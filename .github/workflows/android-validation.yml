@@ -4,6 +4,12 @@ name: Android Validation
 # Proves the repository's own Gradle wrapper actually compiles and tests the
 # Pass 1-4 USB serial transport code. Must stay green before any future
 # native pass (Pass 5+) is planned or implemented.
+#
+# Also builds a standalone release APK (signed with the repo's existing,
+# non-secret debug keystore - internal validation signing only, not a
+# production release) so it can be installed and launched on real hardware
+# without a Metro server. The debug APK remains Metro-dependent and is kept
+# only as a build diagnostics artifact.
 
 on:
   workflow_dispatch: {}
@@ -127,12 +133,50 @@ jobs:
           ls -la "$APK_PATH"
           echo "APK_PATH=android/$APK_PATH" >> "$GITHUB_ENV"
 
-      - name: Upload debug APK artifact
+      - name: Upload debug APK artifact (Metro-dependent, diagnostics only)
         if: success()
         uses: actions/upload-artifact@v7
         with:
           name: fpv-arbcon-debug-apk
           path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Assemble release APK (standalone, no Metro required)
+        working-directory: android
+        run: ./gradlew :app:assembleRelease
+
+      - name: Locate and verify standalone release APK
+        working-directory: android
+        run: |
+          RELEASE_APK_PATH=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          if [ -z "$RELEASE_APK_PATH" ]; then
+            echo "No release APK produced" >&2
+            exit 1
+          fi
+          test -s "$RELEASE_APK_PATH"
+          echo "Resolved release APK: android/$RELEASE_APK_PATH"
+          ls -la "$RELEASE_APK_PATH"
+          echo "RELEASE_APK_PATH=android/$RELEASE_APK_PATH" >> "$GITHUB_ENV"
+
+      - name: Verify standalone release APK is signed
+        working-directory: android
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "${RELEASE_APK_PATH#android/}"
+
+      - name: Verify standalone release APK contains the JS bundle
+        working-directory: android
+        run: |
+          BUNDLE_PATH="${RELEASE_APK_PATH#android/}"
+          unzip -l "$BUNDLE_PATH" | grep -E 'assets/index\.android\.bundle|assets/.*\.hbc' \
+            || { echo "Release APK does not contain a packaged JS bundle" >&2; exit 1; }
+
+      - name: Upload standalone release APK artifact
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-standalone-apk
+          path: ${{ env.RELEASE_APK_PATH }}
           if-no-files-found: error
           retention-days: 14
 
