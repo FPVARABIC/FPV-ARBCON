@@ -8,8 +8,11 @@ name: Android Validation
 # Also builds a standalone release APK (signed with the repo's existing,
 # non-secret debug keystore - internal validation signing only, not a
 # production release) so it can be installed and launched on real hardware
-# without a Metro server. The debug APK remains Metro-dependent and is kept
-# only as a build diagnostics artifact.
+# without a Metro server. The debug variant is still built and exercised
+# internally (compileDebugKotlin/testDebugUnitTest/assembleDebug all run
+# against it) but is never uploaded as an artifact - the only user-facing
+# download from this workflow is the single fpv-arbcon-apk artifact
+# containing the standalone release APK.
 
 on:
   workflow_dispatch: {}
@@ -120,7 +123,7 @@ jobs:
         working-directory: android
         run: ./gradlew :app:assembleDebug
 
-      - name: Locate and verify debug APK
+      - name: Locate and verify debug APK (internal diagnostics only, not uploaded)
         working-directory: android
         run: |
           APK_PATH=$(find app/build/outputs/apk/debug -name '*.apk' | head -n 1)
@@ -129,18 +132,8 @@ jobs:
             exit 1
           fi
           test -s "$APK_PATH"
-          echo "Resolved debug APK: android/$APK_PATH"
+          echo "Resolved debug APK (Metro-dependent, diagnostics only): android/$APK_PATH"
           ls -la "$APK_PATH"
-          echo "APK_PATH=android/$APK_PATH" >> "$GITHUB_ENV"
-
-      - name: Upload debug APK artifact (Metro-dependent, diagnostics only)
-        if: success()
-        uses: actions/upload-artifact@v7
-        with:
-          name: fpv-arbcon-debug-apk
-          path: ${{ env.APK_PATH }}
-          if-no-files-found: error
-          retention-days: 14
 
       - name: Assemble release APK (standalone, no Metro required)
         working-directory: android
@@ -171,11 +164,11 @@ jobs:
           unzip -l "$BUNDLE_PATH" | grep -E 'assets/index\.android\.bundle|assets/.*\.hbc' \
             || { echo "Release APK does not contain a packaged JS bundle" >&2; exit 1; }
 
-      - name: Upload standalone release APK artifact
+      - name: Upload standalone release APK artifact (the only user-facing download)
         if: success()
         uses: actions/upload-artifact@v7
         with:
-          name: fpv-arbcon-standalone-apk
+          name: fpv-arbcon-apk
           path: ${{ env.RELEASE_APK_PATH }}
           if-no-files-found: error
           retention-days: 14

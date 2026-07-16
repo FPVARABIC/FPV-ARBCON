@@ -1,4 +1,104 @@
 {
-  "app.name": "FPV-ARBCON",
-  "app.underConstruction": "قيد الإنشاء"
+  "app": {
+    "name": "FPV-ARBCON",
+    "underConstruction": "قيد الإنشاء"
+  },
+  "connection": {
+    "screenTitle": "اتصال متحكم الطيران",
+    "sessionIdLabel": "معرف الجلسة",
+    "state": {
+      "disconnected": "غير متصل",
+      "scanning": "جارٍ البحث",
+      "connecting": "جارٍ الاتصال",
+      "connected": "متصل",
+      "disconnecting": "جارٍ قطع الاتصال",
+      "error": "خطأ"
+    },
+    "instructionPrimary": "وصّل متحكم الطيران بالهاتف باستخدام كابل USB OTG، ثم اضغط على تحديث.",
+    "instructionSecondary": "لن يطلب التطبيق إذن USB إلا بعد اختيار الجهاز والضغط على اتصال."
+  },
+  "devices": {
+    "sectionTitle": "أجهزة USB المتصلة",
+    "refresh": "تحديث",
+    "notScannedPrompt": "اضغط على تحديث للبحث عن أجهزة USB المتصلة.",
+    "scanning": "جارٍ البحث عن أجهزة USB…",
+    "countLabel": "عدد الأجهزة الموجودة: {{count}}",
+    "emptyPrimary": "لم يتم العثور على جهاز USB.",
+    "emptySecondary": "تحقق من توصيل الكابل ومن دعم الهاتف لـ USB OTG، ثم اضغط على تحديث.",
+    "unknownProductName": "جهاز USB",
+    "driverType": "نوع برنامج التشغيل",
+    "vid": "VID",
+    "pid": "PID",
+    "portCount": "عدد المنافذ",
+    "supportStatus": "حالة الدعم",
+    "supported": "مدعوم",
+    "unsupported": "غير مدعوم",
+    "unsupportedHint": "هذا الجهاز غير مدعوم حاليًا.",
+    "selectedBadge": "محدد"
+  },
+  "ports": {
+    "portNumber": "المنفذ {{number}}",
+    "selectorLabel": "اختر المنفذ"
+  },
+  "serialConfiguration": {
+    "sectionTitle": "إعدادات الاتصال التسلسلي",
+    "baudRate": "معدل البث",
+    "dataBits": "بتات البيانات",
+    "stopBits": "بتات التوقف",
+    "parity": "التكافؤ",
+    "flowControl": "التحكم بالتدفق",
+    "parityNone": "بدون",
+    "flowControlOff": "متوقف",
+    "readOnlyNote": "قيم ثابتة لهذه المرحلة من الاختبار."
+  },
+  "actions": {
+    "connect": "اتصال",
+    "connecting": "جارٍ الاتصال...",
+    "connectSuccess": "تم الاتصال بنجاح",
+    "disconnect": "قطع الاتصال",
+    "disconnecting": "جارٍ قطع الاتصال...",
+    "disconnectSuccess": "تم قطع الاتصال بنجاح"
+  },
+  "errors": {
+    "DEVICE_ENUMERATION_FAILED": "تعذر البحث عن أجهزة USB المتصلة.",
+    "UNSUPPORTED_DEVICE": "هذا الجهاز غير مدعوم حاليًا.",
+    "INVALID_PORT_INDEX": "المنفذ المحدد غير صالح لهذا الجهاز.",
+    "DEVICE_ALREADY_IN_USE": "هذا الجهاز مستخدم حاليًا في جلسة اتصال أخرى.",
+    "PERMISSION_REQUEST_FAILED": "تعذر طلب إذن الوصول إلى جهاز USB.",
+    "PERMISSION_DENIED": "تم رفض إذن الوصول إلى جهاز USB.",
+    "DEVICE_CHANGED_DURING_OPEN": "تم فصل الجهاز أو تغييره أثناء محاولة الاتصال.",
+    "OPEN_FAILED": "تعذر فتح الاتصال مع الجهاز.",
+    "INVALID_CONFIGURATION": "إعدادات الاتصال التسلسلي غير صالحة.",
+    "UNSUPPORTED_SERIAL_CONFIGURATION": "إعدادات الاتصال المحددة غير مدعومة من هذا الجهاز.",
+    "UNKNOWN_SESSION": "جلسة الاتصال غير موجودة أو انتهت.",
+    "CLOSE_FAILED": "تعذر التأكد من إغلاق اتصال USB بالكامل. افصل الكابل وأعد توصيله قبل محاولة اتصال جديدة.",
+    "NATIVE_OPERATION_FAILED": "حدث خطأ أثناء تنفيذ عملية الاتصال.",
+    "NOT_IMPLEMENTED": "هذه الوظيفة غير متاحة في المرحلة الحالية.",
+    "UNKNOWN": "حدث خطأ غير متوقع أثناء الاتصال."
+  },
+  "validationLog": {
+    "title": "سجل التحقق",
+    "clear": "مسح السجل",
+    "empty": "لا توجد إدخالات بعد.",
+    "expand": "إظهار سجل التحقق",
+    "collapse": "إخفاء سجل التحقق",
+    "scanStarted": "بدء البحث عن أجهزة USB",
+    "scanCompleted": "اكتمل البحث، عدد الأجهزة: {{count}}",
+    "deviceSelected": "تم تحديد الجهاز (VID {{vid}}، PID {{pid}})",
+    "connectStarted": "بدء محاولة الاتصال",
+    "permissionGranted": "تم منح إذن الوصول إلى USB",
+    "permissionDenied": "تم رفض إذن الوصول إلى USB",
+    "connectSucceeded": "نجح الاتصال، معرف الجلسة: {{sessionId}}",
+    "disconnectStarted": "بدء قطع الاتصال",
+    "disconnectSucceeded": "تم قطع الاتصال بنجاح",
+    "errorEntry": "خطأ: {{message}} ({{code}})"
+  },
+  "accessibility": {
+    "refresh": "تحديث قائمة أجهزة USB",
+    "selectDevice": "اختيار الجهاز",
+    "selectPort": "اختيار المنفذ",
+    "connect": "بدء الاتصال بالجهاز المحدد",
+    "disconnect": "قطع الاتصال الحالي",
+    "clearLog": "مسح سجل التحقق"
+  }
 }
