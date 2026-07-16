@@ -131,9 +131,9 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
         completeOpen(identity, port, parsedConfig, granted, failureMessage, promise)
       }
     } catch (error: UsbTransportException) {
-      promise.reject(error)
+      promise.rejectTransportError(error)
     } catch (error: Exception) {
-      promise.reject(
+      promise.rejectTransportError(
         UsbTransportException(
           "NATIVE_OPERATION_FAILED",
           error.message ?: "Unexpected failure while opening device $deviceId.",
@@ -164,12 +164,12 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
 
     if (failureMessage != null) {
       sessionRegistry.releaseReservation(identity.deviceId)
-      promise.reject(UsbTransportException("PERMISSION_REQUEST_FAILED", failureMessage))
+      promise.rejectTransportError(UsbTransportException("PERMISSION_REQUEST_FAILED", failureMessage))
       return
     }
     if (!granted) {
       sessionRegistry.releaseReservation(identity.deviceId)
-      promise.reject(UsbTransportException("PERMISSION_DENIED", "Permission denied for device ${identity.deviceId}."))
+      promise.rejectTransportError(UsbTransportException("PERMISSION_DENIED", "Permission denied for device ${identity.deviceId}."))
       return
     }
 
@@ -245,10 +245,10 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
       }
     } catch (error: UsbTransportException) {
       sessionRegistry.releaseReservation(identity.deviceId)
-      promise.reject(error)
+      promise.rejectTransportError(error)
     } catch (error: Exception) {
       sessionRegistry.releaseReservation(identity.deviceId)
-      promise.reject(
+      promise.rejectTransportError(
         UsbTransportException("OPEN_FAILED", error.message ?: "Failed to open device ${identity.deviceId}."),
       )
     }
@@ -322,7 +322,7 @@ private fun closeQuietly(port: UsbSerialPort) {
   }
 }
 
-private fun Promise.reject(error: UsbTransportException) {
+private fun Promise.rejectTransportError(error: UsbTransportException) {
   val field = error.field
   val message = error.message ?: "USB transport operation failed."
   if (field != null) {
