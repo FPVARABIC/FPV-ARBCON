@@ -1,0 +1,155 @@
+name: Android Validation
+
+# Mandatory quality gate for native (Android/Kotlin) passes.
+# Proves the repository's own Gradle wrapper actually compiles and tests the
+# Pass 1-4 USB serial transport code. Must stay green before any future
+# native pass (Pass 5+) is planned or implemented.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'src/platforms/react-native/**'
+      - 'src/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'app.json'
+      - 'index.js'
+      - '*.config.js'
+      - 'tsconfig.json'
+      - '.github/workflows/android-validation.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'src/platforms/react-native/**'
+      - 'src/core/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'app.json'
+      - 'index.js'
+      - '*.config.js'
+      - 'tsconfig.json'
+      - '.github/workflows/android-validation.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-validation:
+    name: Android validation (Pass 1-4)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      - name: TypeScript check (tsc --noEmit)
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: ESLint
+        run: npx eslint .
+
+      - name: Jest
+        run: npx jest --ci
+
+      - name: Setup JDK 17 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          # Must exactly match android/build.gradle: compileSdk/targetSdk 36,
+          # buildToolsVersion 36.0.0, ndkVersion 27.1.12297006.
+          packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.1.12297006'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Make gradlew executable
+        working-directory: android
+        run: chmod +x ./gradlew
+
+      - name: Java / Gradle wrapper version proof
+        working-directory: android
+        run: |
+          java -version
+          javac -version
+          ./gradlew --version
+
+      - name: Dependency resolution (debugRuntimeClasspath)
+        working-directory: android
+        run: ./gradlew :app:dependencies --configuration debugRuntimeClasspath
+
+      - name: usb-serial-for-android dependency insight
+        working-directory: android
+        run: ./gradlew :app:dependencyInsight --dependency usb-serial-for-android --configuration debugRuntimeClasspath
+
+      - name: Compile Kotlin (debug)
+        working-directory: android
+        run: ./gradlew :app:compileDebugKotlin
+
+      - name: JVM unit tests (debug)
+        working-directory: android
+        run: ./gradlew :app:testDebugUnitTest
+
+      - name: Assemble debug APK
+        working-directory: android
+        run: ./gradlew :app:assembleDebug
+
+      - name: Locate and verify debug APK
+        working-directory: android
+        run: |
+          APK_PATH=$(find app/build/outputs/apk/debug -name '*.apk' | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "No debug APK produced" >&2
+            exit 1
+          fi
+          test -s "$APK_PATH"
+          echo "Resolved debug APK: android/$APK_PATH"
+          ls -la "$APK_PATH"
+          echo "APK_PATH=android/$APK_PATH" >> "$GITHUB_ENV"
+
+      - name: Upload debug APK artifact
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-debug-apk
+          path: ${{ env.APK_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload JVM unit test reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-unit-test-reports
+          path: android/app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Android lint report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-lint-report
+          path: android/app/build/reports/lint-results-debug.html
+          if-no-files-found: ignore
+          retention-days: 14
