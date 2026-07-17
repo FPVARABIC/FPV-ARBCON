@@ -22,6 +22,11 @@ import org.junit.Test
  * not real BroadcastReceiver/main-thread identity. Real off-main-thread
  * proof for the actual open/close call chain still requires a real device
  * or emulator (see the Pass 5.1 report's physical acceptance checklist).
+ *
+ * Pass 5.1 correction (PASS5.1-AUDIT-2): [UsbIoExecutor.submit] now returns
+ * a Boolean (true = accepted, false = rejected post-shutdown) instead of a
+ * silent no-op either way - these tests assert on that return value
+ * directly, not just on whether the task ran.
  */
 class UsbIoExecutorTest {
 
@@ -43,9 +48,26 @@ class UsbIoExecutorTest {
   fun `submit eventually runs the given action`() {
     val done = CountDownLatch(1)
 
-    executor.submit { done.countDown() }
+    val accepted = executor.submit { done.countDown() }
 
+    assertTrue(accepted)
     assertTrue(done.await(2, TimeUnit.SECONDS))
+  }
+
+  @Test
+  fun `an accepted submission returns true`() {
+    val accepted = executor.submit {}
+
+    assertTrue(accepted)
+  }
+
+  @Test
+  fun `a post-shutdown submission returns false`() {
+    executor.shutdown()
+
+    val accepted = executor.submit {}
+
+    assertFalse(accepted)
   }
 
   @Test
@@ -80,15 +102,16 @@ class UsbIoExecutorTest {
   }
 
   @Test
-  fun `after shutdown, submit does not throw and the action never runs`() {
+  fun `after shutdown, submit returns false and the action never runs`() {
     executor.shutdown()
 
     var ran = false
-    executor.submit { ran = true }
+    val accepted = executor.submit { ran = true }
 
     // ExecutorService.execute() on an already-shutdown executor rejects
     // synchronously at the submission call itself - the action never gets
     // a chance to run, so this is deterministic without any wait.
+    assertFalse(accepted)
     assertFalse(ran)
   }
 
@@ -98,7 +121,8 @@ class UsbIoExecutorTest {
     executor.shutdown()
 
     var ran = false
-    executor.submit { ran = true }
+    val accepted = executor.submit { ran = true }
+    assertFalse(accepted)
     assertFalse(ran)
   }
 
@@ -106,11 +130,12 @@ class UsbIoExecutorTest {
   fun `shutdown lets an already-queued task finish before the executor terminates`() {
     val done = CountDownLatch(1)
 
-    executor.submit { done.countDown() }
+    val accepted = executor.submit { done.countDown() }
     executor.shutdown()
 
     // shutdown() (never shutdownNow()) lets already-queued work run to
     // completion - it only refuses new submissions from this point on.
+    assertTrue(accepted)
     assertTrue(done.await(2, TimeUnit.SECONDS))
   }
 
@@ -195,10 +220,11 @@ class UsbIoExecutorTest {
 
     var ranAfter = false
     val doneAfter = CountDownLatch(1)
-    executor.submit {
+    val acceptedAfter = executor.submit {
       ranAfter = true
       doneAfter.countDown()
     }
+    assertTrue(acceptedAfter)
     assertTrue(doneAfter.await(2, TimeUnit.SECONDS))
     assertTrue(ranAfter)
   }

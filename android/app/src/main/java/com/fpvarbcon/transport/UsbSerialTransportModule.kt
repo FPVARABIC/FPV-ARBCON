@@ -23,7 +23,7 @@ import java.util.UUID
  * 1. validate SerialConfiguration
  * 2. find and preserve device identity (deviceId/vendorId/productId)
  * 3. validate driver and port
- * 4. reserve device
+ * 4. reserve device (yields this attempt's own [ReservationToken])
  * 5. request/confirm permission (async)
  * 6. re-fetch and revalidate device identity
  * 7. open UsbDeviceConnection
@@ -32,11 +32,12 @@ import java.util.UUID
  * 10. apply setFlowControl
  * 11. create the completed local session and its UUID sessionId
  * 12. enter the lifecycle gate
- * 13. if the module is still valid, insert the session atomically
+ * 13. if the module is still valid, insert the session atomically - only if
+ *     this attempt's token still owns the reservation (see step 4's note)
  * 14. exit the lifecycle gate
  * 15. if accepted, resolve openDevice(sessionId)
- * 16. if invalidated, close the unaccepted local session without settling
- *     the Promise
+ * 16. if invalidated, or if this attempt's token was superseded, close the
+ *     unaccepted local session
  * No sessionId is generated and no registry insertion happens before step 10
  * succeeds. No registry insertion is possible once invalidated becomes true,
  * because both that check and the insertion happen inside the same
@@ -57,6 +58,21 @@ import java.util.UUID
  * thread consistent across both cases and keeps this method's real blocking
  * native I/O (openDevice/port.open/setParameters/setFlowControl) off the
  * main thread in both cases, not just one of them.
+ *
+ * Pass 5.1 corrective note (PASS5.1-AUDIT-1 / PASS5.1-AUDIT-2): step 4's
+ * reservation now yields a [ReservationToken] unique to this one attempt,
+ * threaded through to every later release/insert call for it (see
+ * [completeOpen]). This is what stops an old attempt's stale, delayed
+ * permission callback from ever releasing or overwriting a *newer* attempt's
+ * reservation for the same deviceId - see [ReservationToken]'s own note and
+ * [UsbSerialSessionRegistry]'s class-level note for the full scenario. A
+ * genuine physical detach still unconditionally invalidates whatever
+ * reservation currently exists for its deviceId (see [handleDeviceDetached])
+ * because a detach targets a single, ordered hardware event, not a
+ * possibly-stale callback - that call and this module's own detach-session
+ * cleanup are now one atomic step under [lifecycleLock], so a claimed
+ * session's close() submission can never lose a race against
+ * [ioExecutor]'s shutdown in [invalidate].
  */
 class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   NativeUsbSerialTransportSpec(reactContext) {
@@ -97,7 +113,8 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * thread (the Android main thread, whenever permission was not already
    * granted - see completeOpen's own note). See UsbIoExecutor's class-level
    * note for why one shared single-thread executor is used for both, rather
-   * than two separate executors. Shut down in [invalidate].
+   * than two separate executors, and for its Boolean submit() contract.
+   * Shut down in [invalidate].
    */
   private val ioExecutor = UsbIoExecutor()
 
@@ -113,6 +130,14 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * independently elsewhere without holding this lock at all, so there is
    * no path that acquires the registry's monitor first and then requests
    * this lock. A single, consistent acquisition order cannot deadlock.
+   *
+   * Pass 5.1 correction: also now the single coordination point for
+   * "claim a detached device's session/reservation" and "submit its close
+   * work to ioExecutor" (see [handleDeviceDetached]) and for "drain every
+   * session at teardown" and "submit their close work" (see [invalidate]) -
+   * both happen as one atomic step under this lock, so [ioExecutor]'s
+   * shutdown() (called only after that step releases the lock) can never
+   * race ahead of a submission that step made.
    */
   private val lifecycleLock = Any()
 
@@ -160,19 +185,24 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
           )
 
       // 4. Reserve the device before the (asynchronous) permission request.
-      if (!sessionRegistry.reserveDevice(deviceId)) {
-        throw UsbTransportException(
-          "DEVICE_ALREADY_IN_USE",
-          "A session is already open (or opening) for device $deviceId.",
-        )
-      }
+      // The returned token belongs only to this attempt - it is threaded
+      // through completeOpen() and is what stops a stale/delayed callback
+      // from this attempt from ever releasing or overwriting a *different*
+      // (later) attempt's reservation for the same deviceId (see
+      // UsbSerialSessionRegistry's class-level note).
+      val reservation =
+        sessionRegistry.reserveDevice(deviceId)
+          ?: throw UsbTransportException(
+            "DEVICE_ALREADY_IN_USE",
+            "A session is already open (or opening) for device $deviceId.",
+          )
 
       // 5. Request/confirm permission; steps 6-13 continue in completeOpen(),
       // always on ioExecutor's background thread regardless of which thread
       // this callback itself fires on (see the class-level note above).
       permissionRequester.requestPermission(device) { granted, failureMessage ->
         ioExecutor.submit {
-          completeOpen(identity, port, parsedConfig, granted, failureMessage, promise)
+          completeOpen(identity, reservation, port, parsedConfig, granted, failureMessage, promise)
         }
       }
     } catch (error: UsbTransportException) {
@@ -188,12 +218,19 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   }
 
   /**
-   * Runs after the (possibly asynchronous) permission result is known. The
-   * device's reservation is already held and must be released on every exit
-   * path below that doesn't end in a registered session.
+   * Runs after the (possibly asynchronous) permission result is known. This
+   * attempt's own [reservation] token is already held and must be released
+   * - using that exact token, never a bare deviceId - on every exit path
+   * below that doesn't end in a registered session. Using the token (rather
+   * than the deviceId alone) guarantees this attempt can only ever affect
+   * its own reservation: if a detach has since invalidated it, or a newer
+   * attempt has since reserved this deviceId again, every release/insert
+   * call below simply becomes a harmless no-op instead of disturbing that
+   * newer attempt (see PASS5.1-AUDIT-1's fix in UsbSerialSessionRegistry).
    */
   private fun completeOpen(
     identity: UsbDeviceIdentity,
+    reservation: ReservationToken,
     port: UsbSerialPort,
     parsedConfig: ParsedSerialConfiguration,
     granted: Boolean,
@@ -201,19 +238,20 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     promise: Promise,
   ) {
     // The module was torn down while this permission request was pending.
-    // invalidate() already drained the registry (including this reservation)
-    // and cancelled the requester - do not resolve/reject through a dead host.
+    // invalidate() already drained the registry (including this reservation
+    // if it was still current) and cancelled the requester - do not
+    // resolve/reject through a dead host.
     if (invalidated) {
       return
     }
 
     if (failureMessage != null) {
-      sessionRegistry.releaseReservation(identity.deviceId)
+      sessionRegistry.releaseReservation(identity.deviceId, reservation)
       promise.rejectTransportError(UsbTransportException("PERMISSION_REQUEST_FAILED", failureMessage))
       return
     }
     if (!granted) {
-      sessionRegistry.releaseReservation(identity.deviceId)
+      sessionRegistry.releaseReservation(identity.deviceId, reservation)
       promise.rejectTransportError(UsbTransportException("PERMISSION_DENIED", "Permission denied for device ${identity.deviceId}."))
       return
     }
@@ -238,7 +276,7 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
       try {
         port.open(connection)
       } catch (error: Exception) {
-        connection.close()
+        closeQuietly(connection)
         throw UsbTransportException("OPEN_FAILED", error.message ?: "Failed to open serial port.")
       }
 
@@ -265,37 +303,63 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
       // 12-14. Atomic acceptance: invalidate() drains under this same lock,
       // so this check and the insertion can never straddle a drain - either
       // this runs entirely before invalidate()'s drain, or entirely after
-      // (in which case invalidated is already true and nothing is inserted).
-      val accepted =
+      // (in which case invalidated is already true and nothing is
+      // inserted). insert() additionally only succeeds if [reservation] is
+      // still the current reservation for this deviceId - if a detach
+      // invalidated it, or a newer attempt has since reserved this deviceId
+      // again (this attempt's own permission callback was stale/delayed -
+      // see the class-level Pass 5.1 note), insert() returns false and
+      // touches neither the newer reservation nor any session it may have
+      // already produced.
+      val outcome =
         synchronized(lifecycleLock) {
           if (invalidated) {
-            false
+            OpenCompletionOutcome.MODULE_INVALIDATED
+          } else if (sessionRegistry.insert(reservation, session)) {
+            OpenCompletionOutcome.ACCEPTED
           } else {
-            sessionRegistry.insert(session)
-            true
+            OpenCompletionOutcome.RESERVATION_SUPERSEDED
           }
         }
 
-      // 15-16. Resolve only if accepted; otherwise close the never-registered
-      // session and settle nothing - the React host is being torn down.
-      // UsbSerialSession.close() is the single owner of releasing the port
-      // and connection - no cleanup logic is duplicated here.
-      if (accepted) {
-        promise.resolve(sessionId)
-      } else {
-        try {
-          session.close()
-        } catch (_: Exception) {
-          // Best-effort - this session was never accepted, and there is no
-          // live host to report a close failure to either way.
+      // 15-16. Resolve only if accepted. Otherwise close the never-registered
+      // session and, for the invalidated case, settle nothing (the React
+      // host is being torn down); for the superseded case, reject this
+      // attempt's own Promise without touching whatever now legitimately
+      // owns this deviceId. UsbSerialSession.close() is the single owner of
+      // releasing the port and connection - no cleanup logic is duplicated
+      // here.
+      when (outcome) {
+        OpenCompletionOutcome.ACCEPTED -> promise.resolve(sessionId)
+        OpenCompletionOutcome.MODULE_INVALIDATED -> {
+          try {
+            session.close()
+          } catch (_: Exception) {
+            // Best-effort - this session was never accepted, and there is no
+            // live host to report a close failure to either way.
+          }
         }
-        sessionRegistry.releaseReservation(identity.deviceId)
+        OpenCompletionOutcome.RESERVATION_SUPERSEDED -> {
+          try {
+            session.close()
+          } catch (_: Exception) {
+            // Best-effort - this attempt's session was never accepted, and
+            // whatever now owns this deviceId's reservation must be left
+            // untouched either way.
+          }
+          promise.rejectTransportError(
+            UsbTransportException(
+              "DEVICE_CHANGED_DURING_OPEN",
+              "Device ${identity.deviceId} was reused by a newer connection attempt while this one was still opening.",
+            ),
+          )
+        }
       }
     } catch (error: UsbTransportException) {
-      sessionRegistry.releaseReservation(identity.deviceId)
+      sessionRegistry.releaseReservation(identity.deviceId, reservation)
       promise.rejectTransportError(error)
     } catch (error: Exception) {
-      sessionRegistry.releaseReservation(identity.deviceId)
+      sessionRegistry.releaseReservation(identity.deviceId, reservation)
       promise.rejectTransportError(
         UsbTransportException("OPEN_FAILED", error.message ?: "Failed to open device ${identity.deviceId}."),
       )
@@ -350,25 +414,50 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * event is always emitted afterward regardless, so JS can reconcile its
    * device list even when no session was involved.
    *
-   * Also releases any pending *reservation* for this device - not just a
-   * registered session. Without this, a device detached while its own
-   * connect attempt is still waiting on the permission dialog would stay
-   * reserved (openDevice()'s step 4) until that pending completeOpen() call
-   * eventually runs and fails its own device-identity revalidation, which
-   * could otherwise make a fast detach-then-reattach spuriously fail with
-   * DEVICE_ALREADY_IN_USE. releaseReservation() is idempotent and scoped to
-   * this one deviceId, so calling it here is harmless when nothing was
-   * reserved, and never touches another device's reservation or an
-   * unrelated registered session. The delayed completeOpen() call (if one
-   * is still pending) remains safe regardless: its own step 6 identity
-   * revalidation against the current usbManager.deviceList already handles
-   * "the device is gone" correctly, exactly as before this change.
+   * Also unconditionally invalidates any pending *reservation* for this
+   * device - not just a registered session - via
+   * [UsbSerialSessionRegistry.invalidateReservationForDevice], which is
+   * deliberately not token-gated: a detach is a single, ordered hardware
+   * event that always targets whichever one attempt currently occupies
+   * this deviceId's slot (see that method's own note). Without this, a
+   * device detached while its own connect attempt is still waiting on the
+   * permission dialog would stay reserved (openDevice()'s step 4) until
+   * that pending completeOpen() call eventually runs, which could
+   * otherwise make a fast detach-then-reattach spuriously fail with
+   * DEVICE_ALREADY_IN_USE.
+   *
+   * Pass 5.1 correction (PASS5.1-AUDIT-2): checking [invalidated], claiming
+   * this device's reservation/session, and submitting the session's
+   * close() to [ioExecutor] are now one atomic step under [lifecycleLock] -
+   * the same lock [invalidate] holds while draining every other session
+   * and only then shutting [ioExecutor] down. This closes a narrow but real
+   * race in the previous version of this method: it used to check
+   * [invalidated] on its own, separately from (and before) calling
+   * ioExecutor.submit() a few lines later, leaving a small window where
+   * invalidate() could run its entire body - including shutting the
+   * executor down - in between, silently dropping this detach's close
+   * submission. Sharing [lifecycleLock] with [invalidate] means that by the
+   * time this method could reach its own submission, it is guaranteed to
+   * either run entirely before invalidate()'s drain (and its submission is
+   * guaranteed accepted, since shutdown() only ever happens after that
+   * drain releases the lock) or entirely after it (in which case
+   * [invalidated] is already true here and this method does nothing,
+   * because invalidate()'s own drain already claimed and submitted the
+   * close for this exact session, if one existed).
    */
   private fun handleDeviceDetached(identity: UsbDeviceIdentity) {
-    if (invalidated) return
-    sessionRegistry.releaseReservation(identity.deviceId)
-    sessionRegistry.removeByDeviceId(identity.deviceId)?.let { session ->
-      ioExecutor.submit { session.close() }
+    val detachedSession =
+      synchronized(lifecycleLock) {
+        if (invalidated) {
+          null
+        } else {
+          sessionRegistry.invalidateReservationForDevice(identity.deviceId)
+          sessionRegistry.removeByDeviceId(identity.deviceId)?.also { session ->
+            ioExecutor.submit { session.close() }
+          }
+        }
+      }
+    detachedSession?.let { session ->
       emitOnSessionDetached(
         Arguments.createMap().apply {
           putString("sessionId", session.sessionId)
@@ -387,57 +476,63 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * outstanding receiver/reservation/session is cleaned up.
    *
    * Idempotent: a second call finds [invalidated] already true under the
-   * same [lifecycleLock] and does nothing further. Setting the flag and
-   * draining the registry happen inside one critical section so no session
-   * can be inserted (see completeOpen's atomic acceptance step) between
-   * "invalidated becomes true" and "the registry is drained" - closing the
-   * exact race this correction exists to fix. Slow native I/O (closing each
-   * drained session's port/connection, and cancelling the permission
-   * requester) happens outside the lock, per the "never hold this lock
-   * during native I/O" rule - and, as of this pass, on [ioExecutor] rather
-   * than directly on whatever thread invalidate() itself runs on.
+   * same [lifecycleLock] and does nothing further. Setting the flag,
+   * draining the registry, and submitting every drained session's close()
+   * to [ioExecutor] all happen inside one critical section, so: (a) no
+   * session can be inserted (see completeOpen's atomic acceptance step)
+   * between "invalidated becomes true" and "the registry is drained" -
+   * closing the original race this correction exists to fix; and (b) no
+   * detach (see [handleDeviceDetached]) can ever observe [invalidated] as
+   * false, claim a session, and then lose its own close() submission to a
+   * shutdown() that already happened - closing PASS5.1-AUDIT-2's race,
+   * since [ioExecutor].shutdown() below only ever runs after this entire
+   * critical section (including every submission it makes) has already
+   * completed and released the lock.
    *
-   * ioExecutor.shutdown() is called last, after every orphaned session's
-   * close() has already been submitted to it: ExecutorService.shutdown()
-   * (never shutdownNow()) lets already-queued work run to completion before
-   * the executor actually terminates, so this ordering guarantees those
-   * closes still execute even though shutdown() itself does not block this
-   * (the main) thread waiting for them. A permission callback or a detach
-   * that races in after this point either finds [invalidated] already true
-   * (its own guard, unchanged) or has its ioExecutor.submit() call safely
-   * rejected as a no-op (see UsbIoExecutor) - either way, nothing is
-   * silently left as unmanaged work, and no Promise is settled for a host
-   * that is already gone.
+   * The actual blocking session.close() calls never run inside this lock -
+   * only claiming the sessions and submitting their close tasks does; the
+   * submitted closures themselves run later, on ioExecutor's own thread,
+   * per the "never hold this lock during native I/O" rule.
    */
   override fun invalidate() {
     super.invalidate()
 
     hotplugMonitor.stop()
 
-    val orphanedSessions =
+    val alreadyInvalidated =
       synchronized(lifecycleLock) {
         if (invalidated) {
-          null
+          true
         } else {
           invalidated = true
-          sessionRegistry.removeAll()
+          sessionRegistry.removeAll().forEach { session ->
+            ioExecutor.submit {
+              try {
+                session.close()
+              } catch (_: Exception) {
+                // Best-effort during teardown - there is no Promise left to report this to.
+              }
+            }
+          }
+          false
         }
       }
-        ?: return
+
+    if (alreadyInvalidated) return
 
     permissionRequester.cancelAll()
-    orphanedSessions.forEach { session ->
-      ioExecutor.submit {
-        try {
-          session.close()
-        } catch (_: Exception) {
-          // Best-effort during teardown - there is no Promise left to report this to.
-        }
-      }
-    }
     ioExecutor.shutdown()
   }
 }
+
+/**
+ * The outcome of completeOpen()'s atomic acceptance step (see [ReservationToken]
+ * and [UsbSerialSessionRegistry.insert]). RESERVATION_SUPERSEDED is distinct
+ * from MODULE_INVALIDATED because they require different Promise handling:
+ * an invalidated module settles nothing (the host is gone), while a
+ * superseded reservation must still reject this attempt's own Promise.
+ */
+private enum class OpenCompletionOutcome { ACCEPTED, MODULE_INVALIDATED, RESERVATION_SUPERSEDED }
 
 private fun closeQuietly(port: UsbSerialPort) {
   try {

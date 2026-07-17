@@ -26,11 +26,21 @@ import java.util.concurrent.RejectedExecutionException
  * UsbSerialTransportModule, UsbSerialSession, and UsbSerialSessionRegistry
  * respectively.
  *
- * [submit] never throws. If this executor has already been shut down (e.g.
- * a detach broadcast or a delayed permission callback racing module
- * invalidation - see UsbSerialTransportModule.invalidate()), the submission
- * is silently absorbed as a no-op: there is no live host left to report a
- * failure to either way. [shutdown] is idempotent and orderly - it lets any
+ * [submit] never throws. It returns true if the task was accepted (it will
+ * run, in submission order, before this executor's queue drains at
+ * [shutdown]) and false if this executor has already been shut down (e.g. a
+ * detach broadcast or a delayed permission callback racing module
+ * invalidation - see UsbSerialTransportModule.invalidate()) - there is no
+ * live host left to report a failure to either way, but the caller can use
+ * this return value to decide whether it still owns cleanup responsibility
+ * for whatever the task would have done (see the Pass 5.1 corrective
+ * report, PASS5.1-AUDIT-2: a caller that needs a guarantee that submitted
+ * close work is never silently lost must ensure - by its own coordination,
+ * not by this class - that it never calls [submit] after this executor
+ * could already have been shut down; UsbSerialTransportModule does this by
+ * making "claim the work" and "submit it here" one atomic step under its
+ * lifecycleLock, the same lock invalidate() holds while deciding to shut
+ * this executor down). [shutdown] is idempotent and orderly - it lets any
  * already-queued task run to completion before the executor actually stops
  * (see java.util.concurrent.ExecutorService#shutdown), it never discards
  * queued work the way shutdownNow() would, and it never blocks the calling
@@ -46,8 +56,9 @@ internal class UsbIoExecutor {
   private val executor: ExecutorService =
     Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "UsbIoExecutor").apply { isDaemon = true } }
 
-  fun submit(task: () -> Unit) {
-    try {
+  /** Returns true if [task] was accepted, false if this executor was already shut down. */
+  fun submit(task: () -> Unit): Boolean {
+    return try {
       executor.execute {
         try {
           task()
@@ -58,8 +69,10 @@ internal class UsbIoExecutor {
           // from processing whatever is submitted next.
         }
       }
+      true
     } catch (_: RejectedExecutionException) {
       // Already shut down - nothing meaningful left to do.
+      false
     }
   }
 

@@ -2,23 +2,41 @@ package com.fpvarbcon.transport
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Covers only the reservation semantics that back the "one active session
- * per physical device" policy. insert()/remove() with a real UsbSerialSession
- * need a UsbDeviceConnection/UsbSerialPort (real Android types) and are not
- * exercised here - see Pass 4 report, section on genuine unresolved issues.
+ * Covers the reservation/token semantics that back the "one active session
+ * per physical device" policy. insert()/remove()/removeByDeviceId() with a
+ * real UsbSerialSession need a UsbDeviceConnection/UsbSerialPort (real
+ * Android framework types with no application-constructible instance - see
+ * Pass 4 report, section on genuine unresolved issues) and are not
+ * exercised here beyond their no-session/empty-registry cases.
+ *
+ * Pass 5.1 corrective note (PASS5.1-AUDIT-1): reservations are now owned by
+ * a [ReservationToken], not a bare deviceId - reserveDevice() returns the
+ * token, and releaseReservation()/insert() only act when the exact token
+ * they were given still owns the reservation. The tests below directly
+ * prove the "Attempt A / Attempt B" scenario from the corrective report for
+ * every reservation-only operation (release, re-reserve, repeated release).
+ * insert()'s own stale-vs-matching-token behavior shares the identical
+ * token-comparison logic already proven by releaseReservation()'s tests
+ * below, but the method itself still requires a real UsbSerialSession to
+ * call end-to-end, and remains untestable in this plain-JUnit sandbox for
+ * the same reason insert() always has been (see the class-level note
+ * above and the Pass 5.1 corrective report's honest "remaining risks"
+ * section) - it is not silently skipped, it is a known, unchanged,
+ * pre-existing gap in what this sandbox can exercise.
  */
 class UsbSerialSessionRegistryTest {
 
   @Test
-  fun `reserving an unclaimed device succeeds`() {
+  fun `reserving an unclaimed device returns a token`() {
     val registry = UsbSerialSessionRegistry()
 
-    assertTrue(registry.reserveDevice(1))
+    assertNotEquals(null, registry.reserveDevice(1))
   }
 
   @Test
@@ -26,34 +44,63 @@ class UsbSerialSessionRegistryTest {
     val registry = UsbSerialSessionRegistry()
     registry.reserveDevice(1)
 
-    assertFalse(registry.reserveDevice(1))
+    assertNull(registry.reserveDevice(1))
   }
 
   @Test
-  fun `different devices can be reserved independently`() {
+  fun `separate reservations for different devices receive distinct tokens`() {
     val registry = UsbSerialSessionRegistry()
 
-    assertTrue(registry.reserveDevice(1))
-    assertTrue(registry.reserveDevice(2))
+    val tokenForDevice1 = registry.reserveDevice(1)
+    val tokenForDevice2 = registry.reserveDevice(2)
+
+    assertNotEquals(null, tokenForDevice1)
+    assertNotEquals(null, tokenForDevice2)
+    assertNotEquals(tokenForDevice1, tokenForDevice2)
   }
 
   @Test
-  fun `releasing a reservation allows it to be claimed again`() {
+  fun `two successive reservations for the same deviceId receive distinct tokens`() {
     val registry = UsbSerialSessionRegistry()
-    registry.reserveDevice(1)
+    val tokenA = registry.reserveDevice(1)!!
+    registry.releaseReservation(1, tokenA)
 
-    registry.releaseReservation(1)
+    val tokenB = registry.reserveDevice(1)!!
 
-    assertTrue(registry.reserveDevice(1))
+    assertNotEquals(tokenA, tokenB)
+  }
+
+  @Test
+  fun `releasing a reservation with its own token allows it to be claimed again`() {
+    val registry = UsbSerialSessionRegistry()
+    val token = registry.reserveDevice(1)!!
+
+    assertTrue(registry.releaseReservation(1, token))
+    assertNotEquals(null, registry.reserveDevice(1))
   }
 
   @Test
   fun `releasing a reservation that was never held is a harmless no-op`() {
     val registry = UsbSerialSessionRegistry()
 
-    registry.releaseReservation(42)
+    assertFalse(registry.releaseReservation(42, ReservationToken(0)))
+    assertNotEquals(null, registry.reserveDevice(42))
+  }
 
-    assertTrue(registry.reserveDevice(42))
+  @Test
+  fun `a stale token cannot release a newer reservation for the same deviceId`() {
+    val registry = UsbSerialSessionRegistry()
+    val staleToken = registry.reserveDevice(1)!!
+    registry.invalidateReservationForDevice(1)
+    val currentToken = registry.reserveDevice(1)!!
+
+    val releasedByStaleToken = registry.releaseReservation(1, staleToken)
+
+    assertFalse(releasedByStaleToken)
+    // The current (Attempt B-equivalent) reservation must still be exactly
+    // what it was - still held, and releasable only by its own token.
+    assertNull(registry.reserveDevice(1))
+    assertTrue(registry.releaseReservation(1, currentToken))
   }
 
   // removeAll() (the module/host invalidation drain). Only reservations are
@@ -62,16 +109,20 @@ class UsbSerialSessionRegistryTest {
   // and is not exercised without Gradle/device support (see Pass 4 report).
 
   @Test
-  fun `removeAll clears pending reservations so the device can be reserved again`() {
+  fun `removeAll invalidates every outstanding token so every device can be reserved again`() {
     val registry = UsbSerialSessionRegistry()
-    registry.reserveDevice(1)
-    registry.reserveDevice(2)
+    val token1 = registry.reserveDevice(1)!!
+    val token2 = registry.reserveDevice(2)!!
 
     val drained = registry.removeAll()
 
     assertEquals(0, drained.size)
-    assertTrue(registry.reserveDevice(1))
-    assertTrue(registry.reserveDevice(2))
+    assertNotEquals(null, registry.reserveDevice(1))
+    assertNotEquals(null, registry.reserveDevice(2))
+    // The tokens removeAll() invalidated must no longer be able to release
+    // the brand-new reservations it made room for.
+    assertFalse(registry.releaseReservation(1, token1))
+    assertFalse(registry.releaseReservation(2, token2))
   }
 
   @Test
@@ -81,7 +132,7 @@ class UsbSerialSessionRegistryTest {
     val drained = registry.removeAll()
 
     assertEquals(0, drained.size)
-    assertTrue(registry.reserveDevice(1))
+    assertNotEquals(null, registry.reserveDevice(1))
   }
 
   @Test
@@ -94,7 +145,7 @@ class UsbSerialSessionRegistryTest {
 
     assertEquals(0, first.size)
     assertEquals(0, second.size)
-    assertTrue(registry.reserveDevice(1))
+    assertNotEquals(null, registry.reserveDevice(1))
   }
 
   // removeByDeviceId() (the hot-plug detach invalidation path, Pass 4.7).
@@ -116,59 +167,90 @@ class UsbSerialSessionRegistryTest {
     registry.reserveDevice(1)
 
     assertNull(registry.removeByDeviceId(2))
-    assertFalse(registry.reserveDevice(1))
+    assertNull(registry.reserveDevice(1))
   }
 
-  // Pass 5.1: releasing a pending reservation on detach (the
-  // "device detached while its own connect attempt is still waiting on the
-  // permission dialog" window). handleDeviceDetached() now calls
-  // releaseReservation(deviceId) unconditionally alongside removeByDeviceId()
-  // - these tests cover releaseReservation()'s own semantics for that usage
+  // Pass 5.1: invalidateReservationForDevice() (the detach path) and its
+  // interaction with token-owned reservations. handleDeviceDetached() calls
+  // invalidateReservationForDevice(deviceId) unconditionally (it does not
+  // hold - and must not need - the detached attempt's own token), then
+  // removeByDeviceId(). These tests cover that method's own semantics
   // directly; the BroadcastReceiver-driven call site itself cannot be
   // exercised without Android framework infrastructure (see
   // UsbHotplugMonitor's own class-level note).
 
   @Test
-  fun `a pending reservation released as detach handling would can be reserved again immediately`() {
+  fun `invalidateReservationForDevice clears a pending reservation so it can be reserved again immediately`() {
     val registry = UsbSerialSessionRegistry()
     registry.reserveDevice(1)
 
-    registry.releaseReservation(1)
+    registry.invalidateReservationForDevice(1)
 
-    assertTrue(registry.reserveDevice(1))
+    assertNotEquals(null, registry.reserveDevice(1))
   }
 
   @Test
-  fun `releasing one device's pending reservation does not affect another device's reservation`() {
+  fun `invalidateReservationForDevice for one device does not affect another device's reservation`() {
     val registry = UsbSerialSessionRegistry()
     registry.reserveDevice(1)
     registry.reserveDevice(2)
 
-    registry.releaseReservation(1)
+    registry.invalidateReservationForDevice(1)
 
-    assertTrue(registry.reserveDevice(1))
-    assertFalse(registry.reserveDevice(2))
+    assertNotEquals(null, registry.reserveDevice(1))
+    assertNull(registry.reserveDevice(2))
   }
 
   @Test
-  fun `repeated release for the same device remains harmless and does not throw`() {
+  fun `repeated invalidateReservationForDevice calls remain harmless and do not throw`() {
     val registry = UsbSerialSessionRegistry()
     registry.reserveDevice(1)
 
-    registry.releaseReservation(1)
-    registry.releaseReservation(1)
-    registry.releaseReservation(1)
+    registry.invalidateReservationForDevice(1)
+    registry.invalidateReservationForDevice(1)
+    registry.invalidateReservationForDevice(1)
 
-    assertTrue(registry.reserveDevice(1))
+    assertNotEquals(null, registry.reserveDevice(1))
   }
 
   @Test
-  fun `releasing a reservation that was never held does not corrupt an existing reservation for another device`() {
+  fun `invalidateReservationForDevice on a device that was never reserved does not corrupt another device's reservation`() {
     val registry = UsbSerialSessionRegistry()
     registry.reserveDevice(2)
 
-    registry.releaseReservation(1)
+    registry.invalidateReservationForDevice(1)
 
-    assertFalse(registry.reserveDevice(2))
+    assertNull(registry.reserveDevice(2))
+  }
+
+  // Pass 5.1 corrective report, "Attempt A / Attempt B" scenario
+  // (PASS5.1-AUDIT-1's fix, reservation half): Attempt A reserves a
+  // deviceId; the device detaches while A is still waiting on permission
+  // (invalidateReservationForDevice); the device reconnects and Attempt B
+  // reserves the same deviceId; A's delayed permission callback finally
+  // runs and calls releaseReservation using A's own (now stale) token. B's
+  // reservation must survive untouched.
+
+  @Test
+  fun `Attempt A detach then Attempt B reserve then Attempt A's delayed release leaves Attempt B intact`() {
+    val registry = UsbSerialSessionRegistry()
+    val tokenA = registry.reserveDevice(1)!!
+
+    // Device detaches while A's permission dialog is still pending.
+    registry.invalidateReservationForDevice(1)
+
+    // Device reconnects with the same deviceId; Attempt B reserves it.
+    val tokenB = registry.reserveDevice(1)!!
+
+    // Attempt A's delayed/stale permission callback finally runs and tries
+    // to release using its own (now-stale) token.
+    val releasedByA = registry.releaseReservation(1, tokenA)
+
+    assertFalse(releasedByA)
+    // Attempt B's reservation must still be exactly what it was - only
+    // releasable by its own token, and a third attempt still cannot
+    // reserve this deviceId while B holds it.
+    assertNull(registry.reserveDevice(1))
+    assertTrue(registry.releaseReservation(1, tokenB))
   }
 }
