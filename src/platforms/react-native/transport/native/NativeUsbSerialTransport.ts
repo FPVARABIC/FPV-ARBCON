@@ -37,6 +37,19 @@ export type UsbSerialSessionDetachedEvent = {
   deviceId: number;
 };
 
+/**
+ * Canonical device identity only (deviceId/vendorId/productId) - the same
+ * shape UsbSerialDeviceDescriptor's identity fields and UsbDeviceIdentity.kt
+ * use. Carries no product name, no display label, and no firmware/session
+ * information: hot-plug attach/detach is a device-presence signal only, not
+ * a session or connection event.
+ */
+export type UsbDeviceHotplugEvent = {
+  deviceId: number;
+  vendorId: number;
+  productId: number;
+};
+
 export type UsbSerialErrorEvent = {
   sessionId?: string;
   deviceId?: number;
@@ -61,6 +74,8 @@ export interface Spec extends TurboModule {
   readonly onDataReceived: EventEmitter<UsbSerialDataEvent>;
   readonly onSessionDetached: EventEmitter<UsbSerialSessionDetachedEvent>;
   readonly onError: EventEmitter<UsbSerialErrorEvent>;
+  readonly onDeviceAttached: EventEmitter<UsbDeviceHotplugEvent>;
+  readonly onDeviceDetached: EventEmitter<UsbDeviceHotplugEvent>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('UsbSerialTransport');

@@ -22,6 +22,7 @@ import {
 import type {
   SerialConfiguration,
   TransportError,
+  UsbDeviceHotplugEvent,
   UsbSerialDeviceDescriptor,
   UsbSerialTransportClient,
 } from '../../platforms/react-native/transport';
@@ -67,6 +68,15 @@ interface ScreenState {
    * user moves on to connecting/connected/disconnecting/error.
    */
   detectionMessageKey: 'oneSupported' | 'multipleSupported' | null;
+  /**
+   * Set by a hot-plug event only - never by the initial mount scan or
+   * manual تحديث. Cleared at the start of every new scan (SCAN_START), same
+   * lifecycle as detectionMessageKey, so it cannot linger once the user
+   * moves on. 'deviceDetached' covers a physical detach before/without a
+   * connection; 'sessionDetachedDuringConnection' covers a physical detach
+   * of the device an active session was open on.
+   */
+  hotplugMessageKey: 'deviceDetached' | 'sessionDetachedDuringConnection' | null;
   log: ValidationLogEntry[];
   logExpanded: boolean;
   nextLogId: number;
@@ -85,7 +95,10 @@ type Action =
   | {type: 'DISCONNECT_SUCCESS'}
   | {type: 'DISCONNECT_FAILURE'; error: TransportError; message: string}
   | {type: 'CLEAR_LOG'}
-  | {type: 'TOGGLE_LOG'};
+  | {type: 'TOGGLE_LOG'}
+  | {type: 'DEVICE_ATTACHED_LOG'}
+  | {type: 'DEVICE_DETACHED'; identity: UsbDeviceHotplugEvent}
+  | {type: 'SESSION_DETACHED'; sessionId: string};
 
 const initialState: ScreenState = {
   connectionState: 'idle',
@@ -98,6 +111,7 @@ const initialState: ScreenState = {
   lastResult: null,
   requiresCableReset: false,
   detectionMessageKey: null,
+  hotplugMessageKey: null,
   log: [],
   logExpanded: false,
   nextLogId: 1,
@@ -138,6 +152,7 @@ function reducer(state: ScreenState, action: Action): ScreenState {
         errorMessage: null,
         lastResult: null,
         detectionMessageKey: null,
+        hotplugMessageKey: null,
         ...appendLog(state, 'validationLog.scanStarted'),
       };
     }
@@ -314,6 +329,66 @@ function reducer(state: ScreenState, action: Action): ScreenState {
       return {...state, log: []};
     case 'TOGGLE_LOG':
       return {...state, logExpanded: !state.logExpanded};
+    case 'DEVICE_ATTACHED_LOG':
+      return {...state, ...appendLog(state, 'validationLog.usbDeviceAttached')};
+    case 'DEVICE_DETACHED': {
+      // Instant local reconciliation - Android already told us exactly which
+      // device disappeared, so there is no need to wait for (or trigger) a
+      // fresh listDevices() round trip just to know it is gone.
+      const key = deviceKey(action.identity);
+      const matchesSelected = state.selectedDeviceKey === key;
+      const wasListed = state.devices.some(d => deviceKey(d) === key);
+      const devices = wasListed ? state.devices.filter(d => deviceKey(d) !== key) : state.devices;
+
+      // A paired SESSION_DETACHED dispatch (same physical event) may have
+      // already set the more specific "session detached during connection"
+      // message - never downgrade that back to the generic one, regardless
+      // of which of the two dispatches happens to run first.
+      const hotplugMessageKey =
+        state.hotplugMessageKey === 'sessionDetachedDuringConnection'
+          ? state.hotplugMessageKey
+          : 'deviceDetached';
+
+      const detachedLog = appendLog(state, 'validationLog.usbDeviceDetached');
+      if (!matchesSelected) {
+        return {...state, devices, hotplugMessageKey, ...detachedLog};
+      }
+
+      const staleClearedLog = appendLog(
+        {...state, ...detachedLog},
+        'validationLog.staleSelectionCleared',
+      );
+      return {
+        ...state,
+        devices,
+        selectedDeviceKey: null,
+        selectedPortIndex: null,
+        detectionMessageKey: null,
+        hotplugMessageKey,
+        ...staleClearedLog,
+      };
+    }
+    case 'SESSION_DETACHED': {
+      // Only the active session's own detach is meaningful - a stale id
+      // (already closed/replaced) is ignored rather than corrupting the
+      // current state.
+      if (!action.sessionId || action.sessionId !== state.activeSessionId) {
+        return state;
+      }
+      // A physical detach is not a close failure: requiresCableReset is
+      // deliberately left untouched here (see DISCONNECT_FAILURE, the only
+      // action allowed to set it).
+      return {
+        ...state,
+        connectionState: 'ready',
+        activeSessionId: null,
+        lastResult: null,
+        errorMessage: null,
+        detectionMessageKey: null,
+        hotplugMessageKey: 'sessionDetachedDuringConnection',
+        ...appendLog(state, 'validationLog.sessionInvalidatedAfterDetach'),
+      };
+    }
     default:
       return state;
   }
@@ -348,26 +423,61 @@ export default function UsbConnectionScreen({
     isSupportedDevice(selectedDevice) &&
     state.selectedPortIndex !== null;
 
+  // scanInFlightRef/rescanQueuedRef serialize every caller of handleRefresh
+  // (initial mount scan, manual تحديث, USB attach events) onto a single
+  // real listDevices() call at a time. A call that arrives while one is
+  // already in flight does not start a second, overlapping native call -
+  // it only flags that another pass is needed. This is a generation/dirty
+  // mechanism, not a fixed "one follow-up only" cap: the do/while loop below
+  // keeps looping for as long as a new event keeps arriving during the scan
+  // it triggers (even a follow-up scan itself), and only stops once one full
+  // scan completes with no event having arrived during it - guaranteeing the
+  // final state always reflects a scan that started after the last observed
+  // event, so a hot-plug event during a follow-up scan is never silently
+  // lost. It cannot loop forever on its own: only a genuinely new external
+  // event (a real broadcast, or another caller) re-arms it, so it always
+  // stops once hot-plug activity stops.
+  const scanInFlightRef = useRef(false);
+  const rescanQueuedRef = useRef(false);
+
   const handleRefresh = useCallback(async () => {
-    dispatch({type: 'SCAN_START'});
-    try {
-      const devices = await client.listDevices();
-      if (!mountedRef.current) {
-        return;
-      }
-      dispatch({type: 'SCAN_SUCCESS', devices});
-    } catch (error) {
-      if (!mountedRef.current) {
-        return;
-      }
-      const transportError = error as TransportError;
-      dispatch({
-        type: 'SCAN_FAILURE',
-        error: transportError,
-        message: localizeTransportError(t, transportError),
-      });
+    if (scanInFlightRef.current) {
+      rescanQueuedRef.current = true;
+      return;
     }
-  }, [client, t]);
+    if (isBusy || isConnected) {
+      // Not safe to enumerate right now (mid connect/disconnect, or an
+      // active connection) - hot-plug must never disturb it, and this
+      // mirrors the manual تحديث button's own refreshDisabled guard.
+      return;
+    }
+    scanInFlightRef.current = true;
+    try {
+      do {
+        rescanQueuedRef.current = false;
+        dispatch({type: 'SCAN_START'});
+        try {
+          const devices = await client.listDevices();
+          if (!mountedRef.current) {
+            return;
+          }
+          dispatch({type: 'SCAN_SUCCESS', devices});
+        } catch (error) {
+          if (!mountedRef.current) {
+            return;
+          }
+          const transportError = error as TransportError;
+          dispatch({
+            type: 'SCAN_FAILURE',
+            error: transportError,
+            message: localizeTransportError(t, transportError),
+          });
+        }
+      } while (rescanQueuedRef.current && mountedRef.current);
+    } finally {
+      scanInFlightRef.current = false;
+    }
+  }, [client, t, isBusy, isConnected]);
 
   // One automatic enumeration per mounted screen instance - same scan path
   // and reducer actions as manual تحديث (handleRefresh), never openDevice()/
@@ -383,6 +493,48 @@ export default function UsbConnectionScreen({
     hasAutoScannedRef.current = true;
     handleRefresh();
   }, [handleRefresh]);
+
+  // handleRefresh's identity changes with isBusy/isConnected, but the
+  // hot-plug subscriptions below must be created exactly once per mounted
+  // screen instance (re-subscribing on every connectionState change would
+  // both violate "subscribe once" and momentarily drop events between an
+  // unsubscribe/resubscribe pair). This ref always exposes the latest
+  // handleRefresh to the stable listeners without making them a dependency.
+  const handleRefreshRef = useRef(handleRefresh);
+  useEffect(() => {
+    handleRefreshRef.current = handleRefresh;
+  }, [handleRefresh]);
+
+  // Subscribes to native USB hot-plug events exactly once per mounted
+  // screen instance; unsubscribes on unmount. Intentionally depends only on
+  // `client` (stable across the component's life) - see handleRefreshRef
+  // above for why handleRefresh itself must not be a dependency here.
+  useEffect(() => {
+    const unsubscribeAttached = client.onDeviceAttached(() => {
+      if (!mountedRef.current) {
+        return;
+      }
+      dispatch({type: 'DEVICE_ATTACHED_LOG'});
+      handleRefreshRef.current();
+    });
+    const unsubscribeDetached = client.onDeviceDetached(identity => {
+      if (!mountedRef.current) {
+        return;
+      }
+      dispatch({type: 'DEVICE_DETACHED', identity});
+    });
+    const unsubscribeSessionDetached = client.onSessionDetached(event => {
+      if (!mountedRef.current) {
+        return;
+      }
+      dispatch({type: 'SESSION_DETACHED', sessionId: event.sessionId});
+    });
+    return () => {
+      unsubscribeAttached();
+      unsubscribeDetached();
+      unsubscribeSessionDetached();
+    };
+  }, [client]);
 
   const handleSelectDevice = useCallback(
     (device: UsbSerialDeviceDescriptor) => {
@@ -497,6 +649,18 @@ export default function UsbConnectionScreen({
           </View>
         ) : null}
 
+        {state.hotplugMessageKey ? (
+          <View style={styles.hotplugBanner} accessibilityRole="text">
+            <Text style={styles.hotplugBannerText}>
+              {t(
+                state.hotplugMessageKey === 'deviceDetached'
+                  ? 'devices.deviceDetached'
+                  : 'devices.sessionDetachedDuringConnection',
+              )}
+            </Text>
+          </View>
+        ) : null}
+
         <UsbDeviceList
           devices={state.devices}
           scanning={state.connectionState === 'scanning'}
@@ -587,5 +751,18 @@ const styles = StyleSheet.create({
   detectionBannerText: {
     ...typography.body,
     color: colors.success,
+  },
+  hotplugBanner: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.warning,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceAlt,
+  },
+  hotplugBannerText: {
+    ...typography.body,
+    color: colors.warning,
   },
 });

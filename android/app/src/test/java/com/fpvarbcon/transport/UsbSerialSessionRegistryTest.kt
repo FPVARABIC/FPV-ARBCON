@@ -2,6 +2,7 @@ package com.fpvarbcon.transport
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -94,5 +95,27 @@ class UsbSerialSessionRegistryTest {
     assertEquals(0, first.size)
     assertEquals(0, second.size)
     assertTrue(registry.reserveDevice(1))
+  }
+
+  // removeByDeviceId() (the hot-plug detach invalidation path, Pass 4.7).
+  // Only the no-session cases are exercised here for the same reason
+  // insert()/remove() above are not: a real UsbSerialSession needs a
+  // UsbDeviceConnection/UsbSerialPort (real Android types) unavailable
+  // without Gradle/device support.
+
+  @Test
+  fun `removeByDeviceId on an empty registry returns null and is a harmless no-op`() {
+    val registry = UsbSerialSessionRegistry()
+
+    assertNull(registry.removeByDeviceId(1))
+  }
+
+  @Test
+  fun `removeByDeviceId does not disturb an unrelated device's reservation`() {
+    val registry = UsbSerialSessionRegistry()
+    registry.reserveDevice(1)
+
+    assertNull(registry.removeByDeviceId(2))
+    assertFalse(registry.reserveDevice(1))
   }
 }

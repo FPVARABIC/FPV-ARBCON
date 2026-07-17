@@ -60,6 +60,20 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     UsbPermissionRequester(reactApplicationContext, usbManager)
   }
 
+  /**
+   * Registered eagerly (not lazily) so hot-plug is observed for this
+   * module's entire lifetime, starting at construction - not merely from
+   * whenever JS happens to first call listDevices() or subscribe to an
+   * event. Stopped in [invalidate]. See UsbHotplugMonitor's own class-level
+   * note for what is and is not unit-testable about this wiring.
+   */
+  private val hotplugMonitor: UsbHotplugMonitor =
+    UsbHotplugMonitor(
+      context = reactApplicationContext,
+      onAttached = ::handleDeviceAttached,
+      onDetached = ::handleDeviceDetached,
+    ).also { it.start() }
+
   @Volatile private var invalidated = false
 
   /**
@@ -274,6 +288,49 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * Called from [hotplugMonitor] when Android reports a new USB device
+   * attach. Only reports the device's identity to JS via the Codegen event
+   * emitter - never opens a port, never requests permission, never creates
+   * a session. Enumeration and the safe auto-selection policy live entirely
+   * on the JS side (UsbConnectionScreen), which reacts to this event by
+   * re-running its existing listDevices() path - the exact same one the
+   * initial mount scan and manual تحديث already use.
+   */
+  private fun handleDeviceAttached(identity: UsbDeviceIdentity) {
+    if (invalidated) return
+    emitOnDeviceAttached(identity.toWritableMap())
+  }
+
+  /**
+   * Called from [hotplugMonitor] when Android reports a USB device detach.
+   * A physical detach is not a close failure: if the detached device owned
+   * an active session, that session is removed from the registry and
+   * best-effort closed here (there is no live cable to fail a graceful
+   * close against, and no Promise is waiting on this cleanup) and reported
+   * via the existing onSessionDetached event so JS can clear its connected
+   * state without a fake CLOSE_FAILED/requiresCableReset path. The general
+   * onDeviceDetached event is always emitted afterward regardless, so JS
+   * can reconcile its device list even when no session was involved.
+   */
+  private fun handleDeviceDetached(identity: UsbDeviceIdentity) {
+    if (invalidated) return
+    sessionRegistry.removeByDeviceId(identity.deviceId)?.let { session ->
+      try {
+        session.close()
+      } catch (_: Exception) {
+        // Best-effort - the physical device is already gone.
+      }
+      emitOnSessionDetached(
+        Arguments.createMap().apply {
+          putString("sessionId", session.sessionId)
+          putInt("deviceId", session.deviceId)
+        },
+      )
+    }
+    emitOnDeviceDetached(identity.toWritableMap())
+  }
+
+  /**
    * Called before the React Native instance is destroyed (NativeModule's
    * confirmed, non-deprecated teardown hook - see Pass 4 report for the
    * installed-source evidence). Ensures no later async permission callback
@@ -292,6 +349,8 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    */
   override fun invalidate() {
     super.invalidate()
+
+    hotplugMonitor.stop()
 
     val orphanedSessions =
       synchronized(lifecycleLock) {
@@ -331,6 +390,14 @@ private fun Promise.rejectTransportError(error: UsbTransportException) {
   } else {
     reject(error.code, message)
   }
+}
+
+private fun UsbDeviceIdentity.toWritableMap(): WritableMap {
+  val map = Arguments.createMap()
+  map.putInt("deviceId", deviceId)
+  map.putInt("vendorId", vendorId)
+  map.putInt("productId", productId)
+  return map
 }
 
 private fun UsbSerialDeviceDescriptor.toWritableMap(): WritableMap {

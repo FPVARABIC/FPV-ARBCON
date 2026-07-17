@@ -1,7 +1,9 @@
 import NativeUsbSerialTransport from './native/NativeUsbSerialTransport';
 import type {
   SerialConfiguration,
+  UsbDeviceHotplugEvent,
   UsbSerialDeviceDescriptor,
+  UsbSerialSessionDetachedEvent,
 } from './native/NativeUsbSerialTransport';
 import {normalizeNativeError} from './transportErrors';
 
@@ -22,6 +24,26 @@ const UNSUPPORTED_DRIVER_TYPE = 'UNSUPPORTED';
  */
 export function isSupportedDevice(device: UsbSerialDeviceDescriptor): boolean {
   return device.driverType !== UNSUPPORTED_DRIVER_TYPE && device.portCount > 0;
+}
+
+function isValidHotplugEvent(value: unknown): value is UsbDeviceHotplugEvent {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.deviceId === 'number' &&
+    typeof candidate.vendorId === 'number' &&
+    typeof candidate.productId === 'number'
+  );
+}
+
+function isValidSessionDetachedEvent(value: unknown): value is UsbSerialSessionDetachedEvent {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.sessionId === 'string' && typeof candidate.deviceId === 'number';
 }
 
 function isValidDescriptor(value: unknown): value is UsbSerialDeviceDescriptor {
@@ -91,6 +113,45 @@ export class UsbSerialTransportClient {
     } catch (reason) {
       throw normalizeNativeError(reason);
     }
+  }
+
+  /**
+   * Subscribes to the native USB attach broadcast. Fires with the attached
+   * device's canonical identity only - never a session, never a firmware
+   * claim. Returns an unsubscribe function; malformed events (missing
+   * fields) are dropped rather than forwarded.
+   */
+  onDeviceAttached(callback: (event: UsbDeviceHotplugEvent) => void): () => void {
+    const subscription = NativeUsbSerialTransport.onDeviceAttached(event => {
+      if (isValidHotplugEvent(event)) {
+        callback(event);
+      }
+    });
+    return () => subscription.remove();
+  }
+
+  /** Subscribes to the native USB detach broadcast. See onDeviceAttached. */
+  onDeviceDetached(callback: (event: UsbDeviceHotplugEvent) => void): () => void {
+    const subscription = NativeUsbSerialTransport.onDeviceDetached(event => {
+      if (isValidHotplugEvent(event)) {
+        callback(event);
+      }
+    });
+    return () => subscription.remove();
+  }
+
+  /**
+   * Subscribes to the native "active session's device physically detached"
+   * broadcast - distinct from onDeviceDetached: this only fires when the
+   * detached device owned an open session, and carries that sessionId.
+   */
+  onSessionDetached(callback: (event: UsbSerialSessionDetachedEvent) => void): () => void {
+    const subscription = NativeUsbSerialTransport.onSessionDetached(event => {
+      if (isValidSessionDetachedEvent(event)) {
+        callback(event);
+      }
+    });
+    return () => subscription.remove();
   }
 }
 

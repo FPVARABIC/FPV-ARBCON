@@ -36,7 +36,9 @@
     "unsupportedHint": "هذا الجهاز غير مدعوم حاليًا.",
     "selectedBadge": "محدد",
     "supportedDetected": "تم اكتشاف جهاز USB مدعوم. يمكنك الآن الاتصال.",
-    "multipleSupportedGuidance": "تم العثور على أكثر من جهاز مدعوم. اختر الجهاز الذي تريد الاتصال به."
+    "multipleSupportedGuidance": "تم العثور على أكثر من جهاز مدعوم. اختر الجهاز الذي تريد الاتصال به.",
+    "deviceDetached": "تم فصل جهاز USB.",
+    "sessionDetachedDuringConnection": "انقطع الاتصال بعد فصل جهاز USB."
   },
   "ports": {
     "portNumber": "المنفذ {{number}}",
@@ -94,7 +96,11 @@
     "disconnectStarted": "بدء قطع الاتصال",
     "disconnectSucceeded": "تم قطع الاتصال بنجاح",
     "errorEntry": "خطأ: {{message}} ({{code}})",
-    "autoSelected": "تم تحديد الجهاز المدعوم الوحيد تلقائيًا."
+    "autoSelected": "تم تحديد الجهاز المدعوم الوحيد تلقائيًا.",
+    "usbDeviceAttached": "تم توصيل جهاز USB.",
+    "usbDeviceDetached": "تم فصل جهاز USB.",
+    "staleSelectionCleared": "تم إلغاء التحديد بعد فصل الجهاز.",
+    "sessionInvalidatedAfterDetach": "تم إنهاء الجلسة بعد الفصل الفعلي للجهاز."
   },
   "accessibility": {
     "refresh": "تحديث قائمة أجهزة USB",

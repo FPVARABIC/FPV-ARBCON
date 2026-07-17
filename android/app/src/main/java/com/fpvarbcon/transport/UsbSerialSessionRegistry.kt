@@ -54,6 +54,21 @@ internal class UsbSerialSessionRegistry {
   fun remove(sessionId: String): UsbSerialSession? = sessions.remove(sessionId)
 
   /**
+   * Atomically removes and returns the active session for [deviceId], if
+   * any - used when the device has physically detached and its session
+   * must be invalidated immediately. Deliberately bypasses the normal
+   * closeSession() Promise round trip: there is no live cable left to
+   * report a close failure against, and no Promise is waiting on this
+   * cleanup either way.
+   */
+  @Synchronized
+  fun removeByDeviceId(deviceId: Int): UsbSerialSession? {
+    val match = sessions.values.find { it.deviceId == deviceId } ?: return null
+    sessions.remove(match.sessionId)
+    return match
+  }
+
+  /**
    * Atomically drains every active session and clears every pending
    * reservation - used only for module/host teardown. Returns the removed
    * sessions so the caller can close them (real I/O) outside this lock;

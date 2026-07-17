@@ -9,6 +9,7 @@ export type {
   UsbSerialDataEvent,
   UsbSerialSessionDetachedEvent,
   UsbSerialErrorEvent,
+  UsbDeviceHotplugEvent,
 } from './native';
 
 export {
