@@ -59,6 +59,14 @@ interface ScreenState {
    * be immediately reconnectable.
    */
   requiresCableReset: boolean;
+  /**
+   * Set from the last completed scan's supported-device count so the screen
+   * can show accurate, non-overclaiming detection feedback. Cleared at the
+   * start of every new scan. Rendering is additionally gated on
+   * connectionState === 'ready' so a stale banner cannot linger once the
+   * user moves on to connecting/connected/disconnecting/error.
+   */
+  detectionMessageKey: 'oneSupported' | 'multipleSupported' | null;
   log: ValidationLogEntry[];
   logExpanded: boolean;
   nextLogId: number;
@@ -89,6 +97,7 @@ const initialState: ScreenState = {
   errorMessage: null,
   lastResult: null,
   requiresCableReset: false,
+  detectionMessageKey: null,
   log: [],
   logExpanded: false,
   nextLogId: 1,
@@ -128,6 +137,7 @@ function reducer(state: ScreenState, action: Action): ScreenState {
         connectionState: 'scanning',
         errorMessage: null,
         lastResult: null,
+        detectionMessageKey: null,
         ...appendLog(state, 'validationLog.scanStarted'),
       };
     }
@@ -149,17 +159,44 @@ function reducer(state: ScreenState, action: Action): ScreenState {
           : selectedDevice?.portCount === 1
             ? 0
             : null;
+
+      const scanCompletedLog = appendLog(state, 'validationLog.scanCompleted', {
+        count: action.devices.length,
+      });
+
+      // Safe automatic-selection policy (selection only - never opens a
+      // session): only applies when there is no existing valid selection to
+      // preserve, and never while recovering from a CLOSE_FAILED cable
+      // reset - that recovery always requires an explicit reselect.
+      let autoSelectedDeviceKey: string | null = null;
+      let autoSelectedPortIndex: number | null = null;
+      let autoSelectLog: Pick<ScreenState, 'log' | 'nextLogId'> | null = null;
+      const supportedDevices = action.devices.filter(isSupportedDevice);
+      if (!stillPresent && !state.requiresCableReset && supportedDevices.length === 1) {
+        const onlySupported = supportedDevices[0];
+        autoSelectedDeviceKey = deviceKey(onlySupported);
+        autoSelectedPortIndex = onlySupported.portCount === 1 ? 0 : null;
+        autoSelectLog = appendLog(
+          {...state, ...scanCompletedLog},
+          'validationLog.autoSelected',
+        );
+      }
+
+      const detectionMessageKey: ScreenState['detectionMessageKey'] =
+        supportedDevices.length === 0 ? null : supportedDevices.length === 1 ? 'oneSupported' : 'multipleSupported';
+
       return {
         ...state,
         connectionState: 'ready',
         devices: action.devices,
         hasScannedOnce: true,
-        selectedDeviceKey: stillPresent ? state.selectedDeviceKey : null,
-        selectedPortIndex: stillPresent ? selectedPortIndex : null,
+        selectedDeviceKey: stillPresent ? state.selectedDeviceKey : autoSelectedDeviceKey,
+        selectedPortIndex: stillPresent ? selectedPortIndex : autoSelectedPortIndex,
+        detectionMessageKey,
         // A completed scan is exactly what lifts a post-CLOSE_FAILED cable
         // reset requirement - a fresh scan is the only thing that clears it.
         requiresCableReset: false,
-        ...appendLog(state, 'validationLog.scanCompleted', {count: action.devices.length}),
+        ...(autoSelectLog ?? scanCompletedLog),
       };
     }
     case 'SCAN_FAILURE': {
@@ -332,6 +369,21 @@ export default function UsbConnectionScreen({
     }
   }, [client, t]);
 
+  // One automatic enumeration per mounted screen instance - same scan path
+  // and reducer actions as manual تحديث (handleRefresh), never openDevice()/
+  // closeSession(). The ref (not the effect dep array) is what makes this
+  // one-time: it survives React Strict Mode's mount->unmount->remount effect
+  // replay on the same component instance, so a second real listDevices()
+  // call never happens even though the effect body itself may run twice.
+  const hasAutoScannedRef = useRef(false);
+  useEffect(() => {
+    if (hasAutoScannedRef.current) {
+      return;
+    }
+    hasAutoScannedRef.current = true;
+    handleRefresh();
+  }, [handleRefresh]);
+
   const handleSelectDevice = useCallback(
     (device: UsbSerialDeviceDescriptor) => {
       dispatch({type: 'SELECT_DEVICE', device});
@@ -433,6 +485,18 @@ export default function UsbConnectionScreen({
           </View>
         ) : null}
 
+        {state.connectionState === 'ready' && state.detectionMessageKey === 'oneSupported' ? (
+          <View style={styles.detectionBanner} accessibilityRole="text">
+            <Text style={styles.detectionBannerText}>{t('devices.supportedDetected')}</Text>
+          </View>
+        ) : null}
+
+        {state.connectionState === 'ready' && state.detectionMessageKey === 'multipleSupported' ? (
+          <View style={styles.detectionBanner} accessibilityRole="text">
+            <Text style={styles.detectionBannerText}>{t('devices.multipleSupportedGuidance')}</Text>
+          </View>
+        ) : null}
+
         <UsbDeviceList
           devices={state.devices}
           scanning={state.connectionState === 'scanning'}
@@ -510,5 +574,18 @@ const styles = StyleSheet.create({
   errorBannerText: {
     ...typography.body,
     color: colors.error,
+  },
+  detectionBanner: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.success,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceAlt,
+  },
+  detectionBannerText: {
+    ...typography.body,
+    color: colors.success,
   },
 });
