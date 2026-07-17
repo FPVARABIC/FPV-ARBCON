@@ -1,6 +1,7 @@
 package com.fpvarbcon.transport
 
 import android.content.Context
+import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -42,6 +43,20 @@ import java.util.UUID
  * lifecycle-lock critical section as invalidate()'s own drain (see
  * [lifecycleLock] and [invalidate] below) - there is no timing window where
  * invalidate() can drain first and a session gets inserted afterward.
+ *
+ * Steps 6-16 (everything from the permission result onward) always run on
+ * [ioExecutor]'s single background thread, never on whichever thread
+ * delivered the permission result itself. This matters because that
+ * delivering thread is not always the same one: when permission was already
+ * granted, UsbPermissionRequester.requestPermission() calls back
+ * synchronously on whatever thread called openDevice(); when a real
+ * permission dialog was shown, the callback instead runs from
+ * UsbPermissionRequester's BroadcastReceiver.onReceive(), which - since that
+ * receiver is registered without a Handler - is always the Android main
+ * thread. Submitting completeOpen() to ioExecutor makes the execution
+ * thread consistent across both cases and keeps this method's real blocking
+ * native I/O (openDevice/port.open/setParameters/setFlowControl) off the
+ * main thread in both cases, not just one of them.
  */
 class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   NativeUsbSerialTransportSpec(reactContext) {
@@ -75,11 +90,16 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     ).also { it.start() }
 
   /**
-   * Runs a detached device's stale-session close() off handleDeviceDetached
-   * (and therefore off BroadcastReceiver.onReceive / the main thread) - see
-   * UsbSessionCloser's own class-level note. Shut down in [invalidate].
+   * The one owned, lifecycle-scoped background thread for every blocking
+   * USB I/O operation this module performs - both the open/configure work
+   * that follows a permission result and a detached device's stale-session
+   * close() - so neither ever runs on BroadcastReceiver.onReceive's calling
+   * thread (the Android main thread, whenever permission was not already
+   * granted - see completeOpen's own note). See UsbIoExecutor's class-level
+   * note for why one shared single-thread executor is used for both, rather
+   * than two separate executors. Shut down in [invalidate].
    */
-  private val sessionCloser = UsbSessionCloser()
+  private val ioExecutor = UsbIoExecutor()
 
   @Volatile private var invalidated = false
 
@@ -147,9 +167,13 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
         )
       }
 
-      // 5. Request/confirm permission; steps 6-13 continue in completeOpen().
+      // 5. Request/confirm permission; steps 6-13 continue in completeOpen(),
+      // always on ioExecutor's background thread regardless of which thread
+      // this callback itself fires on (see the class-level note above).
       permissionRequester.requestPermission(device) { granted, failureMessage ->
-        completeOpen(identity, port, parsedConfig, granted, failureMessage, promise)
+        ioExecutor.submit {
+          completeOpen(identity, port, parsedConfig, granted, failureMessage, promise)
+        }
       }
     } catch (error: UsbTransportException) {
       promise.rejectTransportError(error)
@@ -218,13 +242,16 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
         throw UsbTransportException("OPEN_FAILED", error.message ?: "Failed to open serial port.")
       }
 
-      // 9-10. Apply serial parameters and flow control.
+      // 9-10. Apply serial parameters and flow control. Both cleanup calls
+      // are best-effort (closeQuietly swallows their own failures) so that
+      // a secondary close failure here can never replace the real
+      // UNSUPPORTED_SERIAL_CONFIGURATION cause with a less specific one.
       try {
         port.setParameters(parsedConfig.baudRate, parsedConfig.dataBits, parsedConfig.stopBits, parsedConfig.parity)
         port.setFlowControl(parsedConfig.flowControl)
       } catch (error: Exception) {
         closeQuietly(port)
-        connection.close()
+        closeQuietly(connection)
         throw UsbTransportException(
           "UNSUPPORTED_SERIAL_CONFIGURATION",
           error.message ?: "Driver rejected the requested serial configuration.",
@@ -313,7 +340,7 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * A physical detach is not a close failure: if the detached device owned
    * an active session, that session is removed from the registry
    * immediately (synchronous, in-memory only) and its close() I/O is
-   * handed to [sessionCloser] to run on its own background thread - never
+   * handed to [ioExecutor] to run on its own background thread - never
    * synchronously here, since this method still runs on
    * BroadcastReceiver.onReceive's calling thread (the main thread) and
    * must stay short and non-blocking. The onSessionDetached event is
@@ -322,11 +349,26 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * CLOSE_FAILED/requiresCableReset path. The general onDeviceDetached
    * event is always emitted afterward regardless, so JS can reconcile its
    * device list even when no session was involved.
+   *
+   * Also releases any pending *reservation* for this device - not just a
+   * registered session. Without this, a device detached while its own
+   * connect attempt is still waiting on the permission dialog would stay
+   * reserved (openDevice()'s step 4) until that pending completeOpen() call
+   * eventually runs and fails its own device-identity revalidation, which
+   * could otherwise make a fast detach-then-reattach spuriously fail with
+   * DEVICE_ALREADY_IN_USE. releaseReservation() is idempotent and scoped to
+   * this one deviceId, so calling it here is harmless when nothing was
+   * reserved, and never touches another device's reservation or an
+   * unrelated registered session. The delayed completeOpen() call (if one
+   * is still pending) remains safe regardless: its own step 6 identity
+   * revalidation against the current usbManager.deviceList already handles
+   * "the device is gone" correctly, exactly as before this change.
    */
   private fun handleDeviceDetached(identity: UsbDeviceIdentity) {
     if (invalidated) return
+    sessionRegistry.releaseReservation(identity.deviceId)
     sessionRegistry.removeByDeviceId(identity.deviceId)?.let { session ->
-      sessionCloser.submit { session.close() }
+      ioExecutor.submit { session.close() }
       emitOnSessionDetached(
         Arguments.createMap().apply {
           putString("sessionId", session.sessionId)
@@ -352,13 +394,25 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * exact race this correction exists to fix. Slow native I/O (closing each
    * drained session's port/connection, and cancelling the permission
    * requester) happens outside the lock, per the "never hold this lock
-   * during native I/O" rule.
+   * during native I/O" rule - and, as of this pass, on [ioExecutor] rather
+   * than directly on whatever thread invalidate() itself runs on.
+   *
+   * ioExecutor.shutdown() is called last, after every orphaned session's
+   * close() has already been submitted to it: ExecutorService.shutdown()
+   * (never shutdownNow()) lets already-queued work run to completion before
+   * the executor actually terminates, so this ordering guarantees those
+   * closes still execute even though shutdown() itself does not block this
+   * (the main) thread waiting for them. A permission callback or a detach
+   * that races in after this point either finds [invalidated] already true
+   * (its own guard, unchanged) or has its ioExecutor.submit() call safely
+   * rejected as a no-op (see UsbIoExecutor) - either way, nothing is
+   * silently left as unmanaged work, and no Promise is settled for a host
+   * that is already gone.
    */
   override fun invalidate() {
     super.invalidate()
 
     hotplugMonitor.stop()
-    sessionCloser.shutdown()
 
     val orphanedSessions =
       synchronized(lifecycleLock) {
@@ -373,18 +427,28 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
 
     permissionRequester.cancelAll()
     orphanedSessions.forEach { session ->
-      try {
-        session.close()
-      } catch (_: Exception) {
-        // Best-effort during teardown - there is no Promise left to report this to.
+      ioExecutor.submit {
+        try {
+          session.close()
+        } catch (_: Exception) {
+          // Best-effort during teardown - there is no Promise left to report this to.
+        }
       }
     }
+    ioExecutor.shutdown()
   }
 }
 
 private fun closeQuietly(port: UsbSerialPort) {
   try {
     port.close()
+  } catch (_: Exception) {
+  }
+}
+
+private fun closeQuietly(connection: UsbDeviceConnection) {
+  try {
+    connection.close()
   } catch (_: Exception) {
   }
 }

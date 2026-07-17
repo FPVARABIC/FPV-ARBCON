@@ -118,4 +118,57 @@ class UsbSerialSessionRegistryTest {
     assertNull(registry.removeByDeviceId(2))
     assertFalse(registry.reserveDevice(1))
   }
+
+  // Pass 5.1: releasing a pending reservation on detach (the
+  // "device detached while its own connect attempt is still waiting on the
+  // permission dialog" window). handleDeviceDetached() now calls
+  // releaseReservation(deviceId) unconditionally alongside removeByDeviceId()
+  // - these tests cover releaseReservation()'s own semantics for that usage
+  // directly; the BroadcastReceiver-driven call site itself cannot be
+  // exercised without Android framework infrastructure (see
+  // UsbHotplugMonitor's own class-level note).
+
+  @Test
+  fun `a pending reservation released as detach handling would can be reserved again immediately`() {
+    val registry = UsbSerialSessionRegistry()
+    registry.reserveDevice(1)
+
+    registry.releaseReservation(1)
+
+    assertTrue(registry.reserveDevice(1))
+  }
+
+  @Test
+  fun `releasing one device's pending reservation does not affect another device's reservation`() {
+    val registry = UsbSerialSessionRegistry()
+    registry.reserveDevice(1)
+    registry.reserveDevice(2)
+
+    registry.releaseReservation(1)
+
+    assertTrue(registry.reserveDevice(1))
+    assertFalse(registry.reserveDevice(2))
+  }
+
+  @Test
+  fun `repeated release for the same device remains harmless and does not throw`() {
+    val registry = UsbSerialSessionRegistry()
+    registry.reserveDevice(1)
+
+    registry.releaseReservation(1)
+    registry.releaseReservation(1)
+    registry.releaseReservation(1)
+
+    assertTrue(registry.reserveDevice(1))
+  }
+
+  @Test
+  fun `releasing a reservation that was never held does not corrupt an existing reservation for another device`() {
+    val registry = UsbSerialSessionRegistry()
+    registry.reserveDevice(2)
+
+    registry.releaseReservation(1)
+
+    assertFalse(registry.reserveDevice(2))
+  }
 }
