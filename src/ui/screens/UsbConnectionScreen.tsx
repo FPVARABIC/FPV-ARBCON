@@ -440,6 +440,16 @@ export default function UsbConnectionScreen({
   const scanInFlightRef = useRef(false);
   const rescanQueuedRef = useRef(false);
 
+  // deferredRescanRef records "an attach event arrived while scanning was
+  // ineligible due to isBusy/isConnected" - a different deferral than
+  // rescanQueuedRef above (which only ever applies to a scan already in
+  // flight). It is consumed - cleared - the moment a real scan actually
+  // starts, regardless of what triggered that scan (the watcher effect
+  // below, a manual تحديث press, or anything else), so it can never cause
+  // a stale extra scan later. It is never set or read directly from JSX;
+  // handleRefresh and the watcher effect are its only two touchpoints.
+  const deferredRescanRef = useRef(false);
+
   const handleRefresh = useCallback(async () => {
     if (scanInFlightRef.current) {
       rescanQueuedRef.current = true;
@@ -448,9 +458,13 @@ export default function UsbConnectionScreen({
     if (isBusy || isConnected) {
       // Not safe to enumerate right now (mid connect/disconnect, or an
       // active connection) - hot-plug must never disturb it, and this
-      // mirrors the manual تحديث button's own refreshDisabled guard.
+      // mirrors the manual تحديث button's own refreshDisabled guard. Record
+      // that a scan is owed instead of silently dropping it - the watcher
+      // effect below runs it once eligibility is regained.
+      deferredRescanRef.current = true;
       return;
     }
+    deferredRescanRef.current = false;
     scanInFlightRef.current = true;
     try {
       do {
@@ -493,6 +507,20 @@ export default function UsbConnectionScreen({
     hasAutoScannedRef.current = true;
     handleRefresh();
   }, [handleRefresh]);
+
+  // Runs a deferred rescan (see deferredRescanRef above) the moment the
+  // screen becomes eligible to scan again - i.e. whenever isBusy/isConnected
+  // change and neither is true anymore. Re-checks eligibility through
+  // handleRefresh's own guard rather than trusting this effect's own timing
+  // - handleRefresh is the single source of truth for whether a scan may
+  // actually run, and for clearing the flag once one does. Effects never
+  // fire after unmount, so a deferred flag left pending at unmount is
+  // simply never consumed - no stale work follows.
+  useEffect(() => {
+    if (!isBusy && !isConnected && deferredRescanRef.current) {
+      handleRefresh();
+    }
+  }, [isBusy, isConnected, handleRefresh]);
 
   // handleRefresh's identity changes with isBusy/isConnected, but the
   // hot-plug subscriptions below must be created exactly once per mounted

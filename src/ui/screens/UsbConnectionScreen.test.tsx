@@ -1090,3 +1090,157 @@ describe('UsbConnectionScreen - hot-plug scan coalescing', () => {
     expect(joined).not.toContain('Betaflight');
   });
 });
+
+describe('UsbConnectionScreen - deferred attach rescan while busy/connected', () => {
+  it('attach while connecting produces a deferred scan once the connect attempt fails', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    let rejectOpen: (reason: unknown) => void = () => {};
+    client.openDevice.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectOpen = reject;
+      }),
+    );
+    const renderer = await renderScreen(client, [device]);
+    await act(async () => {
+      findByTestID(renderer, 'usb-connect-button').props.onPress();
+    });
+    expect(client.listDevices).toHaveBeenCalledTimes(1);
+
+    // Attach arrives while connecting (isBusy) - must not scan yet.
+    client.listDevices.mockResolvedValueOnce([device]);
+    await fireAttached(client);
+    expect(client.listDevices).toHaveBeenCalledTimes(1);
+
+    // The connect attempt fails - connectionState becomes 'error', eligible again.
+    await act(async () => {
+      rejectOpen({code: 'OPEN_FAILED', nativeMessage: 'x'});
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(client.listDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it('attach while connected produces a deferred scan once the session ends', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    client.openDevice.mockResolvedValueOnce('session-deferred-1');
+    const renderer = await renderScreen(client, [device]);
+    await pressConnect(renderer);
+    expect(client.listDevices).toHaveBeenCalledTimes(1);
+
+    // Attach arrives while connected - must not scan yet.
+    client.listDevices.mockResolvedValueOnce([device]);
+    await fireAttached(client);
+    expect(client.listDevices).toHaveBeenCalledTimes(1);
+    expect(allText(renderer)).toContain(i18n.t('actions.connectSuccess'));
+
+    await fireSessionDetached(client, 'session-deferred-1');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(client.listDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it('no scan runs while the session is still connected', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    client.openDevice.mockResolvedValueOnce('session-deferred-2');
+    const renderer = await renderScreen(client, [device]);
+    await pressConnect(renderer);
+
+    await fireAttached(client);
+
+    expect(client.listDevices).toHaveBeenCalledTimes(1);
+    expect(queryByTestID(renderer, 'usb-disconnect-button')).not.toBeNull();
+  });
+
+  it('multiple attach events while busy coalesce into one deferred scan', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    let rejectOpen: (reason: unknown) => void = () => {};
+    client.openDevice.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectOpen = reject;
+      }),
+    );
+    const renderer = await renderScreen(client, [device]);
+    await act(async () => {
+      findByTestID(renderer, 'usb-connect-button').props.onPress();
+    });
+
+    client.listDevices.mockResolvedValueOnce([device]);
+    await fireAttached(client);
+    await fireAttached(client);
+    await fireAttached(client);
+    expect(client.listDevices).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      rejectOpen({code: 'OPEN_FAILED', nativeMessage: 'x'});
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Exactly one deferred scan ran - not one per coalesced attach event.
+    expect(client.listDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it('the deferred flag is consumed and does not cause a repeated scan on a later busy/idle toggle', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    let rejectFirstOpen: (reason: unknown) => void = () => {};
+    client.openDevice.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectFirstOpen = reject;
+      }),
+    );
+    const renderer = await renderScreen(client, [device]);
+    await act(async () => {
+      findByTestID(renderer, 'usb-connect-button').props.onPress();
+    });
+
+    client.listDevices.mockResolvedValueOnce([device]);
+    await fireAttached(client);
+
+    await act(async () => {
+      rejectFirstOpen({code: 'OPEN_FAILED', nativeMessage: 'x'});
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(client.listDevices).toHaveBeenCalledTimes(2);
+
+    // A second, unrelated busy/idle toggle with no new attach event must not
+    // trigger another scan - the deferred flag was already consumed.
+    client.openDevice.mockRejectedValueOnce({code: 'OPEN_FAILED', nativeMessage: 'y'});
+    await pressDevice(renderer, device);
+    await pressConnect(renderer);
+
+    expect(client.listDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it('unmount before the deferred scan runs prevents stale work', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    client.openDevice.mockResolvedValueOnce('session-deferred-3');
+    const renderer = await renderScreen(client, [device]);
+    await pressConnect(renderer);
+
+    await fireAttached(client);
+    expect(client.listDevices).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      renderer.unmount();
+    });
+
+    // Nothing left to consume the deferred flag post-unmount - no extra
+    // scan attempt, no crash.
+    expect(client.listDevices).toHaveBeenCalledTimes(1);
+  });
+});

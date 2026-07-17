@@ -74,6 +74,13 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
       onDetached = ::handleDeviceDetached,
     ).also { it.start() }
 
+  /**
+   * Runs a detached device's stale-session close() off handleDeviceDetached
+   * (and therefore off BroadcastReceiver.onReceive / the main thread) - see
+   * UsbSessionCloser's own class-level note. Shut down in [invalidate].
+   */
+  private val sessionCloser = UsbSessionCloser()
+
   @Volatile private var invalidated = false
 
   /**
@@ -304,22 +311,22 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   /**
    * Called from [hotplugMonitor] when Android reports a USB device detach.
    * A physical detach is not a close failure: if the detached device owned
-   * an active session, that session is removed from the registry and
-   * best-effort closed here (there is no live cable to fail a graceful
-   * close against, and no Promise is waiting on this cleanup) and reported
-   * via the existing onSessionDetached event so JS can clear its connected
-   * state without a fake CLOSE_FAILED/requiresCableReset path. The general
-   * onDeviceDetached event is always emitted afterward regardless, so JS
-   * can reconcile its device list even when no session was involved.
+   * an active session, that session is removed from the registry
+   * immediately (synchronous, in-memory only) and its close() I/O is
+   * handed to [sessionCloser] to run on its own background thread - never
+   * synchronously here, since this method still runs on
+   * BroadcastReceiver.onReceive's calling thread (the main thread) and
+   * must stay short and non-blocking. The onSessionDetached event is
+   * reported immediately, without waiting for that close() to actually
+   * finish, so JS can clear its connected state without a fake
+   * CLOSE_FAILED/requiresCableReset path. The general onDeviceDetached
+   * event is always emitted afterward regardless, so JS can reconcile its
+   * device list even when no session was involved.
    */
   private fun handleDeviceDetached(identity: UsbDeviceIdentity) {
     if (invalidated) return
     sessionRegistry.removeByDeviceId(identity.deviceId)?.let { session ->
-      try {
-        session.close()
-      } catch (_: Exception) {
-        // Best-effort - the physical device is already gone.
-      }
+      sessionCloser.submit { session.close() }
       emitOnSessionDetached(
         Arguments.createMap().apply {
           putString("sessionId", session.sessionId)
@@ -351,6 +358,7 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     super.invalidate()
 
     hotplugMonitor.stop()
+    sessionCloser.shutdown()
 
     val orphanedSessions =
       synchronized(lifecycleLock) {
