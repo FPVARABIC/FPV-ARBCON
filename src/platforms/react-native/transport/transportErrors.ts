@@ -25,6 +25,7 @@ export const KNOWN_ERROR_CODES = [
   'MODULE_INVALIDATED',
   'RX_ALREADY_ACTIVE',
   'READ_FAILED',
+  'RX_RESTART_TIMEOUT',
 ] as const;
 
 export type KnownTransportErrorCode = (typeof KNOWN_ERROR_CODES)[number];

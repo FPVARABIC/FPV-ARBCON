@@ -88,6 +88,22 @@ import java.util.UUID
  * or drain that same session, under the same [lifecycleLock] critical
  * section where applicable, so a receive worker can never outlive the
  * session it reads from in a way that produces a stale event.
+ *
+ * Pass 5.2 corrective note (PASS5.2-AUDIT-F1): token invalidation alone (the
+ * mechanism described above) stops a stale worker from *emitting*, but does
+ * nothing to stop two real threads from both being inside the same session's
+ * (unsynchronized, per the pinned usb-serial-for-android dependency's own
+ * source) UsbSerialPort.read() at once during a rapid stopReading() ->
+ * startReading() cycle on a still-open session. [startReading] now always
+ * runs its own work off the calling thread (see [performStartReading]) and,
+ * when the previous attempt's token is retired but its worker thread hasn't
+ * yet confirmed exiting, waits - bounded, off the main thread - for that
+ * confirmation (see [ReadWorkerHandle]/[UsbSerialReadRegistry.StartAttempt])
+ * before ever starting a new worker, so at most one real read() call for a
+ * given session is ever in flight, even across a rapid restart. This does
+ * not change close/detach/invalidate: those paths remove a session entirely,
+ * so there is no future startReading() for that exact sessionId that could
+ * ever need to wait.
  */
 class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   NativeUsbSerialTransportSpec(reactContext) {
@@ -431,72 +447,150 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
 
   /**
    * Starts a receive loop for an already-open session. Explicit and
-   * idempotent-by-rejection: calling this twice for the same still-active
-   * session fails with RX_ALREADY_ACTIVE rather than silently restarting or
-   * merging with the existing loop (see [UsbSerialReadRegistry.start]).
-   * Looking up the session and claiming its receive token happen atomically
-   * under [lifecycleLock] (see [closeSession]'s own note for the race this
-   * closes); starting the worker thread itself is a fast, non-blocking call
-   * (creating and starting a Thread does not run its body synchronously)
-   * so doing it inside this same short critical section does not violate
-   * the "never hold this lock during native I/O" rule - no native read
-   * happens until the new thread's own run() begins.
+   * idempotent-by-rejection: calling this while a receive loop is genuinely
+   * active for the session fails immediately with RX_ALREADY_ACTIVE.
+   *
+   * Pass 5.2 corrective note (PASS5.2-AUDIT-F1): the entire attempt - including
+   * a possible bounded wait for a still-retiring previous attempt on this
+   * exact session (see [UsbSerialReadRegistry.StartAttempt.Retiring]) - runs
+   * on its own dedicated, throwaway thread, never on whatever thread called
+   * this method. This is required because a rapid stopReading() followed
+   * immediately by startReading() for the *same still-open* session must
+   * never let the new attempt begin reading before the old attempt's worker
+   * thread has actually returned from UsbSerialPort.read() - the pinned
+   * usb-serial-for-android dependency provides no internal synchronization
+   * for concurrent read() calls on one port and documents shared,
+   * unsynchronized read state, so two threads inside read() on the same
+   * port at once is a genuine data race, not merely a stale-event risk.
+   * Token invalidation alone (checked by [SerialReadLoop] via [isCurrent])
+   * stops a stale worker from *emitting* but does nothing to stop its
+   * thread from still being physically inside a blocking native call - only
+   * an actual, confirmed thread exit (via [ReadWorkerHandle]) does that.
    */
   override fun startReading(sessionId: String, promise: Promise) {
-    val outcome =
-      synchronized(lifecycleLock) {
-        if (invalidated) {
-          StartReadingOutcome.MODULE_INVALIDATED
-        } else {
-          val session = sessionRegistry.get(sessionId)
-          if (session == null) {
-            StartReadingOutcome.UNKNOWN_SESSION
+    Thread({ performStartReading(sessionId, promise) }, "UsbSerialRxStart-$sessionId")
+      .apply { isDaemon = true }
+      .start()
+  }
+
+  /**
+   * Attempts to claim [sessionId] for a new receive attempt, atomically
+   * under [lifecycleLock] exactly as before (see [closeSession]'s own note
+   * for the startReading-vs-closeSession race this closes). If the registry
+   * reports [UsbSerialReadRegistry.StartAttempt.Retiring] - a previous
+   * attempt's token is already inactive but its thread has not yet
+   * confirmed it exited - waits, bounded, on this (already dedicated,
+   * off-caller) thread for that confirmation, then makes exactly one more
+   * attempt, re-validating [invalidated] and the session's continued
+   * existence since real time has passed. Never retries more than once -
+   * a second [StartAttempt.Retiring] on the retry (which would require
+   * another attempt to have raced in during the wait) is treated as a
+   * restart timeout rather than waiting again, keeping this method's own
+   * worst-case latency bounded to one [RX_RESTART_WAIT_MILLIS] window.
+   */
+  private fun performStartReading(sessionId: String, promise: Promise) {
+    when (val firstAttempt = attemptStartReading(sessionId)) {
+      is StartReadingAttemptOutcome.NeedsRetirementWait -> {
+        val finished = firstAttempt.handle.awaitDone(RX_RESTART_WAIT_MILLIS)
+        val secondAttempt =
+          if (!finished) {
+            StartReadingAttemptOutcome.RestartTimedOut
           } else {
-            val token = readRegistry.start(sessionId)
-            if (token == null) {
-              StartReadingOutcome.ALREADY_ACTIVE
-            } else {
-              startReceiveWorker(sessionId, token, session)
-              StartReadingOutcome.STARTED
+            when (val retryAttempt = attemptStartReading(sessionId)) {
+              is StartReadingAttemptOutcome.NeedsRetirementWait -> StartReadingAttemptOutcome.RestartTimedOut
+              else -> retryAttempt
             }
+          }
+        settleStartReading(sessionId, secondAttempt, promise)
+      }
+      else -> settleStartReading(sessionId, firstAttempt, promise)
+    }
+  }
+
+  /**
+   * One atomic lookup-and-claim attempt, reusable for both the initial try
+   * and the single post-wait retry. Starting the worker thread itself is a
+   * fast, non-blocking call (creating and starting a Thread does not run
+   * its body synchronously) so doing it inside this short critical section
+   * does not violate the "never hold this lock during native I/O" rule -
+   * no native read happens until the new thread's own run() begins.
+   */
+  private fun attemptStartReading(sessionId: String): StartReadingAttemptOutcome =
+    synchronized(lifecycleLock) {
+      if (invalidated) {
+        StartReadingAttemptOutcome.ModuleInvalidated
+      } else {
+        val session = sessionRegistry.get(sessionId)
+        if (session == null) {
+          StartReadingAttemptOutcome.UnknownSession
+        } else {
+          when (val attempt = readRegistry.start(sessionId)) {
+            is UsbSerialReadRegistry.StartAttempt.Started -> {
+              startReceiveWorker(sessionId, attempt.token, attempt.handle, session)
+              StartReadingAttemptOutcome.Started
+            }
+            UsbSerialReadRegistry.StartAttempt.AlreadyActive -> StartReadingAttemptOutcome.AlreadyActive
+            is UsbSerialReadRegistry.StartAttempt.Retiring ->
+              StartReadingAttemptOutcome.NeedsRetirementWait(attempt.handle)
           }
         }
       }
+    }
 
+  private fun settleStartReading(sessionId: String, outcome: StartReadingAttemptOutcome, promise: Promise) {
     when (outcome) {
-      StartReadingOutcome.STARTED -> promise.resolve(null)
-      StartReadingOutcome.MODULE_INVALIDATED ->
+      StartReadingAttemptOutcome.Started -> promise.resolve(null)
+      StartReadingAttemptOutcome.ModuleInvalidated ->
         promise.rejectTransportError(
           UsbTransportException("MODULE_INVALIDATED", "The transport module is being torn down."),
         )
-      StartReadingOutcome.UNKNOWN_SESSION ->
+      StartReadingAttemptOutcome.UnknownSession ->
         promise.rejectTransportError(
           UsbTransportException("UNKNOWN_SESSION", "No active session with id $sessionId."),
         )
-      StartReadingOutcome.ALREADY_ACTIVE ->
+      StartReadingAttemptOutcome.AlreadyActive ->
         promise.rejectTransportError(
           UsbTransportException(
             "RX_ALREADY_ACTIVE",
             "A receive loop is already active for session $sessionId.",
           ),
         )
+      StartReadingAttemptOutcome.RestartTimedOut ->
+        promise.rejectTransportError(
+          UsbTransportException(
+            "RX_RESTART_TIMEOUT",
+            "Timed out waiting for the previous receive loop for session $sessionId to stop.",
+          ),
+        )
+      is StartReadingAttemptOutcome.NeedsRetirementWait ->
+        error("NeedsRetirementWait must never reach settleStartReading directly")
     }
   }
 
   /**
    * Stops the receive loop for [sessionId], if one is active. Idempotent
    * and safe to call repeatedly or for a session with no active (or no
-   * longer existing) receive loop - [UsbSerialReadRegistry.removeSession]
-   * is itself a harmless no-op in that case. Never touches or closes the
+   * longer existing) receive loop - [UsbSerialReadRegistry.retire] is
+   * itself a harmless no-op in that case. Never touches or closes the
    * underlying session - this method's contract is receive-loop lifecycle
-   * only, matching the public API's separation of concerns. Does not wait
-   * for the worker's thread to actually exit (see [SerialReadLoop]'s own
-   * note on cooperative, non-blocking cancellation) - it only guarantees
-   * that worker will emit no further chunks or errors for this attempt,
-   * within at most one read-timeout window.
+   * only, matching the public API's separation of concerns.
+   *
+   * Resolves immediately, without waiting for the worker's thread to
+   * actually exit - it only guarantees that worker will emit no further
+   * chunks or errors for this attempt, within at most one read-timeout
+   * window. Deliberately uses [UsbSerialReadRegistry.retire] rather than
+   * [UsbSerialReadRegistry.removeSession]: retire() keeps this session's
+   * entry (and its [ReadWorkerHandle]) registered until the worker itself
+   * confirms it exited, which is exactly what lets a subsequent
+   * startReading() for this same still-open session correctly wait for
+   * that real thread to finish before reading the same port again (see
+   * [startReading]'s own note, PASS5.2-AUDIT-F1). removeSession() remains
+   * correct for closeSession()/detach/invalidate, where the session itself
+   * is going away and no future startReading() for this exact sessionId can
+   * ever occur.
    */
   override fun stopReading(sessionId: String, promise: Promise) {
-    readRegistry.removeSession(sessionId)
+    readRegistry.retire(sessionId)
     promise.resolve(null)
   }
 
@@ -509,8 +603,21 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * it (see the class-level Pass 5.2 note). Daemon so a lingering worker -
    * bounded to at most one [RX_READ_TIMEOUT_MILLIS] window after its token
    * is invalidated - can never keep the JVM process alive on its own.
+   *
+   * The finally block's [UsbSerialReadRegistry.confirmRetired] call runs
+   * unconditionally, whatever the reason run() returned - normal stop,
+   * detach/close/invalidate removing this session's entry, or an unexpected
+   * read failure - so this exact sessionId is always eventually freed for a
+   * fresh startReading() attempt, and any startReading() call currently
+   * waiting on [handle] is always eventually unblocked (bounded by this
+   * loop's own read-timeout-driven exit latency).
    */
-  private fun startReceiveWorker(sessionId: String, token: ReceiveToken, session: UsbSerialSession) {
+  private fun startReceiveWorker(
+    sessionId: String,
+    token: ReceiveToken,
+    handle: ReadWorkerHandle,
+    session: UsbSerialSession,
+  ) {
     val loop =
       SerialReadLoop(
         sessionId = sessionId,
@@ -521,7 +628,16 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
         onChunk = { buffer, length -> emitDataReceived(sessionId, buffer, length) },
         onTerminalError = { error -> emitReadError(sessionId, error) },
       )
-    Thread({ loop.run() }, "UsbSerialRx-$sessionId").apply { isDaemon = true }.start()
+    Thread(
+      {
+        try {
+          loop.run()
+        } finally {
+          readRegistry.confirmRetired(sessionId, handle)
+        }
+      },
+      "UsbSerialRx-$sessionId",
+    ).apply { isDaemon = true }.start()
   }
 
   /**
@@ -740,8 +856,26 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
  */
 private enum class OpenCompletionOutcome { ACCEPTED, MODULE_INVALIDATED, RESERVATION_SUPERSEDED }
 
-/** The outcome of startReading()'s atomic lookup-and-claim step (see [UsbSerialTransportModule.startReading]). */
-private enum class StartReadingOutcome { STARTED, MODULE_INVALIDATED, UNKNOWN_SESSION, ALREADY_ACTIVE }
+/**
+ * The outcome of one startReading() attempt (see
+ * [UsbSerialTransportModule.attemptStartReading]/[UsbSerialTransportModule.settleStartReading]).
+ * [NeedsRetirementWait] is an intermediate state, produced only by
+ * `attemptStartReading` and consumed only by `performStartReading` - it must
+ * never reach `settleStartReading` directly (enforced there defensively).
+ */
+private sealed class StartReadingAttemptOutcome {
+  object Started : StartReadingAttemptOutcome()
+
+  object ModuleInvalidated : StartReadingAttemptOutcome()
+
+  object UnknownSession : StartReadingAttemptOutcome()
+
+  object AlreadyActive : StartReadingAttemptOutcome()
+
+  object RestartTimedOut : StartReadingAttemptOutcome()
+
+  data class NeedsRetirementWait(val handle: ReadWorkerHandle) : StartReadingAttemptOutcome()
+}
 
 /**
  * How long a single native read call blocks waiting for data before
@@ -751,6 +885,19 @@ private enum class StartReadingOutcome { STARTED, MODULE_INVALIDATED, UNKNOWN_SE
  * prompt stop responsiveness and not waking up needlessly often.
  */
 private const val RX_READ_TIMEOUT_MILLIS = 200
+
+/**
+ * How long a startReading() attempt waits, at most, for a still-retiring
+ * previous attempt on the same session to confirm its worker thread has
+ * actually exited (see PASS5.2-AUDIT-F1's corrective note on
+ * [UsbSerialTransportModule.startReading]) before giving up and rejecting
+ * with RX_RESTART_TIMEOUT. Set to [RX_READ_TIMEOUT_MILLIS] plus a modest
+ * margin: the retiring worker is guaranteed to notice its token is no
+ * longer active and return from run() within one read-timeout window, so
+ * this bound only needs to cover that plus ordinary thread-scheduling
+ * overhead, not an unbounded or arbitrarily long wait.
+ */
+private const val RX_RESTART_WAIT_MILLIS = (RX_READ_TIMEOUT_MILLIS + 100).toLong()
 
 private fun closeQuietly(port: UsbSerialPort) {
   try {

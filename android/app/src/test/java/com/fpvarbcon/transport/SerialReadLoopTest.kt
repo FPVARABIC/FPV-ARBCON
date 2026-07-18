@@ -25,10 +25,16 @@ import org.junit.Test
  */
 class SerialReadLoopTest {
 
+  // Shorthand for tests that only need a fresh token and don't care about
+  // the handle - every such call site is a brand-new session with no
+  // existing entry, so Started is always the outcome.
+  private fun UsbSerialReadRegistry.startToken(sessionId: String): ReceiveToken =
+    (start(sessionId) as UsbSerialReadRegistry.StartAttempt.Started).token
+
   @Test
   fun `received bytes are emitted unchanged, including values above 127`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     val expected = byteArrayOf(0x00, 0x01, 0x7f, 0x80.toByte(), 0xff.toByte())
     var callCount = 0
     val emittedChunks = mutableListOf<ByteArray>()
@@ -63,7 +69,7 @@ class SerialReadLoopTest {
   @Test
   fun `byte order within a chunk is preserved`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     val expected = byteArrayOf(10, 20, 30, 40, 50)
     var callCount = 0
     var observed: ByteArray? = null
@@ -97,7 +103,7 @@ class SerialReadLoopTest {
   @Test
   fun `a zero-byte read (timeout with no data) emits nothing`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     var callCount = 0
     var emitted = false
 
@@ -126,7 +132,7 @@ class SerialReadLoopTest {
   @Test
   fun `the loop does not busy-spin - it calls read exactly once per iteration using the given timeout`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     var callCount = 0
     val observedTimeouts = mutableListOf<Int>()
 
@@ -156,7 +162,7 @@ class SerialReadLoopTest {
   @Test
   fun `no event occurs once the token has already been removed before the loop starts`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     registry.removeSession("s1")
     var readCalled = false
 
@@ -179,7 +185,7 @@ class SerialReadLoopTest {
   @Test
   fun `an unexpected read failure while the token is still current emits exactly one terminal error`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     val errors = mutableListOf<Exception>()
 
     val loop =
@@ -202,7 +208,7 @@ class SerialReadLoopTest {
   @Test
   fun `a read failure after the token was already removed (normal stop) emits no error`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     registry.removeSession("s1")
 
     val loop =
@@ -223,7 +229,7 @@ class SerialReadLoopTest {
   @Test
   fun `a normal stop (token removed, no failure) never emits an error`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     var callCount = 0
 
     val loop =
@@ -251,8 +257,8 @@ class SerialReadLoopTest {
   fun `one loop's exception does not affect a second, independent loop`() {
     val registryA = UsbSerialReadRegistry()
     val registryB = UsbSerialReadRegistry()
-    val tokenA = registryA.start("s1")!!
-    val tokenB = registryB.start("s2")!!
+    val tokenA = registryA.startToken("s1")
+    val tokenB = registryB.startToken("s2")
     var errorsA = 0
     var chunksB = 0
     var callCountB = 0
@@ -300,7 +306,7 @@ class SerialReadLoopTest {
   @Test
   fun `stop racing with a blocked-but-successful read produces no stale event`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     val readStarted = CountDownLatch(1)
     val releaseRead = CountDownLatch(1)
     val emitted = AtomicInteger(0)
@@ -347,7 +353,7 @@ class SerialReadLoopTest {
   @Test
   fun `close racing with a blocked read that then throws produces no stale error`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     val readStarted = CountDownLatch(1)
     val releaseRead = CountDownLatch(1)
     val errors = AtomicInteger(0)
@@ -392,7 +398,7 @@ class SerialReadLoopTest {
   @Test
   fun `detach racing between two iterations produces no stale event`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     val firstReadDone = CountDownLatch(1)
     val detachApplied = CountDownLatch(1)
     val emitted = AtomicInteger(0)
@@ -442,7 +448,7 @@ class SerialReadLoopTest {
   @Test
   fun `invalidate racing with a blocked read produces no stale event`() {
     val registry = UsbSerialReadRegistry()
-    val token = registry.start("s1")!!
+    val token = registry.startToken("s1")
     val readStarted = CountDownLatch(1)
     val releaseRead = CountDownLatch(1)
     val emitted = AtomicInteger(0)
@@ -483,9 +489,11 @@ class SerialReadLoopTest {
   }
 
   @Test
-  fun `an old worker completing after a newer attempt started does not affect the new attempt`() {
+  fun `an old worker completing after a newer attempt is requested does not affect the new attempt`() {
     val registry = UsbSerialReadRegistry()
-    val oldToken = registry.start("s1")!!
+    val oldAttempt = registry.start("s1") as UsbSerialReadRegistry.StartAttempt.Started
+    val oldToken = oldAttempt.token
+    val oldHandle = oldAttempt.handle
     val oldReadStarted = CountDownLatch(1)
     val releaseOldRead = CountDownLatch(1)
     val oldEmitted = AtomicInteger(0)
@@ -511,22 +519,44 @@ class SerialReadLoopTest {
         onTerminalError = { unexpectedErrors.incrementAndGet() },
       )
 
-    val oldThread = Thread({ oldLoop.run() }, "test-rx-old-worker").apply { isDaemon = true }
+    // The worker thread's own finally block is what confirms retirement in
+    // production (see UsbSerialTransportModule.startReceiveWorker) - mirrored
+    // here so this test proves the real handshake, not just the loop.
+    val oldThread =
+      Thread({
+        try {
+          oldLoop.run()
+        } finally {
+          registry.confirmRetired("s1", oldHandle)
+        }
+      }, "test-rx-old-worker")
+        .apply { isDaemon = true }
     oldThread.start()
     assertTrue(oldReadStarted.await(2, TimeUnit.SECONDS))
 
     // Simulates stopReading() followed immediately by a new startReading()
     // for the same session, while the old worker's read is still blocked.
-    registry.removeSession("s1")
-    val newToken = registry.start("s1")!!
+    // The registry must report Retiring here, never a fresh Started - a
+    // second worker must not be created while the first is still running.
+    registry.retire("s1")
+    val restartAttempt = registry.start("s1")
+    assertTrue(
+      "a restart while the old worker is still running must wait, not start a second worker",
+      restartAttempt is UsbSerialReadRegistry.StartAttempt.Retiring,
+    )
 
-    // Now let the old, superseded read finally return.
+    // Now let the old, superseded read finally return and confirm retirement.
     releaseOldRead.countDown()
     oldThread.join(2000)
-
     assertFalse(oldThread.isAlive)
+
+    // Only now may the caller retry and actually obtain the new token.
+    val newAttempt = registry.start("s1") as UsbSerialReadRegistry.StartAttempt.Started
+    val newToken = newAttempt.token
+
     assertEquals("the old worker must not have emitted for the newer attempt", 0, oldEmitted.get())
     assertEquals(0, unexpectedErrors.get())
+    assertFalse("the old token must no longer be current", registry.isCurrent("s1", oldToken))
     assertTrue("the newer attempt's token must remain the current one", registry.isCurrent("s1", newToken))
   }
 }
