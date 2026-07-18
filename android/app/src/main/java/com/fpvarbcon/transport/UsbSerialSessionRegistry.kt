@@ -123,6 +123,15 @@ internal class UsbSerialSessionRegistry {
   fun remove(sessionId: String): UsbSerialSession? = sessions.remove(sessionId)
 
   /**
+   * Read-only lookup by sessionId - added for Pass 5.2's startReading(),
+   * which must confirm a session exists before allocating a receive token
+   * for it, without removing or otherwise disturbing the session. Touches
+   * neither [reservations] nor any other state.
+   */
+  @Synchronized
+  fun get(sessionId: String): UsbSerialSession? = sessions[sessionId]
+
+  /**
    * Atomically removes and returns the active session for [deviceId], if
    * any - used when the device has physically detached and its session
    * must be invalidated immediately. Deliberately bypasses the normal

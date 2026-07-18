@@ -3,6 +3,7 @@ package com.fpvarbcon.transport
 import android.content.Context
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
+import android.util.Base64
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -15,9 +16,9 @@ import java.util.UUID
 
 /**
  * Thin TurboModule bridge for USB serial transport. listDevices(),
- * openDevice(), and closeSession() have real behavior in this pass.
- * writeBytes() remains a temporary stub until its approved pass lands - no
- * read loop, no data transmission here yet.
+ * openDevice(), closeSession(), startReading(), and stopReading() have real
+ * behavior. writeBytes() remains a temporary stub until its approved pass
+ * lands - this module is still receive-only, no data transmission here yet.
  *
  * Session creation order (locked, see Pass 4 correction) is exactly:
  * 1. validate SerialConfiguration
@@ -73,6 +74,20 @@ import java.util.UUID
  * cleanup are now one atomic step under [lifecycleLock], so a claimed
  * session's close() submission can never lose a race against
  * [ioExecutor]'s shutdown in [invalidate].
+ *
+ * Pass 5.2 (receive-only): [startReading]/[stopReading] add a second,
+ * independent per-session lifecycle - "is a receive loop currently allowed
+ * to emit for this sessionId" - tracked entirely separately from the
+ * open-attempt reservation above, in [readRegistry]. A receive loop never
+ * runs on [ioExecutor]: a continuous blocking read would monopolize that
+ * single shared thread and starve session close/detach/invalidate work, so
+ * each active receive attempt gets its own dedicated, named daemon thread
+ * instead (see [startReceiveWorker] and [SerialReadLoop]'s own note).
+ * closeSession()/handleDeviceDetached()/invalidate() all clear a session's
+ * receive state - via [readRegistry] - no later than the point they remove
+ * or drain that same session, under the same [lifecycleLock] critical
+ * section where applicable, so a receive worker can never outlive the
+ * session it reads from in a way that produces a stale event.
  */
 class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   NativeUsbSerialTransportSpec(reactContext) {
@@ -86,6 +101,14 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   private val prober = UsbSerialProber.getDefaultProber()
 
   private val sessionRegistry = UsbSerialSessionRegistry()
+
+  /**
+   * Tracks which sessionId currently owns an active receive loop (Pass
+   * 5.2) - entirely separate from [sessionRegistry]'s open-attempt
+   * reservations. See [UsbSerialReadRegistry]'s own class-level note for
+   * why the two are deliberately independent.
+   */
+  private val readRegistry = UsbSerialReadRegistry()
 
   private val permissionRequester: UsbPermissionRequester by lazy {
     UsbPermissionRequester(reactApplicationContext, usbManager)
@@ -366,8 +389,29 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * Pass 5.2: removing this session's receive state (if any) and removing
+   * the session itself now happen as one atomic step under [lifecycleLock]
+   * - the same coordination point [startReading] uses to look up a session
+   * and claim its receive token. This closes a narrow race that would
+   * otherwise exist between an in-flight startReading() call and a
+   * concurrent closeSession() call for the same sessionId: either
+   * startReading() completes its entire check-and-claim before this method
+   * can remove anything (so this method then correctly finds and clears
+   * that just-started receive state too), or this method removes the
+   * session first (so startReading(), running after, correctly finds no
+   * such session and rejects UNKNOWN_SESSION) - never a window where a
+   * receive worker starts against a session that is simultaneously being
+   * closed out from under it. The actual native session.close() call stays
+   * outside the lock, per the existing "never hold this lock during native
+   * I/O" rule.
+   */
   override fun closeSession(sessionId: String, promise: Promise) {
-    val session = sessionRegistry.remove(sessionId)
+    val session =
+      synchronized(lifecycleLock) {
+        readRegistry.removeSession(sessionId)
+        sessionRegistry.remove(sessionId)
+      }
     if (session == null) {
       promise.reject("UNKNOWN_SESSION", "No active session with id $sessionId.")
       return
@@ -383,6 +427,149 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
 
   override fun writeBytes(sessionId: String, dataBase64: String, promise: Promise) {
     promise.reject("NOT_IMPLEMENTED", "writeBytes is not implemented yet.")
+  }
+
+  /**
+   * Starts a receive loop for an already-open session. Explicit and
+   * idempotent-by-rejection: calling this twice for the same still-active
+   * session fails with RX_ALREADY_ACTIVE rather than silently restarting or
+   * merging with the existing loop (see [UsbSerialReadRegistry.start]).
+   * Looking up the session and claiming its receive token happen atomically
+   * under [lifecycleLock] (see [closeSession]'s own note for the race this
+   * closes); starting the worker thread itself is a fast, non-blocking call
+   * (creating and starting a Thread does not run its body synchronously)
+   * so doing it inside this same short critical section does not violate
+   * the "never hold this lock during native I/O" rule - no native read
+   * happens until the new thread's own run() begins.
+   */
+  override fun startReading(sessionId: String, promise: Promise) {
+    val outcome =
+      synchronized(lifecycleLock) {
+        if (invalidated) {
+          StartReadingOutcome.MODULE_INVALIDATED
+        } else {
+          val session = sessionRegistry.get(sessionId)
+          if (session == null) {
+            StartReadingOutcome.UNKNOWN_SESSION
+          } else {
+            val token = readRegistry.start(sessionId)
+            if (token == null) {
+              StartReadingOutcome.ALREADY_ACTIVE
+            } else {
+              startReceiveWorker(sessionId, token, session)
+              StartReadingOutcome.STARTED
+            }
+          }
+        }
+      }
+
+    when (outcome) {
+      StartReadingOutcome.STARTED -> promise.resolve(null)
+      StartReadingOutcome.MODULE_INVALIDATED ->
+        promise.rejectTransportError(
+          UsbTransportException("MODULE_INVALIDATED", "The transport module is being torn down."),
+        )
+      StartReadingOutcome.UNKNOWN_SESSION ->
+        promise.rejectTransportError(
+          UsbTransportException("UNKNOWN_SESSION", "No active session with id $sessionId."),
+        )
+      StartReadingOutcome.ALREADY_ACTIVE ->
+        promise.rejectTransportError(
+          UsbTransportException(
+            "RX_ALREADY_ACTIVE",
+            "A receive loop is already active for session $sessionId.",
+          ),
+        )
+    }
+  }
+
+  /**
+   * Stops the receive loop for [sessionId], if one is active. Idempotent
+   * and safe to call repeatedly or for a session with no active (or no
+   * longer existing) receive loop - [UsbSerialReadRegistry.removeSession]
+   * is itself a harmless no-op in that case. Never touches or closes the
+   * underlying session - this method's contract is receive-loop lifecycle
+   * only, matching the public API's separation of concerns. Does not wait
+   * for the worker's thread to actually exit (see [SerialReadLoop]'s own
+   * note on cooperative, non-blocking cancellation) - it only guarantees
+   * that worker will emit no further chunks or errors for this attempt,
+   * within at most one read-timeout window.
+   */
+  override fun stopReading(sessionId: String, promise: Promise) {
+    readRegistry.removeSession(sessionId)
+    promise.resolve(null)
+  }
+
+  /**
+   * Builds the real UsbSerialPort-backed [SerialReadSource] for [session]
+   * and starts exactly one dedicated, named daemon thread running its
+   * [SerialReadLoop]. This thread is never [ioExecutor] - a continuous
+   * blocking read loop must not be able to monopolize that single shared
+   * executor and starve session close/detach/invalidate work queued behind
+   * it (see the class-level Pass 5.2 note). Daemon so a lingering worker -
+   * bounded to at most one [RX_READ_TIMEOUT_MILLIS] window after its token
+   * is invalidated - can never keep the JVM process alive on its own.
+   */
+  private fun startReceiveWorker(sessionId: String, token: ReceiveToken, session: UsbSerialSession) {
+    val loop =
+      SerialReadLoop(
+        sessionId = sessionId,
+        token = token,
+        source = SerialReadSource { buffer, timeoutMillis -> session.read(buffer, timeoutMillis) },
+        registry = readRegistry,
+        readTimeoutMillis = RX_READ_TIMEOUT_MILLIS,
+        onChunk = { buffer, length -> emitDataReceived(sessionId, buffer, length) },
+        onTerminalError = { error -> emitReadError(sessionId, error) },
+      )
+    Thread({ loop.run() }, "UsbSerialRx-$sessionId").apply { isDaemon = true }.start()
+  }
+
+  /**
+   * Encodes exactly the [length] valid bytes of [buffer] (which may be
+   * larger and is reused by the caller's loop on its next iteration - see
+   * SerialReadLoop) to Base64 and emits them for JS, matching the already
+   * locked onDataReceived/UsbSerialDataEvent bridge contract (dataBase64:
+   * string) - not a new encoding choice made for this pass. Base64 encodes
+   * raw bytes verbatim regardless of sign interpretation, so every value
+   * 0-255 round-trips losslessly; no separate "unsigned conversion" step is
+   * needed or performed. android.util.Base64 (not java.util.Base64, which
+   * requires API 26) is used to stay compatible with this project's
+   * minSdkVersion 24.
+   */
+  private fun emitDataReceived(sessionId: String, buffer: ByteArray, length: Int) {
+    val dataBase64 = Base64.encodeToString(buffer, 0, length, Base64.NO_WRAP)
+    emitOnDataReceived(
+      Arguments.createMap().apply {
+        putString("sessionId", sessionId)
+        putString("dataBase64", dataBase64)
+      },
+    )
+  }
+
+  /**
+   * Reports a receive loop's unexpected termination via the existing
+   * onError/UsbSerialErrorEvent contract. Only ever called by
+   * [SerialReadLoop] when this attempt's token was still current at
+   * failure time - a failure caused by an intentional
+   * stop/close/detach/invalidate (its token already gone) is never reported
+   * here at all, so this always represents a genuine, unexpected native
+   * read failure, reported at most once per attempt (the loop returns
+   * immediately after calling this). recoverable is always false: this
+   * pass has no retry/reconnect logic, so the caller must decide whether to
+   * call startReading() again - nothing here will do so automatically.
+   * error.message is used as-is (an IOException's own message, not a raw
+   * stack trace or an internal path) to stay consistent with every other
+   * rejection in this module.
+   */
+  private fun emitReadError(sessionId: String, error: Exception) {
+    emitOnError(
+      Arguments.createMap().apply {
+        putString("sessionId", sessionId)
+        putString("code", "READ_FAILED")
+        putString("message", error.message ?: "USB serial read failed.")
+        putBoolean("recoverable", false)
+      },
+    )
   }
 
   /**
@@ -444,6 +631,14 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * [invalidated] is already true here and this method does nothing,
    * because invalidate()'s own drain already claimed and submitted the
    * close for this exact session, if one existed).
+   *
+   * Pass 5.2: also clears that session's receive state (if any) via
+   * [readRegistry] in the same step, before its close() is even submitted -
+   * a detached device's receive loop (if it was running) will independently
+   * notice via its own token check within one read-timeout window, but
+   * clearing the registry entry here immediately ensures no new chunk is
+   * ever attributed to this sessionId again, and that a later
+   * closeSession()/stopReading() call for it finds nothing left to clear.
    */
   private fun handleDeviceDetached(identity: UsbDeviceIdentity) {
     val detachedSession =
@@ -453,6 +648,7 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
         } else {
           sessionRegistry.invalidateReservationForDevice(identity.deviceId)
           sessionRegistry.removeByDeviceId(identity.deviceId)?.also { session ->
+            readRegistry.removeSession(session.sessionId)
             ioExecutor.submit { session.close() }
           }
         }
@@ -493,6 +689,15 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * only claiming the sessions and submitting their close tasks does; the
    * submitted closures themselves run later, on ioExecutor's own thread,
    * per the "never hold this lock during native I/O" rule.
+   *
+   * Pass 5.2: [readRegistry].removeAll() runs in the same critical section,
+   * invalidating every outstanding receive token atomically with
+   * [invalidated] becoming true - no receive worker thread is explicitly
+   * interrupted or joined here (see [SerialReadLoop]'s own note on
+   * cooperative cancellation), but every one of them will independently
+   * notice its token is gone and stop emitting within at most one
+   * read-timeout window, without this method ever blocking to wait for
+   * that.
    */
   override fun invalidate() {
     super.invalidate()
@@ -505,6 +710,7 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
           true
         } else {
           invalidated = true
+          readRegistry.removeAll()
           sessionRegistry.removeAll().forEach { session ->
             ioExecutor.submit {
               try {
@@ -533,6 +739,18 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
  * superseded reservation must still reject this attempt's own Promise.
  */
 private enum class OpenCompletionOutcome { ACCEPTED, MODULE_INVALIDATED, RESERVATION_SUPERSEDED }
+
+/** The outcome of startReading()'s atomic lookup-and-claim step (see [UsbSerialTransportModule.startReading]). */
+private enum class StartReadingOutcome { STARTED, MODULE_INVALIDATED, UNKNOWN_SESSION, ALREADY_ACTIVE }
+
+/**
+ * How long a single native read call blocks waiting for data before
+ * returning 0 bytes and letting the loop re-check whether it should keep
+ * running - see SerialReadLoop's own note on why a finite, non-zero timeout
+ * is required for cooperative cancellation. Chosen as a balance between
+ * prompt stop responsiveness and not waking up needlessly often.
+ */
+private const val RX_READ_TIMEOUT_MILLIS = 200
 
 private fun closeQuietly(port: UsbSerialPort) {
   try {

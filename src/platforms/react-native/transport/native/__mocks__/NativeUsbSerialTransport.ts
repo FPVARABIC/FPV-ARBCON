@@ -9,6 +9,8 @@ const NativeUsbSerialTransport = {
   openDevice: jest.fn(),
   closeSession: jest.fn(),
   writeBytes: jest.fn(),
+  startReading: jest.fn(),
+  stopReading: jest.fn(),
   onDataReceived: jest.fn(() => ({remove: jest.fn()})),
   onSessionDetached: jest.fn(() => ({remove: jest.fn()})),
   onError: jest.fn(() => ({remove: jest.fn()})),

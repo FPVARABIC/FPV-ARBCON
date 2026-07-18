@@ -2,7 +2,9 @@ import NativeUsbSerialTransport from './native/NativeUsbSerialTransport';
 import type {
   SerialConfiguration,
   UsbDeviceHotplugEvent,
+  UsbSerialDataEvent,
   UsbSerialDeviceDescriptor,
+  UsbSerialErrorEvent,
   UsbSerialSessionDetachedEvent,
 } from './native/NativeUsbSerialTransport';
 import {normalizeNativeError} from './transportErrors';
@@ -46,6 +48,28 @@ function isValidSessionDetachedEvent(value: unknown): value is UsbSerialSessionD
   return typeof candidate.sessionId === 'string' && typeof candidate.deviceId === 'number';
 }
 
+function isValidDataEvent(value: unknown): value is UsbSerialDataEvent {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.sessionId === 'string' && typeof candidate.dataBase64 === 'string';
+}
+
+function isValidErrorEvent(value: unknown): value is UsbSerialErrorEvent {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.code === 'string' &&
+    typeof candidate.message === 'string' &&
+    typeof candidate.recoverable === 'boolean' &&
+    (candidate.sessionId === undefined || typeof candidate.sessionId === 'string') &&
+    (candidate.deviceId === undefined || typeof candidate.deviceId === 'number')
+  );
+}
+
 function isValidDescriptor(value: unknown): value is UsbSerialDeviceDescriptor {
   if (typeof value !== 'object' || value === null) {
     return false;
@@ -70,9 +94,12 @@ function isValidDescriptor(value: unknown): value is UsbSerialDeviceDescriptor {
  * ever see this client's stable result/error types.
  *
  * Deliberately does not: implement src/core's Transport, implement
- * AndroidUsbTransport, call writeBytes, touch Base64, retry, reconnect, or
- * persist anything. It validates shapes defensively and normalizes rejected
- * values; it does not decide UI policy.
+ * AndroidUsbTransport, call writeBytes, decode or interpret dataBase64's
+ * contents, parse any protocol, retry, reconnect, or persist anything. It
+ * validates shapes defensively and normalizes rejected values; it does not
+ * decide UI policy. Pass 5.2 adds startReading()/stopReading() and the
+ * onDataReceived/onError subscriptions - dataBase64 crosses this boundary
+ * exactly as the native side encoded it, opaque to this client.
  */
 export class UsbSerialTransportClient {
   async listDevices(): Promise<UsbSerialDeviceDescriptor[]> {
@@ -113,6 +140,62 @@ export class UsbSerialTransportClient {
     } catch (reason) {
       throw normalizeNativeError(reason);
     }
+  }
+
+  /**
+   * Starts the receive loop for an already-open session. Explicit only -
+   * this client never calls it implicitly from openDevice(). See
+   * onDataReceived/onError for how received bytes and receive-loop failures
+   * are reported afterward.
+   */
+  async startReading(sessionId: string): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.startReading(sessionId);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
+  /**
+   * Stops the receive loop for a session. Idempotent - safe to call
+   * repeatedly, or for a session with no active receive loop. Never closes
+   * the underlying session.
+   */
+  async stopReading(sessionId: string): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.stopReading(sessionId);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
+  /**
+   * Subscribes to received serial data. dataBase64 is delivered exactly as
+   * the native side encoded it - this client does not decode, interpret, or
+   * touch its contents. Malformed events (missing sessionId/dataBase64) are
+   * dropped rather than forwarded.
+   */
+  onDataReceived(callback: (event: UsbSerialDataEvent) => void): () => void {
+    const subscription = NativeUsbSerialTransport.onDataReceived(event => {
+      if (isValidDataEvent(event)) {
+        callback(event);
+      }
+    });
+    return () => subscription.remove();
+  }
+
+  /**
+   * Subscribes to native transport errors, including an active receive
+   * loop's unexpected termination (code READ_FAILED). Malformed events are
+   * dropped rather than forwarded.
+   */
+  onError(callback: (event: UsbSerialErrorEvent) => void): () => void {
+    const subscription = NativeUsbSerialTransport.onError(event => {
+      if (isValidErrorEvent(event)) {
+        callback(event);
+      }
+    });
+    return () => subscription.remove();
   }
 
   /**

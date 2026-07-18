@@ -22,6 +22,9 @@ export const KNOWN_ERROR_CODES = [
   'CLOSE_FAILED',
   'NATIVE_OPERATION_FAILED',
   'NOT_IMPLEMENTED',
+  'MODULE_INVALIDATED',
+  'RX_ALREADY_ACTIVE',
+  'READ_FAILED',
 ] as const;
 
 export type KnownTransportErrorCode = (typeof KNOWN_ERROR_CODES)[number];

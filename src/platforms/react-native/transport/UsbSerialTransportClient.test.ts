@@ -8,6 +8,10 @@ const mockedNative = NativeUsbSerialTransport as unknown as {
   listDevices: jest.Mock;
   openDevice: jest.Mock;
   closeSession: jest.Mock;
+  startReading: jest.Mock;
+  stopReading: jest.Mock;
+  onDataReceived: jest.Mock;
+  onError: jest.Mock;
 };
 
 const CONFIGURATION: SerialConfiguration = {
@@ -148,5 +152,142 @@ describe('UsbSerialTransportClient thrown non-Error normalization', () => {
       code: 'UNKNOWN_ERROR',
       nativeMessage: 'native crash string',
     });
+  });
+});
+
+describe('UsbSerialTransportClient.startReading', () => {
+  it('resolves on success', async () => {
+    mockedNative.startReading.mockResolvedValueOnce(undefined);
+    const client = new UsbSerialTransportClient();
+    await expect(client.startReading('session-123')).resolves.toBeUndefined();
+    expect(mockedNative.startReading).toHaveBeenCalledWith('session-123');
+  });
+
+  it('normalizes a rejected native call', async () => {
+    mockedNative.startReading.mockRejectedValueOnce({
+      code: 'RX_ALREADY_ACTIVE',
+      message: 'already reading',
+    });
+    const client = new UsbSerialTransportClient();
+    await expect(client.startReading('session-123')).rejects.toEqual({
+      code: 'RX_ALREADY_ACTIVE',
+      nativeMessage: 'already reading',
+    });
+  });
+});
+
+describe('UsbSerialTransportClient.stopReading', () => {
+  it('resolves on success', async () => {
+    mockedNative.stopReading.mockResolvedValueOnce(undefined);
+    const client = new UsbSerialTransportClient();
+    await expect(client.stopReading('session-123')).resolves.toBeUndefined();
+    expect(mockedNative.stopReading).toHaveBeenCalledWith('session-123');
+  });
+
+  it('normalizes a rejected native call', async () => {
+    mockedNative.stopReading.mockRejectedValueOnce({code: 'UNKNOWN_ERROR', message: 'boom'});
+    const client = new UsbSerialTransportClient();
+    await expect(client.stopReading('session-123')).rejects.toEqual({
+      code: 'UNKNOWN_ERROR',
+      nativeMessage: 'boom',
+    });
+  });
+});
+
+describe('UsbSerialTransportClient.onDataReceived', () => {
+  it('forwards a valid event and preserves dataBase64 verbatim', () => {
+    let captured: unknown;
+    mockedNative.onDataReceived.mockImplementationOnce((handler: (event: unknown) => void) => {
+      handler({sessionId: 'session-123', dataBase64: 'AAECAwQ='});
+      return {remove: jest.fn()};
+    });
+    const client = new UsbSerialTransportClient();
+    client.onDataReceived(event => {
+      captured = event;
+    });
+    expect(captured).toEqual({sessionId: 'session-123', dataBase64: 'AAECAwQ='});
+  });
+
+  it('drops a malformed event instead of forwarding it', () => {
+    const callback = jest.fn();
+    mockedNative.onDataReceived.mockImplementationOnce((handler: (event: unknown) => void) => {
+      handler({sessionId: 'session-123'}); // missing dataBase64
+      handler(null);
+      handler('not an object');
+      return {remove: jest.fn()};
+    });
+    const client = new UsbSerialTransportClient();
+    client.onDataReceived(callback);
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('returns an unsubscribe function that calls remove()', () => {
+    const remove = jest.fn();
+    mockedNative.onDataReceived.mockReturnValueOnce({remove});
+    const client = new UsbSerialTransportClient();
+    const unsubscribe = client.onDataReceived(() => {});
+    expect(remove).not.toHaveBeenCalled();
+    unsubscribe();
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('UsbSerialTransportClient.onError', () => {
+  it('forwards a valid error event, including the optional sessionId', () => {
+    let captured: unknown;
+    mockedNative.onError.mockImplementationOnce((handler: (event: unknown) => void) => {
+      handler({
+        sessionId: 'session-123',
+        code: 'READ_FAILED',
+        message: 'native read failed',
+        recoverable: false,
+      });
+      return {remove: jest.fn()};
+    });
+    const client = new UsbSerialTransportClient();
+    client.onError(event => {
+      captured = event;
+    });
+    expect(captured).toEqual({
+      sessionId: 'session-123',
+      code: 'READ_FAILED',
+      message: 'native read failed',
+      recoverable: false,
+    });
+  });
+
+  it('forwards a valid error event with no sessionId/deviceId (both optional)', () => {
+    let captured: unknown;
+    mockedNative.onError.mockImplementationOnce((handler: (event: unknown) => void) => {
+      handler({code: 'DEVICE_ENUMERATION_FAILED', message: 'boom', recoverable: false});
+      return {remove: jest.fn()};
+    });
+    const client = new UsbSerialTransportClient();
+    client.onError(event => {
+      captured = event;
+    });
+    expect(captured).toEqual({code: 'DEVICE_ENUMERATION_FAILED', message: 'boom', recoverable: false});
+  });
+
+  it('drops a malformed event instead of forwarding it', () => {
+    const callback = jest.fn();
+    mockedNative.onError.mockImplementationOnce((handler: (event: unknown) => void) => {
+      handler({code: 'READ_FAILED', message: 'boom'}); // missing recoverable
+      handler(null);
+      return {remove: jest.fn()};
+    });
+    const client = new UsbSerialTransportClient();
+    client.onError(callback);
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  it('returns an unsubscribe function that calls remove()', () => {
+    const remove = jest.fn();
+    mockedNative.onError.mockReturnValueOnce({remove});
+    const client = new UsbSerialTransportClient();
+    const unsubscribe = client.onError(() => {});
+    expect(remove).not.toHaveBeenCalled();
+    unsubscribe();
+    expect(remove).toHaveBeenCalledTimes(1);
   });
 });

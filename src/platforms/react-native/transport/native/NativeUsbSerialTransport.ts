@@ -71,6 +71,23 @@ export interface Spec extends TurboModule {
 
   writeBytes(sessionId: string, dataBase64: string): Promise<void>;
 
+  /**
+   * Starts a receive loop for an already-open session. Explicit only - never
+   * started implicitly by openDevice(). Rejects if the session is unknown,
+   * if a receive loop is already active for it, or if the module is being
+   * torn down. Received chunks arrive via onDataReceived; an unexpected
+   * native read failure arrives via onError, not as a rejection of some
+   * later call - this Promise only reflects whether the loop was started.
+   */
+  startReading(sessionId: string): Promise<void>;
+
+  /**
+   * Stops the receive loop for a session, if one is active. Idempotent -
+   * safe to call repeatedly, or for a session with no active receive loop.
+   * Never closes or otherwise affects the underlying session.
+   */
+  stopReading(sessionId: string): Promise<void>;
+
   readonly onDataReceived: EventEmitter<UsbSerialDataEvent>;
   readonly onSessionDetached: EventEmitter<UsbSerialSessionDetachedEvent>;
   readonly onError: EventEmitter<UsbSerialErrorEvent>;
