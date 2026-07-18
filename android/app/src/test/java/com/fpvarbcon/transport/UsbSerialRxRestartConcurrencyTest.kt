@@ -24,6 +24,16 @@ import org.junit.Test
  * Retiring, bounded awaitDone() then retry once; every worker's own thread
  * confirms its retirement in a finally block after SerialReadLoop.run()
  * returns).
+ *
+ * PASS5.2-AUDIT-F2 correction: the same-session restart test below now
+ * launches a genuine successor [Thread] via [spawnWorker] for every
+ * [UsbSerialReadRegistry.StartAttempt.Started] result it obtains from a
+ * restart, and that successor becomes the "old" worker being retired in the
+ * next cycle - a real chain of worker threads, not a single worker with its
+ * restart outcome immediately discarded. This is what lets the test actually
+ * detect a regression in the retiring-worker coordination itself, rather
+ * than only exercising [UsbSerialReadRegistry]'s state machine in isolation
+ * (already covered by UsbSerialReadRegistryTest.kt).
  */
 class UsbSerialRxRestartConcurrencyTest {
 
@@ -31,11 +41,13 @@ class UsbSerialRxRestartConcurrencyTest {
   private class CountingReadSource(
     private val activeReadCount: AtomicInteger,
     private val maximumConcurrentReadCount: AtomicInteger,
+    private val totalReadEntryCount: AtomicInteger = AtomicInteger(0),
     private val onRead: (buffer: ByteArray) -> Int,
   ) : SerialReadSource {
     override fun read(buffer: ByteArray, timeoutMillis: Int): Int {
       val current = activeReadCount.incrementAndGet()
       maximumConcurrentReadCount.updateAndGet { max -> maxOf(max, current) }
+      totalReadEntryCount.incrementAndGet()
       try {
         return onRead(buffer)
       } finally {
@@ -68,12 +80,20 @@ class UsbSerialRxRestartConcurrencyTest {
     return resolved as? UsbSerialReadRegistry.StartAttempt.Started
   }
 
-  /** Mirrors startReceiveWorker(): runs the loop, then confirms retirement unconditionally. */
+  /**
+   * Mirrors startReceiveWorker(): runs the loop, then confirms retirement
+   * unconditionally. [onFailure] records anything unexpected that escapes
+   * [SerialReadLoop.run] itself (e.g. a misbehaving callback) so no
+   * background-thread failure can be silently lost - see
+   * [assertNoBackgroundFailure].
+   */
   private fun spawnWorker(
     registry: UsbSerialReadRegistry,
     sessionId: String,
     started: UsbSerialReadRegistry.StartAttempt.Started,
     source: SerialReadSource,
+    onChunk: (buffer: ByteArray, length: Int) -> Unit = { _, _ -> },
+    onFailure: (Throwable) -> Unit = {},
   ): Thread {
     val loop =
       SerialReadLoop(
@@ -82,13 +102,15 @@ class UsbSerialRxRestartConcurrencyTest {
         source = source,
         registry = registry,
         readTimeoutMillis = 1000,
-        onChunk = { _, _ -> },
+        onChunk = onChunk,
         onTerminalError = { },
       )
     val thread =
       Thread({
         try {
           loop.run()
+        } catch (error: Throwable) {
+          onFailure(error)
         } finally {
           registry.confirmRetired(sessionId, started.handle)
         }
@@ -98,67 +120,283 @@ class UsbSerialRxRestartConcurrencyTest {
     return thread
   }
 
+  /** First-failure-wins recorder for exceptions raised on a background thread. */
+  private fun recordFailure(failureRef: AtomicReference<Throwable?>, error: Throwable) {
+    failureRef.compareAndSet(null, error)
+  }
+
+  /** Fails the test - with the original throwable preserved as the cause - if any background thread recorded a failure. */
+  private fun assertNoBackgroundFailure(failureRef: AtomicReference<Throwable?>) {
+    val failure = failureRef.get()
+    if (failure != null) {
+      throw AssertionError("a background thread recorded an unexpected failure", failure)
+    }
+  }
+
+  /** One worker's live coordination handles within the restart chain below. */
+  private class ChainWorker(
+    val thread: Thread,
+    val readEntered: CountDownLatch,
+    val releaseRead: CountDownLatch,
+    val handle: ReadWorkerHandle,
+  )
+
+  /**
+   * Launches one real worker for [started], using fresh, per-call latches so
+   * no cycle can ever observe or consume another cycle's entry/release
+   * signal. [cycleTag] is written into the read buffer purely so a failure
+   * dump would show which cycle's worker produced which data - it plays no
+   * synchronization role.
+   */
+  private fun launchChainWorker(
+    registry: UsbSerialReadRegistry,
+    sessionId: String,
+    started: UsbSerialReadRegistry.StartAttempt.Started,
+    activeReadCount: AtomicInteger,
+    maximumConcurrentReadCount: AtomicInteger,
+    totalReadEntryCount: AtomicInteger,
+    emittedChunks: AtomicInteger,
+    backgroundFailure: AtomicReference<Throwable?>,
+    cycleTag: Int,
+  ): ChainWorker {
+    val readEntered = CountDownLatch(1)
+    val releaseRead = CountDownLatch(1)
+    val source =
+      CountingReadSource(activeReadCount, maximumConcurrentReadCount, totalReadEntryCount) { buffer ->
+        readEntered.countDown()
+        // Bounded wait only - see the no-assert note on background-thread
+        // assertions in SerialReadLoopTest; failures here are still caught
+        // via assertNoBackgroundFailure below, not lost.
+        releaseRead.await(2, TimeUnit.SECONDS)
+        buffer[0] = cycleTag.toByte()
+        1
+      }
+    val thread =
+      spawnWorker(
+        registry = registry,
+        sessionId = sessionId,
+        started = started,
+        source = source,
+        onChunk = { _, _ -> emittedChunks.incrementAndGet() },
+        onFailure = { error -> recordFailure(backgroundFailure, error) },
+      )
+    return ChainWorker(thread, readEntered, releaseRead, started.handle)
+  }
+
+  /**
+   * T1 (also subsumes T2 and T5, proven every cycle rather than once - see
+   * each assertion's own note): a genuine chain of real worker threads for
+   * the *same* session, across [RESTART_CYCLE_COUNT] rapid stop-then-restart
+   * cycles. Every [UsbSerialReadRegistry.StartAttempt.Started] result this
+   * test obtains is passed to [launchChainWorker] - never retired/confirmed
+   * without first owning a real, running worker - and that worker becomes
+   * the "old" worker being retired in the very next cycle. This is the
+   * PASS5.2-AUDIT-F2 correction: the previous version of this test obtained
+   * a fresh Started result after each restart and immediately retired +
+   * confirmed it without ever launching a worker for it, so only the
+   * original worker ever genuinely entered read() - the restart handshake
+   * itself was never exercised end-to-end with two real threads.
+   */
   @Test
   fun `rapid same-session stop-restart cycles never allow more than one concurrent read`() {
     val registry = UsbSerialReadRegistry()
+    val sessionId = "s1"
     val activeReadCount = AtomicInteger(0)
     val maximumConcurrentReadCount = AtomicInteger(0)
-    val sessionId = "s1"
+    val totalReadEntryCount = AtomicInteger(0)
+    val emittedChunks = AtomicInteger(0)
+    val backgroundFailure = AtomicReference<Throwable?>(null)
+    var workerLaunchCount = 0
 
-    repeat(5) { cycle ->
-      val readStarted = CountDownLatch(1)
-      val releaseRead = CountDownLatch(1)
-      val source =
-        CountingReadSource(activeReadCount, maximumConcurrentReadCount) { buffer ->
-          readStarted.countDown()
-          // See SerialReadLoopTest's no-assert note: an AssertionError on this
-          // background thread would not fail the test - the bounded
-          // thread.join()s below are what actually enforce this.
-          releaseRead.await(2, TimeUnit.SECONDS)
-          buffer[0] = cycle.toByte()
-          1
-        }
+    val initialStarted = registry.start(sessionId) as UsbSerialReadRegistry.StartAttempt.Started
+    var current =
+      launchChainWorker(
+        registry, sessionId, initialStarted, activeReadCount, maximumConcurrentReadCount,
+        totalReadEntryCount, emittedChunks, backgroundFailure, cycleTag = 0,
+      )
+    workerLaunchCount++
+    assertTrue("worker 0 must genuinely enter read()", current.readEntered.await(2, TimeUnit.SECONDS))
+    assertEquals(1, totalReadEntryCount.get())
 
-      val started = registry.start(sessionId) as? UsbSerialReadRegistry.StartAttempt.Started
-        ?: error("cycle $cycle: expected a fresh Started attempt, previous cycle left stale state")
-      val worker = spawnWorker(registry, sessionId, started, source)
-      assertTrue(readStarted.await(2, TimeUnit.SECONDS))
-
+    for (cycle in 0 until RESTART_CYCLE_COUNT) {
       // Simulates stopReading() immediately followed by startReading() for
-      // the same session, while the old worker's read is still blocked.
-      // retire() happens-before this thread is started, so the restart
-      // attempt below is guaranteed to observe Retiring, never AlreadyActive
-      // or a fresh Started - deterministically, not by scheduling luck.
+      // the same still-open session, while the current worker's read is
+      // still genuinely blocked.
       registry.retire(sessionId)
+
+      // Requirement: the restart request must encounter the real
+      // retiring-worker coordination path. start() has no side effect for
+      // the Retiring case (it only reads the existing entry), so probing it
+      // here does not disturb the restartThread's own subsequent call.
+      assertTrue(
+        "cycle $cycle: a restart attempted while the old worker is still running " +
+          "must observe Retiring, not a fresh Started or AlreadyActive - this is the " +
+          "exact coordination path the F1 fix depends on",
+        registry.start(sessionId) is UsbSerialReadRegistry.StartAttempt.Retiring,
+      )
+
       val restartResult = AtomicReference<UsbSerialReadRegistry.StartAttempt.Started?>()
       val restartThread =
-        Thread({ restartResult.set(startWithRetry(registry, sessionId, waitMillis = 300)) }, "test-restart-$sessionId")
+        Thread({
+          try {
+            restartResult.set(startWithRetry(registry, sessionId, waitMillis = 300))
+          } catch (error: Throwable) {
+            recordFailure(backgroundFailure, error)
+          }
+        }, "test-restart-$sessionId-$cycle")
           .apply { isDaemon = true }
       restartThread.start()
 
-      // Let the old, superseded read return - this is what allows the old
-      // worker's finally block to confirm retirement and unblock the
-      // waiting restart attempt above.
-      releaseRead.countDown()
-      worker.join(2000)
-      assertFalse("old worker for cycle $cycle must have exited", worker.isAlive)
+      // Before releasing the old worker: no successor may have entered
+      // read() yet - the count must still reflect only the workers that
+      // have already run in prior cycles plus this cycle's still-blocked
+      // worker, never one more.
+      assertEquals(
+        "cycle $cycle: no successor may enter read() before the old worker is released",
+        cycle + 1,
+        totalReadEntryCount.get(),
+      )
+
+      // Release the old, superseded worker's exact read cycle - and only
+      // that cycle's own latch, never a later one, since each cycle's
+      // latches are freshly created.
+      current.releaseRead.countDown()
+      current.thread.join(2000)
+      assertFalse("cycle $cycle: old worker must have exited", current.thread.isAlive)
 
       restartThread.join(2000)
       assertFalse(restartThread.isAlive)
       val restarted =
         restartResult.get() ?: error("cycle $cycle: restart must succeed once the old worker confirmed retirement")
 
-      // Retire the new worker's session before starting the next cycle so
-      // the following iteration begins from a clean, fully-retired state.
-      registry.retire(sessionId)
-      registry.confirmRetired(sessionId, restarted.handle)
+      // The corrective step for PASS5.2-AUDIT-F2: launch a genuine successor
+      // worker for this Started result - never retire/confirm a Started
+      // attempt that never owned a real running worker.
+      val successor =
+        launchChainWorker(
+          registry, sessionId, restarted, activeReadCount, maximumConcurrentReadCount,
+          totalReadEntryCount, emittedChunks, backgroundFailure, cycleTag = cycle + 1,
+        )
+      workerLaunchCount++
+      assertTrue(
+        "cycle $cycle: the successor worker must genuinely enter read()",
+        successor.readEntered.await(2, TimeUnit.SECONDS),
+      )
+      assertEquals(cycle + 2, totalReadEntryCount.get())
+
+      current = successor
     }
 
+    // Final deterministic cleanup (T5): retire the last successor, release
+    // its exact blocked read, join it with a bounded timeout, and confirm
+    // every relevant piece of state has settled.
+    registry.retire(sessionId)
+    current.releaseRead.countDown()
+    current.thread.join(2000)
+    assertFalse("final worker must have exited", current.thread.isAlive)
+
+    assertEquals(RESTART_CYCLE_COUNT + 1, workerLaunchCount)
+    assertEquals(RESTART_CYCLE_COUNT + 1, totalReadEntryCount.get())
     assertEquals(
       "same-session restarts must never allow two concurrent real reads",
       1,
       maximumConcurrentReadCount.get(),
     )
+    assertEquals("no worker may still be counted as reading after final cleanup", 0, activeReadCount.get())
+    assertEquals(
+      "a retired worker's late-returning data must never be emitted (T3)",
+      0,
+      emittedChunks.get(),
+    )
+    assertNull(
+      "the registry must retain no entry for this session after the final worker's own finally block ran",
+      registry.removeSession(sessionId),
+    )
+    assertNoBackgroundFailure(backgroundFailure)
+  }
+
+  /**
+   * T4: two callers race a restart while the current worker is still
+   * genuinely blocked in read(). Exactly one may obtain Started; the other
+   * must receive null (AlreadyActive, once the first caller's fresh entry
+   * is visible to it) - never two real successor workers, and never a
+   * ghost registry entry left behind.
+   */
+  @Test
+  fun `two concurrent restart callers - exactly one wins and no ghost worker is created`() {
+    val registry = UsbSerialReadRegistry()
+    val sessionId = "s1"
+    val activeReadCount = AtomicInteger(0)
+    val maximumConcurrentReadCount = AtomicInteger(0)
+    val totalReadEntryCount = AtomicInteger(0)
+    val emittedChunks = AtomicInteger(0)
+    val backgroundFailure = AtomicReference<Throwable?>(null)
+
+    val started = registry.start(sessionId) as UsbSerialReadRegistry.StartAttempt.Started
+    val original =
+      launchChainWorker(
+        registry, sessionId, started, activeReadCount, maximumConcurrentReadCount,
+        totalReadEntryCount, emittedChunks, backgroundFailure, cycleTag = 0,
+      )
+    assertTrue(original.readEntered.await(2, TimeUnit.SECONDS))
+
+    registry.retire(sessionId)
+
+    val resultA = AtomicReference<UsbSerialReadRegistry.StartAttempt.Started?>()
+    val resultB = AtomicReference<UsbSerialReadRegistry.StartAttempt.Started?>()
+    val callerA =
+      Thread({
+        try {
+          resultA.set(startWithRetry(registry, sessionId, waitMillis = 300))
+        } catch (error: Throwable) {
+          recordFailure(backgroundFailure, error)
+        }
+      }, "test-restart-caller-A")
+        .apply { isDaemon = true }
+    val callerB =
+      Thread({
+        try {
+          resultB.set(startWithRetry(registry, sessionId, waitMillis = 300))
+        } catch (error: Throwable) {
+          recordFailure(backgroundFailure, error)
+        }
+      }, "test-restart-caller-B")
+        .apply { isDaemon = true }
+    callerA.start()
+    callerB.start()
+
+    original.releaseRead.countDown()
+    original.thread.join(2000)
+    assertFalse(original.thread.isAlive)
+
+    callerA.join(2000)
+    callerB.join(2000)
+    assertFalse(callerA.isAlive)
+    assertFalse(callerB.isAlive)
+
+    val winners = listOfNotNull(resultA.get(), resultB.get())
+    assertEquals("exactly one of the two racing restart callers must obtain Started", 1, winners.size)
+    val winner = winners.single()
+
+    val successor =
+      launchChainWorker(
+        registry, sessionId, winner, activeReadCount, maximumConcurrentReadCount,
+        totalReadEntryCount, emittedChunks, backgroundFailure, cycleTag = 1,
+      )
+    assertTrue(
+      "exactly one real successor worker must be launched from the winning caller",
+      successor.readEntered.await(2, TimeUnit.SECONDS),
+    )
+
+    registry.retire(sessionId)
+    successor.releaseRead.countDown()
+    successor.thread.join(2000)
+    assertFalse(successor.thread.isAlive)
+
+    assertEquals("no two same-session reads may ever have overlapped", 1, maximumConcurrentReadCount.get())
+    assertEquals(0, activeReadCount.get())
+    assertNull("no ghost registry entry may remain", registry.removeSession(sessionId))
+    assertNoBackgroundFailure(backgroundFailure)
   }
 
   @Test
@@ -253,5 +491,9 @@ class UsbSerialRxRestartConcurrencyTest {
       "an unexpected worker failure must not permanently block future restarts of this session",
       restarted is UsbSerialReadRegistry.StartAttempt.Started,
     )
+  }
+
+  private companion object {
+    const val RESTART_CYCLE_COUNT = 5
   }
 }
