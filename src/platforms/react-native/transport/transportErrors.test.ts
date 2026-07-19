@@ -68,6 +68,14 @@ describe('localizeTransportError', () => {
       expect(typeof message).toBe('string');
       expect(message.length).toBeGreaterThan(0);
       expect(message).not.toBe('errors.UNKNOWN');
+      // A missing ar.json key does not throw and does not equal
+      // 'errors.UNKNOWN' either - i18next instead returns the raw,
+      // untranslated key string (e.g. "errors.MODULE_INVALIDATED"), which
+      // the two checks above would silently let through. Guard against that
+      // directly, per code, so a future code added to KNOWN_ERROR_CODES
+      // without a matching ar.json entry fails here instead of shipping an
+      // English key string to the user.
+      expect(message).not.toBe(`errors.${code}`);
     }
   });
 
