@@ -26,6 +26,9 @@ export const KNOWN_ERROR_CODES = [
   'RX_ALREADY_ACTIVE',
   'READ_FAILED',
   'RX_RESTART_TIMEOUT',
+  'SESSION_CLOSED',
+  'WRITE_QUEUE_FULL',
+  'WRITE_FAILED',
 ] as const;
 
 export type KnownTransportErrorCode = (typeof KNOWN_ERROR_CODES)[number];

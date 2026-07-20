@@ -10,6 +10,7 @@ const mockedNative = NativeUsbSerialTransport as unknown as {
   closeSession: jest.Mock;
   startReading: jest.Mock;
   stopReading: jest.Mock;
+  writeBytes: jest.Mock;
   onDataReceived: jest.Mock;
   onError: jest.Mock;
 };
@@ -190,6 +191,27 @@ describe('UsbSerialTransportClient.stopReading', () => {
     await expect(client.stopReading('session-123')).rejects.toEqual({
       code: 'UNKNOWN_ERROR',
       nativeMessage: 'boom',
+    });
+  });
+});
+
+describe('UsbSerialTransportClient.writeBytes', () => {
+  it('resolves on success', async () => {
+    mockedNative.writeBytes.mockResolvedValueOnce(undefined);
+    const client = new UsbSerialTransportClient();
+    await expect(client.writeBytes('session-123', 'AAECAwQ=')).resolves.toBeUndefined();
+    expect(mockedNative.writeBytes).toHaveBeenCalledWith('session-123', 'AAECAwQ=');
+  });
+
+  it('normalizes a rejected native call', async () => {
+    mockedNative.writeBytes.mockRejectedValueOnce({
+      code: 'WRITE_QUEUE_FULL',
+      message: 'queue full',
+    });
+    const client = new UsbSerialTransportClient();
+    await expect(client.writeBytes('session-123', 'AAECAwQ=')).rejects.toEqual({
+      code: 'WRITE_QUEUE_FULL',
+      nativeMessage: 'queue full',
     });
   });
 });

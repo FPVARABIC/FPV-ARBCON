@@ -16,9 +16,8 @@ import java.util.UUID
 
 /**
  * Thin TurboModule bridge for USB serial transport. listDevices(),
- * openDevice(), closeSession(), startReading(), and stopReading() have real
- * behavior. writeBytes() remains a temporary stub until its approved pass
- * lands - this module is still receive-only, no data transmission here yet.
+ * openDevice(), closeSession(), startReading(), stopReading(), and (Pass
+ * 5.3) writeBytes() all have real behavior.
  *
  * Session creation order (locked, see Pass 4 correction) is exactly:
  * 1. validate SerialConfiguration
@@ -104,6 +103,25 @@ import java.util.UUID
  * not change close/detach/invalidate: those paths remove a session entirely,
  * so there is no future startReading() for that exact sessionId that could
  * ever need to wait.
+ *
+ * Pass 5.3 (TX write path): [writeBytes] no longer stubs out - it decodes
+ * the given Base64 payload and enqueues it on the target session's own
+ * dedicated write queue (see [UsbSerialSession.enqueueWrite] and
+ * [UsbSerialWriteQueue]), never on [ioExecutor] and never on an RX worker
+ * thread, resolving the original Promise only once that specific write
+ * actually completes. Every read()/write() call for one session's port is
+ * now serialized through that session's own fair ioLock (see
+ * [UsbSerialSession]'s own note, PASS5.3-STEP0): the pinned
+ * usb-serial-for-android 3.10.0 library provides no synchronization
+ * between a concurrent read() and write() on the same port, and neither
+ * does the underlying UsbDeviceConnection.bulkTransfer() call both
+ * ultimately make. closeSession()/handleDeviceDetached()/invalidate() all
+ * now also stop each affected session's write queue immediately - at the
+ * same point they already clear that session's RX state - rejecting every
+ * still-queued (not yet started) write with SESSION_CLOSED before
+ * performing the session's own (possibly deferred) native close(); a write
+ * already in progress when this happens is not interrupted here, it fails
+ * (or succeeds) on its own, exactly as any other write outcome would.
  */
 class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   NativeUsbSerialTransportSpec(reactContext) {
@@ -434,15 +452,60 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     }
 
     try {
-      session.close()
+      closeSessionRejectingPendingWrites(
+        session = session,
+        rejectPendingWrites = { rejectPendingWrites(it, sessionId) },
+        performClose = { session.close() },
+      )
       promise.resolve(null)
     } catch (error: Exception) {
       promise.reject("CLOSE_FAILED", error.message ?: "Failed to close session $sessionId.")
     }
   }
 
+  /**
+   * Decodes [dataBase64] and enqueues it on [sessionId]'s own write queue
+   * (see [UsbSerialSession.enqueueWrite]/[UsbSerialWriteQueue]) - never
+   * writing directly from whatever thread called this method. The
+   * returned [promise] settles exactly once, from that queue's own
+   * consumer thread, only once this specific write has actually completed
+   * (success or failure) - never merely once it was enqueued. A full
+   * queue rejects immediately with WRITE_QUEUE_FULL; a queue already
+   * stopped (session closed/detached/module invalidated) rejects
+   * immediately with SESSION_CLOSED. Neither case ever leaves anything
+   * unresolved.
+   */
   override fun writeBytes(sessionId: String, dataBase64: String, promise: Promise) {
-    promise.reject("NOT_IMPLEMENTED", "writeBytes is not implemented yet.")
+    val session = sessionRegistry.get(sessionId)
+    if (session == null) {
+      promise.rejectTransportError(UsbTransportException("UNKNOWN_SESSION", "No active session with id $sessionId."))
+      return
+    }
+    val buffer =
+      try {
+        Base64.decode(dataBase64, Base64.NO_WRAP)
+      } catch (error: Exception) {
+        promise.rejectTransportError(
+          UsbTransportException("WRITE_FAILED", error.message ?: "Invalid Base64 write payload."),
+        )
+        return
+      }
+    val request =
+      UsbSerialWriteRequest(buffer, TX_WRITE_TIMEOUT_MILLIS) { result ->
+        result.fold(
+          onSuccess = { promise.resolve(null) },
+          onFailure = { error -> promise.rejectTransportError(toWriteFailureError(error)) },
+        )
+      }
+    when (session.enqueueWrite(request)) {
+      UsbSerialWriteQueue.EnqueueResult.Accepted -> Unit // settles later, via request.onComplete
+      UsbSerialWriteQueue.EnqueueResult.QueueFull ->
+        promise.rejectTransportError(
+          UsbTransportException("WRITE_QUEUE_FULL", "The write queue for session $sessionId is full."),
+        )
+      UsbSerialWriteQueue.EnqueueResult.Stopped ->
+        promise.rejectTransportError(UsbTransportException("SESSION_CLOSED", "Session $sessionId was closed."))
+    }
   }
 
   /**
@@ -765,11 +828,24 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
           sessionRegistry.invalidateReservationForDevice(identity.deviceId)
           sessionRegistry.removeByDeviceId(identity.deviceId)?.also { session ->
             readRegistry.removeSession(session.sessionId)
-            ioExecutor.submit { session.close() }
           }
         }
       }
+    // PASS5.3-STEP1-CORRECTION4: uses the same closeSessionRejectingPendingWrites
+    // sequencing as closeSession()/invalidate() - the write queue is
+    // stopped and its still-queued writes rejected strictly before
+    // session.close() is even submitted to ioExecutor, not after, as an
+    // earlier version of this method did (that earlier ordering meant the
+    // close task could already be running on ioExecutor's own thread
+    // before this thread ever reached the write-queue stop, leaving which
+    // of the two "wins" a race - both individually safe/idempotent, but
+    // needlessly non-deterministic in order).
     detachedSession?.let { session ->
+      closeSessionRejectingPendingWrites(
+        session = session,
+        rejectPendingWrites = { rejectPendingWrites(it, session.sessionId) },
+        performClose = { ioExecutor.submit { session.close() } },
+      )
       emitOnSessionDetached(
         Arguments.createMap().apply {
           putString("sessionId", session.sessionId)
@@ -820,31 +896,62 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
 
     hotplugMonitor.stop()
 
-    val alreadyInvalidated =
+    val drainedSessions =
       synchronized(lifecycleLock) {
         if (invalidated) {
-          true
+          null
         } else {
           invalidated = true
           readRegistry.removeAll()
-          sessionRegistry.removeAll().forEach { session ->
-            ioExecutor.submit {
-              try {
-                session.close()
-              } catch (_: Exception) {
-                // Best-effort during teardown - there is no Promise left to report this to.
-              }
-            }
-          }
-          false
+          sessionRegistry.removeAll()
         }
       }
 
-    if (alreadyInvalidated) return
+    if (drainedSessions == null) return
+
+    drainedSessions.forEach { session ->
+      closeSessionRejectingPendingWrites(
+        session = session,
+        rejectPendingWrites = { rejectPendingWrites(it, session.sessionId) },
+        performClose = {
+          ioExecutor.submit {
+            try {
+              session.close()
+            } catch (_: Exception) {
+              // Best-effort during teardown - there is no Promise left to report this to.
+            }
+          }
+        },
+      )
+    }
 
     permissionRequester.cancelAll()
     ioExecutor.shutdown()
   }
+
+  /**
+   * Rejects every [pendingWrites] request (already drained from a
+   * session's write queue by the caller - see
+   * [UsbSerialSession.stopAndDrainPendingWrites]) with SESSION_CLOSED.
+   * Deliberately a no-op loop over an already-drained list, never itself
+   * touching any lock or registry - callers decide when it is safe to
+   * call this (see closeSession()/handleDeviceDetached()/invalidate()'s
+   * own notes on why it is always safe immediately after this exact
+   * sessionId is removed from [sessionRegistry]).
+   */
+  private fun rejectPendingWrites(pendingWrites: List<UsbSerialWriteRequest>, sessionId: String) {
+    pendingWrites.forEach { request ->
+      request.onComplete(Result.failure(UsbTransportException("SESSION_CLOSED", "Session $sessionId was closed.")))
+    }
+  }
+
+  /** Maps a write failure to a stable error code - preserves an existing UsbTransportException's own code, otherwise WRITE_FAILED. */
+  private fun toWriteFailureError(error: Throwable): UsbTransportException =
+    if (error is UsbTransportException) {
+      error
+    } else {
+      UsbTransportException("WRITE_FAILED", error.message ?: "USB serial write failed.")
+    }
 }
 
 /**
@@ -883,6 +990,20 @@ private sealed class StartReadingAttemptOutcome {
  * running - see SerialReadLoop's own note on why a finite, non-zero timeout
  * is required for cooperative cancellation. Chosen as a balance between
  * prompt stop responsiveness and not waking up needlessly often.
+ *
+ * PASS5.3-STEP1 re-evaluated this value, since it now also bounds
+ * worst-case TX lock-acquisition latency under UsbSerialSession's shared
+ * fair ioLock (a write queued while RX holds the lock is guaranteed to go
+ * next, but only once RX's current read call itself returns - see
+ * ioLock's own note). Left unchanged deliberately: shrinking it would
+ * lower that worst case but multiply how often read() is called with no
+ * data arriving - for the entire lifetime of every active receive loop,
+ * not just while a write is pending - trading a rare, one-time,
+ * ~200ms-bounded TX delay for a permanent, continuous increase in
+ * CPU/USB-bus/battery overhead. No confirmed real-world MSP
+ * responsiveness requirement is known yet that would justify that
+ * trade - the conservative choice is to keep this value as-is pending
+ * one, not to guess a smaller number aggressively.
  */
 private const val RX_READ_TIMEOUT_MILLIS = 200
 
@@ -898,6 +1019,28 @@ private const val RX_READ_TIMEOUT_MILLIS = 200
  * overhead, not an unbounded or arbitrarily long wait.
  */
 private const val RX_RESTART_WAIT_MILLIS = (RX_READ_TIMEOUT_MILLIS + 100).toLong()
+
+/**
+ * How long a single write() attempt blocks, at most, before this
+ * project's own write queue treats it as failed (PASS5.3-STEP1).
+ *
+ * Two things can delay a write beyond the time it takes to physically
+ * transmit: waiting to acquire UsbSerialSession's own fair ioLock behind
+ * an in-progress RX read (bounded to at most one RX read cycle - see
+ * [RX_READ_TIMEOUT_MILLIS] - by fairness itself, never more), and the
+ * transmission itself. MSP command frames are small (typically well
+ * under 256 bytes); at any realistic serial baud rate this project
+ * configures, that takes well under this bound to physically transmit
+ * even with no contention at all. No confirmed real-world MSP
+ * responsiveness or throughput requirement is known yet at this pass -
+ * 1000ms is chosen conservatively (generous headroom over both of the
+ * above combined) rather than aggressively, so a momentarily busy link
+ * does not spuriously fail a normal write, while still bounding a
+ * genuinely stuck write so it can never block this session's write-queue
+ * consumer thread - and therefore every write queued behind it -
+ * indefinitely.
+ */
+private const val TX_WRITE_TIMEOUT_MILLIS = 1000
 
 private fun closeQuietly(port: UsbSerialPort) {
   try {

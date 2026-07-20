@@ -94,12 +94,13 @@ function isValidDescriptor(value: unknown): value is UsbSerialDeviceDescriptor {
  * ever see this client's stable result/error types.
  *
  * Deliberately does not: implement src/core's Transport, implement
- * AndroidUsbTransport, call writeBytes, decode or interpret dataBase64's
- * contents, parse any protocol, retry, reconnect, or persist anything. It
- * validates shapes defensively and normalizes rejected values; it does not
- * decide UI policy. Pass 5.2 adds startReading()/stopReading() and the
- * onDataReceived/onError subscriptions - dataBase64 crosses this boundary
- * exactly as the native side encoded it, opaque to this client.
+ * AndroidUsbTransport, decode or interpret dataBase64's contents, parse any
+ * protocol, retry, reconnect, or persist anything. It validates shapes
+ * defensively and normalizes rejected values; it does not decide UI policy.
+ * Pass 5.2 adds startReading()/stopReading() and the onDataReceived/onError
+ * subscriptions; Pass 5.3 adds writeBytes() - dataBase64 crosses this
+ * boundary exactly as the caller/native side encoded it, opaque to this
+ * client either direction.
  */
 export class UsbSerialTransportClient {
   async listDevices(): Promise<UsbSerialDeviceDescriptor[]> {
@@ -164,6 +165,22 @@ export class UsbSerialTransportClient {
   async stopReading(sessionId: string): Promise<void> {
     try {
       await NativeUsbSerialTransport.stopReading(sessionId);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
+  /**
+   * Writes bytes (already Base64-encoded by the caller) to an already-open
+   * session. Explicit only - never called implicitly by this client.
+   * Resolves only once the native side reports the write itself actually
+   * completed (success or failure) - never merely once it was queued. This
+   * client does not encode, batch, retry, or otherwise interpret
+   * dataBase64's contents.
+   */
+  async writeBytes(sessionId: string, dataBase64: string): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.writeBytes(sessionId, dataBase64);
     } catch (reason) {
       throw normalizeNativeError(reason);
     }
