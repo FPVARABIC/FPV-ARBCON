@@ -26,6 +26,10 @@ import type {
   UsbSerialDeviceDescriptor,
   UsbSerialTransportClient,
 } from '../../platforms/react-native/transport';
+// TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbSerialDebugPanel.tsx's own
+// class-level note. Delete this import and its one render site below
+// alongside that file once real protocol screens exist.
+import UsbSerialDebugPanel from './UsbSerialDebugPanel';
 
 /**
  * Owned by the UI/client, not the Kotlin transport defaults. Approved as a
@@ -718,6 +722,12 @@ export default function UsbConnectionScreen({
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
         />
+
+        {/* TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbSerialDebugPanel.tsx's
+            own class-level note. Delete this block alongside that file. */}
+        {isConnected && state.activeSessionId ? (
+          <UsbSerialDebugPanel sessionId={state.activeSessionId} client={client} />
+        ) : null}
 
         <ValidationLog
           entries={state.log}

@@ -16,6 +16,10 @@ type MockClient = {
   onDeviceAttached: jest.Mock;
   onDeviceDetached: jest.Mock;
   onSessionDetached: jest.Mock;
+  // Only exercised once connected, by the temporary debug scaffolding (Pass
+  // 5.3, UsbSerialDebugPanel.tsx) - see its own class-level note.
+  onDataReceived: jest.Mock;
+  onError: jest.Mock;
 };
 
 function createMockClient(): MockClient {
@@ -26,6 +30,8 @@ function createMockClient(): MockClient {
     onDeviceAttached: jest.fn(() => jest.fn()),
     onDeviceDetached: jest.fn(() => jest.fn()),
     onSessionDetached: jest.fn(() => jest.fn()),
+    onDataReceived: jest.fn(() => jest.fn()),
+    onError: jest.fn(() => jest.fn()),
   };
 }
 
