@@ -71,6 +71,17 @@ internal class UsbAppLogCaptureModule(reactContext: ReactApplicationContext) :
    * cannot do that anymore: [readProcessOutputBounded] force-destroys the
    * subprocess and throws [ProcessReadTimeoutException] instead of ever
    * blocking past [CAPTURE_TIMEOUT_MILLIS].
+   *
+   * PASS5.5-CAPTURE-TIMESTAMP: the resolved string is now always prefixed
+   * with a "[Captured at: HH:MM:SS.mmm]" header showing the wall-clock time
+   * this method actually ran - not a fix for any confirmed bug in
+   * [MAX_CAPTURED_CHARS] truncation below (which already keeps the most
+   * RECENT characters via [takeLast], not the earliest - verified, not
+   * assumed, before adding this), but pure clarity: a capture whose
+   * contents end well before a connect attempt/error happened is otherwise
+   * ambiguous between "the button was pressed too early" and "something is
+   * wrong with what got captured." This header removes that ambiguity for
+   * every future capture.
    */
   @ReactMethod
   fun captureAppLog(promise: Promise) {
@@ -86,7 +97,7 @@ internal class UsbAppLogCaptureModule(reactContext: ReactApplicationContext) :
         } else {
           ""
         }
-      promise.resolve(prefix + truncated)
+      promise.resolve(captureTimestampHeader() + prefix + truncated)
     } catch (error: ProcessReadTimeoutException) {
       // readProcessOutputBounded already force-destroyed the subprocess on
       // this path - nothing further to clean up here, only to report.
@@ -95,6 +106,18 @@ internal class UsbAppLogCaptureModule(reactContext: ReactApplicationContext) :
       process?.destroyForcibly()
       promise.reject("LOG_CAPTURE_FAILED", error.message ?: "Failed to capture this app's own logcat output.")
     }
+  }
+
+  /**
+   * A fresh [java.text.SimpleDateFormat] per call, deliberately not a
+   * shared/cached instance - SimpleDateFormat is documented as not
+   * thread-safe, and this method has no need to reuse one across calls (a
+   * manual debug button press is not a hot path).
+   */
+  private fun captureTimestampHeader(): String {
+    val formatted =
+      java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
+    return "[Captured at: $formatted]\n"
   }
 
   private companion object {
