@@ -1,4 +1,5 @@
 import { MspClient, type MspClientDiagnosticEvent } from '../mspClient';
+import type { MspTransport } from '../mspTransport';
 import { FakeMspTransport } from '../__testUtils__/mspFakeTransport';
 import { buildMspFrameBytes } from '../__testUtils__/mspFixtures';
 
@@ -26,6 +27,17 @@ function responseFrame(command: number, payload: Uint8Array = EMPTY): Uint8Array
 
 function errorFrame(command: number, payload: Uint8Array = EMPTY): Uint8Array {
   return buildMspFrameBytes(command, payload, { wireFormat: 'v1', direction: 'error' });
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((sum, c) => sum + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    out.set(c, offset);
+    offset += c.length;
+  }
+  return out;
 }
 
 describe('MspClient - basic round trip and FIFO', () => {
@@ -370,6 +382,119 @@ describe('MspClient - getState() observability', () => {
     transport.rejectNextWrite('WRITE_FAILED');
     await p1.catch(() => undefined);
     expect(client.getState()).toBe('DESYNCHRONIZED');
+  });
+});
+
+describe('MspClient - a throwing onDiagnostic() listener does not break processing of later events', () => {
+  it('a throwing first listener does not prevent a second listener from running or a later matching FRAME in the SAME ingest() chunk from settling the active request', async () => {
+    const { transport, client } = makeClient();
+    const events: MspClientDiagnosticEvent[] = [];
+    client.onDiagnostic(() => {
+      throw new Error('boom - simulated throwing diagnostic listener');
+    });
+    client.onDiagnostic(e => events.push(e));
+
+    const promise = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+
+    // One chunk containing an unsolicited frame (command 99, triggers the
+    // throwing listener via emitDiagnostic()) immediately followed by the
+    // real matching response (command 1) - both delivered in a SINGLE
+    // onDataReceived dispatch / ingest() call, so they land in the same
+    // handleBytes() for-loop iteration.
+    const chunk = concatBytes([responseFrame(99), responseFrame(1, Uint8Array.from([7]))]);
+
+    expect(() => transport.emitData(chunk)).not.toThrow();
+
+    // The second listener still ran despite the first one throwing.
+    expect(events).toHaveLength(1);
+    expect(events[0].type).toBe('UNSOLICITED_FRAME');
+
+    // The real response, later in the same chunk, was still processed - not
+    // silently dropped by the earlier listener's throw aborting the loop.
+    const frame = await promise;
+    expect(frame.command).toBe(1);
+    expect(frame.payload).toEqual(Uint8Array.from([7]));
+    expect(client.getState()).toBe('READY');
+  });
+});
+
+describe('MspClient - recursive pump() depth on consecutive encode() failures', () => {
+  it('a full queue (maxPendingRequests) of consecutive encode failures all settle with MSP_ENCODE_FAILED, without throwing or hanging, leaving the client READY', async () => {
+    const MAX = 32;
+    const { transport, client } = makeClient({ maxPendingRequests: MAX });
+
+    const active = client.request(0, EMPTY, { wireFormat: 'v1' }); // occupies the active slot, encodes fine
+    const queued = Array.from({ length: MAX }, (_, i) =>
+      client.request(i + 1, EMPTY, { wireFormat: 'v1', flags: 1 }), // invalid for v1 - all fail to encode
+    );
+
+    expect(transport.writes).toHaveLength(1); // only the active request has reached the transport
+
+    transport.resolveNextWrite();
+    // Settling the active request's response synchronously triggers a
+    // single pump() call that recursively drains all MAX queued,
+    // encode-failing requests in one nested call chain (pump() ->
+    // startRequest() -> catch -> pump() -> ...) before returning - at the
+    // default bound this is a trivially shallow ~32-frame chain, well
+    // within any JS engine's default stack depth, so this must not throw.
+    expect(() => transport.emitData(responseFrame(0))).not.toThrow();
+    expect((await active).command).toBe(0);
+
+    for (const p of queued) {
+      await expect(p).rejects.toMatchObject({ code: 'MSP_ENCODE_FAILED' });
+    }
+
+    expect(client.getState()).toBe('READY');
+    expect(client.getEpoch()).toBe(0); // confirmed-not-sent failures never desync
+    expect(transport.writes).toHaveLength(0); // none of the 32 ever reached the transport
+  });
+});
+
+describe('MspClient - transport.writeBytes() throwing synchronously (contract violation)', () => {
+  it('is treated as MSP_WRITE_OUTCOME_UNKNOWN and desynchronizes, exactly like an unrecognized write rejection, instead of hanging or throwing out of request()', async () => {
+    const dataListeners = new Set<(bytes: Uint8Array) => void>();
+    const throwingTransport: MspTransport = {
+      writeBytes: () => {
+        throw new Error('simulated non-conforming transport: synchronous throw instead of a rejected Promise');
+      },
+      onDataReceived: listener => {
+        dataListeners.add(listener);
+        return () => dataListeners.delete(listener);
+      },
+      onSessionDetached: () => () => undefined,
+    };
+    const client = new MspClient(throwingTransport, SESSION_ID);
+
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getState()).toBe('DESYNCHRONIZED');
+    expect(client.getEpoch()).toBe(1);
+  });
+});
+
+describe('MspClient - dispose() when a transport unsubscribe function throws', () => {
+  it('still rejects the active + queued requests and finalizes to DISCONNECTED even if unsubscribeData() throws', async () => {
+    const dataListeners = new Set<(bytes: Uint8Array) => void>();
+    const throwingUnsubscribeTransport: MspTransport = {
+      writeBytes: () => new Promise<void>(() => undefined), // never settles - irrelevant to this test
+      onDataReceived: listener => {
+        dataListeners.add(listener);
+        return () => {
+          throw new Error('simulated non-conforming transport: unsubscribe throws');
+        };
+      },
+      onSessionDetached: () => () => undefined,
+    };
+    const client = new MspClient(throwingUnsubscribeTransport, SESSION_ID);
+
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' }); // active, write never settles
+
+    expect(() => client.dispose()).not.toThrow();
+
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_SESSION_CLOSED' });
+    expect(client.getState()).toBe('DISCONNECTED');
   });
 });
 

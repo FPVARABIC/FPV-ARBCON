@@ -300,8 +300,24 @@ export class MspClient {
     }
     this.disposed = true;
 
-    this.unsubscribeData();
-    this.unsubscribeSessionDetached();
+    // Best-effort, matching this codebase's existing "swallow and continue"
+    // pattern (e.g. UsbSerialWriteQueue.runLoop()'s own task-wrapper catch,
+    // android/.../transport/UsbSerialWriteQueue.kt): these unsubscribe
+    // functions come from the external transport, outside this file's
+    // control. Either one throwing must never prevent the rest of dispose()
+    // from running - above all, rejecting the active + queued requests
+    // below - which would otherwise leave those Promises hanging forever
+    // even though `disposed` is already true and a retry cannot help.
+    try {
+      this.unsubscribeData();
+    } catch {
+      // Swallowed intentionally - see comment above.
+    }
+    try {
+      this.unsubscribeSessionDetached();
+    } catch {
+      // Swallowed intentionally - see comment above.
+    }
 
     if (this.state === 'DISCONNECTED') {
       return;
@@ -444,7 +460,32 @@ export class MspClient {
     // doc comment on the write-vs-response race this ordering exists for.
     this.active = active;
 
-    this.transport.writeBytes(encoded).then(
+    let writePromise: Promise<void>;
+    try {
+      writePromise = this.transport.writeBytes(encoded);
+    } catch {
+      // MspTransport.writeBytes() is documented (mspTransport.ts) to always
+      // return a Promise<void> and encapsulate every failure as a rejection
+      // - a conforming implementation never throws synchronously. If a
+      // non-conforming transport does anyway, this is genuinely different
+      // from the encode() catch above: encode() runs strictly before this
+      // point and can never have touched the transport, so that failure is
+      // confirmed-not-sent; here writeBytes() itself was actually invoked,
+      // so whether any bytes reached the wire is unknown - the same
+      // ambiguity classifyWriteFailure()'s own safe default already
+      // handles, so this is classified identically: MSP_WRITE_OUTCOME_UNKNOWN,
+      // freeing the slot and desynchronizing.
+      const won = active.settle.reject(new MspClientError('MSP_WRITE_OUTCOME_UNKNOWN'));
+      if (won) {
+        if (this.active === active) {
+          this.active = undefined;
+        }
+        this.triggerDesyncLatch();
+      }
+      return;
+    }
+
+    writePromise.then(
       () => this.onWriteSettled(active, undefined),
       (reason: unknown) => this.onWriteSettled(active, reason),
     );
@@ -573,7 +614,19 @@ export class MspClient {
 
   private emitDiagnostic(event: MspClientDiagnosticEvent): void {
     for (const listener of this.diagnosticListeners) {
-      listener(event);
+      try {
+        listener(event);
+      } catch {
+        // Best-effort, matching this codebase's existing "swallow and
+        // continue" pattern (e.g. UsbSerialWriteQueue.runLoop()'s own
+        // task-wrapper catch, android/.../transport/UsbSerialWriteQueue.kt):
+        // a caller-supplied onDiagnostic() listener is external code this
+        // file does not control. One listener throwing must never prevent
+        // another registered listener from running, and must never abort
+        // handleBytes()'s enclosing for-loop - which would otherwise
+        // silently drop every remaining event in this same ingest() chunk,
+        // including a real, matching response frame.
+      }
     }
   }
 }
