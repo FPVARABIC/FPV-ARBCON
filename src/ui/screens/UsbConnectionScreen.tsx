@@ -30,6 +30,13 @@ import type {
 // class-level note. Delete this import and its one render site below
 // alongside that file once real protocol screens exist.
 import UsbSerialDebugPanel from './UsbSerialDebugPanel';
+// TEMPORARY DEBUG SCAFFOLDING (Pass 5.4) - see UsbAppLogCapturePanel.tsx's
+// own class-level note. Rendered unconditionally (unlike UsbSerialDebugPanel
+// above), since it needs neither a session nor a connected client, and must
+// stay reachable even during a stuck connect attempt. Delete this import and
+// its one render site below alongside that file once real protocol screens
+// exist.
+import UsbAppLogCapturePanel from './UsbAppLogCapturePanel';
 
 /**
  * Owned by the UI/client, not the Kotlin transport defaults. Approved as a
@@ -662,6 +669,10 @@ export default function UsbConnectionScreen({
           <Text style={styles.instructionPrimary}>{t('connection.instructionPrimary')}</Text>
           <Text style={styles.instructionSecondary}>{t('connection.instructionSecondary')}</Text>
         </View>
+
+        {/* TEMPORARY DEBUG SCAFFOLDING (Pass 5.4) - see UsbAppLogCapturePanel.tsx's
+            own class-level note. Delete this block alongside that file. */}
+        <UsbAppLogCapturePanel />
 
         {state.errorMessage ? (
           <View style={styles.errorBanner} accessibilityRole="alert">

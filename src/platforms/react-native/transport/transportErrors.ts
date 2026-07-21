@@ -29,6 +29,7 @@ export const KNOWN_ERROR_CODES = [
   'SESSION_CLOSED',
   'WRITE_QUEUE_FULL',
   'WRITE_FAILED',
+  'CONNECT_TIMEOUT',
 ] as const;
 
 export type KnownTransportErrorCode = (typeof KNOWN_ERROR_CODES)[number];

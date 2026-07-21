@@ -1,6 +1,7 @@
 package com.fpvarbcon.transport
 
 import android.content.Context
+import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.util.Base64
@@ -13,6 +14,7 @@ import com.facebook.react.bridge.WritableMap
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
 
 /**
  * Thin TurboModule bridge for USB serial transport. listDevices(),
@@ -45,19 +47,52 @@ import java.util.UUID
  * [lifecycleLock] and [invalidate] below) - there is no timing window where
  * invalidate() can drain first and a session gets inserted afterward.
  *
- * Steps 6-16 (everything from the permission result onward) always run on
- * [ioExecutor]'s single background thread, never on whichever thread
- * delivered the permission result itself. This matters because that
- * delivering thread is not always the same one: when permission was already
- * granted, UsbPermissionRequester.requestPermission() calls back
- * synchronously on whatever thread called openDevice(); when a real
- * permission dialog was shown, the callback instead runs from
- * UsbPermissionRequester's BroadcastReceiver.onReceive(), which - since that
- * receiver is registered without a Handler - is always the Android main
- * thread. Submitting completeOpen() to ioExecutor makes the execution
- * thread consistent across both cases and keeps this method's real blocking
- * native I/O (openDevice/port.open/setParameters/setFlowControl) off the
- * main thread in both cases, not just one of them.
+ * Steps 5-16 (the permission request onward) now (Pass 5.4) run entirely on
+ * one dedicated, single-use, per-attempt background thread - never
+ * [ioExecutor], and never whichever thread delivered the permission result
+ * itself. Before Pass 5.4 this all ran as a task submitted to [ioExecutor],
+ * the same single shared thread also used for every detach/invalidate-
+ * triggered session close(); see that pass's own corrective note below for
+ * why that was changed.
+ *
+ * Pass 5.4 corrective note (PASS5.4-CONNECT-TIMEOUT): a real-hardware
+ * openDevice() hang was confirmed to be an unbounded, uninterruptible native
+ * call (most likely UsbSerialPort.open()'s internal claimInterface(), which
+ * has no Android-API-level timeout parameter at all) with no path back to
+ * JS - the Promise simply never settled. Worse, because completeOpen() used
+ * to run on [ioExecutor] - the exact same single-threaded executor
+ * [handleDeviceDetached]/[invalidate] submit their own session-close work
+ * to - one stuck open attempt would permanently starve every future open
+ * *and* every future detach-triggered close for the remainder of the
+ * process's life, since a single-threaded executor never runs a second
+ * queued task until the first one's Runnable returns.
+ *
+ * The fix: [openDevice] now runs the permission wait (bridged back onto one
+ * synchronous call via a [CountDownLatch] - see its own inline note) and the
+ * entire native open/configure sequence as one [work] block on its own
+ * dedicated, throwaway thread via [runOnDedicatedThreadWithTimeout], bounded
+ * to [CONNECT_TIMEOUT_MILLIS] overall. [ioExecutor] is untouched by this -
+ * it continues to be used only for detach/invalidate session closes, exactly
+ * as before. A stuck attempt's abandoned thread can therefore never block or
+ * poison any other connect attempt, or any close, ever again - it can only
+ * ever leak itself (see [runOnDedicatedThreadWithTimeout]'s own note on why
+ * that leaked thread is never interrupted or force-stopped: whether
+ * UsbDeviceConnection.close() can reliably unblock a thread genuinely stuck
+ * inside claimInterface() could not be confirmed via any available Android
+ * source or documentation, and general Unix precedent suggests closing a
+ * file descriptor from another thread does not reliably interrupt a
+ * blocking syscall already using it - so this is honestly best-effort
+ * cleanup, not a guaranteed unblock).
+ *
+ * A connect attempt that eventually completes after already having timed
+ * out (CONNECT_TIMEOUT already rejected the Promise via
+ * [UsbPromiseSettleOnce]) needs no special-casing to discard cleanly: the
+ * timeout path already released this attempt's own [ReservationToken] (see
+ * [UsbSerialSessionRegistry.releaseReservation]), so completeOpen()'s own
+ * atomic acceptance step (steps 12-14 below) finds its token superseded and
+ * takes the existing RESERVATION_SUPERSEDED path, closing the never-
+ * published session - the same mechanism that already handled a stale,
+ * superseded attempt before this pass, unchanged.
  *
  * Pass 5.1 corrective note (PASS5.1-AUDIT-1 / PASS5.1-AUDIT-2): step 4's
  * reservation now yields a [ReservationToken] unique to this one attempt,
@@ -163,15 +198,17 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     ).also { it.start() }
 
   /**
-   * The one owned, lifecycle-scoped background thread for every blocking
-   * USB I/O operation this module performs - both the open/configure work
-   * that follows a permission result and a detached device's stale-session
-   * close() - so neither ever runs on BroadcastReceiver.onReceive's calling
-   * thread (the Android main thread, whenever permission was not already
-   * granted - see completeOpen's own note). See UsbIoExecutor's class-level
-   * note for why one shared single-thread executor is used for both, rather
-   * than two separate executors, and for its Boolean submit() contract.
-   * Shut down in [invalidate].
+   * The one owned, lifecycle-scoped background thread for a detached
+   * device's stale-session close() (see [handleDeviceDetached]) and for
+   * every session drained at teardown (see [invalidate]) - so neither ever
+   * runs on BroadcastReceiver.onReceive's calling thread (the Android main
+   * thread). See UsbIoExecutor's class-level note for its Boolean submit()
+   * contract. Shut down in [invalidate].
+   *
+   * PASS5.4-CONNECT-TIMEOUT: no longer used for the open/configure work that
+   * follows a permission result - see the class-level Pass 5.4 note for why
+   * that was moved onto its own dedicated per-attempt thread instead of this
+   * shared one.
    */
   private val ioExecutor = UsbIoExecutor()
 
@@ -254,14 +291,76 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
             "A session is already open (or opening) for device $deviceId.",
           )
 
-      // 5. Request/confirm permission; steps 6-13 continue in completeOpen(),
-      // always on ioExecutor's background thread regardless of which thread
-      // this callback itself fires on (see the class-level note above).
-      permissionRequester.requestPermission(device) { granted, failureMessage ->
-        ioExecutor.submit {
-          completeOpen(identity, reservation, port, parsedConfig, granted, failureMessage, promise)
-        }
-      }
+      // 5. Request/confirm permission, then continue steps 6-16 in
+      // completeOpen() - all as one synchronous [work] block on its own
+      // dedicated per-attempt thread, bounded overall to
+      // CONNECT_TIMEOUT_MILLIS (see the class-level Pass 5.4 note and
+      // runOnDedicatedThreadWithTimeout's own note). [awaitPermissionResult]
+      // bridges requestPermission()'s own asynchronous callback back onto
+      // this one thread via a CountDownLatch, so the permission wait and the
+      // native open/configure sequence share a single overall bound instead
+      // of each needing their own.
+      val settle = UsbPromiseSettleOnce(promise)
+      runOnDedicatedThreadWithTimeout(
+        threadName = "UsbSerialOpen-$deviceId",
+        timeoutMillis = CONNECT_TIMEOUT_MILLIS,
+        work = {
+          val permissionResult = awaitPermissionResult(device)
+          completeOpen(
+            identity,
+            reservation,
+            port,
+            parsedConfig,
+            permissionResult.granted,
+            permissionResult.failureMessage,
+            settle,
+          )
+        },
+        onSettle = { outcome ->
+          when (outcome) {
+            is UsbAttemptOutcome.Completed ->
+              outcome.result.exceptionOrNull()?.let { error ->
+                // completeOpen() catches every exception it can throw and
+                // always settles `settle` itself - this branch should be
+                // unreachable in practice, but is still handled defensively
+                // rather than silently leaving the Promise unsettled if it
+                // ever is.
+                sessionRegistry.releaseReservation(identity.deviceId, reservation)
+                // Result intentionally ignored - this path never reaches the
+                // point where a session could have been created, so there is
+                // no resource to clean up on a loss (see UsbPromiseSettleOnce's
+                // own note, PASS5.4-AUDIT-1).
+                settle.reject(
+                  UsbTransportException(
+                    "OPEN_FAILED",
+                    error.message ?: "Unexpected failure while opening device $deviceId.",
+                  ),
+                )
+              }
+            UsbAttemptOutcome.TimedOut -> {
+              // Best-effort only: this frees the reservation so a fresh
+              // connect attempt (or a detach) can proceed immediately - it
+              // does not, and cannot, stop the abandoned worker thread's own
+              // native call if it is genuinely stuck (see the class-level
+              // Pass 5.4 note on why that thread is simply abandoned, never
+              // interrupted or force-stopped).
+              sessionRegistry.releaseReservation(identity.deviceId, reservation)
+              // Result intentionally ignored - this path itself never creates
+              // a session, so there is nothing here to clean up on a loss. If
+              // the abandoned worker thread later DOES complete and insert a
+              // session, completeOpen()'s own ACCEPTED branch is the one that
+              // checks whether ITS settle.resolve() lost this exact race and
+              // cleans that session up (see PASS5.4-AUDIT-1's note there).
+              settle.reject(
+                UsbTransportException(
+                  "CONNECT_TIMEOUT",
+                  "Timed out opening device $deviceId after ${CONNECT_TIMEOUT_MILLIS}ms.",
+                ),
+              )
+            }
+          }
+        },
+      )
     } catch (error: UsbTransportException) {
       promise.rejectTransportError(error)
     } catch (error: Exception) {
@@ -275,6 +374,35 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   }
 
   /**
+   * Bridges UsbPermissionRequester.requestPermission()'s own asynchronous
+   * callback - which may fire synchronously (permission already granted) or
+   * later from a different thread entirely (a real dialog shown, its result
+   * delivered via BroadcastReceiver.onReceive() on the Android main thread) -
+   * back onto this one calling thread, so it can be awaited as a single
+   * synchronous step inside [openDevice]'s `work` block.
+   *
+   * Deliberately has no timeout of its own: the overall
+   * [runOnDedicatedThreadWithTimeout] bound covers however long this wait
+   * (plus the native open/configure sequence that follows it) takes as one
+   * combined budget - see the class-level Pass 5.4 note on why one shared
+   * bound, rather than a separate one here, was chosen. `outcome`'s write
+   * (from whichever thread calls onResult) happens-before this method's own
+   * read of it once [latch] .await() returns, per CountDownLatch's own
+   * documented memory-visibility guarantee - no additional synchronization
+   * is needed for that single handoff.
+   */
+  private fun awaitPermissionResult(device: UsbDevice): PermissionOutcome {
+    val latch = CountDownLatch(1)
+    var outcome = PermissionOutcome(granted = false, failureMessage = "Permission result never arrived.")
+    permissionRequester.requestPermission(device) { granted, failureMessage ->
+      outcome = PermissionOutcome(granted, failureMessage)
+      latch.countDown()
+    }
+    latch.await()
+    return outcome
+  }
+
+  /**
    * Runs after the (possibly asynchronous) permission result is known. This
    * attempt's own [reservation] token is already held and must be released
    * - using that exact token, never a bare deviceId - on every exit path
@@ -284,6 +412,11 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * attempt has since reserved this deviceId again, every release/insert
    * call below simply becomes a harmless no-op instead of disturbing that
    * newer attempt (see PASS5.1-AUDIT-1's fix in UsbSerialSessionRegistry).
+   *
+   * PASS5.4-CONNECT-TIMEOUT: [promise] is now settled only through [settle],
+   * never directly - see [UsbPromiseSettleOnce]'s own note for why this
+   * attempt's Promise can otherwise be settled twice (once from here, once
+   * from the connect-timeout watchdog).
    */
   private fun completeOpen(
     identity: UsbDeviceIdentity,
@@ -292,7 +425,7 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     parsedConfig: ParsedSerialConfiguration,
     granted: Boolean,
     failureMessage: String?,
-    promise: Promise,
+    settle: UsbPromiseSettleOnce,
   ) {
     // The module was torn down while this permission request was pending.
     // invalidate() already drained the registry (including this reservation
@@ -304,12 +437,17 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
 
     if (failureMessage != null) {
       sessionRegistry.releaseReservation(identity.deviceId, reservation)
-      promise.rejectTransportError(UsbTransportException("PERMISSION_REQUEST_FAILED", failureMessage))
+      // Result intentionally ignored - this path has no resource to clean up
+      // on a loss: no session exists yet at this point (see
+      // UsbPromiseSettleOnce's own note, PASS5.4-AUDIT-1).
+      settle.reject(UsbTransportException("PERMISSION_REQUEST_FAILED", failureMessage))
       return
     }
     if (!granted) {
       sessionRegistry.releaseReservation(identity.deviceId, reservation)
-      promise.rejectTransportError(UsbTransportException("PERMISSION_DENIED", "Permission denied for device ${identity.deviceId}."))
+      // Result intentionally ignored - same reasoning as above: no session
+      // exists yet, so there is nothing to clean up on a loss.
+      settle.reject(UsbTransportException("PERMISSION_DENIED", "Permission denied for device ${identity.deviceId}."))
       return
     }
 
@@ -386,8 +524,40 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
       // owns this deviceId. UsbSerialSession.close() is the single owner of
       // releasing the port and connection - no cleanup logic is duplicated
       // here.
+      //
+      // PASS5.4-AUDIT-1 correction: ACCEPTED alone is no longer guaranteed to
+      // mean "JS will learn this sessionId" - insert() succeeding (this
+      // session is genuinely, correctly in sessionRegistry) and
+      // settle.resolve() winning its own separate race against a concurrent
+      // settle.reject(CONNECT_TIMEOUT) are two independent races with no
+      // ordering tying them together (see the confirmed scenario in
+      // UsbPromiseSettleOnce's own note). If resolve() loses, this session is
+      // orphaned - correctly inserted, but with no sessionId JS was ever
+      // told - and must be cleaned up here, by sessionId (never deviceId, a
+      // newer attempt may already have replaced this deviceId's session by
+      // now) and only if this exact removal call actually finds it (a null
+      // result means a concurrent physical detach already claimed and likely
+      // already closed it - closing again would double-close).
       when (outcome) {
-        OpenCompletionOutcome.ACCEPTED -> promise.resolve(sessionId)
+        OpenCompletionOutcome.ACCEPTED -> {
+          val settledHere = settle.resolve(sessionId)
+          if (!settledHere) {
+            val orphaned = sessionRegistry.remove(sessionId)
+            if (orphaned != null) {
+              try {
+                orphaned.close()
+              } catch (_: Exception) {
+                // Best-effort - there is no live Promise left to report this
+                // failure to, and JS was never told this sessionId existed
+                // either way.
+              }
+            }
+            // else: nothing removed - a concurrent handleDeviceDetached()
+            // (matched by deviceId, not sessionId) already claimed and
+            // presumably already closed this exact session. Deliberately not
+            // calling close() again here - see this branch's own note above.
+          }
+        }
         OpenCompletionOutcome.MODULE_INVALIDATED -> {
           try {
             session.close()
@@ -404,7 +574,10 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
             // whatever now owns this deviceId's reservation must be left
             // untouched either way.
           }
-          promise.rejectTransportError(
+          // Result intentionally ignored - this session was never inserted
+          // (insert() itself returned false), so there is nothing further to
+          // clean up regardless of whether this reject() wins its race.
+          settle.reject(
             UsbTransportException(
               "DEVICE_CHANGED_DURING_OPEN",
               "Device ${identity.deviceId} was reused by a newer connection attempt while this one was still opening.",
@@ -414,10 +587,15 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
       }
     } catch (error: UsbTransportException) {
       sessionRegistry.releaseReservation(identity.deviceId, reservation)
-      promise.rejectTransportError(error)
+      // Result intentionally ignored - every throw site above this catch
+      // runs strictly before a session is created (session creation and
+      // insertion happen together, with no throwing code in between), so
+      // there is never a session here to clean up on a loss.
+      settle.reject(error)
     } catch (error: Exception) {
       sessionRegistry.releaseReservation(identity.deviceId, reservation)
-      promise.rejectTransportError(
+      // Result intentionally ignored - same reasoning as the catch above.
+      settle.reject(
         UsbTransportException("OPEN_FAILED", error.message ?: "Failed to open device ${identity.deviceId}."),
       )
     }
@@ -963,6 +1141,9 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
  */
 private enum class OpenCompletionOutcome { ACCEPTED, MODULE_INVALIDATED, RESERVATION_SUPERSEDED }
 
+/** [UsbSerialTransportModule.awaitPermissionResult]'s single-value handoff result. */
+private data class PermissionOutcome(val granted: Boolean, val failureMessage: String?)
+
 /**
  * The outcome of one startReading() attempt (see
  * [UsbSerialTransportModule.attemptStartReading]/[UsbSerialTransportModule.settleStartReading]).
@@ -1042,6 +1223,27 @@ private const val RX_RESTART_WAIT_MILLIS = (RX_READ_TIMEOUT_MILLIS + 100).toLong
  */
 private const val TX_WRITE_TIMEOUT_MILLIS = 1000
 
+/**
+ * The single overall bound (Pass 5.4, PASS5.4-CONNECT-TIMEOUT) covering an
+ * entire connect attempt from the moment permission is requested through the
+ * end of the native open/port-open/setParameters/setFlowControl sequence -
+ * see [UsbSerialTransportModule.openDevice]'s own note and the class-level
+ * Pass 5.4 note for why this was added (a confirmed real-hardware hang with
+ * no existing bound at all).
+ *
+ * This one bound necessarily also counts ordinary human interaction time
+ * with the real permission dialog against it - there is no way from here to
+ * tell "waiting on a person to tap a dialog" apart from "stuck in a hung
+ * native call" (see [UsbSerialTransportModule.awaitPermissionResult]'s own
+ * note on why it has no separate bound of its own). 15 seconds is chosen to
+ * make a spurious timeout during normal, attentive dialog interaction rare,
+ * while still bounding a genuinely stuck attempt to a wait a real user will
+ * actually tolerate rather than assume the app has frozen. No confirmed
+ * real-world UX requirement pins this number down more precisely yet - this
+ * is a considered starting point, not a measured one.
+ */
+private const val CONNECT_TIMEOUT_MILLIS = 15_000L
+
 private fun closeQuietly(port: UsbSerialPort) {
   try {
     port.close()
@@ -1056,7 +1258,7 @@ private fun closeQuietly(connection: UsbDeviceConnection) {
   }
 }
 
-private fun Promise.rejectTransportError(error: UsbTransportException) {
+internal fun Promise.rejectTransportError(error: UsbTransportException) {
   val field = error.field
   val message = error.message ?: "USB transport operation failed."
   if (field != null) {

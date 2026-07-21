@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {NativeModules, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 
 import {colors, radii, spacing, typography} from '../theme';
 import type {TransportError, UsbSerialTransportClient} from '../../platforms/react-native/transport';
@@ -11,25 +11,6 @@ import {
 } from './usbSerialDebugPanelBytes';
 
 /**
- * TEMPORARY DEBUG SCAFFOLDING (Pass 5.3, PASS5.3-DEBUG-LOGCAT) - a plain
- * (non-TurboModule) NativeModule registered by UsbAppLogCapturePackage.kt,
- * entirely separate from the real UsbSerialTransport TurboModule/contract.
- * Only ever captures THIS app's own process logcat output (see
- * UsbAppLogCaptureModule.kt's own class-level note for exactly why this
- * needs no android.permission.READ_LOGS, and for the Android 13+ consent-
- * dialog caveat found during that same investigation). Accessed via the
- * old-style NativeModules registry, not TurboModuleRegistry, since it is
- * not a Codegen'd TurboModule.
- */
-async function captureAppLog(): Promise<string> {
-  const nativeModule = NativeModules.UsbAppLogCapture as {captureAppLog?: () => Promise<string>} | undefined;
-  if (!nativeModule?.captureAppLog) {
-    throw new Error('UsbAppLogCapture native module is not available on this build.');
-  }
-  return nativeModule.captureAppLog();
-}
-
-/**
  * TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - NOT a real app screen, NOT part
  * of the final design. Exists solely so the RX/TX real-hardware manual test
  * plan can actually be executed: start/stop the receive loop, send known or
@@ -39,11 +20,15 @@ async function captureAppLog(): Promise<string> {
  * Calls ONLY the existing public UsbSerialTransportClient methods
  * (startReading/stopReading/writeBytes/onDataReceived/onError) exactly as
  * they already exist - this file does not touch, wrap, or add anything to
- * the transport layer (Kotlin or TS) itself. The one exception is the
- * separate, dedicated UsbAppLogCapture native module (PASS5.3-DEBUG-LOGCAT,
- * see this file's own top-level captureAppLog() note) - a standalone debug
- * module with no connection to the transport contract at all, added solely
- * for in-app logcat capture during real-hardware debugging.
+ * the transport layer (Kotlin or TS) itself.
+ *
+ * PASS5.4: the standalone "Capture App Log" feature (PASS5.3-DEBUG-LOGCAT)
+ * that used to live at the bottom of this same panel has moved to its own
+ * UsbAppLogCapturePanel.tsx, rendered unconditionally in
+ * UsbConnectionScreen.tsx - it needs neither a session nor a connected
+ * client, and gating it behind isConnected made it unreachable exactly when
+ * a stuck connect attempt makes it most needed. This panel keeps only the
+ * RX/TX manual test controls, which do genuinely require an open session.
  *
  * Delete this file (and its one integration point in
  * UsbConnectionScreen.tsx, clearly marked there the same way) once real
@@ -82,11 +67,6 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
   const [reading, setReading] = useState(false);
   const [readBusy, setReadBusy] = useState(false);
   const [byteInput, setByteInput] = useState('1,2,3,4,5');
-  // null = hidden. Toggling to hidden always clears this (rather than just
-  // hiding a stale capture) so the next "Capture App Log" press always
-  // re-captures fresh output, per this feature's own requirement.
-  const [appLog, setAppLog] = useState<string | null>(null);
-  const [appLogCapturing, setAppLogCapturing] = useState(false);
   const mountedRef = useRef(true);
   const nextIdRef = useRef(1);
 
@@ -209,35 +189,6 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
 
   const handleClearLog = useCallback(() => setEntries([]), []);
 
-  // Toggles between capture/hide. Hiding always clears appLog to null (not
-  // just visually collapsing a stale capture), so pressing "Capture App
-  // Log" again after hiding always re-captures fresh output, never re-shows
-  // an old one - Ahmed will want to repeat this across multiple attempts.
-  const handleToggleAppLog = useCallback(async () => {
-    if (appLog !== null) {
-      setAppLog(null);
-      return;
-    }
-    setAppLogCapturing(true);
-    try {
-      const captured = await captureAppLog();
-      if (!mountedRef.current) {
-        return;
-      }
-      setAppLog(captured.length > 0 ? captured : '(empty capture - no log lines were produced for this process)');
-    } catch (error) {
-      if (!mountedRef.current) {
-        return;
-      }
-      const message = error instanceof Error ? error.message : String(error);
-      setAppLog(`Failed to capture app log: ${message}`);
-    } finally {
-      if (mountedRef.current) {
-        setAppLogCapturing(false);
-      }
-    }
-  }, [appLog]);
-
   const logText = entries.map(entry => `[${formatDebugTimestamp(entry.timestamp)}] ${entry.text}`).join('\n');
 
   return (
@@ -307,33 +258,6 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
           </Text>
         </ScrollView>
       )}
-
-      {/* TEMPORARY DEBUG SCAFFOLDING (Pass 5.3, PASS5.3-DEBUG-LOGCAT) - a
-          separate block from the RX/TX debug log above, deliberately not
-          mixed with it (this captures raw app-process logcat text, not
-          RX/TX events). See UsbAppLogCaptureModule.kt's own note for what
-          this can and cannot read, and the Android 13+ caveat found during
-          this same investigation. */}
-      <View style={styles.logHeaderRow}>
-        <Text style={styles.sectionTitle}>App Log Capture (own process, no adb needed)</Text>
-        <Pressable
-          testID="debug-toggle-app-log"
-          disabled={appLogCapturing}
-          onPress={handleToggleAppLog}
-          style={[styles.button, appLogCapturing && styles.buttonDisabled]}>
-          <Text style={styles.buttonText}>
-            {appLogCapturing ? 'Capturing...' : appLog !== null ? 'Hide Log' : 'Capture App Log'}
-          </Text>
-        </Pressable>
-      </View>
-
-      {appLog !== null ? (
-        <ScrollView style={styles.log} nestedScrollEnabled>
-          <Text selectable style={styles.logText}>
-            {appLog}
-          </Text>
-        </ScrollView>
-      ) : null}
     </View>
   );
 }
