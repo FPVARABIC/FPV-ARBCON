@@ -113,6 +113,33 @@ class UsbSerialReadRegistryTest {
     assertNotEquals(attempt.token, (restart as UsbSerialReadRegistry.StartAttempt.Started).token)
   }
 
+  // PASS5.7-AUDIT: proves the registry-cleanup half of the fix for a
+  // confirmed gap - if startReceiveWorker() throws before the real worker
+  // thread's own body (and therefore its own finally block) ever runs,
+  // nothing else would ever call confirmRetired() for that Started attempt.
+  // attemptStartReading()'s own catch block now calls confirmRetired()
+  // directly, itself, in exactly this situation - a still-active entry that
+  // was never explicitly retire()'d first (unlike every other
+  // confirmRetired() test above, which all go through a normal retire() ->
+  // confirmRetired() worker-exit sequence). This test proves that direct
+  // call correctly releases the entry regardless, so a session is never
+  // left permanently reporting AlreadyActive/Retiring after a failed start.
+  @Test
+  fun `confirmRetired releases a Started entry whose worker never actually ran, freeing the session for a fresh start`() {
+    val registry = UsbSerialReadRegistry()
+    val attempt = registry.start("session-1") as UsbSerialReadRegistry.StartAttempt.Started
+
+    // Deliberately no registry.retire("session-1") call here - the entry is
+    // still active=true, exactly as it would be if startReceiveWorker()
+    // threw immediately after readRegistry.start() succeeded.
+    registry.confirmRetired("session-1", attempt.handle)
+
+    assertTrue(
+      "a fresh startReading() attempt for the same session must succeed, not report AlreadyActive/Retiring forever",
+      registry.start("session-1") is UsbSerialReadRegistry.StartAttempt.Started,
+    )
+  }
+
   @Test
   fun `confirmRetired unblocks the handle even if it never removed anything`() {
     val registry = UsbSerialReadRegistry()

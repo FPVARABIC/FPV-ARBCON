@@ -728,23 +728,61 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * another attempt to have raced in during the wait) is treated as a
    * restart timeout rather than waiting again, keeping this method's own
    * worst-case latency bounded to one [RX_RESTART_WAIT_MILLIS] window.
+   *
+   * Pass 5.7 corrective note (PASS5.7-AUDIT): a Pass-6-prep audit found this
+   * method had no top-level exception safety net, unlike every other public
+   * method in this class (openDevice()/closeSession()/writeBytes() all
+   * guarantee their Promise settles even on a genuinely unexpected
+   * exception) - an uncaught exception on this method's dedicated thread
+   * would previously have gone to the JVM's default
+   * UncaughtExceptionHandler and left [promise] permanently unsettled, with
+   * no live trigger identified but no defense either. Now wrapped in a
+   * catch-all that rejects with NATIVE_OPERATION_FAILED - see its own note
+   * below - and [attemptStartReading]'s own `Started` branch additionally
+   * releases any readRegistry entry it just created if starting the real
+   * worker thread itself fails, so a failure here can never leave
+   * [sessionId] permanently stuck reporting RX_ALREADY_ACTIVE/Retiring for
+   * every future startReading() attempt either.
    */
   private fun performStartReading(sessionId: String, promise: Promise) {
-    when (val firstAttempt = attemptStartReading(sessionId)) {
-      is StartReadingAttemptOutcome.NeedsRetirementWait -> {
-        val finished = firstAttempt.handle.awaitDone(RX_RESTART_WAIT_MILLIS)
-        val secondAttempt =
-          if (!finished) {
-            StartReadingAttemptOutcome.RestartTimedOut
-          } else {
-            when (val retryAttempt = attemptStartReading(sessionId)) {
-              is StartReadingAttemptOutcome.NeedsRetirementWait -> StartReadingAttemptOutcome.RestartTimedOut
-              else -> retryAttempt
+    try {
+      when (val firstAttempt = attemptStartReading(sessionId)) {
+        is StartReadingAttemptOutcome.NeedsRetirementWait -> {
+          val finished = firstAttempt.handle.awaitDone(RX_RESTART_WAIT_MILLIS)
+          val secondAttempt =
+            if (!finished) {
+              StartReadingAttemptOutcome.RestartTimedOut
+            } else {
+              when (val retryAttempt = attemptStartReading(sessionId)) {
+                is StartReadingAttemptOutcome.NeedsRetirementWait -> StartReadingAttemptOutcome.RestartTimedOut
+                else -> retryAttempt
+              }
             }
-          }
-        settleStartReading(sessionId, secondAttempt, promise)
+          settleStartReading(sessionId, secondAttempt, promise)
+        }
+        else -> settleStartReading(sessionId, firstAttempt, promise)
       }
-      else -> settleStartReading(sessionId, firstAttempt, promise)
+    } catch (error: Exception) {
+      // PASS5.7-AUDIT: last-resort safety net only, mirroring openDevice()'s
+      // own outer catch relative to completeOpen()'s specific error
+      // handling - every NAMED StartReadingAttemptOutcome is already
+      // exhaustively handled by settleStartReading() above (including the
+      // deliberate `error(...)` assertion for the structurally-unreachable
+      // NeedsRetirementWait case, which this catch now also converts into a
+      // real rejection instead of a silent thread death). This exists so
+      // this method - unlike before this pass - can never leave [promise]
+      // permanently unsettled no matter what unexpected exception occurs
+      // anywhere in this call graph, matching every other public method in
+      // this class. attemptStartReading()'s own Started branch already
+      // releases any readRegistry entry it created before rethrowing here -
+      // see its own note - so this catch only needs to settle the Promise,
+      // never to repeat that registry cleanup itself.
+      promise.rejectTransportError(
+        UsbTransportException(
+          "NATIVE_OPERATION_FAILED",
+          error.message ?: "Unexpected failure while starting the receive loop for session $sessionId.",
+        ),
+      )
     }
   }
 
@@ -767,8 +805,26 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
         } else {
           when (val attempt = readRegistry.start(sessionId)) {
             is UsbSerialReadRegistry.StartAttempt.Started -> {
-              startReceiveWorker(sessionId, attempt.token, attempt.handle, session)
-              StartReadingAttemptOutcome.Started
+              try {
+                startReceiveWorker(sessionId, attempt.token, attempt.handle, session)
+                StartReadingAttemptOutcome.Started
+              } catch (error: Exception) {
+                // PASS5.7-AUDIT: readRegistry.start() above already inserted
+                // an "active" entry for this attempt before
+                // startReceiveWorker() ever ran. If that call throws before
+                // the real worker thread's own body begins - and therefore
+                // before its own finally block could ever call
+                // confirmRetired() - this exact sessionId would otherwise
+                // stay permanently "active": every future startReading() for
+                // it would see AlreadyActive/Retiring forever, a registry
+                // leak independent of (and in addition to) the Promise
+                // itself never settling. Release it here, ourselves - this
+                // is the only code that still has this exact handle in
+                // scope - then rethrow so performStartReading()'s own outer
+                // catch (see its note) settles the Promise.
+                readRegistry.confirmRetired(sessionId, attempt.handle)
+                throw error
+              }
             }
             UsbSerialReadRegistry.StartAttempt.AlreadyActive -> StartReadingAttemptOutcome.AlreadyActive
             is UsbSerialReadRegistry.StartAttempt.Retiring ->
