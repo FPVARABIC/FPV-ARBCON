@@ -20,6 +20,16 @@ export type {
   MspStreamParserOptions,
   MspIngestEvent,
   MspIngestResult,
+  MspTransport,
+  MspTransportError,
+  MspTransportSessionDetachedEvent,
+  MspTransportUnsubscribe,
+  MspClientErrorCode,
+  MspClientState,
+  MspRequestPhase,
+  MspRequestOptions,
+  MspClientOptions,
+  MspClientDiagnosticEvent,
 } from './protocol';
 export {
   MSP_V2_FRAME_ID,
@@ -33,4 +43,9 @@ export {
   crc8DvbS2,
   encode,
   createMspStreamParser,
+  MSP_CLIENT_ERROR_CODES,
+  MspClient,
+  MspClientError,
+  MSP_CLIENT_MAX_PENDING_REQUESTS_DEFAULT,
+  MSP_RESPONSE_TIMEOUT_MILLIS,
 } from './protocol';

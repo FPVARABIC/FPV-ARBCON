@@ -22,3 +22,27 @@ export type { MspEncodeOptions } from './mspEncoder';
 
 export { createMspStreamParser } from './mspStreamParser';
 export type { MspStreamParser, MspStreamParserOptions, MspIngestEvent, MspIngestResult } from './mspStreamParser';
+
+export type {
+  MspTransport,
+  MspTransportError,
+  MspTransportSessionDetachedEvent,
+  MspTransportUnsubscribe,
+} from './mspTransport';
+
+export { MSP_CLIENT_ERROR_CODES } from './mspClientErrorCodes';
+export type { MspClientErrorCode } from './mspClientErrorCodes';
+
+export {
+  MspClient,
+  MspClientError,
+  MSP_CLIENT_MAX_PENDING_REQUESTS_DEFAULT,
+  MSP_RESPONSE_TIMEOUT_MILLIS,
+} from './mspClient';
+export type {
+  MspClientState,
+  MspRequestPhase,
+  MspRequestOptions,
+  MspClientOptions,
+  MspClientDiagnosticEvent,
+} from './mspClient';
