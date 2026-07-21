@@ -31,8 +31,19 @@ interface PendingWrite {
   reject: (error: MspTransportError) => void;
 }
 
+interface PendingRestart {
+  resolve: () => void;
+  reject: (reason: unknown) => void;
+}
+
 export class FakeMspTransport implements MspTransport {
   readonly writes: PendingWrite[] = [];
+  /** Pass 6.2b: pending restartReceiveLoop() calls, oldest first - same
+   * manual-control pattern as `writes` above. "Hang" behavior needs no
+   * separate method: simply never calling resolveNextRestart()/
+   * rejectNextRestart() for an entry leaves that call's Promise pending
+   * forever, exactly like an un-settled write. */
+  readonly restarts: PendingRestart[] = [];
 
   private dataListeners = new Set<(bytes: Uint8Array) => void>();
   private sessionDetachedListeners = new Set<(event: MspTransportSessionDetachedEvent) => void>();
@@ -81,5 +92,29 @@ export class FakeMspTransport implements MspTransport {
     for (const listener of this.sessionDetachedListeners) {
       listener({ sessionId });
     }
+  }
+
+  restartReceiveLoop(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.restarts.push({ resolve, reject });
+    });
+  }
+
+  /** Resolves the oldest not-yet-settled restartReceiveLoop() call. */
+  resolveNextRestart(): void {
+    const next = this.restarts.shift();
+    if (!next) {
+      throw new Error('FakeMspTransport.resolveNextRestart(): no pending restart.');
+    }
+    next.resolve();
+  }
+
+  /** Rejects the oldest not-yet-settled restartReceiveLoop() call. */
+  rejectNextRestart(reason: unknown = new Error('fake transport restart failure')): void {
+    const next = this.restarts.shift();
+    if (!next) {
+      throw new Error('FakeMspTransport.rejectNextRestart(): no pending restart.');
+    }
+    next.reject(reason);
   }
 }

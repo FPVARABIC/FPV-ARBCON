@@ -63,4 +63,32 @@ export interface MspTransport {
   onSessionDetached(
     callback: (event: MspTransportSessionDetachedEvent) => void,
   ): MspTransportUnsubscribe;
+
+  /**
+   * Pass 6.2b: a single, combined receive-loop recovery operation - stops
+   * the current RX loop, then starts it again. Deliberately ONE method
+   * rather than two separate stop/start calls: MspClient's recovery
+   * orchestration (mspClient.ts) calls this exactly once and never
+   * sequences stop/start itself - the ordering guarantee (stop fully
+   * completes before start begins) is this transport's own responsibility.
+   *
+   * The concrete React Native adapter (a later task, wrapping
+   * UsbSerialTransportClient.stopReading()/startReading() -
+   * src/platforms/react-native/transport) is expected to implement this by
+   * calling stopReading() (the underlying native module resolves that
+   * immediately and synchronously - see
+   * UsbSerialTransportModule.stopReading()) followed by startReading()
+   * (bounded to at most one RX_RESTART_WAIT_MILLIS wait for the previous
+   * attempt's worker thread to confirm its exit, with its own top-level
+   * exception-safety net guaranteeing the call always settles - see
+   * UsbSerialTransportModule.performStartReading()'s Pass 5.7 note).
+   * MspClient relies on that already-verified bound and deliberately adds
+   * no client-side timeout of its own for this call - see mspClient.ts's
+   * Pass 6.2b recovery orchestration doc comment for the full reasoning.
+   *
+   * Resolves once the receive loop is running again; rejects (the reason
+   * is not inspected further by MspClient - any rejection here is treated
+   * identically) if either half of the restart failed.
+   */
+  restartReceiveLoop(): Promise<void>;
 }

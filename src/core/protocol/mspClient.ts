@@ -1,12 +1,25 @@
 /**
  * MSP request/response engine with a "detect and latch" desynchronization
- * response - Pass 6.2a.
+ * response (Pass 6.2a) and automatic recovery orchestration (Pass 6.2b).
  *
- * This slice has NO recovery mechanism. On a write-outcome-unknown failure
- * or a response timeout, the client latches into DESYNCHRONIZED and stays
- * there for the rest of this instance's life - no stopReading/startReading,
- * no probing, no automatic path back to READY. Recovery is Pass 6.2b, built
- * on top of this once this slice is reviewed and approved.
+ * On a write-outcome-unknown failure or a response timeout, the client
+ * latches into DESYNCHRONIZED and, in the SAME synchronous call
+ * (triggerDesyncLatch() -> startRecovery()), begins recovery immediately:
+ * RESTARTING_READER (transport.restartReceiveLoop()) -> PROBING (one
+ * lightweight, read-only MSP request) -> READY on success, or
+ * RECOVERY_FAILED (terminal for this instance - a full reconnect or
+ * MspClient replacement is required, out of scope for this slice) on
+ * failure at either step. Because recovery starts synchronously from the
+ * same code path that sets DESYNCHRONIZED, that state is never externally
+ * observable as a distinct tick - see startRecovery()'s doc comment.
+ *
+ * Every recovery step is guarded by isCurrentRecoveryAttempt(epoch),
+ * checked immediately before each transition/action, not only after an
+ * await resolves - a second desync, a physical detach, or dispose() during
+ * an in-flight recovery attempt's async work silently retires that
+ * attempt's remaining continuations instead of racing them. See
+ * isCurrentRecoveryAttempt()'s own doc comment for the one interleaving
+ * this project's own review found unreachable under this design.
  *
  * Zero React/RN/Android dependency, same as every other file in
  * src/core/protocol - depends only on mspEncoder/mspStreamParser and the
@@ -42,7 +55,14 @@ export const MSP_CLIENT_MAX_PENDING_REQUESTS_DEFAULT = 32;
  */
 export const MSP_RESPONSE_TIMEOUT_MILLIS = 2000;
 
-export type MspClientState = 'READY' | 'DESYNCHRONIZED' | 'RECOVERY_FAILED' | 'DISCONNECTED' | 'CLOSING';
+export type MspClientState =
+  | 'READY'
+  | 'DESYNCHRONIZED'
+  | 'RESTARTING_READER'
+  | 'PROBING'
+  | 'RECOVERY_FAILED'
+  | 'DISCONNECTED'
+  | 'CLOSING';
 
 /**
  * Independent of MspClientState. Only meaningful while state === 'READY'
@@ -82,6 +102,7 @@ const MSP_CLIENT_ERROR_MESSAGES: Record<MspClientErrorCode, string> = {
   MSP_TRANSPORT_QUEUE_FULL: 'The transport write queue is full.',
   MSP_RECOVERY_REQUIRED: 'The MSP client is desynchronized and requires recovery before new requests can be sent.',
   MSP_ENCODE_FAILED: 'The request could not be encoded and was never sent to the flight controller.',
+  MSP_RECOVERING: 'The MSP client is automatically recovering from a communication desync; retry shortly.',
 };
 
 export class MspClientError extends Error {
@@ -99,6 +120,22 @@ export class MspClientError extends Error {
 function deriveProtocolVersion(wireFormat: MspWireFormat): MspProtocolVersion {
   return wireFormat === 'v1' ? 'v1' : 'v2';
 }
+
+/** Pass 6.2b recovery probe: a small, fixed, read-only MSP command,
+ * deliberately different from whatever command caused the original
+ * desync - independently verified against Betaflight's own
+ * src/main/msp/msp_protocol.h (MSP_API_VERSION = 1), not assumed from
+ * memory, per this project's standing "verify, don't assume" convention. */
+const MSP_PROBE_COMMAND = 1; // MSP_API_VERSION
+const MSP_PROBE_PAYLOAD = new Uint8Array(0);
+const MSP_PROBE_WIRE_FORMAT: MspWireFormat = 'v1';
+/** Reuses MSP_RESPONSE_TIMEOUT_MILLIS rather than a distinct constant: the
+ * probe is an ordinary, lightweight, zero-payload request through the
+ * exact same pipeline as any other - there is no justified reason to
+ * expect it to need a shorter or longer bound than a real request's own
+ * response timeout, so this pass does not introduce a second timeout knob
+ * with no distinct value to justify it. */
+const MSP_PROBE_TIMEOUT_MILLIS = MSP_RESPONSE_TIMEOUT_MILLIS;
 
 /**
  * Mirrors UsbPromiseSettleOnce's Boolean-return contract (Pass 5.4/5.7),
@@ -153,6 +190,13 @@ interface PendingRequest {
   flags?: number;
   responseTimeoutMs: number;
   settle: SettleOnce<MspFrame>;
+  /** Required, never defaulted (same "no silent default" convention as
+   * MspRequestOptions.wireFormat) - true only for the internal Pass 6.2b
+   * recovery probe built by sendProbe(), false for every real request()
+   * call. Threaded onto ActiveRequest and consulted at every failure exit
+   * in this request's lifecycle to skip classifyWriteFailure()/
+   * triggerDesyncLatch() for the probe - see sendProbe()'s doc comment. */
+  isProbe: boolean;
 }
 
 interface ActiveRequest {
@@ -162,6 +206,7 @@ interface ActiveRequest {
   responseTimeoutMs: number;
   settle: SettleOnce<MspFrame>;
   timer: ReturnType<typeof setTimeout> | undefined;
+  isProbe: boolean;
 }
 
 /** Classifies a writeBytes() rejection reason into this slice's exact error
@@ -386,6 +431,7 @@ export class MspClient {
         flags: options.flags,
         responseTimeoutMs: options.responseTimeoutMs ?? MSP_RESPONSE_TIMEOUT_MILLIS,
         settle,
+        isProbe: false,
       };
       this.queue.push(pending);
       this.pump();
@@ -397,6 +443,17 @@ export class MspClient {
       case 'READY':
         return undefined;
       case 'DESYNCHRONIZED':
+      case 'RESTARTING_READER':
+      case 'PROBING':
+        // DESYNCHRONIZED itself is never actually observable here in
+        // practice: triggerDesyncLatch() immediately, synchronously calls
+        // startRecovery(), which transitions to RESTARTING_READER before
+        // this method (or anything else) can ever run while state is
+        // still DESYNCHRONIZED. Kept as an explicit case anyway, for the
+        // same "defensive invariant, not relied on to be false" reason
+        // handleFrame()'s own already-unreachable branch is kept (see its
+        // comment) - not worth losing type-exhaustiveness over.
+        return 'MSP_RECOVERING';
       case 'RECOVERY_FAILED':
         return 'MSP_RECOVERY_REQUIRED';
       case 'DISCONNECTED':
@@ -455,6 +512,7 @@ export class MspClient {
       responseTimeoutMs: pending.responseTimeoutMs,
       settle: pending.settle,
       timer: undefined,
+      isProbe: pending.isProbe,
     };
     // Registered before the transport write is ever called - see request()'s
     // doc comment on the write-vs-response race this ordering exists for.
@@ -475,6 +533,19 @@ export class MspClient {
       // ambiguity classifyWriteFailure()'s own safe default already
       // handles, so this is classified identically: MSP_WRITE_OUTCOME_UNKNOWN,
       // freeing the slot and desynchronizing.
+      //
+      // Pass 6.2b: for the recovery probe (isProbe), desynchronizing here
+      // would be a forbidden re-entrant recovery cycle - see sendProbe()'s
+      // doc comment - so classifyWriteFailure()/triggerDesyncLatch() are
+      // skipped entirely and the probe's own settle.reject() callback (its
+      // own guarded RECOVERY_FAILED transition) is used instead.
+      if (active.isProbe) {
+        const won = active.settle.reject(new Error('MSP recovery probe: writeBytes() threw synchronously'));
+        if (won && this.active === active) {
+          this.active = undefined;
+        }
+        return;
+      }
       const won = active.settle.reject(new MspClientError('MSP_WRITE_OUTCOME_UNKNOWN'));
       if (won) {
         if (this.active === active) {
@@ -503,6 +574,18 @@ export class MspClient {
       return;
     }
 
+    if (active.isProbe) {
+      // Pass 6.2b: see startRequest()'s writeBytes() catch above for why
+      // classifyWriteFailure()/triggerDesyncLatch() must never run for the
+      // probe - its own settle.reject() callback does the guarded
+      // RECOVERY_FAILED transition instead.
+      const wonProbe = active.settle.reject(failureReason);
+      if (wonProbe && this.active === active) {
+        this.active = undefined;
+      }
+      return;
+    }
+
     const code = classifyWriteFailure(failureReason);
     const won = active.settle.reject(new MspClientError(code));
     if (!won) {
@@ -522,6 +605,16 @@ export class MspClient {
   }
 
   private onResponseTimeout(active: ActiveRequest): void {
+    if (active.isProbe) {
+      // Pass 6.2b: same isProbe branching as onWriteSettled() above - a
+      // probe response timeout must never call triggerDesyncLatch().
+      const wonProbe = active.settle.reject(new Error('MSP recovery probe: response timeout'));
+      if (wonProbe && this.active === active) {
+        this.active = undefined;
+      }
+      return;
+    }
+
     const won = active.settle.reject(new MspClientError('MSP_TIMEOUT'));
     if (!won) {
       return;
@@ -561,10 +654,25 @@ export class MspClient {
       clearTimeout(active.timer);
     }
 
-    const won =
-      frame.direction === 'error'
-        ? active.settle.reject(new MspClientError('MSP_REMOTE_ERROR', frame))
-        : active.settle.resolve(frame);
+    let won: boolean;
+    if (frame.direction === 'error' && active.isProbe) {
+      // Pass 6.2b correction: a correctly-matched '!' frame for the probe
+      // still proves the byte stream is genuinely resynchronized - the
+      // physical link is readable and correctly framed again, regardless
+      // of whether the FC's answer was itself a semantic error for
+      // MSP_PROBE_COMMAND. That is the actual recovery criterion ("is
+      // communication working again"), not "did this specific probe
+      // command succeed" - so this is probe SUCCESS, unlike a normal
+      // request's own MSP_REMOTE_ERROR rejection below (unaffected).
+      // MSP_TIMEOUT and a probe write failure remain probe FAILURE - see
+      // onResponseTimeout()/onWriteSettled()'s isProbe branches, both
+      // still routed through settle.reject() untouched by this change.
+      won = active.settle.resolve(frame);
+    } else if (frame.direction === 'error') {
+      won = active.settle.reject(new MspClientError('MSP_REMOTE_ERROR', frame));
+    } else {
+      won = active.settle.resolve(frame);
+    }
 
     if (!won) {
       // Not reachable given the `!active.settle.settled` check above (JS is
@@ -583,15 +691,171 @@ export class MspClient {
   private triggerDesyncLatch(): void {
     const rejectedQueue = this.queue.splice(0, this.queue.length);
     for (const pending of rejectedQueue) {
-      pending.settle.reject(new MspClientError('MSP_RECOVERY_REQUIRED'));
+      // MSP_RECOVERING, not MSP_RECOVERY_REQUIRED: per Pass 6.2b's updated
+      // acceptance table, MSP_RECOVERY_REQUIRED is now reserved for the
+      // terminal RECOVERY_FAILED state ("permanent, user action needed").
+      // At the moment this latch fires, recovery hasn't even started yet
+      // (startRecovery() runs at the end of this same method) - telling
+      // the caller "recovering, retry shortly" is the accurate signal.
+      pending.settle.reject(new MspClientError('MSP_RECOVERING'));
     }
     this.mspEpoch += 1;
     this.state = 'DESYNCHRONIZED';
+
+    // Recovery begins automatically and immediately, in this same
+    // synchronous call - see the class-level Pass 6.2b doc comment and
+    // startRecovery()'s own note on why DESYNCHRONIZED is never externally
+    // observable as a distinct tick.
+    this.startRecovery(this.mspEpoch);
+  }
+
+  /**
+   * Pass 6.2b: begins immediately, synchronously, from within
+   * triggerDesyncLatch() - the same tick DESYNCHRONIZED is set - so that
+   * state is never externally observable as a distinct tick from
+   * RESTARTING_READER. `epoch` is captured once by the caller
+   * (triggerDesyncLatch(), as `this.mspEpoch` immediately after
+   * incrementing it) and threaded through every subsequent step;
+   * isCurrentRecoveryAttempt(epoch) is checked before every transition
+   * below so a second desync, a physical detach, or dispose() that starts
+   * a newer attempt - or ends this instance entirely - silently retires
+   * this attempt's remaining async work instead of racing it.
+   */
+  private startRecovery(epoch: number): void {
+    if (!this.isCurrentRecoveryAttempt(epoch)) {
+      return;
+    }
+    this.state = 'RESTARTING_READER';
+
+    let restartPromise: Promise<void>;
+    try {
+      restartPromise = this.transport.restartReceiveLoop();
+    } catch {
+      // Same "external dependency call can throw synchronously" guard
+      // already applied to encode()/writeBytes() in the prior audit sweep
+      // - restartReceiveLoop() is documented (mspTransport.ts) to always
+      // return a Promise<void>, but a non-conforming transport throwing
+      // here must not go unhandled.
+      if (this.isCurrentRecoveryAttempt(epoch)) {
+        this.state = 'RECOVERY_FAILED';
+      }
+      return;
+    }
+
+    restartPromise.then(
+      () => {
+        if (!this.isCurrentRecoveryAttempt(epoch)) {
+          return;
+        }
+        this.sendProbe(epoch);
+      },
+      () => {
+        // Reason not inspected further - see mspTransport.ts's
+        // restartReceiveLoop() doc comment.
+        if (this.isCurrentRecoveryAttempt(epoch)) {
+          this.state = 'RECOVERY_FAILED';
+        }
+      },
+    );
+  }
+
+  /**
+   * Sends exactly one probe request as part of Pass 6.2b recovery, reusing
+   * startRequest()'s entire encode -> write -> (write-vs-response race) ->
+   * response-match pipeline verbatim - including both audit-sweep
+   * exception guards - by constructing an ordinary PendingRequest tagged
+   * `isProbe: true` and calling startRequest() directly. This deliberately
+   * bypasses pump()'s FIFO queue and READY-state gate: the probe is not a
+   * queued user request.
+   *
+   * Success is any correctly matched frame - RESPONSE-direction OR
+   * ERROR-direction - and transitions to READY via this method's own
+   * `settle` resolve callback below: a matched frame of either direction
+   * proves the byte stream is genuinely resynchronized (the link is
+   * readable and correctly framed again), which is the actual recovery
+   * criterion, not whether the FC's answer was itself a semantic success
+   * for MSP_PROBE_COMMAND specifically. See handleFrame()'s own isProbe
+   * branch for where this is decided. Only a write failure or a response
+   * timeout - genuinely nothing matched at all - end the probe as a
+   * failure, transitioning directly to RECOVERY_FAILED via the reject
+   * callback; neither goes through classifyWriteFailure()/
+   * triggerDesyncLatch() (see the isProbe branches in
+   * startRequest()/onWriteSettled()/onResponseTimeout()), since that would
+   * increment mspEpoch and re-enter DESYNCHRONIZED - a forbidden
+   * re-entrant recovery cycle.
+   */
+  private sendProbe(epoch: number): void {
+    if (!this.isCurrentRecoveryAttempt(epoch)) {
+      return;
+    }
+    this.state = 'PROBING';
+
+    const settle = new SettleOnce<MspFrame>(
+      () => {
+        if (this.isCurrentRecoveryAttempt(epoch)) {
+          this.state = 'READY';
+        }
+      },
+      () => {
+        if (this.isCurrentRecoveryAttempt(epoch)) {
+          this.state = 'RECOVERY_FAILED';
+        }
+      },
+    );
+
+    const pending: PendingRequest = {
+      command: MSP_PROBE_COMMAND,
+      payload: MSP_PROBE_PAYLOAD,
+      wireFormat: MSP_PROBE_WIRE_FORMAT,
+      responseTimeoutMs: MSP_PROBE_TIMEOUT_MILLIS,
+      settle,
+      isProbe: true,
+    };
+
+    this.startRequest(pending);
+  }
+
+  /**
+   * Guards every Pass 6.2b recovery transition/action, checked immediately
+   * before each one rather than only after an await resolves. `epoch` is
+   * the value `this.mspEpoch` held at the moment this specific recovery
+   * attempt began (captured once, in triggerDesyncLatch()); the attempt is
+   * still "current" only while nothing else has superseded it - no newer
+   * desync (this.mspEpoch has since changed) and no terminal transition
+   * that ends the instance outright (DISCONNECTED via physical detach, or
+   * CLOSING/DISCONNECTED via dispose()).
+   *
+   * This project's own review (Pass 6.2b) found exactly one interleaving
+   * this guard defends against that is NOT actually reachable under this
+   * implementation: a second desync firing while an earlier attempt's own
+   * async work (restartReceiveLoop() or the probe) is still outstanding.
+   * That can't happen here because only one MspClient-level "active
+   * request" slot ever exists, no normal (non-probe) request occupies it
+   * during RESTARTING_READER (this.active is undefined) or PROBING (the
+   * only active request is the probe, whose own failures are deliberately
+   * routed away from triggerDesyncLatch() - see sendProbe()'s doc
+   * comment), and RECOVERY_FAILED rejects every new request() outright.
+   * The guard is kept exactly as specified regardless - it is still
+   * exercised by, and correctly resolves, physical detach and dispose()
+   * racing a pending recovery step, and it costs nothing to keep for
+   * whatever a future pass (recovery retries, a different trigger source)
+   * might add.
+   */
+  private isCurrentRecoveryAttempt(epoch: number): boolean {
+    return this.state !== 'DISCONNECTED' && this.state !== 'CLOSING' && this.mspEpoch === epoch;
   }
 
   private handlePhysicalDetach(): void {
     const code: MspClientErrorCode = 'MSP_DEVICE_DETACHED';
     this.disconnectCause = code;
+    // Set BEFORE rejecting active/queued below (not after, as a naive
+    // ordering might do) - isCurrentRecoveryAttempt(), called synchronously
+    // from within a probe's own settle.reject() callback triggered by the
+    // active.settle.reject() call just below, must already see
+    // DISCONNECTED and abandon silently, rather than transiently (even if
+    // harmlessly, since nothing observes it in between) writing
+    // RECOVERY_FAILED only to have this method immediately overwrite it.
+    this.state = 'DISCONNECTED';
 
     const active = this.active;
     if (active !== undefined) {
@@ -606,10 +870,6 @@ export class MspClient {
     for (const pending of rejectedQueue) {
       pending.settle.reject(new MspClientError(code));
     }
-
-    // Hard override: unconditional, regardless of the state this instance
-    // was previously latched into (including DESYNCHRONIZED).
-    this.state = 'DISCONNECTED';
   }
 
   private emitDiagnostic(event: MspClientDiagnosticEvent): void {

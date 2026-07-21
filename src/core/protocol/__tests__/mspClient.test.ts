@@ -124,8 +124,8 @@ describe('MspClient - confirmed-not-sent transport rejections (no desync)', () =
   });
 });
 
-describe('MspClient - the desynchronization latch', () => {
-  it('WRITE_FAILED rejects the active request with MSP_WRITE_OUTCOME_UNKNOWN and latches: epoch increments, state becomes DESYNCHRONIZED, queued requests rejected with MSP_RECOVERY_REQUIRED', async () => {
+describe('MspClient - the desynchronization latch and automatic recovery kickoff', () => {
+  it('WRITE_FAILED rejects the active request with MSP_WRITE_OUTCOME_UNKNOWN, latches (epoch increments), queued requests rejected with MSP_RECOVERING, and recovery begins immediately (RESTARTING_READER, not a lingering DESYNCHRONIZED)', async () => {
     const { transport, client } = makeClient();
     const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
     const p2 = client.request(2, EMPTY, { wireFormat: 'v1' });
@@ -135,25 +135,30 @@ describe('MspClient - the desynchronization latch', () => {
     transport.rejectNextWrite('WRITE_FAILED');
 
     await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
-    await expect(p2).rejects.toMatchObject({ code: 'MSP_RECOVERY_REQUIRED' });
-    await expect(p3).rejects.toMatchObject({ code: 'MSP_RECOVERY_REQUIRED' });
-    expect(client.getState()).toBe('DESYNCHRONIZED');
+    await expect(p2).rejects.toMatchObject({ code: 'MSP_RECOVERING' });
+    await expect(p3).rejects.toMatchObject({ code: 'MSP_RECOVERING' });
     expect(client.getEpoch()).toBe(1);
+    // Recovery already kicked off synchronously - DESYNCHRONIZED is never
+    // externally observable as a distinct tick (see mspClient.ts's Pass
+    // 6.2b doc comment).
+    expect(client.getState()).toBe('RESTARTING_READER');
+    expect(transport.restarts).toHaveLength(1);
   });
 
-  it('an unrecognized transport rejection code is also treated as write-outcome-unknown (never inspected further) and latches', async () => {
+  it('an unrecognized transport rejection code is also treated as write-outcome-unknown (never inspected further) and latches into recovery', async () => {
     const { transport, client } = makeClient();
     const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
     transport.rejectNextWrite('SOME_UNRECOGNIZED_NATIVE_CODE');
     await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
-    expect(client.getState()).toBe('DESYNCHRONIZED');
+    expect(client.getState()).toBe('RESTARTING_READER');
+    expect(client.getEpoch()).toBe(1);
   });
 
   describe('response timeout (fake timers - no real sleep)', () => {
     beforeEach(() => jest.useFakeTimers());
     afterEach(() => jest.useRealTimers());
 
-    it('MSP_RESPONSE_TIMEOUT_MILLIS elapsing with no matching response rejects with MSP_TIMEOUT and latches identically to WRITE_FAILED', async () => {
+    it('MSP_RESPONSE_TIMEOUT_MILLIS elapsing with no matching response rejects with MSP_TIMEOUT and latches into recovery identically to WRITE_FAILED', async () => {
       const { transport, client } = makeClient();
       const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
       const p2 = client.request(2, EMPTY, { wireFormat: 'v1' });
@@ -165,8 +170,8 @@ describe('MspClient - the desynchronization latch', () => {
       jest.advanceTimersByTime(2000);
 
       await expect(p1).rejects.toMatchObject({ code: 'MSP_TIMEOUT' });
-      await expect(p2).rejects.toMatchObject({ code: 'MSP_RECOVERY_REQUIRED' });
-      expect(client.getState()).toBe('DESYNCHRONIZED');
+      await expect(p2).rejects.toMatchObject({ code: 'MSP_RECOVERING' });
+      expect(client.getState()).toBe('RESTARTING_READER');
       expect(client.getEpoch()).toBe(1);
     });
 
@@ -274,36 +279,68 @@ describe('MspClient - remote error frames and unsolicited frames', () => {
   });
 });
 
-describe('MspClient - DESYNCHRONIZED rejects everything, does not self-heal', () => {
-  it('every new request() call is rejected immediately with MSP_RECOVERY_REQUIRED, never enters the FIFO, across repeated calls', async () => {
+describe('MspClient - RECOVERY_FAILED rejects everything, terminal, does not self-heal', () => {
+  it('once recovery fails (restartReceiveLoop() rejects), every new request() call is rejected immediately with MSP_RECOVERY_REQUIRED, never enters the FIFO, across repeated calls', async () => {
     const { transport, client } = makeClient();
     const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
     transport.rejectNextWrite('WRITE_FAILED');
     await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
-    expect(client.getState()).toBe('DESYNCHRONIZED');
+    expect(client.getState()).toBe('RESTARTING_READER');
+
+    transport.rejectNextRestart();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('RECOVERY_FAILED');
 
     for (let i = 0; i < 5; i++) {
       const p = client.request(100 + i, EMPTY, { wireFormat: 'v1' });
       await expect(p).rejects.toMatchObject({ code: 'MSP_RECOVERY_REQUIRED' });
       expect(transport.writes).toHaveLength(0); // never reached the transport
-      expect(client.getState()).toBe('DESYNCHRONIZED'); // does not self-heal
+      expect(client.getState()).toBe('RECOVERY_FAILED'); // does not self-heal
     }
   });
 });
 
 describe('MspClient - physical disconnect always wins', () => {
-  it('a physical detach while DESYNCHRONIZED transitions to DISCONNECTED (not a no-op, not RECOVERY_FAILED)', async () => {
+  it('a physical detach while RESTARTING_READER transitions to DISCONNECTED (not a no-op, not RECOVERY_FAILED), the recovery attempt is abandoned silently, and a late restartReceiveLoop() resolution afterward does nothing', async () => {
     const { transport, client } = makeClient();
     const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
     transport.rejectNextWrite('WRITE_FAILED');
     await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
-    expect(client.getState()).toBe('DESYNCHRONIZED');
+    expect(client.getState()).toBe('RESTARTING_READER');
 
     transport.emitSessionDetached(SESSION_ID);
     expect(client.getState()).toBe('DISCONNECTED');
 
+    // The stale attempt's restartReceiveLoop() call resolving late must be
+    // silently ignored (isCurrentRecoveryAttempt() guard) - no crash, no
+    // state change, no resurrection out of DISCONNECTED.
+    expect(() => transport.resolveNextRestart()).not.toThrow();
+    expect(client.getState()).toBe('DISCONNECTED');
+
     const p2 = client.request(2, EMPTY, { wireFormat: 'v1' });
     await expect(p2).rejects.toMatchObject({ code: 'MSP_DEVICE_DETACHED' });
+  });
+
+  it('a physical detach while PROBING transitions to DISCONNECTED, the recovery attempt is abandoned silently, and a late probe response afterward does not resurrect the client', async () => {
+    const { transport, client } = makeClient();
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getState()).toBe('RESTARTING_READER');
+
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('PROBING');
+    expect(transport.writes).toHaveLength(1); // the probe's own write
+
+    transport.emitSessionDetached(SESSION_ID);
+    expect(client.getState()).toBe('DISCONNECTED');
+
+    // A late, correctly-matched probe response arriving afterward must be
+    // silently ignored, not resurrect the client out of DISCONNECTED.
+    // MSP_PROBE_COMMAND === 1 (MSP_API_VERSION) - see mspClient.ts.
+    expect(() => transport.emitData(responseFrame(1))).not.toThrow();
+    expect(client.getState()).toBe('DISCONNECTED');
   });
 
   it('a physical detach while READY with an active request in flight transitions to DISCONNECTED and rejects active + pending requests with MSP_DEVICE_DETACHED', async () => {
@@ -376,12 +413,13 @@ describe('MspClient - getState() observability', () => {
     await expect(p1).rejects.toMatchObject({ code: 'MSP_DEVICE_DETACHED' });
   });
 
-  it('reflects the desync latch as soon as its triggering promise settles, with no further delay after that point', async () => {
+  it('reflects the desync latch AND the automatic recovery kickoff as soon as the triggering promise settles, with no further delay after that point', async () => {
     const { transport, client } = makeClient();
     const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
     transport.rejectNextWrite('WRITE_FAILED');
     await p1.catch(() => undefined);
-    expect(client.getState()).toBe('DESYNCHRONIZED');
+    expect(client.getState()).toBe('RESTARTING_READER');
+    expect(client.getEpoch()).toBe(1);
   });
 });
 
@@ -453,7 +491,7 @@ describe('MspClient - recursive pump() depth on consecutive encode() failures', 
 });
 
 describe('MspClient - transport.writeBytes() throwing synchronously (contract violation)', () => {
-  it('is treated as MSP_WRITE_OUTCOME_UNKNOWN and desynchronizes, exactly like an unrecognized write rejection, instead of hanging or throwing out of request()', async () => {
+  it('is treated as MSP_WRITE_OUTCOME_UNKNOWN, latches, and begins recovery, exactly like an unrecognized write rejection, instead of hanging or throwing out of request()', async () => {
     const dataListeners = new Set<(bytes: Uint8Array) => void>();
     const throwingTransport: MspTransport = {
       writeBytes: () => {
@@ -464,12 +502,13 @@ describe('MspClient - transport.writeBytes() throwing synchronously (contract vi
         return () => dataListeners.delete(listener);
       },
       onSessionDetached: () => () => undefined,
+      restartReceiveLoop: () => new Promise<void>(() => undefined), // left pending - irrelevant to this test
     };
     const client = new MspClient(throwingTransport, SESSION_ID);
 
     const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
     await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
-    expect(client.getState()).toBe('DESYNCHRONIZED');
+    expect(client.getState()).toBe('RESTARTING_READER');
     expect(client.getEpoch()).toBe(1);
   });
 });
@@ -486,6 +525,7 @@ describe('MspClient - dispose() when a transport unsubscribe function throws', (
         };
       },
       onSessionDetached: () => () => undefined,
+      restartReceiveLoop: () => new Promise<void>(() => undefined), // never settles - irrelevant to this test
     };
     const client = new MspClient(throwingUnsubscribeTransport, SESSION_ID);
 
@@ -560,5 +600,212 @@ describe('MspClient - dispose()', () => {
 
     await expect(p1).rejects.toMatchObject({ code: 'MSP_SESSION_CLOSED' });
     expect(client.getState()).toBe('DISCONNECTED');
+  });
+});
+
+describe('MspClient - Pass 6.2b recovery orchestration', () => {
+  it('full happy path: WRITE_FAILED -> RESTARTING_READER -> (restart succeeds) -> PROBING -> (probe succeeds) -> READY, and a new request afterward succeeds normally', async () => {
+    const { transport, client } = makeClient();
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getState()).toBe('RESTARTING_READER');
+    expect(client.getEpoch()).toBe(1);
+
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('PROBING');
+    expect(transport.writes).toHaveLength(1); // the probe's own write
+
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(1)); // MSP_PROBE_COMMAND === 1 (MSP_API_VERSION)
+    await flushMicrotasks();
+    expect(client.getState()).toBe('READY');
+    expect(client.getEpoch()).toBe(1); // unchanged by a successful recovery
+
+    // A brand new request works completely normally afterward.
+    const p2 = client.request(2, EMPTY, { wireFormat: 'v1' });
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(2, Uint8Array.from([9])));
+    const frame = await p2;
+    expect(frame.command).toBe(2);
+    expect(client.getState()).toBe('READY');
+  });
+
+  it('restartReceiveLoop() rejecting transitions directly to RECOVERY_FAILED, with no retry', async () => {
+    const { transport, client } = makeClient();
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getState()).toBe('RESTARTING_READER');
+
+    transport.rejectNextRestart();
+    await flushMicrotasks();
+
+    expect(client.getState()).toBe('RECOVERY_FAILED');
+    expect(client.getEpoch()).toBe(1); // a restart failure does not itself re-desync
+    expect(transport.restarts).toHaveLength(0); // exactly one attempt was made - no retry
+  });
+
+  it('a probe write failure transitions directly to RECOVERY_FAILED - NOT back through DESYNCHRONIZED - without incrementing mspEpoch again', async () => {
+    const { transport, client } = makeClient();
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getEpoch()).toBe(1);
+
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('PROBING');
+
+    // The probe's own write fails - this must NOT go through
+    // classifyWriteFailure()/triggerDesyncLatch() (which would increment
+    // mspEpoch and re-enter DESYNCHRONIZED - a forbidden re-entrant
+    // recovery cycle for the probe).
+    transport.rejectNextWrite('WRITE_FAILED');
+    await flushMicrotasks();
+
+    expect(client.getState()).toBe('RECOVERY_FAILED');
+    expect(client.getEpoch()).toBe(1); // unchanged - proves the isProbe branch was genuinely taken
+  });
+
+  it('a probe response timeout transitions directly to RECOVERY_FAILED - NOT back through DESYNCHRONIZED - without incrementing mspEpoch again', async () => {
+    jest.useFakeTimers();
+    try {
+      const { transport, client } = makeClient();
+      const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+      transport.rejectNextWrite('WRITE_FAILED');
+      await p1.catch(() => undefined);
+      expect(client.getEpoch()).toBe(1);
+
+      transport.resolveNextRestart();
+      await flushMicrotasks();
+      expect(client.getState()).toBe('PROBING');
+
+      transport.resolveNextWrite();
+      await flushMicrotasks();
+
+      // MSP_PROBE_TIMEOUT_MILLIS reuses MSP_RESPONSE_TIMEOUT_MILLIS (2000) -
+      // see mspClient.ts.
+      jest.advanceTimersByTime(2000);
+
+      expect(client.getState()).toBe('RECOVERY_FAILED');
+      expect(client.getEpoch()).toBe(1); // unchanged - proves the isProbe branch was genuinely taken
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('a probe receiving a correctly-matched ERROR-direction ("!") frame is treated as SUCCESS (READY), not failure - a matched frame of either direction proves the link is resynchronized, regardless of the FC\'s semantic answer', async () => {
+    const { transport, client } = makeClient();
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getEpoch()).toBe(1);
+
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('PROBING');
+    expect(transport.writes).toHaveLength(1);
+
+    transport.resolveNextWrite();
+    transport.emitData(errorFrame(1)); // MSP_PROBE_COMMAND === 1 - matched, but error-direction
+    await flushMicrotasks();
+
+    expect(client.getState()).toBe('READY'); // NOT RECOVERY_FAILED
+    expect(client.getEpoch()).toBe(1); // unchanged - never re-entered DESYNCHRONIZED
+
+    // A subsequent request succeeds completely normally.
+    const p2 = client.request(2, EMPTY, { wireFormat: 'v1' });
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(2, Uint8Array.from([3])));
+    const frame = await p2;
+    expect(frame.command).toBe(2);
+    expect(client.getState()).toBe('READY');
+  });
+
+  it('request() is rejected with MSP_RECOVERING while RESTARTING_READER, and again while PROBING', async () => {
+    const { transport, client } = makeClient();
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getState()).toBe('RESTARTING_READER');
+
+    const duringRestart = client.request(100, EMPTY, { wireFormat: 'v1' });
+    await expect(duringRestart).rejects.toMatchObject({ code: 'MSP_RECOVERING' });
+    expect(transport.writes).toHaveLength(0);
+
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('PROBING');
+
+    const duringProbe = client.request(101, EMPTY, { wireFormat: 'v1' });
+    await expect(duringProbe).rejects.toMatchObject({ code: 'MSP_RECOVERING' });
+    expect(transport.writes).toHaveLength(1); // only the probe's own write
+  });
+
+  it('the probe genuinely reuses the write-vs-response race handling: a matching response arriving before the probe write Promise itself settles still succeeds', async () => {
+    const { transport, client } = makeClient();
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('PROBING');
+    expect(transport.writes).toHaveLength(1);
+
+    // Response arrives BEFORE resolveNextWrite() is ever called for the probe.
+    transport.emitData(responseFrame(1)); // MSP_PROBE_COMMAND === 1
+    await flushMicrotasks();
+    expect(client.getState()).toBe('READY');
+
+    // The probe's write settling late must be a no-op.
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('READY');
+  });
+});
+
+describe('MspClient - stale recovery attempts are ignored (isCurrentRecoveryAttempt guard)', () => {
+  // Reachability note: a genuinely OVERLAPPING second desync while an
+  // earlier attempt's own async work (restartReceiveLoop()/the probe) is
+  // still outstanding is NOT reachable through the public request() API
+  // under this implementation. The only MspClient-level "active request"
+  // slot is empty throughout RESTARTING_READER and holds only the probe
+  // throughout PROBING - and the probe's own failures are deliberately
+  // routed away from triggerDesyncLatch() (see sendProbe()'s doc comment)
+  // - while RECOVERY_FAILED rejects every new request() outright. So
+  // nothing can independently fail and re-trigger triggerDesyncLatch()
+  // while a prior attempt is still in flight. This test instead proves the
+  // property that IS reachable: two SEQUENTIAL recovery cycles each get
+  // their own epoch, with no bleed-through from the first. Genuine overlap
+  // (a pending recovery step raced by something else that supersedes it)
+  // IS exercised above, by the physical-detach-during-RESTARTING_READER
+  // and physical-detach-during-PROBING tests.
+  it('two independent, sequential desync/recovery cycles each get their own epoch, with no leftover state from the first', async () => {
+    const { transport, client } = makeClient();
+
+    // Cycle 1: full recovery to READY.
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getEpoch()).toBe(1);
+
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(1));
+    await flushMicrotasks();
+    expect(client.getState()).toBe('READY');
+
+    // Cycle 2: a brand new, independent desync.
+    const p2 = client.request(2, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p2).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+
+    expect(client.getEpoch()).toBe(2); // a fresh epoch, not a leftover from cycle 1
+    expect(client.getState()).toBe('RESTARTING_READER');
+    expect(transport.restarts).toHaveLength(1); // cycle 1's own restart call is long gone, not re-counted
   });
 });
