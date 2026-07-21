@@ -320,6 +320,34 @@ describe('MspClient - physical disconnect always wins', () => {
   });
 });
 
+describe('MspClient - encode() failure for a not-first queued request', () => {
+  it('a second (not-first) queued request that fails to encode is rejected with MSP_ENCODE_FAILED, does not hang, does not desync, and the FIFO continues normally for a third request', async () => {
+    const { transport, client } = makeClient();
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' }); // active, encodes fine
+    // Nonzero flags is invalid for wireFormat 'v1' (mspEncoder.ts's encode()
+    // throws a RangeError for it) - this request never becomes the first
+    // active one, so startRequest() for it runs from pump() called inside
+    // handleFrame(), not inside this request's own Promise executor.
+    const p2 = client.request(2, EMPTY, { wireFormat: 'v1', flags: 1 }); // queued - fails to encode
+    const p3 = client.request(3, EMPTY, { wireFormat: 'v1' }); // queued - must still succeed after p2's failure
+
+    expect(transport.writes).toHaveLength(1); // only p1 has reached the transport so far
+
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(1)); // settles p1, synchronously pumps p2 (fails) then p3 (succeeds)
+    expect((await p1).command).toBe(1);
+
+    await expect(p2).rejects.toMatchObject({ code: 'MSP_ENCODE_FAILED' });
+    expect(client.getState()).toBe('READY'); // confirmed-not-sent - must not desync
+    expect(client.getEpoch()).toBe(0);
+
+    expect(transport.writes).toHaveLength(1); // p3 now active; p2 never reached the transport at all
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(3));
+    expect((await p3).command).toBe(3);
+  });
+});
+
 describe('MspClient - getState() observability', () => {
   it('reflects synchronous transitions (frame arrival, physical detach) with zero delay', async () => {
     const { transport, client } = makeClient();

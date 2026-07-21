@@ -81,6 +81,7 @@ const MSP_CLIENT_ERROR_MESSAGES: Record<MspClientErrorCode, string> = {
   MSP_QUEUE_FULL: 'The MSP client request queue is full.',
   MSP_TRANSPORT_QUEUE_FULL: 'The transport write queue is full.',
   MSP_RECOVERY_REQUIRED: 'The MSP client is desynchronized and requires recovery before new requests can be sent.',
+  MSP_ENCODE_FAILED: 'The request could not be encoded and was never sent to the flight controller.',
 };
 
 export class MspClientError extends Error {
@@ -405,10 +406,31 @@ export class MspClient {
   }
 
   private startRequest(pending: PendingRequest): void {
-    const encoded = encode(pending.command, pending.payload, {
-      wireFormat: pending.wireFormat,
-      flags: pending.flags,
-    });
+    let encoded: Uint8Array;
+    try {
+      encoded = encode(pending.command, pending.payload, {
+        wireFormat: pending.wireFormat,
+        flags: pending.flags,
+      });
+    } catch {
+      // encode() throwing here means nothing was ever attempted on the wire
+      // - a confirmed-not-sent failure, the same category as the
+      // SESSION_CLOSED/WRITE_QUEUE_FULL transport rejections handled in
+      // onWriteSettled(), so it must not touch this.active (the FIFO slot
+      // stays free) and must not desynchronize (nothing was ever written).
+      // MSP_WRITE_OUTCOME_UNKNOWN is deliberately not reused for this: that
+      // code specifically means a write WAS attempted and its outcome is
+      // unknown, which would be misleading here - the write was never even
+      // attempted. This branch is only reachable for a request that is not
+      // the first to become active: pump() is then invoked from
+      // onWriteSettled()/handleFrame(), outside this specific request's own
+      // Promise executor call stack, so an uncaught throw here would
+      // otherwise never reach this request's own reject() and would hang it
+      // forever instead of propagating into the transport's event dispatch.
+      pending.settle.reject(new MspClientError('MSP_ENCODE_FAILED'));
+      this.pump();
+      return;
+    }
 
     const active: ActiveRequest = {
       command: pending.command,

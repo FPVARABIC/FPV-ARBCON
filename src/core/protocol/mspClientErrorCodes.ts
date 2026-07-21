@@ -26,6 +26,7 @@ export const MSP_CLIENT_ERROR_CODES = [
   'MSP_QUEUE_FULL',
   'MSP_TRANSPORT_QUEUE_FULL',
   'MSP_RECOVERY_REQUIRED',
+  'MSP_ENCODE_FAILED',
 ] as const;
 
 export type MspClientErrorCode = (typeof MSP_CLIENT_ERROR_CODES)[number];
