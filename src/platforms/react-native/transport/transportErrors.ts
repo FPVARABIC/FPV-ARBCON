@@ -2,10 +2,14 @@ import type {TFunction} from 'i18next';
 
 /**
  * Every error code the Kotlin transport module currently rejects with
- * (UsbSerialTransportModule.kt / SerialConfigurationMapper.kt). Kept as a
- * plain string union (not imported from Kotlin) since there is no shared
- * source of truth across the JS/Kotlin boundary - this list must be updated
- * by hand if the native side ever adds a new code.
+ * (UsbSerialTransportModule.kt / SerialConfigurationMapper.kt), PLUS
+ * (Pass 6.4b) MSP_ACTIVATION_FAILED - the one code this JS layer mints
+ * itself (see MspOwnershipActivationError in MspSessionCoordinator.ts) and
+ * re-wraps as a TransportError so UsbConnectionScreen.tsx's handleConnect()
+ * can localize it through this exact same, already-established mechanism.
+ * Kept as a plain string union (not imported from Kotlin) since there is no
+ * shared source of truth across the JS/Kotlin boundary - the native-sourced
+ * entries must be updated by hand if the native side ever adds a new code.
  */
 export const KNOWN_ERROR_CODES = [
   'DEVICE_ENUMERATION_FAILED',
@@ -30,6 +34,7 @@ export const KNOWN_ERROR_CODES = [
   'WRITE_QUEUE_FULL',
   'WRITE_FAILED',
   'CONNECT_TIMEOUT',
+  'MSP_ACTIVATION_FAILED',
 ] as const;
 
 export type KnownTransportErrorCode = (typeof KNOWN_ERROR_CODES)[number];

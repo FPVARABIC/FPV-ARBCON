@@ -3,7 +3,9 @@ import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-na
 
 import {colors, radii, spacing, typography} from '../theme';
 import type {TransportError, UsbSerialTransportClient} from '../../platforms/react-native/transport';
-import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
+import {mspSessionCoordinator, useMspIdentificationState} from '../../platforms/react-native/protocol';
+import type {MspIdentificationState} from '../../platforms/react-native/protocol';
+import type {MspClientState} from '../../core';
 import {
   base64ToBytes,
   bytesToBase64,
@@ -55,6 +57,18 @@ import {
  * captured callback or an old event-listener closure) must still be
  * blocked at CALL TIME by reading current, live state, not by however
  * mspActive happened to read when that particular closure was created.
+ *
+ * PASS6.4b: mspActive is now real and reactive (UsbConnectionScreen.tsx's
+ * useMspOwnershipState()), flipping true at ACTIVATING - BEFORE the
+ * MspClient/RNMspTransport pairing even finishes constructing, earlier
+ * than Pass 6.3's hardcoded-false placeholder ever could. The
+ * mspActiveRef guard above needed NO code change for this: it already
+ * reads whatever mspActive currently is, synchronously, at call time -
+ * flipping true earlier only means it starts protecting sooner. This
+ * panel also gains a read-only status/identification display (below,
+ * driven by useMspIdentificationState() and MspClient.getState()) -
+ * still no identify() call, no retry button, and no new write capability
+ * of its own.
  */
 
 const MAX_DEBUG_LOG_ENTRIES = 200;
@@ -77,6 +91,41 @@ function formatDebugTimestamp(epochMs: number): string {
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${String(
     date.getMilliseconds(),
   ).padStart(3, '0')}`;
+}
+
+interface MspStatusMessage {
+  text: string;
+  tone: 'info' | 'warning';
+}
+
+/**
+ * PASS6.4b Step 7 - priority order, checked top to bottom, first match
+ * wins: MspClient itself being gone/unrecoverable always outranks
+ * identification's own status, since nothing else is meaningful once the
+ * connection itself is disconnected or requires a fresh reconnect.
+ * identify() success has no message of its own here - see the separate
+ * identity/metrics block below, rendered independently whenever
+ * identificationState.status === 'SUCCEEDED' regardless of what this
+ * function returns (a later RECOVERY_FAILED does not erase an already-
+ * succeeded identification's own facts).
+ */
+function deriveMspStatusMessage(
+  mspClientState: MspClientState | undefined,
+  identificationState: MspIdentificationState,
+): MspStatusMessage | null {
+  if (mspClientState === 'DISCONNECTED') {
+    return {text: 'انتهت جلسة الاتصال بوحدة التحكم أو تم فصلها.', tone: 'warning'};
+  }
+  if (mspClientState === 'RECOVERY_FAILED') {
+    return {text: 'تعذّرت استعادة اتصال MSP. أعد الاتصال بوحدة التحكم للمتابعة.', tone: 'warning'};
+  }
+  if (identificationState.status === 'RUNNING') {
+    return {text: 'جارٍ التعرّف على وحدة التحكم…', tone: 'info'};
+  }
+  if (identificationState.status === 'FAILED') {
+    return {text: 'تعذّر التعرّف على نوع وحدة التحكم، مع بقاء الاتصال قائمًا.', tone: 'warning'};
+  }
+  return null;
 }
 
 interface Props {
@@ -114,6 +163,42 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
   useLayoutEffect(() => {
     mspActiveRef.current = mspActive;
   }, [mspActive]);
+
+  // PASS6.4b Step 7 - read-only status display. identificationState is
+  // reactive (MspSessionCoordinator's own subscription mechanism).
+  // MspClient.getState() has no equivalent subscription (Pass 6.2a/6.2b
+  // never added one) - a plain synchronous getter polled here on a simple
+  // interval is a deliberate, honest choice for this temporary debug
+  // panel rather than adding new reactive plumbing to the already-approved
+  // MspClient.ts for a single read-only display. The interval is cleared
+  // and re-armed (with one immediate read) whenever identificationState
+  // itself changes, so the RUNNING->SUCCEEDED/FAILED transition is
+  // reflected immediately rather than waiting up to a full poll tick -
+  // the interval alone still catches anything that changes later and
+  // independently (e.g. an eventual RECOVERY_FAILED).
+  const identificationState = useMspIdentificationState(sessionId);
+  const [mspClientState, setMspClientState] = useState<MspClientState | undefined>(undefined);
+
+  useEffect(() => {
+    if (!mspActive) {
+      setMspClientState(undefined);
+      return undefined;
+    }
+    const readMspClientState = () => {
+      setMspClientState(mspSessionCoordinator.getActiveMspClient(sessionId)?.getState());
+    };
+    readMspClientState();
+    const intervalId = setInterval(readMspClientState, 1000);
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [sessionId, mspActive, identificationState]);
+
+  const mspStatusMessage = mspActive ? deriveMspStatusMessage(mspClientState, identificationState) : null;
+  const identificationMetrics =
+    identificationState.status === 'SUCCEEDED' || identificationState.status === 'FAILED'
+      ? mspSessionCoordinator.getIdentificationMetrics(sessionId)
+      : undefined;
 
   const appendLog = useCallback((text: string) => {
     if (!mountedRef.current) {
@@ -297,6 +382,36 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
         </Text>
       ) : null}
 
+      {mspStatusMessage ? (
+        <Text
+          testID="msp-status-message"
+          style={mspStatusMessage.tone === 'warning' ? styles.mspStatusWarning : styles.mspStatusInfo}
+          accessibilityRole="text">
+          {mspStatusMessage.text}
+        </Text>
+      ) : null}
+
+      {identificationState.status === 'SUCCEEDED' ? (
+        <View testID="msp-identity-section" style={styles.identitySection}>
+          <Text style={styles.identityLabel}>
+            معرّف البرنامج الثابت: <Text style={styles.identityValue}>{identificationState.identity.firmware.identifier}</Text>
+          </Text>
+          <Text style={styles.identityLabel}>
+            الفئة: <Text style={styles.identityValue}>{identificationState.identity.firmware.knownFamily}</Text>
+          </Text>
+          <Text style={styles.identityLabel}>
+            اسم اللوحة: <Text style={styles.identityValue}>{identificationState.identity.board.targetName}</Text>
+          </Text>
+          {identificationMetrics ? (
+            <Text testID="msp-identification-metrics" style={styles.metricsText}>
+              chunks={identificationMetrics.nativeChunkCount} bytes={identificationMetrics.receivedByteCount}{' '}
+              frames={identificationMetrics.completedFrameCount} diagnostics={identificationMetrics.diagnosticCount}{' '}
+              duration={identificationMetrics.durationMs ?? '-'}ms
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+
       <View style={styles.row}>
         <Pressable
           testID="debug-start-reading"
@@ -394,6 +509,39 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.warning,
     marginBottom: spacing.md,
+  },
+  mspStatusWarning: {
+    ...typography.caption,
+    color: colors.warning,
+    marginBottom: spacing.md,
+  },
+  mspStatusInfo: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginBottom: spacing.md,
+  },
+  identitySection: {
+    marginBottom: spacing.md,
+    padding: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+  },
+  identityLabel: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    marginBottom: spacing.xs,
+  },
+  identityValue: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: '700',
+    writingDirection: 'ltr',
+  },
+  metricsText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'ltr',
   },
   row: {
     flexDirection: 'row',

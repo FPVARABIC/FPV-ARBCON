@@ -5,8 +5,10 @@ import {Text} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import UsbConnectionScreen from './UsbConnectionScreen';
+import UsbSerialDebugPanel from './UsbSerialDebugPanel';
 import type {UsbSerialDeviceDescriptor} from '../../platforms/react-native/transport';
 import type {UsbSerialTransportClient} from '../../platforms/react-native/transport';
+import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
 import i18n from '../../i18n';
 
 type MockClient = {
@@ -20,20 +22,35 @@ type MockClient = {
   // 5.3, UsbSerialDebugPanel.tsx) - see its own class-level note.
   onDataReceived: jest.Mock;
   onError: jest.Mock;
+  // Pass 6.4b: not exercised by any existing assertion in this file - given
+  // default "quiet" implementations (a permanently-pending Promise, never
+  // resolving or rejecting) purely so that the real
+  // mspSessionCoordinator.openSession() call handleConnect() now makes on
+  // EVERY successful connect (not just this file's own Pass 6.4b describe
+  // block below) has something to call without throwing. RNMspTransport
+  // itself is what actually calls these; a real MSP request against a
+  // permanently-pending write never settles, so it can never arm a real
+  // response-timeout timer - the exact "quiet fake client" pattern already
+  // established in MspSessionCoordinator.test.ts, applied here for the same
+  // reason: every test that merely presses connect (without itself caring
+  // about MSP identification's outcome) must not leave a dangling handle
+  // behind it.
+  writeBytes: jest.Mock;
+  stopReading: jest.Mock;
+  startReading: jest.Mock;
   /** Fires the given event to EVERY currently-registered onSessionDetached
    * listener (a genuine Set-based fan-out), not just whichever handler was
-   * registered most recently. In Pass 6.3 as shipped, onSessionDetached has
-   * only ONE real subscriber - this screen's own hot-plug effect (registered
-   * once at mount) - because mspSessionCoordinator.openSession()'s call site
-   * inside handleConnect() was deferred to Pass 6.4 (see
-   * UsbConnectionScreen.tsx's own deferred-wiring comments there). This mock
-   * is still written as a genuine multi-listener fan-out, not a "latest
-   * handler wins" stub, because once Pass 6.4 reinstates that call site,
-   * RNMspTransport's own constructor subscription becomes a SECOND real
-   * subscriber on this same event - a "latest handler wins" mock would then
-   * silently invoke only that second one and never exercise this screen's
-   * own SESSION_DETACHED dispatch again. Kept correct now so it stays
-   * correct then, without needing to be revisited. */
+   * registered most recently. As of Pass 6.4b, onSessionDetached genuinely
+   * has TWO real subscribers whenever a session is connected: this screen's
+   * own hot-plug effect (registered once at mount) AND RNMspTransport's
+   * constructor subscription (registered inside
+   * mspSessionCoordinator.openSession(), called from handleConnect() -
+   * see UsbConnectionScreen.tsx's own Pass 6.4b comments there). A "latest
+   * handler wins" mock would incorrectly invoke only the second of those
+   * two and silently miss this screen's own SESSION_DETACHED dispatch -
+   * this mock is written as a genuine multi-listener fan-out specifically
+   * so both are exercised correctly, matching the real UsbSerialTransportClient's
+   * own event-emitter contract. */
   emitSessionDetached: (event: {sessionId: string; deviceId: number}) => void;
 };
 
@@ -54,6 +71,9 @@ function createMockClient(): MockClient {
     }),
     onDataReceived: jest.fn(() => jest.fn()),
     onError: jest.fn(() => jest.fn()),
+    writeBytes: jest.fn(() => new Promise<void>(() => undefined)),
+    stopReading: jest.fn(() => new Promise<void>(() => undefined)),
+    startReading: jest.fn(() => new Promise<void>(() => undefined)),
     emitSessionDetached: event => {
       // Snapshot before iterating: mirrors RNMspTransport's own fan-out
       // discipline, in case a listener synchronously unsubscribes another
@@ -142,6 +162,35 @@ function unsupportedDevice(overrides: Partial<UsbSerialDeviceDescriptor> = {}): 
   };
 }
 
+// Pass 6.4b: every renderer createScreen() produces is tracked here and
+// force-unmounted in the afterEach() below. Before Pass 6.4b, an unmounted-
+// at-test-end renderer left behind nothing live (UsbSerialDebugPanel was
+// never actually MSP-active in a test, since mspActive was Pass 6.3's
+// hardcoded false) - now that mspActive is real, a still-"connected" screen
+// left mounted at test end keeps UsbSerialDebugPanel's own real
+// setInterval(1000ms) MspClientState poll (see its own class-level note)
+// alive past the test, which is what was leaving Jest's process unable to
+// exit. A handful of existing tests already call renderer.unmount()
+// themselves mid-test (e.g. the hot-plug subscription-lifecycle describe
+// block) - calling unmount() a second time here on an already-unmounted
+// renderer is a documented no-op in react-test-renderer, so this is safe to
+// apply unconditionally to every renderer without inspecting whether a given
+// test already tore its own down.
+const trackedRenderers: ReactTestRenderer.ReactTestRenderer[] = [];
+
+afterEach(() => {
+  act(() => {
+    for (const renderer of trackedRenderers.splice(0, trackedRenderers.length)) {
+      try {
+        renderer.unmount();
+      } catch {
+        // Best-effort - see the comment above on why a second unmount() call
+        // must never fail this hook (and therefore the test that just passed).
+      }
+    }
+  });
+});
+
 /** Creates the screen without pre-configuring the automatic mount scan's
  * result - the caller must have already queued the desired
  * listDevices() mock behavior (resolved, rejected, or pending). */
@@ -152,6 +201,7 @@ async function createScreen(client: MockClient) {
       <UsbConnectionScreen client={client as unknown as UsbSerialTransportClient} />,
     );
   });
+  trackedRenderers.push(renderer);
   return renderer;
 }
 
@@ -1277,5 +1327,120 @@ describe('UsbConnectionScreen - deferred attach rescan while busy/connected', ()
     // Nothing left to consume the deferred flag post-unmount - no extra
     // scan attempt, no crash.
     expect(client.listDevices).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('UsbConnectionScreen - Pass 6.4b mspActive prop reflects real MspSessionCoordinator ownership state', () => {
+  // createMockClient() (above) deliberately has no writeBytes/stopReading/
+  // startReading mocked at all - see its own class-level note. This means
+  // mspSessionCoordinator.openSession()'s construction phase (which only
+  // touches the already-mocked onDataReceived/onSessionDetached) succeeds
+  // exactly like real hardware would, so ownership genuinely reaches ACTIVE
+  // and CONNECT_SUCCESS/handleConnect()'s success path is exercised
+  // unchanged. Only the fire-and-forget identify() call that
+  // MspSessionCoordinator starts immediately afterward fails - every one of
+  // its underlying MSP requests synchronously throws on the missing
+  // writeBytes/stopReading/startReading mocks, caught and re-wrapped as a
+  // rejected promise by RNMspTransport itself (see its writeBytes()/
+  // restartReceiveLoop() try/catches) - entirely via microtask-level
+  // rejections, never a real setTimeout (mspClient.ts's own response-timeout
+  // timer is only ever armed once a write has actually SUCCEEDED with no
+  // matching response, which never happens here since the write itself
+  // always rejects first). flushMicrotasks() below drains that entire
+  // fire-and-forget chain inside its own act() before any assertion or
+  // subsequent interaction runs, so nothing settles outside of act().
+  async function flushMicrotasks() {
+    for (let i = 0; i < 30; i += 1) {
+      await Promise.resolve();
+    }
+  }
+
+  async function pressConnectAndSettle(renderer: ReactTestRenderer.ReactTestRenderer) {
+    await pressConnect(renderer);
+    await act(async () => {
+      await flushMicrotasks();
+    });
+  }
+
+  /** UsbConnectionScreen only renders UsbSerialDebugPanel while
+   * isConnected && activeSessionId - undefined (no match) is itself a
+   * meaningful, assertable phase, not a lookup failure. */
+  function debugPanelMspActive(renderer: ReactTestRenderer.ReactTestRenderer): boolean | undefined {
+    const matches = renderer.root.findAllByType(UsbSerialDebugPanel);
+    return matches.length > 0 ? matches[0].props.mspActive : undefined;
+  }
+
+  it('has no debug panel (and therefore no mspActive) before any connection exists, matching the coordinator\'s own INACTIVE default', async () => {
+    const client = createMockClient();
+    const renderer = await renderScreen(client, [supportedDevice()]);
+
+    expect(debugPanelMspActive(renderer)).toBeUndefined();
+    expect(mspSessionCoordinator.getOwnershipState('')).toBe('INACTIVE');
+  });
+
+  it('flips mspActive true on the debug panel the moment CONNECT_SUCCESS is reflected, matching getOwnershipState() for that exact session', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    client.openDevice.mockResolvedValueOnce('session-mspactive-1');
+    const renderer = await renderScreen(client, [device]);
+
+    await pressConnectAndSettle(renderer);
+
+    expect(debugPanelMspActive(renderer)).toBe(true);
+    expect(mspSessionCoordinator.getOwnershipState('session-mspactive-1')).toBe('ACTIVE');
+  });
+
+  it('flips mspActive back to false (panel unmounts) once an intentional disconnect completes', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    client.openDevice.mockResolvedValueOnce('session-mspactive-2');
+    client.closeSession.mockResolvedValueOnce(undefined);
+    const renderer = await renderScreen(client, [device]);
+    await pressConnectAndSettle(renderer);
+    expect(debugPanelMspActive(renderer)).toBe(true);
+
+    await pressDisconnect(renderer);
+
+    // The panel itself unmounts once isConnected becomes false - there is no
+    // literal mspActive=false prop left to read, but the coordinator's own
+    // ownership state for that now-closed session is the real source of
+    // truth this prop was always derived from, and it must be INACTIVE.
+    expect(debugPanelMspActive(renderer)).toBeUndefined();
+    expect(mspSessionCoordinator.getOwnershipState('session-mspactive-2')).toBe('INACTIVE');
+  });
+
+  it('flips mspActive back to false on a physical session detach, same as an intentional disconnect', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    client.openDevice.mockResolvedValueOnce('session-mspactive-3');
+    const renderer = await renderScreen(client, [device]);
+    await pressConnectAndSettle(renderer);
+    expect(debugPanelMspActive(renderer)).toBe(true);
+
+    await fireSessionDetached(client, 'session-mspactive-3');
+
+    expect(debugPanelMspActive(renderer)).toBeUndefined();
+    expect(mspSessionCoordinator.getOwnershipState('session-mspactive-3')).toBe('INACTIVE');
+  });
+
+  it('a second, independent connect/disconnect cycle on a fresh session is reflected correctly, with no stale state leaking from the first session', async () => {
+    const client = createMockClient();
+    const device = supportedDevice();
+    client.openDevice.mockResolvedValueOnce('session-mspactive-4a');
+    client.closeSession.mockResolvedValueOnce(undefined);
+    const renderer = await renderScreen(client, [device]);
+    await pressConnectAndSettle(renderer);
+    await pressDisconnect(renderer);
+    expect(debugPanelMspActive(renderer)).toBeUndefined();
+
+    client.listDevices.mockResolvedValueOnce([device]);
+    await pressRefresh(renderer);
+    await pressDevice(renderer, device);
+    client.openDevice.mockResolvedValueOnce('session-mspactive-4b');
+    await pressConnectAndSettle(renderer);
+
+    expect(debugPanelMspActive(renderer)).toBe(true);
+    expect(mspSessionCoordinator.getOwnershipState('session-mspactive-4a')).toBe('INACTIVE');
+    expect(mspSessionCoordinator.getOwnershipState('session-mspactive-4b')).toBe('ACTIVE');
   });
 });

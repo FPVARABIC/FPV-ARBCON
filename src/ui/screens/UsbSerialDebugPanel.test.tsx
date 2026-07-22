@@ -1,14 +1,31 @@
 jest.mock('../../platforms/react-native/protocol', () => ({
   mspSessionCoordinator: {
     getActiveTransport: jest.fn(),
+    // Pass 6.4b: getActiveMspClient()?.getState() (polled by the panel's own
+    // setInterval while mspActive) and getIdentificationMetrics() (read once
+    // identificationState reaches SUCCEEDED/FAILED) - both new call sites
+    // added to the component this pass; the mock must satisfy them for the
+    // component to render at all now, even for tests that don't care about
+    // either value (they get undefined, exactly like a session the
+    // coordinator has no entry for).
+    getActiveMspClient: jest.fn(),
+    getIdentificationMetrics: jest.fn(),
   },
+  // Pass 6.4b: a plain jest.fn(), not a real useSyncExternalStore hook - this
+  // file renders UsbSerialDebugPanel directly (not through React's normal
+  // external-store subscription machinery), so each test simply configures
+  // this mock's return value up front, exactly like the getActiveTransport
+  // mock above already worked for Pass 6.3.
+  useMspIdentificationState: jest.fn(),
 }));
 
 import React from 'react';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import UsbSerialDebugPanel from './UsbSerialDebugPanel';
-import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
+import {mspSessionCoordinator, useMspIdentificationState} from '../../platforms/react-native/protocol';
+import type {MspIdentificationState} from '../../platforms/react-native/protocol';
+import type {MspClientState} from '../../core';
 import type {
   UsbSerialDataEvent,
   UsbSerialErrorEvent,
@@ -82,6 +99,28 @@ function createFakeTransport(): FakeTransport {
   };
 }
 
+// Pass 6.4b: every renderer created in this file is tracked here and
+// force-unmounted in the afterEach() below - see UsbConnectionScreen.test.tsx's
+// own identical afterEach for the full reasoning. It applies just as much
+// here: any test rendering with mspActive=true leaves the panel's own real
+// setInterval(1000ms) MspClientState poll running (UsbSerialDebugPanel.tsx's
+// own class-level note), and most tests in this file never explicitly
+// unmount before returning.
+const trackedRenderers: ReactTestRenderer.ReactTestRenderer[] = [];
+
+afterEach(() => {
+  act(() => {
+    for (const renderer of trackedRenderers.splice(0, trackedRenderers.length)) {
+      try {
+        renderer.unmount();
+      } catch {
+        // Best-effort - a test that already unmounted its own renderer must
+        // not fail here on a harmless second unmount() call.
+      }
+    }
+  });
+});
+
 async function renderPanel(client: MockClient, mspActive: boolean) {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   await act(async () => {
@@ -93,7 +132,40 @@ async function renderPanel(client: MockClient, mspActive: boolean) {
       />,
     );
   });
+  trackedRenderers.push(renderer);
   return renderer;
+}
+
+/** A minimal, valid FlightControllerIdentity fixture - only the fields the
+ * panel's own SUCCEEDED display actually reads (firmware.identifier,
+ * firmware.knownFamily, board.targetName) are given meaningful values;
+ * every other required field is filled with an arbitrary valid placeholder
+ * so the object satisfies the real FlightControllerIdentity shape. */
+function buildIdentity(
+  overrides: {identifier?: string; knownFamily?: string; targetName?: string} = {},
+): MspIdentificationState & {status: 'SUCCEEDED'} {
+  return {
+    status: 'SUCCEEDED',
+    identity: {
+      apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: 48},
+      firmware: {
+        identifier: overrides.identifier ?? 'BTFL',
+        knownFamily: (overrides.knownFamily ?? 'BETAFLIGHT') as never,
+      },
+      board: {
+        boardIdentifier: 'AFF3',
+        hardwareRevision: 0,
+        boardType: 0,
+        targetCapabilities: 0,
+        targetName: overrides.targetName ?? 'MATEKF722',
+        boardName: 'MATEKF722',
+        manufacturerId: 'MTKS',
+        signature: new Uint8Array(32),
+        mcuTypeId: 0,
+        trailingBytes: new Uint8Array(0),
+      },
+    },
+  };
 }
 
 function findByTestID(renderer: ReactTestRenderer.ReactTestRenderer, testID: string) {
@@ -114,9 +186,24 @@ function logText(renderer: ReactTestRenderer.ReactTestRenderer): string {
 }
 
 const getActiveTransportMock = mspSessionCoordinator.getActiveTransport as jest.Mock;
+const getActiveMspClientMock = mspSessionCoordinator.getActiveMspClient as jest.Mock;
+const getIdentificationMetricsMock = mspSessionCoordinator.getIdentificationMetrics as jest.Mock;
+const useMspIdentificationStateMock = useMspIdentificationState as jest.Mock;
 
 beforeEach(() => {
   getActiveTransportMock.mockReset();
+  getActiveMspClientMock.mockReset();
+  getIdentificationMetricsMock.mockReset();
+  useMspIdentificationStateMock.mockReset();
+  // Every pre-existing (Pass 6.3) test in this file renders with no opinion
+  // at all about identification - IDLE (no status message, no identity
+  // block) and an absent MspClient (getState() never called, since
+  // getActiveMspClientMock's default `undefined` return short-circuits the
+  // panel's own `?.getState()` optional chain) are the correct, inert
+  // defaults for all of them. Only the new Pass 6.4b describe blocks below
+  // override these per-test.
+  useMspIdentificationStateMock.mockReturnValue({status: 'IDLE'} satisfies MspIdentificationState);
+  getActiveMspClientMock.mockReturnValue(undefined);
 });
 
 describe('UsbSerialDebugPanel - controls enabled/disabled by mspActive', () => {
@@ -261,6 +348,7 @@ describe('UsbSerialDebugPanel - MSP-mode RX subscription (mspActive=true)', () =
         />,
       );
     });
+    trackedRenderers.push(renderer);
     const rawUnsubscribe = client.onDataReceived.mock.results[0].value as jest.Mock;
     expect(rawUnsubscribe).not.toHaveBeenCalled();
 
@@ -308,6 +396,7 @@ describe('UsbSerialDebugPanel - mspActiveRef guard (ref-based, not dependency-ar
         />,
       );
     });
+    trackedRenderers.push(renderer);
     const setMspActive = async (value: boolean) => {
       await act(async () => {
         renderer.update(
@@ -453,5 +542,179 @@ describe('UsbSerialDebugPanel - mspActiveRef guard (ref-based, not dependency-ar
 
     expect(matchingLines).toHaveLength(1);
     expect(matchingLines[0]).not.toContain('ERR ');
+  });
+});
+
+describe('UsbSerialDebugPanel - Pass 6.4b read-only MSP status message (Step 7 priority order)', () => {
+  it('shows the "identifying" message while identificationState is RUNNING', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue({status: 'RUNNING'} satisfies MspIdentificationState);
+    const renderer = await renderPanel(client, true);
+
+    expect(findByTestID(renderer, 'msp-status-message').props.children).toBe('جارٍ التعرّف على وحدة التحكم…');
+  });
+
+  it('shows the FAILED message when identification failed but the client is otherwise fine', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue({
+      status: 'FAILED',
+      error: new Error('boom'),
+    } satisfies MspIdentificationState);
+    getActiveMspClientMock.mockReturnValue({getState: () => 'READY' as MspClientState});
+    const renderer = await renderPanel(client, true);
+
+    expect(findByTestID(renderer, 'msp-status-message').props.children).toBe(
+      'تعذّر التعرّف على نوع وحدة التحكم، مع بقاء الاتصال قائمًا.',
+    );
+  });
+
+  it('shows the RECOVERY_FAILED message, outranking a simultaneously RUNNING identification status', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue({status: 'RUNNING'} satisfies MspIdentificationState);
+    getActiveMspClientMock.mockReturnValue({getState: () => 'RECOVERY_FAILED' as MspClientState});
+    const renderer = await renderPanel(client, true);
+
+    expect(findByTestID(renderer, 'msp-status-message').props.children).toBe(
+      'تعذّرت استعادة اتصال MSP. أعد الاتصال بوحدة التحكم للمتابعة.',
+    );
+  });
+
+  it('shows the DISCONNECTED message, outranking RECOVERY_FAILED too', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue({status: 'IDLE'} satisfies MspIdentificationState);
+    getActiveMspClientMock.mockReturnValue({getState: () => 'DISCONNECTED' as MspClientState});
+    const renderer = await renderPanel(client, true);
+
+    expect(findByTestID(renderer, 'msp-status-message').props.children).toBe(
+      'انتهت جلسة الاتصال بوحدة التحكم أو تم فصلها.',
+    );
+  });
+
+  it('shows no status message once identification SUCCEEDED and the client is READY', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue(buildIdentity());
+    getActiveMspClientMock.mockReturnValue({getState: () => 'READY' as MspClientState});
+    const renderer = await renderPanel(client, true);
+
+    expect(renderer.root.findAllByProps({testID: 'msp-status-message'})).toHaveLength(0);
+  });
+
+  it('shows no status message while mspActive is false, regardless of identificationState', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue({status: 'RUNNING'} satisfies MspIdentificationState);
+    const renderer = await renderPanel(client, false);
+
+    expect(renderer.root.findAllByProps({testID: 'msp-status-message'})).toHaveLength(0);
+  });
+
+  it('no write/RX-control button becomes enabled in any status/identification combination', async () => {
+    const client = createMockClient();
+    const identificationScenarios: MspIdentificationState[] = [
+      {status: 'IDLE'},
+      {status: 'RUNNING'},
+      {status: 'FAILED', error: new Error('boom')},
+      buildIdentity(),
+    ];
+    const clientStateScenarios: Array<MspClientState | undefined> = [
+      undefined,
+      'READY',
+      'RECOVERY_FAILED',
+      'DISCONNECTED',
+    ];
+
+    for (const identificationState of identificationScenarios) {
+      for (const clientState of clientStateScenarios) {
+        useMspIdentificationStateMock.mockReturnValue(identificationState);
+        getActiveMspClientMock.mockReturnValue(
+          clientState === undefined ? undefined : {getState: () => clientState},
+        );
+        const renderer = await renderPanel(client, true);
+
+        expect(findByTestID(renderer, 'debug-start-reading').props.disabled).toBe(true);
+        expect(findByTestID(renderer, 'debug-stop-reading').props.disabled).toBe(true);
+        expect(findByTestID(renderer, 'debug-send-preset-1,2,3,4,5').props.disabled).toBe(true);
+        expect(findByTestID(renderer, 'debug-send-preset-AA 55').props.disabled).toBe(true);
+        expect(findByTestID(renderer, 'debug-send-custom').props.disabled).toBe(true);
+      }
+    }
+  });
+});
+
+describe('UsbSerialDebugPanel - Pass 6.4b identification result display (SUCCEEDED)', () => {
+  it('shows no identity section at all for IDLE/RUNNING/FAILED identification states', async () => {
+    const client = createMockClient();
+    for (const identificationState of [
+      {status: 'IDLE'},
+      {status: 'RUNNING'},
+      {status: 'FAILED', error: new Error('boom')},
+    ] satisfies MspIdentificationState[]) {
+      useMspIdentificationStateMock.mockReturnValue(identificationState);
+      const renderer = await renderPanel(client, true);
+      expect(renderer.root.findAllByProps({testID: 'msp-identity-section'})).toHaveLength(0);
+    }
+  });
+
+  it('displays the firmware identifier, known family, and board target name once identification SUCCEEDED', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue(
+      buildIdentity({identifier: 'BTFL', knownFamily: 'BETAFLIGHT', targetName: 'MATEKF722'}),
+    );
+    const renderer = await renderPanel(client, true);
+
+    expect(renderer.root.findAllByProps({testID: 'msp-identity-section'}).length).toBeGreaterThan(0);
+    const text = logText(renderer);
+    expect(text).toContain('BTFL');
+    expect(text).toContain('BETAFLIGHT');
+    expect(text).toContain('MATEKF722');
+  });
+
+  it('displays the metrics snapshot alongside a SUCCEEDED identity, sourced from getIdentificationMetrics()', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue(buildIdentity());
+    getIdentificationMetricsMock.mockReturnValue({
+      startedAtMs: 1_000,
+      completedAtMs: 1_250,
+      durationMs: 250,
+      nativeChunkCount: 4,
+      receivedByteCount: 32,
+      completedFrameCount: 3,
+      diagnosticCount: 0,
+    });
+    const renderer = await renderPanel(client, true);
+
+    expect(getIdentificationMetricsMock).toHaveBeenCalledWith(SESSION_ID);
+    const text = logText(renderer);
+    expect(text).toContain('chunks=4');
+    expect(text).toContain('bytes=32');
+    expect(text).toContain('frames=3');
+    expect(text).toContain('diagnostics=0');
+    expect(text).toContain('duration=250ms');
+  });
+
+  it('renders the identity block even with no metrics snapshot available (getIdentificationMetrics() returns undefined)', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue(buildIdentity());
+    getIdentificationMetricsMock.mockReturnValue(undefined);
+    const renderer = await renderPanel(client, true);
+
+    expect(renderer.root.findAllByProps({testID: 'msp-identity-section'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'msp-identification-metrics'})).toHaveLength(0);
+  });
+
+  it('does not call identify() or expose any new write capability from the identity display itself', async () => {
+    // The panel has no identify()-triggering call of its own anywhere - this
+    // is a structural guarantee (no such function exists on the component's
+    // props or imports), verified here simply by confirming the mocked
+    // coordinator's only two read-site methods used by this display
+    // (getIdentificationMetrics/getActiveMspClient) were called with no
+    // arguments beyond sessionId, and client.writeBytes/startReading/
+    // stopReading remain untouched by merely rendering a SUCCEEDED state.
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue(buildIdentity());
+    await renderPanel(client, true);
+
+    expect(client.writeBytes).not.toHaveBeenCalled();
+    expect(client.startReading).not.toHaveBeenCalled();
+    expect(client.stopReading).not.toHaveBeenCalled();
   });
 });

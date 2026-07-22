@@ -26,9 +26,11 @@ import type {
   UsbSerialDeviceDescriptor,
   UsbSerialTransportClient,
 } from '../../platforms/react-native/transport';
-// mspSessionCoordinator's openSession()/closeSession() wiring is DEFERRED
-// to Pass 6.4 (see handleConnect()/handleDisconnect() below) - no import
-// from '../../platforms/react-native/protocol' is needed here until then.
+import {
+  MspOwnershipActivationError,
+  mspSessionCoordinator,
+  useMspOwnershipState,
+} from '../../platforms/react-native/protocol';
 // TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbSerialDebugPanel.tsx's own
 // class-level note. Delete this import and its one render site below
 // alongside that file once real protocol screens exist.
@@ -428,6 +430,12 @@ export default function UsbConnectionScreen({
 
   const isBusy = BUSY_STATES.has(state.connectionState);
   const isConnected = state.connectionState === 'connected';
+  // Pass 6.4b: '' is a safe fallback when no session is active -
+  // getOwnershipState() reports INACTIVE for any sessionId with no entry,
+  // including this placeholder one, so mspActive below is correctly false
+  // whenever state.activeSessionId is null.
+  const mspOwnershipState = useMspOwnershipState(state.activeSessionId ?? '');
+  const mspActive = mspOwnershipState !== 'INACTIVE';
   const selectedDevice = state.devices.find(d => deviceKey(d) === state.selectedDeviceKey) ?? null;
   const canConnect =
     !isBusy &&
@@ -609,19 +617,29 @@ export default function UsbConnectionScreen({
       if (!mountedRef.current) {
         return;
       }
-      // Pass 6.3 Step 2 built mspSessionCoordinator.openSession() as the
-      // hook point for this exact spot (the only place a sessionId ever
-      // becomes known), but wiring it into the live connect flow is
-      // DEFERRED to Pass 6.4. RNMspTransport/MspSessionCoordinator are
-      // fully built and fully tested; mspActive (passed to
-      // UsbSerialDebugPanel further down) stays false throughout Pass 6.3
-      // by design until this call site is reinstated.
+      // Pass 6.4b: the only place a sessionId ever becomes known - see
+      // MspSessionCoordinator.ts's own doc comment. Only a construction
+      // failure (MspOwnershipActivationError) is treated as a real
+      // connection-level failure below; identification runs fire-and-
+      // forget afterward and never affects this dispatch either way.
+      mspSessionCoordinator.openSession(client, sessionId);
       dispatch({type: 'CONNECT_SUCCESS', sessionId});
     } catch (error) {
       if (!mountedRef.current) {
         return;
       }
-      const transportError = error as TransportError;
+      // MspOwnershipActivationError does not carry {code, nativeMessage} -
+      // re-wrapped as one so it can flow through the exact same
+      // localizeTransportError() mechanism openDevice() failures already
+      // use. Unlike a genuinely unpredictable NATIVE error code,
+      // MSP_ACTIVATION_FAILED is a code THIS layer mints itself (see
+      // MspOwnershipActivationError/KNOWN_ERROR_CODES in
+      // transportErrors.ts) - it has its own dedicated, real Arabic
+      // translation (ar.json), not a fallback to 'errors.UNKNOWN'.
+      const transportError: TransportError =
+        error instanceof MspOwnershipActivationError
+          ? {code: 'MSP_ACTIVATION_FAILED', nativeMessage: error.message}
+          : (error as TransportError);
       dispatch({
         type: 'CONNECT_FAILURE',
         error: transportError,
@@ -649,9 +667,10 @@ export default function UsbConnectionScreen({
       if (!mountedRef.current) {
         return;
       }
-      // mspSessionCoordinator.closeSession() would pair with the deferred
-      // openSession() call above (see handleConnect()'s comment) - DEFERRED
-      // to Pass 6.4 along with it, for the same reason.
+      // Pass 6.4b: intentional-close hook point, paired with openSession()
+      // in handleConnect() above - see MspSessionCoordinator.ts's own doc
+      // comment on why this must run BEFORE DISCONNECT_SUCCESS dispatches.
+      mspSessionCoordinator.deactivateMspSession(sessionId);
       dispatch({type: 'DISCONNECT_SUCCESS'});
     } catch (error) {
       if (!mountedRef.current) {
@@ -753,13 +772,11 @@ export default function UsbConnectionScreen({
           <UsbSerialDebugPanel
             sessionId={state.activeSessionId}
             client={client}
-            // Hardcoded false, not derived from isConnected: Pass 6.3 Step 3
-            // defers mspSessionCoordinator.openSession()/closeSession()
-            // wiring to Pass 6.4 (see handleConnect()/handleDisconnect()'s
-            // own comments above) - no MspClient is ever active during
-            // Pass 6.3, so this panel keeps its original, fully-functional
-            // raw RX/TX behavior unconditionally until that wiring lands.
-            mspActive={false}
+            // Pass 6.4b: the real, reactive value - derived from
+            // useMspOwnershipState() above, which now correctly flips true
+            // at ACTIVATING (before construction even completes), not just
+            // once ACTIVE.
+            mspActive={mspActive}
           />
         ) : null}
 
