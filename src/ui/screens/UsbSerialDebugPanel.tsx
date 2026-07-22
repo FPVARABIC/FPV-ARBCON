@@ -3,11 +3,7 @@ import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-na
 
 import {colors, radii, spacing, typography} from '../theme';
 import type {TransportError, UsbSerialTransportClient} from '../../platforms/react-native/transport';
-import {
-  describeMspIdentificationError,
-  mspSessionCoordinator,
-  useMspIdentificationState,
-} from '../../platforms/react-native/protocol';
+import {mspSessionCoordinator, useMspIdentificationState} from '../../platforms/react-native/protocol';
 import type {MspIdentificationState} from '../../platforms/react-native/protocol';
 import type {MspClientState} from '../../core';
 import {
@@ -392,18 +388,6 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
           style={mspStatusMessage.tone === 'warning' ? styles.mspStatusWarning : styles.mspStatusInfo}
           accessibilityRole="text">
           {mspStatusMessage.text}
-        </Text>
-      ) : null}
-
-      {/* TEMPORARY DIAGNOSTIC SCAFFOLDING - see mspIdentificationDiagnostics.ts's
-          own class-level note. A SEPARATE Text element from the Arabic
-          msp-status-message above (never appended into it), so it cannot
-          affect anything that asserts on that message's exact text. Delete
-          this block once the real-hardware investigation it was added for
-          is resolved. */}
-      {identificationState.status === 'FAILED' ? (
-        <Text testID="msp-identification-error-detail" style={styles.metricsText} accessibilityRole="text">
-          {describeMspIdentificationError(identificationState.error)}
         </Text>
       ) : null}
 
