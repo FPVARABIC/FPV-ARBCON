@@ -518,6 +518,18 @@ export class MspClient {
     // doc comment on the write-vs-response race this ordering exists for.
     this.active = active;
 
+    // TEMPORARY DIAGNOSTIC SCAFFOLDING - added to investigate a real-hardware
+    // finding (identify()'s own MSP_API_VERSION request timing out despite a
+    // genuine, valid FC reply eventually arriving). Logs exactly when each
+    // write is dispatched, tagged with the command and whether it's a Pass
+    // 6.2b recovery probe (MSP_PROBE_COMMAND, which happens to equal
+    // MSP_API_VERSION = 1 - see this file's own MSP_PROBE_COMMAND comment),
+    // reachable via the existing "Capture App Log" button
+    // (UsbAppLogCapturePanel.tsx) with no adb needed - directly comparable
+    // against the debug panel's own RX (MSP) log timestamps. NOT a permanent
+    // feature - delete this one line once the investigation is resolved.
+    console.log(`[MSP TX] command=${pending.command} isProbe=${pending.isProbe} t=${Date.now()}`);
+
     let writePromise: Promise<void>;
     try {
       writePromise = this.transport.writeBytes(encoded);
