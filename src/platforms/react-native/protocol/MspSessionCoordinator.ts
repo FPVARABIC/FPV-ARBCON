@@ -63,6 +63,7 @@ import {MspClient, MspIdentificationService} from '../../../core';
 import type {FlightControllerIdentity, MspRequester} from '../../../core';
 import type {UsbSerialTransportClient} from '../transport';
 import {RNMspTransport} from './RNMspTransport';
+import {describeMspIdentificationError} from './mspIdentificationDiagnostics';
 
 export type MspSessionOwnershipState = 'INACTIVE' | 'ACTIVATING' | 'ACTIVE' | 'CLOSING';
 
@@ -305,6 +306,18 @@ export class MspSessionCoordinator {
       const current = this.sessions.get(sessionId);
       if (!current) {
         return;
+      }
+      // TEMPORARY DIAGNOSTIC SCAFFOLDING - see mspIdentificationDiagnostics.ts's
+      // own class-level note. Surfaces the actual error identify() rejected
+      // with (via the same shared formatter UsbSerialDebugPanel.tsx's
+      // error-detail Text element uses) into this app's own process
+      // logcat, reachable with no adb via the existing "Capture App Log"
+      // button (UsbAppLogCapturePanel.tsx). Delete this block once the
+      // real-hardware investigation it was added for is resolved.
+      if (identification.status === 'FAILED') {
+        console.error(
+          `[MSP identification failed] session=${sessionId}: ${describeMspIdentificationError(identification.error)}`,
+        );
       }
       current.identification = identification;
       current.metrics = {

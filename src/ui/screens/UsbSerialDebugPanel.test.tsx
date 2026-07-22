@@ -17,6 +17,14 @@ jest.mock('../../platforms/react-native/protocol', () => ({
   // this mock's return value up front, exactly like the getActiveTransport
   // mock above already worked for Pass 6.3.
   useMspIdentificationState: jest.fn(),
+  // TEMPORARY DIAGNOSTIC SCAFFOLDING - see mspIdentificationDiagnostics.ts's
+  // own class-level note. Deliberately the REAL implementation, not a
+  // jest.fn() mock - the tests below exist specifically to prove the
+  // formatting logic itself renders correctly for different error shapes,
+  // which a mocked stand-in couldn't verify.
+  describeMspIdentificationError:
+    jest.requireActual('../../platforms/react-native/protocol/mspIdentificationDiagnostics')
+      .describeMspIdentificationError,
 }));
 
 import React from 'react';
@@ -716,5 +724,65 @@ describe('UsbSerialDebugPanel - Pass 6.4b identification result display (SUCCEED
     expect(client.writeBytes).not.toHaveBeenCalled();
     expect(client.startReading).not.toHaveBeenCalled();
     expect(client.stopReading).not.toHaveBeenCalled();
+  });
+});
+
+describe('UsbSerialDebugPanel - TEMPORARY DIAGNOSTIC SCAFFOLDING: msp-identification-error-detail', () => {
+  it('renders "code: message" for an MspClientError-shaped error (has both code and message)', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue({
+      status: 'FAILED',
+      error: {code: 'MSP_TIMEOUT', message: 'No response received within the configured timeout.'},
+    } satisfies MspIdentificationState);
+    const renderer = await renderPanel(client, true);
+
+    expect(findByTestID(renderer, 'msp-identification-error-detail').props.children).toBe(
+      'MSP_TIMEOUT: No response received within the configured timeout.',
+    );
+  });
+
+  it('renders "name: message" for a plain Error instance (no code field)', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue({
+      status: 'FAILED',
+      error: new Error('Failed to decode response for MSP command 2: attempted to read past the end of the payload.'),
+    } satisfies MspIdentificationState);
+    const renderer = await renderPanel(client, true);
+
+    expect(findByTestID(renderer, 'msp-identification-error-detail').props.children).toBe(
+      'Error: Failed to decode response for MSP command 2: attempted to read past the end of the payload.',
+    );
+  });
+
+  it('does not render for IDLE/RUNNING/SUCCEEDED identification states', async () => {
+    const client = createMockClient();
+    for (const identificationState of [
+      {status: 'IDLE'},
+      {status: 'RUNNING'},
+      buildIdentity(),
+    ] satisfies MspIdentificationState[]) {
+      useMspIdentificationStateMock.mockReturnValue(identificationState);
+      const renderer = await renderPanel(client, true);
+      expect(renderer.root.findAllByProps({testID: 'msp-identification-error-detail'})).toHaveLength(0);
+    }
+  });
+
+  it('does not modify or replace the existing FAILED-status Arabic message - both render as separate elements', async () => {
+    const client = createMockClient();
+    useMspIdentificationStateMock.mockReturnValue({
+      status: 'FAILED',
+      error: new Error('boom'),
+    } satisfies MspIdentificationState);
+    getActiveMspClientMock.mockReturnValue({getState: () => 'READY' as MspClientState});
+    const renderer = await renderPanel(client, true);
+
+    // The pre-existing message and testID are completely unchanged - this is
+    // the same assertion the pre-existing "shows the FAILED message..." test
+    // above already makes, repeated here explicitly to confirm this new,
+    // separate element did not alter it.
+    expect(findByTestID(renderer, 'msp-status-message').props.children).toBe(
+      'تعذّر التعرّف على نوع وحدة التحكم، مع بقاء الاتصال قائمًا.',
+    );
+    expect(findByTestID(renderer, 'msp-identification-error-detail').props.children).toBe('Error: boom');
   });
 });
