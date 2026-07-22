@@ -46,3 +46,24 @@ export type {
   MspClientOptions,
   MspClientDiagnosticEvent,
 } from './mspClient';
+
+export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO} from './msp';
+export {
+  BETAFLIGHT_SOURCE_REPO,
+  BETAFLIGHT_PINNED_COMMIT,
+  INAV_SOURCE_REPO,
+  INAV_PINNED_COMMIT,
+  EMUFLIGHT_SOURCE_REPO,
+  EMUFLIGHT_PINNED_COMMIT,
+} from './msp';
+export {MspPayloadReader, MspPayloadReadError} from './msp';
+export {decodeApiVersion, decodeFcVariant, decodeBoardInfo} from './msp';
+export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo} from './msp';
+export {
+  checkMspCompatibility,
+  MSP_MIN_REQUIRED_API_VERSION_MAJOR,
+  MSP_MIN_REQUIRED_API_VERSION_MINOR,
+} from './msp';
+export type {MspCompatibilityResult} from './msp';
+export {deriveFcFamily, MspIdentificationService, MspIncompatibleFirmwareError} from './msp';
+export type {MspFcFamily, MspFcVariant, FlightControllerIdentity, MspRequester} from './msp';
