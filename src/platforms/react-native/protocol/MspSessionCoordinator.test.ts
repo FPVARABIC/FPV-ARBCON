@@ -69,6 +69,10 @@ interface FakeClient {
   startReading: jest.Mock;
   emitSessionDetached: (event: UsbSerialSessionDetachedEvent) => void;
   setResponse: (command: number, payload: Uint8Array) => void;
+  /** Only meaningful when constructed with {deferStartReading: true} -
+   * resolves the pending startReading() Promise on demand. A no-op
+   * (never referenced) for every fake built without that option. */
+  resolveStartReading: () => void;
 }
 
 /**
@@ -80,10 +84,19 @@ interface FakeClient {
  * mspStreamParser.test.ts/mspClient.test.ts already use) without ever
  * needing a real or fake timer.
  */
-function makeFakeClient(sessionId: string, options: {neverResolveWrite?: boolean} = {}): FakeClient {
+function makeFakeClient(
+  sessionId: string,
+  options: {neverResolveWrite?: boolean; deferStartReading?: boolean} = {},
+): FakeClient {
   const dataListeners = new Set<(event: UsbSerialDataEvent) => void>();
   const sessionDetachedListeners = new Set<(event: UsbSerialSessionDetachedEvent) => void>();
   const responses = new Map<number, Uint8Array>();
+  let resolveStartReadingImpl: () => void = () => undefined;
+  const startReadingPromise = options.deferStartReading
+    ? new Promise<void>(resolve => {
+        resolveStartReadingImpl = resolve;
+      })
+    : Promise.resolve(undefined);
 
   const emitFrame = (command: number, payload: Uint8Array) => {
     const frameBytes = buildMspFrameBytes(command, payload, {wireFormat: 'v1', direction: 'response'});
@@ -123,7 +136,10 @@ function makeFakeClient(sessionId: string, options: {neverResolveWrite?: boolean
       return jest.fn(() => sessionDetachedListeners.delete(cb));
     }),
     stopReading: jest.fn().mockResolvedValue(undefined),
-    startReading: jest.fn().mockResolvedValue(undefined),
+    startReading: jest.fn(() => startReadingPromise),
+    resolveStartReading: () => {
+      resolveStartReadingImpl();
+    },
     emitSessionDetached: event => {
       for (const listener of Array.from(sessionDetachedListeners)) {
         listener(event);
@@ -316,6 +332,56 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     expect(observed).toEqual(['ACTIVATING', 'ACTIVE']);
   });
 
+  it('beginIdentification() (and therefore identify()\'s first writeBytes()) never fires until startReading() genuinely resolves - not merely issued in the same synchronous turn', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeFakeClient(SESSION_ID, {deferStartReading: true});
+    client.setResponse(MSP_API_VERSION, apiVersionPayload());
+    client.setResponse(MSP_FC_VARIANT, fcVariantPayload());
+    client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+
+    // startReading() was called (the fix's whole point), but its Promise is
+    // deliberately left unresolved by this fake client until
+    // resolveStartReading() is called below - proving the corrected
+    // sequencing, not just that the call was issued.
+    expect(client.startReading).toHaveBeenCalledWith(SESSION_ID);
+    await flushAsync();
+    expect(client.writeBytes).not.toHaveBeenCalled();
+    expect(coordinator.getIdentificationState(SESSION_ID)).toEqual({status: 'IDLE'});
+
+    client.resolveStartReading();
+    await flushAsync();
+
+    // Only NOW, after startReading() genuinely resolved, does identify()'s
+    // first request (and therefore its first writeBytes() call) happen.
+    expect(client.writeBytes).toHaveBeenCalled();
+    const identification = coordinator.getIdentificationState(SESSION_ID);
+    expect(identification.status).toBe('SUCCEEDED');
+  });
+
+  it('a startReading() rejection tears the session down (ACTIVE -> INACTIVE directly, skipping CLOSING) and never starts identification', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeQuietFakeClient(SESSION_ID);
+    client.startReading.mockRejectedValueOnce({code: 'RX_ALREADY_ACTIVE', nativeMessage: 'x'});
+
+    const observed: MspSessionOwnershipState[] = [];
+    coordinator.subscribeOwnershipState(() => {
+      observed.push(coordinator.getOwnershipState(SESSION_ID));
+    });
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    expect(observed).toEqual(['ACTIVATING', 'ACTIVE', 'INACTIVE']);
+    expect(observed).not.toContain('CLOSING');
+    expect(coordinator.getOwnershipState(SESSION_ID)).toBe('INACTIVE');
+    expect(coordinator.getActiveMspClient(SESSION_ID)).toBeUndefined();
+    expect(coordinator.getActiveTransport(SESSION_ID)).toBeUndefined();
+    // Never even reached beginIdentification() - stayed IDLE throughout.
+    expect(coordinator.getIdentificationState(SESSION_ID)).toEqual({status: 'IDLE'});
+  });
+
   it('a construction failure reverts ACTIVATING -> INACTIVE, cleans up fully, and re-throws MspOwnershipActivationError', () => {
     const coordinator = new MspSessionCoordinator();
     const client = makeQuietFakeClient(SESSION_ID);
@@ -413,6 +479,12 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     });
 
     coordinator.openSession(uClient, SESSION_ID);
+    // beginIdentification() is now chained onto startReading()'s own
+    // resolution (the corrected fix this test file was updated for) - a
+    // flush is required before identificationState genuinely reaches
+    // RUNNING, whereas before that fix it was set synchronously within
+    // openSession() itself.
+    await flushAsync();
     expect(coordinator.getIdentificationState(SESSION_ID)).toEqual({status: 'RUNNING'});
 
     client.emitSessionDetached({sessionId: SESSION_ID, deviceId: 1});
@@ -458,6 +530,9 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     const uClient = client as unknown as UsbSerialTransportClient;
 
     coordinator.openSession(uClient, SESSION_ID);
+    // See the physical-detach test above's identical comment - a flush is
+    // now required before identificationState reaches RUNNING.
+    await flushAsync();
     expect(coordinator.getIdentificationState(SESSION_ID)).toEqual({status: 'RUNNING'});
 
     coordinator.deactivateMspSession(SESSION_ID);
@@ -476,6 +551,11 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     // current synchronous call stack fully unwinds).
     const oldClient = makeFakeClient(SESSION_ID);
     const oldMspClient = coordinator.openSession(oldClient as unknown as UsbSerialTransportClient, SESSION_ID);
+    // beginIdentification() is chained onto startReading()'s resolution
+    // (the corrected fix) - flushed once here so the OLD session's
+    // identify() request is genuinely in flight (RUNNING) before it gets
+    // torn down below, matching this test's own stated scenario.
+    await flushAsync();
     expect(coordinator.getIdentificationState(SESSION_ID)).toEqual({status: 'RUNNING'});
 
     // Intentional close: invalidates the OLD generation token and disposes
@@ -494,7 +574,6 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     const newMspClient = coordinator.openSession(newClient as unknown as UsbSerialTransportClient, SESSION_ID);
     expect(newMspClient).not.toBe(oldMspClient);
     expect(coordinator.getOwnershipState(SESSION_ID)).toBe('ACTIVE');
-    expect(coordinator.getIdentificationState(SESSION_ID)).toEqual({status: 'RUNNING'});
 
     await flushAsync();
 

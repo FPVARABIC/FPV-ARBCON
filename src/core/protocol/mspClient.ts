@@ -125,7 +125,18 @@ function deriveProtocolVersion(wireFormat: MspWireFormat): MspProtocolVersion {
  * deliberately different from whatever command caused the original
  * desync - independently verified against Betaflight's own
  * src/main/msp/msp_protocol.h (MSP_API_VERSION = 1), not assumed from
- * memory, per this project's standing "verify, don't assume" convention. */
+ * memory, per this project's standing "verify, don't assume" convention.
+ *
+ * KNOWN GAP, DEFERRED (found investigating a Pass 6.4b real-hardware
+ * timeout): this happens to be the SAME command as MSP_API_VERSION,
+ * which MspIdentificationService.identify() (Pass 6.4a) sends first - so
+ * a probe fired shortly after an identify()-driven MSP_API_VERSION
+ * timeout produces a reply indistinguishable, by raw bytes, from a
+ * second reply to the original request. Confirmed NOT the cause of that
+ * timeout (a missing startReading() call was - fixed separately in
+ * MspSessionCoordinator.openSession()); this collision only made the
+ * symptom read as "duplicate response" instead of a plain hang. Left
+ * unfixed here, deliberately - tracked as its own separate future task. */
 const MSP_PROBE_COMMAND = 1; // MSP_API_VERSION
 const MSP_PROBE_PAYLOAD = new Uint8Array(0);
 const MSP_PROBE_WIRE_FORMAT: MspWireFormat = 'v1';

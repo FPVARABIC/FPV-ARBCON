@@ -178,9 +178,23 @@ export class MspSessionCoordinator {
    *     generation token, ownership -> ACTIVE, and the MspClient is
    *     returned (same contract as Pass 6.3).
    *  5. Still within this same synchronous call, immediately after step 4:
-   *     identification -> RUNNING and MspIdentificationService.identify()
-   *     starts fire-and-forget against the just-created MspClient, tagged
-   *     with this attempt's generation token (see beginIdentification()).
+   *     client.startReading(sessionId) is called, fire-and-forget from
+   *     openSession()'s own perspective - openSession() itself does not
+   *     await it, still returning MspClient synchronously, unchanged. BUT
+   *     beginIdentification() (and therefore identify()'s first
+   *     writeBytes()) is deliberately CHAINED onto that same Promise's
+   *     resolution, not fired independently alongside it - genuinely
+   *     guaranteeing the native receive loop is confirmed running before
+   *     the first MSP request is ever written, not merely "issued first
+   *     and hoped to win a race." Found necessary by a real-hardware
+   *     investigation: MspSessionCoordinator previously never called
+   *     startReading() at all for a real session (only
+   *     RNMspTransport.restartReceiveLoop() - MspClient's OWN Pass 6.2b
+   *     recovery machinery - ever did, and only after a request had
+   *     already timed out), so the very first identify() attempt on a
+   *     fresh connection was reading from a receive loop that had never
+   *     been started - see handleStartReadingFailure() for what happens
+   *     if startReading() itself rejects instead of resolving.
    */
   openSession(client: UsbSerialTransportClient, sessionId: string): MspClient {
     const existing = this.sessions.get(sessionId);
@@ -226,9 +240,51 @@ export class MspSessionCoordinator {
     this.ownershipStates.set(sessionId, 'ACTIVE');
     this.notifyOwnership();
 
-    this.beginIdentification(sessionId, mspClient, transport, generation);
+    // Fire-and-forget from openSession()'s own perspective (still returns
+    // synchronously below, unchanged) - but beginIdentification() is
+    // deliberately CHAINED onto startReading()'s resolution, not started
+    // independently alongside it. See this method's own doc comment
+    // (step 5) for why this ordering - not just issuing both calls in the
+    // same synchronous turn - is required to actually close the race
+    // rather than merely narrow it.
+    client.startReading(sessionId).then(
+      () => {
+        if (!this.isCurrentGeneration(sessionId, generation)) {
+          // Superseded - the session was torn down (deactivated or
+          // physically detached) while startReading() was still in
+          // flight. Never begin identification against a session that no
+          // longer exists.
+          return;
+        }
+        this.beginIdentification(sessionId, mspClient, transport, generation);
+      },
+      error => this.handleStartReadingFailure(sessionId, generation, error),
+    );
 
     return mspClient;
+  }
+
+  /**
+   * A session whose native receive loop failed to start (e.g.
+   * RX_ALREADY_ACTIVE, RX_RESTART_TIMEOUT, or any other real rejection
+   * from UsbSerialTransportClient.startReading()) is exactly as unusable
+   * as one that never activated at all - it can never receive data. But
+   * unlike a genuine construction failure, this is discovered
+   * asynchronously, after openSession() has already returned MspClient to
+   * its caller - there is no synchronous throw left to raise. Treated the
+   * same way a physical detach discovered mid-flight already is (NOT the
+   * same way a construction failure is): the generation-token guard first
+   * (an already-superseded session, e.g. reused sessionId reopened before
+   * this settled, must never be torn down by a stale rejection), then the
+   * identical handlePhysicalDetach() sequence - not a graceful,
+   * in-progress close, so CLOSING is skipped entirely, same reasoning as
+   * that method's own doc comment.
+   */
+  private handleStartReadingFailure(sessionId: string, generation: number, _error: unknown): void {
+    if (!this.isCurrentGeneration(sessionId, generation)) {
+      return;
+    }
+    this.handlePhysicalDetach(sessionId);
   }
 
   /**
