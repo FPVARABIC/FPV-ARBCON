@@ -26,6 +26,9 @@ import type {
   UsbSerialDeviceDescriptor,
   UsbSerialTransportClient,
 } from '../../platforms/react-native/transport';
+// mspSessionCoordinator's openSession()/closeSession() wiring is DEFERRED
+// to Pass 6.4 (see handleConnect()/handleDisconnect() below) - no import
+// from '../../platforms/react-native/protocol' is needed here until then.
 // TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbSerialDebugPanel.tsx's own
 // class-level note. Delete this import and its one render site below
 // alongside that file once real protocol screens exist.
@@ -606,6 +609,13 @@ export default function UsbConnectionScreen({
       if (!mountedRef.current) {
         return;
       }
+      // Pass 6.3 Step 2 built mspSessionCoordinator.openSession() as the
+      // hook point for this exact spot (the only place a sessionId ever
+      // becomes known), but wiring it into the live connect flow is
+      // DEFERRED to Pass 6.4. RNMspTransport/MspSessionCoordinator are
+      // fully built and fully tested; mspActive (passed to
+      // UsbSerialDebugPanel further down) stays false throughout Pass 6.3
+      // by design until this call site is reinstated.
       dispatch({type: 'CONNECT_SUCCESS', sessionId});
     } catch (error) {
       if (!mountedRef.current) {
@@ -639,6 +649,9 @@ export default function UsbConnectionScreen({
       if (!mountedRef.current) {
         return;
       }
+      // mspSessionCoordinator.closeSession() would pair with the deferred
+      // openSession() call above (see handleConnect()'s comment) - DEFERRED
+      // to Pass 6.4 along with it, for the same reason.
       dispatch({type: 'DISCONNECT_SUCCESS'});
     } catch (error) {
       if (!mountedRef.current) {
@@ -737,7 +750,17 @@ export default function UsbConnectionScreen({
         {/* TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbSerialDebugPanel.tsx's
             own class-level note. Delete this block alongside that file. */}
         {isConnected && state.activeSessionId ? (
-          <UsbSerialDebugPanel sessionId={state.activeSessionId} client={client} />
+          <UsbSerialDebugPanel
+            sessionId={state.activeSessionId}
+            client={client}
+            // Hardcoded false, not derived from isConnected: Pass 6.3 Step 3
+            // defers mspSessionCoordinator.openSession()/closeSession()
+            // wiring to Pass 6.4 (see handleConnect()/handleDisconnect()'s
+            // own comments above) - no MspClient is ever active during
+            // Pass 6.3, so this panel keeps its original, fully-functional
+            // raw RX/TX behavior unconditionally until that wiring lands.
+            mspActive={false}
+          />
         ) : null}
 
         <ValidationLog

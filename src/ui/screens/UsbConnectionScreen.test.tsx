@@ -20,18 +20,48 @@ type MockClient = {
   // 5.3, UsbSerialDebugPanel.tsx) - see its own class-level note.
   onDataReceived: jest.Mock;
   onError: jest.Mock;
+  /** Fires the given event to EVERY currently-registered onSessionDetached
+   * listener (a genuine Set-based fan-out), not just whichever handler was
+   * registered most recently. In Pass 6.3 as shipped, onSessionDetached has
+   * only ONE real subscriber - this screen's own hot-plug effect (registered
+   * once at mount) - because mspSessionCoordinator.openSession()'s call site
+   * inside handleConnect() was deferred to Pass 6.4 (see
+   * UsbConnectionScreen.tsx's own deferred-wiring comments there). This mock
+   * is still written as a genuine multi-listener fan-out, not a "latest
+   * handler wins" stub, because once Pass 6.4 reinstates that call site,
+   * RNMspTransport's own constructor subscription becomes a SECOND real
+   * subscriber on this same event - a "latest handler wins" mock would then
+   * silently invoke only that second one and never exercise this screen's
+   * own SESSION_DETACHED dispatch again. Kept correct now so it stays
+   * correct then, without needing to be revisited. */
+  emitSessionDetached: (event: {sessionId: string; deviceId: number}) => void;
 };
 
 function createMockClient(): MockClient {
+  const sessionDetachedListeners = new Set<(event?: unknown) => void>();
+
   return {
     listDevices: jest.fn(),
     openDevice: jest.fn(),
     closeSession: jest.fn(),
     onDeviceAttached: jest.fn(() => jest.fn()),
     onDeviceDetached: jest.fn(() => jest.fn()),
-    onSessionDetached: jest.fn(() => jest.fn()),
+    onSessionDetached: jest.fn((listener: (event?: unknown) => void) => {
+      sessionDetachedListeners.add(listener);
+      return jest.fn(() => {
+        sessionDetachedListeners.delete(listener);
+      });
+    }),
     onDataReceived: jest.fn(() => jest.fn()),
     onError: jest.fn(() => jest.fn()),
+    emitSessionDetached: event => {
+      // Snapshot before iterating: mirrors RNMspTransport's own fan-out
+      // discipline, in case a listener synchronously unsubscribes another
+      // (e.g. MspSessionCoordinator's teardown) mid-dispatch.
+      for (const listener of Array.from(sessionDetachedListeners)) {
+        listener(event);
+      }
+    },
   };
 }
 
@@ -70,9 +100,8 @@ async function fireDetached(
 
 /** Simulates the native "active session's device physically detached" event. */
 async function fireSessionDetached(client: MockClient, sessionId: string) {
-  const handler = latestHandler(client.onSessionDetached);
   await act(async () => {
-    handler({sessionId, deviceId: 0});
+    client.emitSessionDetached({sessionId, deviceId: 0});
   });
 }
 

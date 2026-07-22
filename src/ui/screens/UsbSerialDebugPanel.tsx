@@ -1,8 +1,9 @@
-import React, {useCallback, useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from 'react';
 import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 
 import {colors, radii, spacing, typography} from '../theme';
 import type {TransportError, UsbSerialTransportClient} from '../../platforms/react-native/transport';
+import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
 import {
   base64ToBytes,
   bytesToBase64,
@@ -33,6 +34,27 @@ import {
  * Delete this file (and its one integration point in
  * UsbConnectionScreen.tsx, clearly marked there the same way) once real
  * protocol screens (Setup, PID, etc.) exist and this is no longer needed.
+ *
+ * PASS6.3 (Step 3): READ-ONLY MONITOR EXCLUSIVITY. Once an MspClient is
+ * active for this session (mspActive prop, driven by
+ * MspSessionCoordinator - see UsbConnectionScreen.tsx's own hook-point
+ * comments), this panel's Start Reading/Stop Reading/Send controls are
+ * DISABLED (not hidden) - MSP protocol traffic and this panel's own manual
+ * RX loop control/writes must never compete for the same physical byte
+ * stream. The panel still displays incoming bytes while mspActive: it
+ * registers its OWN independent listener directly on the SAME
+ * RNMspTransport instance MspClient itself uses (Step 1's multi-listener
+ * support), never a second, separate subscription to the raw underlying
+ * client - see the mspActive-branched effects below.
+ *
+ * PASS6.3 (Step 3 final correction): the disabled={mspActive} styling on
+ * the buttons is a UX layer only, NOT the safety mechanism. The real
+ * guard is mspActiveRef, a ref kept in sync via useLayoutEffect (not a
+ * useCallback dependency) - a caller that already holds a stale reference
+ * to handleStartReading/handleStopReading/sendBytes (e.g. a previously
+ * captured callback or an old event-listener closure) must still be
+ * blocked at CALL TIME by reading current, live state, not by however
+ * mspActive happened to read when that particular closure was created.
  */
 
 const MAX_DEBUG_LOG_ENTRIES = 200;
@@ -60,15 +82,27 @@ function formatDebugTimestamp(epochMs: number): string {
 interface Props {
   sessionId: string;
   client: UsbSerialTransportClient;
+  /** True once MspSessionCoordinator.openSession() has been called for
+   * this exact session (and until closeSession()/detach) - see
+   * UsbConnectionScreen.tsx's own hook-point comments. Disables this
+   * panel's write/RX-loop-control buttons and switches its own byte log
+   * to read from the shared RNMspTransport instance instead of a second,
+   * separate raw client subscription. */
+  mspActive: boolean;
 }
 
-export default function UsbSerialDebugPanel({sessionId, client}: Props): React.JSX.Element {
+export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Props): React.JSX.Element {
   const [entries, setEntries] = useState<DebugLogEntry[]>([]);
   const [reading, setReading] = useState(false);
   const [readBusy, setReadBusy] = useState(false);
   const [byteInput, setByteInput] = useState('1,2,3,4,5');
   const mountedRef = useRef(true);
   const nextIdRef = useRef(1);
+  // Synchronous internal guard for handleStartReading/handleStopReading/
+  // sendBytes - see the class-level doc comment above. useLayoutEffect
+  // (not useEffect): the ref must already be current by the time this
+  // render becomes interactive, not merely eventually consistent.
+  const mspActiveRef = useRef(mspActive);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -76,6 +110,10 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
       mountedRef.current = false;
     };
   }, []);
+
+  useLayoutEffect(() => {
+    mspActiveRef.current = mspActive;
+  }, [mspActive]);
 
   const appendLog = useCallback((text: string) => {
     if (!mountedRef.current) {
@@ -85,9 +123,35 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
     setEntries(prev => [entry, ...prev].slice(0, MAX_DEBUG_LOG_ENTRIES));
   }, []);
 
-  // Subscribed only while this panel is mounted - i.e. only while a session
-  // is connected (see its one render site in UsbConnectionScreen.tsx).
+  // Attach-log + native transport errors - unconditional, unaffected by
+  // mspActive (a native read error is still meaningful diagnostic info
+  // regardless of whether an MspClient exists for this session).
   useEffect(() => {
+    appendLog('debug panel attached to this session');
+    const unsubscribeError = client.onError(event => {
+      if (event.sessionId !== undefined && event.sessionId !== sessionId) {
+        return;
+      }
+      appendLog(`ERR ${event.code}: ${event.message}`);
+    });
+    return () => {
+      unsubscribeError();
+    };
+  }, [client, sessionId, appendLog]);
+
+  // RAW byte log - only while NOT mspActive (exactly this panel's original,
+  // pre-Pass-6.3 behavior: its own filtered, self-decoded subscription
+  // directly on the underlying client). Explicit cleanup below detaches
+  // this the moment mspActive flips true, sessionId changes, or the panel
+  // unmounts - mirroring UsbConnectionScreen.tsx's own hot-plug
+  // subscription useEffect, this codebase's established pattern for every
+  // subscription lifecycle: never rely on the far side (here,
+  // RNMspTransport.dispose()) eventually clearing its own listeners as a
+  // substitute for this effect managing its own subscription explicitly.
+  useEffect(() => {
+    if (mspActive) {
+      return undefined;
+    }
     const unsubscribeData = client.onDataReceived(event => {
       if (event.sessionId !== sessionId) {
         return;
@@ -95,20 +159,42 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
       const bytes = base64ToBytes(event.dataBase64);
       appendLog(`RX  ${bytes.length}B  hex=[${bytesToHex(bytes)}]  base64Len=${event.dataBase64.length}`);
     });
-    const unsubscribeError = client.onError(event => {
-      if (event.sessionId !== undefined && event.sessionId !== sessionId) {
-        return;
-      }
-      appendLog(`ERR ${event.code}: ${event.message}`);
-    });
-    appendLog('debug panel attached to this session');
     return () => {
       unsubscribeData();
-      unsubscribeError();
     };
-  }, [client, sessionId, appendLog]);
+  }, [client, sessionId, mspActive, appendLog]);
+
+  // MSP-active byte log - only while mspActive. Registers its OWN
+  // independent listener directly on the SAME RNMspTransport instance
+  // MspClient itself uses (Step 1's multi-listener support) - never a
+  // second, separate subscription to the raw underlying client. One
+  // synchronous getActiveTransport() lookup per mspActive/sessionId change
+  // (see UsbConnectionScreen.tsx's own comment on why mspActive and
+  // MspSessionCoordinator.openSession() are always in sync by the time
+  // this effect runs) - not polling, not re-checked on every render.
+  // Cleanup explicitly unsubscribes, same reasoning as the raw-log effect
+  // above.
+  useEffect(() => {
+    if (!mspActive) {
+      return undefined;
+    }
+    const transport = mspSessionCoordinator.getActiveTransport(sessionId);
+    if (!transport) {
+      return undefined;
+    }
+    const unsubscribeMspData = transport.onDataReceived(bytes => {
+      appendLog(`RX (MSP)  ${bytes.length}B  hex=[${bytesToHex(bytes)}]`);
+    });
+    return () => {
+      unsubscribeMspData();
+    };
+  }, [sessionId, mspActive, appendLog]);
 
   const handleStartReading = useCallback(async () => {
+    if (mspActiveRef.current) {
+      appendLog('DEBUG_CONTROL_BLOCKED_BY_MSP');
+      return;
+    }
     setReadBusy(true);
     appendLog('startReading() called');
     try {
@@ -132,6 +218,10 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
   }, [client, sessionId, appendLog]);
 
   const handleStopReading = useCallback(async () => {
+    if (mspActiveRef.current) {
+      appendLog('DEBUG_CONTROL_BLOCKED_BY_MSP');
+      return;
+    }
     setReadBusy(true);
     appendLog('stopReading() called');
     try {
@@ -160,6 +250,10 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
   // must never serialize or block them.
   const sendBytes = useCallback(
     (bytes: Uint8Array, label: string) => {
+      if (mspActiveRef.current) {
+        appendLog('DEBUG_CONTROL_BLOCKED_BY_MSP');
+        return;
+      }
       const dataBase64 = bytesToBase64(bytes);
       appendLog(`TX  (${label}) ${bytes.length}B  hex=[${bytesToHex(bytes)}]`);
       client
@@ -196,19 +290,26 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
       <Text style={styles.debugLabel}>⚠ DEBUG - RX/TX MANUAL TEST PANEL (temporary, Pass 5.3)</Text>
       <Text style={styles.sessionText}>session: {sessionId}</Text>
 
+      {mspActive ? (
+        <Text style={styles.mspActiveNotice} accessibilityRole="text">
+          التحكم بالقراءة والإرسال معطّل لأن بروتوكول MSP نشط حاليًا لهذه الجلسة - هذه اللوحة تعرض البيانات
+          الواردة فقط دون التدخل فيها.
+        </Text>
+      ) : null}
+
       <View style={styles.row}>
         <Pressable
           testID="debug-start-reading"
-          disabled={readBusy || reading}
+          disabled={readBusy || reading || mspActive}
           onPress={handleStartReading}
-          style={[styles.button, (readBusy || reading) && styles.buttonDisabled]}>
+          style={[styles.button, (readBusy || reading || mspActive) && styles.buttonDisabled]}>
           <Text style={styles.buttonText}>Start Reading</Text>
         </Pressable>
         <Pressable
           testID="debug-stop-reading"
-          disabled={readBusy || !reading}
+          disabled={readBusy || !reading || mspActive}
           onPress={handleStopReading}
-          style={[styles.button, (readBusy || !reading) && styles.buttonDisabled]}>
+          style={[styles.button, (readBusy || !reading || mspActive) && styles.buttonDisabled]}>
           <Text style={styles.buttonText}>Stop Reading</Text>
         </Pressable>
       </View>
@@ -219,8 +320,9 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
           <Pressable
             key={preset.label}
             testID={`debug-send-preset-${preset.label}`}
+            disabled={mspActive}
             onPress={() => sendBytes(Uint8Array.from(preset.bytes), preset.label)}
-            style={styles.button}>
+            style={[styles.button, mspActive && styles.buttonDisabled]}>
             <Text style={styles.buttonText}>Send [{preset.label}]</Text>
           </Pressable>
         ))}
@@ -237,7 +339,11 @@ export default function UsbSerialDebugPanel({sessionId, client}: Props): React.J
           autoCapitalize="none"
           autoCorrect={false}
         />
-        <Pressable testID="debug-send-custom" onPress={handleSendCustom} style={styles.button}>
+        <Pressable
+          testID="debug-send-custom"
+          disabled={mspActive}
+          onPress={handleSendCustom}
+          style={[styles.button, mspActive && styles.buttonDisabled]}>
           <Text style={styles.buttonText}>Send</Text>
         </Pressable>
       </View>
@@ -282,6 +388,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'ltr',
+    marginBottom: spacing.md,
+  },
+  mspActiveNotice: {
+    ...typography.caption,
+    color: colors.warning,
     marginBottom: spacing.md,
   },
   row: {
