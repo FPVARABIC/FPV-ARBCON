@@ -39,6 +39,13 @@ export type {
   MspFcVariant,
   FlightControllerIdentity,
   MspRequester,
+  MonotonicClock,
+  MspPollDefinition,
+  TelemetryValue,
+  TelemetryPauseReason,
+  TelemetryPauseLease,
+  MspTelemetryScheduler,
+  MspTelemetrySchedulerOptions,
 } from './protocol';
 export {
   MSP_V2_FRAME_ID,
@@ -79,4 +86,7 @@ export {
   deriveFcFamily,
   MspIdentificationService,
   MspIncompatibleFirmwareError,
+  RealClock,
+  FakeClock,
+  createMspTelemetryScheduler,
 } from './protocol';

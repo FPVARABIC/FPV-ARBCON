@@ -67,3 +67,14 @@ export {
 export type {MspCompatibilityResult} from './msp';
 export {deriveFcFamily, MspIdentificationService, MspIncompatibleFirmwareError} from './msp';
 export type {MspFcFamily, MspFcVariant, FlightControllerIdentity, MspRequester} from './msp';
+
+export {RealClock, FakeClock, createMspTelemetryScheduler} from './telemetry';
+export type {
+  MonotonicClock,
+  MspPollDefinition,
+  TelemetryValue,
+  TelemetryPauseReason,
+  TelemetryPauseLease,
+  MspTelemetryScheduler,
+  MspTelemetrySchedulerOptions,
+} from './telemetry';
