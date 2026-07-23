@@ -46,6 +46,15 @@ export type {
   TelemetryPauseLease,
   MspTelemetryScheduler,
   MspTelemetrySchedulerOptions,
+  ExclusiveOperationState,
+  OperationExecutionPhase,
+  MspOperationContext,
+  MspOperationValidationResult,
+  MspExclusiveOperation,
+  SetupOperationResult,
+  MspOperationCoordinator,
+  MspOperationSessionSource,
+  MspOperationCoordinatorOptions,
 } from './protocol';
 export {
   MSP_V2_FRAME_ID,
@@ -89,4 +98,7 @@ export {
   RealClock,
   FakeClock,
   createMspTelemetryScheduler,
+  MspOperationOutcomeUnknownError,
+  createMspOperationCoordinator,
+  MspExclusiveOperationInProgressError,
 } from './protocol';

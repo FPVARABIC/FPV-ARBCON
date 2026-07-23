@@ -78,3 +78,20 @@ export type {
   MspTelemetryScheduler,
   MspTelemetrySchedulerOptions,
 } from './telemetry';
+
+export {
+  MspOperationOutcomeUnknownError,
+  createMspOperationCoordinator,
+  MspExclusiveOperationInProgressError,
+} from './telemetry';
+export type {
+  ExclusiveOperationState,
+  OperationExecutionPhase,
+  MspOperationContext,
+  MspOperationValidationResult,
+  MspExclusiveOperation,
+  SetupOperationResult,
+  MspOperationCoordinator,
+  MspOperationSessionSource,
+  MspOperationCoordinatorOptions,
+} from './telemetry';
