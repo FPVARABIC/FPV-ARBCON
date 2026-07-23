@@ -1,4 +1,4 @@
-export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO} from './commands/mspCommands';
+export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE} from './commands/mspCommands';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
@@ -15,6 +15,8 @@ export {decodeFcVariant} from './decoding/decodeFcVariant';
 export type {MspFcVariantRaw} from './decoding/decodeFcVariant';
 export {decodeBoardInfo} from './decoding/decodeBoardInfo';
 export type {MspBoardInfo} from './decoding/decodeBoardInfo';
+export {decodeAttitude} from './decoding/decodeAttitude';
+export type {MspAttitude} from './decoding/decodeAttitude';
 
 export {
   checkMspCompatibility,

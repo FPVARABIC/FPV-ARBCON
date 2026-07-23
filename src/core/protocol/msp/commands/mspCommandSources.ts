@@ -61,6 +61,45 @@
  * arrived, never by cross-referencing a separately-fetched API version
  * number - see decodeBoardInfo.ts's own doc comment for how this is
  * handled.
+ *
+ * MSP_ATTITUDE (Pass 7.0 - hardware polling-capacity audit measurement
+ * harness): verified against the SAME BETAFLIGHT_PINNED_COMMIT above (no
+ * separate/newer pin needed - the command definition and encoding were
+ * both read at that exact commit, same as everything else in this file).
+ *   Files read at that commit:
+ *     - src/main/msp/msp_protocol.h
+ *         `#define MSP_ATTITUDE 108  // out message: 2 angles 1 heading`
+ *     - src/main/msp/msp.c, the real `case MSP_ATTITUDE:` block inside
+ *       mspProcessOutCommand() - verbatim:
+ *         sbufWriteU16(dst, attitude.values.roll);
+ *         sbufWriteU16(dst, attitude.values.pitch);
+ *         sbufWriteU16(dst, DECIDEGREES_TO_DEGREES(attitude.values.yaw));
+ *       Unconditionally 6 bytes total - no "Added in API version" comment
+ *       or `if (apiVersion >= ...)` conditional anywhere near this case,
+ *       unlike MSP_BOARD_INFO's fields; this command has no version-gating
+ *       history to account for at all.
+ *     - src/main/flight/imu.h
+ *         attitudeEulerAngles_t's `values` struct declares roll/pitch/yaw
+ *         as signed `int16_t`, in DECIDEGREES (comment: "eg
+ *         attitude.values.yaw 180 deg = 1800").
+ *     - src/main/common/maths.h
+ *         `#define DECIDEGREES_TO_DEGREES(angle) ((angle) / 10)` - plain
+ *         integer division by 10.
+ *     - src/main/flight/imu.c
+ *         `if (attitude.values.yaw < 0) { attitude.values.yaw += 3600; }`
+ *         - yaw is normalized to [0, 3600) decidegrees before the case
+ *         block's /10 conversion, so it is always non-negative (0-359) on
+ *         the wire in practice, despite being declared int16_t.
+ *   VERIFIED FINDING, NOT ASSUMED FROM MEMORY: roll and pitch are NOT the
+ *   same unit as yaw on the wire. roll/pitch are sent as their raw signed
+ *   int16_t decidegree value (0.1 degree units) - sbufWriteU16 is only the
+ *   byte-writing primitive's name, not a claim the value is unsigned; a
+ *   decoder must treat them as signed since bank/pitch angle can be either
+ *   direction. yaw, in contrast, is converted to WHOLE DEGREES
+ *   (DECIDEGREES_TO_DEGREES) before being written, and is functionally
+ *   always non-negative given the imu.c normalization above - a
+ *   fundamentally different unit from roll/pitch, not merely a different
+ *   sign convention. See decodeAttitude.ts's own doc comment.
  */
 
 export const BETAFLIGHT_SOURCE_REPO = 'https://github.com/betaflight/betaflight';

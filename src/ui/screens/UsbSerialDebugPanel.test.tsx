@@ -31,6 +31,8 @@ import type {
   UsbSerialErrorEvent,
   UsbSerialTransportClient,
 } from '../../platforms/react-native/transport';
+import {MSP_ATTITUDE} from '../../core';
+import type {MspFrame} from '../../core';
 
 const SESSION_ID = 'session-debug-1';
 
@@ -716,5 +718,100 @@ describe('UsbSerialDebugPanel - Pass 6.4b identification result display (SUCCEED
     expect(client.writeBytes).not.toHaveBeenCalled();
     expect(client.startReading).not.toHaveBeenCalled();
     expect(client.stopReading).not.toHaveBeenCalled();
+  });
+});
+
+// PASS7.0 (TEMPORARY) - remove alongside the panel section/handler these
+// tests cover, and pollingCapacityAudit.ts/.test.ts.
+describe('UsbSerialDebugPanel - Pass 7.0 TEMPORARY polling-capacity audit section', () => {
+  function attitudeFrame(rollDecidegrees: number, pitchDecidegrees: number, yawDegrees: number): MspFrame {
+    const s16le = (value: number) => {
+      const unsigned = value < 0 ? value + 0x10000 : value;
+      return [unsigned & 0xff, (unsigned >> 8) & 0xff];
+    };
+    const payload = Uint8Array.from([...s16le(rollDecidegrees), ...s16le(pitchDecidegrees), ...s16le(yawDegrees)]);
+    return {protocolVersion: 'v1', wireFormat: 'v1', direction: 'response', command: MSP_ATTITUDE, flags: 0, payload};
+  }
+
+  function createFakeMspClient(overrides: {request?: () => Promise<MspFrame>} = {}) {
+    return {
+      getState: jest.fn(() => 'READY' as MspClientState),
+      request: jest.fn(overrides.request ?? (async () => attitudeFrame(10, -20, 30))),
+      onDiagnostic: jest.fn(() => jest.fn()),
+    };
+  }
+
+  it('renders no polling-audit section at all while mspActive is false', async () => {
+    const client = createMockClient();
+    const renderer = await renderPanel(client, false);
+
+    expect(renderer.root.findAllByProps({testID: 'polling-capacity-audit-section'})).toHaveLength(0);
+  });
+
+  it('renders the section (with its run button) once mspActive is true', async () => {
+    const client = createMockClient();
+    getActiveMspClientMock.mockReturnValue(createFakeMspClient());
+    getActiveTransportMock.mockReturnValue(createFakeTransport());
+    const renderer = await renderPanel(client, true);
+
+    expect(renderer.root.findAllByProps({testID: 'polling-capacity-audit-section'}).length).toBeGreaterThan(0);
+    expect(findByTestID(renderer, 'polling-capacity-audit-run').props.disabled).toBe(false);
+  });
+
+  it('runs the real harness against getActiveMspClient()/getActiveTransport() for this exact session and displays a summary', async () => {
+    const client = createMockClient();
+    const fakeMspClient = createFakeMspClient();
+    const fakeTransport = createFakeTransport();
+    getActiveMspClientMock.mockReturnValue(fakeMspClient);
+    getActiveTransportMock.mockReturnValue(fakeTransport);
+    const renderer = await renderPanel(client, true);
+
+    const runButton = findByTestID(renderer, 'polling-capacity-audit-run');
+    await act(async () => {
+      await (runButton.props.onPress as () => Promise<void>)();
+    });
+
+    expect(getActiveMspClientMock).toHaveBeenCalledWith(SESSION_ID);
+    expect(getActiveTransportMock).toHaveBeenCalledWith(SESSION_ID);
+    // Default maxRequests (100) with every request succeeding instantly and
+    // state always READY - the harness's own maxRequests stop condition is
+    // what ends this run.
+    expect(fakeMspClient.request).toHaveBeenCalledTimes(100);
+    const summary = renderer.root.findAllByProps({testID: 'polling-capacity-audit-summary'})[0];
+    expect(summary.props.children.join('')).toContain('attempted=100');
+    expect(summary.props.children.join('')).toContain('success=100');
+    expect(summary.props.children.join('')).toContain('error=0');
+  });
+
+  it('shows an error message (not a crash) instead of running when no MSP session is actually active', async () => {
+    const client = createMockClient();
+    getActiveMspClientMock.mockReturnValue(undefined);
+    getActiveTransportMock.mockReturnValue(undefined);
+    const renderer = await renderPanel(client, true);
+
+    const runButton = findByTestID(renderer, 'polling-capacity-audit-run');
+    await act(async () => {
+      await (runButton.props.onPress as () => Promise<void>)();
+    });
+
+    expect(renderer.root.findAllByProps({testID: 'polling-capacity-audit-summary'})).toHaveLength(0);
+    expect(findByTestID(renderer, 'polling-capacity-audit-error')).toBeDefined();
+  });
+
+  it('never calls client.startReading()/writeBytes() (the raw transport methods) - only mspClient.request()', async () => {
+    const client = createMockClient();
+    const fakeMspClient = createFakeMspClient();
+    getActiveMspClientMock.mockReturnValue(fakeMspClient);
+    getActiveTransportMock.mockReturnValue(createFakeTransport());
+    const renderer = await renderPanel(client, true);
+
+    const runButton = findByTestID(renderer, 'polling-capacity-audit-run');
+    await act(async () => {
+      await (runButton.props.onPress as () => Promise<void>)();
+    });
+
+    expect(client.startReading).not.toHaveBeenCalled();
+    expect(client.writeBytes).not.toHaveBeenCalled();
+    expect(fakeMspClient.request).toHaveBeenCalled();
   });
 });

@@ -15,3 +15,7 @@ export const MSP_FC_VARIANT = 2;
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_PINNED_COMMIT:
  * `#define MSP_BOARD_INFO  4    // out message: Get board information` */
 export const MSP_BOARD_INFO = 4;
+
+/** src/main/msp/msp_protocol.h @ BETAFLIGHT_PINNED_COMMIT (Pass 7.0):
+ * `#define MSP_ATTITUDE 108  // out message: 2 angles 1 heading` */
+export const MSP_ATTITUDE = 108;

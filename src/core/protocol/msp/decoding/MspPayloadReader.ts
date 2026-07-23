@@ -57,6 +57,18 @@ export class MspPayloadReader {
     return value >>> 0;
   }
 
+  /** Pass 7.0 - added because MSP_ATTITUDE's roll/pitch/yaw fields are
+   * genuinely signed (see decodeAttitude.ts's own doc comment: Betaflight
+   * declares them int16_t and roll/pitch can go negative) even though the
+   * firmware source writes them via sbufWriteU16 - that is only the raw
+   * byte-writing primitive's name, not a claim about the value's sign.
+   * Reads the same two little-endian bytes readU16LE() would, then
+   * reinterprets as two's-complement signed 16-bit. */
+  readS16LE(): number {
+    const unsigned = this.readU16LE();
+    return unsigned >= 0x8000 ? unsigned - 0x10000 : unsigned;
+  }
+
   readU32LE(): number {
     this.ensure(4);
     const value =

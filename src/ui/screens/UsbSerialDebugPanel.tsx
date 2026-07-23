@@ -7,6 +7,11 @@ import {mspSessionCoordinator, useMspIdentificationState} from '../../platforms/
 import type {MspIdentificationState} from '../../platforms/react-native/protocol';
 import type {MspClientState} from '../../core';
 import {
+  runPollingCapacityAudit,
+  summarizePollingCapacityAudit,
+} from '../../core/protocol/msp/pollingCapacityAudit';
+import type {PollingCapacityAuditSummary} from '../../core/protocol/msp/pollingCapacityAudit';
+import {
   base64ToBytes,
   bytesToBase64,
   bytesToHex,
@@ -69,6 +74,19 @@ import {
  * driven by useMspIdentificationState() and MspClient.getState()) -
  * still no identify() call, no retry button, and no new write capability
  * of its own.
+ *
+ * PASS7.0 (TEMPORARY, hardware polling-capacity audit measurement only -
+ * remove this section, its handler/state below, and the
+ * pollingCapacityAudit.ts import once findings are recorded and acted
+ * on): one button, visible only while mspActive, running
+ * runPollingCapacityAudit() (src/core/protocol/msp/pollingCapacityAudit.ts)
+ * against mspSessionCoordinator.getActiveMspClient(sessionId)/
+ * getActiveTransport(sessionId) - the SAME session already opened via the
+ * normal connect flow, no new session-management path. Calls only
+ * mspClient.request(), never client.startReading()/writeBytes() (the raw
+ * transport methods the Start Reading/Stop Reading/Send controls above
+ * use) - so this section is fully independent of, and never conflicts
+ * with, this panel's existing mspActive-gated write/RX controls.
  */
 
 const MAX_DEBUG_LOG_ENTRIES = 200;
@@ -199,6 +217,39 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
     identificationState.status === 'SUCCEEDED' || identificationState.status === 'FAILED'
       ? mspSessionCoordinator.getIdentificationMetrics(sessionId)
       : undefined;
+
+  // PASS7.0 (TEMPORARY) - see this file's own class-level doc comment.
+  const [pollingAuditStatus, setPollingAuditStatus] = useState<'idle' | 'running'>('idle');
+  const [pollingAuditSummary, setPollingAuditSummary] = useState<PollingCapacityAuditSummary | undefined>(undefined);
+  const [pollingAuditError, setPollingAuditError] = useState<string | undefined>(undefined);
+
+  const handleRunPollingAudit = useCallback(async () => {
+    const mspClient = mspSessionCoordinator.getActiveMspClient(sessionId);
+    const transport = mspSessionCoordinator.getActiveTransport(sessionId);
+    if (!mspClient || !transport) {
+      setPollingAuditError('لا توجد جلسة MSP نشطة لتشغيل هذا القياس.');
+      return;
+    }
+    setPollingAuditStatus('running');
+    setPollingAuditError(undefined);
+    setPollingAuditSummary(undefined);
+    try {
+      const result = await runPollingCapacityAudit(mspClient, transport);
+      if (!mountedRef.current) {
+        return;
+      }
+      setPollingAuditSummary(summarizePollingCapacityAudit(result));
+    } catch (error) {
+      if (!mountedRef.current) {
+        return;
+      }
+      setPollingAuditError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (mountedRef.current) {
+        setPollingAuditStatus('idle');
+      }
+    }
+  }, [sessionId]);
 
   const appendLog = useCallback((text: string) => {
     if (!mountedRef.current) {
@@ -412,6 +463,44 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
         </View>
       ) : null}
 
+      {/* PASS7.0 (TEMPORARY) - see this file's own class-level doc comment.
+          Delete this block, its state/handler above, and the
+          pollingCapacityAudit.ts import once findings are recorded and
+          acted on. */}
+      {mspActive ? (
+        <View testID="polling-capacity-audit-section" style={styles.pollingAuditSection}>
+          <Text style={styles.pollingAuditLabel}>
+            ⚠ قياس مؤقت (Pass 7.0) - سعة الاستقصاء (MSP_ATTITUDE)
+          </Text>
+          <Pressable
+            testID="polling-capacity-audit-run"
+            disabled={pollingAuditStatus === 'running'}
+            onPress={handleRunPollingAudit}
+            style={[styles.button, pollingAuditStatus === 'running' && styles.buttonDisabled]}>
+            <Text style={styles.buttonText}>
+              {pollingAuditStatus === 'running' ? 'جارٍ القياس…' : 'تشغيل قياس السعة'}
+            </Text>
+          </Pressable>
+          {pollingAuditError ? (
+            <Text testID="polling-capacity-audit-error" style={styles.mspStatusWarning}>
+              {pollingAuditError}
+            </Text>
+          ) : null}
+          {pollingAuditSummary ? (
+            <Text testID="polling-capacity-audit-summary" style={styles.metricsText}>
+              attempted={pollingAuditSummary.totalAttempted} success={pollingAuditSummary.successCount}{' '}
+              error={pollingAuditSummary.errorCount} minRtt={pollingAuditSummary.minRoundTripMs ?? '-'}ms{' '}
+              maxRtt={pollingAuditSummary.maxRoundTripMs ?? '-'}ms{' '}
+              avgRtt={pollingAuditSummary.averageRoundTripMs?.toFixed(1) ?? '-'}ms{' '}
+              medianRtt={pollingAuditSummary.medianRoundTripMs ?? '-'}ms{' '}
+              rate={pollingAuditSummary.effectiveRatePerSecond.toFixed(2)}/s{' '}
+              recoveryCycles={pollingAuditSummary.recoveryCycleCount}{' '}
+              nonReadyMs={pollingAuditSummary.totalNonReadyMs} glitches={pollingAuditSummary.glitches.length}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+
       <View style={styles.row}>
         <Pressable
           testID="debug-start-reading"
@@ -526,6 +615,20 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     borderRadius: radii.sm,
+  },
+  // PASS7.0 (TEMPORARY) - remove alongside the section that uses these.
+  pollingAuditSection: {
+    marginBottom: spacing.md,
+    padding: spacing.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.warning,
+    borderRadius: radii.sm,
+    gap: spacing.xs,
+  },
+  pollingAuditLabel: {
+    ...typography.caption,
+    color: colors.warning,
+    fontWeight: '700',
   },
   identityLabel: {
     ...typography.caption,

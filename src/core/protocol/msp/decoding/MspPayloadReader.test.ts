@@ -26,6 +26,32 @@ describe('MspPayloadReader.readU16LE', () => {
   });
 });
 
+describe('MspPayloadReader.readS16LE', () => {
+  it('reads a positive value identically to readU16LE, little-endian', () => {
+    const reader = new MspPayloadReader(Uint8Array.from([0x34, 0x12]));
+    expect(reader.readS16LE()).toBe(0x1234);
+    expect(reader.remaining()).toBe(0);
+  });
+
+  it('reads a negative value as two\'s-complement signed, e.g. -1 (0xFFFF)', () => {
+    const reader = new MspPayloadReader(Uint8Array.from([0xff, 0xff]));
+    expect(reader.readS16LE()).toBe(-1);
+  });
+
+  it('reads the exact int16 boundary values correctly: 32767 and -32768', () => {
+    const maxReader = new MspPayloadReader(Uint8Array.from([0xff, 0x7f]));
+    expect(maxReader.readS16LE()).toBe(32767);
+
+    const minReader = new MspPayloadReader(Uint8Array.from([0x00, 0x80]));
+    expect(minReader.readS16LE()).toBe(-32768);
+  });
+
+  it('throws when only one byte remains (one short of the boundary)', () => {
+    const reader = new MspPayloadReader(Uint8Array.from([0x34]));
+    expect(() => reader.readS16LE()).toThrow(MspPayloadReadError);
+  });
+});
+
 describe('MspPayloadReader.readU32LE', () => {
   it('reads exactly the remaining four bytes successfully, little-endian', () => {
     const reader = new MspPayloadReader(Uint8Array.from([0x78, 0x56, 0x34, 0x12]));
