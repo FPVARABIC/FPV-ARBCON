@@ -1,1 +1,1 @@
-export {UsbConnectionScreen} from './screens';
+export {UsbConnectionScreen, SetupScreen} from './screens';

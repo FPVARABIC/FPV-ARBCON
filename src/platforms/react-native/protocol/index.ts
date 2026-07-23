@@ -9,5 +9,8 @@ export type {
   MspIdentificationState,
   MspIdentificationMetrics,
   MspSessionCoordinatorUnsubscribe,
+  SetupUiSessionKey,
 } from './MspSessionCoordinator';
 export {useMspOwnershipState, useMspIdentificationState} from './useMspSessionState';
+export {SetupUiSessionStore, setupUiSessionStore} from './SetupUiSessionStore';
+export type {SetupUiSessionState} from './SetupUiSessionStore';

@@ -242,6 +242,52 @@ describe('MspSessionCoordinator - one MspClient per session (Pass 6.3, renamed/e
   });
 });
 
+describe('MspSessionCoordinator - Pass 7.1 getSessionKey()', () => {
+  it('returns a stable {sessionId, generation} key for an active session across repeated calls', () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeQuietFakeClient(SESSION_ID) as unknown as UsbSerialTransportClient;
+
+    coordinator.openSession(client, SESSION_ID);
+    const first = coordinator.getSessionKey(SESSION_ID);
+    const second = coordinator.getSessionKey(SESSION_ID);
+
+    expect(first).toEqual({sessionId: SESSION_ID, generation: expect.any(Number)});
+    expect(second).toEqual(first);
+  });
+
+  it('returns undefined for a never-opened session, and again after it is deactivated', () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeQuietFakeClient(SESSION_ID) as unknown as UsbSerialTransportClient;
+
+    expect(coordinator.getSessionKey('never-opened')).toBeUndefined();
+
+    coordinator.openSession(client, SESSION_ID);
+    expect(coordinator.getSessionKey(SESSION_ID)).not.toBeUndefined();
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    expect(coordinator.getSessionKey(SESSION_ID)).toBeUndefined();
+  });
+
+  it('the generation component changes across deactivate+reopen for the same reused sessionId string', () => {
+    const coordinator = new MspSessionCoordinator();
+    const firstClient = makeQuietFakeClient(SESSION_ID) as unknown as UsbSerialTransportClient;
+
+    coordinator.openSession(firstClient, SESSION_ID);
+    const firstKey = coordinator.getSessionKey(SESSION_ID);
+    expect(firstKey).toBeDefined();
+
+    coordinator.deactivateMspSession(SESSION_ID);
+
+    const secondClient = makeQuietFakeClient(SESSION_ID) as unknown as UsbSerialTransportClient;
+    coordinator.openSession(secondClient, SESSION_ID);
+    const secondKey = coordinator.getSessionKey(SESSION_ID);
+
+    expect(secondKey).toBeDefined();
+    expect(secondKey!.sessionId).toBe(firstKey!.sessionId);
+    expect(secondKey!.generation).not.toBe(firstKey!.generation);
+  });
+});
+
 describe('MspSessionCoordinator - dispose ordering (Pass 6.3, renamed for Pass 6.4b)', () => {
   it('deactivateMspSession() disposes MspClient BEFORE RNMspTransport, verified via a spy', () => {
     const coordinator = new MspSessionCoordinator();

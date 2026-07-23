@@ -72,6 +72,19 @@ export type MspIdentificationState =
   | {status: 'SUCCEEDED'; identity: FlightControllerIdentity}
   | {status: 'FAILED'; error: unknown};
 
+/** Pass 7.1 bugfix: getIdentificationState()'s own "no entry" fallback,
+ * below - a single stable reference, not a fresh {status: 'IDLE'} object
+ * literal per call. useMspIdentificationState() (useMspSessionState.ts)
+ * wraps this in useSyncExternalStore(), whose contract requires repeated
+ * getSnapshot() calls to return a referentially-STABLE value when nothing
+ * has actually changed; a fresh object every call broke that contract for
+ * any sessionId with no active entry (e.g. once a session is torn down
+ * while UsbSerialDebugPanel - Pass 5.3 - is still mounted, exactly what
+ * Pass 7.1's own "Setup has focus while the session goes INACTIVE"
+ * scenario produces), which surfaced as a real
+ * "Maximum update depth exceeded" crash under enough render pressure. */
+const IDLE_IDENTIFICATION_STATE: MspIdentificationState = {status: 'IDLE'};
+
 export type MspIdentificationMetrics = {
   startedAtMs: number;
   completedAtMs?: number;
@@ -95,6 +108,19 @@ export type MspIdentificationMetrics = {
 };
 
 export type MspSessionCoordinatorUnsubscribe = () => void;
+
+/** Pass 7.1: a composite identity for one activation of one sessionId,
+ * exposed via getSessionKey() so UI-only state (SetupUiSessionStore) and
+ * navigation (the Setup screen's route params) can distinguish a genuinely
+ * new FC session from a same-physical-session MSP-level recovery, even when
+ * the native sessionId string happens to be reused (see the existing
+ * "reused sessionId" tests in MspSessionCoordinator.test.ts for why that
+ * reuse is a real, already-tested scenario). The raw generation number
+ * itself is deliberately not exposed anywhere else. */
+export type SetupUiSessionKey = {
+  sessionId: string;
+  generation: number;
+};
 
 /** Thrown by openSession() ONLY when constructing the RNMspTransport/
  * MspClient pairing itself throws (Step 3.3) - the ONE failure mode
@@ -410,7 +436,7 @@ export class MspSessionCoordinator {
   }
 
   getIdentificationState(sessionId: string): MspIdentificationState {
-    return this.sessions.get(sessionId)?.identification ?? {status: 'IDLE'};
+    return this.sessions.get(sessionId)?.identification ?? IDLE_IDENTIFICATION_STATE;
   }
 
   /** A SEPARATE Set from ownershipListeners (Step 2's own choice, reported
@@ -448,6 +474,18 @@ export class MspSessionCoordinator {
    * subscription to the raw underlying client. */
   getActiveTransport(sessionId: string): RNMspTransport | undefined {
     return this.sessions.get(sessionId)?.transport;
+  }
+
+  /** Pass 7.1: mirrors getActiveMspClient()'s exact undefined-for-no-entry
+   * convention above. Returns a fresh object each call (not a cached
+   * reference) - callers must compare by value ({sessionId, generation}),
+   * never by identity. */
+  getSessionKey(sessionId: string): SetupUiSessionKey | undefined {
+    const entry = this.sessions.get(sessionId);
+    if (!entry) {
+      return undefined;
+    }
+    return {sessionId, generation: entry.generation};
   }
 
   /**

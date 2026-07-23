@@ -1,7 +1,9 @@
 import React, {useCallback, useEffect, useReducer, useRef} from 'react';
 import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import {useTranslation} from 'react-i18next';
+import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 
+import type {RootStackParamList} from '../../navigation/types';
 import {colors, spacing, typography} from '../theme';
 import {
   ConnectionActions,
@@ -413,10 +415,20 @@ function reducer(state: ScreenState, action: Action): ScreenState {
 interface Props {
   /** Injectable for tests; defaults to the real singleton client. */
   client?: UsbSerialTransportClient;
+  /**
+   * Pass 7.1: optional (not the real Stack.Screen-injected prop's required
+   * type) so every existing test in UsbConnectionScreen.test.tsx that
+   * renders this screen standalone, outside a NavigationContainer, keeps
+   * working unchanged - handleConnect() below simply skips navigating when
+   * it is absent. The real app (App.tsx) always provides it via
+   * Stack.Screen's component prop.
+   */
+  navigation?: NativeStackScreenProps<RootStackParamList, 'Connection'>['navigation'];
 }
 
 export default function UsbConnectionScreen({
   client = usbSerialTransportClient,
+  navigation,
 }: Props): React.JSX.Element {
   const {t} = useTranslation();
   const [state, dispatch] = useReducer(reducer, initialState);
@@ -623,6 +635,17 @@ export default function UsbConnectionScreen({
       // connection-level failure below; identification runs fire-and-
       // forget afterward and never affects this dispatch either way.
       mspSessionCoordinator.openSession(client, sessionId);
+      // Pass 7.1: openSession() above commits its session entry
+      // synchronously before returning (see its own doc comment), so
+      // getSessionKey() is always defined here - the `if` is a defensive
+      // invariant, not an expected-false branch. A push, never
+      // replace/reset: the user can still navigate back to this exact
+      // connected state. navigation is only absent in tests that render
+      // this screen standalone (see the Props doc comment above).
+      const sessionKey = mspSessionCoordinator.getSessionKey(sessionId);
+      if (sessionKey) {
+        navigation?.navigate('Setup', {sessionKey});
+      }
       dispatch({type: 'CONNECT_SUCCESS', sessionId});
     } catch (error) {
       if (!mountedRef.current) {
@@ -650,6 +673,7 @@ export default function UsbConnectionScreen({
     client,
     isBusy,
     isConnected,
+    navigation,
     selectedDevice,
     state.requiresCableReset,
     state.selectedPortIndex,
