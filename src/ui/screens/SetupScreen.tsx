@@ -22,6 +22,27 @@
  * anywhere in this codebase (verified by search, not assumed) - so a
  * lazy, mount-time read of the store is genuinely correct here, not an
  * unexamined shortcut.
+ *
+ * KNOWN LATENT GAP IF THIS ASSUMPTION IS EVER VIOLATED (Pass 7.4 final
+ * sweep, traced explicitly): if a SECOND SetupScreen instance were ever
+ * mounted for the same SetupUiSessionKey while a first is still mounted,
+ * a write from one instance's handleResetView()/handleResetHintShown()
+ * would update the real store correctly but would NOT be reflected in
+ * the other instance's own local `uiState` mirror - that sibling would
+ * keep rendering its stale copy until it performs its own write or
+ * remounts, since the store itself has no subscribe/notify to propagate
+ * the change. NOT reachable today: the app's Stack.Navigator (App.tsx)
+ * uses no custom getId(), and the one real call site
+ * (UsbConnectionScreen.tsx) calls navigation.navigate() (not .push()),
+ * whose default behavior for an already-present route name is to
+ * refocus the existing instance rather than mount a second one - so two
+ * concurrent instances for the same session cannot occur through any
+ * navigation action this codebase performs today. Left unfixed
+ * deliberately (per this project's own no-speculative-abstraction
+ * convention): a future pass that adds a second entry point, or
+ * switches this call site to .push(), must revisit this doc comment and
+ * either give SetupUiSessionStore real subscribe/notify machinery or
+ * otherwise resolve this before that change ships.
  */
 
 import React, {useCallback, useState} from 'react';
