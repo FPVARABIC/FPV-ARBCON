@@ -63,6 +63,159 @@ describe('rotateBodyPoint', () => {
   });
 });
 
+/**
+ * Pass 7.5 - compound-composition contract tests. Every expected value
+ * below is INDEPENDENT of the production rotation helpers: the literals
+ * were precomputed from the explicit rotation matrices (documented in
+ * this block's own multiplyMatrixVector() cross-check, an in-test
+ * implementation that shares no code with droneSceneGeometry.ts), for
+ * the intrinsic yaw -> pitch -> roll contract, i.e. the fixed-axis
+ * matrix product p' = R_yaw * R_pitch * R_roll * p (roll applied first).
+ *
+ * The old, incorrect composition (R_roll * R_pitch * R_yaw - roll applied
+ * LAST) produces identical results for every single-axis pose, which is
+ * exactly why the pre-existing single-axis tests above could never catch
+ * it - the decisive cases here use multiple simultaneously non-zero,
+ * non-symmetric angles (17/31/43 degrees), where the two compositions
+ * differ by ~0.4 units on a unit-scale point.
+ */
+describe('rotateBodyPoint - Pass 7.5 compound composition contract (independent expected values)', () => {
+  const P_GENERIC = {x: 0.8, y: 0.35, z: -0.6};
+
+  /** Independent 3x3 matrix helpers - explicit coefficient matrices for
+   * the three axis rotations in this file's basis (+X fwd, +Y up, +Z
+   * right), multiplied as plain arrays. Deliberately NOT importing or
+   * mirroring the production helpers' code paths. */
+  type Mat3 = number[][];
+  const deg = (d: number) => (d * Math.PI) / 180;
+  const yawMatrix = (psi: number): Mat3 => {
+    const c = Math.cos(psi);
+    const s = Math.sin(psi);
+    return [
+      [c, 0, -s],
+      [0, 1, 0],
+      [s, 0, c],
+    ];
+  };
+  const pitchMatrix = (theta: number): Mat3 => {
+    const c = Math.cos(theta);
+    const s = Math.sin(theta);
+    return [
+      [c, -s, 0],
+      [s, c, 0],
+      [0, 0, 1],
+    ];
+  };
+  const rollMatrix = (phi: number): Mat3 => {
+    const c = Math.cos(phi);
+    const s = Math.sin(phi);
+    return [
+      [1, 0, 0],
+      [0, c, -s],
+      [0, s, c],
+    ];
+  };
+  const matMul = (a: Mat3, b: Mat3): Mat3 =>
+    a.map((row, i) => row.map((_, j) => a[i][0] * b[0][j] + a[i][1] * b[1][j] + a[i][2] * b[2][j]));
+  const matVec = (m: Mat3, v: {x: number; y: number; z: number}) => ({
+    x: m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z,
+    y: m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z,
+    z: m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z,
+  });
+
+  it('zero orientation leaves a representative non-axis-aligned point unchanged', () => {
+    const result = rotateBodyPoint(P_GENERIC, ZERO);
+    closeTo(result.x, 0.8);
+    closeTo(result.y, 0.35);
+    closeTo(result.z, -0.6);
+  });
+
+  it('roll-only (17deg) matches the independent single-matrix expectation (unchanged by the Pass 7.5 fix)', () => {
+    const result = rotateBodyPoint(P_GENERIC, {rollDeg: 17, pitchDeg: 0, yawDeg: 0});
+    closeTo(result.x, 0.8);
+    closeTo(result.y, 0.510129687);
+    closeTo(result.z, -0.471452757);
+  });
+
+  it('pitch-only (31deg) matches the independent single-matrix expectation (unchanged by the Pass 7.5 fix)', () => {
+    const result = rotateBodyPoint(P_GENERIC, {rollDeg: 0, pitchDeg: 31, yawDeg: 0});
+    closeTo(result.x, 0.505470514);
+    closeTo(result.y, 0.712039015);
+    closeTo(result.z, -0.6);
+  });
+
+  it('yaw-only (43deg) matches the independent single-matrix expectation (unchanged by the Pass 7.5 fix)', () => {
+    const result = rotateBodyPoint(P_GENERIC, {rollDeg: 0, pitchDeg: 0, yawDeg: 43});
+    closeTo(result.x, 0.994281977);
+    closeTo(result.y, 0.35);
+    closeTo(result.z, 0.106786467);
+  });
+
+  it('roll+pitch compound (17/31) matches R_pitch * R_roll * p', () => {
+    const result = rotateBodyPoint(P_GENERIC, {rollDeg: 17, pitchDeg: 31, yawDeg: 0});
+    closeTo(result.x, 0.422997628);
+    closeTo(result.y, 0.849296947);
+    closeTo(result.z, -0.471452757);
+  });
+
+  it('pitch+yaw compound (31/43) matches R_yaw * R_pitch * p', () => {
+    const result = rotateBodyPoint(P_GENERIC, {rollDeg: 0, pitchDeg: 31, yawDeg: 43});
+    closeTo(result.x, 0.778876748);
+    closeTo(result.y, 0.712039015);
+    closeTo(result.z, -0.094082159);
+  });
+
+  it('roll+yaw compound (17/43) matches R_yaw * R_roll * p', () => {
+    const result = rotateBodyPoint(P_GENERIC, {rollDeg: 17, pitchDeg: 0, yawDeg: 43});
+    closeTo(result.x, 0.906612968);
+    closeTo(result.y, 0.510129687);
+    closeTo(result.z, 0.200799969);
+  });
+
+  it('DECISIVE three-axis compound (17/31/43): matches R_yaw * R_pitch * R_roll * p, cross-checked against an in-test independent matrix product', () => {
+    const orientation = {rollDeg: 17, pitchDeg: 31, yawDeg: 43};
+    const result = rotateBodyPoint(P_GENERIC, orientation);
+    // Precomputed literals for the intended composition:
+    closeTo(result.x, 0.630890888);
+    closeTo(result.y, 0.849296947);
+    closeTo(result.z, -0.05631503);
+    // Independent in-test cross-check of the same contract:
+    const m = matMul(yawMatrix(deg(43)), matMul(pitchMatrix(deg(31)), rollMatrix(deg(17))));
+    const independent = matVec(m, P_GENERIC);
+    closeTo(result.x, independent.x);
+    closeTo(result.y, independent.y);
+    closeTo(result.z, independent.z);
+  });
+
+  it('DISCRIMINATOR: the old reversed composition (R_roll * R_pitch * R_yaw) is materially different and must NOT match', () => {
+    const result = rotateBodyPoint(P_GENERIC, {rollDeg: 17, pitchDeg: 31, yawDeg: 43});
+    // Precomputed literals for the OLD composition at the same inputs:
+    const old = {x: 0.672002672, y: 0.74539531, z: 0.339555945};
+    const distance = Math.sqrt((result.x - old.x) ** 2 + (result.y - old.y) ** 2 + (result.z - old.z) ** 2);
+    // The two compositions differ by ~0.411 here - far beyond any
+    // floating-point tolerance; a >0.4 floor cannot be satisfied by both.
+    expect(distance).toBeGreaterThan(0.4);
+  });
+
+  it('transformed forward basis vector (1,0,0) at 17/31/43 - and its vertical component equals sin(pitch), independent of yaw and roll (the physically-correct aerospace invariant the old composition violated)', () => {
+    const nose = rotateBodyPoint({x: 1, y: 0, z: 0}, {rollDeg: 17, pitchDeg: 31, yawDeg: 43});
+    closeTo(nose.x, 0.626892478);
+    closeTo(nose.y, 0.515038075);
+    closeTo(nose.z, 0.584586693);
+    closeTo(nose.y, Math.sin(deg(31)));
+    // Same invariant at a different roll/yaw - nose height still sin(31).
+    const noseOther = rotateBodyPoint({x: 1, y: 0, z: 0}, {rollDeg: -80, pitchDeg: 31, yawDeg: 200});
+    closeTo(noseOther.y, Math.sin(deg(31)));
+  });
+
+  it('transformed up basis vector (0,1,0) at 17/31/43 matches the independent expectation', () => {
+    const up = rotateBodyPoint({x: 0, y: 1, z: 0}, {rollDeg: 17, pitchDeg: 31, yawDeg: 43});
+    closeTo(up.x, -0.55961312);
+    closeTo(up.y, 0.819713166);
+    closeTo(up.z, -0.122079816);
+  });
+});
+
 describe('computeMotorFrame', () => {
   const frame = computeMotorFrame();
 

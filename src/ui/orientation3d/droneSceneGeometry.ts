@@ -27,11 +27,22 @@
  *   +Z = right
  *
  * ROTATION CONVENTION (matches orientationViewModel.ts's own documented
- * sign choices exactly - a point is rotated by applying, IN ORDER, the
- * yaw matrix, then the pitch matrix, then the roll matrix, each about the
- * ORIGINAL fixed body axes above; this fixed-axis "innermost-first"
- * matrix composition is the standard way to implement true intrinsic
- * yaw->pitch->roll body-axis composition):
+ * contract: SEMANTIC orientation order is intrinsic yaw -> pitch -> roll,
+ * standard aerospace Tait-Bryan ZYX - yaw about the body's up axis first,
+ * then pitch about the RESULTING right axis, then roll about the
+ * RESULTING forward axis. For active rotations of column vectors about
+ * FIXED axes, that intrinsic sequence is equivalent to the matrix product
+ *
+ *     p' = R_yaw * R_pitch * R_roll * p
+ *
+ * i.e. the NESTED FUNCTION-APPLICATION order rotateYaw(rotatePitch(
+ * rotateRoll(p))) - ROLL is applied first (innermost), then pitch, then
+ * yaw last (outermost). Note the reversal: intrinsic order yaw-first
+ * corresponds to fixed-axis application roll-first; Pass 7.5 corrected
+ * rotateBodyPoint(), which previously nested the fixed-axis calls in the
+ * OPPOSITE order (roll outermost = intrinsic roll->pitch->yaw), producing
+ * wrong compound poses while leaving every single-axis pose identical.
+ * Per-axis positive-angle signs (unchanged by that correction):
  *   - positive roll  = right side down   (rotates Y toward -Z... see rollMatrix)
  *   - positive pitch = nose up           (rotates X toward +Y)
  *   - positive yaw   = nose swings right, viewed from above (rotates X toward +Z)
@@ -144,12 +155,17 @@ function rotateRoll(p: Vec3, rollRad: number): Vec3 {
   return {x: p.x, y: p.y * cos - p.z * sin, z: p.y * sin + p.z * cos};
 }
 
-/** The one place the fixed yaw -> pitch -> roll order (documented above
- * and in orientationViewModel.ts) is actually applied. */
+/** The one place the intrinsic yaw -> pitch -> roll contract (documented
+ * above and in orientationViewModel.ts) is actually applied. As a matrix
+ * expression this is p' = R_yaw * R_pitch * R_roll * p; as nested calls,
+ * rotateRoll runs FIRST (innermost), then rotatePitch, then rotateYaw
+ * last (outermost) - see the file-header ROTATION CONVENTION note for
+ * why the intrinsic (semantic) order and the fixed-axis application
+ * order are deliberately reversed relative to each other. */
 export function rotateBodyPoint(p: Vec3, orientation: DroneOrientationDeg): Vec3 {
-  const yawed = rotateYaw(p, degToRad(orientation.yawDeg));
-  const pitched = rotatePitch(yawed, degToRad(orientation.pitchDeg));
-  return rotateRoll(pitched, degToRad(orientation.rollDeg));
+  const rolled = rotateRoll(p, degToRad(orientation.rollDeg));
+  const pitched = rotatePitch(rolled, degToRad(orientation.pitchDeg));
+  return rotateYaw(pitched, degToRad(orientation.yawDeg));
 }
 
 export type MotorFrameInfo = {
