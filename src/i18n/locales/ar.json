@@ -128,5 +128,42 @@
     "connect": "بدء الاتصال بالجهاز المحدد",
     "disconnect": "قطع الاتصال الحالي",
     "clearLog": "مسح سجل التحقق"
+  },
+  "safetyStrip": {
+    "armed": "مسلّحة",
+    "ready": "✓ جاهزة للتسليح",
+    "unknown": "حالة التسليح غير مؤكدة",
+    "blockedHeading": "غير جاهزة للتسليح",
+    "showAllReasons": "عرض جميع الأسباب",
+    "showAllReasonsAccessibilityLabel": "عرض جميع الأسباب، {{count}} أسباب إضافية"
+  },
+  "setupTopBar": {
+    "title": "الإعداد",
+    "back": "رجوع",
+    "connectionState": {
+      "connected": "متصل",
+      "activating": "جارٍ التفعيل",
+      "recovering": "جارٍ استعادة الاتصال",
+      "recoveryFailed": "تعذّرت الاستعادة",
+      "disconnected": "غير متصل"
+    },
+    "boardPlaceholder": "—",
+    "armingBadge": {
+      "armed": "مسلّحة",
+      "ready": "جاهزة",
+      "blocked": "غير جاهزة",
+      "unknown": "غير مؤكدة"
+    }
+  },
+  "orientationHero": {
+    "waiting": "بانتظار بيانات الاتجاه...",
+    "error": "تعذّر عرض الاتجاه",
+    "staleLabel": "البيانات متأخرة",
+    "rollLabel": "الدوران",
+    "pitchLabel": "الميل",
+    "headingLabel": "الاتجاه",
+    "resetButton": "إعادة ضبط عرض الاتجاه",
+    "resetHint": "هذا يعيد ضبط زاوية العرض فقط، ولا يُجري معايرة لمستشعرات وحدة التحكم بالطيران.",
+    "resetHintDismiss": "حسنًا"
   }
 }

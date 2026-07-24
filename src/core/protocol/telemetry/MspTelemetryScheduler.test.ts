@@ -232,6 +232,25 @@ describe('MspTelemetryScheduler - reference-counted pause', () => {
     scheduler.tick();
     expect(requester.callCount).toBe(1); // now, finally, dispatches
   });
+
+  it('Pass 7.4: staleness is still detected via tick() even while paused - a paused telemetry poll genuinely IS going stale, and must be reported as such', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 802, 100_000, 500));
+
+    scheduler.tick();
+    requester.resolveNext(makeFrame(802, Uint8Array.from([5])));
+    await scheduler.waitUntilIdle();
+    expect(scheduler.getValue<number>('a')).toMatchObject({status: 'FRESH'});
+
+    const lease = scheduler.acquirePauseLease('EXCLUSIVE_OPERATION');
+    clock.advance(500);
+    scheduler.tick(); // paused - no new dispatch, but staleness still checked
+    expect(scheduler.getValue<number>('a')).toMatchObject({status: 'STALE', ageMs: 500});
+
+    lease.release();
+  });
 });
 
 describe('MspTelemetryScheduler - waitUntilIdle', () => {
@@ -344,7 +363,7 @@ describe('MspTelemetryScheduler - TelemetryValue transitions', () => {
     expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 42, updatedAtMs: 0});
   });
 
-  it('FRESH -> STALE once staleAfterMs elapses without a fresh update, via pure clock advance alone (no tick needed)', async () => {
+  it('FRESH -> STALE once staleAfterMs elapses without a fresh update, made visible via tick() (Pass 7.4: getValue() is a stable cache lookup, not a live computation - see MspTelemetryScheduler.ts\'s own class-level doc comment on why pure clock-advance alone, with no tick(), no longer transitions the reported status)', async () => {
     const clock = new FakeClock(0);
     const requester = createFakeRequester();
     const scheduler = createMspTelemetryScheduler(requester, {clock});
@@ -357,10 +376,27 @@ describe('MspTelemetryScheduler - TelemetryValue transitions', () => {
     expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 7, updatedAtMs: 0});
 
     clock.advance(499);
+    scheduler.tick();
     expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 7, updatedAtMs: 0});
 
     clock.advance(1); // now exactly staleAfterMs (500) old
+    scheduler.tick();
     expect(scheduler.getValue<number>('a')).toEqual({status: 'STALE', value: 7, updatedAtMs: 0, ageMs: 500});
+  });
+
+  it('a poll that is FRESH but not yet stale is left with the SAME cached reference across repeated getValue() calls (no tick, no dispatch, no change) - the referential-stability contract useSyncExternalStore requires', () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 1205, 100_000, 500));
+
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1205, Uint8Array.from([3])));
+    return scheduler.waitUntilIdle().then(() => {
+      const first = scheduler.getValue<number>('a');
+      const second = scheduler.getValue<number>('a');
+      expect(first).toBe(second);
+    });
   });
 
   it('ERROR on a failed dispatch - retains only the last-known-GOOD timestamp, never a stale value', async () => {
@@ -470,5 +506,119 @@ describe('MspTelemetryScheduler - tick() no-op cases', () => {
     clock.advance(10); // nowhere near the 5000ms interval
     scheduler.tick();
     expect(requester.callCount).toBe(1); // unchanged
+  });
+});
+
+describe('MspTelemetryScheduler - subscribe()', () => {
+  it('notifies after a dispatch settles successfully', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 1601, 200, 100_000));
+
+    const listener = jest.fn();
+    scheduler.subscribe(listener);
+
+    scheduler.tick(); // dispatch + one unconditional tick()-end notify
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    requester.resolveNext(makeFrame(1601, Uint8Array.from([1])));
+    await scheduler.waitUntilIdle();
+    expect(listener).toHaveBeenCalledTimes(2); // settle notify
+  });
+
+  it('notifies after a dispatch settles with an error', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 1602, 200, 100_000));
+
+    const listener = jest.fn();
+    scheduler.subscribe(listener);
+
+    scheduler.tick();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    requester.rejectNext(new Error('boom'));
+    await scheduler.waitUntilIdle();
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('notifies at the end of every tick() call, even when nothing is due (the mechanism behind the time-based FRESH->STALE transition)', () => {
+    const clock = new FakeClock(0);
+    const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock});
+    // No poll registered at all - tick() is a pure no-op internally, but
+    // subscribers are still notified every call.
+
+    const listener = jest.fn();
+    scheduler.subscribe(listener);
+
+    scheduler.tick();
+    scheduler.tick();
+    scheduler.tick();
+    expect(listener).toHaveBeenCalledTimes(3);
+  });
+
+  it('a FRESH poll actually reads back as STALE via getValue() after enough ticks/clock-advances - proving subscribe() is the real mechanism a UI would rely on to notice this', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 1603, 100_000, 500)); // huge interval, staleAfterMs=500
+
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1603, Uint8Array.from([9])));
+    await scheduler.waitUntilIdle();
+    expect(scheduler.getValue<number>('a')).toMatchObject({status: 'FRESH'});
+
+    const listener = jest.fn();
+    scheduler.subscribe(listener);
+
+    clock.advance(500);
+    scheduler.tick(); // no new dispatch (interval huge) - but still notifies
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(scheduler.getValue<number>('a')).toMatchObject({status: 'STALE'});
+  });
+
+  it('the returned unsubscribe function stops further notifications', () => {
+    const clock = new FakeClock(0);
+    const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock});
+    const listener = jest.fn();
+    const unsubscribe = scheduler.subscribe(listener);
+
+    scheduler.tick();
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    unsubscribe();
+    scheduler.tick();
+    expect(listener).toHaveBeenCalledTimes(1); // unchanged
+  });
+
+  it('a throwing listener does not prevent another listener from being notified', () => {
+    const clock = new FakeClock(0);
+    const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock});
+    const throwing = jest.fn(() => {
+      throw new Error('listener boom');
+    });
+    const normal = jest.fn();
+    scheduler.subscribe(throwing);
+    scheduler.subscribe(normal);
+
+    expect(() => scheduler.tick()).not.toThrow();
+    expect(throwing).toHaveBeenCalledTimes(1);
+    expect(normal).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('MspTelemetryScheduler - getValue() referential stability for WAITING/UNAVAILABLE', () => {
+  it('returns the exact same reference across repeated calls for an unregistered id', () => {
+    const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock: new FakeClock()});
+    expect(scheduler.getValue('nope')).toBe(scheduler.getValue('nope'));
+  });
+
+  it('returns the exact same reference across repeated calls for a registered-but-never-settled id', () => {
+    const clock = new FakeClock(0);
+    const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock});
+    scheduler.registerPoll(definition('a', 1701, 1000, 5000));
+    expect(scheduler.getValue('a')).toBe(scheduler.getValue('a'));
   });
 });

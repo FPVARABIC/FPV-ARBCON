@@ -809,3 +809,164 @@ describe('MspClient - stale recovery attempts are ignored (isCurrentRecoveryAtte
     expect(transport.restarts).toHaveLength(1); // cycle 1's own restart call is long gone, not re-counted
   });
 });
+
+describe('MspClient - subscribe()/notify() (Pass 7.4, Step 4)', () => {
+  it('fires on a state transition (READY -> DESYNCHRONIZED/RESTARTING_READER)', async () => {
+    const { transport, client } = makeClient();
+    const listener = jest.fn();
+    client.subscribe(listener);
+
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+
+    // DESYNCHRONIZED then RESTARTING_READER, both in the same synchronous
+    // call (triggerDesyncLatch() -> startRecovery()) - see mspClient.ts's
+    // own doc comment on why DESYNCHRONIZED is never externally observable
+    // as a distinct getState() read, but subscribe() still fires for it.
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it('fires on EVERY transition across a full recovery happy path, not just the 3 states Step 4 UI cares about', async () => {
+    const { transport, client } = makeClient();
+    const listener = jest.fn();
+    client.subscribe(listener);
+
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED'); // -> DESYNCHRONIZED, RESTARTING_READER (2 calls)
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+
+    transport.resolveNextRestart(); // -> PROBING (1 call)
+    await flushMicrotasks();
+
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(1)); // -> READY (1 call)
+    await flushMicrotasks();
+
+    expect(client.getState()).toBe('READY');
+    expect(listener).toHaveBeenCalledTimes(4);
+  });
+
+  it('the returned unsubscribe function stops further notifications', async () => {
+    const { transport, client } = makeClient();
+    const listener = jest.fn();
+    const unsubscribe = client.subscribe(listener);
+
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(listener).toHaveBeenCalledTimes(2);
+
+    unsubscribe();
+
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(1));
+    await flushMicrotasks();
+
+    expect(client.getState()).toBe('READY');
+    expect(listener).toHaveBeenCalledTimes(2); // no further calls after unsubscribe
+  });
+
+  it('a throwing listener does not prevent another registered listener from being notified', async () => {
+    const { transport, client } = makeClient();
+    const throwingListener = jest.fn(() => {
+      throw new Error('boom');
+    });
+    const goodListener = jest.fn();
+    client.subscribe(throwingListener);
+    client.subscribe(goodListener);
+
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+
+    expect(throwingListener).toHaveBeenCalledTimes(2);
+    expect(goodListener).toHaveBeenCalledTimes(2);
+  });
+
+  it('two consecutive getState() calls with no transition in between return the exact same value (trivially true for a string primitive, verified explicitly per this pass\'s own referential-stability requirement)', () => {
+    const { client } = makeClient();
+    const first = client.getState();
+    const second = client.getState();
+    expect(first).toBe(second);
+  });
+
+  it('notify() never fires after dispose() has returned, even from an in-flight recovery continuation (restartReceiveLoop()) that resolves afterward', async () => {
+    const { transport, client } = makeClient();
+    const listener = jest.fn();
+    client.subscribe(listener);
+
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED'); // -> DESYNCHRONIZED, RESTARTING_READER
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    expect(client.getState()).toBe('RESTARTING_READER');
+    const callsBeforeDispose = listener.mock.calls.length;
+
+    // The restart's own Promise is left deliberately pending (never
+    // resolved/rejected) - dispose() runs while it is still in flight.
+    client.dispose();
+    expect(client.getState()).toBe('DISCONNECTED');
+    // dispose() itself is a real transition (CLOSING -> DISCONNECTED) and
+    // DOES notify - that is expected and correct (existing subscribers
+    // deserve to learn the client is now disconnected).
+    expect(listener.mock.calls.length).toBeGreaterThan(callsBeforeDispose);
+    const callsAfterDispose = listener.mock.calls.length;
+
+    // NOW resolve the stale restart - isCurrentRecoveryAttempt(epoch)
+    // must see DISCONNECTED and silently abandon, per mspClient.ts's own
+    // Pass 6.2b guard - no further setState()/notify() call should occur.
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+
+    expect(client.getState()).toBe('DISCONNECTED'); // unchanged
+    expect(listener.mock.calls.length).toBe(callsAfterDispose); // no further notifications
+  });
+
+  it('notify() never fires after dispose() has returned, even from an in-flight probe response that arrives afterward', async () => {
+    const { transport, client } = makeClient();
+    const listener = jest.fn();
+
+    const p1 = client.request(1, EMPTY, { wireFormat: 'v1' });
+    transport.rejectNextWrite('WRITE_FAILED');
+    await expect(p1).rejects.toMatchObject({ code: 'MSP_WRITE_OUTCOME_UNKNOWN' });
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    expect(client.getState()).toBe('PROBING');
+
+    client.subscribe(listener);
+    const callsBeforeDispose = listener.mock.calls.length;
+
+    // The probe's own write is left deliberately unresolved - dispose()
+    // runs while the probe is still outstanding.
+    client.dispose();
+    expect(client.getState()).toBe('DISCONNECTED');
+    expect(listener.mock.calls.length).toBeGreaterThan(callsBeforeDispose);
+    const callsAfterDispose = listener.mock.calls.length;
+
+    // A late-arriving probe response must not resurrect the client or
+    // fire a stale notification - dispose() already unsubscribed the
+    // transport's own onDataReceived listener (see dispose()'s own doc
+    // comment), so this is a genuine no-op at the transport layer too.
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(1));
+    await flushMicrotasks();
+
+    expect(client.getState()).toBe('DISCONNECTED');
+    expect(listener.mock.calls.length).toBe(callsAfterDispose);
+  });
+
+  it('calling dispose() twice does not double-notify for the second, no-op call', () => {
+    const { client } = makeClient();
+    const listener = jest.fn();
+    client.subscribe(listener);
+
+    client.dispose();
+    const callsAfterFirstDispose = listener.mock.calls.length;
+    expect(callsAfterFirstDispose).toBeGreaterThan(0);
+
+    client.dispose();
+    expect(listener.mock.calls.length).toBe(callsAfterFirstDispose);
+  });
+});

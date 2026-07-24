@@ -59,10 +59,49 @@
  * longer exists.
  */
 
-import {MspClient, MspIdentificationService} from '../../../core';
-import type {FlightControllerIdentity, MspRequester} from '../../../core';
+import {MspClient, MspIdentificationService, MSP_ATTITUDE, decodeAttitude, createMspTelemetryScheduler} from '../../../core';
+import type {FlightControllerIdentity, MspRequester, MspTelemetryScheduler, MspAttitude, MspClientState} from '../../../core';
 import type {UsbSerialTransportClient} from '../transport';
 import {RNMspTransport} from './RNMspTransport';
+
+/** Pass 7.4: the one MSP_ATTITUDE poll every session's real
+ * MspTelemetryScheduler registers - a stable exported id so the UI layer
+ * (useTelemetryValue() consumers) never duplicates this string. */
+export const ATTITUDE_TELEMETRY_POLL_ID = 'attitude';
+
+/** Confirmed real-hardware ceiling (Pass 7.0, Betaflight STM32F405,
+ * medianRtt=224ms across two separate runs) - NOT a 100ms/10Hz
+ * placeholder. */
+const ATTITUDE_POLL_INTERVAL_MS = 220;
+
+/** ~3x the poll interval - tolerates a couple of missed cycles (e.g. one
+ * Pass 6.2b desync/recovery pause) without immediately flipping the UI
+ * to STALE, while still being short enough that genuinely stopped data
+ * is flagged within roughly a second, not several. */
+const ATTITUDE_POLL_STALE_AFTER_MS = 700;
+
+/** How often the real tick() driver below fires - well under
+ * ATTITUDE_POLL_INTERVAL_MS (Pass 7.2's own tick() is a safe, cheap
+ * no-op when nothing is due, per that pass's own design). */
+const TELEMETRY_TICK_INTERVAL_MS = 50;
+
+/**
+ * Pass 7.4, Step 3: RESERVED poll ids for a future pass's real armed-flag
+ * / arming-blockers decoders - deliberately NEVER registered by
+ * startTelemetry() in this pass (no real MSP decoder for either exists
+ * yet). Exported now so SafetyStrip.tsx's useTelemetryValue() calls use
+ * the exact same id string a future registerPoll() call will use, with
+ * ZERO changes to the strip's own rendering logic once that pass lands -
+ * a real, intentional placeholder, not a stub to be swapped out later.
+ * Until then, useTelemetryValue() naturally returns {status:
+ * 'UNAVAILABLE'} for these ids through the SAME real mechanism
+ * ATTITUDE_TELEMETRY_POLL_ID itself relies on when no scheduler exists
+ * yet (MspTelemetryScheduler.getValue() returns UNAVAILABLE_VALUE for
+ * any poll id nothing ever registered) - no special-casing needed
+ * anywhere in this file or in SafetyStrip.tsx.
+ */
+export const ARMED_TELEMETRY_POLL_ID = 'armed';
+export const ARMING_BLOCKERS_TELEMETRY_POLL_ID = 'armingBlockers';
 
 export type MspSessionOwnershipState = 'INACTIVE' | 'ACTIVATING' | 'ACTIVE' | 'CLOSING';
 
@@ -156,6 +195,18 @@ interface SessionEntry {
   generation: number;
   identification: MspIdentificationState;
   metrics: MspIdentificationMetrics | undefined;
+  /** Pass 7.4: undefined until startTelemetry() runs (the same
+   * startReading()-confirmed point beginIdentification() itself starts
+   * from - see startTelemetry()'s own doc comment for why that point,
+   * not the earlier synchronous ownership->ACTIVE flip, is what "once
+   * ownership reaches ACTIVE" means here). */
+  telemetryScheduler: MspTelemetryScheduler | undefined;
+  tickIntervalHandle: ReturnType<typeof setInterval> | undefined;
+  /** Pass 7.4, Step 4: unsubscribes this entry's own forwarding listener
+   * from mspClient.subscribe() - see notifyMspRecoveryState()'s own doc
+   * comment for why calling this during teardown is a deliberate
+   * consistency choice, not something GC correctness actually requires. */
+  mspClientStateUnsubscribe: () => void;
 }
 
 /** Never a real generation number (generationCounter starts at 1 and only
@@ -168,6 +219,15 @@ export class MspSessionCoordinator {
   private readonly ownershipStates = new Map<string, MspSessionOwnershipState>();
   private readonly ownershipListeners = new Set<() => void>();
   private readonly identificationListeners = new Set<() => void>();
+  /** Pass 7.4: a THIRD, dedicated axis alongside ownership/identification
+   * - see startTelemetry()'s own doc comment for why this could not
+   * reuse ownershipListeners. */
+  private readonly telemetryAvailabilityListeners = new Set<() => void>();
+  /** Pass 7.4, Step 4: a FOURTH dedicated axis - forwards MspClient's own
+   * subscribe() (per-instance, per-sessionId) into one coordinator-wide
+   * axis, the same "broad notify, narrow-in-getSnapshot" shape as the
+   * other three. */
+  private readonly mspRecoveryStateListeners = new Set<() => void>();
   private generationCounter = 0;
 
   /**
@@ -254,6 +314,15 @@ export class MspSessionCoordinator {
       throw new MspOwnershipActivationError(sessionId, constructionError);
     }
 
+    // Pass 7.4, Step 4: subscribed from construction, not deferred to
+    // startReading()'s resolution the way startTelemetry() is - unlike
+    // MSP_ATTITUDE polling, recovery state is meaningful from the moment
+    // an MspClient exists (e.g. a desync triggered by identify()'s own
+    // requests, before startTelemetry() would even run).
+    const mspClientStateUnsubscribe = mspClient.subscribe(() => {
+      this.notifyMspRecoveryState();
+    });
+
     const generation = ++this.generationCounter;
     this.sessions.set(sessionId, {
       transport,
@@ -261,9 +330,25 @@ export class MspSessionCoordinator {
       generation,
       identification: {status: 'IDLE'},
       metrics: undefined,
+      telemetryScheduler: undefined,
+      tickIntervalHandle: undefined,
+      mspClientStateUnsubscribe,
     });
     this.ownershipStates.set(sessionId, 'ACTIVE');
     this.notifyOwnership();
+    // Pass 7.4, Step 4: a REAL bug, found by an actual hook test failing
+    // (not inferred by analogy alone): mspClient.subscribe() only fires
+    // on SUBSEQUENT transitions - it never announces the client's own
+    // initial READY state from construction. Unlike telemetryAvailability
+    // (whose scheduler genuinely does not exist until startTelemetry()
+    // runs, later, asynchronously), getMspRecoveryState() already flips
+    // from undefined to 'READY' RIGHT HERE, synchronously - so this
+    // explicit notify() is required for that transition to ever reach a
+    // useMspRecoveryState() subscriber; without it, a component mounted
+    // before openSession() is called would stay stuck at its initial
+    // undefined value forever, even though getMspRecoveryState() itself
+    // already reports 'READY' correctly on the next read.
+    this.notifyMspRecoveryState();
 
     // Fire-and-forget from openSession()'s own perspective (still returns
     // synchronously below, unchanged) - but beginIdentification() is
@@ -282,6 +367,7 @@ export class MspSessionCoordinator {
           return;
         }
         this.beginIdentification(sessionId, mspClient, transport, generation);
+        this.startTelemetry(sessionId, mspClient);
       },
       error => this.handleStartReadingFailure(sessionId, generation, error),
     );
@@ -407,6 +493,77 @@ export class MspSessionCoordinator {
     );
   }
 
+  /**
+   * Pass 7.4: creates this session's real MspTelemetryScheduler
+   * (wrapping mspClient directly as its MspRequester - MspClient already
+   * satisfies that interface structurally, same as
+   * beginIdentification()'s own countingRequester's underlying call, no
+   * wrapper needed here since no per-request counting is wanted for
+   * telemetry), registers the MSP_ATTITUDE poll, and starts a real
+   * setInterval driving tick() every TELEMETRY_TICK_INTERVAL_MS.
+   *
+   * Called from the SAME startReading()-confirmed continuation
+   * beginIdentification() is - deliberately NOT at the earlier
+   * synchronous ownership->ACTIVE flip inside openSession() itself,
+   * despite this pass's own instructions phrasing the trigger as "once
+   * ownership reaches ACTIVE": firing an MSP_ATTITUDE request before
+   * startReading() has resolved would reintroduce the exact "receive
+   * loop not started yet" race beginIdentification() was already built
+   * to avoid (see that method's own doc comment) - "the same point
+   * beginIdentification() already starts from" is read as the
+   * authoritative, more specific instruction here.
+   *
+   * Also notifies subscribeTelemetryAvailability() listeners once the
+   * scheduler is actually in place (found necessary while testing
+   * useTelemetryValue.ts): the synchronous ownership->ACTIVE notification
+   * inside openSession() fires BEFORE this method ever runs (this is
+   * called later, from the startReading()-resolved continuation), so a
+   * hook that only re-checks getTelemetryScheduler() in response to
+   * ownership notifications would otherwise never learn the scheduler
+   * now exists. A DEDICATED listener Set, not a reuse of
+   * ownershipListeners: reusing ownershipListeners was tried first and
+   * reverted - it broke an existing test asserting the EXACT ownership
+   * notification sequence (['ACTIVATING', 'ACTIVE', 'INACTIVE']) by
+   * inserting a redundant extra 'ACTIVE' firing with no actual status
+   * change, exactly the kind of surprising cross-axis coupling
+   * subscribeIdentificationState()'s own doc comment already warns
+   * against for the ownership/identification split - the same reasoning
+   * applies here.
+   */
+  private startTelemetry(sessionId: string, mspClient: MspClient): void {
+    const entry = this.sessions.get(sessionId);
+    if (!entry) {
+      // Unreachable given this method's own call-site ordering (called
+      // synchronously immediately after beginIdentification(), which
+      // has the identical guard) - kept as a defensive invariant.
+      return;
+    }
+
+    const scheduler = createMspTelemetryScheduler(mspClient);
+    scheduler.registerPoll<MspAttitude>({
+      id: ATTITUDE_TELEMETRY_POLL_ID,
+      command: MSP_ATTITUDE,
+      intervalMs: ATTITUDE_POLL_INTERVAL_MS,
+      staleAfterMs: ATTITUDE_POLL_STALE_AFTER_MS,
+      priority: 0,
+      decode: decodeAttitude,
+    });
+
+    // No isCurrentGeneration() guard is needed inside this callback:
+    // JavaScript's single-threaded execution means clearInterval() (both
+    // teardown paths, below) always fully takes effect before any other
+    // code (including a new openSession() for a reused sessionId) can
+    // run - there is no window for this interval to fire again once
+    // teardown has cleared it.
+    const tickIntervalHandle = setInterval(() => {
+      scheduler.tick();
+    }, TELEMETRY_TICK_INTERVAL_MS);
+
+    entry.telemetryScheduler = scheduler;
+    entry.tickIntervalHandle = tickIntervalHandle;
+    this.notifyTelemetryAvailability();
+  }
+
   /** Mirrors mspClient.ts's own isCurrentRecoveryAttempt() epoch-guard
    * pattern: an identify() attempt is only "current" while the session it
    * belongs to still exists AND still carries the exact generation token
@@ -488,6 +645,66 @@ export class MspSessionCoordinator {
     return {sessionId, generation: entry.generation};
   }
 
+  /** Pass 7.4: mirrors getActiveMspClient()'s exact undefined-for-
+   * no-entry convention. undefined both when there is no active session
+   * at all, AND while ownership is ACTIVE but startTelemetry() has not
+   * run yet (the brief window between the synchronous ownership->ACTIVE
+   * flip and startReading() actually resolving - see startTelemetry()'s
+   * own doc comment). */
+  getTelemetryScheduler(sessionId: string): MspTelemetryScheduler | undefined {
+    return this.sessions.get(sessionId)?.telemetryScheduler;
+  }
+
+  /** Pass 7.4: fires whenever getTelemetryScheduler() may now report
+   * something different FOR ANY sessionId - specifically, once
+   * startTelemetry() has just created one (same broad-notify, narrow-in-
+   * getSnapshot convention as subscribeOwnershipState()/
+   * subscribeIdentificationState()). A session's teardown (either path)
+   * still only fires the EXISTING subscribeOwnershipState() notification
+   * - getTelemetryScheduler() reverting to undefined there is a direct,
+   * synchronous consequence of the same ownership transition, not a
+   * separate event worth a second notification. */
+  subscribeTelemetryAvailability(listener: () => void): MspSessionCoordinatorUnsubscribe {
+    this.telemetryAvailabilityListeners.add(listener);
+    return () => {
+      this.telemetryAvailabilityListeners.delete(listener);
+    };
+  }
+
+  /**
+   * Pass 7.4, Step 4: the underlying MspClient's own recovery/connection
+   * state - the raw MspClientState, not pre-collapsed to whatever subset
+   * a particular UI need cares about (the same "expose the real
+   * underlying type, let the caller derive" precedent
+   * getOwnershipState()/getIdentificationState() already set - Region 1's
+   * own 5-state top-bar derivation, a SEPARATE pure function, is the
+   * right place for that collapsing, not this coordinator).
+   *
+   * NO OBJECT-CACHING NEEDED (unlike getTelemetryScheduler()'s own
+   * cachedValue machinery): MspClientState is a bare string union, and a
+   * live pass-through (`entry?.mspClient.getState()`) is ALREADY
+   * referentially stable for useSyncExternalStore's purposes - two calls
+   * with no transition in between return the exact same primitive via
+   * ===, by JavaScript's own string-equality semantics, with no
+   * wrapping object to construct fresh each time. undefined for no
+   * active session - mirrors getTelemetryScheduler()'s own convention. */
+  getMspRecoveryState(sessionId: string): MspClientState | undefined {
+    return this.sessions.get(sessionId)?.mspClient.getState();
+  }
+
+  /** Pass 7.4, Step 4: fires whenever getMspRecoveryState() may now
+   * report something different for ANY sessionId - forwards every one of
+   * the underlying MspClient's own subscribe() notifications (wired up
+   * once, in openSession(), for the entry's own MspClient instance - see
+   * that call site's own doc comment for why subscription starts at
+   * construction rather than being deferred like startTelemetry() is). */
+  subscribeMspRecoveryState(listener: () => void): MspSessionCoordinatorUnsubscribe {
+    this.mspRecoveryStateListeners.add(listener);
+    return () => {
+      this.mspRecoveryStateListeners.delete(listener);
+    };
+  }
+
   /**
    * Intentional close (Pass 6.4b rename - deliberately NOT named
    * closeSession(), to avoid any resemblance to UsbSerialTransportClient's
@@ -504,10 +721,21 @@ export class MspSessionCoordinator {
    *     completion racing this teardown must already see itself as
    *     superseded from this point forward, not only once the entry is
    *     fully gone.
-   *  3. mspClient.dispose().
-   *  4. transport.dispose().
-   *  5. The session is removed from the internal map.
-   *  6. Ownership -> INACTIVE.
+   *  3. Pass 7.4: the telemetry tick interval is cleared (if
+   *     startTelemetry() ever ran for this session) - stops any further
+   *     tick() from firing new requests against a client that is about
+   *     to be disposed, same "stop generating new activity before
+   *     tearing down what it depends on" principle as step 2 itself.
+   *  4. mspClient.dispose() - itself a real, final state transition
+   *     (CLOSING -> DISCONNECTED) that legitimately notifies this
+   *     entry's recovery-state subscribers one last time (see
+   *     notifyMspRecoveryState()'s own doc comment).
+   *  5. Pass 7.4, Step 4: entry.mspClientStateUnsubscribe() - AFTER
+   *     dispose(), not before, so that final DISCONNECTED notification
+   *     above is not itself silently dropped.
+   *  6. transport.dispose().
+   *  7. The session is removed from the internal map.
+   *  8. Ownership -> INACTIVE.
    */
   deactivateMspSession(sessionId: string): void {
     const entry = this.sessions.get(sessionId);
@@ -519,8 +747,10 @@ export class MspSessionCoordinator {
     this.notifyOwnership();
 
     entry.generation = INVALIDATED_GENERATION;
+    this.stopTelemetry(entry);
 
     entry.mspClient.dispose();
+    entry.mspClientStateUnsubscribe();
     entry.transport.dispose();
 
     this.sessions.delete(sessionId);
@@ -551,13 +781,28 @@ export class MspSessionCoordinator {
     }
 
     entry.generation = INVALIDATED_GENERATION;
+    this.stopTelemetry(entry);
 
     entry.mspClient.dispose();
+    entry.mspClientStateUnsubscribe();
     entry.transport.dispose();
 
     this.sessions.delete(sessionId);
     this.ownershipStates.delete(sessionId);
     this.notifyOwnership();
+  }
+
+  /** Shared by both teardown paths - clears the real tick() interval (if
+   * startTelemetry() ever ran for this entry) and drops the scheduler
+   * reference. The scheduler itself (Pass 7.2) has no dispose() of its
+   * own to call - it owns no resource beyond what this coordinator added
+   * (the interval cleared here). */
+  private stopTelemetry(entry: SessionEntry): void {
+    if (entry.tickIntervalHandle !== undefined) {
+      clearInterval(entry.tickIntervalHandle);
+      entry.tickIntervalHandle = undefined;
+    }
+    entry.telemetryScheduler = undefined;
   }
 
   private notifyOwnership(): void {
@@ -572,6 +817,53 @@ export class MspSessionCoordinator {
 
   private notifyIdentification(): void {
     for (const listener of Array.from(this.identificationListeners)) {
+      try {
+        listener();
+      } catch {
+        // Best-effort - same reasoning as notifyOwnership() above.
+      }
+    }
+  }
+
+  private notifyTelemetryAvailability(): void {
+    for (const listener of Array.from(this.telemetryAvailabilityListeners)) {
+      try {
+        listener();
+      } catch {
+        // Best-effort - same reasoning as notifyOwnership() above.
+      }
+    }
+  }
+
+  /**
+   * Pass 7.4, Step 4: called from the per-entry forwarding listener
+   * registered in openSession() (mspClient.subscribe(() =>
+   * this.notifyMspRecoveryState())) - fires once per underlying
+   * MspClient state transition, for whichever session that transition
+   * belongs to (broad notify, same as every other axis here).
+   *
+   * DISPOSAL, TRACED EXPLICITLY (per this pass's own requirement): can
+   * this ever fire after this coordinator has already torn the session
+   * down? mspClient.dispose() (called from deactivateMspSession()/
+   * handlePhysicalDetach(), BEFORE this.sessions.delete()) is itself a
+   * real transition (CLOSING -> DISCONNECTED) and DOES fire this
+   * forwarding listener - that is expected and correct: existing
+   * subscribers (e.g. Region 1's connection indicator) deserve to learn
+   * the client is now disconnected, and getMspRecoveryState(sessionId)
+   * still resolves correctly at that exact moment, since the entry has
+   * not been removed from `this.sessions` yet (dispose() runs before
+   * the map delete - see deactivateMspSession()'s own numbered steps).
+   * After that point, mspClient.ts's own Pass 6.2b isCurrentRecoveryAttempt()
+   * guard (see mspClient.ts's subscribe() doc comment) makes any FURTHER
+   * setState()/notify() call from that instance structurally
+   * impossible - so this method can never fire again for an
+   * already-torn-down session. entry.mspClientStateUnsubscribe() is
+   * still called explicitly in both teardown paths below anyway, purely
+   * for the same explicit-cleanup consistency stopTelemetry() already
+   * follows - not because a leak is otherwise possible.
+   */
+  private notifyMspRecoveryState(): void {
+    for (const listener of Array.from(this.mspRecoveryStateListeners)) {
       try {
         listener();
       } catch {

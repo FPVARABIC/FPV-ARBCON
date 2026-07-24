@@ -3,6 +3,9 @@ export {
   MspSessionCoordinator,
   mspSessionCoordinator,
   MspOwnershipActivationError,
+  ATTITUDE_TELEMETRY_POLL_ID,
+  ARMED_TELEMETRY_POLL_ID,
+  ARMING_BLOCKERS_TELEMETRY_POLL_ID,
 } from './MspSessionCoordinator';
 export type {
   MspSessionOwnershipState,
@@ -11,6 +14,7 @@ export type {
   MspSessionCoordinatorUnsubscribe,
   SetupUiSessionKey,
 } from './MspSessionCoordinator';
-export {useMspOwnershipState, useMspIdentificationState} from './useMspSessionState';
+export {useMspOwnershipState, useMspIdentificationState, useMspRecoveryState} from './useMspSessionState';
+export {useTelemetryValue} from './useTelemetryValue';
 export {SetupUiSessionStore, setupUiSessionStore} from './SetupUiSessionStore';
 export type {SetupUiSessionState} from './SetupUiSessionStore';

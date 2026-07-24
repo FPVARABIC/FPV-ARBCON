@@ -55,6 +55,10 @@ function createFakeScheduler(): MspTelemetryScheduler & {
     tick(): void {
       // Never called by MspOperationCoordinator.
     },
+    subscribe(): () => void {
+      // Never called by MspOperationCoordinator.
+      return () => undefined;
+    },
     acquirePauseLease(): TelemetryPauseLease {
       fake.acquirePauseLeaseCallCount += 1;
       fake.leaseReleased = false;

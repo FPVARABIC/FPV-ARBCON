@@ -1,7 +1,8 @@
-import {MspSessionCoordinator, MspOwnershipActivationError} from './MspSessionCoordinator';
+import {MspSessionCoordinator, MspOwnershipActivationError, ATTITUDE_TELEMETRY_POLL_ID} from './MspSessionCoordinator';
 import type {MspSessionOwnershipState} from './MspSessionCoordinator';
 import {RNMspTransport} from './RNMspTransport';
-import {MspClient, MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO} from '../../../core';
+import {MspClient, MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE} from '../../../core';
+import type {MspAttitude} from '../../../core';
 import {buildMspFrameBytes} from '../../../core/protocol/__testUtils__/mspFixtures';
 import {base64ToBytes, bytesToBase64} from './base64';
 import type {UsbSerialDataEvent, UsbSerialSessionDetachedEvent, UsbSerialTransportClient} from '../transport';
@@ -45,6 +46,16 @@ function boardInfoPayload(): Uint8Array {
   ]);
 }
 
+/** A valid MSP_ATTITUDE response payload: 3 signed LE16 fields
+ * (roll/pitch decidegrees, yaw whole degrees - see decodeAttitude.ts). */
+function attitudePayload(rollDecidegrees: number, pitchDecidegrees: number, yawDegrees: number): Uint8Array {
+  const s16le = (value: number) => {
+    const unsigned = value < 0 ? value + 0x10000 : value;
+    return [unsigned & 0xff, (unsigned >> 8) & 0xff];
+  };
+  return Uint8Array.from([...s16le(rollDecidegrees), ...s16le(pitchDecidegrees), ...s16le(yawDegrees)]);
+}
+
 /**
  * Drains microtask chains ONLY (never a real/fake timer) - every test in
  * this file is deliberately structured so identify() either resolves via a
@@ -73,6 +84,12 @@ interface FakeClient {
    * resolves the pending startReading() Promise on demand. A no-op
    * (never referenced) for every fake built without that option. */
   resolveStartReading: () => void;
+  /** Pass 7.4, Step 4: marks the NEXT writeBytes() call to reject instead
+   * of resolving - mirrors mspClient.test.ts's own FakeMspTransport
+   * rejectNextWrite(), the standard way this codebase triggers a real
+   * desync/recovery cycle in a test. Never referenced by any test that
+   * doesn't explicitly call it, so this is purely additive. */
+  rejectNextWrite: (reason?: unknown) => void;
 }
 
 /**
@@ -97,6 +114,7 @@ function makeFakeClient(
         resolveStartReadingImpl = resolve;
       })
     : Promise.resolve(undefined);
+  let rejectNextWriteReason: {reason: unknown} | undefined;
 
   const emitFrame = (command: number, payload: Uint8Array) => {
     const frameBytes = buildMspFrameBytes(command, payload, {wireFormat: 'v1', direction: 'response'});
@@ -112,6 +130,11 @@ function makeFakeClient(
       // makeQuietFakeClient()'s own doc comment for why.
       if (options.neverResolveWrite) {
         return new Promise<void>(() => undefined);
+      }
+      if (rejectNextWriteReason) {
+        const {reason} = rejectNextWriteReason;
+        rejectNextWriteReason = undefined;
+        return Promise.reject(reason);
       }
       const bytes = base64ToBytes(dataBase64);
       // v1 request frame layout: $ M < size command ...payload checksum -
@@ -147,6 +170,9 @@ function makeFakeClient(
     },
     setResponse: (command, payload) => {
       responses.set(command, payload);
+    },
+    rejectNextWrite: (reason: unknown = new Error('fake write failure')) => {
+      rejectNextWriteReason = {reason};
     },
   };
 }
@@ -655,5 +681,311 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     expect(coordinator.getOwnershipState('never-opened')).toBe('INACTIVE');
     expect(coordinator.getIdentificationState('never-opened')).toEqual({status: 'IDLE'});
     expect(coordinator.getIdentificationMetrics('never-opened')).toBeUndefined();
+  });
+});
+
+/**
+ * Pass 7.4: the real MspTelemetryScheduler + tick() driver integration.
+ * This is one of the few places in this project where a real/fake timer
+ * is genuinely unavoidable (the tick driver is a real setInterval) - Jest
+ * fake timers are used ONLY in this describe block, scoped via
+ * beforeEach/afterEach, not introduced anywhere else in this file that
+ * could instead use the existing flushAsync()/scripted-response
+ * convention. jest.advanceTimersByTimeAsync() is used throughout (not
+ * plain advanceTimersByTime()) since it also flushes the microtask chain
+ * a scripted writeBytes() response settles through, matching the same
+ * need this project's pollingCapacityAudit.test.ts already established
+ * that pattern for.
+ */
+describe('MspSessionCoordinator - Pass 7.4 real telemetry scheduler integration', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    // Defensive backstop: any test in this block that started a real
+    // tick-driver setInterval without explicitly deactivating its own
+    // coordinator (most of them do deactivate/detach explicitly, as
+    // that IS what they're testing) would otherwise leave a fake-timer
+    // handle open past the test's own end, which is what was actually
+    // causing Jest to report "did not exit one second after the test
+    // run has completed" - confirmed by reading Jest's own warning, not
+    // guessed.
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  it('getTelemetryScheduler() is undefined immediately after openSession() returns, and only becomes defined once startReading() has actually resolved (the same point identification starts from)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(10, -20, 30));
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    expect(coordinator.getTelemetryScheduler(SESSION_ID)).toBeUndefined();
+
+    await flushAsync();
+
+    expect(coordinator.getTelemetryScheduler(SESSION_ID)).toBeDefined();
+    coordinator.deactivateMspSession(SESSION_ID); // stop the real tick interval
+  });
+
+  it('getTelemetryScheduler() returns undefined for a never-opened session', () => {
+    const coordinator = new MspSessionCoordinator();
+    expect(coordinator.getTelemetryScheduler('never-opened')).toBeUndefined();
+  });
+
+  it('registers the real MSP_ATTITUDE poll, which round-trips real decoded data through the real MspClient once the tick driver fires', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(10, -20, 30));
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    expect(scheduler).toBeDefined();
+    expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toEqual({status: 'WAITING'});
+
+    // First tick driver firing (50ms) - the poll is due immediately at
+    // registration, so this dispatches right away.
+    await jest.advanceTimersByTimeAsync(50);
+    await flushAsync();
+
+    const value = scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID);
+    expect(value).toMatchObject({
+      status: 'FRESH',
+      value: {rollDecidegrees: 10, pitchDecidegrees: -20, yawDegrees: 30},
+    });
+    coordinator.deactivateMspSession(SESSION_ID); // stop the real tick interval
+  });
+
+  it('registers MSP_ATTITUDE at the confirmed real ~220ms interval, not some other cadence (the second real dispatch only happens once ~220ms have elapsed since the first)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    const countAttitudeWrites = () =>
+      client.writeBytes.mock.calls.filter(call => base64ToBytes(call[1] as string)[4] === MSP_ATTITUDE).length;
+
+    // First dispatch - due immediately at registration.
+    await jest.advanceTimersByTimeAsync(50);
+    await flushAsync();
+    expect(countAttitudeWrites()).toBe(1);
+
+    // Well under 220ms further - must NOT have dispatched again yet.
+    await jest.advanceTimersByTimeAsync(100);
+    await flushAsync();
+    expect(countAttitudeWrites()).toBe(1);
+
+    // The first dispatch's next-due time is dueAtMs = 50 + 220 = 270ms
+    // after registration. 50ms + 100ms so far = 150ms elapsed; this
+    // advance brings the total to 300ms, comfortably past 270ms.
+    await jest.advanceTimersByTimeAsync(150);
+    await flushAsync();
+    expect(countAttitudeWrites()).toBe(2);
+    coordinator.deactivateMspSession(SESSION_ID); // stop the real tick interval
+  });
+
+  it('stops the tick driver on deactivateMspSession() - no further MSP_ATTITUDE dispatches happen afterward', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(50);
+    await flushAsync();
+
+    const countAttitudeWrites = () =>
+      client.writeBytes.mock.calls.filter(call => base64ToBytes(call[1] as string)[4] === MSP_ATTITUDE).length;
+    const beforeDeactivate = countAttitudeWrites();
+    expect(beforeDeactivate).toBeGreaterThan(0);
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    expect(coordinator.getTelemetryScheduler(SESSION_ID)).toBeUndefined();
+
+    await jest.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(countAttitudeWrites()).toBe(beforeDeactivate);
+  });
+
+  it('stops the tick driver on a physical detach - no further MSP_ATTITUDE dispatches happen afterward', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(50);
+    await flushAsync();
+
+    const countAttitudeWrites = () =>
+      client.writeBytes.mock.calls.filter(call => base64ToBytes(call[1] as string)[4] === MSP_ATTITUDE).length;
+    const beforeDetach = countAttitudeWrites();
+    expect(beforeDetach).toBeGreaterThan(0);
+
+    client.emitSessionDetached({sessionId: SESSION_ID, deviceId: 1});
+    expect(coordinator.getTelemetryScheduler(SESSION_ID)).toBeUndefined();
+
+    await jest.advanceTimersByTimeAsync(2000);
+    await flushAsync();
+    expect(countAttitudeWrites()).toBe(beforeDetach);
+  });
+});
+
+describe('MspSessionCoordinator - Pass 7.4, Step 4: MspClient recovery-state axis', () => {
+  const EMPTY = new Uint8Array(0);
+
+  it('getMspRecoveryState() returns undefined for a never-opened session', () => {
+    const coordinator = new MspSessionCoordinator();
+    expect(coordinator.getMspRecoveryState('never-opened')).toBeUndefined();
+  });
+
+  it('getMspRecoveryState() reflects READY immediately once a session is open', () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    expect(coordinator.getMspRecoveryState(SESSION_ID)).toBe('READY');
+  });
+
+  it('two consecutive getMspRecoveryState() calls with no transition in between return the exact same reference', () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    const first = coordinator.getMspRecoveryState(SESSION_ID);
+    const second = coordinator.getMspRecoveryState(SESSION_ID);
+    expect(first).toBe(second);
+  });
+
+  it('subscribeMspRecoveryState() fires, and getMspRecoveryState() reflects the transition, on a real desync triggered by a write failure', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    const mspClient = coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync(); // let identify() finish first
+
+    const listener = jest.fn();
+    coordinator.subscribeMspRecoveryState(listener);
+
+    client.rejectNextWrite('write failed');
+    const failing = mspClient.request(42, EMPTY, {wireFormat: 'v1'});
+    await expect(failing).rejects.toBeDefined();
+
+    expect(listener).toHaveBeenCalled();
+    expect(coordinator.getMspRecoveryState(SESSION_ID)).toBe('RESTARTING_READER');
+    coordinator.deactivateMspSession(SESSION_ID); // stop the in-flight recovery attempt cleanly
+  });
+
+  it('does not fire for a DIFFERENT session\'s recovery-state transition', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const clientA = makeHappyFakeClient(SESSION_ID);
+    const clientB = makeHappyFakeClient(OTHER_SESSION_ID);
+    const mspClientA = coordinator.openSession(clientA as unknown as UsbSerialTransportClient, SESSION_ID);
+    coordinator.openSession(clientB as unknown as UsbSerialTransportClient, OTHER_SESSION_ID);
+    await flushAsync();
+
+    const listener = jest.fn();
+    coordinator.subscribeMspRecoveryState(listener);
+    listener.mockClear();
+
+    clientA.rejectNextWrite('write failed');
+    const failing = mspClientA.request(42, EMPTY, {wireFormat: 'v1'});
+    await expect(failing).rejects.toBeDefined();
+
+    // Confirm the desync genuinely happened (otherwise the assertion
+    // below would trivially pass for the wrong reason).
+    expect(listener).toHaveBeenCalled();
+    expect(coordinator.getMspRecoveryState(SESSION_ID)).toBe('RESTARTING_READER');
+
+    // subscribeMspRecoveryState() is broad-notify (fires for ANY session's
+    // transition, same as every other axis - the caller re-reads
+    // getMspRecoveryState(sessionId) itself to narrow) - this test
+    // confirms session B's OWN state is genuinely untouched by session
+    // A's desync, not that the listener itself was filtered.
+    expect(coordinator.getMspRecoveryState(OTHER_SESSION_ID)).toBe('READY');
+    coordinator.deactivateMspSession(SESSION_ID); // stop the in-flight recovery attempt cleanly
+    coordinator.deactivateMspSession(OTHER_SESSION_ID);
+  });
+
+  it('cross-axis isolation: a recovery-state transition does not fire ownership/identification/telemetry-availability listeners, and vice versa', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    const mspClient = coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    const recoveryListener = jest.fn();
+    const ownershipListener = jest.fn();
+    const identificationListener = jest.fn();
+    const telemetryAvailabilityListener = jest.fn();
+    coordinator.subscribeMspRecoveryState(recoveryListener);
+    coordinator.subscribeOwnershipState(ownershipListener);
+    coordinator.subscribeIdentificationState(identificationListener);
+    coordinator.subscribeTelemetryAvailability(telemetryAvailabilityListener);
+
+    client.rejectNextWrite('write failed');
+    const failing = mspClient.request(42, EMPTY, {wireFormat: 'v1'});
+    await expect(failing).rejects.toBeDefined();
+
+    expect(recoveryListener).toHaveBeenCalled();
+    expect(ownershipListener).not.toHaveBeenCalled();
+    expect(identificationListener).not.toHaveBeenCalled();
+    expect(telemetryAvailabilityListener).not.toHaveBeenCalled();
+    coordinator.deactivateMspSession(SESSION_ID); // stop the in-flight recovery attempt cleanly
+  });
+
+  it('getMspRecoveryState() reverts to undefined after deactivateMspSession()', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    expect(coordinator.getMspRecoveryState(SESSION_ID)).toBe('READY');
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    expect(coordinator.getMspRecoveryState(SESSION_ID)).toBeUndefined();
+  });
+
+  it('getMspRecoveryState() reverts to undefined after a physical detach', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    expect(coordinator.getMspRecoveryState(SESSION_ID)).toBe('READY');
+
+    client.emitSessionDetached({sessionId: SESSION_ID, deviceId: 1});
+    expect(coordinator.getMspRecoveryState(SESSION_ID)).toBeUndefined();
+  });
+
+  it('deactivateMspSession() itself still notifies subscribeMspRecoveryState() once, for the final DISCONNECTED transition, before the entry is torn down', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    const listener = jest.fn();
+    coordinator.subscribeMspRecoveryState(listener);
+
+    coordinator.deactivateMspSession(SESSION_ID);
+
+    expect(listener).toHaveBeenCalled();
+  });
+
+  it('the returned unsubscribe function stops further notifications', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    const mspClient = coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    const listener = jest.fn();
+    const unsubscribe = coordinator.subscribeMspRecoveryState(listener);
+    unsubscribe();
+
+    client.rejectNextWrite('write failed');
+    const failing = mspClient.request(42, EMPTY, {wireFormat: 'v1'});
+    await expect(failing).rejects.toBeDefined();
+
+    expect(listener).not.toHaveBeenCalled();
+    coordinator.deactivateMspSession(SESSION_ID); // stop the in-flight recovery attempt cleanly
   });
 });

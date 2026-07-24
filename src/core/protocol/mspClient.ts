@@ -254,6 +254,19 @@ export class MspClient {
   private readonly maxPendingRequests: number;
   private readonly parser = createMspStreamParser();
   private readonly diagnosticListeners = new Set<(event: MspClientDiagnosticEvent) => void>();
+  /** Pass 7.4, Step 4: fires on every `state` transition (READY <->
+   * DESYNCHRONIZED/RESTARTING_READER/PROBING/RECOVERY_FAILED, and the
+   * DISCONNECTED/CLOSING terminal transitions) - see setState() below,
+   * the ONE place `this.state` is ever assigned. Deliberately GENERIC
+   * (every transition, not just the ones a particular UI need happens to
+   * care about right now) - the exact same "narrow producer, let
+   * consumers filter" precedent as onDiagnostic() itself. Mirrors the
+   * Set<listener>/Array.from()-snapshot/per-listener-try-catch idiom
+   * MspTelemetryScheduler.subscribe() and MspSessionCoordinator's own
+   * three axes already established this pass - NOT emitDiagnostic()'s
+   * own older (Pass 6.2a) plain `for...of` loop below, which predates
+   * that idiom. */
+  private readonly stateListeners = new Set<() => void>();
   private readonly unsubscribeData: () => void;
   private readonly unsubscribeSessionDetached: () => void;
 
@@ -303,6 +316,73 @@ export class MspClient {
 
   getState(): MspClientState {
     return this.state;
+  }
+
+  /**
+   * Pass 7.4, Step 4: subscribes to every `state` transition. Unlike
+   * MspTelemetryScheduler.getValue() (Pass 7.2/Step 0.5), getState()
+   * itself needs NO parallel object-caching machinery for
+   * useSyncExternalStore's referential-stability contract: MspClientState
+   * is a bare string union, and JavaScript string primitives are always
+   * reference-stable via ===/Object.is() regardless of how or when they
+   * were computed - two consecutive getState() calls with no transition
+   * in between are trivially `===` already, with no wrapping object and
+   * no cached-value field required. This is a genuinely different
+   * situation from Step 0.5's bug, which was specifically about a freshly
+   * CONSTRUCTED OBJECT's identity, not a primitive value - confirmed by
+   * tracing the actual JS semantics, not assumed by analogy.
+   *
+   * DISPOSAL: setState() (the only place notify() is ever called from) is
+   * reachable only from this class's own state-transition sites, every
+   * one of which outside dispose()/handlePhysicalDetach() is already
+   * gated by isCurrentRecoveryAttempt(epoch) - which explicitly excludes
+   * CLOSING and DISCONNECTED, the exact two states dispose() sets (and
+   * handlePhysicalDetach() sets DISCONNECTED directly). Since dispose()
+   * runs fully synchronously (no `await` inside it - see its own doc
+   * comment) and permanently prevents its own re-entry (`this.disposed`),
+   * no further setState() call - and therefore no further notify() call -
+   * can EVER happen once dispose() has returned: every async recovery
+   * continuation that might still resolve afterward checks
+   * isCurrentRecoveryAttempt() first and silently no-ops instead. This
+   * existing Pass 6.2b guard (built to stop stale recovery attempts from
+   * resurrecting state, for an unrelated reason) already fully satisfies
+   * "no listener call after dispose()" for free - no additional guard was
+   * added here, and none is needed. subscribe() itself deliberately does
+   * NOT clear stateListeners in dispose() either: an already-registered
+   * listener simply stops being invoked (nothing can trigger it again),
+   * the same way onDiagnostic() listeners are left as-is by dispose()
+   * today.
+   */
+  subscribe(listener: () => void): () => void {
+    this.stateListeners.add(listener);
+    return () => {
+      this.stateListeners.delete(listener);
+    };
+  }
+
+  /** The ONE place `this.state` is ever assigned - guarantees every
+   * transition is paired with a notify() call, with no site able to
+   * forget it. Notifies unconditionally, even on a same-value
+   * reassignment (e.g. a defensive double handlePhysicalDetach() call) -
+   * the same "notify every call, let useSyncExternalStore's own bail-out
+   * absorb a no-op" precedent MspTelemetryScheduler.tick() already
+   * established, rather than adding an equality check no other axis in
+   * this pass bothers with either. */
+  private setState(next: MspClientState): void {
+    this.state = next;
+    this.notify();
+  }
+
+  private notify(): void {
+    for (const listener of Array.from(this.stateListeners)) {
+      try {
+        listener();
+      } catch {
+        // Best-effort - same reasoning as emitDiagnostic()'s own catch
+        // below: a caller-supplied listener is external code this file
+        // does not control, and one throwing must never block another.
+      }
+    }
   }
 
   getActiveRequestPhase(): MspRequestPhase | undefined {
@@ -379,7 +459,7 @@ export class MspClient {
       return;
     }
 
-    this.state = 'CLOSING';
+    this.setState('CLOSING');
 
     const active = this.active;
     if (active !== undefined) {
@@ -395,7 +475,7 @@ export class MspClient {
     }
 
     this.disconnectCause = 'MSP_SESSION_CLOSED';
-    this.state = 'DISCONNECTED';
+    this.setState('DISCONNECTED');
   }
 
   /**
@@ -711,7 +791,7 @@ export class MspClient {
       pending.settle.reject(new MspClientError('MSP_RECOVERING'));
     }
     this.mspEpoch += 1;
-    this.state = 'DESYNCHRONIZED';
+    this.setState('DESYNCHRONIZED');
 
     // Recovery begins automatically and immediately, in this same
     // synchronous call - see the class-level Pass 6.2b doc comment and
@@ -736,7 +816,7 @@ export class MspClient {
     if (!this.isCurrentRecoveryAttempt(epoch)) {
       return;
     }
-    this.state = 'RESTARTING_READER';
+    this.setState('RESTARTING_READER');
 
     let restartPromise: Promise<void>;
     try {
@@ -748,7 +828,7 @@ export class MspClient {
       // return a Promise<void>, but a non-conforming transport throwing
       // here must not go unhandled.
       if (this.isCurrentRecoveryAttempt(epoch)) {
-        this.state = 'RECOVERY_FAILED';
+        this.setState('RECOVERY_FAILED');
       }
       return;
     }
@@ -764,7 +844,7 @@ export class MspClient {
         // Reason not inspected further - see mspTransport.ts's
         // restartReceiveLoop() doc comment.
         if (this.isCurrentRecoveryAttempt(epoch)) {
-          this.state = 'RECOVERY_FAILED';
+          this.setState('RECOVERY_FAILED');
         }
       },
     );
@@ -799,17 +879,17 @@ export class MspClient {
     if (!this.isCurrentRecoveryAttempt(epoch)) {
       return;
     }
-    this.state = 'PROBING';
+    this.setState('PROBING');
 
     const settle = new SettleOnce<MspFrame>(
       () => {
         if (this.isCurrentRecoveryAttempt(epoch)) {
-          this.state = 'READY';
+          this.setState('READY');
         }
       },
       () => {
         if (this.isCurrentRecoveryAttempt(epoch)) {
-          this.state = 'RECOVERY_FAILED';
+          this.setState('RECOVERY_FAILED');
         }
       },
     );
@@ -866,7 +946,7 @@ export class MspClient {
     // DISCONNECTED and abandon silently, rather than transiently (even if
     // harmlessly, since nothing observes it in between) writing
     // RECOVERY_FAILED only to have this method immediately overwrite it.
-    this.state = 'DISCONNECTED';
+    this.setState('DISCONNECTED');
 
     const active = this.active;
     if (active !== undefined) {

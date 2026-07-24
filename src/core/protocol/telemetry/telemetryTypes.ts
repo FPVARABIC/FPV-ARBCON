@@ -57,12 +57,15 @@ export type MspPollDefinition<T> = {
  * for silent redisplay. `updatedAtMs` is undefined only when a poll has
  * NEVER once succeeded (its very first dispatch failed).
  *
- * FRESH vs STALE is derived dynamically at getValue() call time (age =
- * now - updatedAtMs, compared against the poll's own staleAfterMs), not
- * decided proactively during tick() - a value can silently transition
- * from FRESH to STALE purely because time passed, with no scheduler
- * activity in between, which is exactly the transition Pass 7.2's own
- * tests exercise via clock advance alone.
+ * FRESH vs STALE is driven by age (now - updatedAtMs, compared against
+ * the poll's own staleAfterMs) becoming stale purely because time
+ * passed, with no new dispatch in between. Pass 7.2 originally derived
+ * this dynamically on every getValue() call; Pass 7.4 changed getValue()
+ * to a stable cache lookup instead (required for useSyncExternalStore's
+ * referential-stability contract - see MspTelemetryScheduler.ts's own
+ * class-level doc comment), so as of Pass 7.4 this transition is only
+ * ever made visible via tick() re-evaluating staleness and replacing the
+ * cached value, not by a bare clock advance alone.
  */
 export type TelemetryValue<T> =
   | {status: 'UNAVAILABLE'}

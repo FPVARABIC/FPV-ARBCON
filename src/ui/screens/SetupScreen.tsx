@@ -1,32 +1,55 @@
 /**
- * Pass 7.1 - minimal stub only. Renders nothing but the received
- * SetupUiSessionKey (so navigation wiring is visibly verifiable) plus a
- * placeholder message. No real Setup UI, no reads from
- * SetupUiSessionStore, no MSP requests - that is Pass 7.3's work, once
- * this navigation foundation is confirmed correct.
+ * Pass 7.4, Step 5 - the real Setup screen, assembled from Regions 1+2
+ * ONLY (TopSystemBar, OrientationHero, SafetyStrip) - Regions 3/4/5 are
+ * genuinely absent, not placeholders, per this pass's own scope.
+ *
+ * The missing-sessionKey fallback (Pass 7.1's own defense-in-depth) is
+ * unchanged: the only real call site (UsbConnectionScreen.tsx's
+ * navigate('Setup', {sessionKey})) always supplies it, TypeScript-
+ * enforced, but nothing at runtime stops a future linking config from
+ * reaching this screen without it.
+ *
+ * SetupUiSessionStore (Pass 7.1) is a PLAIN, non-reactive store (by its
+ * own explicit design - "no useSyncExternalStore hook, no subscribe/
+ * notify machinery") - reading it once via a lazy useState initializer
+ * and re-reading+setState()-ing it after every write (resetView/
+ * hintShown below) is what makes this screen's UI actually reflect
+ * store writes, without adding new reactive machinery to the store
+ * itself. This is safe for exactly the way this screen is actually
+ * used: SetupScreen is the ONLY reader/writer of its own session's UI
+ * state, and is reached via exactly one navigate('Setup', {sessionKey})
+ * call site (UsbConnectionScreen.tsx) with no in-place re-parameterization
+ * anywhere in this codebase (verified by search, not assumed) - so a
+ * lazy, mount-time read of the store is genuinely correct here, not an
+ * unexamined shortcut.
  */
 
-import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
+import React, {useCallback, useState} from 'react';
+import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 
 import type {RootStackParamList} from '../../navigation/types';
 import {colors, spacing, typography} from '../theme';
+import {TopSystemBar, OrientationHero, SafetyStrip} from '../components/setup';
+import {
+  useTelemetryValue,
+  setupUiSessionStore,
+  ATTITUDE_TELEMETRY_POLL_ID,
+  ARMED_TELEMETRY_POLL_ID,
+  ARMING_BLOCKERS_TELEMETRY_POLL_ID,
+} from '../../platforms/react-native/protocol';
+import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
+import {deriveOrientationViewState, deriveArmingReadiness} from '../../core';
+import type {MspAttitude, ArmingBlockReason} from '../../core';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
-export default function SetupScreen({route}: Props): React.JSX.Element {
-  // Defense-in-depth (mspClient.ts/RNMspTransport.ts precedent): the only
-  // call site today (UsbConnectionScreen.tsx) always supplies sessionKey,
-  // TypeScript-enforced - but that guarantee is compile-time only, and
-  // nothing at runtime stops a future linking config or another call site
-  // from reaching this screen without it. Render an honest fallback
-  // instead of crashing on a missing param.
+export default function SetupScreen({route, navigation}: Props): React.JSX.Element {
   const sessionKey = route.params?.sessionKey;
 
   if (!sessionKey) {
     return (
-      <View style={styles.root}>
+      <View style={styles.missingSessionRoot}>
         <Text style={styles.placeholderText} testID="setup-screen-missing-session">
           شاشة الإعداد (قيد الإنشاء)
         </Text>
@@ -34,12 +57,53 @@ export default function SetupScreen({route}: Props): React.JSX.Element {
     );
   }
 
+  return <SetupScreenContent sessionKey={sessionKey} onBack={() => navigation.goBack()} />;
+}
+
+function SetupScreenContent({
+  sessionKey,
+  onBack,
+}: {
+  sessionKey: SetupUiSessionKey;
+  onBack: () => void;
+}): React.JSX.Element {
+  const {sessionId} = sessionKey;
+
+  const attitude = useTelemetryValue<MspAttitude>(sessionId, ATTITUDE_TELEMETRY_POLL_ID);
+  const armed = useTelemetryValue<boolean>(sessionId, ARMED_TELEMETRY_POLL_ID);
+  const blockers = useTelemetryValue<ArmingBlockReason[]>(sessionId, ARMING_BLOCKERS_TELEMETRY_POLL_ID);
+
+  const [uiState, setUiState] = useState(() => setupUiSessionStore.getState(sessionKey));
+
+  const orientationView = deriveOrientationViewState(attitude, uiState.orientationViewOffset);
+  // Computed ONCE, threaded to both SafetyStrip and TopSystemBar's Row 2
+  // arming badge - per Step 4's own established design, avoiding two
+  // independently-derived ArmingReadiness values that could diverge by
+  // a render tick.
+  const armingReadiness = deriveArmingReadiness(armed, blockers);
+
+  const handleResetView = useCallback(() => {
+    setupUiSessionStore.resetOrientationViewOffset(sessionKey);
+    setUiState(setupUiSessionStore.getState(sessionKey));
+  }, [sessionKey]);
+
+  const handleResetHintShown = useCallback(() => {
+    setupUiSessionStore.update(sessionKey, {hasSeenOrientationResetHint: true});
+    setUiState(setupUiSessionStore.getState(sessionKey));
+  }, [sessionKey]);
+
   return (
-    <View style={styles.root}>
-      <Text style={styles.sessionKeyText} testID="setup-screen-session-key">
-        {`${sessionKey.sessionId}:${sessionKey.generation}`}
-      </Text>
-      <Text style={styles.placeholderText}>شاشة الإعداد (قيد الإنشاء)</Text>
+    <View style={styles.root} testID="setup-screen">
+      <TopSystemBar sessionId={sessionId} onBack={onBack} armingReadiness={armingReadiness} />
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <OrientationHero
+          orientationView={orientationView}
+          hasSeenResetHint={uiState.hasSeenOrientationResetHint}
+          onResetView={handleResetView}
+          onResetHintShown={handleResetHintShown}
+        />
+        <SafetyStrip readiness={armingReadiness} />
+      </ScrollView>
     </View>
   );
 }
@@ -47,14 +111,17 @@ export default function SetupScreen({route}: Props): React.JSX.Element {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
+    backgroundColor: colors.background,
+  },
+  missingSessionRoot: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.background,
     padding: spacing.lg,
   },
-  sessionKeyText: {
-    ...typography.caption,
-    color: colors.textSecondary,
+  scrollContent: {
+    paddingBottom: spacing.xl,
   },
   placeholderText: {
     ...typography.body,

@@ -39,6 +39,14 @@ export type SetupUiSessionState = {
   expandedDiagnosticSections: Set<string>;
   dismissedAutoOpenIncidents: Set<string>;
   orientationViewOffset: {rollDeg: number; pitchDeg: number; yawDeg: number};
+  /** Pass 7.4, Step 5: has this session already seen the one-time hint
+   * ("view only, does not calibrate FC sensors") the first time
+   * "إعادة ضبط عرض الاتجاه" is pressed? A direct field addition to this
+   * store's existing purpose (misc per-session Setup UI state) serving
+   * an explicit spec requirement - not a new architectural pattern, so
+   * not treated as a stop-and-report decision the way activatedAtMs
+   * tracking was. */
+  hasSeenOrientationResetHint: boolean;
 };
 
 function defaultState(): SetupUiSessionState {
@@ -46,6 +54,7 @@ function defaultState(): SetupUiSessionState {
     expandedDiagnosticSections: new Set(),
     dismissedAutoOpenIncidents: new Set(),
     orientationViewOffset: {rollDeg: 0, pitchDeg: 0, yawDeg: 0},
+    hasSeenOrientationResetHint: false,
   };
 }
 
@@ -71,6 +80,16 @@ export class SetupUiSessionStore {
     const serialized = serializeKey(key);
     const current = this.states.get(serialized) ?? defaultState();
     this.states.set(serialized, {...current, ...patch});
+  }
+
+  /** Pass 7.4: "إعادة ضبط عرض الاتجاه" - zeroes ONLY the local
+   * orientation-view offset. Deliberately does not touch any other field
+   * of this session's state, and (same as every other method here) never
+   * talks to MspSessionCoordinator/MspClient - resetting the VIEW is not
+   * an MSP command and must never be confused with FC sensor
+   * calibration. */
+  resetOrientationViewOffset(key: SetupUiSessionKey): void {
+    this.update(key, {orientationViewOffset: {rollDeg: 0, pitchDeg: 0, yawDeg: 0}});
   }
 }
 

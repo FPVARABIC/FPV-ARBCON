@@ -4,6 +4,16 @@
 
 jest.mock('../src/platforms/react-native/transport/native/NativeUsbSerialTransport');
 
+// Pass 7.4, Step 5 - the real SetupScreen (App.tsx's own navigation
+// stack reaches it for real in this file) now imports OrientationHero,
+// which imports the real Skia-backed OrientationRenderer - mounting it
+// under Jest fails (per Step 2's own established finding: no real
+// CanvasKit-WASM wired in). Mirrors SetupScreen.test.tsx's own identical
+// mock.
+jest.mock('../src/ui/orientation3d', () => ({
+  OrientationRenderer: () => null,
+}));
+
 // Pass 7.1 BUGFIX test support - wraps the real NavigationContainer so a
 // test can deterministically hold back its onReady callback (simulating
 // the narrow real-world window where App.tsx's own isNavigationReady
@@ -182,6 +192,15 @@ function queryByTestID(renderer: ReactTestRenderer.ReactTestRenderer, testID: st
   return renderer.root.findAllByProps({testID}).filter(node => node.type === Text);
 }
 
+/** Pass 7.4, Step 5: the real SetupScreen no longer renders a raw
+ * sessionId:generation Text node (that was only ever Pass 7.1's own stub-
+ * verification device) - "is the real Setup screen currently showing"
+ * is now checked via its root View's own 'setup-screen' testID instead
+ * (not Text-typed, so the Text-only filter above does not apply). */
+function isOnSetupScreen(renderer: ReactTestRenderer.ReactTestRenderer): boolean {
+  return renderer.root.findAllByProps({testID: 'setup-screen'}).length > 0;
+}
+
 async function pressConnect(renderer: ReactTestRenderer.ReactTestRenderer) {
   await act(async () => {
     await findByTestID(renderer, 'usb-connect-button').props.onPress();
@@ -256,7 +275,7 @@ async function renderAppConnectedToSetup(sessionId: string) {
   const renderer = await renderApp();
   await pressConnect(renderer);
 
-  expect(queryByTestID(renderer, 'setup-screen-session-key')).toHaveLength(1);
+  expect(isOnSetupScreen(renderer)).toBe(true);
   return renderer;
 }
 
@@ -283,13 +302,29 @@ test('renders the USB connection screen and forces RTL', async () => {
 });
 
 describe('App - Pass 7.1 navigation foundation', () => {
-  it('navigates Connection -> Setup on a successful connect, reaching the real SetupScreen with the coordinator\'s own session key', async () => {
-    const renderer = await renderAppConnectedToSetup('session-app-nav-1');
+  it('navigates Connection -> Setup on a successful connect, reaching the real SetupScreen wired to the coordinator\'s own session', async () => {
+    const sessionId = 'session-app-nav-1';
+    const renderer = await renderAppConnectedToSetup(sessionId);
 
-    const sessionKeyText = queryByTestID(renderer, 'setup-screen-session-key')[0].props.children;
-    const expectedKey = mspSessionCoordinator.getSessionKey('session-app-nav-1');
+    // The real Setup screen no longer displays a raw sessionId:generation
+    // Text node (that was only ever Pass 7.1's own stub-verification
+    // device) - the coordinator having genuinely committed a session key
+    // for THIS exact sessionId, combined with TopSystemBar's own
+    // connection indicator showing "متصل" (CONNECTED - only reachable
+    // via useMspOwnershipState(sessionId) reading real ACTIVE state AND
+    // useMspRecoveryState(sessionId) reading the real MspClient's own
+    // default READY state), is a STRONGER end-to-end proof that the
+    // correct sessionId flowed through route.params all the way to the
+    // real hooks than a static text comparison ever was: a wrong or
+    // empty sessionId would read INACTIVE/undefined instead and show
+    // "غير متصل".
+    const expectedKey = mspSessionCoordinator.getSessionKey(sessionId);
     expect(expectedKey).toBeDefined();
-    expect(sessionKeyText).toBe(`${expectedKey!.sessionId}:${expectedKey!.generation}`);
+
+    const texts = renderer.root
+      .findAllByType(Text)
+      .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
+    expect(texts).toContain(i18n.t('setupTopBar.connectionState.connected'));
   });
 
   it("the root redirect listener resets the stack to 'Connection' once the tracked session's ownership goes INACTIVE while 'Setup' has focus", async () => {
@@ -308,7 +343,7 @@ describe('App - Pass 7.1 navigation foundation', () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
     });
 
-    expect(queryByTestID(renderer, 'setup-screen-session-key')).toHaveLength(0);
+    expect(isOnSetupScreen(renderer)).toBe(false);
     const texts = renderer.root
       .findAllByType(Text)
       .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
@@ -342,7 +377,7 @@ describe('App - Pass 7.1 navigation foundation', () => {
       hardwareBackHandler();
     });
 
-    expect(queryByTestID(renderer, 'setup-screen-session-key')).toHaveLength(0);
+    expect(isOnSetupScreen(renderer)).toBe(false);
     expect(deactivateSpy).not.toHaveBeenCalled();
     expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
 
@@ -365,7 +400,7 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
       const renderer = await renderAppConnectedToSetup(sessionId);
       // onReady was captured by the mock, not forwarded - App.tsx's own
       // isNavigationReady state is still false at this point.
-      expect(queryByTestID(renderer, 'setup-screen-session-key')).toHaveLength(1);
+      expect(isOnSetupScreen(renderer)).toBe(true);
 
       await act(async () => {
         mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -380,7 +415,7 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
       // genuinely PENDING (trackedSessionId deliberately left set), not
       // because it was silently dropped - the next act() below is what
       // actually distinguishes the two.
-      expect(queryByTestID(renderer, 'setup-screen-session-key')).toHaveLength(1);
+      expect(isOnSetupScreen(renderer)).toBe(true);
 
       // Release the held onReady callback - App.tsx's isNavigationReady
       // flips true, which (being a real dependency of the redirect
@@ -390,7 +425,7 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
         navigationReadyControl.heldCallback?.();
       });
 
-      expect(queryByTestID(renderer, 'setup-screen-session-key')).toHaveLength(0);
+      expect(isOnSetupScreen(renderer)).toBe(false);
       const texts = renderer.root
         .findAllByType(Text)
         .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
@@ -416,6 +451,6 @@ describe('App - Pass 7.1 defensive guard: malformed Setup route params', () => {
 
     // SetupScreen's own guard: an honest fallback, not a crash.
     expect(queryByTestID(renderer, 'setup-screen-missing-session')).toHaveLength(1);
-    expect(queryByTestID(renderer, 'setup-screen-session-key')).toHaveLength(0);
+    expect(isOnSetupScreen(renderer)).toBe(false);
   });
 });

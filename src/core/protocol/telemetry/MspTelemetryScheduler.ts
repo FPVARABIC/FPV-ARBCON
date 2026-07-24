@@ -97,6 +97,68 @@
  * dispatched (by pushing their dueAtMs forward, same mechanism as a
  * normal dispatch would) - an in-flight dispatch is left completely
  * alone and will still update this scheduler's state when it settles.
+ *
+ * ==========================================================================
+ * PASS 7.4: subscribe() AND THE TIME-BASED FRESH->STALE NOTIFICATION
+ * ==========================================================================
+ * getValue() had no subscription/notification mechanism at all before
+ * this pass - nothing for a React consumer (useSyncExternalStore) to
+ * subscribe to. subscribe() fires on two occasions: (1) whenever a
+ * dispatch settles (success or error) - the obvious case, new data
+ * genuinely arrived; and (2) at the end of EVERY tick() call,
+ * unconditionally. (2) exists specifically for the FRESH->STALE
+ * transition, which happens purely from time passing and involves no
+ * dispatch settling at all. tick() is already called regularly by
+ * whatever real driver a later pass wires up (Pass 7.4's own
+ * MspSessionCoordinator integration runs it via a real setInterval), so
+ * piggybacking the staleness check on that existing cadence needs no new
+ * timer of its own.
+ *
+ * ==========================================================================
+ * PASS 7.4: getValue() MUST BE A STABLE CACHE LOOKUP, NOT A LIVE COMPUTATION
+ * ==========================================================================
+ * getValue() originally (Pass 7.2) computed FRESH/STALE freshly on every
+ * single call, deriving STALE's ageMs from `clock.now() - updatedAtMs`
+ * each time. That is fundamentally incompatible with subscribe() feeding
+ * a real useSyncExternalStore consumer: React requires getSnapshot() to
+ * return a REFERENTIALLY STABLE value across repeated calls unless
+ * subscribe()'s listener was actually invoked in between - violating
+ * this produces a genuine "Maximum update depth exceeded" crash (caught
+ * via real Pass 7.4 integration testing against useTelemetryValue.ts,
+ * not by inspection alone), the SAME bug class already documented and
+ * fixed once in this codebase (MspSessionCoordinator.ts's own
+ * IDLE_IDENTIFICATION_STATE fix, Pass 7.1).
+ *
+ * Fixed by caching the actual TelemetryValue object per poll
+ * (PollRuntimeState.cachedValue) and only ever REPLACING that reference
+ * at two well-defined moments, both of which already call notify()
+ * immediately afterward: a dispatch settling (success/error), or
+ * refreshStaleness() detecting a FRESH poll has now crossed its own
+ * staleAfterMs threshold during a tick() call. getValue() itself is now
+ * a pure, side-effect-free Map+field lookup - it never touches the
+ * clock at all.
+ *
+ * KNOWN, DELIBERATE BEHAVIOR CHANGE from Pass 7.2's original design:
+ * advancing a FakeClock alone, with no tick() call in between, no longer
+ * transitions a poll's reported status to STALE - only an actual tick()
+ * call (or a dispatch settling) can update the cached value now. This is
+ * NOT a regression for any real consumer: tick() is already the
+ * mandated, unconditional driving mechanism for exactly this transition
+ * (see the section above), and Pass 7.4's real integration always drives
+ * it on a real interval - only a test that advances the clock without
+ * ever calling tick() would notice, and that was already an artificial
+ * scenario divorced from how this scheduler is actually driven.
+ *
+ * Once STALE, a poll's cachedValue (and therefore its ageMs) continues
+ * to be replaced on every subsequent tick() for as long as it stays
+ * stale - not merely once at the FRESH->STALE boundary - so a live
+ * consumer sees a genuinely incrementing age, not a value frozen at the
+ * instant staleness was first detected. This does NOT reintroduce the
+ * instability bug: every such replacement is paired with a real
+ * notify() call, which is exactly the condition under which
+ * useSyncExternalStore expects (and requires) a new reference - the bug
+ * was specifically about getSnapshot() changing BETWEEN or WITHOUT
+ * notify() calls, never about it changing correctly alongside one.
  */
 
 import type {MspFrame} from '../mspTypes';
@@ -137,6 +199,12 @@ interface PollRuntimeState<T = unknown> {
    * or failure). Used only to populate ERROR's optional `updatedAtMs` -
    * see telemetryTypes.ts's own doc comment on that field's meaning. */
   lastSuccessAtMs: number | undefined;
+  /** Pass 7.4: the exact object getValue() returns for this poll -
+   * replaced ONLY at a dispatch settling or at a tick()-driven staleness
+   * recomputation (refreshStaleness()), NEVER computed fresh inside
+   * getValue() itself. See this file's own class-level doc comment
+   * ("getValue() MUST BE A STABLE CACHE LOOKUP") for why this exists. */
+  cachedValue: TelemetryValue<T>;
 }
 
 export interface MspTelemetryScheduler {
@@ -164,6 +232,17 @@ export interface MspTelemetryScheduler {
    * queue to duplicate into regardless (see this file's own class-level
    * doc comment on the coalescing model). */
   requestRefresh(ids: readonly string[]): void;
+  /** Pass 7.4: fires after any dispatch settles (success or error) AND
+   * after every tick() call (see this file's own class-level doc
+   * comment on why tick() itself is the chosen mechanism for the
+   * time-based FRESH->STALE transition, which involves no dispatch at
+   * all). Mirrors MspSessionCoordinator's own subscribeOwnershipState()
+   * pattern exactly: a Set<listener>, Array.from()-snapshot before
+   * iterating, per-listener try/catch. Not scoped to one poll id - same
+   * "notify broadly, narrow in the caller's own getSnapshot()"
+   * convention already established by subscribeOwnershipState()/
+   * subscribeIdentificationState(). */
+  subscribe(listener: () => void): () => void;
 }
 
 export interface MspTelemetrySchedulerOptions {
@@ -172,9 +251,24 @@ export interface MspTelemetrySchedulerOptions {
   clock?: MonotonicClock;
 }
 
+/** Pass 7.4: stable singleton references for getValue()'s two payload-
+ * free variants - the SAME lesson already learned and fixed once in this
+ * codebase (MspSessionCoordinator.ts's own IDLE_IDENTIFICATION_STATE
+ * fix, Pass 7.1): useSyncExternalStore's contract requires getSnapshot()
+ * to return a referentially-stable value when nothing has actually
+ * changed, or React can spin into "Maximum update depth exceeded". A
+ * fresh `{status: 'WAITING'}`/`{status: 'UNAVAILABLE'}` object literal
+ * every call would break that the instant subscribe()'s new tick()-driven
+ * notifications (below) start firing regularly for a poll that never
+ * settles. Safe as `TelemetryValue<T>` for any T - neither variant
+ * carries a T-typed payload. */
+const WAITING_VALUE: TelemetryValue<never> = {status: 'WAITING'};
+const UNAVAILABLE_VALUE: TelemetryValue<never> = {status: 'UNAVAILABLE'};
+
 class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private readonly polls = new Map<string, PollRuntimeState>();
   private readonly activeLeaseIds = new Set<string>();
+  private readonly listeners = new Set<() => void>();
   private nextLeaseSeq = 0;
   private inFlightCount = 0;
   private idleWaiters: Array<() => void> = [];
@@ -191,6 +285,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       inFlight: false,
       lastOutcome: undefined,
       lastSuccessAtMs: undefined,
+      cachedValue: WAITING_VALUE,
     };
     this.polls.set(definition.id, state as PollRuntimeState);
 
@@ -205,48 +300,83 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     };
   }
 
+  /** Pure cache lookup - see this file's own class-level doc comment
+   * ("getValue() MUST BE A STABLE CACHE LOOKUP") for why this never
+   * computes anything itself. */
   getValue<T>(id: string): TelemetryValue<T> {
     const poll = this.polls.get(id) as PollRuntimeState<T> | undefined;
-    if (!poll) {
-      return {status: 'UNAVAILABLE'};
+    return poll ? poll.cachedValue : UNAVAILABLE_VALUE;
+  }
+
+  /** Recomputes (and replaces) a single poll's cachedValue if it is
+   * currently FRESH and has now crossed its own staleAfterMs threshold.
+   * A no-op for WAITING/UNAVAILABLE/ERROR (staleness only applies to a
+   * value that was once genuinely fresh) and for a FRESH poll that
+   * hasn't crossed the threshold yet (cachedValue reference deliberately
+   * left untouched - see this file's own class-level doc comment on
+   * referential stability). Called from tick() for every registered
+   * poll, not only the one selected for dispatch this tick. */
+  private refreshStaleness(poll: PollRuntimeState, now: number): void {
+    if (poll.cachedValue.status !== 'FRESH' && poll.cachedValue.status !== 'STALE') {
+      return;
     }
-    const outcome = poll.lastOutcome;
-    if (!outcome) {
-      return {status: 'WAITING'};
-    }
-    if (outcome.type === 'error') {
-      return {status: 'ERROR', error: outcome.error, updatedAtMs: poll.lastSuccessAtMs};
-    }
-    const ageMs = this.clock.now() - outcome.updatedAtMs;
+    const ageMs = now - poll.cachedValue.updatedAtMs;
     if (ageMs >= poll.definition.staleAfterMs) {
-      return {status: 'STALE', value: outcome.value, updatedAtMs: outcome.updatedAtMs, ageMs};
+      poll.cachedValue = {status: 'STALE', value: poll.cachedValue.value, updatedAtMs: poll.cachedValue.updatedAtMs, ageMs};
     }
-    return {status: 'FRESH', value: outcome.value, updatedAtMs: outcome.updatedAtMs};
   }
 
   tick(): void {
-    if (this.activeLeaseIds.size > 0) {
-      return;
-    }
     const now = this.clock.now();
 
-    let best: PollRuntimeState | undefined;
-    let bestRatio = -Infinity;
+    // Staleness is a property of "time since last update," genuinely
+    // true regardless of whether the scheduler happens to be paused
+    // right now - checked for EVERY registered poll unconditionally,
+    // before the pause/due-selection logic below (which only concerns
+    // whether a NEW dispatch may start this tick).
     for (const poll of this.polls.values()) {
-      if (poll.inFlight || now < poll.dueAtMs) {
-        continue;
+      this.refreshStaleness(poll, now);
+    }
+
+    if (this.activeLeaseIds.size <= 0) {
+      let best: PollRuntimeState | undefined;
+      let bestRatio = -Infinity;
+      for (const poll of this.polls.values()) {
+        if (poll.inFlight || now < poll.dueAtMs) {
+          continue;
+        }
+        const ratio = (now - poll.dueAtMs) / poll.definition.intervalMs;
+        const isBetter =
+          best === undefined || ratio > bestRatio || (ratio === bestRatio && poll.definition.priority > best.definition.priority);
+        if (isBetter) {
+          best = poll;
+          bestRatio = ratio;
+        }
       }
-      const ratio = (now - poll.dueAtMs) / poll.definition.intervalMs;
-      const isBetter =
-        best === undefined || ratio > bestRatio || (ratio === bestRatio && poll.definition.priority > best.definition.priority);
-      if (isBetter) {
-        best = poll;
-        bestRatio = ratio;
+
+      if (best) {
+        this.dispatch(best, now);
       }
     }
 
-    if (best) {
-      this.dispatch(best, now);
+    this.notify();
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  private notify(): void {
+    for (const listener of Array.from(this.listeners)) {
+      try {
+        listener();
+      } catch {
+        // Best-effort - mirrors MspSessionCoordinator's own
+        // notifyOwnership()/notifyIdentification().
+      }
     }
   }
 
@@ -306,9 +436,11 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         const updatedAtMs = this.clock.now();
         poll.lastOutcome = {type: 'success', value, updatedAtMs};
         poll.lastSuccessAtMs = updatedAtMs;
+        poll.cachedValue = {status: 'FRESH', value, updatedAtMs};
       })
       .catch((error: unknown) => {
         poll.lastOutcome = {type: 'error', error};
+        poll.cachedValue = {status: 'ERROR', error, updatedAtMs: poll.lastSuccessAtMs};
       })
       .finally(() => {
         poll.inFlight = false;
@@ -318,6 +450,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
           this.idleWaiters = [];
           waiters.forEach(resolve => resolve());
         }
+        this.notify();
       });
   }
 }
