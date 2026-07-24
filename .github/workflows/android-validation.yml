@@ -123,9 +123,39 @@ jobs:
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest
 
+      # CI-only mitigation for the run-30086823998 failure (runner died
+      # ~26min into the first-ever native build of Skia/Reanimated/Worklets,
+      # signature of host resource exhaustion): the DEBUG validation build
+      # compiles C++ for arm64-v8a only and caps Gradle at 2 workers, via
+      # command-line flags only - android/gradle.properties (and therefore
+      # every local/release build) keeps the full 4-ABI configuration.
+      # --no-daemon/--stacktrace/--info/--console=plain make any recurrence
+      # fail with a readable tail instead of a silent runner death, and
+      # timeout-minutes bounds it instead of the 6h default.
+      - name: Android build diagnostics
+        working-directory: android
+        run: |
+          echo "Build diagnostics started at: $(date -u)"
+          echo "Java:"
+          java -version
+          echo "Gradle:"
+          ./gradlew --version
+          echo "Disk:"
+          df -h
+          echo "Memory:"
+          free -h || true
+
       - name: Assemble debug APK
         working-directory: android
-        run: ./gradlew :app:assembleDebug
+        timeout-minutes: 30
+        run: |
+          ./gradlew :app:assembleDebug \
+            -PreactNativeArchitectures=arm64-v8a \
+            --max-workers=2 \
+            --no-daemon \
+            --stacktrace \
+            --info \
+            --console=plain
 
       - name: Locate and verify debug APK (internal diagnostics only, not uploaded)
         working-directory: android
