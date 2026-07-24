@@ -214,6 +214,43 @@ interface SessionEntry {
  * teardown begins, so isCurrentGeneration() reads false immediately. */
 const INVALIDATED_GENERATION = -1;
 
+/**
+ * CI-hang investigation fix: startTelemetry()'s real setInterval() (below)
+ * keeps Node's event loop alive by default for as long as it exists - if
+ * something else (a missed deactivateMspSession()/detach, most commonly
+ * an incomplete test) leaves it running, the owning process cannot exit
+ * naturally. .unref() is the standard Node fix, but it is NOT safe to
+ * call unconditionally here: this exact code also runs for real on a
+ * physical Android device via Hermes/React Native's own JS runtime, not
+ * Node.
+ *
+ * VERIFIED, NOT ASSUMED: this project's own tsc configuration (tsconfig.json
+ * -> @react-native/typescript-config's "types": ["jest"] excludes
+ * @types/node's ambient globals; "lib" excludes "dom" too) resolves
+ * setInterval()'s return type to plain `number`, sourced from React
+ * Native's OWN type declarations (node_modules/react-native/src/types/
+ * globals.d.ts: `function setInterval(...): number`) - matching Hermes'
+ * real runtime behavior (a plain numeric handle, browser-style, never a
+ * NodeJS.Timeout object). Calling .unref() on that would not even
+ * compile as a plain, typed call; casting past the type system to force
+ * it would compile but throw "unref is not a function" the instant this
+ * runs on a real device - a severe regression, not a theoretical one.
+ *
+ * Under Jest, by contrast, this code actually executes on a real Node.js
+ * process at runtime (regardless of what RN's own .d.ts says at compile
+ * time), where setInterval() genuinely does return a Timeout object with
+ * a real .unref(). This guard calls it only when it is actually present
+ * at runtime - true under Jest/Node, safely absent (a no-op) on real RN/
+ * Hermes. Does not affect tick()'s own firing behavior at all - it only
+ * changes whether this handle can block process exit.
+ */
+function unrefIfSupported(handle: unknown): void {
+  const maybeUnrefable = handle as {unref?: () => void};
+  if (typeof maybeUnrefable.unref === 'function') {
+    maybeUnrefable.unref();
+  }
+}
+
 export class MspSessionCoordinator {
   private readonly sessions = new Map<string, SessionEntry>();
   private readonly ownershipStates = new Map<string, MspSessionOwnershipState>();
@@ -558,6 +595,7 @@ export class MspSessionCoordinator {
     const tickIntervalHandle = setInterval(() => {
       scheduler.tick();
     }, TELEMETRY_TICK_INTERVAL_MS);
+    unrefIfSupported(tickIntervalHandle);
 
     entry.telemetryScheduler = scheduler;
     entry.tickIntervalHandle = tickIntervalHandle;

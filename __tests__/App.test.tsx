@@ -325,6 +325,16 @@ describe('App - Pass 7.1 navigation foundation', () => {
       .findAllByType(Text)
       .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
     expect(texts).toContain(i18n.t('setupTopBar.connectionState.connected'));
+
+    // Pass 7.4 CI-hang fix: this reaches a real, successful connect via
+    // the real mspSessionCoordinator singleton (real MSP_ATTITUDE tick-
+    // driver setInterval included) - unlike the renderer itself (cleaned
+    // up by the file-level afterEach), nothing tears the session down
+    // automatically on unmount. Must be torn down explicitly or it leaks
+    // a real, permanently-ticking interval for the rest of the process.
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
   });
 
   it("the root redirect listener resets the stack to 'Connection' once the tracked session's ownership goes INACTIVE while 'Setup' has focus", async () => {
@@ -382,6 +392,16 @@ describe('App - Pass 7.1 navigation foundation', () => {
     expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
 
     deactivateSpy.mockRestore();
+
+    // Pass 7.4 CI-hang fix: the whole point of this test is that the
+    // session stays ACTIVE (never deactivated) after a hardware Back
+    // press - but it still must not stay ACTIVE past the test's own end,
+    // or its real telemetry tick-driver setInterval leaks. Torn down
+    // here, after every existing assertion above, once the spy itself is
+    // no longer needed.
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
   });
 });
 

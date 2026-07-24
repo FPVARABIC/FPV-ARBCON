@@ -1331,24 +1331,33 @@ describe('UsbConnectionScreen - deferred attach rescan while busy/connected', ()
 });
 
 describe('UsbConnectionScreen - Pass 6.4b mspActive prop reflects real MspSessionCoordinator ownership state', () => {
-  // createMockClient() (above) deliberately has no writeBytes/stopReading/
-  // startReading mocked at all - see its own class-level note. This means
-  // mspSessionCoordinator.openSession()'s construction phase (which only
-  // touches the already-mocked onDataReceived/onSessionDetached) succeeds
-  // exactly like real hardware would, so ownership genuinely reaches ACTIVE
-  // and CONNECT_SUCCESS/handleConnect()'s success path is exercised
-  // unchanged. Only the fire-and-forget identify() call that
-  // MspSessionCoordinator starts immediately afterward fails - every one of
-  // its underlying MSP requests synchronously throws on the missing
-  // writeBytes/stopReading/startReading mocks, caught and re-wrapped as a
-  // rejected promise by RNMspTransport itself (see its writeBytes()/
-  // restartReceiveLoop() try/catches) - entirely via microtask-level
-  // rejections, never a real setTimeout (mspClient.ts's own response-timeout
-  // timer is only ever armed once a write has actually SUCCEEDED with no
-  // matching response, which never happens here since the write itself
-  // always rejects first). flushMicrotasks() below drains that entire
-  // fire-and-forget chain inside its own act() before any assertion or
-  // subsequent interaction runs, so nothing settles outside of act().
+  // createMockClient() (above) deliberately leaves writeBytes/stopReading/
+  // startReading as jest.fn()s that return a PERMANENTLY-PENDING Promise
+  // (`new Promise<void>(() => undefined)`) - see its own class-level note.
+  // This means mspSessionCoordinator.openSession()'s construction phase
+  // (which only touches the already-mocked onDataReceived/onSessionDetached)
+  // succeeds exactly like real hardware would, so ownership genuinely
+  // reaches ACTIVE and CONNECT_SUCCESS/handleConnect()'s success path is
+  // exercised unchanged.
+  //
+  // CORRECTED (Pass 7.4 CI-hang investigation): this comment used to claim
+  // the fire-and-forget identify() call MspSessionCoordinator starts
+  // afterward DOES run, and its underlying MSP requests synchronously throw
+  // on the missing mocks. That is not what actually happens, traced against
+  // the real code: openSession() only calls beginIdentification() (and,
+  // since Pass 7.4, startTelemetry()) from inside client.startReading(...)'s
+  // OWN .then() continuation - and startReading() here never resolves (nor
+  // rejects) at all. So neither identify() nor Pass 7.4's real telemetry
+  // tick-driver setInterval() ever starts, for ANY test in this file - not
+  // because identify()'s requests fail, but because the precondition for
+  // starting it is never met. This is actually a STRONGER guarantee than
+  // the original comment claimed (no fire-and-forget chain to drain at
+  // all, for either concern), confirmed by grep: no test in this file ever
+  // overrides startReading() to resolve. flushMicrotasks() below still
+  // exists for the same reason it always did - draining whatever microtask
+  // chains the connect flow itself queues, inside its own act(), before any
+  // assertion or subsequent interaction runs, so nothing settles outside
+  // of act().
   async function flushMicrotasks() {
     for (let i = 0; i < 30; i += 1) {
       await Promise.resolve();

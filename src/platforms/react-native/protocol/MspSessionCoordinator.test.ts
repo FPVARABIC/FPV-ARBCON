@@ -195,11 +195,31 @@ function makeHappyFakeClient(sessionId: string): FakeClient {
  * openSession()'s own return value / spy-recorded dispose order) -
  * writeBytes() never settles at all, so MspClient's own onWriteSettled()
  * never runs and therefore never starts its real MSP_RESPONSE_TIMEOUT_MILLIS
- * setTimeout in the first place. This sidesteps entirely (rather than
- * merely mitigating) any risk of a real background timer surviving past
- * a synchronous test's own return - these tests never flush/await
- * anything, so there is no other point at which such a timer could be
- * reliably cleared.
+ * setTimeout in the first place.
+ *
+ * STALE CLAIM, CORRECTED (Pass 7.4 CI-hang investigation): the paragraph
+ * below used to claim this "sidesteps entirely... any risk of a real
+ * background timer surviving past a synchronous test's own return." That
+ * was true when it was written, but is NO LONGER true as of this same
+ * pass's own startTelemetry() addition: that method starts a SECOND,
+ * INDEPENDENT real setInterval() (the MSP_ATTITUDE tick driver) the
+ * moment startReading() resolves - completely unconditional on whether
+ * identify()'s writeBytes() ever settles. Since this fixture's
+ * startReading() DOES resolve (only writeBytes() is held open), a test
+ * using this fixture that never explicitly tears its session down (via
+ * deactivateMspSession()/a detach) DOES leak a real, permanently-ticking
+ * setInterval for the rest of the process's life, even though it "never
+ * flushes/awaits anything" - the queued microtask chain
+ * (startReading().then(...) -> startTelemetry()) still runs on its own,
+ * once the current synchronous test body returns and the microtask queue
+ * drains, before the next test begins. Confirmed by an actual CI hang
+ * (GitHub Actions run stuck in the Jest step for 40+ minutes, vs. this
+ * project's own established ~12-17s baseline) traced back to exactly
+ * this gap - not a hypothetical. Every test using this fixture (or the
+ * plain makeFakeClient()/makeHappyFakeClient() below, without
+ * deferStartReading) MUST still call deactivateMspSession() (or trigger
+ * a detach) for its own sessionId before returning, even if it "doesn't
+ * care" about identify()'s own outcome.
  */
 function makeQuietFakeClient(sessionId: string): FakeClient {
   return makeFakeClient(sessionId, {neverResolveWrite: true});
@@ -215,6 +235,8 @@ describe('MspSessionCoordinator - one MspClient per session (Pass 6.3, renamed/e
 
     expect(fromScreenA).toBeInstanceOf(MspClient);
     expect(fromScreenA).toBe(fromScreenB);
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('getActiveMspClient() returns the same instance openSession() already created', () => {
@@ -225,6 +247,8 @@ describe('MspSessionCoordinator - one MspClient per session (Pass 6.3, renamed/e
     const fetched = coordinator.getActiveMspClient(SESSION_ID);
 
     expect(fetched).toBe(opened);
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('getActiveMspClient() returns undefined for a session that was never opened', () => {
@@ -242,6 +266,8 @@ describe('MspSessionCoordinator - one MspClient per session (Pass 6.3, renamed/e
 
     expect(first).toBeInstanceOf(RNMspTransport);
     expect(first).toBe(second);
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('getActiveTransport() returns undefined for a never-opened session, and again after it is deactivated', () => {
@@ -265,6 +291,9 @@ describe('MspSessionCoordinator - one MspClient per session (Pass 6.3, renamed/e
     const second = coordinator.openSession(client, OTHER_SESSION_ID);
 
     expect(first).not.toBe(second);
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    coordinator.deactivateMspSession(OTHER_SESSION_ID);
   });
 });
 
@@ -384,6 +413,12 @@ describe('MspSessionCoordinator - dispose ordering (Pass 6.3, renamed for Pass 6
     client.emitSessionDetached({sessionId: OTHER_SESSION_ID, deviceId: 1});
 
     expect(coordinator.getActiveMspClient(SESSION_ID)).toBe(mspClient);
+
+    // Pass 7.4 CI-hang fix: SESSION_ID's own session is deliberately never
+    // torn down by the detach above (that's the whole point of this test)
+    // - it must still be torn down here, explicitly, or its real telemetry
+    // tick-driver setInterval leaks for the rest of the process's life.
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 });
 
@@ -402,6 +437,8 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     coordinator.openSession(client, SESSION_ID);
 
     expect(observed).toEqual(['ACTIVATING', 'ACTIVE']);
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('beginIdentification() (and therefore identify()\'s first writeBytes()) never fires until startReading() genuinely resolves - not merely issued in the same synchronous turn', async () => {
@@ -430,6 +467,8 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     expect(client.writeBytes).toHaveBeenCalled();
     const identification = coordinator.getIdentificationState(SESSION_ID);
     expect(identification.status).toBe('SUCCEEDED');
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('a startReading() rejection tears the session down (ACTIVE -> INACTIVE directly, skipping CLOSING) and never starts identification', async () => {
@@ -491,6 +530,8 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     // Exactly one identify() round (API_VERSION, FC_VARIANT, BOARD_INFO) -
     // 3 writeBytes() calls total, not 6.
     expect(client.writeBytes).toHaveBeenCalledTimes(3);
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('identify() failure (malformed response) leaves ownership at ACTIVE and sets identificationState to FAILED', async () => {
@@ -512,6 +553,8 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     expect(observed).toEqual(['ACTIVATING', 'ACTIVE']);
     expect(coordinator.getOwnershipState(SESSION_ID)).toBe('ACTIVE');
     expect(coordinator.getIdentificationState(SESSION_ID).status).toBe('FAILED');
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('identify() success sets identificationState to SUCCEEDED with the correct identity and populates the metrics snapshot', async () => {
@@ -535,6 +578,8 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     expect(metrics?.completedAtMs).toBeDefined();
     expect(metrics?.durationMs).toBeDefined();
     expect(metrics?.durationMs).toBeGreaterThanOrEqual(0);
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('physical detach while identification is RUNNING discards the eventual late result and moves ownership DIRECTLY from ACTIVE to INACTIVE, without visiting CLOSING', async () => {
@@ -674,6 +719,8 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
     // ACTIVATING + ACTIVE - both notifications reached the second listener
     // despite the first one throwing on every call.
     expect(secondCallCount).toBe(2);
+
+    coordinator.deactivateMspSession(SESSION_ID);
   });
 
   it('getOwnershipState()/getIdentificationState() default to INACTIVE/IDLE for any never-opened sessionId', () => {
