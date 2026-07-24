@@ -28,7 +28,7 @@ import type {OrientationViewState} from '../../../core';
 import {describeOrientationForAccessibility} from '../../../core';
 import {colors, radii, spacing, typography} from '../../theme';
 
-const HERO_SIZE = 260;
+export const HERO_SIZE = 260;
 
 export interface OrientationHeroProps {
   orientationView: OrientationViewState;

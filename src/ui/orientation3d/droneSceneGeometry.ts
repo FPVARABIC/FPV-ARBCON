@@ -404,3 +404,54 @@ export function computeDroneScene(
 
   return {primitives};
 }
+
+// ============================================================================
+// TEMP — Pass 7.5B pitch/front hardware diagnostics — DO NOT MERGE
+// ============================================================================
+
+/** TEMP (Pass 7.5B) - screen-space front-direction diagnostics, derived
+ * from the EXACT production camera/projection above (buildCamera()/
+ * project()/toViewport() are reused as-is; no constant is duplicated or
+ * altered). Screen Y decreases toward the top of the display, so a
+ * NEGATIVE frontScreenDeltaY means the projected front point sits ABOVE
+ * the model centre. frontRiseFromZero isolates pitch's contribution: the
+ * current front point's screen Y minus the front point's screen Y at the
+ * SAME roll/yaw but pitch = 0 - negative means the current pitch moves
+ * the front UP on screen relative to its own zero-pitch position. */
+export type FrontProjectionDiagnostics = {
+  centre: Vec2;
+  front: Vec2;
+  frontScreenDeltaX: number;
+  frontScreenDeltaY: number;
+  frontRiseFromZero: number;
+};
+
+/** The unit forward direction on the hub plane - the reference "front
+ * point" the diagnostics project. Deliberately the bare +X basis vector
+ * (not the arrow tip) so the metric is independent of arrow geometry. */
+const FRONT_DIAG_LOCAL_POINT: Vec3 = {x: 1, y: 0, z: 0};
+
+export function computeFrontProjectionDiagnostics(
+  orientation: DroneOrientationDeg,
+  viewportSize: {width: number; height: number},
+): FrontProjectionDiagnostics {
+  const camera = buildCamera();
+  const viewportMinDimension = Math.min(viewportSize.width, viewportSize.height);
+  const projectToViewport = (local: Vec3, o: DroneOrientationDeg): Vec2 => {
+    const world = rotateBodyPoint(local, o);
+    const projected = project(world, camera, viewportMinDimension);
+    return toViewport(projected.screen, viewportSize.width, viewportSize.height);
+  };
+
+  const centre = projectToViewport({x: 0, y: 0, z: 0}, orientation);
+  const front = projectToViewport(FRONT_DIAG_LOCAL_POINT, orientation);
+  const frontAtZeroPitch = projectToViewport(FRONT_DIAG_LOCAL_POINT, {...orientation, pitchDeg: 0});
+
+  return {
+    centre,
+    front,
+    frontScreenDeltaX: front.x - centre.x,
+    frontScreenDeltaY: front.y - centre.y,
+    frontRiseFromZero: front.y - frontAtZeroPitch.y,
+  };
+}

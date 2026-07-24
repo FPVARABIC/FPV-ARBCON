@@ -52,6 +52,13 @@ import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import type {RootStackParamList} from '../../navigation/types';
 import {colors, spacing, typography} from '../theme';
 import {TopSystemBar, OrientationHero, SafetyStrip} from '../components/setup';
+// TEMP - Pass 7.5B pitch/front hardware diagnostics - DO NOT MERGE.
+// Direct file imports (not via the setup barrel) so screen tests that
+// mock the orientation3d barrel still exercise the REAL, pure diagnostic
+// math underneath.
+import TempXyzDiagnosticsPanel from '../components/setup/TempXyzDiagnosticsPanel';
+import {buildOrientationDiagnostics} from '../components/setup/orientationDiagnostics';
+import {HERO_SIZE} from '../components/setup/OrientationHero';
 import {
   useTelemetryValue,
   setupUiSessionStore,
@@ -122,6 +129,18 @@ function SetupScreenContent({
           hasSeenResetHint={uiState.hasSeenOrientationResetHint}
           onResetView={handleResetView}
           onResetHintShown={handleResetHintShown}
+        />
+        {/* TEMP - Pass 7.5B pitch/front hardware diagnostics - DO NOT
+            MERGE. Purely observational (see orientationDiagnostics.ts);
+            re-renders only with this screen's own telemetry-driven
+            renders - no timer of its own. */}
+        <TempXyzDiagnosticsPanel
+          snapshot={buildOrientationDiagnostics(
+            attitude,
+            orientationView,
+            {width: HERO_SIZE, height: HERO_SIZE},
+            Date.now(),
+          )}
         />
         <SafetyStrip readiness={armingReadiness} />
       </ScrollView>

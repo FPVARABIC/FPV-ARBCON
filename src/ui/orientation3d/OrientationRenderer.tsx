@@ -49,7 +49,7 @@ import {colors} from '../theme';
 /** Front motors/props BLUE, rear RED - the SOLE front/back color scheme
  * (per the approved prototype spec). Reuses the existing theme palette's
  * own accent/error colors rather than introducing new ones. */
-const MATERIAL_COLOR: Record<DroneSceneMaterial, string> = {
+export const MATERIAL_COLOR: Record<DroneSceneMaterial, string> = {
   HUB: colors.surfaceAlt,
   STANDOFF: colors.border,
   ARM: colors.textSecondary,
