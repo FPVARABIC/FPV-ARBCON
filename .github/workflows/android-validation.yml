@@ -62,6 +62,48 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # Run-30089612606 root cause (evidence-first investigation): the
+      # runner entered the native builds with only 7.2GB free (91% full)
+      # and the 4-ABI release build ran the disk to zero mid-way through
+      # :shopify_react-native-skia:bundleReleaseLocalLintAar (explicit
+      # "No space left on device" seconds later on the same filesystem).
+      # This deletes ONLY explicitly-listed preinstalled toolchains this
+      # workflow never uses - Node comes from setup-node, Java/SDK/NDK/
+      # Gradle are installed explicitly by later steps and are untouched.
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Disk before cleanup:"
+          df -h /
+
+          codeql_path="${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/CodeQL"
+
+          cleanup_paths=(
+            "/usr/share/dotnet"
+            "/opt/ghc"
+            "/usr/local/.ghcup"
+            "/usr/share/swift"
+            "/opt/az"
+            "/usr/local/share/powershell"
+            "/usr/local/share/chromium"
+            "$codeql_path"
+          )
+
+          echo "Removing unused preinstalled toolchains:"
+          for path in "${cleanup_paths[@]}"; do
+            if [[ -e "$path" ]]; then
+              echo "  Removing: $path"
+              sudo rm -rf -- "$path"
+            else
+              echo "  Not present: $path"
+            fi
+          done
+
+          echo "Disk after cleanup:"
+          df -h /
+
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
@@ -169,9 +211,36 @@ jobs:
           echo "Resolved debug APK (Metro-dependent, diagnostics only): android/$APK_PATH"
           ls -la "$APK_PATH"
 
+      - name: Disk before release build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Disk before release build:"
+          df -h /
+
+          echo "Android build-directory sizes:"
+          du -sh \
+            android/.gradle \
+            android/build \
+            android/app/build \
+            2>/dev/null || true
+
       - name: Assemble release APK (standalone, no Metro required)
         working-directory: android
         run: ./gradlew :app:assembleRelease
+
+      - name: Android failure disk diagnostics
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          echo "Disk state after failure:"
+          df -h / || true
+
+          echo "Largest Android paths after failure:"
+          du -xhd 4 android 2>/dev/null \
+            | sort -h \
+            | tail -40 || true
 
       - name: Locate and verify standalone release APK
         working-directory: android
