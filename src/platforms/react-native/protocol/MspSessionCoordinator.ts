@@ -659,7 +659,7 @@ export class MspSessionCoordinator {
         identification.identity.firmware.knownFamily === 'BETAFLIGHT' &&
         current.telemetryScheduler !== undefined
       ) {
-        current.telemetryScheduler.registerPoll<MspBatteryState>({
+        const batteryUnregister = current.telemetryScheduler.registerPoll<MspBatteryState>({
           id: BATTERY_TELEMETRY_POLL_ID,
           command: MSP_BATTERY_STATE,
           intervalMs: BATTERY_POLL_INTERVAL_MS,
@@ -671,11 +671,53 @@ export class MspSessionCoordinator {
         // see batteryDebugLog.ts). The subscription lives exactly as long
         // as this session's scheduler: stopTelemetry() drops the scheduler
         // (and its listener set) wholesale, and onTeardown logs the end.
+        //
+        // Pass 7.6c battery-timeout closure: the SAME subscription also
+        // hosts the battery one-strike timeout breaker (mirroring the
+        // auxiliary channels' policy exactly): the FIRST battery
+        // MSP_TIMEOUT unregisters the poll - the scheduler can never
+        // dispatch an unregistered id again, so no queued or later tick
+        // can send another battery request this physical session, and no
+        // separate battery timer exists to cancel beyond the in-flight
+        // response timer MspClient already consumed at the timeout
+        // itself. getValue() then reports UNAVAILABLE (the approved
+        // "بيانات البطارية غير متاحة" state - never UNSUPPORTED, never
+        // "no LiPo", and an earlier FRESH value can never be shown as
+        // live again). The verdict is recorded in auxChannelStates under
+        // the battery poll id so tests/consumers can read it through the
+        // existing getAuxTelemetryChannelState() surface; a genuinely
+        // new physical session (new generation) starts a fresh entry and
+        // polls battery normally. Screen navigation never touches this
+        // coordinator state, so remounting Setup cannot reset the
+        // breaker. NON-timeout battery errors keep the pre-existing
+        // behavior (retry each 3000ms interval) unchanged.
         const batteryDebugLog = createBatteryDebugLogger(sessionId, generation);
         batteryDebugLog.onRegistered(BATTERY_POLL_INTERVAL_MS, BATTERY_POLL_STALE_AFTER_MS);
         const schedulerForLog = current.telemetryScheduler;
+        current.auxChannelStates.set(BATTERY_TELEMETRY_POLL_ID, 'ACTIVE');
+        let batteryLastRef: unknown;
+        let batteryBroken = false;
         schedulerForLog.subscribe(() => {
-          batteryDebugLog.onValue(schedulerForLog.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID));
+          if (!this.isCurrentGeneration(sessionId, generation)) {
+            return; // late/old-generation outcome - discarded
+          }
+          const batteryValue = schedulerForLog.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID);
+          const isNewSettle = batteryValue !== batteryLastRef;
+          batteryLastRef = batteryValue;
+          batteryDebugLog.onValue(batteryValue);
+          if (
+            !batteryBroken &&
+            isNewSettle &&
+            batteryValue.status === 'ERROR' &&
+            batteryValue.error instanceof MspClientError &&
+            batteryValue.error.code === 'MSP_TIMEOUT'
+          ) {
+            batteryBroken = true;
+            batteryUnregister();
+            current.auxChannelStates.set(BATTERY_TELEMETRY_POLL_ID, 'DISABLED');
+            batteryDebugLog.onCircuitBreak('timeout');
+            this.notifyAuxTelemetry();
+          }
         });
         current.batteryDebugLog = batteryDebugLog;
 

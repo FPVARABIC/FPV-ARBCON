@@ -1458,7 +1458,7 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
     await flushAsync();
   });
 
-  it('reports ERROR when battery responses stop and the request times out, and attitude recovers between battery retry cycles', async () => {
+  it('battery-timeout closure: a SINGLE battery MSP_TIMEOUT after a success disables battery polling for the session - honest UNAVAILABLE, never a stale value shown live, attitude recovers', async () => {
     const coordinator = new MspSessionCoordinator();
     const client = makeHappyFakeClient(SESSION_ID);
     client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
@@ -1470,28 +1470,214 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
     await flushAsync();
     const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
     expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('ACTIVE');
 
-    // Later battery requests go unanswered: the write settles, so the
-    // real MSP response timeout runs and the dispatch settles as an
-    // error outcome.
+    // The next battery request goes unanswered: the write settles, the
+    // REAL 2000ms response timeout ends it (~t=5150 for the ~3150ms
+    // dispatch) - ONE strike disables battery polling for the session.
     client.clearResponse(MSP_BATTERY_STATE);
-    // Second battery dispatch (~t=3150) goes unanswered and occupies the
-    // serialized queue until the real 2000ms response timeout ends it as
-    // an error outcome (~t=5150); attitude then resumes. Sample INSIDE
-    // the recovery window before the next battery retry (~t=6150+):
     await jest.advanceTimersByTimeAsync(3150);
     await flushAsync();
-    await jest.advanceTimersByTimeAsync(2300); // past the timeout, before the next retry
+    await jest.advanceTimersByTimeAsync(2300); // past the timeout
     await flushAsync();
     await jest.advanceTimersByTimeAsync(500); // attitude refreshes within its own cadence
     await flushAsync();
 
-    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toMatchObject({status: 'ERROR'});
+    // Exactly 2 battery writes this generation (1 success + the 1 timed
+    // out) - and the earlier FRESH value is NEVER retained as live: the
+    // unregistered poll reads honest UNAVAILABLE (the approved
+    // "بيانات البطارية غير متاحة" state), never UNSUPPORTED/no-LiPo.
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(2);
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toEqual({status: 'UNAVAILABLE'});
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('DISABLED');
     expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+
+    // NO battery request through at least THREE later nominal polling
+    // windows (3 x 3000ms), and the disabled invariant persists after.
+    await jest.advanceTimersByTimeAsync(9500);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(2);
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('DISABLED');
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toEqual({status: 'UNAVAILABLE'});
+    // No second periodic attitude stall: attitude is FRESH at the end of
+    // a window that would have contained three of the old retry stalls.
+    expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+
     coordinator.deactivateMspSession(SESSION_ID);
-    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
-    // - a straggler settling after afterEach's useRealTimers() would
-    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('battery-timeout closure: a timeout BEFORE the first battery success equally disables battery for the session (exactly ONE timed-out request in the generation)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.clearResponse(MSP_BATTERY_STATE); // never answered - REAL 2000ms timeout
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    // Battery dispatches at ~t=100 and times out at ~t=2100.
+    await jest.advanceTimersByTimeAsync(2300);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('DISABLED');
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toEqual({status: 'UNAVAILABLE'});
+
+    // Three-plus later polling windows: still exactly the one request.
+    await jest.advanceTimersByTimeAsync(10_000);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
+    // The auxiliary channels and attitude all recover and keep working.
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(scheduler?.getValue<MspAnalog>(RECEIVER_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(scheduler?.getValue<MspRawGpsCompact>(GPS_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(scheduler?.getValue<MspStatusExCompact>(FC_STATUS_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('battery-timeout closure MEASURED: the single battery timeout stalls attitude once (honest STALE then FRESH) and never again; a late battery response cannot resurrect the poll', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.clearResponse(MSP_BATTERY_STATE);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID)!;
+
+    const attitudeSuccessTimes: number[] = [];
+    let staleObservedAtMs: number | undefined;
+    for (let t = 50; t <= 12_000; t += 50) {
+      await jest.advanceTimersByTimeAsync(50);
+      const value = scheduler.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID);
+      if (value.status === 'FRESH' && attitudeSuccessTimes[attitudeSuccessTimes.length - 1] !== value.updatedAtMs) {
+        attitudeSuccessTimes.push(value.updatedAtMs);
+      }
+      if (value.status === 'STALE' && staleObservedAtMs === undefined) {
+        staleObservedAtMs = t;
+      }
+    }
+    await flushAsync();
+
+    // Battery dispatched at ~t=100, held the ONE serialized link to its
+    // REAL timeout at ~t=2100, then desync recovery ran. Measured:
+    let maxGapMs = 0;
+    for (let i = 1; i < attitudeSuccessTimes.length; i++) {
+      maxGapMs = Math.max(maxGapMs, attitudeSuccessTimes[i] - attitudeSuccessTimes[i - 1]);
+    }
+    // One honest stall spanning the timeout + recovery (~2.1s) - attitude
+    // truthfully crossed its 700ms threshold and returned to FRESH...
+    expect(maxGapMs).toBeGreaterThanOrEqual(2000);
+    expect(maxGapMs).toBeLessThan(3000);
+    expect(staleObservedAtMs).toBeDefined();
+    expect(scheduler.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    // ...and NO second periodic stall exists anywhere in the remaining
+    // ~10s (the old 3000ms retry loop would have produced three more):
+    // (updatedAtMs values are absolute mocked-epoch timestamps - filter
+    // RELATIVE to the first success, past the one recovery point.)
+    const afterRecovery = attitudeSuccessTimes.filter(at => at - attitudeSuccessTimes[0] >= 3000);
+    for (let i = 1; i < afterRecovery.length; i++) {
+      expect(afterRecovery[i] - afterRecovery[i - 1]).toBeLessThan(600);
+    }
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1); // no backlog, no suppressed-tick burst
+
+    // A LATE battery response after the breaker cannot resurrect the
+    // poll or corrupt anything.
+    client.emitResponseNow(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('DISABLED');
+    expect(scheduler.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toEqual({status: 'UNAVAILABLE'});
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
+    expect(scheduler.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+
+    // Teardown leaves no timer of any kind (one-shot stragglers drained
+    // first - same discipline as the aux measured test).
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(2250);
+    await flushAsync();
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('battery-timeout closure: teardown while the battery request is pending is clean, and a genuinely NEW generation polls battery normally again', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.clearResponse(MSP_BATTERY_STATE);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(150); // battery dispatched ~t=100, still pending
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
+
+    // Deactivate mid-flight: the generation guard discards the late
+    // settle; no timer survives.
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(2250);
+    await flushAsync();
+    expect(jest.getTimerCount()).toBe(0);
+
+    // A NEW physical session on the same id: battery breaker is reset,
+    // polling works normally at its unchanged cadence.
+    const client2 = makeHappyFakeClient(SESSION_ID);
+    client2.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client2.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    coordinator.openSession(client2 as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(150);
+    await flushAsync();
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toMatchObject({status: 'FRESH'});
+    // Cadence unchanged: second dispatch lands after the same 3000ms.
+    await jest.advanceTimersByTimeAsync(3100);
+    await flushAsync();
+    expect(countWritesFor(client2, MSP_BATTERY_STATE)).toBe(2);
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('battery-timeout closure: session REPLACEMENT while the battery request is pending never leaks the old outcome into the new generation', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client1 = makeHappyFakeClient(SESSION_ID);
+    client1.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client1.clearResponse(MSP_BATTERY_STATE);
+
+    coordinator.openSession(client1 as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(150); // battery pending on gen 1
+    await flushAsync();
+
+    // Replace in place: deactivate + immediately open gen 2 on the same id.
+    coordinator.deactivateMspSession(SESSION_ID);
+    const client2 = makeHappyFakeClient(SESSION_ID);
+    client2.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client2.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    coordinator.openSession(client2 as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    // Let gen 1's would-have-been timeout moment pass INSIDE gen 2's life.
+    await jest.advanceTimersByTimeAsync(2500);
+    await flushAsync();
+
+    // Gen 2's battery is alive and ACTIVE - the old generation's pending
+    // request (rejected at dispose) never disabled the replacement.
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toMatchObject({status: 'FRESH'});
+
+    coordinator.deactivateMspSession(SESSION_ID);
     await flushAsync();
   });
 

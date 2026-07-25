@@ -59,12 +59,20 @@ describe('batteryDebugLog', () => {
     expect(lines[0]).toContain('session=session-9 gen=4');
   });
 
+  it('Pass 7.6c battery-timeout closure: the circuit-break line carries identity, the DISABLED verdict, and the cause - one bounded line', () => {
+    const lines: string[] = [];
+    const logger = createBatteryDebugLogger('session-9', 3, line => lines.push(line));
+    logger.onCircuitBreak('timeout');
+    expect(lines).toEqual(['[FPV-BATT] circuit-break session=session-9 gen=3 battery->DISABLED cause=timeout']);
+  });
+
   it('the default sink is silent under Jest (bounded: no console noise from hundreds of coordinator tests)', () => {
     const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
       const logger = createBatteryDebugLogger('session-9', 5); // no injected sink
       logger.onRegistered(3000, 9000);
       logger.onValue(FRESH);
+      logger.onCircuitBreak('timeout');
       logger.onTeardown('detached');
       expect(logSpy).not.toHaveBeenCalled();
     } finally {

@@ -61,6 +61,10 @@ export interface BatteryDebugLogger {
   /** Call on every scheduler notification with the CURRENT battery value -
    * logs only on a status transition (plus the first settled outcome). */
   onValue(value: TelemetryValue<MspBatteryState>): void;
+  /** Pass 7.6c battery-timeout closure (additive): the ONE line emitted
+   * when a genuine MSP response timeout disables battery polling for the
+   * remainder of this physical session. */
+  onCircuitBreak(cause: string): void;
   onTeardown(reason: 'deactivated' | 'detached' | 'replaced' | 'disposed'): void;
 }
 
@@ -97,6 +101,9 @@ export function createBatteryDebugLogger(
         write(`[${BATTERY_DEBUG_LOG_TAG}] ${identity} ${formatBatteryDebugValue(value)}`);
       }
       lastStatus = value.status;
+    },
+    onCircuitBreak(cause: string): void {
+      write(`[${BATTERY_DEBUG_LOG_TAG}] circuit-break ${identity} battery->DISABLED cause=${cause}`);
     },
     onTeardown(reason): void {
       write(`[${BATTERY_DEBUG_LOG_TAG}] stop ${identity} reason=${reason}`);

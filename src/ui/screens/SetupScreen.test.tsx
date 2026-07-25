@@ -1399,4 +1399,63 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
       renderer.unmount();
     });
   });
+
+  it('battery-timeout closure: navigating away and back in the SAME session does not reset the battery breaker - no new battery request, honest unavailable copy', async () => {
+    const sessionId = 'pass76c-batt-breaker-nav-1';
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    client.clearResponse(MSP_BATTERY_STATE); // battery goes unanswered -> REAL 2000ms timeout
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2400); // dispatch ~100, timeout ~2100 -> breaker
+      await flushAsync();
+    });
+
+    const countBatteryWrites = () =>
+      client.writeBytes.mock.calls.filter(call => base64ToBytes(call[1] as string)[4] === MSP_BATTERY_STATE).length;
+    expect(countBatteryWrites()).toBe(1);
+    expect(findAnyByTestID(renderer, 'battery-card-unavailable')).not.toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.unavailable'));
+
+    // Navigate away (unmount) and back (fresh mount, SAME session/
+    // generation) - the breaker lives in the coordinator, not the screen.
+    act(() => {
+      renderer.unmount();
+    });
+    let renderer2!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer2 = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      // A full battery polling window plus slack: the old retry loop
+      // would have sent another request here.
+      await jest.advanceTimersByTimeAsync(3500);
+      await flushAsync();
+    });
+
+    expect(countBatteryWrites()).toBe(1); // STILL exactly the one timed-out request
+    expect(findAnyByTestID(renderer2, 'battery-card-unavailable')).not.toBeNull();
+    // Never the stale pre-timeout value as live, never a "no LiPo" claim.
+    expect(allText(renderer2)).not.toContain(i18n.t('batteryCard.notDetected'));
+    // The rest of the screen is alive.
+    expect(findAnyByTestID(renderer2, 'setup-screen')).not.toBeNull();
+    expect(findAnyByTestID(renderer2, 'setup-top-bar')).not.toBeNull();
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer2.unmount();
+    });
+  });
 });
