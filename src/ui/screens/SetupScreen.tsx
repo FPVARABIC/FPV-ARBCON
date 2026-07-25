@@ -51,18 +51,44 @@ import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 
 import type {RootStackParamList} from '../../navigation/types';
 import {colors, spacing, typography} from '../theme';
-import {TopSystemBar, OrientationHero, SafetyStrip, BatteryCard} from '../components/setup';
+import {
+  TopSystemBar,
+  OrientationHero,
+  SafetyStrip,
+  BatteryCard,
+  ReceiverCard,
+  GpsCard,
+  FlightControllerCard,
+} from '../components/setup';
 import {
   useTelemetryValue,
+  useMspOwnershipState,
+  useAuxTelemetryChannelState,
+  useBatteryConfigState,
   setupUiSessionStore,
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
   BATTERY_TELEMETRY_POLL_ID,
+  RECEIVER_TELEMETRY_POLL_ID,
+  GPS_TELEMETRY_POLL_ID,
+  FC_STATUS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
 import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
-import {deriveOrientationViewState, deriveArmingReadiness} from '../../core';
-import type {MspAttitude, MspBatteryState, ArmingBlockReason} from '../../core';
+import {
+  deriveOrientationViewState,
+  deriveArmingReadiness,
+  deriveBatteryChargeEstimate,
+  isGpsPresent,
+} from '../../core';
+import type {
+  MspAttitude,
+  MspBatteryState,
+  MspAnalog,
+  MspRawGpsCompact,
+  MspStatusExCompact,
+  ArmingBlockReason,
+} from '../../core';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
@@ -100,6 +126,29 @@ function SetupScreenContent({
   // "unavailable" state through the exact same UNAVAILABLE mechanism.
   const battery = useTelemetryValue<MspBatteryState>(sessionId, BATTERY_TELEMETRY_POLL_ID);
 
+  // Pass 7.6c: Region 3's remaining channels - the same generic hook/
+  // scheduler path, plus the per-channel circuit-breaker verdicts and
+  // the one-shot battery-config outcome from the coordinator.
+  const receiver = useTelemetryValue<MspAnalog>(sessionId, RECEIVER_TELEMETRY_POLL_ID);
+  const gps = useTelemetryValue<MspRawGpsCompact>(sessionId, GPS_TELEMETRY_POLL_ID);
+  const fcStatus = useTelemetryValue<MspStatusExCompact>(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
+  const receiverChannelState = useAuxTelemetryChannelState(sessionId, RECEIVER_TELEMETRY_POLL_ID);
+  const gpsChannelState = useAuxTelemetryChannelState(sessionId, GPS_TELEMETRY_POLL_ID);
+  const fcChannelState = useAuxTelemetryChannelState(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
+  const batteryConfigState = useBatteryConfigState(sessionId);
+  const ownershipState = useMspOwnershipState(sessionId);
+  const connected = ownershipState === 'ACTIVE';
+
+  const chargeEstimate = deriveBatteryChargeEstimate(
+    battery,
+    batteryConfigState?.status === 'READY' ? batteryConfigState.config : undefined,
+  );
+  // GPS presence proof comes from the SHARED MSP_STATUS_EX decode (a
+  // stale sensor mask still proves the FC detected the hardware);
+  // undefined = not provable right now.
+  const gpsPresent =
+    fcStatus.status === 'FRESH' || fcStatus.status === 'STALE' ? isGpsPresent(fcStatus.value) : undefined;
+
   const [uiState, setUiState] = useState(() => setupUiSessionStore.getState(sessionKey));
 
   const orientationView = deriveOrientationViewState(attitude, uiState.orientationViewOffset);
@@ -130,11 +179,27 @@ function SetupScreenContent({
           onResetHintShown={handleResetHintShown}
         />
         <SafetyStrip readiness={armingReadiness} />
-        {/* Pass 7.6b: Region 3's first summary card, mounted at the
-            audited insertion point (after the approved Region 1+2
-            sequence, inside the existing scroll content) - the approved
-            product sequence places the card grid after SafetyStrip. */}
-        <BatteryCard telemetry={battery} />
+        {/* Pass 7.6c: the complete Region 3 2x2 card grid at the audited
+            insertion point (after the approved Region 1+2 sequence).
+            Tree/accessibility order is the approved diagnostic order
+            Battery -> Receiver -> GPS -> FC; under the app's RTL layout,
+            row-wrapping renders row 1 as Battery (right) / Receiver
+            (left) and row 2 as GPS (right) / FC (left). Display-only -
+            no press actions, no navigation, no horizontal scroll. */}
+        <View style={styles.cardGrid} testID="telemetry-card-grid">
+          <View style={styles.cardCell}>
+            <BatteryCard telemetry={battery} chargeEstimate={chargeEstimate} />
+          </View>
+          <View style={styles.cardCell}>
+            <ReceiverCard connected={connected} channelState={receiverChannelState} telemetry={receiver} />
+          </View>
+          <View style={styles.cardCell}>
+            <GpsCard connected={connected} channelState={gpsChannelState} telemetry={gps} gpsPresent={gpsPresent} />
+          </View>
+          <View style={styles.cardCell}>
+            <FlightControllerCard connected={connected} channelState={fcChannelState} telemetry={fcStatus} />
+          </View>
+        </View>
       </ScrollView>
     </View>
   );
@@ -154,6 +219,16 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: spacing.xl,
+  },
+  cardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  cardCell: {
+    width: '50%',
+    padding: spacing.xs,
   },
   placeholderText: {
     ...typography.body,

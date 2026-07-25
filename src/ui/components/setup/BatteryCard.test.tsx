@@ -11,7 +11,7 @@ import {Text} from 'react-native';
 
 import BatteryCard from './BatteryCard';
 import i18n from '../../../i18n';
-import type {MspBatteryState, TelemetryValue} from '../../../core';
+import type {MspBatteryState, TelemetryValue, BatteryChargeEstimate} from '../../../core';
 
 const GOLDEN: MspBatteryState = {
   cellCount: 4,
@@ -23,10 +23,13 @@ const GOLDEN: MspBatteryState = {
   voltageCentivolts: 1685,
 };
 
-function render(telemetry: TelemetryValue<MspBatteryState>): ReactTestRenderer.ReactTestRenderer {
+function render(
+  telemetry: TelemetryValue<MspBatteryState>,
+  chargeEstimate?: BatteryChargeEstimate,
+): ReactTestRenderer.ReactTestRenderer {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   act(() => {
-    renderer = ReactTestRenderer.create(<BatteryCard telemetry={telemetry} />);
+    renderer = ReactTestRenderer.create(<BatteryCard telemetry={telemetry} chargeEstimate={chargeEstimate} />);
   });
   return renderer;
 }
@@ -153,6 +156,31 @@ describe('BatteryCard', () => {
     const flat = Object.assign({}, ...[voltage.props.style].flat().filter(Boolean));
     expect(flat.writingDirection).toBe('ltr');
     expect(flat.fontVariant).toEqual(['tabular-nums']);
+    unmount(renderer);
+  });
+
+  it('Pass 7.6c: a fully-qualified ESTIMATE replaces the percentage-unavailable line and announces the since-startup limitation as the accessibility hint', () => {
+    const renderer = render({status: 'FRESH', value: GOLDEN, updatedAtMs: 0}, {kind: 'ESTIMATE', percent: 77});
+    const text = allText(renderer);
+    expect(text).toContain('الشحن التقديري: 77%');
+    expect(text).not.toContain('نسبة الشحن غير متاحة');
+    expect(renderer.root.findAllByProps({testID: 'battery-card-charge-estimate'}).length).toBeGreaterThan(0);
+    const card = renderer.root.findAllByProps({testID: 'battery-card-live'})[0];
+    expect(card.props.accessibilityHint).toBe(i18n.t('batteryCard.chargeEstimateHint'));
+    expect(card.props.accessibilityLabel).toContain('الشحن التقديري: 77%');
+    unmount(renderer);
+  });
+
+  it('Pass 7.6c: an UNAVAILABLE estimate (any reason) keeps the exact Pass 7.6b honest fallback line, with no hint', () => {
+    const renderer = render(
+      {status: 'FRESH', value: GOLDEN, updatedAtMs: 0},
+      {kind: 'UNAVAILABLE', reason: 'METER_SOURCE_NOT_QUALIFIED'},
+    );
+    const text = allText(renderer);
+    expect(text).toContain('نسبة الشحن غير متاحة');
+    expect(text.join(' ')).not.toContain('الشحن التقديري');
+    const card = renderer.root.findAllByProps({testID: 'battery-card-live'})[0];
+    expect(card.props.accessibilityHint).toBeUndefined();
     unmount(renderer);
   });
 

@@ -1064,7 +1064,13 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
 
     expect(allText(renderer)).toContain('16.85 V');
     expect(allText(renderer)).toContain(i18n.t('batteryCard.state.OK'));
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.percentageUnavailable'));
+    // Pass 7.6c: the golden payload (capacity 1500, consumed 350) plus
+    // the default qualifying MSP_BATTERY_CONFIG fixture (ADC meter,
+    // matching capacity 1500) now legitimately produces the CONDITIONAL
+    // consumption-based estimate: round(((1500-350)/1500)*100) = 77%.
+    // The Pass 7.6b honest-fallback line is asserted separately in the
+    // Pass 7.6c grid describe (non-qualifying config).
+    expect(allText(renderer)).toContain('الشحن التقديري: 77%');
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -1231,6 +1237,169 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
     });
     act(() => {
       renderer2.unmount();
+    });
+  });
+});
+
+describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL pipeline', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    // Same straggler discipline as the Pass 7.6b describe above.
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  /** Opens a default-fixture session, renders the screen, and advances
+   * far enough (2.2s) for all three phase-staggered auxiliary polls
+   * (700/1400/2100ms) to have dispatched and settled. */
+  async function renderWithLiveAux(sessionId: string, configure?: (client: ReturnType<typeof makeFakeClient>) => void) {
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    configure?.(client);
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2200);
+      await flushAsync();
+    });
+    return {client, renderer};
+  }
+
+  async function teardown(sessionId: string, renderer: ReactTestRenderer.ReactTestRenderer) {
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  }
+
+  it('renders the complete 2x2 grid with all four cards live, in the approved diagnostic tree order Battery -> Receiver -> GPS -> FC', async () => {
+    const sessionId = 'pass76c-grid-1';
+    const {renderer} = await renderWithLiveAux(sessionId);
+
+    expect(findAnyByTestID(renderer, 'telemetry-card-grid')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'receiver-card-live')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'gps-card-live')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'fc-card-live')).not.toBeNull();
+
+    // Tree order = accessibility (reading) order: the four titles appear
+    // in exactly the approved diagnostic sequence.
+    const text = allText(renderer);
+    const positions = [
+      text.indexOf(i18n.t('batteryCard.title')),
+      text.indexOf(i18n.t('telemetryCards.receiver.title')),
+      text.indexOf(i18n.t('telemetryCards.gps.title')),
+      text.indexOf(i18n.t('telemetryCards.fc.title')),
+    ];
+    for (const position of positions) {
+      expect(position).toBeGreaterThanOrEqual(0);
+    }
+    expect([...positions].sort((a, b) => a - b)).toEqual(positions);
+
+    // Regions 1+2 are preserved around the grid.
+    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
+
+    await teardown(sessionId, renderer);
+  });
+
+  it('feeds every auxiliary card from the REAL decode pipeline: RSSI percentage, GPS fix + satellites (presence via the shared STATUS_EX bit), CPU load + cycle time', async () => {
+    const sessionId = 'pass76c-aux-live-1';
+    const {renderer} = await renderWithLiveAux(sessionId);
+    const text = allText(renderer);
+
+    // Default fixtures: MSP_ANALOG rssi=540 -> 53%; MSP_RAW_GPS raw fix
+    // flag 2 (the real GPS_FIX bit) + 8 sats; MSP_STATUS_EX mask 41
+    // (includes GPS bit 8), cycle 312us, cpu 12%.
+    expect(text).toContain('RSSI: 53%');
+    expect(text).toContain(i18n.t('telemetryCards.gps.fix'));
+    expect(text).toContain('عدد الأقمار: 8');
+    expect(text).toContain('استخدام المعالج: 12%');
+    expect(text).toContain('زمن الدورة: 312 µs');
+
+    await teardown(sessionId, renderer);
+  });
+
+  it('shows the approved waiting copy on the auxiliary cards BEFORE their phase-staggered first dispatches (no fabricated values at mount)', async () => {
+    const sessionId = 'pass76c-waiting-1';
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(150); // before the 700ms receiver stagger
+      await flushAsync();
+    });
+
+    expect(findAnyByTestID(renderer, 'receiver-card-waiting')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'gps-card-waiting')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'fc-card-waiting')).not.toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('telemetryCards.state.waiting'));
+    // The battery card (its poll is immediately due) is already live.
+    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
+
+    await teardown(sessionId, renderer);
+  });
+
+  it('keeps the honest percentage-unavailable line when the current-meter source is not ADC (estimate prerequisites fail end-to-end)', async () => {
+    const sessionId = 'pass76c-estimate-gate-1';
+    const {renderer} = await renderWithLiveAux(sessionId, client => {
+      // Detected 4S battery + a config whose meter source is NONE (0):
+      // METER_SOURCE_NOT_QUALIFIED -> no estimate, the approved fallback.
+      client.setResponse(MSP_BATTERY_STATE, Uint8Array.from([4, ...u16le(1500), 168, ...u16le(350), ...u16le(0), 0, ...u16le(1685)]));
+      client.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 0]));
+    });
+
+    const text = allText(renderer);
+    expect(text).toContain(i18n.t('batteryCard.percentageUnavailable'));
+    expect(text.join(' ')).not.toContain('الشحن التقديري');
+
+    await teardown(sessionId, renderer);
+  });
+
+  it('drops every auxiliary card to the approved disconnected copy on session teardown (battery keeps its own 7.6b unavailable wording)', async () => {
+    const sessionId = 'pass76c-disconnect-1';
+    const {renderer} = await renderWithLiveAux(sessionId);
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+
+    expect(findAnyByTestID(renderer, 'receiver-card-disconnected')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'gps-card-disconnected')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'fc-card-disconnected')).not.toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('telemetryCards.state.disconnected'));
+    // Pass 7.6b preserved: the battery card's own unavailable copy.
+    expect(findAnyByTestID(renderer, 'battery-card-unavailable')).not.toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.unavailable'));
+
+    act(() => {
+      renderer.unmount();
     });
   });
 });

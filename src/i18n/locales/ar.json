@@ -182,6 +182,34 @@
       "CRITICAL": "حرجة",
       "INIT": "جارٍ التحقق من البطارية",
       "NOT_PRESENT": "لم تُكتشف بطارية"
+    },
+    "chargeEstimate": "الشحن التقديري: {{percent}}%",
+    "chargeEstimateHint": "تقدير مبني على الاستهلاك منذ تشغيل وحدة التحكم بالطيران، بافتراض بدء التشغيل ببطارية مشحونة بالكامل."
+  },
+  "telemetryCards": {
+    "state": {
+      "disconnected": "غير متصل",
+      "waiting": "بانتظار أول قراءة",
+      "unavailable": "البيانات غير متاحة",
+      "unsupported": "غير مدعوم",
+      "stale": "القراءة غير محدثة",
+      "error": "تعذرت قراءة البيانات"
+    },
+    "receiver": {
+      "title": "جهاز الاستقبال",
+      "rssi": "RSSI: {{percent}}%"
+    },
+    "gps": {
+      "title": "GPS",
+      "fix": "تم تحديد الموقع",
+      "noFix": "لم يُحدَّد الموقع بعد",
+      "satellites": "عدد الأقمار: {{value}}"
+    },
+    "fc": {
+      "title": "متحكم الطيران",
+      "cpuLoad": "استخدام المعالج: {{value}}%",
+      "cycleTime": "زمن الدورة: {{value}} µs",
+      "i2cErrors": "أخطاء I²C منذ التشغيل: {{value}}"
     }
   }
 }
