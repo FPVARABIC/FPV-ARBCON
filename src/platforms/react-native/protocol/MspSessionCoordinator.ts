@@ -59,8 +59,23 @@
  * longer exists.
  */
 
-import {MspClient, MspIdentificationService, MSP_ATTITUDE, decodeAttitude, createMspTelemetryScheduler} from '../../../core';
-import type {FlightControllerIdentity, MspRequester, MspTelemetryScheduler, MspAttitude, MspClientState} from '../../../core';
+import {
+  MspClient,
+  MspIdentificationService,
+  MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  decodeAttitude,
+  decodeBatteryState,
+  createMspTelemetryScheduler,
+} from '../../../core';
+import type {
+  FlightControllerIdentity,
+  MspRequester,
+  MspTelemetryScheduler,
+  MspAttitude,
+  MspBatteryState,
+  MspClientState,
+} from '../../../core';
 import type {UsbSerialTransportClient} from '../transport';
 import {RNMspTransport} from './RNMspTransport';
 
@@ -102,6 +117,38 @@ const TELEMETRY_TICK_INTERVAL_MS = 50;
  */
 export const ARMED_TELEMETRY_POLL_ID = 'armed';
 export const ARMING_BLOCKERS_TELEMETRY_POLL_ID = 'armingBlockers';
+
+/** Pass 7.6a: the MSP_BATTERY_STATE poll - registered ONLY after
+ * identification SUCCEEDS with knownFamily 'BETAFLIGHT' (see
+ * beginIdentification()'s finish()), because the 11-byte payload contract
+ * was verified against Betaflight source exclusively (mspCommandSources.ts).
+ * Before identification settles, and for FAILED / INAV / EMUFLIGHT /
+ * UNKNOWN outcomes, nothing registers this id, so useTelemetryValue()
+ * reports UNAVAILABLE through the exact same mechanism the reserved
+ * arming ids above already rely on - honest absence, never fabricated
+ * telemetry. */
+export const BATTERY_TELEMETRY_POLL_ID = 'battery';
+
+/** Pass 7.6a - deliberately conservative (a BINDING product correction,
+ * not a guess): Pass 7.0 measured the serialized MSP queue's real
+ * capacity at ~4.54 successful requests/s with attitude alone already
+ * demanding ~4.55/s at its 220ms cadence - there is NO demonstrated
+ * spare 1-req/s headroom. Battery data changes slowly; 3000ms bounds the
+ * added demand to ~0.33 req/s (~7%), the first poll is still immediately
+ * due at registration (registerPoll() marks dueAtMs=now), and later
+ * changes surface within ~3s. Perceptual impact on attitude smoothness
+ * is checked on hardware in Pass 7.6b. */
+const BATTERY_POLL_INTERVAL_MS = 3000;
+
+/** 3x the poll interval - same missed-cycles tolerance ratio the
+ * attitude poll's own stale threshold uses (220ms -> 700ms). */
+const BATTERY_POLL_STALE_AFTER_MS = 9000;
+
+/** Strictly below attitude's priority 0: the scheduler's overdue-ratio
+ * fairness already prevents a slow poll from starving a fast one
+ * (MspTelemetryScheduler.ts's own selection model); this only settles
+ * EXACT ratio ties in attitude's favor. */
+const BATTERY_POLL_PRIORITY = -1;
 
 export type MspSessionOwnershipState = 'INACTIVE' | 'ACTIVATING' | 'ACTIVE' | 'CLOSING';
 
@@ -521,6 +568,32 @@ export class MspSessionCoordinator {
         completedFrameCount: successfulFrameCount + unsolicitedFrameCount,
         diagnosticCount,
       };
+      // Pass 7.6a: the ONE battery-poll registration point, deliberately
+      // inside this generation-guarded finish() (a late result from a
+      // replaced session already returned above and can never register
+      // into the replacement). Betaflight-only per the verified payload
+      // contract; every other outcome leaves the id unregistered ->
+      // UNAVAILABLE. The scheduler is guaranteed to exist here in
+      // practice (startTelemetry() runs synchronously in the same
+      // startReading() continuation that starts identify(), which
+      // settles later) - the undefined check is a defensive invariant,
+      // same as startTelemetry()'s own entry guard. Teardown needs no
+      // extra handling: deactivate/detach/replacement destroy the whole
+      // scheduler, and this poll dies with it.
+      if (
+        identification.status === 'SUCCEEDED' &&
+        identification.identity.firmware.knownFamily === 'BETAFLIGHT' &&
+        current.telemetryScheduler !== undefined
+      ) {
+        current.telemetryScheduler.registerPoll<MspBatteryState>({
+          id: BATTERY_TELEMETRY_POLL_ID,
+          command: MSP_BATTERY_STATE,
+          intervalMs: BATTERY_POLL_INTERVAL_MS,
+          staleAfterMs: BATTERY_POLL_STALE_AFTER_MS,
+          priority: BATTERY_POLL_PRIORITY,
+          decode: decodeBatteryState,
+        });
+      }
       this.notifyIdentification();
     };
 

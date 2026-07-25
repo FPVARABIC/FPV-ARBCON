@@ -47,7 +47,7 @@ export type {
   MspClientDiagnosticEvent,
 } from './mspClient';
 
-export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE} from './msp';
+export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE, MSP_BATTERY_STATE} from './msp';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
@@ -57,8 +57,8 @@ export {
   EMUFLIGHT_PINNED_COMMIT,
 } from './msp';
 export {MspPayloadReader, MspPayloadReadError} from './msp';
-export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude} from './msp';
-export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude} from './msp';
+export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, decodeBatteryState} from './msp';
+export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState} from './msp';
 export {
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,

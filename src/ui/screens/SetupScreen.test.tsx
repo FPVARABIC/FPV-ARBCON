@@ -31,7 +31,7 @@ import {
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
-import {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE} from '../../core';
+import {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE, MSP_BATTERY_STATE} from '../../core';
 import type {ArmingBlockReason} from '../../core';
 import {buildMspFrameBytes} from '../../core/protocol/__testUtils__/mspFixtures';
 import {base64ToBytes, bytesToBase64} from '../../platforms/react-native/protocol/base64';
@@ -218,6 +218,15 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
   fake.setResponse(MSP_API_VERSION, Uint8Array.from([0, 1, 48]));
   fake.setResponse(MSP_FC_VARIANT, Uint8Array.from(ascii('BTFL')));
   fake.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+  // Pass 7.6a (test-fixture isolation only): production now registers a
+  // battery poll for every successfully-identified BETAFLIGHT session,
+  // and an UNANSWERED battery request would occupy the serialized MSP
+  // queue (until its real 2000ms response timeout), distorting these
+  // screen tests' settle loops. A valid, benign 11-byte response (no
+  // battery detected: cellCount 0, firmware state BATTERY_NOT_PRESENT=3,
+  // all measurements 0) keeps every test isolated without changing any
+  // assertion or production behavior.
+  fake.setResponse(MSP_BATTERY_STATE, Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]));
   return fake;
 }
 

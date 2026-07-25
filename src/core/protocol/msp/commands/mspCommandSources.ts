@@ -100,6 +100,43 @@
  *   always non-negative given the imu.c normalization above - a
  *   fundamentally different unit from roll/pitch, not merely a different
  *   sign convention. See decodeAttitude.ts's own doc comment.
+ *
+ * MSP_BATTERY_STATE (Pass 7.6a - battery telemetry foundation): verified
+ * against the SAME BETAFLIGHT_PINNED_COMMIT above.
+ *   Files read at that commit:
+ *     - src/main/msp/msp_protocol.h:197
+ *         `#define MSP_BATTERY_STATE 130  // out message: Connected/
+ *         Disconnected, Voltage, Current Used`
+ *     - src/main/msp/msp.c:818-833, the real `case MSP_BATTERY_STATE:`
+ *       block - exactly 11 bytes, in order:
+ *         sbufWriteU8(getBatteryCellCount())   // "0 indicates battery not detected."
+ *         sbufWriteU16(batteryCapacity)        // CONFIGURED capacity, mAh
+ *         sbufWriteU8(getLegacyBatteryVoltage()) // 0.1V steps, saturates at 25.5V
+ *         sbufWriteU16(getMAhDrawn())          // consumed, mAh
+ *         sbufWriteU16((int16_t)getAmperage()) // SIGNED int16, 0.01A steps,
+ *                                              // "range is -320A to 320A"
+ *         sbufWriteU8(getBatteryState())       // batteryState_e enum
+ *         sbufWriteU16(getBatteryVoltage())    // 0.01V steps - the canonical field
+ *     - src/main/sensors/battery.h:99-105
+ *         batteryState_e: BATTERY_OK=0, BATTERY_WARNING=1,
+ *         BATTERY_CRITICAL=2, BATTERY_NOT_PRESENT=3, BATTERY_INIT=4.
+ *     - src/main/sensors/battery.c
+ *         getBatteryCellCount()/getBatteryVoltage()/getLegacyBatteryVoltage()/
+ *         getAmperage()/getMAhDrawn() - the wire carries NO current-meter-
+ *         presence flag, so a raw 0.00A cannot be distinguished from a
+ *         disabled/absent current sensor by this command alone (see
+ *         batteryTelemetry.ts's SENSOR_VALIDITY semantics).
+ *   CROSS-VERSION GUARANTEE (this app accepts MSP API >= 1.42 only, see
+ *   mspCompatibility.ts): the identical 11-byte layout INCLUDING the
+ *   trailing 0.01V uint16 was additionally verified at release tags
+ *   4.1.0 (commit c37a7c91a24d2828e0824225a52851bd0cfa40a6, msp_protocol.h
+ *   API_VERSION 1.42, msp.c:658-673) and 4.2.11 (commit
+ *   948ba6339766851806d7637370829ea0ff74c690, API 1.43, msp.c:730-745) -
+ *   every accepted Betaflight API version emits all 11 bytes; no accepted
+ *   version has a shorter payload. Betaflight-only: INAV/EmuFlight also
+ *   define command 130 but their payload contracts were deliberately NOT
+ *   verified or adopted in this pass - the battery poll is gated to
+ *   identified BETAFLIGHT sessions (see MspSessionCoordinator.ts).
  */
 
 export const BETAFLIGHT_SOURCE_REPO = 'https://github.com/betaflight/betaflight';

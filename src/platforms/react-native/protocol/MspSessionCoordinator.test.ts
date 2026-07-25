@@ -1,8 +1,13 @@
-import {MspSessionCoordinator, MspOwnershipActivationError, ATTITUDE_TELEMETRY_POLL_ID} from './MspSessionCoordinator';
+import {
+  MspSessionCoordinator,
+  MspOwnershipActivationError,
+  ATTITUDE_TELEMETRY_POLL_ID,
+  BATTERY_TELEMETRY_POLL_ID,
+} from './MspSessionCoordinator';
 import type {MspSessionOwnershipState} from './MspSessionCoordinator';
 import {RNMspTransport} from './RNMspTransport';
-import {MspClient, MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE} from '../../../core';
-import type {MspAttitude} from '../../../core';
+import {MspClient, MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE, MSP_BATTERY_STATE} from '../../../core';
+import type {MspAttitude, MspBatteryState} from '../../../core';
 import {buildMspFrameBytes} from '../../../core/protocol/__testUtils__/mspFixtures';
 import {base64ToBytes, bytesToBase64} from './base64';
 import type {UsbSerialDataEvent, UsbSerialSessionDetachedEvent, UsbSerialTransportClient} from '../transport';
@@ -90,6 +95,19 @@ interface FakeClient {
    * desync/recovery cycle in a test. Never referenced by any test that
    * doesn't explicitly call it, so this is purely additive. */
   rejectNextWrite: (reason?: unknown) => void;
+  /** Pass 7.6a (additive): removes a previously-scripted response so
+   * later requests for that command go unanswered - mirrors
+   * SetupScreen.test.tsx's own fake's clearResponse(). */
+  clearResponse: (command: number) => void;
+  /** Pass 7.6a (additive): every FUTURE writeBytes() carrying this exact
+   * command never settles at all (the same never-settling promise
+   * neverResolveWrite uses, but per-command) - so MspClient's
+   * onWriteSettled() never runs for it and no response-timeout timer is
+   * ever started, leaving that one poll genuinely in-flight forever.
+   * The scheduler-side effect (a permanently in-flight dispatch whose
+   * poll goes STALE by age) is exactly what the battery staleness test
+   * needs and cannot be produced any other way without timers. */
+  holdWritesFor: (command: number) => void;
 }
 
 /**
@@ -103,11 +121,12 @@ interface FakeClient {
  */
 function makeFakeClient(
   sessionId: string,
-  options: {neverResolveWrite?: boolean; deferStartReading?: boolean} = {},
+  options: {neverResolveWrite?: boolean; deferStartReading?: boolean; responseDelayMs?: number} = {},
 ): FakeClient {
   const dataListeners = new Set<(event: UsbSerialDataEvent) => void>();
   const sessionDetachedListeners = new Set<(event: UsbSerialSessionDetachedEvent) => void>();
   const responses = new Map<number, Uint8Array>();
+  const heldWriteCommands = new Set<number>();
   let resolveStartReadingImpl: () => void = () => undefined;
   const startReadingPromise = options.deferStartReading
     ? new Promise<void>(resolve => {
@@ -141,12 +160,26 @@ function makeFakeClient(
       // command is byte index 4 for any non-jumbo (small) payload, which
       // every identify() request is.
       const command = bytes[4];
+      // Pass 7.6a (additive): a per-command held write never settles -
+      // see the FakeClient interface doc for why.
+      if (heldWriteCommands.has(command)) {
+        return new Promise<void>(() => undefined);
+      }
       const payload = responses.get(command);
       if (payload) {
-        // A microtask hop, not synchronous - mirrors a real write's own
-        // async settlement, and keeps ordering deterministic without
-        // relying on exactly-synchronous re-entrancy into the parser.
-        Promise.resolve().then(() => emitFrame(command, payload));
+        if (options.responseDelayMs !== undefined) {
+          // Pass 7.6a (additive): models a real serial link's service
+          // time (e.g. the recorded ~224ms median RTT) - the response
+          // frame arrives via a (fake-timer-driven) delay instead of a
+          // microtask hop. Only tests that opt in via responseDelayMs
+          // ever take this branch.
+          setTimeout(() => emitFrame(command, payload), options.responseDelayMs);
+        } else {
+          // A microtask hop, not synchronous - mirrors a real write's own
+          // async settlement, and keeps ordering deterministic without
+          // relying on exactly-synchronous re-entrancy into the parser.
+          Promise.resolve().then(() => emitFrame(command, payload));
+        }
       }
       return Promise.resolve(undefined);
     }),
@@ -174,6 +207,12 @@ function makeFakeClient(
     rejectNextWrite: (reason: unknown = new Error('fake write failure')) => {
       rejectNextWriteReason = {reason};
     },
+    clearResponse: (command: number) => {
+      responses.delete(command);
+    },
+    holdWritesFor: (command: number) => {
+      heldWriteCommands.add(command);
+    },
   };
 }
 
@@ -185,6 +224,17 @@ function makeHappyFakeClient(sessionId: string): FakeClient {
   client.setResponse(MSP_API_VERSION, apiVersionPayload());
   client.setResponse(MSP_FC_VARIANT, fcVariantPayload());
   client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+  // Pass 7.6a (additive): production now registers a battery poll for
+  // every successfully-identified BETAFLIGHT session, and an UNANSWERED
+  // battery request would occupy the serialized MSP queue until the
+  // response timeout, distorting older tests' attitude timing. A benign
+  // scripted response keeps every pre-existing "happy" test isolated
+  // from the new poll without changing any of their assertions. Tests
+  // that need different battery behavior simply overwrite/clear it.
+  client.setResponse(
+    MSP_BATTERY_STATE,
+    Uint8Array.from([4, ...u16le(1500), 168, ...u16le(0), ...u16le(0), 0, ...u16le(1680)]),
+  );
   return client;
 }
 
@@ -1034,5 +1084,495 @@ describe('MspSessionCoordinator - Pass 7.4, Step 4: MspClient recovery-state axi
 
     expect(listener).not.toHaveBeenCalled();
     coordinator.deactivateMspSession(SESSION_ID); // stop the in-flight recovery attempt cleanly
+  });
+});
+
+describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry poll', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    // Same defensive backstop as the Pass 7.4 scheduler describe above -
+    // every test here still deactivates its own sessions explicitly.
+    // ADDITIONALLY (found via an intermittent full-serial-run "did not
+    // exit" watchdog warning, reproducible only under whole-suite
+    // event-loop load): teardown chains from dispose()-rejected requests
+    // are ordinary microtasks interleaved with this afterEach in the
+    // SAME queue - a continuation that lands after useRealTimers() would
+    // schedule its response-timeout as a REAL 2000ms timer and trip
+    // Jest's exit watchdog. Drain every straggler while fake timers are
+    // still installed, uninstall, then drain once more so nothing can
+    // outlive this file.
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  /** The verified 11-byte MSP_BATTERY_STATE payload (mspCommandSources.ts)
+   * - built with this file's existing u16le() helper; negative current is
+   * pre-converted to its unsigned two's-complement representation. */
+  function batteryPayload(fields: {
+    cellCount: number;
+    capacityMah: number;
+    legacyDecivolts: number;
+    consumedMah: number;
+    amperageCentiamps: number;
+    stateRaw: number;
+    voltageCentivolts: number;
+  }): Uint8Array {
+    const amperageUnsigned =
+      fields.amperageCentiamps < 0 ? fields.amperageCentiamps + 0x10000 : fields.amperageCentiamps;
+    return Uint8Array.from([
+      fields.cellCount,
+      ...u16le(fields.capacityMah),
+      fields.legacyDecivolts,
+      ...u16le(fields.consumedMah),
+      ...u16le(amperageUnsigned),
+      fields.stateRaw,
+      ...u16le(fields.voltageCentivolts),
+    ]);
+  }
+
+  const GOLDEN_BATTERY = batteryPayload({
+    cellCount: 4,
+    capacityMah: 1500,
+    legacyDecivolts: 168,
+    consumedMah: 350,
+    amperageCentiamps: -250,
+    stateRaw: 1,
+    voltageCentivolts: 1685,
+  });
+
+  const countWritesFor = (client: FakeClient, command: number) =>
+    client.writeBytes.mock.calls.filter(call => base64ToBytes(call[1] as string)[4] === command).length;
+
+  it('reports UNAVAILABLE while identification is still pending - no battery poll exists yet and no battery request is ever sent', async () => {
+    const coordinator = new MspSessionCoordinator();
+    // No identify responses scripted: identification never settles.
+    const client = makeFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    expect(scheduler).toBeDefined();
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toEqual({status: 'UNAVAILABLE'});
+
+    await jest.advanceTimersByTimeAsync(200);
+    await flushAsync();
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toEqual({status: 'UNAVAILABLE'});
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(0);
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('registers the battery poll after successful BETAFLIGHT identification, immediately due, and round-trips the real decoded 11-byte payload', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    // Registered (WAITING), not UNAVAILABLE - identification has settled.
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toEqual({status: 'WAITING'});
+
+    // Immediately due at registration - but tick() dispatches only the
+    // single best overdue-ratio poll per firing, and attitude (50/220)
+    // outranks battery (50/3000) on the first tick. Battery therefore
+    // dispatches on the SECOND 50ms tick.
+    await jest.advanceTimersByTimeAsync(100);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
+
+    const value = scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID);
+    expect(value).toMatchObject({
+      status: 'FRESH',
+      value: {
+        cellCount: 4,
+        configuredCapacityMah: 1500,
+        legacyVoltageDecivolts: 168,
+        consumedMah: 350,
+        amperageCentiamps: -250,
+        batteryStateRaw: 1,
+        voltageCentivolts: 1685,
+      },
+    });
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('never registers the battery poll when identification FAILS (incompatible API 1.41)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeFakeClient(SESSION_ID);
+    client.setResponse(MSP_API_VERSION, apiVersionPayload(41)); // below the 1.42 minimum
+    client.setResponse(MSP_FC_VARIANT, fcVariantPayload());
+    client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    // The failure is the CANONICAL compatibility decision: identify()
+    // runs checkMspCompatibility() first and throws
+    // MspIncompatibleFirmwareError, so SUCCEEDED can never carry an
+    // unaccepted API version (MspIdentificationService.ts:125-128).
+    const identification = coordinator.getIdentificationState(SESSION_ID);
+    expect(identification).toMatchObject({status: 'FAILED'});
+    if (identification.status === 'FAILED') {
+      expect((identification.error as Error).name).toBe('MspIncompatibleFirmwareError');
+    }
+    // The incompatible session is deliberately NOT detached or
+    // reclassified - it stays ACTIVE, exactly as before this pass.
+    expect(coordinator.getOwnershipState(SESSION_ID)).toBe('ACTIVE');
+
+    await jest.advanceTimersByTimeAsync(200);
+    await flushAsync();
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toEqual({status: 'UNAVAILABLE'});
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(0);
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('registers the battery poll with EXACTLY the corrected specification: id, command 130, intervalMs 3000, staleAfterMs 9000, priority -1, and immediately due', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeFakeClient(SESSION_ID, {deferStartReading: true});
+    client.setResponse(MSP_API_VERSION, apiVersionPayload());
+    client.setResponse(MSP_FC_VARIANT, fcVariantPayload('BTFL'));
+    client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    client.resolveStartReading();
+    // One-hop settle: the startReading() continuation has now run
+    // (scheduler exists, identification is still in flight), so the
+    // registerPoll spy can be attached BEFORE identification finishes.
+    let scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    for (let i = 0; i < 5 && !scheduler; i++) {
+      await Promise.resolve();
+      scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    }
+    expect(scheduler).toBeDefined();
+    expect(coordinator.getIdentificationState(SESSION_ID)).toMatchObject({status: 'RUNNING'});
+    const registerSpy = jest.spyOn(scheduler!, 'registerPoll');
+
+    await flushAsync(); // identification settles -> battery registers
+
+    expect(registerSpy).toHaveBeenCalledTimes(1);
+    expect(registerSpy.mock.calls[0][0]).toMatchObject({
+      id: BATTERY_TELEMETRY_POLL_ID,
+      command: MSP_BATTERY_STATE,
+      intervalMs: 3000,
+      staleAfterMs: 9000,
+      priority: -1,
+    });
+
+    // Initially due upon registration: it dispatches within the first
+    // two 50ms ticks (attitude wins the first by overdue ratio), not
+    // after a full 3000ms interval.
+    await jest.advanceTimersByTimeAsync(100);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('never registers the battery poll for INAV, EMUFLIGHT, or UNKNOWN firmware families, even though identification SUCCEEDS', async () => {
+    for (const identifier of ['INAV', 'EMUF', 'XXXX']) {
+      const sessionId = `family-${identifier}`;
+      const coordinator = new MspSessionCoordinator();
+      const client = makeFakeClient(sessionId);
+      client.setResponse(MSP_API_VERSION, apiVersionPayload());
+      client.setResponse(MSP_FC_VARIANT, fcVariantPayload(identifier));
+      client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+      client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+      client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+      coordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+      expect(coordinator.getIdentificationState(sessionId)).toMatchObject({status: 'SUCCEEDED'});
+
+      await jest.advanceTimersByTimeAsync(200);
+      await flushAsync();
+      expect(
+        coordinator.getTelemetryScheduler(sessionId)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+      ).toEqual({status: 'UNAVAILABLE'});
+      expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(0);
+      coordinator.deactivateMspSession(sessionId);
+      await flushAsync(); // drain teardown chains inside fake-timer scope
+    }
+  });
+
+  it('polls battery at the corrected 3000ms interval (not 1000ms) while attitude continues at its own unchanged cadence', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    // First battery dispatch on the second tick (t=100 - attitude wins
+    // the first tick by overdue ratio; see the round-trip test above).
+    await jest.advanceTimersByTimeAsync(100);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
+
+    // Just under the next due time (dueAt = 100 + 3000 = 3100): still one.
+    await jest.advanceTimersByTimeAsync(2850); // t = 2950
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
+    // Attitude was NOT starved meanwhile: ~2950ms / 220ms => at least 12
+    // attitude dispatches with instant fake responses.
+    expect(countWritesFor(client, MSP_ATTITUDE)).toBeGreaterThanOrEqual(12);
+
+    // Past dueAt = 3100 (t=3250): exactly the second dispatch.
+    await jest.advanceTimersByTimeAsync(300);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(2);
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('goes STALE by age when a battery dispatch hangs in-flight forever (a held write also blocks the serialized MSP queue - reported honestly, not hidden)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(100); // two ticks - battery dispatches on the second
+    await flushAsync();
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+
+    // Every future battery write hangs (never settles - no response
+    // timeout timer ever starts), so the next dispatch at ~t=3050 stays
+    // in-flight forever and the value ages into STALE at 9000ms past the
+    // last success (~t=100).
+    client.holdWritesFor(MSP_BATTERY_STATE);
+    await jest.advanceTimersByTimeAsync(3150); // second dispatch (held)
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(6100); // t ≈ 9350 > 100 + 9000
+    await flushAsync();
+
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toMatchObject({
+      status: 'STALE',
+      value: {voltageCentivolts: 1685},
+    });
+    // HONEST consequence of the ONE serialized MSP queue: a request that
+    // never settles blocks every later request too, so attitude also
+    // degrades to STALE here. This models a pathological transport (a
+    // write that never settles); a merely UNANSWERED request is ended by
+    // the real 2000ms response timeout instead - covered next.
+    expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'STALE'});
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('reports ERROR when battery responses stop and the request times out, and attitude recovers between battery retry cycles', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(100); // two ticks - battery dispatches on the second
+    await flushAsync();
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+
+    // Later battery requests go unanswered: the write settles, so the
+    // real MSP response timeout runs and the dispatch settles as an
+    // error outcome.
+    client.clearResponse(MSP_BATTERY_STATE);
+    // Second battery dispatch (~t=3150) goes unanswered and occupies the
+    // serialized queue until the real 2000ms response timeout ends it as
+    // an error outcome (~t=5150); attitude then resumes. Sample INSIDE
+    // the recovery window before the next battery retry (~t=6150+):
+    await jest.advanceTimersByTimeAsync(3150);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(2300); // past the timeout, before the next retry
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(500); // attitude refreshes within its own cadence
+    await flushAsync();
+
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toMatchObject({status: 'ERROR'});
+    expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('re-gates from scratch for a reused sessionId: a BETAFLIGHT session followed by an INAV session on the same id gets no battery poll', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client1 = makeHappyFakeClient(SESSION_ID);
+    client1.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client1.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    coordinator.openSession(client1 as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toEqual({status: 'WAITING'});
+    coordinator.deactivateMspSession(SESSION_ID);
+
+    const client2 = makeFakeClient(SESSION_ID);
+    client2.setResponse(MSP_API_VERSION, apiVersionPayload());
+    client2.setResponse(MSP_FC_VARIANT, fcVariantPayload('INAV'));
+    client2.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+    client2.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client2.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    coordinator.openSession(client2 as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(200);
+    await flushAsync();
+
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toEqual({status: 'UNAVAILABLE'});
+    expect(countWritesFor(client2, MSP_BATTERY_STATE)).toBe(0);
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('a replaced generation\'s late startReading() completion cannot start identification or register battery into the replacement session', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client1 = makeFakeClient(SESSION_ID, {deferStartReading: true});
+    client1.setResponse(MSP_API_VERSION, apiVersionPayload());
+    client1.setResponse(MSP_FC_VARIANT, fcVariantPayload('BTFL'));
+    client1.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+    client1.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    coordinator.openSession(client1 as unknown as UsbSerialTransportClient, SESSION_ID);
+    coordinator.deactivateMspSession(SESSION_ID); // gen 1 torn down before startReading resolves
+
+    const client2 = makeFakeClient(SESSION_ID);
+    client2.setResponse(MSP_API_VERSION, apiVersionPayload());
+    client2.setResponse(MSP_FC_VARIANT, fcVariantPayload('INAV'));
+    client2.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+    client2.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    coordinator.openSession(client2 as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    // Gen 1's startReading now resolves LATE - its continuation must hit
+    // the generation guard and do nothing at all.
+    client1.resolveStartReading();
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(200);
+    await flushAsync();
+
+    expect(client1.writeBytes).not.toHaveBeenCalled(); // no late identify(), let alone battery
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toEqual({status: 'UNAVAILABLE'});
+    expect(countWritesFor(client2, MSP_BATTERY_STATE)).toBe(0);
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
+  });
+
+  it('contention at the recorded ~224ms link service time stays bounded: no backlog, no catch-up burst, at most one in-flight demand per poll, attitude never starved', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeFakeClient(SESSION_ID, {responseDelayMs: 224});
+    client.setResponse(MSP_API_VERSION, apiVersionPayload());
+    client.setResponse(MSP_FC_VARIANT, fcVariantPayload('BTFL'));
+    client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    // Drive ~10s of fake time in 50ms steps, recording each command's
+    // dispatch times at 50ms resolution.
+    const attitudeDispatchTimes: number[] = [];
+    const batteryDispatchTimes: number[] = [];
+    let attitudeSeen = 0;
+    let batterySeen = 0;
+    for (let t = 50; t <= 10_000; t += 50) {
+      await jest.advanceTimersByTimeAsync(50);
+      await flushAsync();
+      const attitudeNow = countWritesFor(client, MSP_ATTITUDE);
+      const batteryNow = countWritesFor(client, MSP_BATTERY_STATE);
+      // At most ONE new dispatch per command per 50ms step - a backlog
+      // or catch-up burst would emit several in a single step.
+      expect(attitudeNow - attitudeSeen).toBeLessThanOrEqual(1);
+      expect(batteryNow - batterySeen).toBeLessThanOrEqual(1);
+      if (attitudeNow > attitudeSeen) {
+        attitudeDispatchTimes.push(t);
+      }
+      if (batteryNow > batterySeen) {
+        batteryDispatchTimes.push(t);
+      }
+      attitudeSeen = attitudeNow;
+      batterySeen = batteryNow;
+    }
+
+    // Battery stays at its corrected 3000ms cadence: bounded count over
+    // the window (registration ~ after 3 sequential 224ms identify round
+    // trips), and consecutive dispatches never closer than ~2500ms (no
+    // catch-up burst after the identification delay either).
+    expect(batteryDispatchTimes.length).toBeGreaterThanOrEqual(2);
+    expect(batteryDispatchTimes.length).toBeLessThanOrEqual(4);
+    for (let i = 1; i < batteryDispatchTimes.length; i++) {
+      expect(batteryDispatchTimes[i] - batteryDispatchTimes[i - 1]).toBeGreaterThanOrEqual(2500);
+    }
+
+    // Attitude keeps flowing: with a 224ms service time on a serialized
+    // link plus occasional battery turns, the MODELED completion cadence
+    // is ~250-320ms (NOT the nominal 220ms - the queue genuinely shares
+    // time; asserted honestly here). Over the ~9s window that means at
+    // least 25 dispatches, and consecutive dispatches at least 200ms
+    // apart (one in-flight demand at a time - the scheduler's own
+    // inFlight guard).
+    expect(attitudeDispatchTimes.length).toBeGreaterThanOrEqual(25);
+    for (let i = 1; i < attitudeDispatchTimes.length; i++) {
+      expect(attitudeDispatchTimes[i] - attitudeDispatchTimes[i - 1]).toBeGreaterThanOrEqual(200);
+    }
+
+    // Both polls end the window genuinely served.
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    coordinator.deactivateMspSession(SESSION_ID);
+    // Drain dispose/rejection chains INSIDE this test's fake-timer scope
+    // - a straggler settling after afterEach's useRealTimers() would
+    // otherwise schedule a real timer and trip Jest's exit watchdog.
+    await flushAsync();
   });
 });

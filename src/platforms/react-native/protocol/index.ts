@@ -6,6 +6,7 @@ export {
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
+  BATTERY_TELEMETRY_POLL_ID,
 } from './MspSessionCoordinator';
 export type {
   MspSessionOwnershipState,

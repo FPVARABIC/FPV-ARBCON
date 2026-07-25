@@ -19,3 +19,9 @@ export const MSP_BOARD_INFO = 4;
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_PINNED_COMMIT (Pass 7.0):
  * `#define MSP_ATTITUDE 108  // out message: 2 angles 1 heading` */
 export const MSP_ATTITUDE = 108;
+
+/** src/main/msp/msp_protocol.h:197 @ BETAFLIGHT_PINNED_COMMIT (Pass 7.6a):
+ * `#define MSP_BATTERY_STATE 130  // out message: Connected/Disconnected,
+ * Voltage, Current Used` - see mspCommandSources.ts for the full payload
+ * verification record. */
+export const MSP_BATTERY_STATE = 130;

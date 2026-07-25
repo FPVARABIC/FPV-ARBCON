@@ -34,6 +34,7 @@ export type {
   MspFcVariantRaw,
   MspBoardInfo,
   MspAttitude,
+  MspBatteryState,
   MspCompatibilityResult,
   MspFcFamily,
   MspFcVariant,
@@ -77,6 +78,7 @@ export {
   MSP_FC_VARIANT,
   MSP_BOARD_INFO,
   MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
   INAV_SOURCE_REPO,
@@ -89,6 +91,7 @@ export {
   decodeFcVariant,
   decodeBoardInfo,
   decodeAttitude,
+  decodeBatteryState,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
@@ -108,3 +111,9 @@ export {deriveArmingReadiness, rankArmingBlockReasons, selectTopArmingBlockReaso
 export type {ArmingBlockSeverity, ArmingBlockReason, ArmingReadiness, ArmingBlockReasonSelection} from './state';
 export {pickTopNotice} from './state';
 export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeScope} from './state';
+// Pass 7.6a: exported directly from the module file (not via ./state's
+// barrel) because src/core/state/index.ts is outside this pass's
+// authorized file allowlist - a deliberate, documented allowlist
+// constraint, not a new convention.
+export {deriveBatterySemantics} from './state/batteryTelemetry';
+export type {BatteryFirmwareState, BatterySensorValidity, BatterySemantics} from './state/batteryTelemetry';

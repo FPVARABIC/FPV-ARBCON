@@ -1,4 +1,4 @@
-export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE} from './commands/mspCommands';
+export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE, MSP_BATTERY_STATE} from './commands/mspCommands';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
@@ -17,6 +17,8 @@ export {decodeBoardInfo} from './decoding/decodeBoardInfo';
 export type {MspBoardInfo} from './decoding/decodeBoardInfo';
 export {decodeAttitude} from './decoding/decodeAttitude';
 export type {MspAttitude} from './decoding/decodeAttitude';
+export {decodeBatteryState} from './decoding/decodeBatteryState';
+export type {MspBatteryState} from './decoding/decodeBatteryState';
 
 export {
   checkMspCompatibility,
