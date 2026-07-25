@@ -1,6 +1,9 @@
 export {default as SafetyStrip} from './SafetyStrip';
 export type {SafetyStripProps} from './SafetyStrip';
 
+export {default as BatteryCard} from './BatteryCard';
+export type {BatteryCardProps} from './BatteryCard';
+
 export {default as OrientationHero} from './OrientationHero';
 export type {OrientationHeroProps} from './OrientationHero';
 

@@ -51,17 +51,18 @@ import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 
 import type {RootStackParamList} from '../../navigation/types';
 import {colors, spacing, typography} from '../theme';
-import {TopSystemBar, OrientationHero, SafetyStrip} from '../components/setup';
+import {TopSystemBar, OrientationHero, SafetyStrip, BatteryCard} from '../components/setup';
 import {
   useTelemetryValue,
   setupUiSessionStore,
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
+  BATTERY_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
 import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
 import {deriveOrientationViewState, deriveArmingReadiness} from '../../core';
-import type {MspAttitude, ArmingBlockReason} from '../../core';
+import type {MspAttitude, MspBatteryState, ArmingBlockReason} from '../../core';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
@@ -93,6 +94,11 @@ function SetupScreenContent({
   const attitude = useTelemetryValue<MspAttitude>(sessionId, ATTITUDE_TELEMETRY_POLL_ID);
   const armed = useTelemetryValue<boolean>(sessionId, ARMED_TELEMETRY_POLL_ID);
   const blockers = useTelemetryValue<ArmingBlockReason[]>(sessionId, ARMING_BLOCKERS_TELEMETRY_POLL_ID);
+  // Pass 7.6b: the same generic hook/scheduler path attitude uses - the
+  // poll itself exists only for identified-compatible Betaflight sessions
+  // (Pass 7.6a), so every other session renders the card's honest
+  // "unavailable" state through the exact same UNAVAILABLE mechanism.
+  const battery = useTelemetryValue<MspBatteryState>(sessionId, BATTERY_TELEMETRY_POLL_ID);
 
   const [uiState, setUiState] = useState(() => setupUiSessionStore.getState(sessionKey));
 
@@ -124,6 +130,11 @@ function SetupScreenContent({
           onResetHintShown={handleResetHintShown}
         />
         <SafetyStrip readiness={armingReadiness} />
+        {/* Pass 7.6b: Region 3's first summary card, mounted at the
+            audited insertion point (after the approved Region 1+2
+            sequence, inside the existing scroll content) - the approved
+            product sequence places the card grid after SafetyStrip. */}
+        <BatteryCard telemetry={battery} />
       </ScrollView>
     </View>
   );

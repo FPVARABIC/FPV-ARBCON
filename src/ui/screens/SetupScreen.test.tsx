@@ -117,6 +117,7 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
   const dataListeners = new Set<(event: UsbSerialDataEvent) => void>();
   const detachListeners = new Set<(event: UsbSerialSessionDetachedEvent) => void>();
   const responses = new Map<number, Uint8Array>();
+  const heldWriteCommands = new Set<number>();
   let rejectNextWriteReason: {reason: unknown} | undefined;
   let rejectNextRestartReason: {reason: unknown} | undefined;
   let resolveStartReadingImpl: () => void = () => undefined;
@@ -150,6 +151,12 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
       }
       const bytes = base64ToBytes(dataBase64);
       const command = bytes[4];
+      // Pass 7.6b (additive): a per-command held write never settles -
+      // no response-timeout timer ever starts, leaving that one poll
+      // genuinely in-flight forever (the battery staleness fixture).
+      if (heldWriteCommands.has(command)) {
+        return new Promise<void>(() => undefined);
+      }
       const payload = responses.get(command);
       if (payload) {
         const frameBytes = buildMspFrameBytes(command, payload, {wireFormat: 'v1', direction: 'response'});
@@ -199,6 +206,9 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
     },
     setResponse: (command: number, payload: Uint8Array) => {
       responses.set(command, payload);
+    },
+    holdWritesFor: (command: number) => {
+      heldWriteCommands.add(command);
     },
     clearResponse: (command: number) => {
       responses.delete(command);
@@ -948,6 +958,253 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
     });
     act(() => {
       renderer.unmount();
+    });
+  });
+});
+
+describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline', () => {
+  /** The verified 11-byte MSP_BATTERY_STATE payload (golden: 4S, 16.85V,
+   * firmware BATTERY_OK) - built with this file's existing u16le helper. */
+  function batteryPayload(cellCount: number, stateRaw: number, voltageCentivolts: number): Uint8Array {
+    return Uint8Array.from([cellCount, ...u16le(1500), 168, ...u16le(350), ...u16le(0), stateRaw, ...u16le(voltageCentivolts)]);
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    // Same straggler discipline as the coordinator's Pass 7.6a describe:
+    // drain teardown chains under fake timers, uninstall, drain again.
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  it('renders the card after Regions 1+2, shows the default fixture\'s honest NOT-DETECTED state, and preserves the hero and safety strip', async () => {
+    const sessionId = 'pass76b-default-1';
+    const client = makeFakeClient(sessionId); // default fixture: BATTERY_NOT_PRESENT, 0 cells, 0V
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(150); // ticks: attitude first, battery on a following tick
+      await flushAsync();
+    });
+
+    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.title'));
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.notDetected'));
+    // Regions 1+2 still present around the card.
+    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('shows the REAL decoded voltage and firmware state for a detected battery (golden 4S/16.85V/OK payload end-to-end)', async () => {
+    const sessionId = 'pass76b-golden-1';
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    client.setResponse(MSP_BATTERY_STATE, batteryPayload(4, 0, 1685));
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(150);
+      await flushAsync();
+    });
+
+    expect(allText(renderer)).toContain('16.85 V');
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.state.OK'));
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.percentageUnavailable'));
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('freezes into the approved STALE presentation when battery responses stop while attitude keeps flowing', async () => {
+    const sessionId = 'pass76b-stale-1';
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    client.setResponse(MSP_BATTERY_STATE, batteryPayload(4, 0, 1685));
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(150);
+      await flushAsync();
+    });
+    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
+
+    // Every later battery WRITE hangs (never settles - no response
+    // timeout starts), so the value ages past the 9000ms stale threshold
+    // while the responsive attitude poll keeps the rest of the screen live.
+    client.holdWritesFor(MSP_BATTERY_STATE);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(3100);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(6200);
+      await flushAsync();
+    });
+
+    expect(findAnyByTestID(renderer, 'battery-card-stale')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'battery-card-stale-label')).not.toBeNull();
+    expect(allText(renderer)).toContain('16.85 V'); // frozen last real value, dimmed - not blanked
+    expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('drops to the honest UNAVAILABLE state on session teardown, and a replacement session on the same id starts from scratch (never retaining the previous physical session\'s data)', async () => {
+    const sessionId = 'pass76b-replace-1';
+    const client1 = makeFakeClient(sessionId);
+    client1.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    client1.setResponse(MSP_BATTERY_STATE, batteryPayload(4, 0, 1685));
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client1 as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(150);
+      await flushAsync();
+    });
+    expect(allText(renderer)).toContain('16.85 V');
+
+    // Teardown: the card must NOT keep showing the dead session's values.
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    expect(findAnyByTestID(renderer, 'battery-card-unavailable')).not.toBeNull();
+    expect(allText(renderer)).not.toContain('16.85 V');
+
+    // Replacement session, same id, different battery: starts from its
+    // OWN readings (generation-guarded registration; fresh scheduler).
+    const client2 = makeFakeClient(sessionId);
+    client2.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    client2.setResponse(MSP_BATTERY_STATE, batteryPayload(3, 1, 1122)); // 3S, WARNING, 11.22V
+    await act(async () => {
+      mspSessionCoordinator.openSession(client2 as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(150);
+      await flushAsync();
+    });
+    expect(allText(renderer)).toContain('11.22 V');
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.state.WARNING'));
+    expect(allText(renderer)).not.toContain('16.85 V');
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('rebinds after navigating away and back (unmount + remount) during the SAME active session - no duplicate pollers, current value shown', async () => {
+    const sessionId = 'pass76b-remount-1';
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    client.setResponse(MSP_BATTERY_STATE, batteryPayload(4, 0, 1685));
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(150);
+      await flushAsync();
+    });
+    expect(allText(renderer)).toContain('16.85 V');
+
+    const batteryWritesBefore = client.writeBytes.mock.calls.filter(
+      call => base64ToBytes(call[1] as string)[4] === MSP_BATTERY_STATE,
+    ).length;
+
+    // Navigate away (screen unmounts; the session keeps running - the
+    // established hardware-Back behavior) and back again.
+    act(() => {
+      renderer.unmount();
+    });
+    let renderer2!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer2 = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      await flushAsync();
+    });
+    expect(allText(renderer2)).toContain('16.85 V'); // rebinds to the live value immediately
+
+    // The 3000ms cadence is owned by the SESSION, not the screen - a
+    // remount must not add a second battery poller (no burst of extra
+    // battery requests beyond the cadence).
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(3100);
+      await flushAsync();
+    });
+    const batteryWritesAfter = client.writeBytes.mock.calls.filter(
+      call => base64ToBytes(call[1] as string)[4] === MSP_BATTERY_STATE,
+    ).length;
+    expect(batteryWritesAfter - batteryWritesBefore).toBeLessThanOrEqual(2);
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
+    act(() => {
+      renderer2.unmount();
     });
   });
 });

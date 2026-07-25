@@ -78,6 +78,8 @@ import type {
 } from '../../../core';
 import type {UsbSerialTransportClient} from '../transport';
 import {RNMspTransport} from './RNMspTransport';
+import {createBatteryDebugLogger} from './batteryDebugLog';
+import type {BatteryDebugLogger} from './batteryDebugLog';
 
 /** Pass 7.4: the one MSP_ATTITUDE poll every session's real
  * MspTelemetryScheduler registers - a stable exported id so the UI layer
@@ -254,6 +256,11 @@ interface SessionEntry {
    * comment for why calling this during teardown is a deliberate
    * consistency choice, not something GC correctness actually requires. */
   mspClientStateUnsubscribe: () => void;
+  /** Pass 7.6b: debug-build-only battery observability (batteryDebugLog.ts)
+   * - set only when the battery poll actually registers, so teardown can
+   * emit its bounded stop line. undefined for every non-Betaflight /
+   * unidentified session. */
+  batteryDebugLog: BatteryDebugLogger | undefined;
 }
 
 /** Never a real generation number (generationCounter starts at 1 and only
@@ -417,6 +424,7 @@ export class MspSessionCoordinator {
       telemetryScheduler: undefined,
       tickIntervalHandle: undefined,
       mspClientStateUnsubscribe,
+      batteryDebugLog: undefined,
     });
     this.ownershipStates.set(sessionId, 'ACTIVE');
     this.notifyOwnership();
@@ -593,6 +601,17 @@ export class MspSessionCoordinator {
           priority: BATTERY_POLL_PRIORITY,
           decode: decodeBatteryState,
         });
+        // Pass 7.6b: bounded debug observability (transition-driven only -
+        // see batteryDebugLog.ts). The subscription lives exactly as long
+        // as this session's scheduler: stopTelemetry() drops the scheduler
+        // (and its listener set) wholesale, and onTeardown logs the end.
+        const batteryDebugLog = createBatteryDebugLogger(sessionId, generation);
+        batteryDebugLog.onRegistered(BATTERY_POLL_INTERVAL_MS, BATTERY_POLL_STALE_AFTER_MS);
+        const schedulerForLog = current.telemetryScheduler;
+        schedulerForLog.subscribe(() => {
+          batteryDebugLog.onValue(schedulerForLog.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID));
+        });
+        current.batteryDebugLog = batteryDebugLog;
       }
       this.notifyIdentification();
     };
@@ -858,7 +877,7 @@ export class MspSessionCoordinator {
     this.notifyOwnership();
 
     entry.generation = INVALIDATED_GENERATION;
-    this.stopTelemetry(entry);
+    this.stopTelemetry(entry, 'deactivated');
 
     entry.mspClient.dispose();
     entry.mspClientStateUnsubscribe();
@@ -892,7 +911,7 @@ export class MspSessionCoordinator {
     }
 
     entry.generation = INVALIDATED_GENERATION;
-    this.stopTelemetry(entry);
+    this.stopTelemetry(entry, 'detached');
 
     entry.mspClient.dispose();
     entry.mspClientStateUnsubscribe();
@@ -908,12 +927,16 @@ export class MspSessionCoordinator {
    * reference. The scheduler itself (Pass 7.2) has no dispose() of its
    * own to call - it owns no resource beyond what this coordinator added
    * (the interval cleared here). */
-  private stopTelemetry(entry: SessionEntry): void {
+  private stopTelemetry(entry: SessionEntry, reason: 'deactivated' | 'detached'): void {
     if (entry.tickIntervalHandle !== undefined) {
       clearInterval(entry.tickIntervalHandle);
       entry.tickIntervalHandle = undefined;
     }
     entry.telemetryScheduler = undefined;
+    // Pass 7.6b: bounded debug observability - one stop line, only for
+    // sessions whose battery poll ever registered.
+    entry.batteryDebugLog?.onTeardown(reason);
+    entry.batteryDebugLog = undefined;
   }
 
   private notifyOwnership(): void {
