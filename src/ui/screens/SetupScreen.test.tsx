@@ -491,7 +491,7 @@ describe('SetupScreen - Step 6: STALE freeze visible in real rendered output', (
   it('OrientationHero freezes at the last LIVE values and shows "البيانات متأخرة" once attitude data stops arriving', async () => {
     const sessionId = 'step6-stale-1';
     const client = makeFakeClient(sessionId);
-    client.setResponse(MSP_ATTITUDE, attitudePayload(40, 20, 90)); // -> 4deg/2deg/90deg
+    client.setResponse(MSP_ATTITUDE, attitudePayload(40, 20, 90)); // -> 4deg/-2deg/90deg
     const props = makeProps({sessionKey: {sessionId, generation: 1}});
 
     let renderer!: ReactTestRenderer.ReactTestRenderer;
@@ -513,7 +513,7 @@ describe('SetupScreen - Step 6: STALE freeze visible in real rendered output', (
 
     expect(findAnyByTestID(renderer, 'orientation-hero-stale-label')).toBeNull();
     expect(allText(renderer)).toContain('4°');
-    expect(allText(renderer)).toContain('2°');
+    expect(allText(renderer)).toContain('-2°');
     expect(allText(renderer)).toContain('90°');
 
     // No further attitude responses from here on.
@@ -531,7 +531,7 @@ describe('SetupScreen - Step 6: STALE freeze visible in real rendered output', (
     expect(allText(renderer)).toContain(i18n.t('orientationHero.staleLabel'));
     // Frozen at the LAST KNOWN values, never blanked, never faked/interpolated.
     expect(allText(renderer)).toContain('4°');
-    expect(allText(renderer)).toContain('2°');
+    expect(allText(renderer)).toContain('-2°');
     expect(allText(renderer)).toContain('90°');
 
     await act(async () => {
@@ -757,9 +757,9 @@ describe('SetupScreen - Step 6: resetOrientationViewOffset() end-to-end', () => 
       await flushAsync();
     });
 
-    // Offset-adjusted: 10-5=5, 5-3=2, 90-10=80.
+    // Offset-adjusted: 10-5=5, -(50 / 10) - 3 = -8, 90-10=80.
     expect(allText(renderer)).toContain('5°');
-    expect(allText(renderer)).toContain('2°');
+    expect(allText(renderer)).toContain('-8°');
     expect(allText(renderer)).toContain('80°');
     expect(findAnyByTestID(renderer, 'orientation-hero-reset-hint')).toBeNull();
 
@@ -870,7 +870,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
   it('OrientationHero: the 3D model wrapper carries a real, non-empty accessibilityLabel from describeOrientationForAccessibility() when LIVE', async () => {
     const sessionId = 'step6-a11y-hero-1';
     const client = makeFakeClient(sessionId);
-    client.setResponse(MSP_ATTITUDE, attitudePayload(40, 20, 90)); // -> 4deg/2deg/90deg
+    client.setResponse(MSP_ATTITUDE, attitudePayload(40, 20, 90)); // -> 4deg/-2deg/90deg
     const props = makeProps({sessionKey: {sessionId, generation: 1}});
 
     let renderer!: ReactTestRenderer.ReactTestRenderer;
@@ -886,7 +886,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
 
     const wrapper = findAnyByTestID(renderer, 'orientation-hero-renderer-wrapper');
     expect(wrapper?.props.accessible).toBe(true);
-    expect(wrapper?.props.accessibilityLabel).toBe('ميلان 4 درجة لليمين، ارتفاع المقدمة 2 درجة، الاتجاه 90 درجة');
+    expect(wrapper?.props.accessibilityLabel).toBe('ميلان 4 درجة لليمين، انخفاض المقدمة 2 درجة، الاتجاه 90 درجة');
 
     const resetButton = findAnyByTestID(renderer, 'orientation-hero-reset-button');
     expect(resetButton?.props.accessibilityRole).toBe('button');

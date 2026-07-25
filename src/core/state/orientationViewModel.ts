@@ -29,13 +29,18 @@
  * used). This is stated once, here, specifically so Step 2 never has to
  * invent its own ad-hoc transform order.
  *
- * SIGN CONVENTION (adopted, NOT independently re-verified against
- * firmware source this pass - unlike the decidegree/whole-degree unit
- * split, which Pass 7.0 DID verify directly against imu.h/imu.c): positive
- * roll = right, positive pitch = nose up. This matches Betaflight
- * Configurator's own published attitude-indicator convention. Flagged
- * explicitly so it can be confirmed against real hardware during manual
- * Setup screen testing rather than silently trusted.
+ * SIGN CONVENTION (Pass 7.5C - verified against firmware source AND real
+ * hardware, superseding the earlier adopted-but-unverified claim that raw
+ * positive pitch meant nose up): MSP_ATTITUDE raw pitch is positive =
+ * physical nose DOWN (Betaflight imu.c @ pinned commit 0ccf5955,
+ * getSinPitchAngle(): "Positive angle - nose down, negative angle - nose
+ * up"; INAV and EmuFlight use the identical formula, and this is the
+ * app's declared generic MSP contract for UNKNOWN firmware too). The
+ * PRESENTATION contract is positive pitch = nose up, positive roll =
+ * right - so toViewDegrees() below negates pitch exactly once at this
+ * firmware->presentation boundary. Nothing upstream (decoder, telemetry)
+ * or downstream (renderer, readouts, accessibility) may add another sign
+ * change.
  */
 
 import type {MspAttitude, TelemetryValue} from '../protocol';
@@ -90,9 +95,14 @@ function toViewDegrees(
   // Roll/pitch: decidegrees -> whole degrees (/10). Yaw: already whole
   // degrees on the wire (Pass 7.0's own verified finding) - do NOT
   // re-divide it.
+  // Pitch is additionally negated exactly once, HERE and nowhere else:
+  // MSP raw pitch is positive = physical nose DOWN, while presentation
+  // pitch (renderer, numeric readout, accessibility) is positive =
+  // physical nose UP. The offset is presentation-domain, so the order is
+  // convert -> negate -> subtract offset -> normalize.
   return {
     rollDeg: normalizeSignedDegrees(attitude.rollDecidegrees / 10 - offset.rollDeg),
-    pitchDeg: normalizeSignedDegrees(attitude.pitchDecidegrees / 10 - offset.pitchDeg),
+    pitchDeg: normalizeSignedDegrees(-(attitude.pitchDecidegrees / 10) - offset.pitchDeg),
     yawDeg: normalizeHeadingDegrees(attitude.yawDegrees - offset.yawDeg),
   };
 }

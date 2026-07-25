@@ -24,7 +24,7 @@ describe('deriveOrientationViewState', () => {
     expect(deriveOrientationViewState(telemetry, ZERO_OFFSET)).toEqual({status: 'ERROR'});
   });
 
-  it('maps FRESH to LIVE, converting roll/pitch decidegrees to whole degrees and leaving yaw (already whole degrees) unconverted', () => {
+  it('maps FRESH to LIVE, converting roll/pitch decidegrees to whole degrees (pitch negated into the presentation domain) and leaving yaw (already whole degrees) unconverted', () => {
     const telemetry: TelemetryValue<MspAttitude> = {
       status: 'FRESH',
       value: attitude(150, -300, 270),
@@ -33,7 +33,8 @@ describe('deriveOrientationViewState', () => {
     expect(deriveOrientationViewState(telemetry, ZERO_OFFSET)).toEqual({
       status: 'LIVE',
       rollDeg: 15,
-      pitchDeg: -30,
+      // Raw -300 dd = firmware nose UP 30deg -> presentation +30 (Pass 7.5C).
+      pitchDeg: 30,
       yawDeg: 270,
     });
   });
@@ -48,7 +49,8 @@ describe('deriveOrientationViewState', () => {
     expect(deriveOrientationViewState(telemetry, ZERO_OFFSET)).toEqual({
       status: 'STALE',
       rollDeg: 4,
-      pitchDeg: 2,
+      // Raw +20 dd = firmware nose DOWN 2deg -> presentation -2 (Pass 7.5C).
+      pitchDeg: -2,
       yawDeg: 90,
       ageMs: 850,
     });
@@ -60,7 +62,8 @@ describe('deriveOrientationViewState', () => {
       value: attitude(50, 50, 50),
       updatedAtMs: 0,
     };
-    expect(deriveOrientationViewState(telemetry)).toEqual({status: 'LIVE', rollDeg: 5, pitchDeg: 5, yawDeg: 50});
+    // Pitch: raw +50 dd -> presentation -5 (Pass 7.5C sign contract).
+    expect(deriveOrientationViewState(telemetry)).toEqual({status: 'LIVE', rollDeg: 5, pitchDeg: -5, yawDeg: 50});
   });
 
   describe('view offset application', () => {
@@ -71,11 +74,12 @@ describe('deriveOrientationViewState', () => {
         updatedAtMs: 0,
       };
       const offset: OrientationViewOffset = {rollDeg: 5, pitchDeg: -3, yawDeg: 20};
-      // roll: 15 - 5 = 10, pitch: 10 - (-3) = 13, yaw: 100 - 20 = 80
+      // roll: 15 - 5 = 10; pitch (presentation-domain offset, Pass 7.5C):
+      // -(100/10) - (-3) = -7; yaw: 100 - 20 = 80
       expect(deriveOrientationViewState(telemetry, offset)).toEqual({
         status: 'LIVE',
         rollDeg: 10,
-        pitchDeg: 13,
+        pitchDeg: -7,
         yawDeg: 80,
       });
     });
@@ -89,9 +93,44 @@ describe('deriveOrientationViewState', () => {
       expect(deriveOrientationViewState(telemetry, ZERO_OFFSET)).toEqual({
         status: 'LIVE',
         rollDeg: -27.5,
-        pitchDeg: 89.9,
+        // Raw +899 dd -> presentation -89.9 (Pass 7.5C sign contract).
+        pitchDeg: -89.9,
         yawDeg: 359,
       });
+    });
+  });
+
+  describe('firmware->presentation pitch sign (Pass 7.5C RC-CONVENTION regression)', () => {
+    // MSP_ATTITUDE pitch is positive = nose DOWN (Betaflight imu.c @
+    // 0ccf5955: attitude.values.pitch = asin(getSinPitchAngle()), whose
+    // own comment reads "Positive angle - nose down, negative angle -
+    // nose up"; INAV/EmuFlight share the identical formula). The
+    // presentation contract (renderer, numeric readout, accessibility)
+    // is positive = nose UP, so the view model must negate pitch exactly
+    // once - here, at the firmware->presentation boundary.
+    it('raw +100 decidegrees (nose down) with zero offset presents as -10 (nose down on screen)', () => {
+      const telemetry: TelemetryValue<MspAttitude> = {status: 'FRESH', value: attitude(0, 100, 0), updatedAtMs: 0};
+      expect(deriveOrientationViewState(telemetry, ZERO_OFFSET)).toMatchObject({pitchDeg: -10});
+    });
+
+    it('raw -100 decidegrees (nose up) with zero offset presents as +10 (nose up on screen)', () => {
+      const telemetry: TelemetryValue<MspAttitude> = {status: 'FRESH', value: attitude(0, -100, 0), updatedAtMs: 0};
+      expect(deriveOrientationViewState(telemetry, ZERO_OFFSET)).toMatchObject({pitchDeg: 10});
+    });
+
+    it('negates BEFORE subtracting the presentation-domain offset: raw -100 dd with pitch offset +3 presents as +7', () => {
+      // Correct order: (-(-100/10)) - 3 = 10 - 3 = 7.
+      // Old (uncorrected) code would give (-100/10) - 3 = -13; the wrong
+      // order (subtract-then-negate, -((-10) - 3)) would give 13 - so 7
+      // discriminates against both.
+      const telemetry: TelemetryValue<MspAttitude> = {status: 'FRESH', value: attitude(0, -100, 0), updatedAtMs: 0};
+      const offset: OrientationViewOffset = {rollDeg: 0, pitchDeg: 3, yawDeg: 0};
+      expect(deriveOrientationViewState(telemetry, offset)).toMatchObject({pitchDeg: 7});
+    });
+
+    it('roll and yaw keep their existing equations - no negation leaks into either', () => {
+      const telemetry: TelemetryValue<MspAttitude> = {status: 'FRESH', value: attitude(150, 0, 270), updatedAtMs: 0};
+      expect(deriveOrientationViewState(telemetry, ZERO_OFFSET)).toMatchObject({rollDeg: 15, yawDeg: 270});
     });
   });
 
