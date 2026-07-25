@@ -249,6 +249,15 @@ export interface MspTelemetrySchedulerOptions {
   /** Defaults to RealClock (Date.now()-based). Inject a FakeClock in
    * tests - see clock.ts. */
   clock?: MonotonicClock;
+  /** Pass 7.6c - capacity-safe mode for the real serialized MSP link
+   * (~224ms measured round trip): when true, tick() starts NO new
+   * dispatch while ANY poll is still in flight (global concurrency of
+   * exactly one), and never dispatches two sub-zero-priority (auxiliary)
+   * polls consecutively while a priority>=0 poll is due. Default false
+   * preserves pre-7.6c behavior exactly (existing tests and any consumer
+   * relying on overlapping dispatches are untouched); the coordinator
+   * opts in explicitly. */
+  singleFlight?: boolean;
 }
 
 /** Pass 7.4: stable singleton references for getValue()'s two payload-
@@ -273,15 +282,20 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private inFlightCount = 0;
   private idleWaiters: Array<() => void> = [];
 
+  private lastDispatchedPriority: number | undefined;
+
   constructor(
     private readonly requester: MspRequester,
     private readonly clock: MonotonicClock,
+    private readonly singleFlight: boolean = false,
   ) {}
 
   registerPoll<T>(definition: MspPollDefinition<T>): () => void {
     const state: PollRuntimeState<T> = {
       definition,
-      dueAtMs: this.clock.now(),
+      // Pass 7.6c: optional phase stagger - default 0 keeps the
+      // long-established immediately-due-at-registration behavior.
+      dueAtMs: this.clock.now() + (definition.initialDelayMs ?? 0),
       inFlight: false,
       lastOutcome: undefined,
       lastSuccessAtMs: undefined,
@@ -338,11 +352,33 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       this.refreshStaleness(poll, now);
     }
 
-    if (this.activeLeaseIds.size <= 0) {
+    // Pass 7.6c singleFlight: with a genuinely serialized ~224ms MSP
+    // link, starting a second dispatch while one is outstanding only
+    // builds a client-side queue (backlog) - so in this mode at most ONE
+    // telemetry dispatch may be outstanding at any moment, scheduler-wide.
+    const dispatchBlocked = this.singleFlight && this.inFlightCount > 0;
+    if (this.activeLeaseIds.size <= 0 && !dispatchBlocked) {
+      // Pass 7.6c aux alternation (singleFlight mode only): never run two
+      // auxiliary (priority < 0) polls back-to-back while a primary
+      // (priority >= 0, i.e. attitude) poll is due - the primary gets the
+      // slot first, keeping the high-frequency channel responsive.
+      let restrictToPrimary = false;
+      if (this.singleFlight && this.lastDispatchedPriority !== undefined && this.lastDispatchedPriority < 0) {
+        for (const poll of this.polls.values()) {
+          if (!poll.inFlight && now >= poll.dueAtMs && poll.definition.priority >= 0) {
+            restrictToPrimary = true;
+            break;
+          }
+        }
+      }
+
       let best: PollRuntimeState | undefined;
       let bestRatio = -Infinity;
       for (const poll of this.polls.values()) {
         if (poll.inFlight || now < poll.dueAtMs) {
+          continue;
+        }
+        if (restrictToPrimary && poll.definition.priority < 0) {
           continue;
         }
         const ratio = (now - poll.dueAtMs) / poll.definition.intervalMs;
@@ -355,6 +391,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       }
 
       if (best) {
+        this.lastDispatchedPriority = best.definition.priority;
         this.dispatch(best, now);
       }
     }
@@ -461,5 +498,5 @@ export function createMspTelemetryScheduler(
   requester: MspRequester,
   options: MspTelemetrySchedulerOptions = {},
 ): MspTelemetryScheduler {
-  return new MspTelemetrySchedulerImpl(requester, options.clock ?? new RealClock());
+  return new MspTelemetrySchedulerImpl(requester, options.clock ?? new RealClock(), options.singleFlight ?? false);
 }

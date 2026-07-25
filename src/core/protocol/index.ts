@@ -47,7 +47,19 @@ export type {
   MspClientDiagnosticEvent,
 } from './mspClient';
 
-export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE, MSP_BATTERY_STATE} from './msp';
+export {
+  MSP_API_VERSION,
+  MSP_FC_VARIANT,
+  MSP_BOARD_INFO,
+  MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  MSP_BATTERY_CONFIG,
+  MSP_RAW_GPS,
+  MSP_ANALOG,
+  MSP_STATUS_EX,
+  STATUS_SENSOR_GPS_BIT,
+  CURRENT_METER_SOURCE,
+} from './msp';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
@@ -57,8 +69,8 @@ export {
   EMUFLIGHT_PINNED_COMMIT,
 } from './msp';
 export {MspPayloadReader, MspPayloadReadError} from './msp';
-export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, decodeBatteryState} from './msp';
-export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState} from './msp';
+export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, decodeBatteryState, decodeAnalog, decodeRawGps, decodeStatusEx, decodeBatteryConfig} from './msp';
+export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState, MspAnalog, MspRawGpsCompact, MspStatusExCompact, MspBatteryConfig} from './msp';
 export {
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,

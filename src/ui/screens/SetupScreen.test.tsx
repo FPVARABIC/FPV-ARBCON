@@ -31,7 +31,17 @@ import {
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
-import {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE, MSP_BATTERY_STATE} from '../../core';
+import {
+  MSP_API_VERSION,
+  MSP_FC_VARIANT,
+  MSP_BOARD_INFO,
+  MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  MSP_BATTERY_CONFIG,
+  MSP_ANALOG,
+  MSP_RAW_GPS,
+  MSP_STATUS_EX,
+} from '../../core';
 import type {ArmingBlockReason} from '../../core';
 import {buildMspFrameBytes} from '../../core/protocol/__testUtils__/mspFixtures';
 import {base64ToBytes, bytesToBase64} from '../../platforms/react-native/protocol/base64';
@@ -237,6 +247,22 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
   // all measurements 0) keeps every test isolated without changing any
   // assertion or production behavior.
   fake.setResponse(MSP_BATTERY_STATE, Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]));
+  // Pass 7.6c (same isolation rationale): production now also issues a
+  // ONE-SHOT MSP_BATTERY_CONFIG read and registers three auxiliary polls
+  // (MSP_ANALOG / MSP_RAW_GPS / MSP_STATUS_EX, phase-staggered at
+  // 700/1400/2100ms) for every identified BETAFLIGHT session. Benign
+  // responses keep the serialized queue flowing in tests that advance
+  // past those times; tests needing different behavior overwrite them.
+  fake.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 1]));
+  fake.setResponse(MSP_ANALOG, Uint8Array.from([168, ...u16le(0), ...u16le(540), ...u16le(0), ...u16le(1680)]));
+  fake.setResponse(
+    MSP_RAW_GPS,
+    Uint8Array.from([2, 8, 0, 0, 0, 0, 0, 0, 0, 0, ...u16le(0), ...u16le(0), ...u16le(0)]),
+  );
+  fake.setResponse(
+    MSP_STATUS_EX,
+    Uint8Array.from([...u16le(312), ...u16le(0), ...u16le(41), 0, 0, 0, 0, 0, ...u16le(12)]),
+  );
   return fake;
 }
 

@@ -137,6 +137,74 @@
  *   define command 130 but their payload contracts were deliberately NOT
  *   verified or adopted in this pass - the battery poll is gated to
  *   identified BETAFLIGHT sessions (see MspSessionCoordinator.ts).
+ *
+ * PASS 7.6c (auxiliary Region 3 telemetry: MSP_ANALOG, MSP_RAW_GPS,
+ * MSP_STATUS_EX, and the one-shot MSP_BATTERY_CONFIG) - VERIFICATION
+ * STRATEGY: every layout below was read at TWO fixed points and found
+ * IDENTICAL for all consumed fields:
+ *   (a) BETAFLIGHT_PINNED_COMMIT above (master, API_VERSION 1.48), and
+ *   (b) release tag 4.5.5 = commit 4adbd3ef7cb546947600e5f747bd5453c9573063
+ *       (msp_protocol.h API_VERSION 1.46 - 4.5.x is the latest release
+ *       line; a 4.6.0 tag does not exist upstream).
+ * The bench flight controller reports API 1.47, strictly between the two
+ * verified endpoints, so its layouts for these commands necessarily
+ * match. All four commands are Betaflight-gated exactly like
+ * MSP_BATTERY_STATE.
+ *
+ * MSP_ANALOG (110) - msp.c:786-792 @ pin, msp.c:757-763 @ 4.5.5 -
+ * exactly 9 mandatory bytes, in order:
+ *     sbufWriteU8(...getLegacyBatteryVoltage...)   // 0.1V, saturates 25.5V
+ *     sbufWriteU16(getMAhDrawn())                  // consumed mAh
+ *     sbufWriteU16(getRssi())                      // 0..1023 - RSSI_MAX_VALUE,
+ *                                                  // rx/rx.h:193 @ pin. RSSI,
+ *                                                  // NOT link quality.
+ *     sbufWriteU16((int16_t)getAmperage())         // SIGNED, 0.01A
+ *     sbufWriteU16(getBatteryVoltage())            // 0.01V
+ *   The wire carries NO RSSI-source-configured flag: a raw 0 cannot be
+ *   distinguished from "no RSSI source configured" by this command alone
+ *   (see auxTelemetrySemantics.ts's NOT_DISTINGUISHABLE policy). Only the
+ *   RSSI field feeds the Receiver card; the duplicate battery fields
+ *   never replace the verified MSP_BATTERY_STATE channel.
+ *
+ * MSP_RAW_GPS (106) - msp.c:1569-1579 @ pin, msp.c:1508-1518 @ 4.5.5 -
+ * 16 mandatory bytes, in order:
+ *     sbufWriteU8(STATE(GPS_FIX))       // RAW stateFlags bit: GPS_FIX =
+ *                                       // (1 << 1) = 2, fc/runtime_config.h:124
+ *                                       // @ pin - the byte is 0 or 2, NEVER
+ *                                       // assume 1; decode as `!== 0`. A
+ *                                       // generic fix flag - no 2D/3D
+ *                                       // distinction exists on this wire.
+ *     sbufWriteU8(gpsSol.numSat)
+ *     sbufWriteU32(lat) / sbufWriteU32(lon)  // decoded past for structural
+ *                                       // integrity, NEVER retained -
+ *                                       // privacy enforced by model shape
+ *                                       // (decodeRawGps.ts).
+ *     sbufWriteU16(altitude) / sbufWriteU16(groundSpeed) / sbufWriteU16(groundCourse)
+ *   Trailing u16 pdop: "Added in API version 1.44" - historical note, and
+ *   the app's minimum accepted API is 1.42, so it is treated as optional
+ *   trailing data and ignored.
+ *
+ * MSP_STATUS_EX (150) - msp.c:1131-1147 @ pin, msp.c:1080-1096 @ 4.5.5 -
+ * only the fixed 13-byte prefix is consumed:
+ *     u16 cycle time (us); u16 i2c error counter (CUMULATIVE since boot);
+ *     u16 sensor-presence mask (ACC=1, BARO=2, MAG=4, GPS=8,
+ *     RANGEFINDER=16, GYRO=32; the pin adds OPTICALFLOW=64 - an ADDITIVE
+ *     bit, prefix layout unchanged; a set bit means DETECTED, never
+ *     "healthy"); u32 flight mode flags (skipped); u8 pid profile index
+ *     (skipped); u16 average system load percent, constrained
+ *     0..LOAD_PERCENTAGE_ONE=100 (fc/core.h:33 @ pin).
+ *   Everything past offset 12 is version-variable tail and ignored
+ *   (decodeStatusEx.ts).
+ *
+ * MSP_BATTERY_CONFIG (32) - msp.c:926-936 @ pin, msp.c:898-908 @ 4.5.5 -
+ * 7 mandatory bytes (+ 3x u16 high-resolution trailing, ignored):
+ *     u8 min/max/warning cell voltage (0.1V); u16 CONFIGURED capacity mAh
+ *     (CLI `bat_capacity`, u16, range 0..20000 - cli/settings.c:996 @
+ *     pin); u8 voltageMeterSource; u8 currentMeterSource -
+ *     currentMeterSource_e, sensors/current.h:26-33 @ pin: NONE=0, ADC=1,
+ *     VIRTUAL=2, ESC=3, MSP=4.
+ *   ONE-SHOT read per session, never polled - consumed exclusively by the
+ *   charge-estimate prerequisites (batteryChargeEstimate.ts).
  */
 
 export const BETAFLIGHT_SOURCE_REPO = 'https://github.com/betaflight/betaflight';

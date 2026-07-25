@@ -3,11 +3,25 @@ import {
   MspOwnershipActivationError,
   ATTITUDE_TELEMETRY_POLL_ID,
   BATTERY_TELEMETRY_POLL_ID,
+  RECEIVER_TELEMETRY_POLL_ID,
+  GPS_TELEMETRY_POLL_ID,
+  FC_STATUS_TELEMETRY_POLL_ID,
 } from './MspSessionCoordinator';
 import type {MspSessionOwnershipState} from './MspSessionCoordinator';
 import {RNMspTransport} from './RNMspTransport';
-import {MspClient, MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE, MSP_BATTERY_STATE} from '../../../core';
-import type {MspAttitude, MspBatteryState} from '../../../core';
+import {
+  MspClient,
+  MSP_API_VERSION,
+  MSP_FC_VARIANT,
+  MSP_BOARD_INFO,
+  MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  MSP_BATTERY_CONFIG,
+  MSP_ANALOG,
+  MSP_RAW_GPS,
+  MSP_STATUS_EX,
+} from '../../../core';
+import type {MspAttitude, MspBatteryState, MspAnalog, MspRawGpsCompact, MspStatusExCompact} from '../../../core';
 import {buildMspFrameBytes} from '../../../core/protocol/__testUtils__/mspFixtures';
 import {base64ToBytes, bytesToBase64} from './base64';
 import type {UsbSerialDataEvent, UsbSerialSessionDetachedEvent, UsbSerialTransportClient} from '../transport';
@@ -108,6 +122,12 @@ interface FakeClient {
    * poll goes STALE by age) is exactly what the battery staleness test
    * needs and cannot be produced any other way without timers. */
   holdWritesFor: (command: number) => void;
+  /** Pass 7.6c (additive): scripts an MSP v1 ERROR-direction ('!') frame
+   * for this command - the real wire shape a flight controller uses to
+   * reject an unsupported command, which MspClient surfaces as
+   * MspClientError('MSP_REMOTE_ERROR') (mspClient.ts). Needed by the
+   * circuit-breaker UNSUPPORTED tests; never referenced elsewhere. */
+  setErrorResponse: (command: number) => void;
 }
 
 /**
@@ -126,6 +146,7 @@ function makeFakeClient(
   const dataListeners = new Set<(event: UsbSerialDataEvent) => void>();
   const sessionDetachedListeners = new Set<(event: UsbSerialSessionDetachedEvent) => void>();
   const responses = new Map<number, Uint8Array>();
+  const errorResponseCommands = new Set<number>();
   const heldWriteCommands = new Set<number>();
   let resolveStartReadingImpl: () => void = () => undefined;
   const startReadingPromise = options.deferStartReading
@@ -135,8 +156,8 @@ function makeFakeClient(
     : Promise.resolve(undefined);
   let rejectNextWriteReason: {reason: unknown} | undefined;
 
-  const emitFrame = (command: number, payload: Uint8Array) => {
-    const frameBytes = buildMspFrameBytes(command, payload, {wireFormat: 'v1', direction: 'response'});
+  const emitFrame = (command: number, payload: Uint8Array, direction: 'response' | 'error' = 'response') => {
+    const frameBytes = buildMspFrameBytes(command, payload, {wireFormat: 'v1', direction});
     const event: UsbSerialDataEvent = {sessionId, dataBase64: bytesToBase64(frameBytes)};
     for (const listener of Array.from(dataListeners)) {
       listener(event);
@@ -164,6 +185,12 @@ function makeFakeClient(
       // see the FakeClient interface doc for why.
       if (heldWriteCommands.has(command)) {
         return new Promise<void>(() => undefined);
+      }
+      // Pass 7.6c (additive): a scripted remote rejection - see the
+      // FakeClient interface doc for setErrorResponse().
+      if (errorResponseCommands.has(command)) {
+        Promise.resolve().then(() => emitFrame(command, new Uint8Array(0), 'error'));
+        return Promise.resolve(undefined);
       }
       const payload = responses.get(command);
       if (payload) {
@@ -213,6 +240,9 @@ function makeFakeClient(
     holdWritesFor: (command: number) => {
       heldWriteCommands.add(command);
     },
+    setErrorResponse: (command: number) => {
+      errorResponseCommands.add(command);
+    },
   };
 }
 
@@ -234,6 +264,26 @@ function makeHappyFakeClient(sessionId: string): FakeClient {
   client.setResponse(
     MSP_BATTERY_STATE,
     Uint8Array.from([4, ...u16le(1500), 168, ...u16le(0), ...u16le(0), 0, ...u16le(1680)]),
+  );
+  // Pass 7.6c (additive, same isolation rationale as the battery response
+  // above): production now also registers three auxiliary polls
+  // (MSP_ANALOG / MSP_RAW_GPS / MSP_STATUS_EX, phase-staggered at
+  // 700/1400/2100ms) and issues a ONE-SHOT MSP_BATTERY_CONFIG request for
+  // every successfully-identified BETAFLIGHT session. Benign scripted
+  // responses keep pre-existing "happy" tests isolated from the new
+  // channels; tests needing different aux behavior overwrite/clear them.
+  client.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 1]));
+  client.setResponse(
+    MSP_ANALOG,
+    Uint8Array.from([168, ...u16le(0), ...u16le(540), ...u16le(0), ...u16le(1680)]),
+  );
+  client.setResponse(
+    MSP_RAW_GPS,
+    Uint8Array.from([2, 8, 0, 0, 0, 0, 0, 0, 0, 0, ...u16le(0), ...u16le(0), ...u16le(0)]),
+  );
+  client.setResponse(
+    MSP_STATUS_EX,
+    Uint8Array.from([...u16le(312), ...u16le(0), ...u16le(41), 0, 0, 0, 0, 0, ...u16le(12)]),
   );
   return client;
 }
@@ -577,9 +627,11 @@ describe('MspSessionCoordinator - Pass 6.4b ownership lifecycle', () => {
 
     await flushAsync();
 
-    // Exactly one identify() round (API_VERSION, FC_VARIANT, BOARD_INFO) -
-    // 3 writeBytes() calls total, not 6.
-    expect(client.writeBytes).toHaveBeenCalledTimes(3);
+    // Exactly one identify() round (API_VERSION, FC_VARIANT, BOARD_INFO)
+    // plus Pass 7.6c's single one-shot MSP_BATTERY_CONFIG read after the
+    // one successful BETAFLIGHT identification - 4 writeBytes() calls
+    // total, not 8 (a second identify() round would double it).
+    expect(client.writeBytes).toHaveBeenCalledTimes(4);
 
     coordinator.deactivateMspSession(SESSION_ID);
   });
@@ -1259,6 +1311,11 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
     client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
     client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
     client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    // Pass 7.6c: an unanswered one-shot MSP_BATTERY_CONFIG would occupy
+    // the serialized MSP queue until its 2000ms response timeout and
+    // block the battery dispatch this test times - benign response, same
+    // isolation rationale as makeHappyFakeClient()'s.
+    client.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 1]));
 
     coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
     client.resolveStartReading();
@@ -1276,8 +1333,12 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
 
     await flushAsync(); // identification settles -> battery registers
 
-    expect(registerSpy).toHaveBeenCalledTimes(1);
-    expect(registerSpy.mock.calls[0][0]).toMatchObject({
+    // Pass 7.6c: battery is no longer the only registration - the three
+    // auxiliary Region 3 polls register in the same finish() path (their
+    // own exact specs are asserted in the Pass 7.6c describe below).
+    expect(registerSpy).toHaveBeenCalledTimes(4);
+    const batteryCall = registerSpy.mock.calls.find(call => call[0].id === BATTERY_TELEMETRY_POLL_ID);
+    expect(batteryCall?.[0]).toMatchObject({
       id: BATTERY_TELEMETRY_POLL_ID,
       command: MSP_BATTERY_STATE,
       intervalMs: 3000,
@@ -1514,6 +1575,20 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
     client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
     client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
     client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    // Pass 7.6c: the session now also runs the one-shot MSP_BATTERY_CONFIG
+    // and the three auxiliary polls - answered at the same 224ms service
+    // time so this test keeps modeling the REAL shared-queue contention
+    // instead of 2000ms response-timeout stalls that no healthy link has.
+    client.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 1]));
+    client.setResponse(MSP_ANALOG, Uint8Array.from([168, ...u16le(0), ...u16le(540), ...u16le(0), ...u16le(1680)]));
+    client.setResponse(
+      MSP_RAW_GPS,
+      Uint8Array.from([2, 8, 0, 0, 0, 0, 0, 0, 0, 0, ...u16le(0), ...u16le(0), ...u16le(0)]),
+    );
+    client.setResponse(
+      MSP_STATUS_EX,
+      Uint8Array.from([...u16le(312), ...u16le(0), ...u16le(41), 0, 0, 0, 0, 0, ...u16le(12)]),
+    );
 
     coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
     await flushAsync();
@@ -1574,5 +1649,527 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
     // - a straggler settling after afterEach's useRealTimers() would
     // otherwise schedule a real timer and trip Jest's exit watchdog.
     await flushAsync();
+  });
+});
+
+describe('MspSessionCoordinator - Pass 7.6c auxiliary Region 3 telemetry (Receiver/GPS/FC status) and one-shot battery config', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    // Same double-drain backstop as the Pass 7.6a describe above - see
+    // its afterEach comment for the full straggler rationale.
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  const countWritesFor = (client: FakeClient, command: number) =>
+    client.writeBytes.mock.calls.filter(call => base64ToBytes(call[1] as string)[4] === command).length;
+
+  /** Verified 9-byte MSP_ANALOG payload (mspCommandSources.ts). */
+  const GOLDEN_ANALOG = Uint8Array.from([168, ...u16le(350), ...u16le(540), ...u16le(1234), ...u16le(1685)]);
+  /** Verified 16-byte MSP_RAW_GPS payload: raw GPS_FIX bit (2), 11 sats,
+   * deliberately NON-ZERO coordinate bytes (they must be dropped). */
+  const GOLDEN_RAW_GPS = Uint8Array.from([2, 11, 0x15, 0xcd, 0x5b, 0x07, 0xa1, 0x86, 0x01, 0x00, ...u16le(300), ...u16le(100), ...u16le(9000)]);
+  /** Verified 13-byte MSP_STATUS_EX fixed prefix: 900us cycle, 7 i2c
+   * errors, mask ACC|GPS|GYRO=41, cpu 42%. */
+  const GOLDEN_STATUS_EX = Uint8Array.from([...u16le(900), ...u16le(7), ...u16le(41), 0, 0, 0, 0, 1, ...u16le(42)]);
+  /** Verified 7-byte MSP_BATTERY_CONFIG: 3.3/4.3/3.5V cells, 1500mAh,
+   * voltage meter 1, current meter ADC(1). */
+  const GOLDEN_BATTERY_CONFIG = Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 1]);
+
+  function makeAuxHappyClient(sessionId: string): FakeClient {
+    const client = makeHappyFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_ANALOG, GOLDEN_ANALOG);
+    client.setResponse(MSP_RAW_GPS, GOLDEN_RAW_GPS);
+    client.setResponse(MSP_STATUS_EX, GOLDEN_STATUS_EX);
+    client.setResponse(MSP_BATTERY_CONFIG, GOLDEN_BATTERY_CONFIG);
+    return client;
+  }
+
+  it('registers the three auxiliary polls with EXACTLY the authorized capacity-safe specifications (intervals, staleness, priorities, phase stagger)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeFakeClient(SESSION_ID, {deferStartReading: true});
+    client.setResponse(MSP_API_VERSION, apiVersionPayload());
+    client.setResponse(MSP_FC_VARIANT, fcVariantPayload('BTFL'));
+    client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, Uint8Array.from([4, ...u16le(1500), 168, ...u16le(0), ...u16le(0), 0, ...u16le(1680)]));
+    client.setResponse(MSP_BATTERY_CONFIG, GOLDEN_BATTERY_CONFIG);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    client.resolveStartReading();
+    let scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    for (let i = 0; i < 5 && !scheduler; i++) {
+      await Promise.resolve();
+      scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    }
+    expect(scheduler).toBeDefined();
+    const registerSpy = jest.spyOn(scheduler!, 'registerPoll');
+
+    await flushAsync(); // identification settles -> battery + aux register
+
+    const byId = (id: string) => registerSpy.mock.calls.find(call => call[0].id === id)?.[0];
+    expect(byId(RECEIVER_TELEMETRY_POLL_ID)).toMatchObject({
+      command: MSP_ANALOG,
+      intervalMs: 4000,
+      staleAfterMs: 12000,
+      priority: -2,
+      initialDelayMs: 700,
+    });
+    expect(byId(GPS_TELEMETRY_POLL_ID)).toMatchObject({
+      command: MSP_RAW_GPS,
+      intervalMs: 5000,
+      staleAfterMs: 15000,
+      priority: -3,
+      initialDelayMs: 1400,
+    });
+    expect(byId(FC_STATUS_TELEMETRY_POLL_ID)).toMatchObject({
+      command: MSP_STATUS_EX,
+      intervalMs: 8000,
+      staleAfterMs: 24000,
+      priority: -4,
+      initialDelayMs: 2100,
+    });
+    // Battery (asserted fully in the Pass 7.6a describe) plus the three
+    // auxiliaries - and nothing else.
+    expect(registerSpy).toHaveBeenCalledTimes(4);
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('phase-staggers the first auxiliary dispatches (receiver ~700ms, gps ~1400ms, fc ~2100ms) - no startup burst', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    await jest.advanceTimersByTimeAsync(650);
+    expect(countWritesFor(client, MSP_ANALOG)).toBe(0);
+    expect(countWritesFor(client, MSP_RAW_GPS)).toBe(0);
+    expect(countWritesFor(client, MSP_STATUS_EX)).toBe(0);
+
+    await jest.advanceTimersByTimeAsync(100); // t = 750
+    expect(countWritesFor(client, MSP_ANALOG)).toBe(1);
+    expect(countWritesFor(client, MSP_RAW_GPS)).toBe(0);
+    expect(countWritesFor(client, MSP_STATUS_EX)).toBe(0);
+
+    await jest.advanceTimersByTimeAsync(700); // t = 1450
+    expect(countWritesFor(client, MSP_RAW_GPS)).toBe(1);
+    expect(countWritesFor(client, MSP_STATUS_EX)).toBe(0);
+
+    await jest.advanceTimersByTimeAsync(700); // t = 2150
+    expect(countWritesFor(client, MSP_STATUS_EX)).toBe(1);
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('round-trips all three auxiliary payloads through the real decoders - and the GPS value structurally CANNOT carry coordinates', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    await jest.advanceTimersByTimeAsync(2200);
+    await flushAsync();
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+
+    expect(scheduler?.getValue<MspAnalog>(RECEIVER_TELEMETRY_POLL_ID)).toMatchObject({
+      status: 'FRESH',
+      value: {legacyVoltageDecivolts: 168, consumedMah: 350, rssi: 540, amperageCentiamps: 1234, voltageCentivolts: 1685},
+    });
+    const gpsValue = scheduler?.getValue<MspRawGpsCompact>(GPS_TELEMETRY_POLL_ID);
+    expect(gpsValue).toMatchObject({status: 'FRESH', value: {hasFix: true, satelliteCount: 11}});
+    if (gpsValue?.status === 'FRESH') {
+      // Privacy by model shape: exactly these two keys, nothing else -
+      // the scripted payload deliberately carried non-zero coordinates.
+      expect(Object.keys(gpsValue.value).sort()).toEqual(['hasFix', 'satelliteCount']);
+    }
+    expect(scheduler?.getValue<MspStatusExCompact>(FC_STATUS_TELEMETRY_POLL_ID)).toMatchObject({
+      status: 'FRESH',
+      value: {cycleTimeUs: 900, i2cErrorCount: 7, sensorPresenceMask: 41, cpuLoadPercent: 42},
+    });
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, GPS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, FC_STATUS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('never registers auxiliary polls or requests battery config for INAV/EMUFLIGHT/UNKNOWN families (Betaflight-only gating)', async () => {
+    for (const identifier of ['INAV', 'EMUF', 'XXXX']) {
+      const sessionId = `aux-family-${identifier}`;
+      const coordinator = new MspSessionCoordinator();
+      const client = makeFakeClient(sessionId);
+      client.setResponse(MSP_API_VERSION, apiVersionPayload());
+      client.setResponse(MSP_FC_VARIANT, fcVariantPayload(identifier));
+      client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+      client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+      client.setResponse(MSP_ANALOG, GOLDEN_ANALOG);
+      client.setResponse(MSP_BATTERY_CONFIG, GOLDEN_BATTERY_CONFIG);
+
+      coordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+      expect(coordinator.getIdentificationState(sessionId)).toMatchObject({status: 'SUCCEEDED'});
+
+      await jest.advanceTimersByTimeAsync(3000);
+      await flushAsync();
+      expect(countWritesFor(client, MSP_ANALOG)).toBe(0);
+      expect(countWritesFor(client, MSP_RAW_GPS)).toBe(0);
+      expect(countWritesFor(client, MSP_STATUS_EX)).toBe(0);
+      expect(countWritesFor(client, MSP_BATTERY_CONFIG)).toBe(0);
+      expect(coordinator.getBatteryConfigState(sessionId)).toBeUndefined();
+      // Default 'ACTIVE' verdict; the poll ids simply read UNAVAILABLE.
+      expect(coordinator.getAuxTelemetryChannelState(sessionId, RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+      expect(
+        coordinator.getTelemetryScheduler(sessionId)?.getValue<MspAnalog>(RECEIVER_TELEMETRY_POLL_ID),
+      ).toEqual({status: 'UNAVAILABLE'});
+      coordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    }
+  });
+
+  it('circuit-breaks a structurally invalid response as DECODE_FAILED after ONE dispatch - and the other channels keep polling', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    client.setResponse(MSP_ANALOG, Uint8Array.from([1, 2, 3])); // truncated - decodeAnalog throws
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    await jest.advanceTimersByTimeAsync(800);
+    await flushAsync();
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('DECODE_FAILED');
+    // Unregistered: reads UNAVAILABLE and NEVER polls again this session.
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspAnalog>(RECEIVER_TELEMETRY_POLL_ID),
+    ).toEqual({status: 'UNAVAILABLE'});
+
+    await jest.advanceTimersByTimeAsync(9000);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_ANALOG)).toBe(1);
+    // Isolation: gps/fc/battery/attitude are entirely unaffected.
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, GPS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, FC_STATUS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    expect(scheduler?.getValue<MspRawGpsCompact>(GPS_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(scheduler?.getValue<MspStatusExCompact>(FC_STATUS_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(scheduler?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('circuit-breaks an explicit MSP error frame as UNSUPPORTED after ONE dispatch (the FC rejected the command)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    client.clearResponse(MSP_RAW_GPS);
+    client.setErrorResponse(MSP_RAW_GPS);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushAsync();
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, GPS_TELEMETRY_POLL_ID)).toBe('UNSUPPORTED');
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspRawGpsCompact>(GPS_TELEMETRY_POLL_ID),
+    ).toEqual({status: 'UNAVAILABLE'});
+
+    await jest.advanceTimersByTimeAsync(11_000);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_RAW_GPS)).toBe(1);
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, FC_STATUS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('a timeout BEFORE any success gets exactly ONE delayed retry, then DISABLED (never labeled UNSUPPORTED)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    client.clearResponse(MSP_ANALOG); // write succeeds, response never arrives -> 2000ms response timeout
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    // First dispatch ~700ms, times out ~2700ms (failure 1 - one permitted
+    // delayed retry at the NEXT interval); retry ~4700ms, times out
+    // ~6700ms (failure 2 -> DISABLED).
+    await jest.advanceTimersByTimeAsync(3000);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_ANALOG)).toBe(1);
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+
+    await jest.advanceTimersByTimeAsync(4000); // t = 7000 - retry has timed out
+    await flushAsync();
+    expect(countWritesFor(client, MSP_ANALOG)).toBe(2);
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('DISABLED');
+
+    // Stays disabled - no third attempt, ever, this physical session.
+    await jest.advanceTimersByTimeAsync(8000);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_ANALOG)).toBe(2);
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('after a success, DISABLES the channel only after 10 CONSECUTIVE errors (bounded recovery, never an unbounded retry loop)', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    // First receiver dispatch succeeds (~700ms).
+    await jest.advanceTimersByTimeAsync(800);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_ANALOG)).toBe(1);
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspAnalog>(RECEIVER_TELEMETRY_POLL_ID),
+    ).toMatchObject({status: 'FRESH'});
+
+    // Every later dispatch times out (2000ms each, ~4000ms cadence).
+    // Failures land at roughly t = 2700 + 4000k; the 10th consecutive
+    // failure settles around t ~ 42.7s -> DISABLED.
+    client.clearResponse(MSP_ANALOG);
+    await jest.advanceTimersByTimeAsync(46_000);
+    await flushAsync();
+
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('DISABLED');
+    expect(countWritesFor(client, MSP_ANALOG)).toBe(11); // 1 success + exactly 10 failures
+    // Isolation: the other channels survived the same 46 seconds.
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, GPS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, FC_STATUS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('reads MSP_BATTERY_CONFIG exactly ONCE per session (never polled) and exposes the decoded config as READY', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    expect(coordinator.getBatteryConfigState(SESSION_ID)).toEqual({
+      status: 'READY',
+      config: {
+        minCellVoltageDecivolts: 33,
+        maxCellVoltageDecivolts: 43,
+        warningCellVoltageDecivolts: 35,
+        configuredCapacityMah: 1500,
+        voltageMeterSourceRaw: 1,
+        currentMeterSourceRaw: 1,
+      },
+    });
+
+    await jest.advanceTimersByTimeAsync(20_000);
+    await flushAsync();
+    expect(countWritesFor(client, MSP_BATTERY_CONFIG)).toBe(1);
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('a malformed battery-config response yields FAILED - the estimate is disabled but the battery voltage channel is untouched', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    client.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([1, 2])); // truncated - decode fails
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    expect(coordinator.getBatteryConfigState(SESSION_ID)).toEqual({status: 'FAILED'});
+
+    await jest.advanceTimersByTimeAsync(200);
+    await flushAsync();
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toMatchObject({status: 'FRESH'});
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('a battery-config request timeout yields FAILED without breaking any polling channel', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    client.clearResponse(MSP_BATTERY_CONFIG); // response never arrives -> 2000ms timeout
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+
+    expect(coordinator.getBatteryConfigState(SESSION_ID)).toEqual({status: 'PENDING'});
+    await jest.advanceTimersByTimeAsync(2200);
+    await flushAsync();
+    expect(coordinator.getBatteryConfigState(SESSION_ID)).toEqual({status: 'FAILED'});
+
+    // The polls recover once the stuck one-shot releases the serialized
+    // queue - all channels still ACTIVE and being served.
+    await jest.advanceTimersByTimeAsync(3000);
+    await flushAsync();
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    expect(scheduler?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+    expect(scheduler?.getValue<MspAnalog>(RECEIVER_TELEMETRY_POLL_ID)).toMatchObject({status: 'FRESH'});
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('subscribeAuxTelemetry() notifies on lifecycle changes and unsubscribing stops the notifications', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeAuxHappyClient(SESSION_ID);
+    let notifications = 0;
+    const unsubscribe = coordinator.subscribeAuxTelemetry(() => {
+      notifications += 1;
+    });
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    expect(notifications).toBeGreaterThan(0); // registration + config PENDING->READY
+
+    unsubscribe();
+    const after = notifications;
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+    expect(notifications).toBe(after);
+  });
+
+  it('getters default safely for unknown sessions (ACTIVE / undefined) and teardown clears every aux surface and timer', async () => {
+    const coordinator = new MspSessionCoordinator();
+    expect(coordinator.getAuxTelemetryChannelState('never-opened', RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getBatteryConfigState('never-opened')).toBeUndefined();
+
+    const client = makeAuxHappyClient(SESSION_ID);
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(800);
+    await flushAsync();
+    expect(coordinator.getBatteryConfigState(SESSION_ID)).toMatchObject({status: 'READY'});
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+    expect(coordinator.getBatteryConfigState(SESSION_ID)).toBeUndefined();
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getTelemetryScheduler(SESSION_ID)).toBeUndefined();
+    // No timer of any kind survives teardown (tick driver cleared,
+    // MspClient response timers cleared by dispose).
+    expect(jest.getTimerCount()).toBe(0);
+  });
+
+  it('LOAD: 60 simulated seconds at the measured ~224ms service time - concurrency one, no backlog, no burst, attitude never stale (max gap < 600ms), auxiliaries never starved, clean teardown', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeFakeClient(SESSION_ID, {responseDelayMs: 224});
+    client.setResponse(MSP_API_VERSION, apiVersionPayload());
+    client.setResponse(MSP_FC_VARIANT, fcVariantPayload('BTFL'));
+    client.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, Uint8Array.from([4, ...u16le(1500), 168, ...u16le(0), ...u16le(0), 0, ...u16le(1680)]));
+    client.setResponse(MSP_ANALOG, GOLDEN_ANALOG);
+    client.setResponse(MSP_RAW_GPS, GOLDEN_RAW_GPS);
+    client.setResponse(MSP_STATUS_EX, GOLDEN_STATUS_EX);
+    client.setResponse(MSP_BATTERY_CONFIG, GOLDEN_BATTERY_CONFIG);
+
+    // Timestamped write log (modern fake timers mock Date.now(), so these
+    // are exact fake-clock readings).
+    const writeLog: Array<{cmd: number; at: number}> = [];
+    const baseImpl = client.writeBytes.getMockImplementation()!;
+    client.writeBytes.mockImplementation((sessionId: string, dataBase64: string) => {
+      writeLog.push({cmd: base64ToBytes(dataBase64)[4], at: Date.now()});
+      return baseImpl(sessionId, dataBase64);
+    });
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID)!;
+
+    // Identification itself takes 3 sequential 224ms round trips; the
+    // one-shot config write marks the moment telemetry registration
+    // happened (finish()).
+    const successTimes = new Map<string, number[]>([
+      [ATTITUDE_TELEMETRY_POLL_ID, []],
+      [BATTERY_TELEMETRY_POLL_ID, []],
+      [RECEIVER_TELEMETRY_POLL_ID, []],
+      [GPS_TELEMETRY_POLL_ID, []],
+      [FC_STATUS_TELEMETRY_POLL_ID, []],
+    ]);
+    let attitudeWentStale = false;
+    for (let step = 0; step < 1200; step++) {
+      await jest.advanceTimersByTimeAsync(50);
+      for (const [id, times] of successTimes) {
+        const value = scheduler.getValue<unknown>(id);
+        if (value.status === 'FRESH' && times[times.length - 1] !== value.updatedAtMs) {
+          times.push(value.updatedAtMs);
+        }
+        if (id === ATTITUDE_TELEMETRY_POLL_ID && value.status === 'STALE') {
+          attitudeWentStale = true;
+        }
+      }
+    }
+
+    // --- Wire discipline: the link is genuinely serialized end to end.
+    // Every consecutive write is at least one full 224ms service time
+    // after the previous one - therefore concurrency was exactly one,
+    // there was never a queued backlog burst, and no startup burst.
+    for (let i = 1; i < writeLog.length; i++) {
+      expect(writeLog[i].at - writeLog[i - 1].at).toBeGreaterThanOrEqual(224);
+    }
+    // Bounded total demand: a 224ms-serialized link fits at most
+    // 60000/224 ~ 268 requests in the window (+identify+config slack).
+    expect(writeLog.length).toBeLessThanOrEqual(272);
+
+    // --- Phase stagger honored relative to registration (the config
+    // write time): no auxiliary fired before its initial delay.
+    const configAt = writeLog.find(write => write.cmd === MSP_BATTERY_CONFIG)!.at;
+    const firstWriteAt = (cmd: number) => writeLog.find(write => write.cmd === cmd)?.at;
+    expect(firstWriteAt(MSP_ANALOG)! - configAt).toBeGreaterThanOrEqual(700);
+    expect(firstWriteAt(MSP_RAW_GPS)! - configAt).toBeGreaterThanOrEqual(1400);
+    expect(firstWriteAt(MSP_STATUS_EX)! - configAt).toBeGreaterThanOrEqual(2100);
+
+    // --- Attitude health: never crossed its 700ms stale boundary, and
+    // the maximum gap between successful readings stayed under 600ms.
+    expect(attitudeWentStale).toBe(false);
+    const attitudeTimes = successTimes.get(ATTITUDE_TELEMETRY_POLL_ID)!;
+    expect(attitudeTimes.length).toBeGreaterThanOrEqual(150);
+    let maxAttitudeGap = 0;
+    for (let i = 1; i < attitudeTimes.length; i++) {
+      maxAttitudeGap = Math.max(maxAttitudeGap, attitudeTimes[i] - attitudeTimes[i - 1]);
+    }
+    expect(maxAttitudeGap).toBeLessThan(600);
+
+    // --- Auxiliaries genuinely served (not starved) at their own
+    // cadences across the 60s window.
+    expect(successTimes.get(BATTERY_TELEMETRY_POLL_ID)!.length).toBeGreaterThanOrEqual(14);
+    expect(successTimes.get(RECEIVER_TELEMETRY_POLL_ID)!.length).toBeGreaterThanOrEqual(10);
+    expect(successTimes.get(GPS_TELEMETRY_POLL_ID)!.length).toBeGreaterThanOrEqual(8);
+    expect(successTimes.get(FC_STATUS_TELEMETRY_POLL_ID)!.length).toBeGreaterThanOrEqual(5);
+    // Every channel ended the hour-long-feeling window still healthy.
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, RECEIVER_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, GPS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, FC_STATUS_TELEMETRY_POLL_ID)).toBe('ACTIVE');
+    expect(coordinator.getBatteryConfigState(SESSION_ID)).toMatchObject({status: 'READY'});
+
+    // --- Detach/disposal leaves no active RECURRING timer. Two one-shot
+    // straggler classes are drained first because they are bounded and
+    // harmless: (a) the FIXTURE's own 224ms response-emit setTimeout for
+    // a request mid-service when the loop ended (its frame lands on a
+    // disposed client - a no-op), and (b) the documented ~rare teardown
+    // microtask-chain interleaving (the Pass 7.6a lesson) where a write
+    // settling across dispose can still start one final one-shot 2000ms
+    // response timeout. Advancing past BOTH consumes every one-shot; the
+    // assertion then proves what actually matters - the telemetry tick
+    // interval (the only recurring timer) is genuinely gone, since an
+    // interval would survive any amount of advancing.
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(2250);
+    await flushAsync();
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

@@ -61,11 +61,21 @@
 
 import {
   MspClient,
+  MspClientError,
   MspIdentificationService,
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
+  MSP_BATTERY_CONFIG,
+  MSP_ANALOG,
+  MSP_RAW_GPS,
+  MSP_STATUS_EX,
+  MspPayloadReadError,
   decodeAttitude,
   decodeBatteryState,
+  decodeAnalog,
+  decodeRawGps,
+  decodeStatusEx,
+  decodeBatteryConfig,
   createMspTelemetryScheduler,
 } from '../../../core';
 import type {
@@ -74,12 +84,15 @@ import type {
   MspTelemetryScheduler,
   MspAttitude,
   MspBatteryState,
+  MspBatteryConfig,
   MspClientState,
 } from '../../../core';
 import type {UsbSerialTransportClient} from '../transport';
 import {RNMspTransport} from './RNMspTransport';
 import {createBatteryDebugLogger} from './batteryDebugLog';
 import type {BatteryDebugLogger} from './batteryDebugLog';
+import {createAuxTelemetryDebugLogger} from './auxTelemetryDebugLog';
+import type {AuxTelemetryDebugLogger} from './auxTelemetryDebugLog';
 
 /** Pass 7.4: the one MSP_ATTITUDE poll every session's real
  * MspTelemetryScheduler registers - a stable exported id so the UI layer
@@ -151,6 +164,57 @@ const BATTERY_POLL_STALE_AFTER_MS = 9000;
  * (MspTelemetryScheduler.ts's own selection model); this only settles
  * EXACT ratio ties in attitude's favor. */
 const BATTERY_POLL_PRIORITY = -1;
+
+/**
+ * Pass 7.6c: the three auxiliary Region 3 polls - Betaflight-gated exactly
+ * like battery, registered in the SAME identification finish(). All three
+ * are deliberately slow (the ~224ms serialized link has no spare fast-
+ * cadence headroom - see BATTERY_POLL_INTERVAL_MS's own capacity note),
+ * phase-staggered so they can never all become due in one startup burst,
+ * and strictly below battery's priority so exact overdue-ratio ties
+ * resolve toward the older channels. The scheduler runs in singleFlight
+ * mode (one outstanding telemetry dispatch, ever - see
+ * MspTelemetrySchedulerOptions.singleFlight).
+ */
+export const RECEIVER_TELEMETRY_POLL_ID = 'receiver';
+export const GPS_TELEMETRY_POLL_ID = 'gps';
+export const FC_STATUS_TELEMETRY_POLL_ID = 'fcStatus';
+
+const RECEIVER_POLL_INTERVAL_MS = 4000;
+const RECEIVER_POLL_STALE_AFTER_MS = 12000;
+const RECEIVER_POLL_PRIORITY = -2;
+const RECEIVER_POLL_INITIAL_DELAY_MS = 700;
+
+const GPS_POLL_INTERVAL_MS = 5000;
+const GPS_POLL_STALE_AFTER_MS = 15000;
+const GPS_POLL_PRIORITY = -3;
+const GPS_POLL_INITIAL_DELAY_MS = 1400;
+
+const FC_STATUS_POLL_INTERVAL_MS = 8000;
+const FC_STATUS_POLL_STALE_AFTER_MS = 24000;
+const FC_STATUS_POLL_PRIORITY = -4;
+const FC_STATUS_POLL_INITIAL_DELAY_MS = 2100;
+
+/** Pass 7.6c circuit breaker: consecutive post-success failures before a
+ * channel is disabled for the rest of the physical session ("bounded
+ * recovery, never an unbounded retry loop"). */
+const AUX_MAX_CONSECUTIVE_ERRORS_AFTER_SUCCESS = 10;
+
+/** Per-channel lifecycle verdict for the CURRENT physical session. A new
+ * physical session (new generation) probes capabilities again from
+ * scratch. 'ACTIVE' is also returned for sessions where the channel never
+ * registered (non-Betaflight) - the poll id simply reads UNAVAILABLE
+ * through the normal scheduler mechanism there. */
+export type AuxTelemetryChannelState = 'ACTIVE' | 'UNSUPPORTED' | 'DECODE_FAILED' | 'DISABLED';
+
+/** One-shot MSP_BATTERY_CONFIG outcome for the current session. undefined
+ * (from the getter) = not a compatible-Betaflight session. */
+export type BatteryConfigState =
+  | {status: 'PENDING'}
+  | {status: 'FAILED'}
+  | {status: 'READY'; config: MspBatteryConfig};
+
+const EMPTY_REQUEST_PAYLOAD = new Uint8Array(0);
 
 export type MspSessionOwnershipState = 'INACTIVE' | 'ACTIVATING' | 'ACTIVE' | 'CLOSING';
 
@@ -261,6 +325,13 @@ interface SessionEntry {
    * emit its bounded stop line. undefined for every non-Betaflight /
    * unidentified session. */
   batteryDebugLog: BatteryDebugLogger | undefined;
+  /** Pass 7.6c: per-channel circuit-breaker verdicts + supervisor
+   * tracking for the auxiliary Region 3 polls; empty/undefined for
+   * non-Betaflight sessions. */
+  auxChannelStates: Map<string, AuxTelemetryChannelState>;
+  auxUnregisterFns: Map<string, () => void>;
+  batteryConfigState: BatteryConfigState | undefined;
+  auxDebugLog: AuxTelemetryDebugLogger | undefined;
 }
 
 /** Never a real generation number (generationCounter starts at 1 and only
@@ -309,6 +380,7 @@ export class MspSessionCoordinator {
   private readonly sessions = new Map<string, SessionEntry>();
   private readonly ownershipStates = new Map<string, MspSessionOwnershipState>();
   private readonly ownershipListeners = new Set<() => void>();
+  private readonly auxTelemetryListeners = new Set<() => void>();
   private readonly identificationListeners = new Set<() => void>();
   /** Pass 7.4: a THIRD, dedicated axis alongside ownership/identification
    * - see startTelemetry()'s own doc comment for why this could not
@@ -425,6 +497,10 @@ export class MspSessionCoordinator {
       tickIntervalHandle: undefined,
       mspClientStateUnsubscribe,
       batteryDebugLog: undefined,
+      auxChannelStates: new Map(),
+      auxUnregisterFns: new Map(),
+      batteryConfigState: undefined,
+      auxDebugLog: undefined,
     });
     this.ownershipStates.set(sessionId, 'ACTIVE');
     this.notifyOwnership();
@@ -612,6 +688,12 @@ export class MspSessionCoordinator {
           batteryDebugLog.onValue(schedulerForLog.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID));
         });
         current.batteryDebugLog = batteryDebugLog;
+
+        // ---- Pass 7.6c: auxiliary Region 3 channels (same Betaflight
+        // gate, same generation guard, same scheduler) - phase-staggered
+        // slow polls plus a per-channel circuit breaker (see the
+        // AuxTelemetryChannelState doc above). ----
+        this.registerAuxTelemetry(sessionId, generation, current, mspClient);
       }
       this.notifyIdentification();
     };
@@ -668,7 +750,10 @@ export class MspSessionCoordinator {
       return;
     }
 
-    const scheduler = createMspTelemetryScheduler(mspClient);
+    // Pass 7.6c: singleFlight - the real MSP link is serialized at
+    // ~224ms per round trip, so at most ONE telemetry dispatch may be
+    // outstanding at any moment (see MspTelemetrySchedulerOptions).
+    const scheduler = createMspTelemetryScheduler(mspClient, {singleFlight: true});
     scheduler.registerPoll<MspAttitude>({
       id: ATTITUDE_TELEMETRY_POLL_ID,
       command: MSP_ATTITUDE,
@@ -937,6 +1022,252 @@ export class MspSessionCoordinator {
     // sessions whose battery poll ever registered.
     entry.batteryDebugLog?.onTeardown(reason);
     entry.batteryDebugLog = undefined;
+    // Pass 7.6c: aux channels die with the scheduler (their unregister
+    // functions are moot once the scheduler reference is dropped) - one
+    // bounded stop line, then clear the per-session verdicts.
+    entry.auxDebugLog?.onTeardown(reason);
+    entry.auxDebugLog = undefined;
+    entry.auxChannelStates.clear();
+    entry.auxUnregisterFns.clear();
+    entry.batteryConfigState = undefined;
+    this.notifyAuxTelemetry();
+  }
+
+  /**
+   * Pass 7.6c: registers the three auxiliary polls, wires the per-channel
+   * circuit-breaker supervisor, starts the ONE-SHOT MSP_BATTERY_CONFIG
+   * read, and emits the bounded [FPV-TELEM] observability. Runs only
+   * inside the generation-guarded, Betaflight-identified finish() path.
+   */
+  private registerAuxTelemetry(
+    sessionId: string,
+    generation: number,
+    entry: SessionEntry,
+    mspClient: MspClient,
+  ): void {
+    const scheduler = entry.telemetryScheduler;
+    if (scheduler === undefined) {
+      return; // defensive - same invariant as the battery registration
+    }
+
+    const auxLog = createAuxTelemetryDebugLogger(sessionId, generation);
+    entry.auxDebugLog = auxLog;
+
+    const definitions: Array<{
+      id: string;
+      command: number;
+      intervalMs: number;
+      staleAfterMs: number;
+      priority: number;
+      initialDelayMs: number;
+      decode: (payload: Uint8Array) => unknown;
+      summarize: (value: unknown) => string;
+    }> = [
+      {
+        id: RECEIVER_TELEMETRY_POLL_ID,
+        command: MSP_ANALOG,
+        intervalMs: RECEIVER_POLL_INTERVAL_MS,
+        staleAfterMs: RECEIVER_POLL_STALE_AFTER_MS,
+        priority: RECEIVER_POLL_PRIORITY,
+        initialDelayMs: RECEIVER_POLL_INITIAL_DELAY_MS,
+        decode: decodeAnalog,
+        summarize: value => `rssi=${(value as {rssi: number}).rssi}`,
+      },
+      {
+        id: GPS_TELEMETRY_POLL_ID,
+        command: MSP_RAW_GPS,
+        intervalMs: GPS_POLL_INTERVAL_MS,
+        staleAfterMs: GPS_POLL_STALE_AFTER_MS,
+        priority: GPS_POLL_PRIORITY,
+        initialDelayMs: GPS_POLL_INITIAL_DELAY_MS,
+        decode: decodeRawGps,
+        // NEVER coordinates - the compact model cannot even carry them.
+        summarize: value => {
+          const gps = value as {hasFix: boolean; satelliteCount: number};
+          return `fix=${gps.hasFix} sats=${gps.satelliteCount}`;
+        },
+      },
+      {
+        id: FC_STATUS_TELEMETRY_POLL_ID,
+        command: MSP_STATUS_EX,
+        intervalMs: FC_STATUS_POLL_INTERVAL_MS,
+        staleAfterMs: FC_STATUS_POLL_STALE_AFTER_MS,
+        priority: FC_STATUS_POLL_PRIORITY,
+        initialDelayMs: FC_STATUS_POLL_INITIAL_DELAY_MS,
+        decode: decodeStatusEx,
+        summarize: value => {
+          const status = value as {cpuLoadPercent: number; cycleTimeUs: number};
+          return `cpu=${status.cpuLoadPercent}% cycle=${status.cycleTimeUs}us`;
+        },
+      },
+    ];
+
+    for (const definition of definitions) {
+      entry.auxChannelStates.set(definition.id, 'ACTIVE');
+      const unregister = scheduler.registerPoll({
+        id: definition.id,
+        command: definition.command,
+        intervalMs: definition.intervalMs,
+        staleAfterMs: definition.staleAfterMs,
+        priority: definition.priority,
+        initialDelayMs: definition.initialDelayMs,
+        decode: definition.decode,
+      });
+      entry.auxUnregisterFns.set(definition.id, unregister);
+    }
+    auxLog.onServiceStart(definitions.map(definition => definition.id));
+
+    // Supervisor: classifies each NEW settle (cachedValue is replaced
+    // with a fresh object exactly once per settle - object identity is
+    // the settle detector) and applies the circuit-breaker rules.
+    const tracking = new Map<
+      string,
+      {lastRef: unknown; lastStatus: string | undefined; hadSuccess: boolean; preSuccessFailures: number; consecutiveErrors: number; firstOutcomeLogged: boolean}
+    >(definitions.map(definition => [definition.id, {lastRef: undefined, lastStatus: undefined, hadSuccess: false, preSuccessFailures: 0, consecutiveErrors: 0, firstOutcomeLogged: false}]));
+
+    const breakChannel = (id: string, state: AuxTelemetryChannelState, cause: string) => {
+      entry.auxUnregisterFns.get(id)?.();
+      entry.auxUnregisterFns.delete(id);
+      entry.auxChannelStates.set(id, state);
+      auxLog.onCircuitBreak(id, state, cause);
+      this.notifyAuxTelemetry();
+    };
+
+    scheduler.subscribe(() => {
+      if (!this.isCurrentGeneration(sessionId, generation)) {
+        return;
+      }
+      for (const definition of definitions) {
+        if (entry.auxChannelStates.get(definition.id) !== 'ACTIVE') {
+          continue;
+        }
+        const track = tracking.get(definition.id)!;
+        const value = scheduler.getValue<unknown>(definition.id);
+        const isNewSettle = value !== track.lastRef;
+        const statusChanged = value.status !== track.lastStatus;
+        if (!isNewSettle && !statusChanged) {
+          continue;
+        }
+        track.lastRef = value;
+        track.lastStatus = value.status;
+
+        if (value.status === 'FRESH' && isNewSettle) {
+          track.hadSuccess = true;
+          track.consecutiveErrors = 0;
+        }
+
+        const summary =
+          value.status === 'FRESH' || value.status === 'STALE' ? definition.summarize(value.value) : undefined;
+        const settled = value.status === 'FRESH' || value.status === 'ERROR';
+        if (settled && !track.firstOutcomeLogged) {
+          track.firstOutcomeLogged = true;
+          auxLog.onFirstOutcome(definition.id, value.status, summary);
+        } else if (statusChanged) {
+          auxLog.onChannelTransition(definition.id, value.status, summary);
+        }
+
+        if (value.status === 'ERROR' && isNewSettle) {
+          const error = value.error;
+          if (error instanceof MspPayloadReadError) {
+            // Structurally invalid response - never poll it again this
+            // physical session.
+            breakChannel(definition.id, 'DECODE_FAILED', 'decode');
+          } else if (error instanceof MspClientError && error.code === 'MSP_REMOTE_ERROR') {
+            // The FC explicitly rejected the command - proven
+            // unsupported for this session.
+            breakChannel(definition.id, 'UNSUPPORTED', 'remote-error');
+          } else if (!track.hadSuccess) {
+            // Timeout/request failure BEFORE any success: the next
+            // scheduled attempt (a full interval later, after the client
+            // is back to READY) is the one permitted delayed retry.
+            track.preSuccessFailures += 1;
+            if (track.preSuccessFailures >= 2) {
+              breakChannel(definition.id, 'DISABLED', 'pre-success-failures');
+            }
+          } else {
+            // Temporary failure after success: bounded recovery via the
+            // normal cadence, but never an unbounded loop.
+            track.consecutiveErrors += 1;
+            if (track.consecutiveErrors >= AUX_MAX_CONSECUTIVE_ERRORS_AFTER_SUCCESS) {
+              breakChannel(definition.id, 'DISABLED', 'post-success-failures');
+            }
+          }
+        }
+      }
+    });
+    this.notifyAuxTelemetry();
+
+    // ---- One-shot MSP_BATTERY_CONFIG (never polled) - percentage
+    // prerequisites only; its failure disables ONLY the estimate and can
+    // never touch the proven voltage channel. ----
+    entry.batteryConfigState = {status: 'PENDING'};
+    this.notifyAuxTelemetry();
+    mspClient.request(MSP_BATTERY_CONFIG, EMPTY_REQUEST_PAYLOAD, {wireFormat: 'v1'}).then(
+      frame => {
+        if (!this.isCurrentGeneration(sessionId, generation)) {
+          return; // late result from a replaced session - discarded
+        }
+        const still = this.sessions.get(sessionId);
+        if (!still) {
+          return;
+        }
+        try {
+          const config = decodeBatteryConfig(frame.payload);
+          still.batteryConfigState = {status: 'READY', config};
+          auxLog.onBatteryConfigOutcome(
+            `READY capacity=${config.configuredCapacityMah}mAh meterSource=${config.currentMeterSourceRaw}`,
+          );
+        } catch {
+          still.batteryConfigState = {status: 'FAILED'};
+          auxLog.onBatteryConfigOutcome('FAILED decode');
+        }
+        this.notifyAuxTelemetry();
+      },
+      () => {
+        if (!this.isCurrentGeneration(sessionId, generation)) {
+          return;
+        }
+        const still = this.sessions.get(sessionId);
+        if (!still) {
+          return;
+        }
+        still.batteryConfigState = {status: 'FAILED'};
+        auxLog.onBatteryConfigOutcome('FAILED request');
+        this.notifyAuxTelemetry();
+      },
+    );
+  }
+
+  /** Pass 7.6c: the current circuit-breaker verdict for an auxiliary
+   * channel. 'ACTIVE' for unknown sessions/channels - the poll id then
+   * simply reads UNAVAILABLE through the scheduler as always. */
+  getAuxTelemetryChannelState(sessionId: string, pollId: string): AuxTelemetryChannelState {
+    return this.sessions.get(sessionId)?.auxChannelStates.get(pollId) ?? 'ACTIVE';
+  }
+
+  /** Pass 7.6c: the one-shot battery-config outcome; undefined when the
+   * session is absent or not an identified-compatible Betaflight one. */
+  getBatteryConfigState(sessionId: string): BatteryConfigState | undefined {
+    return this.sessions.get(sessionId)?.batteryConfigState;
+  }
+
+  /** Pass 7.6c: fires on any aux channel-state or battery-config change -
+   * same Set/snapshot/try-catch convention as every other subscribe here. */
+  subscribeAuxTelemetry(listener: () => void): () => void {
+    this.auxTelemetryListeners.add(listener);
+    return () => {
+      this.auxTelemetryListeners.delete(listener);
+    };
+  }
+
+  private notifyAuxTelemetry(): void {
+    for (const listener of Array.from(this.auxTelemetryListeners)) {
+      try {
+        listener();
+      } catch {
+        // Best-effort - same convention as notifyOwnership().
+      }
+    }
   }
 
   private notifyOwnership(): void {

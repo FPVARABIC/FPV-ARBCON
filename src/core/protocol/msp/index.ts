@@ -1,4 +1,14 @@
-export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE, MSP_BATTERY_STATE} from './commands/mspCommands';
+export {
+  MSP_API_VERSION,
+  MSP_FC_VARIANT,
+  MSP_BOARD_INFO,
+  MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  MSP_BATTERY_CONFIG,
+  MSP_RAW_GPS,
+  MSP_ANALOG,
+  MSP_STATUS_EX,
+} from './commands/mspCommands';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
@@ -19,6 +29,14 @@ export {decodeAttitude} from './decoding/decodeAttitude';
 export type {MspAttitude} from './decoding/decodeAttitude';
 export {decodeBatteryState} from './decoding/decodeBatteryState';
 export type {MspBatteryState} from './decoding/decodeBatteryState';
+export {decodeAnalog} from './decoding/decodeAnalog';
+export type {MspAnalog} from './decoding/decodeAnalog';
+export {decodeRawGps} from './decoding/decodeRawGps';
+export type {MspRawGpsCompact} from './decoding/decodeRawGps';
+export {decodeStatusEx, STATUS_SENSOR_GPS_BIT} from './decoding/decodeStatusEx';
+export type {MspStatusExCompact} from './decoding/decodeStatusEx';
+export {decodeBatteryConfig, CURRENT_METER_SOURCE} from './decoding/decodeBatteryConfig';
+export type {MspBatteryConfig} from './decoding/decodeBatteryConfig';
 
 export {
   checkMspCompatibility,

@@ -35,6 +35,10 @@ export type {
   MspBoardInfo,
   MspAttitude,
   MspBatteryState,
+  MspAnalog,
+  MspRawGpsCompact,
+  MspStatusExCompact,
+  MspBatteryConfig,
   MspCompatibilityResult,
   MspFcFamily,
   MspFcVariant,
@@ -79,6 +83,12 @@ export {
   MSP_BOARD_INFO,
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
+  MSP_BATTERY_CONFIG,
+  MSP_RAW_GPS,
+  MSP_ANALOG,
+  MSP_STATUS_EX,
+  STATUS_SENSOR_GPS_BIT,
+  CURRENT_METER_SOURCE,
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
   INAV_SOURCE_REPO,
@@ -92,6 +102,10 @@ export {
   decodeBoardInfo,
   decodeAttitude,
   decodeBatteryState,
+  decodeAnalog,
+  decodeRawGps,
+  decodeStatusEx,
+  decodeBatteryConfig,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
@@ -117,3 +131,7 @@ export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeSco
 // constraint, not a new convention.
 export {deriveBatterySemantics} from './state/batteryTelemetry';
 export type {BatteryFirmwareState, BatterySensorValidity, BatterySemantics} from './state/batteryTelemetry';
+export {deriveBatteryChargeEstimate, BATTERY_CAPACITY_MAX_MAH} from './state/batteryChargeEstimate';
+export type {BatteryChargeEstimate} from './state/batteryChargeEstimate';
+export {deriveReceiverRssi, isGpsPresent, deriveGpsCard, RSSI_MAX_VALUE} from './state/auxTelemetrySemantics';
+export type {ReceiverRssiSemantics, GpsCardSemantics} from './state/auxTelemetrySemantics';
