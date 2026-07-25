@@ -373,6 +373,75 @@ describe('computeDroneScene', () => {
     expect(sceneA).toEqual(sceneB);
   });
 
+  describe('Pass 7.5D preview sizing - enlarged, centered, uncropped', () => {
+    // The hero preview is a fixed 260x260 wrapper (OrientationHero's
+    // HERO_SIZE); the Skia canvas clips to it, and no control overlays
+    // it, so the wrapper edges ARE the clipping edges.
+    const PREVIEW = {width: 260, height: 260};
+    const MIN_CLEARANCE = 12;
+    // Every pose the Pass 7.5D bounds-verification contract requires.
+    const POSES: DroneOrientationDeg[] = [
+      {rollDeg: 0, pitchDeg: 0, yawDeg: 0},
+      {rollDeg: 0, pitchDeg: 30, yawDeg: 0},
+      {rollDeg: 0, pitchDeg: -30, yawDeg: 0},
+      {rollDeg: 30, pitchDeg: 0, yawDeg: 0},
+      {rollDeg: -30, pitchDeg: 0, yawDeg: 0},
+      {rollDeg: 0, pitchDeg: 0, yawDeg: 45},
+      {rollDeg: 0, pitchDeg: 0, yawDeg: -45},
+      {rollDeg: 20, pitchDeg: -20, yawDeg: 30},
+    ];
+
+    function sceneBounds(orientation: DroneOrientationDeg): {minX: number; maxX: number; minY: number; maxY: number} {
+      const scene = computeDroneScene(orientation, PREVIEW);
+      const xs = scene.primitives.flatMap(p => p.points.map(pt => pt.x));
+      const ys = scene.primitives.flatMap(p => p.points.map(pt => pt.y));
+      return {minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys)};
+    }
+
+    it('the NEUTRAL model projects to 60%-68% of the usable preview width (large enough for visual hardware judgment)', () => {
+      const b = sceneBounds({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+      const widthRatio = (b.maxX - b.minX) / PREVIEW.width;
+      expect(widthRatio).toBeGreaterThanOrEqual(0.6);
+      expect(widthRatio).toBeLessThanOrEqual(0.68);
+    });
+
+    it('every required verification pose keeps the COMPLETE model uncropped with >=12 units of clearance from every clipping edge', () => {
+      for (const pose of POSES) {
+        const b = sceneBounds(pose);
+        expect(b.minX).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+        expect(b.minY).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+        expect(PREVIEW.width - b.maxX).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+        expect(PREVIEW.height - b.maxY).toBeGreaterThanOrEqual(MIN_CLEARANCE);
+      }
+    });
+
+    it('the model stays visually centered - the rotation fixed point projects to the exact viewport centre and the bounds centre stays near it (perspective asymmetry only)', () => {
+      for (const pose of POSES) {
+        const b = sceneBounds(pose);
+        // Bounds-centre drift from the viewport centre is pure
+        // perspective asymmetry (measured max ~12.6 at the chosen
+        // scale) - a manual translation to fake centering would break
+        // the fixed-point-at-centre property other tests rely on.
+        expect(Math.abs((b.minX + b.maxX) / 2 - PREVIEW.width / 2)).toBeLessThanOrEqual(15);
+        expect(Math.abs((b.minY + b.maxY) / 2 - PREVIEW.height / 2)).toBeLessThanOrEqual(15);
+      }
+    });
+
+    it('the front cue (ARROW) stays fully visible inside the preview in every required pose', () => {
+      for (const pose of POSES) {
+        const scene = computeDroneScene(pose, PREVIEW);
+        const arrowPoints = scene.primitives.filter(p => p.material === 'ARROW').flatMap(p => p.points);
+        expect(arrowPoints.length).toBeGreaterThan(0);
+        for (const pt of arrowPoints) {
+          expect(pt.x).toBeGreaterThanOrEqual(0);
+          expect(pt.x).toBeLessThanOrEqual(PREVIEW.width);
+          expect(pt.y).toBeGreaterThanOrEqual(0);
+          expect(pt.y).toBeLessThanOrEqual(PREVIEW.height);
+        }
+      }
+    });
+  });
+
   it('scales with viewport size - a larger viewport produces a larger projected model', () => {
     const small = computeDroneScene(ZERO, {width: 100, height: 100});
     const large = computeDroneScene(ZERO, {width: 400, height: 400});

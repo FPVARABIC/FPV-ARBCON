@@ -131,6 +131,17 @@ const CAMERA_ELEVATION_DEG = 28; // moderate downward tilt
 const CAMERA_DISTANCE = 6;
 const FOCAL_LENGTH = 1.6;
 
+/** Pass 7.5D - the single presentation-scale knob for how large the
+ * projected model appears inside the preview viewport. Chosen so the
+ * NEUTRAL (0/0/0) model's projected width is ~65% of the preview's
+ * usable width (measured 65.5% at 260x260; was 18.7% at the previous
+ * 0.16), while every required verification pose (pitch/roll +-30, yaw
+ * +-45, compound 20/-20/30) keeps >=12 logical units of clearance from
+ * every viewport edge - verified by droneSceneGeometry.test.ts's
+ * preview-sizing tests. Purely presentational: changes NOTHING about
+ * rotation math, camera direction, geometry, or front identity. */
+const MODEL_PIXEL_SCALE_FACTOR = 0.56;
+
 const CIRCLE_SEGMENT_COUNT = 24;
 
 function degToRad(deg: number): number {
@@ -251,7 +262,7 @@ function project(world: Vec3, camera: Camera, viewportMinDimension: number): Pro
   const camY = vecDot(relative, camera.up);
   const camZ = vecDot(relative, camera.forward);
 
-  const pixelScale = viewportMinDimension * 0.16;
+  const pixelScale = viewportMinDimension * MODEL_PIXEL_SCALE_FACTOR;
   const screenX = (camX / camZ) * FOCAL_LENGTH * pixelScale;
   // Screen Y increases downward; world up must decrease screen Y.
   const screenY = (-camY / camZ) * FOCAL_LENGTH * pixelScale;
