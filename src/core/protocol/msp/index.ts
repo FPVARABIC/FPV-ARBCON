@@ -4,7 +4,6 @@ export {
   MSP_BOARD_INFO,
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
-  MSP_BATTERY_CONFIG,
   MSP_RAW_GPS,
   MSP_ANALOG,
   MSP_STATUS_EX,
@@ -12,6 +11,7 @@ export {
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
+  BETAFLIGHT_API147_COMMIT,
   INAV_SOURCE_REPO,
   INAV_PINNED_COMMIT,
   EMUFLIGHT_SOURCE_REPO,
@@ -35,8 +35,6 @@ export {decodeRawGps} from './decoding/decodeRawGps';
 export type {MspRawGpsCompact} from './decoding/decodeRawGps';
 export {decodeStatusEx, STATUS_SENSOR_GPS_BIT} from './decoding/decodeStatusEx';
 export type {MspStatusExCompact} from './decoding/decodeStatusEx';
-export {decodeBatteryConfig, CURRENT_METER_SOURCE} from './decoding/decodeBatteryConfig';
-export type {MspBatteryConfig} from './decoding/decodeBatteryConfig';
 
 export {
   checkMspCompatibility,

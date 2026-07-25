@@ -18,10 +18,9 @@ export type {
   MspSessionCoordinatorUnsubscribe,
   SetupUiSessionKey,
   AuxTelemetryChannelState,
-  BatteryConfigState,
 } from './MspSessionCoordinator';
 export {useMspOwnershipState, useMspIdentificationState, useMspRecoveryState} from './useMspSessionState';
 export {useTelemetryValue} from './useTelemetryValue';
-export {useAuxTelemetryChannelState, useBatteryConfigState} from './useAuxTelemetry';
+export {useAuxTelemetryChannelState} from './useAuxTelemetry';
 export {SetupUiSessionStore, setupUiSessionStore} from './SetupUiSessionStore';
 export type {SetupUiSessionState} from './SetupUiSessionStore';

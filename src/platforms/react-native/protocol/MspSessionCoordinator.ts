@@ -65,7 +65,6 @@ import {
   MspIdentificationService,
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
-  MSP_BATTERY_CONFIG,
   MSP_ANALOG,
   MSP_RAW_GPS,
   MSP_STATUS_EX,
@@ -75,7 +74,6 @@ import {
   decodeAnalog,
   decodeRawGps,
   decodeStatusEx,
-  decodeBatteryConfig,
   createMspTelemetryScheduler,
 } from '../../../core';
 import type {
@@ -84,7 +82,6 @@ import type {
   MspTelemetryScheduler,
   MspAttitude,
   MspBatteryState,
-  MspBatteryConfig,
   MspClientState,
 } from '../../../core';
 import type {UsbSerialTransportClient} from '../transport';
@@ -195,9 +192,13 @@ const FC_STATUS_POLL_STALE_AFTER_MS = 24000;
 const FC_STATUS_POLL_PRIORITY = -4;
 const FC_STATUS_POLL_INITIAL_DELAY_MS = 2100;
 
-/** Pass 7.6c circuit breaker: consecutive post-success failures before a
- * channel is disabled for the rest of the physical session ("bounded
- * recovery, never an unbounded retry loop"). */
+/** Pass 7.6c circuit breaker: consecutive post-success NON-TIMEOUT
+ * failures (fast-settling rejections that never hold the serialized
+ * link) before a channel is disabled for the rest of the physical
+ * session ("bounded recovery, never an unbounded retry loop"). A
+ * response TIMEOUT is handled separately and more strictly - a single
+ * MSP_TIMEOUT disables the channel immediately (closure correction; see
+ * the supervisor's classification in registerAuxTelemetry()). */
 const AUX_MAX_CONSECUTIVE_ERRORS_AFTER_SUCCESS = 10;
 
 /** Per-channel lifecycle verdict for the CURRENT physical session. A new
@@ -206,15 +207,6 @@ const AUX_MAX_CONSECUTIVE_ERRORS_AFTER_SUCCESS = 10;
  * registered (non-Betaflight) - the poll id simply reads UNAVAILABLE
  * through the normal scheduler mechanism there. */
 export type AuxTelemetryChannelState = 'ACTIVE' | 'UNSUPPORTED' | 'DECODE_FAILED' | 'DISABLED';
-
-/** One-shot MSP_BATTERY_CONFIG outcome for the current session. undefined
- * (from the getter) = not a compatible-Betaflight session. */
-export type BatteryConfigState =
-  | {status: 'PENDING'}
-  | {status: 'FAILED'}
-  | {status: 'READY'; config: MspBatteryConfig};
-
-const EMPTY_REQUEST_PAYLOAD = new Uint8Array(0);
 
 export type MspSessionOwnershipState = 'INACTIVE' | 'ACTIVATING' | 'ACTIVE' | 'CLOSING';
 
@@ -330,7 +322,6 @@ interface SessionEntry {
    * non-Betaflight sessions. */
   auxChannelStates: Map<string, AuxTelemetryChannelState>;
   auxUnregisterFns: Map<string, () => void>;
-  batteryConfigState: BatteryConfigState | undefined;
   auxDebugLog: AuxTelemetryDebugLogger | undefined;
 }
 
@@ -499,7 +490,6 @@ export class MspSessionCoordinator {
       batteryDebugLog: undefined,
       auxChannelStates: new Map(),
       auxUnregisterFns: new Map(),
-      batteryConfigState: undefined,
       auxDebugLog: undefined,
     });
     this.ownershipStates.set(sessionId, 'ACTIVE');
@@ -693,7 +683,7 @@ export class MspSessionCoordinator {
         // gate, same generation guard, same scheduler) - phase-staggered
         // slow polls plus a per-channel circuit breaker (see the
         // AuxTelemetryChannelState doc above). ----
-        this.registerAuxTelemetry(sessionId, generation, current, mspClient);
+        this.registerAuxTelemetry(sessionId, generation, current);
       }
       this.notifyIdentification();
     };
@@ -1029,22 +1019,16 @@ export class MspSessionCoordinator {
     entry.auxDebugLog = undefined;
     entry.auxChannelStates.clear();
     entry.auxUnregisterFns.clear();
-    entry.batteryConfigState = undefined;
     this.notifyAuxTelemetry();
   }
 
   /**
    * Pass 7.6c: registers the three auxiliary polls, wires the per-channel
-   * circuit-breaker supervisor, starts the ONE-SHOT MSP_BATTERY_CONFIG
-   * read, and emits the bounded [FPV-TELEM] observability. Runs only
-   * inside the generation-guarded, Betaflight-identified finish() path.
+   * circuit-breaker supervisor, and emits the bounded [FPV-TELEM]
+   * observability. Runs only inside the generation-guarded,
+   * Betaflight-identified finish() path.
    */
-  private registerAuxTelemetry(
-    sessionId: string,
-    generation: number,
-    entry: SessionEntry,
-    mspClient: MspClient,
-  ): void {
+  private registerAuxTelemetry(sessionId: string, generation: number, entry: SessionEntry): void {
     const scheduler = entry.telemetryScheduler;
     if (scheduler === undefined) {
       return; // defensive - same invariant as the battery registration
@@ -1176,17 +1160,33 @@ export class MspSessionCoordinator {
             // The FC explicitly rejected the command - proven
             // unsupported for this session.
             breakChannel(definition.id, 'UNSUPPORTED', 'remote-error');
+          } else if (error instanceof MspClientError && error.code === 'MSP_TIMEOUT') {
+            // Pass 7.6c closure correction: a genuine response timeout
+            // costs the ENTIRE serialized link its full 2000ms window
+            // (MSP_RESPONSE_TIMEOUT_MILLIS) plus the desync recovery it
+            // triggers - long enough to stall attitude past its 700ms
+            // stale threshold. ONE timeout therefore disables this
+            // channel for the remainder of the CURRENT physical session
+            // - no automatic retry, whether or not the channel had
+            // succeeded before. Classified as timeout/error (DISABLED),
+            // NEVER 'UNSUPPORTED' (a timeout proves nothing about
+            // command support). A genuinely new physical session (new
+            // generation) probes again from scratch, and no other
+            // channel is touched.
+            breakChannel(definition.id, 'DISABLED', 'timeout');
           } else if (!track.hadSuccess) {
-            // Timeout/request failure BEFORE any success: the next
-            // scheduled attempt (a full interval later, after the client
-            // is back to READY) is the one permitted delayed retry.
+            // NON-timeout request failure BEFORE any success (e.g. a
+            // fast-settling write failure or recovery-window rejection -
+            // these never hold the serialized link): the next scheduled
+            // attempt is the one permitted delayed retry.
             track.preSuccessFailures += 1;
             if (track.preSuccessFailures >= 2) {
               breakChannel(definition.id, 'DISABLED', 'pre-success-failures');
             }
           } else {
-            // Temporary failure after success: bounded recovery via the
-            // normal cadence, but never an unbounded loop.
+            // NON-timeout temporary failure after success: bounded
+            // recovery via the normal cadence, but never an unbounded
+            // loop.
             track.consecutiveErrors += 1;
             if (track.consecutiveErrors >= AUX_MAX_CONSECUTIVE_ERRORS_AFTER_SUCCESS) {
               breakChannel(definition.id, 'DISABLED', 'post-success-failures');
@@ -1196,46 +1196,6 @@ export class MspSessionCoordinator {
       }
     });
     this.notifyAuxTelemetry();
-
-    // ---- One-shot MSP_BATTERY_CONFIG (never polled) - percentage
-    // prerequisites only; its failure disables ONLY the estimate and can
-    // never touch the proven voltage channel. ----
-    entry.batteryConfigState = {status: 'PENDING'};
-    this.notifyAuxTelemetry();
-    mspClient.request(MSP_BATTERY_CONFIG, EMPTY_REQUEST_PAYLOAD, {wireFormat: 'v1'}).then(
-      frame => {
-        if (!this.isCurrentGeneration(sessionId, generation)) {
-          return; // late result from a replaced session - discarded
-        }
-        const still = this.sessions.get(sessionId);
-        if (!still) {
-          return;
-        }
-        try {
-          const config = decodeBatteryConfig(frame.payload);
-          still.batteryConfigState = {status: 'READY', config};
-          auxLog.onBatteryConfigOutcome(
-            `READY capacity=${config.configuredCapacityMah}mAh meterSource=${config.currentMeterSourceRaw}`,
-          );
-        } catch {
-          still.batteryConfigState = {status: 'FAILED'};
-          auxLog.onBatteryConfigOutcome('FAILED decode');
-        }
-        this.notifyAuxTelemetry();
-      },
-      () => {
-        if (!this.isCurrentGeneration(sessionId, generation)) {
-          return;
-        }
-        const still = this.sessions.get(sessionId);
-        if (!still) {
-          return;
-        }
-        still.batteryConfigState = {status: 'FAILED'};
-        auxLog.onBatteryConfigOutcome('FAILED request');
-        this.notifyAuxTelemetry();
-      },
-    );
   }
 
   /** Pass 7.6c: the current circuit-breaker verdict for an auxiliary
@@ -1245,14 +1205,8 @@ export class MspSessionCoordinator {
     return this.sessions.get(sessionId)?.auxChannelStates.get(pollId) ?? 'ACTIVE';
   }
 
-  /** Pass 7.6c: the one-shot battery-config outcome; undefined when the
-   * session is absent or not an identified-compatible Betaflight one. */
-  getBatteryConfigState(sessionId: string): BatteryConfigState | undefined {
-    return this.sessions.get(sessionId)?.batteryConfigState;
-  }
-
-  /** Pass 7.6c: fires on any aux channel-state or battery-config change -
-   * same Set/snapshot/try-catch convention as every other subscribe here. */
+  /** Pass 7.6c: fires on any aux channel-state change - same Set/
+   * snapshot/try-catch convention as every other subscribe here. */
   subscribeAuxTelemetry(listener: () => void): () => void {
     this.auxTelemetryListeners.add(listener);
     return () => {

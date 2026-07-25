@@ -64,7 +64,6 @@ import {
   useTelemetryValue,
   useMspOwnershipState,
   useAuxTelemetryChannelState,
-  useBatteryConfigState,
   setupUiSessionStore,
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
@@ -75,12 +74,7 @@ import {
   FC_STATUS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
 import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
-import {
-  deriveOrientationViewState,
-  deriveArmingReadiness,
-  deriveBatteryChargeEstimate,
-  isGpsPresent,
-} from '../../core';
+import {deriveOrientationViewState, deriveArmingReadiness, isGpsPresent} from '../../core';
 import type {
   MspAttitude,
   MspBatteryState,
@@ -127,22 +121,17 @@ function SetupScreenContent({
   const battery = useTelemetryValue<MspBatteryState>(sessionId, BATTERY_TELEMETRY_POLL_ID);
 
   // Pass 7.6c: Region 3's remaining channels - the same generic hook/
-  // scheduler path, plus the per-channel circuit-breaker verdicts and
-  // the one-shot battery-config outcome from the coordinator.
+  // scheduler path, plus the per-channel circuit-breaker verdicts from
+  // the coordinator.
   const receiver = useTelemetryValue<MspAnalog>(sessionId, RECEIVER_TELEMETRY_POLL_ID);
   const gps = useTelemetryValue<MspRawGpsCompact>(sessionId, GPS_TELEMETRY_POLL_ID);
   const fcStatus = useTelemetryValue<MspStatusExCompact>(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
   const receiverChannelState = useAuxTelemetryChannelState(sessionId, RECEIVER_TELEMETRY_POLL_ID);
   const gpsChannelState = useAuxTelemetryChannelState(sessionId, GPS_TELEMETRY_POLL_ID);
   const fcChannelState = useAuxTelemetryChannelState(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
-  const batteryConfigState = useBatteryConfigState(sessionId);
   const ownershipState = useMspOwnershipState(sessionId);
   const connected = ownershipState === 'ACTIVE';
 
-  const chargeEstimate = deriveBatteryChargeEstimate(
-    battery,
-    batteryConfigState?.status === 'READY' ? batteryConfigState.config : undefined,
-  );
   // GPS presence proof comes from the SHARED MSP_STATUS_EX decode (a
   // stale sensor mask still proves the FC detected the hardware);
   // undefined = not provable right now.
@@ -188,7 +177,7 @@ function SetupScreenContent({
             no press actions, no navigation, no horizontal scroll. */}
         <View style={styles.cardGrid} testID="telemetry-card-grid">
           <View style={styles.cardCell}>
-            <BatteryCard telemetry={battery} chargeEstimate={chargeEstimate} />
+            <BatteryCard telemetry={battery} />
           </View>
           <View style={styles.cardCell}>
             <ReceiverCard connected={connected} channelState={receiverChannelState} telemetry={receiver} />

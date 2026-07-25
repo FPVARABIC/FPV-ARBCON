@@ -37,7 +37,6 @@ import {
   MSP_BOARD_INFO,
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
-  MSP_BATTERY_CONFIG,
   MSP_ANALOG,
   MSP_RAW_GPS,
   MSP_STATUS_EX,
@@ -247,13 +246,12 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
   // all measurements 0) keeps every test isolated without changing any
   // assertion or production behavior.
   fake.setResponse(MSP_BATTERY_STATE, Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]));
-  // Pass 7.6c (same isolation rationale): production now also issues a
-  // ONE-SHOT MSP_BATTERY_CONFIG read and registers three auxiliary polls
-  // (MSP_ANALOG / MSP_RAW_GPS / MSP_STATUS_EX, phase-staggered at
-  // 700/1400/2100ms) for every identified BETAFLIGHT session. Benign
-  // responses keep the serialized queue flowing in tests that advance
-  // past those times; tests needing different behavior overwrite them.
-  fake.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 1]));
+  // Pass 7.6c (same isolation rationale): production now also registers
+  // three auxiliary polls (MSP_ANALOG / MSP_RAW_GPS / MSP_STATUS_EX,
+  // phase-staggered at 700/1400/2100ms) for every identified BETAFLIGHT
+  // session. Benign responses keep the serialized queue flowing in tests
+  // that advance past those times; tests needing different behavior
+  // overwrite them.
   fake.setResponse(MSP_ANALOG, Uint8Array.from([168, ...u16le(0), ...u16le(540), ...u16le(0), ...u16le(1680)]));
   fake.setResponse(
     MSP_RAW_GPS,
@@ -1064,13 +1062,7 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
 
     expect(allText(renderer)).toContain('16.85 V');
     expect(allText(renderer)).toContain(i18n.t('batteryCard.state.OK'));
-    // Pass 7.6c: the golden payload (capacity 1500, consumed 350) plus
-    // the default qualifying MSP_BATTERY_CONFIG fixture (ADC meter,
-    // matching capacity 1500) now legitimately produces the CONDITIONAL
-    // consumption-based estimate: round(((1500-350)/1500)*100) = 77%.
-    // The Pass 7.6b honest-fallback line is asserted separately in the
-    // Pass 7.6c grid describe (non-qualifying config).
-    expect(allText(renderer)).toContain('الشحن التقديري: 77%');
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.percentageUnavailable'));
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -1365,18 +1357,23 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     await teardown(sessionId, renderer);
   });
 
-  it('keeps the honest percentage-unavailable line when the current-meter source is not ADC (estimate prerequisites fail end-to-end)', async () => {
-    const sessionId = 'pass76c-estimate-gate-1';
+  it('never renders ANY battery charge percentage - the removed consumption estimate cannot come back through any pipeline state', async () => {
+    const sessionId = 'pass76c-no-percentage-1';
     const {renderer} = await renderWithLiveAux(sessionId, client => {
-      // Detected 4S battery + a config whose meter source is NONE (0):
-      // METER_SOURCE_NOT_QUALIFIED -> no estimate, the approved fallback.
+      // Detected 4S battery with real consumption data on the wire - even
+      // with everything the estimate once used available, NO percentage
+      // may be derived: consumed-mAh-since-startup cannot establish the
+      // pack's initial state of charge.
       client.setResponse(MSP_BATTERY_STATE, Uint8Array.from([4, ...u16le(1500), 168, ...u16le(350), ...u16le(0), 0, ...u16le(1685)]));
-      client.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 0]));
     });
 
     const text = allText(renderer);
     expect(text).toContain(i18n.t('batteryCard.percentageUnavailable'));
     expect(text.join(' ')).not.toContain('الشحن التقديري');
+    // The battery card carries no percent figure at all (the receiver's
+    // own RSSI percent lives on a different card and is unrelated).
+    const batteryCard = findAnyByTestID(renderer, 'battery-card-live');
+    expect(JSON.stringify(batteryCard?.props.accessibilityLabel)).not.toContain('%');
 
     await teardown(sessionId, renderer);
   });

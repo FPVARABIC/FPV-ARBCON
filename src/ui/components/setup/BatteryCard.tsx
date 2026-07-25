@@ -30,7 +30,7 @@ import React from 'react';
 import {StyleSheet, Text, View} from 'react-native';
 import {useTranslation} from 'react-i18next';
 
-import type {MspBatteryState, TelemetryValue, BatteryFirmwareState, BatteryChargeEstimate} from '../../../core';
+import type {MspBatteryState, TelemetryValue, BatteryFirmwareState} from '../../../core';
 import {deriveBatterySemantics} from '../../../core';
 import {colors, radii, spacing, typography} from '../../theme';
 
@@ -38,18 +38,13 @@ const STALE_OPACITY = 0.45;
 
 export interface BatteryCardProps {
   telemetry: TelemetryValue<MspBatteryState>;
-  /** Pass 7.6c - the CONDITIONAL consumption-based estimate
-   * (batteryChargeEstimate.ts). Optional and undefined-safe: absent or
-   * UNAVAILABLE keeps the Pass 7.6b honest "نسبة الشحن غير متاحة" line
-   * exactly as before; only a fully-qualified ESTIMATE replaces it. */
-  chargeEstimate?: BatteryChargeEstimate;
 }
 
 function firmwareStateKey(state: BatteryFirmwareState): string | undefined {
   return typeof state === 'string' ? `batteryCard.state.${state}` : undefined;
 }
 
-export default function BatteryCard({telemetry, chargeEstimate}: BatteryCardProps): React.JSX.Element {
+export default function BatteryCard({telemetry}: BatteryCardProps): React.JSX.Element {
   const {t} = useTranslation();
 
   if (telemetry.status === 'UNAVAILABLE') {
@@ -73,27 +68,15 @@ export default function BatteryCard({telemetry, chargeEstimate}: BatteryCardProp
         ? t(stateKey)
         : t('batteryCard.stateUnknown');
 
-  // Pass 7.6c: the estimate line - shown ONLY when every prerequisite in
-  // deriveBatteryChargeEstimate() proved out (its FRESH requirement also
-  // means a STALE card always falls back to the honest unavailable line).
-  const estimatePercent = chargeEstimate?.kind === 'ESTIMATE' ? chargeEstimate.percent : undefined;
-  const showEstimate = estimatePercent !== undefined;
-  const percentageText = showEstimate
-    ? t('batteryCard.chargeEstimate', {percent: estimatePercent})
-    : t('batteryCard.percentageUnavailable');
-
   const accessibilityLabel = `${t('batteryCard.title')}، ${t('batteryCard.voltageLabel')} ${voltageText}، ${stateText}${
-    showEstimate ? `، ${percentageText}` : ''
-  }${isStale ? `، ${t('batteryCard.stale')}` : ''}`;
+    isStale ? `، ${t('batteryCard.stale')}` : ''
+  }`;
 
   return (
     <View
       style={styles.container}
       accessible
       accessibilityLabel={accessibilityLabel}
-      // The consumption-since-startup limitation, announced with the
-      // card whenever the estimate is shown (approved contract).
-      accessibilityHint={showEstimate ? t('batteryCard.chargeEstimateHint') : undefined}
       testID={isStale ? 'battery-card-stale' : 'battery-card-live'}>
       <View style={isStale ? styles.staleContent : undefined}>
         <Text style={styles.title}>{t('batteryCard.title')}</Text>
@@ -106,9 +89,7 @@ export default function BatteryCard({telemetry, chargeEstimate}: BatteryCardProp
         <Text style={styles.stateText} testID="battery-card-state">
           {stateText}
         </Text>
-        <Text style={styles.captionText} testID={showEstimate ? 'battery-card-charge-estimate' : undefined}>
-          {percentageText}
-        </Text>
+        <Text style={styles.captionText}>{t('batteryCard.percentageUnavailable')}</Text>
       </View>
       {isStale && (
         <Text style={styles.staleLabel} testID="battery-card-stale-label">

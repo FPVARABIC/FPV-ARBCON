@@ -34,10 +34,12 @@ describe('decodeStatusEx', () => {
 
   it('exposes GPS presence through STATUS_SENSOR_GPS_BIT = 8 (the raw 1<<3 mask bit)', () => {
     expect(STATUS_SENSOR_GPS_BIT).toBe(8);
-    const withGps = decodeStatusEx(GOLDEN);
+    // Masks asserted as exact decoded numbers (no bitwise re-derivation in
+    // the test): 41 = GYRO(32) + GPS(8) + ACC(1); 33 = GYRO(32) + ACC(1) -
+    // every bit of GOLDEN's mask except GPS.
+    expect(decodeStatusEx(GOLDEN).sensorPresenceMask).toBe(41);
     const withoutGps = decodeStatusEx(payload([0x84, 0x03, 0x07, 0x00, 0x21, 0x00, 0, 0, 0, 0, 0, 0x2a, 0x00]));
-    expect((withGps.sensorPresenceMask & STATUS_SENSOR_GPS_BIT) !== 0).toBe(true);
-    expect((withoutGps.sensorPresenceMask & STATUS_SENSOR_GPS_BIT) !== 0).toBe(false);
+    expect(withoutGps.sensorPresenceMask).toBe(33);
   });
 
   it('covers cpu load bounds 0 and 100 (firmware constrains to LOAD_PERCENTAGE_ONE=100) verbatim', () => {

@@ -1,7 +1,7 @@
 /**
  * Pass 7.6c - BOUNDED, debug-build-only observability for the auxiliary
- * Region 3 telemetry channels (Receiver / GPS / FC status) and the
- * one-shot battery-config read, under ONE stable prefix: [FPV-TELEM].
+ * Region 3 telemetry channels (Receiver / GPS / FC status), under ONE
+ * stable prefix: [FPV-TELEM].
  * Same design rules as batteryDebugLog.ts ([FPV-BATT], preserved
  * unchanged): transition-driven output only, bounded decoded summaries,
  * never raw MSP frames, NEVER GPS coordinates (the compact GPS model
@@ -30,7 +30,6 @@ export interface AuxTelemetryDebugLogger {
   onChannelTransition(channelId: string, status: string, summary?: string): void;
   onFirstOutcome(channelId: string, status: string, summary?: string): void;
   onCircuitBreak(channelId: string, state: string, cause: string): void;
-  onBatteryConfigOutcome(outcome: string): void;
   onTeardown(reason: 'deactivated' | 'detached' | 'replaced' | 'disposed'): void;
 }
 
@@ -62,9 +61,6 @@ export function createAuxTelemetryDebugLogger(
     },
     onCircuitBreak(channelId: string, state: string, cause: string): void {
       write(`[${AUX_TELEMETRY_DEBUG_LOG_TAG}] circuit-break ${identity} ${channelId}->${state} cause=${cause}`);
-    },
-    onBatteryConfigOutcome(outcome: string): void {
-      write(`[${AUX_TELEMETRY_DEBUG_LOG_TAG}] battery-config ${identity} ${outcome}`);
     },
     onTeardown(reason): void {
       write(`[${AUX_TELEMETRY_DEBUG_LOG_TAG}] stop ${identity} reason=${reason}`);

@@ -20,7 +20,7 @@ import ReactTestRenderer, {act} from 'react-test-renderer';
 import {useTelemetryValue} from './useTelemetryValue';
 import {mspSessionCoordinator} from './MspSessionCoordinator';
 import {ATTITUDE_TELEMETRY_POLL_ID} from './MspSessionCoordinator';
-import {MSP_ATTITUDE, MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_BATTERY_CONFIG} from '../../../core';
+import {MSP_ATTITUDE, MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO} from '../../../core';
 import type {MspAttitude} from '../../../core';
 import {buildMspFrameBytes} from '../../../core/protocol/__testUtils__/mspFixtures';
 import {base64ToBytes, bytesToBase64} from './base64';
@@ -109,14 +109,6 @@ function makeFakeClient(sessionId: string) {
   fake.setResponse(MSP_API_VERSION, Uint8Array.from([0, 1, 48]));
   fake.setResponse(MSP_FC_VARIANT, Uint8Array.from(ascii('BTFL')));
   fake.setResponse(MSP_BOARD_INFO, boardInfoPayload());
-  // Pass 7.6c (test-fixture isolation only): production now issues a
-  // ONE-SHOT MSP_BATTERY_CONFIG request the moment a BETAFLIGHT session
-  // identifies - BEFORE the first telemetry tick - and an UNANSWERED
-  // config request would occupy MspClient's single serialized in-flight
-  // slot for its full 2000ms response timeout, blocking the very first
-  // attitude dispatch these tests time. A benign 7-byte response keeps
-  // the queue flowing without changing any assertion.
-  fake.setResponse(MSP_BATTERY_CONFIG, Uint8Array.from([33, 43, 35, ...u16le(1500), 1, 1]));
   return fake;
 }
 

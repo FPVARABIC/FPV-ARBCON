@@ -1,15 +1,17 @@
 import {MspPayloadReader} from './MspPayloadReader';
 
 /**
- * Pass 7.6c - wire decoder for MSP_ANALOG (110), verified verbatim at
- * BOTH the pinned master (msp.c:786-792, API 1.48) and release 4.5.5
- * (msp.c:757-763, API 1.46) - identical 9-byte little-endian layout, so
- * the bench API 1.47 necessarily matches (mspCommandSources.ts):
+ * Pass 7.6c - wire decoder for MSP_ANALOG (110), verified DIRECTLY at
+ * the immutable API-1.47 authority (release 2025.12.5, commit
+ * BETAFLIGHT_API147_COMMIT, msp.c:764-770 - the API version the bench
+ * reports; matching reads at API 1.46/1.48 are secondary regression
+ * comparisons only, never proof of 1.47 - see mspCommandSources.ts).
+ * Exactly 9 mandatory little-endian bytes:
  *
  *   offset 0  u8   legacy vbat, 0.1V (saturates at 25.5V)
  *   offset 1  u16  mAh drawn
  *   offset 3  u16  RSSI - getRssi(), range 0..1023 (RSSI_MAX_VALUE,
- *                  rx/rx.h:193). This is RSSI, NOT link quality.
+ *                  rx/rx.h:188 @ 2025.12.5). RSSI, NOT link quality.
  *   offset 5  s16  amperage, 0.01A (signed two's complement)
  *   offset 7  u16  vbat, 0.01V
  *

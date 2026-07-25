@@ -12,7 +12,7 @@ describe('auxTelemetryDebugLog', () => {
     expect(AUX_TELEMETRY_DEBUG_LOG_TAG).toBe('FPV-TELEM');
   });
 
-  it('emits service start, first outcomes, transitions, circuit breaks, battery-config outcome, and teardown with identity on EVERY line', () => {
+  it('emits service start, first outcomes, transitions, circuit breaks, and teardown with identity on EVERY line', () => {
     const lines: string[] = [];
     const logger = createAuxTelemetryDebugLogger('session-9', 3, line => lines.push(line));
 
@@ -20,7 +20,6 @@ describe('auxTelemetryDebugLog', () => {
     logger.onFirstOutcome('receiver', 'FRESH', 'rssi=540');
     logger.onChannelTransition('gps', 'STALE');
     logger.onCircuitBreak('fcStatus', 'UNSUPPORTED', 'MSP_REMOTE_ERROR');
-    logger.onBatteryConfigOutcome('READY capacity=1500 currentMeterSource=1');
     logger.onTeardown('deactivated');
 
     expect(lines).toEqual([
@@ -28,7 +27,6 @@ describe('auxTelemetryDebugLog', () => {
       '[FPV-TELEM] first-outcome session=session-9 gen=3 receiver=FRESH rssi=540',
       '[FPV-TELEM] session=session-9 gen=3 gps=STALE',
       '[FPV-TELEM] circuit-break session=session-9 gen=3 fcStatus->UNSUPPORTED cause=MSP_REMOTE_ERROR',
-      '[FPV-TELEM] battery-config session=session-9 gen=3 READY capacity=1500 currentMeterSource=1',
       '[FPV-TELEM] stop session=session-9 gen=3 reason=deactivated',
     ]);
     for (const line of lines) {

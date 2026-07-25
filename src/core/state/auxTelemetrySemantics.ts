@@ -35,6 +35,7 @@ export function deriveReceiverRssi(analog: MspAnalog): ReceiverRssiSemantics {
  * "healthy" - used only to distinguish "GPS present but no fix yet" from
  * "no proven GPS support/presence". */
 export function isGpsPresent(statusEx: MspStatusExCompact): boolean {
+  // eslint-disable-next-line no-bitwise -- testing the verified GPS bit of a real firmware bit mask (sensor-presence, msp.c @ BETAFLIGHT_API147_COMMIT) is inherently a bitwise protocol operation; suppressed narrowly instead of widening the byte-helper warning baseline.
   return (statusEx.sensorPresenceMask & STATUS_SENSOR_GPS_BIT) !== 0;
 }
 

@@ -53,24 +53,23 @@ export {
   MSP_BOARD_INFO,
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
-  MSP_BATTERY_CONFIG,
   MSP_RAW_GPS,
   MSP_ANALOG,
   MSP_STATUS_EX,
   STATUS_SENSOR_GPS_BIT,
-  CURRENT_METER_SOURCE,
 } from './msp';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
+  BETAFLIGHT_API147_COMMIT,
   INAV_SOURCE_REPO,
   INAV_PINNED_COMMIT,
   EMUFLIGHT_SOURCE_REPO,
   EMUFLIGHT_PINNED_COMMIT,
 } from './msp';
 export {MspPayloadReader, MspPayloadReadError} from './msp';
-export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, decodeBatteryState, decodeAnalog, decodeRawGps, decodeStatusEx, decodeBatteryConfig} from './msp';
-export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState, MspAnalog, MspRawGpsCompact, MspStatusExCompact, MspBatteryConfig} from './msp';
+export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, decodeBatteryState, decodeAnalog, decodeRawGps, decodeStatusEx} from './msp';
+export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState, MspAnalog, MspRawGpsCompact, MspStatusExCompact} from './msp';
 export {
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,

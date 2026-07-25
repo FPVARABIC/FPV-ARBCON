@@ -11,7 +11,7 @@ import {Text} from 'react-native';
 
 import BatteryCard from './BatteryCard';
 import i18n from '../../../i18n';
-import type {MspBatteryState, TelemetryValue, BatteryChargeEstimate} from '../../../core';
+import type {MspBatteryState, TelemetryValue} from '../../../core';
 
 const GOLDEN: MspBatteryState = {
   cellCount: 4,
@@ -23,13 +23,10 @@ const GOLDEN: MspBatteryState = {
   voltageCentivolts: 1685,
 };
 
-function render(
-  telemetry: TelemetryValue<MspBatteryState>,
-  chargeEstimate?: BatteryChargeEstimate,
-): ReactTestRenderer.ReactTestRenderer {
+function render(telemetry: TelemetryValue<MspBatteryState>): ReactTestRenderer.ReactTestRenderer {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   act(() => {
-    renderer = ReactTestRenderer.create(<BatteryCard telemetry={telemetry} chargeEstimate={chargeEstimate} />);
+    renderer = ReactTestRenderer.create(<BatteryCard telemetry={telemetry} />);
   });
   return renderer;
 }
@@ -159,28 +156,15 @@ describe('BatteryCard', () => {
     unmount(renderer);
   });
 
-  it('Pass 7.6c: a fully-qualified ESTIMATE replaces the percentage-unavailable line and announces the since-startup limitation as the accessibility hint', () => {
-    const renderer = render({status: 'FRESH', value: GOLDEN, updatedAtMs: 0}, {kind: 'ESTIMATE', percent: 77});
-    const text = allText(renderer);
-    expect(text).toContain('الشحن التقديري: 77%');
-    expect(text).not.toContain('نسبة الشحن غير متاحة');
-    expect(renderer.root.findAllByProps({testID: 'battery-card-charge-estimate'}).length).toBeGreaterThan(0);
-    const card = renderer.root.findAllByProps({testID: 'battery-card-live'})[0];
-    expect(card.props.accessibilityHint).toBe(i18n.t('batteryCard.chargeEstimateHint'));
-    expect(card.props.accessibilityLabel).toContain('الشحن التقديري: 77%');
-    unmount(renderer);
-  });
-
-  it('Pass 7.6c: an UNAVAILABLE estimate (any reason) keeps the exact Pass 7.6b honest fallback line, with no hint', () => {
-    const renderer = render(
-      {status: 'FRESH', value: GOLDEN, updatedAtMs: 0},
-      {kind: 'UNAVAILABLE', reason: 'METER_SOURCE_NOT_QUALIFIED'},
-    );
-    const text = allText(renderer);
-    expect(text).toContain('نسبة الشحن غير متاحة');
-    expect(text.join(' ')).not.toContain('الشحن التقديري');
+  it("Pass 7.6c closure: NO charge percentage exists in any state - consumed-mAh-since-startup cannot establish state of charge, so the honest fallback line is unconditional", () => {
+    const renderer = render({status: 'FRESH', value: GOLDEN, updatedAtMs: 0});
+    const joined = allText(renderer).join(' ');
+    expect(joined).toContain('نسبة الشحن غير متاحة');
+    expect(joined).not.toContain('الشحن التقديري');
+    expect(joined).not.toMatch(/\d+%/);
     const card = renderer.root.findAllByProps({testID: 'battery-card-live'})[0];
     expect(card.props.accessibilityHint).toBeUndefined();
+    expect(card.props.accessibilityLabel).not.toContain('%');
     unmount(renderer);
   });
 
