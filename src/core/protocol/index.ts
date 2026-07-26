@@ -69,6 +69,8 @@ export {
 } from './msp';
 export {MspPayloadReader, MspPayloadReadError} from './msp';
 export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, decodeBatteryState, decodeAnalog, decodeRawGps, decodeStatusEx} from './msp';
+export {decodeStatusExReadiness, STATUS_EX_FIXED_PREFIX_BYTES} from './msp';
+export type {MspStatusExReadiness} from './msp';
 export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState, MspAnalog, MspRawGpsCompact, MspStatusExCompact} from './msp';
 export {
   checkMspCompatibility,

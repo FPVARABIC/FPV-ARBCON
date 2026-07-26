@@ -38,6 +38,7 @@ export type {
   MspAnalog,
   MspRawGpsCompact,
   MspStatusExCompact,
+  MspStatusExReadiness,
   MspCompatibilityResult,
   MspFcFamily,
   MspFcVariant,
@@ -103,6 +104,8 @@ export {
   decodeAnalog,
   decodeRawGps,
   decodeStatusEx,
+  decodeStatusExReadiness,
+  STATUS_EX_FIXED_PREFIX_BYTES,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
@@ -129,4 +132,14 @@ export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeSco
 export {deriveBatterySemantics} from './state/batteryTelemetry';
 export type {BatteryFirmwareState, BatterySensorValidity, BatterySemantics} from './state/batteryTelemetry';
 export {deriveReceiverRssi, isGpsPresent, deriveGpsCard, RSSI_MAX_VALUE} from './state/auxTelemetrySemantics';
+export {
+  ARMING_DISABLE_FLAG_TOKENS,
+  ARMING_DISABLE_FLAGS_COUNT,
+  SENSOR_PRESENCE_TOKENS,
+  BOXARM_PERMANENT_ID,
+  decodeArmingBlockers,
+  decodeSensorPresence,
+  deriveArmedState,
+} from './state/armingBlockers';
+export type {ArmingBlockerBit, SensorPresenceBit, ArmedState} from './state/armingBlockers';
 export type {ReceiverRssiSemantics, GpsCardSemantics} from './state/auxTelemetrySemantics';

@@ -34,6 +34,8 @@ export type {MspAnalog} from './decoding/decodeAnalog';
 export {decodeRawGps} from './decoding/decodeRawGps';
 export type {MspRawGpsCompact} from './decoding/decodeRawGps';
 export {decodeStatusEx, STATUS_SENSOR_GPS_BIT} from './decoding/decodeStatusEx';
+export {decodeStatusExReadiness, STATUS_EX_FIXED_PREFIX_BYTES} from './decoding/decodeStatusExReadiness';
+export type {MspStatusExReadiness} from './decoding/decodeStatusExReadiness';
 export type {MspStatusExCompact} from './decoding/decodeStatusEx';
 
 export {
