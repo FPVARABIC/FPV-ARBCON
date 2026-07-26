@@ -88,6 +88,9 @@ export {
   MSP_ANALOG,
   MSP_STATUS_EX,
   MSP_BOXIDS,
+  MSP_ACC_CALIBRATION,
+  MSP_MAG_CALIBRATION,
+  MSP_REBOOT,
   STATUS_SENSOR_GPS_BIT,
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
@@ -146,7 +149,10 @@ export {
   decodeSensorPresence,
   deriveArmedState,
 } from './state/armingBlockers';
+export type {BoxIdsOwnerIdentity, BoxIdsResult} from './protocol';
 export type {ArmingBlockerBit, SensorPresenceBit, ArmedState} from './state/armingBlockers';
+export {resolveFcToolAvailability, resolveAllFcToolAvailability, FC_TOOL_IDS} from './state/fcTools';
+export type {FcToolId, FcToolBlockReason, FcToolAvailability, FcToolGateInput} from './state/fcTools';
 export {deriveSetupDiagnostics} from './state/setupDiagnostics';
 export type {
   SetupDiagnosticsInput,

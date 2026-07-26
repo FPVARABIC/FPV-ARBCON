@@ -54,3 +54,45 @@ export const MSP_STATUS_EX = 150;
  * what makes bit->BOXARM resolution possible. ONE-SHOT per composite
  * readiness identity; never polled (BoxIdsAcquisition.ts). */
 export const MSP_BOXIDS = 119;
+
+/**
+ * Pass 7.7, Region 5 - the three FC-tool WRITE commands, each verified
+ * DIRECTLY at BETAFLIGHT_API147_COMMIT (release 2025.12.5). See
+ * mspCommandSources.ts for the full per-command contract record,
+ * including the acknowledgement and persistence audits.
+ *
+ * `#define MSP_ACC_CALIBRATION 205  // in message: no param`
+ * msp.c:3313-3317 (mspProcessInCommand):
+ *     case MSP_ACC_CALIBRATION:
+ *         if (!ARMING_FLAG(ARMED))
+ *             accStartCalibration();
+ *         break;
+ * Empty request payload. The handler only STARTS calibration and the
+ * command acks (MSP_RESULT_ACK) either way - including when the FC is
+ * ARMED and nothing at all happened. An ack therefore proves neither
+ * completion nor that calibration even began.
+ */
+export const MSP_ACC_CALIBRATION = 205;
+
+/**
+ * `#define MSP_MAG_CALIBRATION 206  // in message: no param`
+ * msp.c:3319-3326 (mspProcessInCommand):
+ *     case MSP_MAG_CALIBRATION:
+ *         if (!ARMING_FLAG(ARMED)) {
+ *             compassStartCalibration();
+ *         }
+ * Empty request payload; same start-only, ack-either-way semantics.
+ */
+export const MSP_MAG_CALIBRATION = 206;
+
+/**
+ * `#define MSP_REBOOT 68  // in message: reboot settings`
+ * msp.c:2342-2357: an OPTIONAL u8 reboot mode; when the request payload
+ * is empty the firmware itself uses `rebootMode = MSP_REBOOT_FIRMWARE`
+ * (0), i.e. a normal reboot. This app always sends an EMPTY payload, so
+ * it can never select MSC/bootloader by accident. The FC echoes the
+ * accepted mode back (`sbufWriteU8(dst, rebootMode)`) and then reboots
+ * via mspPostProcessFn - so the USB/MSP link drops right after the ack,
+ * and a missing ack does NOT prove the reboot did not happen.
+ */
+export const MSP_REBOOT = 68;

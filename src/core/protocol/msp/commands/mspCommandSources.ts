@@ -252,3 +252,70 @@ export const INAV_PINNED_COMMIT = 'c5c593d71d33c8e284bf9cd34381588fda7a98c8';
 
 export const EMUFLIGHT_SOURCE_REPO = 'https://github.com/emuflight/EmuFlight';
 export const EMUFLIGHT_PINNED_COMMIT = '0a569000b9dfa5b6d8f807bd2e56b634027d84cd';
+
+/**
+ * ==========================================================================
+ * PASS 7.7, REGION 5 - FC-TOOL WRITE CONTRACT AND PERSISTENCE AUDIT
+ * ==========================================================================
+ * Every line below was read at BETAFLIGHT_API147_COMMIT
+ * (7348054f268f0058574719c134e9f149565bb8ea, release tag 2025.12.5,
+ * whose src/main/msp/msp_protocol.h:61-62 declares API_VERSION_MAJOR 1 /
+ * API_VERSION_MINOR 47). No master, no neighbouring release, no
+ * "sandwich" inference, no Configurator-derived behavior.
+ *
+ * 1. MSP_ACC_CALIBRATION (205)
+ *    Request payload: NONE.
+ *    Handler (src/main/msp/msp.c:3313-3317, inside mspProcessInCommand):
+ *      case MSP_ACC_CALIBRATION:
+ *          if (!ARMING_FLAG(ARMED))
+ *              accStartCalibration();
+ *          break;
+ *    Response: mspProcessInCommand returns MSP_RESULT_ACK - an EMPTY ack
+ *    frame - and it does so even when ARMED, in which case the guard
+ *    skipped the call entirely and nothing was started. Therefore an ack
+ *    proves ONLY that the command was received and parsed.
+ *    accStartCalibration() (src/main/sensors/acceleration_init.c:388-391)
+ *    merely sets `accelerationRuntime.calibratingA = CALIBRATING_ACC_CYCLES`;
+ *    the calibration itself runs over subsequent gyro/acc task cycles.
+ *    PERSISTENCE: performed BY THE FIRMWARE on the final cycle -
+ *    acceleration_init.c:435-437 calls setConfigCalibrationCompleted()
+ *    and then saveConfigAndNotify(). No MSP_EEPROM_WRITE and no CLI is
+ *    required from this app, so the operation is offerable.
+ *
+ * 2. MSP_MAG_CALIBRATION (206)
+ *    Request payload: NONE.
+ *    Handler (src/main/msp/msp.c:3319-3326):
+ *      case MSP_MAG_CALIBRATION:
+ *          if (!ARMING_FLAG(ARMED)) {
+ *              compassStartCalibration();
+ *          }
+ *    Response: MSP_RESULT_ACK, with the same armed-guard caveat as above.
+ *    compassStartCalibration() (src/main/sensors/compass.c:407-416) starts
+ *    a TIME-LIMITED process, and the limits are source-proven, not
+ *    invented: CALIBRATION_WAIT_US = 15s (compass.c:79) to begin moving
+ *    the craft, then CALIBRATION_TIME_US = 30s (compass.c:82) of movement
+ *    once motion is detected (compass.c:478-479).
+ *    PERSISTENCE: performed BY THE FIRMWARE - compass.c:490-496 writes the
+ *    new magZero values and calls saveConfigAndNotify(); if no movement
+ *    was detected it beeps a failure and saves NOTHING (compass.c:497-499).
+ *    No MSP_EEPROM_WRITE and no CLI is required, so the operation is
+ *    offerable - but the FC never reports progress or completion over
+ *    MSP, so this app must not display either.
+ *
+ * 3. MSP_REBOOT (68)
+ *    Request payload: OPTIONAL u8 reboot mode. msp.c:2342-2357 reads it
+ *    only `if (sbufBytesRemaining(src))`, rejects a mode >= MSP_REBOOT_COUNT
+ *    (and MSC modes on builds without USE_USB_MSC) with MSP_RESULT_ERROR,
+ *    and otherwise defaults to `rebootMode = MSP_REBOOT_FIRMWARE` (0) when
+ *    the payload is EMPTY. This app sends an empty payload, so a normal
+ *    firmware reboot is the only mode it can ever request.
+ *    Response: the accepted mode is echoed back (sbufWriteU8(dst,
+ *    rebootMode)), and the actual reboot happens afterwards through
+ *    mspPostProcessFn = mspRebootFn. The link therefore drops immediately
+ *    after (or racing with) the ack: a MISSING ack does not prove the
+ *    reboot failed, and the app must never resend it automatically.
+ *
+ * 4. MSP_EEPROM_WRITE (250) remains PROHIBITED by this project. Neither
+ *    calibration needs it (both persist FC-side, as recorded above), so
+ *    nothing in Region 5 sends it.
+ */

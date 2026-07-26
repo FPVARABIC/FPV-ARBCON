@@ -8,6 +8,9 @@ export {
   MSP_ANALOG,
   MSP_STATUS_EX,
   MSP_BOXIDS,
+  MSP_ACC_CALIBRATION,
+  MSP_MAG_CALIBRATION,
+  MSP_REBOOT,
 } from './commands/mspCommands';
 export {
   BETAFLIGHT_SOURCE_REPO,

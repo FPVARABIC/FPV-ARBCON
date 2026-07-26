@@ -1680,3 +1680,98 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     await teardown(sessionId, renderer);
   });
 });
+
+/**
+ * Pass 7.7 - Region 5 (أدوات وحدة التحكم) through the real screen. The
+ * transaction itself is covered end-to-end in FcToolsController.test.ts;
+ * here the point is placement, the honest disabled reason the real
+ * pipeline actually produces, and that mounting the screen never sends
+ * an FC write of its own.
+ */
+describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  async function renderSession(sessionId: string) {
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2200);
+      await flushAsync();
+    });
+    return {client, renderer};
+  }
+
+  it('renders Region 5 AFTER Region 4, with its exact Arabic title and all three proven tools', async () => {
+    const sessionId = 'pass77-region5-order';
+    const {renderer} = await renderSession(sessionId);
+
+    expect(findAnyByTestID(renderer, 'fc-tools-section')).not.toBeNull();
+    const text = allText(renderer);
+    const region4 = text.indexOf('التشخيص والجاهزية');
+    const region5 = text.indexOf('أدوات وحدة التحكم');
+    expect(region4).toBeGreaterThanOrEqual(0);
+    expect(region5).toBeGreaterThan(region4);
+    expect(text).toEqual(
+      expect.arrayContaining(['معايرة مقياس التسارع', 'معايرة البوصلة المغناطيسية', 'إعادة تشغيل متحكم الطيران']),
+    );
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('never sends an FC write merely by mounting the screen', async () => {
+    const sessionId = 'pass77-region5-no-write';
+    const {client, renderer} = await renderSession(sessionId);
+
+    const written = client.writeBytes.mock.calls.map(call => base64ToBytes(call[1] as string)[4]);
+    expect(written).not.toContain(205); // MSP_ACC_CALIBRATION
+    expect(written).not.toContain(206); // MSP_MAG_CALIBRATION
+    expect(written).not.toContain(68); // MSP_REBOOT
+    expect(written).not.toContain(250); // MSP_EEPROM_WRITE, prohibited
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('disables every tool with the honest reason while the session is not connected', async () => {
+    const sessionId = 'pass77-region5-disconnected';
+    const {renderer} = await renderSession(sessionId);
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+
+    expect(allText(renderer)).toContain('غير متاح: لا يوجد اتصال نشط');
+    act(() => {
+      renderer.unmount();
+    });
+  });
+});

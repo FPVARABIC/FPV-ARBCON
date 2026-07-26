@@ -60,11 +60,16 @@ import {
   GpsCard,
   FlightControllerCard,
   DiagnosticsSection,
+  FcToolsSection,
 } from '../components/setup';
 import {
   useTelemetryValue,
   useMspOwnershipState,
   useMspIdentificationState,
+  useMspRecoveryState,
+  useSetupAppStatePhase,
+  useFcToolArmedState,
+  fcToolsController,
   useAuxTelemetryChannelState,
   useBatteryLatchedValue,
   setupAppStateTelemetryOwner,
@@ -142,6 +147,9 @@ function SetupScreenContent({
   const ownershipState = useMspOwnershipState(sessionId);
   const connected = ownershipState === 'ACTIVE';
 
+  const freshStatusValue =
+    fcStatus.status === 'FRESH' || fcStatus.status === 'STALE' ? fcStatus.value : undefined;
+
   // Pass 7.7, Region 4: derived from the SAME identification state
   // Region 1 already reads and the SAME single FC-status poll Region 3
   // already renders - no second reader, no extra command.
@@ -150,16 +158,26 @@ function SetupScreenContent({
     connected,
     channelState: fcChannelState,
     status: fcStatus.status,
-    value: fcStatus.status === 'FRESH' || fcStatus.status === 'STALE' ? fcStatus.value : undefined,
+    value: freshStatusValue,
     identificationStatus: identification.status,
     identity: identification.status === 'SUCCEEDED' ? identification.identity : undefined,
   });
 
+  // Pass 7.7, Region 5 inputs. The armed state is read ONLY from the
+  // at-most-once BOXIDS mapping (never from the blocker mask, never
+  // guessed); the effect below starts that one acquisition after a
+  // compatible identification, and never polls it.
+  const recoveryState = useMspRecoveryState(sessionId);
+  const appStatePhase = useSetupAppStatePhase();
+  const cachedArmedState = useFcToolArmedState(sessionId, freshStatusValue);
+  useEffect(() => {
+    fcToolsController.ensureBoxIdsMapping(sessionId);
+  }, [sessionId, identification.status, ownershipState]);
+
   // GPS presence proof comes from the SHARED MSP_STATUS_EX decode (a
   // stale sensor mask still proves the FC detected the hardware);
   // undefined = not provable right now.
-  const gpsPresent =
-    fcStatus.status === 'FRESH' || fcStatus.status === 'STALE' ? isGpsPresent(fcStatus.value) : undefined;
+  const gpsPresent = freshStatusValue === undefined ? undefined : isGpsPresent(freshStatusValue);
 
   // Pass 7.7: the ONE AppState owner (module singleton) pauses/resumes
   // telemetry through the scheduler's own lease API. The screen only
@@ -224,6 +242,23 @@ function SetupScreenContent({
         </View>
         {/* Pass 7.7: Region 4 immediately after Region 3. */}
         <DiagnosticsSection view={diagnosticsView} />
+        {/* Pass 7.7: Region 5 after Region 4. Armed state comes ONLY
+            from the BOXIDS mapping - with none acquired for this screen
+            it stays UNKNOWN, and every control is honestly disabled with
+            that exact reason until the transaction's own fresh preflight
+            proves DISARMED. */}
+        <FcToolsSection
+          sessionId={sessionId}
+          gate={{
+            connected,
+            appActive: appStatePhase === 'ACTIVE',
+            recovering: recoveryState !== undefined && recoveryState !== 'READY',
+            compatibility: diagnosticsView.compatibility,
+            dataState: diagnosticsView.dataState,
+            armedState: cachedArmedState,
+            sensors: diagnosticsView.sensors.kind === 'REPORTED' ? diagnosticsView.sensors.bits : undefined,
+          }}
+        />
       </ScrollView>
     </View>
   );
