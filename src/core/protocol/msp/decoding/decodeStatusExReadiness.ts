@@ -42,6 +42,24 @@ export interface MspStatusExReadiness {
   /** UNSIGNED 32-bit mask; undefined when the payload ended first. */
   readonly armingDisableFlags?: number;
   readonly rebootRequired?: boolean;
+  /**
+   * Pass 7.7 closure: set ONLY when a tail field was PARTIALLY present -
+   * i.e. the frame began a field it could not finish (a declared
+   * extension byteCount larger than the bytes that remain, or the
+   * arming-disable count byte followed by fewer than the four mask
+   * bytes). This is categorically different from a valid shorter payload
+   * that simply stopped before an optional field BEGAN, which leaves
+   * this undefined.
+   *
+   * The distinction matters downstream and must never be normalized
+   * away: "the FC did not send blockers" is honest absence, while "the
+   * frame is inconsistent" means nothing decoded after the fixed prefix
+   * can be trusted - so it can neither be shown as a readiness fact nor
+   * authorize an FC write. The safely decoded fixed prefix is still
+   * returned alongside it; no field is ever partially reconstructed and
+   * no read ever goes out of bounds.
+   */
+  readonly malformedTail?: true;
 }
 
 /** Byte offset of the optional tail - the fixed prefix decodeStatusEx()
@@ -57,7 +75,9 @@ export function decodeStatusExReadiness(payload: Uint8Array): MspStatusExReadine
   const remaining = () => payload.length - STATUS_EX_FIXED_PREFIX_BYTES - consumed;
 
   if (remaining() < 2) {
-    return {};
+    // One lone byte after the fixed prefix: PID_PROFILE_COUNT began but
+    // the rate-profile index that must follow it is missing.
+    return {malformedTail: true};
   }
   const pidProfileCount = reader.readU8();
   const controlRateProfileIndex = reader.readU8();
@@ -69,17 +89,26 @@ export function decodeStatusExReadiness(payload: Uint8Array): MspStatusExReadine
   const byteCount = reader.readU8();
   consumed += 1;
   if (remaining() < byteCount) {
-    // Declared more extension bytes than the frame actually holds:
-    // malformed partial field - stop without reading out of bounds.
-    return {pidProfileCount, controlRateProfileIndex};
+    // Declared more extension bytes than the frame actually holds: a
+    // PARTIALLY PRESENT field, not an absent one. Stop without reading
+    // out of bounds, keep the safely decoded prefix fields, and mark the
+    // tail malformed so no consumer can mistake this for honest absence.
+    return {pidProfileCount, controlRateProfileIndex, malformedTail: true};
   }
   const extraFlightModeFlagBytes = Array.from(reader.readBytes(byteCount));
   consumed += byteCount;
 
-  if (remaining() < 5) {
-    // The count byte plus the 4-byte mask must BOTH fit, otherwise the
-    // blocker mask is absent (never partially reconstructed).
+  if (remaining() === 0) {
+    // The frame legitimately stopped BEFORE the blocker field began:
+    // honest absence, not malformed.
     return {pidProfileCount, controlRateProfileIndex, extraFlightModeFlagBytes};
+  }
+  if (remaining() < 5) {
+    // 1-4 bytes left: the ARMING_DISABLE_FLAGS_COUNT byte is present but
+    // 0-3 of the four mask bytes are missing. The mask is NEVER partially
+    // reconstructed, and this is NEVER normalized into "absent" or into a
+    // zero-blocker reading - it is reported as malformed.
+    return {pidProfileCount, controlRateProfileIndex, extraFlightModeFlagBytes, malformedTail: true};
   }
   const armingDisableFlagsCount = reader.readU8();
   const armingDisableFlags = reader.readU32LE(); // unsigned

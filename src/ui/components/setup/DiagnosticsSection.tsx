@@ -164,6 +164,10 @@ function describeBlockers(blockers: DiagnosticsBlockers, t: Translate): string[]
   if (blockers.kind === 'UNCONFIRMED') {
     return [t('diagnostics.blockersUnconfirmed')];
   }
+  if (blockers.kind === 'MALFORMED') {
+    // Inconsistent data, stated as such - never "no blockers".
+    return [t('diagnostics.blockersMalformed')];
+  }
   if (blockers.kind === 'NONE_IN_THIS_READING') {
     return [t('diagnostics.blockersNoneInReading')];
   }

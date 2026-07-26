@@ -24,6 +24,7 @@ function input(overrides: Partial<FcToolGateInput> = {}): FcToolGateInput {
     recovering: false,
     compatibility: 'BETAFLIGHT_API_1_47',
     dataState: 'FRESH',
+    readingMalformed: false,
     armedState: 'DISARMED',
     sensors: WITH_MAG,
     ...overrides,
@@ -57,6 +58,7 @@ describe('resolveFcToolAvailability - every disabled state names its exact reaso
     [{dataState: 'UNSUPPORTED'}, 'NO_READING'],
     [{dataState: 'DISCONNECTED'}, 'NO_READING'],
     [{dataState: 'STALE'}, 'STALE_READING'],
+    [{readingMalformed: true}, 'MALFORMED_READING'],
     [{armedState: 'UNKNOWN'}, 'ARMED_UNKNOWN'],
     [{armedState: 'ARMED'}, 'ARMED'],
   ];
@@ -80,6 +82,16 @@ describe('resolveFcToolAvailability - every disabled state names its exact reaso
     expect(resolveFcToolAvailability('REBOOT', input({dataState: 'STALE', armedState: 'ARMED'})).reason).toBe(
       'STALE_READING',
     );
+  });
+
+  it('a malformed reading blocks every tool even when it would otherwise be fully authorized', () => {
+    for (const tool of FC_TOOL_IDS) {
+      const authorized = resolveFcToolAvailability(tool, input());
+      expect(authorized.enabled).toBe(true);
+      const malformed = resolveFcToolAvailability(tool, input({readingMalformed: true}));
+      expect(malformed.enabled).toBe(false);
+      expect(malformed.reason).toBe('MALFORMED_READING');
+    }
   });
 
   it('an UNKNOWN armed state is never treated as permission - a cached DISARMED is required explicitly', () => {

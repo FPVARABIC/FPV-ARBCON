@@ -83,17 +83,18 @@ function makeFakeController() {
 }
 
 function gate(overrides: Partial<FcToolGateInput> = {}): Omit<FcToolGateInput, 'busy'> {
-  const {connected, appActive, recovering, compatibility, dataState, armedState, sensors} = {
+  const {connected, appActive, recovering, compatibility, dataState, readingMalformed, armedState, sensors} = {
     connected: true,
     appActive: true,
     recovering: false,
     compatibility: 'BETAFLIGHT_API_1_47' as const,
     dataState: 'FRESH' as const,
+    readingMalformed: false,
     armedState: 'DISARMED' as const,
     sensors: WITH_MAG,
     ...overrides,
   };
-  return {connected, appActive, recovering, compatibility, dataState, armedState, sensors};
+  return {connected, appActive, recovering, compatibility, dataState, readingMalformed, armedState, sensors};
 }
 
 function render(

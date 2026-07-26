@@ -204,6 +204,24 @@ describe('deriveSetupDiagnostics - blocker semantics', () => {
     }
   });
 
+  it('a MALFORMED tail is its own state - never absent, never "no blockers"', () => {
+    const view = deriveSetupDiagnostics(
+      input({value: value({readiness: {pidProfileCount: 3, malformedTail: true}})}),
+    );
+    expect(view.dataState).toBe('FRESH');
+    expect(view.blockers).toEqual({kind: 'MALFORMED'});
+    // Safely decoded PREFIX data may still be shown.
+    expect(view.sensors.kind).toBe('REPORTED');
+  });
+
+  it('a malformed tail that ALSO carried a zero mask is never reported as zero blockers', () => {
+    const view = deriveSetupDiagnostics(
+      input({value: value({readiness: {armingDisableFlags: 0, malformedTail: true}})}),
+    );
+    expect(view.blockers).toEqual({kind: 'MALFORMED'});
+    expect(view.blockers).not.toEqual({kind: 'NONE_IN_THIS_READING'});
+  });
+
   it('preserves an unsigned bit-31 blocker instead of truncating it', () => {
     const view = deriveSetupDiagnostics(input({value: value({readiness: {armingDisableFlags: 2147483648}})}));
     expect(view.blockers).toEqual({kind: 'REPORTED', bits: [{kind: 'UNKNOWN', bit: 31, hex: '0x80000000'}]});

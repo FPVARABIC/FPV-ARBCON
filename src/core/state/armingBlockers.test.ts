@@ -88,19 +88,76 @@ describe('decodeStatusExReadiness - bounded optional-tail parsing (pinned API 1.
     expect(decoded.pidProfileCount).toBe(3);
     expect(decoded.armingDisableFlags).toBeUndefined();
     expect(decoded.rebootRequired).toBeUndefined();
+    // ABSENT, not malformed: the optional field never began.
+    expect(decoded.malformedTail).toBeUndefined();
   });
 
-  it('a malformed partial blocker mask is rejected as absent - no out-of-bounds read, no partial value', () => {
+  it('CASE 1 - a valid payload that stops before EVERY optional-tail boundary is absent, never malformed', () => {
+    const full = statusExPayload({extraFlightModeBytes: [0xaa], armingDisableFlags: 1, configState: 0});
+    // Each cut lands exactly where a field ENDS, so the next one simply
+    // never began: prefix-only, after the profile pair, after the
+    // extension bytes, and after the mask.
+    for (const length of [13, 15, 17, 22]) {
+      const decoded = decodeStatusExReadiness(full.subarray(0, length));
+      expect(decoded.malformedTail).toBeUndefined();
+    }
+    expect(decodeStatusExReadiness(full.subarray(0, 17)).extraFlightModeFlagBytes).toEqual([0xaa]);
+    expect(decodeStatusExReadiness(full.subarray(0, 17)).armingDisableFlags).toBeUndefined();
+    expect(decodeStatusExReadiness(full.subarray(0, 22)).armingDisableFlags).toBe(1);
+  });
+
+  it('CASE 2 - a declared extension length longer than the frame is MALFORMED, prefix preserved, no over-read', () => {
+    const decoded = decodeStatusExReadiness(
+      statusExPayload({extraFlightModeBytes: [1], declaredExtraCount: 12}),
+    );
+    expect(decoded.malformedTail).toBe(true);
+    // Safely decoded prefix fields survive...
+    expect(decoded.pidProfileCount).toBe(3);
+    expect(decoded.controlRateProfileIndex).toBe(0);
+    // ...and nothing past the broken field is reconstructed.
+    expect(decoded.extraFlightModeFlagBytes).toBeUndefined();
+    expect(decoded.armingDisableFlags).toBeUndefined();
+  });
+
+  it('CASE 3 - 0..3 of the four mask bytes present is MALFORMED, never absent and never zero blockers', () => {
+    const full = statusExPayload({extraFlightModeBytes: [], armingDisableFlags: 0xffffffff, configState: 0});
+    // Cut so the ARMING_DISABLE_FLAGS_COUNT byte is present but only
+    // 0, 1, 2 or 3 of the four mask bytes remain.
+    for (const missing of [4, 3, 2, 1]) {
+      const decoded = decodeStatusExReadiness(full.subarray(0, full.length - 1 - missing));
+      expect(decoded.malformedTail).toBe(true);
+      expect(decoded.armingDisableFlags).toBeUndefined();
+      expect(decoded.pidProfileCount).toBe(3);
+    }
+  });
+
+  it('a lone byte after the fixed prefix is MALFORMED - PID_PROFILE_COUNT began without its rate index', () => {
+    const decoded = decodeStatusExReadiness(statusExPayload({}).subarray(0, STATUS_EX_FIXED_PREFIX_BYTES + 1));
+    expect(decoded.malformedTail).toBe(true);
+    expect(decoded.pidProfileCount).toBeUndefined();
+  });
+
+  it('a fully-formed tail is never marked malformed', () => {
+    const decoded = decodeStatusExReadiness(
+      statusExPayload({extraFlightModeBytes: [1], armingDisableFlags: 0, configState: 1}),
+    );
+    expect(decoded.malformedTail).toBeUndefined();
+    expect(decoded.armingDisableFlags).toBe(0);
+  });
+
+  it('a malformed partial blocker mask is rejected - no out-of-bounds read, no partial value', () => {
     const full = statusExPayload({armingDisableFlags: 0xffffffff});
     // Cut two bytes out of the middle of the 4-byte mask.
     const decoded = decodeStatusExReadiness(full.subarray(0, full.length - 4));
     expect(decoded.armingDisableFlags).toBeUndefined();
+    expect(decoded.malformedTail).toBe(true);
     expect(decoded.pidProfileCount).toBe(3);
   });
 
   it('an extension byteCount larger than the frame is rejected without reading out of bounds', () => {
     const decoded = decodeStatusExReadiness(statusExPayload({extraFlightModeBytes: [1], declaredExtraCount: 12}));
     expect(decoded.extraFlightModeFlagBytes).toBeUndefined();
+    expect(decoded.malformedTail).toBe(true);
     expect(decoded.pidProfileCount).toBe(3);
   });
 

@@ -313,6 +313,48 @@ describe('FcToolsController - the exclusive FC-tool transaction', () => {
     expect(client.countOf(MSP_BOXIDS)).toBe(1);
   });
 
+  it('REJECTS a MALFORMED fresh preflight and dispatches ZERO commands', async () => {
+    const sessionId = 'fc-tools-malformed';
+    const client = await openIdentifiedSession(sessionId, c => {
+      // A full, otherwise-authorizing frame whose extension byteCount
+      // declares more bytes than the frame actually holds.
+      c.setResponse(
+        MSP_STATUS_EX,
+        Uint8Array.from([
+          ...u16le(312), ...u16le(0), ...u16le(41), 0, 0, 0, 0, 0, ...u16le(12),
+          3, 0, 12, 0x01,
+        ]),
+      );
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'ACC_CALIBRATION', reason: 'MALFORMED_READING'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+    expect(client.countOf(MSP_MAG_CALIBRATION)).toBe(0);
+    expect(client.countOf(MSP_REBOOT)).toBe(0);
+  });
+
+  it('REJECTS a preflight whose blocker mask is only PARTIALLY present, dispatching ZERO commands', async () => {
+    const sessionId = 'fc-tools-partial-mask';
+    const client = await openIdentifiedSession(sessionId, c => {
+      // The ARMING_DISABLE_FLAGS_COUNT byte is present, but only two of
+      // the four mask bytes follow it.
+      c.setResponse(
+        MSP_STATUS_EX,
+        Uint8Array.from([
+          ...u16le(312), ...u16le(0), ...u16le(41), 0, 0, 0, 0, 0, ...u16le(12),
+          3, 0, 0, 29, 0x00, 0x00,
+        ]),
+      );
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'REBOOT');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'REBOOT', reason: 'MALFORMED_READING'});
+    expect(client.countOf(MSP_REBOOT)).toBe(0);
+  });
+
   it('REJECTS magnetometer calibration when no magnetometer is reported as detected', async () => {
     const sessionId = 'fc-tools-no-mag';
     const client = await openIdentifiedSession(sessionId, c => {

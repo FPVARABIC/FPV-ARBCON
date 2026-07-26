@@ -68,6 +68,10 @@ export type DiagnosticsBlockers =
   /** Cannot currently be confirmed (absent field, stale, error,
    * unsupported, disconnected, waiting). */
   | {readonly kind: 'UNCONFIRMED'}
+  /** The frame began a readiness field it could not finish. Distinct
+   * from UNCONFIRMED on purpose: the data is inconsistent, not merely
+   * missing, and it must never read as "no blockers". */
+  | {readonly kind: 'MALFORMED'}
   /** A FRESH reading that carried the field and had no bit set. */
   | {readonly kind: 'NONE_IN_THIS_READING'}
   | {readonly kind: 'REPORTED'; readonly bits: readonly ArmingBlockerBit[]};
@@ -94,6 +98,7 @@ export interface SetupDiagnosticsInput {
 
 const UNCONFIRMED_SENSORS: DiagnosticsSensors = Object.freeze({kind: 'UNCONFIRMED' as const});
 const UNCONFIRMED_BLOCKERS: DiagnosticsBlockers = Object.freeze({kind: 'UNCONFIRMED' as const});
+const MALFORMED_BLOCKERS: DiagnosticsBlockers = Object.freeze({kind: 'MALFORMED' as const});
 
 /** The Region-3 aux precedence, extended with the two live states.
  * Identical ordering to resolveAuxCardGate() so Region 4 can never
@@ -163,10 +168,13 @@ export function deriveSetupDiagnostics(input: SetupDiagnosticsInput): SetupDiagn
       ? UNCONFIRMED_SENSORS
       : Object.freeze({kind: 'REPORTED' as const, bits: decodeSensorPresence(value.sensorPresenceMask)});
 
+  // A partially-present tail is inconsistent data, reported as its own
+  // state - never collapsed into absence and never into "no blockers".
+  const malformed = value?.readiness.malformedTail === true;
   // Blockers are a MOMENTARY condition: only a FRESH reading that
   // actually carried the field can confirm them.
-  const mask = dataState === 'FRESH' ? value?.readiness.armingDisableFlags : undefined;
-  let blockers: DiagnosticsBlockers = UNCONFIRMED_BLOCKERS;
+  const mask = dataState === 'FRESH' && !malformed ? value?.readiness.armingDisableFlags : undefined;
+  let blockers: DiagnosticsBlockers = malformed ? MALFORMED_BLOCKERS : UNCONFIRMED_BLOCKERS;
   if (mask !== undefined) {
     const bits = decodeArmingBlockers(mask);
     blockers = bits.length === 0 ? Object.freeze({kind: 'NONE_IN_THIS_READING' as const}) : Object.freeze({kind: 'REPORTED' as const, bits});

@@ -263,6 +263,7 @@ function SetupScreenContent({
             recovering: recoveryState !== undefined && recoveryState !== 'READY',
             compatibility: diagnosticsView.compatibility,
             dataState: diagnosticsView.dataState,
+            readingMalformed: freshStatusValue?.readiness.malformedTail === true,
             armedState: cachedArmedState,
             sensors: diagnosticsView.sensors.kind === 'REPORTED' ? diagnosticsView.sensors.bits : undefined,
           }}

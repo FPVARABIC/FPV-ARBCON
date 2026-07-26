@@ -288,6 +288,10 @@ export class FcToolsController {
           recovering: this.coordinator.getMspRecoveryState(sessionId) !== 'READY',
           compatibility: this.compatibilityOf(sessionId),
           dataState: 'FRESH',
+          // A partially-present readiness tail invalidates the whole
+          // preflight: nothing after the fixed prefix can be trusted, so
+          // the write is refused and NOTHING is dispatched.
+          readingMalformed: fresh.readiness.malformedTail === true,
           armedState,
           sensors: decodeSensorPresence(fresh.sensorPresenceMask) as readonly SensorPresenceBit[],
         });

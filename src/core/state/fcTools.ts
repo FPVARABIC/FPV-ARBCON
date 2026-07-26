@@ -42,6 +42,7 @@ export type FcToolBlockReason =
   | 'INCOMPATIBLE'
   | 'NO_READING'
   | 'STALE_READING'
+  | 'MALFORMED_READING'
   | 'ARMED'
   | 'ARMED_UNKNOWN'
   | 'SENSOR_NOT_DETECTED';
@@ -66,6 +67,10 @@ export interface FcToolGateInput {
   readonly compatibility: DiagnosticsCompatibility;
   /** The Region-4 lifecycle verdict for the shared STATUS_EX channel. */
   readonly dataState: DiagnosticsDataState;
+  /** The reading began a readiness field it could not finish. Nothing
+   * decoded after the fixed prefix can be trusted, so it can never
+   * authorize a write - even when every other precondition holds. */
+  readonly readingMalformed: boolean;
   /** Derived ONLY through the BOXIDS mapping - never from blockers. */
   readonly armedState: ArmedState;
   /** From the same reading; used only for MAG_CALIBRATION's requirement. */
@@ -110,6 +115,9 @@ export function resolveFcToolAvailability(tool: FcToolId, input: FcToolGateInput
   }
   if (input.dataState === 'STALE') {
     return blocked('STALE_READING');
+  }
+  if (input.readingMalformed) {
+    return blocked('MALFORMED_READING');
   }
   if (input.armedState === 'UNKNOWN') {
     return blocked('ARMED_UNKNOWN');

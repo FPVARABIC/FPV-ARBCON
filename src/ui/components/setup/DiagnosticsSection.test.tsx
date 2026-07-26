@@ -273,6 +273,17 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
     unmount(renderer);
   });
 
+  it('a malformed readiness tail says the data is inconsistent - never "no blockers" and never "ready"', () => {
+    const renderer = render(view({value: value({readiness: {pidProfileCount: 3, malformedTail: true}})}));
+    const all = texts(renderer).join(' | ');
+    expect(all).toContain('بيانات الجاهزية غير مكتملة أو غير متسقة؛ تعذّر تأكيد موانع التسليح');
+    expect(all).not.toContain('لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة');
+    expect(all).not.toContain('جاهزة للطيران');
+    // The safely decoded prefix (sensors) is still shown.
+    expect(texts(renderer)).toEqual(expect.arrayContaining(['ACC', 'GYRO']));
+    unmount(renderer);
+  });
+
   it('says blockers cannot be confirmed for stale, short, failed, unsupported and disconnected data', () => {
     const unconfirmed = 'لا يمكن تأكيد موانع التسليح في الوقت الحالي';
     for (const overrides of [
