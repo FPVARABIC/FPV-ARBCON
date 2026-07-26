@@ -25,8 +25,8 @@ export {useAuxTelemetryChannelState, useBatteryLatchedValue} from './useAuxTelem
 export {SetupAppStateTelemetryOwner, setupAppStateTelemetryOwner} from './setupAppStateTelemetryOwner';
 export type {SetupAppStatePhase, SetupAppStateTelemetryOwnerOptions} from './setupAppStateTelemetryOwner';
 export {FcToolsController, fcToolsController} from './FcToolsController';
-export type {FcToolPhase, FcToolOutcome, FcToolsControllerOptions} from './FcToolsController';
-export {useFcToolPhase, useFcToolOutcome, useFcToolArmedState} from './useFcTools';
+export type {FcToolPhase, FcToolOutcome, FcToolOutcomeOrigin, FcToolPublication, FcToolsControllerOptions} from './FcToolsController';
+export {useFcToolPhase, useFcToolPublication, useFcToolArmedState} from './useFcTools';
 export {useSetupAppStatePhase} from './useSetupAppState';
 export {SetupUiSessionStore, setupUiSessionStore} from './SetupUiSessionStore';
 export type {SetupUiSessionState} from './SetupUiSessionStore';

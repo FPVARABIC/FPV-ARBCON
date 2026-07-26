@@ -4,7 +4,7 @@
  * like useAuxTelemetry's existing pattern: no polling, no second store.
  */
 
-import {useSyncExternalStore} from 'react';
+import {useCallback, useRef, useSyncExternalStore} from 'react';
 
 import {fcToolsController} from './FcToolsController';
 import type {FcToolOutcome, FcToolPhase, FcToolsController} from './FcToolsController';
@@ -18,12 +18,39 @@ export function useFcToolPhase(controller: FcToolsController = fcToolsController
   );
 }
 
-export function useFcToolOutcome(controller: FcToolsController = fcToolsController): FcToolOutcome | undefined {
-  return useSyncExternalStore(
-    listener => controller.subscribe(listener),
-    () => controller.getLastOutcome(),
-    () => controller.getLastOutcome(),
+/**
+ * Pass 7.7A (A-1): the outcome THIS mounted subscriber may show.
+ *
+ * Two independent guards, deliberately not collapsed into one:
+ *  - a MOUNT BASELINE captured once per component instance, so an
+ *    outcome published before this instance existed can never be
+ *    replayed or re-announced after a remount;
+ *  - PROVENANCE revocation inside the controller, so a replacement
+ *    physical generation or MSP epoch immediately hides an older
+ *    session's outcome, while a transient detach with no replacement
+ *    leaves an already-received acknowledgement alone.
+ *
+ * The baseline lives in a ref, so React Strict Mode's double effect
+ * invocation reuses the same instance's baseline rather than shifting
+ * it, and an unmounted instance's cleanup can never touch controller
+ * state at all - there is none to clear.
+ */
+export function useFcToolPublication(
+  sessionId: string,
+  controller: FcToolsController = fcToolsController,
+): FcToolOutcome | undefined {
+  const mountedAtSequence = useRef<number | undefined>(undefined);
+  if (mountedAtSequence.current === undefined) {
+    mountedAtSequence.current = controller.getPublicationSequence();
+  }
+  const baseline = mountedAtSequence.current;
+
+  const subscribe = useCallback((listener: () => void) => controller.subscribe(listener), [controller]);
+  const snapshot = useCallback(
+    () => controller.getVisibleOutcome(sessionId, baseline),
+    [controller, sessionId, baseline],
   );
+  return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
 /**

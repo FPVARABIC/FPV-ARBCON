@@ -81,6 +81,50 @@ export type FcToolPhase =
   | {readonly kind: 'CONFIRMING'; readonly tool: FcToolId; readonly sessionId: string}
   | {readonly kind: 'RUNNING'; readonly tool: FcToolId; readonly sessionId: string};
 
+/**
+ * Pass 7.7A (A-1): WHO an outcome belongs to. Captured when the action
+ * starts, from the canonical identity the coordinator already owns
+ * (getSessionKey().generation + MspClient.getEpoch()) - this introduces
+ * no second definition of "the current session".
+ *
+ * A sentinel generation/epoch of -1 means the action began with no live
+ * session at all; such an outcome is still truthful for the screen that
+ * asked for it, and is revoked the moment any real owner appears.
+ */
+export interface FcToolOutcomeOrigin {
+  readonly sessionId: string;
+  readonly physicalGeneration: number;
+  /** The epoch when the action STARTED - provenance. */
+  readonly mspEpoch: number;
+  /**
+   * The epoch this action actually ENDED on. Revocation compares against
+   * this, not against `mspEpoch`, for one concrete reason: a response
+   * timeout inside the action itself bumps the epoch (MspClient's desync
+   * latch), and an action must never revoke its own result. Only an
+   * epoch change that happens AFTER the outcome settled means a new
+   * logical owner has taken over.
+   */
+  readonly settledMspEpoch: number;
+}
+
+/**
+ * A stored outcome plus its provenance and a monotonic publication
+ * sequence. PROVENANCE and PUBLICATION LIFETIME are deliberately
+ * separate concepts:
+ *  - provenance (origin) decides whether a REPLACEMENT owner revokes it;
+ *  - the sequence decides whether a given MOUNTED subscriber may ever see
+ *    it at all (a subscriber only sees publications made after it
+ *    mounted, so a remount can never replay - or re-announce - an old
+ *    result).
+ * A mere transient detach revokes nothing: the same mounted subscriber
+ * keeps an acknowledgement it legitimately received.
+ */
+export interface FcToolPublication {
+  readonly outcome: FcToolOutcome;
+  readonly origin: FcToolOutcomeOrigin;
+  readonly sequence: number;
+}
+
 export type FcToolOutcome =
   /** The FC acknowledged the command. For a calibration this means
    * ACCEPTED/STARTED - never completed. */
@@ -140,7 +184,11 @@ export class FcToolsController {
   private readonly coordinator: MspSessionCoordinator;
   private readonly appStateOwner: SetupAppStateTelemetryOwner;
   private phase: FcToolPhase = {kind: 'IDLE'};
-  private lastOutcome: FcToolOutcome | undefined;
+  /** The ONE stored publication, with provenance and sequence (A-1). */
+  private publication: FcToolPublication | undefined;
+  /** Monotonic, never reset: a subscriber's mount baseline is a value of
+   * this counter, so "published before I mounted" is decidable. */
+  private publicationSequence = 0;
   private readonly listeners = new Set<() => void>();
   /** One acquisition per LIVE MspClient; internally scoped to the
    * composite (physicalGeneration, mspEpoch) identity. Keyed with the
@@ -162,8 +210,77 @@ export class FcToolsController {
     return this.phase.kind !== 'IDLE';
   }
 
+  /**
+   * The raw stored outcome, IGNORING provenance and subscriber lifetime.
+   * Diagnostics and controller-level tests only - never a UI source, and
+   * deliberately not what the hook reads.
+   */
   getLastOutcome(): FcToolOutcome | undefined {
-    return this.lastOutcome;
+    return this.publication?.outcome;
+  }
+
+  /** The current publication counter - a subscriber captures this when it
+   * mounts and never sees anything published at or before it. */
+  getPublicationSequence(): number {
+    return this.publicationSequence;
+  }
+
+  /**
+   * The outcome a MOUNTED subscriber for `sessionId` may show, given the
+   * baseline it captured when it mounted.
+   *
+   * Hidden when: nothing is stored; it was published before this
+   * subscriber mounted (so a remount can never replay or re-announce it);
+   * it belongs to another screen's session; or a REPLACEMENT owner has
+   * become current for that session. A transient detach with no
+   * replacement revokes nothing.
+   */
+  getVisibleOutcome(sessionId: string, mountedAtSequence: number): FcToolOutcome | undefined {
+    const published = this.publication;
+    if (published === undefined) {
+      return undefined;
+    }
+    if (published.sequence <= mountedAtSequence) {
+      return undefined;
+    }
+    if (published.origin.sessionId !== sessionId) {
+      return undefined;
+    }
+    return this.isRevoked(published.origin) ? undefined : published.outcome;
+  }
+
+  /**
+   * True once a DIFFERENT owner is current for that session - a new
+   * physical generation, or a new MSP epoch on the same generation.
+   * Deliberately false while the session is merely absent (transient
+   * detach with no replacement yet).
+   */
+  private isRevoked(origin: FcToolOutcomeOrigin): boolean {
+    const key = this.coordinator.getSessionKey(origin.sessionId);
+    if (key === undefined) {
+      return origin.physicalGeneration < 0 ? false : false;
+    }
+    if (key.generation !== origin.physicalGeneration) {
+      return true;
+    }
+    const client = this.coordinator.getActiveMspClient(origin.sessionId);
+    if (client === undefined) {
+      return false;
+    }
+    return client.getEpoch() !== origin.settledMspEpoch;
+  }
+
+  /** Captures the canonical composite identity that owns an action. */
+  private captureOrigin(sessionId: string): FcToolOutcomeOrigin {
+    const key = this.coordinator.getSessionKey(sessionId);
+    const client = this.coordinator.getActiveMspClient(sessionId);
+    const epoch = client?.getEpoch() ?? -1;
+    return {
+      sessionId,
+      physicalGeneration: key?.generation ?? -1,
+      mspEpoch: epoch,
+      settledMspEpoch: epoch,
+    };
   }
 
   subscribe(listener: () => void): () => void {
@@ -181,7 +298,8 @@ export class FcToolsController {
       return false;
     }
     this.phase = {kind: 'CONFIRMING', tool, sessionId};
-    this.lastOutcome = undefined;
+    // A new action supersedes the previous publication outright.
+    this.publication = undefined;
     this.notify();
     return true;
   }
@@ -191,7 +309,7 @@ export class FcToolsController {
     if (this.phase.kind !== 'CONFIRMING') {
       return;
     }
-    this.settle({kind: 'CANCELLED', tool: this.phase.tool});
+    this.settle({kind: 'CANCELLED', tool: this.phase.tool}, this.captureOrigin(this.phase.sessionId));
   }
 
   /**
@@ -201,14 +319,17 @@ export class FcToolsController {
    */
   async confirm(): Promise<FcToolOutcome> {
     if (this.phase.kind !== 'CONFIRMING') {
-      return this.lastOutcome ?? {kind: 'REJECTED', tool: 'REBOOT', reason: 'BUSY'};
+      return this.publication?.outcome ?? {kind: 'REJECTED', tool: 'REBOOT', reason: 'BUSY'};
     }
     const {tool, sessionId} = this.phase;
+    // Provenance is captured BEFORE the transaction, so a detach or a
+    // replacement during it cannot rewrite who the outcome belonged to.
+    const origin = this.captureOrigin(sessionId);
     this.phase = {kind: 'RUNNING', tool, sessionId};
     this.notify();
 
     const outcome = await this.runTransaction(sessionId, tool);
-    this.settle(outcome);
+    this.settle(outcome, origin);
     return outcome;
   }
 
@@ -463,9 +584,19 @@ export class FcToolsController {
 
   /** The single settle point - the mutex is released here and nowhere
    * else, exactly once per action. */
-  private settle(outcome: FcToolOutcome): void {
+  private settle(outcome: FcToolOutcome, capturedOrigin: FcToolOutcomeOrigin): void {
     this.phase = {kind: 'IDLE'};
-    this.lastOutcome = outcome;
+    this.publicationSequence += 1;
+    // Stamp the epoch the action ENDED on, so a desync the action itself
+    // caused cannot revoke its own outcome.
+    const settledEpoch =
+      this.coordinator.getActiveMspClient(capturedOrigin.sessionId)?.getEpoch() ?? capturedOrigin.mspEpoch;
+    const origin: FcToolOutcomeOrigin = Object.freeze({...capturedOrigin, settledMspEpoch: settledEpoch});
+    // Stored unconditionally, WITH its provenance: an acknowledgement
+    // that genuinely arrived is never downgraded just because the
+    // continuation later observes a detach. Whether it is VISIBLE is
+    // decided by getVisibleOutcome(), not here.
+    this.publication = Object.freeze({outcome, origin, sequence: this.publicationSequence});
     this.notify();
   }
 

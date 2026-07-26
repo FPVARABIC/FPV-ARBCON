@@ -29,7 +29,7 @@ import {useTranslation} from 'react-i18next';
 
 import {FC_TOOL_IDS, resolveFcToolAvailability} from '../../../core';
 import type {FcToolGateInput, FcToolId} from '../../../core';
-import {fcToolsController, useFcToolOutcome, useFcToolPhase} from '../../../platforms/react-native/protocol';
+import {fcToolsController, useFcToolPhase, useFcToolPublication} from '../../../platforms/react-native/protocol';
 import type {FcToolOutcome, FcToolsController} from '../../../platforms/react-native/protocol';
 import {colors, radii, spacing, typography} from '../../theme';
 
@@ -49,7 +49,10 @@ export default function FcToolsSection({sessionId, gate, controller}: FcToolsSec
   const {t} = useTranslation();
   const active = controller ?? fcToolsController;
   const phase = useFcToolPhase(active);
-  const outcome = useFcToolOutcome(active);
+  // Scoped to THIS session and THIS mounted instance (A-1): a
+  // replacement generation/epoch revokes it, and a remount never
+  // replays or re-announces an older result.
+  const outcome = useFcToolPublication(sessionId, active);
   const busy = phase.kind !== 'IDLE';
 
   const onRequest = useCallback(

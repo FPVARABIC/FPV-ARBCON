@@ -732,6 +732,150 @@ describe('FcToolsController - telemetry pause and guaranteed resume', () => {
   });
 });
 
+describe('FcToolsController - outcome provenance and publication lifetime (A-1)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  async function runAcc(controller: FcToolsController, sessionId: string) {
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    for (let i = 0; i < 8; i++) {
+      await jest.advanceTimersByTimeAsync(10);
+      await flushAsync();
+    }
+    return settled;
+  }
+
+  it('publishes with the captured composite origin and a monotonic sequence', async () => {
+    const sessionId = 'a1-origin';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+
+    expect(await runAcc(controller, sessionId)).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    expect(controller.getPublicationSequence()).toBeGreaterThan(before);
+    // Visible to a subscriber that mounted before publication...
+    expect(controller.getVisibleOutcome(sessionId, before)).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    // ...and invisible to one that mounts after it.
+    expect(controller.getVisibleOutcome(sessionId, controller.getPublicationSequence())).toBeUndefined();
+  });
+
+  it('an outcome is never visible to a DIFFERENT session', async () => {
+    const sessionId = 'a1-other-session';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+    expect(controller.getVisibleOutcome('a-different-session', before)).toBeUndefined();
+  });
+
+  it('a TRANSIENT detach with no replacement keeps the acknowledgement visible', async () => {
+    const sessionId = 'a1-transient-detach';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+
+    mspSessionCoordinator.deactivateMspSession(sessionId);
+    await flushAsync();
+
+    expect(controller.getVisibleOutcome(sessionId, before)).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+  });
+
+  it('a REPLACEMENT generation revokes generation N\'s outcome immediately', async () => {
+    const sessionId = 'a1-replacement';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeDefined();
+
+    mspSessionCoordinator.deactivateMspSession(sessionId);
+    await flushAsync();
+    await openIdentifiedSession(sessionId); // generation N+1
+
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+  });
+
+  it('an outcome settling AFTER a replacement became current cannot publish into it', async () => {
+    const sessionId = 'a1-late-settle';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        if (command === MSP_ACC_CALIBRATION) {
+          // The link dies and a replacement takes over before the
+          // continuation that settles this action runs.
+          mspSessionCoordinator.deactivateMspSession(sessionId);
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+
+    await openIdentifiedSession(sessionId); // replacement becomes current
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+  });
+
+  it('an epoch change AFTER the outcome revokes it, but the action\'s OWN desync does not', async () => {
+    const sessionId = 'a1-epoch-revocation';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION); // times out -> the action's own desync
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(2100);
+    await flushAsync();
+    expect(await settled).toEqual({kind: 'UNCONFIRMED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+
+    // The action's own timeout bumped the epoch; its result stays visible.
+    expect(controller.getVisibleOutcome(sessionId, before)).toEqual({kind: 'UNCONFIRMED', tool: 'ACC_CALIBRATION'});
+
+    // A LATER epoch change (a new logical owner) revokes it.
+    const live = mspSessionCoordinator.getActiveMspClient(sessionId);
+    expect(live).toBeDefined();
+    // An unanswered command times out -> MspClient's desync latch bumps
+    // the epoch, i.e. a NEW logical owner for the same physical session.
+    const timingOut = live!
+      .request(0x2a, new Uint8Array(0), {wireFormat: 'v1', responseTimeoutMs: 5})
+      .catch(() => undefined);
+    await jest.advanceTimersByTimeAsync(50);
+    await flushAsync();
+    await timingOut;
+    await flushAsync();
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+  });
+
+  it('opening a new confirmation clears the previous publication', async () => {
+    const sessionId = 'a1-new-confirmation';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeDefined();
+
+    expect(controller.requestConfirmation(sessionId, 'REBOOT')).toBe(true);
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+    controller.cancel();
+  });
+});
+
 describe('FcToolsController - generation binding', () => {
   beforeEach(() => {
     jest.useFakeTimers();

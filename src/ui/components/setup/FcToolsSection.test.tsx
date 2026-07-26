@@ -58,11 +58,20 @@ const WITH_MAG: readonly SensorPresenceBit[] = [
   {kind: 'KNOWN', bit: 5, token: 'GYRO'},
 ];
 
-/** Records exactly what the component asks the shared mutex to do. */
+/**
+ * Records exactly what the component asks the shared mutex to do, and
+ * mirrors the REAL publication model faithfully: a monotonic sequence
+ * plus an origin, with visibility decided by
+ * getVisibleOutcome(sessionId, mountedAtSequence). The end-to-end proof
+ * against the real controller lives in SetupScreenIntegration.test.tsx;
+ * this fake exists only to drive the component's own branches.
+ */
 function makeFakeController() {
   const listeners = new Set<() => void>();
   let phase: FcToolPhase = {kind: 'IDLE'};
-  let outcome: FcToolOutcome | undefined;
+  let published: {outcome: FcToolOutcome; sessionId: string; sequence: number} | undefined;
+  let sequence = 0;
+  let revoked = false;
   const calls: string[] = [];
   const notify = () => {
     for (const listener of Array.from(listeners)) {
@@ -73,7 +82,17 @@ function makeFakeController() {
     calls,
     getPhase: () => phase,
     isBusy: () => phase.kind !== 'IDLE',
-    getLastOutcome: () => outcome,
+    getLastOutcome: () => published?.outcome,
+    getPublicationSequence: () => sequence,
+    getVisibleOutcome: (sessionId: string, mountedAtSequence: number) => {
+      if (published === undefined || revoked) {
+        return undefined;
+      }
+      if (published.sequence <= mountedAtSequence || published.sessionId !== sessionId) {
+        return undefined;
+      }
+      return published.outcome;
+    },
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -84,7 +103,7 @@ function makeFakeController() {
         return false;
       }
       phase = {kind: 'CONFIRMING', tool: tool as never, sessionId};
-      outcome = undefined;
+      published = undefined;
       notify();
       return true;
     },
@@ -93,22 +112,30 @@ function makeFakeController() {
       if (phase.kind !== 'CONFIRMING') {
         return;
       }
-      outcome = {kind: 'CANCELLED', tool: phase.tool};
+      sequence += 1;
+      published = {outcome: {kind: 'CANCELLED', tool: phase.tool}, sessionId: phase.sessionId, sequence};
       phase = {kind: 'IDLE'};
       notify();
     },
     confirm: async () => {
       calls.push('confirm');
       if (phase.kind !== 'CONFIRMING') {
-        return outcome as FcToolOutcome;
+        return published?.outcome as FcToolOutcome;
       }
-      outcome = {kind: 'ACCEPTED', tool: phase.tool};
+      sequence += 1;
+      published = {outcome: {kind: 'ACCEPTED', tool: phase.tool}, sessionId: phase.sessionId, sequence};
       phase = {kind: 'IDLE'};
       notify();
-      return outcome;
+      return published.outcome;
     },
-    setOutcome: (next: FcToolOutcome) => {
-      outcome = next;
+    setOutcome: (next: FcToolOutcome, sessionId = 's1') => {
+      sequence += 1;
+      published = {outcome: next, sessionId, sequence};
+      notify();
+    },
+    /** Simulates a replacement owner becoming current. */
+    revoke: () => {
+      revoked = true;
       notify();
     },
   };
@@ -429,6 +456,69 @@ describe('FcToolsSection - truthful outcome copy', () => {
     expect(all).toContain('يطلب من متحكم الطيران بدء معايرة مقياس التسارع');
     expect(all).not.toContain('يبدأ متحكم الطيران معايرة مقياس التسارع ويحفظ النتيجة بنفسه.');
     unmount(renderer);
+  });
+
+  it('a subscriber that mounts AFTER publication never consumes the old outcome', () => {
+    const controller = makeFakeController();
+    // Published while nothing is mounted.
+    controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    const renderer = render(controller);
+    expect(renderer.root.findAll(n => n.props.testID === 'fc-tools-outcome')).toEqual([]);
+    unmount(renderer);
+  });
+
+  it('unmount ends the publication lease and a REMOUNT does not replay the outcome', () => {
+    const controller = makeFakeController();
+    const first = render(controller);
+    act(() => {
+      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    });
+    expect(texts(first)).toContain(TRUTHFUL_ACK);
+    unmount(first);
+
+    const second = render(controller);
+    expect(texts(second)).not.toContain(TRUTHFUL_ACK);
+    // ...and therefore no new alert node exists to be announced.
+    expect(second.root.findAll(n => n.props.testID === 'fc-tools-outcome')).toEqual([]);
+    unmount(second);
+  });
+
+  it('a REPLACEMENT owner revokes the visible outcome immediately', () => {
+    const controller = makeFakeController();
+    const renderer = render(controller);
+    act(() => {
+      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    });
+    expect(texts(renderer)).toContain(TRUTHFUL_ACK);
+    act(() => {
+      controller.revoke();
+    });
+    expect(texts(renderer)).not.toContain(TRUTHFUL_ACK);
+    unmount(renderer);
+  });
+
+  it('an outcome belonging to ANOTHER session is never shown here', () => {
+    const controller = makeFakeController();
+    const renderer = render(controller);
+    act(() => {
+      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'}, 'some-other-session');
+    });
+    expect(texts(renderer)).not.toContain(TRUTHFUL_ACK);
+    unmount(renderer);
+  });
+
+  it('unmounting an OLD instance cannot clear a NEWER instance\'s outcome', () => {
+    const controller = makeFakeController();
+    const older = render(controller);
+    const newer = render(controller);
+    act(() => {
+      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    });
+    expect(texts(newer)).toContain(TRUTHFUL_ACK);
+    // The stale instance goes away; its cleanup touches no shared state.
+    unmount(older);
+    expect(texts(newer)).toContain(TRUTHFUL_ACK);
+    unmount(newer);
   });
 
   it('the outcome is announced as an alert', () => {

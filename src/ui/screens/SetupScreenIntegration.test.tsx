@@ -64,6 +64,10 @@ const ARABIC = {
   confirmAction: 'نعم، المراوح مفكوكة — تابع',
 };
 
+/** The exact truthful acknowledgement copy (Pass 7.7 commit 13). */
+const TRUTHFUL_ACK =
+  'استلم التطبيق ردًا صالحًا من متحكم الطيران على أمر المعايرة، لكن هذا لا يؤكد أن المعايرة بدأت أو اكتملت أو حُفظت.';
+
 function ascii(text: string): number[] {
   return text.split('').map(c => c.charCodeAt(0));
 }
@@ -596,6 +600,86 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
 
     expect(client.countOf(MSP_MAG_CALIBRATION)).toBe(0);
     expect(fcToolsController.getPhase()).toEqual({kind: 'IDLE'});
+  });
+
+  it('generation N\'s accepted outcome NEVER appears under a replacement generation N+1', async () => {
+    const sessionId = 'integration-outcome-scope';
+    const {client, renderer} = await mount(sessionId);
+
+    act(() => {
+      pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
+    });
+    act(() => {
+      pressable(renderer, 'fc-tools-confirm').props.onPress();
+    });
+    await settle(300);
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+    expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+
+    // Transient detach with NO replacement: the same mounted screen keeps
+    // the acknowledgement it legitimately received.
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+
+    // A replacement generation becomes current: revoked immediately.
+    const replacement = makeFakeClient(sessionId);
+    await act(async () => {
+      mspSessionCoordinator.openSession(replacement as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await settle(2200);
+    expect(allText(renderer)).not.toContain(TRUTHFUL_ACK);
+    expect(renderer.root.findAll(n => n.props.testID === 'fc-tools-outcome')).toEqual([]);
+  });
+
+  it('a REMOUNT does not replay the previous outcome or re-announce it as an alert', async () => {
+    const sessionId = 'integration-outcome-remount';
+    const {renderer} = await mount(sessionId);
+    act(() => {
+      pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
+    });
+    act(() => {
+      pressable(renderer, 'fc-tools-confirm').props.onPress();
+    });
+    await settle(300);
+    expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+
+    act(() => {
+      renderer.unmount();
+    });
+    let remounted!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      remounted = ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />);
+    });
+    await settle(300);
+
+    expect(allText(remounted)).not.toContain(TRUTHFUL_ACK);
+    expect(remounted.root.findAll(n => n.props.testID === 'fc-tools-outcome')).toEqual([]);
+    act(() => {
+      remounted.unmount();
+    });
+  });
+
+  it('a detach BEFORE the response keeps the conservative unconfirmed result, not an acknowledgement', async () => {
+    const sessionId = 'integration-outcome-detach-first';
+    const {client, renderer} = await mount(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION);
+    });
+    act(() => {
+      pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
+    });
+    act(() => {
+      pressable(renderer, 'fc-tools-confirm').props.onPress();
+    });
+    await settle(2500);
+
+    const text = allText(renderer);
+    expect(text).toContain('تعذّر تأكيد النتيجة. لم يُعَد الإرسال تلقائيًا.');
+    expect(text).not.toContain(TRUTHFUL_ACK);
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
   });
 
   it('teardown leaves no JS timer, listener or pending action behind', async () => {
