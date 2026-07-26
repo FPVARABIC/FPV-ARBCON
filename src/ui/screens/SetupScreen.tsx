@@ -45,7 +45,7 @@
  * otherwise resolve this before that change ships.
  */
 
-import React, {useCallback, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 
@@ -65,6 +65,7 @@ import {
   useMspOwnershipState,
   useAuxTelemetryChannelState,
   useBatteryLatchedValue,
+  setupAppStateTelemetryOwner,
   setupUiSessionStore,
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
@@ -144,6 +145,16 @@ function SetupScreenContent({
   // undefined = not provable right now.
   const gpsPresent =
     fcStatus.status === 'FRESH' || fcStatus.status === 'STALE' ? isGpsPresent(fcStatus.value) : undefined;
+
+  // Pass 7.7: the ONE AppState owner (module singleton) pauses/resumes
+  // telemetry through the scheduler's own lease API. The screen only
+  // starts it and registers this session; it never becomes a second
+  // AppState listener or a second polling owner, and unmounting the
+  // screen does NOT close the coordinator-owned physical session.
+  useEffect(() => {
+    setupAppStateTelemetryOwner.start();
+    setupAppStateTelemetryOwner.track(sessionId);
+  }, [sessionId]);
 
   const [uiState, setUiState] = useState(() => setupUiSessionStore.getState(sessionKey));
 

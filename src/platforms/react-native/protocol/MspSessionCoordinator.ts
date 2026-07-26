@@ -851,6 +851,13 @@ export class MspSessionCoordinator {
     return entry !== undefined && entry.generation === generation;
   }
 
+  /** Pass 7.7: the ids of sessions with a live entry right now - the
+   * AppState owner needs this to pause every running session's telemetry
+   * on background. Read-only snapshot; never exposes the entries. */
+  listSessionIds(): string[] {
+    return Array.from(this.sessions.keys());
+  }
+
   getOwnershipState(sessionId: string): MspSessionOwnershipState {
     return this.ownershipStates.get(sessionId) ?? 'INACTIVE';
   }

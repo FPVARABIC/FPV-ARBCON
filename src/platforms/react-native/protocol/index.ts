@@ -22,5 +22,7 @@ export type {
 export {useMspOwnershipState, useMspIdentificationState, useMspRecoveryState} from './useMspSessionState';
 export {useTelemetryValue} from './useTelemetryValue';
 export {useAuxTelemetryChannelState, useBatteryLatchedValue} from './useAuxTelemetry';
+export {SetupAppStateTelemetryOwner, setupAppStateTelemetryOwner} from './setupAppStateTelemetryOwner';
+export type {SetupAppStatePhase, SetupAppStateTelemetryOwnerOptions} from './setupAppStateTelemetryOwner';
 export {SetupUiSessionStore, setupUiSessionStore} from './SetupUiSessionStore';
 export type {SetupUiSessionState} from './SetupUiSessionStore';
