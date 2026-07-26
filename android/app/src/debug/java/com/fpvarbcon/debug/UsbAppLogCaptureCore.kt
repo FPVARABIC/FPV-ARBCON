@@ -99,8 +99,48 @@ internal class UsbAppLogCaptureCore(
     } finally {
       // One place terminates the process and clears the entry, whichever
       // path got here - success, error, timeout, cancel or invalidation.
-      process?.destroyForcibly()
+      val owned = process
+      if (owned != null) {
+        terminateAndAwait(owned)
+      }
       inFlight.compareAndSet(process, null)
+    }
+  }
+
+  /**
+   * destroyForcibly() only DELIVERS the kill. java.lang.Process documents
+   * that isAlive() may still report true for a brief period afterwards,
+   * and tells callers who need the process to actually be gone to use
+   * destroyForcibly().waitFor().
+   *
+   * This core CLAIMS ownership of the process it spawned ("no zombie
+   * process and no pending entry survives teardown", above), so it must
+   * not release that ownership - clear inFlight and return - while the
+   * child may still be running. Without this wait the guarantee is only
+   * EVENTUALLY true, and whether an observer immediately after capture()
+   * sees a live child is decided purely by how fast the OS reaps the
+   * SIGKILL. That is what made
+   * UsbAppLogCaptureCoreTest's timeout case fail intermittently under CI
+   * load: a real, if brief, window in which this core had already
+   * disowned a process that was still alive.
+   *
+   * SIGKILL cannot be blocked or handled, so the wait is bounded by
+   * reaping latency rather than by anything the child does. An interrupt
+   * is re-asserted rather than swallowed, so a caller that interrupted
+   * this thread still observes it.
+   *
+   * cancel() and invalidate() deliberately do NOT wait: they run on a
+   * different thread from the capture they are tearing down, and the
+   * capture thread's own finally - this method - is what completes the
+   * termination. Blocking them would add a new blocking call on the
+   * React Native bridge thread for no additional guarantee.
+   */
+  private fun terminateAndAwait(process: Process) {
+    process.destroyForcibly()
+    try {
+      process.waitFor()
+    } catch (interrupted: InterruptedException) {
+      Thread.currentThread().interrupt()
     }
   }
 
