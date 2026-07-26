@@ -246,6 +246,42 @@ function track(renderer: ReactTestRenderer.ReactTestRenderer): ReactTestRenderer
   return renderer;
 }
 
+/**
+ * Pass 7.7B (A-6): the mount continuation currently in flight, if any.
+ *
+ * Jest's per-test timeout does NOT cancel the test body - it only stops
+ * awaiting it. The body keeps running, so a test that times out inside
+ * mount() leaves a live continuation that (a) still owns an open act()
+ * scope and (b) still holds a renderer reference it is about to use.
+ * Teardown must therefore SETTLE that continuation before it opens any
+ * act() scope of its own and before it unmounts anything; otherwise the
+ * two overlap and the continuation reaches `.root` on an already
+ * unmounted tree.
+ *
+ * Recorded synchronously by mount(), consumed exactly once by
+ * teardownAll(). Never used to swallow a failure: the continuation's own
+ * rejection still belongs to the test that started it, so it is settled
+ * here (`then(noop, noop)`) rather than re-thrown into teardown.
+ */
+let pendingMount: Promise<void> | null = null;
+
+function trackPendingMount<T>(started: Promise<T>): Promise<T> {
+  const settled = started.then(
+    () => undefined,
+    () => undefined,
+  );
+  pendingMount = pendingMount === null ? settled : pendingMount.then(() => settled);
+  return started;
+}
+
+async function settlePendingMount(): Promise<void> {
+  const inFlight = pendingMount;
+  pendingMount = null;
+  if (inFlight !== null) {
+    await inFlight;
+  }
+}
+
 /** Idempotent: a test that already unmounted its own renderer leaves
  * toJSON() === null, and that renderer is skipped here. */
 async function unmountAllTracked(): Promise<void> {
@@ -262,26 +298,162 @@ async function unmountAllTracked(): Promise<void> {
 }
 
 /**
- * The single teardown path: unmount every tree first, then deactivate
- * every session, then stop the AppState owner - each inside an awaited
- * act() so no React update is ever left unflushed. Safe to run twice.
+ * The single teardown path: settle any still-running mount continuation
+ * first, then unmount every tree, then deactivate every session, then
+ * stop the AppState owner - each inside an awaited act() so no React
+ * update is ever left unflushed. Safe to run twice.
+ *
+ * Timer restoration is in a finally so it happens even if an earlier
+ * step throws.
  */
 async function teardownAll(sessionIds: string[]): Promise<void> {
-  await unmountAllTracked();
-  await act(async () => {
-    for (const sessionId of sessionIds) {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    }
+  try {
+    await settlePendingMount();
+    await unmountAllTracked();
+    await act(async () => {
+      for (const sessionId of sessionIds) {
+        mspSessionCoordinator.deactivateMspSession(sessionId);
+      }
+      await flushAsync();
+    });
+    await act(async () => {
+      setupAppStateTelemetryOwner.stop();
+      await flushAsync();
+    });
+  } finally {
+    jest.clearAllTimers();
+    jest.useRealTimers();
     await flushAsync();
-  });
-  await act(async () => {
-    setupAppStateTelemetryOwner.stop();
-    await flushAsync();
-  });
-  jest.clearAllTimers();
-  jest.useRealTimers();
-  await flushAsync();
+  }
 }
+
+/**
+ * Pass 7.7B (A-6): the commands a healthy warm-up answers exactly once
+ * before the screen is in its steady, fully-populated state -
+ * identification is complete, Region 3's cards have their first reading,
+ * Region 4 has its first STATUS_EX, and Region 5 has its BOXIDS mapping.
+ *
+ * Reaching all of them is an OBSERVABLE readiness condition on the fake
+ * transport. It is what mount() waits for; elapsed virtual time is only
+ * the bound, never the signal.
+ */
+const READY_COMMANDS = [
+  MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  MSP_ANALOG,
+  MSP_RAW_GPS,
+  MSP_STATUS_EX,
+  MSP_BOXIDS,
+] as const;
+
+/** One telemetry sweep is far shorter than this; the cap only exists so
+ * a session that legitimately never reaches the full ready set - an
+ * incompatible FC never asks for BOXIDS, a deliberately held response
+ * occupies the link for its full real timeout - still terminates. It is
+ * kept at exactly the virtual duration of the fixed warm-up it replaced,
+ * so those sessions get no less warm-up than they did before; a healthy
+ * one now stops as soon as it is genuinely ready instead. */
+const READY_CAP_MS = 2200;
+const READY_STEP_MS = 50;
+
+type ReadySignal = {readonly elapsedMs: number; readonly ready: boolean};
+
+async function advanceUntilReady(client: ReturnType<typeof makeFakeClient>): Promise<ReadySignal> {
+  const isReady = () => READY_COMMANDS.every(command => client.countOf(command) >= 1);
+  let elapsedMs = 0;
+  while (!isReady() && elapsedMs < READY_CAP_MS) {
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(READY_STEP_MS);
+      await flushAsync();
+    });
+    elapsedMs += READY_STEP_MS;
+  }
+  return {elapsedMs, ready: isReady()};
+}
+
+/**
+ * The single mount path for both describe blocks. Every React
+ * state-changing step - create, session activation, timer advancement -
+ * happens inside an awaited act(), and the whole thing is registered as
+ * the in-flight mount continuation before the first await, so teardown
+ * can settle it even if this test never gets to await it.
+ */
+function mountSetupScreen(
+  sessionId: string,
+  configure?: (client: ReturnType<typeof makeFakeClient>) => void,
+): Promise<{
+  client: ReturnType<typeof makeFakeClient>;
+  renderer: ReactTestRenderer.ReactTestRenderer;
+  ready: ReadySignal;
+}> {
+  const client = makeFakeClient(sessionId);
+  configure?.(client);
+  return trackPendingMount(
+    (async () => {
+      let renderer!: ReactTestRenderer.ReactTestRenderer;
+      await act(async () => {
+        renderer = track(ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />));
+        await flushAsync();
+      });
+      await act(async () => {
+        mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+        await flushAsync();
+      });
+      const ready = await advanceUntilReady(client);
+      return {client, renderer, ready};
+    })(),
+  );
+}
+
+/**
+ * Pass 7.7B (A-6): the FIRST render of the real SetupScreen tree costs
+ * seconds of one-time work when Jest runs with --coverage (every app
+ * module in the tree executes its instrumented form for the first time);
+ * every later render of the same tree costs single-digit milliseconds.
+ * That one-time cost used to be charged to whichever test happened to
+ * mount first, which is what pushed it past Jest's 5000 ms per-test
+ * budget and started the abandoned-continuation cascade.
+ *
+ * It is paid here instead, once per suite, in a hook that does nothing
+ * else: mount a throwaway tree for a session that was never opened, then
+ * unmount it. No session, timer, listener or store entry outlives this
+ * hook, and the per-suite beforeEach below re-establishes fake timers,
+ * the fake AppState and an idle FC-tools controller regardless.
+ *
+ * MEASURED, on this machine, with `jest --coverage --runInBand` over this
+ * suite alone (jest.getRealSystemTime(), so fake timers do not distort
+ * it):
+ *   - this warm-up hook: 4128 ms / 4657 ms; 286 ms without --coverage;
+ *   - the same first render when it was still inside the first test:
+ *     4381 ms and 3716 ms, on top of that test's own work - which is what
+ *     put the test over 5000 ms;
+ *   - every subsequent mount of the same tree: 4-16 ms.
+ *
+ * The explicit hook timeout is therefore deliberate and narrowly scoped
+ * to this one warm-up. It conceals nothing: the hook contains a single
+ * synchronous render and its unmount, both inside awaited act() scopes,
+ * with no session opened, no request issued and no timer left armed -
+ * and it cannot be shortened by waiting for any readiness condition,
+ * because there is no asynchronous work in it to wait for.
+ */
+beforeAll(async () => {
+  jest.useFakeTimers();
+  try {
+    let warmup!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      warmup = ReactTestRenderer.create(<SetupScreen {...makeProps('coverage-warmup')} />);
+      await flushAsync();
+    });
+    await act(async () => {
+      warmup.unmount();
+      await flushAsync();
+    });
+  } finally {
+    setupAppStateTelemetryOwner.stop();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  }
+}, 120_000);
 
 describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
   let openIds: string[] = [];
@@ -301,23 +473,9 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     await teardownAll(openIds);
   });
 
-  async function mount(sessionId: string, configure?: (client: ReturnType<typeof makeFakeClient>) => void) {
-    const client = makeFakeClient(sessionId);
-    configure?.(client);
+  function mount(sessionId: string, configure?: (client: ReturnType<typeof makeFakeClient>) => void) {
     openIds.push(sessionId);
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = track(ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />));
-    });
-    await act(async () => {
-      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
-      await flushAsync();
-    });
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(2200);
-      await flushAsync();
-    });
-    return {client, renderer};
+    return mountSetupScreen(sessionId, configure);
   }
 
   async function settle(ms = 120) {
@@ -755,6 +913,79 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     });
     expect(client.commands.length).toBe(settledCommands); // nothing still polling
   });
+
+  /**
+   * Pass 7.7B (A-6) regressions. These do not relax anything above; they
+   * pin the lifecycle properties the fix depends on, so a future change
+   * that reintroduces an abandoned continuation fails here rather than
+   * cascading through every later test in the file.
+   */
+
+  it('reaches the required ready state as an OBSERVED condition, not after a fixed 2200 ms warm-up', async () => {
+    const {client, renderer, ready} = await mount('integration-ready-signal');
+
+    // Every command the steady state depends on has been answered...
+    expect(ready.ready).toBe(true);
+    for (const command of READY_COMMANDS) {
+      expect(client.countOf(command)).toBeGreaterThanOrEqual(1);
+    }
+    // ...the regions that need those answers are populated...
+    expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
+    expect(hasTestID(renderer, 'diagnostics-section')).toBe(true);
+    expect(pressable(renderer, 'fc-tool-REBOOT-button').props.disabled).toBe(false);
+    // ...and it got there strictly before the old fixed warm-up would
+    // even have finished, so nothing here depends on 2200 ms of
+    // unrelated polling.
+    expect(ready.elapsedMs).toBeLessThan(READY_CAP_MS);
+  });
+
+  it('teardown settles an abandoned mount continuation BEFORE unmounting, and runs twice harmlessly', async () => {
+    const sessionId = 'integration-abandoned-mount';
+    openIds.push(sessionId);
+
+    let observedRenderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    let textsSeenWhileMounted: string[] | undefined;
+    let continuationError: unknown;
+
+    // Deliberately NOT awaited: this is exactly the state Jest leaves a
+    // test in when it exceeds its per-test timeout mid-mount - the body
+    // keeps running, still holding its renderer.
+    const abandoned = mountSetupScreen(sessionId).then(
+      ({renderer}) => {
+        observedRenderer = renderer;
+        textsSeenWhileMounted = allText(renderer);
+      },
+      error => {
+        continuationError = error;
+      },
+    );
+
+    await teardownAll([sessionId]);
+
+    // The continuation ran against a still-MOUNTED tree: pre-fix this
+    // threw "Can't access .root on unmounted test renderer".
+    expect(continuationError).toBeUndefined();
+    expect(textsSeenWhileMounted).toContain(ARABIC.region5Title);
+    await abandoned;
+
+    // And the unmount really did happen - afterwards, by ordering.
+    expect(observedRenderer?.toJSON()).toBeNull();
+    expect(mountedRenderers).toHaveLength(0);
+    expect(mspSessionCoordinator.getTelemetryScheduler(sessionId)).toBeUndefined();
+    expect(fcToolsController.getPhase()).toEqual({kind: 'IDLE'});
+
+    // Idempotent - the suite's own afterEach will make this a third run.
+    await teardownAll([sessionId]);
+  });
+
+  it('starts from clean singleton state - nothing survives the previous test', () => {
+    expect(fcToolsController.getPhase()).toEqual({kind: 'IDLE'});
+    expect(jest.getTimerCount()).toBe(0);
+    for (const sessionId of ['integration-order', 'integration-teardown', 'integration-abandoned-mount']) {
+      expect(mspSessionCoordinator.getOwnershipState(sessionId)).not.toBe('ACTIVE');
+      expect(mspSessionCoordinator.getTelemetryScheduler(sessionId)).toBeUndefined();
+    }
+  });
 });
 
 describe('Setup screen - layout and accessibility', () => {
@@ -772,22 +1003,9 @@ describe('Setup screen - layout and accessibility', () => {
     await teardownAll(openIds);
   });
 
-  async function mount(sessionId: string) {
-    const client = makeFakeClient(sessionId);
+  function mount(sessionId: string) {
     openIds.push(sessionId);
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = track(ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />));
-    });
-    await act(async () => {
-      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
-      await flushAsync();
-    });
-    await act(async () => {
-      await jest.advanceTimersByTimeAsync(2200);
-      await flushAsync();
-    });
-    return {client, renderer};
+    return mountSetupScreen(sessionId);
   }
 
   it('every FC-tool control keeps a >=44dp touch target and a labelled button role', async () => {

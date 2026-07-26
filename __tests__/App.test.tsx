@@ -129,6 +129,32 @@ const navigationReadyControl = (
 
 const fakeClient = usbSerialTransportClient as unknown as FakeUsbClient;
 
+// Pass 7.7B (A-6): these two spies MUST be installed before the App
+// module graph is evaluated - App.tsx forces RTL at module scope, once,
+// and Node's module cache means only the very first load can ever be
+// observed. They therefore live here, immediately above the load, rather
+// than inside the RTL test.
+const allowRTLSpy = jest.spyOn(I18nManager, 'allowRTL');
+const forceRTLSpy = jest.spyOn(I18nManager, 'forceRTL');
+
+// Pass 7.7B (A-6): the App module graph (navigation, both screens, the
+// whole protocol and UI stack) is loaded ONCE, here at module scope.
+//
+// It used to be require()d from inside the first test. That require is
+// pure, synchronous fixture work - it awaits nothing and can be shortened
+// by nothing - but under `jest --coverage` it costs seconds (measured:
+// ~9.1 s on this machine) because every module in the graph executes its
+// instrumented form for the first time. Charged to a test, it exhausted
+// Jest's 5000 ms per-test budget on its own; Jest then abandoned the
+// still-running test body, ran afterEach against it, and the abandoned
+// continuation went on to touch an already-unmounted renderer. Module
+// scope is not subject to the per-test timeout, so the cost is simply no
+// longer charged to a test - nothing is skipped, deferred or hidden.
+//
+// require(), not import: the jest.mock() factories above are hoisted, but
+// so are imports, and this load must happen AFTER the two spies.
+const App = require('../App').default as () => React.JSX.Element;
+
 /** A single supported, single-port device - the same shape
  * UsbConnectionScreen.test.tsx's own supportedDevice() fixture uses, kept
  * minimal here since only the safe-auto-select path (exactly one supported
@@ -155,17 +181,52 @@ function supportedDevice() {
 // off, hangs the whole run).
 const trackedRenderers: ReactTestRenderer.ReactTestRenderer[] = [];
 
-afterEach(() => {
-  act(() => {
-    for (const renderer of trackedRenderers.splice(0, trackedRenderers.length)) {
-      try {
+/**
+ * Pass 7.7B (A-6): the render continuation currently in flight, if any.
+ *
+ * Jest's per-test timeout stops AWAITING a test body; it does not cancel
+ * it. A test that times out mid-render therefore leaves a live
+ * continuation that still owns an open act() scope and still holds a
+ * renderer it is about to read. Teardown settles that continuation
+ * FIRST - before opening any act() scope of its own, and before
+ * unmounting anything - so the two can never overlap and no continuation
+ * can reach `.root` after unmount.
+ *
+ * The continuation's own rejection still belongs to the test that
+ * started it, so it is settled here rather than re-thrown into teardown.
+ */
+let pendingRender: Promise<void> = Promise.resolve();
+
+function trackPendingRender<T>(started: Promise<T>): Promise<T> {
+  pendingRender = pendingRender.then(() =>
+    started.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return started;
+}
+
+/** The single teardown path for this file. Idempotent: a renderer that
+ * was already unmounted reports toJSON() === null and is skipped. */
+async function teardownRenderers(): Promise<void> {
+  const inFlight = pendingRender;
+  pendingRender = Promise.resolve();
+  await inFlight;
+
+  const renderers = trackedRenderers.splice(0, trackedRenderers.length);
+  await act(async () => {
+    for (const renderer of renderers) {
+      if (renderer.toJSON() !== null) {
         renderer.unmount();
-      } catch {
-        // Best-effort - see UsbConnectionScreen.test.tsx's own identical
-        // afterEach() comment.
       }
     }
+    await flushSchedulerTick();
   });
+}
+
+afterEach(async () => {
+  await teardownRenderers();
 });
 
 // Mirrors UsbConnectionScreen.test.tsx's own findPressableMatch()/
@@ -245,22 +306,63 @@ function flushSchedulerTick(): Promise<void> {
   return new Promise<void>(resolve => setTimeout(() => resolve(), 0));
 }
 
-/** Mounts App and lets its first scheduler-queued passive effects settle
- * (see flushSchedulerTick's own doc comment) - the shared foundation both
- * renderAppConnectedToSetup() and the malformed-params guard test below
- * build on. */
-async function renderApp() {
-  const App = require('../App').default;
-  let renderer!: ReactTestRenderer.ReactTestRenderer;
-  await act(async () => {
-    renderer = ReactTestRenderer.create(<App />);
-  });
-  trackedRenderers.push(renderer);
-  await act(async () => {
-    await flushSchedulerTick();
-    await flushSchedulerTick();
-  });
-  return renderer;
+/**
+ * Pass 7.7B (A-6): UsbConnectionScreen's mount-time auto-scan
+ * (hasAutoScannedRef -> handleRefresh) dispatches SCAN_SUCCESS only after
+ * client.listDevices() resolves. Awaiting THAT promise - the very one the
+ * screen itself awaited, read back off the jest.fn's recorded results -
+ * is an observable readiness condition, not a guess about elapsed time:
+ * once every recorded listDevices() call has settled, the reducer update
+ * has either already been dispatched or is one microtask away, and the
+ * scheduler tick that follows flushes it plus the passive effects React
+ * queues off it. All of it inside the caller's own act() scope, which is
+ * what removes the "update to UsbConnectionScreen was not wrapped in
+ * act()" warning at UsbConnectionScreen.tsx's dispatch({type:
+ * 'SCAN_SUCCESS'}).
+ */
+async function settlePendingScans(): Promise<void> {
+  // One real scheduler tick so React's passive effects - the mount-time
+  // auto-scan among them - actually run and call listDevices().
+  await flushSchedulerTick();
+  // Then the observable readiness condition itself: every scan promise
+  // the screen is awaiting, positively settled.
+  await Promise.all(
+    fakeClient.listDevices.mock.results
+      .filter(result => result.type === 'return')
+      .map(result => Promise.resolve(result.value).then(undefined, () => undefined)),
+  );
+  // And one more tick for the dispatch that follows a resolved scan and
+  // anything React schedules off it.
+  await flushSchedulerTick();
+}
+
+/** Mounts App, then lets its mount-time device scan and its first
+ * scheduler-queued passive effects settle inside a second awaited act()
+ * (see settlePendingScans() and flushSchedulerTick()) - the shared
+ * foundation every test in this file builds on. */
+function renderApp(): Promise<ReactTestRenderer.ReactTestRenderer> {
+  return trackPendingRender(
+    (async () => {
+      let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+      try {
+        await act(async () => {
+          renderer = ReactTestRenderer.create(<App />);
+        });
+        // Own the scan settlement in its own awaited act() scope: React
+        // defers a mount's passive effects until the creating act()
+        // scope pops, so the auto-scan cannot even have started inside
+        // the scope above.
+        await act(async () => {
+          await settlePendingScans();
+        });
+      } finally {
+        if (renderer !== undefined) {
+          trackedRenderers.push(renderer);
+        }
+      }
+      return renderer as ReactTestRenderer.ReactTestRenderer;
+    })(),
+  );
 }
 
 /** Mounts App, lets the safe auto-select policy pick the sole supported
@@ -268,37 +370,109 @@ async function renderApp() {
  * a real user reaching it would, via UsbConnectionScreen's own
  * navigation.navigate('Setup', {sessionKey}) call (Pass 7.1). Returns the
  * sessionId the fake client resolved openDevice() with. */
-async function renderAppConnectedToSetup(sessionId: string) {
-  fakeClient.listDevices.mockResolvedValueOnce([supportedDevice()]);
-  fakeClient.openDevice.mockResolvedValueOnce(sessionId);
+function renderAppConnectedToSetup(sessionId: string) {
+  return trackPendingRender(
+    (async () => {
+      fakeClient.listDevices.mockResolvedValueOnce([supportedDevice()]);
+      fakeClient.openDevice.mockResolvedValueOnce(sessionId);
 
-  const renderer = await renderApp();
-  await pressConnect(renderer);
+      const renderer = await renderApp();
+      await pressConnect(renderer);
 
-  expect(isOnSetupScreen(renderer)).toBe(true);
-  return renderer;
+      expect(isOnSetupScreen(renderer)).toBe(true);
+      return renderer;
+    })(),
+  );
+}
+
+/** Every <Text> currently rendered, joined children included. */
+function allText(renderer: ReactTestRenderer.ReactTestRenderer): unknown[] {
+  return renderer.root
+    .findAllByType(Text)
+    .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
 }
 
 test('renders the USB connection screen and forces RTL', async () => {
-  const allowRTLSpy = jest.spyOn(I18nManager, 'allowRTL');
-  const forceRTLSpy = jest.spyOn(I18nManager, 'forceRTL');
+  const renderer = await renderApp();
 
-  const App = require('../App').default;
-
-  let renderer: ReactTestRenderer.ReactTestRenderer;
-  await ReactTestRenderer.act(() => {
-    renderer = ReactTestRenderer.create(<App />);
-  });
-  trackedRenderers.push(renderer!);
-
-  const texts = renderer!.root
-    .findAllByType(Text)
-    .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
+  const texts = allText(renderer);
 
   expect(texts).toContain(i18n.t('app.name'));
   expect(texts).toContain(i18n.t('connection.instructionPrimary'));
+  // The spies were installed above the module-scope load of ../App, so
+  // these still assert on App.tsx's own one-time module-scope RTL forcing
+  // - exactly what this test asserted before, from the only place that
+  // can still observe it.
   expect(allowRTLSpy).toHaveBeenCalledWith(true);
   expect(forceRTLSpy).toHaveBeenCalledWith(true);
+});
+
+describe('App - Pass 7.7B: coverage lifecycle', () => {
+  it('completes the mount-time device scan INSIDE act(), with no act() warning', async () => {
+    const recorded: string[] = [];
+    const originalError = console.error.bind(console);
+    // Recording, not suppressing: every argument list is still forwarded
+    // to the real console.error, so nothing is hidden from the run.
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      recorded.push(args.map(argument => String(argument)).join(' '));
+      originalError(...args);
+    });
+
+    let texts: unknown[];
+    try {
+      // A scan that settles LATER than any fixed number of scheduler
+      // hops would cover. A microtask- or immediate-macrotask-resolved
+      // scan would pass this test even with the settlement removed, so
+      // it would prove nothing; this one is only inside the act() scope
+      // if settlePendingScans() genuinely awaits the screen's own scan
+      // promise. Verified as a negative control: deleting that await
+      // fails this test with the screen still showing "جارٍ البحث".
+      fakeClient.listDevices.mockImplementationOnce(
+        () => new Promise(resolve => setTimeout(() => resolve([supportedDevice()]), 200)),
+      );
+      const renderer = await renderApp();
+      // Positive proof the scan completed inside renderApp()'s own act()
+      // scope: the enumerated device is already on screen, with no
+      // further flushing of any kind between the mount and this read.
+      texts = allText(renderer);
+    } finally {
+      errorSpy.mockRestore();
+    }
+
+    expect(texts).toContain('CH340 Serial');
+    expect(recorded.filter(message => message.includes('not wrapped in act'))).toEqual([]);
+    expect(recorded.filter(message => message.includes('overlapping act'))).toEqual([]);
+  });
+
+  it('teardown settles an un-awaited render continuation before it unmounts anything', async () => {
+    let textsSeenWhileMounted: unknown[] | undefined;
+    let continuationError: unknown;
+
+    // Deliberately NOT awaited here - this is exactly the state Jest
+    // leaves a test in when it exceeds its timeout mid-render.
+    const abandoned = renderApp().then(
+      renderer => {
+        textsSeenWhileMounted = allText(renderer);
+      },
+      error => {
+        continuationError = error;
+      },
+    );
+
+    await teardownRenderers();
+
+    // The continuation ran to completion against a still-mounted tree.
+    expect(continuationError).toBeUndefined();
+    expect(textsSeenWhileMounted).toContain(i18n.t('connection.instructionPrimary'));
+    await abandoned;
+
+    // ...and the renderer really is unmounted afterwards, so the
+    // pre-fix ".root after unmount" access is now impossible by ordering.
+    expect(trackedRenderers).toHaveLength(0);
+
+    // Idempotent: running the same teardown again is harmless.
+    await teardownRenderers();
+  });
 });
 
 describe('App - Pass 7.1 navigation foundation', () => {
