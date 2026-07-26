@@ -182,37 +182,83 @@ function supportedDevice() {
 const trackedRenderers: ReactTestRenderer.ReactTestRenderer[] = [];
 
 /**
- * Pass 7.7B (A-6): the render continuation currently in flight, if any.
+ * Pass 7.7B.1: COMPLETE renderer-lifetime ownership.
  *
  * Jest's per-test timeout stops AWAITING a test body; it does not cancel
- * it. A test that times out mid-render therefore leaves a live
- * continuation that still owns an open act() scope and still holds a
- * renderer it is about to read. Teardown settles that continuation
- * FIRST - before opening any act() scope of its own, and before
- * unmounting anything - so the two can never overlap and no continuation
- * can reach `.root` after unmount.
+ * it. Pass 7.7B tracked only the render helper's own Promise and argued
+ * from Promise-callback order that the body would resume first. That
+ * argument expires at the body's next await - and most tests here have
+ * one (`await act(...)` around a deactivation, a hardware-Back press, a
+ * held onReady release) followed by a further `renderer.root` read. A
+ * test timing out inside one of those later awaits would find its render
+ * Promise long settled, teardown would sail through, unmount, and the
+ * body would then reach `.root` on a dead tree.
  *
- * The continuation's own rejection still belongs to the test that
- * started it, so it is settled here rather than re-thrown into teardown.
+ * So the unit of ownership is the WHOLE renderer-using operation. A
+ * ticket is added synchronously, before the operation's first statement,
+ * and removed in a `finally` - released on success, on failure and on an
+ * abandoned continuation alike. Teardown waits until the set is empty
+ * before it opens any act() scope or unmounts anything.
+ *
+ * DEADLOCK SAFETY: an owning operation must never await teardown. Only
+ * afterEach and the two teardown regressions below call
+ * teardownRenderers, and those regressions deliberately use plain `it`
+ * rather than itOwningRenderer for exactly that reason. Every owning
+ * operation here completes on its own - real scheduler ticks and the
+ * screen's own scan Promise - and needs no unmount and no other
+ * teardown-only action to finish.
  */
-let pendingRender: Promise<void> = Promise.resolve();
+const rendererOwners = new Set<Promise<void>>();
 
-function trackPendingRender<T>(started: Promise<T>): Promise<T> {
-  pendingRender = pendingRender.then(() =>
-    started.then(
-      () => undefined,
-      () => undefined,
-    ),
-  );
-  return started;
+function ownRendererOperation<T>(operation: () => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const ticket = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  rendererOwners.add(ticket);
+  return (async () => {
+    try {
+      return await operation();
+    } finally {
+      rendererOwners.delete(ticket);
+      release();
+    }
+  })();
+}
+
+/**
+ * Waits until no renderer-owning operation is in flight. The loop (not a
+ * single Promise.all) covers an operation that starts another while this
+ * is waiting; the Set lets several be owned at once without any of them
+ * overwriting an earlier owner. A ticket resolves rather than rejects,
+ * so a failing operation still releases teardown - its rejection stays
+ * with the test that started it and is never swallowed here.
+ */
+async function settleRendererOwners(): Promise<void> {
+  while (rendererOwners.size > 0) {
+    await Promise.all(Array.from(rendererOwners));
+  }
+}
+
+/**
+ * `it()` for a test whose ENTIRE body owns its renderer: creation, every
+ * later await, every query, every press, and the final renderer access.
+ * Jest still awaits the body normally - the ticket is an additional
+ * teardown-safety contract, not a substitute for awaiting.
+ */
+function itOwningRenderer(name: string, body: () => Promise<void>): void {
+  it(name, () => ownRendererOperation(body));
+}
+
+/** The top-level `test()` equivalent of itOwningRenderer. */
+function testOwningRenderer(name: string, body: () => Promise<void>): void {
+  test(name, () => ownRendererOperation(body));
 }
 
 /** The single teardown path for this file. Idempotent: a renderer that
  * was already unmounted reports toJSON() === null and is skipped. */
 async function teardownRenderers(): Promise<void> {
-  const inFlight = pendingRender;
-  pendingRender = Promise.resolve();
-  await inFlight;
+  await settleRendererOwners();
 
   const renderers = trackedRenderers.splice(0, trackedRenderers.length);
   await act(async () => {
@@ -341,8 +387,8 @@ async function settlePendingScans(): Promise<void> {
  * (see settlePendingScans() and flushSchedulerTick()) - the shared
  * foundation every test in this file builds on. */
 function renderApp(): Promise<ReactTestRenderer.ReactTestRenderer> {
-  return trackPendingRender(
-    (async () => {
+  return ownRendererOperation(
+    async () => {
       let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
       try {
         await act(async () => {
@@ -361,7 +407,7 @@ function renderApp(): Promise<ReactTestRenderer.ReactTestRenderer> {
         }
       }
       return renderer as ReactTestRenderer.ReactTestRenderer;
-    })(),
+    },
   );
 }
 
@@ -371,8 +417,8 @@ function renderApp(): Promise<ReactTestRenderer.ReactTestRenderer> {
  * navigation.navigate('Setup', {sessionKey}) call (Pass 7.1). Returns the
  * sessionId the fake client resolved openDevice() with. */
 function renderAppConnectedToSetup(sessionId: string) {
-  return trackPendingRender(
-    (async () => {
+  return ownRendererOperation(
+    async () => {
       fakeClient.listDevices.mockResolvedValueOnce([supportedDevice()]);
       fakeClient.openDevice.mockResolvedValueOnce(sessionId);
 
@@ -381,7 +427,7 @@ function renderAppConnectedToSetup(sessionId: string) {
 
       expect(isOnSetupScreen(renderer)).toBe(true);
       return renderer;
-    })(),
+    },
   );
 }
 
@@ -392,7 +438,7 @@ function allText(renderer: ReactTestRenderer.ReactTestRenderer): unknown[] {
     .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
 }
 
-test('renders the USB connection screen and forces RTL', async () => {
+testOwningRenderer('renders the USB connection screen and forces RTL', async () => {
   const renderer = await renderApp();
 
   const texts = allText(renderer);
@@ -408,7 +454,7 @@ test('renders the USB connection screen and forces RTL', async () => {
 });
 
 describe('App - Pass 7.7B: coverage lifecycle', () => {
-  it('completes the mount-time device scan INSIDE act(), with no act() warning', async () => {
+  itOwningRenderer('completes the mount-time device scan INSIDE act(), with no act() warning', async () => {
     const recorded: string[] = [];
     const originalError = console.error.bind(console);
     // Recording, not suppressing: every argument list is still forwarded
@@ -444,6 +490,73 @@ describe('App - Pass 7.7B: coverage lifecycle', () => {
     expect(recorded.filter(message => message.includes('overlapping act'))).toEqual([]);
   });
 
+  /**
+   * The DANGEROUS boundary, mirroring the Setup integration suite's own
+   * regression: the render Promise has already settled, and the owning
+   * operation is parked on a SECOND await when teardown starts. Waiting
+   * only for the render Promise (Pass 7.7B) unmounts here; waiting for
+   * the complete operation does not.
+   *
+   * A plain `it`, not itOwningRenderer: this test awaits teardown
+   * itself, and an owning operation that awaits teardown would deadlock
+   * against its own ticket.
+   */
+  it('teardown waits for the COMPLETE renderer-owning operation, not just its render', async () => {
+    // A real deferred Promise, not a sleep: nothing advances until this
+    // test releases it.
+    let releaseGate!: () => void;
+    const gate = new Promise<void>(resolve => {
+      releaseGate = resolve;
+    });
+    let announceRendered!: (renderer: ReactTestRenderer.ReactTestRenderer) => void;
+    const rendered = new Promise<ReactTestRenderer.ReactTestRenderer>(resolve => {
+      announceRendered = resolve;
+    });
+
+    let textsAfterGate: unknown[] | undefined;
+    let operationFinished = false;
+    let operationError: unknown;
+
+    const owning = ownRendererOperation(async () => {
+      const renderer = await renderApp();
+      announceRendered(renderer);
+      await gate;
+      textsAfterGate = allText(renderer);
+      operationFinished = true;
+    }).catch(error => {
+      operationError = error;
+    });
+
+    const renderer = await rendered;
+    expect(renderer.toJSON()).not.toBeNull();
+
+    const teardown = teardownRenderers();
+
+    // Teardown must be waiting, not unmounting - give it every tick it
+    // would need to reach an unmount if it were going to.
+    await flushSchedulerTick();
+    await flushSchedulerTick();
+    expect(renderer.toJSON()).not.toBeNull();
+    expect(trackedRenderers).toContain(renderer);
+    expect(textsAfterGate).toBeUndefined();
+    expect(operationFinished).toBe(false);
+
+    releaseGate();
+    await owning;
+
+    expect(operationError).toBeUndefined();
+    expect(operationFinished).toBe(true);
+    expect(textsAfterGate).toContain(i18n.t('connection.instructionPrimary'));
+
+    await teardown;
+    expect(renderer.toJSON()).toBeNull();
+    expect(trackedRenderers).toHaveLength(0);
+
+    // Idempotent - and the file-level afterEach makes it a third run.
+    await teardownRenderers();
+    expect(renderer.toJSON()).toBeNull();
+  });
+
   it('teardown settles an un-awaited render continuation before it unmounts anything', async () => {
     let textsSeenWhileMounted: unknown[] | undefined;
     let continuationError: unknown;
@@ -476,7 +589,7 @@ describe('App - Pass 7.7B: coverage lifecycle', () => {
 });
 
 describe('App - Pass 7.1 navigation foundation', () => {
-  it('navigates Connection -> Setup on a successful connect, reaching the real SetupScreen wired to the coordinator\'s own session', async () => {
+  itOwningRenderer('navigates Connection -> Setup on a successful connect, reaching the real SetupScreen wired to the coordinator\'s own session', async () => {
     const sessionId = 'session-app-nav-1';
     const renderer = await renderAppConnectedToSetup(sessionId);
 
@@ -511,7 +624,7 @@ describe('App - Pass 7.1 navigation foundation', () => {
     });
   });
 
-  it("the root redirect listener resets the stack to 'Connection' once the tracked session's ownership goes INACTIVE while 'Setup' has focus", async () => {
+  itOwningRenderer("the root redirect listener resets the stack to 'Connection' once the tracked session's ownership goes INACTIVE while 'Setup' has focus", async () => {
     const sessionId = 'session-app-redirect-1';
     const renderer = await renderAppConnectedToSetup(sessionId);
     expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
@@ -534,7 +647,7 @@ describe('App - Pass 7.1 navigation foundation', () => {
     expect(texts).toContain(i18n.t('connection.instructionPrimary'));
   });
 
-  it('Android hardware Back from Setup returns to Connection WITHOUT deactivating the still-active MSP session', async () => {
+  itOwningRenderer('Android hardware Back from Setup returns to Connection WITHOUT deactivating the still-active MSP session', async () => {
     const backHandlerSpy = jest.spyOn(BackHandler, 'addEventListener');
     const deactivateSpy = jest.spyOn(mspSessionCoordinator, 'deactivateMspSession');
     const sessionId = 'session-app-back-1';
@@ -585,7 +698,7 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
     navigationReadyControl.heldCallback = null;
   });
 
-  it(
+  itOwningRenderer(
     "does not permanently drop the redirect when ownership goes INACTIVE before the navigator reports ready - " +
       'it stays pending and completes once onReady fires',
     async () => {
@@ -629,7 +742,7 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
 });
 
 describe('App - Pass 7.1 defensive guard: malformed Setup route params', () => {
-  it('does not throw and falls back gracefully when the Setup route is reached without sessionKey params', async () => {
+  itOwningRenderer('does not throw and falls back gracefully when the Setup route is reached without sessionKey params', async () => {
     const renderer = await renderApp();
 
     await act(async () => {
