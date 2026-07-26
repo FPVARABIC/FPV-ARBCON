@@ -170,9 +170,17 @@ function SetupScreenContent({
   const recoveryState = useMspRecoveryState(sessionId);
   const appStatePhase = useSetupAppStatePhase();
   const cachedArmedState = useFcToolArmedState(sessionId, freshStatusValue);
+  // Deliberately dependency-free: the composite readiness identity is
+  // (physicalGeneration, mspEpoch), and the epoch can change without any
+  // rendered value changing with it (a desync/recovery cycle that
+  // settles back to READY within one batch). ensureBoxIdsMapping() is
+  // idempotent and returns immediately when the CURRENT identity has
+  // already settled or is already in flight, so this is at most ONE
+  // MSP_BOXIDS request per identity - never a poll, and never a retry
+  // inside an identity.
   useEffect(() => {
     fcToolsController.ensureBoxIdsMapping(sessionId);
-  }, [sessionId, identification.status, ownershipState]);
+  });
 
   // GPS presence proof comes from the SHARED MSP_STATUS_EX decode (a
   // stale sensor mask still proves the FC detected the hardware);
