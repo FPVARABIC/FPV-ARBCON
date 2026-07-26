@@ -180,6 +180,42 @@ describe('debug panels - JS import-graph isolation', () => {
     expect(seam).not.toMatch(/export const Usb/);
   });
 
+  it('with __DEV__ === false the seam resolves BOTH panels to undefined (A-8)', () => {
+    const globals = global as unknown as {__DEV__: boolean};
+    const original = globals.__DEV__;
+    try {
+      globals.__DEV__ = false;
+      jest.isolateModules(() => {
+        // A fresh require() is the whole point: a static import cannot
+        // re-evaluate the module under a different __DEV__.
+        const seam = require('./debugPanels') as {DevAppLogPanel?: unknown; DevSerialPanel?: unknown};
+        expect(seam.DevAppLogPanel).toBeUndefined();
+        expect(seam.DevSerialPanel).toBeUndefined();
+      });
+    } finally {
+      globals.__DEV__ = original;
+    }
+    // The global is restored exactly as it was.
+    expect((global as unknown as {__DEV__: boolean}).__DEV__).toBe(original);
+  });
+
+  it('with __DEV__ === true the seam resolves both panels to real components', () => {
+    const globals = global as unknown as {__DEV__: boolean};
+    const original = globals.__DEV__;
+    try {
+      globals.__DEV__ = true;
+      jest.isolateModules(() => {
+        // Fresh require() again - see the previous case.
+        const seam = require('./debugPanels') as {DevAppLogPanel?: unknown; DevSerialPanel?: unknown};
+        expect(typeof seam.DevAppLogPanel).toBe('function');
+        expect(typeof seam.DevSerialPanel).toBe('function');
+      });
+    } finally {
+      globals.__DEV__ = original;
+    }
+    expect((global as unknown as {__DEV__: boolean}).__DEV__).toBe(original);
+  });
+
   it('the screens barrel no longer re-exports a debug panel', () => {
     const barrel = readFileSync(join(REPO_ROOT, 'src/ui/screens/index.ts'), 'utf8');
     expect(barrel).not.toContain("from './UsbSerialDebugPanel'");

@@ -232,6 +232,57 @@ function installFakeAppState(initial: AppStateStatus = 'active') {
   };
 }
 
+/**
+ * Pass 7.7A (A-7): every renderer this suite mounts, so teardown can
+ * unmount them all INSIDE act() and BEFORE any session is deactivated.
+ * Unmount-first is what removes the whole class of "a deactivation
+ * notification updates a tree the test is about to abandon" warnings,
+ * and with it any possibility of touching `.root` after unmount.
+ */
+let mountedRenderers: ReactTestRenderer.ReactTestRenderer[] = [];
+
+function track(renderer: ReactTestRenderer.ReactTestRenderer): ReactTestRenderer.ReactTestRenderer {
+  mountedRenderers.push(renderer);
+  return renderer;
+}
+
+/** Idempotent: a test that already unmounted its own renderer leaves
+ * toJSON() === null, and that renderer is skipped here. */
+async function unmountAllTracked(): Promise<void> {
+  const renderers = mountedRenderers;
+  mountedRenderers = [];
+  await act(async () => {
+    for (const renderer of renderers) {
+      if (renderer.toJSON() !== null) {
+        renderer.unmount();
+      }
+    }
+    await flushAsync();
+  });
+}
+
+/**
+ * The single teardown path: unmount every tree first, then deactivate
+ * every session, then stop the AppState owner - each inside an awaited
+ * act() so no React update is ever left unflushed. Safe to run twice.
+ */
+async function teardownAll(sessionIds: string[]): Promise<void> {
+  await unmountAllTracked();
+  await act(async () => {
+    for (const sessionId of sessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+  });
+  await act(async () => {
+    setupAppStateTelemetryOwner.stop();
+    await flushAsync();
+  });
+  jest.clearAllTimers();
+  jest.useRealTimers();
+  await flushAsync();
+}
+
 describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
   let openIds: string[] = [];
   let appState: ReturnType<typeof installFakeAppState>;
@@ -239,6 +290,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     openIds = [];
+    mountedRenderers = [];
     // The FC-tools mutex is an app-wide singleton: release it so one
     // test can never leave a confirmation open for the next.
     fcToolsController.cancel();
@@ -246,14 +298,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
   });
 
   afterEach(async () => {
-    for (const sessionId of openIds) {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    }
-    await flushAsync();
-    setupAppStateTelemetryOwner.stop();
-    jest.clearAllTimers();
-    jest.useRealTimers();
-    await flushAsync();
+    await teardownAll(openIds);
   });
 
   async function mount(sessionId: string, configure?: (client: ReturnType<typeof makeFakeClient>) => void) {
@@ -262,7 +307,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     openIds.push(sessionId);
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
-      renderer = ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />);
+      renderer = track(ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />));
     });
     await act(async () => {
       mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
@@ -542,7 +587,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     });
     let remounted!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
-      remounted = ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />);
+      remounted = track(ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />));
     });
     await settle(400);
 
@@ -652,7 +697,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     });
     let remounted!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
-      remounted = ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />);
+      remounted = track(ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />));
     });
     await settle(300);
 
@@ -718,19 +763,13 @@ describe('Setup screen - layout and accessibility', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     openIds = [];
+    mountedRenderers = [];
     fcToolsController.cancel();
     installFakeAppState('active');
   });
 
   afterEach(async () => {
-    for (const sessionId of openIds) {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    }
-    await flushAsync();
-    setupAppStateTelemetryOwner.stop();
-    jest.clearAllTimers();
-    jest.useRealTimers();
-    await flushAsync();
+    await teardownAll(openIds);
   });
 
   async function mount(sessionId: string) {
@@ -738,7 +777,7 @@ describe('Setup screen - layout and accessibility', () => {
     openIds.push(sessionId);
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
-      renderer = ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />);
+      renderer = track(ReactTestRenderer.create(<SetupScreen {...makeProps(sessionId)} />));
     });
     await act(async () => {
       mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
