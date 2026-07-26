@@ -55,74 +55,53 @@ import com.facebook.react.bridge.ReactMethod
 internal class UsbAppLogCaptureModule(reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
 
+  private val core =
+    UsbAppLogCaptureCore(
+      startProcess = {
+        val ownPid = android.os.Process.myPid()
+        ProcessBuilder("logcat", "-d", "--pid=$ownPid").redirectErrorStream(true).start()
+      },
+    )
+
   override fun getName(): String = NAME
 
   /**
-   * Captures this process's own recent logcat output as a single string and
-   * resolves [promise] with it. Never reads any other process's log.
+   * Captures this process's own recent logcat output as a single string
+   * and resolves [promise] with it. Never reads any other process's log.
    *
-   * PASS5.3-DEBUG-LOGCAT-CORRECTION: the read itself - not just the
-   * process's exit - is now bounded, via [readProcessOutputBounded] (see
-   * its own note). A prior version of this method only bounded the wait
-   * for the process to exit, calling the equivalent of `reader.readText()`
-   * unbounded beforehand - if that stdout stream never reached EOF for any
-   * reason, this could hang indefinitely, exactly the same class of bug
-   * this entire debug feature exists to diagnose in openDevice(). It
-   * cannot do that anymore: [readProcessOutputBounded] force-destroys the
-   * subprocess and throws [ProcessReadTimeoutException] instead of ever
-   * blocking past [CAPTURE_TIMEOUT_MILLIS].
-   *
-   * PASS5.5-CAPTURE-TIMESTAMP: the resolved string is now always prefixed
-   * with a "[Captured at: HH:MM:SS.mmm]" header showing the wall-clock time
-   * this method actually ran - not a fix for any confirmed bug in
-   * [MAX_CAPTURED_CHARS] truncation below (which already keeps the most
-   * RECENT characters via [takeLast], not the earliest - verified, not
-   * assumed, before adding this), but pure clarity: a capture whose
-   * contents end well before a connect attempt/error happened is otherwise
-   * ambiguous between "the button was pressed too early" and "something is
-   * wrong with what got captured." This header removes that ambiguity for
-   * every future capture.
+   * Pass 7.7: the whole process lifecycle (success, read error, timeout,
+   * explicit cancellation and module invalidation, plus the settle-once
+   * rule) now lives in [UsbAppLogCaptureCore], a plain JVM object with
+   * its own unit tests - this method is only the bridge adapter.
    */
   @ReactMethod
   fun captureAppLog(promise: Promise) {
-    val ownPid = android.os.Process.myPid()
-    var process: Process? = null
-    try {
-      process = ProcessBuilder("logcat", "-d", "--pid=$ownPid").redirectErrorStream(true).start()
-      val output = readProcessOutputBounded(process, CAPTURE_TIMEOUT_MILLIS)
-      val truncated = if (output.length > MAX_CAPTURED_CHARS) output.takeLast(MAX_CAPTURED_CHARS) else output
-      val prefix =
-        if (output.length > MAX_CAPTURED_CHARS) {
-          "[... truncated to the last $MAX_CAPTURED_CHARS characters ...]\n"
-        } else {
-          ""
+    core.capture(
+      object : AppLogCaptureOutcome {
+        override fun resolve(output: String) {
+          promise.resolve(output)
         }
-      promise.resolve(captureTimestampHeader() + prefix + truncated)
-    } catch (error: ProcessReadTimeoutException) {
-      // readProcessOutputBounded already force-destroyed the subprocess on
-      // this path - nothing further to clean up here, only to report.
-      promise.reject("LOG_CAPTURE_TIMEOUT", error.message ?: "Timed out capturing this app's own logcat output.")
-    } catch (error: Exception) {
-      process?.destroyForcibly()
-      promise.reject("LOG_CAPTURE_FAILED", error.message ?: "Failed to capture this app's own logcat output.")
-    }
+
+        override fun reject(code: String, message: String) {
+          promise.reject(code, message)
+        }
+      },
+    )
   }
 
-  /**
-   * A fresh [java.text.SimpleDateFormat] per call, deliberately not a
-   * shared/cached instance - SimpleDateFormat is documented as not
-   * thread-safe, and this method has no need to reuse one across calls (a
-   * manual debug button press is not a hot path).
-   */
-  private fun captureTimestampHeader(): String {
-    val formatted =
-      java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.US).format(java.util.Date())
-    return "[Captured at: $formatted]\n"
+  /** Explicit cancellation - terminates any in-flight capture process. */
+  @ReactMethod
+  fun cancelAppLogCapture() {
+    core.cancel()
+  }
+
+  /** React context teardown: nothing may survive it. */
+  override fun invalidate() {
+    core.invalidate()
+    super.invalidate()
   }
 
   private companion object {
     const val NAME = "UsbAppLogCapture"
-    const val CAPTURE_TIMEOUT_MILLIS = 5_000L
-    const val MAX_CAPTURED_CHARS = 20_000
   }
 }

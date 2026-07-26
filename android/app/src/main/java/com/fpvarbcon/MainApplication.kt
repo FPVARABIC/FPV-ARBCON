@@ -6,7 +6,6 @@ import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
-import com.fpvarbcon.debug.UsbAppLogCapturePackage
 import com.fpvarbcon.transport.UsbSerialTransportPackage
 
 class MainApplication : Application(), ReactApplication {
@@ -19,9 +18,11 @@ class MainApplication : Application(), ReactApplication {
           // Packages that cannot be autolinked yet can be added manually here, for example:
           // add(MyReactNativePackage())
           add(UsbSerialTransportPackage())
-          // TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbAppLogCaptureModule.kt's
-          // own class-level note. Remove this line alongside that file.
-          add(UsbAppLogCapturePackage())
+          // Pass 7.7: the variant-safe seam. Debug supplies the app-log
+          // capture package; release supplies an empty list, so nothing
+          // under com.fpvarbcon.debug is referenced from the main source
+          // set and none of it can reach the release DEX.
+          addAll(variantReactPackages())
         },
     )
   }
