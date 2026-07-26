@@ -43,91 +43,130 @@ internal class UsbPermissionRequester(
   private val usbManager: UsbManager,
 ) {
 
-  private val permissionAction = "${context.packageName}.transport.USB_PERMISSION"
-  private val pendingReceivers = mutableSetOf<BroadcastReceiver>()
-
-  @Volatile private var cancelled = false
+  /**
+   * PASS 7.7: the action is now PER REQUEST
+   * ("<pkg>.transport.USB_PERMISSION.<uniqueId>") instead of one shared
+   * string, and every broadcast is validated against the exact requesting
+   * device before it may settle anything - see
+   * [UsbPermissionRequestCoordinator] for the confirmed baseline defects
+   * (no request identity, no EXTRA_DEVICE validation, no device
+   * comparison, duplicate/foreign broadcasts accepted) this closes.
+   */
+  private val coordinator = UsbPermissionRequestCoordinator("${context.packageName}.transport.USB_PERMISSION")
+  private val pendingReceivers = mutableMapOf<Long, BroadcastReceiver>()
 
   /** onResult(granted, failureMessage). failureMessage set only for infrastructure failures. */
   fun requestPermission(device: UsbDevice, onResult: (granted: Boolean, failureMessage: String?) -> Unit) {
-    if (cancelled) return
+    if (coordinator.isCancelled()) return
 
     if (usbManager.hasPermission(device)) {
       onResult(true, null)
       return
     }
 
-    var settled = false
-    lateinit var receiver: BroadcastReceiver
-    receiver =
+    val identity = UsbDeviceIdentity(device.deviceId, device.vendorId, device.productId)
+    val requestId = coordinator.register(identity, onResult) ?: return
+    val action = coordinator.actionFor(requestId)
+
+    val receiver =
       object : BroadcastReceiver() {
         override fun onReceive(receivedContext: Context, intent: Intent) {
-          if (intent.action != permissionAction) return
-          if (!unregister(this) || settled) return
-          settled = true
-          val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-          onResult(granted, null)
+          // Validate the exact action, the presence of EXTRA_DEVICE and
+          // the device identity itself. A wrong-device, stale, duplicate
+          // or spoofed broadcast matches nothing and settles nothing.
+          val received = extractDevice(intent)
+          val matched =
+            coordinator.matchResult(
+              intent.action,
+              requestId,
+              received?.let { UsbDeviceIdentity(it.deviceId, it.vendorId, it.productId) },
+            ) ?: return
+          unregister(requestId)
+          val granted =
+            intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false) &&
+              !coordinator.isCancelled()
+          matched.onResult(granted, null)
         }
       }
 
-    synchronized(pendingReceivers) { pendingReceivers.add(receiver) }
+    synchronized(pendingReceivers) { pendingReceivers[requestId] = receiver }
 
-    val filter = IntentFilter(permissionAction)
+    val filter = IntentFilter(action)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      // API 33+ requires an explicit export flag for dynamically
+      // registered receivers; this receiver is internal to the app only.
       context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
     } else {
       context.registerReceiver(receiver, filter)
     }
 
-    // FLAG_MUTABLE + setPackage() - see this class's own class-level note
-    // for why (a confirmed real-hardware fix, not merely defensive style).
-    // minSdkVersion is 24 (> Build.VERSION_CODES.M / 23, verified against
-    // android/build.gradle, not assumed), so every device this app runs on
-    // is unconditionally past the pinned library example's own
-    // `SDK_INT >= M` guard - no version check is needed here.
-    val permissionRequestIntent = Intent(permissionAction).apply { setPackage(context.packageName) }
+    // FLAG_MUTABLE + setPackage() - retained verbatim from the Pass 5.6
+    // real-hardware fix (see the file history note below): the USB
+    // framework fills EXTRA_DEVICE/EXTRA_PERMISSION_GRANTED into this
+    // intent, so it must remain mutable, and setPackage() keeps delivery
+    // scoped to this app. minSdkVersion is 24 (android/build.gradle), so
+    // no pre-M branch is needed.
+    val permissionRequestIntent = Intent(action).apply { setPackage(context.packageName) }
     val permissionIntent =
-      PendingIntent.getBroadcast(context, 0, permissionRequestIntent, PendingIntent.FLAG_MUTABLE)
+      PendingIntent.getBroadcast(
+        context,
+        // A distinct requestCode per request: two concurrent requests must
+        // not collide onto one cached PendingIntent.
+        requestId.toInt(),
+        permissionRequestIntent,
+        PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+      )
 
     try {
       usbManager.requestPermission(device, permissionIntent)
     } catch (error: Exception) {
-      if (unregister(receiver) && !settled) {
-        settled = true
-        onResult(false, error.message ?: "Failed to request USB permission.")
-      }
+      val failed = coordinator.settle(requestId, UsbPermissionRequestCoordinator.SettleReason.REQUEST_FAILURE)
+      unregister(requestId)
+      failed?.onResult(false, error.message ?: "Failed to request USB permission.")
     }
   }
 
   /**
-   * Removes [receiver] from the tracked set and unregisters it with the
-   * system, but only the caller that actually performs the removal (returns
-   * true) may proceed to settle its callback - guarantees exactly one
-   * settlement per request even under concurrent unregister attempts.
+   * PASS 7.7: gives the caller a bounded way out of a permission wait that
+   * never answers. Settles the request exactly once (nothing else can
+   * settle it afterwards - a late grant finds no pending entry and cannot
+   * open USB) and unregisters its receiver.
    */
-  private fun unregister(receiver: BroadcastReceiver): Boolean {
-    val removed = synchronized(pendingReceivers) { pendingReceivers.remove(receiver) }
-    if (removed) {
-      try {
-        context.unregisterReceiver(receiver)
-      } catch (_: Exception) {
-        // Already unregistered by the system (e.g. context torn down) - safe to ignore.
-      }
+  fun abandonRequest(requestId: Long, reason: UsbPermissionRequestCoordinator.SettleReason) {
+    val abandoned = coordinator.settle(requestId, reason)
+    unregister(requestId)
+    abandoned?.onResult(false, "USB permission request was cancelled before a result arrived.")
+  }
+
+  @Suppress("DEPRECATION")
+  private fun extractDevice(intent: Intent): UsbDevice? =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+    } else {
+      intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
     }
-    return removed
+
+  /** Unregisters (idempotently) the receiver owned by [requestId]. */
+  private fun unregister(requestId: Long) {
+    val receiver = synchronized(pendingReceivers) { pendingReceivers.remove(requestId) } ?: return
+    try {
+      context.unregisterReceiver(receiver)
+    } catch (_: Exception) {
+      // Already unregistered by the system (e.g. context torn down) - safe to ignore.
+    }
   }
 
   /**
-   * Unregisters every outstanding receiver and prevents any new request from
-   * starting. Used by module invalidation. Does not call any pending
-   * onResult callback - the owning open attempt's cleanup (releasing its
-   * device reservation) is the caller's responsibility, not this class's.
+   * Unregisters every outstanding receiver and prevents any new request
+   * from starting. Used by module invalidation. Pending callbacks are
+   * settled as not-granted so no caller can wait forever, and a late grant
+   * arriving afterwards can never open USB.
    */
   fun cancelAll() {
-    cancelled = true
+    val drained = coordinator.cancelAll()
     val receivers =
       synchronized(pendingReceivers) {
-        val copy = pendingReceivers.toList()
+        val copy = pendingReceivers.values.toList()
         pendingReceivers.clear()
         copy
       }
@@ -137,5 +176,11 @@ internal class UsbPermissionRequester(
       } catch (_: Exception) {
       }
     }
+    drained.forEach { request ->
+      request.onResult(false, "USB permission request was cancelled (module invalidated).")
+    }
   }
+
+  /** Test/diagnostic seam: how many permission requests are still pending. */
+  fun pendingRequestCount(): Int = coordinator.pendingCount()
 }

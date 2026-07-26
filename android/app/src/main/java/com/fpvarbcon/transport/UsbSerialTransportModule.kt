@@ -15,6 +15,8 @@ import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Thin TurboModule bridge for USB serial transport. listDevices(),
@@ -393,13 +395,34 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    */
   private fun awaitPermissionResult(device: UsbDevice): PermissionOutcome {
     val latch = CountDownLatch(1)
-    var outcome = PermissionOutcome(granted = false, failureMessage = "Permission result never arrived.")
+    // AtomicReference (not a bare local): with the bounded await below the
+    // callback thread may still write after this thread stops waiting, so
+    // the handoff needs an explicitly safe cell rather than relying on
+    // await()'s happens-before alone.
+    val outcome =
+      AtomicReference(
+        PermissionOutcome(granted = false, failureMessage = "Permission result never arrived."),
+      )
     permissionRequester.requestPermission(device) { granted, failureMessage ->
-      outcome = PermissionOutcome(granted, failureMessage)
+      outcome.set(PermissionOutcome(granted, failureMessage))
       latch.countDown()
     }
-    latch.await()
-    return outcome
+    // PASS 7.7: BOUNDED wait. The baseline used a bare latch.await() with
+    // no bound of its own, so a permission result that never arrives left
+    // this worker parked forever (the outer connect watchdog abandons the
+    // thread but cannot stop it). The bound is the same overall connect
+    // budget, so behavior for a normally-answered dialog is unchanged; on
+    // expiry the wait returns a truthful timeout outcome and the abandoned
+    // permission request can no longer open USB (the requester settles it
+    // exactly once - see UsbPermissionRequestCoordinator).
+    val answered = latch.await(CONNECT_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+    if (!answered) {
+      return PermissionOutcome(
+        granted = false,
+        failureMessage = "Timed out waiting for the USB permission result.",
+      )
+    }
+    return outcome.get()
   }
 
   /**
