@@ -19,6 +19,39 @@ import '../../../i18n';
 import type {FcToolGateInput, SensorPresenceBit} from '../../../core';
 import type {FcToolOutcome, FcToolPhase, FcToolsController} from '../../../platforms/react-native/protocol';
 
+/** The EXACT acknowledgement copy. A non-error response proves only
+ * that the firmware received and parsed the command: msp.c's
+ * mspProcessInCommand() has no `dst` buffer at all, and it acks even
+ * when the FC is ARMED and the handler therefore did nothing. So this
+ * sentence must not affirm that calibration started, completed,
+ * succeeded, produced values, or was persisted - it only states that a
+ * valid response arrived and explicitly denies the rest. */
+const TRUTHFUL_ACK =
+  'استلم التطبيق ردًا صالحًا من متحكم الطيران على أمر المعايرة، لكن هذا لا يؤكد أن المعايرة بدأت أو اكتملت أو حُفظت.';
+
+/** The exact sentence this replaced - it affirmatively claimed that
+ * execution had begun, which the firmware contract does not support. */
+const FORMER_AFFIRMATIVE_ACK = 'قبل متحكم الطيران الأمر وبدأ التنفيذ. لا يستطيع التطبيق تأكيد اكتماله.';
+
+/** Affirmative PHRASES that must never appear anywhere in the rendered
+ * tree. Deliberately phrases, not bare words: the truthful sentence
+ * legitimately contains بدأت / اكتملت / حُفظت inside an explicit
+ * negation ("...does not confirm that calibration started or completed
+ * or was saved"), so a bare-word absence check would be both wrong and
+ * meaningless. */
+const FORBIDDEN_AFFIRMATIVE_PHRASES = [
+  'وبدأ التنفيذ',
+  'بدأت المعايرة',
+  'اكتملت المعايرة',
+  'تمت المعايرة',
+  'نجحت المعايرة',
+  'المعايرة ناجحة',
+  'تم حفظ',
+  'حُفظت القيم',
+  'تمت بنجاح',
+  'أُعيد التشغيل بنجاح',
+];
+
 const WITH_MAG: readonly SensorPresenceBit[] = [
   {kind: 'KNOWN', bit: 0, token: 'ACC'},
   {kind: 'KNOWN', bit: 2, token: 'MAG'},
@@ -297,7 +330,7 @@ describe('FcToolsSection - confirmation', () => {
 
 describe('FcToolsSection - truthful outcome copy', () => {
   const cases: Array<[FcToolOutcome, string]> = [
-    [{kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'}, 'قبل متحكم الطيران الأمر وبدأ التنفيذ. لا يستطيع التطبيق تأكيد اكتماله.'],
+    [{kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'}, TRUTHFUL_ACK],
     [{kind: 'REBOOT_REQUESTED'}, 'أُرسل أمر إعادة التشغيل. يُتوقَّع انقطاع الاتصال؛ لم تُؤكَّد إعادة الاتصال.'],
     [{kind: 'UNCONFIRMED', tool: 'REBOOT'}, 'تعذّر تأكيد النتيجة. لم يُعَد الإرسال تلقائيًا.'],
     [{kind: 'FAILED', tool: 'ACC_CALIBRATION', error: new Error('x')}, 'رفض متحكم الطيران الأمر أو لم يُرسَل.'],
@@ -326,15 +359,75 @@ describe('FcToolsSection - truthful outcome copy', () => {
     unmount(renderer);
   });
 
-  it('an accepted calibration NEVER claims completion or success', () => {
+  it.each(['ACC_CALIBRATION', 'MAG_CALIBRATION'] as const)(
+    'the %s acknowledgement renders the EXACT truthful wording and never the former affirmative sentence',
+    tool => {
+      const controller = makeFakeController();
+      const renderer = render(controller);
+      act(() => {
+        controller.setOutcome({kind: 'ACCEPTED', tool});
+      });
+
+      const rendered = texts(renderer);
+      expect(rendered).toContain(TRUTHFUL_ACK);
+      const all = rendered.join(' | ');
+      expect(all).not.toContain(FORMER_AFFIRMATIVE_ACK);
+      expect(all).not.toContain('وبدأ التنفيذ');
+      unmount(renderer);
+    },
+  );
+
+  it('no acknowledgement text affirms that calibration started, completed, succeeded or was persisted', () => {
+    for (const tool of ['ACC_CALIBRATION', 'MAG_CALIBRATION'] as const) {
+      const controller = makeFakeController();
+      const renderer = render(controller);
+      act(() => {
+        controller.setOutcome({kind: 'ACCEPTED', tool});
+      });
+      const all = texts(renderer).join(' | ');
+      for (const phrase of FORBIDDEN_AFFIRMATIVE_PHRASES) {
+        expect(all).not.toContain(phrase);
+      }
+      unmount(renderer);
+    }
+  });
+
+  it('every بدأت/اكتملت/حُفظت in the acknowledgement sits INSIDE the explicit negation', () => {
     const controller = makeFakeController();
     const renderer = render(controller);
     act(() => {
       controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
     });
+
+    const sentence = texts(renderer).find(text => text.includes('لا يؤكد'));
+    expect(sentence).toBeDefined();
+    const negationAt = (sentence as string).indexOf('لا يؤكد');
+    // Structural, not word-blind: each of these verbs may appear only
+    // AFTER the negation marker, so none of them can ever be read as an
+    // affirmative claim.
+    for (const verb of ['بدأت', 'اكتملت', 'حُفظت']) {
+      let from = 0;
+      for (;;) {
+        const at = (sentence as string).indexOf(verb, from);
+        if (at < 0) {
+          break;
+        }
+        expect(at).toBeGreaterThan(negationAt);
+        from = at + verb.length;
+      }
+    }
+    unmount(renderer);
+  });
+
+  it('the tool DESCRIPTIONS do not affirm that calibration starts, succeeds or is persisted either', () => {
+    const renderer = render(makeFakeController());
     const all = texts(renderer).join(' | ');
-    expect(all).not.toContain('اكتملت');
-    expect(all).not.toContain('نجحت');
+    for (const phrase of FORBIDDEN_AFFIRMATIVE_PHRASES) {
+      expect(all).not.toContain(phrase);
+    }
+    // The descriptions state what the app REQUESTS, conditionally.
+    expect(all).toContain('يطلب من متحكم الطيران بدء معايرة مقياس التسارع');
+    expect(all).not.toContain('يبدأ متحكم الطيران معايرة مقياس التسارع ويحفظ النتيجة بنفسه.');
     unmount(renderer);
   });
 
