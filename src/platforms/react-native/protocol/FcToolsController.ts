@@ -142,6 +142,14 @@ export type FcToolOutcome =
   | {readonly kind: 'UNCONFIRMED'; readonly tool: FcToolId}
   | {readonly kind: 'SESSION_ENDED'; readonly tool: FcToolId};
 
+/**
+ * Pass 7.7A (A-4): the typed neutral result of calling confirm() with no
+ * confirmation open. It is NOT an FC-tool outcome: it is never stored,
+ * never emitted to subscribers, never rendered, never announced, and
+ * never guesses a tool.
+ */
+export const NO_PENDING_CONFIRMATION = null;
+
 /** Thrown by the operation's own execute() when a precondition fails
  * BEFORE any write is dispatched. Its existence is what proves "send
  * nothing" is a distinct outcome from "the write failed". */
@@ -309,7 +317,16 @@ export class FcToolsController {
     if (this.phase.kind !== 'CONFIRMING') {
       return;
     }
-    this.settle({kind: 'CANCELLED', tool: this.phase.tool}, this.captureOrigin(this.phase.sessionId));
+    const {tool, sessionId} = this.phase;
+    // Same total contract as confirm(): capturing provenance must never
+    // be able to leave the mutex held.
+    let origin: FcToolOutcomeOrigin = {sessionId, physicalGeneration: -1, mspEpoch: -1, settledMspEpoch: -1};
+    try {
+      origin = this.captureOrigin(sessionId);
+    } catch {
+      // Fall through with the conservative sentinel origin.
+    }
+    this.settle({kind: 'CANCELLED', tool}, origin);
   }
 
   /**
@@ -317,23 +334,47 @@ export class FcToolsController {
    * ignored (the mutex is already held) and returns the outcome of the
    * run that is already in progress once it settles.
    */
-  async confirm(): Promise<FcToolOutcome> {
+  async confirm(): Promise<FcToolOutcome | null> {
     if (this.phase.kind !== 'CONFIRMING') {
-      return this.publication?.outcome ?? {kind: 'REJECTED', tool: 'REBOOT', reason: 'BUSY'};
+      // A-4: fabricate nothing. No stored outcome, no notification, no
+      // phase change, no guessed tool.
+      return NO_PENDING_CONFIRMATION;
     }
     const {tool, sessionId} = this.phase;
-    // Provenance is captured BEFORE the transaction, so a detach or a
-    // replacement during it cannot rewrite who the outcome belonged to.
-    const origin = this.captureOrigin(sessionId);
     this.phase = {kind: 'RUNNING', tool, sessionId};
     this.notify();
 
-    const outcome = await this.runTransaction(sessionId, tool);
-    this.settle(outcome, origin);
+    // A-3: total settle-once contract. EVERYTHING after the mutex is
+    // taken - including capturing provenance - runs inside this guard,
+    // so no unexpected synchronous throw or rejection anywhere can leave
+    // the phase wedged. An unexpected failure is classified
+    // conservatively: bytes may already have been handed to the
+    // transport, so it is never a confirmed success and never a definite
+    // failure, and nothing is retried.
+    let origin: FcToolOutcomeOrigin = {
+      sessionId,
+      physicalGeneration: -1,
+      mspEpoch: -1,
+      settledMspEpoch: -1,
+    };
+    let outcome: FcToolOutcome = {kind: 'UNCONFIRMED', tool};
+    try {
+      // Provenance is captured BEFORE the transaction, so a detach or a
+      // replacement during it cannot rewrite who the outcome belonged to.
+      origin = this.captureOrigin(sessionId);
+      outcome = await this.runTransaction(sessionId, tool);
+    } catch {
+      outcome = {kind: 'UNCONFIRMED', tool};
+    } finally {
+      // settle() is idempotent per action (it refuses once the phase is
+      // no longer RUNNING), so this cannot double-publish.
+      this.settle(outcome, origin);
+    }
     return outcome;
   }
 
   private async runTransaction(sessionId: string, tool: FcToolId): Promise<FcToolOutcome> {
+    this.pruneObsoleteSessions();
     const sessionKey = this.coordinator.getSessionKey(sessionId);
     const client = this.coordinator.getActiveMspClient(sessionId);
     const scheduler = this.coordinator.getTelemetryScheduler(sessionId);
@@ -398,10 +439,26 @@ export class FcToolsController {
           );
         }
 
-        // Steps 7-9: ONE fresh reading, the real armed state, and the
-        // full gate re-evaluated against it.
+        // A-2: the BOXIDS mapping is obtained BEFORE the fresh status
+        // read, never after it. The forbidden order
+        // STATUS_EX -> BOXIDS -> write would leave the readiness that
+        // authorizes the write a full MSP round trip old.
+        const mapping = await acquisition.acquire(identity, stillOwned);
+        if (this.coordinator.getOwnershipState(sessionId) !== 'ACTIVE' || !stillOwned()) {
+          throw new FcToolPreflightRejection('DISCONNECTED');
+        }
+
+        // ONE fresh reading. From here to the write there is NO awaited
+        // MSP round trip: derivation and gating are synchronous.
         const fresh = await this.readFreshStatus(requester);
-        const armedState = await this.resolveArmedState(acquisition, identity, stillOwned, fresh);
+        const armedState: ArmedState =
+          mapping.kind === 'READY'
+            ? deriveArmedState(
+                fresh.flightModeFlagsLow32,
+                fresh.readiness.extraFlightModeFlagBytes,
+                mapping.permanentIds,
+              )
+            : 'UNKNOWN';
         const gate = resolveFcToolAvailability(tool, {
           connected: true,
           appActive: this.appStateOwner.getPhase() === 'ACTIVE',
@@ -420,10 +477,22 @@ export class FcToolsController {
           // Step 10: nothing is sent.
           throw new FcToolPreflightRejection(gate.reason ?? 'ARMED_UNKNOWN');
         }
-        // Final pre-dispatch app check - backgrounding here still sends
-        // nothing at all.
+        // FINAL ownership boundary, evaluated synchronously in the same
+        // turn as the dispatch below: app active, ownership ACTIVE, the
+        // same composite identity, and the same EXACT MspClient instance.
+        // MspClient.request() enqueues and, when READY and idle, hands
+        // the bytes to transport.writeBytes() in this same synchronous
+        // turn - so anything observed here is observed before any byte
+        // can leave.
         if (this.appStateOwner.getPhase() !== 'ACTIVE') {
           throw new FcToolPreflightRejection('BACKGROUNDED');
+        }
+        if (
+          this.coordinator.getOwnershipState(sessionId) !== 'ACTIVE' ||
+          !stillOwned() ||
+          this.coordinator.getActiveMspClient(sessionId) !== client
+        ) {
+          throw new FcToolPreflightRejection('DISCONNECTED');
         }
 
         // Step 11: exactly once, no retry anywhere in this function.
@@ -474,25 +543,6 @@ export class FcToolsController {
     return decodeStatusExDiagnostics(frame.payload);
   }
 
-  /** Armed state comes ONLY from the BOXIDS mapping; without one it is
-   * UNKNOWN, which the gate then refuses. */
-  private async resolveArmedState(
-    acquisition: BoxIdsAcquisition,
-    identity: BoxIdsOwnerIdentity,
-    stillOwned: () => boolean,
-    fresh: ReturnType<typeof decodeStatusExDiagnostics>,
-  ): Promise<ArmedState> {
-    const mapping = await acquisition.acquire(identity, stillOwned);
-    if (mapping.kind !== 'READY') {
-      return 'UNKNOWN';
-    }
-    return deriveArmedState(
-      fresh.flightModeFlagsLow32,
-      fresh.readiness.extraFlightModeFlagBytes,
-      mapping.permanentIds,
-    );
-  }
-
   private compatibilityOf(sessionId: string): DiagnosticsCompatibility {
     const identification = this.coordinator.getIdentificationState(sessionId);
     if (identification.status === 'FAILED') {
@@ -505,6 +555,46 @@ export class FcToolsController {
     return firmware.identifier === 'BTFL' && apiVersion.apiVersionMajor === 1 && apiVersion.apiVersionMinor === 47
       ? 'BETAFLIGHT_API_1_47'
       : 'OTHER_FIRMWARE_OR_API';
+  }
+
+  /**
+   * A-5: drops per-session state whose owner no longer exists.
+   *
+   * The rule is exact rather than a heuristic bound: an entry is removed
+   * only when the coordinator has NO session key and NO active client for
+   * that sessionId (the session was torn down and not replaced), or when
+   * the stored client is no longer the current one. A still-current
+   * identity therefore always keeps its cached BOXIDS mapping, so pruning
+   * can never cause a re-acquisition. Retention is bounded by the number
+   * of sessions the coordinator itself still owns.
+   *
+   * Idempotent, and safe to run at any time: pruning session N after N+1
+   * became current removes nothing belonging to N+1, because N+1's entry
+   * is keyed by its own live client.
+   */
+  private pruneObsoleteSessions(): void {
+    for (const sessionId of Array.from(this.boxIds.keys())) {
+      const entry = this.boxIds.get(sessionId);
+      const client = this.coordinator.getActiveMspClient(sessionId);
+      const key = this.coordinator.getSessionKey(sessionId);
+      if ((client === undefined && key === undefined) || (entry !== undefined && entry.client !== client)) {
+        this.boxIds.delete(sessionId);
+      }
+    }
+    for (const sessionId of Array.from(this.lastGenerations.keys())) {
+      if (
+        this.coordinator.getActiveMspClient(sessionId) === undefined &&
+        this.coordinator.getSessionKey(sessionId) === undefined
+      ) {
+        this.lastGenerations.delete(sessionId);
+      }
+    }
+  }
+
+  /** Read-only diagnostic: how many sessions this controller still holds
+   * identity state for. Exposes no mutable internals. */
+  trackedSessionCount(): number {
+    return Math.max(this.boxIds.size, this.lastGenerations.size);
   }
 
   private boxIdsFor(sessionId: string, client: MspRequester): BoxIdsAcquisition {
@@ -527,6 +617,7 @@ export class FcToolsController {
    * and never runs before a compatible identification.
    */
   ensureBoxIdsMapping(sessionId: string): void {
+    this.pruneObsoleteSessions();
     if (this.compatibilityOf(sessionId) !== 'BETAFLIGHT_API_1_47') {
       return;
     }
@@ -585,12 +676,20 @@ export class FcToolsController {
   /** The single settle point - the mutex is released here and nowhere
    * else, exactly once per action. */
   private settle(outcome: FcToolOutcome, capturedOrigin: FcToolOutcomeOrigin): void {
+    if (this.phase.kind === 'IDLE') {
+      return; // already settled - never publish or notify twice
+    }
     this.phase = {kind: 'IDLE'};
     this.publicationSequence += 1;
     // Stamp the epoch the action ENDED on, so a desync the action itself
     // caused cannot revoke its own outcome.
-    const settledEpoch =
-      this.coordinator.getActiveMspClient(capturedOrigin.sessionId)?.getEpoch() ?? capturedOrigin.mspEpoch;
+    let settledEpoch = capturedOrigin.mspEpoch;
+    try {
+      settledEpoch = this.coordinator.getActiveMspClient(capturedOrigin.sessionId)?.getEpoch() ?? settledEpoch;
+    } catch {
+      // A coordinator lookup must never prevent the mutex from being
+      // released; the captured epoch is the conservative fallback.
+    }
     const origin: FcToolOutcomeOrigin = Object.freeze({...capturedOrigin, settledMspEpoch: settledEpoch});
     // Stored unconditionally, WITH its provenance: an acknowledgement
     // that genuinely arrived is never downgraded just because the
