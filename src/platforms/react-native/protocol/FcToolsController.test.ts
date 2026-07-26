@@ -1,0 +1,1264 @@
+/**
+ * Pass 7.7, Region 5 - the exclusive FC-tool transaction, exercised
+ * through the REAL MspSessionCoordinator, the REAL MspClient (its FIFO,
+ * its single-in-flight rule and its real 2000ms response timeout) and
+ * the REAL MspOperationCoordinator. Only the USB transport is a fake.
+ */
+
+import {FcToolsController} from './FcToolsController';
+import {mspSessionCoordinator} from './MspSessionCoordinator';
+import {SetupAppStateTelemetryOwner} from './setupAppStateTelemetryOwner';
+import {base64ToBytes, bytesToBase64} from './base64';
+import {
+  MSP_ACC_CALIBRATION,
+  MSP_ANALOG,
+  MSP_API_VERSION,
+  MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  MSP_BOARD_INFO,
+  MSP_BOXIDS,
+  MSP_FC_VARIANT,
+  MSP_MAG_CALIBRATION,
+  MSP_RAW_GPS,
+  MSP_REBOOT,
+  MSP_STATUS_EX,
+} from '../../../core';
+import {buildMspFrameBytes} from '../../../core/protocol/__testUtils__/mspFixtures';
+import type {UsbSerialDataEvent, UsbSerialTransportClient} from '../transport';
+import type {AppStateStatus, NativeEventSubscription} from 'react-native';
+
+function ascii(text: string): number[] {
+  return text.split('').map(c => c.charCodeAt(0));
+}
+
+function pstring(text: string): number[] {
+  return [text.length, ...ascii(text)];
+}
+
+function u16le(value: number): number[] {
+  return [value % 256, Math.floor(value / 256) % 256];
+}
+
+function boardInfoPayload(): Uint8Array {
+  return Uint8Array.from([
+    ...ascii('AFF3'),
+    ...u16le(0),
+    0,
+    0,
+    ...pstring('TEST'),
+    ...pstring('MyBoard'),
+    ...pstring('MTKS'),
+    ...new Array(32).fill(0),
+    0,
+  ]);
+}
+
+/** 13-byte prefix (sensors mask 41 = ACC|GPS|GYRO by default) + the full
+ * API-1.47 optional tail. */
+function statusExPayload(
+  options: {sensorMask?: number; flightModeFlags?: number; blockerMask?: number; extension?: number[]} = {},
+): Uint8Array {
+  const flags = options.flightModeFlags ?? 0;
+  const extension = options.extension ?? [];
+  const mask = options.blockerMask ?? 0;
+  return Uint8Array.from([
+    ...u16le(312),
+    ...u16le(0),
+    ...u16le(options.sensorMask ?? 41),
+    flags % 256,
+    Math.floor(flags / 256) % 256,
+    Math.floor(flags / 65536) % 256,
+    Math.floor(flags / 16777216) % 256,
+    0,
+    ...u16le(12),
+    3,
+    0,
+    extension.length,
+    ...extension,
+    29,
+    mask % 256,
+    Math.floor(mask / 256) % 256,
+    Math.floor(mask / 65536) % 256,
+    Math.floor(mask / 16777216) % 256,
+    0,
+  ]);
+}
+
+type WriteHook = (command: number) => void;
+
+function makeFakeClient(sessionId: string) {
+  const dataListeners = new Set<(event: UsbSerialDataEvent) => void>();
+  const responses = new Map<number, Uint8Array>();
+  const errorFrames = new Set<number>();
+  const heldCommands = new Set<number>();
+  const hooks: WriteHook[] = [];
+  const commands: number[] = [];
+
+  const fake = {
+    commands,
+    writeBytes: jest.fn((_sessionId: string, dataBase64: string) => {
+      const bytes = base64ToBytes(dataBase64);
+      const command = bytes[4];
+      commands.push(command);
+      for (const hook of Array.from(hooks)) {
+        hook(command);
+      }
+      if (heldCommands.has(command)) {
+        return Promise.resolve(undefined); // no response ever - real timeout
+      }
+      const payload = responses.get(command);
+      if (payload !== undefined) {
+        const frameBytes = buildMspFrameBytes(command, payload, {
+          wireFormat: 'v1',
+          direction: errorFrames.has(command) ? 'error' : 'response',
+        });
+        Promise.resolve().then(() => {
+          const event: UsbSerialDataEvent = {sessionId, dataBase64: bytesToBase64(frameBytes)};
+          for (const listener of Array.from(dataListeners)) {
+            listener(event);
+          }
+        });
+      }
+      return Promise.resolve(undefined);
+    }),
+    onDataReceived: jest.fn((cb: (event: UsbSerialDataEvent) => void) => {
+      dataListeners.add(cb);
+      return jest.fn(() => dataListeners.delete(cb));
+    }),
+    onSessionDetached: jest.fn(() => jest.fn()),
+    stopReading: jest.fn(() => Promise.resolve(undefined)),
+    startReading: jest.fn(() => Promise.resolve(undefined)),
+    setResponse: (command: number, payload: Uint8Array) => {
+      responses.set(command, payload);
+      errorFrames.delete(command);
+    },
+    setErrorFrame: (command: number) => {
+      responses.set(command, Uint8Array.from([]));
+      errorFrames.add(command);
+    },
+    hold: (command: number) => {
+      heldCommands.add(command);
+    },
+    onWrite: (hook: WriteHook) => {
+      hooks.push(hook);
+    },
+    countOf: (command: number) => commands.filter(c => c === command).length,
+  };
+
+  fake.setResponse(MSP_API_VERSION, Uint8Array.from([0, 1, 47]));
+  fake.setResponse(MSP_FC_VARIANT, Uint8Array.from(ascii('BTFL')));
+  fake.setResponse(MSP_BOARD_INFO, boardInfoPayload());
+  // Benign responses for the polls the coordinator registers for an
+  // identified Betaflight session - an unanswered one would occupy the
+  // serialized link for a real 2000ms and distort these tests.
+  // The 220ms attitude poll runs for every session; leaving it
+  // unanswered would time out after a real 2000ms and desync the link.
+  fake.setResponse(MSP_ATTITUDE, Uint8Array.from([0, 0, 0, 0, 0, 0]));
+  fake.setResponse(MSP_BATTERY_STATE, Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]));
+  fake.setResponse(MSP_ANALOG, Uint8Array.from([168, ...u16le(0), ...u16le(540), ...u16le(0), ...u16le(1680)]));
+  fake.setResponse(MSP_RAW_GPS, Uint8Array.from([2, 8, 0, 0, 0, 0, 0, 0, 0, 0, ...u16le(0), ...u16le(0), ...u16le(0)]));
+  fake.setResponse(MSP_STATUS_EX, statusExPayload());
+  // BOXARM (permanent id 0) is the FIRST active box -> flight-mode bit 0.
+  fake.setResponse(MSP_BOXIDS, Uint8Array.from([0, 1, 2]));
+  // Both calibrations and reboot ack with an empty payload.
+  fake.setResponse(MSP_ACC_CALIBRATION, Uint8Array.from([]));
+  fake.setResponse(MSP_MAG_CALIBRATION, Uint8Array.from([]));
+  fake.setResponse(MSP_REBOOT, Uint8Array.from([0]));
+  return fake;
+}
+
+async function flushAsync(): Promise<void> {
+  for (let i = 0; i < 12; i++) {
+    await Promise.resolve();
+  }
+}
+
+/** The transaction chains several real MspClient round trips (pause ->
+ * wait-for-idle -> STATUS_EX -> BOXIDS -> the write), each settling on
+ * its own microtask turn; a few short timer advances flush them all
+ * without ever reaching the 2000ms response timeout. */
+async function settleTransaction(): Promise<void> {
+  for (let i = 0; i < 8; i++) {
+    await jest.advanceTimersByTimeAsync(10);
+    await flushAsync();
+  }
+}
+
+function makeAppState(initial: AppStateStatus) {
+  const listeners = new Set<(status: AppStateStatus) => void>();
+  return {
+    currentState: initial,
+    addEventListener: (_type: 'change', listener: (status: AppStateStatus) => void): NativeEventSubscription => {
+      listeners.add(listener);
+      return {remove: () => listeners.delete(listener)} as NativeEventSubscription;
+    },
+    emit: (status: AppStateStatus) => {
+      for (const listener of Array.from(listeners)) {
+        listener(status);
+      }
+    },
+  };
+}
+
+function makeOwner(initial: AppStateStatus = 'active') {
+  const appState = makeAppState(initial);
+  const owner = new SetupAppStateTelemetryOwner({appState});
+  owner.start();
+  return {owner, appState};
+}
+
+let openSessionIds: string[] = [];
+
+async function openIdentifiedSession(sessionId: string, configure?: (client: ReturnType<typeof makeFakeClient>) => void) {
+  const client = makeFakeClient(sessionId);
+  configure?.(client);
+  openSessionIds.push(sessionId);
+  await jestAct(async () => {
+    mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+    await flushAsync();
+    // Let identification settle and the phase-staggered aux polls take
+    // their first (benign) turn, so the serialized link is genuinely
+    // idle before any FC-tool transaction starts.
+    await jest.advanceTimersByTimeAsync(2200);
+    await flushAsync();
+  });
+  return client;
+}
+
+/** No React here - just a named helper so the await/flush pairs read the
+ * same way the screen-level suites do. */
+async function jestAct(body: () => Promise<void>): Promise<void> {
+  await body();
+}
+
+describe('FcToolsController - the exclusive FC-tool transaction', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  async function run(controller: FcToolsController, sessionId: string, tool: 'ACC_CALIBRATION' | 'MAG_CALIBRATION' | 'REBOOT') {
+    expect(controller.requestConfirmation(sessionId, tool)).toBe(true);
+    const settled = controller.confirm();
+    await settleTransaction();
+    return settled;
+  }
+
+  it('sends the write EXACTLY once, after ONE fresh preflight status read, and reports ACCEPTED (never "completed")', async () => {
+    const sessionId = 'fc-tools-happy';
+    const client = await openIdentifiedSession(sessionId);
+    const {owner} = makeOwner();
+    const controller = new FcToolsController({appStateOwner: owner});
+
+    const statusBefore = client.countOf(MSP_STATUS_EX);
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+
+    expect(outcome).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+    expect(client.countOf(MSP_STATUS_EX)).toBe(statusBefore + 1); // the fresh preflight read
+    expect(client.countOf(MSP_BOXIDS)).toBe(1);
+    // The mutex was released exactly once, at the single settle point.
+    expect(controller.getPhase()).toEqual({kind: 'IDLE'});
+    expect(controller.getLastOutcome()).toEqual(outcome);
+  });
+
+  it('acquires the BOXIDS mapping at most once across repeated actions in the same identity', async () => {
+    const sessionId = 'fc-tools-boxids-once';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    await run(controller, sessionId, 'ACC_CALIBRATION');
+    await run(controller, sessionId, 'ACC_CALIBRATION');
+    await run(controller, sessionId, 'REBOOT');
+
+    expect(client.countOf(MSP_BOXIDS)).toBe(1);
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(2);
+  });
+
+  it('REJECTS while ARMED and sends NO write', async () => {
+    const sessionId = 'fc-tools-armed';
+    const client = await openIdentifiedSession(sessionId, c => {
+      // BOXARM is bit 0 of the packed flags, and it is SET.
+      c.setResponse(MSP_STATUS_EX, statusExPayload({flightModeFlags: 1}));
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'ACC_CALIBRATION', reason: 'ARMED'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+  });
+
+  it('REJECTS when the armed state cannot be proven (no BOXIDS mapping) and sends NO write', async () => {
+    const sessionId = 'fc-tools-armed-unknown';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.setErrorFrame(MSP_BOXIDS); // the FC rejects the mapping request
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'ACC_CALIBRATION', reason: 'ARMED_UNKNOWN'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+    // ...and the failed mapping is never retried inside this identity.
+    await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(client.countOf(MSP_BOXIDS)).toBe(1);
+  });
+
+  it('REJECTS a MALFORMED fresh preflight and dispatches ZERO commands', async () => {
+    const sessionId = 'fc-tools-malformed';
+    const client = await openIdentifiedSession(sessionId, c => {
+      // A full, otherwise-authorizing frame whose extension byteCount
+      // declares more bytes than the frame actually holds.
+      c.setResponse(
+        MSP_STATUS_EX,
+        Uint8Array.from([
+          ...u16le(312), ...u16le(0), ...u16le(41), 0, 0, 0, 0, 0, ...u16le(12),
+          3, 0, 12, 0x01,
+        ]),
+      );
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'ACC_CALIBRATION', reason: 'MALFORMED_READING'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+    expect(client.countOf(MSP_MAG_CALIBRATION)).toBe(0);
+    expect(client.countOf(MSP_REBOOT)).toBe(0);
+  });
+
+  it('REJECTS a preflight whose blocker mask is only PARTIALLY present, dispatching ZERO commands', async () => {
+    const sessionId = 'fc-tools-partial-mask';
+    const client = await openIdentifiedSession(sessionId, c => {
+      // The ARMING_DISABLE_FLAGS_COUNT byte is present, but only two of
+      // the four mask bytes follow it.
+      c.setResponse(
+        MSP_STATUS_EX,
+        Uint8Array.from([
+          ...u16le(312), ...u16le(0), ...u16le(41), 0, 0, 0, 0, 0, ...u16le(12),
+          3, 0, 0, 29, 0x00, 0x00,
+        ]),
+      );
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'REBOOT');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'REBOOT', reason: 'MALFORMED_READING'});
+    expect(client.countOf(MSP_REBOOT)).toBe(0);
+  });
+
+  it('REJECTS magnetometer calibration when no magnetometer is reported as detected', async () => {
+    const sessionId = 'fc-tools-no-mag';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.setResponse(MSP_STATUS_EX, statusExPayload({sensorMask: 41})); // ACC|GPS|GYRO, no MAG
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'MAG_CALIBRATION');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'MAG_CALIBRATION', reason: 'SENSOR_NOT_DETECTED'});
+    expect(client.countOf(MSP_MAG_CALIBRATION)).toBe(0);
+  });
+
+  it('runs magnetometer calibration when the FRESH reading reports a magnetometer', async () => {
+    const sessionId = 'fc-tools-mag';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.setResponse(MSP_STATUS_EX, statusExPayload({sensorMask: 41 + 4})); // + MAG (bit 2)
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    expect(await run(controller, sessionId, 'MAG_CALIBRATION')).toEqual({
+      kind: 'ACCEPTED',
+      tool: 'MAG_CALIBRATION',
+    });
+    expect(client.countOf(MSP_MAG_CALIBRATION)).toBe(1);
+  });
+
+  it('REJECTS an incompatible FC/API and sends NO write', async () => {
+    const sessionId = 'fc-tools-incompatible';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.setResponse(MSP_API_VERSION, Uint8Array.from([0, 1, 46]));
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'REBOOT');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'REBOOT', reason: 'INCOMPATIBLE'});
+    expect(client.countOf(MSP_REBOOT)).toBe(0);
+    // The mapping is never even requested for an incompatible FC.
+    expect(client.countOf(MSP_BOXIDS)).toBe(0);
+  });
+
+  it('sends NO write when the app is backgrounded BEFORE dispatch', async () => {
+    const sessionId = 'fc-tools-bg-before';
+    const client = await openIdentifiedSession(sessionId);
+    const {owner} = makeOwner('background');
+    const controller = new FcToolsController({appStateOwner: owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(outcome).toEqual({kind: 'REJECTED', tool: 'ACC_CALIBRATION', reason: 'BACKGROUNDED'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+    expect(client.countOf(MSP_STATUS_EX)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('backgrounding AFTER dispatch never retries and never fabricates an outcome', async () => {
+    const sessionId = 'fc-tools-bg-after';
+    const {owner, appState} = makeOwner();
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        if (command === MSP_ACC_CALIBRATION) {
+          appState.emit('background');
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(outcome).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1); // exactly once, no retry
+    expect(owner.getPhase()).toBe('APP_BACKGROUND');
+  });
+
+  it('an MSP error frame is a DEFINITE failure, not an ambiguous one', async () => {
+    const sessionId = 'fc-tools-error-frame';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.setErrorFrame(MSP_ACC_CALIBRATION);
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(outcome?.kind).toBe('FAILED');
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+  });
+
+  it('a real 2000ms response timeout is UNCONFIRMED - never success, never definite failure, never retried', async () => {
+    const sessionId = 'fc-tools-timeout';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION);
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(2100); // the REAL MspClient timeout
+    await flushAsync();
+
+    expect(await settled).toEqual({kind: 'UNCONFIRMED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+    expect(controller.getPhase()).toEqual({kind: 'IDLE'});
+  });
+
+  it('reboot reports REBOOT_REQUESTED on ack and never claims the FC came back', async () => {
+    const sessionId = 'fc-tools-reboot';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'REBOOT');
+    expect(outcome).toEqual({kind: 'REBOOT_REQUESTED'});
+    expect(client.countOf(MSP_REBOOT)).toBe(1);
+  });
+
+  it('a reboot whose ack never arrives is UNCONFIRMED, not a failure, and is never resent', async () => {
+    const sessionId = 'fc-tools-reboot-silent';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_REBOOT); // the FC rebooted before answering
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    expect(controller.requestConfirmation(sessionId, 'REBOOT')).toBe(true);
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(2100);
+    await flushAsync();
+
+    expect(await settled).toEqual({kind: 'UNCONFIRMED', tool: 'REBOOT'});
+    expect(client.countOf(MSP_REBOOT)).toBe(1);
+  });
+
+  it('a detach AFTER a valid calibration acknowledgement does not erase that acknowledgement', async () => {
+    const sessionId = 'fc-tools-detach-after-ack';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        if (command === MSP_ACC_CALIBRATION) {
+          // The link dies immediately after the write - but the ack for
+          // it still arrives and settles first.
+          Promise.resolve().then(() => Promise.resolve()).then(() => {
+            mspSessionCoordinator.deactivateMspSession(sessionId);
+          });
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    // ACCEPTED (received/started), never downgraded, never "completed".
+    expect(outcome).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1); // never resent
+  });
+
+  it('a detach BEFORE any acknowledgement is UNCONFIRMED, never success and never definite failure', async () => {
+    const sessionId = 'fc-tools-detach-before-ack';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION);
+      c.onWrite(command => {
+        if (command === MSP_ACC_CALIBRATION) {
+          mspSessionCoordinator.deactivateMspSession(sessionId);
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(2100);
+    await flushAsync();
+
+    const outcome = await settled;
+    expect(outcome?.kind).toBe('UNCONFIRMED');
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1); // never retried
+  });
+
+  it('reports SESSION_ENDED when the session is gone before the transaction can start', async () => {
+    const sessionId = 'fc-tools-no-session';
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    expect(controller.requestConfirmation(sessionId, 'REBOOT')).toBe(true);
+    expect(await controller.confirm()).toEqual({kind: 'SESSION_ENDED', tool: 'REBOOT'});
+  });
+
+  it('a disconnect during the preflight sends no write', async () => {
+    const sessionId = 'fc-tools-disconnect-preflight';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        if (command === MSP_BOXIDS) {
+          mspSessionCoordinator.deactivateMspSession(sessionId);
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    expect(['REJECTED', 'SESSION_ENDED', 'UNCONFIRMED', 'FAILED']).toContain(outcome?.kind);
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+  });
+});
+
+describe('FcToolsController - the single shared mutex', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  it('a double tap cannot open two confirmations', () => {
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    expect(controller.requestConfirmation('s', 'ACC_CALIBRATION')).toBe(true);
+    expect(controller.requestConfirmation('s', 'ACC_CALIBRATION')).toBe(false);
+    expect(controller.getPhase()).toEqual({kind: 'CONFIRMING', tool: 'ACC_CALIBRATION', sessionId: 's'});
+  });
+
+  it('two DIFFERENT tools compete for the same mutex - the second is refused', () => {
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    expect(controller.requestConfirmation('s', 'ACC_CALIBRATION')).toBe(true);
+    expect(controller.requestConfirmation('s', 'REBOOT')).toBe(false);
+    expect(controller.requestConfirmation('s', 'MAG_CALIBRATION')).toBe(false);
+  });
+
+  it('cancelling sends NO write, releases the mutex, and settles exactly once', async () => {
+    const sessionId = 'fc-tools-cancel';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const settles: unknown[] = [];
+    controller.subscribe(() => settles.push(controller.getPhase()));
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    controller.cancel();
+    controller.cancel(); // a second cancel is a no-op
+
+    expect(controller.getPhase()).toEqual({kind: 'IDLE'});
+    expect(controller.getLastOutcome()).toEqual({kind: 'CANCELLED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+    // CONFIRMING then IDLE - exactly two notifications, not three.
+    expect(settles).toEqual([{kind: 'CONFIRMING', tool: 'ACC_CALIBRATION', sessionId}, {kind: 'IDLE'}]);
+  });
+
+  it('a second confirm() while one is RUNNING starts nothing new', async () => {
+    const sessionId = 'fc-tools-double-confirm';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const first = controller.confirm();
+    const second = controller.confirm(); // ignored: the mutex is held
+    await jest.advanceTimersByTimeAsync(1);
+    await flushAsync();
+
+    await first;
+    await second;
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+  });
+
+  it('the outcome is published exactly once per action', async () => {
+    const sessionId = 'fc-tools-callback-once';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const outcomes: unknown[] = [];
+    controller.subscribe(() => {
+      const outcome = controller.getLastOutcome();
+      if (outcome !== undefined) {
+        outcomes.push(outcome);
+      }
+    });
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    await controller.confirm();
+    await jest.advanceTimersByTimeAsync(1);
+    await flushAsync();
+
+    expect(outcomes).toEqual([{kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'}]);
+  });
+});
+
+describe('FcToolsController - telemetry pause and guaranteed resume', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  /** Observes the REAL scheduler's own lease API. */
+  function watchLeases(sessionId: string) {
+    const scheduler = mspSessionCoordinator.getTelemetryScheduler(sessionId)!;
+    const acquired: string[] = [];
+    const released: string[] = [];
+    const original = scheduler.acquirePauseLease.bind(scheduler);
+    scheduler.acquirePauseLease = reason => {
+      const lease = original(reason);
+      acquired.push(lease.id);
+      return {
+        id: lease.id,
+        release: () => {
+          released.push(lease.id);
+          lease.release();
+        },
+      };
+    };
+    return {acquired, released};
+  }
+
+  it('pauses new periodic scheduling for the transaction and ALWAYS releases the lease on success', async () => {
+    const sessionId = 'fc-tools-pause-success';
+    await openIdentifiedSession(sessionId);
+    const leases = watchLeases(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(1);
+    await flushAsync();
+    await settled;
+
+    expect(leases.acquired).toHaveLength(1);
+    expect(leases.released).toEqual(leases.acquired);
+  });
+
+  it('releases the lease on a REJECTED preflight (nothing sent) and on an ambiguous timeout', async () => {
+    const sessionId = 'fc-tools-pause-reject';
+    await openIdentifiedSession(sessionId, c => {
+      c.setResponse(MSP_STATUS_EX, statusExPayload({flightModeFlags: 1})); // ARMED
+    });
+    const leases = watchLeases(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const rejected = controller.confirm();
+    await jest.advanceTimersByTimeAsync(1);
+    await flushAsync();
+    expect((await rejected)?.kind).toBe('REJECTED');
+    expect(leases.released).toEqual(leases.acquired);
+    expect(leases.acquired).toHaveLength(1);
+  });
+
+  it('releases the lease even when the FC-tool write times out', async () => {
+    const sessionId = 'fc-tools-pause-timeout';
+    await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION);
+    });
+    const leases = watchLeases(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(2100);
+    await flushAsync();
+    expect((await settled)?.kind).toBe('UNCONFIRMED');
+    expect(leases.released).toEqual(leases.acquired);
+  });
+
+  it('releases the lease after a reboot too - the session-ending effect is not an excuse to leak it', async () => {
+    const sessionId = 'fc-tools-pause-reboot';
+    await openIdentifiedSession(sessionId);
+    const leases = watchLeases(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    controller.requestConfirmation(sessionId, 'REBOOT');
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(1);
+    await flushAsync();
+    expect(await settled).toEqual({kind: 'REBOOT_REQUESTED'});
+    expect(leases.released).toEqual(leases.acquired);
+  });
+});
+
+describe('FcToolsController - preflight ordering and dispatch boundary (A-2)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  /** The commands written for THIS transaction, in order. */
+  function tail(client: ReturnType<typeof makeFakeClient>, from: number): number[] {
+    return client.commands.slice(from);
+  }
+
+  async function drive(controller: FcToolsController, sessionId: string, tool: 'ACC_CALIBRATION' | 'REBOOT') {
+    expect(controller.requestConfirmation(sessionId, tool)).toBe(true);
+    const settled = controller.confirm();
+    for (let i = 0; i < 8; i++) {
+      await jest.advanceTimersByTimeAsync(10);
+      await flushAsync();
+    }
+    return settled;
+  }
+
+  it('FIRST consumer order is BOXIDS -> STATUS_EX -> exactly one tool request', async () => {
+    const sessionId = 'a2-first-consumer';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const from = client.commands.length;
+
+    expect(await drive(controller, sessionId, 'ACC_CALIBRATION')).toEqual({
+      kind: 'ACCEPTED',
+      tool: 'ACC_CALIBRATION',
+    });
+
+    const order = tail(client, from).filter(c => c === MSP_BOXIDS || c === MSP_STATUS_EX || c === MSP_ACC_CALIBRATION);
+    expect(order).toEqual([MSP_BOXIDS, MSP_STATUS_EX, MSP_ACC_CALIBRATION]);
+  });
+
+  it('CACHED mapping order is STATUS_EX -> exactly one tool request, with no second BOXIDS', async () => {
+    const sessionId = 'a2-cached-mapping';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    await drive(controller, sessionId, 'ACC_CALIBRATION');
+
+    const from = client.commands.length;
+    await drive(controller, sessionId, 'ACC_CALIBRATION');
+    const order = tail(client, from).filter(c => c === MSP_BOXIDS || c === MSP_STATUS_EX || c === MSP_ACC_CALIBRATION);
+    expect(order).toEqual([MSP_STATUS_EX, MSP_ACC_CALIBRATION]);
+    expect(client.countOf(MSP_BOXIDS)).toBe(1);
+  });
+
+  it('the FORBIDDEN order STATUS_EX -> BOXIDS -> tool request never occurs', async () => {
+    const sessionId = 'a2-forbidden-order';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    await drive(controller, sessionId, 'ACC_CALIBRATION');
+    await drive(controller, sessionId, 'REBOOT');
+
+    const relevant = client.commands.filter(
+      c => c === MSP_BOXIDS || c === MSP_STATUS_EX || c === MSP_ACC_CALIBRATION || c === MSP_REBOOT,
+    );
+    for (let i = 0; i < relevant.length - 2; i++) {
+      const window = [relevant[i], relevant[i + 1], relevant[i + 2]];
+      expect(window).not.toEqual([MSP_STATUS_EX, MSP_BOXIDS, MSP_ACC_CALIBRATION]);
+      expect(window).not.toEqual([MSP_STATUS_EX, MSP_BOXIDS, MSP_REBOOT]);
+    }
+  });
+
+  it('no awaited MSP round trip exists between the fresh STATUS_EX and the tool request', async () => {
+    const sessionId = 'a2-no-interposition';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const from = client.commands.length;
+    await drive(controller, sessionId, 'ACC_CALIBRATION');
+
+    const order = tail(client, from);
+    const statusIndex = order.lastIndexOf(MSP_STATUS_EX);
+    const writeIndex = order.lastIndexOf(MSP_ACC_CALIBRATION);
+    expect(statusIndex).toBeGreaterThanOrEqual(0);
+    expect(writeIndex).toBe(statusIndex + 1); // strictly adjacent
+  });
+
+  it('a BOXIDS failure produces ZERO tool-request invocations and is not retried', async () => {
+    const sessionId = 'a2-boxids-failure';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.setErrorFrame(MSP_BOXIDS);
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    expect(await drive(controller, sessionId, 'ACC_CALIBRATION')).toEqual({
+      kind: 'REJECTED',
+      tool: 'ACC_CALIBRATION',
+      reason: 'ARMED_UNKNOWN',
+    });
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+    await drive(controller, sessionId, 'ACC_CALIBRATION');
+    expect(client.countOf(MSP_BOXIDS)).toBe(1); // never retried
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+  });
+
+  it('a GENERATION change during BOXIDS produces zero tool-request invocations and zero writes', async () => {
+    const sessionId = 'a2-generation-during-boxids';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        if (command === MSP_BOXIDS) {
+          mspSessionCoordinator.deactivateMspSession(sessionId);
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    await drive(controller, sessionId, 'ACC_CALIBRATION');
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+    expect(client.countOf(MSP_STATUS_EX)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('a GENERATION change during the fresh STATUS_EX produces zero tool-request invocations and zero writes', async () => {
+    const sessionId = 'a2-generation-during-status';
+    let armed = false;
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        // Only the PREFLIGHT status read (after BOXIDS) kills the session.
+        if (command === MSP_STATUS_EX && armed) {
+          mspSessionCoordinator.deactivateMspSession(sessionId);
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    armed = true;
+
+    await drive(controller, sessionId, 'ACC_CALIBRATION');
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+  });
+
+  it('the normal flow invokes exactly one state-changing request and writes it exactly once', async () => {
+    const sessionId = 'a2-exactly-one';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    await drive(controller, sessionId, 'REBOOT');
+
+    // Invocation and transport handoff are the SAME synchronous turn for
+    // this path, so one invocation is exactly one transport write.
+    expect(client.countOf(MSP_REBOOT)).toBe(1);
+  });
+
+  it('invalidation observed BEFORE invocation yields zero invocation and zero writes', async () => {
+    const sessionId = 'a2-invalidate-before';
+    const {owner, appState} = makeOwner();
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        if (command === MSP_STATUS_EX) {
+          appState.emit('background'); // observed by the final pre-dispatch check
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: owner});
+
+    expect(await drive(controller, sessionId, 'ACC_CALIBRATION')).toEqual({
+      kind: 'REJECTED',
+      tool: 'ACC_CALIBRATION',
+      reason: 'BACKGROUNDED',
+    });
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(0);
+  });
+
+  it('invalidation AFTER transport handoff yields at most one write, UNCONFIRMED, and no retry', async () => {
+    const sessionId = 'a2-invalidate-after';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION);
+      c.onWrite(command => {
+        if (command === MSP_ACC_CALIBRATION) {
+          mspSessionCoordinator.deactivateMspSession(sessionId);
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(2100);
+    await flushAsync();
+
+    expect((await settled)?.kind).toBe('UNCONFIRMED');
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+  });
+});
+
+describe('FcToolsController - settle-once, neutral confirm and bounded state (A-3, A-4, A-5)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  it('A-4: confirm() with no confirmation open returns the neutral result and publishes NOTHING', async () => {
+    const sessionId = 'a4-neutral';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const notifications: unknown[] = [];
+    controller.subscribe(() => notifications.push(controller.getPhase()));
+    const before = controller.getPublicationSequence();
+
+    const result = await controller.confirm();
+
+    expect(result).toBeNull();
+    expect(controller.getPhase()).toEqual({kind: 'IDLE'});
+    expect(controller.getLastOutcome()).toBeUndefined();
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+    expect(controller.getPublicationSequence()).toBe(before);
+    expect(notifications).toEqual([]);
+  });
+
+  it('A-4: the neutral result cannot clear or corrupt a legitimate newer outcome', async () => {
+    const sessionId = 'a4-no-corruption';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const settled = controller.confirm();
+    for (let i = 0; i < 8; i++) {
+      await jest.advanceTimersByTimeAsync(10);
+      await flushAsync();
+    }
+    await settled;
+    const published = controller.getVisibleOutcome(sessionId, before);
+    expect(published).toBeDefined();
+
+    expect(await controller.confirm()).toBeNull();
+    expect(controller.getVisibleOutcome(sessionId, before)).toEqual(published);
+  });
+
+  it('A-3: an unexpected transaction rejection settles once, releases the mutex and stays conservative', async () => {
+    const sessionId = 'a3-unexpected';
+    await openIdentifiedSession(sessionId);
+    // A legitimate injected seam - the controller's own coordinator
+    // option - rather than a production-only failure path: this faulty
+    // coordinator delegates everything except one lookup, which throws.
+    const faulty = Object.create(mspSessionCoordinator) as typeof mspSessionCoordinator;
+    (faulty as unknown as {getSessionKey: () => never}).getSessionKey = () => {
+      throw new Error('unexpected internal failure');
+    };
+    const controller = new FcToolsController({coordinator: faulty, appStateOwner: makeOwner().owner});
+
+    const phases: string[] = [];
+    controller.subscribe(() => phases.push(controller.getPhase().kind));
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const outcome = await controller.confirm();
+
+    expect(outcome).toEqual({kind: 'UNCONFIRMED', tool: 'ACC_CALIBRATION'});
+    expect(controller.getPhase()).toEqual({kind: 'IDLE'});
+    // CONFIRMING -> RUNNING -> IDLE, each notified exactly once.
+    expect(phases).toEqual(['CONFIRMING', 'RUNNING', 'IDLE']);
+    // The mutex is free: a later confirmation can proceed.
+    expect(controller.requestConfirmation(sessionId, 'REBOOT')).toBe(true);
+    controller.cancel();
+  });
+
+  it('A-5: state stays bounded across repeated open/close cycles and stale cleanup is harmless', async () => {
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    for (let i = 0; i < 6; i++) {
+      const sessionId = `a5-cycle-${i}`;
+      await openIdentifiedSession(sessionId);
+      controller.ensureBoxIdsMapping(sessionId);
+      await jest.advanceTimersByTimeAsync(20);
+      await flushAsync();
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+      // Cleanup twice - idempotent.
+      controller.ensureBoxIdsMapping(sessionId);
+      controller.ensureBoxIdsMapping(sessionId);
+    }
+    expect(controller.trackedSessionCount()).toBe(0);
+  });
+
+  it('A-5: pruning an obsolete session never removes the CURRENT identity or forces a re-acquisition', async () => {
+    const current = 'a5-current';
+    const obsolete = 'a5-obsolete';
+    await openIdentifiedSession(obsolete);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    controller.ensureBoxIdsMapping(obsolete);
+    await jest.advanceTimersByTimeAsync(20);
+    await flushAsync();
+
+    const liveClient = await openIdentifiedSession(current);
+    controller.ensureBoxIdsMapping(current);
+    await jest.advanceTimersByTimeAsync(20);
+    await flushAsync();
+    expect(liveClient.countOf(MSP_BOXIDS)).toBe(1);
+
+    mspSessionCoordinator.deactivateMspSession(obsolete);
+    await flushAsync();
+    controller.ensureBoxIdsMapping(current); // prunes the obsolete entry
+
+    // The current identity kept its cached mapping - no second request.
+    expect(liveClient.countOf(MSP_BOXIDS)).toBe(1);
+    expect(controller.trackedSessionCount()).toBe(1);
+  });
+});
+
+describe('FcToolsController - outcome provenance and publication lifetime (A-1)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  async function runAcc(controller: FcToolsController, sessionId: string) {
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    for (let i = 0; i < 8; i++) {
+      await jest.advanceTimersByTimeAsync(10);
+      await flushAsync();
+    }
+    return settled;
+  }
+
+  it('publishes with the captured composite origin and a monotonic sequence', async () => {
+    const sessionId = 'a1-origin';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+
+    expect(await runAcc(controller, sessionId)).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    expect(controller.getPublicationSequence()).toBeGreaterThan(before);
+    // Visible to a subscriber that mounted before publication...
+    expect(controller.getVisibleOutcome(sessionId, before)).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    // ...and invisible to one that mounts after it.
+    expect(controller.getVisibleOutcome(sessionId, controller.getPublicationSequence())).toBeUndefined();
+  });
+
+  it('an outcome is never visible to a DIFFERENT session', async () => {
+    const sessionId = 'a1-other-session';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+    expect(controller.getVisibleOutcome('a-different-session', before)).toBeUndefined();
+  });
+
+  it('a TRANSIENT detach with no replacement keeps the acknowledgement visible', async () => {
+    const sessionId = 'a1-transient-detach';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+
+    mspSessionCoordinator.deactivateMspSession(sessionId);
+    await flushAsync();
+
+    expect(controller.getVisibleOutcome(sessionId, before)).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+  });
+
+  it('a REPLACEMENT generation revokes generation N\'s outcome immediately', async () => {
+    const sessionId = 'a1-replacement';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeDefined();
+
+    mspSessionCoordinator.deactivateMspSession(sessionId);
+    await flushAsync();
+    await openIdentifiedSession(sessionId); // generation N+1
+
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+  });
+
+  it('an outcome settling AFTER a replacement became current cannot publish into it', async () => {
+    const sessionId = 'a1-late-settle';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        if (command === MSP_ACC_CALIBRATION) {
+          // The link dies and a replacement takes over before the
+          // continuation that settles this action runs.
+          mspSessionCoordinator.deactivateMspSession(sessionId);
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+
+    await openIdentifiedSession(sessionId); // replacement becomes current
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+  });
+
+  it('an epoch change AFTER the outcome revokes it, but the action\'s OWN desync does not', async () => {
+    const sessionId = 'a1-epoch-revocation';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION); // times out -> the action's own desync
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(2100);
+    await flushAsync();
+    expect(await settled).toEqual({kind: 'UNCONFIRMED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+
+    // The action's own timeout bumped the epoch; its result stays visible.
+    expect(controller.getVisibleOutcome(sessionId, before)).toEqual({kind: 'UNCONFIRMED', tool: 'ACC_CALIBRATION'});
+
+    // A LATER epoch change (a new logical owner) revokes it.
+    const live = mspSessionCoordinator.getActiveMspClient(sessionId);
+    expect(live).toBeDefined();
+    // An unanswered command times out -> MspClient's desync latch bumps
+    // the epoch, i.e. a NEW logical owner for the same physical session.
+    const timingOut = live!
+      .request(0x2a, new Uint8Array(0), {wireFormat: 'v1', responseTimeoutMs: 5})
+      .catch(() => undefined);
+    await jest.advanceTimersByTimeAsync(50);
+    await flushAsync();
+    await timingOut;
+    await flushAsync();
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+  });
+
+  it('opening a new confirmation clears the previous publication', async () => {
+    const sessionId = 'a1-new-confirmation';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+    const before = controller.getPublicationSequence();
+    await runAcc(controller, sessionId);
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeDefined();
+
+    expect(controller.requestConfirmation(sessionId, 'REBOOT')).toBe(true);
+    expect(controller.getVisibleOutcome(sessionId, before)).toBeUndefined();
+    controller.cancel();
+  });
+});
+
+describe('FcToolsController - generation binding', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  it('a replacement generation re-acquires its OWN mapping and never inherits the old one', async () => {
+    const sessionId = 'fc-tools-generation';
+    const first = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(1);
+    await flushAsync();
+    await settled;
+    expect(first.countOf(MSP_BOXIDS)).toBe(1);
+
+    mspSessionCoordinator.deactivateMspSession(sessionId);
+    await flushAsync();
+
+    const second = await openIdentifiedSession(sessionId);
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const settled2 = controller.confirm();
+    await jest.advanceTimersByTimeAsync(1);
+    await flushAsync();
+    expect(await settled2).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    // The NEW physical session asked for its own mapping.
+    expect(second.countOf(MSP_BOXIDS)).toBe(1);
+  });
+
+  it('peekArmedState never guesses: UNKNOWN without a mapping, and never derived from blockers', async () => {
+    const sessionId = 'fc-tools-peek';
+    await openIdentifiedSession(sessionId, c => {
+      // Every blocker set, but the ARM bit clear.
+      c.setResponse(MSP_STATUS_EX, statusExPayload({blockerMask: 0x1fffffff}));
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    expect(controller.peekArmedState(sessionId, undefined)).toBe('UNKNOWN');
+    controller.ensureBoxIdsMapping(sessionId);
+    await jest.advanceTimersByTimeAsync(1);
+    await flushAsync();
+
+    // With the mapping in hand, the FULL blocker mask still yields
+    // DISARMED - the armed state comes only from the BOXARM bit.
+    const scheduler = mspSessionCoordinator.getTelemetryScheduler(sessionId);
+    expect(scheduler).toBeDefined();
+    await jest.advanceTimersByTimeAsync(2200);
+    await flushAsync();
+    const status = scheduler!.getValue<{flightModeFlagsLow32: number; readiness: {extraFlightModeFlagBytes?: number[]}}>(
+      'fcStatus',
+    );
+    if (status.status === 'FRESH' || status.status === 'STALE') {
+      expect(controller.peekArmedState(sessionId, status.value as never)).toBe('DISARMED');
+    }
+  });
+});

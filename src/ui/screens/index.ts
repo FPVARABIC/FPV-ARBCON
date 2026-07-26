@@ -1,5 +1,6 @@
 export {default as UsbConnectionScreen} from './UsbConnectionScreen';
 export {default as SetupScreen} from './SetupScreen';
-// TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbSerialDebugPanel.tsx's own
-// class-level note. Delete this export alongside that file.
-export {default as UsbSerialDebugPanel} from './UsbSerialDebugPanel';
+// Pass 7.7: the debug panels are deliberately NOT re-exported here. A
+// static re-export would keep them in the production import graph even
+// though nothing renders them; they are reached only through
+// debugPanels.ts's __DEV__-guarded resolution.

@@ -33,17 +33,11 @@ import {
   mspSessionCoordinator,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
-// TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbSerialDebugPanel.tsx's own
-// class-level note. Delete this import and its one render site below
-// alongside that file once real protocol screens exist.
-import UsbSerialDebugPanel from './UsbSerialDebugPanel';
-// TEMPORARY DEBUG SCAFFOLDING (Pass 5.4) - see UsbAppLogCapturePanel.tsx's
-// own class-level note. Rendered unconditionally (unlike UsbSerialDebugPanel
-// above), since it needs neither a session nor a connected client, and must
-// stay reachable even during a stuck connect attempt. Delete this import and
-// its one render site below alongside that file once real protocol screens
-// exist.
-import UsbAppLogCapturePanel from './UsbAppLogCapturePanel';
+// DEBUG-ONLY SCAFFOLDING (Pass 5.3/5.4, isolated in Pass 7.7) - both
+// panels are reached only through debugPanels.ts, which resolves them
+// behind __DEV__ so a production bundle never retains them. Each render
+// site below is null in a release build.
+import {DevAppLogPanel, DevSerialPanel} from './debugPanels';
 
 /**
  * Owned by the UI/client, not the Kotlin transport defaults. Approved as a
@@ -726,9 +720,9 @@ export default function UsbConnectionScreen({
           <Text style={styles.instructionSecondary}>{t('connection.instructionSecondary')}</Text>
         </View>
 
-        {/* TEMPORARY DEBUG SCAFFOLDING (Pass 5.4) - see UsbAppLogCapturePanel.tsx's
-            own class-level note. Delete this block alongside that file. */}
-        <UsbAppLogCapturePanel />
+        {/* DEBUG-ONLY (Pass 5.4, isolated in Pass 7.7): absent from every
+            production bundle - DevAppLogPanel is undefined there. */}
+        {DevAppLogPanel ? <DevAppLogPanel /> : null}
 
         {state.errorMessage ? (
           <View style={styles.errorBanner} accessibilityRole="alert">
@@ -790,10 +784,9 @@ export default function UsbConnectionScreen({
           onDisconnect={handleDisconnect}
         />
 
-        {/* TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - see UsbSerialDebugPanel.tsx's
-            own class-level note. Delete this block alongside that file. */}
-        {isConnected && state.activeSessionId ? (
-          <UsbSerialDebugPanel
+        {/* DEBUG-ONLY (Pass 5.3, isolated in Pass 7.7): same __DEV__ gate. */}
+        {DevSerialPanel && isConnected && state.activeSessionId ? (
+          <DevSerialPanel
             sessionId={state.activeSessionId}
             client={client}
             // Pass 6.4b: the real, reactive value - derived from

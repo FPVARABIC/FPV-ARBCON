@@ -45,23 +45,53 @@
  * otherwise resolve this before that change ships.
  */
 
-import React, {useCallback, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {ScrollView, StyleSheet, Text, View} from 'react-native';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 
 import type {RootStackParamList} from '../../navigation/types';
 import {colors, spacing, typography} from '../theme';
-import {TopSystemBar, OrientationHero, SafetyStrip} from '../components/setup';
+import {
+  TopSystemBar,
+  OrientationHero,
+  SafetyStrip,
+  BatteryCard,
+  ReceiverCard,
+  GpsCard,
+  FlightControllerCard,
+  DiagnosticsSection,
+  FcToolsSection,
+} from '../components/setup';
 import {
   useTelemetryValue,
+  useMspOwnershipState,
+  useMspIdentificationState,
+  useMspRecoveryState,
+  useSetupAppStatePhase,
+  useFcToolArmedState,
+  fcToolsController,
+  useAuxTelemetryChannelState,
+  useBatteryLatchedValue,
+  setupAppStateTelemetryOwner,
   setupUiSessionStore,
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
+  BATTERY_TELEMETRY_POLL_ID,
+  RECEIVER_TELEMETRY_POLL_ID,
+  GPS_TELEMETRY_POLL_ID,
+  FC_STATUS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
 import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
-import {deriveOrientationViewState, deriveArmingReadiness} from '../../core';
-import type {MspAttitude, ArmingBlockReason} from '../../core';
+import {deriveOrientationViewState, deriveArmingReadiness, isGpsPresent, deriveSetupDiagnostics} from '../../core';
+import type {
+  MspAttitude,
+  MspBatteryState,
+  MspAnalog,
+  MspRawGpsCompact,
+  MspStatusExDiagnostics,
+  ArmingBlockReason,
+} from '../../core';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
@@ -93,6 +123,79 @@ function SetupScreenContent({
   const attitude = useTelemetryValue<MspAttitude>(sessionId, ATTITUDE_TELEMETRY_POLL_ID);
   const armed = useTelemetryValue<boolean>(sessionId, ARMED_TELEMETRY_POLL_ID);
   const blockers = useTelemetryValue<ArmingBlockReason[]>(sessionId, ARMING_BLOCKERS_TELEMETRY_POLL_ID);
+  // Pass 7.6b: the same generic hook/scheduler path attitude uses - the
+  // poll itself exists only for identified-compatible Betaflight sessions
+  // (Pass 7.6a), so every other session renders the card's honest
+  // "unavailable" state through the exact same UNAVAILABLE mechanism.
+  const batteryPolled = useTelemetryValue<MspBatteryState>(sessionId, BATTERY_TELEMETRY_POLL_ID);
+  // Pass 7.7: once the one-strike battery timeout breaker has fired, the
+  // poll is unregistered (scheduler reports UNAVAILABLE). The latch is the
+  // truthful replacement: the pre-timeout reading frozen as STALE (no
+  // longer updating), or a read-timeout ERROR when nothing ever succeeded.
+  const batteryLatched = useBatteryLatchedValue(sessionId);
+  const battery = batteryLatched ?? batteryPolled;
+
+  // Pass 7.6c: Region 3's remaining channels - the same generic hook/
+  // scheduler path, plus the per-channel circuit-breaker verdicts from
+  // the coordinator.
+  const receiver = useTelemetryValue<MspAnalog>(sessionId, RECEIVER_TELEMETRY_POLL_ID);
+  const gps = useTelemetryValue<MspRawGpsCompact>(sessionId, GPS_TELEMETRY_POLL_ID);
+  const fcStatus = useTelemetryValue<MspStatusExDiagnostics>(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
+  const receiverChannelState = useAuxTelemetryChannelState(sessionId, RECEIVER_TELEMETRY_POLL_ID);
+  const gpsChannelState = useAuxTelemetryChannelState(sessionId, GPS_TELEMETRY_POLL_ID);
+  const fcChannelState = useAuxTelemetryChannelState(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
+  const ownershipState = useMspOwnershipState(sessionId);
+  const connected = ownershipState === 'ACTIVE';
+
+  const freshStatusValue =
+    fcStatus.status === 'FRESH' || fcStatus.status === 'STALE' ? fcStatus.value : undefined;
+
+  // Pass 7.7, Region 4: derived from the SAME identification state
+  // Region 1 already reads and the SAME single FC-status poll Region 3
+  // already renders - no second reader, no extra command.
+  const identification = useMspIdentificationState(sessionId);
+  const diagnosticsView = deriveSetupDiagnostics({
+    connected,
+    channelState: fcChannelState,
+    status: fcStatus.status,
+    value: freshStatusValue,
+    identificationStatus: identification.status,
+    identity: identification.status === 'SUCCEEDED' ? identification.identity : undefined,
+  });
+
+  // Pass 7.7, Region 5 inputs. The armed state is read ONLY from the
+  // at-most-once BOXIDS mapping (never from the blocker mask, never
+  // guessed); the effect below starts that one acquisition after a
+  // compatible identification, and never polls it.
+  const recoveryState = useMspRecoveryState(sessionId);
+  const appStatePhase = useSetupAppStatePhase();
+  const cachedArmedState = useFcToolArmedState(sessionId, freshStatusValue);
+  // Deliberately dependency-free: the composite readiness identity is
+  // (physicalGeneration, mspEpoch), and the epoch can change without any
+  // rendered value changing with it (a desync/recovery cycle that
+  // settles back to READY within one batch). ensureBoxIdsMapping() is
+  // idempotent and returns immediately when the CURRENT identity has
+  // already settled or is already in flight, so this is at most ONE
+  // MSP_BOXIDS request per identity - never a poll, and never a retry
+  // inside an identity.
+  useEffect(() => {
+    fcToolsController.ensureBoxIdsMapping(sessionId);
+  });
+
+  // GPS presence proof comes from the SHARED MSP_STATUS_EX decode (a
+  // stale sensor mask still proves the FC detected the hardware);
+  // undefined = not provable right now.
+  const gpsPresent = freshStatusValue === undefined ? undefined : isGpsPresent(freshStatusValue);
+
+  // Pass 7.7: the ONE AppState owner (module singleton) pauses/resumes
+  // telemetry through the scheduler's own lease API. The screen only
+  // starts it and registers this session; it never becomes a second
+  // AppState listener or a second polling owner, and unmounting the
+  // screen does NOT close the coordinator-owned physical session.
+  useEffect(() => {
+    setupAppStateTelemetryOwner.start();
+    setupAppStateTelemetryOwner.track(sessionId);
+  }, [sessionId]);
 
   const [uiState, setUiState] = useState(() => setupUiSessionStore.getState(sessionKey));
 
@@ -124,6 +227,47 @@ function SetupScreenContent({
           onResetHintShown={handleResetHintShown}
         />
         <SafetyStrip readiness={armingReadiness} />
+        {/* Pass 7.6c: the complete Region 3 2x2 card grid at the audited
+            insertion point (after the approved Region 1+2 sequence).
+            Tree/accessibility order is the approved diagnostic order
+            Battery -> Receiver -> GPS -> FC; under the app's RTL layout,
+            row-wrapping renders row 1 as Battery (right) / Receiver
+            (left) and row 2 as GPS (right) / FC (left). Display-only -
+            no press actions, no navigation, no horizontal scroll. */}
+        <View style={styles.cardGrid} testID="telemetry-card-grid">
+          <View style={styles.cardCell}>
+            <BatteryCard telemetry={battery} />
+          </View>
+          <View style={styles.cardCell}>
+            <ReceiverCard connected={connected} channelState={receiverChannelState} telemetry={receiver} />
+          </View>
+          <View style={styles.cardCell}>
+            <GpsCard connected={connected} channelState={gpsChannelState} telemetry={gps} gpsPresent={gpsPresent} />
+          </View>
+          <View style={styles.cardCell}>
+            <FlightControllerCard connected={connected} channelState={fcChannelState} telemetry={fcStatus} />
+          </View>
+        </View>
+        {/* Pass 7.7: Region 4 immediately after Region 3. */}
+        <DiagnosticsSection view={diagnosticsView} />
+        {/* Pass 7.7: Region 5 after Region 4. Armed state comes ONLY
+            from the BOXIDS mapping - with none acquired for this screen
+            it stays UNKNOWN, and every control is honestly disabled with
+            that exact reason until the transaction's own fresh preflight
+            proves DISARMED. */}
+        <FcToolsSection
+          sessionId={sessionId}
+          gate={{
+            connected,
+            appActive: appStatePhase === 'ACTIVE',
+            recovering: recoveryState !== undefined && recoveryState !== 'READY',
+            compatibility: diagnosticsView.compatibility,
+            dataState: diagnosticsView.dataState,
+            readingMalformed: freshStatusValue?.readiness.malformedTail === true,
+            armedState: cachedArmedState,
+            sensors: diagnosticsView.sensors.kind === 'REPORTED' ? diagnosticsView.sensors.bits : undefined,
+          }}
+        />
       </ScrollView>
     </View>
   );
@@ -143,6 +287,16 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: spacing.xl,
+  },
+  cardGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  cardCell: {
+    width: '50%',
+    padding: spacing.xs,
   },
   placeholderText: {
     ...typography.body,

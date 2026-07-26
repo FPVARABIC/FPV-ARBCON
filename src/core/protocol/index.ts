@@ -47,25 +47,43 @@ export type {
   MspClientDiagnosticEvent,
 } from './mspClient';
 
-export {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO, MSP_ATTITUDE} from './msp';
+export {
+  MSP_API_VERSION,
+  MSP_FC_VARIANT,
+  MSP_BOARD_INFO,
+  MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  MSP_RAW_GPS,
+  MSP_ANALOG,
+  MSP_STATUS_EX,
+  MSP_BOXIDS,
+  MSP_ACC_CALIBRATION,
+  MSP_MAG_CALIBRATION,
+  MSP_REBOOT,
+  STATUS_SENSOR_GPS_BIT,
+} from './msp';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
+  BETAFLIGHT_API147_COMMIT,
   INAV_SOURCE_REPO,
   INAV_PINNED_COMMIT,
   EMUFLIGHT_SOURCE_REPO,
   EMUFLIGHT_PINNED_COMMIT,
 } from './msp';
 export {MspPayloadReader, MspPayloadReadError} from './msp';
-export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude} from './msp';
-export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude} from './msp';
+export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, decodeBatteryState, decodeAnalog, decodeRawGps, decodeStatusEx} from './msp';
+export {decodeStatusExReadiness, STATUS_EX_FIXED_PREFIX_BYTES, decodeStatusExDiagnostics} from './msp';
+export type {MspStatusExReadiness, MspStatusExDiagnostics} from './msp';
+export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState, MspAnalog, MspRawGpsCompact, MspStatusExCompact} from './msp';
 export {
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
 } from './msp';
 export type {MspCompatibilityResult} from './msp';
-export {deriveFcFamily, MspIdentificationService, MspIncompatibleFirmwareError} from './msp';
+export {deriveFcFamily, MspIdentificationService, MspIncompatibleFirmwareError, BoxIdsAcquisition} from './msp';
+export type {BoxIdsOwnerIdentity, BoxIdsResult} from './msp';
 export type {MspFcFamily, MspFcVariant, FlightControllerIdentity, MspRequester} from './msp';
 
 export {RealClock, FakeClock, createMspTelemetryScheduler} from './telemetry';

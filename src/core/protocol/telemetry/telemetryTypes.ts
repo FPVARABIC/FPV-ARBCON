@@ -28,6 +28,12 @@ export type MspPollDefinition<T> = {
   priority: number;
   requestPayload?: Uint8Array;
   decode: (payload: Uint8Array) => T;
+  /** Pass 7.6c: optional startup phase offset - the poll first becomes
+   * due at registration time + initialDelayMs instead of immediately.
+   * Default 0 preserves every pre-7.6c registration's behavior exactly.
+   * Used to stagger the auxiliary Region 3 polls so they cannot all
+   * become due in the same startup burst on the serialized MSP queue. */
+  initialDelayMs?: number;
 };
 
 /**

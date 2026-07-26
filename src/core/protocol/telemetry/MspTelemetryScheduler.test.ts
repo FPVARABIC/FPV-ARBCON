@@ -622,3 +622,182 @@ describe('MspTelemetryScheduler - getValue() referential stability for WAITING/U
     expect(scheduler.getValue('a')).toBe(scheduler.getValue('a'));
   });
 });
+
+describe('MspTelemetryScheduler - Pass 7.6c initialDelayMs (phase stagger)', () => {
+  it('defaults to immediately-due at registration when initialDelayMs is absent (pre-7.6c behavior preserved exactly)', () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 501, 200, 100_000));
+    scheduler.tick();
+    expect(requester.callCount).toBe(1);
+  });
+
+  it('delays the FIRST dispatch by exactly initialDelayMs, then resumes the normal interval cadence from the first dispatch time', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester((command, payload) => makeFrame(command, payload.length ? payload : Uint8Array.from([1])));
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll({...definition('aux', 110, 4000, 12_000, -2), initialDelayMs: 700});
+
+    // Not due before the stagger elapses - repeated ticks dispatch nothing.
+    scheduler.tick();
+    clock.advance(650);
+    scheduler.tick();
+    expect(requester.callCount).toBe(0);
+
+    // Due exactly at the 700ms boundary.
+    clock.advance(50);
+    scheduler.tick();
+    expect(requester.callCount).toBe(1);
+    await scheduler.waitUntilIdle();
+
+    // Next due time comes from the dispatch's own start + intervalMs
+    // (700 + 4000 = 4700), NOT initialDelay-relative arithmetic.
+    clock.advance(3999);
+    scheduler.tick();
+    expect(requester.callCount).toBe(1);
+    clock.advance(1);
+    scheduler.tick();
+    expect(requester.callCount).toBe(2);
+  });
+
+  it("staggers three aux registrations (700/1400/2100ms, the coordinator's own phases) into distinct first-dispatch times", async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester((command, payload) => makeFrame(command, payload.length ? payload : Uint8Array.from([1])));
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll({...definition('receiver', 110, 4000, 12_000, -2), initialDelayMs: 700});
+    scheduler.registerPoll({...definition('gps', 106, 5000, 15_000, -3), initialDelayMs: 1400});
+    scheduler.registerPoll({...definition('fcStatus', 150, 8000, 24_000, -4), initialDelayMs: 2100});
+
+    const firstDispatchOrder: number[] = [];
+    for (let elapsed = 0; elapsed <= 2200; elapsed += 50) {
+      scheduler.tick();
+      await scheduler.waitUntilIdle();
+      while (requester.calls.length > firstDispatchOrder.length) {
+        firstDispatchOrder.push(requester.calls[firstDispatchOrder.length].command);
+      }
+      clock.advance(50);
+    }
+    expect(firstDispatchOrder).toEqual([110, 106, 150]);
+  });
+});
+
+describe('MspTelemetryScheduler - Pass 7.6c singleFlight (global concurrency of one)', () => {
+  it('default mode (flag absent) still allows overlapping dispatches - pre-7.6c behavior preserved exactly', () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 501, 200, 100_000));
+    scheduler.registerPoll(definition('b', 502, 300, 100_000));
+    scheduler.tick();
+    scheduler.tick();
+    expect(requester.callCount).toBe(2);
+  });
+
+  it('singleFlight mode never starts a dispatch while another is in flight, across DIFFERENT polls', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock, singleFlight: true});
+    scheduler.registerPoll(definition('a', 501, 200, 100_000));
+    scheduler.registerPoll(definition('b', 502, 300, 100_000));
+
+    scheduler.tick();
+    expect(requester.callCount).toBe(1);
+
+    // b is due too, but a's dispatch is still unsettled - nothing new may
+    // start no matter how often tick() runs or how late b becomes.
+    scheduler.tick();
+    clock.advance(1000);
+    scheduler.tick();
+    scheduler.tick();
+    expect(requester.callCount).toBe(1);
+
+    // The moment the outstanding dispatch settles, the next tick may
+    // dispatch exactly one more.
+    requester.resolveNext(makeFrame(501, Uint8Array.from([1])));
+    await scheduler.waitUntilIdle();
+    scheduler.tick();
+    expect(requester.callCount).toBe(2);
+  });
+
+  it('singleFlight mode produces zero overlap over a long mixed-cadence run (max in-flight is exactly one)', async () => {
+    const clock = new FakeClock(0);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const requester: MspRequester = {
+      request(command: number): Promise<MspFrame> {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        return Promise.resolve().then(() => {
+          inFlight -= 1;
+          return makeFrame(command, Uint8Array.from([1]));
+        });
+      },
+    };
+    const scheduler = createMspTelemetryScheduler(requester, {clock, singleFlight: true});
+    scheduler.registerPoll(definition('attitude', 108, 220, 700, 0));
+    scheduler.registerPoll({...definition('receiver', 110, 4000, 12_000, -2), initialDelayMs: 700});
+    scheduler.registerPoll({...definition('gps', 106, 5000, 15_000, -3), initialDelayMs: 1400});
+
+    for (let elapsed = 0; elapsed < 20_000; elapsed += 50) {
+      clock.advance(50);
+      scheduler.tick();
+      await scheduler.waitUntilIdle();
+    }
+    expect(maxInFlight).toBe(1);
+  });
+});
+
+describe('MspTelemetryScheduler - Pass 7.6c aux alternation (primary never starved by auxiliaries)', () => {
+  it('after an auxiliary (priority < 0) dispatch, a due primary (priority >= 0) poll wins the next slot even when an auxiliary is MORE overdue by ratio', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester((command, payload) => makeFrame(command, payload.length ? payload : Uint8Array.from([1])));
+    const scheduler = createMspTelemetryScheduler(requester, {clock, singleFlight: true});
+    // Two auxiliaries with SHORT intervals so their overdue ratios can
+    // legitimately exceed the primary's, plus one primary.
+    scheduler.registerPoll(definition('primary', 108, 220, 700, 0));
+    scheduler.registerPoll(definition('auxA', 110, 100, 12_000, -2));
+    scheduler.registerPoll(definition('auxB', 106, 100, 15_000, -3));
+
+    // t=0: all three due at ratio 0; priority tiebreak picks the primary.
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.map(c => c.command)).toEqual([108]);
+
+    // t=400: auxA/auxB are 3+ intervals overdue (ratio >= 3), primary is
+    // due again at a lower ratio. Aux wins ONCE by ratio...
+    clock.advance(400);
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.map(c => c.command)).toEqual([108, 110]);
+
+    // ...but the next slot must go BACK to the still-due primary (the
+    // alternation rule), even though auxB's ratio is still far higher.
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.map(c => c.command)).toEqual([108, 110, 108]);
+
+    // With the primary served, the remaining auxiliary now gets its turn.
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.map(c => c.command)).toEqual([108, 110, 108, 106]);
+  });
+
+  it('two auxiliaries may still run consecutively when NO primary poll is due (the rule only protects a due primary)', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester((command, payload) => makeFrame(command, payload.length ? payload : Uint8Array.from([1])));
+    const scheduler = createMspTelemetryScheduler(requester, {clock, singleFlight: true});
+    scheduler.registerPoll(definition('primary', 108, 10_000, 30_000, 0));
+    scheduler.registerPoll(definition('auxA', 110, 100, 12_000, -2));
+    scheduler.registerPoll(definition('auxB', 106, 100, 15_000, -3));
+
+    scheduler.tick(); // primary (priority tiebreak at ratio 0)
+    await scheduler.waitUntilIdle();
+    clock.advance(400); // primary NOT due again for ~10s; both auxes overdue
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.map(c => c.command)).toEqual([108, 110, 106]);
+  });
+});

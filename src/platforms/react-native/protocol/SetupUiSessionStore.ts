@@ -1,62 +1,117 @@
 /**
- * Pass 7.1 - pure UI-state storage for the (not-yet-built) Setup screen,
- * keyed by SetupUiSessionKey (see MspSessionCoordinator.ts's own doc
- * comment on that type) rather than by sessionId alone: a reused native
- * sessionId string must never let one physical session's UI state (which
- * diagnostic sections are expanded, which incidents were dismissed, the
- * orientation-view offset) leak into a different activation of that same
- * id.
+ * Pass 7.1 - pure UI-state storage for the Setup screen, keyed by
+ * SetupUiSessionKey (see MspSessionCoordinator.ts's own doc comment on that
+ * type) rather than by sessionId alone: a reused native sessionId string
+ * must never let one physical session's UI state (which diagnostic sections
+ * are expanded, which incidents were dismissed, the orientation-view
+ * offset) leak into a different activation of that same id.
  *
  * A module-level singleton, mirroring MspSessionCoordinator's own
  * established precedent (see that file's class doc comment for why: no
  * React Context usage and no generic event-emitter/pub-sub pattern exists
- * elsewhere in this codebase for cross-cutting state). Placed alongside
- * MspSessionCoordinator rather than under src/ui/ - it is not a component
- * and has no rendering logic, only a same-shaped singleton keyed by the
- * same session identity that module already owns.
+ * elsewhere in this codebase for cross-cutting state).
  *
- * Pure storage mechanism only for this pass: no useSyncExternalStore hook,
- * no subscribe/notify machinery, no listening for generation changes. Real
- * UI wiring (a reactive hook, actually reading/writing these fields from
- * the Setup screen) is Pass 7.3.
+ * ==========================================================================
+ * PASS 7.7 - IMMUTABLE SNAPSHOTS, ONE WRITER, BOUNDED HISTORY
+ * ==========================================================================
+ * CONFIRMED baseline defects (read from the Pass 7.6c source of this file,
+ * not assumed):
  *
- * Orphaned entries (a generation that will never be read again, e.g. after
- * its session was torn down) are deliberately left uncollected in this
- * pass: each entry is a handful of small values, growth is bounded by how
- * many times a session is genuinely (re)activated during one app process's
- * life (not by any unbounded user-facing loop), and this store only grows
- * an entry on an actual update() - never merely from a read - so probing
- * getState() for many keys cannot inflate it either. Picking an eviction
- * policy (tie it to the ACTIVE -> INACTIVE ownership transition? an LRU
- * cap?) now, before Pass 7.3's real UI wiring shows what usage actually
- * looks like, would be guessing at a requirement that does not exist yet -
- * left for a later pass if it turns out to matter.
+ *  1. LEAKED MUTABLE COLLECTIONS. getState() returned the STORED object,
+ *     whose expandedDiagnosticSections/dismissedAutoOpenIncidents were live
+ *     `Set` instances and whose orientationViewOffset was a live object -
+ *     any reader could `getState(key).expandedDiagnosticSections.add(...)`
+ *     and silently mutate stored state.
+ *  2. UNSTABLE SNAPSHOT IDENTITY for unknown keys: every getState() of a
+ *     never-written key built a brand-new defaultState() object, so
+ *     repeated reads returned different references while nothing changed.
+ *  3. UNBOUNDED GROWTH: the file's own doc comment acknowledged entries are
+ *     "deliberately left uncollected" with no policy at all.
+ *
+ * The representation is now an actually-immutable snapshot: recursively
+ * frozen plain objects with SORTED FROZEN ARRAYS instead of Sets.
+ * `Object.freeze(new Set(...))` is deliberately NOT used - freezing a Set
+ * does not make its internal entries immutable (add/delete still mutate
+ * it), which is exactly the trap this representation avoids. Mutable input
+ * collections are normalized/cloned on ingress, so a caller keeping a
+ * reference to what it passed in cannot reach into stored state either.
+ *
+ * Snapshot identity: the SAME frozen object is returned for repeated reads
+ * while the stored state is unchanged (including the shared EMPTY_STATE for
+ * every never-written key), and a NEW frozen object appears only when an
+ * update actually changes something - the referential-stability contract
+ * useSyncExternalStore requires.
+ *
+ * Bounded history: at most SETUP_UI_SESSION_HISTORY_LIMIT terminal (older-
+ * generation) entries are retained per sessionId, evicted oldest-generation
+ * first and deterministically. The CURRENT (highest-generation) entry for a
+ * sessionId is never evicted, so an ACTIVE/CLOSING session cannot lose its
+ * own state; and because keys carry the generation, old state can never
+ * leak into a new physical generation.
  */
 
 import type {SetupUiSessionKey} from './MspSessionCoordinator';
 
 export type SetupUiSessionState = {
-  expandedDiagnosticSections: Set<string>;
-  dismissedAutoOpenIncidents: Set<string>;
-  orientationViewOffset: {rollDeg: number; pitchDeg: number; yawDeg: number};
+  /** Sorted, frozen. Was a mutable Set before Pass 7.7. */
+  readonly expandedDiagnosticSections: readonly string[];
+  /** Sorted, frozen. Was a mutable Set before Pass 7.7. */
+  readonly dismissedAutoOpenIncidents: readonly string[];
+  readonly orientationViewOffset: {readonly rollDeg: number; readonly pitchDeg: number; readonly yawDeg: number};
   /** Pass 7.4, Step 5: has this session already seen the one-time hint
    * ("view only, does not calibrate FC sensors") the first time
-   * "إعادة ضبط عرض الاتجاه" is pressed? A direct field addition to this
-   * store's existing purpose (misc per-session Setup UI state) serving
-   * an explicit spec requirement - not a new architectural pattern, so
-   * not treated as a stop-and-report decision the way activatedAtMs
-   * tracking was. */
-  hasSeenOrientationResetHint: boolean;
+   * "إعادة ضبط عرض الاتجاه" is pressed? */
+  readonly hasSeenOrientationResetHint: boolean;
 };
 
-function defaultState(): SetupUiSessionState {
-  return {
-    expandedDiagnosticSections: new Set(),
-    dismissedAutoOpenIncidents: new Set(),
-    orientationViewOffset: {rollDeg: 0, pitchDeg: 0, yawDeg: 0},
-    hasSeenOrientationResetHint: false,
-  };
+/** Named, documented finite bound on retained TERMINAL (older-generation)
+ * entries per sessionId. Small on purpose: this state is a handful of UI
+ * booleans/ids whose only reason to survive a generation change is a user
+ * quickly re-plugging the same device. */
+export const SETUP_UI_SESSION_HISTORY_LIMIT = 4;
+
+function freezeState(state: {
+  expandedDiagnosticSections: readonly string[];
+  dismissedAutoOpenIncidents: readonly string[];
+  orientationViewOffset: {rollDeg: number; pitchDeg: number; yawDeg: number};
+  hasSeenOrientationResetHint: boolean;
+}): SetupUiSessionState {
+  return Object.freeze({
+    expandedDiagnosticSections: Object.freeze([...state.expandedDiagnosticSections].sort()),
+    dismissedAutoOpenIncidents: Object.freeze([...state.dismissedAutoOpenIncidents].sort()),
+    orientationViewOffset: Object.freeze({...state.orientationViewOffset}),
+    hasSeenOrientationResetHint: state.hasSeenOrientationResetHint,
+  }) as SetupUiSessionState;
 }
+
+/** One shared frozen instance for every never-written key - repeated reads
+ * of an unknown key must return the SAME reference (Pass 7.1's own
+ * IDLE_IDENTIFICATION_STATE lesson, applied here). */
+const EMPTY_STATE: SetupUiSessionState = freezeState({
+  expandedDiagnosticSections: [],
+  dismissedAutoOpenIncidents: [],
+  orientationViewOffset: {rollDeg: 0, pitchDeg: 0, yawDeg: 0},
+  hasSeenOrientationResetHint: false,
+});
+
+/** Accepts whatever a caller passes (array, Set, or nothing) and returns a
+ * normalized plain array - cloned, so the caller's own collection is never
+ * retained by this store. */
+function normalizeIds(value: readonly string[] | ReadonlySet<string> | undefined, fallback: readonly string[]): string[] {
+  if (value === undefined) {
+    return [...fallback];
+  }
+  return Array.isArray(value) ? [...value] : [...(value as ReadonlySet<string>)];
+}
+
+/** Patch shape - accepts Sets for ergonomic call sites while the STORED
+ * representation stays immutable arrays. */
+export type SetupUiSessionStatePatch = {
+  expandedDiagnosticSections?: readonly string[] | ReadonlySet<string>;
+  dismissedAutoOpenIncidents?: readonly string[] | ReadonlySet<string>;
+  orientationViewOffset?: {rollDeg: number; pitchDeg: number; yawDeg: number};
+  hasSeenOrientationResetHint?: boolean;
+};
 
 /** Composite key serialization - a reused sessionId string with a
  * different generation must serialize to a different map key. generation
@@ -67,19 +122,48 @@ function serializeKey(key: SetupUiSessionKey): string {
   return `${key.sessionId}:${key.generation}`;
 }
 
+function sameState(a: SetupUiSessionState, b: SetupUiSessionState): boolean {
+  return (
+    a.hasSeenOrientationResetHint === b.hasSeenOrientationResetHint &&
+    a.orientationViewOffset.rollDeg === b.orientationViewOffset.rollDeg &&
+    a.orientationViewOffset.pitchDeg === b.orientationViewOffset.pitchDeg &&
+    a.orientationViewOffset.yawDeg === b.orientationViewOffset.yawDeg &&
+    a.expandedDiagnosticSections.length === b.expandedDiagnosticSections.length &&
+    a.expandedDiagnosticSections.every((id, index) => id === b.expandedDiagnosticSections[index]) &&
+    a.dismissedAutoOpenIncidents.length === b.dismissedAutoOpenIncidents.length &&
+    a.dismissedAutoOpenIncidents.every((id, index) => id === b.dismissedAutoOpenIncidents[index])
+  );
+}
+
 export class SetupUiSessionStore {
+  /** THE single writer surface is update()/resetOrientationViewOffset();
+   * every other consumer is a reader of frozen snapshots. */
   private readonly states = new Map<string, SetupUiSessionState>();
+  /** sessionId -> generations that have an entry, insertion-ordered, used
+   * for the deterministic bounded eviction below. */
+  private readonly generationsBySession = new Map<string, number[]>();
 
   /** Never throws - a key this store has never seen an update() for
-   * returns a fresh default state rather than an error. */
+   * returns the shared frozen empty state rather than an error, and
+   * repeated calls return the SAME reference while nothing changes. */
   getState(key: SetupUiSessionKey): SetupUiSessionState {
-    return this.states.get(serializeKey(key)) ?? defaultState();
+    return this.states.get(serializeKey(key)) ?? EMPTY_STATE;
   }
 
-  update(key: SetupUiSessionKey, patch: Partial<SetupUiSessionState>): void {
+  update(key: SetupUiSessionKey, patch: SetupUiSessionStatePatch): void {
     const serialized = serializeKey(key);
-    const current = this.states.get(serialized) ?? defaultState();
-    this.states.set(serialized, {...current, ...patch});
+    const current = this.states.get(serialized) ?? EMPTY_STATE;
+    const next = freezeState({
+      expandedDiagnosticSections: normalizeIds(patch.expandedDiagnosticSections, current.expandedDiagnosticSections),
+      dismissedAutoOpenIncidents: normalizeIds(patch.dismissedAutoOpenIncidents, current.dismissedAutoOpenIncidents),
+      orientationViewOffset: patch.orientationViewOffset ?? {...current.orientationViewOffset},
+      hasSeenOrientationResetHint: patch.hasSeenOrientationResetHint ?? current.hasSeenOrientationResetHint,
+    });
+    if (this.states.has(serialized) && sameState(current, next)) {
+      return; // no real change: keep the existing snapshot reference stable
+    }
+    this.states.set(serialized, next);
+    this.trackGeneration(key);
   }
 
   /** Pass 7.4: "إعادة ضبط عرض الاتجاه" - zeroes ONLY the local
@@ -90,6 +174,30 @@ export class SetupUiSessionStore {
    * calibration. */
   resetOrientationViewOffset(key: SetupUiSessionKey): void {
     this.update(key, {orientationViewOffset: {rollDeg: 0, pitchDeg: 0, yawDeg: 0}});
+  }
+
+  /** Diagnostic/test seam: how many entries exist for a sessionId. */
+  entryCountFor(sessionId: string): number {
+    return this.generationsBySession.get(sessionId)?.length ?? 0;
+  }
+
+  /** Records the generation and evicts oldest TERMINAL generations beyond
+   * the bound. The highest generation seen for a sessionId is the current
+   * one and is never evicted. */
+  private trackGeneration(key: SetupUiSessionKey): void {
+    const generations = this.generationsBySession.get(key.sessionId) ?? [];
+    if (!generations.includes(key.generation)) {
+      generations.push(key.generation);
+    }
+    generations.sort((a, b) => a - b);
+    // Keep the newest (current) plus up to the bound of older terminal ones.
+    while (generations.length > SETUP_UI_SESSION_HISTORY_LIMIT + 1) {
+      const evicted = generations.shift();
+      if (evicted !== undefined) {
+        this.states.delete(`${key.sessionId}:${evicted}`);
+      }
+    }
+    this.generationsBySession.set(key.sessionId, generations);
   }
 }
 

@@ -34,6 +34,12 @@ export type {
   MspFcVariantRaw,
   MspBoardInfo,
   MspAttitude,
+  MspBatteryState,
+  MspAnalog,
+  MspRawGpsCompact,
+  MspStatusExCompact,
+  MspStatusExReadiness,
+  MspStatusExDiagnostics,
   MspCompatibilityResult,
   MspFcFamily,
   MspFcVariant,
@@ -77,8 +83,18 @@ export {
   MSP_FC_VARIANT,
   MSP_BOARD_INFO,
   MSP_ATTITUDE,
+  MSP_BATTERY_STATE,
+  MSP_RAW_GPS,
+  MSP_ANALOG,
+  MSP_STATUS_EX,
+  MSP_BOXIDS,
+  MSP_ACC_CALIBRATION,
+  MSP_MAG_CALIBRATION,
+  MSP_REBOOT,
+  STATUS_SENSOR_GPS_BIT,
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
+  BETAFLIGHT_API147_COMMIT,
   INAV_SOURCE_REPO,
   INAV_PINNED_COMMIT,
   EMUFLIGHT_SOURCE_REPO,
@@ -89,12 +105,20 @@ export {
   decodeFcVariant,
   decodeBoardInfo,
   decodeAttitude,
+  decodeBatteryState,
+  decodeAnalog,
+  decodeRawGps,
+  decodeStatusEx,
+  decodeStatusExReadiness,
+  decodeStatusExDiagnostics,
+  STATUS_EX_FIXED_PREFIX_BYTES,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
   deriveFcFamily,
   MspIdentificationService,
   MspIncompatibleFirmwareError,
+  BoxIdsAcquisition,
   RealClock,
   FakeClock,
   createMspTelemetryScheduler,
@@ -108,3 +132,37 @@ export {deriveArmingReadiness, rankArmingBlockReasons, selectTopArmingBlockReaso
 export type {ArmingBlockSeverity, ArmingBlockReason, ArmingReadiness, ArmingBlockReasonSelection} from './state';
 export {pickTopNotice} from './state';
 export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeScope} from './state';
+// Pass 7.6a: exported directly from the module file (not via ./state's
+// barrel) because src/core/state/index.ts is outside this pass's
+// authorized file allowlist - a deliberate, documented allowlist
+// constraint, not a new convention.
+export {deriveBatterySemantics} from './state/batteryTelemetry';
+export type {BatteryFirmwareState, BatterySensorValidity, BatterySemantics} from './state/batteryTelemetry';
+export {deriveReceiverRssi, isGpsPresent, deriveGpsCard, RSSI_MAX_VALUE} from './state/auxTelemetrySemantics';
+export {
+  ARMING_DISABLE_FLAG_TOKENS,
+  ARMING_DISABLE_FLAGS_COUNT,
+  SENSOR_PRESENCE_TOKENS,
+  BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION,
+  BOXARM_PERMANENT_ID,
+  decodeArmingBlockers,
+  decodeSensorPresence,
+  deriveArmedState,
+} from './state/armingBlockers';
+export type {BoxIdsOwnerIdentity, BoxIdsResult} from './protocol';
+export type {ArmingBlockerBit, SensorPresenceBit, ArmedState} from './state/armingBlockers';
+export {resolveFcToolAvailability, resolveAllFcToolAvailability, FC_TOOL_IDS} from './state/fcTools';
+export type {FcToolId, FcToolBlockReason, FcToolAvailability, FcToolGateInput} from './state/fcTools';
+export {deriveSetupDiagnostics} from './state/setupDiagnostics';
+export type {
+  SetupDiagnosticsInput,
+  SetupDiagnosticsView,
+  DiagnosticsChannelState,
+  DiagnosticsTelemetryStatus,
+  DiagnosticsDataState,
+  DiagnosticsCompatibility,
+  DiagnosticsIdentity,
+  DiagnosticsSensors,
+  DiagnosticsBlockers,
+} from './state/setupDiagnostics';
+export type {ReceiverRssiSemantics, GpsCardSemantics} from './state/auxTelemetrySemantics';

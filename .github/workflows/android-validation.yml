@@ -10,9 +10,18 @@ name: Android Validation
 # production release) so it can be installed and launched on real hardware
 # without a Metro server. The debug variant is still built and exercised
 # internally (compileDebugKotlin/testDebugUnitTest/assembleDebug all run
-# against it) but is never uploaded as an artifact - the only user-facing
-# download from this workflow is the single fpv-arbcon-apk artifact
-# containing the standalone release APK.
+# against it).
+#
+# Pass 7.6c: the debug APK is NOW ALSO uploaded, as the clearly-separated
+# fpv-arbcon-apk-debug artifact. Rationale: the bounded [FPV-BATT]/
+# [FPV-TELEM] hardware observability (batteryDebugLog.ts /
+# auxTelemetryDebugLog.ts) is deliberately __DEV__-only, so the standalone
+# release APK cannot emit it - capturing those logs on real hardware
+# requires the debug variant. LIMITATION, disclosed rather than hidden:
+# this debug APK does NOT bundle the JS - it needs a Metro server on the
+# connected computer (npx react-native start + adb reverse tcp:8081
+# tcp:8081). The standalone fpv-arbcon-apk release artifact remains the
+# primary hardware-validation download.
 
 on:
   workflow_dispatch: {}
@@ -199,7 +208,7 @@ jobs:
             --info \
             --console=plain
 
-      - name: Locate and verify debug APK (internal diagnostics only, not uploaded)
+      - name: Locate and verify debug APK
         working-directory: android
         run: |
           APK_PATH=$(find app/build/outputs/apk/debug -name '*.apk' | head -n 1)
@@ -208,8 +217,22 @@ jobs:
             exit 1
           fi
           test -s "$APK_PATH"
-          echo "Resolved debug APK (Metro-dependent, diagnostics only): android/$APK_PATH"
+          echo "Resolved debug APK (Metro-dependent - needed for __DEV__-only FPV-BATT/FPV-TELEM logs): android/$APK_PATH"
           ls -la "$APK_PATH"
+          echo "DEBUG_APK_PATH=android/$APK_PATH" >> "$GITHUB_ENV"
+
+      # Pass 7.6c - see the workflow header comment: __DEV__-only hardware
+      # observability requires the debug variant; this artifact is named
+      # and documented so it can never be mistaken for the standalone
+      # release APK.
+      - name: Upload debug APK artifact (Metro-dependent, for FPV-BATT/FPV-TELEM log capture)
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-apk-debug
+          path: ${{ env.DEBUG_APK_PATH }}
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Disk before release build
         shell: bash
