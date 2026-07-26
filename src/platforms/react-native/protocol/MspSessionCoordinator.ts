@@ -73,7 +73,7 @@ import {
   decodeBatteryState,
   decodeAnalog,
   decodeRawGps,
-  decodeStatusEx,
+  decodeStatusExDiagnostics,
   createMspTelemetryScheduler,
 } from '../../../core';
 import type {
@@ -1159,7 +1159,10 @@ export class MspSessionCoordinator {
         staleAfterMs: FC_STATUS_POLL_STALE_AFTER_MS,
         priority: FC_STATUS_POLL_PRIORITY,
         initialDelayMs: FC_STATUS_POLL_INITIAL_DELAY_MS,
-        decode: decodeStatusEx,
+        // Pass 7.7: the SAME single poll, decoded further in place
+        // (fixed prefix + flight-mode bits + bounded optional readiness
+        // tail) so Region 4 needs no second STATUS_EX reader.
+        decode: decodeStatusExDiagnostics,
         summarize: value => {
           const status = value as {cpuLoadPercent: number; cycleTimeUs: number};
           return `cpu=${status.cpuLoadPercent}% cycle=${status.cycleTimeUs}us`;

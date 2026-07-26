@@ -131,6 +131,50 @@ export function decodeSensorPresence(mask: number): readonly SensorPresenceBit[]
   return Object.freeze(bits);
 }
 
+/**
+ * Pass 7.7, Region 4: the blocker tokens whose MEANING (not merely whose
+ * name) was read at the pinned authority, so an Arabic description of
+ * the condition is source-proven rather than inferred. Each entry below
+ * names the exact set-site that proves it:
+ *
+ *   NO_GYRO          fc/init.c:668      (!sensorsAutodetect())
+ *   FAILSAFE         flight/failsafe.c:390
+ *   RX_FAILSAFE      flight/failsafe.c:183,202,219
+ *   NOT_DISARMED     fc/core.c:331      (RX returned with the arm switch on)
+ *   BOXFAILSAFE      fc/core.c:349      (IS_RC_MODE_ACTIVE(BOXFAILSAFE))
+ *   RUNAWAY_TAKEOFF  fc/core.c:1227
+ *   CRASH_DETECTED   flight/pid.c:691
+ *   THROTTLE         fc/core.c:367      (calculateThrottleStatus() != THROTTLE_LOW)
+ *   ANGLE            fc/core.c:373      (!isUpright())
+ *   BOOT_GRACE_TIME  fc/init.c:969 + fc/core.c:311-320
+ *   NOPREARM         fc/core.c:394-396  (BOXPREARM not active)
+ *   LOAD             fc/core.c:380      (getCpuPercentageLate() > limit)
+ *   CALIBRATING      fc/core.c:387      (isCalibrating())
+ *   CLI              cli/cli.c:6944
+ *   CMS_MENU         cms/cms.c:907
+ *   MSP              msp/msp.c:3636     (arming disabled while an MSP link is used)
+ *   PARALYZE         fc/core.c:434      (IS_RC_MODE_ACTIVE(BOXPARALYZE))
+ *   GPS              fc/core.c:404-406  (GPS-rescue fix/sat requirement unmet)
+ *   RESC             fc/core.c:409      (IS_RC_MODE_ACTIVE(BOXGPSRESCUE))
+ *   DSHOT_TELEM      fc/core.c:419      (DShot telemetry enabled but inactive)
+ *   REBOOT_REQUIRED  config/config.c:806 (setRebootRequired())
+ *   DSHOT_BITBANG    fc/core.c:427      (bitbang status != DSHOT_BITBANG_STATUS_OK)
+ *   ACC_CALIBRATION  fc/core.c:439      (accNeedsCalibration())
+ *   MOTOR_PROTOCOL   fc/core.c:446      (!isMotorProtocolEnabled())
+ *   CRASHFLIP        fc/core.c:292      (manual re-arm required after crashflip)
+ *   ALTHOLD          fc/core.c:355      (IS_RC_MODE_ACTIVE(BOXALTHOLD))
+ *   POSHOLD          fc/core.c:361      (IS_RC_MODE_ACTIVE(BOXPOSHOLD))
+ *   ARM_SWITCH       fc/core.c:472 + runtime_config.h:72 (set when the arm
+ *                    switch is on while another blocker is active)
+ *
+ * BST is deliberately ABSENT: no set-site was located at the pinned
+ * authority in this pass, so the UI shows its canonical token only and
+ * invents no Arabic explanation for it.
+ */
+export const BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION: readonly string[] = Object.freeze(
+  ARMING_DISABLE_FLAG_TOKENS.filter(token => token !== 'BST'),
+);
+
 /** BOXARM's permanent id at the pinned authority (msp_box.c:49). */
 export const BOXARM_PERMANENT_ID = 0;
 

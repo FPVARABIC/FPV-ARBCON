@@ -39,6 +39,7 @@ export type {
   MspRawGpsCompact,
   MspStatusExCompact,
   MspStatusExReadiness,
+  MspStatusExDiagnostics,
   MspCompatibilityResult,
   MspFcFamily,
   MspFcVariant,
@@ -106,6 +107,7 @@ export {
   decodeRawGps,
   decodeStatusEx,
   decodeStatusExReadiness,
+  decodeStatusExDiagnostics,
   STATUS_EX_FIXED_PREFIX_BYTES,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
@@ -138,10 +140,23 @@ export {
   ARMING_DISABLE_FLAG_TOKENS,
   ARMING_DISABLE_FLAGS_COUNT,
   SENSOR_PRESENCE_TOKENS,
+  BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION,
   BOXARM_PERMANENT_ID,
   decodeArmingBlockers,
   decodeSensorPresence,
   deriveArmedState,
 } from './state/armingBlockers';
 export type {ArmingBlockerBit, SensorPresenceBit, ArmedState} from './state/armingBlockers';
+export {deriveSetupDiagnostics} from './state/setupDiagnostics';
+export type {
+  SetupDiagnosticsInput,
+  SetupDiagnosticsView,
+  DiagnosticsChannelState,
+  DiagnosticsTelemetryStatus,
+  DiagnosticsDataState,
+  DiagnosticsCompatibility,
+  DiagnosticsIdentity,
+  DiagnosticsSensors,
+  DiagnosticsBlockers,
+} from './state/setupDiagnostics';
 export type {ReceiverRssiSemantics, GpsCardSemantics} from './state/auxTelemetrySemantics';

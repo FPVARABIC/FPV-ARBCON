@@ -13,6 +13,9 @@ export type {GpsCardProps} from './GpsCard';
 export {default as FlightControllerCard} from './FlightControllerCard';
 export type {FlightControllerCardProps} from './FlightControllerCard';
 
+export {default as DiagnosticsSection} from './DiagnosticsSection';
+export type {DiagnosticsSectionProps} from './DiagnosticsSection';
+
 export {default as OrientationHero} from './OrientationHero';
 export type {OrientationHeroProps} from './OrientationHero';
 

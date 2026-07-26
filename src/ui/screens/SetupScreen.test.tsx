@@ -1464,3 +1464,219 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     });
   });
 });
+
+/**
+ * Pass 7.7 - Region 4 (التشخيص والجاهزية) through the REAL pipeline: the
+ * SAME single MSP_STATUS_EX poll Region 3's FC card already uses, plus
+ * the SAME identification state Region 1 already reads. These tests
+ * additionally prove no SECOND STATUS_EX poll was introduced.
+ */
+describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  /** A real API-1.47 STATUS_EX frame: the 13-byte prefix (sensors mask
+   * 41 = ACC|GPS|GYRO, cycle 312us, cpu 12%) followed by the full
+   * optional tail - 3 pid profiles, rate 0, one extension byte, the
+   * declared count 29, the u32 blocker mask, and the config-state byte. */
+  function statusExWithBlockers(mask: number): Uint8Array {
+    return Uint8Array.from([
+      ...u16le(312), ...u16le(0), ...u16le(41), 0, 0, 0, 0, 0, ...u16le(12),
+      3, 0, 1, 0,
+      29,
+      mask % 256,
+      Math.floor(mask / 256) % 256,
+      Math.floor(mask / 65536) % 256,
+      Math.floor(mask / 16777216) % 256,
+      0,
+    ]);
+  }
+
+  function countStatusExWrites(client: ReturnType<typeof makeFakeClient>): number {
+    return client.writeBytes.mock.calls.filter(
+      call => base64ToBytes(call[1] as string)[4] === MSP_STATUS_EX,
+    ).length;
+  }
+
+  async function renderSession(
+    sessionId: string,
+    configure?: (client: ReturnType<typeof makeFakeClient>) => void,
+  ) {
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    configure?.(client);
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2200);
+      await flushAsync();
+    });
+    return {client, renderer};
+  }
+
+  async function teardown(sessionId: string, renderer: ReactTestRenderer.ReactTestRenderer) {
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  }
+
+  it('renders Region 4 immediately AFTER Region 3, with its exact Arabic title', async () => {
+    const sessionId = 'pass77-region4-order';
+    const {renderer} = await renderSession(sessionId);
+
+    expect(findAnyByTestID(renderer, 'diagnostics-section')).not.toBeNull();
+    const text = allText(renderer);
+    const gridTitleIndex = text.indexOf(i18n.t('telemetryCards.fc.title'));
+    const region4Index = text.indexOf('التشخيص والجاهزية');
+    expect(gridTitleIndex).toBeGreaterThanOrEqual(0);
+    expect(region4Index).toBeGreaterThan(gridTitleIndex);
+    // Regions 1-3 are all still present around it.
+    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'telemetry-card-grid')).not.toBeNull();
+
+    await teardown(sessionId, renderer);
+  });
+
+  it('adds NO second MSP_STATUS_EX poll: Region 3 and Region 4 are fed by the same requests', async () => {
+    const sessionId = 'pass77-region4-single-poll';
+    const {client, renderer} = await renderSession(sessionId);
+
+    // One phase-staggered dispatch at 2100ms within the 2200ms window.
+    expect(countStatusExWrites(client)).toBe(1);
+    // Both regions rendered from it.
+    expect(findAnyByTestID(renderer, 'fc-card-live')).not.toBeNull();
+    expect(allText(renderer)).toContain('استخدام المعالج: 12%');
+    expect(findAnyByTestID(renderer, 'diagnostics-sensors')).not.toBeNull();
+
+    // A second full FC-status interval adds exactly one more request.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(8000);
+      await flushAsync();
+    });
+    expect(countStatusExWrites(client)).toBe(2);
+
+    await teardown(sessionId, renderer);
+  });
+
+  it('shows the FC-reported detected sensors from the shared decode', async () => {
+    const sessionId = 'pass77-region4-sensors';
+    const {renderer} = await renderSession(sessionId);
+    const text = allText(renderer);
+    // Fixture mask 41 = ACC | GPS | GYRO.
+    expect(text).toEqual(expect.arrayContaining(['ACC', 'GPS', 'GYRO']));
+    expect(text).not.toContain('BARO');
+    await teardown(sessionId, renderer);
+  });
+
+  it('says blockers cannot be confirmed when the FC returns a valid SHORT payload with no blocker field', async () => {
+    const sessionId = 'pass77-region4-short';
+    const {renderer} = await renderSession(sessionId); // default 13-byte fixture
+    const text = allText(renderer);
+    expect(text).toContain('لا يمكن تأكيد موانع التسليح في الوقت الحالي');
+    expect(text).not.toContain('لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة');
+    // The rest of the section still works - one absent field does not
+    // take down identity, compatibility or sensors.
+    expect(text).toEqual(expect.arrayContaining(['ACC', 'GYRO']));
+    await teardown(sessionId, renderer);
+  });
+
+  it('decodes REAL blockers end-to-end and renders their source-proven Arabic text plus canonical tokens', async () => {
+    const sessionId = 'pass77-region4-blockers';
+    const mask = Math.pow(2, 7) + Math.pow(2, 28); // THROTTLE + ARM_SWITCH
+    const {renderer} = await renderSession(sessionId, client => {
+      client.setResponse(MSP_STATUS_EX, statusExWithBlockers(mask));
+    });
+    const text = allText(renderer);
+    expect(text).toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
+    expect(text).toContain('مفتاح التسليح مُفعَّل بينما يوجد مانع آخر (ARM_SWITCH)');
+    await teardown(sessionId, renderer);
+  });
+
+  it('a FRESH zero mask says only "no blocker in this reading" - never a readiness claim', async () => {
+    const sessionId = 'pass77-region4-zero';
+    const {renderer} = await renderSession(sessionId, client => {
+      client.setResponse(MSP_STATUS_EX, statusExWithBlockers(0));
+    });
+    const text = allText(renderer).join(' | ');
+    expect(text).toContain('لم يُبلِّغ متحكم الطيران عن أي مانع في هذه القراءة');
+    expect(text).not.toContain('جاهزة للطيران');
+    await teardown(sessionId, renderer);
+  });
+
+  it('reports the real identity and does NOT claim API-1.47 compatibility for the 1.48 fixture', async () => {
+    const sessionId = 'pass77-region4-compat';
+    const {renderer} = await renderSession(sessionId);
+    const text = allText(renderer);
+    expect(text).toContain('البرنامج الثابت: BTFL — واجهة MSP 1.48');
+    expect(text).toContain('واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط');
+    expect(text).not.toContain('متوافق: Betaflight بواجهة MSP 1.47');
+    await teardown(sessionId, renderer);
+  });
+
+  it('reports the compatible pair for a real API-1.47 Betaflight session', async () => {
+    const sessionId = 'pass77-region4-compat-147';
+    const {renderer} = await renderSession(sessionId, client => {
+      client.setResponse(MSP_API_VERSION, Uint8Array.from([0, 1, 47]));
+    });
+    expect(allText(renderer)).toContain('متوافق: Betaflight بواجهة MSP 1.47');
+    await teardown(sessionId, renderer);
+  });
+
+  it('drops to the honest unconfirmed/disconnected copy on teardown, and a replacement generation starts clean', async () => {
+    const sessionId = 'pass77-region4-generation';
+    const mask = Math.pow(2, 7);
+    const {renderer} = await renderSession(sessionId, client => {
+      client.setResponse(MSP_STATUS_EX, statusExWithBlockers(mask));
+    });
+    expect(allText(renderer)).toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    const afterTeardown = allText(renderer);
+    expect(afterTeardown).toContain('غير متصل');
+    expect(afterTeardown).toContain('لا يمكن تأكيد موانع التسليح في الوقت الحالي');
+    expect(afterTeardown).toContain('لا يمكن تأكيد المستشعرات في الوقت الحالي');
+    // The replaced generation's blocker text is gone entirely.
+    expect(afterTeardown).not.toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
+
+    // A NEW physical session on the same id re-derives from its own
+    // reading - nothing from the previous generation leaks in.
+    const client2 = makeFakeClient(sessionId);
+    client2.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    client2.setResponse(MSP_STATUS_EX, statusExWithBlockers(Math.pow(2, 8))); // ANGLE
+    await act(async () => {
+      mspSessionCoordinator.openSession(client2 as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2200);
+      await flushAsync();
+    });
+    const afterReplacement = allText(renderer);
+    expect(afterReplacement).toContain('الطائرة ليست مستوية (ANGLE)');
+    expect(afterReplacement).not.toContain('الخانق ليس في وضعه الأدنى (THROTTLE)');
+
+    await teardown(sessionId, renderer);
+  });
+});

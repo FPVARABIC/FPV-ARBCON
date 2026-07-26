@@ -59,10 +59,12 @@ import {
   ReceiverCard,
   GpsCard,
   FlightControllerCard,
+  DiagnosticsSection,
 } from '../components/setup';
 import {
   useTelemetryValue,
   useMspOwnershipState,
+  useMspIdentificationState,
   useAuxTelemetryChannelState,
   useBatteryLatchedValue,
   setupAppStateTelemetryOwner,
@@ -76,13 +78,13 @@ import {
   FC_STATUS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
 import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
-import {deriveOrientationViewState, deriveArmingReadiness, isGpsPresent} from '../../core';
+import {deriveOrientationViewState, deriveArmingReadiness, isGpsPresent, deriveSetupDiagnostics} from '../../core';
 import type {
   MspAttitude,
   MspBatteryState,
   MspAnalog,
   MspRawGpsCompact,
-  MspStatusExCompact,
+  MspStatusExDiagnostics,
   ArmingBlockReason,
 } from '../../core';
 
@@ -133,12 +135,25 @@ function SetupScreenContent({
   // the coordinator.
   const receiver = useTelemetryValue<MspAnalog>(sessionId, RECEIVER_TELEMETRY_POLL_ID);
   const gps = useTelemetryValue<MspRawGpsCompact>(sessionId, GPS_TELEMETRY_POLL_ID);
-  const fcStatus = useTelemetryValue<MspStatusExCompact>(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
+  const fcStatus = useTelemetryValue<MspStatusExDiagnostics>(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
   const receiverChannelState = useAuxTelemetryChannelState(sessionId, RECEIVER_TELEMETRY_POLL_ID);
   const gpsChannelState = useAuxTelemetryChannelState(sessionId, GPS_TELEMETRY_POLL_ID);
   const fcChannelState = useAuxTelemetryChannelState(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
   const ownershipState = useMspOwnershipState(sessionId);
   const connected = ownershipState === 'ACTIVE';
+
+  // Pass 7.7, Region 4: derived from the SAME identification state
+  // Region 1 already reads and the SAME single FC-status poll Region 3
+  // already renders - no second reader, no extra command.
+  const identification = useMspIdentificationState(sessionId);
+  const diagnosticsView = deriveSetupDiagnostics({
+    connected,
+    channelState: fcChannelState,
+    status: fcStatus.status,
+    value: fcStatus.status === 'FRESH' || fcStatus.status === 'STALE' ? fcStatus.value : undefined,
+    identificationStatus: identification.status,
+    identity: identification.status === 'SUCCEEDED' ? identification.identity : undefined,
+  });
 
   // GPS presence proof comes from the SHARED MSP_STATUS_EX decode (a
   // stale sensor mask still proves the FC detected the hardware);
@@ -207,6 +222,8 @@ function SetupScreenContent({
             <FlightControllerCard connected={connected} channelState={fcChannelState} telemetry={fcStatus} />
           </View>
         </View>
+        {/* Pass 7.7: Region 4 immediately after Region 3. */}
+        <DiagnosticsSection view={diagnosticsView} />
       </ScrollView>
     </View>
   );
