@@ -56,6 +56,7 @@ export {
   MSP_RAW_GPS,
   MSP_ANALOG,
   MSP_STATUS_EX,
+  MSP_BOXIDS,
   STATUS_SENSOR_GPS_BIT,
 } from './msp';
 export {
@@ -78,7 +79,8 @@ export {
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
 } from './msp';
 export type {MspCompatibilityResult} from './msp';
-export {deriveFcFamily, MspIdentificationService, MspIncompatibleFirmwareError} from './msp';
+export {deriveFcFamily, MspIdentificationService, MspIncompatibleFirmwareError, BoxIdsAcquisition} from './msp';
+export type {BoxIdsOwnerIdentity, BoxIdsResult} from './msp';
 export type {MspFcFamily, MspFcVariant, FlightControllerIdentity, MspRequester} from './msp';
 
 export {RealClock, FakeClock, createMspTelemetryScheduler} from './telemetry';

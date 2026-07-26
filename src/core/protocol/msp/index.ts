@@ -7,6 +7,7 @@ export {
   MSP_RAW_GPS,
   MSP_ANALOG,
   MSP_STATUS_EX,
+  MSP_BOXIDS,
 } from './commands/mspCommands';
 export {
   BETAFLIGHT_SOURCE_REPO,
@@ -47,4 +48,6 @@ export type {MspCompatibilityResult} from './identification/mspCompatibility';
 export {deriveFcFamily} from './identification/mspIdentificationTypes';
 export type {MspFcFamily, MspFcVariant, FlightControllerIdentity} from './identification/mspIdentificationTypes';
 export {MspIdentificationService, MspIncompatibleFirmwareError} from './identification/MspIdentificationService';
+export {BoxIdsAcquisition} from './identification/BoxIdsAcquisition';
+export type {BoxIdsOwnerIdentity, BoxIdsResult} from './identification/BoxIdsAcquisition';
 export type {MspRequester} from './identification/MspIdentificationService';

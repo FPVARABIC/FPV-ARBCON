@@ -46,3 +46,11 @@ export const MSP_ANALOG = 110;
  * CPU load, sensor present etc` - fixed 13-byte prefix only is consumed
  * (decodeStatusEx.ts). */
 export const MSP_STATUS_EX = 150;
+
+/** src/main/msp/msp_protocol.h:187 @ BETAFLIGHT_API147_COMMIT (Pass 7.7):
+ * `#define MSP_BOXIDS 119  // out message: Get the permanent IDs
+ * associated to BOXes` - msp.c:2336-2341 serializes the permanent IDs in
+ * the SAME active-box order packFlightModeFlags() packs its bits, which is
+ * what makes bit->BOXARM resolution possible. ONE-SHOT per composite
+ * readiness identity; never polled (BoxIdsAcquisition.ts). */
+export const MSP_BOXIDS = 119;
