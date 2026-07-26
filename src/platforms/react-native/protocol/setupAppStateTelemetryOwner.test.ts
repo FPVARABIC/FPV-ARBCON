@@ -28,8 +28,11 @@ const SESSION_ID = 'appstate-session-1';
 function ascii(text: string): number[] {
   return text.split('').map(c => c.charCodeAt(0));
 }
+/** Little-endian u16 without bitwise operators - this project's ESLint
+ * baseline flags `no-bitwise`, and a new test helper must not add
+ * warnings to it (arithmetic is exact for the 0..65535 range used here). */
 function u16le(value: number): number[] {
-  return [value & 0xff, (value >> 8) & 0xff];
+  return [value % 256, Math.floor(value / 256) % 256];
 }
 function boardInfoPayload(): Uint8Array {
   return Uint8Array.from([
