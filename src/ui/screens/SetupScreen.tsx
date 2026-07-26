@@ -64,6 +64,7 @@ import {
   useTelemetryValue,
   useMspOwnershipState,
   useAuxTelemetryChannelState,
+  useBatteryLatchedValue,
   setupUiSessionStore,
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
@@ -118,7 +119,13 @@ function SetupScreenContent({
   // poll itself exists only for identified-compatible Betaflight sessions
   // (Pass 7.6a), so every other session renders the card's honest
   // "unavailable" state through the exact same UNAVAILABLE mechanism.
-  const battery = useTelemetryValue<MspBatteryState>(sessionId, BATTERY_TELEMETRY_POLL_ID);
+  const batteryPolled = useTelemetryValue<MspBatteryState>(sessionId, BATTERY_TELEMETRY_POLL_ID);
+  // Pass 7.7: once the one-strike battery timeout breaker has fired, the
+  // poll is unregistered (scheduler reports UNAVAILABLE). The latch is the
+  // truthful replacement: the pre-timeout reading frozen as STALE (no
+  // longer updating), or a read-timeout ERROR when nothing ever succeeded.
+  const batteryLatched = useBatteryLatchedValue(sessionId);
+  const battery = batteryLatched ?? batteryPolled;
 
   // Pass 7.6c: Region 3's remaining channels - the same generic hook/
   // scheduler path, plus the per-channel circuit-breaker verdicts from

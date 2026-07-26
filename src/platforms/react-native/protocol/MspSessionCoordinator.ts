@@ -83,6 +83,7 @@ import type {
   MspAttitude,
   MspBatteryState,
   MspClientState,
+  TelemetryValue,
 } from '../../../core';
 import type {UsbSerialTransportClient} from '../transport';
 import {RNMspTransport} from './RNMspTransport';
@@ -317,6 +318,16 @@ interface SessionEntry {
    * emit its bounded stop line. undefined for every non-Betaflight /
    * unidentified session. */
   batteryDebugLog: BatteryDebugLogger | undefined;
+  /** Pass 7.7 - battery timeout latch (last-known-value retention): set
+   * ONLY when the one-strike battery timeout breaker fires. If a real
+   * value existed before the timeout it is retained here as a FROZEN
+   * STALE snapshot (truthfully "no longer updating" - the DISABLED
+   * channel verdict plus the stale label carry that meaning); with no
+   * prior value it is a truthful ERROR read-timeout state. NEVER a
+   * fabricated zero payload, never "not detected", never UNSUPPORTED. A
+   * new physical generation starts a fresh entry, so this can never leak
+   * across generations. */
+  batteryLatchedValue: TelemetryValue<MspBatteryState> | undefined;
   /** Pass 7.6c: per-channel circuit-breaker verdicts + supervisor
    * tracking for the auxiliary Region 3 polls; empty/undefined for
    * non-Betaflight sessions. */
@@ -488,6 +499,7 @@ export class MspSessionCoordinator {
       tickIntervalHandle: undefined,
       mspClientStateUnsubscribe,
       batteryDebugLog: undefined,
+      batteryLatchedValue: undefined,
       auxChannelStates: new Map(),
       auxUnregisterFns: new Map(),
       auxDebugLog: undefined,
@@ -697,6 +709,7 @@ export class MspSessionCoordinator {
         current.auxChannelStates.set(BATTERY_TELEMETRY_POLL_ID, 'ACTIVE');
         let batteryLastRef: unknown;
         let batteryBroken = false;
+        let batteryLastGood: {value: MspBatteryState; updatedAtMs: number} | undefined;
         schedulerForLog.subscribe(() => {
           if (!this.isCurrentGeneration(sessionId, generation)) {
             return; // late/old-generation outcome - discarded
@@ -704,6 +717,9 @@ export class MspSessionCoordinator {
           const batteryValue = schedulerForLog.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID);
           const isNewSettle = batteryValue !== batteryLastRef;
           batteryLastRef = batteryValue;
+          if (batteryValue.status === 'FRESH' && isNewSettle) {
+            batteryLastGood = {value: batteryValue.value, updatedAtMs: batteryValue.updatedAtMs};
+          }
           batteryDebugLog.onValue(batteryValue);
           if (
             !batteryBroken &&
@@ -715,6 +731,21 @@ export class MspSessionCoordinator {
             batteryBroken = true;
             batteryUnregister();
             current.auxChannelStates.set(BATTERY_TELEMETRY_POLL_ID, 'DISABLED');
+            // Pass 7.7 last-known-value latch: retain the pre-timeout real
+            // reading (if any) as a frozen truthfully-STALE snapshot; with
+            // no prior success, a truthful read-timeout ERROR. The
+            // scheduler's own value for the unregistered poll stays
+            // UNAVAILABLE - this latch is the UI-facing display override.
+            current.batteryLatchedValue = Object.freeze(
+              batteryLastGood !== undefined
+                ? {
+                    status: 'STALE' as const,
+                    value: batteryLastGood.value,
+                    updatedAtMs: batteryLastGood.updatedAtMs,
+                    ageMs: Date.now() - batteryLastGood.updatedAtMs,
+                  }
+                : {status: 'ERROR' as const, error: batteryValue.error},
+            ) as TelemetryValue<MspBatteryState>;
             batteryDebugLog.onCircuitBreak('timeout');
             this.notifyAuxTelemetry();
           }
@@ -1061,6 +1092,7 @@ export class MspSessionCoordinator {
     entry.auxDebugLog = undefined;
     entry.auxChannelStates.clear();
     entry.auxUnregisterFns.clear();
+    entry.batteryLatchedValue = undefined;
     this.notifyAuxTelemetry();
   }
 
@@ -1245,6 +1277,14 @@ export class MspSessionCoordinator {
    * simply reads UNAVAILABLE through the scheduler as always. */
   getAuxTelemetryChannelState(sessionId: string, pollId: string): AuxTelemetryChannelState {
     return this.sessions.get(sessionId)?.auxChannelStates.get(pollId) ?? 'ACTIVE';
+  }
+
+  /** Pass 7.7: the battery timeout latch (see SessionEntry doc) -
+   * undefined unless the battery breaker has fired for the CURRENT
+   * generation. Frozen, referentially stable snapshot (set exactly once
+   * per generation), so useSyncExternalStore consumers are safe. */
+  getBatteryLatchedValue(sessionId: string): TelemetryValue<MspBatteryState> | undefined {
+    return this.sessions.get(sessionId)?.batteryLatchedValue;
   }
 
   /** Pass 7.6c: fires on any aux channel-state change - same Set/

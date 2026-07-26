@@ -21,6 +21,6 @@ export type {
 } from './MspSessionCoordinator';
 export {useMspOwnershipState, useMspIdentificationState, useMspRecoveryState} from './useMspSessionState';
 export {useTelemetryValue} from './useTelemetryValue';
-export {useAuxTelemetryChannelState} from './useAuxTelemetry';
+export {useAuxTelemetryChannelState, useBatteryLatchedValue} from './useAuxTelemetry';
 export {SetupUiSessionStore, setupUiSessionStore} from './SetupUiSessionStore';
 export type {SetupUiSessionState} from './SetupUiSessionStore';

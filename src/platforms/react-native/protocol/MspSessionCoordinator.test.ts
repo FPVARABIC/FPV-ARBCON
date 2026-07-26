@@ -1606,6 +1606,90 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  it('Pass 7.7 latch: a timeout AFTER a real reading retains that reading as a FROZEN truthful STALE snapshot - never fabricated zeros, never "not detected", never UNSUPPORTED', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(100);
+    await flushAsync();
+    expect(coordinator.getBatteryLatchedValue(SESSION_ID)).toBeUndefined(); // healthy: no latch
+
+    // The next dispatch times out for real -> breaker + latch.
+    client.clearResponse(MSP_BATTERY_STATE);
+    await jest.advanceTimersByTimeAsync(6000);
+    await flushAsync();
+
+    const latched = coordinator.getBatteryLatchedValue(SESSION_ID);
+    expect(latched).toMatchObject({
+      status: 'STALE',
+      value: {cellCount: 4, voltageCentivolts: 1685, batteryStateRaw: 1},
+    });
+    // Truthful, not fabricated: the retained payload is the REAL last
+    // reading, and the channel verdict says it is no longer updating.
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('DISABLED');
+    expect(latched?.status).not.toBe('UNAVAILABLE');
+    if (latched?.status === 'STALE') {
+      expect(latched.value.cellCount).not.toBe(0); // never "battery not detected"
+    }
+    // Frozen + referentially stable across repeated reads (snapshot contract).
+    expect(Object.isFrozen(latched)).toBe(true);
+    expect(coordinator.getBatteryLatchedValue(SESSION_ID)).toBe(latched);
+
+    // A late response cannot reverse the verdict or refresh the latch.
+    client.emitResponseNow(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(4000);
+    await flushAsync();
+    expect(coordinator.getBatteryLatchedValue(SESSION_ID)).toBe(latched);
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('DISABLED');
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
+  it('Pass 7.7 latch: a timeout BEFORE any battery success latches a truthful read-ERROR (no invented values), and a NEW generation clears the latch', async () => {
+    const coordinator = new MspSessionCoordinator();
+    const client = makeHappyFakeClient(SESSION_ID);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client.clearResponse(MSP_BATTERY_STATE);
+
+    coordinator.openSession(client as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(2400);
+    await flushAsync();
+
+    const latched = coordinator.getBatteryLatchedValue(SESSION_ID);
+    expect(latched?.status).toBe('ERROR');
+    expect(JSON.stringify(latched)).not.toContain('cellCount'); // no fabricated payload
+    expect(coordinator.getAuxTelemetryChannelState(SESSION_ID, BATTERY_TELEMETRY_POLL_ID)).toBe('DISABLED');
+
+    // Teardown clears it; a genuinely new physical generation starts clean.
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(2250);
+    await flushAsync();
+    expect(coordinator.getBatteryLatchedValue(SESSION_ID)).toBeUndefined();
+
+    const client2 = makeHappyFakeClient(SESSION_ID);
+    client2.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
+    client2.setResponse(MSP_BATTERY_STATE, GOLDEN_BATTERY);
+    coordinator.openSession(client2 as unknown as UsbSerialTransportClient, SESSION_ID);
+    await flushAsync();
+    await jest.advanceTimersByTimeAsync(150);
+    await flushAsync();
+    expect(coordinator.getBatteryLatchedValue(SESSION_ID)).toBeUndefined();
+    expect(
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getValue<MspBatteryState>(BATTERY_TELEMETRY_POLL_ID),
+    ).toMatchObject({status: 'FRESH'});
+
+    coordinator.deactivateMspSession(SESSION_ID);
+    await flushAsync();
+  });
+
   it('battery-timeout closure: teardown while the battery request is pending is clean, and a genuinely NEW generation polls battery normally again', async () => {
     const coordinator = new MspSessionCoordinator();
     const client = makeHappyFakeClient(SESSION_ID);

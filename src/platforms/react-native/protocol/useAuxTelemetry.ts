@@ -18,6 +18,7 @@
 import {useCallback, useSyncExternalStore} from 'react';
 import {mspSessionCoordinator} from './MspSessionCoordinator';
 import type {AuxTelemetryChannelState} from './MspSessionCoordinator';
+import type {MspBatteryState, TelemetryValue} from '../../../core';
 
 function subscribeAux(listener: () => void): () => void {
   return mspSessionCoordinator.subscribeAuxTelemetry(listener);
@@ -32,5 +33,17 @@ export function useAuxTelemetryChannelState(sessionId: string, pollId: string): 
     () => mspSessionCoordinator.getAuxTelemetryChannelState(sessionId, pollId),
     [sessionId, pollId],
   );
+  return useSyncExternalStore(subscribeAux, getSnapshot);
+}
+
+/** Pass 7.7: the battery timeout latch for this UI session - undefined
+ * unless the one-strike battery breaker fired for the current physical
+ * generation. When present it is the truthful display value (frozen
+ * last-known STALE snapshot, or a read-timeout ERROR when no reading ever
+ * succeeded) and must take precedence over the scheduler's UNAVAILABLE
+ * for the unregistered poll. Referentially stable (set exactly once per
+ * generation), satisfying useSyncExternalStore's snapshot contract. */
+export function useBatteryLatchedValue(sessionId: string): TelemetryValue<MspBatteryState> | undefined {
+  const getSnapshot = useCallback(() => mspSessionCoordinator.getBatteryLatchedValue(sessionId), [sessionId]);
   return useSyncExternalStore(subscribeAux, getSnapshot);
 }

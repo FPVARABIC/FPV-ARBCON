@@ -1423,8 +1423,12 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     const countBatteryWrites = () =>
       client.writeBytes.mock.calls.filter(call => base64ToBytes(call[1] as string)[4] === MSP_BATTERY_STATE).length;
     expect(countBatteryWrites()).toBe(1);
-    expect(findAnyByTestID(renderer, 'battery-card-unavailable')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.unavailable'));
+    // Pass 7.7: with NO prior successful reading, the latch is a truthful
+    // read-timeout ERROR (batteryCard.error) rather than the generic
+    // unavailable copy - the timeout really did fail to read, and that is
+    // what the card now says.
+    expect(findAnyByTestID(renderer, 'battery-card-error')).not.toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('batteryCard.error'));
 
     // Navigate away (unmount) and back (fresh mount, SAME session/
     // generation) - the breaker lives in the coordinator, not the screen.
@@ -1443,7 +1447,8 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     });
 
     expect(countBatteryWrites()).toBe(1); // STILL exactly the one timed-out request
-    expect(findAnyByTestID(renderer2, 'battery-card-unavailable')).not.toBeNull();
+    // The latch (coordinator-owned, generation-scoped) survives remount.
+    expect(findAnyByTestID(renderer2, 'battery-card-error')).not.toBeNull();
     // Never the stale pre-timeout value as live, never a "no LiPo" claim.
     expect(allText(renderer2)).not.toContain(i18n.t('batteryCard.notDetected'));
     // The rest of the screen is alive.
