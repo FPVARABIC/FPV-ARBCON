@@ -480,6 +480,49 @@ describe('FcToolsController - the exclusive FC-tool transaction', () => {
     expect(client.countOf(MSP_REBOOT)).toBe(1);
   });
 
+  it('a detach AFTER a valid calibration acknowledgement does not erase that acknowledgement', async () => {
+    const sessionId = 'fc-tools-detach-after-ack';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.onWrite(command => {
+        if (command === MSP_ACC_CALIBRATION) {
+          // The link dies immediately after the write - but the ack for
+          // it still arrives and settles first.
+          Promise.resolve().then(() => Promise.resolve()).then(() => {
+            mspSessionCoordinator.deactivateMspSession(sessionId);
+          });
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await run(controller, sessionId, 'ACC_CALIBRATION');
+    // ACCEPTED (received/started), never downgraded, never "completed".
+    expect(outcome).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1); // never resent
+  });
+
+  it('a detach BEFORE any acknowledgement is UNCONFIRMED, never success and never definite failure', async () => {
+    const sessionId = 'fc-tools-detach-before-ack';
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION);
+      c.onWrite(command => {
+        if (command === MSP_ACC_CALIBRATION) {
+          mspSessionCoordinator.deactivateMspSession(sessionId);
+        }
+      });
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    await jest.advanceTimersByTimeAsync(2100);
+    await flushAsync();
+
+    const outcome = await settled;
+    expect(outcome.kind).toBe('UNCONFIRMED');
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1); // never retried
+  });
+
   it('reports SESSION_ENDED when the session is gone before the transaction can start', async () => {
     const sessionId = 'fc-tools-no-session';
     const controller = new FcToolsController({appStateOwner: makeOwner().owner});

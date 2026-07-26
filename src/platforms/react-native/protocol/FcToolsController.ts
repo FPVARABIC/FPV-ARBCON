@@ -321,11 +321,17 @@ export class FcToolsController {
       },
     });
 
-    // Step 12: an outcome from a replaced generation is never published.
-    if (result.status === 'SUCCEEDED' && !stillOwned() && tool !== 'REBOOT') {
-      return {kind: 'UNCONFIRMED', tool};
-    }
-
+    // Step 12: the outcome belongs to the generation captured above.
+    //
+    // A SUCCEEDED result means the request RESOLVED through this
+    // session's own MspClient - a valid acknowledgement genuinely
+    // arrived from the captured generation (a replaced session's client
+    // is disposed and its pending requests reject, so a resolved ack can
+    // never come from a different one). A detach that happens AFTER that
+    // ack must therefore not erase it: downgrading a confirmed
+    // acknowledgement to "unconfirmed" would be less truthful, not more.
+    // What the ack proves is bounded by the copy each outcome maps to -
+    // acceptance, never completion, and never a physical reboot.
     switch (result.status) {
       case 'SUCCEEDED':
         return tool === 'REBOOT' ? {kind: 'REBOOT_REQUESTED'} : {kind: 'ACCEPTED', tool};
