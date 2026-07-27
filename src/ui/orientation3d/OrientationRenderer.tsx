@@ -44,6 +44,8 @@ import type {SkPath} from '@shopify/react-native-skia';
 
 import {computeDroneScene} from './droneSceneGeometry';
 import type {DroneOrientationDeg, DroneScenePrimitive, DroneSceneMaterial} from './droneSceneGeometry';
+import {orientationLatencyTracker} from './orientationLatencyDebugLog';
+import type {OrientationLatencySampleIdentity} from './orientationLatencyDebugLog';
 import {colors} from '../theme';
 
 /** Front motors/props BLUE, rear RED - the SOLE front/back color scheme
@@ -69,11 +71,10 @@ const TRANSLUCENT_MATERIALS = new Set<DroneSceneMaterial>(['PROP_DISC_FRONT', 'P
 const TRANSLUCENT_OPACITY = 0.18;
 
 /** STALE per Step 1's OrientationViewState - the model freezes at its
- * last LIVE pose and is dimmed here. Visual interpolation between two
- * GENUINE samples happens upstream (useInterpolatedOrientation) and is
- * cancelled the moment data goes STALE, so a dimmed model is always
- * showing the last real sample - never an extrapolated or invented one,
- * and never a numeric readout derived from an animation frame. The
+ * last LIVE pose and is dimmed here. The pose this component is given is
+ * always a GENUINE sample: there is no animation, no interpolation and
+ * no extrapolation anywhere on the Orientation model path, so a dimmed
+ * model is showing the last real sample and nothing else. The
  * "البيانات متأخرة" text label itself is Region 2's own overlay, not
  * this renderer's job. */
 const STALE_OPACITY_MULTIPLIER = 0.45;
@@ -98,32 +99,68 @@ export type OrientationRendererProps = {
   height: number;
   /** True while Region 2 is showing a STALE (frozen) reading. */
   stale?: boolean;
+  /** Development-only diagnostics: which genuine sample this pose came
+   * from. Never affects what is drawn - the pose alone decides that. */
+  sampleIdentity?: OrientationLatencySampleIdentity;
 };
+
+/** One build per genuine pose, and the SkPaths built with it.
+ *
+ * BUILDING THE PATHS INSIDE THE MEMO IS THE POINT, not a tidy-up. Before
+ * this pass the scene was memoized but `toSkPath()` ran inside the JSX
+ * map, so every single render allocated a fresh SkPath for all 38
+ * primitives (511 points) even when the pose had not changed. Combined
+ * with the retired animation-frame loop - which re-rendered this
+ * component at frame rate - that was ~2,280 SkPath allocations per
+ * second for data arriving 4.5 times per second. */
+function buildDrawables(orientation: DroneOrientationDeg, width: number, height: number) {
+  const scene = computeDroneScene(orientation, {width, height});
+  return scene.primitives.map(primitive => ({
+    path: toSkPath(primitive.points),
+    color: MATERIAL_COLOR[primitive.material],
+    baseOpacity: TRANSLUCENT_MATERIALS.has(primitive.material) ? TRANSLUCENT_OPACITY : 1,
+  }));
+}
 
 export function OrientationRenderer({
   orientation,
   width,
   height,
   stale = false,
+  sampleIdentity,
 }: OrientationRendererProps): React.JSX.Element {
   const {rollDeg, pitchDeg, yawDeg} = orientation;
-  const scene = useMemo(
-    () => computeDroneScene({rollDeg, pitchDeg, yawDeg}, {width, height}),
+  const sessionToken = sampleIdentity?.sessionToken;
+  const sampleSeq = sampleIdentity?.sampleSeq;
+
+  // Deliberately depends on the POSE, not on the sample identity: two
+  // consecutive samples reporting an identical attitude must reuse the
+  // built scene rather than rebuild an identical one. The diagnostics
+  // stamp below is therefore taken on the render that first shows a
+  // sample, whether or not that render had to build a new scene.
+  const drawables = useMemo(
+    () => buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height),
     [rollDeg, pitchDeg, yawDeg, width, height],
   );
 
+  if (sessionToken !== undefined && sampleSeq !== undefined) {
+    const identity = {sessionToken, sampleSeq};
+    orientationLatencyTracker.noteRendererSample(identity);
+    orientationLatencyTracker.noteSceneBuilt(identity);
+  }
+
   return (
     <View style={{width, height}} testID="orientation-renderer">
+      {/* Unkeyed and never conditionally swapped: a key or a mount
+          toggle tied to the sample would destroy and recreate the
+          native surface on every attitude update. */}
       <Canvas style={StyleSheet.absoluteFill}>
-        {scene.primitives.map((primitive, index) => {
-          const baseOpacity = TRANSLUCENT_MATERIALS.has(primitive.material) ? TRANSLUCENT_OPACITY : 1;
-          const opacity = stale ? baseOpacity * STALE_OPACITY_MULTIPLIER : baseOpacity;
+        {drawables.map((drawable, index) => {
+          const opacity = stale ? drawable.baseOpacity * STALE_OPACITY_MULTIPLIER : drawable.baseOpacity;
           // The scene is fully rebuilt in the same deterministic
           // primitive order every render (see computeDroneScene()'s own
           // doc comment), so a plain index is a stable, correct key here.
-          return (
-            <Path key={index} path={toSkPath(primitive.points)} color={MATERIAL_COLOR[primitive.material]} opacity={opacity} />
-          );
+          return <Path key={index} path={drawable.path} color={drawable.color} opacity={opacity} />;
         })}
       </Canvas>
     </View>

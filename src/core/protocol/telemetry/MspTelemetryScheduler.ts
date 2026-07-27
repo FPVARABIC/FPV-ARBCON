@@ -279,6 +279,12 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private readonly activeLeaseIds = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private nextLeaseSeq = 0;
+  /** Monotonic genuine-sample counter, scheduler-wide (therefore
+   * session-wide - one scheduler per physical session). Incremented
+   * once per successful decode, never on an error, a staleness
+   * recomputation or a tick. See TelemetryValue's own doc comment on
+   * why updatedAtMs cannot serve as a sample identity. */
+  private nextSampleSeq = 1;
   private inFlightCount = 0;
   private idleWaiters: Array<() => void> = [];
 
@@ -336,7 +342,15 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     }
     const ageMs = now - poll.cachedValue.updatedAtMs;
     if (ageMs >= poll.definition.staleAfterMs) {
-      poll.cachedValue = {status: 'STALE', value: poll.cachedValue.value, updatedAtMs: poll.cachedValue.updatedAtMs, ageMs};
+      // The sample itself is unchanged - only its age is - so it keeps
+      // its own sampleSeq. A STALE value is still sample N.
+      poll.cachedValue = {
+        status: 'STALE',
+        value: poll.cachedValue.value,
+        updatedAtMs: poll.cachedValue.updatedAtMs,
+        ageMs,
+        sampleSeq: poll.cachedValue.sampleSeq,
+      };
     }
   }
 
@@ -473,7 +487,8 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         const updatedAtMs = this.clock.now();
         poll.lastOutcome = {type: 'success', value, updatedAtMs};
         poll.lastSuccessAtMs = updatedAtMs;
-        poll.cachedValue = {status: 'FRESH', value, updatedAtMs};
+        // THE canonical publication boundary for a genuine sample.
+        poll.cachedValue = {status: 'FRESH', value, updatedAtMs, sampleSeq: this.nextSampleSeq++};
       })
       .catch((error: unknown) => {
         poll.lastOutcome = {type: 'error', error};

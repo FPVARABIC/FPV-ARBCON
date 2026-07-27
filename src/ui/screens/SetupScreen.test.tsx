@@ -1138,6 +1138,66 @@ describe('SetupScreen - the display-only Heading reset', () => {
       renderer.unmount();
     });
   });
+
+  /**
+   * The render-latency repair is a RENDERING change. It must be provably
+   * invisible to the protocol: the same poll, at the same cadence, with
+   * no request the screen did not already make.
+   */
+  it('renders sample after sample without issuing ONE additional MSP request', async () => {
+    const sessionKey = {sessionId: 'render-latency-no-extra-msp', generation: 1};
+    const {client, renderer} = await mountWithAttitude(sessionKey, {
+      rollDecidegrees: 0,
+      pitchDecidegrees: 0,
+      yawDegrees: 0,
+    });
+
+    const commandsIn = (from: number) =>
+      client.writeBytes.mock.calls.slice(from).map(call => base64ToBytes(call[1] as string)[4]);
+    const baseline = client.writeBytes.mock.calls.length;
+
+    // Ten real poll cycles' worth of attitude samples.
+    for (let i = 1; i <= 10; i++) {
+      await pushAttitude(client, {rollDecidegrees: i * 10, pitchDecidegrees: -i * 5, yawDegrees: i * 20});
+    }
+
+    const issued = commandsIn(baseline);
+    // Every request in that window belongs to a poll that already
+    // existed - attitude plus the pre-existing auxiliary channels. No
+    // new opcode appears, and in particular nothing state-changing.
+    const expectedPollCommands = new Set([
+      MSP_ATTITUDE,
+      MSP_BATTERY_STATE,
+      MSP_ANALOG,
+      MSP_RAW_GPS,
+      MSP_STATUS_EX,
+    ]);
+    for (const command of issued) {
+      expect(expectedPollCommands.has(command)).toBe(true);
+    }
+    expect(issued).not.toContain(205); // MSP_ACC_CALIBRATION
+    expect(issued).not.toContain(206); // MSP_MAG_CALIBRATION
+    expect(issued).not.toContain(68); // MSP_REBOOT
+    expect(issued).not.toContain(250); // MSP_EEPROM_WRITE
+
+    // The attitude poll is still on its own 220ms cadence: ten pushes of
+    // 300ms each cannot have produced more than one request per cycle.
+    const attitudeRequests = issued.filter(command => command === MSP_ATTITUDE).length;
+    expect(attitudeRequests).toBeGreaterThan(0);
+    expect(attitudeRequests).toBeLessThanOrEqual(Math.ceil((10 * 300) / 220));
+
+    // The display followed every one of them, ending on the last:
+    // roll 100 decidegrees = 10, raw pitch -50 decidegrees negated once
+    // at the firmware boundary = +5, heading 200.
+    const finalText = allText(renderer);
+    expect(finalText).toContain('10°');
+    expect(finalText).toContain('5°');
+    expect(finalText).toContain('200°');
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionKey.sessionId);
+    });
+  });
 });
 
 /**
