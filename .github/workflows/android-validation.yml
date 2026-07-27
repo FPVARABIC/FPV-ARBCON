@@ -229,6 +229,13 @@ jobs:
           test -s "$APK_PATH"
           echo "Resolved debug APK (Metro-dependent - needed for __DEV__-only FPV-BATT/FPV-TELEM logs): android/$APK_PATH"
           ls -la "$APK_PATH"
+          # The APK FILE's own digest. Deliberately not the same thing as
+          # the artifact digest actions/upload-artifact reports, which is
+          # the digest of the .zip wrapper around it - only this one can
+          # be checked against the file after it is unzipped and
+          # installed.
+          echo "Debug APK size (bytes): $(stat -c %s "$APK_PATH")"
+          echo "Debug APK SHA-256: $(sha256sum "$APK_PATH" | cut -d' ' -f1)"
           echo "DEBUG_APK_PATH=android/$APK_PATH" >> "$GITHUB_ENV"
 
       # Pass 7.6c - see the workflow header comment: __DEV__-only hardware
@@ -286,6 +293,10 @@ jobs:
           test -s "$RELEASE_APK_PATH"
           echo "Resolved release APK: android/$RELEASE_APK_PATH"
           ls -la "$RELEASE_APK_PATH"
+          # The APK FILE's own digest - see the debug step above for why
+          # the artifact digest is not a substitute for it.
+          echo "Release APK size (bytes): $(stat -c %s "$RELEASE_APK_PATH")"
+          echo "Release APK SHA-256: $(sha256sum "$RELEASE_APK_PATH" | cut -d' ' -f1)"
           echo "RELEASE_APK_PATH=android/$RELEASE_APK_PATH" >> "$GITHUB_ENV"
 
       - name: Verify standalone release APK is signed
