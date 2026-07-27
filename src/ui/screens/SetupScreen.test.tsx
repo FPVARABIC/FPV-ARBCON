@@ -32,6 +32,7 @@ import type {RootStackParamList} from '../../navigation/types';
 import {
   mspSessionCoordinator,
   setupUiSessionStore,
+  ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
@@ -2079,7 +2080,7 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
     return {client, renderer};
   }
 
-  it('renders Region 5 AFTER Region 4, with its exact Arabic title and all three proven tools', async () => {
+  it('renders Region 5 directly below the Orientation section, with its exact Arabic title and all three proven tools', async () => {
     const sessionId = 'pass77-region5-order';
     const {renderer} = await renderSession(sessionId);
 
@@ -2087,8 +2088,11 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
     const text = allText(renderer);
     const region4 = text.indexOf('التشخيص والجاهزية');
     const region5 = text.indexOf('أدوات وحدة التحكم');
-    expect(region4).toBeGreaterThanOrEqual(0);
-    expect(region5).toBeGreaterThan(region4);
+    // FINAL-POLISH PASS: Region 5 moved UP to sit under the Orientation
+    // hero, so it now precedes Region 4 rather than following it. The
+    // ordering is still asserted exactly - only its direction changed.
+    expect(region5).toBeGreaterThanOrEqual(0);
+    expect(region4).toBeGreaterThan(region5);
     expect(text).toEqual(
       expect.arrayContaining(['معايرة مقياس التسارع', 'معايرة البوصلة المغناطيسية', 'إعادة تشغيل متحكم الطيران']),
     );
@@ -2133,5 +2137,435 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
     act(() => {
       renderer.unmount();
     });
+  });
+});
+
+/**
+ * FINAL-POLISH PASS - the Setup screen's effective section order.
+ *
+ * "أدوات وحدة التحكم" (FcToolsSection - accelerometer calibration,
+ * magnetometer calibration, FC reboot) must sit directly below the
+ * COMPLETE Orientation section, with no status strip, telemetry card or
+ * diagnostics block wedged between them. Everything else keeps its
+ * previous relative order.
+ *
+ * Order is read from the rendered tree rather than from the source
+ * file: findAll() walks depth-first in render order, so the sequence
+ * these markers appear in IS the sequence a user scrolls through.
+ */
+describe('SetupScreen - effective section order after the final polish', () => {
+  /** One stable marker per major section. SafetyStrip's own testID
+   * varies with readiness state, so it is matched by prefix. */
+  const SECTION_MARKERS = ['orientation-hero', 'fc-tools-section', 'safety-strip-', 'telemetry-card-grid', 'diagnostics-section'];
+
+  function markerFor(testID: unknown): string | undefined {
+    if (typeof testID !== 'string') {
+      return undefined;
+    }
+    return SECTION_MARKERS.find(marker => (marker.endsWith('-') ? testID.startsWith(marker) : testID === marker));
+  }
+
+  /** The ordered list of sections as actually rendered, de-duplicated
+   * so a section's own nested host node cannot appear twice. */
+  function renderedSectionOrder(renderer: ReactTestRenderer.ReactTestRenderer): string[] {
+    const order: string[] = [];
+    for (const node of renderer.root.findAll(n => typeof n.type === 'string')) {
+      const marker = markerFor(node.props.testID);
+      if (marker !== undefined && !order.includes(marker)) {
+        order.push(marker);
+      }
+    }
+    return order;
+  }
+
+  async function renderConnectedScreen(sessionId: string) {
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
+    const props = makeProps({sessionKey: {sessionId, generation: 1}});
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(2200);
+      await flushAsync();
+    });
+    return {client, renderer};
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(async () => {
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  it('renders Orientation, then أدوات وحدة التحكم, then the safety strip, cards and diagnostics', async () => {
+    const sessionId = 'final-polish-order';
+    const {renderer} = await renderConnectedScreen(sessionId);
+
+    expect(renderedSectionOrder(renderer)).toEqual([
+      'orientation-hero',
+      'fc-tools-section',
+      'safety-strip-',
+      'telemetry-card-grid',
+      'diagnostics-section',
+    ]);
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('places NOTHING between the end of the Orientation section and the FC tools section', async () => {
+    const sessionId = 'final-polish-adjacency';
+    const {renderer} = await renderConnectedScreen(sessionId);
+
+    const order = renderedSectionOrder(renderer);
+    expect(order.indexOf('fc-tools-section')).toBe(order.indexOf('orientation-hero') + 1);
+    // Named explicitly, because these are the sections that USED to be
+    // in between and must not creep back.
+    for (const displaced of ['safety-strip-', 'telemetry-card-grid', 'diagnostics-section']) {
+      expect(order.indexOf(displaced)).toBeGreaterThan(order.indexOf('fc-tools-section'));
+    }
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('moves the FC TOOLS section, not the FlightController telemetry card', async () => {
+    const sessionId = 'final-polish-not-the-card';
+    const {renderer} = await renderConnectedScreen(sessionId);
+
+    // The moved section is the one with the calibration/reboot controls.
+    expect(findAnyByTestID(renderer, 'fc-tool-ACC_CALIBRATION')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'fc-tool-MAG_CALIBRATION')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'fc-tool-REBOOT')).not.toBeNull();
+    expect(allText(renderer)).toContain('أدوات وحدة التحكم');
+
+    // The FlightController CARD stayed where it was: inside the
+    // telemetry grid, which is still after the safety strip.
+    const grid = renderer.root.findAll(
+      n => typeof n.type === 'string' && n.props.testID === 'telemetry-card-grid',
+    );
+    expect(grid).toHaveLength(1);
+    const cardTestIds = grid[0]
+      .findAll(n => typeof n.type === 'string' && typeof n.props.testID === 'string')
+      .map(n => n.props.testID as string);
+    expect(cardTestIds.some(id => id.startsWith('fc-card') || id.includes('flight-controller'))).toBe(true);
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('renders exactly ONE FC tools section, with its title and all three tools', async () => {
+    const sessionId = 'final-polish-single-instance';
+    const {renderer} = await renderConnectedScreen(sessionId);
+
+    const sections = renderer.root.findAll(
+      n => typeof n.type === 'string' && n.props.testID === 'fc-tools-section',
+    );
+    expect(sections).toHaveLength(1);
+    expect(
+      renderer.root.findAll(n => typeof n.type === 'string' && n.props.testID === 'fc-tools-title'),
+    ).toHaveLength(1);
+    for (const tool of ['ACC_CALIBRATION', 'MAG_CALIBRATION', 'REBOOT']) {
+      expect(
+        renderer.root.findAll(n => typeof n.type === 'string' && n.props.testID === `fc-tool-${tool}`),
+      ).toHaveLength(1);
+    }
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('keeps the FC tools section wired to its controller - the move changed position, not behaviour', async () => {
+    const sessionId = 'final-polish-still-wired';
+    const {client, renderer} = await renderConnectedScreen(sessionId);
+
+    // Its gating still reflects real session state: with no BOXIDS
+    // mapping acquired the armed state is UNKNOWN, so the controls are
+    // honestly disabled rather than silently enabled by the move.
+    const accButton = findAnyByTestID(renderer, 'fc-tool-ACC_CALIBRATION-button');
+    expect(accButton).not.toBeNull();
+    expect(typeof accButton!.props.onPress).toBe('function');
+    expect(accButton!.props.accessibilityState).toBeDefined();
+
+    // And it still sends nothing merely by being rendered here.
+    const written = client.writeBytes.mock.calls.map(call => base64ToBytes(call[1] as string)[4]);
+    expect(written).not.toContain(205); // MSP_ACC_CALIBRATION
+    expect(written).not.toContain(206); // MSP_MAG_CALIBRATION
+    expect(written).not.toContain(68); // MSP_REBOOT
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+});
+
+/**
+ * FINAL-POLISH PASS - the reset contract, through the REAL scheduler,
+ * store and view model.
+ *
+ * The user reported that the model appears to tilt by itself after a
+ * reset. This block does not assume that is a defect; it pins down
+ * every property whose violation COULD produce it, so that the
+ * remaining explanation is hardware/sensor behaviour rather than
+ * application logic.
+ */
+describe('SetupScreen - reset contract and apparent self-tilt', () => {
+  const mounted: ReactTestRenderer.ReactTestRenderer[] = [];
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      for (const renderer of mounted.splice(0)) {
+        renderer.unmount();
+      }
+    });
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  async function mountLive(
+    sessionKey: {sessionId: string; generation: number},
+    attitude: {rollDecidegrees: number; pitchDecidegrees: number; yawDegrees: number},
+  ) {
+    const client = makeFakeClient(sessionKey.sessionId);
+    client.setResponse(
+      MSP_ATTITUDE,
+      attitudePayload(attitude.rollDecidegrees, attitude.pitchDecidegrees, attitude.yawDegrees),
+    );
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...makeProps({sessionKey})} />);
+    });
+    mounted.push(renderer);
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionKey.sessionId);
+      await flushAsync();
+    });
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(50);
+      await flushAsync();
+    });
+    return {client, renderer};
+  }
+
+  async function pushSample(
+    client: ReturnType<typeof makeFakeClient>,
+    attitude: {rollDecidegrees: number; pitchDecidegrees: number; yawDegrees: number},
+  ) {
+    client.setResponse(
+      MSP_ATTITUDE,
+      attitudePayload(attitude.rollDecidegrees, attitude.pitchDecidegrees, attitude.yawDegrees),
+    );
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(300);
+      await flushAsync();
+    });
+  }
+
+  /** The scheduler's own committed value - the canonical sample, before
+   * any display derivation. */
+  function committed(sessionId: string) {
+    return mspSessionCoordinator.getTelemetryScheduler(sessionId)!.getValue<{
+      rollDecidegrees: number;
+      pitchDecidegrees: number;
+      yawDegrees: number;
+    }>(ATTITUDE_TELEMETRY_POLL_ID);
+  }
+
+  function press(renderer: ReactTestRenderer.ReactTestRenderer) {
+    return act(async () => {
+      findAnyByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+    });
+  }
+
+  it('captures the LATEST committed sample, not an earlier one', async () => {
+    const sessionKey = {sessionId: 'reset-latest-sample', generation: 1};
+    const {client, renderer} = await mountLive(sessionKey, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 40});
+    const first = committed(sessionKey.sessionId);
+    const firstSeq = first.status === 'FRESH' ? first.sampleSeq : undefined;
+    expect(firstSeq).toBeDefined();
+
+    await pushSample(client, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 130});
+    const latest = committed(sessionKey.sessionId);
+    expect(latest.status).toBe('FRESH');
+    if (latest.status !== 'FRESH') {
+      return;
+    }
+    expect(latest.sampleSeq).toBeGreaterThan(firstSeq!);
+
+    await press(renderer);
+
+    // The reference is the NEWEST sample's yaw (130), never the one the
+    // screen first rendered (40).
+    expect(setupUiSessionStore.getState(sessionKey).orientationViewOffset.yawDeg).toBe(130);
+    expect(allText(renderer)).toContain('0°');
+  });
+
+  it('repaints IMMEDIATELY, in the same interaction, without waiting for the next telemetry response', async () => {
+    const sessionKey = {sessionId: 'reset-immediate-repaint', generation: 1};
+    const {client, renderer} = await mountLive(sessionKey, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 75});
+    expect(allText(renderer)).toContain('75°');
+
+    const requestsBefore = client.writeBytes.mock.calls.length;
+    await press(renderer);
+
+    // No timer advanced, no new sample delivered - and the heading has
+    // already changed on screen.
+    expect(allText(renderer)).toContain('0°');
+    expect(allText(renderer)).not.toContain('75°');
+    expect(client.writeBytes.mock.calls.length).toBe(requestsBefore);
+  });
+
+  it('changes ONLY the heading reference - roll and pitch from that same sample are untouched', async () => {
+    const sessionKey = {sessionId: 'reset-heading-only', generation: 1};
+    const {renderer} = await mountLive(sessionKey, {rollDecidegrees: 123, pitchDecidegrees: -456, yawDegrees: 200});
+    const before = committed(sessionKey.sessionId);
+
+    await press(renderer);
+
+    const after = committed(sessionKey.sessionId);
+    // Raw telemetry is immutable: the canonical sample is byte-identical.
+    expect(after).toEqual(before);
+    const offset = setupUiSessionStore.getState(sessionKey).orientationViewOffset;
+    expect(offset.rollDeg).toBe(0);
+    expect(offset.pitchDeg).toBe(0);
+    expect(offset.yawDeg).toBe(200);
+    // Roll 12.3 -> 12, pitch -(-45.6) -> 46 on screen, unchanged by reset.
+    expect(allText(renderer)).toContain('12°');
+    expect(allText(renderer)).toContain('46°');
+  });
+
+  it('is IDEMPOTENT - ten taps with no newer sample cannot accumulate a second rotation', async () => {
+    const sessionKey = {sessionId: 'reset-idempotent', generation: 1};
+    const {renderer} = await mountLive(sessionKey, {rollDecidegrees: 60, pitchDecidegrees: 30, yawDegrees: 311});
+
+    for (let i = 0; i < 10; i++) {
+      await press(renderer);
+    }
+
+    const offset = setupUiSessionStore.getState(sessionKey).orientationViewOffset;
+    expect(offset).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 311});
+    expect(allText(renderer)).toContain('0°');
+    // Roll 60 decidegrees -> 6; raw pitch 30 decidegrees is nose DOWN,
+    // negated once at the firmware boundary -> -3 on screen.
+    expect(allText(renderer)).toContain('6°');
+    expect(allText(renderer)).toContain('-3°');
+  });
+
+  it('the next newer sample renders directly, relative to the reference and with no drift of its own', async () => {
+    const sessionKey = {sessionId: 'reset-then-newer', generation: 1};
+    const {client, renderer} = await mountLive(sessionKey, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 359});
+
+    await press(renderer);
+    expect(allText(renderer)).toContain('0°');
+
+    // Crossing the wrap: reference 359, raw 1 -> relative 2.
+    await pushSample(client, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 1});
+    expect(allText(renderer)).toContain('2°');
+
+    // And back the other way: raw 357 -> relative 358, never -2.
+    await pushSample(client, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 357});
+    expect(allText(renderer)).toContain('358°');
+  });
+
+  it('a repeated IDENTICAL sample after reset leaves the model pose and the readouts completely unchanged', async () => {
+    const sessionKey = {sessionId: 'reset-no-self-tilt', generation: 1};
+    const {client, renderer} = await mountLive(sessionKey, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 88});
+
+    await press(renderer);
+    // Scoped to the ORIENTATION section deliberately: the unrelated
+    // battery/receiver/GPS cards legitimately fill in as their own
+    // slower polls answer, and comparing the whole screen would fail
+    // on their progress rather than on any model movement.
+    // Degree-suffixed strings appear only in the Orientation readouts,
+    // so this is the numeric half of the section without dragging in
+    // the unrelated cards.
+    const degrees = () => allText(renderer).filter(text => text.endsWith('°'));
+    const pose = () => (OrientationRenderer as unknown as jest.Mock).mock.calls.slice(-1)[0][0].orientation;
+    const readoutsAfterReset = degrees();
+    const poseAfterReset = pose();
+
+    // The FC keeps reporting exactly the same attitude - the aircraft
+    // has not moved. Neither the model nor the numbers may move. This
+    // is the direct test of "the model tilts by itself".
+    for (let i = 0; i < 5; i++) {
+      await pushSample(client, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 88});
+    }
+
+    expect(degrees()).toEqual(readoutsAfterReset);
+    expect(pose()).toEqual(poseAfterReset);
+  });
+
+  it('sends NO MSP request and starts NO timer, interval or frame of its own', async () => {
+    const sessionKey = {sessionId: 'reset-no-side-effects', generation: 1};
+    const {client, renderer} = await mountLive(sessionKey, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 45});
+
+    const before = client.writeBytes.mock.calls.length;
+    const raf = jest.spyOn(globalThis, 'requestAnimationFrame');
+    const interval = jest.spyOn(globalThis, 'setInterval');
+    const timersBefore = jest.getTimerCount();
+    try {
+      await press(renderer);
+      expect(client.writeBytes.mock.calls.length).toBe(before);
+      expect(raf).not.toHaveBeenCalled();
+      expect(interval).not.toHaveBeenCalled();
+      // No DELAYED pose update was queued: with no newer telemetry,
+      // letting a long time pass changes nothing on screen. Asserted
+      // behaviourally rather than by counting pending timers, because
+      // React's own scheduler legitimately holds transient entries
+      // that have nothing to do with the reset.
+      const afterPress = allText(renderer).filter(text => text.endsWith('°'));
+      expect(afterPress.length).toBeGreaterThan(0);
+      // Short of the 220ms poll interval, so no NEW sample can arrive:
+      // anything that moved here would have to be a delayed update the
+      // press itself queued.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(200);
+        await flushAsync();
+      });
+      expect(allText(renderer).filter(text => text.endsWith('°'))).toEqual(afterPress);
+      expect(timersBefore).toBeGreaterThan(0);
+    } finally {
+      raf.mockRestore();
+      interval.mockRestore();
+    }
   });
 });

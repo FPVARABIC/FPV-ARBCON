@@ -258,6 +258,29 @@ function SetupScreenContent({
           onResetView={handleResetView}
           onResetHintShown={handleResetHintShown}
         />
+        {/* FINAL-POLISH PASS: "أدوات وحدة التحكم" moved to sit directly
+            below the COMPLETE Orientation section (model, readouts,
+            note, reset button) - the calibration and reboot controls
+            belong next to the thing they act on, not below the
+            diagnostics. This is the SAME component invocation with the
+            same props, relocated; nothing about its gating, its
+            confirmation flow or its commands changed, and no status
+            strip, telemetry card or diagnostic block may sit between
+            the two. Everything below keeps its previous relative
+            order. */}
+        <FcToolsSection
+          sessionId={sessionId}
+          gate={{
+            connected,
+            appActive: appStatePhase === 'ACTIVE',
+            recovering: recoveryState !== undefined && recoveryState !== 'READY',
+            compatibility: diagnosticsView.compatibility,
+            dataState: diagnosticsView.dataState,
+            readingMalformed: freshStatusValue?.readiness.malformedTail === true,
+            armedState: cachedArmedState,
+            sensors: diagnosticsView.sensors.kind === 'REPORTED' ? diagnosticsView.sensors.bits : undefined,
+          }}
+        />
         <SafetyStrip readiness={armingReadiness} />
         {/* Pass 7.6c: the complete Region 3 2x2 card grid at the audited
             insertion point (after the approved Region 1+2 sequence).
@@ -280,26 +303,11 @@ function SetupScreenContent({
             <FlightControllerCard connected={connected} channelState={fcChannelState} telemetry={fcStatus} />
           </View>
         </View>
-        {/* Pass 7.7: Region 4 immediately after Region 3. */}
+        {/* Pass 7.7: Region 4 immediately after Region 3. Region 5
+            ("أدوات وحدة التحكم") used to follow here; the final-polish
+            pass moved that one section up to sit directly under the
+            Orientation hero. Nothing else in this order changed. */}
         <DiagnosticsSection view={diagnosticsView} />
-        {/* Pass 7.7: Region 5 after Region 4. Armed state comes ONLY
-            from the BOXIDS mapping - with none acquired for this screen
-            it stays UNKNOWN, and every control is honestly disabled with
-            that exact reason until the transaction's own fresh preflight
-            proves DISARMED. */}
-        <FcToolsSection
-          sessionId={sessionId}
-          gate={{
-            connected,
-            appActive: appStatePhase === 'ACTIVE',
-            recovering: recoveryState !== undefined && recoveryState !== 'READY',
-            compatibility: diagnosticsView.compatibility,
-            dataState: diagnosticsView.dataState,
-            readingMalformed: freshStatusValue?.readiness.malformedTail === true,
-            armedState: cachedArmedState,
-            sensors: diagnosticsView.sensors.kind === 'REPORTED' ? diagnosticsView.sensors.bits : undefined,
-          }}
-        />
       </ScrollView>
     </View>
   );

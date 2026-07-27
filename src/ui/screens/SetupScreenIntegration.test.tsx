@@ -514,15 +514,19 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const {renderer} = await mount('integration-order');
       const text = allText(renderer);
 
+      // FINAL-POLISH PASS: Region 5 ("أدوات وحدة التحكم") now sits
+      // directly below the COMPLETE Orientation section rather than
+      // after Region 4 - the calibration and reboot controls belong
+      // next to the thing they act on. Region 4 keeps its own place
+      // after the telemetry cards; only Region 5 moved.
       const positions = [
         text.indexOf(ARABIC.region1Title),
         text.indexOf('نموذج الاتجاه'),
-        text.indexOf(ARABIC.region4Title),
         text.indexOf(ARABIC.region5Title),
+        text.indexOf(ARABIC.region4Title),
       ].filter(index => index >= 0);
-      // Identity/orientation come first, diagnostics then tools last.
-      expect(text.indexOf(ARABIC.region4Title)).toBeGreaterThan(0);
-      expect(text.indexOf(ARABIC.region5Title)).toBeGreaterThan(text.indexOf(ARABIC.region4Title));
+      expect(text.indexOf(ARABIC.region5Title)).toBeGreaterThan(0);
+      expect(text.indexOf(ARABIC.region4Title)).toBeGreaterThan(text.indexOf(ARABIC.region5Title));
       expect([...positions].sort((a, b) => a - b)).toEqual(positions);
 
       for (const testID of [
