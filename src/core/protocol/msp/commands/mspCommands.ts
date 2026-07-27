@@ -12,6 +12,30 @@ export const MSP_API_VERSION = 1;
  * `#define MSP_FC_VARIANT  2    // out message: Get flight controller variant` */
 export const MSP_FC_VARIANT = 2;
 
+/**
+ * Pass 1C-P2. src/main/msp/msp_protocol.h:96 @
+ * BETAFLIGHT_2025_12_2_COMMIT:
+ * `#define MSP_FC_VERSION 3    // out message: Get flight controller version`
+ *
+ * The FIRMWARE version - neither MSP_FC_VARIANT nor MSP_API_VERSION.
+ * API 1.47 is reported by every 2025.12.x release and "BTFL" names the
+ * project, so this is the only command that distinguishes 2025.12.2 from
+ * 2025.12.5. Empty request payload; see ../decoding/decodeFcVersion.ts
+ * for the verbatim handler, the Pascal-string layout and the official
+ * suffix contract.
+ *
+ * DELIBERATELY NOT PART OF GLOBAL IDENTIFICATION. MspIdentificationService
+ * still requests exactly MSP_API_VERSION -> MSP_FC_VARIANT ->
+ * MSP_BOARD_INFO. Making this a fourth mandatory step would let a
+ * missing or malformed version response fail identification outright for
+ * consumers that never needed it (the top bar, telemetry ownership, FC
+ * tools). It is acquired instead by a narrow, motor-scoped, session-bound
+ * path - ../../../state/motorFcFirmwareVersion.ts - which fails closed
+ * for the future motor gate while staying non-fatal to the rest of the
+ * application.
+ */
+export const MSP_FC_VERSION = 3;
+
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_PINNED_COMMIT:
  * `#define MSP_BOARD_INFO  4    // out message: Get board information` */
 export const MSP_BOARD_INFO = 4;

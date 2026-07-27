@@ -151,12 +151,19 @@
  *   API_VERSION_MINOR 47 at lines 61-62. Immutable permalink form:
  *   https://github.com/betaflight/betaflight/blob/7348054f268f0058574719c134e9f149565bb8ea/src/main/msp/msp.c
  *
- *   BENCH-BUILD QUALIFICATION (honest scope): the app's identification
- *   records only the FC variant ("BTFL"), the MSP API version (1.47 on
- *   the bench), and MSP_BOARD_INFO - it never requests MSP_FC_VERSION or
- *   MSP_BUILD_INFO, so the bench's exact patch version / build date /
- *   Git revision are UNKNOWN and the exact bench build could not be
- *   resolved to a public commit. The pinned 2025.12.5 source is
+ *   BENCH-BUILD QUALIFICATION (honest scope, CORRECTED BY PASS 1C-P2):
+ *   when this record was written, GLOBAL identification recorded only the
+ *   FC variant ("BTFL"), the MSP API version (1.47 on the bench) and
+ *   MSP_BOARD_INFO, and nothing in the project requested MSP_FC_VERSION.
+ *   That statement is no longer accurate as written. Global
+ *   identification is UNCHANGED and still requests exactly those three
+ *   commands - but Pass 1C-P2 added a separate, motor-scoped, opt-in
+ *   acquisition of MSP_FC_VERSION (3), so the FC's exact reported
+ *   firmware version CAN now be read on demand; see mspCommands.ts and
+ *   ../decoding/decodeFcVersion.ts. MSP_BUILD_INFO is still never
+ *   requested, so the bench's build date / Git revision remain UNKNOWN
+ *   and the exact bench build could not be resolved to a public commit
+ *   when this record was written. The pinned 2025.12.5 source is
  *   therefore the PUBLIC API-1.47 CONTRACT AUTHORITY; exact-bench-build
  *   compatibility remains HARDWARE-PENDING and is deliberately not
  *   claimed. Matching layouts at OTHER API versions (1.46 release 4.5.5
