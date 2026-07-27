@@ -73,13 +73,20 @@ describe('motor read-capability command IDs', () => {
     expect(MSP_MOTOR_CONFIG).toBe(131);
   });
 
-  it('define NO motor write command - MSP_SET_MOTOR must not exist in this module', () => {
+  it('declares MSP_SET_MOTOR as 214 and still declares NO arming-disable command', () => {
     const commands: Record<string, unknown> = {...mspCommandsModule};
-    // A write constant appearing here would be the first step toward a
-    // motor-spinning path, so its absence is asserted rather than assumed.
-    expect(Object.keys(commands)).not.toContain('MSP_SET_MOTOR');
+    // SUPERSEDED BY PASS 1B. The read-only pass asserted MSP_SET_MOTOR's
+    // ABSENCE here. Pass 1B declares it under explicit authorization, as
+    // a constant with pure, unreachable encoding helpers and no caller,
+    // so the assertion is inverted to pin its verified value instead of
+    // being deleted.
+    expect(commands.MSP_SET_MOTOR).toBe(214);
+
+    // NOT superseded: MSP_SET_ARMING_DISABLED is still deliberately
+    // absent. It is not an interlock for MSP_SET_MOTOR, and declaring it
+    // is a separate decision that has not been taken.
     expect(Object.keys(commands)).not.toContain('MSP_SET_ARMING_DISABLED');
-    expect(Object.values(commands)).not.toContain(214);
+    expect(Object.values(commands)).not.toContain(99);
   });
 });
 

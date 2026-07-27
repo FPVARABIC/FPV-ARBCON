@@ -350,12 +350,14 @@ export const EMUFLIGHT_PINNED_COMMIT = '0a569000b9dfa5b6d8f807bd2e56b634027d84cd
  * whose src/main/msp/msp_protocol.h:61-62 declares API_VERSION_MAJOR 1 /
  * API_VERSION_MINOR 47 - the bench firmware's own reported API).
  *
- * SCOPE, STATED ONCE: every command here is an OUT (read) message. No
- * write/set motor command is defined, encoded or exported anywhere in
- * this pass - deliberately, because sending motor values is a separate,
- * safety-critical decision that has not been taken. In particular
- * MSP_SET_MOTOR (214) is NOT defined here even though it was read during
- * the audit.
+ * SCOPE, STATED ONCE: every command recorded in THIS FILE is an OUT
+ * (read) message. The read-only pass that wrote this record defined no
+ * write/set motor command at all. Pass 1B has since declared exactly one
+ * write command - MSP_SET_MOTOR (214), see mspCommands.ts for its full
+ * source citation and hazard notes - as a CONSTANT with pure, unreachable
+ * encoding helpers and no caller, no complete frame construction and no
+ * transport path. Sending motor values to real hardware remains a
+ * separate, safety-critical decision that has NOT been taken.
  *
  * MSP_FEATURE_CONFIG (36 - msp_protocol.h) - msp.c:784-786 @ 2025.12.2 -
  * 4 bytes:

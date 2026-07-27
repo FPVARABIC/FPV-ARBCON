@@ -105,11 +105,17 @@ export const MSP_REBOOT = 68;
  * / API_VERSION_MINOR 47). See mspCommandSources.ts for the full
  * field-by-field record and the minimum payload length of each.
  *
- * DELIBERATE OMISSION: MSP_SET_MOTOR (214) is NOT defined in this file.
- * It was read during the audit and is intentionally absent - defining a
- * motor WRITE command is a separate, safety-gated decision that has not
- * been taken, and an unused constant is exactly the kind of thing that
- * later gets picked up by accident.
+ * MSP_SET_MOTOR (214) was deliberately omitted by that read-only pass and
+ * is declared at the bottom of this file by Pass 1B, under an explicit,
+ * narrowly scoped authorization. Its declaration is a CONSTANT ONLY:
+ * nothing in this repository calls it, encodes a complete frame for it,
+ * or reaches a transport with it. See its own doc comment.
+ *
+ * STILL DELIBERATELY ABSENT: MSP_SET_ARMING_DISABLED (99). It is not an
+ * interlock for MSP_SET_MOTOR (msp.c:3623-3652 @ the pinned commit sets
+ * ARMING_DISABLED_MSP and disarms, but nothing in the MSP_SET_MOTOR path
+ * consults it), and declaring it is a separate decision that has not
+ * been taken.
  */
 
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
@@ -148,3 +154,49 @@ export const MSP_MOTOR_3D_CONFIG = 124;
  * for motor count. Its first u16 is a removed field hard-coded to 0, not
  * a minimum throttle. */
 export const MSP_MOTOR_CONFIG = 131;
+
+/**
+ * THE ONLY MOTOR *WRITE* COMMAND IN THIS REPOSITORY, AND A CONSTANT ONLY.
+ *
+ * src/main/msp/msp_protocol.h:246 @ BETAFLIGHT_2025_12_2_COMMIT:
+ * `#define MSP_SET_MOTOR 214  // in message:  PropBalance function`
+ *
+ * Handler, verbatim, msp.c:2927-2931 @ the same commit:
+ *
+ *     case MSP_SET_MOTOR:
+ *         for (int i = 0; i < getMotorCount(); i++) {
+ *             motor_disarmed[i] = motorConvertFromExternal(sbufReadU16(src));
+ *         }
+ *         break;
+ *
+ * FOUR PROPERTIES THAT MAKE THIS COMMAND DANGEROUS, all read from source:
+ *
+ *  1. NO LENGTH VALIDATION. Unlike its neighbours (MSP_SET_SERVO_
+ *     CONFIGURATION checks dataSize), this case reads getMotorCount()
+ *     u16 values unconditionally, and sbufReadU16 (common/streambuf.c:
+ *     103-109) is two bare `*src->ptr++` dereferences with no bounds
+ *     check. A short payload reads past the buffer ON THE FLIGHT
+ *     CONTROLLER. A caller must always send exactly motorCount * 2
+ *     bytes, with motorCount taken from MSP_MOTOR_CONFIG offset 6.
+ *
+ *  2. NO EXPIRY. motor_disarmed[] keeps whatever value it was last given
+ *     until something else overwrites it. Losing USB, losing the app, or
+ *     losing power to the phone does NOT stop a motor.
+ *
+ *  3. STOP IS A VALUE, NOT A COMMAND. There is no MSP_MOTOR_STOP;
+ *     msp_protocol.h has no motor-stop opcode at all. In NON-3D DShot,
+ *     stop is external exactly 1000 (drivers/dshot.c:90). FEATURE_
+ *     MOTOR_STOP (config/feature.h:49, bit 4) is an unrelated
+ *     flight-control feature and is NOT an emergency stop.
+ *
+ *  4. ACK IS NOT A STOP. The case falls through mspProcessInCommand,
+ *     which returns MSP_RESULT_ACK. That proves the frame was parsed -
+ *     never that a DShot frame reached an ESC, never that a propeller
+ *     stopped turning.
+ *
+ * DECLARATION ONLY. Pass 1B adds this constant plus pure, unreachable
+ * payload/vector functions. It deliberately adds NO caller, NO complete
+ * frame construction, NO transport path, and NO runtime registration,
+ * and it is NOT authorization to spin a motor.
+ */
+export const MSP_SET_MOTOR = 214;
