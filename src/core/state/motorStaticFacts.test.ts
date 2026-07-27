@@ -122,6 +122,16 @@ function attemptWrite(target: object, key: PropertyKey, value: unknown): boolean
   return Reflect.set(target, key, value);
 }
 
+/**
+ * COMPILE-TIME guard, evaluated against the production type rather than
+ * against any fixture in this file. `Exclude<'apiVersion', keyof
+ * MotorStaticFactsInput>` is `'apiVersion'` only while the input type
+ * has no such key; the day one is added it collapses to `never`, and the
+ * initializer below stops compiling. The runtime `expect` merely keeps
+ * the binding live so it cannot be dropped as unused.
+ */
+const EXCLUDED_INPUT_KEY: Exclude<'apiVersion', keyof MotorStaticFactsInput> = 'apiVersion';
+
 const TOP_LEVEL_KEYS = [
   'flightControllerIdentity',
   'mixerModeRaw',
@@ -216,6 +226,66 @@ describe('assembleMotorStaticFacts', () => {
     );
   });
 
+  it('handles a PARTIAL optional board set - present ones kept, absent ones still absent', () => {
+    // decodeBoardInfo reads MspBoardInfo's five optional fields in order
+    // and stops as soon as the payload runs out (its optionalFields loop
+    // breaks on insufficient bytes), so a real firmware genuinely
+    // produces a prefix of them. Here: the first two present, the last
+    // three absent. Optional names taken from MspBoardInfo itself.
+    const board: MspBoardInfo = {
+      ...makeBoardWithoutOptionals(),
+      configurationState: 2,
+      gyroSampleRateHz: 8000,
+    };
+    expect(Object.keys(board)).toContain('configurationState');
+    expect(Object.keys(board)).not.toContain('configurationProblems');
+
+    const snapshot = assembleMotorStaticFacts(
+      makeInput({flightControllerIdentity: {...makeIdentity(), board}}),
+    ).flightControllerIdentity.board;
+
+    // Present optionals survive as own properties with unchanged values.
+    expect(Object.prototype.hasOwnProperty.call(snapshot, 'configurationState')).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(snapshot, 'gyroSampleRateHz')).toBe(true);
+    expect(snapshot.configurationState).toBe(2);
+    expect(snapshot.gyroSampleRateHz).toBe(8000);
+
+    // Absent optionals do NOT become own keys holding undefined.
+    for (const absent of [
+      'configurationProblems',
+      'spiRegisteredDeviceCount',
+      'i2cRegisteredDeviceCount',
+    ]) {
+      expect(Object.prototype.hasOwnProperty.call(snapshot, absent)).toBe(false);
+    }
+
+    // Exact own-key set for this partial variant: 9 required + the two
+    // present optionals + trailingBytes.
+    expect(Object.keys(snapshot).sort()).toEqual(
+      [
+        'boardIdentifier',
+        'hardwareRevision',
+        'boardType',
+        'targetCapabilities',
+        'targetName',
+        'boardName',
+        'manufacturerId',
+        'signature',
+        'mcuTypeId',
+        'configurationState',
+        'gyroSampleRateHz',
+        'trailingBytes',
+      ].sort(),
+    );
+
+    // The mutable byte fields are still copied and frozen on this path.
+    expect(snapshot.signature).not.toBe(board.signature);
+    expect(snapshot.signature).toEqual([1, 2, 3, 250, 0, 255]);
+    expect(Object.isFrozen(snapshot.signature)).toBe(true);
+    expect(Object.isFrozen(snapshot.trailingBytes)).toBe(true);
+    expect(Object.isFrozen(snapshot)).toBe(true);
+  });
+
   it('exposes exactly ONE API-version path and no second copy that could diverge', () => {
     const facts = assembleMotorStaticFacts(makeInput());
     const asRecord: Record<string, unknown> = {...facts};
@@ -223,9 +293,13 @@ describe('assembleMotorStaticFacts', () => {
     expect(Object.keys(asRecord)).not.toContain('apiVersion');
     expect(facts.flightControllerIdentity.apiVersion.apiVersionMajor).toBe(1);
     expect(facts.flightControllerIdentity.apiVersion.apiVersionMinor).toBe(47);
-    // The assembly input carries no independent API-version member either,
-    // so there is nothing that could disagree in the first place.
-    expect(Object.keys(makeInput())).not.toContain('apiVersion');
+    // The assembly input carries no independent API-version member
+    // either, so nothing exists that could disagree in the first place.
+    // Anchored to the PRODUCTION type via `keyof MotorStaticFactsInput`,
+    // not to this file's fixture factory: Exclude<> yields `never` the
+    // moment 'apiVersion' becomes a top-level input key, and `never` has
+    // no assignable value, so re-adding it breaks compilation here.
+    expect(EXCLUDED_INPUT_KEY).toBe('apiVersion');
   });
 
   it('preserves dshotTelemetryRaw under the firmware field name, unreinterpreted', () => {
@@ -299,15 +373,28 @@ describe('assembleMotorStaticFacts', () => {
   });
 
   it('keeps motor idle raw and exposes no pulse/throttle value derived from it', () => {
-    const facts: Record<string, unknown> = {...assembleMotorStaticFacts(makeInput())};
-    expect(facts.motorIdleRaw).toBe(550);
+    const base = makeInput();
+
+    // PROPERTY-BASED, not fixture-value-based: for every raw idle across
+    // the firmware's range, the assembled value must be that same number,
+    // unchanged. A transform into an 1000..2000 external pulse - or any
+    // other rescaling - would break the identity for at least one input.
+    for (const motorIdleRaw of [0, 1, 300, 550, 700, 1000, 2000, 65535]) {
+      const facts = assembleMotorStaticFacts({
+        ...base,
+        advancedConfig: {...base.advancedConfig, motorIdleRaw},
+      });
+      expect(facts.motorIdleRaw).toBe(motorIdleRaw);
+    }
+
+    // Structural proof that nothing pulse-shaped exists at all is the
+    // exhaustive nine-key allowlist (asserted in its own test); this
+    // name check is only a redundant guard against a future addition.
+    const facts: Record<string, unknown> = {...assembleMotorStaticFacts(base)};
     for (const key of Object.keys(facts)) {
       expect(key).not.toMatch(/pulse|throttle|command|spin|test/i);
     }
-    // 550 hundredths-of-a-percent must not have been turned into an
-    // 1000..2000 external value anywhere in the object.
-    expect(Object.values(facts)).not.toContain(1055);
-    expect(Object.values(facts)).not.toContain(1000);
+    expect(Object.keys(facts).sort()).toEqual([...TOP_LEVEL_KEYS].sort());
   });
 
   it('computes no compatibility verdict', () => {
@@ -561,12 +648,50 @@ describe('bindMotorStaticFacts', () => {
     expect(bound.sessionIdentity.mspEpoch).toBe(11);
   });
 
-  it('projects ONLY the two session fields, discarding anything else supplied', () => {
-    const bound = bindMotorStaticFacts(
-      {physicalGeneration: 3, mspEpoch: 11},
-      assembleMotorStaticFacts(makeInput()),
-    );
+  it('projects ONLY the two session fields, discarding extra properties actually supplied', () => {
+    // A WIDENED object really carrying extra own properties. Declared
+    // through its own interface and passed as a variable, so TypeScript's
+    // excess-property check (which only fires on fresh object literals)
+    // does not apply and the extras genuinely reach the function at
+    // runtime - no `any`, no cast, no suppression. This is what makes the
+    // test prove RUNTIME projection rather than compile-time filtering.
+    interface WidenedSessionIdentity extends MotorStaticFactsSessionIdentity {
+      sessionId: string;
+      operatorNote: string;
+    }
+    const widened: WidenedSessionIdentity = {
+      physicalGeneration: 3,
+      mspEpoch: 11,
+      sessionId: 'usb-device-0',
+      operatorNote: 'must not survive projection',
+    };
+    expect(Object.keys(widened).sort()).toEqual([
+      'mspEpoch',
+      'operatorNote',
+      'physicalGeneration',
+      'sessionId',
+    ]);
+
+    const bound = bindMotorStaticFacts(widened, assembleMotorStaticFacts(makeInput()));
+
+    // Exactly the two approved keys survive; the extras are gone.
     expect(Object.keys(bound.sessionIdentity).sort()).toEqual(['mspEpoch', 'physicalGeneration']);
+    expect(Object.keys(bound.sessionIdentity)).not.toContain('sessionId');
+    expect(Object.keys(bound.sessionIdentity)).not.toContain('operatorNote');
+    expect(bound.sessionIdentity).toEqual({physicalGeneration: 3, mspEpoch: 11});
+
+    // A new object, not the supplied one - had it been stored or spread
+    // by reference, the extras above would still be present.
+    expect(bound.sessionIdentity).not.toBe(widened);
+
+    // Freeze and caller-mutation guarantees hold for the widened path too.
+    expect(Object.isFrozen(bound)).toBe(true);
+    expect(Object.isFrozen(bound.sessionIdentity)).toBe(true);
+    widened.sessionId = 'usb-device-1';
+    widened.operatorNote = 'rewritten';
+    expect(Object.keys(bound.sessionIdentity).sort()).toEqual(['mspEpoch', 'physicalGeneration']);
+    expect(attemptWrite(bound.sessionIdentity, 'mspEpoch', 99)).toBe(false);
+    expect(bound.sessionIdentity.mspEpoch).toBe(11);
   });
 
   it('does not accept a bare number as session identity (compile-time)', () => {

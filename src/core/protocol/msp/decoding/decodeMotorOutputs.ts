@@ -2,11 +2,16 @@ import {MspPayloadReader} from './MspPayloadReader';
 
 /**
  * Motor read-capability pass - wire decoder for MSP_MOTOR (104),
- * verified against src/main/msp/msp.c:1199-1211 @
- * BETAFLIGHT_2025_12_2_COMMIT. Quoted here VERBATIM AND IN FULL,
- * including the build-time conditional (preprocessor directives are at
- * column 0 upstream, as reproduced), so the excerpt cannot be read as
- * saying more than the firmware does:
+ * verified against src/main/msp/msp.c @ BETAFLIGHT_2025_12_2_COMMIT.
+ *
+ * The block below reproduces msp.c:1199-1210 - the whole output loop,
+ * including its build-time conditional - word for word. It is an
+ * EXCERPT, not the whole case: the enclosing `case MSP_MOTOR:` (line
+ * 1198) and the trailing `break;` (line 1211) are outside the quoted
+ * range and are deliberately not reproduced, since neither writes a
+ * payload byte. Indentation inside a comment block cannot preserve the
+ * upstream columns; upstream the preprocessor directives sit at column
+ * 0, which is why they appear dedented relative to the loop body here.
  *
  *       for (unsigned i = 0; i < 8; i++) {
  *   #ifdef USE_MOTOR
