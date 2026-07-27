@@ -96,3 +96,55 @@ export const MSP_MAG_CALIBRATION = 206;
  * and a missing ack does NOT prove the reboot did not happen.
  */
 export const MSP_REBOOT = 68;
+
+/**
+ * Motor read-capability pass - the six READ-ONLY motor/mixer commands,
+ * each verified DIRECTLY at BETAFLIGHT_2025_12_2_COMMIT
+ * (79065c96ba0bb5cdc675e67d7093e05dab8b330e, release tag 2025.12.2 - the
+ * bench firmware, whose msp_protocol.h:61-62 declares API_VERSION_MAJOR 1
+ * / API_VERSION_MINOR 47). See mspCommandSources.ts for the full
+ * field-by-field record and the minimum payload length of each.
+ *
+ * DELIBERATE OMISSION: MSP_SET_MOTOR (214) is NOT defined in this file.
+ * It was read during the audit and is intentionally absent - defining a
+ * motor WRITE command is a separate, safety-gated decision that has not
+ * been taken, and an unused constant is exactly the kind of thing that
+ * later gets picked up by accident.
+ */
+
+/** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
+ * `#define MSP_FEATURE_CONFIG 36` - msp.c:784-786, 4 bytes: the u32
+ * enabled-feature mask. FEATURE_3D is bit 12 and is the ONLY authority
+ * for whether 3D mode is active. */
+export const MSP_FEATURE_CONFIG = 36;
+
+/** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
+ * `#define MSP_MIXER_CONFIG 42` - msp.c, 2 bytes: u8 mixerMode, u8
+ * yaw_motors_reversed. MIXER_QUADX (3) and MIXER_QUADX_1234 (26) are
+ * distinct mixers with different output ordering. */
+export const MSP_MIXER_CONFIG = 42;
+
+/** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
+ * `#define MSP_ADVANCED_CONFIG 90` - msp.c:1846-1864, 20 bytes. Carries
+ * the raw motor protocol and the raw motor idle (hundredths of a
+ * percent). gyro_offset_yaw within it is genuinely SIGNED. */
+export const MSP_ADVANCED_CONFIG = 90;
+
+/** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
+ * `#define MSP_MOTOR 104  // out message: motors` - msp.c:1198-1211,
+ * 16 bytes: ALWAYS eight u16 outputs, 0 for a disabled/absent one.
+ * DYNAMIC FC-side state - never configuration, never a motor count, and
+ * never proof of physical motion or stop. */
+export const MSP_MOTOR = 104;
+
+/** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
+ * `#define MSP_MOTOR_3D_CONFIG 124` - msp.c, 6 bytes: three u16 3D
+ * tuning values. Present whether or not 3D is enabled - they never
+ * determine 3D state. */
+export const MSP_MOTOR_3D_CONFIG = 124;
+
+/** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
+ * `#define MSP_MOTOR_CONFIG 131` - msp.c, 10 bytes. The ONLY authority
+ * for motor count. Its first u16 is a removed field hard-coded to 0, not
+ * a minimum throttle. */
+export const MSP_MOTOR_CONFIG = 131;

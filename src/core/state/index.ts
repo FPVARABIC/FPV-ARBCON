@@ -6,3 +6,6 @@ export type {ArmingBlockSeverity, ArmingBlockReason, ArmingReadiness, ArmingBloc
 
 export {pickTopNotice} from './setupNotice';
 export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeScope} from './setupNotice';
+
+export {assembleMotorStaticFacts, bindMotorStaticFacts} from './motorStaticFacts';
+export type {MotorStaticFacts, MotorStaticFactsInput, MotorStaticFactsBinding} from './motorStaticFacts';

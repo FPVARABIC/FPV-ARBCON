@@ -40,6 +40,12 @@ export type {
   MspStatusExCompact,
   MspStatusExReadiness,
   MspStatusExDiagnostics,
+  MspFeatureConfig,
+  MspMixerConfig,
+  MspAdvancedConfig,
+  MspMotorConfig,
+  MspMotor3dConfig,
+  MspMotorOutputs,
   MspCompatibilityResult,
   MspFcFamily,
   MspFcVariant,
@@ -92,9 +98,16 @@ export {
   MSP_MAG_CALIBRATION,
   MSP_REBOOT,
   STATUS_SENSOR_GPS_BIT,
+  MSP_FEATURE_CONFIG,
+  MSP_MIXER_CONFIG,
+  MSP_ADVANCED_CONFIG,
+  MSP_MOTOR,
+  MSP_MOTOR_3D_CONFIG,
+  MSP_MOTOR_CONFIG,
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
   BETAFLIGHT_API147_COMMIT,
+  BETAFLIGHT_2025_12_2_COMMIT,
   INAV_SOURCE_REPO,
   INAV_PINNED_COMMIT,
   EMUFLIGHT_SOURCE_REPO,
@@ -112,6 +125,17 @@ export {
   decodeStatusExReadiness,
   decodeStatusExDiagnostics,
   STATUS_EX_FIXED_PREFIX_BYTES,
+  decodeFeatureConfig,
+  FEATURE_3D_BIT,
+  decodeMixerConfig,
+  MIXER_MODE_QUADX,
+  MIXER_MODE_QUADX_1234,
+  decodeAdvancedConfig,
+  MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2,
+  decodeMotorConfig,
+  decodeMotor3dConfig,
+  decodeMotorOutputs,
+  MSP_MOTOR_OUTPUT_COUNT,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
@@ -132,6 +156,8 @@ export {deriveArmingReadiness, rankArmingBlockReasons, selectTopArmingBlockReaso
 export type {ArmingBlockSeverity, ArmingBlockReason, ArmingReadiness, ArmingBlockReasonSelection} from './state';
 export {pickTopNotice} from './state';
 export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeScope} from './state';
+export {assembleMotorStaticFacts, bindMotorStaticFacts} from './state';
+export type {MotorStaticFacts, MotorStaticFactsInput, MotorStaticFactsBinding} from './state';
 // Pass 7.6a: exported directly from the module file (not via ./state's
 // barrel) because src/core/state/index.ts is outside this pass's
 // authorized file allowlist - a deliberate, documented allowlist

@@ -11,11 +11,18 @@ export {
   MSP_ACC_CALIBRATION,
   MSP_MAG_CALIBRATION,
   MSP_REBOOT,
+  MSP_FEATURE_CONFIG,
+  MSP_MIXER_CONFIG,
+  MSP_ADVANCED_CONFIG,
+  MSP_MOTOR,
+  MSP_MOTOR_3D_CONFIG,
+  MSP_MOTOR_CONFIG,
 } from './commands/mspCommands';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
   BETAFLIGHT_API147_COMMIT,
+  BETAFLIGHT_2025_12_2_COMMIT,
   INAV_SOURCE_REPO,
   INAV_PINNED_COMMIT,
   EMUFLIGHT_SOURCE_REPO,
@@ -43,6 +50,22 @@ export {decodeStatusExReadiness, STATUS_EX_FIXED_PREFIX_BYTES} from './decoding/
 export type {MspStatusExReadiness} from './decoding/decodeStatusExReadiness';
 export type {MspStatusExCompact} from './decoding/decodeStatusEx';
 export type {MspStatusExDiagnostics} from './decoding/decodeStatusExDiagnostics';
+
+export {decodeFeatureConfig, FEATURE_3D_BIT} from './decoding/decodeFeatureConfig';
+export type {MspFeatureConfig} from './decoding/decodeFeatureConfig';
+export {decodeMixerConfig, MIXER_MODE_QUADX, MIXER_MODE_QUADX_1234} from './decoding/decodeMixerConfig';
+export type {MspMixerConfig} from './decoding/decodeMixerConfig';
+export {
+  decodeAdvancedConfig,
+  MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2,
+} from './decoding/decodeAdvancedConfig';
+export type {MspAdvancedConfig} from './decoding/decodeAdvancedConfig';
+export {decodeMotorConfig} from './decoding/decodeMotorConfig';
+export type {MspMotorConfig} from './decoding/decodeMotorConfig';
+export {decodeMotor3dConfig} from './decoding/decodeMotor3dConfig';
+export type {MspMotor3dConfig} from './decoding/decodeMotor3dConfig';
+export {decodeMotorOutputs, MSP_MOTOR_OUTPUT_COUNT} from './decoding/decodeMotorOutputs';
+export type {MspMotorOutputs} from './decoding/decodeMotorOutputs';
 
 export {
   checkMspCompatibility,

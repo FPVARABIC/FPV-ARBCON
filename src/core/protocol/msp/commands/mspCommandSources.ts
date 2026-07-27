@@ -247,6 +247,27 @@ export const BETAFLIGHT_PINNED_COMMIT = '0ccf59553351860fcedbaed952dbf3694f10f76
  * `git ls-remote refs/tags/2025.12.5` and audited at this exact SHA. */
 export const BETAFLIGHT_API147_COMMIT = '7348054f268f0058574719c134e9f149565bb8ea';
 
+/**
+ * Motor read-capability pass: the immutable commit of release tag
+ * 2025.12.2 - the exact firmware the bench flight controller reports, and
+ * therefore the authority every motor-related schema in this codebase is
+ * verified against. Resolved via
+ * `git ls-remote --tags https://github.com/betaflight/betaflight 2025.12.2`
+ * -> 79065c96ba0bb5cdc675e67d7093e05dab8b330e, and every line cited below
+ * was read at that SHA (not at the tag name, which is a movable ref).
+ *
+ * WHY A SECOND API-1.47 CONSTANT RATHER THAN REUSING BETAFLIGHT_API147_COMMIT.
+ * 2025.12.5 (above) and 2025.12.2 are different releases of the same
+ * 2025.12.x family; both declare API_VERSION_MAJOR 1 / API_VERSION_MINOR
+ * 47. The existing constant is left completely untouched so no previously
+ * audited citation silently changes its authority. For the six commands
+ * this pass decodes, the two releases were compared directly and every
+ * encoder block is BYTE-IDENTICAL between them - so the pre-existing
+ * decoders keep their own pinned authority and this pass gains a
+ * verifiable one, with no contradiction between the two.
+ */
+export const BETAFLIGHT_2025_12_2_COMMIT = '79065c96ba0bb5cdc675e67d7093e05dab8b330e';
+
 export const INAV_SOURCE_REPO = 'https://github.com/iNavFlight/inav';
 export const INAV_PINNED_COMMIT = 'c5c593d71d33c8e284bf9cd34381588fda7a98c8';
 
@@ -318,4 +339,127 @@ export const EMUFLIGHT_PINNED_COMMIT = '0a569000b9dfa5b6d8f807bd2e56b634027d84cd
  * 4. MSP_EEPROM_WRITE (250) remains PROHIBITED by this project. Neither
  *    calibration needs it (both persist FC-side, as recorded above), so
  *    nothing in Region 5 sends it.
+ */
+
+/**
+ * ==========================================================================
+ * MOTOR READ-CAPABILITY PASS - THE SIX READ-ONLY MOTOR/MIXER COMMANDS
+ * ==========================================================================
+ * Every line below was read at BETAFLIGHT_2025_12_2_COMMIT
+ * (79065c96ba0bb5cdc675e67d7093e05dab8b330e, release tag 2025.12.2,
+ * whose src/main/msp/msp_protocol.h:61-62 declares API_VERSION_MAJOR 1 /
+ * API_VERSION_MINOR 47 - the bench firmware's own reported API).
+ *
+ * SCOPE, STATED ONCE: every command here is an OUT (read) message. No
+ * write/set motor command is defined, encoded or exported anywhere in
+ * this pass - deliberately, because sending motor values is a separate,
+ * safety-critical decision that has not been taken. In particular
+ * MSP_SET_MOTOR (214) is NOT defined here even though it was read during
+ * the audit.
+ *
+ * MSP_FEATURE_CONFIG (36 - msp_protocol.h) - msp.c:784-786 @ 2025.12.2 -
+ * 4 bytes:
+ *   sbufWriteU32(dst, featureConfig()->enabledFeatures);
+ *   FEATURE_3D is bit 12 (src/main/config/feature.h:56,
+ *   `FEATURE_3D = 1 << 12`). The mask is genuinely UNSIGNED 32-bit; bit
+ *   31 is a legal set bit and must survive decoding as a positive
+ *   number, which is why the reader's readU32LE() (>>> 0) is used.
+ *
+ * MSP_MIXER_CONFIG (42 - msp_protocol.h) - msp.c @ 2025.12.2 - 2 bytes:
+ *   sbufWriteU8(dst, mixerConfig()->mixerMode);
+ *   sbufWriteU8(dst, mixerConfig()->yaw_motors_reversed);
+ *   mixerMode is mixerMode_e (src/main/flight/mixer.h): MIXER_TRI = 1,
+ *   MIXER_QUADX = 3, ... MIXER_CUSTOM = 23, MIXER_QUADX_1234 = 26.
+ *   MIXER_QUADX and MIXER_QUADX_1234 are DISTINCT mixers with different
+ *   motor-output ordering - one may never be treated as the other.
+ *   yaw_motors_reversed is FC CONFIGURATION. mixer.c uses it only to flip
+ *   the sign of the yaw PID term
+ *   (`if (!mixerConfig()->yaw_motors_reversed) { scaledAxisPidYaw =
+ *   -scaledAxisPidYaw; }`); it does NOT remap outputs to positions and is
+ *   NOT proof of any physical propeller rotation direction.
+ *
+ * MSP_ADVANCED_CONFIG (90 - msp_protocol.h) - msp.c:1846-1864 @ 2025.12.2
+ * - 20 bytes, in this exact order:
+ *   sbufWriteU8 (1)                                  // was gyro_sync_denom, removed in API 1.43
+ *   sbufWriteU8 (pidConfig()->pid_process_denom)
+ *   sbufWriteU8 (motorConfig()->dev.useContinuousUpdate)
+ *   sbufWriteU8 (motorConfig()->dev.motorProtocol)
+ *   sbufWriteU16(motorConfig()->dev.motorPwmRate)
+ *   sbufWriteU16(motorConfig()->motorIdle)
+ *   sbufWriteU8 (0)                                  // DEPRECATED: gyro_use_32kHz
+ *   sbufWriteU8 (motorConfig()->dev.motorInversion)
+ *   sbufWriteU8 (0)                                  // deprecated gyro_to_use
+ *   sbufWriteU8 (gyroConfig()->gyro_high_fsr)
+ *   sbufWriteU8 (gyroConfig()->gyroMovementCalibrationThreshold)
+ *   sbufWriteU16(gyroConfig()->gyroCalibrationDuration)
+ *   sbufWriteU16(gyroConfig()->gyro_offset_yaw)
+ *   sbufWriteU8 (gyroConfig()->checkOverflow)
+ *   sbufWriteU8 (systemConfig()->debug_mode)         // added in MSP API 1.42
+ *   sbufWriteU8 (DEBUG_COUNT)
+ *
+ *   gyro_offset_yaw IS SIGNED. src/main/sensors/gyro.h:164 declares
+ *   `int16_t gyro_offset_yaw;` - sbufWriteU16 is only the byte-writing
+ *   primitive's name, exactly the MSP_ATTITUDE/MSP_BATTERY_STATE lesson
+ *   already recorded in this file. It is therefore read with readS16LE().
+ *
+ *   motorProtocol is motorProtocolTypes_e
+ *   (src/main/drivers/motor_types.h @ 2025.12.2), by declaration order:
+ *     0 PWM, 1 ONESHOT125, 2 ONESHOT42, 3 MULTISHOT, 4 BRUSHED,
+ *     5 DSHOT150, 6 DSHOT300, 7 DSHOT600,
+ *     (DSHOT1200 is REMOVED at this tag - the enum comment says so
+ *      explicitly, which is why 8 is PROSHOT1000 and not DSHOT1200)
+ *     8 PROSHOT1000, 9 DISABLED, 10 MAX.
+ *   So raw 7 == DSHOT600 AT THIS TAG. The value is version-sensitive and
+ *   is therefore stored raw; any name is a local interpretation, never a
+ *   claim about an "official" identifier.
+ *
+ *   motorIdle is stored in hundredths of a percent: raw 550 == 5.5%.
+ *   IT IS NOT A PULSE VALUE AND NO PULSE MAY BE DERIVED FROM IT.
+ *   dshotInitEndpoints() uses motorIdle only to compute the ARMED
+ *   throttle curve's lower endpoint; dshotConvertFromExternal() - the
+ *   function an MSP motor value would actually pass through - does not
+ *   reference motorIdle at all.
+ *
+ *   motorInversion is electrical output-signal inversion
+ *   (motorConfig()->dev.motorInversion). It is NOT props-out
+ *   configuration and NOT physical CW/CCW rotation.
+ *
+ * MSP_MOTOR (104 - msp_protocol.h) - msp.c:1198-1211 @ 2025.12.2 -
+ * 16 bytes:
+ *   for (unsigned i = 0; i < 8; i++) {
+ *       if (!motorIsEnabled() || i >= MAX_SUPPORTED_MOTORS || !motorIsMotorEnabled(i)) {
+ *           sbufWriteU16(dst, 0);
+ *           continue;
+ *       }
+ *       sbufWriteU16(dst, motorConvertToExternal(motor[i]));
+ *   }
+ *   ALWAYS exactly 8 values regardless of the airframe's motor count; a
+ *   disabled/absent output writes 0. Zero is therefore a legal value and
+ *   the number of non-zero entries is NOT a motor count - the only
+ *   authority for motor count is MSP_MOTOR_CONFIG's own field.
+ *   These are DYNAMIC FC-side output values, not configuration, and not
+ *   proof of physical motion or of physical stop.
+ *
+ * MSP_MOTOR_3D_CONFIG (124 - msp_protocol.h) - msp.c @ 2025.12.2 -
+ * 6 bytes:
+ *   sbufWriteU16(dst, flight3DConfig()->deadband3d_low);
+ *   sbufWriteU16(dst, flight3DConfig()->deadband3d_high);
+ *   sbufWriteU16(dst, flight3DConfig()->neutral3d);
+ *   These are 3D TUNING values and are present whether or not 3D is
+ *   enabled. Whether 3D is active is decided ONLY by FEATURE_3D in
+ *   MSP_FEATURE_CONFIG - never inferred from these numbers.
+ *
+ * MSP_MOTOR_CONFIG (131 - msp_protocol.h) - msp.c @ 2025.12.2 -
+ * 10 bytes:
+ *   sbufWriteU16(dst, 0);                            // was minthrottle until after 4.5
+ *   sbufWriteU16(dst, motorConfig()->maxthrottle);
+ *   sbufWriteU16(dst, motorConfig()->mincommand);
+ *   sbufWriteU8 (getMotorCount());
+ *   sbufWriteU8 (motorConfig()->motorPoleCount);
+ *   sbufWriteU8 (useDshotTelemetry);                 // 0 when built without USE_DSHOT_TELEMETRY
+ *   sbufWriteU8 (featureIsEnabled(FEATURE_ESC_SENSOR)); // 0 when built without USE_ESC_SENSOR
+ *   The first field is a REMOVED value hard-coded to 0 - it is not a
+ *   minimum throttle and must never be used as one. The DShot-telemetry
+ *   byte is the raw firmware state; a 0 can mean either "disabled" or
+ *   "not compiled in", so it is stored raw and interpreted nowhere here.
  */

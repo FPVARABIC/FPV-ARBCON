@@ -61,11 +61,18 @@ export {
   MSP_MAG_CALIBRATION,
   MSP_REBOOT,
   STATUS_SENSOR_GPS_BIT,
+  MSP_FEATURE_CONFIG,
+  MSP_MIXER_CONFIG,
+  MSP_ADVANCED_CONFIG,
+  MSP_MOTOR,
+  MSP_MOTOR_3D_CONFIG,
+  MSP_MOTOR_CONFIG,
 } from './msp';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
   BETAFLIGHT_API147_COMMIT,
+  BETAFLIGHT_2025_12_2_COMMIT,
   INAV_SOURCE_REPO,
   INAV_PINNED_COMMIT,
   EMUFLIGHT_SOURCE_REPO,
@@ -76,6 +83,27 @@ export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, deco
 export {decodeStatusExReadiness, STATUS_EX_FIXED_PREFIX_BYTES, decodeStatusExDiagnostics} from './msp';
 export type {MspStatusExReadiness, MspStatusExDiagnostics} from './msp';
 export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState, MspAnalog, MspRawGpsCompact, MspStatusExCompact} from './msp';
+export {
+  decodeFeatureConfig,
+  FEATURE_3D_BIT,
+  decodeMixerConfig,
+  MIXER_MODE_QUADX,
+  MIXER_MODE_QUADX_1234,
+  decodeAdvancedConfig,
+  MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2,
+  decodeMotorConfig,
+  decodeMotor3dConfig,
+  decodeMotorOutputs,
+  MSP_MOTOR_OUTPUT_COUNT,
+} from './msp';
+export type {
+  MspFeatureConfig,
+  MspMixerConfig,
+  MspAdvancedConfig,
+  MspMotorConfig,
+  MspMotor3dConfig,
+  MspMotorOutputs,
+} from './msp';
 export {
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
