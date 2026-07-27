@@ -64,7 +64,7 @@ export {decodeMotorConfig} from './decoding/decodeMotorConfig';
 export type {MspMotorConfig} from './decoding/decodeMotorConfig';
 export {decodeMotor3dConfig} from './decoding/decodeMotor3dConfig';
 export type {MspMotor3dConfig} from './decoding/decodeMotor3dConfig';
-export {decodeMotorOutputs, MSP_MOTOR_OUTPUT_COUNT} from './decoding/decodeMotorOutputs';
+export {decodeMotorOutputs, MSP_MOTOR_OUTPUT_SLOT_COUNT} from './decoding/decodeMotorOutputs';
 export type {MspMotorOutputs} from './decoding/decodeMotorOutputs';
 
 export {

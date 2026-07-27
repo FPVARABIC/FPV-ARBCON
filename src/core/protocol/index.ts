@@ -94,7 +94,7 @@ export {
   decodeMotorConfig,
   decodeMotor3dConfig,
   decodeMotorOutputs,
-  MSP_MOTOR_OUTPUT_COUNT,
+  MSP_MOTOR_OUTPUT_SLOT_COUNT,
 } from './msp';
 export type {
   MspFeatureConfig,

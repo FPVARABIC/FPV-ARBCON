@@ -28,8 +28,13 @@ import {MspPayloadReader} from './MspPayloadReader';
 /** src/main/config/feature.h:56 @ BETAFLIGHT_2025_12_2_COMMIT:
  * `FEATURE_3D = 1 << 12`. Exported because 3D state is safety-relevant
  * and callers must be able to check the bit against the raw mask
- * themselves rather than trusting a boolean they cannot audit. */
-export const FEATURE_3D_BIT = 1 << 12;
+ * themselves rather than trusting a boolean they cannot audit.
+ *
+ * Written as `2 ** 12` rather than `1 << 12` so the CONSTANT needs no
+ * lint suppression; the value is identical (4096) and the exponent still
+ * reads as the bit position the firmware declares. The membership test
+ * below stays a real bitmask operation - see its own comment. */
+export const FEATURE_3D_BIT = 2 ** 12;
 
 export interface MspFeatureConfig {
   /** u32, unsigned. The complete mask exactly as the FC sent it - kept
@@ -53,6 +58,15 @@ export function decodeFeatureConfig(payload: Uint8Array): MspFeatureConfig {
     // JavaScript, so the comparison is against 0 rather than against the
     // bit itself - `!== 0` is correct for every mask, signed-looking or
     // not.
+    //
+    // The single suppression below is deliberate and narrowly scoped to
+    // this one line. Betaflight's enabledFeatures is a single 32-bit
+    // BITMASK (featureConfig()->enabledFeatures, msp.c:785 @
+    // BETAFLIGHT_2025_12_2_COMMIT), so testing membership of one flag is
+    // inherently a bitwise AND; any arithmetic substitute would obscure a
+    // safety-relevant check. Same pattern as the existing precedent in
+    // src/core/state/auxTelemetrySemantics.ts. No file-wide disable.
+    // eslint-disable-next-line no-bitwise -- Betaflight feature flags are a 32-bit bitmask; membership testing is inherently bitwise.
     feature3dEnabled: (enabledFeaturesRaw & FEATURE_3D_BIT) !== 0,
   });
 }

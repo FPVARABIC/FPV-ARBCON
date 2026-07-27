@@ -13,8 +13,12 @@ import {MspPayloadReader} from './MspPayloadReader';
  * yaw_motors_reversed IS FC CONFIGURATION, NOT PHYSICAL TRUTH. At this
  * tag mixer.c uses it in exactly one place - to flip the sign of the yaw
  * PID term - and it does NOT remap outputs to airframe positions. It is
- * therefore never evidence of which way any propeller actually turns;
- * only a human looking at the aircraft can establish that.
+ * therefore never evidence of which way any propeller actually turns,
+ * never evidence that the propellers are installed props-out, and never
+ * a statement about mechanical condition; only a human looking at the
+ * aircraft can establish any of those. The decoded field is named
+ * `yawMotorsReversedConfigured` for exactly this reason - see its own
+ * doc comment.
  */
 
 /** src/main/flight/mixer.h:42 @ BETAFLIGHT_2025_12_2_COMMIT:
@@ -32,12 +36,18 @@ export interface MspMixerConfig {
   /** u8, raw mixerMode_e. Kept raw: the enum is version-sensitive and
    * this decoder asserts no policy about which mixers are acceptable. */
   readonly mixerModeRaw: number;
-  /** u8 as sent. Non-zero means the FC is configured for reversed yaw
-   * motors ("props out"). CONFIGURATION ONLY - see the file comment. */
-  readonly yawMotorsReversed: boolean;
-  /** The raw byte behind `yawMotorsReversed`, preserved because the
-   * firmware field is a uint8 and a future release could give it values
-   * beyond 0/1 that a boolean would silently flatten. */
+  /** u8 as sent, non-zero. THE FC's STORED CONFIGURATION FLAG, and
+   * nothing more. Named `...Configured` because the bare name reads like
+   * a physical claim at a call site, and it is not one:
+   *  - it does NOT prove actual physical motor rotation direction;
+   *  - it does NOT prove the propellers are correctly installed
+   *    props-out (or props-in);
+   *  - it is NOT a mechanical-condition claim of any kind.
+   * Only a human looking at the aircraft can establish those. */
+  readonly yawMotorsReversedConfigured: boolean;
+  /** The raw byte behind `yawMotorsReversedConfigured`, preserved because
+   * the firmware field is a uint8 and a future release could give it
+   * values beyond 0/1 that a boolean would silently flatten. */
   readonly yawMotorsReversedRaw: number;
 }
 
@@ -47,7 +57,7 @@ export function decodeMixerConfig(payload: Uint8Array): MspMixerConfig {
   const yawMotorsReversedRaw = reader.readU8();
   return Object.freeze({
     mixerModeRaw,
-    yawMotorsReversed: yawMotorsReversedRaw !== 0,
+    yawMotorsReversedConfigured: yawMotorsReversedRaw !== 0,
     yawMotorsReversedRaw,
   });
 }

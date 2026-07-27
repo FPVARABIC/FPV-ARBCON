@@ -15,7 +15,7 @@ import {decodeMixerConfig, MIXER_MODE_QUADX, MIXER_MODE_QUADX_1234} from './deco
 import {decodeAdvancedConfig, MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2} from './decodeAdvancedConfig';
 import {decodeMotorConfig} from './decodeMotorConfig';
 import {decodeMotor3dConfig} from './decodeMotor3dConfig';
-import {decodeMotorOutputs, MSP_MOTOR_OUTPUT_COUNT} from './decodeMotorOutputs';
+import {decodeMotorOutputs, MSP_MOTOR_OUTPUT_SLOT_COUNT} from './decodeMotorOutputs';
 import {
   MSP_FEATURE_CONFIG,
   MSP_MIXER_CONFIG,
@@ -26,13 +26,28 @@ import {
 } from '../commands/mspCommands';
 import * as mspCommandsModule from '../commands/mspCommands';
 
-const u16 = (value: number): number[] => [value & 0xff, (value >> 8) & 0xff];
-const u32 = (value: number): number[] => [
-  value & 0xff,
-  (value >>> 8) & 0xff,
-  (value >>> 16) & 0xff,
-  (value >>> 24) & 0xff,
-];
+/**
+ * Fixture encoders built on DataView with an EXPLICIT little-endian
+ * argument, rather than hand-rolled shift-and-mask arithmetic: the
+ * endianness is then stated by the platform API instead of re-derived
+ * here, so a test fixture cannot drift from the wire format it is
+ * supposed to represent. No production byte writer exists or is added -
+ * this pass ships decoders only.
+ *
+ * DataView.setUint16/setUint32 apply the standard ToUint32 conversion, so
+ * a value expressed as a negative JavaScript number still encodes to the
+ * correct unsigned bytes.
+ */
+function littleEndianBytes(byteLength: number, write: (view: DataView) => void): number[] {
+  const buffer = new ArrayBuffer(byteLength);
+  write(new DataView(buffer));
+  return Array.from(new Uint8Array(buffer));
+}
+
+const u16 = (value: number): number[] =>
+  littleEndianBytes(2, view => view.setUint16(0, value, true));
+const u32 = (value: number): number[] =>
+  littleEndianBytes(4, view => view.setUint32(0, value, true));
 
 /** Drives the "every truncated length from 0 through minimum-1 throws"
  * requirement for a decoder, rather than spot-checking one short input. */
@@ -74,10 +89,23 @@ describe('decodeFeatureConfig (MSP_FEATURE_CONFIG, 4 bytes)', () => {
     expect(decoded.enabledFeaturesRaw).toBe(0x0000_1000);
   });
 
+  it('pins FEATURE_3D to bit 12 by VALUE, not just by symbol', () => {
+    // Asserted against literals so a change to how the constant is
+    // written (2 ** 12 vs 1 << 12) can never silently move the bit.
+    expect(FEATURE_3D_BIT).toBe(4096);
+    expect(FEATURE_3D_BIT).toBe(0x0000_1000);
+    expect(decodeFeatureConfig(Uint8Array.from(u32(0x0000_1000))).feature3dEnabled).toBe(true);
+    expect(decodeFeatureConfig(Uint8Array.from(u32(0x0000_0800))).feature3dEnabled).toBe(false);
+    expect(decodeFeatureConfig(Uint8Array.from(u32(0x0000_2000))).feature3dEnabled).toBe(false);
+  });
+
   it('reports FEATURE_3D from bit 12 only', () => {
     expect(decodeFeatureConfig(Uint8Array.from(u32(FEATURE_3D_BIT))).feature3dEnabled).toBe(true);
-    // Every other bit set, bit 12 clear -> still false.
-    expect(decodeFeatureConfig(Uint8Array.from(u32(0xffff_ffff & ~FEATURE_3D_BIT))).feature3dEnabled).toBe(false);
+    // Every other bit set, bit 12 clear -> still false. Bit 12 is set in
+    // an all-ones mask, so subtracting the flag's value clears exactly
+    // that one bit and nothing else.
+    const allBitsExcept3d = 0xffff_ffff - FEATURE_3D_BIT;
+    expect(decodeFeatureConfig(Uint8Array.from(u32(allBitsExcept3d))).feature3dEnabled).toBe(false);
     expect(decodeFeatureConfig(Uint8Array.from(u32(0))).feature3dEnabled).toBe(false);
   });
 
@@ -111,7 +139,7 @@ describe('decodeMixerConfig (MSP_MIXER_CONFIG, 2 bytes)', () => {
   it('decodes mixer mode and the reversed-yaw byte at their exact offsets', () => {
     const decoded = decodeMixerConfig(Uint8Array.from([MIXER_MODE_QUADX, 1]));
     expect(decoded.mixerModeRaw).toBe(3);
-    expect(decoded.yawMotorsReversed).toBe(true);
+    expect(decoded.yawMotorsReversedConfigured).toBe(true);
     expect(decoded.yawMotorsReversedRaw).toBe(1);
   });
 
@@ -124,10 +152,10 @@ describe('decodeMixerConfig (MSP_MIXER_CONFIG, 2 bytes)', () => {
     expect(decodeMixerConfig(Uint8Array.from([26, 0])).mixerModeRaw).not.toBe(MIXER_MODE_QUADX);
   });
 
-  it('treats yawMotorsReversed 0 as false and preserves any non-0/1 raw byte', () => {
-    expect(decodeMixerConfig(Uint8Array.from([3, 0])).yawMotorsReversed).toBe(false);
+  it('treats yawMotorsReversedConfigured 0 as false and preserves any non-0/1 raw byte', () => {
+    expect(decodeMixerConfig(Uint8Array.from([3, 0])).yawMotorsReversedConfigured).toBe(false);
     const odd = decodeMixerConfig(Uint8Array.from([3, 7]));
-    expect(odd.yawMotorsReversed).toBe(true);
+    expect(odd.yawMotorsReversedConfigured).toBe(true);
     expect(odd.yawMotorsReversedRaw).toBe(7);
   });
 
@@ -189,9 +217,10 @@ describe('decodeAdvancedConfig (MSP_ADVANCED_CONFIG, 20 bytes)', () => {
 
   it('decodes gyroYawOffset as SIGNED - the whole negative range, not 65535-relative', () => {
     const at = (raw: number) => {
+      const [low, high] = u16(raw);
       const bytes = [...FULL];
-      bytes[15] = raw & 0xff;
-      bytes[16] = (raw >> 8) & 0xff;
+      bytes[15] = low;
+      bytes[16] = high;
       return decodeAdvancedConfig(Uint8Array.from(bytes)).gyroYawOffset;
     };
     expect(at(0x0000)).toBe(0);
@@ -326,7 +355,7 @@ describe('decodeMotorOutputs (MSP_MOTOR, 16 bytes)', () => {
   ];
 
   it('always decodes exactly eight u16 values, zeros included', () => {
-    expect(MSP_MOTOR_OUTPUT_COUNT).toBe(8);
+    expect(MSP_MOTOR_OUTPUT_SLOT_COUNT).toBe(8);
     expect(FULL).toHaveLength(16);
     const decoded = decodeMotorOutputs(Uint8Array.from(FULL));
     expect(decoded.values).toHaveLength(8);

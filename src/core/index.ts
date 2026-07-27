@@ -135,7 +135,7 @@ export {
   decodeMotorConfig,
   decodeMotor3dConfig,
   decodeMotorOutputs,
-  MSP_MOTOR_OUTPUT_COUNT,
+  MSP_MOTOR_OUTPUT_SLOT_COUNT,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
@@ -157,7 +157,16 @@ export type {ArmingBlockSeverity, ArmingBlockReason, ArmingReadiness, ArmingBloc
 export {pickTopNotice} from './state';
 export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeScope} from './state';
 export {assembleMotorStaticFacts, bindMotorStaticFacts} from './state';
-export type {MotorStaticFacts, MotorStaticFactsInput, MotorStaticFactsBinding} from './state';
+export type {
+  MotorStaticFacts,
+  MotorStaticFactsInput,
+  MotorStaticFactsBinding,
+  MotorStaticFactsSessionIdentity,
+  MotorStaticFactsFlightControllerIdentity,
+  MotorStaticFactsApiVersionSnapshot,
+  MotorStaticFactsFirmwareSnapshot,
+  MotorStaticFactsBoardSnapshot,
+} from './state';
 // Pass 7.6a: exported directly from the module file (not via ./state's
 // barrel) because src/core/state/index.ts is outside this pass's
 // authorized file allowlist - a deliberate, documented allowlist
