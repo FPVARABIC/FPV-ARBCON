@@ -34,12 +34,10 @@ function lastModelPose(): {rollDeg: number; pitchDeg: number; yawDeg: number} {
   return calls[calls.length - 1][0].orientation;
 }
 
-/** Every renderer this file mounts, so each one is unmounted again.
- * Not hygiene theatre: the model-interpolation frame loop is a real
- * requestAnimationFrame (setTimeout-backed under the RN Jest preset), and
- * only unmounting runs the cleanup that cancels a frame still in flight.
- * Left mounted, a test that eases the model leaks a timer past the end of
- * the suite. */
+/** Every renderer this file mounts, so each one is unmounted again - a
+ * tree left mounted keeps answering updates and would distort the next
+ * test, and the leak checks below can only mean anything if nothing from
+ * an earlier test is still alive. */
 const mounted: ReactTestRenderer.ReactTestRenderer[] = [];
 
 beforeEach(() => {
@@ -71,7 +69,9 @@ function render(
   overrides: Partial<{
     hasSeenResetHint: boolean;
     canReset: boolean;
-    interpolationResetToken: string;
+    sessionToken: string;
+    sampleSeq: number;
+    sampleReceivedAt: number;
     onResetView: () => void;
     onResetHintShown: () => void;
   }> = {},
@@ -79,16 +79,18 @@ function render(
   renderer: ReactTestRenderer.ReactTestRenderer;
   onResetView: jest.Mock;
   onResetHintShown: jest.Mock;
-  update: (next: OrientationViewState) => void;
+  update: (next: OrientationViewState, sampleSeq?: number) => void;
 } {
   const onResetView = (overrides.onResetView as jest.Mock) ?? jest.fn();
   const onResetHintShown = (overrides.onResetHintShown as jest.Mock) ?? jest.fn();
-  const element = (view: OrientationViewState) => (
+  const element = (view: OrientationViewState, sampleSeq?: number) => (
     <OrientationHero
       orientationView={view}
       hasSeenResetHint={overrides.hasSeenResetHint ?? true}
       canReset={overrides.canReset}
-      interpolationResetToken={overrides.interpolationResetToken}
+      sessionToken={overrides.sessionToken}
+      sampleSeq={sampleSeq ?? overrides.sampleSeq}
+      sampleReceivedAt={overrides.sampleReceivedAt}
       onResetView={onResetView}
       onResetHintShown={onResetHintShown}
     />
@@ -98,9 +100,9 @@ function render(
     renderer = ReactTestRenderer.create(element(orientationView));
   });
   mounted.push(renderer);
-  const update = (next: OrientationViewState) => {
+  const update = (next: OrientationViewState, sampleSeq?: number) => {
     act(() => {
-      renderer.update(element(next));
+      renderer.update(element(next, sampleSeq));
     });
   };
   return {renderer, onResetView, onResetHintShown, update};
@@ -250,21 +252,87 @@ describe('OrientationHero', () => {
   });
 
   /**
-   * Interpolation is a VISUAL smoothing of the model between two genuine
-   * samples. These tests pin the boundary: what the model may show while
-   * easing, and what the numbers/accessibility text may never show.
+   * LATEST WINS. The model is handed the newest genuine sample directly,
+   * with nothing between it and the renderer - no easing, no queue, no
+   * pending target. These tests pin that: the model and the numbers show
+   * the SAME sample, and no amount of flushing can bring an older one
+   * back afterwards.
    */
-  describe('model interpolation vs. the numeric readouts', () => {
-    it('the FIRST sample of a session reaches the model exactly as reported - nothing to ease from', () => {
-      render({status: 'LIVE', rollDeg: 12, pitchDeg: -4, yawDeg: 200}, {interpolationResetToken: 's:1'});
+  describe('latest-wins: the model and the numbers show the same sample', () => {
+    /** Every deferred mechanism React or the runtime might still be
+     * holding: microtasks, timers, and animation frames. If anything at
+     * all could restore an older pose, this is where it would happen. */
+    async function flushEverythingDeferred(): Promise<void> {
+      await act(async () => {
+        for (let i = 0; i < 10; i++) {
+          await Promise.resolve();
+        }
+        jest.advanceTimersByTime(5_000);
+        await Promise.resolve();
+      });
+    }
+
+    it('the FIRST sample of a session reaches the model exactly as reported', () => {
+      render({status: 'LIVE', rollDeg: 12, pitchDeg: -4, yawDeg: 200});
       expect(lastModelPose()).toEqual({rollDeg: 12, pitchDeg: -4, yawDeg: 200});
     });
 
-    it('the numbers and the accessibility text follow the GENUINE sample, never an animation frame', () => {
-      const {renderer, update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0}, {interpolationResetToken: 's:1'});
+    it('a burst of 100 samples ends on sample 100 in BOTH the model and the numbers, and cannot be undone', async () => {
+      jest.useFakeTimers();
+      try {
+        const {renderer, update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0}, {sessionToken: 's:1'});
 
-      // A large jump: the model may lag behind while easing, but the
-      // readouts must show the new sample on the very same render.
+        for (let seq = 1; seq <= 100; seq++) {
+          update({status: 'LIVE', rollDeg: seq % 31, pitchDeg: -(seq % 17), yawDeg: (seq * 3) % 360}, seq);
+        }
+
+        const final = {rollDeg: 100 % 31, pitchDeg: -(100 % 17), yawDeg: (100 * 3) % 360};
+        expect(lastModelPose()).toEqual(final);
+        expect(allText(renderer)).toContain(`${final.rollDeg}°`);
+        expect(allText(renderer)).toContain(`${final.yawDeg}°`);
+
+        // Nothing queued anywhere may resurrect samples 1-99.
+        await flushEverythingDeferred();
+        expect(lastModelPose()).toEqual(final);
+        expect(allText(renderer)).toContain(`${final.yawDeg}°`);
+      } finally {
+        jest.clearAllTimers();
+        jest.useRealTimers();
+      }
+    });
+
+    it.each([
+      ['level', {rollDeg: 0, pitchDeg: 0, yawDeg: 0}],
+      ['roll right', {rollDeg: 27, pitchDeg: 0, yawDeg: 0}],
+      ['roll left', {rollDeg: -27, pitchDeg: 0, yawDeg: 0}],
+      ['pitch up', {rollDeg: 0, pitchDeg: 33, yawDeg: 0}],
+      ['pitch down', {rollDeg: 0, pitchDeg: -33, yawDeg: 0}],
+      ['heading just below the wrap', {rollDeg: 0, pitchDeg: 0, yawDeg: 359}],
+      ['heading just past the wrap', {rollDeg: 0, pitchDeg: 0, yawDeg: 1}],
+      ['compound', {rollDeg: -14, pitchDeg: 21, yawDeg: 274}],
+    ])('%s: the model receives EXACTLY the displayed numbers', (_label, pose) => {
+      const {renderer} = render({status: 'LIVE', ...pose});
+
+      expect(lastModelPose()).toEqual(pose);
+      const text = allText(renderer);
+      expect(text).toContain(`${Math.round(pose.rollDeg)}°`);
+      expect(text).toContain(`${Math.round(pose.pitchDeg)}°`);
+      expect(text).toContain(`${Math.round(pose.yawDeg)}°`);
+    });
+
+    it('crossing 359 -> 0 hands the model the reported heading, never a swept value in between', () => {
+      const {update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 359});
+      expect(lastModelPose().yawDeg).toBe(359);
+
+      update({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 1});
+      // 1, not 180 and not 359: no interpolation exists to produce an
+      // intermediate heading at all.
+      expect(lastModelPose().yawDeg).toBe(1);
+    });
+
+    it('the numbers and the accessibility text follow the GENUINE sample', () => {
+      const {renderer, update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+
       update({status: 'LIVE', rollDeg: 30, pitchDeg: -20, yawDeg: 150});
 
       const text = allText(renderer);
@@ -274,27 +342,29 @@ describe('OrientationHero', () => {
       expect(findByTestID(renderer, 'orientation-hero-renderer-wrapper')?.props.accessibilityLabel).toBe(
         'ميلان 30 درجة لليمين، انخفاض المقدمة 20 درجة، الاتجاه 150 درجة',
       );
+      expect(lastModelPose()).toEqual({rollDeg: 30, pitchDeg: -20, yawDeg: 150});
     });
 
-    it('STALE hands the model the FROZEN genuine sample - a stale pose is never eased toward anything', () => {
-      const {update} = render({status: 'LIVE', rollDeg: 10, pitchDeg: 5, yawDeg: 90}, {interpolationResetToken: 's:1'});
+    it('STALE hands the model the FROZEN genuine sample and invents no continued movement', () => {
+      const {update} = render({status: 'LIVE', rollDeg: 10, pitchDeg: 5, yawDeg: 90});
       rendererMock.mockClear();
 
       update({status: 'STALE', rollDeg: 10, pitchDeg: 5, yawDeg: 90, ageMs: 1200});
 
       expect(lastModelPose()).toEqual({rollDeg: 10, pitchDeg: 5, yawDeg: 90});
+      expect(rendererMock.mock.calls[rendererMock.mock.calls.length - 1][0].stale).toBe(true);
     });
 
-    it('a SESSION change snaps the model to the new sample instead of sweeping across from the old attitude', () => {
-      const {renderer, update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 350}, {interpolationResetToken: 's:1'});
+    it('a SESSION change shows the new session sample immediately, with no trace of the old attitude', () => {
+      const {renderer} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 350}, {sessionToken: 's:1'});
 
-      // Same component, replacement generation: re-render with a new token.
       act(() => {
         renderer.update(
           <OrientationHero
             orientationView={{status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 20}}
             hasSeenResetHint
-            interpolationResetToken="s:2"
+            sessionToken="s:2"
+            sampleSeq={1}
             onResetView={jest.fn()}
             onResetHintShown={jest.fn()}
           />,
@@ -302,9 +372,27 @@ describe('OrientationHero', () => {
       });
 
       expect(lastModelPose()).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 20});
-      // `update` is exercised above only to keep the helper's contract
-      // honest for readers - the session change itself is the assertion.
-      expect(typeof update).toBe('function');
+    });
+
+    it('rendering samples schedules NO animation frame and NO timer from this component', () => {
+      const raf = jest.spyOn(globalThis, 'requestAnimationFrame');
+      const interval = jest.spyOn(globalThis, 'setInterval');
+      try {
+        const {update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+        for (let seq = 1; seq <= 25; seq++) {
+          update({status: 'LIVE', rollDeg: seq, pitchDeg: -seq, yawDeg: seq * 4}, seq);
+        }
+        expect(raf).not.toHaveBeenCalled();
+        expect(interval).not.toHaveBeenCalled();
+      } finally {
+        raf.mockRestore();
+        interval.mockRestore();
+      }
+    });
+
+    it('non-finite angles are handed through unchanged rather than being smoothed into something invented', () => {
+      render({status: 'LIVE', rollDeg: Number.NaN, pitchDeg: 0, yawDeg: 0});
+      expect(Number.isNaN(lastModelPose().rollDeg)).toBe(true);
     });
   });
 

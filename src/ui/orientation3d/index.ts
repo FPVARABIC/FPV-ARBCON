@@ -11,5 +11,10 @@ export type {
 
 export {OrientationRenderer} from './OrientationRenderer';
 export type {OrientationRendererProps} from './OrientationRenderer';
-export {useInterpolatedOrientation, shortestAngleDelta, ORIENTATION_INTERPOLATION_MS} from './useInterpolatedOrientation';
-export type {InterpolatedOrientation} from './useInterpolatedOrientation';
+export {
+  orientationLatencyTracker,
+  createOrientationLatencyTracker,
+  ORIENTATION_LATENCY_LOG_TAG,
+  ORIENTATION_LATENCY_PENDING_LIMIT,
+} from './orientationLatencyDebugLog';
+export type {OrientationLatencyTracker, OrientationLatencySampleIdentity} from './orientationLatencyDebugLog';

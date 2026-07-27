@@ -246,13 +246,14 @@ function SetupScreenContent({
         <OrientationHero
           orientationView={orientationView}
           hasSeenResetHint={uiState.hasSeenOrientationResetHint}
-          // Session identity AND the captured heading reference. The
-          // reference belongs in the token because pressing reset moves
-          // the DISPLAY, not the aircraft: easing the model 200 degrees
-          // round would animate a rotation that never physically
-          // happened. A reference change snaps, exactly as a session
-          // change does.
-          interpolationResetToken={`${sessionKey.sessionId}:${sessionKey.generation}:${uiState.orientationViewOffset.yawDeg}`}
+          // Diagnostics scope + sample identity. A sampleSeq is only
+          // comparable within one physical session, so it travels with
+          // the composite key; neither value affects what is drawn.
+          sessionToken={`${sessionKey.sessionId}:${sessionKey.generation}`}
+          sampleSeq={attitude.status === 'FRESH' || attitude.status === 'STALE' ? attitude.sampleSeq : undefined}
+          sampleReceivedAt={
+            attitude.status === 'FRESH' || attitude.status === 'STALE' ? attitude.updatedAtMs : undefined
+          }
           canReset={canResetView}
           onResetView={handleResetView}
           onResetHintShown={handleResetHintShown}

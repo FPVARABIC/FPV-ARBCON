@@ -11,6 +11,17 @@
  * "البيانات متأخرة" - never fakes/interpolates, per this pass's own
  * explicit rule.
  *
+ * LATEST SAMPLE WINS, WITH NO ANIMATION IN BETWEEN. The model is handed
+ * the same `displayed` object the numeric readouts render, taken
+ * straight from the newest genuine OrientationViewState. There is no
+ * frame loop, no tween, no queue of pending poses and nothing that can
+ * commit an older sample after a newer one has arrived. An earlier
+ * revision eased the model between samples with requestAnimationFrame;
+ * every frame of that easing rebuilt the whole 38-primitive Skia scene,
+ * so on a real device the model fell progressively behind the readouts
+ * instead of merely looking smoother. Truthful and current beats
+ * smooth: see this pass's own commit message.
+ *
  * hasSeenResetHint/onResetHintShown are OWNED BY THE CALLER (SetupScreen,
  * backed by SetupUiSessionStore) - this component only owns the
  * TRANSIENT "is the hint bubble currently visible" state, which does not
@@ -26,9 +37,9 @@ import {useTranslation} from 'react-i18next';
 import {OrientationRenderer} from '../../orientation3d';
 // Imported from its own module, not the orientation3d barrel: several
 // screen-level suites jest.mock() that barrel down to OrientationRenderer
-// alone (the Skia component cannot mount under Jest), and this hook is
-// pure logic that must keep running in exactly those tests.
-import {useInterpolatedOrientation} from '../../orientation3d/useInterpolatedOrientation';
+// alone (the Skia component cannot mount under Jest), and the
+// diagnostics tracker must keep working in exactly those tests.
+import {orientationLatencyTracker} from '../../orientation3d/orientationLatencyDebugLog';
 import type {OrientationViewState} from '../../../core';
 import {describeOrientationForAccessibility} from '../../../core';
 import {colors, radii, spacing, typography} from '../../theme';
@@ -38,10 +49,17 @@ const HERO_SIZE = 260;
 export interface OrientationHeroProps {
   orientationView: OrientationViewState;
   hasSeenResetHint: boolean;
-  /** Composite session identity ({sessionId}:{generation}). Changing it
-   * snaps the model instead of sweeping it across from the previous
-   * session's attitude - see useInterpolatedOrientation. */
-  interpolationResetToken?: string;
+  /** Composite session identity ({sessionId}:{generation}), used only to
+   * scope the development-only latency diagnostics - a sample sequence
+   * is meaningless across sessions. Nothing about what is drawn depends
+   * on it. */
+  sessionToken?: string;
+  /** Which genuine sample `orientationView` came from
+   * (TelemetryValue.sampleSeq). Diagnostics only. */
+  sampleSeq?: number;
+  /** The scheduler's own publication stamp for that sample
+   * (TelemetryValue.updatedAtMs). Diagnostics only. */
+  sampleReceivedAt?: number;
   /** The display-only Heading reset needs a FRESH sample from a session
    * that is still active in order to capture a reference. Optional and
    * defaulting to true so existing callers/tests are unaffected; the real
@@ -54,26 +72,15 @@ export interface OrientationHeroProps {
 export default function OrientationHero({
   orientationView,
   hasSeenResetHint,
-  interpolationResetToken,
+  sessionToken,
+  sampleSeq,
+  sampleReceivedAt,
   canReset = true,
   onResetView,
   onResetHintShown,
 }: OrientationHeroProps): React.JSX.Element {
   const {t} = useTranslation();
   const [hintVisible, setHintVisible] = useState(false);
-
-  // MODEL-ONLY easing between two genuine samples. Called before the
-  // WAITING/ERROR early returns because hooks must run unconditionally;
-  // a null target is exactly how the hook is told to stop animating and
-  // freeze on the last real pose (STALE, WAITING and ERROR all pass
-  // null). The numeric readouts below never read this value.
-  const interpolationTarget =
-    orientationView.status === 'LIVE'
-      ? {rollDeg: orientationView.rollDeg, pitchDeg: orientationView.pitchDeg, yawDeg: orientationView.yawDeg}
-      : null;
-  const interpolatedOrientation = useInterpolatedOrientation(interpolationTarget, {
-    resetToken: interpolationResetToken,
-  });
 
   const handleReset = () => {
     // Rejected, not merely visually disabled: a press delivered while the
@@ -107,6 +114,31 @@ export default function OrientationHero({
   const isStale = orientationView.status === 'STALE';
   const accessibilityText = describeOrientationForAccessibility(orientationView);
 
+  // THE displayed sample. One object, built once, handed to the model
+  // and read by the numeric readouts below - so "the number and the
+  // model disagree" is not a state this component can even represent.
+  const displayed = {
+    rollDeg: orientationView.rollDeg,
+    pitchDeg: orientationView.pitchDeg,
+    yawDeg: orientationView.yawDeg,
+  };
+
+  // Development-only latency stamp. Deliberately during render rather
+  // than in an effect: an effect would measure when React got round to
+  // running effects, not when this sample reached the model. The tracker
+  // is a no-op outside __DEV__, is idempotent per sample, and schedules
+  // nothing.
+  const sampleIdentity =
+    sessionToken !== undefined && sampleSeq !== undefined ? {sessionToken, sampleSeq} : undefined;
+  if (sampleIdentity !== undefined) {
+    orientationLatencyTracker.noteHeroSample(
+      sampleIdentity,
+      sampleReceivedAt ?? 0,
+      orientationView.status,
+      displayed,
+    );
+  }
+
   return (
     <View style={styles.container} testID="orientation-hero">
       <View
@@ -115,19 +147,14 @@ export default function OrientationHero({
         accessibilityLabel={accessibilityText}
         testID="orientation-hero-renderer-wrapper">
         <OrientationRenderer
-          orientation={
-            // Eased pose while LIVE; the genuine sample itself whenever
-            // interpolation is not running (STALE freeze, first sample of
-            // a session, or a snapped session change).
-            interpolatedOrientation ?? {
-              rollDeg: orientationView.rollDeg,
-              pitchDeg: orientationView.pitchDeg,
-              yawDeg: orientationView.yawDeg,
-            }
-          }
+          // The latest GENUINE sample, directly. No animation, no queue,
+          // no pending target: a newer sample simply replaces this prop,
+          // so an older pose can never be drawn after a newer one.
+          orientation={displayed}
           width={HERO_SIZE}
           height={HERO_SIZE}
           stale={isStale}
+          sampleIdentity={sampleIdentity}
         />
       </View>
 
@@ -140,15 +167,15 @@ export default function OrientationHero({
       <View style={styles.readoutsRow}>
         <View style={styles.readout} testID="orientation-hero-roll">
           <Text style={styles.readoutLabel}>{t('orientationHero.rollLabel')}</Text>
-          <Text style={styles.readoutValue}>{`${Math.round(orientationView.rollDeg)}°`}</Text>
+          <Text style={styles.readoutValue}>{`${Math.round(displayed.rollDeg)}°`}</Text>
         </View>
         <View style={styles.readout} testID="orientation-hero-pitch">
           <Text style={styles.readoutLabel}>{t('orientationHero.pitchLabel')}</Text>
-          <Text style={styles.readoutValue}>{`${Math.round(orientationView.pitchDeg)}°`}</Text>
+          <Text style={styles.readoutValue}>{`${Math.round(displayed.pitchDeg)}°`}</Text>
         </View>
         <View style={styles.readout} testID="orientation-hero-heading">
           <Text style={styles.readoutLabel}>{t('orientationHero.headingLabel')}</Text>
-          <Text style={styles.readoutValue}>{`${Math.round(orientationView.yawDeg)}°`}</Text>
+          <Text style={styles.readoutValue}>{`${Math.round(displayed.yawDeg)}°`}</Text>
         </View>
       </View>
 
