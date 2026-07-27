@@ -123,6 +123,83 @@ describe('SetupUiSessionStore', () => {
 
       expect(store.getState(KEY_A).orientationViewOffset).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
     });
+
+    /**
+     * The Heading-reset repair. Before it, this method zeroed the offset,
+     * so pressing reset while the FC pointed at 90 degrees left the
+     * display still reading 90 - the button visibly did nothing. It now
+     * CAPTURES the raw yaw at press time as this session's heading
+     * reference, which is what makes the readout drop to ~0 and stay
+     * relative afterwards.
+     */
+    describe('captured heading reference', () => {
+      it('stores the raw yaw handed to it as the reference, instead of zeroing it', () => {
+        const store = new SetupUiSessionStore();
+
+        store.resetOrientationViewOffset(KEY_A, 90);
+
+        expect(store.getState(KEY_A).orientationViewOffset).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 90});
+      });
+
+      it('is Heading-only: roll and pitch references are cleared to zero and never captured', () => {
+        const store = new SetupUiSessionStore();
+        store.update(KEY_A, {orientationViewOffset: {rollDeg: 12, pitchDeg: -6, yawDeg: 10}});
+
+        store.resetOrientationViewOffset(KEY_A, 217);
+
+        const offset = store.getState(KEY_A).orientationViewOffset;
+        expect(offset.rollDeg).toBe(0);
+        expect(offset.pitchDeg).toBe(0);
+        expect(offset.yawDeg).toBe(217);
+      });
+
+      it('normalizes the captured yaw into [0, 360) exactly as the view model normalizes the raw sample', () => {
+        const store = new SetupUiSessionStore();
+
+        // A negative or over-wound sample must land on the same value the
+        // readout would show, so reference and sample cancel exactly.
+        store.resetOrientationViewOffset(KEY_A, -10);
+        expect(store.getState(KEY_A).orientationViewOffset.yawDeg).toBe(350);
+
+        store.resetOrientationViewOffset(KEY_A, 370);
+        expect(store.getState(KEY_A).orientationViewOffset.yawDeg).toBe(10);
+
+        store.resetOrientationViewOffset(KEY_A, 359.9);
+        expect(store.getState(KEY_A).orientationViewOffset.yawDeg).toBeCloseTo(359.9, 10);
+      });
+
+      it('clears the reference rather than freezing a guessed one when there is no sample to capture', () => {
+        const store = new SetupUiSessionStore();
+        store.resetOrientationViewOffset(KEY_A, 90);
+
+        store.resetOrientationViewOffset(KEY_A);
+
+        expect(store.getState(KEY_A).orientationViewOffset).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+      });
+
+      it('never stores a non-finite reference - NaN/Infinity clear it instead of poisoning every later heading', () => {
+        const store = new SetupUiSessionStore();
+
+        store.resetOrientationViewOffset(KEY_A, Number.NaN);
+        expect(store.getState(KEY_A).orientationViewOffset.yawDeg).toBe(0);
+
+        store.resetOrientationViewOffset(KEY_A, Number.POSITIVE_INFINITY);
+        expect(store.getState(KEY_A).orientationViewOffset.yawDeg).toBe(0);
+      });
+
+      it('a session REPLACEMENT starts with no reference - a new generation never inherits the old heading zero', () => {
+        const store = new SetupUiSessionStore();
+        store.resetOrientationViewOffset(KEY_A, 90);
+
+        // Same physical device, replugged: same sessionId string, new
+        // generation. Its state is the shared zero-offset default.
+        expect(store.getState(KEY_A_GEN_2).orientationViewOffset).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+        // A different device likewise starts unreferenced.
+        expect(store.getState(KEY_B).orientationViewOffset).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+        // ...and the original session keeps its own reference intact.
+        expect(store.getState(KEY_A).orientationViewOffset.yawDeg).toBe(90);
+      });
+    });
   });
 
   describe('hasSeenOrientationResetHint', () => {

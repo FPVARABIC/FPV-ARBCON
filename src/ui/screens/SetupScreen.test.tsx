@@ -13,7 +13,10 @@
  */
 
 jest.mock('../orientation3d', () => ({
-  OrientationRenderer: () => null,
+  // A jest.fn component: the pose the 3D model is handed has to be
+  // observable for the heading-reset tests below, which assert the model
+  // and the numeric readout agree on the SAME relative heading.
+  OrientationRenderer: jest.fn(() => null),
 }));
 
 import React from 'react';
@@ -22,6 +25,7 @@ import ReactTestRenderer, {act} from 'react-test-renderer';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 
 import SetupScreen from './SetupScreen';
+import {OrientationRenderer} from '../orientation3d';
 import '../../i18n';
 import i18n from '../../i18n';
 import type {RootStackParamList} from '../../navigation/types';
@@ -778,7 +782,7 @@ describe('SetupScreen - Step 6: SafetyStrip compact vs expanded through the real
 });
 
 describe('SetupScreen - Step 6: resetOrientationViewOffset() end-to-end', () => {
-  it('pressing the reset button zeroes the REAL stored offset, changes the displayed (now un-offset) readouts, and shows the one-time hint only on the first press', async () => {
+  it('pressing the reset button captures the CURRENT raw yaw as the REAL stored heading reference, drives the displayed Heading to 0, leaves roll/pitch untouched, and shows the one-time hint only on the first press', async () => {
     const sessionId = 'step6-reset-1';
     const sessionKey = {sessionId, generation: 1};
     // Seed a genuinely non-zero, pre-existing offset directly in the
@@ -810,12 +814,16 @@ describe('SetupScreen - Step 6: resetOrientationViewOffset() end-to-end', () => 
       findAnyByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
     });
 
-    // The REAL store is genuinely zeroed - not just the rendered output.
-    expect(setupUiSessionStore.getState(sessionKey).orientationViewOffset).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+    // The REAL store now holds the CAPTURED heading reference - the raw
+    // yaw at press time (90), not a zero. Roll/pitch references stay at
+    // zero: this reset is Heading-only and never touches tilt.
+    expect(setupUiSessionStore.getState(sessionKey).orientationViewOffset).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 90});
     expect(setupUiSessionStore.getState(sessionKey).hasSeenOrientationResetHint).toBe(true);
-    // Readouts now show the RAW (no-longer-offset) values.
+    // Heading reads 0 immediately after the reset (90 - 90), while roll
+    // and pitch show their RAW values now that their offsets are gone.
+    expect(allText(renderer)).toContain('0°');
     expect(allText(renderer)).toContain('10°');
-    expect(allText(renderer)).toContain('90°');
+    expect(allText(renderer)).toContain('-5°');
     // The one-time hint appeared on this first press.
     expect(findAnyByTestID(renderer, 'orientation-hero-reset-hint')).not.toBeNull();
     expect(allText(renderer)).toContain(i18n.t('orientationHero.resetHint'));
@@ -833,6 +841,298 @@ describe('SetupScreen - Step 6: resetOrientationViewOffset() end-to-end', () => 
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+});
+
+/**
+ * The Heading-reset repair, through the REAL store, the REAL view model
+ * and the REAL session coordinator.
+ *
+ * The defect being fixed: pressing "إعادة ضبط عرض الاتجاه" wrote a ZERO
+ * offset instead of capturing the current heading, so the displayed
+ * Heading did not move and the button appeared to do nothing. The
+ * contract now is a captured REFERENCE - the display becomes relative to
+ * wherever the aircraft was pointing at press time, the raw sensor is
+ * never touched, and the reference belongs to one session only.
+ */
+describe('SetupScreen - the display-only Heading reset', () => {
+  const rendererMock = OrientationRenderer as unknown as jest.Mock;
+  /** Tracked so a test that fails mid-way still leaves the next one a
+   * clean tree - a screen left mounted keeps answering telemetry
+   * notifications and would silently distort the following test. */
+  const mounted: ReactTestRenderer.ReactTestRenderer[] = [];
+
+  beforeEach(() => {
+    rendererMock.mockClear();
+    jest.useFakeTimers();
+  });
+
+  afterEach(() => {
+    act(() => {
+      for (const renderer of mounted.splice(0)) {
+        renderer.unmount();
+      }
+    });
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  /** The pose the 3D model was last handed - the model side of "the
+   * number and the model agree". */
+  function lastModelPose(): {rollDeg: number; pitchDeg: number; yawDeg: number} {
+    const calls = rendererMock.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    return calls[calls.length - 1][0].orientation;
+  }
+
+  async function mountWithAttitude(
+    sessionKey: {sessionId: string; generation: number},
+    attitude: {rollDecidegrees: number; pitchDecidegrees: number; yawDegrees: number},
+  ) {
+    const client = makeFakeClient(sessionKey.sessionId);
+    client.setResponse(
+      MSP_ATTITUDE,
+      attitudePayload(attitude.rollDecidegrees, attitude.pitchDecidegrees, attitude.yawDegrees),
+    );
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...makeProps({sessionKey})} />);
+    });
+    mounted.push(renderer);
+    await act(async () => {
+      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionKey.sessionId);
+      await flushAsync();
+    });
+    // The real 50ms tick driver: the attitude poll is due at
+    // registration, so this is its first genuine dispatch.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(50);
+      await flushAsync();
+    });
+    return {client, renderer};
+  }
+
+  /** Answers the attitude poll with a new sample and lets the REAL 220ms
+   * poll cadence deliver it - no hand-driven scheduler poking. */
+  async function pushAttitude(
+    client: ReturnType<typeof makeFakeClient>,
+    attitude: {rollDecidegrees: number; pitchDecidegrees: number; yawDegrees: number},
+  ) {
+    client.setResponse(
+      MSP_ATTITUDE,
+      attitudePayload(attitude.rollDecidegrees, attitude.pitchDecidegrees, attitude.yawDegrees),
+    );
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(300);
+      await flushAsync();
+    });
+  }
+
+  it('later samples stay RELATIVE to the captured reference - the reset is a new zero, not a one-off nudge', async () => {
+    const sessionKey = {sessionId: 'heading-reset-relative', generation: 1};
+    const {client, renderer} = await mountWithAttitude(sessionKey, {
+      rollDecidegrees: 0,
+      pitchDecidegrees: 0,
+      yawDegrees: 90,
+    });
+
+    expect(allText(renderer)).toContain('90°');
+    await act(async () => {
+      findAnyByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+    });
+    expect(allText(renderer)).toContain('0°');
+
+    // The aircraft yaws 30 degrees further right: the display must read
+    // 30, not 120 - the reference persists across samples.
+    await pushAttitude(client, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 120});
+    expect(allText(renderer)).toContain('30°');
+
+    // And it wraps the short way: 80 degrees LEFT of the reference reads
+    // 280, never a negative heading.
+    await pushAttitude(client, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 10});
+    expect(allText(renderer)).toContain('280°');
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionKey.sessionId);
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('the numeric Heading and the 3D model show the SAME relative heading, before and after the reset', async () => {
+    const sessionKey = {sessionId: 'heading-reset-model-agrees', generation: 1};
+    const {renderer} = await mountWithAttitude(sessionKey, {
+      rollDecidegrees: 100,
+      pitchDecidegrees: 50,
+      yawDegrees: 200,
+    });
+
+    // Before: model and number both on the raw sample (roll 10, pitch -5,
+    // heading 200 - pitch negated once at the firmware boundary).
+    expect(lastModelPose()).toEqual({rollDeg: 10, pitchDeg: -5, yawDeg: 200});
+    expect(allText(renderer)).toContain('200°');
+
+    await act(async () => {
+      findAnyByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+    });
+
+    // After: both on the SAME relative heading. The model is not eased
+    // here - the sample itself never changed, only the reference did.
+    const pose = lastModelPose();
+    expect(pose.yawDeg).toBe(0);
+    expect(allText(renderer)).toContain('0°');
+    // Tilt is untouched by a Heading-only reset, in both places.
+    expect(pose.rollDeg).toBe(10);
+    expect(pose.pitchDeg).toBe(-5);
+    expect(allText(renderer)).toContain('10°');
+    expect(allText(renderer)).toContain('-5°');
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionKey.sessionId);
+    });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('is UNAVAILABLE on a STALE reading, and a press delivered anyway captures NOTHING', async () => {
+    const sessionKey = {sessionId: 'heading-reset-stale', generation: 1};
+    const {client, renderer} = await mountWithAttitude(sessionKey, {
+      rollDecidegrees: 0,
+      pitchDecidegrees: 0,
+      yawDegrees: 90,
+    });
+
+    // FRESH and connected: the control is available.
+    expect(findAnyByTestID(renderer, 'orientation-hero-reset-button')!.props.disabled).toBe(false);
+
+    // Attitude stops arriving; past 700ms the reading is STALE. The
+    // session is still ACTIVE, so the button is still on screen - but a
+    // frozen sample is not something to zero against.
+    client.clearResponse(MSP_ATTITUDE);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(750);
+      await flushAsync();
+    });
+
+    const button = findAnyByTestID(renderer, 'orientation-hero-reset-button');
+    expect(button?.props.disabled).toBe(true);
+    expect(button?.props.accessibilityState).toEqual({disabled: true});
+    expect(findAnyByTestID(renderer, 'orientation-hero-reset-unavailable')).not.toBeNull();
+
+    await act(async () => {
+      button!.props.onPress();
+    });
+    expect(setupUiSessionStore.getState(sessionKey).orientationViewOffset).toEqual({
+      rollDeg: 0,
+      pitchDeg: 0,
+      yawDeg: 0,
+    });
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionKey.sessionId);
+      await flushAsync();
+    });
+  });
+
+  it('once the session ends there is no reset control at all, and a late press stores nothing', async () => {
+    const sessionKey = {sessionId: 'heading-reset-ended', generation: 1};
+    const {renderer} = await mountWithAttitude(sessionKey, {
+      rollDecidegrees: 0,
+      pitchDecidegrees: 0,
+      yawDegrees: 90,
+    });
+    // Captured BEFORE the disconnect - exactly the stale callback a real
+    // late tap would run.
+    const press = findAnyByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress;
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionKey.sessionId);
+      await flushAsync();
+    });
+
+    // No telemetry to draw at all: the hero is back to its waiting state
+    // and offers nothing to press.
+    expect(findAnyByTestID(renderer, 'orientation-hero-waiting')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'orientation-hero-reset-button')).toBeNull();
+
+    await act(async () => {
+      press();
+    });
+    expect(setupUiSessionStore.getState(sessionKey).orientationViewOffset).toEqual({
+      rollDeg: 0,
+      pitchDeg: 0,
+      yawDeg: 0,
+    });
+
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('a REPLACEMENT session starts unreferenced - the previous generation heading zero never leaks into it', async () => {
+    const sessionId = 'heading-reset-replacement';
+    const firstKey = {sessionId, generation: 1};
+    const first = await mountWithAttitude(firstKey, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 90});
+
+    await act(async () => {
+      findAnyByTestID(first.renderer, 'orientation-hero-reset-button')!.props.onPress();
+    });
+    expect(setupUiSessionStore.getState(firstKey).orientationViewOffset.yawDeg).toBe(90);
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushAsync();
+    });
+    act(() => {
+      first.renderer.unmount();
+    });
+
+    // Replugged: the same sessionId string, a NEW generation.
+    const secondKey = {sessionId, generation: 2};
+    const second = await mountWithAttitude(secondKey, {rollDecidegrees: 0, pitchDecidegrees: 0, yawDegrees: 90});
+
+    expect(setupUiSessionStore.getState(secondKey).orientationViewOffset).toEqual({
+      rollDeg: 0,
+      pitchDeg: 0,
+      yawDeg: 0,
+    });
+    // Unreferenced, so the RAW heading is shown - not the old zero.
+    expect(allText(second.renderer)).toContain('90°');
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
+    act(() => {
+      second.renderer.unmount();
+    });
+  });
+
+  it('captures a reference WITHOUT sending anything to the FC - resetting the view is not an MSP command', async () => {
+    const sessionKey = {sessionId: 'heading-reset-no-write', generation: 1};
+    const {client, renderer} = await mountWithAttitude(sessionKey, {
+      rollDecidegrees: 0,
+      pitchDecidegrees: 0,
+      yawDegrees: 90,
+    });
+
+    const before = client.writeBytes.mock.calls.length;
+    await act(async () => {
+      findAnyByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+    });
+
+    // Not merely "no calibration command" - no MSP traffic at all is
+    // caused by the press itself.
+    expect(client.writeBytes.mock.calls.length).toBe(before);
+    expect(setupUiSessionStore.getState(sessionKey).orientationViewOffset.yawDeg).toBe(90);
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionKey.sessionId);
     });
     act(() => {
       renderer.unmount();

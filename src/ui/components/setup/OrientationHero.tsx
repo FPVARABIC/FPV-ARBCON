@@ -24,6 +24,11 @@ import {Pressable, StyleSheet, Text, View} from 'react-native';
 import {useTranslation} from 'react-i18next';
 
 import {OrientationRenderer} from '../../orientation3d';
+// Imported from its own module, not the orientation3d barrel: several
+// screen-level suites jest.mock() that barrel down to OrientationRenderer
+// alone (the Skia component cannot mount under Jest), and this hook is
+// pure logic that must keep running in exactly those tests.
+import {useInterpolatedOrientation} from '../../orientation3d/useInterpolatedOrientation';
 import type {OrientationViewState} from '../../../core';
 import {describeOrientationForAccessibility} from '../../../core';
 import {colors, radii, spacing, typography} from '../../theme';
@@ -33,6 +38,15 @@ const HERO_SIZE = 260;
 export interface OrientationHeroProps {
   orientationView: OrientationViewState;
   hasSeenResetHint: boolean;
+  /** Composite session identity ({sessionId}:{generation}). Changing it
+   * snaps the model instead of sweeping it across from the previous
+   * session's attitude - see useInterpolatedOrientation. */
+  interpolationResetToken?: string;
+  /** The display-only Heading reset needs a FRESH sample from a session
+   * that is still active in order to capture a reference. Optional and
+   * defaulting to true so existing callers/tests are unaffected; the real
+   * screen passes the computed availability. */
+  canReset?: boolean;
   onResetView: () => void;
   onResetHintShown: () => void;
 }
@@ -40,13 +54,33 @@ export interface OrientationHeroProps {
 export default function OrientationHero({
   orientationView,
   hasSeenResetHint,
+  interpolationResetToken,
+  canReset = true,
   onResetView,
   onResetHintShown,
 }: OrientationHeroProps): React.JSX.Element {
   const {t} = useTranslation();
   const [hintVisible, setHintVisible] = useState(false);
 
+  // MODEL-ONLY easing between two genuine samples. Called before the
+  // WAITING/ERROR early returns because hooks must run unconditionally;
+  // a null target is exactly how the hook is told to stop animating and
+  // freeze on the last real pose (STALE, WAITING and ERROR all pass
+  // null). The numeric readouts below never read this value.
+  const interpolationTarget =
+    orientationView.status === 'LIVE'
+      ? {rollDeg: orientationView.rollDeg, pitchDeg: orientationView.pitchDeg, yawDeg: orientationView.yawDeg}
+      : null;
+  const interpolatedOrientation = useInterpolatedOrientation(interpolationTarget, {
+    resetToken: interpolationResetToken,
+  });
+
   const handleReset = () => {
+    // Rejected, not merely visually disabled: a press delivered while the
+    // control is unavailable must capture nothing at all.
+    if (!canReset) {
+      return;
+    }
     onResetView();
     if (!hasSeenResetHint) {
       setHintVisible(true);
@@ -81,7 +115,16 @@ export default function OrientationHero({
         accessibilityLabel={accessibilityText}
         testID="orientation-hero-renderer-wrapper">
         <OrientationRenderer
-          orientation={{rollDeg: orientationView.rollDeg, pitchDeg: orientationView.pitchDeg, yawDeg: orientationView.yawDeg}}
+          orientation={
+            // Eased pose while LIVE; the genuine sample itself whenever
+            // interpolation is not running (STALE freeze, first sample of
+            // a session, or a snapped session change).
+            interpolatedOrientation ?? {
+              rollDeg: orientationView.rollDeg,
+              pitchDeg: orientationView.pitchDeg,
+              yawDeg: orientationView.yawDeg,
+            }
+          }
           width={HERO_SIZE}
           height={HERO_SIZE}
           stale={isStale}
@@ -109,14 +152,31 @@ export default function OrientationHero({
         </View>
       </View>
 
+      {/* Heading here is a RELATIVE direction, not magnetic north: this
+          app never claims a compass it cannot prove, and after the
+          display-only reset the number is explicitly relative to the
+          captured reference. */}
+      <Text style={styles.headingNoteText} testID="orientation-hero-heading-note">
+        {t('orientationHero.headingRelativeNote')}
+      </Text>
+
       <Pressable
         onPress={handleReset}
+        disabled={!canReset}
         accessibilityRole="button"
+        accessibilityState={{disabled: !canReset}}
         accessibilityLabel={t('orientationHero.resetButton')}
-        style={styles.resetButton}
+        style={canReset ? styles.resetButton : [styles.resetButton, styles.resetButtonDisabled]}
         testID="orientation-hero-reset-button">
-        <Text style={styles.resetButtonText}>{t('orientationHero.resetButton')}</Text>
+        <Text style={canReset ? styles.resetButtonText : [styles.resetButtonText, styles.resetButtonTextDisabled]}>
+          {t('orientationHero.resetButton')}
+        </Text>
       </Pressable>
+      {!canReset && (
+        <Text style={styles.resetUnavailableText} testID="orientation-hero-reset-unavailable">
+          {t('orientationHero.resetUnavailable')}
+        </Text>
+      )}
 
       {hintVisible && (
         <View style={styles.hintBanner} testID="orientation-hero-reset-hint">
@@ -182,6 +242,24 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.border,
     borderRadius: radii.sm,
+  },
+  headingNoteText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: spacing.xs,
+  },
+  resetButtonDisabled: {
+    opacity: 0.45,
+  },
+  resetButtonTextDisabled: {
+    color: colors.textSecondary,
+  },
+  resetUnavailableText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: spacing.xs,
   },
   resetButtonText: {
     ...typography.body,

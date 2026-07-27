@@ -74,6 +74,7 @@ import {
   useBatteryLatchedValue,
   setupAppStateTelemetryOwner,
   setupUiSessionStore,
+  mspSessionCoordinator,
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
@@ -206,10 +207,32 @@ function SetupScreenContent({
   // a render tick.
   const armingReadiness = deriveArmingReadiness(armed, blockers);
 
+  // The display-only Heading reset may only capture a reference it
+  // genuinely has: a FRESH attitude sample belonging to the session that
+  // is ACTIVE right now. A STALE/WAITING/ERROR reading, or a session that
+  // is no longer active, means there is nothing truthful to zero against,
+  // so the control is disabled rather than freezing a guessed reference.
+  const canResetView = attitude.status === 'FRESH' && ownershipState === 'ACTIVE';
+
   const handleResetView = useCallback(() => {
-    setupUiSessionStore.resetOrientationViewOffset(sessionKey);
+    // Read the AUTHORITATIVE state at press time, from the coordinator
+    // and the scheduler themselves rather than from this callback's own
+    // render closure. A press handler captured before a disconnect - a
+    // tap already in flight, or a stale reference held by a queued event
+    // - would otherwise capture a sample belonging to a session that has
+    // since ended, and store it as this session's heading reference.
+    if (mspSessionCoordinator.getOwnershipState(sessionId) !== 'ACTIVE') {
+      return;
+    }
+    const current = mspSessionCoordinator
+      .getTelemetryScheduler(sessionId)
+      ?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID);
+    if (current === undefined || current.status !== 'FRESH') {
+      return;
+    }
+    setupUiSessionStore.resetOrientationViewOffset(sessionKey, current.value.yawDegrees);
     setUiState(setupUiSessionStore.getState(sessionKey));
-  }, [sessionKey]);
+  }, [sessionKey, sessionId]);
 
   const handleResetHintShown = useCallback(() => {
     setupUiSessionStore.update(sessionKey, {hasSeenOrientationResetHint: true});
@@ -223,6 +246,14 @@ function SetupScreenContent({
         <OrientationHero
           orientationView={orientationView}
           hasSeenResetHint={uiState.hasSeenOrientationResetHint}
+          // Session identity AND the captured heading reference. The
+          // reference belongs in the token because pressing reset moves
+          // the DISPLAY, not the aircraft: easing the model 200 degrees
+          // round would animate a rotation that never physically
+          // happened. A reference change snaps, exactly as a session
+          // change does.
+          interpolationResetToken={`${sessionKey.sessionId}:${sessionKey.generation}:${uiState.orientationViewOffset.yawDeg}`}
+          canReset={canResetView}
           onResetView={handleResetView}
           onResetHintShown={handleResetHintShown}
         />

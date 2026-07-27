@@ -60,17 +60,22 @@ const MATERIAL_COLOR: Record<DroneSceneMaterial, string> = {
   PROP_RING_REAR: colors.error,
   PROP_DISC_REAR: colors.error,
   ARROW: colors.textPrimary,
+  LEVEL_GRID: colors.border,
 };
 
 /** Faint translucent discs representing the propeller's swept area, per
  * the approved prototype spec - every other material is fully opaque. */
-const TRANSLUCENT_MATERIALS = new Set<DroneSceneMaterial>(['PROP_DISC_FRONT', 'PROP_DISC_REAR']);
+const TRANSLUCENT_MATERIALS = new Set<DroneSceneMaterial>(['PROP_DISC_FRONT', 'PROP_DISC_REAR', 'LEVEL_GRID']);
 const TRANSLUCENT_OPACITY = 0.18;
 
 /** STALE per Step 1's OrientationViewState - the model freezes at its
- * last LIVE pose (the caller simply stops updating `orientation`) and is
- * dimmed here, never faked/interpolated. The "البيانات متأخرة" text
- * label itself is Region 2's own overlay, not this renderer's job. */
+ * last LIVE pose and is dimmed here. Visual interpolation between two
+ * GENUINE samples happens upstream (useInterpolatedOrientation) and is
+ * cancelled the moment data goes STALE, so a dimmed model is always
+ * showing the last real sample - never an extrapolated or invented one,
+ * and never a numeric readout derived from an animation frame. The
+ * "البيانات متأخرة" text label itself is Region 2's own overlay, not
+ * this renderer's job. */
 const STALE_OPACITY_MULTIPLIER = 0.45;
 
 function toSkPath(points: DroneScenePrimitive['points']): SkPath {

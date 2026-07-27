@@ -1262,3 +1262,143 @@ describe('FcToolsController - generation binding', () => {
     }
   });
 });
+
+/**
+ * The ACC-calibration repair pass. Everything above proves the transaction
+ * MACHINERY; this block pins the accelerometer command itself down to the
+ * bytes on the wire, because that is the part a hardware bug report is
+ * about: which opcode left, with what payload, how many times, and what
+ * the app is entitled to claim afterwards.
+ */
+describe('FcToolsController - the ACC calibration command on the wire', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    openSessionIds = [];
+  });
+
+  afterEach(async () => {
+    for (const sessionId of openSessionIds) {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    }
+    await flushAsync();
+    jest.clearAllTimers();
+    jest.useRealTimers();
+    await flushAsync();
+  });
+
+  /** Every frame this session actually handed to the transport, decoded
+   * back from base64 - the only place the real bytes are observable. */
+  function writtenFrames(client: ReturnType<typeof makeFakeClient>) {
+    return client.writeBytes.mock.calls.map(call => base64ToBytes(call[1] as string));
+  }
+
+  async function pressCalibrate(controller: FcToolsController, sessionId: string) {
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(true);
+    const settled = controller.confirm();
+    await settleTransaction();
+    return settled;
+  }
+
+  it('sends opcode 205 with an EXACTLY empty payload - the parameterless MSP_ACC_CALIBRATION', async () => {
+    const sessionId = 'acc-wire-opcode';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    await pressCalibrate(controller, sessionId);
+
+    // The constant and the literal Betaflight opcode must agree; a rename
+    // or a re-point of MSP_ACC_CALIBRATION would otherwise pass silently.
+    expect(MSP_ACC_CALIBRATION).toBe(205);
+    const accFrames = writtenFrames(client).filter(bytes => bytes[4] === 205);
+    expect(accFrames).toHaveLength(1);
+    // v1 frame: '$' 'M' '<' <len> <cmd> ...payload... <crc>. Betaflight's
+    // msp.c takes "no param" literally, so len must be 0 and the frame
+    // must be exactly 6 bytes with nothing between command and checksum.
+    expect(accFrames[0][3]).toBe(0);
+    expect(accFrames[0]).toHaveLength(6);
+  });
+
+  it('never sends MSP_EEPROM_WRITE (250) - the calibration persists FC-side on its own', async () => {
+    const sessionId = 'acc-wire-no-eeprom';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    await pressCalibrate(controller, sessionId);
+
+    expect(writtenFrames(client).map(bytes => bytes[4])).not.toContain(250);
+  });
+
+  it('dispatches EXACTLY ONE calibration per accepted press, and a duplicate press dispatches none', async () => {
+    const sessionId = 'acc-wire-duplicate';
+    const client = await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    // The press that is accepted.
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const first = controller.confirm();
+    // Impatient taps, while the mutex is held by the run above: the
+    // confirmation cannot reopen and confirm() has nothing to confirm.
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(false);
+    expect(await controller.confirm()).toBeNull();
+    expect(controller.requestConfirmation(sessionId, 'ACC_CALIBRATION')).toBe(false);
+
+    await settleTransaction();
+    expect(await first).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+  });
+
+  it('starts NO new periodic poll while the calibration is in flight, and polling resumes afterwards', async () => {
+    const sessionId = 'acc-wire-poll-pause';
+    // Held: the FC never answers, so the calibration genuinely stays in
+    // flight across several 220ms attitude intervals - the only way to
+    // observe the pause rather than assert it.
+    const client = await openIdentifiedSession(sessionId, c => {
+      c.hold(MSP_ACC_CALIBRATION);
+    });
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    let attitudeAtDispatch = -1;
+    client.onWrite(command => {
+      if (command === MSP_ACC_CALIBRATION) {
+        attitudeAtDispatch = client.countOf(MSP_ATTITUDE);
+      }
+    });
+
+    controller.requestConfirmation(sessionId, 'ACC_CALIBRATION');
+    const settled = controller.confirm();
+    // Well past several attitude intervals, but short of the 2000ms
+    // response timeout: the calibration is still outstanding here.
+    await jest.advanceTimersByTimeAsync(1000);
+    await flushAsync();
+    expect(attitudeAtDispatch).toBeGreaterThanOrEqual(0); // it really was dispatched
+    expect(client.countOf(MSP_ATTITUDE)).toBe(attitudeAtDispatch);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushAsync();
+    // No answer ever came, so the honest outcome is UNCONFIRMED - and the
+    // pause must be released on that path exactly as on the happy one.
+    expect(await settled).toEqual({kind: 'UNCONFIRMED', tool: 'ACC_CALIBRATION'});
+
+    const attitudeAfterSettle = client.countOf(MSP_ATTITUDE);
+    await jest.advanceTimersByTimeAsync(700);
+    await flushAsync();
+    // The attitude poll is alive again - exactly what the Orientation
+    // view depends on once a calibration finishes.
+    expect(client.countOf(MSP_ATTITUDE)).toBeGreaterThan(attitudeAfterSettle);
+  });
+
+  it('an ack is ACCEPTED and nothing more - it never asserts the FC finished or verified the calibration', async () => {
+    const sessionId = 'acc-wire-ack-meaning';
+    await openIdentifiedSession(sessionId);
+    const controller = new FcToolsController({appStateOwner: makeOwner().owner});
+
+    const outcome = await pressCalibrate(controller, sessionId);
+
+    // msp.c acks MSP_ACC_CALIBRATION on receipt - even in states where it
+    // starts nothing - so the ONLY truthful claim is that it was accepted.
+    // The outcome union is checked exhaustively here rather than by
+    // reading one field: no COMPLETED/VERIFIED/SUCCEEDED kind may appear.
+    expect(outcome).toEqual({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    expect(['COMPLETED', 'VERIFIED', 'SUCCEEDED', 'CALIBRATED']).not.toContain(outcome?.kind);
+  });
+});

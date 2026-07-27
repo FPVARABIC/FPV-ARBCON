@@ -122,6 +122,15 @@ function serializeKey(key: SetupUiSessionKey): string {
   return `${key.sessionId}:${key.generation}`;
 }
 
+/** The single normalization used for a captured heading reference:
+ * normalize360(v) = ((v % 360) + 360) % 360. Kept here rather than
+ * imported from the view model so this store stays dependency-free, and
+ * deliberately identical to normalizeHeadingDegrees() there so a
+ * reference captured at 359.9 and a raw sample at 359.9 cancel exactly. */
+function normalizeHeadingDegrees(deg: number): number {
+  return ((deg % 360) + 360) % 360;
+}
+
 function sameState(a: SetupUiSessionState, b: SetupUiSessionState): boolean {
   return (
     a.hasSeenOrientationResetHint === b.hasSeenOrientationResetHint &&
@@ -166,14 +175,36 @@ export class SetupUiSessionStore {
     this.trackGeneration(key);
   }
 
-  /** Pass 7.4: "إعادة ضبط عرض الاتجاه" - zeroes ONLY the local
+  /** Pass 7.4: "إعادة ضبط عرض الاتجاه" - writes ONLY the local
    * orientation-view offset. Deliberately does not touch any other field
    * of this session's state, and (same as every other method here) never
    * talks to MspSessionCoordinator/MspClient - resetting the VIEW is not
    * an MSP command and must never be confused with FC sensor
-   * calibration. */
-  resetOrientationViewOffset(key: SetupUiSessionKey): void {
-    this.update(key, {orientationViewOffset: {rollDeg: 0, pitchDeg: 0, yawDeg: 0}});
+   * calibration.
+   *
+   * HEADING REFERENCE (the display-only Heading reset). Passing the
+   * latest FRESH raw yaw captures it as this session's heading reference:
+   * orientationViewModel then shows `rawYaw - reference`, so the displayed
+   * Heading reads ~0 immediately after the press and stays RELATIVE to
+   * that reference afterwards. The raw sensor value is never altered -
+   * only what the screen subtracts from it.
+   *
+   * The reference is stored under the composite {sessionId, generation}
+   * key, so a disconnect, a session replacement, or a different FC lands
+   * on a different key whose state is the shared zero-offset EMPTY_STATE.
+   * There is no cross-session clearing to perform and no stale reference
+   * to leak.
+   *
+   * Roll and pitch offsets stay at zero: this reset is Heading-only, and
+   * nothing in the app writes a roll/pitch offset. Called with no yaw
+   * (no fresh sample to capture) it clears the reference back to zero
+   * rather than freezing a guessed one. */
+  resetOrientationViewOffset(key: SetupUiSessionKey, capturedRawYawDeg?: number): void {
+    const yawDeg =
+      capturedRawYawDeg === undefined || !Number.isFinite(capturedRawYawDeg)
+        ? 0
+        : normalizeHeadingDegrees(capturedRawYawDeg);
+    this.update(key, {orientationViewOffset: {rollDeg: 0, pitchDeg: 0, yawDeg}});
   }
 
   /** Diagnostic/test seam: how many entries exist for a sessionId. */
