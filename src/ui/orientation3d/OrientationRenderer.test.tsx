@@ -252,16 +252,40 @@ describe('OrientationRenderer - Canvas stability and no app-owned frame loop', (
     expect(canvasLifecycle.unmounts).toBe(0);
   });
 
-  it('draws every primitive of the scene, so memoizing the paths did not silently drop any', () => {
+  it('draws every primitive of the scene, plus one outline pass for the airframe materials', () => {
     const pose = {rollDeg: 5, pitchDeg: 5, yawDeg: 45};
-    const expected = geometry.computeDroneScene(pose, {width: SIZE, height: SIZE}).primitives.length;
+    const primitives = geometry.computeDroneScene(pose, {width: SIZE, height: SIZE}).primitives;
+    // FINAL-POLISH PASS: the visibility outline is a SECOND draw of the
+    // same memoized path for the airframe materials only - the prop
+    // discs and the level grid are deliberately not outlined. So the
+    // expected draw count is fills + outlines, and this test still
+    // fails if any primitive is dropped.
+    const OUTLINED = new Set(['HUB', 'ARM', 'ARROW', 'MOTOR_FRONT', 'MOTOR_REAR', 'PROP_RING_FRONT', 'PROP_RING_REAR']);
+    const outlineCount = primitives.filter(p => OUTLINED.has(p.material)).length;
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
       renderer = ReactTestRenderer.create(<OrientationRenderer orientation={pose} width={SIZE} height={SIZE} />);
     });
     mounted.push(renderer);
 
-    expect(expected).toBeGreaterThan(0);
-    expect(findAllByTestID(renderer, 'skia-path')).toHaveLength(expected);
+    expect(primitives.length).toBeGreaterThan(0);
+    expect(outlineCount).toBeGreaterThan(0);
+    expect(findAllByTestID(renderer, 'skia-path')).toHaveLength(primitives.length + outlineCount);
+  });
+
+  it('the outline reuses the SAME memoized path object as its fill - no second geometry build', () => {
+    const pose = {rollDeg: 3, pitchDeg: -2, yawDeg: 15};
+    const buildSpy = jest.spyOn(geometry, 'computeDroneScene');
+    try {
+      let renderer!: ReactTestRenderer.ReactTestRenderer;
+      act(() => {
+        renderer = ReactTestRenderer.create(<OrientationRenderer orientation={pose} width={SIZE} height={SIZE} />);
+      });
+      mounted.push(renderer);
+      // One scene build for the whole draw, outlines included.
+      expect(buildSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      buildSpy.mockRestore();
+    }
   });
 });
