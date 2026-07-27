@@ -326,7 +326,8 @@ describe('computeDroneScene', () => {
     expect(countByMaterial(scene.primitives, 'ARROW')).toBe(2);
     // Nothing else in the material vocabulary represents a camera wedge
     // or landing legs - the full set of materials used is a closed,
-    // known list.
+    // known list. LEVEL_GRID is the world-fixed horizon reference the
+    // level-presentation repair added; it is not part of the airframe.
     const materials = new Set(scene.primitives.map(p => p.material));
     expect(materials).toEqual(
       new Set([
@@ -340,6 +341,7 @@ describe('computeDroneScene', () => {
         'PROP_RING_REAR',
         'PROP_DISC_REAR',
         'ARROW',
+        'LEVEL_GRID',
       ]),
     );
   });
@@ -391,10 +393,17 @@ describe('computeDroneScene', () => {
       {rollDeg: 20, pitchDeg: -20, yawDeg: 30},
     ];
 
+    /** MODEL bounds only. The world-fixed LEVEL_GRID is deliberately
+     * excluded: it is a horizon reference that extends past the airframe
+     * (and may clip at the preview edge, exactly as a ground plane
+     * should), not part of the model these sizing/centering/clearance
+     * contracts are about. Every assertion below keeps its original
+     * meaning - "the MODEL is large enough, centered and uncropped". */
     function sceneBounds(orientation: DroneOrientationDeg): {minX: number; maxX: number; minY: number; maxY: number} {
       const scene = computeDroneScene(orientation, PREVIEW);
-      const xs = scene.primitives.flatMap(p => p.points.map(pt => pt.x));
-      const ys = scene.primitives.flatMap(p => p.points.map(pt => pt.y));
+      const model = scene.primitives.filter(p => p.material !== 'LEVEL_GRID');
+      const xs = model.flatMap(p => p.points.map(pt => pt.x));
+      const ys = model.flatMap(p => p.points.map(pt => pt.y));
       return {minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys)};
     }
 
@@ -456,5 +465,85 @@ describe('computeDroneScene', () => {
     };
 
     expect(spreadOf(large)).toBeGreaterThan(spreadOf(small));
+  });
+});
+
+/**
+ * The neutral-presentation repair. The camera used to sit at a diagonal
+ * azimuth, so a genuinely level aircraft rendered as a skewed, tilted
+ * shape - the single most confusing thing about the old Orientation
+ * view, because a user could not tell a real tilt from the projection.
+ * The camera now sits directly behind the tail, and a world-fixed level
+ * grid gives the tilt something to be measured against.
+ */
+describe('computeDroneScene - neutral presentation (level reads as level)', () => {
+  const VIEWPORT = {width: 260, height: 260};
+  const CENTRE_X = VIEWPORT.width / 2;
+
+  function modelPoints(orientation: DroneOrientationDeg) {
+    return computeDroneScene(orientation, VIEWPORT)
+      .primitives.filter(p => p.material !== 'LEVEL_GRID')
+      .flatMap(p => p.points);
+  }
+
+  function gridPrimitives(orientation: DroneOrientationDeg) {
+    return computeDroneScene(orientation, VIEWPORT).primitives.filter(p => p.material === 'LEVEL_GRID');
+  }
+
+  it('at zero roll/pitch/yaw the airframe is MIRROR SYMMETRIC about the viewport centre line - no diagonal skew', () => {
+    const points = modelPoints(ZERO);
+    expect(points.length).toBeGreaterThan(0);
+
+    // Every point must have a partner reflected across the centre line
+    // at the same height. Compared as rounded multisets so the check is
+    // about the shape, not floating-point identity.
+    const key = (p: {x: number; y: number}) => `${p.x.toFixed(3)}|${p.y.toFixed(3)}`;
+    const actual = points.map(key).sort();
+    const mirrored = points.map(p => key({x: 2 * CENTRE_X - p.x, y: p.y})).sort();
+    expect(mirrored).toEqual(actual);
+  });
+
+  it('at zero roll/pitch the airframe sits LEVEL on screen: its extreme left and right points share a screen height', () => {
+    const points = modelPoints(ZERO);
+    const leftmost = points.reduce((a, b) => (b.x < a.x ? b : a));
+    const rightmost = points.reduce((a, b) => (b.x > a.x ? b : a));
+    closeTo(leftmost.y, rightmost.y, 6);
+  });
+
+  it('a real 15deg roll genuinely breaks that horizontal - the level reading above is not an artifact of symmetry', () => {
+    const points = modelPoints({rollDeg: 15, pitchDeg: 0, yawDeg: 0});
+    const leftmost = points.reduce((a, b) => (b.x < a.x ? b : a));
+    const rightmost = points.reduce((a, b) => (b.x > a.x ? b : a));
+    expect(Math.abs(leftmost.y - rightmost.y)).toBeGreaterThan(5);
+  });
+
+  it('emits the level grid as a closed set of world-fixed lines, one primitive per line', () => {
+    const grid = gridPrimitives(ZERO);
+    // 5 lines per axis, two axes.
+    expect(grid).toHaveLength(10);
+    for (const line of grid) {
+      expect(line.kind).toBe('POLYGON');
+      expect(line.points).toHaveLength(4);
+    }
+  });
+
+  it('the grid does NOT rotate with the body - it is the horizon the aircraft tilts AGAINST', () => {
+    const level = gridPrimitives(ZERO);
+    for (const pose of [
+      {rollDeg: 35, pitchDeg: 0, yawDeg: 0},
+      {rollDeg: 0, pitchDeg: -28, yawDeg: 0},
+      {rollDeg: 0, pitchDeg: 0, yawDeg: 137},
+      {rollDeg: 20, pitchDeg: -20, yawDeg: 30},
+    ] as DroneOrientationDeg[]) {
+      expect(gridPrimitives(pose)).toEqual(level);
+    }
+  });
+
+  it('the grid is part of the SCENE but never part of the airframe - no model primitive borrows its material', () => {
+    const scene = computeDroneScene({rollDeg: 12, pitchDeg: -7, yawDeg: 33}, VIEWPORT);
+    const airframe = scene.primitives.filter(p => p.material !== 'LEVEL_GRID');
+    expect(airframe.length).toBeGreaterThan(0);
+    expect(airframe.every(p => p.material !== 'LEVEL_GRID')).toBe(true);
+    expect(scene.primitives.length).toBe(airframe.length + 10);
   });
 });

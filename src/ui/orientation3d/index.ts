@@ -11,3 +11,5 @@ export type {
 
 export {OrientationRenderer} from './OrientationRenderer';
 export type {OrientationRendererProps} from './OrientationRenderer';
+export {useInterpolatedOrientation, shortestAngleDelta, ORIENTATION_INTERPOLATION_MS} from './useInterpolatedOrientation';
+export type {InterpolatedOrientation} from './useInterpolatedOrientation';
