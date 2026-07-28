@@ -1,0 +1,675 @@
+/**
+ * Phase 2A - the PURE motor-test safety state machine.
+ *
+ * WHAT THIS MODULE IS
+ * -------------------
+ * A deterministic, synchronous reducer over an abstract domain model. It
+ * decides WHAT SHOULD HAPPEN NEXT and describes it as inert intent
+ * descriptors. It performs nothing.
+ *
+ * WHAT THIS MODULE IS NOT, BY CONSTRUCTION
+ * ----------------------------------------
+ * It has ZERO imports. It therefore cannot reach a protocol client, a
+ * transport, a native module, React, React Native, navigation or the UI,
+ * and no future edit can give it one of those without that import
+ * becoming visible in review.
+ *
+ * It contains no command id, no byte buffer, no payload, no motor value
+ * and no pulse magnitude. An "intent" here names an ACTION CATEGORY -
+ * "submit the start", "submit the stop" - and deliberately carries no
+ * value at all. Choosing any magnitude is a separate, unapproved safety
+ * decision, and nothing in this file can express one.
+ *
+ * It schedules nothing. The pulse deadline is modelled ONLY as an
+ * incoming event plus an outgoing "arm the deadline" intent. Whoever
+ * drives this reducer owns the real clock; this file owns none.
+ *
+ * WHY THE SEMANTICS LOOK CONSERVATIVE
+ * -----------------------------------
+ * Three accepted findings shape every rule below:
+ *
+ *  1. A start that has been submitted CANNOT be cancelled. From the
+ *     moment activation is accepted, the aircraft may become commanded,
+ *     so every stop path assumes the start is live rather than assuming
+ *     it was dropped.
+ *  2. The flight controller applies a motor write BEFORE producing its
+ *     acknowledgement. An acknowledgement is therefore evidence about a
+ *     message, never about a propeller. Losing one does not mean the
+ *     command was not applied.
+ *  3. There is no firmware-side inactivity watchdog restoring stop
+ *     values. Nothing in this file may be read as proving a motor has
+ *     physically stopped.
+ *
+ * Consequently: an acknowledgement never starts, extends or resets the
+ * pulse deadline; stop always outranks start progression; and `Fault` is
+ * terminal for the session authority it was raised under.
+ */
+
+/**
+ * One official MSP session, as an OPAQUE IDENTITY.
+ *
+ * Compared with `===` and never inspected, never enumerated, never
+ * serialized. Declared structurally empty on purpose: this module must
+ * not know, and must not be able to learn, anything about the session it
+ * is scoped to. A driver passes whatever non-forgeable anchor object the
+ * protocol layer already mints; this file only asks "is it the same one".
+ */
+export type MotorTestSessionAuthority = object;
+
+/** The seven top-level states. There is deliberately no eighth. */
+export type MotorTestStateName =
+  | 'Checking'
+  | 'Locked'
+  | 'Ready'
+  | 'Starting'
+  | 'Pulsing'
+  | 'Stopping'
+  | 'Fault';
+
+/**
+ * Where a successful stop is allowed to leave the machine.
+ *
+ * Ordered by severity - see `escalateDisposition`. A stop that began as
+ * an ordinary release can be escalated by a later, worse trigger, and can
+ * never be de-escalated afterwards.
+ */
+export type MotorTestStopDisposition = 'Ready' | 'Locked' | 'Fault';
+
+/**
+ * Ordinary end-of-pulse reasons. A confirmed stop returns to `Ready`
+ * without re-running the safety gates, because nothing observed suggests
+ * the aircraft or session changed.
+ */
+export type MotorTestNormalStopReason =
+  | 'TOUCH_RELEASED'
+  | 'STOP_BUTTON_PRESSED'
+  | 'MOTOR_SELECTION_CHANGED'
+  /** The planned maximum-duration cutoff. This is a DESIGNED safety
+   * limit, not a communication failure, so on a confirmed stop it is an
+   * ordinary completion - never automatically a fault. */
+  | 'PULSE_DEADLINE_ELAPSED';
+
+/**
+ * Reasons that invalidate the preconditions themselves. A confirmed stop
+ * leaves the machine `Locked`, so the gates must pass again before any
+ * further activation.
+ */
+export type MotorTestLockingStopReason =
+  | 'NAVIGATION_BLURRED'
+  | 'ANDROID_BACK'
+  | 'ANDROID_PREDICTIVE_BACK'
+  | 'APP_STATE_BACKGROUNDED'
+  | 'ARMED_STATE_DETECTED'
+  | 'ARMING_RESTRICTION_REMOVED'
+  | 'BATTERY_CHANGED'
+  | 'BATTERY_BECAME_UNSAFE';
+
+export type MotorTestStopTriggerReason =
+  | MotorTestNormalStopReason
+  | MotorTestLockingStopReason;
+
+/**
+ * Conditions under which the session is no longer trustworthy at all.
+ * Every one of these is terminal for the current authority.
+ */
+export type MotorTestFaultReason =
+  | 'MSP_RESPONSE_TIMEOUT'
+  | 'TRANSPORT_WRITE_TIMEOUT'
+  | 'WRITE_FAILED'
+  | 'WRITE_OUTCOME_UNKNOWN'
+  | 'DESYNCHRONIZED'
+  | 'SESSION_CHANGED'
+  | 'USB_DETACHED'
+  | 'NATIVE_EXCEPTION'
+  | 'STOP_FAILED'
+  | 'STOP_TIMEOUT'
+  | 'AUTHORITY_MISMATCH';
+
+/**
+ * The exact operator-facing warning required whenever a motor may be
+ * commanded and the machine can no longer even attempt a stop.
+ *
+ * Exported as a value so a UI layer references THIS constant rather than
+ * retyping the sentence. This module never renders anything.
+ */
+export const MOTOR_TEST_STOP_UNCONFIRMED_WARNING =
+  'Unable to confirm stop — disconnect LiPo immediately';
+
+/* ------------------------------------------------------------------ *
+ * Intents - inert descriptors, never actions
+ * ------------------------------------------------------------------ */
+
+/**
+ * What the driver should do next.
+ *
+ * `SUBMIT_START_INTENT` and `SUBMIT_STOP_INTENT` carry NO value: not a
+ * command id, not a motor index, not a magnitude, not a buffer. They say
+ * only "a start was requested" and "a stop is required". Turning either
+ * into anything that could reach an aircraft is a separate, unapproved
+ * pass, and this file cannot describe it.
+ */
+export type MotorTestEffect =
+  | {readonly kind: 'SUBMIT_START_INTENT'}
+  | {readonly kind: 'SUBMIT_STOP_INTENT'}
+  /** Begin the maximum-duration cutoff. Emitted exactly once per
+   * activation, at the moment the start write is called - never on an
+   * acknowledgement. */
+  | {readonly kind: 'ARM_PULSE_DEADLINE'}
+  /** Surface MOTOR_TEST_STOP_UNCONFIRMED_WARNING. Emitted only when a
+   * motor may be commanded AND no stop can be attempted. */
+  | {readonly kind: 'SHOW_STOP_UNCONFIRMED_WARNING'; readonly message: string};
+
+const NO_EFFECTS: readonly MotorTestEffect[] = Object.freeze([]);
+
+/* ------------------------------------------------------------------ *
+ * Events
+ * ------------------------------------------------------------------ */
+
+/**
+ * Every event carries the authority it was produced under, so a
+ * continuation belonging to a replaced session is recognizable as such
+ * before it can influence anything.
+ */
+export interface MotorTestEventBase {
+  readonly authority: MotorTestSessionAuthority;
+}
+
+export type MotorTestEvent = MotorTestEventBase &
+  (
+    | {readonly kind: 'GATES_PASSED'}
+    | {readonly kind: 'GATES_FAILED'}
+    | {readonly kind: 'RECHECK_REQUESTED'}
+    /** Long-press accepted. Produces the start intent; from here on the
+     * start is considered uncancellable. */
+    | {readonly kind: 'ACTIVATION_ACCEPTED'}
+    /** The transport write call for the start has been made. The command
+     * may now have reached the aircraft. */
+    | {readonly kind: 'START_WRITE_CALLED'}
+    /** Acknowledgement for the start. Metadata only - see the file
+     * comment on why this proves nothing physical. */
+    | {readonly kind: 'START_ACKNOWLEDGED'}
+    | {
+        readonly kind: 'STOP_TRIGGERED';
+        readonly reason: MotorTestStopTriggerReason;
+      }
+    | {readonly kind: 'STOP_ACKNOWLEDGED'}
+    | {readonly kind: 'FAULT_RAISED'; readonly reason: MotorTestFaultReason}
+  );
+
+/* ------------------------------------------------------------------ *
+ * State
+ * ------------------------------------------------------------------ */
+
+/**
+ * Immutable bookkeeping for an in-progress stop.
+ *
+ * This is why there is no eighth top-level state: the difference between
+ * "released normally" and "stopping because the battery went unsafe" is
+ * DATA about one stop, not a different place in the machine.
+ */
+export interface MotorTestStoppingMetadata {
+  /** The trigger that first demanded the stop. Never overwritten by a
+   * later trigger - only `requiredDisposition` escalates. */
+  readonly stopReason: MotorTestStopTriggerReason;
+  /** Conservatively true from the moment activation is accepted: a
+   * submitted start cannot be recalled, so it may still reach the
+   * aircraft even if the write call has not happened yet. */
+  readonly startMayHaveReachedFc: boolean;
+  /** True once the single permitted stop intent has been emitted for
+   * this activation. Further triggers coalesce into it. */
+  readonly stopIntentIssued: boolean;
+  /** Where a CONFIRMED stop is allowed to land. Monotonic. */
+  readonly requiredDisposition: MotorTestStopDisposition;
+  /** The authority everything here was captured under. */
+  readonly authority: MotorTestSessionAuthority;
+  /** Whether the start was acknowledged. Recorded for observability
+   * only; it changes no decision. */
+  readonly startAcknowledged: boolean;
+}
+
+export type MotorTestState =
+  | {readonly name: 'Checking'; readonly authority: MotorTestSessionAuthority}
+  | {readonly name: 'Locked'; readonly authority: MotorTestSessionAuthority}
+  | {readonly name: 'Ready'; readonly authority: MotorTestSessionAuthority}
+  | {
+      readonly name: 'Starting';
+      readonly authority: MotorTestSessionAuthority;
+      /** Always true - the start intent was emitted on entry. */
+      readonly startSubmitted: boolean;
+    }
+  | {
+      readonly name: 'Pulsing';
+      readonly authority: MotorTestSessionAuthority;
+      /** Armed on entry, at the write call. Never re-armed. */
+      readonly pulseDeadlineArmed: boolean;
+      readonly startAcknowledged: boolean;
+    }
+  | {
+      readonly name: 'Stopping';
+      readonly authority: MotorTestSessionAuthority;
+      readonly stopping: MotorTestStoppingMetadata;
+    }
+  | {
+      readonly name: 'Fault';
+      readonly authority: MotorTestSessionAuthority;
+      readonly faultReason: MotorTestFaultReason;
+    };
+
+export interface MotorTestTransition {
+  readonly state: MotorTestState;
+  readonly effects: readonly MotorTestEffect[];
+}
+
+/* ------------------------------------------------------------------ *
+ * Helpers
+ * ------------------------------------------------------------------ */
+
+/** Compile-time exhaustiveness. Deliberately does NOT throw: a reducer
+ * on a safety path must not turn an unforeseen input into an exception.
+ * If a variant is ever added without being handled, this stops
+ * compiling, which is where the problem belongs. */
+function assertExhaustive(value: never): void {
+  // The parameter is deliberately returned rather than discarded: a
+  // `never` value is assignable to `void`, so this both consumes it and
+  // keeps the guard free of any runtime behaviour.
+  return value;
+}
+
+/**
+ * The disposition a stop reason asks for on its own. Normal reasons ask
+ * for `Ready`; everything else invalidated a precondition and asks for
+ * `Locked`. Neither ever asks for `Fault` - a fault is raised by its own
+ * event, never inferred from a stop reason.
+ *
+ * An exhaustive switch rather than a lookup table: adding a stop reason
+ * without deciding its disposition must fail to compile.
+ */
+export function dispositionForStopReason(
+  reason: MotorTestStopTriggerReason,
+): MotorTestStopDisposition {
+  switch (reason) {
+    case 'TOUCH_RELEASED':
+    case 'STOP_BUTTON_PRESSED':
+    case 'MOTOR_SELECTION_CHANGED':
+    case 'PULSE_DEADLINE_ELAPSED':
+      return 'Ready';
+    case 'NAVIGATION_BLURRED':
+    case 'ANDROID_BACK':
+    case 'ANDROID_PREDICTIVE_BACK':
+    case 'APP_STATE_BACKGROUNDED':
+    case 'ARMED_STATE_DETECTED':
+    case 'ARMING_RESTRICTION_REMOVED':
+    case 'BATTERY_CHANGED':
+    case 'BATTERY_BECAME_UNSAFE':
+      return 'Locked';
+    default:
+      assertExhaustive(reason);
+      // Unreachable. Chosen anyway as the strictest of the two values a
+      // stop reason may request, so an unforeseen reason can never be
+      // treated as an ordinary release.
+      return 'Locked';
+  }
+}
+
+function dispositionRank(disposition: MotorTestStopDisposition): number {
+  switch (disposition) {
+    case 'Ready':
+      return 0;
+    case 'Locked':
+      return 1;
+    case 'Fault':
+      return 2;
+    default:
+      assertExhaustive(disposition);
+      return 2;
+  }
+}
+
+/** Monotonic: severity may only increase. A later, milder trigger can
+ * never soften an earlier, worse one. */
+export function escalateDisposition(
+  current: MotorTestStopDisposition,
+  next: MotorTestStopDisposition,
+): MotorTestStopDisposition {
+  return dispositionRank(next) > dispositionRank(current) ? next : current;
+}
+
+function stay(state: MotorTestState): MotorTestTransition {
+  return Object.freeze({state, effects: NO_EFFECTS});
+}
+
+function toFault(
+  authority: MotorTestSessionAuthority,
+  faultReason: MotorTestFaultReason,
+  effects: readonly MotorTestEffect[],
+): MotorTestTransition {
+  return Object.freeze({
+    state: Object.freeze({
+      name: 'Fault' as const,
+      authority,
+      faultReason,
+    }),
+    effects: Object.freeze(effects.slice()),
+  });
+}
+
+/**
+ * Entering a stop from an operational state.
+ *
+ * `startMayHaveReachedFc` is true for every caller here, because both
+ * `Starting` and `Pulsing` sit after the point where the start became
+ * uncancellable.
+ */
+function beginStopping(
+  authority: MotorTestSessionAuthority,
+  reason: MotorTestStopTriggerReason,
+  startAcknowledged: boolean,
+): MotorTestTransition {
+  return Object.freeze({
+    state: Object.freeze({
+      name: 'Stopping' as const,
+      authority,
+      stopping: Object.freeze({
+        stopReason: reason,
+        startMayHaveReachedFc: true,
+        stopIntentIssued: true,
+        requiredDisposition: dispositionForStopReason(reason),
+        authority,
+        startAcknowledged,
+      }),
+    }),
+    effects: Object.freeze([{kind: 'SUBMIT_STOP_INTENT' as const}]),
+  });
+}
+
+function withStopping(
+  authority: MotorTestSessionAuthority,
+  stopping: MotorTestStoppingMetadata,
+  effects: readonly MotorTestEffect[],
+): MotorTestTransition {
+  return Object.freeze({
+    state: Object.freeze({
+      name: 'Stopping' as const,
+      authority,
+      stopping: Object.freeze(stopping),
+    }),
+    effects: Object.freeze(effects.slice()),
+  });
+}
+
+/**
+ * A detach cannot carry a stop to the aircraft - the link is gone - so it
+ * emits the operator warning INSTEAD of a stop intent, never both.
+ */
+function detachEffects(
+  motorMayBeCommanded: boolean,
+): readonly MotorTestEffect[] {
+  return motorMayBeCommanded
+    ? Object.freeze([
+        {
+          kind: 'SHOW_STOP_UNCONFIRMED_WARNING' as const,
+          message: MOTOR_TEST_STOP_UNCONFIRMED_WARNING,
+        },
+      ])
+    : NO_EFFECTS;
+}
+
+function faultFromOperational(
+  authority: MotorTestSessionAuthority,
+  reason: MotorTestFaultReason,
+  motorMayBeCommanded: boolean,
+): MotorTestTransition {
+  return toFault(
+    authority,
+    reason,
+    reason === 'USB_DETACHED' ? detachEffects(motorMayBeCommanded) : NO_EFFECTS,
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Construction
+ * ------------------------------------------------------------------ */
+
+/**
+ * A fresh machine always begins in `Checking`: no activation is possible
+ * until the gates have actually been evaluated for THIS authority.
+ *
+ * Recovery from `Fault` is deliberately NOT a transition. It is this
+ * function, called again with a genuinely new authority.
+ */
+export function createMotorTestState(
+  authority: MotorTestSessionAuthority,
+): MotorTestState {
+  return Object.freeze({name: 'Checking' as const, authority});
+}
+
+/* ------------------------------------------------------------------ *
+ * The reducer
+ * ------------------------------------------------------------------ */
+
+/**
+ * Pure transition. Same state plus same event always yields the same
+ * result; nothing here reads a clock, a random source or any ambient
+ * value.
+ *
+ * Two rules apply before any per-state handling:
+ *
+ *  1. `Fault` is terminal. Every event is a no-op, so no sequence of
+ *     later events can produce an operational state again. A new session
+ *     means a new machine.
+ *  2. An event carrying a DIFFERENT authority is a continuation from a
+ *     session that no longer exists. It can never be acted on, and it
+ *     must emit NO start and NO stop intent - acting on it would put
+ *     traffic from a dead session onto a live one. It is recorded as a
+ *     fault rather than silently dropped, because a stale continuation
+ *     arriving at all means the machine's own view is already unsound.
+ */
+export function motorTestTransition(
+  state: MotorTestState,
+  event: MotorTestEvent,
+): MotorTestTransition {
+  if (state.name === 'Fault') {
+    return stay(state);
+  }
+  if (event.authority !== state.authority) {
+    return toFault(state.authority, 'AUTHORITY_MISMATCH', NO_EFFECTS);
+  }
+
+  switch (state.name) {
+    case 'Checking':
+      return reduceChecking(state.authority, event);
+    case 'Locked':
+      return reduceLocked(state.authority, event);
+    case 'Ready':
+      return reduceReady(state.authority, event);
+    case 'Starting':
+      return reduceStarting(state.authority, event);
+    case 'Pulsing':
+      return reducePulsing(state, event);
+    case 'Stopping':
+      return reduceStopping(state.authority, state.stopping, event);
+    default:
+      assertExhaustive(state);
+      return stay(state);
+  }
+}
+
+function reduceChecking(
+  authority: MotorTestSessionAuthority,
+  event: MotorTestEvent,
+): MotorTestTransition {
+  switch (event.kind) {
+    case 'GATES_PASSED':
+      return stay(Object.freeze({name: 'Ready' as const, authority}));
+    case 'GATES_FAILED':
+      return stay(Object.freeze({name: 'Locked' as const, authority}));
+    case 'FAULT_RAISED':
+      // Nothing was ever activated here, so no motor can be commanded
+      // and no stop warning is warranted.
+      return faultFromOperational(authority, event.reason, false);
+    default:
+      return stay(Object.freeze({name: 'Checking' as const, authority}));
+  }
+}
+
+function reduceLocked(
+  authority: MotorTestSessionAuthority,
+  event: MotorTestEvent,
+): MotorTestTransition {
+  switch (event.kind) {
+    case 'RECHECK_REQUESTED':
+      return stay(Object.freeze({name: 'Checking' as const, authority}));
+    case 'FAULT_RAISED':
+      return faultFromOperational(authority, event.reason, false);
+    default:
+      return stay(Object.freeze({name: 'Locked' as const, authority}));
+  }
+}
+
+function reduceReady(
+  authority: MotorTestSessionAuthority,
+  event: MotorTestEvent,
+): MotorTestTransition {
+  switch (event.kind) {
+    case 'ACTIVATION_ACCEPTED':
+      return Object.freeze({
+        state: Object.freeze({
+          name: 'Starting' as const,
+          authority,
+          startSubmitted: true,
+        }),
+        effects: Object.freeze([{kind: 'SUBMIT_START_INTENT' as const}]),
+      });
+    case 'GATES_FAILED':
+      return stay(Object.freeze({name: 'Locked' as const, authority}));
+    case 'FAULT_RAISED':
+      return faultFromOperational(authority, event.reason, false);
+    case 'STOP_TRIGGERED':
+      // Nothing was ever submitted, so there is nothing to stop and no
+      // intent may be produced.
+      return stay(Object.freeze({name: 'Ready' as const, authority}));
+    default:
+      return stay(Object.freeze({name: 'Ready' as const, authority}));
+  }
+}
+
+function reduceStarting(
+  authority: MotorTestSessionAuthority,
+  event: MotorTestEvent,
+): MotorTestTransition {
+  const current = Object.freeze({
+    name: 'Starting' as const,
+    authority,
+    startSubmitted: true,
+  });
+  switch (event.kind) {
+    case 'START_WRITE_CALLED':
+      // The command may now be live, so the maximum-duration cutoff
+      // begins HERE - not at the acknowledgement.
+      return Object.freeze({
+        state: Object.freeze({
+          name: 'Pulsing' as const,
+          authority,
+          pulseDeadlineArmed: true,
+          startAcknowledged: false,
+        }),
+        effects: Object.freeze([{kind: 'ARM_PULSE_DEADLINE' as const}]),
+      });
+    case 'STOP_TRIGGERED':
+      // The submitted start cannot be recalled. Assume it will reach the
+      // aircraft and require a stop rather than hoping it was dropped.
+      return beginStopping(authority, event.reason, false);
+    case 'FAULT_RAISED':
+      return faultFromOperational(authority, event.reason, true);
+    default:
+      return stay(current);
+  }
+}
+
+function reducePulsing(
+  state: Extract<MotorTestState, {name: 'Pulsing'}>,
+  event: MotorTestEvent,
+): MotorTestTransition {
+  switch (event.kind) {
+    case 'START_ACKNOWLEDGED':
+      // Metadata only. The deadline is NOT re-armed, NOT extended and
+      // NOT restarted, and no intent is produced.
+      return stay(
+        Object.freeze({
+          name: 'Pulsing' as const,
+          authority: state.authority,
+          pulseDeadlineArmed: state.pulseDeadlineArmed,
+          startAcknowledged: true,
+        }),
+      );
+    case 'STOP_TRIGGERED':
+      return beginStopping(state.authority, event.reason, state.startAcknowledged);
+    case 'FAULT_RAISED':
+      return faultFromOperational(state.authority, event.reason, true);
+    default:
+      return stay(state);
+  }
+}
+
+function reduceStopping(
+  authority: MotorTestSessionAuthority,
+  stopping: MotorTestStoppingMetadata,
+  event: MotorTestEvent,
+): MotorTestTransition {
+  switch (event.kind) {
+    case 'STOP_TRIGGERED': {
+      // Coalesce: at most ONE stop intent exists per activation, however
+      // many triggers arrive. Only the required disposition moves, and
+      // only upward.
+      const escalated = escalateDisposition(
+        stopping.requiredDisposition,
+        dispositionForStopReason(event.reason),
+      );
+      return withStopping(
+        authority,
+        {...stopping, requiredDisposition: escalated},
+        NO_EFFECTS,
+      );
+    }
+    case 'START_ACKNOWLEDGED':
+      // A late acknowledgement for the start that could not be cancelled.
+      // It never revives the pulse and never changes the disposition.
+      return withStopping(
+        authority,
+        {...stopping, startAcknowledged: true},
+        NO_EFFECTS,
+      );
+    case 'START_WRITE_CALLED':
+      // The uncancellable start reached the transport after the stop was
+      // already demanded. Recorded, but it changes no decision.
+      return withStopping(
+        authority,
+        {...stopping, startMayHaveReachedFc: true},
+        NO_EFFECTS,
+      );
+    case 'STOP_ACKNOWLEDGED':
+      switch (stopping.requiredDisposition) {
+        case 'Ready':
+          return stay(Object.freeze({name: 'Ready' as const, authority}));
+        case 'Locked':
+          return stay(Object.freeze({name: 'Locked' as const, authority}));
+        case 'Fault':
+          // Kept for completeness of the lattice. A fault reason routes
+          // straight to `Fault` via FAULT_RAISED, so a stop that is
+          // confirmed while already required to end in `Fault` cannot
+          // arise today - and if it ever does, it must still end there.
+          return toFault(authority, 'STOP_FAILED', NO_EFFECTS);
+        default:
+          assertExhaustive(stopping.requiredDisposition);
+          return toFault(authority, 'STOP_FAILED', NO_EFFECTS);
+      }
+    case 'FAULT_RAISED':
+      return faultFromOperational(
+        authority,
+        event.reason,
+        stopping.startMayHaveReachedFc,
+      );
+    default:
+      return withStopping(authority, stopping, NO_EFFECTS);
+  }
+}
