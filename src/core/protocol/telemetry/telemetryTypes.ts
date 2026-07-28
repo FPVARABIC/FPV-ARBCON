@@ -80,7 +80,22 @@ export type TelemetryValue<T> =
   | {status: 'STALE'; value: T; updatedAtMs: number; ageMs: number}
   | {status: 'ERROR'; error: unknown; updatedAtMs?: number};
 
-export type TelemetryPauseReason = 'EXCLUSIVE_OPERATION' | 'MSP_RECOVERY' | 'SESSION_CLOSING' | 'APP_BACKGROUND';
+/**
+ * Why telemetry polling is currently held off.
+ *
+ * Phase 2C adds MOTOR_TEST. It is a distinct reason on purpose: a
+ * motor-test barrier and an APP_BACKGROUND pause (or an
+ * EXCLUSIVE_OPERATION pause) can be in force simultaneously and are
+ * released by different owners at different times, so releasing one must
+ * never release another. See motorTestTelemetryBarrier.ts, which owns one
+ * independent lease per barrier token rather than a per-reason flag.
+ */
+export type TelemetryPauseReason =
+  | 'EXCLUSIVE_OPERATION'
+  | 'MSP_RECOVERY'
+  | 'SESSION_CLOSING'
+  | 'APP_BACKGROUND'
+  | 'MOTOR_TEST';
 
 export type TelemetryPauseLease = {
   id: string;
