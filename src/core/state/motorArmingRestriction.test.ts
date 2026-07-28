@@ -32,7 +32,8 @@ import {
   MotorTestLease,
   type MspSessionCompositeIdentity,
 } from '../protocol/motorTestLease';
-import type {BoxIdsResult} from '../protocol/msp/identification/BoxIdsAcquisition';
+import {acquireMotorTestBoxIds, MotorTestBoxIdsSnapshot} from './motorTestBoxIds';
+import {MSP_BOXIDS} from '../protocol/msp/commands/mspCommands';
 import {FakeMspTransport} from '../protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../protocol/__testUtils__/mspFixtures';
 
@@ -41,8 +42,12 @@ const EMPTY = new Uint8Array(0);
 
 /** BOXARM's permanent id is 0; placed at index 2 so a hardcoded bit-0
  * assumption would be caught. */
-const BOX_IDS: BoxIdsResult = {kind: 'READY', permanentIds: [5, 1, 0, 13]};
+const BOX_ID_WIRE_BYTES = Uint8Array.from([5, 1, 0, 13]);
 const ARM_BIT = 2;
+
+/** Snapshots minted per lease, so the establishment helper can supply
+ * genuine session-bound evidence without every call site threading it. */
+const MINTED = new WeakMap<MotorTestLease, MotorTestBoxIdsSnapshot>();
 
 function identity(physicalGeneration = 2, mspEpoch = 0): MspSessionCompositeIdentity {
   return {physicalGeneration, mspEpoch};
@@ -131,7 +136,7 @@ function statusPayload(fixture: StatusFixture = {}): Uint8Array {
 
 interface RunOptions {
   readonly status?: StatusFixture;
-  readonly boxIds?: BoxIdsResult | undefined;
+  readonly boxIds?: MotorTestBoxIdsSnapshot | undefined;
   readonly currentIdentity?: MspSessionCompositeIdentity | undefined;
   readonly requestedIdentity?: MspSessionCompositeIdentity;
   /** Fails the arming-disable request instead of ACKing it. */
@@ -161,7 +166,7 @@ async function runEstablishment(
     lease,
     requestedIdentity: options.requestedIdentity ?? identity(),
     readCurrentIdentity: options.readCurrentIdentity ?? (() => identityBox.current),
-    boxIds: 'boxIds' in options ? options.boxIds : BOX_IDS,
+    boxIds: 'boxIds' in options ? options.boxIds : MINTED.get(lease),
   });
 
   // --- arming-disable request ---
@@ -204,11 +209,35 @@ async function runEstablishment(
   return promise;
 }
 
-function standardSetup() {
+/**
+ * Performs the REAL lease-based MSP_BOXIDS acquisition, so every test
+ * below uses genuine session-bound evidence rather than a hand-built
+ * object the production code would now reject.
+ */
+async function mintBoxIds(
+  transport: FakeMspTransport,
+  lease: MotorTestLease,
+  wire: Uint8Array = BOX_ID_WIRE_BYTES,
+): Promise<MotorTestBoxIdsSnapshot> {
+  const pending = acquireMotorTestBoxIds(lease);
+  await flushMicrotasks();
+  transport.resolveNextWrite();
+  await flushMicrotasks();
+  transport.emitData(responseFrame(MSP_BOXIDS, wire));
+  const result = await pending;
+  if (result.kind !== 'ACQUIRED') {
+    throw new Error(`expected box-ids ACQUIRED, got ${result.reason}`);
+  }
+  MINTED.set(lease, result.snapshot);
+  return result.snapshot;
+}
+
+async function standardSetup() {
   const {transport, client} = makeClient();
   const lease = leaseFor(client);
+  const boxIds = await mintBoxIds(transport, lease);
   const identityBox = {current: identity() as MspSessionCompositeIdentity | undefined};
-  return {transport, client, lease, identityBox};
+  return {transport, client, lease, identityBox, boxIds};
 }
 
 function expectNotEstablished(
@@ -276,7 +305,7 @@ describe('tagged protocol contract (betaflight 2025.12.2 @ 79065c96)', () => {
 
 describe('establishment admission', () => {
   it('accepts independently allocated but value-equal identities', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox);
     expect(result.kind).toBe('ESTABLISHED');
   });
@@ -287,7 +316,7 @@ describe('establishment admission', () => {
       lease: undefined,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identity(),
-      boxIds: BOX_IDS,
+      boxIds: undefined,
     });
     expectNotEstablished(result, 'MOTOR_TEST_LEASE_INACTIVE');
     expect(transport.writes).toHaveLength(0);
@@ -296,18 +325,19 @@ describe('establishment admission', () => {
   it('fails with no authoritative identity and sends nothing', async () => {
     const {transport, client} = makeClient();
     const lease = leaseFor(client);
+    await mintBoxIds(transport, lease);
     const result = await establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => undefined,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     expectNotEstablished(result, 'CURRENT_SESSION_IDENTITY_UNAVAILABLE');
     expect(transport.writes).toHaveLength(0);
   });
 
   it('fails on a physicalGeneration mismatch and sends nothing', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       requestedIdentity: identity(9, 0),
     });
@@ -316,7 +346,7 @@ describe('establishment admission', () => {
   });
 
   it('fails on an mspEpoch mismatch and sends nothing', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       requestedIdentity: identity(2, 7),
     });
@@ -331,14 +361,14 @@ describe('establishment admission', () => {
       lease,
       requestedIdentity: identity(5, 0),
       readCurrentIdentity: () => identity(5, 0),
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     expectNotEstablished(result, 'MOTOR_TEST_LEASE_IDENTITY_MISMATCH');
     expect(transport.writes).toHaveLength(0);
   });
 
   it('fails on a released lease and sends nothing', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     expect(lease.release()).toBe('RELEASED');
     const result = await runEstablishment(transport, lease, identityBox);
     expectNotEstablished(result, 'MOTOR_TEST_LEASE_INACTIVE');
@@ -346,7 +376,7 @@ describe('establishment admission', () => {
   });
 
   it('fails on an invalidated lease and sends nothing', async () => {
-    const {transport, client, lease, identityBox} = standardSetup();
+    const {transport, client, lease, identityBox} = await standardSetup();
     client.dispose();
     const result = await runEstablishment(transport, lease, identityBox);
     expectNotEstablished(result, 'MOTOR_TEST_LEASE_INACTIVE');
@@ -354,13 +384,15 @@ describe('establishment admission', () => {
   });
 
   it('fails on a forged lease and sends nothing', async () => {
-    const {transport} = makeClient();
+    const {transport, boxIds} = await standardSetup();
     const forged = new MotorTestLease(identity());
+    // Genuine evidence presented with a forged capability must still
+    // fail - the lease check fires first.
     const result = await establishMotorArmingRestriction({
       lease: forged,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identity(),
-      boxIds: BOX_IDS,
+      boxIds,
     });
     expectNotEstablished(result, 'MOTOR_TEST_LEASE_INACTIVE');
     expect(transport.writes).toHaveLength(0);
@@ -377,38 +409,42 @@ describe('establishment admission', () => {
     expect(second.transport.writes).toHaveLength(0);
   });
 
-  it('fails when no usable box-id mapping is supplied, before any traffic', async () => {
-    const {transport, lease, identityBox} = standardSetup();
-    for (const boxIds of [
-      undefined,
-      {kind: 'UNAVAILABLE', reason: 'MALFORMED'} as BoxIdsResult,
-      {kind: 'READY', permanentIds: []} as BoxIdsResult,
-    ]) {
-      const fresh = standardSetup();
-      const result = await runEstablishment(fresh.transport, fresh.lease, fresh.identityBox, {
-        boxIds,
-      });
-      expectNotEstablished(result, 'INDEPENDENT_VERIFICATION_UNAVAILABLE');
-      expect(fresh.transport.writes).toHaveLength(0);
-    }
-    expect(transport.writes).toHaveLength(0);
-    expect(lease.isActive()).toBe(true);
-    expect(identityBox.current).toBeDefined();
+  it('fails when no box-id evidence is supplied at all, before any traffic', async () => {
+    const fresh = await standardSetup();
+    const result = await runEstablishment(fresh.transport, fresh.lease, fresh.identityBox, {
+      boxIds: undefined,
+    });
+    expectNotEstablished(result, 'INDEPENDENT_VERIFICATION_UNAVAILABLE');
+    expect(fresh.transport.writes).toHaveLength(0);
+    expect(fresh.lease.isActive()).toBe(true);
+  });
+
+  it('fails when the trusted snapshot carries an empty mapping', async () => {
+    // A real, correctly-minted snapshot whose wire reply was a single
+    // byte that is not BOXARM: provenance is fine, the mapping is not.
+    const {transport, client} = makeClient();
+    const lease = leaseFor(client);
+    const snapshot = await mintBoxIds(transport, lease, Uint8Array.from([7]));
+    const identityBox = {current: identity() as MspSessionCompositeIdentity | undefined};
+    const result = await runEstablishment(transport, lease, identityBox, {boxIds: snapshot});
+    // BOXARM is absent from the mapping, so the ARM bit is unresolvable.
+    expectNotEstablished(result, 'INDEPENDENT_VERIFICATION_UNAVAILABLE');
+    expect(lease.isActive()).toBe(false); // faulted closed after the ACK
   });
 
   it('refuses a second concurrent establishment immediately', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const first = establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     const second = await establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     expectNotEstablished(second, 'ARMING_RESTRICTION_ALREADY_ESTABLISHING');
 
@@ -424,13 +460,13 @@ describe('establishment admission', () => {
   });
 
   it('refuses a second establishment after a successful one', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     expect((await runEstablishment(transport, lease, identityBox)).kind).toBe('ESTABLISHED');
     const again = await establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     expectNotEstablished(again, 'ARMING_RESTRICTION_ALREADY_ESTABLISHED');
   });
@@ -443,7 +479,7 @@ describe('establishment admission', () => {
         lease,
         requestedIdentity: identity(9, 9),
         readCurrentIdentity: () => identity(),
-        boxIds: BOX_IDS,
+        boxIds: MINTED.get(lease),
       }),
     ).resolves.toMatchObject({kind: 'NOT_ESTABLISHED'});
   });
@@ -455,7 +491,7 @@ describe('establishment admission', () => {
 
 describe('request order', () => {
   it('emits exactly MSP_SET_ARMING_DISABLED then MSP_STATUS_EX, through the lease FIFO', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox);
     expect(result.kind).toBe('ESTABLISHED');
     // FakeMspTransport shifts settled writes off `writes`, so capture the
@@ -466,6 +502,7 @@ describe('request order', () => {
   it('records exactly two requests, in order, with the exact payloads', async () => {
     const {transport, client} = makeClient();
     const lease = leaseFor(client);
+    await mintBoxIds(transport, lease);
     const identityBox = {current: identity() as MspSessionCompositeIdentity | undefined};
     const seen: Array<{command: number; payload: number[]}> = [];
 
@@ -473,7 +510,7 @@ describe('request order', () => {
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
 
     await flushMicrotasks();
@@ -502,12 +539,12 @@ describe('request order', () => {
   });
 
   it('never admits an ordinary request while establishing (lease exclusivity holds)', async () => {
-    const {transport, client, lease, identityBox} = standardSetup();
+    const {transport, client, lease, identityBox} = await standardSetup();
     const promise = establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     await flushMicrotasks();
     await expect(client.request(101, EMPTY, {wireFormat: 'v1'})).rejects.toMatchObject({
@@ -527,12 +564,13 @@ describe('request order', () => {
   it('produces NO receipt from the ACK alone', async () => {
     const {transport, client} = makeClient();
     const lease = leaseFor(client);
+    await mintBoxIds(transport, lease);
     const identityBox = {current: identity() as MspSessionCompositeIdentity | undefined};
     const promise = establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     await flushMicrotasks();
     transport.resolveNextWrite();
@@ -564,7 +602,7 @@ describe('request order', () => {
 
 describe('verification', () => {
   it('succeeds on ACK + disarmed + MSP restriction observed', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       status: {armed: false, mspRestrictionPresent: true},
     });
@@ -576,7 +614,7 @@ describe('verification', () => {
   });
 
   it('fails closed when the FC reports ARMED, and faults the lease', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       status: {armed: true, mspRestrictionPresent: true},
     });
@@ -585,7 +623,7 @@ describe('verification', () => {
   });
 
   it('fails closed when the MSP restriction bit is absent, and faults the lease', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       status: {mspRestrictionPresent: false},
     });
@@ -594,7 +632,7 @@ describe('verification', () => {
   });
 
   it('does not accept an unrelated arming-disable flag as the MSP restriction', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       // THROTTLE (bit 7) and NO_GYRO (bit 0) set, MSP bit clear.
       status: {mspRestrictionPresent: false, extraMask: Math.pow(2, 7) + Math.pow(2, 0)},
@@ -603,7 +641,7 @@ describe('verification', () => {
   });
 
   it('fails closed on an ERROR-direction ACK', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       failArmingDisable: 'ERROR_FRAME',
     });
@@ -612,7 +650,7 @@ describe('verification', () => {
   });
 
   it('fails closed on an arming-disable write failure', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       failArmingDisable: 'WRITE',
     });
@@ -621,14 +659,14 @@ describe('verification', () => {
   });
 
   it('fails closed on a status write failure', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {failStatus: 'WRITE'});
     expectNotEstablished(result, 'POST_ACK_STATUS_REQUEST_FAILED');
     expect(lease.isActive()).toBe(false);
   });
 
   it('fails closed on an ERROR-direction status response', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       failStatus: 'ERROR_FRAME',
     });
@@ -637,7 +675,7 @@ describe('verification', () => {
   });
 
   it('fails closed on a truncated status frame', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       status: {truncateTo: 9},
     });
@@ -646,7 +684,7 @@ describe('verification', () => {
   });
 
   it('fails closed on a partially present status tail', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       status: {declaredByteCount: 9, truncateTo: 16},
     });
@@ -655,7 +693,7 @@ describe('verification', () => {
   });
 
   it('fails closed when the status frame carried no arming-disable mask', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       status: {truncateTo: 16},
     });
@@ -668,12 +706,13 @@ describe('verification', () => {
     try {
       const {transport, client} = makeClient();
       const lease = leaseFor(client);
+      await mintBoxIds(transport, lease);
       const identityBox = {current: identity() as MspSessionCompositeIdentity | undefined};
       const promise = establishMotorArmingRestriction({
         lease,
         requestedIdentity: identity(),
         readCurrentIdentity: () => identityBox.current,
-        boxIds: BOX_IDS,
+        boxIds: MINTED.get(lease),
       });
       await flushMicrotasks();
       transport.resolveNextWrite();
@@ -692,7 +731,7 @@ describe('verification', () => {
   });
 
   it('fails closed when the identity changes after the ACK', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       onAfterAck: () => {
         identityBox.current = identity(2, 99);
@@ -703,7 +742,7 @@ describe('verification', () => {
   });
 
   it('fails closed when the identity disappears after the ACK', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       onAfterAck: () => {
         identityBox.current = undefined;
@@ -718,7 +757,7 @@ describe('verification', () => {
     // that third call is precisely "changed after the response arrived,
     // before the result settled" - a transport-milestone callback would
     // fire too late, after the synchronous continuation already ran.
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     let calls = 0;
     const result = await runEstablishment(transport, lease, identityBox, {
       readCurrentIdentity: () => {
@@ -732,7 +771,7 @@ describe('verification', () => {
   });
 
   it('fails when the lease is invalidated mid-establishment', async () => {
-    const {transport, client, lease, identityBox} = standardSetup();
+    const {transport, client, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       onAfterAck: () => {
         client.dispose();
@@ -745,13 +784,14 @@ describe('verification', () => {
   it('never accepts a pre-ACK observation: the status read happens after the ACK', async () => {
     const {transport, client} = makeClient();
     const lease = leaseFor(client);
+    await mintBoxIds(transport, lease);
     const identityBox = {current: identity() as MspSessionCompositeIdentity | undefined};
     const order: string[] = [];
     const promise = establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     await flushMicrotasks();
     order.push(`write:${transport.writes[0].data[4]}`);
@@ -769,7 +809,7 @@ describe('verification', () => {
   });
 
   it('a recovery probe does not resume a failed establishment', async () => {
-    const {transport, client, lease, identityBox} = standardSetup();
+    const {transport, client, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       failArmingDisable: 'WRITE',
     });
@@ -797,7 +837,7 @@ describe('verification', () => {
 
 describe('receipt ownership', () => {
   async function established() {
-    const setup = standardSetup();
+    const setup = await standardSetup();
     const result = await runEstablishment(setup.transport, setup.lease, setup.identityBox);
     if (result.kind !== 'ESTABLISHED') {
       throw new Error(`expected ESTABLISHED, got ${result.reason}`);
@@ -808,6 +848,7 @@ describe('receipt ownership', () => {
   it('does not retain the caller identity object by reference', async () => {
     const {transport, client} = makeClient();
     const lease = leaseFor(client);
+    await mintBoxIds(transport, lease);
     const caller = {physicalGeneration: 2, mspEpoch: 0};
     const identityBox = {current: caller as MspSessionCompositeIdentity | undefined};
     const result = await runEstablishment(transport, lease, identityBox, {});
@@ -901,6 +942,7 @@ describe('receipt ownership', () => {
 
     const second = makeClient();
     const newLease = leaseFor(second.client);
+    await mintBoxIds(second.transport, newLease);
     expect(receipt.isCurrent()).toBe(false);
     expect(newLease.isActive()).toBe(true);
     // The old receipt is not the new lease's receipt.
@@ -922,7 +964,7 @@ describe('receipt ownership', () => {
 
 describe('fault boundary', () => {
   it('a semantic failure fault-latches the same composite identity', async () => {
-    const {transport, client, lease, identityBox} = standardSetup();
+    const {transport, client, lease, identityBox} = await standardSetup();
     const result = await runEstablishment(transport, lease, identityBox, {
       status: {mspRestrictionPresent: false},
     });
@@ -942,19 +984,19 @@ describe('fault boundary', () => {
   });
 
   it('refuses a retry of establishment on the faulted lease', async () => {
-    const {transport, lease, identityBox} = standardSetup();
+    const {transport, lease, identityBox} = await standardSetup();
     await runEstablishment(transport, lease, identityBox, {status: {armed: true}});
     const retry = await establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     expectNotEstablished(retry, 'ARMING_RESTRICTION_FAULT_LATCHED');
   });
 
   it('a genuinely new session identity crosses the old fault boundary', async () => {
-    const first = standardSetup();
+    const first = await standardSetup();
     await runEstablishment(first.transport, first.lease, first.identityBox, {
       status: {mspRestrictionPresent: false},
     });
@@ -963,6 +1005,7 @@ describe('fault boundary', () => {
     // A new physical session is a new MspClient entirely.
     const second = makeClient();
     const newLease = leaseFor(second.client);
+    await mintBoxIds(second.transport, newLease);
     expect(newLease.isActive()).toBe(true);
     const result = await runEstablishment(second.transport, newLease, {
       current: identity() as MspSessionCompositeIdentity | undefined,
@@ -981,7 +1024,7 @@ describe('fault boundary', () => {
 
   it('a successful establishment does not clear an unrelated existing fault', async () => {
     // Fault client A, then establish on a completely separate client B.
-    const faulted = standardSetup();
+    const faulted = await standardSetup();
     await runEstablishment(faulted.transport, faulted.lease, faulted.identityBox, {
       status: {armed: true},
     });
@@ -989,6 +1032,7 @@ describe('fault boundary', () => {
 
     const other = makeClient();
     const otherLease = leaseFor(other.client);
+    await mintBoxIds(other.transport, otherLease);
     const ok = await runEstablishment(other.transport, otherLease, {
       current: identity() as MspSessionCompositeIdentity | undefined,
     });
@@ -1013,7 +1057,7 @@ describe('semantic exclusions', () => {
     /^(is)?(safe|ready|authoriz|approved|allowed|permitted|permission|cantest|canpulse|canstart|go)$/i;
 
   it('exposes no field or method meaning motor safety or authorization', async () => {
-    const setup = standardSetup();
+    const setup = await standardSetup();
     const result = await runEstablishment(setup.transport, setup.lease, setup.identityBox);
     if (result.kind !== 'ESTABLISHED') {
       throw new Error('unreachable');
@@ -1038,7 +1082,7 @@ describe('semantic exclusions', () => {
   });
 
   it('converts no Pass 1E result into permission', async () => {
-    const setup = standardSetup();
+    const setup = await standardSetup();
     const result = await runEstablishment(setup.transport, setup.lease, setup.identityBox);
     const serialized = JSON.stringify(result);
     for (const forbidden of [
@@ -1057,7 +1101,7 @@ describe('semantic exclusions', () => {
   it('uses no timer, retry, TTL or automatic expiry of its own', async () => {
     jest.useFakeTimers();
     try {
-      const setup = standardSetup();
+      const setup = await standardSetup();
       const result = await runEstablishment(setup.transport, setup.lease, setup.identityBox);
       if (result.kind !== 'ESTABLISHED') {
         throw new Error('unreachable');
@@ -1074,7 +1118,7 @@ describe('semantic exclusions', () => {
   });
 
   it('sends nothing further after establishment - no monitoring loop', async () => {
-    const setup = standardSetup();
+    const setup = await standardSetup();
     await runEstablishment(setup.transport, setup.lease, setup.identityBox);
     const after = setup.transport.writes.length;
     await flushMicrotasks(20);
@@ -1084,13 +1128,14 @@ describe('semantic exclusions', () => {
   it('establishment alone cannot pulse a motor - only two read/write commands exist', async () => {
     const {transport, client} = makeClient();
     const lease = leaseFor(client);
+    await mintBoxIds(transport, lease);
     const identityBox = {current: identity() as MspSessionCompositeIdentity | undefined};
     const commands: number[] = [];
     const promise = establishMotorArmingRestriction({
       lease,
       requestedIdentity: identity(),
       readCurrentIdentity: () => identityBox.current,
-      boxIds: BOX_IDS,
+      boxIds: MINTED.get(lease),
     });
     await flushMicrotasks();
     commands.push(transport.writes[0].data[4]);
@@ -1108,5 +1153,396 @@ describe('semantic exclusions', () => {
     expect(commands).not.toContain(214);
     // A four-motor payload would be 8 bytes; nothing of that size exists.
     expect(buildArmingDisablePayload()).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Pass 3 correction A - session-scoped establishment authority
+ * ------------------------------------------------------------------ */
+
+describe('correction A: cross-lease establishment within one official session', () => {
+  it('refuses lease B after lease A established and was released idle', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const first = await runEstablishment(transport, leaseA, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    expect(first.kind).toBe('ESTABLISHED');
+    expect(leaseA.release()).toBe('RELEASED');
+
+    const leaseB = leaseFor(client); // same client, same official session
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    const writesBefore = transport.writes.length;
+
+    const second = await establishMotorArmingRestriction({
+      lease: leaseB,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identity(),
+      boxIds: boxIdsB,
+    });
+    expectNotEstablished(second, 'ARMING_RESTRICTION_ALREADY_ESTABLISHED');
+    // Zero additional MSP requests and zero transport writes.
+    expect(transport.writes.length).toBe(writesBefore);
+  });
+
+  it('keeps total command 99 submissions at exactly one for the session', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const commands: number[] = [];
+    const record = () => {
+      for (const write of transport.writes) {
+        commands.push(write.data[4]);
+      }
+    };
+    const promise = establishMotorArmingRestriction({
+      lease: leaseA,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identity(),
+      boxIds: MINTED.get(leaseA),
+    });
+    await flushMicrotasks();
+    record();
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(MSP_SET_ARMING_DISABLED));
+    await flushMicrotasks();
+    record();
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(MSP_STATUS_EX, statusPayload()));
+    expect((await promise).kind).toBe('ESTABLISHED');
+
+    expect(leaseA.release()).toBe('RELEASED');
+    const leaseB = leaseFor(client);
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    await establishMotorArmingRestriction({
+      lease: leaseB,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identity(),
+      boxIds: boxIdsB,
+    });
+    await flushMicrotasks();
+    record();
+
+    expect(commands.filter(command => command === MSP_SET_ARMING_DISABLED)).toHaveLength(1);
+    expect(commands).not.toContain(214);
+  });
+
+  it('makes receipt A non-current on release without clearing the session record', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const first = await runEstablishment(transport, leaseA, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    if (first.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    expect(first.receipt.isCurrent()).toBe(true);
+    expect(leaseA.release()).toBe('RELEASED');
+    expect(first.receipt.isCurrent()).toBe(false); // non-current...
+
+    const leaseB = leaseFor(client);
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    // ...but the session record survived, so B is refused.
+    expectNotEstablished(
+      await establishMotorArmingRestriction({
+        lease: leaseB,
+        requestedIdentity: identity(),
+        readCurrentIdentity: () => identity(),
+        boxIds: boxIdsB,
+      }),
+      'ARMING_RESTRICTION_ALREADY_ESTABLISHED',
+    );
+  });
+
+  it('is not bypassed by caller-created value-equal identity objects', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    await runEstablishment(transport, leaseA, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    expect(leaseA.release()).toBe('RELEASED');
+    const leaseB = leaseFor(client);
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    // Freshly allocated, value-equal objects - different references.
+    expectNotEstablished(
+      await establishMotorArmingRestriction({
+        lease: leaseB,
+        requestedIdentity: {physicalGeneration: 2, mspEpoch: 0},
+        readCurrentIdentity: () => ({physicalGeneration: 2, mspEpoch: 0}),
+        boxIds: boxIdsB,
+      }),
+      'ARMING_RESTRICTION_ALREADY_ESTABLISHED',
+    );
+  });
+
+  it('cannot be bypassed by inventing different scalar values', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    await runEstablishment(transport, leaseA, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    expect(leaseA.release()).toBe('RELEASED');
+    const leaseB = leaseFor(client);
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    const writesBefore = transport.writes.length;
+    // Claiming a different session does not manufacture one: the lease's
+    // own identity no longer matches, so it is refused - and still sends
+    // nothing.
+    const result = await establishMotorArmingRestriction({
+      lease: leaseB,
+      requestedIdentity: identity(9, 9),
+      readCurrentIdentity: () => identity(9, 9),
+      boxIds: boxIdsB,
+    });
+    expect(result.kind).toBe('NOT_ESTABLISHED');
+    expect(transport.writes.length).toBe(writesBefore);
+  });
+
+  it('lets a genuinely different client/session establish independently', async () => {
+    const first = await standardSetup();
+    expect((await runEstablishment(first.transport, first.lease, first.identityBox)).kind).toBe(
+      'ESTABLISHED',
+    );
+    const second = await standardSetup();
+    expect((await runEstablishment(second.transport, second.lease, second.identityBox)).kind).toBe(
+      'ESTABLISHED',
+    );
+  });
+
+  it('does not let client A\'s record block or authorize client B', async () => {
+    const a = await standardSetup();
+    await runEstablishment(a.transport, a.lease, a.identityBox);
+    const b = await standardSetup();
+    // Not blocked...
+    const result = await runEstablishment(b.transport, b.lease, b.identityBox);
+    expect(result.kind).toBe('ESTABLISHED');
+    if (result.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    // ...and not authorized by A either: B minted its own receipt.
+    expect(result.receipt.isCurrent()).toBe(true);
+  });
+
+  it('creates no success record from a failed pre-write admission', async () => {
+    const {transport, lease, identityBox} = await standardSetup();
+    const writesBefore = transport.writes.length;
+    expectNotEstablished(
+      await runEstablishment(transport, lease, identityBox, {requestedIdentity: identity(4, 4)}),
+      'REQUESTED_SESSION_IDENTITY_MISMATCH',
+    );
+    expect(transport.writes.length).toBe(writesBefore);
+    // The session is still establishable afterwards.
+    expect((await runEstablishment(transport, lease, identityBox)).kind).toBe('ESTABLISHED');
+  });
+
+  it('keeps concurrent-establishment protection atomic and session-scoped', async () => {
+    const {transport, lease, identityBox} = await standardSetup();
+    const first = establishMotorArmingRestriction({
+      lease,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identityBox.current,
+      boxIds: MINTED.get(lease),
+    });
+    expectNotEstablished(
+      await establishMotorArmingRestriction({
+        lease,
+        requestedIdentity: identity(),
+        readCurrentIdentity: () => identityBox.current,
+        boxIds: MINTED.get(lease),
+      }),
+      'ARMING_RESTRICTION_ALREADY_ESTABLISHING',
+    );
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(MSP_SET_ARMING_DISABLED));
+    await flushMicrotasks();
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(MSP_STATUS_EX, statusPayload()));
+    expect((await first).kind).toBe('ESTABLISHED');
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Pass 3 correction B - Box IDs provenance
+ * ------------------------------------------------------------------ */
+
+describe('correction B: session-bound Box IDs provenance', () => {
+  it('accepts a legitimate current-session snapshot', async () => {
+    const {transport, lease, identityBox, boxIds} = await standardSetup();
+    expect(boxIds).toBeInstanceOf(MotorTestBoxIdsSnapshot);
+    expect((await runEstablishment(transport, lease, identityBox, {boxIds})).kind).toBe(
+      'ESTABLISHED',
+    );
+  });
+
+  async function expectRejectedEvidence(
+    boxIds: MotorTestBoxIdsSnapshot | undefined,
+  ): Promise<void> {
+    const {transport, lease, identityBox} = await standardSetup();
+    const writesBefore = transport.writes.length;
+    expectNotEstablished(
+      await runEstablishment(transport, lease, identityBox, {boxIds}),
+      'BOX_IDS_PROVENANCE_INVALID',
+    );
+    // Zero establishment requests and zero transport writes.
+    expect(transport.writes.length).toBe(writesBefore);
+    expect(lease.isActive()).toBe(true);
+  }
+
+  it('rejects a stale snapshot from a previous session on the same client', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const staleSnapshot = MINTED.get(leaseA);
+    // Desync rotates the epoch, which is a new official session.
+    const doomed = leaseA.request(MSP_STATUS_EX, EMPTY, {wireFormat: 'v1'});
+    const settled = doomed.catch(() => undefined);
+    transport.rejectNextWrite('WRITE_FAILED');
+    await settled;
+    await flushMicrotasks();
+    expect(client.getEpoch()).toBe(1);
+    expect(leaseA.isActive()).toBe(false);
+
+    // A fresh lease in the NEW session must not accept the old evidence.
+    const second = await standardSetup();
+    expectNotEstablished(
+      await runEstablishment(second.transport, second.lease, second.identityBox, {
+        boxIds: staleSnapshot,
+      }),
+      'BOX_IDS_PROVENANCE_INVALID',
+    );
+  });
+
+  it('rejects a cross-client snapshot before command 99', async () => {
+    const other = await standardSetup();
+    await expectRejectedEvidence(other.boxIds);
+  });
+
+  it('rejects a spread copy', async () => {
+    const {boxIds} = await standardSetup();
+    await expectRejectedEvidence({...boxIds} as unknown as MotorTestBoxIdsSnapshot);
+  });
+
+  it('rejects a JSON round-trip', async () => {
+    const {boxIds} = await standardSetup();
+    await expectRejectedEvidence(
+      JSON.parse(JSON.stringify(boxIds)) as MotorTestBoxIdsSnapshot,
+    );
+  });
+
+  it('rejects a structurally forged / hand-built object', async () => {
+    await expectRejectedEvidence({
+      snapshotKind: 'MOTOR_TEST_BOX_IDS_SNAPSHOT',
+      permanentIds: [5, 1, 0, 13],
+    } as unknown as MotorTestBoxIdsSnapshot);
+    // Even a real class instance built by hand has no registry entry.
+    await expectRejectedEvidence(new MotorTestBoxIdsSnapshot([5, 1, 0, 13]));
+  });
+
+  it('does not make a forgery authentic by copying session scalar fields', async () => {
+    const {boxIds} = await standardSetup();
+    // A genuine snapshot cannot even be decorated - it is frozen.
+    expect(() =>
+      Object.assign(boxIds as object, {physicalGeneration: 2, mspEpoch: 0}),
+    ).toThrow(TypeError);
+    // And a hand-built look-alike carrying every plausible session field
+    // is still rejected: authenticity is registry membership, not shape.
+    const withScalars = {
+      snapshotKind: 'MOTOR_TEST_BOX_IDS_SNAPSHOT',
+      permanentIds: [5, 1, 0, 13],
+      physicalGeneration: 2,
+      mspEpoch: 0,
+      sessionIdentity: identity(),
+    };
+    await expectRejectedEvidence(withScalars as unknown as MotorTestBoxIdsSnapshot);
+  });
+
+  it('cannot be altered by mutating the original decoded input', async () => {
+    const {transport, client} = makeClient();
+    const lease = leaseFor(client);
+    const wire = Uint8Array.from([5, 1, 0, 13]);
+    const snapshot = await mintBoxIds(transport, lease, wire);
+    wire[2] = 99; // BOXARM byte in the caller's own buffer
+    expect(snapshot.permanentIds).toEqual([5, 1, 0, 13]);
+    expect(Object.isFrozen(snapshot.permanentIds)).toBe(true);
+    expect(Object.isFrozen(snapshot)).toBe(true);
+  });
+
+  it('exposes no transport, client, requester, token or write capability', async () => {
+    const {boxIds} = await standardSetup();
+    const names = new Set<string>([
+      ...Object.keys(boxIds),
+      ...Object.getOwnPropertyNames(Object.getPrototypeOf(boxIds) as object),
+    ]);
+    for (const forbidden of ['request', 'lease', 'client', 'transport', 'writeBytes', 'token']) {
+      expect(names.has(forbidden)).toBe(false);
+    }
+    expect(Object.keys(boxIds).sort()).toEqual(['permanentIds', 'snapshotKind']);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Pass 3 correction 6.5 - identity-provider exceptions
+ * ------------------------------------------------------------------ */
+
+describe('correction 6.5: a throwing identity provider', () => {
+  it('returns a typed failure with zero traffic when it throws pre-write', async () => {
+    const {transport, lease} = await standardSetup();
+    const writesBefore = transport.writes.length;
+    const result = await establishMotorArmingRestriction({
+      lease,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => {
+        throw new Error('provider exploded');
+      },
+      boxIds: MINTED.get(lease),
+    });
+    expectNotEstablished(result, 'SESSION_IDENTITY_PROVIDER_FAILED');
+    expect(transport.writes.length).toBe(writesBefore);
+    expect(lease.isActive()).toBe(true); // nothing was sent, nothing faulted
+  });
+
+  it('faults the lease when it throws after command 99 was submitted', async () => {
+    const {transport, lease, identityBox} = await standardSetup();
+    let calls = 0;
+    const result = await runEstablishment(transport, lease, identityBox, {
+      readCurrentIdentity: () => {
+        calls += 1;
+        if (calls >= 2) {
+          throw new Error('provider exploded after ACK');
+        }
+        return identity();
+      },
+    });
+    expectNotEstablished(result, 'SESSION_IDENTITY_PROVIDER_FAILED');
+    expect(lease.isActive()).toBe(false);
+  });
+
+  it('faults the lease when it throws after the status response', async () => {
+    const {transport, lease, identityBox} = await standardSetup();
+    let calls = 0;
+    const result = await runEstablishment(transport, lease, identityBox, {
+      readCurrentIdentity: () => {
+        calls += 1;
+        if (calls >= 3) {
+          throw new Error('provider exploded after status');
+        }
+        return identity();
+      },
+    });
+    expectNotEstablished(result, 'SESSION_IDENTITY_PROVIDER_FAILED');
+    expect(calls).toBeGreaterThanOrEqual(3);
+    expect(lease.isActive()).toBe(false);
+  });
+
+  it('never throws from receipt.isCurrent()', async () => {
+    const {transport, lease, identityBox} = await standardSetup();
+    const result = await runEstablishment(transport, lease, identityBox);
+    if (result.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    // isCurrent() consults only this module's own state - it never calls
+    // a caller-supplied provider, so nothing a caller does can make it
+    // throw, before or after the lease dies.
+    expect(() => result.receipt.isCurrent()).not.toThrow();
+    expect(result.receipt.isCurrent()).toBe(true);
+    lease.failClosed();
+    expect(() => result.receipt.isCurrent()).not.toThrow();
+    expect(result.receipt.isCurrent()).toBe(false);
   });
 });

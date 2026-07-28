@@ -53,14 +53,23 @@
  * NO CLEARING, NO RE-ENABLE. The inverse payload (byte 0) exists in the
  * firmware, and this module deliberately does not implement, expose or
  * encode it. Teardown - which must also have confirmed motor stop and
- * lifecycle safety - belongs to a later pass. Note that at the pinned tag
- * the restriction is STICKY: `mspArmingDisableFlags` is never cleared on
- * port release, disconnect, detach or descriptor destruction (its only
- * three touch points are msp.c:232/238/243), and `resetMspPort`
- * (msp_serial.c:47-54) allocates a brand-new, never-reused descriptor. So
- * after a detach the old descriptor's bit remains set and arming stays
- * disabled until the FC reboots. Releasing a JavaScript receipt clears
- * nothing on the FC.
+ * lifecycle safety - belongs to a later pass.
+ *
+ * WHAT WAS ACTUALLY TRACED about persistence, and nothing beyond it:
+ *   - an explicit `command == 0` from a descriptor clears that
+ *     descriptor's bit, and the global ARMING_DISABLED_MSP clears only
+ *     once every descriptor has cleared (msp.c:236-243);
+ *   - the release/reset paths that were inspected -
+ *     `mspSerialReleasePortIfAllocated` (msp_serial.c:93-101) and
+ *     `resetMspPort` (msp_serial.c:47-54) - do not themselves touch
+ *     `mspArmingDisableFlags`, whose only three touch points are
+ *     msp.c:232/238/243, and descriptors are allocated monotonically and
+ *     never reused.
+ * Whether the restriction therefore survives every real USB VCP detach
+ * until the FC reboots was NOT proven: the full USB detach lifecycle was
+ * not traced. Treat that as a CONDITIONAL INFERENCE, not a fact.
+ * Independently of it, releasing a JavaScript receipt clears nothing on
+ * the FC.
  *
  * NO TIMERS, NO RETRIES, NO POLLING, NO TTL, NO CLOCK, NO EXPIRY, NO
  * AUTOMATIC CONTINUATION. One attempt, two requests, one answer.
@@ -84,8 +93,19 @@
  *                       enable branch; the disable branch calls
  *                       `runawayTakeoffTemporaryDisable(false)` with a
  *                       hardcoded literal and ignores it entirely.
- *     => the disable request is EXACTLY ONE BYTE. Single bytes, so byte
- *        order does not apply.
+ *
+ *     WHAT THE FIRMWARE REQUIRES vs WHAT THIS CODE SENDS - two different
+ *     statements, never to be conflated:
+ *       - the handler requires byte 0 to be present, MAY additionally
+ *         read byte 1, and applies NO explicit length validation, so
+ *         trailing bytes are simply ignored rather than rejected. There
+ *         is no error path for an over-long payload. (`sbufReadU8` is
+ *         `return *src->ptr++`, streambuf.c:98-101 - unbounded, so a
+ *         zero-length payload would read out of bounds.)
+ *       - THIS IMPLEMENTATION intentionally emits exactly `[1]`, the
+ *         minimal sufficient disable payload. That is a choice made
+ *         here, not a constraint the protocol enforces.
+ *     Single bytes, so byte order does not apply.
  *
  *     disable branch:  mspArmingDisableByDescriptor(srcDesc);
  *                      setArmingDisabled(ARMING_DISABLED_MSP);
@@ -103,11 +123,13 @@
 import {
   MotorTestLease,
   mspSessionCompositeIdentitiesMatch,
+  type MspOfficialSessionAuthority,
   type MspSessionCompositeIdentity,
   type MspSessionIdentityProvider,
 } from '../protocol/motorTestLease';
+import {MSP_STATUS_EX} from '../protocol/msp/commands/mspCommands';
 import {decodeStatusExDiagnostics} from '../protocol/msp/decoding/decodeStatusExDiagnostics';
-import type {BoxIdsResult} from '../protocol/msp/identification/BoxIdsAcquisition';
+import {motorTestBoxIdsAuthorityOf, MotorTestBoxIdsSnapshot} from './motorTestBoxIds';
 import {ARMING_DISABLE_FLAG_TOKENS, deriveArmedState} from './armingBlockers';
 
 /* ------------------------------------------------------------------ *
@@ -124,8 +146,14 @@ import {ARMING_DISABLE_FLAG_TOKENS, deriveArmedState} from './armingBlockers';
  */
 export const MSP_SET_ARMING_DISABLED = 99;
 
-/** msp_protocol.h:217. Re-declared locally for the same reason. */
-export const MSP_STATUS_EX = 150;
+/**
+ * Re-exported from the canonical command table rather than re-declared:
+ * MSP_STATUS_EX is an ordinary read that the rest of the project already
+ * owns, so a second local `= 150` would have been a drift risk for no
+ * safety benefit. Command 99 stays local (above) because it is a WRITE
+ * and must not join the general-purpose command surface.
+ */
+export {MSP_STATUS_EX};
 
 /** The single mandatory payload byte, non-zero = disable arming. */
 export const ARMING_DISABLE_COMMAND_BYTE = 1;
@@ -185,7 +213,16 @@ export type MotorArmingRestrictionFailureReason =
    * bit could not be located, so no independent evidence exists. */
   | 'INDEPENDENT_VERIFICATION_UNAVAILABLE'
   /** The status response was truncated or otherwise undecodable. */
-  | 'MALFORMED_STATUS_RESPONSE';
+  | 'MALFORMED_STATUS_RESPONSE'
+  /** The supplied Box IDs evidence was not minted by the trusted
+   * lease-based acquisition, or belongs to a different official session
+   * (stale, cross-session or cross-client). */
+  | 'BOX_IDS_PROVENANCE_INVALID'
+  /** The caller's identity provider THREW. Distinct from "no identity"
+   * and from "identity mismatch": neither of those would be truthful,
+   * and mislabelling a broken provider as an observed mismatch would
+   * hide a real defect. */
+  | 'SESSION_IDENTITY_PROVIDER_FAILED';
 
 /**
  * How strong the post-ACK evidence actually is. There is exactly one
@@ -193,19 +230,50 @@ export type MotorArmingRestrictionFailureReason =
  */
 export type MotorArmingRestrictionEvidenceScope = 'AGGREGATE_NOT_DESCRIPTOR_SPECIFIC';
 
-/** Token storage - module-private, weak, never an own property of the
- * receipt, so spreading and JSON round-tripping cannot carry it. */
-const RECEIPT_TOKENS = new WeakMap<MotorArmingRestrictionReceipt, object>();
+/**
+ * Module-private provenance for receipts. The vestigial RECEIPT_TOKENS
+ * map was REMOVED in the Pass 3 correction: it stored an empty object
+ * that nothing ever checked, so it provided no authenticity while
+ * appearing to. The real anti-forgery mechanism is unchanged and is
+ * strict instance identity - a receipt is current only if the session's
+ * recorded outcome holds THIS exact object - which a spread copy, a JSON
+ * revival or a hand-built instance can never satisfy.
+ */
 const RECEIPT_LEASES = new WeakMap<MotorArmingRestrictionReceipt, MotorTestLease>();
 
-/** Per-lease establishment bookkeeping. Weak, so nothing leaks and no
- * global identity registry is invented - the canonical same-session fault
- * latch still lives in MspClient, exactly where Pass 2 put it. */
-const IN_PROGRESS = new WeakSet<MotorTestLease>();
-type LeaseOutcome =
+/**
+ * Establishment bookkeeping, keyed by the OFFICIAL SESSION AUTHORITY -
+ * not by the lease object, not by a caller-supplied identity object, and
+ * not by caller-supplied scalars.
+ *
+ * This is Pass 3 correction A. Keying on the lease was wrong: a lease is
+ * released and reacquired freely inside one session, so lease-object
+ * keying let command 99 be sent a second time for the same official
+ * session and issued a second receipt. Keying on the authority means the
+ * record deliberately OUTLIVES an ordinary release, and ends only at a
+ * genuine session boundary - a desync (epoch rotation) or a new client -
+ * because that is exactly when a new authority is minted.
+ *
+ * Weak on the authority object, which is itself weakly held per client,
+ * so nothing leaks across unrelated clients.
+ */
+const IN_PROGRESS = new WeakSet<MspOfficialSessionAuthority>();
+type SessionOutcome =
   | {readonly kind: 'ESTABLISHED'; readonly receipt: MotorArmingRestrictionReceipt}
   | {readonly kind: 'FAULTED'};
-const LEASE_OUTCOMES = new WeakMap<MotorTestLease, LeaseOutcome>();
+const SESSION_OUTCOMES = new WeakMap<MspOfficialSessionAuthority, SessionOutcome>();
+
+/**
+ * Leases this module has failed closed.
+ *
+ * Purely for REASON FIDELITY, never for success tracking: faulting kills
+ * the lease, so a retry with that same dead capability can no longer
+ * reach its session authority, and the honest-but-vague
+ * MOTOR_TEST_LEASE_INACTIVE would hide the fact that THIS module already
+ * failed it closed. Success remains session-keyed (above) - this set is
+ * only ever consulted to choose a truthful reason.
+ */
+const FAULTED_LEASES = new WeakSet<MotorTestLease>();
 
 function copyIdentity(identity: MspSessionCompositeIdentity): MspSessionCompositeIdentity {
   return Object.freeze({
@@ -249,12 +317,20 @@ export class MotorArmingRestrictionReceipt {
    * detecting removal remains unsolved.
    */
   isCurrent(): boolean {
+    // Never throws. Every lookup below is a plain map read or a pure
+    // predicate on this module's own state; nothing here calls a
+    // caller-supplied provider, so a broken provider cannot make a
+    // currency check explode.
     const lease = RECEIPT_LEASES.get(this);
-    const token = RECEIPT_TOKENS.get(this);
-    if (lease === undefined || token === undefined || !lease.isActive()) {
+    if (lease === undefined || !lease.isActive()) {
       return false;
     }
-    const outcome = LEASE_OUTCOMES.get(lease);
+    const authority = lease.officialSessionAuthority();
+    if (authority === undefined) {
+      return false;
+    }
+    const outcome = SESSION_OUTCOMES.get(authority);
+    // Strict instance identity - the actual anti-forgery check.
     return outcome?.kind === 'ESTABLISHED' && outcome.receipt === this;
   }
 }
@@ -270,12 +346,16 @@ export interface EstablishMotorArmingRestrictionOptions {
   readonly requestedIdentity: MspSessionCompositeIdentity;
   readonly readCurrentIdentity: MspSessionIdentityProvider;
   /**
-   * The already-acquired MSP_BOXIDS mapping for this same session, used
-   * to locate the ARM bit. Supplied rather than re-requested so
-   * BoxIdsAcquisition keeps its at-most-once-per-identity ownership, and
-   * so this pass adds exactly the two authorized requests.
+   * TRUSTED, session-bound Box IDs evidence from acquireMotorTestBoxIds()
+   * - never a bare `BoxIdsResult`. Its provenance is verified against
+   * this lease's official session authority before command 99 is sent,
+   * so a stale, cross-session, cross-client, spread, JSON-revived or
+   * hand-built mapping is rejected with zero traffic.
+   *
+   * Acquired as its own operation BEFORE establishment, which is what
+   * keeps this function's request contract at exactly 99 then 150.
    */
-  readonly boxIds: BoxIdsResult | undefined;
+  readonly boxIds: MotorTestBoxIdsSnapshot | undefined;
 }
 
 function notEstablished(
@@ -290,12 +370,31 @@ function notEstablished(
  * latched there, and every receipt from that lease stops being current.
  */
 function failClosed(
+  authority: MspOfficialSessionAuthority,
   lease: MotorTestLease,
   reason: MotorArmingRestrictionFailureReason,
 ): MotorArmingRestrictionEstablishment {
-  LEASE_OUTCOMES.set(lease, Object.freeze({kind: 'FAULTED'} as const));
+  SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'FAULTED'} as const));
+  FAULTED_LEASES.add(lease);
   lease.failClosed();
   return notEstablished(reason);
+}
+
+/**
+ * Reads the caller's identity provider without ever letting it reject
+ * this operation in an untyped way. A provider that THROWS is a broken
+ * caller contract, not an expected state, but it must still surface as a
+ * typed result - so it is reported distinctly rather than being
+ * mislabelled as "unavailable" or "mismatched".
+ */
+function readIdentitySafely(
+  read: MspSessionIdentityProvider,
+): {ok: true; identity: MspSessionCompositeIdentity | undefined} | {ok: false} {
+  try {
+    return {ok: true, identity: read()};
+  } catch {
+    return {ok: false};
+  }
 }
 
 /** Arithmetic bit test - JavaScript bitwise operators are signed 32-bit
@@ -334,21 +433,42 @@ export async function establishMotorArmingRestriction(
   if (lease === undefined) {
     return notEstablished('MOTOR_TEST_LEASE_INACTIVE');
   }
-  const priorOutcome = LEASE_OUTCOMES.get(lease);
+  // Checked BEFORE the authority lookup: a lease this module already
+  // failed closed is dead, so its authority is no longer reachable, and
+  // reporting a bare "inactive" would lose the reason it died.
+  if (FAULTED_LEASES.has(lease)) {
+    return notEstablished('ARMING_RESTRICTION_FAULT_LATCHED');
+  }
+  // The official session anchor. undefined means this capability is not
+  // the live owner, so there is no session to bind anything to.
+  const authority = lease.officialSessionAuthority();
+  if (authority === undefined) {
+    return notEstablished('MOTOR_TEST_LEASE_INACTIVE');
+  }
+  // Correction A: these three checks are keyed on the SESSION, so they
+  // survive an ordinary release-and-reacquire and are not defeated by a
+  // fresh lease object or a re-created identity object.
+  const priorOutcome = SESSION_OUTCOMES.get(authority);
   if (priorOutcome?.kind === 'FAULTED') {
     return notEstablished('ARMING_RESTRICTION_FAULT_LATCHED');
   }
   if (priorOutcome?.kind === 'ESTABLISHED') {
     return notEstablished('ARMING_RESTRICTION_ALREADY_ESTABLISHED');
   }
-  if (IN_PROGRESS.has(lease)) {
+  if (IN_PROGRESS.has(authority)) {
     return notEstablished('ARMING_RESTRICTION_ALREADY_ESTABLISHING');
   }
-  const currentIdentity = readCurrentIdentity();
+  const initialRead = readIdentitySafely(readCurrentIdentity);
+  if (!initialRead.ok) {
+    return notEstablished('SESSION_IDENTITY_PROVIDER_FAILED');
+  }
+  const currentIdentity = initialRead.identity;
   if (currentIdentity === undefined) {
     return notEstablished('CURRENT_SESSION_IDENTITY_UNAVAILABLE');
   }
-  // BOTH scalars, by value - never by object reference.
+  // BOTH scalars, by value - never by object reference. Note these
+  // scalars are a coherence check, NOT the authority: the authority is
+  // the anchor object above, which no caller can mint.
   if (!mspSessionCompositeIdentitiesMatch(currentIdentity, requestedIdentity)) {
     return notEstablished('REQUESTED_SESSION_IDENTITY_MISMATCH');
   }
@@ -358,29 +478,43 @@ export async function establishMotorArmingRestriction(
   if (!lease.isActive()) {
     return notEstablished('MOTOR_TEST_LEASE_INACTIVE');
   }
-  // Without the box mapping the ARM bit position is unknown, so no
-  // independent verification is possible at all. Refuse before spending
-  // a request rather than after.
-  if (boxIds === undefined || boxIds.kind !== 'READY' || boxIds.permanentIds.length === 0) {
+  // Correction B: Box IDs must be TRUSTED evidence minted by this
+  // session's own lease-based acquisition. Provenance is registry
+  // membership, so a spread copy, JSON revival, hand-built object or
+  // cross-session snapshot all fail here - before any traffic.
+  if (boxIds === undefined) {
+    return notEstablished('INDEPENDENT_VERIFICATION_UNAVAILABLE');
+  }
+  if (motorTestBoxIdsAuthorityOf(boxIds) !== authority) {
+    return notEstablished('BOX_IDS_PROVENANCE_INVALID');
+  }
+  if (boxIds.permanentIds.length === 0) {
     return notEstablished('INDEPENDENT_VERIFICATION_UNAVAILABLE');
   }
 
-  IN_PROGRESS.add(lease);
+  IN_PROGRESS.add(authority);
   try {
     // --- (1) The arming-disable request, through the lease only. ----
     try {
       await lease.request(MSP_SET_ARMING_DISABLED, buildArmingDisablePayload(), REQUEST_OPTIONS);
     } catch {
       // A rejected lease-scoped request has ALREADY faulted the lease via
-      // Pass 2's own automatic route; record it here so a retry through
-      // this module is refused with the accurate reason.
-      LEASE_OUTCOMES.set(lease, Object.freeze({kind: 'FAULTED'} as const));
+      // Pass 2's own automatic route; record it against the session so a
+      // retry is refused with the accurate reason.
+      SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'FAULTED'} as const));
+      FAULTED_LEASES.add(lease);
       return notEstablished('ARMING_DISABLE_REQUEST_FAILED');
     }
 
     // --- (2)(3) ACK is only ACK. Revalidate before going further. ---
-    if (!mspSessionCompositeIdentitiesMatch(readCurrentIdentity(), requestedIdentity)) {
-      return failClosed(lease, 'SESSION_CHANGED_DURING_ESTABLISHMENT');
+    const afterAck = readIdentitySafely(readCurrentIdentity);
+    if (!afterAck.ok) {
+      // Command 99 is already out. A provider that throws now leaves the
+      // session ambiguous, so fail closed through the canonical latch.
+      return failClosed(authority, lease, 'SESSION_IDENTITY_PROVIDER_FAILED');
+    }
+    if (!mspSessionCompositeIdentitiesMatch(afterAck.identity, requestedIdentity)) {
+      return failClosed(authority, lease, 'SESSION_CHANGED_DURING_ESTABLISHMENT');
     }
     if (!lease.isActive()) {
       return notEstablished('MOTOR_TEST_LEASE_INACTIVE');
@@ -392,29 +526,38 @@ export async function establishMotorArmingRestriction(
       const frame = await lease.request(MSP_STATUS_EX, EMPTY_PAYLOAD, REQUEST_OPTIONS);
       statusPayload = frame.payload;
     } catch {
-      LEASE_OUTCOMES.set(lease, Object.freeze({kind: 'FAULTED'} as const));
+      SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'FAULTED'} as const));
+      FAULTED_LEASES.add(lease);
       return notEstablished('POST_ACK_STATUS_REQUEST_FAILED');
     }
 
     // --- (5) Revalidate again, after the second await. --------------
-    if (!mspSessionCompositeIdentitiesMatch(readCurrentIdentity(), requestedIdentity)) {
-      return failClosed(lease, 'SESSION_CHANGED_DURING_ESTABLISHMENT');
+    const afterStatus = readIdentitySafely(readCurrentIdentity);
+    if (!afterStatus.ok) {
+      return failClosed(authority, lease, 'SESSION_IDENTITY_PROVIDER_FAILED');
+    }
+    if (!mspSessionCompositeIdentitiesMatch(afterStatus.identity, requestedIdentity)) {
+      return failClosed(authority, lease, 'SESSION_CHANGED_DURING_ESTABLISHMENT');
     }
     if (!lease.isActive()) {
       return notEstablished('MOTOR_TEST_LEASE_INACTIVE');
+    }
+    // The session must not have rotated underneath the evidence either.
+    if (lease.officialSessionAuthority() !== authority) {
+      return failClosed(authority, lease, 'SESSION_CHANGED_DURING_ESTABLISHMENT');
     }
 
     let status;
     try {
       status = decodeStatusExDiagnostics(statusPayload);
     } catch {
-      return failClosed(lease, 'MALFORMED_STATUS_RESPONSE');
+      return failClosed(authority, lease, 'MALFORMED_STATUS_RESPONSE');
     }
     const readiness = status.readiness;
     if (readiness.malformedTail === true) {
       // A partially present tail: nothing after the fixed prefix can be
       // trusted, and it is never normalized into "no restriction".
-      return failClosed(lease, 'MALFORMED_STATUS_RESPONSE');
+      return failClosed(authority, lease, 'MALFORMED_STATUS_RESPONSE');
     }
 
     // --- (6) Not armed. Read from the canonical decoded armed state,
@@ -425,29 +568,28 @@ export async function establishMotorArmingRestriction(
       boxIds.permanentIds,
     );
     if (armedState === 'UNKNOWN') {
-      return failClosed(lease, 'INDEPENDENT_VERIFICATION_UNAVAILABLE');
+      return failClosed(authority, lease, 'INDEPENDENT_VERIFICATION_UNAVAILABLE');
     }
     if (armedState === 'ARMED') {
-      return failClosed(lease, 'FC_ARMED');
+      return failClosed(authority, lease, 'FC_ARMED');
     }
 
     // --- (7) The aggregate restriction bit. -------------------------
     const mask = readiness.armingDisableFlags;
     if (mask === undefined) {
       // A missing mask is NEVER an empty mask.
-      return failClosed(lease, 'INDEPENDENT_VERIFICATION_UNAVAILABLE');
+      return failClosed(authority, lease, 'INDEPENDENT_VERIFICATION_UNAVAILABLE');
     }
     if (!isBitSet(mask, ARMING_DISABLED_MSP_BIT_INDEX)) {
-      return failClosed(lease, 'MSP_ARMING_RESTRICTION_NOT_OBSERVED');
+      return failClosed(authority, lease, 'MSP_ARMING_RESTRICTION_NOT_OBSERVED');
     }
 
     // --- (8) Only now. -----------------------------------------------
     const receipt = new MotorArmingRestrictionReceipt(currentIdentity);
     RECEIPT_LEASES.set(receipt, lease);
-    RECEIPT_TOKENS.set(receipt, {});
-    LEASE_OUTCOMES.set(lease, Object.freeze({kind: 'ESTABLISHED', receipt} as const));
+    SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'ESTABLISHED', receipt} as const));
     return Object.freeze({kind: 'ESTABLISHED', receipt} as const);
   } finally {
-    IN_PROGRESS.delete(lease);
+    IN_PROGRESS.delete(authority);
   }
 }

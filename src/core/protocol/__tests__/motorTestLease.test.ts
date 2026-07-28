@@ -840,6 +840,80 @@ describe('invalidation and fault latching', () => {
     expect(lease.isActive()).toBe(true);
   });
 
+  it('officialSessionAuthority() is the SAME object across leases in one session', () => {
+    // Pass 3 correction A depends on this: a "once per official session"
+    // rule must survive an ordinary release-and-reacquire.
+    const {client} = makeClient();
+    const leaseA = acquireOrThrow(client, 0);
+    const authorityA = leaseA.officialSessionAuthority();
+    expect(authorityA).toBeDefined();
+    expect(leaseA.release()).toBe('RELEASED');
+
+    const leaseB = acquireOrThrow(client, 0);
+    expect(leaseB.officialSessionAuthority()).toBe(authorityA);
+  });
+
+  it('officialSessionAuthority() differs after an epoch rotation', async () => {
+    const {transport, client} = makeClient();
+    const leaseA = acquireOrThrow(client, 0);
+    const authorityA = leaseA.officialSessionAuthority();
+    await desynchronizeViaLease(transport, leaseA);
+    await driveRecoveryToCompletion(transport);
+    expect(client.getEpoch()).toBe(1);
+    if (client.getState() !== 'READY') {
+      return; // recovery did not return to READY in this fixture
+    }
+    const leaseB = acquireOrThrow(client, 1);
+    expect(leaseB.officialSessionAuthority()).not.toBe(authorityA);
+  });
+
+  it('officialSessionAuthority() differs across clients', () => {
+    const first = makeClient();
+    const second = makeClient();
+    const a = acquireOrThrow(first.client, 0).officialSessionAuthority();
+    const b = acquireOrThrow(second.client, 0).officialSessionAuthority();
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a).not.toBe(b);
+  });
+
+  it('officialSessionAuthority() is undefined for a dead or forged capability', () => {
+    const {client} = makeClient();
+    expect(new MotorTestLease(identity()).officialSessionAuthority()).toBeUndefined();
+
+    const lease = acquireOrThrow(client, 0);
+    expect(lease.officialSessionAuthority()).toBeDefined();
+    expect(lease.release()).toBe('RELEASED');
+    expect(lease.officialSessionAuthority()).toBeUndefined();
+
+    const faulted = acquireOrThrow(client, 0);
+    expect(faulted.failClosed()).toBe(true);
+    expect(faulted.officialSessionAuthority()).toBeUndefined();
+  });
+
+  it('the authority object exposes no client, transport, token or write capability', () => {
+    const {client} = makeClient();
+    const authority = acquireOrThrow(client, 0).officialSessionAuthority();
+    expect(authority).toBeDefined();
+    const names = [
+      ...Object.keys(authority as object),
+      ...Object.getOwnPropertyNames(Object.getPrototypeOf(authority) as object).filter(
+        name => name !== 'constructor',
+      ),
+    ];
+    // The ONLY member is the inert nominal marker, which is always
+    // undefined and is never read - TypeScript's `private` is
+    // compile-time only, so it does exist as an own key at runtime. There
+    // is no method of any kind, and no capability to reach.
+    expect(names).toEqual(['brand']);
+    expect((authority as unknown as Record<string, unknown>).brand).toBeUndefined();
+    for (const forbidden of ['client', 'transport', 'writeBytes', 'token', 'request', 'lease']) {
+      expect(names).not.toContain(forbidden);
+    }
+    // Carries no serializable data at all.
+    expect(JSON.stringify(authority)).toBe('{}');
+  });
+
   it('an old release cannot affect a new session lease', () => {
     const oldSession = makeClient();
     const oldLease = acquireOrThrow(oldSession.client);
@@ -992,6 +1066,9 @@ describe('semantic exclusions', () => {
       'failClosed',
       'isActive',
       'leaseKind',
+      // Pass 3 correction A added officialSessionAuthority() - an
+      // identity anchor with no data and no methods. It grants nothing.
+      'officialSessionAuthority',
       'release',
       'request',
       'sessionIdentity',

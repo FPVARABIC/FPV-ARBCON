@@ -139,6 +139,68 @@ const LEASE_TOKENS = new WeakMap<MotorTestLease, MspMotorTestLeaseToken>();
  * capability can never be pointed at a different client. */
 const LEASE_CLIENTS = new WeakMap<MotorTestLease, MspClient>();
 
+/**
+ * Pass 3 correction - the canonical, NON-FORGEABLE anchor for one
+ * OFFICIAL MSP session.
+ *
+ * WHY THIS EXISTS. Callers supply `physicalGeneration` and `mspEpoch` as
+ * plain numbers, and plain numbers are not authority: any caller can
+ * invent a pair, or reuse an old one. Anything that must be true "once
+ * per real session" therefore cannot be keyed on those scalars, and it
+ * cannot be keyed on a lease object either, because a lease is released
+ * and replaced many times within one session.
+ *
+ * WHAT IT IS ANCHORED TO. A fresh object identity minted per
+ * `(MspClient instance, that client's own mspEpoch)`:
+ *   - the MspClient instance is created by the session coordinator for a
+ *     genuinely new physical session and disposed when it is replaced,
+ *     closed or detached - a caller cannot fabricate one that this
+ *     module has already registered;
+ *   - `mspEpoch` is the client's OWN counter, readable but not writable
+ *     from outside, and rotated only by triggerDesyncLatch() - which
+ *     also faults any live lease.
+ * So the authority changes exactly when the official session changes,
+ * and never because a caller says so.
+ *
+ * It is a bare branded object with no data and no methods: it carries no
+ * client, transport, token or writer, and is useful only as a WeakMap
+ * key. Handing it out therefore grants nothing.
+ */
+export class MspOfficialSessionAuthority {
+  /** Present only so the type is nominal to TypeScript; never read. */
+  private readonly brand: undefined;
+
+  constructor() {
+    this.brand = undefined;
+  }
+}
+
+/** Minted authorities, per client, per epoch. Weak on the client so a
+ * discarded session's authorities are collectable and nothing leaks
+ * across unrelated clients. */
+const SESSION_AUTHORITIES = new WeakMap<MspClient, Map<number, MspOfficialSessionAuthority>>();
+
+/**
+ * The authority for a client's CURRENT epoch, minted once and then
+ * returned identically for as long as that official session lasts - so
+ * two different leases in the same session observe the SAME authority,
+ * while a desync or a new client yields a different one.
+ */
+function officialSessionAuthorityFor(client: MspClient): MspOfficialSessionAuthority {
+  let byEpoch = SESSION_AUTHORITIES.get(client);
+  if (byEpoch === undefined) {
+    byEpoch = new Map<number, MspOfficialSessionAuthority>();
+    SESSION_AUTHORITIES.set(client, byEpoch);
+  }
+  const epoch = client.getEpoch();
+  let authority = byEpoch.get(epoch);
+  if (authority === undefined) {
+    authority = new MspOfficialSessionAuthority();
+    byEpoch.set(epoch, authority);
+  }
+  return authority;
+}
+
 function copyIdentity(identity: MspSessionCompositeIdentity): MspSessionCompositeIdentity {
   // Explicit scalar copy, never a spread of the caller's object, so a
   // caller that keeps mutating its own session key cannot rewrite which
@@ -255,6 +317,29 @@ export class MotorTestLease {
       return false;
     }
     return client.faultMotorTestLeaseByToken(token);
+  }
+
+  /**
+   * Pass 3 correction - the OFFICIAL SESSION this live capability belongs
+   * to, as a non-forgeable anchor object.
+   *
+   * Returns the same authority for every lease taken on the same client
+   * while its epoch is unchanged, so a "once per official session" rule
+   * survives an ordinary release-and-reacquire. Returns a DIFFERENT
+   * authority after a desync (epoch rotation) or on a different client,
+   * and `undefined` whenever this capability is not the live owner - a
+   * released, invalidated, faulted or forged object can obtain nothing.
+   *
+   * The returned object exposes no client, transport, token or writer:
+   * it is an identity, not a capability, and confers no access at all.
+   */
+  officialSessionAuthority(): MspOfficialSessionAuthority | undefined {
+    const client = LEASE_CLIENTS.get(this);
+    const token = LEASE_TOKENS.get(this);
+    if (client === undefined || token === undefined || !client.isMotorTestLeaseToken(token)) {
+      return undefined;
+    }
+    return officialSessionAuthorityFor(client);
   }
 }
 
