@@ -1065,6 +1065,12 @@ describe('semantic exclusions', () => {
     const lease = acquireOrThrow(client);
     expect(Object.keys(lease).sort()).toEqual(['leaseKind', 'sessionIdentity']);
     expect(publicSurfaceNames(lease).sort()).toEqual([
+      // Phase 2G Pass 1 added emergencyStop() - SUBMISSION PRIORITY over
+      // the client's own FIFO, and nothing else. It chooses no command,
+      // encodes no payload, and is not an authorization: like request(),
+      // the caller supplies both. It is the ONLY route to priority, and
+      // it is reachable only from a live, non-forgeable capability.
+      'emergencyStop',
       // Pass 3 added failClosed() - the capability-bound semantic-fault
       // operation. It is a way to DIE, never a way to be authorized.
       'failClosed',
@@ -1147,5 +1153,152 @@ describe('semantic exclusions', () => {
     expect(transport.restarts).toHaveLength(0);
     expect(lease.release()).toBe('RELEASED');
     expect(transport.writes).toHaveLength(0);
+  });
+});
+
+/* ======================================================================
+ * Phase 2G Pass 1 - emergencyStop() as the ONLY route to priority.
+ *
+ * Submission order only. Nothing here claims on-wire preemption, a
+ * latency bound behind an in-flight write, or that a motor stopped.
+ * ====================================================================== */
+describe('MotorTestLease - Phase 2G emergency stop', () => {
+  /** Command byte of a v1 request frame: `$` `M` `<` len cmd ... */
+  function writtenCommands(transport: FakeMspTransport): number[] {
+    return transport.writeLog.map(bytes => bytes[4]);
+  }
+
+  it('routes the stop through the exact live token, ahead of the lease’s own queued work', async () => {
+    const {transport, client} = makeClient();
+    const lease = acquireOrThrow(client);
+
+    lease.request(HARMLESS_COMMAND, EMPTY, {wireFormat: 'v1'}).catch(() => {});
+    const queued = lease.request(HARMLESS_COMMAND + 1, EMPTY, {wireFormat: 'v1'});
+    queued.catch(() => {});
+    expect(writtenCommands(transport)).toEqual([HARMLESS_COMMAND]);
+
+    // Deliberately the SAME harmless fixture command, not 214: this pass
+    // constructs no motor command anywhere, and the lease chooses none.
+    const dispatch = lease.emergencyStop(HARMLESS_COMMAND + 2, EMPTY, {wireFormat: 'v1'});
+    expect(dispatch.deferredBehindActiveWrite).toBe(true);
+    expect(dispatch.attributionAmbiguous).toBe(false);
+
+    await expect(queued).rejects.toMatchObject({
+      code: 'MSP_DISPLACED_BY_EMERGENCY_STOP',
+      writeAttempted: false,
+    });
+
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    // The stop is the next submission; the purged request never reached
+    // the transport at all.
+    expect(writtenCommands(transport)).toEqual([HARMLESS_COMMAND, HARMLESS_COMMAND + 2]);
+
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(HARMLESS_COMMAND + 2));
+    await expect(dispatch.frame).resolves.toMatchObject({command: HARMLESS_COMMAND + 2});
+  });
+
+  it('gives a forged or reconstructed capability a rejected dispatch, never a write and never a silent no-op', async () => {
+    const {transport, client} = makeClient();
+    const lease = acquireOrThrow(client);
+
+    const forged = JSON.parse(JSON.stringify(lease)) as MotorTestLease;
+    expect(typeof (forged as {emergencyStop?: unknown}).emergencyStop).toBe('undefined');
+
+    // Even borrowing the real prototype method cannot help: the token
+    // lives in a module-private WeakMap keyed by the genuine instance.
+    const borrowed = Object.create(Object.getPrototypeOf(lease)) as MotorTestLease;
+    const dispatch = borrowed.emergencyStop(HARMLESS_COMMAND, EMPTY, {wireFormat: 'v1'});
+    await expect(dispatch.frame).rejects.toThrow(/not a genuine lease/);
+    expect(transport.writeLog).toHaveLength(0);
+    expect(lease.isActive()).toBe(true);
+  });
+
+  it('refuses a stop from a released capability, so a stale lease can never preempt a newer one', async () => {
+    const {transport, client} = makeClient();
+    const stale = acquireOrThrow(client);
+    expect(stale.release()).toBe('RELEASED');
+    const current = acquireOrThrow(client);
+
+    const dispatch = stale.emergencyStop(HARMLESS_COMMAND, EMPTY, {wireFormat: 'v1'});
+    await expect(dispatch.frame).rejects.toMatchObject({
+      code: 'MSP_MOTOR_TEST_LEASE_CAPABILITY_INVALID',
+    });
+    expect(transport.writeLog).toHaveLength(0);
+    expect(current.isActive()).toBe(true);
+  });
+
+  it('a stop aborted by desync leaves the identity it ran under unusable, requiring a genuinely new session identity', async () => {
+    const {transport, client} = makeClient();
+    const lease = acquireOrThrow(client, 0);
+
+    lease.request(HARMLESS_COMMAND, EMPTY, {wireFormat: 'v1'}).catch(() => {});
+    const dispatch = lease.emergencyStop(HARMLESS_COMMAND + 1, EMPTY, {wireFormat: 'v1'});
+
+    // Ambiguous write outcome: the client desynchronizes before the stop
+    // could ever be submitted.
+    transport.rejectNextWrite('WRITE_TIMEOUT');
+    await expect(dispatch.frame).rejects.toMatchObject({
+      code: 'MSP_EMERGENCY_STOP_ABORTED_BY_DESYNC',
+    });
+    // It REJECTED. A stop that was never written must never resolve.
+    expect(writtenCommands(transport)).toEqual([HARMLESS_COMMAND]);
+    expect(lease.isActive()).toBe(false);
+
+    // Drive recovery to completion - the link is fully healthy again.
+    transport.resolveNextRestart();
+    await flushMicrotasks();
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(1)); // MSP_PROBE_COMMAND
+    await flushMicrotasks();
+    expect(client.getState()).toBe('READY');
+
+    // A healthy link is NOT permission to retry. The identity the stop
+    // died under (epoch 0) is refused; only the genuinely new identity
+    // the desync produced can host another attempt.
+    expectNotAcquired(
+      acquire(client, identity(2, 0), identity(2, 0)),
+      'REQUESTED_SESSION_IDENTITY_MISMATCH',
+    );
+    expect(acquire(client, identity(2, 1), identity(2, 1)).kind).toBe('ACQUIRED');
+  });
+
+  it('grants no authorization: the dispatch carries only displacement facts and never a safety verdict', () => {
+    const {transport, client} = makeClient();
+    const lease = acquireOrThrow(client);
+    const dispatch = lease.emergencyStop(HARMLESS_COMMAND, EMPTY, {wireFormat: 'v1'});
+
+    expect(Object.keys(dispatch).sort()).toEqual([
+      'attributionAmbiguous',
+      'deferredBehindActiveWrite',
+      'frame',
+      'joinedExistingStop',
+    ]);
+    // No field asserts safety, readiness, authorization or - above all -
+    // that anything physically stopped.
+    for (const forbidden of [
+      'safe',
+      'ready',
+      'authorized',
+      'approved',
+      'allowed',
+      'permission',
+      'canTest',
+      'canPulse',
+      'canStart',
+      'stopped',
+      'physicalStopConfirmed',
+      'motorsStopped',
+      'preempted',
+    ]) {
+      expect(forbidden in dispatch).toBe(false);
+    }
+    expect(Object.isFrozen(dispatch)).toBe(true);
+    // Settled explicitly rather than left to time out, so this test uses
+    // no real clock at all.
+    transport.resolveNextWrite();
+    transport.emitData(responseFrame(HARMLESS_COMMAND));
+    return dispatch.frame;
   });
 });

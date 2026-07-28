@@ -208,6 +208,13 @@ interface PendingRequest {
    * in this request's lifecycle to skip classifyWriteFailure()/
    * triggerDesyncLatch() for the probe - see sendProbe()'s doc comment. */
   isProbe: boolean;
+  /** Phase 2G: true only for the single lease-owned emergency stop built
+   * by emergencyStopWithMotorTestLease(). Never defaulted, same "no silent
+   * default" convention as isProbe. The stop does NOT live in `queue` at
+   * all - it occupies its own one-slot register that pump() drains ahead
+   * of the FIFO - so this flag exists to make the record self-describing
+   * at every later exit, not to select it out of the queue. */
+  isEmergencyStop: boolean;
 }
 
 interface ActiveRequest {
@@ -218,6 +225,16 @@ interface ActiveRequest {
   settle: SettleOnce<MspFrame>;
   timer: ReturnType<typeof setTimeout> | undefined;
   isProbe: boolean;
+  isEmergencyStop: boolean;
+  /** Phase 2G: set when an emergency stop was registered while THIS
+   * request was still in phase WRITING. The transport write already
+   * handed to writeBytes() cannot be cancelled and must never be raced by
+   * a second concurrent write, so the stop waits for it. When that write
+   * finally settles, onWriteSettled() consults this flag and settles this
+   * request as displaced INSTEAD of entering AWAITING_RESPONSE and arming
+   * a 2000 ms response timer - which would otherwise make the stop wait
+   * out a full response timeout it has no reason to wait for. */
+  displacedByEmergencyStop: boolean;
 }
 
 /** Classifies a writeBytes() rejection reason into this slice's exact error
@@ -326,6 +343,147 @@ export class MspMotorTestLeaseBlockedError extends Error {
   }
 }
 
+/* ---------------- Phase 2G Pass 1: emergency stop priority ----------------
+ *
+ * WHAT THIS ADDS, EXACTLY. One extra submission slot, drained by pump()
+ * ahead of the FIFO, writable only by the live motor-test lease. Nothing
+ * else about the request engine changes: still one active request at a
+ * time, still one writeBytes() in flight at a time, still the same
+ * two-phase timeout, still the same settle precedence.
+ *
+ * WHAT IT DOES **NOT** ADD - and what must never be claimed of it:
+ *   - It does NOT cancel, abort or recall bytes already handed to
+ *     transport.writeBytes(). Nothing at this layer can.
+ *   - It does NOT preempt anything ON THE WIRE. The strongest true
+ *     statement is submission-order only: the stop is the NEXT
+ *     transport.writeBytes() invocation this client makes.
+ *   - It does NOT bound end-to-end latency while a real write is still in
+ *     flight. The deterministic bound applies only when the transport is
+ *     free, or when the displaced request has already reached
+ *     AWAITING_RESPONSE (its write settled, so the transport IS free).
+ *   - It does NOT confirm any motor physically stopped. An ACK proves the
+ *     command was received and processed, nothing mechanical.
+ *
+ * WHAT LIES BEYOND THIS FILE (read-only inspection of the Android native
+ * write path, recorded here so no later pass has to re-derive it, and so
+ * the boundary is stated in code rather than only in a review):
+ *   - UsbSerialTransportModule.writeBytes() enqueues a
+ *     UsbSerialWriteRequest and resolves its Promise from that request's
+ *     onComplete callback. performSerialWrite() invokes onComplete only
+ *     AFTER sink.write() has returned or thrown - so the Promise this
+ *     file awaits settles after the native serial write finished, not
+ *     when it was merely handed over.
+ *   - UsbSerialSession.write() delegates to port.write(buffer, timeout)
+ *     under an ioLock, and is documented confirmed-as-written: every byte
+ *     written and returns, or throws. The native attempt is bounded by
+ *     TX_WRITE_TIMEOUT_MILLIS (1000 ms) and is never auto-retried.
+ *   - Writes ARE serialized natively, twice over: UsbSerialWriteQueue is a
+ *     bounded strict-FIFO single-consumer queue with one dedicated thread
+ *     per session, and UsbSerialSession.write() additionally holds ioLock.
+ *   - THE LIMIT: that native queue has NO priority path and NO
+ *     cancellation. stopAndDrainPending() drains everything and stops the
+ *     queue permanently; it belongs to session close, not to a stop. So
+ *     anything already sitting in the native queue would be written
+ *     BEFORE a stop submitted afterwards. What keeps that from mattering
+ *     here is this client's own single-flight rule - it never has more
+ *     than one writeBytes() outstanding - and NOT any native priority. A
+ *     second caller writing to the same session outside this MspClient
+ *     would break that assumption, and no mechanism in this file could
+ *     detect it.
+ */
+
+export type MspMotorTestStopDisplacementCode =
+  /** The displaced request was still queued. It never reached encode(),
+   * never reached the transport, and never started a timer - so there is
+   * no wire ambiguity whatsoever for it. */
+  | 'MSP_DISPLACED_BY_EMERGENCY_STOP'
+  /** The displaced request had already been written (or was mid-write).
+   * Its bytes may be on the wire and a late response for it may still
+   * arrive; it is quarantined per-request, see handleFrame(). */
+  | 'MSP_DISPLACED_IN_FLIGHT_BY_EMERGENCY_STOP';
+
+/**
+ * Rejection raised when an emergency stop displaces other lease-owned or
+ * in-flight work. Deliberately NOT an MspClientError and NOT a member of
+ * MSP_CLIENT_ERROR_CODES: displacement is not an MSP outcome, has no
+ * user-facing copy, and must not be confused with a timeout, a write
+ * failure or a remote error by any `instanceof MspClientError` consumer.
+ */
+export class MspMotorTestStopDisplacementError extends Error {
+  readonly code: MspMotorTestStopDisplacementCode;
+  /** Whether transport.writeBytes() had already been invoked for the
+   * displaced request. False means confirmed-not-sent. */
+  readonly writeAttempted: boolean;
+
+  constructor(code: MspMotorTestStopDisplacementCode, writeAttempted: boolean) {
+    super(code);
+    this.name = 'MspMotorTestStopDisplacementError';
+    this.code = code;
+    this.writeAttempted = writeAttempted;
+  }
+}
+
+export type MspEmergencyStopAbortCode =
+  /** The client desynchronized before the stop could be submitted. The
+   * lease is faulted and the epoch latched - recovery cannot revive it. */
+  | 'MSP_EMERGENCY_STOP_ABORTED_BY_DESYNC'
+  /** The session closed or the device detached before submission. */
+  | 'MSP_EMERGENCY_STOP_ABORTED_BY_SESSION_END';
+
+/**
+ * Rejection for a registered emergency stop that was never submitted
+ * because the engine died underneath it. Always settles - a stop must
+ * never hang - and always fails CLOSED: the caller may not treat this as
+ * a stop that was sent.
+ */
+export class MspEmergencyStopAbortedError extends Error {
+  readonly code: MspEmergencyStopAbortCode;
+
+  constructor(code: MspEmergencyStopAbortCode) {
+    super(code);
+    this.name = 'MspEmergencyStopAbortedError';
+    this.code = code;
+  }
+}
+
+/**
+ * The synchronous result of registering an emergency stop. Returned
+ * SYNCHRONOUSLY, before any await, so the caller learns the displacement
+ * facts at registration time rather than after the exchange.
+ */
+export interface MspEmergencyStopDispatch {
+  /** Settles with the stop's own response frame, or rejects. Never hangs. */
+  readonly frame: Promise<MspFrame>;
+  /**
+   * TRUE when the request this stop displaced carried the SAME command
+   * and protocol version as the stop itself, AND had already been
+   * written (or was mid-write).
+   *
+   * Why it matters: the ordinary quarantine of a displaced request's late
+   * response is automatic - handleFrame() matches against `this.active`,
+   * and a displaced request is no longer active, so its late frame
+   * becomes an UNSOLICITED_FRAME diagnostic and settles nothing. That
+   * automatic quarantine fails for exactly one shape: when the displaced
+   * command EQUALS the stop's command, a late frame belonging to the
+   * displaced request is byte-indistinguishable from the stop's own ACK
+   * and WILL match the stop. The caller must therefore treat the stop's
+   * apparent acknowledgement as unproven, keep every acknowledgement and
+   * confirmation flag false, and require a full session reset.
+   */
+  readonly attributionAmbiguous: boolean;
+  /**
+   * TRUE when a real transport write was still in flight at registration.
+   * The stop is the next submission, but the caller may NOT claim any
+   * deterministic upper latency bound for it - the uncancellable write
+   * ahead of it settles on the transport's own schedule.
+   */
+  readonly deferredBehindActiveWrite: boolean;
+  /** TRUE when this call joined the one already-registered stop instead
+   * of registering a second one. Repeated triggers never produce a second
+   * writeBytes(). */
+  readonly joinedExistingStop: boolean;
+}
+
 /**
  * MSP request/response client bound to one already-open transport session
  * for its entire lifetime. Does not open, close, or otherwise manage the
@@ -387,6 +545,23 @@ export class MspClient {
   /** The epoch the current lease was acquired under, so a fault latches
    * that epoch rather than whatever the epoch became afterwards. */
   private motorTestLeaseEpoch: number | undefined;
+  /* ------------- Phase 2G Pass 1: the one emergency stop slot -------------
+   * A ONE-slot register, not a second queue: at most one emergency stop
+   * can be registered at a time and a repeated trigger joins it. It sits
+   * outside `queue` so pump() can take it ahead of the FIFO without
+   * reordering, scanning or mutating the FIFO itself. */
+
+  /** The registered stop awaiting submission, or undefined once pump()
+   * has started it (or once it settled). */
+  private emergencyStopPending: PendingRequest | undefined;
+  /** Identity of the registered stop for as long as it is unsettled, used
+   * to join repeat triggers and to clear the registration exactly once. */
+  private emergencyStopSettle: SettleOnce<MspFrame> | undefined;
+  /** The joinable promise for the registered stop. */
+  private emergencyStopFrame: Promise<MspFrame> | undefined;
+  /** Displacement facts captured at registration, replayed to joiners. */
+  private emergencyStopAttributionAmbiguous = false;
+  private emergencyStopDeferredBehindActiveWrite = false;
   /** Incremented every time the desync latch fires. Nothing outside this
    * file consumes it yet in this slice - introduced now, per the standing
    * instruction, because Pass 6.2b's recovery orchestration will need it
@@ -586,6 +761,7 @@ export class MspClient {
       active.settle.reject(new MspClientError('MSP_SESSION_CLOSED'));
       this.active = undefined;
     }
+    this.abortRegisteredEmergencyStop('MSP_EMERGENCY_STOP_ABORTED_BY_SESSION_END');
     const rejectedQueue = this.queue.splice(0, this.queue.length);
     for (const pending of rejectedQueue) {
       pending.settle.reject(new MspClientError('MSP_SESSION_CLOSED'));
@@ -658,6 +834,7 @@ export class MspClient {
         responseTimeoutMs: options.responseTimeoutMs ?? MSP_RESPONSE_TIMEOUT_MILLIS,
         settle,
         isProbe: false,
+        isEmergencyStop: false,
       };
       this.queue.push(pending);
       this.pump();
@@ -678,13 +855,23 @@ export class MspClient {
    *  - an empty queue excludes work that has been admitted but not yet
    *    started;
    *  - `!disposed` excludes an instance already torn down.
+   *
+   * Phase 2G Pass 1 adds the emergency-stop slot to the same conjunction.
+   * It can only ever be non-empty while a lease is already held (only a
+   * live lease can register one), so in practice tryAcquireMotorTestLease()
+   * is already refused by the ALREADY_HELD check before reaching here -
+   * but "idle" must mean idle including the slot, not idle except for the
+   * one submission that matters most. This is the DRAINED BOUNDARY the
+   * lease acquires over: no ordinary request can be queued, active, or
+   * mid-write at the instant ownership is taken.
    */
   private isRequestEngineIdle(): boolean {
     return (
       !this.disposed &&
       this.state === 'READY' &&
       this.active === undefined &&
-      this.queue.length === 0
+      this.queue.length === 0 &&
+      this.emergencyStopPending === undefined
     );
   }
 
@@ -755,10 +942,235 @@ export class MspClient {
     // already has - write failure, write-outcome-unknown, write timeout
     // surfaced as a transport rejection, response timeout, remote error,
     // desync, queue bound, encode failure, close and detach.
-    promise.catch(() => {
+    promise.catch((reason: unknown) => {
+      // Phase 2G Pass 1 - ONE exception, and only one. A request displaced
+      // by this same lease's own emergency stop is not an MSP fault: it is
+      // a deterministic, deliberate cancellation with a known cause, and
+      // for a still-queued request there is no wire ambiguity at all.
+      // Faulting here would be actively harmful - it would kill the very
+      // lease the stop is travelling on, before the stop has been
+      // answered and before teardown can release it cleanly. The stop's
+      // OWN failure still faults through this same route (see
+      // emergencyStopWithMotorTestLease), and an in-flight displacement
+      // whose late response could be mistaken for the stop's ACK is
+      // reported separately as attributionAmbiguous. Every other rejection
+      // reason behaves exactly as before.
+      if (reason instanceof MspMotorTestStopDisplacementError) {
+        return;
+      }
       this.faultMotorTestLease();
     });
     return promise;
+  }
+
+  /**
+   * Phase 2G Pass 1 - submit the lease-owned EMERGENCY STOP as the next
+   * transport write.
+   *
+   * Reachable ONLY with the exact live lease token. There is no ordinary
+   * caller, no public priority flag on request(), and no way to reach this
+   * slot from the FIFO: an ordinary caller is already refused at
+   * request()'s exclusivity gate while a lease is held, and without a
+   * lease there is nothing to present here.
+   *
+   * WHAT IT GUARANTEES
+   *   1. Every request still sitting in the FIFO is purged immediately,
+   *      each rejected exactly once with MSP_DISPLACED_BY_EMERGENCY_STOP.
+   *      None of them was ever written, so none of them is ambiguous.
+   *   2. If a request is active in AWAITING_RESPONSE, its response timer
+   *      is cancelled, it is rejected deterministically, and the active
+   *      slot is freed - so the stop starts on the transport in this same
+   *      synchronous call.
+   *   3. If a request is active in WRITING, its writeBytes() cannot be
+   *      cancelled and is NOT raced: the stop is registered, the real
+   *      write is allowed to settle, and the stop is started the moment it
+   *      does. Two concurrent writeBytes() calls never occur.
+   *   4. Repeated triggers join the one registered stop. One stop, one
+   *      write.
+   *   5. The returned promise always settles. If the engine dies before
+   *      submission (desync, close, detach) it REJECTS - never hangs, and
+   *      never resolves.
+   *
+   * WHAT IT DOES NOT GUARANTEE. See MspEmergencyStopDispatch and the
+   * Phase 2G block above: submission order only, no on-wire preemption, no
+   * latency bound behind an in-flight write, no mechanical confirmation.
+   */
+  emergencyStopWithMotorTestLease(
+    token: unknown,
+    command: number,
+    payload: Uint8Array,
+    options: MspRequestOptions,
+  ): MspEmergencyStopDispatch {
+    if (!this.isMotorTestLeaseToken(token)) {
+      return this.failedStopDispatch(
+        new MspMotorTestLeaseBlockedError('MSP_MOTOR_TEST_LEASE_CAPABILITY_INVALID'),
+      );
+    }
+
+    // Join before touching anything: a second trigger must not purge,
+    // displace or write a second time.
+    const joinable = this.emergencyStopFrame;
+    if (joinable !== undefined) {
+      return Object.freeze({
+        frame: joinable,
+        attributionAmbiguous: this.emergencyStopAttributionAmbiguous,
+        deferredBehindActiveWrite: this.emergencyStopDeferredBehindActiveWrite,
+        joinedExistingStop: true,
+      });
+    }
+
+    // Acceptance is checked BEFORE any displacement, so a stop that cannot
+    // be submitted at all leaves the engine exactly as it found it rather
+    // than destroying in-flight work for nothing. In practice this is
+    // unreachable with a valid token - every non-READY transition
+    // invalidates or faults the lease first - but a stop path must fail
+    // closed on its own evidence, not on another method's invariant.
+    const rejectionCode = this.checkAcceptance();
+    if (rejectionCode !== undefined) {
+      return this.failedStopDispatch(new MspClientError(rejectionCode));
+    }
+
+    const stopProtocolVersion = deriveProtocolVersion(options.wireFormat);
+
+    // (1) Purge the FIFO. Confirmed-not-sent, every one of them.
+    const purged = this.queue.splice(0, this.queue.length);
+    for (const pending of purged) {
+      pending.settle.reject(
+        new MspMotorTestStopDisplacementError('MSP_DISPLACED_BY_EMERGENCY_STOP', false),
+      );
+    }
+
+    // (2) Displace the active request, if there is one.
+    let attributionAmbiguous = false;
+    let deferredBehindActiveWrite = false;
+    const active = this.active;
+    if (active !== undefined && !active.settle.settled) {
+      // The one shape the automatic per-request quarantine cannot cover:
+      // a displaced request whose late response is indistinguishable from
+      // the stop's own. Computed for BOTH phases - the WRITING request's
+      // bytes are already at the transport too.
+      attributionAmbiguous =
+        active.command === command && active.protocolVersion === stopProtocolVersion;
+
+      if (active.phase === 'AWAITING_RESPONSE') {
+        // Its write already settled, so the transport is free RIGHT NOW.
+        if (active.timer !== undefined) {
+          clearTimeout(active.timer);
+          active.timer = undefined;
+        }
+        const won = active.settle.reject(
+          new MspMotorTestStopDisplacementError(
+            'MSP_DISPLACED_IN_FLIGHT_BY_EMERGENCY_STOP',
+            true,
+          ),
+        );
+        if (won && this.active === active) {
+          this.active = undefined;
+        }
+      } else {
+        // WRITING. Do NOT settle it here and do NOT start a second write:
+        // its writeBytes() promise is still outstanding and the engine's
+        // single-flight rule is what keeps the transport coherent. Mark it
+        // so onWriteSettled() settles it as displaced and pumps the stop
+        // instead of arming a response timer.
+        active.displacedByEmergencyStop = true;
+        deferredBehindActiveWrite = true;
+      }
+    }
+
+    // (3) Register the stop in its own slot and pump.
+    let settleRef: SettleOnce<MspFrame> | undefined;
+    const frame = new Promise<MspFrame>((resolve, reject) => {
+      // The executor runs synchronously, so settleRef is assigned before
+      // the constructor returns.
+      settleRef = new SettleOnce<MspFrame>(resolve, reject);
+    });
+    const settle = settleRef as SettleOnce<MspFrame>;
+
+    const stop: PendingRequest = {
+      command,
+      payload,
+      wireFormat: options.wireFormat,
+      flags: options.flags,
+      responseTimeoutMs: options.responseTimeoutMs ?? MSP_RESPONSE_TIMEOUT_MILLIS,
+      settle,
+      isProbe: false,
+      isEmergencyStop: true,
+    };
+    this.emergencyStopPending = stop;
+    this.emergencyStopSettle = settle;
+    this.emergencyStopFrame = frame;
+    this.emergencyStopAttributionAmbiguous = attributionAmbiguous;
+    this.emergencyStopDeferredBehindActiveWrite = deferredBehindActiveWrite;
+
+    frame.then(
+      () => this.clearEmergencyStopRegistration(settle),
+      () => {
+        this.clearEmergencyStopRegistration(settle);
+        // Same policy as every other lease-scoped request: a failed stop
+        // kills the lease and latches the identity. A stop that did not
+        // demonstrably complete must never leave a reusable capability
+        // behind. A stop that RESOLVES does not fault here - the caller
+        // decides, and must fault explicitly when attributionAmbiguous.
+        this.faultMotorTestLease();
+      },
+    );
+
+    this.pump();
+
+    return Object.freeze({
+      frame,
+      attributionAmbiguous,
+      deferredBehindActiveWrite,
+      joinedExistingStop: false,
+    });
+  }
+
+  /** A dispatch whose promise is already rejected. The `catch` keeps a
+   * refused stop from surfacing as an unhandled rejection when the caller
+   * reads only the synchronous displacement facts. */
+  private failedStopDispatch(error: Error): MspEmergencyStopDispatch {
+    const frame = Promise.reject<MspFrame>(error);
+    frame.catch(() => {
+      // Intentionally swallowed - the rejection is still delivered to
+      // every real consumer of `frame`; this only suppresses the
+      // process-level unhandled-rejection warning.
+    });
+    return Object.freeze({
+      frame,
+      attributionAmbiguous: false,
+      deferredBehindActiveWrite: false,
+      joinedExistingStop: false,
+    });
+  }
+
+  /** Clears the one-slot register, but only for the stop that actually
+   * owns it - a late settle from a superseded stop can never clear a
+   * newer registration. */
+  private clearEmergencyStopRegistration(settle: SettleOnce<MspFrame>): void {
+    if (this.emergencyStopSettle !== settle) {
+      return;
+    }
+    this.emergencyStopSettle = undefined;
+    this.emergencyStopFrame = undefined;
+    this.emergencyStopPending = undefined;
+    this.emergencyStopAttributionAmbiguous = false;
+    this.emergencyStopDeferredBehindActiveWrite = false;
+  }
+
+  /**
+   * Settles a registered-but-unsubmitted stop when the engine dies under
+   * it. Called from every route that tears the engine down. Rejecting is
+   * the ONLY correct outcome: the stop was never written, so it must fail
+   * closed rather than appear to have been sent.
+   */
+  private abortRegisteredEmergencyStop(code: MspEmergencyStopAbortCode): void {
+    const stop = this.emergencyStopPending;
+    if (stop === undefined) {
+      return;
+    }
+    this.emergencyStopPending = undefined;
+    stop.settle.reject(new MspEmergencyStopAbortedError(code));
   }
 
   /**
@@ -784,7 +1196,14 @@ export class MspClient {
     if (!this.isMotorTestLeaseToken(token)) {
       return {kind: 'NOT_OWNER'};
     }
-    if (this.active !== undefined || this.queue.length > 0) {
+    if (
+      this.active !== undefined ||
+      this.queue.length > 0 ||
+      this.emergencyStopPending !== undefined
+    ) {
+      // Phase 2G: an emergency stop registered but not yet submitted is
+      // the LAST thing a release may discard. The lease stays held and
+      // ordinary traffic stays blocked until it settles.
       return {kind: 'LEASE_WORK_UNSETTLED'};
     }
     this.retiredMotorTestLeaseTokens.add(this.motorTestLeaseToken as MspMotorTestLeaseToken);
@@ -884,6 +1303,18 @@ export class MspClient {
     if (this.state !== 'READY' || this.active !== undefined) {
       return;
     }
+    // Phase 2G Pass 1: the one place stop priority is expressed. The
+    // emergency-stop slot is drained ahead of the FIFO, which is exactly
+    // what makes the stop the NEXT transport.writeBytes() invocation this
+    // client performs. The single-flight rule above is untouched - this
+    // reorders SUBMISSION, it does not overlap writes, and it makes no
+    // claim about bytes already handed to the transport.
+    const stop = this.emergencyStopPending;
+    if (stop !== undefined) {
+      this.emergencyStopPending = undefined;
+      this.startRequest(stop);
+      return;
+    }
     const next = this.queue.shift();
     if (!next) {
       return;
@@ -926,6 +1357,8 @@ export class MspClient {
       settle: pending.settle,
       timer: undefined,
       isProbe: pending.isProbe,
+      isEmergencyStop: pending.isEmergencyStop,
+      displacedByEmergencyStop: false,
     };
     // Registered before the transport write is ever called - see request()'s
     // doc comment on the write-vs-response race this ordering exists for.
@@ -980,6 +1413,29 @@ export class MspClient {
       if (active.settle.settled) {
         // Early matching response already won the write-vs-response race -
         // the response timer must never even start for it.
+        return;
+      }
+      if (active.displacedByEmergencyStop) {
+        // Phase 2G Pass 1: the uncancellable write has now settled, so the
+        // transport is free. Settle this request as displaced INSTEAD of
+        // entering AWAITING_RESPONSE - arming its 2000 ms response timer
+        // here would make the stop wait out a full response timeout for a
+        // request nobody is waiting on any more. Its late response, if one
+        // ever arrives, is quarantined automatically: handleFrame() only
+        // matches `this.active`, and this request is no longer it.
+        const wonDisplaced = active.settle.reject(
+          new MspMotorTestStopDisplacementError(
+            'MSP_DISPLACED_IN_FLIGHT_BY_EMERGENCY_STOP',
+            true,
+          ),
+        );
+        if (wonDisplaced && this.active === active) {
+          this.active = undefined;
+        }
+        // Frees the slot for the registered stop, which pump() takes ahead
+        // of the FIFO. This is the moment the stop becomes the next
+        // transport submission.
+        this.pump();
         return;
       }
       active.phase = 'AWAITING_RESPONSE';
@@ -1110,6 +1566,13 @@ export class MspClient {
     // to READY never revives the dead capability.
     this.faultMotorTestLease();
 
+    // Phase 2G Pass 1: a stop registered but never submitted dies with the
+    // session it belonged to. It rejects (never resolves, never hangs), the
+    // lease is already faulted above and the epoch is latched below, so
+    // reacquisition on this identity is refused and a full session reset is
+    // required before any further stop attempt.
+    this.abortRegisteredEmergencyStop('MSP_EMERGENCY_STOP_ABORTED_BY_DESYNC');
+
     const rejectedQueue = this.queue.splice(0, this.queue.length);
     for (const pending of rejectedQueue) {
       // MSP_RECOVERING, not MSP_RECOVERY_REQUIRED: per Pass 6.2b's updated
@@ -1231,6 +1694,7 @@ export class MspClient {
       responseTimeoutMs: MSP_PROBE_TIMEOUT_MILLIS,
       settle,
       isProbe: true,
+      isEmergencyStop: false,
     };
 
     this.startRequest(pending);
@@ -1289,6 +1753,8 @@ export class MspClient {
       active.settle.reject(new MspClientError(code));
       this.active = undefined;
     }
+
+    this.abortRegisteredEmergencyStop('MSP_EMERGENCY_STOP_ABORTED_BY_SESSION_END');
 
     const rejectedQueue = this.queue.splice(0, this.queue.length);
     for (const pending of rejectedQueue) {

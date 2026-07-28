@@ -37,7 +37,7 @@ import {
 // panels are reached only through debugPanels.ts, which resolves them
 // behind __DEV__ so a production bundle never retains them. Each render
 // site below is null in a release build.
-import {DevAppLogPanel, DevSerialPanel} from './debugPanels';
+import {DevAppLogPanel, DevBenchEntry, DevSerialPanel} from './debugPanels';
 
 /**
  * Owned by the UI/client, not the Kotlin transport defaults. Approved as a
@@ -794,6 +794,23 @@ export default function UsbConnectionScreen({
             // at ACTIVATING (before construction even completes), not just
             // once ACTIVE.
             mspActive={mspActive}
+          />
+        ) : null}
+
+        {DevBenchEntry && isConnected && state.activeSessionId ? (
+          // Phase 2I: the ONE development-only way into the motor-test
+          // flow. Absent from a production bundle - see MotorsDevEntry.tsx.
+          <DevBenchEntry
+            sessionId={state.activeSessionId}
+            // The navigator, not a route-bound callback - see
+            // MotorsDevEntry.tsx on why the route name must not appear
+            // here. `navigate` is typed loosely on purpose so this file
+            // never names a motor-test route at all.
+            navigate={(route, params) =>
+              (navigation as unknown as {
+                navigate: (r: string, p: unknown) => void;
+              } | undefined)?.navigate(route, params)
+            }
           />
         ) : null}
 

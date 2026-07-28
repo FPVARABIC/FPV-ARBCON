@@ -13,4 +13,17 @@ import type {SetupUiSessionKey} from '../platforms/react-native/protocol';
 export type RootStackParamList = {
   Connection: undefined;
   Setup: {sessionKey: SetupUiSessionKey};
+  /**
+   * Phase 2H - the motor-test screen.
+   *
+   * TYPED HERE UNCONDITIONALLY, REGISTERED CONDITIONALLY. The param type
+   * must exist for any consumer to be type-checked, but App.tsx only
+   * registers the <Stack.Screen> when the __DEV__-gated component
+   * (debugPanels.ts's DevMotorsScreen) actually resolved. In a production
+   * bundle that component is `undefined`, the screen is never registered,
+   * and navigating to 'Motors' therefore reaches nothing - the motor flow
+   * stays unreachable until Phase 2I completes the verification wizard
+   * and report.
+   */
+  Motors: {sessionKey: SetupUiSessionKey};
 };

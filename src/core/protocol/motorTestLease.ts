@@ -21,6 +21,16 @@
  * A later controller, a real arming interlock and a native fail-safe stop
  * path all remain unwritten. None of them is implied by this pass.
  *
+ * PHASE 2G PRECISION. `emergencyStop()` below adds SUBMISSION PRIORITY to
+ * this capability - and nothing else. It is a generic channel exactly like
+ * `request()`: the caller supplies the command and payload, this module
+ * chooses none, encodes none, and builds no motor vector, pulse or idle
+ * value. Priority means "next transport write", never "preempts bytes
+ * already on the wire", never "bounded latency behind an in-flight write",
+ * and never "a motor physically stopped". The absent-field test above
+ * still holds: no `safe`, `ready`, `authorized`, `approved`, `allowed`,
+ * `permission`, `canTest`, `canPulse` or `canStart` field exists here.
+ *
  * WHERE OWNERSHIP ACTUALLY LIVES
  * ------------------------------
  * Not here. The lease state belongs to MspClient - the single class that
@@ -66,7 +76,7 @@
 import {MspClient} from './mspClient';
 import type {MspMotorTestLeaseToken, MspMotorTestLeaseRejectionReason} from './mspClient';
 import type {MspFrame} from './mspTypes';
-import type {MspRequestOptions} from './mspClient';
+import type {MspEmergencyStopDispatch, MspRequestOptions} from './mspClient';
 
 /**
  * The composite session identity a lease is bound to.
@@ -270,6 +280,59 @@ export class MotorTestLease {
       );
     }
     return client.requestWithMotorTestLease(token, command, payload, options);
+  }
+
+  /**
+   * Phase 2G Pass 1 - submit an EMERGENCY STOP as the client's next
+   * transport write.
+   *
+   * THE ONLY ROUTE TO STOP PRIORITY. Priority is not a flag on `request()`
+   * and is not reachable from any ordinary caller: the underlying client
+   * admits it only against the exact live token, which lives in a
+   * module-private WeakMap and is never an own property of this object. A
+   * forged or reconstructed capability has no token and is refused before
+   * the FIFO, before the transport and before any timer.
+   *
+   * THIS METHOD CHOOSES NO COMMAND. Exactly like `request()`, it is a
+   * generic channel: the caller supplies the command and payload. Holding
+   * a lease still authorizes no motor command, and nothing here builds a
+   * motor vector, encodes a pulse, or decides that stopping is safe.
+   *
+   * WHAT THE CALLER MUST HONOUR (see MspEmergencyStopDispatch):
+   *   - `attributionAmbiguous` means the stop's apparent acknowledgement
+   *     is UNPROVEN. Every acknowledgement and confirmation flag must stay
+   *     false and a full session reset is required.
+   *   - `deferredBehindActiveWrite` means no latency bound may be claimed.
+   *   - A resolved promise proves the command was received and processed.
+   *     It never proves a motor physically stopped.
+   *
+   * A forged capability yields a dispatch whose promise is already
+   * rejected - never a thrown exception, and never a silent no-op that a
+   * caller could mistake for a sent stop.
+   */
+  emergencyStop(
+    command: number,
+    payload: Uint8Array,
+    options: MspRequestOptions,
+  ): MspEmergencyStopDispatch {
+    const client = LEASE_CLIENTS.get(this);
+    const token = LEASE_TOKENS.get(this);
+    if (client === undefined || token === undefined) {
+      const frame = Promise.reject<MspFrame>(
+        new Error('MotorTestLease: capability is not a genuine lease'),
+      );
+      frame.catch(() => {
+        // See MspClient.failedStopDispatch() - the rejection still reaches
+        // every real consumer; this only suppresses the unhandled warning.
+      });
+      return Object.freeze({
+        frame,
+        attributionAmbiguous: false,
+        deferredBehindActiveWrite: false,
+        joinedExistingStop: false,
+      });
+    }
+    return client.emergencyStopWithMotorTestLease(token, command, payload, options);
   }
 
   /**

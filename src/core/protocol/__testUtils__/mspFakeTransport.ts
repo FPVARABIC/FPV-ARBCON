@@ -44,11 +44,20 @@ export class FakeMspTransport implements MspTransport {
    * rejectNextRestart() for an entry leaves that call's Promise pending
    * forever, exactly like an un-settled write. */
   readonly restarts: PendingRestart[] = [];
+  /** Phase 2G Pass 1: an append-only HISTORY of every writeBytes() call,
+   * in invocation order, which `writes` above deliberately is not - that
+   * array is shifted as each write settles, so it only ever shows what is
+   * still outstanding. Submission-order proofs need the history: "the stop
+   * is the NEXT transport write" is a statement about invocation order,
+   * and nothing else in this fake records it. Purely additive; no existing
+   * behaviour is changed. */
+  readonly writeLog: Uint8Array[] = [];
 
   private dataListeners = new Set<(bytes: Uint8Array) => void>();
   private sessionDetachedListeners = new Set<(event: MspTransportSessionDetachedEvent) => void>();
 
   writeBytes(data: Uint8Array): Promise<void> {
+    this.writeLog.push(data);
     return new Promise<void>((resolve, reject) => {
       this.writes.push({ data, resolve, reject });
     });

@@ -30,3 +30,13 @@ export {useFcToolPhase, useFcToolPublication, useFcToolArmedState} from './useFc
 export {useSetupAppStatePhase} from './useSetupAppState';
 export {SetupUiSessionStore, setupUiSessionStore} from './SetupUiSessionStore';
 export type {SetupUiSessionState} from './SetupUiSessionStore';
+/* Phase 2E/2H - the ONE official motor-test binding. Only the sealed
+ * facades are exported: no controller class, no client, no lease, no
+ * authority token and no transport ever leaves this module. */
+export {createMotorTestSessionBinding} from './motorTestSessionBinding';
+export type {
+  MotorTestSessionCapability,
+  MotorTestOperatorPort,
+  MotorTestLifecycleStopPort,
+  MotorTestSessionPortInput,
+} from './motorTestSessionBinding';
