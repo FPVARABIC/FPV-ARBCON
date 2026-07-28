@@ -860,9 +860,13 @@ describe('invalidation and fault latching', () => {
     await desynchronizeViaLease(transport, leaseA);
     await driveRecoveryToCompletion(transport);
     expect(client.getEpoch()).toBe(1);
-    if (client.getState() !== 'READY') {
-      return; // recovery did not return to READY in this fixture
-    }
+    // HARD assertion, never a conditional skip: driveRecoveryToCompletion
+    // resolves the reader restart and answers the probe (MSP_PROBE_COMMAND
+    // === 1, which is what responseFrame(1) replies to), so recovery
+    // reaching READY is a deterministic property of this fixture. If it
+    // ever stops holding, this test must FAIL rather than silently pass
+    // without exercising the rotation it exists to prove.
+    expect(client.getState()).toBe('READY');
     const leaseB = acquireOrThrow(client, 1);
     expect(leaseB.officialSessionAuthority()).not.toBe(authorityA);
   });

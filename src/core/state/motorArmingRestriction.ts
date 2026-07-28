@@ -365,18 +365,43 @@ function notEstablished(
 }
 
 /**
- * Fails the whole attempt closed: the lease is faulted through the SAME
- * canonical Pass 2 latch (no second fault manager), the identity is
- * latched there, and every receipt from that lease stops being current.
+ * THE canonical post-submission fail-closed boundary for one official
+ * session. Every route that fails after command 99 may have reached the
+ * wire goes through exactly this function - there is deliberately only
+ * one.
+ *
+ * Order matters. The SESSION-wide record is written FIRST, because that
+ * is what a later lease on the same client and client-owned epoch
+ * consults at admission, before any `lease.request`, before MSP queue
+ * admission and before any transport write. The per-capability set is
+ * only reason fidelity. `lease.failClosed()` last: it is Pass 2's own
+ * canonical latch (no second fault manager is introduced here) and it is
+ * idempotent, returning false for a capability that is already dead -
+ * which is exactly the case when the lease was released or invalidated
+ * underneath an in-flight establishment. That `false` must never be read
+ * as "nothing was faulted": the session record above is the guarantee,
+ * and it survives the lease it was raised on.
+ */
+function latchSessionFault(
+  authority: MspOfficialSessionAuthority,
+  lease: MotorTestLease,
+): void {
+  SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'FAULTED'} as const));
+  FAULTED_LEASES.add(lease);
+  lease.failClosed();
+}
+
+/**
+ * Fails the whole attempt closed: the official session is latched, the
+ * lease is faulted through the SAME canonical Pass 2 latch (no second
+ * fault manager), and every receipt from that lease stops being current.
  */
 function failClosed(
   authority: MspOfficialSessionAuthority,
   lease: MotorTestLease,
   reason: MotorArmingRestrictionFailureReason,
 ): MotorArmingRestrictionEstablishment {
-  SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'FAULTED'} as const));
-  FAULTED_LEASES.add(lease);
-  lease.failClosed();
+  latchSessionFault(authority, lease);
   return notEstablished(reason);
 }
 
@@ -419,6 +444,21 @@ function isBitSet(mask: number, index: number): boolean {
  *   6. require NOT armed
  *   7. require the aggregate ARMING_DISABLED_MSP bit
  *   8. only then mint a receipt
+ *
+ * THE POST-SUBMISSION RULE (Pass 3 follow-up correction). Step 0 may
+ * fail freely: it provably precedes all traffic, so it records nothing
+ * and leaves the session establishable. From step 1 onward the opposite
+ * holds absolutely - once lease.request() has been CALLED, whether or
+ * not the frame reached the transport, EVERY exit leaves the official
+ * session fail-closed. That covers a rejected request, a changed
+ * identity, a throwing identity provider, unacceptable evidence, a lease
+ * that died underneath the attempt, and any unexpected exception. The
+ * latch is keyed on the official session, so it outlives the lease that
+ * raised it: releasing that lease and acquiring another on the same
+ * client and client-owned epoch cannot retry, and command 99 is
+ * therefore submitted at most once per official session. A genuinely new
+ * session - a new client, or a valid internal epoch rotation - mints a
+ * different authority and inherits nothing.
  *
  * Never throws for an expected state. No retry, no poll, no delay, no
  * timer, no queued second attempt, no automatic continuation, no
@@ -493,16 +533,26 @@ export async function establishMotorArmingRestriction(
   }
 
   IN_PROGRESS.add(authority);
+  // Pass 3 follow-up correction - THE POST-SUBMISSION BOUNDARY.
+  //
+  // Set BEFORE lease.request() is called, never after it resolves. Once
+  // the call has been made this module can no longer prove whether the
+  // frame reached the transport, so the conservative reading is the only
+  // safe one: treat the request as submitted from that instant. From
+  // here every exit must leave the official session latched unless it
+  // recorded a terminal outcome of its own - enforced unconditionally by
+  // the finally block below.
+  let submitted = false;
   try {
     // --- (1) The arming-disable request, through the lease only. ----
     try {
+      submitted = true;
       await lease.request(MSP_SET_ARMING_DISABLED, buildArmingDisablePayload(), REQUEST_OPTIONS);
     } catch {
       // A rejected lease-scoped request has ALREADY faulted the lease via
-      // Pass 2's own automatic route; record it against the session so a
-      // retry is refused with the accurate reason.
-      SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'FAULTED'} as const));
-      FAULTED_LEASES.add(lease);
+      // Pass 2's own automatic route; latch the SESSION too so a retry
+      // from any later lease is refused with the accurate reason.
+      latchSessionFault(authority, lease);
       return notEstablished('ARMING_DISABLE_REQUEST_FAILED');
     }
 
@@ -516,8 +566,13 @@ export async function establishMotorArmingRestriction(
     if (!mspSessionCompositeIdentitiesMatch(afterAck.identity, requestedIdentity)) {
       return failClosed(authority, lease, 'SESSION_CHANGED_DURING_ESTABLISHMENT');
     }
+    // Command 99 is already out. A lease that died underneath this
+    // attempt - released, invalidated or faulted - leaves the session
+    // ambiguous in exactly the same way a rejected request does, so it
+    // takes the SAME canonical boundary rather than merely reporting
+    // itself. The typed reason is unchanged.
     if (!lease.isActive()) {
-      return notEstablished('MOTOR_TEST_LEASE_INACTIVE');
+      return failClosed(authority, lease, 'MOTOR_TEST_LEASE_INACTIVE');
     }
 
     // --- (4) A FRESH status read. Never cached, never pre-ACK. ------
@@ -526,8 +581,7 @@ export async function establishMotorArmingRestriction(
       const frame = await lease.request(MSP_STATUS_EX, EMPTY_PAYLOAD, REQUEST_OPTIONS);
       statusPayload = frame.payload;
     } catch {
-      SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'FAULTED'} as const));
-      FAULTED_LEASES.add(lease);
+      latchSessionFault(authority, lease);
       return notEstablished('POST_ACK_STATUS_REQUEST_FAILED');
     }
 
@@ -539,8 +593,9 @@ export async function establishMotorArmingRestriction(
     if (!mspSessionCompositeIdentitiesMatch(afterStatus.identity, requestedIdentity)) {
       return failClosed(authority, lease, 'SESSION_CHANGED_DURING_ESTABLISHMENT');
     }
+    // Same reasoning as after the ACK: both requests are already out.
     if (!lease.isActive()) {
-      return notEstablished('MOTOR_TEST_LEASE_INACTIVE');
+      return failClosed(authority, lease, 'MOTOR_TEST_LEASE_INACTIVE');
     }
     // The session must not have rotated underneath the evidence either.
     if (lease.officialSessionAuthority() !== authority) {
@@ -590,6 +645,22 @@ export async function establishMotorArmingRestriction(
     SESSION_OUTCOMES.set(authority, Object.freeze({kind: 'ESTABLISHED', receipt} as const));
     return Object.freeze({kind: 'ESTABLISHED', receipt} as const);
   } finally {
+    // Clearing the in-progress marker must NEVER be the thing that
+    // re-opens a retry, so the session-wide backstop runs in the same
+    // block, immediately after it.
     IN_PROGRESS.delete(authority);
+    // Pass 3 follow-up correction. Any post-submission exit that did not
+    // record a terminal outcome of its own - a lease that died
+    // underneath the attempt, a future branch added here, or a genuinely
+    // unexpected exception propagating out of this function - fails the
+    // official session closed. Expected states still never throw and
+    // still return their own typed reason; this only guarantees that
+    // whatever the exit was, the session cannot be establishable again.
+    //
+    // An ESTABLISHED or FAULTED record already present is left exactly as
+    // it is: success is not overwritten, and a fault is not re-raised.
+    if (submitted && SESSION_OUTCOMES.get(authority) === undefined) {
+      latchSessionFault(authority, lease);
+    }
   }
 }

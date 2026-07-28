@@ -1546,3 +1546,342 @@ describe('correction 6.5: a throwing identity provider', () => {
     expect(result.receipt.isCurrent()).toBe(false);
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * Pass 3 follow-up - the post-submission fail-closed boundary
+ *
+ * The defect these cover: once command 99 has been submitted, a lease
+ * that dies underneath the attempt used to return MOTOR_TEST_LEASE_
+ * INACTIVE without latching anything. Because a released lease leaves the
+ * client READY, idle and un-latched, a second lease on the SAME client
+ * and SAME client-owned epoch could then be acquired and send command 99
+ * a second time in the same official session.
+ *
+ * The window is real and is exercised here through a real production
+ * branch: readCurrentIdentity is caller-supplied code that this module
+ * invokes AFTER the ACK and BEFORE its own lease.isActive() check, so a
+ * provider with a side effect reaches exactly the state that used to
+ * escape. Every test below asserts the branch was actually reached
+ * rather than assuming it.
+ * ------------------------------------------------------------------ */
+
+describe('post-submission boundary: a dead lease cannot re-open the session', () => {
+  /** Acquires lease B on the SAME client/epoch and proves it is refused
+   * with zero requester calls and zero transport writes. */
+  async function expectLeaseBRefused(
+    transport: FakeMspTransport,
+    client: MspClient,
+    reason: string,
+  ): Promise<void> {
+    const leaseB = leaseFor(client);
+    // Lease B genuinely belongs to the same official session.
+    expect(leaseB.isActive()).toBe(true);
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    const writesBefore = transport.writes.length;
+
+    const retry = await establishMotorArmingRestriction({
+      lease: leaseB,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identity(),
+      boxIds: boxIdsB,
+    });
+    expectNotEstablished(retry, reason);
+    // Rejected before lease.request, before MSP queue admission and
+    // before any transport write: nothing new was ever issued.
+    expect(transport.writes.length).toBe(writesBefore);
+    await flushMicrotasks();
+    expect(transport.writes.length).toBe(writesBefore);
+  }
+
+  /**
+   * Runs an establishment whose identity provider releases lease A on its
+   * `releaseOnCall`-th invocation - call 2 is the post-ACK revalidation,
+   * call 3 the post-status one. Returns the outcome plus the observed
+   * call count so the caller can prove the branch was reached.
+   */
+  async function establishWithReleaseAt(
+    transport: FakeMspTransport,
+    lease: MotorTestLease,
+    releaseOnCall: 2 | 3,
+  ): Promise<{result: MotorArmingRestrictionEstablishment; calls: number}> {
+    let calls = 0;
+    let released: string | undefined;
+    const promise = establishMotorArmingRestriction({
+      lease,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => {
+        calls += 1;
+        if (calls === releaseOnCall) {
+          released = lease.release();
+        }
+        return identity();
+      },
+      boxIds: MINTED.get(lease),
+    });
+
+    await flushMicrotasks();
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(MSP_SET_ARMING_DISABLED));
+    await flushMicrotasks();
+    if (releaseOnCall === 3) {
+      transport.resolveNextWrite();
+      await flushMicrotasks();
+      transport.emitData(responseFrame(MSP_STATUS_EX, statusPayload()));
+    }
+    const result = await promise;
+    // The release really did happen, on the real lease, at the intended
+    // point - not skipped, not refused as LEASE_WORK_UNSETTLED.
+    expect(released).toBe('RELEASED');
+    expect(calls).toBeGreaterThanOrEqual(releaseOnCall);
+    expect(lease.isActive()).toBe(false);
+    return {result, calls};
+  }
+
+  it('latches the session when the lease dies right after command 99', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const {result} = await establishWithReleaseAt(transport, leaseA, 2);
+    // Typed reason fidelity is unchanged - it is still the truthful one.
+    expectNotEstablished(result, 'MOTOR_TEST_LEASE_INACTIVE');
+    await expectLeaseBRefused(transport, client, 'ARMING_RESTRICTION_FAULT_LATCHED');
+  });
+
+  it('latches the session when the lease dies after the command 150 response', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const {result} = await establishWithReleaseAt(transport, leaseA, 3);
+    expectNotEstablished(result, 'MOTOR_TEST_LEASE_INACTIVE');
+    await expectLeaseBRefused(transport, client, 'ARMING_RESTRICTION_FAULT_LATCHED');
+  });
+
+  it('keeps command 99 at exactly one submission across the whole session', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const commands: number[] = [];
+    /** Drains the pending-write queue into a cumulative command log. */
+    const record = () => {
+      for (const write of transport.writes) {
+        commands.push(write.data[4]);
+      }
+    };
+
+    let calls = 0;
+    const promise = establishMotorArmingRestriction({
+      lease: leaseA,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => {
+        calls += 1;
+        if (calls === 2) {
+          expect(leaseA.release()).toBe('RELEASED');
+        }
+        return identity();
+      },
+      boxIds: MINTED.get(leaseA),
+    });
+    await flushMicrotasks();
+    record(); // the single command 99
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(MSP_SET_ARMING_DISABLED));
+    expectNotEstablished(await promise, 'MOTOR_TEST_LEASE_INACTIVE');
+    await flushMicrotasks();
+    record();
+
+    const leaseB = leaseFor(client);
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    expectNotEstablished(
+      await establishMotorArmingRestriction({
+        lease: leaseB,
+        requestedIdentity: identity(),
+        readCurrentIdentity: () => identity(),
+        boxIds: boxIdsB,
+      }),
+      'ARMING_RESTRICTION_FAULT_LATCHED',
+    );
+    await flushMicrotasks();
+    record();
+
+    expect(commands.filter(command => command === MSP_SET_ARMING_DISABLED)).toHaveLength(1);
+    expect(commands).not.toContain(214);
+  });
+
+  it('does not let releasing lease A clear the fault', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    await establishWithReleaseAt(transport, leaseA, 2);
+    // A already released once; releasing again changes nothing either.
+    expect(leaseA.release()).toBe('ALREADY_RELEASED');
+    await expectLeaseBRefused(transport, client, 'ARMING_RESTRICTION_FAULT_LATCHED');
+  });
+
+  it('cleans the in-progress marker without clearing the fault', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    await establishWithReleaseAt(transport, leaseA, 2);
+    const leaseB = leaseFor(client);
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    const retry = await establishMotorArmingRestriction({
+      lease: leaseB,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identity(),
+      boxIds: boxIdsB,
+    });
+    // FAULT_LATCHED, never ALREADY_ESTABLISHING: the in-progress marker
+    // was cleaned up, and the fault is what refuses the retry.
+    expectNotEstablished(retry, 'ARMING_RESTRICTION_FAULT_LATCHED');
+  });
+
+  it('faults the session when the identity provider throws after command 99', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    let calls = 0;
+    const result = await runEstablishment(
+      transport,
+      leaseA,
+      {current: identity() as MspSessionCompositeIdentity | undefined},
+      {
+        readCurrentIdentity: () => {
+          calls += 1;
+          if (calls >= 2) {
+            throw new Error('provider exploded after ACK');
+          }
+          return identity();
+        },
+      },
+    );
+    expectNotEstablished(result, 'SESSION_IDENTITY_PROVIDER_FAILED');
+    expect(calls).toBeGreaterThanOrEqual(2);
+    expect(leaseA.isActive()).toBe(false);
+
+    // Here the lease was still LIVE when it faulted, so Pass 2's own
+    // epoch latch fires too and lease B cannot even be acquired.
+    const blocked = acquireMotorTestLease({
+      client,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identity(),
+    });
+    expect(blocked).toEqual({
+      kind: 'NOT_ACQUIRED',
+      reason: 'MOTOR_TEST_LEASE_FAULT_LATCHED',
+    });
+  });
+
+  it('fails the session closed when an unexpected exception escapes after command 99', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    let calls = 0;
+    const promise = establishMotorArmingRestriction({
+      lease: leaseA,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => {
+        calls += 1;
+        if (calls === 2) {
+          // Not a throwing PROVIDER - the provider returns normally and
+          // the exception escapes later, from the comparison itself. That
+          // is an unexpected exception, outside every typed catch.
+          return {
+            physicalGeneration: 2,
+            get mspEpoch(): number {
+              throw new Error('unexpected defect after submission');
+            },
+          } as unknown as MspSessionCompositeIdentity;
+        }
+        return identity();
+      },
+      boxIds: MINTED.get(leaseA),
+    });
+    const settled = promise.catch((error: unknown) => error);
+    await flushMicrotasks();
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(MSP_SET_ARMING_DISABLED));
+    const escaped = await settled;
+    // A genuine defect is NOT swallowed into a typed reason...
+    expect(escaped).toBeInstanceOf(Error);
+    expect((escaped as Error).message).toBe('unexpected defect after submission');
+    expect(calls).toBeGreaterThanOrEqual(2);
+    // ...but the session is fail-closed regardless.
+    expect(leaseA.isActive()).toBe(false);
+    const blocked = acquireMotorTestLease({
+      client,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identity(),
+    });
+    expect(blocked).toEqual({
+      kind: 'NOT_ACQUIRED',
+      reason: 'MOTOR_TEST_LEASE_FAULT_LATCHED',
+    });
+  });
+
+  it('does not latch anything when admission fails before any traffic', async () => {
+    const {transport, lease, identityBox} = await standardSetup();
+    const writesBefore = transport.writes.length;
+    expectNotEstablished(
+      await runEstablishment(transport, lease, identityBox, {
+        requestedIdentity: identity(4, 4),
+      }),
+      'REQUESTED_SESSION_IDENTITY_MISMATCH',
+    );
+    expect(transport.writes.length).toBe(writesBefore);
+    expect(lease.isActive()).toBe(true);
+    // No success record AND no fault record: the session is untouched and
+    // still establishable.
+    expect((await runEstablishment(transport, lease, identityBox)).kind).toBe('ESTABLISHED');
+  });
+
+  it('does not let one session\'s fault reach a genuinely new session', async () => {
+    const faulted = await standardSetup();
+    await establishWithReleaseAt(faulted.transport, faulted.lease, 2);
+    await expectLeaseBRefused(
+      faulted.transport,
+      faulted.client,
+      'ARMING_RESTRICTION_FAULT_LATCHED',
+    );
+
+    // A brand-new client is a brand-new official session.
+    const fresh = await standardSetup();
+    const result = await runEstablishment(fresh.transport, fresh.lease, fresh.identityBox);
+    expect(result.kind).toBe('ESTABLISHED');
+    if (result.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    expect(result.receipt.isCurrent()).toBe(true);
+  });
+
+  it('mints no receipt and no success record on any latched path', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const {result} = await establishWithReleaseAt(transport, leaseA, 3);
+    expect(result.kind).toBe('NOT_ESTABLISHED');
+    expect(Object.keys(result)).not.toContain('receipt');
+    // The session record is a FAULT, so a later lease is refused with the
+    // fault reason - never ALREADY_ESTABLISHED.
+    await expectLeaseBRefused(transport, client, 'ARMING_RESTRICTION_FAULT_LATCHED');
+  });
+
+  it('keeps concurrent establishment atomic on the latched path', async () => {
+    const {transport, lease, identityBox} = await standardSetup();
+    let calls = 0;
+    const first = establishMotorArmingRestriction({
+      lease,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => {
+        calls += 1;
+        if (calls === 2) {
+          expect(lease.release()).toBe('RELEASED');
+        }
+        return identityBox.current;
+      },
+      boxIds: MINTED.get(lease),
+    });
+    // While the first is in flight, a second attempt on the same session
+    // is refused as ALREADY_ESTABLISHING - not admitted, not queued.
+    expectNotEstablished(
+      await establishMotorArmingRestriction({
+        lease,
+        requestedIdentity: identity(),
+        readCurrentIdentity: () => identityBox.current,
+        boxIds: MINTED.get(lease),
+      }),
+      'ARMING_RESTRICTION_ALREADY_ESTABLISHING',
+    );
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(MSP_SET_ARMING_DISABLED));
+    expectNotEstablished(await first, 'MOTOR_TEST_LEASE_INACTIVE');
+    expect(calls).toBeGreaterThanOrEqual(2);
+  });
+});
