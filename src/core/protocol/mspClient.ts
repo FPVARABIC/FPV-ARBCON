@@ -242,6 +242,90 @@ function classifyWriteFailure(reason: unknown): MspClientErrorCode {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Pass 2 - exclusive motor-test lease primitives.
+ *
+ * These are OWNERSHIP primitives over MSP request admission. Nothing here
+ * decides, implies or grants motor safety, readiness or authorization,
+ * and no name in this section may ever be read that way.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Opaque ownership token. Deliberately a class with NO public data: an
+ * instance carries no own enumerable property, so `{...token}`,
+ * `JSON.stringify(token)` and `structuredClone`-style reconstruction all
+ * produce something that can never be `===` the real token. Identity
+ * comparison is the only test that exists.
+ */
+export class MspMotorTestLeaseToken {
+  /** Present only so the type is nominal to TypeScript; never read. */
+  private readonly brand: undefined;
+
+  constructor() {
+    this.brand = undefined;
+  }
+}
+
+/** Why an exclusive lease could not be taken. These are ownership facts,
+ * never safety verdicts. */
+export type MspMotorTestLeaseRejectionReason =
+  /** The request engine is not truly idle - an active request, a queued
+   * request, a write awaiting settlement, a probe, or a state that is not
+   * plainly READY. */
+  | 'MSP_CLIENT_NOT_IDLE'
+  /** Some other holder already owns this exact client. */
+  | 'MOTOR_TEST_LEASE_ALREADY_HELD'
+  /** A previous lease on this same composite identity died from an
+   * MSP/client fault. A new session identity is required. */
+  | 'MOTOR_TEST_LEASE_FAULT_LATCHED';
+
+export type MspMotorTestLeaseAcquireOutcome =
+  | {readonly kind: 'ACQUIRED'; readonly token: MspMotorTestLeaseToken}
+  | {readonly kind: 'REJECTED'; readonly reason: MspMotorTestLeaseRejectionReason};
+
+export type MspMotorTestLeaseReleaseOutcome =
+  /** The exact active token released an idle client. */
+  | {readonly kind: 'RELEASED'}
+  /** Same token, already released. Idempotent no-op - crucially it does
+   * NOT touch a newer lease. */
+  | {readonly kind: 'ALREADY_RELEASED'}
+  /** The token was killed by close/detach/desync/fault. No-op. */
+  | {readonly kind: 'INVALIDATED'}
+  /** Not the active token (forged, stale, or from another client). */
+  | {readonly kind: 'NOT_OWNER'}
+  /** Lease-owned work is still active, queued or awaiting write
+   * settlement. The lease stays HELD and ordinary traffic stays blocked. */
+  | {readonly kind: 'LEASE_WORK_UNSETTLED'};
+
+export type MspMotorTestLeaseBlockedCode =
+  /** An ordinary request was refused because a lease is held. It never
+   * reached the FIFO, the transport, or any timer. */
+  | 'MSP_MOTOR_TEST_LEASE_HELD'
+  /** A lease-scoped request presented a token that is not the active one. */
+  | 'MSP_MOTOR_TEST_LEASE_CAPABILITY_INVALID';
+
+/**
+ * Rejection raised by request admission while a lease is in force.
+ *
+ * Deliberately NOT a member of MSP_CLIENT_ERROR_CODES: that list is
+ * documented as the USER-FACING codes request() can reject with, and its
+ * test requires an ar.json translation for every entry. Pass 2 adds no UI
+ * and no runtime caller, so inventing user-facing Arabic copy for it
+ * would be wrong. It still carries a `code` field, so any consumer that
+ * reads `error.code` keeps working, while `instanceof MspClientError`
+ * checks correctly do NOT match - a lease refusal is not a timeout, a
+ * remote error, or any other MSP outcome.
+ */
+export class MspMotorTestLeaseBlockedError extends Error {
+  readonly code: MspMotorTestLeaseBlockedCode;
+
+  constructor(code: MspMotorTestLeaseBlockedCode) {
+    super(code);
+    this.name = 'MspMotorTestLeaseBlockedError';
+    this.code = code;
+  }
+}
+
 /**
  * MSP request/response client bound to one already-open transport session
  * for its entire lifetime. Does not open, close, or otherwise manage the
@@ -273,6 +357,36 @@ export class MspClient {
   private state: MspClientState = 'READY';
   private queue: PendingRequest[] = [];
   private active: ActiveRequest | undefined;
+  /* ---------------- Pass 2: exclusive motor-test lease ----------------
+   * The lease lives HERE, in the one class that owns request admission,
+   * and nowhere else. That placement is the whole point: two wrappers
+   * built over the same MspClient cannot both hold a lease, because
+   * neither of them holds the state - this instance does.
+   *
+   * Holding a lease is an MSP OWNERSHIP reservation and nothing else. It
+   * is not a motor-safety decision and grants no authority to send any
+   * motor or arming command. */
+
+  /** The one active ownership token, or undefined when unleased. A fresh
+   * object identity generated HERE - never a caller-supplied string,
+   * number, UUID or timestamp - so it cannot be forged, guessed, cloned,
+   * serialized or reconstructed. */
+  private motorTestLeaseToken: MspMotorTestLeaseToken | undefined;
+  /** Tokens retired by a normal release. Kept so a stale token's release
+   * is idempotent WITHOUT touching whatever lease is current now (the
+   * ABA case). */
+  private readonly retiredMotorTestLeaseTokens = new WeakSet<MspMotorTestLeaseToken>();
+  /** Tokens killed by close, detach, desync or a lease-scoped failure.
+   * Permanently unusable; a recovery probe never revives one. */
+  private readonly invalidatedMotorTestLeaseTokens = new WeakSet<MspMotorTestLeaseToken>();
+  /** Epochs at which a lease died from an MSP/client fault. Reacquisition
+   * is refused until the epoch changes, i.e. until the established
+   * session-reset mechanism produces a genuinely new composite identity.
+   * A normal idle release never adds to this set. */
+  private readonly motorTestLeaseFaultEpochs = new Set<number>();
+  /** The epoch the current lease was acquired under, so a fault latches
+   * that epoch rather than whatever the epoch became afterwards. */
+  private motorTestLeaseEpoch: number | undefined;
   /** Incremented every time the desync latch fires. Nothing outside this
    * file consumes it yet in this slice - introduced now, per the standing
    * instruction, because Pass 6.2b's recovery orchestration will need it
@@ -435,6 +549,9 @@ export class MspClient {
       return;
     }
     this.disposed = true;
+    // Pass 2: a closing client can never own anything again. Done first so
+    // the rejections below cannot be observed by a still-live capability.
+    this.invalidateMotorTestLease();
 
     // Best-effort, matching this codebase's existing "swallow and continue"
     // pattern (e.g. UsbSerialWriteQueue.runLoop()'s own task-wrapper catch,
@@ -499,6 +616,24 @@ export class MspClient {
    * triggers desynchronization.
    */
   request(command: number, payload: Uint8Array, options: MspRequestOptions): Promise<MspFrame> {
+    // Pass 2: the ONE exclusivity gate for ordinary traffic. Placed before
+    // every other step on purpose - a refused request never reaches
+    // checkAcceptance(), never enters the FIFO, never becomes active,
+    // never calls writeBytes(), never starts or clears a timer, and never
+    // triggers recovery. When no lease is held this is a plain
+    // `undefined` comparison and every pre-existing behaviour below is
+    // reached exactly as before.
+    if (this.motorTestLeaseToken !== undefined) {
+      return Promise.reject(new MspMotorTestLeaseBlockedError('MSP_MOTOR_TEST_LEASE_HELD'));
+    }
+    return this.enqueue(command, payload, options);
+  }
+
+  private enqueue(
+    command: number,
+    payload: Uint8Array,
+    options: MspRequestOptions,
+  ): Promise<MspFrame> {
     return new Promise<MspFrame>((resolve, reject) => {
       const settle = new SettleOnce<MspFrame>(resolve, reject);
 
@@ -527,6 +662,169 @@ export class MspClient {
       this.queue.push(pending);
       this.pump();
     });
+  }
+
+  /* ---------------- Pass 2: exclusive motor-test lease ---------------- */
+
+  /**
+   * TRUE idle, as required before ownership may be reserved. Every clause
+   * is load-bearing:
+   *  - state READY excludes DESYNCHRONIZED, RESTARTING_READER, PROBING,
+   *    RECOVERY_FAILED, DISCONNECTED and CLOSING;
+   *  - `active === undefined` excludes BOTH request phases, i.e. a write
+   *    still awaiting settlement (WRITING) and a response still awaited
+   *    (AWAITING_RESPONSE), and also every recovery probe, which is only
+   *    ever active while state is PROBING;
+   *  - an empty queue excludes work that has been admitted but not yet
+   *    started;
+   *  - `!disposed` excludes an instance already torn down.
+   */
+  private isRequestEngineIdle(): boolean {
+    return (
+      !this.disposed &&
+      this.state === 'READY' &&
+      this.active === undefined &&
+      this.queue.length === 0
+    );
+  }
+
+  /**
+   * Synchronous, atomic, non-queued try-acquire. Never retries, never
+   * waits, never schedules a later attempt, and never throws for an
+   * expected refusal. Exactly one caller can win; a second or re-entrant
+   * attempt is refused immediately.
+   *
+   * Acquiring reserves MSP request ownership. It is NOT a motor-safety
+   * decision and authorizes no motor or arming command.
+   */
+  tryAcquireMotorTestLease(): MspMotorTestLeaseAcquireOutcome {
+    if (this.motorTestLeaseToken !== undefined) {
+      return {kind: 'REJECTED', reason: 'MOTOR_TEST_LEASE_ALREADY_HELD'};
+    }
+    if (this.motorTestLeaseFaultEpochs.has(this.mspEpoch)) {
+      return {kind: 'REJECTED', reason: 'MOTOR_TEST_LEASE_FAULT_LATCHED'};
+    }
+    if (!this.isRequestEngineIdle()) {
+      return {kind: 'REJECTED', reason: 'MSP_CLIENT_NOT_IDLE'};
+    }
+    const token = new MspMotorTestLeaseToken();
+    this.motorTestLeaseToken = token;
+    this.motorTestLeaseEpoch = this.mspEpoch;
+    return {kind: 'ACQUIRED', token};
+  }
+
+  /** Whether this exact token is the live owner right now. */
+  isMotorTestLeaseToken(token: unknown): boolean {
+    return this.motorTestLeaseToken !== undefined && token === this.motorTestLeaseToken;
+  }
+
+  /** Whether ANY lease is currently held on this client. */
+  isMotorTestLeaseHeld(): boolean {
+    return this.motorTestLeaseToken !== undefined;
+  }
+
+  /**
+   * The only way a lease-scoped request may be admitted. The token is
+   * revalidated HERE, at admission time, on every single call - so a
+   * stale, released, invalidated, forged, cross-session or wrong-client
+   * token fails closed before the FIFO, before the transport and before
+   * any timer.
+   *
+   * An admitted request then goes through the SAME enqueue -> pump ->
+   * startRequest -> writeBytes pipeline as any other: the existing FIFO,
+   * the existing single-flight rule, the existing two-phase timeout and
+   * the existing settle precedence, with no second queue and no parallel
+   * write path. No priority, cancellation or preemption is introduced.
+   *
+   * Any failure of a lease-scoped request kills the lease and latches the
+   * fault for the identity it was acquired under.
+   */
+  requestWithMotorTestLease(
+    token: unknown,
+    command: number,
+    payload: Uint8Array,
+    options: MspRequestOptions,
+  ): Promise<MspFrame> {
+    if (!this.isMotorTestLeaseToken(token)) {
+      return Promise.reject(
+        new MspMotorTestLeaseBlockedError('MSP_MOTOR_TEST_LEASE_CAPABILITY_INVALID'),
+      );
+    }
+    const promise = this.enqueue(command, payload, options);
+    // One place, covering every rejection route the existing engine
+    // already has - write failure, write-outcome-unknown, write timeout
+    // surfaced as a transport rejection, response timeout, remote error,
+    // desync, queue bound, encode failure, close and detach.
+    promise.catch(() => {
+      this.faultMotorTestLease();
+    });
+    return promise;
+  }
+
+  /**
+   * Explicit release, restricted to the exact active token.
+   *
+   * Refuses while lease-owned work is still active, queued or awaiting
+   * write settlement: the lease stays held, the request is neither
+   * cancelled nor discarded, and ordinary traffic stays blocked.
+   *
+   * ABA protection: a token retired by an earlier release can never clear
+   * a lease acquired afterwards - it is recognized as already-released
+   * and does nothing.
+   */
+  releaseMotorTestLease(token: unknown): MspMotorTestLeaseReleaseOutcome {
+    if (token instanceof MspMotorTestLeaseToken) {
+      if (this.invalidatedMotorTestLeaseTokens.has(token)) {
+        return {kind: 'INVALIDATED'};
+      }
+      if (this.retiredMotorTestLeaseTokens.has(token)) {
+        return {kind: 'ALREADY_RELEASED'};
+      }
+    }
+    if (!this.isMotorTestLeaseToken(token)) {
+      return {kind: 'NOT_OWNER'};
+    }
+    if (this.active !== undefined || this.queue.length > 0) {
+      return {kind: 'LEASE_WORK_UNSETTLED'};
+    }
+    this.retiredMotorTestLeaseTokens.add(this.motorTestLeaseToken as MspMotorTestLeaseToken);
+    this.motorTestLeaseToken = undefined;
+    this.motorTestLeaseEpoch = undefined;
+    return {kind: 'RELEASED'};
+  }
+
+  /**
+   * Kills the active lease without latching a fault. Used for lifecycle
+   * ends (close, detach) where the client itself is finished anyway.
+   * The token is permanently unusable: no recovery probe returning the
+   * client to READY can ever revive it.
+   */
+  private invalidateMotorTestLease(): void {
+    const token = this.motorTestLeaseToken;
+    if (token === undefined) {
+      return;
+    }
+    this.invalidatedMotorTestLeaseTokens.add(token);
+    this.motorTestLeaseToken = undefined;
+    this.motorTestLeaseEpoch = undefined;
+  }
+
+  /**
+   * Kills the active lease AND latches the fault against the composite
+   * identity it was acquired under, so reacquisition is refused until a
+   * genuinely new session identity exists. Idempotent.
+   *
+   * The epoch latched is the lease's OWN acquisition epoch, not whatever
+   * the epoch became afterwards: a desync bumps mspEpoch as part of the
+   * failure, and latching the post-bump value would wrongly punish the
+   * new identity that the established reset mechanism just produced.
+   */
+  private faultMotorTestLease(): void {
+    const epoch = this.motorTestLeaseEpoch;
+    if (epoch !== undefined) {
+      this.motorTestLeaseFaultEpochs.add(epoch);
+    }
+    this.invalidateMotorTestLease();
   }
 
   private checkAcceptance(): MspClientErrorCode | undefined {
@@ -780,6 +1078,14 @@ export class MspClient {
   }
 
   private triggerDesyncLatch(): void {
+    // Pass 2: desynchronization is exactly the ambiguity a lease must not
+    // survive. Faulted (not merely invalidated) and latched against the
+    // acquisition epoch BEFORE mspEpoch is bumped below, so the latch
+    // lands on the identity that failed - and the new identity the bump
+    // produces is free to be leased again. Recovery returning the client
+    // to READY never revives the dead capability.
+    this.faultMotorTestLease();
+
     const rejectedQueue = this.queue.splice(0, this.queue.length);
     for (const pending of rejectedQueue) {
       // MSP_RECOVERING, not MSP_RECOVERY_REQUIRED: per Pass 6.2b's updated
@@ -938,6 +1244,9 @@ export class MspClient {
 
   private handlePhysicalDetach(): void {
     const code: MspClientErrorCode = 'MSP_DEVICE_DETACHED';
+    // Pass 2: USB detach ends ownership immediately, before anything else
+    // in this method can settle a lease-owned request.
+    this.invalidateMotorTestLease();
     this.disconnectCause = code;
     // Set BEFORE rejecting active/queued below (not after, as a naive
     // ordering might do) - isCurrentRecoveryAttempt(), called synchronously
