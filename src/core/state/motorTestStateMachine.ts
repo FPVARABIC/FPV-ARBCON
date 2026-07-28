@@ -68,9 +68,40 @@
  *     triggers now re-emit the stop descriptor until it is acknowledged.
  *     STATE and DISPOSITION coalesce; the safety request does not.
  *
+ * ONE FURTHER CORRECTION IN PHASE 2A.2
+ * ------------------------------------
+ *  D. `Fault` NO LONGER SWALLOWS A STILL-APPLICABLE STOP REQUEST.
+ *     Correction C fixed reassertion inside `Stopping`, but `Fault`
+ *     remained a blanket no-op, so the LAST descriptor emitted before a
+ *     fault was the last one that could ever exist. That turned a bare
+ *     historical emission into proof that no further stop was needed -
+ *     which it never was.
+ *
+ *     Emitting `SUBMIT_STOP_INTENT` proves ONLY that this reducer asked.
+ *     It does not prove that any executor accepted, queued, retained,
+ *     began or wrote it, that an acknowledgement arrived, that an
+ *     equivalent stop is otherwise guaranteed, or that a motor stopped.
+ *     This module has no delivery handshake and must invent none, so it
+ *     cannot know that a previous request survived - and therefore must
+ *     not treat "one was emitted once" as a reason to stay silent.
+ *
+ *     So: while a command may be live, a matching-authority
+ *     STOP_TRIGGERED arriving in `Fault` re-emits the inert descriptor.
+ *     `Fault` stays `Fault` - the very same frozen object, with the same
+ *     reason, authority and liveness - so this is emphatically NOT
+ *     operational recovery. Nothing is unlocked; the machine merely
+ *     keeps saying "a stop is still required" for as long as something
+ *     keeps asking.
+ *
+ *     A fault raised from an idle state carries
+ *     `startMayHaveReachedFc === false`, and there a stop request stays
+ *     inert: no command was ever submitted, so asking for a stop would
+ *     manufacture traffic for an activation that never happened.
+ *
  * Consequently: an acknowledgement never starts, extends or resets the
- * pulse deadline; stop always outranks start progression; and `Fault` is
- * terminal for the session authority it was raised under.
+ * pulse deadline; stop always outranks start progression; and `Fault`
+ * remains terminal for operational purposes under the session authority
+ * it was raised under.
  */
 
 /**
@@ -564,33 +595,43 @@ export function createMotorTestState(
  *
  * Two rules apply before any per-state handling, in this order:
  *
- *  1. `Fault` is terminal and takes precedence over every event. No
- *     sequence of later events can produce an operational state again,
- *     and the recorded authority, reason and `startMayHaveReachedFc` are
- *     preserved exactly. A new session means a new machine.
- *
- *  2. An event carrying a DIFFERENT authority is STALE OR UNRELATED and
- *     is IGNORED: the state is returned unchanged, with zero effects and
- *     the machine's own authority intact. It does not fault, does not
- *     brick an idle machine, and above all does not consume the
- *     activation - a legitimate deadline, stop, acknowledgement or fault
- *     arriving afterwards under the RIGHT authority is handled normally.
+ *  1. An event carrying a DIFFERENT authority is STALE OR UNRELATED and
+ *     is IGNORED, in EVERY state including `Fault`: the state is
+ *     returned unchanged, with zero effects and the machine's own
+ *     authority intact. It does not fault, does not brick an idle
+ *     machine, and above all does not consume the activation - a
+ *     legitimate deadline, stop, acknowledgement or fault arriving
+ *     afterwards under the RIGHT authority is handled normally. It can
+ *     neither establish nor clear nor suppress anything belonging to the
+ *     active authority.
  *
  *     Losing the current session is a different fact, and only the
  *     driver can know it. It must be reported as a matching-authority
  *     `FAULT_RAISED` with `SESSION_CHANGED` or `AUTHORITY_MISMATCH`,
  *     which then follows the ordinary operational-fault rules including
  *     the disconnect warning.
+ *
+ *     Checking authority FIRST is what makes correction D safe: only a
+ *     same-authority request may reach the faulted-state handler below.
+ *     For every other event this ordering is indistinguishable from the
+ *     previous one, since both produced an identity no-op.
+ *
+ *  2. `Fault` is terminal for OPERATIONAL purposes: no sequence of later
+ *     events can produce an operational state again, and the recorded
+ *     authority, reason and `startMayHaveReachedFc` are preserved
+ *     exactly. A new session means a new machine. It is NOT, however, a
+ *     reason to fall silent about a stop that was never confirmed - see
+ *     correction D and `reduceFault` below.
  */
 export function motorTestTransition(
   state: MotorTestState,
   event: MotorTestEvent,
 ): MotorTestTransition {
-  if (state.name === 'Fault') {
-    return stay(state);
-  }
   if (event.authority !== state.authority) {
     return stay(state);
+  }
+  if (state.name === 'Fault') {
+    return reduceFault(state, event);
   }
 
   switch (state.name) {
@@ -610,6 +651,37 @@ export function motorTestTransition(
       assertExhaustive(state);
       return stay(state);
   }
+}
+
+/**
+ * Correction D - the ONLY thing a faulted machine still does.
+ *
+ * Every event returns the SAME frozen `Fault` object, so there is no
+ * transition out of `Fault`, no field is rewritten, no authority is
+ * substituted and no non-stop effect can be produced. Operational
+ * recovery remains impossible; only a fresh machine under a genuinely
+ * new authority can operate again.
+ *
+ * The single difference from a blanket no-op: while `startMayHaveReachedFc`
+ * is true, a STOP_TRIGGERED re-emits the inert stop descriptor. The
+ * reducer cannot observe whether any earlier descriptor was accepted,
+ * delivered, acknowledged or dropped - it has no delivery handshake at
+ * all - so refusing to ask again would be asserting a guarantee it does
+ * not have. Something is still asking for a stop while a command may be
+ * live; the honest answer is to keep asking.
+ *
+ * When the fault came from an idle state (`startMayHaveReachedFc` false)
+ * nothing was ever submitted, so a stop request stays inert rather than
+ * inventing traffic for an activation that never began.
+ */
+function reduceFault(
+  state: Extract<MotorTestState, {name: 'Fault'}>,
+  event: MotorTestEvent,
+): MotorTestTransition {
+  if (event.kind === 'STOP_TRIGGERED' && state.startMayHaveReachedFc) {
+    return transition(state, STOP_EFFECTS);
+  }
+  return stay(state);
 }
 
 function reduceChecking(

@@ -377,10 +377,17 @@ describe('correction A - a foreign authority is ignored, never fatal', () => {
       expect(faultState.authority).toBe(AUTHORITY);
       expect(faultState.startMayHaveReachedFc).toBe(true);
       expect(kinds(result.effects)).toEqual(['SHOW_STOP_UNCONFIRMED_WARNING']);
-      // Terminal: the legitimate stop that follows is now inert.
+      // CHANGED IN 2A.2. This previously asserted that the legitimate
+      // stop which follows is inert - i.e. that reaching `Fault` alone
+      // cancelled every future stop request. That was the NB-1 defect:
+      // the descriptor emitted earlier was never proven delivered, so
+      // silence here was an unearned guarantee. The stronger assertion
+      // is that the state is STILL the identical terminal object AND the
+      // stop is still asked for.
       const after = step(result.state, stopTrigger('TOUCH_RELEASED'));
       expect(after.state).toBe(result.state);
-      expect(after.effects).toEqual([]);
+      expect(after.state.name).toBe('Fault');
+      expect(kinds(after.effects)).toEqual(['SUBMIT_STOP_INTENT']);
     },
   );
 });
@@ -463,6 +470,13 @@ describe('correction B - every operational fault warns', () => {
     const faulted = step(stateAfter(TO_PULSING), fault('DESYNCHRONIZED')).state;
     const before = expectName(faulted, 'Fault');
 
+    // CHANGED IN 2A.2: stopTrigger was removed from this inert list. It
+    // used to assert that a faulted machine answers a legitimate stop
+    // request with silence, which is exactly the NB-1 defect - the
+    // earlier descriptor was never proven delivered. Every OTHER event
+    // remains a strict identity no-op, which is the part that actually
+    // encodes terminality, and the stop case is asserted separately
+    // below with a stronger expectation.
     for (const next of [
       gatesPassed(),
       gatesFailed(),
@@ -470,7 +484,6 @@ describe('correction B - every operational fault warns', () => {
       activation(),
       writeCalled(),
       startAck(),
-      stopTrigger('TOUCH_RELEASED'),
       stopAck(),
       fault('USB_DETACHED'),
       foreign(stopTrigger('TOUCH_RELEASED')),
@@ -837,6 +850,325 @@ describe('deep immutability', () => {
     expect(second.state).toEqual(first.state);
     expect(second.effects).toEqual(first.effects);
     expect(state.name).toBe('Pulsing');
+  });
+});
+
+/* ================================================================== *
+ * Correction D (NB-1) - a stop request survives the fault boundary
+ * ================================================================== */
+
+describe('NB-1 - historical emission is never delivery proof', () => {
+  /** A faulted machine that may still have a live command. */
+  const faultedLive = (reason: MotorTestFaultReason = 'DESYNCHRONIZED') =>
+    expectName(step(stateAfter(TO_PULSING), fault(reason)).state, 'Fault');
+
+  /* --- A: historical emission is not delivery proof --------------- */
+
+  it('A: a second trigger is not lost merely because a first descriptor existed', () => {
+    // No executor acceptance, no completion evidence - nothing at all
+    // between the two triggers.
+    const first = step(stateAfter(TO_PULSING), stopTrigger('TOUCH_RELEASED'));
+    expect(kinds(first.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+
+    const second = step(first.state, stopTrigger('STOP_BUTTON_PRESSED'));
+    expect(kinds(second.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+    expect(second.state.name).toBe('Stopping');
+  });
+
+  it('A: the same holds across the fault boundary', () => {
+    const before = faultedLive();
+    const after = step(before, stopTrigger('TOUCH_RELEASED'));
+    expect(kinds(after.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+    expect(after.state).toBe(before);
+  });
+
+  /* --- B: failure cannot consume all retries ---------------------- */
+
+  it.each([
+    'MSP_RESPONSE_TIMEOUT',
+    'TRANSPORT_WRITE_TIMEOUT',
+    'WRITE_FAILED',
+    'WRITE_OUTCOME_UNKNOWN',
+    'DESYNCHRONIZED',
+    'STOP_FAILED',
+    'STOP_TIMEOUT',
+    'NATIVE_EXCEPTION',
+    'USB_DETACHED',
+    'SESSION_CHANGED',
+    'AUTHORITY_MISMATCH',
+  ] as const)(
+    'B: after %s leaves the stop unconfirmed, a fresh request is still produced',
+    reason => {
+      // Stop demanded, then the attempt fails / times out / desyncs.
+      const stopping = step(
+        stateAfter(TO_PULSING),
+        stopTrigger('TOUCH_RELEASED'),
+      );
+      expect(kinds(stopping.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+
+      const faulted = step(stopping.state, fault(reason));
+      const faultState = expectName(faulted.state, 'Fault');
+      expect(faultState.startMayHaveReachedFc).toBe(true);
+      expect(kinds(faulted.effects)).toEqual(['SHOW_STOP_UNCONFIRMED_WARNING']);
+
+      // Fail-closed: still terminal, still warned, and STILL asking.
+      const retry = step(faulted.state, stopTrigger('STOP_BUTTON_PRESSED'));
+      expect(retry.state).toBe(faulted.state);
+      expect(retry.state.name).toBe('Fault');
+      expect(kinds(retry.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+    },
+  );
+
+  it('B: retries do not run out however many times they are made', () => {
+    const before = faultedLive('WRITE_OUTCOME_UNKNOWN');
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const after = step(before, stopTrigger('TOUCH_RELEASED'));
+      expect(kinds(after.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+      expect(after.state).toBe(before);
+    }
+  });
+
+  /* --- C: dropped / unknown descriptor ---------------------------- */
+
+  it('C: no delivery feedback exists, so emission alone suppresses nothing', () => {
+    // The reducer is given NOTHING that could stand for acceptance:
+    // there is no such event in the model, which is precisely why
+    // emission cannot be treated as delivery.
+    const kindsInModel: MotorTestEvent['kind'][] = [
+      'GATES_PASSED',
+      'GATES_FAILED',
+      'RECHECK_REQUESTED',
+      'ACTIVATION_ACCEPTED',
+      'START_WRITE_CALLED',
+      'START_ACKNOWLEDGED',
+      'STOP_TRIGGERED',
+      'STOP_ACKNOWLEDGED',
+      'FAULT_RAISED',
+    ];
+    expect(kindsInModel).not.toContain('STOP_DISPATCH_ACCEPTED');
+    expect(kindsInModel).not.toContain('STOP_WRITE_CALLED');
+
+    // A long unresolved run: every applicable trigger still asks.
+    let state = stateAfter(TO_PULSING);
+    const emitted: string[] = [];
+    for (const reason of [
+      'TOUCH_RELEASED',
+      'PULSE_DEADLINE_ELAPSED',
+      'STOP_BUTTON_PRESSED',
+      'ANDROID_BACK',
+    ] as const) {
+      const result = step(state, stopTrigger(reason));
+      emitted.push(...kinds(result.effects));
+      state = result.state;
+    }
+    expect(emitted).toEqual([
+      'SUBMIT_STOP_INTENT',
+      'SUBMIT_STOP_INTENT',
+      'SUBMIT_STOP_INTENT',
+      'SUBMIT_STOP_INTENT',
+    ]);
+  });
+
+  /* --- D: same authority versus stale authority ------------------- */
+
+  it('D: a stale authority can neither complete nor suppress A stop lifecycle', () => {
+    const stopping = step(
+      stateAfter(TO_PULSING),
+      stopTrigger('TOUCH_RELEASED'),
+    ).state;
+    expect(stopping.name).toBe('Stopping');
+
+    // Everything authority B could possibly say.
+    for (const next of [
+      stopAck(),
+      stopTrigger('BATTERY_BECAME_UNSAFE'),
+      startAck(),
+      writeCalled(),
+      fault('DESYNCHRONIZED'),
+    ]) {
+      const after = step(stopping, foreign(next));
+      expect(after.state).toBe(stopping);
+      expect(after.effects).toEqual([]);
+    }
+
+    // A's own lifecycle is untouched and still deterministic.
+    const retry = step(stopping, stopTrigger('STOP_BUTTON_PRESSED'));
+    expect(kinds(retry.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+    expect(step(stopping, stopAck()).state.name).toBe('Ready');
+  });
+
+  it('D: a stale authority cannot reach the faulted-state stop path either', () => {
+    const before = faultedLive();
+    const after = step(before, foreign(stopTrigger('TOUCH_RELEASED')));
+    expect(after.state).toBe(before);
+    expect(after.effects).toEqual([]);
+    // ... while the matching authority still can.
+    expect(kinds(step(before, stopTrigger('TOUCH_RELEASED')).effects)).toEqual([
+      'SUBMIT_STOP_INTENT',
+    ]);
+  });
+
+  it('D: a structurally identical but distinct authority is still foreign', () => {
+    const twin: MotorTestSessionAuthority = {};
+    expect(twin).toEqual(AUTHORITY);
+    expect(twin).not.toBe(AUTHORITY);
+    const before = faultedLive();
+    const after = step(before, {
+      kind: 'STOP_TRIGGERED',
+      reason: 'TOUCH_RELEASED',
+      authority: twin,
+    } as MotorTestEvent);
+    expect(after.state).toBe(before);
+    expect(after.effects).toEqual([]);
+  });
+
+  /* --- E: repeated heterogeneous stop triggers -------------------- */
+
+  it.each([
+    ['TOUCH_RELEASED', 'PULSE_DEADLINE_ELAPSED'],
+    ['NAVIGATION_BLURRED', 'STOP_BUTTON_PRESSED'],
+    ['APP_STATE_BACKGROUNDED', 'ANDROID_PREDICTIVE_BACK'],
+    ['ARMED_STATE_DETECTED', 'BATTERY_BECAME_UNSAFE'],
+  ] as const)(
+    'E: heterogeneous triggers %s then %s each produce a request',
+    (first, second) => {
+      const one = step(stateAfter(TO_PULSING), stopTrigger(first));
+      expect(kinds(one.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+      const two = step(one.state, stopTrigger(second));
+      expect(kinds(two.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+      // Disposition still coalesces monotonically.
+      const stopping = expectName(two.state, 'Stopping');
+      expect(stopping.stopping.requiredDisposition).toBe(
+        escalateDisposition(
+          dispositionForStopReason(first),
+          dispositionForStopReason(second),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    ['USB_DETACHED', 'ANDROID_BACK'],
+    ['DESYNCHRONIZED', 'TOUCH_RELEASED'],
+    ['SESSION_CHANGED', 'STOP_BUTTON_PRESSED'],
+  ] as const)(
+    'E: interruption %s followed by trigger %s still asks for a stop',
+    (interruption, trigger) => {
+      const faulted = step(stateAfter(TO_PULSING), fault(interruption));
+      const after = step(faulted.state, stopTrigger(trigger));
+      expect(after.state).toBe(faulted.state);
+      expect(after.state.name).toBe('Fault');
+      expect(kinds(after.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+    },
+  );
+
+  /* --- F: Fault remains terminal ---------------------------------- */
+
+  it('F: a stop request in Fault produces no non-stop effect and no recovery', () => {
+    const before = faultedLive('STOP_TIMEOUT');
+    const after = step(before, stopTrigger('NAVIGATION_BLURRED'));
+
+    expect(after.state).toBe(before);
+    expect(after.state.name).toBe('Fault');
+    expect(expectName(after.state, 'Fault').faultReason).toBe('STOP_TIMEOUT');
+    expect(after.state.authority).toBe(AUTHORITY);
+    expect(expectName(after.state, 'Fault').startMayHaveReachedFc).toBe(true);
+
+    // Exactly one effect, and it is the stop descriptor - nothing else.
+    expect(after.effects).toHaveLength(1);
+    expect(kinds(after.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+    expect(kinds(after.effects)).not.toContain('ARM_PULSE_DEADLINE');
+    expect(kinds(after.effects)).not.toContain('SUBMIT_START_INTENT');
+    expect(kinds(after.effects)).not.toContain('SHOW_STOP_UNCONFIRMED_WARNING');
+
+    // Never Ready, never Stopping, never Pulsing.
+    for (const name of ['Ready', 'Stopping', 'Pulsing', 'Locked', 'Checking']) {
+      expect(after.state.name).not.toBe(name);
+    }
+  });
+
+  it.each(['Checking', 'Locked', 'Ready'] as const)(
+    'F: a fault raised from idle %s stays inert - nothing was ever submitted',
+    origin => {
+      const prefix =
+        origin === 'Checking' ? [] : origin === 'Locked'
+          ? [gatesFailed()]
+          : [gatesPassed()];
+      const faulted = step(stateAfter(prefix), fault('USB_DETACHED')).state;
+      const faultState = expectName(faulted, 'Fault');
+      expect(faultState.startMayHaveReachedFc).toBe(false);
+
+      const after = step(faulted, stopTrigger('TOUCH_RELEASED'));
+      expect(after.state).toBe(faulted);
+      expect(after.effects).toEqual([]);
+    },
+  );
+
+  it('F: the reasserted descriptor is the same frozen inert singleton', () => {
+    const before = faultedLive();
+    const first = step(before, stopTrigger('TOUCH_RELEASED'));
+    const second = step(before, stopTrigger('ANDROID_BACK'));
+    const descriptor = first.effects[0];
+
+    expect(descriptor).toBe(second.effects[0]);
+    expect(Object.isFrozen(descriptor)).toBe(true);
+    expect(Object.isFrozen(first.effects)).toBe(true);
+    expect(Object.isFrozen(first)).toBe(true);
+
+    const serialized = JSON.stringify(descriptor);
+    expect(Reflect.set(descriptor, 'kind', 'TAMPERED')).toBe(false);
+    expect(Reflect.set(descriptor, 'payload', [1])).toBe(false);
+    expect(Reflect.deleteProperty(descriptor, 'kind')).toBe(false);
+    expect(Reflect.set(first.effects, 0, undefined)).toBe(false);
+    expect(() =>
+      (first.effects as MotorTestEffect[]).push(descriptor),
+    ).toThrow();
+    expect(JSON.stringify(descriptor)).toBe(serialized);
+    expect(kinds(first.effects)).toEqual(['SUBMIT_STOP_INTENT']);
+    // Inert data only.
+    expect(Object.keys(descriptor)).toEqual(['kind']);
+    expect(typeof descriptor).toBe('object');
+  });
+
+  /* --- G: positive completion remains scoped ---------------------- */
+
+  it('G: only a matching-authority STOP_ACKNOWLEDGED completes the attempt', () => {
+    const stopping = step(
+      stateAfter(TO_PULSING),
+      stopTrigger('ANDROID_BACK'),
+    ).state;
+
+    // Foreign completion does nothing at all.
+    expect(step(stopping, foreign(stopAck())).state).toBe(stopping);
+    // The matching one resolves to the stored disposition, and says
+    // nothing about a physical motor.
+    const resolved = step(stopping, stopAck());
+    expect(resolved.state.name).toBe('Locked');
+    expect(resolved.effects).toEqual([]);
+    expect(Object.keys(resolved.state).sort()).toEqual(
+      ['authority', 'name'].sort(),
+    );
+  });
+
+  it('G: a completion cannot resolve a faulted machine', () => {
+    const before = faultedLive();
+    const after = step(before, stopAck());
+    expect(after.state).toBe(before);
+    expect(after.state.name).toBe('Fault');
+    expect(after.effects).toEqual([]);
+  });
+
+  /* --- contrast with the rejected policy -------------------------- */
+
+  it('rejects the OLD policy: "faulted => never ask again"', () => {
+    // A one-line stand-in for the removed rule, NOT a reimplementation
+    // of the machine: the old reducer answered every event in `Fault`
+    // with zero effects. The real implementation must disagree with it.
+    const oldPolicyEffectCount = 0;
+    const before = faultedLive();
+    const actual = step(before, stopTrigger('TOUCH_RELEASED'));
+    expect(actual.effects.length).not.toBe(oldPolicyEffectCount);
+    expect(actual.effects).toHaveLength(1);
   });
 });
 
