@@ -228,6 +228,34 @@ export class MotorTestLease {
     }
     return client.releaseMotorTestLease(token).kind;
   }
+
+  /**
+   * Pass 3: fails this lease closed after a SEMANTIC failure - one where
+   * no MSP request rejected, so the automatic fault route never fired.
+   *
+   * This is the deliberate escape hatch for "the exchange succeeded but
+   * the answer was unacceptable": an arming-restriction establishment
+   * whose ACK and status read both worked, yet reported an armed FC or no
+   * restriction at all. Continuing under that ambiguity is exactly what
+   * must never happen, so the lease dies and the composite identity is
+   * fault-latched through the SAME canonical client latch every other
+   * failure uses - no second fault manager exists.
+   *
+   * Restricted to this exact live capability: a forged, stale, released,
+   * invalidated, wrong-client or cross-session object cannot fault
+   * anything, and an old capability can never fault a newer lease.
+   *
+   * Returns whether the fault actually took effect. Idempotent - a second
+   * call on an already-dead capability simply returns false.
+   */
+  failClosed(): boolean {
+    const client = LEASE_CLIENTS.get(this);
+    const token = LEASE_TOKENS.get(this);
+    if (client === undefined || token === undefined) {
+      return false;
+    }
+    return client.faultMotorTestLeaseByToken(token);
+  }
 }
 
 function notAcquired(reason: MotorTestLeaseAcquireFailureReason): MotorTestLeaseAcquisition {

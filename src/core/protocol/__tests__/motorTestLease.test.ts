@@ -773,6 +773,73 @@ describe('invalidation and fault latching', () => {
     expect(acquire(client).kind).toBe('ACQUIRED');
   });
 
+  it('failClosed() lets the exact active capability fault itself after a SEMANTIC failure', () => {
+    // Pass 3 needs this: an exchange that succeeded at the transport
+    // level but whose ANSWER was unacceptable rejects no request, so the
+    // automatic fault route never fires.
+    const {client} = makeClient();
+    const lease = acquireOrThrow(client, 0);
+    expect(lease.failClosed()).toBe(true);
+    expect(lease.isActive()).toBe(false);
+    expect(client.isMotorTestLeaseHeld()).toBe(false);
+  });
+
+  it('failClosed() latches the exact composite identity through the canonical latch', () => {
+    const {client} = makeClient();
+    const lease = acquireOrThrow(client, 0);
+    expect(lease.failClosed()).toBe(true);
+    // Same identity, client still READY and idle - still refused, by the
+    // SAME Pass 2 latch. No second fault manager exists.
+    expect(client.getState()).toBe('READY');
+    expect(client.getEpoch()).toBe(0);
+    expectNotAcquired(acquire(client, identity(2, 0), identity(2, 0)), 'MOTOR_TEST_LEASE_FAULT_LATCHED');
+  });
+
+  it('failClosed() is idempotent and returns false once the capability is dead', () => {
+    const {client} = makeClient();
+    const lease = acquireOrThrow(client, 0);
+    expect(lease.failClosed()).toBe(true);
+    expect(lease.failClosed()).toBe(false);
+    expect(lease.failClosed()).toBe(false);
+  });
+
+  it('failClosed() cannot be used by a forged, released or stale capability', () => {
+    const {client} = makeClient();
+    const forged = new MotorTestLease(identity());
+    expect(forged.failClosed()).toBe(false);
+
+    const older = acquireOrThrow(client, 0);
+    expect(older.release()).toBe('RELEASED');
+    expect(older.failClosed()).toBe(false);
+
+    const newer = acquireOrThrow(client, 0);
+    // The decisive assertion: a stale capability cannot fault the newer
+    // lease.
+    expect(older.failClosed()).toBe(false);
+    expect(newer.isActive()).toBe(true);
+    expect(client.isMotorTestLeaseHeld()).toBe(true);
+  });
+
+  it('failClosed() cannot fault another client', () => {
+    const first = makeClient();
+    const second = makeClient();
+    const leaseOnFirst = acquireOrThrow(first.client, 0);
+    const leaseOnSecond = acquireOrThrow(second.client, 0);
+    expect(leaseOnFirst.failClosed()).toBe(true);
+    // The other client's lease is untouched.
+    expect(leaseOnSecond.isActive()).toBe(true);
+    expect(second.client.isMotorTestLeaseHeld()).toBe(true);
+  });
+
+  it('a raw forged token cannot fault the lease at the client boundary', () => {
+    const {client} = makeClient();
+    const lease = acquireOrThrow(client, 0);
+    expect(client.faultMotorTestLeaseByToken(new MspMotorTestLeaseToken())).toBe(false);
+    expect(client.faultMotorTestLeaseByToken('not-a-token')).toBe(false);
+    expect(client.faultMotorTestLeaseByToken(undefined)).toBe(false);
+    expect(lease.isActive()).toBe(true);
+  });
+
   it('an old release cannot affect a new session lease', () => {
     const oldSession = makeClient();
     const oldLease = acquireOrThrow(oldSession.client);
@@ -920,6 +987,9 @@ describe('semantic exclusions', () => {
     const lease = acquireOrThrow(client);
     expect(Object.keys(lease).sort()).toEqual(['leaseKind', 'sessionIdentity']);
     expect(publicSurfaceNames(lease).sort()).toEqual([
+      // Pass 3 added failClosed() - the capability-bound semantic-fault
+      // operation. It is a way to DIE, never a way to be authorized.
+      'failClosed',
       'isActive',
       'leaseKind',
       'release',

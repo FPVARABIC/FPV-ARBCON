@@ -794,6 +794,30 @@ export class MspClient {
   }
 
   /**
+   * Pass 3: lets the EXACT active lease fault itself after a SEMANTIC
+   * failure - one where no request rejected, so the automatic
+   * failure route in requestWithMotorTestLease() never fires. The
+   * motivating case is an arming-restriction establishment whose ACK and
+   * status read both succeeded but whose evidence was unacceptable (FC
+   * reported armed, or the required restriction was absent).
+   *
+   * Reuses the SAME canonical latch as every other fault - it does not
+   * introduce a second fault manager. Only the exact live token can
+   * trigger it, so a forged, stale, released, invalidated, wrong-client
+   * or cross-session capability cannot affect ownership, and an old
+   * capability can never fault a newer lease.
+   *
+   * Returns whether the fault actually took effect.
+   */
+  faultMotorTestLeaseByToken(token: unknown): boolean {
+    if (!this.isMotorTestLeaseToken(token)) {
+      return false;
+    }
+    this.faultMotorTestLease();
+    return true;
+  }
+
+  /**
    * Kills the active lease without latching a fault. Used for lifecycle
    * ends (close, detach) where the client itself is finished anyway.
    * The token is permanently unusable: no recovery probe returning the
