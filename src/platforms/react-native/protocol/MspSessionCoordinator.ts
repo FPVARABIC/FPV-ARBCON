@@ -74,8 +74,16 @@ import {
   decodeAnalog,
   decodeRawGps,
   decodeStatusExDiagnostics,
-  createMspTelemetryScheduler,
 } from '../../../core';
+// Phase 2E (P4). The motor-test telemetry anchor and every scheduler that
+// joins it are minted from ONE captured MspClient reference by this
+// binding. The coordinator no longer constructs a scheduler directly, so
+// there is no production path that could pair an anchor with a different
+// client. Deep import on purpose: the motor-test modules stay out of
+// `src/core`'s public barrel.
+import {MotorTestTelemetryRegistry} from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
+import {createMotorTestSessionBinding} from './motorTestSessionBinding';
+import type {MotorTestSessionCapability} from './motorTestSessionBinding';
 import type {
   FlightControllerIdentity,
   MspRequester,
@@ -307,6 +315,11 @@ interface SessionEntry {
    * not the earlier synchronous ownership->ACTIVE flip, is what "once
    * ownership reaches ACTIVE" means here). */
   telemetryScheduler: MspTelemetryScheduler | undefined;
+  /** Phase 2E (P4): the authoritative motor-test capability for THIS
+   * entry's exact mspClient. Created alongside the scheduler in
+   * startTelemetry() and closed in stopTelemetry(), so an anchor can never
+   * outlive the client it names. */
+  motorTestSession: MotorTestSessionCapability | undefined;
   tickIntervalHandle: ReturnType<typeof setInterval> | undefined;
   /** Pass 7.4, Step 4: unsubscribes this entry's own forwarding listener
    * from mspClient.subscribe() - see notifyMspRecoveryState()'s own doc
@@ -394,6 +407,10 @@ export class MspSessionCoordinator {
    * other three. */
   private readonly mspRecoveryStateListeners = new Set<() => void>();
   private generationCounter = 0;
+  /** Phase 2E (P4): one coordinator-wide motor-test telemetry registry.
+   * Every anchor in the application is minted here, through the binding,
+   * for a client this coordinator itself created. */
+  private readonly motorTestRegistry = new MotorTestTelemetryRegistry();
 
   /**
    * Idempotent: exactly one MspClient ever exists per sessionId, and
@@ -496,6 +513,7 @@ export class MspSessionCoordinator {
       identification: {status: 'IDLE'},
       metrics: undefined,
       telemetryScheduler: undefined,
+      motorTestSession: undefined,
       tickIntervalHandle: undefined,
       mspClientStateUnsubscribe,
       batteryDebugLog: undefined,
@@ -816,7 +834,18 @@ export class MspSessionCoordinator {
     // Pass 7.6c: singleFlight - the real MSP link is serialized at
     // ~224ms per round trip, so at most ONE telemetry dispatch may be
     // outstanding at any moment (see MspTelemetrySchedulerOptions).
-    const scheduler = createMspTelemetryScheduler(mspClient, {singleFlight: true});
+    // Phase 2E (P4) - THE AUTHORITATIVE CONSTRUCTION BOUNDARY.
+    //
+    // `mspClient` is this entry's exact client. It is handed to the
+    // binding once; the binding mints the anchor for it and is the only
+    // thing that can create a scheduler for it. Nothing downstream is
+    // given the opportunity to name a different client, so the
+    // scheduler-polls-A / anchor-labelled-B composition has no
+    // representation in production code.
+    const motorTestSession = createMotorTestSessionBinding(mspClient, {
+      registry: this.motorTestRegistry,
+    });
+    const scheduler = motorTestSession.createScheduler({singleFlight: true});
     scheduler.registerPoll<MspAttitude>({
       id: ATTITUDE_TELEMETRY_POLL_ID,
       command: MSP_ATTITUDE,
@@ -838,6 +867,7 @@ export class MspSessionCoordinator {
     unrefIfSupported(tickIntervalHandle);
 
     entry.telemetryScheduler = scheduler;
+    entry.motorTestSession = motorTestSession;
     entry.tickIntervalHandle = tickIntervalHandle;
     this.notifyTelemetryAvailability();
   }
@@ -938,6 +968,22 @@ export class MspSessionCoordinator {
    * own doc comment). */
   getTelemetryScheduler(sessionId: string): MspTelemetryScheduler | undefined {
     return this.sessions.get(sessionId)?.telemetryScheduler;
+  }
+
+  /**
+   * Phase 2E (P4): this session's PRE-COHERENT motor-test capability, or
+   * undefined before startTelemetry() has run or after teardown.
+   *
+   * A consumer receives an object whose client and anchor were bound
+   * together here; it can create further polls on that same link and can
+   * close it, but it cannot relabel or replace either member. There is no
+   * accessor that hands out the raw anchor or the raw client for
+   * re-pairing, which is what keeps the A/B composition unrepresentable.
+   */
+  getMotorTestSessionCapability(
+    sessionId: string,
+  ): MotorTestSessionCapability | undefined {
+    return this.sessions.get(sessionId)?.motorTestSession;
   }
 
   /** Pass 7.4: fires whenever getTelemetryScheduler() may now report
@@ -1087,6 +1133,13 @@ export class MspSessionCoordinator {
       clearInterval(entry.tickIntervalHandle);
       entry.tickIntervalHandle = undefined;
     }
+    // Phase 2E (P4): the anchor dies with the scheduler and before the
+    // client/transport are disposed, so a detached or replaced client can
+    // never leave an anchor usable against a newer one. closeSession()
+    // also releases any barrier still held for it, so no pause token
+    // survives teardown.
+    entry.motorTestSession?.close();
+    entry.motorTestSession = undefined;
     entry.telemetryScheduler = undefined;
     // Pass 7.6b: bounded debug observability - one stop line, only for
     // sessions whose battery poll ever registered.
