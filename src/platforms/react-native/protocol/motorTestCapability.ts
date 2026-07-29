@@ -66,6 +66,61 @@ export function createMotorTestTelemetryRegistry(): MotorTestTelemetryRegistry {
 const CAPABILITIES = new Map<string, MotorTestSessionCapability>();
 
 /**
+ * Listeners waiting for a session's capability to APPEAR, keyed by sessionId.
+ *
+ * WHY THIS EXISTS - THE DEFECT IT CLOSES. The capability is created inside
+ * `MspSessionCoordinator.startTelemetry()`, which runs in the continuation
+ * of `client.startReading()`. Navigation to the post-connection route
+ * happens earlier, the moment ownership goes ACTIVE. So there is a real
+ * window in which the operator is looking at the tab shell and the
+ * capability for that session does not exist yet.
+ *
+ * The Motors container reads the capability once, in a `useMemo` keyed on
+ * `sessionKey.sessionId` - a value that never changes for the life of the
+ * mounted panel. Under the old stack navigation the screen was mounted
+ * fresh on every navigation, so a read that came back `undefined` could
+ * not persist. Under the tab shell the panel is mounted once and then kept
+ * alive with `display: 'none'`, so an `undefined` read became PERMANENT:
+ * the screen stayed in its blocked no-session presentation forever, the
+ * hold control stayed `disabled`, and pressing it did nothing at all -
+ * even after identification had long since succeeded.
+ *
+ * A subscription is the honest fix. Polling would race, and re-deriving off
+ * an indirect signal (identification or ownership state) would only be
+ * correct by coincidence of ordering. This fires from the one place that
+ * knows: the store, at the moment it stores.
+ */
+const OPENED_LISTENERS = new Map<string, Set<() => void>>();
+
+/**
+ * Notified when `openMotorTestCapability` stores a capability for this
+ * exact sessionId. Returns an unsubscribe.
+ *
+ * Fires ONLY on transition to existing. It is not a general-purpose event
+ * bus: it carries no capability, no client and no session, so a listener
+ * cannot obtain anything through it - it must still call
+ * `readMotorTestCapability` and go through the same checks as any caller.
+ */
+export function subscribeMotorTestCapabilityOpened(
+  sessionId: string,
+  listener: () => void,
+): () => void {
+  const existing = OPENED_LISTENERS.get(sessionId) ?? new Set<() => void>();
+  existing.add(listener);
+  OPENED_LISTENERS.set(sessionId, existing);
+  return () => {
+    const set = OPENED_LISTENERS.get(sessionId);
+    if (set === undefined) {
+      return;
+    }
+    set.delete(listener);
+    if (set.size === 0) {
+      OPENED_LISTENERS.delete(sessionId);
+    }
+  };
+}
+
+/**
  * Builds the capability for one session and remembers it.
  *
  * TOTAL, NEVER PARTIAL. There is no build, and no caller, in which this
@@ -92,6 +147,13 @@ export function openMotorTestCapability(
 ): MotorTestSessionCapability {
   const capability = createMotorTestSessionBinding(client, {registry});
   CAPABILITIES.set(sessionId, capability);
+  // Announce AFTER the store is consistent, so any listener that
+  // immediately calls readMotorTestCapability() sees it. Iterated over a
+  // copy: a listener that unsubscribes itself must not mutate the set
+  // mid-iteration.
+  for (const listener of [...(OPENED_LISTENERS.get(sessionId) ?? [])]) {
+    listener();
+  }
   return capability;
 }
 

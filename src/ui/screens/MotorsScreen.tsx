@@ -64,7 +64,10 @@ import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol'
 import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
 import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
 import {createMotorTestLifecycleBridge} from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
-import {readMotorTestCapability} from '../../platforms/react-native/protocol/motorTestCapability';
+import {
+  readMotorTestCapability,
+  subscribeMotorTestCapabilityOpened,
+} from '../../platforms/react-native/protocol/motorTestCapability';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import type {RootStackParamList} from '../../navigation/types';
 import {AppState, BackHandler} from 'react-native';
@@ -1111,6 +1114,40 @@ function MotorsScreenBinding({
    * screen's state, refs and effects are torn down before the replacement
    * mounts, and none of its callbacks can reach the new session.
    */
+  /**
+   * Bumped when the capability for this session APPEARS.
+   *
+   * THE DEFECT THIS CLOSES. The capability is created in the coordinator's
+   * `startTelemetry()`, in the continuation of `client.startReading()`.
+   * Navigation to the post-connection route happens earlier, when ownership
+   * goes ACTIVE, so there is a real window in which this panel can mount
+   * while the capability does not exist yet.
+   *
+   * Under the old stack navigation the screen remounted on every
+   * navigation, so a read that came back `undefined` could not persist.
+   * Under the tab shell the panel mounts once and is then kept alive with
+   * `display: 'none'`, so `undefined` became PERMANENT - blocked
+   * presentation forever, hold control `disabled` forever, pressing it
+   * doing nothing at all even long after identification succeeded.
+   *
+   * The `useMemo` below cannot notice on its own: `sessionKey.sessionId`
+   * never changes for the life of the mounted panel. This epoch is the
+   * missing dependency, and it is driven by the store itself rather than by
+   * an indirect signal that would only be correct by coincidence of
+   * ordering.
+   */
+  const [capabilityEpoch, setCapabilityEpoch] = useState(0);
+  useEffect(() => {
+    // Already there - nothing to wait for. Checked before subscribing so a
+    // capability that appeared between render and effect is not missed.
+    if (readMotorTestCapability(sessionKey.sessionId) !== undefined) {
+      return;
+    }
+    return subscribeMotorTestCapabilityOpened(sessionKey.sessionId, () => {
+      setCapabilityEpoch(current => current + 1);
+    });
+  }, [sessionKey.sessionId, capabilityEpoch]);
+
   const operator = useMemo(() => {
     // The capability lives in the store the coordinator writes to. It is
     // `undefined` for exactly one reason - no live, identified session by
@@ -1134,7 +1171,9 @@ function MotorsScreenBinding({
       },
       () => Date.now(),
     );
-  }, [sessionKey.sessionId]);
+    // capabilityEpoch is a REQUIRED dependency, not incidental: without it
+    // this memo can never re-run, because sessionId is immutable here.
+  }, [sessionKey.sessionId, capabilityEpoch]);
 
   /**
    * The ACCEPTED lifecycle bridge owns every lifecycle trigger. This
