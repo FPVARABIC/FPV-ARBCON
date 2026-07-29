@@ -1115,65 +1115,66 @@ function MotorsScreenBinding({
    * mounts, and none of its callbacks can reach the new session.
    */
   /**
-   * Bumped when the capability for this session APPEARS.
+   * The operator facade for this session, resolved as soon as one exists.
    *
    * THE DEFECT THIS CLOSES. The capability is created in the coordinator's
    * `startTelemetry()`, in the continuation of `client.startReading()`.
    * Navigation to the post-connection route happens earlier, when ownership
-   * goes ACTIVE, so there is a real window in which this panel can mount
-   * while the capability does not exist yet.
+   * goes ACTIVE, so this panel can mount while no capability exists yet.
    *
-   * Under the old stack navigation the screen remounted on every
-   * navigation, so a read that came back `undefined` could not persist.
-   * Under the tab shell the panel mounts once and is then kept alive with
-   * `display: 'none'`, so `undefined` became PERMANENT - blocked
-   * presentation forever, hold control `disabled` forever, pressing it
-   * doing nothing at all even long after identification succeeded.
+   * This used to be a `useMemo` keyed on `sessionKey.sessionId` - a value
+   * that never changes for the life of the mounted panel. Under stack
+   * navigation the screen remounted per navigation, so a read that came
+   * back `undefined` could not persist. Under the tab shell the panel
+   * mounts once and is kept alive with `display: 'none'`, so `undefined`
+   * became PERMANENT: blocked presentation forever, hold control `disabled`
+   * forever, pressing it doing nothing at all.
    *
-   * The `useMemo` below cannot notice on its own: `sessionKey.sessionId`
-   * never changes for the life of the mounted panel. This epoch is the
-   * missing dependency, and it is driven by the store itself rather than by
-   * an indirect signal that would only be correct by coincidence of
-   * ordering.
+   * State plus a store subscription rather than a memo with an epoch
+   * dependency: `react-hooks/exhaustive-deps` correctly rejects that epoch
+   * as unnecessary, and a dependency the linter wants removed is a fix that
+   * silently un-fixes itself the first time someone tidies the warning.
    */
-  const [capabilityEpoch, setCapabilityEpoch] = useState(0);
+  const [operator, setOperator] = useState<MotorTestOperatorPort | undefined>(
+    undefined,
+  );
   useEffect(() => {
-    // Already there - nothing to wait for. Checked before subscribing so a
-    // capability that appeared between render and effect is not missed.
-    if (readMotorTestCapability(sessionKey.sessionId) !== undefined) {
+    /** Resolves at most ONE operator port for this session, ever. */
+    const resolve = (): boolean => {
+      const capability = readMotorTestCapability(sessionKey.sessionId);
+      if (capability === undefined) {
+        return false;
+      }
+      setOperator(existing =>
+        existing ??
+        capability.operatorPort(
+          {
+            readCurrentIdentity: () =>
+              mspSessionCoordinator.getMotorTestSessionIdentity(
+                sessionKey.sessionId,
+              ),
+            subscribeSessionInvalidated: listener =>
+              mspSessionCoordinator.subscribeMotorTestSessionInvalidated(
+                sessionKey.sessionId,
+                listener,
+              ),
+          },
+          () => Date.now(),
+        ),
+      );
+      return true;
+    };
+    // Checked BEFORE subscribing, so a capability that appeared between
+    // render and effect is not missed.
+    if (resolve()) {
       return;
     }
     return subscribeMotorTestCapabilityOpened(sessionKey.sessionId, () => {
-      setCapabilityEpoch(current => current + 1);
+      resolve();
     });
-  }, [sessionKey.sessionId, capabilityEpoch]);
+  }, [sessionKey.sessionId]);
 
-  const operator = useMemo(() => {
-    // The capability lives in the store the coordinator writes to. It is
-    // `undefined` for exactly one reason - no live, identified session by
-    // this id ever opened one - and the screen then presents the blocked
-    // state rather than pretending a session exists.
-    const capability = readMotorTestCapability(sessionKey.sessionId);
-    if (capability === undefined) {
-      return undefined;
-    }
-    return capability.operatorPort(
-      {
-        readCurrentIdentity: () =>
-          mspSessionCoordinator.getMotorTestSessionIdentity(
-            sessionKey.sessionId,
-          ),
-        subscribeSessionInvalidated: listener =>
-          mspSessionCoordinator.subscribeMotorTestSessionInvalidated(
-            sessionKey.sessionId,
-            listener,
-          ),
-      },
-      () => Date.now(),
-    );
-    // capabilityEpoch is a REQUIRED dependency, not incidental: without it
-    // this memo can never re-run, because sessionId is immutable here.
-  }, [sessionKey.sessionId, capabilityEpoch]);
+
 
   /**
    * The ACCEPTED lifecycle bridge owns every lifecycle trigger. This

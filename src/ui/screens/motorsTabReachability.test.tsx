@@ -40,6 +40,7 @@ import '../../i18n';
 import MainTabsScreen from './MainTabsScreen';
 import {
   closeMotorTestCapability,
+  subscribeMotorTestCapabilityOpened,
   createMotorTestTelemetryRegistry,
   openMotorTestCapability,
   readMotorTestCapability,
@@ -126,6 +127,32 @@ describe('Motors tab reachability with a session that arrives late', () => {
     shell.unmount();
   });
 
+  /* LAYER 1 - the fix committed here, provable on its own. */
+  it('announces an opening to a listener registered before it (layer 1 mechanism)', () => {
+    const fired: string[] = [];
+    const unsubscribe = subscribeMotorTestCapabilityOpened(SESSION_ID, () => {
+      // The listener must be able to SEE the capability, not just be told
+      // one exists - the store announces after it is consistent.
+      fired.push(
+        readMotorTestCapability(SESSION_ID) === undefined ? 'EMPTY' : 'VISIBLE',
+      );
+    });
+    openRealCapability();
+    unsubscribe();
+    expect(fired).toEqual(['VISIBLE']);
+
+    // And it stops firing once unsubscribed.
+    closeMotorTestCapability(SESSION_ID);
+    openRealCapability();
+    expect(fired).toEqual(['VISIBLE']);
+  });
+
+  /* LAYER 2 - RED ON PURPOSE until beginSession() is wired to a control.
+   * MotorsScreen has never called beginSession(), so the controller has no
+   * machine, derivePresentation() returns NO_SESSION and the hold control
+   * stays disabled. These two assert the END STATE the operator needs and
+   * must stay red until that is fixed. Deliberately not skipped: skipping a
+   * safety-reachability assertion is how this whole class of bug hid. */
   it('PICKS UP a capability that appears AFTER the panel mounted', () => {
     // THE REGRESSION. The capability is created in the coordinator's
     // startTelemetry(), in the continuation of client.startReading().
