@@ -104,65 +104,6 @@ android {
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
         }
-
-        // R3 - THE INTERNAL HARDWARE TEST VARIANT.
-        //
-        // A standalone, non-debuggable build (so the JS bundle is packaged
-        // and no Metro server is needed) that is the ONLY variant carrying
-        // the motor-test engine, screen and route. It is separated from
-        // Production at THREE independent levels:
-        //
-        //   1. the compiled module graph - metro.config.js resolves
-        //      ./motorTestEngineVariant to its .hardwareTest sibling only
-        //      when FPV_ARBCON_HARDWARE_TEST=1, so Production contains no
-        //      motor module at all rather than an unreachable one;
-        //   2. the application id - ".hardwaretest" suffix, so it installs
-        //      ALONGSIDE Production and can never silently replace it;
-        //   3. the visible identity - its own app_name and warning strings
-        //      in src/hardwareTest/res.
-        //
-        // The suffix and label are deliberately not derivable from a
-        // runtime flag: a build either is this variant or it is not.
-        hardwareTest {
-            initWith release
-            applicationIdSuffix ".hardwaretest"
-            versionNameSuffix "-hardwaretest"
-            signingConfig signingConfigs.debug
-            matchingFallbacks = ["release"]
-            // The React Native Gradle plugin injects the
-            // `usesCleartextTraffic` manifest placeholder only for the
-            // variants it knows by name (debug/release), so a new build
-            // type reaches the manifest merger with the placeholder in
-            // src/main/AndroidManifest.xml unsubstituted and the merge
-            // fails. Set explicitly to false: this is a standalone
-            // release-like build that never talks to a Metro server, so it
-            // needs cleartext no more than Production does.
-            manifestPlaceholders += [usesCleartextTraffic: "false"]
-        }
-    }
-}
-
-/**
- * R3 GUARD. A Hardware Test APK whose bundle was produced WITHOUT
- * FPV_ARBCON_HARDWARE_TEST=1 would be labelled "Hardware Test" while
- * containing no engine - an artifact that lies about itself. Fail the
- * build instead of shipping it.
- *
- * The symmetric direction is covered by the CI containment scan, which
- * builds an ordinary Production bundle and fails if any motor token is
- * present.
- */
-tasks.configureEach { task ->
-    if (task.name.startsWith("createBundleHardwareTest")) {
-        task.doFirst {
-            if (System.getenv("FPV_ARBCON_HARDWARE_TEST") != "1") {
-                throw new GradleException(
-                    "Hardware Test bundling requires FPV_ARBCON_HARDWARE_TEST=1 so metro.config.js " +
-                    "compiles the hardware-test build-variant seam. Without it this APK would be " +
-                    "labelled 'Hardware Test' but contain no motor-test engine."
-                )
-            }
-        }
     }
 }
 
