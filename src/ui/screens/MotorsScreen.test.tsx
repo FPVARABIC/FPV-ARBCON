@@ -848,3 +848,105 @@ describe('MotorsScreen - pure derivations', () => {
     expect(commandMayBeLive(snapshotFor({mayHaveReachedFc: true}))).toBe(true);
   });
 });
+
+/* ================================================================== *
+ * REPAIR PASS R1 - THE SCREEN LOCKS WITHOUT CONTINUOUS MONITORING
+ *
+ * NO HARDWARE. The operator double records calls; nothing reaches a
+ * transport, client, lease or device.
+ * ================================================================== */
+
+describe('R1 - unavailable continuous monitoring locks the screen', () => {
+  /** Exactly what the real production controller publishes: the reducer
+   * is in `Ready`, every one-shot gate passed, and activation is refused
+   * solely because no continuous monitor exists. */
+  function monitorBlocked(): MotorTestControllerSnapshot {
+    return snapshotFor({
+      machine: 'Ready',
+      allowed: false,
+      reasons: ['CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE'],
+    });
+  }
+
+  it('presents a LOCKED state, never an actionable READY', () => {
+    const rendered = render(new FakeOperator(monitorBlocked()));
+    expect(rendered.query('motors-status-LOCKED')).toBeDefined();
+    // The actionable ready presentation must be absent entirely.
+    expect(rendered.query('motors-status-READY')).toBeUndefined();
+    rendered.unmount();
+  });
+
+  it('renders the exact Arabic blocking explanation', () => {
+    const rendered = render(new FakeOperator(monitorBlocked()));
+    const node = rendered.find(
+      'motors-block-CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    );
+    expect(JSON.stringify(node.props.children)).toContain(
+      'المراقبة المستمرة لحالة الأمان غير متاحة — اختبار المحركات مقفل.',
+    );
+    expect(texts(rendered)).toContain(
+      'المراقبة المستمرة لحالة الأمان غير متاحة — اختبار المحركات مقفل.',
+    );
+    rendered.unmount();
+  });
+
+  it('keeps the long-press control disabled even with every manual acknowledgement ticked', () => {
+    const operator = new FakeOperator(monitorBlocked());
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    // And a long press still cannot reach activation.
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([]);
+    rendered.unmount();
+  });
+
+  it('does not activate on tap, press-in or plain press either', () => {
+    const operator = new FakeOperator(monitorBlocked());
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+    const hold = rendered.find('motors-hold-button');
+    act(() => {
+      hold.props.onPressIn?.();
+      hold.props.onPress?.();
+      hold.props.onPressOut?.();
+    });
+    expect(operator.pulseCalls).toEqual([]);
+    rendered.unmount();
+  });
+
+  it('keeps the emergency Stop control available while locked', () => {
+    const operator = new FakeOperator(monitorBlocked());
+    const rendered = render(operator);
+    const stop = rendered.find('motors-stop-button');
+    expect(stop.props.disabled).toBeFalsy();
+    rendered.press('motors-stop-button');
+    expect(operator.stopCalls).toEqual(['STOP_BUTTON_PRESSED']);
+    rendered.unmount();
+  });
+
+  it('never describes the missing monitor as available, active or monitored', () => {
+    const rendered = render(new FakeOperator(monitorBlocked()));
+    const rendering = texts(rendered);
+    for (const forbidden of [
+      'المراقبة متاحة',
+      'المراقبة نشطة',
+      'مُراقَب',
+      'AVAILABLE_ACCEPTED_SOURCE',
+    ]) {
+      expect(rendering).not.toContain(forbidden);
+    }
+    rendered.unmount();
+  });
+
+  it('derives LOCKED from the authoritative gate, not from the reducer name', () => {
+    // Pure derivation: same reducer state, opposite gate verdict.
+    expect(
+      derivePresentation(
+        snapshotFor({machine: 'Ready', allowed: true}),
+      ),
+    ).toBe('READY');
+    expect(derivePresentation(monitorBlocked())).toBe('LOCKED');
+  });
+});

@@ -20,6 +20,37 @@
  * containment assertions at the end of this file prove absent.
  */
 
+/**
+ * REPAIR PASS R1 - JEST-ONLY MODULE REPLACEMENT.
+ *
+ * The production continuous-safety-monitor reader is hard-wired
+ * unavailable, and R1 makes that an authoritative activation blocker. The
+ * pulse/stop/timeout/race/receipt/authority coverage below must still
+ * exercise the real engine, so this file replaces THE MODULE inside Jest's
+ * own registry - it does not add a production seam, a flag, an option or
+ * an environment branch. The replacement exists only here; no production
+ * file can import or reach it, and a source-boundary test in
+ * motorTestContinuousSafetyMonitor.test.ts proves that.
+ *
+ * The default is AVAILABLE so the accepted engine paths stay genuinely
+ * exercised. Individual R1 tests below set it UNAVAILABLE to prove the
+ * fail-closed behaviour at the controller level, and the REAL (unmocked)
+ * production reader is proven separately in
+ * motorTestContinuousSafetyMonitor.test.ts and in the production-binding
+ * regression test in motorTestSessionBinding.test.ts.
+ */
+let mockContinuousSafetyMonitoring:
+  | 'UNAVAILABLE_NO_ACCEPTED_SOURCE'
+  | 'AVAILABLE_ACCEPTED_SOURCE' = 'AVAILABLE_ACCEPTED_SOURCE';
+
+jest.mock('./motorTestContinuousSafetyMonitor', () => ({
+  readContinuousSafetyMonitoring: () => mockContinuousSafetyMonitoring,
+}));
+
+beforeEach(() => {
+  mockContinuousSafetyMonitoring = 'AVAILABLE_ACCEPTED_SOURCE';
+});
+
 import {readFileSync} from 'fs';
 import {join} from 'path';
 
@@ -716,10 +747,19 @@ describe('MotorTestController - supported profile', () => {
   });
 
   it('reports the continuous-monitoring gap rather than claiming coverage', async () => {
+    // R1: this file replaces the monitor module, so the production value
+    // must be reinstated here for this test to still mean what it did.
+    // The assertion is UNCHANGED and now carries MORE weight - the gap is
+    // no longer inert data, it fails activation closed.
+    mockContinuousSafetyMonitoring = 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
     const harness = createHarness();
     const snapshot = await runSetup(harness);
     expect(snapshot.continuousSafetyMonitoring).toBe(
       'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+    );
+    expect(snapshot.activation.allowed).toBe(false);
+    expect(snapshot.activation.reasons).toContain(
+      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
     );
   });
 });
@@ -3093,5 +3133,175 @@ describe('Phase 2I - receipt eligibility', () => {
     const closed = await drive(harness, harness.controller.close());
     // A closed session's lease is released, so nothing remains eligible.
     expect(closed.verificationReceipt).toBeUndefined();
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * REPAIR PASS R1 - FAIL CLOSED WITHOUT CONTINUOUS SAFETY MONITORING
+ *
+ * NO HARDWARE. Every byte is in-memory; no USB, FC, ESC, LiPo or motor is
+ * touched. These tests set the Jest-only module replacement to the
+ * PRODUCTION value (unavailable) and prove the controller refuses to
+ * activate - before any vector, payload, attempt record, timer or
+ * transport submission exists.
+ * ------------------------------------------------------------------ */
+
+describe('R1 - unavailable continuous monitoring blocks activation', () => {
+  beforeEach(() => {
+    // The production answer, reinstated over this file's default.
+    mockContinuousSafetyMonitoring = 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
+  });
+
+  it('publishes the blocker and refuses activation even after every one-shot setup check passes', async () => {
+    const harness = createHarness();
+    const snapshot = await runSetup(harness);
+
+    // Setup genuinely succeeded - this is not a blocked or failed session.
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.setupStep).toBe('READY');
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.armingRestriction.kind).toBe('ESTABLISHED');
+    expect(snapshot.telemetryHeld).toBe(true);
+
+    // ... and activation is STILL refused, for exactly this reason.
+    expect(snapshot.continuousSafetyMonitoring).toBe(
+      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+    );
+    expect(snapshot.activation.allowed).toBe(false);
+    expect(snapshot.activation.reasons).toContain(
+      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    );
+  });
+
+  it('refuses pulseMotor before any vector, payload, attempt or timer exists', async () => {
+    jest.useFakeTimers();
+    try {
+      const harness = createHarness();
+      await runSetup(harness);
+      const writesBefore = harness.transport.writeLog.length;
+      expect(jest.getTimerCount()).toBe(0);
+
+      expect(harness.controller.pulseMotor(1)).toBe('GATES_NOT_SATISFIED');
+      await flush(20);
+
+      const snapshot = harness.controller.getSnapshot();
+      // (a) no live attempt record was created
+      expect(snapshot.pulse.attemptId).toBe(0);
+      expect(snapshot.pulse.submitted).toBe(false);
+      expect(snapshot.pulse.motorNumber).toBeUndefined();
+      // (b) the "a command may have reached the FC" latch never set
+      expect(snapshot.pulse.mayHaveReachedFc).toBe(false);
+      // (c) no pulse/watchdog timer armed
+      expect(snapshot.pulse.deadlineArmedAtSubmission).toBe(false);
+      expect(jest.getTimerCount()).toBe(0);
+      // (d) nothing was submitted to the transport at all
+      expect(harness.transport.writeLog).toHaveLength(writesBefore);
+      // (e) the machine never left Ready - no Starting, no Pulsing
+      expect(snapshot.machine?.name).toBe('Ready');
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
+
+  it('submits no MSP_SET_MOTOR (command 214) and encodes no motor payload', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    const before = submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE).length;
+
+    for (const motor of [1, 2, 3, 4]) {
+      expect(harness.controller.pulseMotor(motor)).toBe('GATES_NOT_SATISFIED');
+    }
+    await flush(20);
+
+    // Command 214 never reaches the transport, for any output.
+    expect(submittedCommands(harness)).not.toContain(MSP_SET_MOTOR_FIXTURE);
+    expect(submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE)).toHaveLength(
+      before,
+    );
+    // ... and therefore no pulse or stop vector was ever encoded.
+    expect(harness.controller.getSnapshot().stopExecution.commandDispatched).toBe(
+      false,
+    );
+  });
+
+  it('keeps refusing across repeated attempts, with no cumulative state', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      expect(harness.controller.pulseMotor(2)).toBe('GATES_NOT_SATISFIED');
+    }
+    await flush(20);
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.pulse.attemptId).toBe(0);
+    expect(snapshot.activation.allowed).toBe(false);
+    expect(harness.transport.writeLog.map(writtenCommand)).not.toContain(
+      MSP_SET_MOTOR_FIXTURE,
+    );
+  });
+
+  it('mints no verification receipt while activation is blocked', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    harness.controller.pulseMotor(1);
+    await flush(20);
+    // No attempt happened, so nothing is observation-eligible.
+    expect(harness.controller.getSnapshot().verificationReceipt).toBeUndefined();
+  });
+
+  it('is checked FRESH, so restoring an accepted monitor re-opens the gate and losing it closes it again', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    expect(harness.controller.getSnapshot().activation.allowed).toBe(false);
+
+    // The gate is not cached at construction: `pulseMotor()` re-runs the
+    // SAME evaluation at call time, so it reflects the value as of the
+    // call - not as of setup, and not as of the last publish. (A cached
+    // snapshot read is deliberately NOT the probe here: getSnapshot()
+    // returns the last PUBLISHED snapshot, so it would prove nothing
+    // about freshness.)
+    mockContinuousSafetyMonitoring = 'AVAILABLE_ACCEPTED_SOURCE';
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await flush(20);
+    expect(harness.controller.getSnapshot().activation.reasons).not.toContain(
+      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    );
+
+    // Losing the monitor mid-session closes the gate again immediately.
+    mockContinuousSafetyMonitoring = 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
+    harness.controller.requestStop('STOP_BUTTON_PRESSED');
+    await flush(20);
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+    const closed = harness.controller.getSnapshot();
+    expect(closed.activation.allowed).toBe(false);
+    expect(closed.activation.reasons).toContain(
+      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    );
+  });
+
+  it('never renames the unavailable state as available, safe or monitored', async () => {
+    const harness = createHarness();
+    const snapshot = await runSetup(harness);
+    const serialized = JSON.stringify(snapshot);
+    // Whole tokens only. A bare "SAFE" substring test would be satisfied
+    // by this repair's own CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE
+    // reason and would prove nothing.
+    for (const forbidden of [
+      'AVAILABLE_ACCEPTED_SOURCE',
+      '"MONITORED"',
+      '"SAFE"',
+      'MONITORING_ACTIVE',
+      'SAFETY_MONITORING_AVAILABLE',
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+    expect(snapshot.continuousSafetyMonitoring).toBe(
+      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+    );
+    // The published value is the unavailable one, and the blocker names
+    // the absence rather than describing any coverage.
+    expect(snapshot.activation.reasons).toContain(
+      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    );
   });
 });

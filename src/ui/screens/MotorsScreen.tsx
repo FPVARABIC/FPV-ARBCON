@@ -158,7 +158,12 @@ export function derivePresentation(
     case 'Locked':
       return 'LOCKED';
     case 'Ready':
-      return 'READY';
+      // R1: `Ready` is the REDUCER's state, not a statement that anything
+      // may be started. When the authoritative gate refuses activation -
+      // notably while no continuous safety monitor exists - presenting an
+      // actionable READY would tell the operator something untrue. Locked
+      // is the honest presentation.
+      return snapshot.activation.allowed ? 'READY' : 'LOCKED';
     case 'Starting':
       return 'SUBMITTED_AWAITING_RESPONSE';
     case 'Pulsing':

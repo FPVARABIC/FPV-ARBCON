@@ -29,7 +29,8 @@
       "TELEMETRY_BARRIER_NOT_HELD": "لم يتم إيقاف القياس عن بُعد",
       "ARMING_RESTRICTION_NOT_CURRENT": "قيد منع التسليح غير مثبت",
       "MOTOR_SCOPE_UNSUPPORTED": "إعداد المحركات خارج النطاق المدعوم",
-      "AUTHORITY_STALE": "تغيّرت الجلسة الرسمية"
+      "AUTHORITY_STALE": "تغيّرت الجلسة الرسمية",
+      "CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE": "المراقبة المستمرة لحالة الأمان غير متاحة — اختبار المحركات مقفل."
     },
     "outputsHeading": "مخارج المحركات",
     "outputSlot": "مخرج {{slot}}",

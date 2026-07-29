@@ -132,9 +132,15 @@
  *     restriction removal. Its own doc comment says so.
  * Therefore: continuous armed-state, restriction-loss and battery
  * monitoring is an OPEN GAP. It is reported, not papered over - the
- * snapshot carries it as data in `continuousSafetyMonitoring`. This is
- * acceptable for Phase 2D only because no motor command exists anywhere
- * in this bundle; it must be closed before any activation pass.
+ * snapshot carries it in `continuousSafetyMonitoring`.
+ *
+ * REPAIR PASS R1 CORRECTION. That report used to be INERT: the gap was
+ * published as data and then ignored by the activation gate, so a session
+ * whose one-shot setup checks all passed could still activate a motor
+ * with nothing watching the live condition. It is now an AUTHORITATIVE
+ * BLOCKER - `evaluateActivation()` checks it first, on every evaluation,
+ * and refuses activation while no accepted source exists. R1 does not
+ * implement such a source; it stops the absence from being survivable.
  * `requestStop` accepts the corresponding trigger reasons so that a
  * genuine source added later routes into the same safety path, but this
  * module never manufactures them.
@@ -178,6 +184,10 @@ import {
   MOTOR_VECTOR_MOTOR_COUNT,
   type MotorVectorScope,
 } from '../firmware-adapters/betaflightMotorVectorsV147';
+import {
+  readContinuousSafetyMonitoring,
+  type MotorTestContinuousSafetyMonitoringState,
+} from './motorTestContinuousSafetyMonitor';
 import {
   encodeSetMotorPayload,
   MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
@@ -903,7 +913,21 @@ export type MotorTestActivationBlockReason =
   | 'TELEMETRY_BARRIER_NOT_HELD'
   | 'ARMING_RESTRICTION_NOT_CURRENT'
   | 'MOTOR_SCOPE_UNSUPPORTED'
-  | 'AUTHORITY_STALE';
+  | 'AUTHORITY_STALE'
+  /**
+   * R1 - NO ACCEPTED, FRESH, SESSION-BOUND CONTINUOUS SAFETY MONITOR.
+   *
+   * Every other gate in this list is ONE-SHOT: it proves a condition held
+   * before the session began. None of them observes the seconds during
+   * which an output may actually be live - if the aircraft arms, the
+   * arming restriction is lost, or the battery becomes unsafe WHILE a
+   * pulse is running, nothing in this repository would notice.
+   *
+   * That absence was previously published as data and then ignored by the
+   * gate, so activation could proceed anyway. It is now an authoritative
+   * blocker: no monitor, no activation.
+   */
+  | 'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE';
 
 export interface MotorTestActivationGate {
   /** True only when EVERY accepted guard is simultaneously satisfied. */
@@ -1036,6 +1060,7 @@ function mapActivationBlockToPulseResult(
     case 'TELEMETRY_BARRIER_NOT_HELD':
     case 'ARMING_RESTRICTION_NOT_CURRENT':
     case 'MOTOR_SCOPE_UNSUPPORTED':
+    case 'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE':
       return 'GATES_NOT_SATISFIED';
     case undefined:
       // Unreachable: only called when at least one reason exists. Fails
@@ -1154,7 +1179,17 @@ export interface MotorTestControllerSnapshot {
    * arming-restriction-loss or battery monitoring while the barrier is
    * held, so this controller does not monitor them and does not claim to.
    */
-  readonly continuousSafetyMonitoring: 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
+  /**
+   * The live continuous-monitoring state, read fresh on every publish.
+   *
+   * R1: in production this is ALWAYS
+   * `'UNAVAILABLE_NO_ACCEPTED_SOURCE'` - the reader is hard-wired (see
+   * motorTestContinuousSafetyMonitor.ts) - and that value is now an
+   * authoritative activation blocker rather than an inert note. The type
+   * admits the available case only so the gate can express what it is
+   * checking for; nothing in production produces it.
+   */
+  readonly continuousSafetyMonitoring: MotorTestContinuousSafetyMonitoringState;
 }
 
 export type MotorTestStopRequestResult =
@@ -1477,7 +1512,9 @@ class MotorTestControllerImpl {
       pulse: this.pulse,
       activation: this.evaluateActivation(),
       verificationReceipt: this.evaluateVerificationReceipt(),
-      continuousSafetyMonitoring: 'UNAVAILABLE_NO_ACCEPTED_SOURCE' as const,
+      // Read FRESH, never cached at construction: a value captured once
+      // could outlive the condition it described.
+      continuousSafetyMonitoring: readContinuousSafetyMonitoring(),
     });
   }
 
@@ -1754,6 +1791,18 @@ class MotorTestControllerImpl {
    */
   private evaluateActivation(): MotorTestActivationGate {
     const reasons: MotorTestActivationBlockReason[] = [];
+
+    // R1 - CHECKED FIRST, and read FRESH on every evaluation.
+    //
+    // Placed ahead of every one-shot gate deliberately: those gates all
+    // describe the past, and this one describes whether anything is
+    // watching the present. A session whose setup checks all passed is
+    // still not safe to activate if nothing is observing armed state,
+    // arming-restriction loss or battery condition while an output is
+    // live. Anything that is not an accepted live source fails closed.
+    if (readContinuousSafetyMonitoring() !== 'AVAILABLE_ACCEPTED_SOURCE') {
+      reasons.push('CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE');
+    }
 
     if (this.phase === 'CLOSED' || this.phase === 'CLOSING' || this.closing) {
       reasons.push('CONTROLLER_CLOSED');

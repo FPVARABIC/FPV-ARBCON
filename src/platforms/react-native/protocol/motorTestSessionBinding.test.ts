@@ -446,3 +446,96 @@ describe('B-2E-1 - single authoritative controller', () => {
     second.close();
   });
 });
+
+/* ------------------------------------------------------------------ *
+ * REPAIR PASS R1 - THE REAL PRODUCTION BINDING CANNOT ACTIVATE
+ *
+ * This file deliberately does NOT mock the continuous-safety-monitor
+ * module. Everything below runs against the REAL production reader, the
+ * REAL binding, the REAL controller and the REAL request engine, so it
+ * proves the shipped path - not a test-configured one.
+ *
+ * NO HARDWARE: FakeMspTransport only; no USB, FC, ESC, LiPo or motor.
+ * ------------------------------------------------------------------ */
+
+describe('R1 - production binding fails closed without continuous monitoring', () => {
+  const portArgs = () => [portInput(), () => 0] as const;
+
+  it('refuses activation through the real operator port and writes nothing', async () => {
+    const registry = new MotorTestTelemetryRegistry();
+    const client = makeClient();
+    const binding = createMotorTestSessionBinding(client, {registry});
+    const operator = binding.operatorPort(...portArgs());
+
+    // Before any session work: already blocked, and blocked for THIS
+    // reason - not merely "not ready yet".
+    const initial = operator.getSnapshot();
+    expect(initial.continuousSafetyMonitoring).toBe(
+      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+    );
+    expect(initial.activation.allowed).toBe(false);
+    expect(initial.activation.reasons).toContain(
+      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    );
+
+    // Activation is refused, and refused BEFORE any transport traffic.
+    expect(operator.pulseMotor(1)).not.toBe('ACCEPTED');
+    for (const motor of [1, 2, 3, 4]) {
+      expect(operator.pulseMotor(motor)).not.toBe('ACCEPTED');
+    }
+
+    const after = operator.getSnapshot();
+    expect(after.pulse.attemptId).toBe(0);
+    expect(after.pulse.submitted).toBe(false);
+    expect(after.pulse.mayHaveReachedFc).toBe(false);
+    expect(after.pulse.deadlineArmedAtSubmission).toBe(false);
+    expect(after.verificationReceipt).toBeUndefined();
+
+    binding.close();
+  });
+
+  it('keeps the reason present on the real binding no matter how the port is taken', () => {
+    const registry = new MotorTestTelemetryRegistry();
+    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    // Both facades read the SAME controller, so both must agree.
+    const operator = binding.operatorPort(...portArgs());
+    const lifecycle = binding.lifecycleStopPort();
+
+    expect(operator.getSnapshot().activation.reasons).toContain(
+      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    );
+    expect(lifecycle?.getSnapshot().activation.reasons).toContain(
+      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    );
+    expect(operator.getSnapshot().activation.allowed).toBe(false);
+    expect(lifecycle?.getSnapshot().activation.allowed).toBe(false);
+    binding.close();
+  });
+
+  it('exposes no way through the binding to mark monitoring available', () => {
+    const registry = new MotorTestTelemetryRegistry();
+    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const operator = binding.operatorPort(...portArgs());
+
+    const surface = operator as unknown as Record<string, unknown>;
+    for (const forbidden of [
+      'setContinuousSafetyMonitoring',
+      'continuousSafetyMonitoring',
+      'setMonitoring',
+      'enableMonitoring',
+      'overrideActivation',
+      'setActivationAllowed',
+    ]) {
+      expect(surface[forbidden]).toBeUndefined();
+    }
+    const bindingSurface = binding as unknown as Record<string, unknown>;
+    for (const forbidden of [
+      'setContinuousSafetyMonitoring',
+      'enableMonitoring',
+      'overrideActivation',
+    ]) {
+      expect(bindingSurface[forbidden]).toBeUndefined();
+    }
+    binding.close();
+  });
+});
