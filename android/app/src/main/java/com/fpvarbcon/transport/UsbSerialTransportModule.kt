@@ -1293,14 +1293,40 @@ private const val RX_RESTART_WAIT_MILLIS = (RX_READ_TIMEOUT_MILLIS + 100).toLong
  * configures, that takes well under this bound to physically transmit
  * even with no contention at all. No confirmed real-world MSP
  * responsiveness or throughput requirement is known yet at this pass -
- * 1000ms is chosen conservatively (generous headroom over both of the
+ * the bound is chosen conservatively (generous headroom over both of the
  * above combined) rather than aggressively, so a momentarily busy link
  * does not spuriously fail a normal write, while still bounding a
  * genuinely stuck write so it can never block this session's write-queue
  * consumer thread - and therefore every write queued behind it -
  * indefinitely.
+ *
+ * R4 - WHY THIS IS 150ms AND NOT 1000ms.
+ *
+ * This constant is the REAL upper bound on how long an emergency motor
+ * STOP can be delayed, and it is the only one that matters. The stop
+ * cannot cancel a write already handed to the native layer: this queue is
+ * strict-FIFO with a single consumer thread and UsbSerialSession.write()
+ * additionally holds ioLock, so the stop's frame cannot begin execution
+ * at the writer until the in-flight write returns or times out. Neither
+ * the JS response timeout nor the motor-test safety read's 400ms response
+ * bound constrains that at all - they bound waiting for an ANSWER, not
+ * the preceding write.
+ *
+ * At 1000ms the worst-case stop delay was ~1000ms, four times the 250ms
+ * maximum the motor-test safety contract requires. 150ms restores the
+ * guarantee with large margin over physical reality: an MSP command frame
+ * is 6-20 bytes, which a USB bulk transfer completes in well under a
+ * millisecond, so 150ms is still ~100x the realistic duration. A write
+ * that genuinely takes longer than this means the link is stalled - the
+ * exact situation in which failing fast and faulting is correct and
+ * waiting is not.
+ *
+ * The bound applies uniformly to every write rather than only to
+ * motor-test traffic: a per-caller timeout would put the safety-critical
+ * choice in the hands of each call site, and any site that got it wrong
+ * would silently reintroduce the delay.
  */
-private const val TX_WRITE_TIMEOUT_MILLIS = 1000
+private const val TX_WRITE_TIMEOUT_MILLIS = 150
 
 /**
  * The single overall bound (Pass 5.4, PASS5.4-CONNECT-TIMEOUT) covering an
