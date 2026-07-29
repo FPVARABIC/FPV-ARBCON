@@ -1,5 +1,6 @@
 /**
- * Phase 2D - the UNREACHABLE MOTOR-TEST CONTROLLER.
+ * The MOTOR-TEST CONTROLLER. SAFETY-CRITICAL: invoking it can command a
+ * real motor.
  *
  * WHAT THIS IS
  * ------------
@@ -7,35 +8,72 @@
  * contracts. It captures one official session authority, holds the
  * coordinator-wide telemetry barrier, owns one genuine `MotorTestLease`,
  * gathers the accepted session-bound evidence, establishes the accepted
- * arming restriction, and drives the accepted pure reducer through
- * SAFETY-ONLY operations.
+ * arming restriction, and drives the accepted pure reducer.
  *
- * WHAT IT IS NOT
- * --------------
- * It is NOT mounted. Nothing in the running application imports it; its
- * only consumers are its own tests (and, in a later separately-audited
- * pass, a lifecycle binding). Leaving it unmounted is a requirement of
- * this pre-wire bundle, not an oversight.
+ * IT CAN REACH THE MOTOR-COMMAND PATH
+ * -----------------------------------
+ * This header previously described an inert module that "cannot spin a
+ * motor", with `Starting`, `Pulsing` and `ACTIVATION_ACCEPTED` called
+ * unreachable. That was true when Phase 2D wrote it and is FALSE NOW:
+ * Phase 2G Pass 2 added the fixed single-motor pulse engine and Phase 2H
+ * wired the module into a real screen, and the prose was not updated. The
+ * corrected statement is below; nothing that follows should be read
+ * through the old description.
  *
- * IT CANNOT SPIN A MOTOR, and the impossibility is structural, not a
- * convention:
- *   - no public method can reach `Ready -> Starting`: `ACTIVATION_ACCEPTED`
- *     is never constructed anywhere in this file, so `Starting`,
- *     `Pulsing` and `SUBMIT_START_INTENT` are unreachable;
- *   - there is no generic `dispatch(event)`; the public surface is five
- *     named operations, and the only event any caller can influence is a
- *     whitelisted `STOP_TRIGGERED`;
- *   - no MSP command id, payload, motor index, motor value, output
- *     vector, duration or throttle mapping is chosen, encoded or imported
- *     here. The commands this file names are the accepted READ commands
- *     of the accepted evidence modules;
- *   - every request travels `MotorTestLease.request(...)`, i.e. the
- *     canonical FIFO. No transport, no raw byte writer, no raw client
- *     request, no second queue;
+ * `pulseMotor(...)` is a public method. When its activation gate allows,
+ * it builds a real `MSP_SET_MOTOR` output vector and sends it over the
+ * lease. `ACTIVATION_ACCEPTED` IS constructed in this file, `Starting` and
+ * `Pulsing` ARE reachable, and the command id, the payload encoder and the
+ * vector builders ARE imported here. Treat any call into this controller
+ * as capable of turning a physical motor.
+ *
+ * WHAT STILL CONSTRAINS IT. These are AUTHORITATIVE invariants, not
+ * conventions, and they must keep holding on their own merits:
+ *   - `evaluateActivation()` is the SINGLE gate. `pulseMotor` consults it
+ *     and the published snapshot carries its verdict, so the UI projection
+ *     IS the gate rather than a second, weaker copy of the rule. Since
+ *     Repair Pass R1 its first check is continuous safety monitoring,
+ *     which no production source satisfies, so production activation is
+ *     fail-closed (see the R1 note below);
+ *   - a pulse is FIXED, never operator-shaped: exactly one motor of four
+ *     at exactly `MOTOR_TEST_FIXED_PULSE_VALUE`, every other output at the
+ *     accepted stop value, bounded by
+ *     `MOTOR_TEST_PULSE_MAX_DURATION_MILLIS` and enforced by a watchdog
+ *     armed at SUBMISSION, never at acknowledgement;
+ *   - there is no generic `dispatch(event)`; the public surface is six
+ *     named operations, and the only event any caller can influence
+ *     directly is a whitelisted `STOP_TRIGGERED`. `SUBMIT_START_INTENT`
+ *     is still never constructed anywhere in this file - the reducer's
+ *     handling of it is a fail-closed tripwire, not a path;
+ *   - every request travels `MotorTestLease.request(...)` and every stop
+ *     travels `MotorTestLease.emergencyStop(...)`, i.e. the canonical
+ *     FIFO. No transport, no raw byte writer, no raw client request, no
+ *     second queue;
  *   - the reducer's effects are recorded as INERT FROZEN DATA. Nothing in
  *     this module executes an effect, and no descriptor holds a callback,
  *     promise, client, transport, writer, command, payload, lease, motor
  *     value or native handle.
+ *
+ * REACHABILITY IS CONTROLLED SEPARATELY, AND NOT HERE
+ * ---------------------------------------------------
+ * Whether a shipped build can reach this file is NOT decided in this file
+ * and must not be inferred from it. It is decided elsewhere: by the
+ * build-time containment seam (`motorTestDebugSeam.ts`, a `__DEV__`-guarded
+ * `require`), by there being no production navigation route to the motors
+ * screen, and by the CI scan that fails if this module's symbols appear in
+ * a `--dev false` bundle. Those are BUILD- and NAVIGATION-level controls,
+ * and a change to any of them could make this file reachable in production
+ * without editing a line of it. That is exactly why the invariants above
+ * may never be relaxed on the grounds that "nothing calls it".
+ *
+ * AN ACK IS NOT PHYSICAL MOTION, AND NOT A PHYSICAL STOP
+ * ------------------------------------------------------
+ * Every acknowledgement in this file proves one thing: the flight
+ * controller received and processed a frame. It does not prove a motor
+ * turned, and - critically - a stop ACK does NOT prove a motor stopped.
+ * `physicalStopConfirmed` is therefore permanently `false` and no code
+ * path sets it true. Only a human observing the hardware can establish
+ * mechanical state.
  *
  * THE ORDERING DEVIATION, STATED PLAINLY
  * --------------------------------------
@@ -109,7 +147,11 @@
  * genuinely different links. On mismatch the registry pauses nothing and
  * returns a typed reason, this controller locks with
  * `TELEMETRY_SESSION_CLIENT_MISMATCH`, no lease is requested, no evidence
- * request is sent, `Ready` is unreachable and `telemetryHeld` stays false.
+ * request is sent, and `telemetryHeld` stays false. That session is then
+ * terminally `Locked`: it never reaches `Ready`, so it can never activate.
+ * This is a statement about THAT failure path only - it is not a claim
+ * that `Ready` or the pulse path is unreachable in general (see the
+ * safety-critical note at the top of this file).
  *
  * THE SIGNAL GAP, STATED PLAINLY
  * ------------------------------
