@@ -137,7 +137,7 @@ android {
             // fails. Set explicitly to false: this is a standalone
             // release-like build that never talks to a Metro server, so it
             // needs cleartext no more than Production does.
-            manifestPlaceholders = [usesCleartextTraffic: "false"]
+            manifestPlaceholders += [usesCleartextTraffic: "false"]
         }
     }
 }
