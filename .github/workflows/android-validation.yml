@@ -130,7 +130,23 @@ jobs:
       - name: ESLint
         run: npx eslint .
 
+      # BOUNDED ON PURPOSE. Run 30491403562 finished all 95 suites / 2559
+      # tests green in 41.6 seconds, then printed "Jest did not exit one
+      # second after the test run has completed" and sat on the runner for
+      # 60 more minutes until it was cancelled by hand. Nothing failed and
+      # nothing was running - an unclosed async handle simply kept the
+      # process alive, and the 6-hour job default let it.
+      #
+      # 10 minutes is ~14x the observed runtime, so it cannot trip on a
+      # slow runner, but a hang now fails in minutes with Jest's own
+      # open-handle hint already in the log.
+      #
+      # This is a BOUND, NOT A FIX, and it is deliberately not --forceExit:
+      # forcing the process to die would hide "something is still running
+      # after teardown" in the one suite that drives the real motor
+      # controller, which is the last place to accept that.
       - name: Jest
+        timeout-minutes: 10
         run: npx jest --ci
 
       # MANDATORY GATE. Builds the real --dev false bundle and fails the
