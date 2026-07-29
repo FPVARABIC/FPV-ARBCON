@@ -80,7 +80,17 @@ describe('motor read-capability command IDs', () => {
     // a constant with pure, unreachable encoding helpers and no caller,
     // so the assertion is inverted to pin its verified value instead of
     // being deleted.
-    expect(commands.MSP_SET_MOTOR).toBe(214);
+    // R2 RELOCATION. The constant moved out of the Release-reachable
+    // command table into the motor-only module so its NAME does not ship
+    // in a Release bundle. The assertion is UNCHANGED in strength - the
+    // command id is still pinned to exactly 214 - only the declaration
+    // site it is read from moved.
+    const motorCommands = require('../commands/motorTestCommands') as {
+      MSP_SET_MOTOR: number;
+    };
+    expect(motorCommands.MSP_SET_MOTOR).toBe(214);
+    // ... and it is deliberately ABSENT from the shared table now.
+    expect(Object.keys(commands)).not.toContain('MSP_SET_MOTOR');
 
     // NOT superseded: MSP_SET_ARMING_DISABLED is still deliberately
     // absent. It is not an interlock for MSP_SET_MOTOR, and declaring it

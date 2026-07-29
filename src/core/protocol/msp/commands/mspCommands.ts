@@ -223,4 +223,17 @@ export const MSP_MOTOR_CONFIG = 131;
  * frame construction, NO transport path, and NO runtime registration,
  * and it is NOT authorization to spin a motor.
  */
-export const MSP_SET_MOTOR = 214;
+/* R2 RELOCATION. The constant itself now lives in the motor-only module
+ * `motorTestCommands.ts`, re-exported below for source compatibility.
+ *
+ * WHY: this file is legitimately part of the Release graph (MSP_STATUS_EX,
+ * MSP_RAW_GPS and friends), so an export named `MSP_SET_MOTOR` declared
+ * HERE survived into every Release bundle as a property key even after the
+ * whole motor engine was excluded. Declaring it in a motor-only module
+ * keeps the name out of Release while the VALUE, the command id 214, the
+ * encoding, the vectors and every consumer's behaviour stay byte-for-byte
+ * identical - nothing was renamed and nothing was split. */
+/* Deliberately NOT re-exported here. A re-export is a RUNTIME import: it
+ * pulls `motorTestCommands.ts` straight back into the Release graph, which
+ * measurably made containment worse (the token count rose from 2 to 4).
+ * Consumers import it from `./motorTestCommands` directly. */

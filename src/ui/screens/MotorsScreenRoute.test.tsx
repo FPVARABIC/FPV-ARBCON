@@ -126,7 +126,12 @@ describe('Phase 2H - lifecycle ownership', () => {
   });
 
   it('resolves the operator from the ONE official capability, never constructing a second', () => {
-    expect(executable).toContain('getMotorTestSessionCapability');
+    // R2: the capability now comes from the build-time containment seam
+    // rather than a motor-named coordinator accessor, so no motor surface
+    // survives into a Release bundle. It is still exactly ONE capability,
+    // resolved once, and still the official one.
+    expect(executable).toContain('readMotorTestCapability(');
+    expect(executable.match(/readMotorTestCapability\(/g) ?? []).toHaveLength(1);
     expect(executable).toContain('capability.operatorPort(');
     expect(executable.match(/capability\.operatorPort\(/g) ?? []).toHaveLength(1);
     for (const forbidden of [

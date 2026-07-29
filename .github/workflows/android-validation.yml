@@ -39,6 +39,7 @@ on:
       - 'index.js'
       - '*.config.js'
       - 'tsconfig.json'
+      - 'scripts/**'
       - '.github/workflows/android-validation.yml'
   pull_request:
     branches: [main]
@@ -54,6 +55,7 @@ on:
       - 'index.js'
       - '*.config.js'
       - 'tsconfig.json'
+      - 'scripts/**'
       - '.github/workflows/android-validation.yml'
 
 permissions:
@@ -130,6 +132,14 @@ jobs:
 
       - name: Jest
         run: npx jest --ci
+
+      # R2: MANDATORY CONTAINMENT GATE. Builds the real --dev false bundle
+      # and fails the workflow if the motor-test engine (or any Pass 7.7
+      # debug-panel token) is present, or if a positive control is missing.
+      # Placed after dependency installation and before ANY Release APK
+      # work, so a contaminated bundle can never be packaged or published.
+      - name: Production bundle containment scan
+        run: npm run scan:production-bundle
 
       - name: Setup JDK 17 (Temurin)
         uses: actions/setup-java@v5

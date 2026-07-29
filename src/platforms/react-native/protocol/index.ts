@@ -33,7 +33,13 @@ export type {SetupUiSessionState} from './SetupUiSessionStore';
 /* Phase 2E/2H - the ONE official motor-test binding. Only the sealed
  * facades are exported: no controller class, no client, no lease, no
  * authority token and no transport ever leaves this module. */
-export {createMotorTestSessionBinding} from './motorTestSessionBinding';
+/* R2: the RUNTIME export of the binding factory is deliberately GONE.
+ * A runtime barrel re-export pulls `motorTestSessionBinding` - and with it
+ * the controller, the vector builders, the payload encoder and the pulse
+ * constant - into every graph that imports this barrel, including Release.
+ * The factory is now reachable only through the one build-time containment
+ * seam (motorTestDebugSeam.ts). Type-only exports below erase completely
+ * and pull nothing into the bundle. */
 export type {
   MotorTestSessionCapability,
   MotorTestOperatorPort,

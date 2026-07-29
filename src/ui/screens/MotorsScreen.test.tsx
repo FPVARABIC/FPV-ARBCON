@@ -825,8 +825,9 @@ describe('MotorsScreen - containment', () => {
     expect(executable).not.toContain('createMotorTestController');
     expect(executable).not.toContain('setInterval');
     expect(executable).not.toContain('setTimeout');
-    // The one binding it does use resolves the EXISTING capability.
-    expect(executable).toContain('getMotorTestSessionCapability');
+    // The one binding it does use resolves the EXISTING capability -
+    // R2 moved that lookup into the build-time containment seam.
+    expect(executable).toContain('readMotorTestCapability');
   });
 });
 

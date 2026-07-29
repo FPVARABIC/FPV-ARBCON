@@ -64,6 +64,7 @@ import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol'
 import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
 import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
 import {createMotorTestLifecycleBridge} from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
+import {readMotorTestCapability} from '../../platforms/react-native/protocol/motorTestDebugSeam';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import type {RootStackParamList} from '../../navigation/types';
 import {AppState, BackHandler} from 'react-native';
@@ -931,9 +932,10 @@ function MotorsScreenBinding({
    * mounts, and none of its callbacks can reach the new session.
    */
   const operator = useMemo(() => {
-    const capability = mspSessionCoordinator.getMotorTestSessionCapability(
-      sessionKey.sessionId,
-    );
+    // R2: the capability now lives in the build-time containment seam,
+    // not on the coordinator - so no motor-named coordinator surface
+    // survives into a Release bundle. This screen is itself Debug-only.
+    const capability = readMotorTestCapability(sessionKey.sessionId);
     if (capability === undefined) {
       return undefined;
     }

@@ -170,8 +170,11 @@ import {
   MSP_FEATURE_CONFIG,
   MSP_MIXER_CONFIG,
   MSP_MOTOR_CONFIG,
-  MSP_SET_MOTOR,
 } from '../protocol/msp/commands/mspCommands';
+// R2: motor-only command id, declared outside the Release-reachable
+// command table so its NAME does not ship in a Release bundle. Same id,
+// same encoding, same behaviour.
+import {MSP_SET_MOTOR} from '../protocol/msp/commands/motorTestCommands';
 // Phase 2F. The encoder and the vector builders are ACCEPTED, PROTECTED
 // modules and are reused unchanged - this controller neither duplicates
 // their logic nor introduces a second encoder. `assertSupportedMotorScope`
