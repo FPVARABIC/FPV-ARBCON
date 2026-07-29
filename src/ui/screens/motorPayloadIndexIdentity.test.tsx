@@ -254,8 +254,33 @@ function createHarness(): Harness {
     },
   });
 
-  return {transport, controller, replies: script(), writes: []};
+  const harness = {transport, controller, replies: script(), writes: []};
+  // REGISTERED FOR GUARANTEED TEARDOWN. See the afterEach below: a harness
+  // that a failing assertion skipped past must still be torn down, so the
+  // registry is populated at construction rather than at the end of a test
+  // body that may never be reached.
+  OPEN_HARNESSES.push(harness);
+  return harness;
 }
+
+/**
+ * Every harness built in this file, awaiting teardown.
+ *
+ * WHY THIS EXISTS. `runTeardown()` does real transport I/O - it writes the
+ * command-214 all-stop through `executeStopVector()` - and
+ * `FakeMspTransport.writeBytes()` returns a Promise that is settled ONLY by
+ * an explicit `resolveNextWrite()`, which only `serveOne()` calls, which
+ * only `drive()` calls. So `controller.close()` on its own does not finish:
+ * it starts a teardown that then waits forever on a write nobody serves.
+ *
+ * The controller itself is not at fault - it stops the continuous safety
+ * monitor and clears the pulse-deadline watchdog SYNCHRONOUSLY, before
+ * anything is awaited, so no timer outlives `close()`. What was left
+ * running was this file's abandoned teardown, and in the one suite that
+ * drives the real motor controller that is exactly the thing that must not
+ * be left dangling.
+ */
+const OPEN_HARNESSES: Harness[] = [];
 
 /** Byte 4 of a v1 request frame is the command. */
 function writtenCommand(data: Uint8Array): number {
@@ -420,6 +445,23 @@ function textsWithin(instance: ReactTestRenderer.ReactTestInstance): string[] {
     ) as string[];
 }
 
+/**
+ * Drives every open harness's teardown TO COMPLETION, serving the
+ * transport exactly as a real flight controller would answer it.
+ *
+ * Runs even when a test throws, which a teardown at the end of a test body
+ * cannot promise. `close()` is idempotent - it returns the one stored
+ * teardown promise - so a test that already closed cleanly costs nothing
+ * here.
+ */
+afterEach(async () => {
+  const harnesses = OPEN_HARNESSES.splice(0, OPEN_HARNESSES.length);
+  for (const harness of harnesses) {
+    await drive(harness, harness.controller.close());
+    await flush(20);
+  }
+});
+
 /* ================================================================== *
  * THE TEST
  * ================================================================== */
@@ -505,8 +547,6 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
         }
       }
 
-      harness.controller.close();
-      await flush(20);
     });
   }
 
@@ -576,7 +616,5 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
     )) {
       expect(activeIndices(write.payload).length).toBeLessThanOrEqual(1);
     }
-    harness.controller.close();
-    await flush(20);
   });
 });
