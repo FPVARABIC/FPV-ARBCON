@@ -234,6 +234,12 @@ import {
   type MotorTestContinuousSafetyMonitoringState,
 } from './motorTestContinuousSafetyMonitor';
 import {
+  MotorTestSafetyMonitor,
+  type MotorTestSafetyMonitorFactory,
+  type MotorTestSafetyMonitorLike,
+  type MotorTestSafetyUnsafeReason,
+} from './motorTestSafetyMonitor';
+import {
   encodeSetMotorPayload,
   MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
 } from '../protocol/msp/encoding/encodeSetMotorPayload';
@@ -364,6 +370,18 @@ export interface MotorTestControllerDependencies {
    * never a timer: nothing here schedules on it or compares it to a
    * deadline. */
   readonly readMonotonicMillis: () => number;
+  /**
+   * TEST SEAM ONLY, and deliberately optional.
+   *
+   * Production NEVER supplies this - `motorTestSessionBinding.ts` builds
+   * these dependencies and has no field for it, which a containment test
+   * asserts. Its only purpose is to let the pulse-engine suites drive the
+   * controller without a live observation loop competing for the fake
+   * link; the SAFETY DECISION is unaffected either way, because the gate
+   * always goes through `readContinuousSafetyMonitoring`, which requires a
+   * running monitor holding a fresh satisfied reading.
+   */
+  readonly createSafetyMonitor?: MotorTestSafetyMonitorFactory;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1436,6 +1454,10 @@ class MotorTestControllerImpl {
   /** The official authority, captured exactly once (see file header). */
   private authority: MspOfficialSessionAuthority | undefined;
   private lease: MotorTestLease | undefined;
+  /** The dedicated safety observation path for THIS session. Created and
+   * started only once every setup fact is proven, stopped on teardown and
+   * on any fault, and never shared with another session. */
+  private safetyMonitor: MotorTestSafetyMonitorLike | undefined;
   private barrier: MotorTestBarrierHold | undefined;
   private boxIds: MotorTestBoxIdsSnapshot | undefined;
   private receipt: MotorArmingRestrictionReceipt | undefined;
@@ -1559,7 +1581,10 @@ class MotorTestControllerImpl {
       verificationReceipt: this.evaluateVerificationReceipt(),
       // Read FRESH, never cached at construction: a value captured once
       // could outlive the condition it described.
-      continuousSafetyMonitoring: readContinuousSafetyMonitoring(),
+      continuousSafetyMonitoring: readContinuousSafetyMonitoring(
+        this.safetyMonitor,
+        this.deps.readMonotonicMillis(),
+      ),
     });
   }
 
@@ -1635,7 +1660,57 @@ class MotorTestControllerImpl {
     if (authority === undefined) {
       return;
     }
+    // A faulted session can never activate again, so monitoring it would
+    // buy nothing and could only produce further stop requests against a
+    // machine that is already dead. Stopped here, at the one choke point
+    // every fault passes through, rather than at each call site.
+    this.safetyMonitor?.stop();
     this.apply({authority, kind: 'FAULT_RAISED', reason}, undefined);
+  }
+
+  /**
+   * The dedicated safety monitor proved the link unsafe.
+   *
+   * EVERY branch reaches the SAME idempotent priority-stop path as a
+   * touch release or a deadline - `requestStop`, which registers the
+   * emergency stop synchronously before it returns. Nothing here writes a
+   * motor value, and nothing here waits on the monitor.
+   *
+   * A BLOCKED reading is reported with the specific accepted trigger the
+   * flight controller's own facts justify, so the operator is told which
+   * condition changed. A FAILED or STALE reading additionally FAULTS: a
+   * read that timed out or could not be trusted while an output may be
+   * live is exactly the case where the session must not be reusable.
+   */
+  private onSafetyMonitorUnsafe(reason: MotorTestSafetyUnsafeReason): void {
+    if (reason === 'SAFETY_REQUIREMENTS_BLOCKED') {
+      this.requestStop(this.stopTriggerForBlockedSafety());
+      return;
+    }
+    // Stop FIRST - the stop is registered before the fault is dispatched,
+    // so a possibly-live output is addressed before the state machine is
+    // told the session is dead.
+    this.requestStop('BATTERY_BECAME_UNSAFE');
+    this.dispatchFault('MSP_RESPONSE_TIMEOUT');
+    // requestStop() published BEFORE the fault existed, so without this a
+    // subscriber would be left holding a snapshot that shows the stop but
+    // not the Fault it caused.
+    this.publish();
+  }
+
+  /** Maps the monitor's blocking reasons onto the accepted stop-trigger
+   * whitelist. Ordered by severity of what changed, and defaulting to the
+   * battery trigger only when no more specific cause was reported. */
+  private stopTriggerForBlockedSafety(): MotorTestStopTriggerReason {
+    const status = this.safetyMonitor?.snapshot().status;
+    const reasons = status !== undefined && status.kind === 'BLOCKED' ? status.reasons : [];
+    if (reasons.includes('FC_ARMED')) {
+      return 'ARMED_STATE_DETECTED';
+    }
+    if (reasons.includes('MSP_ARMING_RESTRICTION_NOT_OBSERVED')) {
+      return 'ARMING_RESTRICTION_REMOVED';
+    }
+    return 'BATTERY_BECAME_UNSAFE';
   }
 
   private dispatchStop(reason: MotorTestStopTriggerReason): void {
@@ -1845,7 +1920,10 @@ class MotorTestControllerImpl {
     // still not safe to activate if nothing is observing armed state,
     // arming-restriction loss or battery condition while an output is
     // live. Anything that is not an accepted live source fails closed.
-    if (readContinuousSafetyMonitoring() !== 'AVAILABLE_ACCEPTED_SOURCE') {
+    if (
+      readContinuousSafetyMonitoring(this.safetyMonitor, this.deps.readMonotonicMillis()) !==
+      'AVAILABLE_ACCEPTED_SOURCE'
+    ) {
       reasons.push('CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE');
     }
 
@@ -2617,6 +2695,29 @@ class MotorTestControllerImpl {
     }
 
     // ---- (11) Ready - every mandatory fact valid for one authority. --
+    //
+    // The dedicated safety monitor starts HERE, before Ready is
+    // published, and runs for as long as this controller can command a
+    // motor. Its first observation has not completed yet, so
+    // `evaluateActivation()` still reports
+    // CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE until a real reading lands:
+    // Ready is the reducer's state, never a promise that a pulse may
+    // start. Starting it here rather than at the first pulse is what makes
+    // monitoring CONTINUOUS rather than pre-pulse.
+    const createSafetyMonitor: MotorTestSafetyMonitorFactory =
+      this.deps.createSafetyMonitor ?? (options => new MotorTestSafetyMonitor(options));
+    this.safetyMonitor = createSafetyMonitor({
+      requester: lease,
+      staticCompatibility: compatibility,
+      boxIds: boxIdsResult,
+      readCurrentIdentity,
+      readMonotonicMillis: this.deps.readMonotonicMillis,
+      onUnsafe: reason => this.onSafetyMonitorUnsafe(reason),
+      setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+      clearTimer: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    });
+    this.safetyMonitor.start();
+
     this.setupStep = 'READY';
     this.dispatchGates(true);
     this.outcome = Object.freeze({kind: 'READY' as const});
@@ -2995,6 +3096,12 @@ class MotorTestControllerImpl {
     // Reached directly when teardown is entered without close() - the
     // watchdog must not survive either route.
     this.clearPulseDeadline();
+    // The dedicated safety monitor dies with the session, synchronously
+    // and before anything is awaited. An observation still in flight is
+    // ABANDONED rather than awaited - teardown must never be gated on a
+    // read completing - and its late result publishes nothing because
+    // stop() bumps the monitor's own generation.
+    this.safetyMonitor?.stop();
     this.endPulseAttempt({kind: 'FAILED', reason: 'STOP_DOMINATED'});
     this.phase = 'CLOSING';
     record('MARK_CLOSING', 'DONE');

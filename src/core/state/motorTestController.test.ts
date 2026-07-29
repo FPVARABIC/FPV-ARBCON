@@ -388,6 +388,14 @@ class RecordingScheduler implements MotorTestBarrierScheduler {
  * ------------------------------------------------------------------ */
 
 interface Harness {
+  /** The controlled safety-monitor stand-in injected into the controller.
+   * `reportUnsafe` fires the very callback the real monitor calls. */
+  safetyMonitor: {
+    readonly started: number;
+    readonly stopped: number;
+    readonly running: boolean;
+    reportUnsafe(reason: string): void;
+  };
   readonly transport: FakeMspTransport;
   /** The client the session port exposes - the one the controller would
    * lease and send every evidence request through. */
@@ -483,6 +491,35 @@ function createHarness(
   };
 
   let monotonic = 1_000;
+
+  /**
+   * A CONTROLLED stand-in for the dedicated safety monitor.
+   *
+   * The real monitor runs a live observation loop on the lease. These
+   * suites are about the PULSE ENGINE, and a second reader competing for
+   * the fake link would make every request-sequence assertion here a test
+   * of scheduling rather than of the engine. The real loop has its own
+   * dedicated coverage in motorTestSafetyMonitor.test.ts, and the
+   * controller's reaction to an unsafe reading is exercised through
+   * `safetyMonitor.reportUnsafe(...)` below - the same callback the real
+   * monitor invokes.
+   *
+   * It never fabricates the GATE: the controller still asks
+   * readContinuousSafetyMonitoring(), which this file mocks explicitly.
+   */
+  let monitorRunning = false;
+  let onUnsafeCallback: ((reason: string) => void) | undefined;
+  const safetyMonitor = {
+    started: 0,
+    stopped: 0,
+    get running() {
+      return monitorRunning;
+    },
+    reportUnsafe(reason: string) {
+      onUnsafeCallback?.(reason);
+    },
+  };
+
   const controller = createMotorTestController({
     session,
     telemetryRegistry: registry,
@@ -491,9 +528,35 @@ function createHarness(
       monotonic += 5;
       return monotonic;
     },
+    createSafetyMonitor: monitorOptions => {
+      onUnsafeCallback = monitorOptions.onUnsafe as (reason: string) => void;
+      return {
+        start: () => {
+          monitorRunning = true;
+          safetyMonitor.started += 1;
+        },
+        stop: () => {
+          monitorRunning = false;
+          safetyMonitor.stopped += 1;
+        },
+        snapshot: () => ({
+          status: monitorRunning
+            ? ({
+                kind: 'SATISFIED' as const,
+                observedAtMonotonicMillis: monotonic,
+                sessionIdentity: {physicalGeneration: 0, mspEpoch: 0},
+              })
+            : ({kind: 'NEVER_OBSERVED' as const}),
+          running: monitorRunning,
+          completedObservations: monitorRunning ? 1 : 0,
+        }),
+        isFreshlySatisfied: () => monitorRunning,
+      };
+    },
   });
 
   return {
+    safetyMonitor,
     transport,
     client,
     telemetryOwner,
@@ -2182,8 +2245,15 @@ describe('containment', () => {
     // cannot exist without a timer - so the assertion is narrowed rather
     // than dropped: exactly ONE arm site and ONE clear site, both on the
     // pulse deadline.
-    expect(code.match(/setTimeout\(/g) ?? []).toHaveLength(1);
-    expect(code.match(/clearTimeout\(/g) ?? []).toHaveLength(1);
+    // TWO timer sites, both accounted for and neither hidden: the pulse
+    // deadline, and the safety monitor's injected scheduler. Any third
+    // one is a timer nobody declared, which is what this guards.
+    expect(code.match(/setTimeout\(/g) ?? []).toHaveLength(2);
+    expect(code.match(/clearTimeout\(/g) ?? []).toHaveLength(2);
+    // The monitor's pair is an INJECTION into the monitor, never a timer
+    // this controller arms against a motor output itself.
+    expect(code).toMatch(/setTimer:\s*\(callback, delayMs\) => setTimeout\(callback, delayMs\)/);
+    expect(code).toMatch(/clearTimer:\s*handle => clearTimeout\(/);
     expect(code).toContain('MOTOR_TEST_PULSE_MAX_DURATION_MILLIS');
 
     // Command 214 is never a numeric literal here.
@@ -3303,5 +3373,70 @@ describe('R1 - unavailable continuous monitoring blocks activation', () => {
     expect(snapshot.activation.reasons).toContain(
       'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
     );
+  });
+});
+
+/* ================================================================== *
+ * The dedicated safety monitor, seen from the controller
+ * ================================================================== */
+
+describe('continuous safety monitoring is owned by the controller', () => {
+  it('starts the monitor as part of reaching Ready, not at the first pulse', async () => {
+    const harness = createHarness();
+    expect(harness.safetyMonitor.started).toBe(0);
+
+    await runSetup(harness);
+
+    // Started BEFORE Ready is published, so monitoring covers the whole
+    // window in which a pulse could be requested - never only the pulse.
+    expect(harness.safetyMonitor.started).toBe(1);
+    expect(harness.safetyMonitor.running).toBe(true);
+  });
+
+  it('stops the monitor when the session is torn down', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    expect(harness.safetyMonitor.running).toBe(true);
+
+    await drive(harness, harness.controller.close());
+
+    expect(harness.safetyMonitor.stopped).toBeGreaterThanOrEqual(1);
+    expect(harness.safetyMonitor.running).toBe(false);
+  });
+
+  it('an unsafe REQUIREMENTS reading reaches the ordinary priority-stop path', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    harness.safetyMonitor.reportUnsafe('SAFETY_REQUIREMENTS_BLOCKED');
+
+    const snapshot = harness.controller.getSnapshot();
+    // A blocking reading is a LOCKING stop reason: the session may not be
+    // re-armed without a new activation.
+    expect(snapshot.activation.allowed).toBe(false);
+    expect(snapshot.activation.reasons).toContain('SAFETY_EVENT_LATCHED');
+  });
+
+  it('a FAILED reading stops AND faults, and stops the monitor', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    harness.safetyMonitor.reportUnsafe('SAFETY_OBSERVATION_FAILED');
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Fault');
+    // A faulted session monitors nothing further.
+    expect(harness.safetyMonitor.running).toBe(false);
+    expect(snapshot.activation.allowed).toBe(false);
+  });
+
+  it('a STALE reading is treated exactly like a failed one', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    harness.safetyMonitor.reportUnsafe('SAFETY_OBSERVATION_STALE');
+
+    expect(harness.controller.getSnapshot().machine?.name).toBe('Fault');
+    expect(harness.safetyMonitor.running).toBe(false);
   });
 });
