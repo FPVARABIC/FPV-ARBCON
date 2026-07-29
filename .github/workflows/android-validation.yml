@@ -145,22 +145,25 @@ jobs:
       # forcing the process to die would hide "something is still running
       # after teardown" in the one suite that drives the real motor
       # controller, which is the last place to accept that.
-      # TEMPORARY ONE-OFF DIAGNOSTIC - REMOVE ONCE THE LEAK IS NAMED.
+      # WHY --detectOpenHandles IS NOT USED HERE, having been tried.
       #
-      # The leak does not reproduce locally in EITHER worker topology
-      # (default workers: 23s, exit 0; --maxWorkers=1: 35s, exit 0; both
-      # with no exit warning), so worker topology is not the discriminating
-      # variable - the CI environment is (Node v22.23.1 there vs v22.22.2
-      # locally). That is what makes it legitimate to accept
-      # --detectOpenHandles here even though Jest implies --runInBand with
-      # it: in-band is not what hides the leak.
+      # Run 30496148622 ran this step as `npx jest --ci --detectOpenHandles`
+      # and it PASSED in 48 seconds on the same tree that hung for 60
+      # minutes in run 30491403562. The flag implies --runInBand, and
+      # in-band is exactly what suppresses the hang: the leaked handle lives
+      # in a Jest WORKER, and it is the main process waiting on a worker
+      # that never exits which produces the stall. Running everything in one
+      # process removes the worker, and with it the symptom.
       #
-      # The handle report prints where the "did not exit" warning appeared,
-      # i.e. after the suites finish, so the 10-minute bound still captures
-      # it even if the process then hangs.
+      # So the one flag that can name a handle also hides this handle.
+      # Diagnosis had to come from reading the teardown path instead - see
+      # the OPEN_HARNESSES/afterEach note in
+      # src/ui/screens/motorPayloadIndexIdentity.test.tsx - and
+      # confirmation has to come from a normal, worker-topology run like
+      # this one.
       - name: Jest
         timeout-minutes: 10
-        run: npx jest --ci --detectOpenHandles
+        run: npx jest --ci
 
       # MANDATORY GATE. Builds the real --dev false bundle and fails the
       # workflow if a debug-only token is present, if the motor engine or
