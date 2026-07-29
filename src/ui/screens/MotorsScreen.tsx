@@ -64,7 +64,7 @@ import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol'
 import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
 import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
 import {createMotorTestLifecycleBridge} from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
-import {readMotorTestCapability} from '../../platforms/react-native/protocol/motorTestDebugSeam';
+import {readMotorTestCapability} from '../../platforms/react-native/protocol/motorTestCapability';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import type {RootStackParamList} from '../../navigation/types';
 import {AppState, BackHandler} from 'react-native';
@@ -267,6 +267,16 @@ export interface MotorsScreenViewProps {
   /** Fires when the operator asks to leave. Navigation itself is owned by
    * the lifecycle bridge and the route, never by this component. */
   readonly onRequestLeave?: () => void;
+  /**
+   * Overrides the bottom safe-area padding.
+   *
+   * Hosted inside the main tab shell the persistent tab bar sits below
+   * this screen and already consumes the gesture-navigation inset, so the
+   * screen must not add it a second time - the emergency Stop control
+   * would float above a strip of empty space. Omitted (standalone), the
+   * real inset is used.
+   */
+  readonly bottomInset?: number;
 }
 
 interface Acknowledgements {
@@ -288,9 +298,14 @@ function allAcknowledged(value: Acknowledgements): boolean {
 export function MotorsScreenView({
   operator,
   onRequestLeave,
+  bottomInset,
 }: MotorsScreenViewProps): React.JSX.Element {
   const {t} = useTranslation();
-  const insets = useSafeAreaInsets();
+  const safeAreaInsets = useSafeAreaInsets();
+  const insets = {
+    ...safeAreaInsets,
+    bottom: bottomInset ?? safeAreaInsets.bottom,
+  };
 
   // The snapshot is the ONLY source of controller truth. `useState` plus an
   // explicit subscription rather than useSyncExternalStore: the controller
@@ -1013,30 +1028,59 @@ const styles = StyleSheet.create({
 
 
 /* ================================================================== *
- * The route container.
+ * The tab container.
  *
  * This is where the screen is BOUND to the one official session, and
- * where the accepted lifecycle bridge owns every navigation, back and
- * AppState trigger. The view above stays a pure presentation/gesture
+ * where the accepted lifecycle bridge owns every navigation, back, tab
+ * and AppState trigger. The view above stays a pure presentation/gesture
  * layer and never learns that navigation exists.
+ *
+ * SINGLE-APP MERGE: Motors used to be its own stack route, registered
+ * only when the build-variant seam supplied a component. It is now a TAB
+ * inside the main shell, so this container takes the shell's navigation
+ * object (for `beforeRemove`, which still covers leaving the whole route
+ * and Android Back) plus a tab blur source. It owns and creates neither.
  * ================================================================== */
 
-type MotorsRouteProps = NativeStackScreenProps<RootStackParamList, 'Motors'>;
+type MotorsHostNavigation = NativeStackScreenProps<
+  RootStackParamList,
+  'Setup'
+>['navigation'];
 
-export default function MotorsScreenRoute({
-  route,
+export interface MotorsTabProps {
+  readonly sessionKey: SetupUiSessionKey | undefined;
+  readonly navigation: MotorsHostNavigation;
+  /**
+   * Fires when the operator switches AWAY from the Motors tab.
+   *
+   * THE SAME PATH, NOT A PARALLEL ONE. This is handed to the accepted
+   * lifecycle bridge as its `addBlurListener` source, so a tab change is
+   * treated exactly as a navigation blur already was - one bridge, one
+   * whitelist, one stop obligation. There is deliberately no second
+   * stop/release route wired into tab switching.
+   */
+  readonly subscribeTabBlur: (listener: () => void) => () => void;
+  readonly bottomInset?: number;
+}
+
+export default function MotorsTab({
+  sessionKey,
   navigation,
-}: MotorsRouteProps): React.JSX.Element {
-  const sessionKey = route.params?.sessionKey;
+  subscribeTabBlur,
+  bottomInset,
+}: MotorsTabProps): React.JSX.Element {
   if (!sessionKey) {
-    // Same defense-in-depth as SetupScreen: the typed call site always
-    // supplies it, but a future linking config might not.
-    return <MotorsScreenView operator={undefined} />;
+    // No live session: the screen renders inert and blocked. That is the
+    // correct presentation for a tab opened before a connection exists -
+    // not an error, and not something to hide the tab over.
+    return <MotorsScreenView operator={undefined} bottomInset={bottomInset} />;
   }
   return (
     <MotorsScreenBinding
       sessionKey={sessionKey}
       navigation={navigation}
+      subscribeTabBlur={subscribeTabBlur}
+      bottomInset={bottomInset}
       key={sessionKey.sessionId}
     />
   );
@@ -1045,9 +1089,13 @@ export default function MotorsScreenRoute({
 function MotorsScreenBinding({
   sessionKey,
   navigation,
+  subscribeTabBlur,
+  bottomInset,
 }: {
   sessionKey: SetupUiSessionKey;
-  navigation: MotorsRouteProps['navigation'];
+  navigation: MotorsHostNavigation;
+  subscribeTabBlur: (listener: () => void) => () => void;
+  bottomInset?: number;
 }): React.JSX.Element {
   /**
    * EXACTLY ONE binding owns the current official session. The capability
@@ -1064,9 +1112,10 @@ function MotorsScreenBinding({
    * mounts, and none of its callbacks can reach the new session.
    */
   const operator = useMemo(() => {
-    // R2: the capability now lives in the build-time containment seam,
-    // not on the coordinator - so no motor-named coordinator surface
-    // survives into a Release bundle. This screen is itself Debug-only.
+    // The capability lives in the store the coordinator writes to. It is
+    // `undefined` for exactly one reason - no live, identified session by
+    // this id ever opened one - and the screen then presents the blocked
+    // state rather than pretending a session exists.
     const capability = readMotorTestCapability(sessionKey.sessionId);
     if (capability === undefined) {
       return undefined;
@@ -1116,7 +1165,20 @@ function MotorsScreenBinding({
           AppState.addEventListener('change', status => {
             listener(status as never);
           }),
-        addBlurListener: listener => navigation.addListener('blur', listener),
+        // TWO SOURCES, ONE LISTENER, ONE PATH. A stack blur (the shell
+        // route losing focus) and a tab blur (the operator switching away
+        // from Motors) mean the same thing to the bridge: this screen is
+        // no longer in front of the operator while a command may be live.
+        // Both are subscribed here and both reach the bridge's existing
+        // blur handling - no parallel stop route is introduced for tabs.
+        addBlurListener: listener => {
+          const unsubscribeStackBlur = navigation.addListener('blur', listener);
+          const unsubscribeTabBlur = subscribeTabBlur(listener);
+          return () => {
+            unsubscribeStackBlur();
+            unsubscribeTabBlur();
+          };
+        },
         addBeforeRemoveListener: listener =>
           navigation.addListener('beforeRemove', listener),
       },
@@ -1136,7 +1198,7 @@ function MotorsScreenBinding({
     return () => {
       bridge.detach();
     };
-  }, [operator, navigation]);
+  }, [operator, navigation, subscribeTabBlur]);
 
-  return <MotorsScreenView operator={operator} />;
+  return <MotorsScreenView operator={operator} bottomInset={bottomInset} />;
 }

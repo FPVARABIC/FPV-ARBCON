@@ -11,7 +11,7 @@ jest.mock('react-native-safe-area-context', () => ({
 
 import React from 'react';
 import ReactTestRenderer, {act} from 'react-test-renderer';
-import {readFileSync} from 'fs';
+import {existsSync, readFileSync} from 'fs';
 import {join} from 'path';
 
 import {
@@ -319,54 +319,60 @@ describe('Phase 2I - the read-only report', () => {
   });
 });
 
-describe('Phase 2I - development-only entry containment', () => {
+/**
+ * SINGLE-APP MERGE. The block that used to live here asserted the
+ * development-only entry's containment - that `MotorsDevEntry` was
+ * reachable only behind a seam and that an ordinary Production bundle
+ * contained none of it. All of that is deliberately gone: the entry itself
+ * is deleted, because with Motors in the tab bar it was a SECOND,
+ * ungoverned way in - it navigated straight to the screen from the
+ * connection screen, bypassing the shell that owns tab state and fires the
+ * lifecycle bridge's blur source.
+ *
+ * What survives is the part that was never about bundling: nothing outside
+ * the one official binding may reach the engine, and the app entry must
+ * not know the motor flow exists.
+ */
+describe('Motor flow entry after the single-app merge', () => {
   const REPO_ROOT = join(__dirname, '..', '..', '..');
 
-  it('lives behind the established __DEV__ seam, never a static import', () => {
-    const gate = readFileSync(join(__dirname, 'debugPanels.ts'), 'utf8');
-    expect(gate).toMatch(
-      /DevBenchEntry[\s\S]*?__DEV__[\s\S]*?require\('\.\/MotorsDevEntry'\)/,
-    );
-    const host = readFileSync(join(__dirname, 'UsbConnectionScreen.tsx'), 'utf8');
-    expect(host).not.toMatch(/^import .*MotorsDevEntry/m);
-    expect(host).toContain('DevBenchEntry &&');
+  it('has no development-only entry module or seam left behind', () => {
+    expect(existsSync(join(__dirname, 'MotorsDevEntry.tsx'))).toBe(false);
+    const panels = readFileSync(join(__dirname, 'debugPanels.ts'), 'utf8');
+    const panelsCode = panels
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    expect(panelsCode).not.toContain('DevBenchEntry');
+    expect(panelsCode).not.toContain('DevBenchScreen');
+    expect(panelsCode).not.toContain('MOTORS_ROUTE_NAME');
+    // The debug-only panels it DOES still gate are untouched.
+    expect(panelsCode).toContain('DevAppLogPanel');
+    expect(panelsCode).toContain('DevSerialPanel');
+    expect(panelsCode).toContain('__DEV__');
   });
 
-  it('uses the exact current official session key, never a synthetic one', () => {
-    const entry = readFileSync(join(__dirname, 'MotorsDevEntry.tsx'), 'utf8');
-    expect(entry).toContain('mspSessionCoordinator.getSessionKey(sessionId)');
-    // The route literal lives HERE, inside the strippable module - never
-    // at the call site, where it would survive into a production bundle.
-    expect(entry).toContain('MOTORS_ROUTE_NAME');
+  it('removed the duplicate entry POINT from the connection screen, not just its import', () => {
     const host = readFileSync(join(__dirname, 'UsbConnectionScreen.tsx'), 'utf8');
-    expect(host).not.toContain("'Motors'");
+    const code = host
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    // No import, no render site, no navigate() to a motors route.
+    expect(code).not.toContain('DevBenchEntry');
+    expect(code).not.toContain('MotorsDevEntry');
+    expect(code).not.toContain("'Motors'");
     for (const forbidden of [
       'createMotorTestSessionBinding',
-      'new MspClient',
-      'openSession',
       'operatorPort',
       'pulseMotor',
     ]) {
-      expect(entry).not.toContain(forbidden);
+      expect(code).not.toContain(forbidden);
     }
   });
 
-  it('resolves the entry regardless of __DEV__ - Motors ships in every build', () => {
-    for (const dev of [true, false]) {
-      const previous = (global as {__DEV__?: boolean}).__DEV__;
-      jest.resetModules();
-      (global as {__DEV__?: boolean}).__DEV__ = dev;
-      try {
-        const seam = require('./debugPanels');
-        expect(typeof seam.DevBenchEntry).toBe('function');
-        expect(typeof seam.DevBenchScreen).toBe('function');
-      } finally {
-        (global as {__DEV__?: boolean}).__DEV__ = previous;
-        jest.resetModules();
-      }
-    }
-  });
-  it('keeps the app entry free of any static motor-flow import', () => {
+  it('keeps the app entry free of any direct motor-flow import', () => {
+    // App.tsx registers the tab shell; the shell owns which screens exist
+    // behind which tab. The entry point still never names the motor flow.
     const app = readFileSync(join(REPO_ROOT, 'App.tsx'), 'utf8');
     expect(app).not.toMatch(/from '\.\/src\/ui\/screens\/MotorsScreen'/);
     expect(app).not.toMatch(/MotorVerificationWizard/);

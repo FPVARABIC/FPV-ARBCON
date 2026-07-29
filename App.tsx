@@ -14,11 +14,10 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import './src/i18n';
-import { SetupScreen, UsbConnectionScreen } from './src/ui';
-// Phase 2H: resolved through the SAME __DEV__ seam the debug panels use -
-// `undefined` in a production bundle, where the route below is therefore
-// never registered at all.
-import { DevBenchScreen, DEV_BENCH_ROUTE_NAME } from './src/ui/screens/debugPanels';
+// SINGLE-APP MERGE: the 'Setup' route now renders the main TAB SHELL
+// (Setup / Motors / Ports / Receiver / PID), not the Setup screen alone.
+// The route name is unchanged on purpose - see src/navigation/types.ts.
+import { MainTabsScreen, UsbConnectionScreen } from './src/ui';
 import { useMspOwnershipState } from './src/platforms/react-native/protocol';
 import type { RootStackParamList } from './src/navigation/types';
 
@@ -148,13 +147,7 @@ function App(): React.JSX.Element {
         onStateChange={handleNavigationStateChange}>
         <Stack.Navigator initialRouteName="Connection" screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Connection" component={UsbConnectionScreen} />
-          <Stack.Screen name="Setup" component={SetupScreen} />
-          {DevBenchScreen === undefined || DEV_BENCH_ROUTE_NAME === undefined ? null : (
-            // Both the component AND the route name come from the
-            // __DEV__ seam, so a production bundle contains neither - the
-            // route is not merely unregistered, it is unnamed.
-            <Stack.Screen name={DEV_BENCH_ROUTE_NAME} component={DevBenchScreen} />
-          )}
+          <Stack.Screen name="Setup" component={MainTabsScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaView>

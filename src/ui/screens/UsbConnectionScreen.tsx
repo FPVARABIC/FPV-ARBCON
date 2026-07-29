@@ -37,7 +37,7 @@ import {
 // panels are reached only through debugPanels.ts, which resolves them
 // behind __DEV__ so a production bundle never retains them. Each render
 // site below is null in a release build.
-import {DevAppLogPanel, DevBenchEntry, DevSerialPanel} from './debugPanels';
+import {DevAppLogPanel, DevSerialPanel} from './debugPanels';
 
 /**
  * Owned by the UI/client, not the Kotlin transport defaults. Approved as a
@@ -797,22 +797,14 @@ export default function UsbConnectionScreen({
           />
         ) : null}
 
-        {DevBenchEntry && isConnected && state.activeSessionId ? (
-          // Phase 2I: the ONE development-only way into the motor-test
-          // flow. Absent from a production bundle - see MotorsDevEntry.tsx.
-          <DevBenchEntry
-            sessionId={state.activeSessionId}
-            // The navigator, not a route-bound callback - see
-            // MotorsDevEntry.tsx on why the route name must not appear
-            // here. `navigate` is typed loosely on purpose so this file
-            // never names a motor-test route at all.
-            navigate={(route, params) =>
-              (navigation as unknown as {
-                navigate: (r: string, p: unknown) => void;
-              } | undefined)?.navigate(route, params)
-            }
-          />
-        ) : null}
+        {/* SINGLE-APP MERGE: the development-only motor-test entry that
+            used to sit here is GONE - the control itself, not just its
+            import. Motors is a tab in the main shell now, so leaving this
+            pressable would be a SECOND, ungoverned way in: it navigated
+            straight to the screen from the connection screen, bypassing
+            the shell that owns which tab is active and that fires the
+            lifecycle bridge's blur source when the operator leaves Motors.
+            This screen's job ends at handing the session key to 'Setup'. */}
 
         <ValidationLog
           entries={state.log}

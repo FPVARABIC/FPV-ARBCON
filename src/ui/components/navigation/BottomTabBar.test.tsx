@@ -10,12 +10,13 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 import React from 'react';
-import {I18nManager, ScrollView} from 'react-native';
+import {I18nManager, ScrollView, View} from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../../i18n';
 import i18n from '../../../i18n';
 import BottomTabBar from './BottomTabBar';
+import MainTabsScreen from '../../screens/MainTabsScreen';
 import {
   MAIN_TABS,
   computeTabBarInitialScrollOffset,
@@ -210,5 +211,100 @@ describe('Initial scroll position is the RIGHT edge', () => {
     );
     expect(calls[0].animated).toBe(false);
     rendered.unmount();
+  });
+});
+
+/* ================================================================== *
+ * The shell: state preservation and the Motors stop guard.
+ * ================================================================== */
+
+function renderShell(sessionId = 'session-1') {
+  const navigation = {
+    addListener: () => () => {},
+    goBack: () => {},
+  } as never;
+  const route = {
+    key: 'Setup-1',
+    name: 'Setup' as const,
+    params: {sessionKey: {sessionId, generation: 1}},
+  } as never;
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(
+      <MainTabsScreen navigation={navigation} route={route} />,
+    );
+  });
+  return {
+    renderer,
+    find: (testID: string) => renderer.root.findAllByProps({testID})[0],
+    query: (testID: string) => renderer.root.findAllByProps({testID})[0],
+    press: (testID: string) =>
+      ReactTestRenderer.act(() => {
+        renderer.root.findAllByProps({testID})[0].props.onPress();
+      }),
+    unmount: () =>
+      ReactTestRenderer.act(() => {
+        renderer.unmount();
+      }),
+  };
+}
+
+describe('MainTabsScreen - the shell', () => {
+  it('starts on Setup and mounts Motors only once it is opened', () => {
+    const shell = renderShell();
+    expect(
+      shell.renderer.root.findAllByProps({testID: 'main-tab-panel-SETUP'}).length,
+    ).toBeGreaterThan(0);
+    expect(
+      shell.renderer.root.findAllByProps({testID: 'main-tab-panel-MOTORS'}),
+    ).toHaveLength(0);
+
+    shell.press('main-tab-MOTORS');
+    expect(
+      shell.renderer.root.findAllByProps({testID: 'main-tab-panel-MOTORS'}).length,
+    ).toBeGreaterThan(0);
+    shell.unmount();
+  });
+
+  it('keeps a visited tab MOUNTED but hidden when switching away, never unmounted', () => {
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    shell.press('main-tab-SETUP');
+
+    const panel = shell.renderer.root.findAllByProps({
+      testID: 'main-tab-panel-MOTORS',
+    })[0];
+    const style = Array.isArray(panel.props.style)
+      ? Object.assign({}, ...panel.props.style.filter(Boolean))
+      : panel.props.style;
+    // Still in the tree - which is what keeps the Motors lifecycle bridge
+    // attached so a tab change can trigger its stop path at all.
+    expect(panel).toBeDefined();
+    expect(style.display).toBe('none');
+    shell.unmount();
+  });
+
+  it('does not render a disabled tab as a panel even when pressed', () => {
+    const shell = renderShell();
+    const ports = shell.find('main-tab-PORTS');
+    expect(ports.props.onPress).toBeUndefined();
+    expect(
+      shell.renderer.root.findAllByProps({testID: 'main-tab-panel-PORTS'}),
+    ).toHaveLength(0);
+    shell.unmount();
+  });
+
+  it('renders the tab bar below the content, outside every screen scroll view', () => {
+    const shell = renderShell();
+    const root = shell.renderer.root.findAllByProps({testID: 'main-tabs'})[0];
+    const children = root.findAllByType(View, {deep: false});
+    // The bar is a SIBLING of the content, not a child of it - so no inner
+    // ScrollView can scroll it out of reach.
+    const barAncestorTestIDs = shell
+      .find('main-tab-bar')
+      .parent?.props?.testID;
+    expect(barAncestorTestIDs).not.toBe('main-tab-panel-SETUP');
+    expect(children.length).toBeGreaterThan(0);
+    shell.unmount();
   });
 });

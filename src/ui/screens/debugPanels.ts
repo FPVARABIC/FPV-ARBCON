@@ -23,27 +23,21 @@
  * would leave the forbidden token "UsbAppLogCapture" in a production
  * bundle even with the panel itself fully stripped - confirmed by the
  * scan in scripts/scan-production-bundle.js, not assumed.
+ *
+ * SINGLE-APP MERGE: the motor-test screen, its development-only entry and
+ * its route name used to be gated through this same seam (DevBenchScreen,
+ * DevBenchEntry, DEV_BENCH_ROUTE_NAME). They are gone - Motors is an
+ * ordinary tab now, reachable only once a session is live. THIS SEAM IS
+ * NOT GONE WITH THEM, and nothing else in this file changed: the USB log
+ * capture panel remains strictly `__DEV__`-only, because
+ * `com.fpvarbcon.debug` exists only in the debug source set and the
+ * release DEX must keep zero occurrences of it.
  */
 
 /** Type-only references: `typeof import(...)` is erased at compile time,
  * so it keeps full prop typing without adding anything to the bundle. */
 type AppLogCapturePanel = typeof import('./UsbAppLogCapturePanel').default;
 type SerialDebugPanel = typeof import('./UsbSerialDebugPanel').default;
-/** Phase 2H - the motor-test screen. Gated through this SAME established
- * seam rather than a new feature-flag system: the motor flow is
- * incomplete until Phase 2I ships the verification wizard and report, so
- * it must not be reachable by an ordinary user in a production bundle. */
-type DevBenchScreenComponent = typeof import('./MotorsScreen').default;
-/** Phase 2I - the development-only entry control. Same seam, same reason:
- * the entry's JSX, testID and route literal must be absent from a
- * production bundle, not merely unrendered in it. */
-type DevBenchEntryComponent = typeof import('./MotorsDevEntry').default;
-
-import {
-  hardwareTestBenchEntry,
-  hardwareTestBenchRouteName,
-  hardwareTestBenchScreen,
-} from '../../platforms/react-native/protocol/motorTestDebugSeam';
 
 // NOTE: a static import would keep the debug panels in the production
 // import graph no matter what runtime guard wrapped it; a __DEV__-guarded
@@ -55,26 +49,3 @@ export const DevAppLogPanel: AppLogCapturePanel | undefined = __DEV__
 export const DevSerialPanel: SerialDebugPanel | undefined = __DEV__
   ? (require('./UsbSerialDebugPanel').default as SerialDebugPanel)
   : undefined;
-
-export const DevBenchScreen: DevBenchScreenComponent | undefined = __DEV__
-  ? (require('./MotorsScreen').default as DevBenchScreenComponent)
-  : // R3: a RELEASE build carries the screen only when the build-variant
-    // seam was compiled as the Hardware Test one. Production resolves that
-    // seam to a module that imports no screen at all.
-    (hardwareTestBenchScreen as DevBenchScreenComponent | undefined);
-
-export const DevBenchEntry: DevBenchEntryComponent | undefined = __DEV__
-  ? (require('./MotorsDevEntry').default as DevBenchEntryComponent)
-  : (hardwareTestBenchEntry as DevBenchEntryComponent | undefined);
-
-/**
- * Phase 2I - the route NAME, resolved through the same seam.
- *
- * The name is data, so a literal written at the registration site in
- * App.tsx would survive into a production bundle even though the screen
- * itself is stripped and the route is never registered. Keeping it here
- * means the shipped bytes contain no motor-test route name at all.
- */
-export const DEV_BENCH_ROUTE_NAME: 'Motors' | undefined = __DEV__
-  ? (require('./MotorsDevEntry').MOTORS_ROUTE_NAME as 'Motors')
-  : hardwareTestBenchRouteName;

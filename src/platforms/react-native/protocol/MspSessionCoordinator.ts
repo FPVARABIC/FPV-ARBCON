@@ -81,19 +81,15 @@ import {
 // there is no production path that could pair an anchor with a different
 // client. Deep import on purpose: the motor-test modules stay out of
 // `src/core`'s public barrel.
-// R2: TYPE-ONLY. These erase completely at compile time and pull no
-// runtime module into the Release dependency graph. The runtime factories
-// live behind the one build-time containment seam below.
+// SINGLE-APP MERGE: one capability store, one implementation, every build.
+// The former motorTestDebugSeam and its build-selected registry constructor
+// are gone, so nothing here chooses between variants.
 import type {MotorTestTelemetryRegistry} from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
 import {
   closeMotorTestCapability,
-  devMotorTestRegistryConstructor,
+  createMotorTestTelemetryRegistry,
   openMotorTestCapability,
-} from './motorTestDebugSeam';
-// R2: the accepted scheduler factory, imported directly so the RELEASE
-// path can build its scheduler without the motor-test binding. This is the
-// very factory the binding itself delegates to, so behaviour is identical.
-import {createMspTelemetryScheduler} from '../../../core/protocol/telemetry/MspTelemetryScheduler';
+} from './motorTestCapability';
 import type {
   FlightControllerIdentity,
   MspRequester,
@@ -423,14 +419,13 @@ export class MspSessionCoordinator {
    * Every anchor in the application is minted here, through the binding,
    * for a client this coordinator itself created. */
   /**
-   * R2: constructed only when this build actually contains the motor-test
-   * engine. In Release the constructor is `undefined`, so no registry -
-   * and therefore no motor-only module - exists at all.
+   * SINGLE-APP MERGE: always constructed. This was `undefined` in a build
+   * without the motor-test engine; there is no such build now, so the
+   * union and the branch that read it are gone rather than left as a
+   * permanently-taken path.
    */
-  private readonly motorTestRegistry: MotorTestTelemetryRegistry | undefined =
-    devMotorTestRegistryConstructor === undefined
-      ? undefined
-      : new devMotorTestRegistryConstructor();
+  private readonly motorTestRegistry: MotorTestTelemetryRegistry =
+    createMotorTestTelemetryRegistry();
 
   /**
    * Idempotent: exactly one MspClient ever exists per sessionId, and
@@ -862,26 +857,21 @@ export class MspSessionCoordinator {
     // given the opportunity to name a different client, so the
     // scheduler-polls-A / anchor-labelled-B composition has no
     // representation in production code.
-    // R2 - THE BUILD-TIME BOUNDARY.
+    // SINGLE-APP MERGE: ONE construction path, in every build.
     //
-    // Debug/Jest: the scheduler is still created THROUGH the binding, so
-    // the P4 construction boundary above is fully intact - the binding
-    // mints the anchor for this exact client and is the only thing that
-    // can create a scheduler for it.
-    //
-    // Release: the engine is not in the bundle, so there is no binding and
-    // no anchor to mint. The scheduler comes straight from the accepted
-    // factory the binding itself delegates to, giving identical poll
-    // registration, cadence, tick, stop and disposal behaviour.
+    // The scheduler is always created THROUGH the binding, so the P4
+    // construction boundary above is fully intact - the binding mints the
+    // anchor for this exact client and is the only thing that can create a
+    // scheduler for it. The former Release fallback that built a scheduler
+    // straight from the accepted factory existed only because Release had
+    // no binding; there is no such build now, and it is removed rather
+    // than left as an unreachable second way to build a scheduler.
     const capability = openMotorTestCapability(
       sessionId,
       mspClient,
       this.motorTestRegistry,
     );
-    const scheduler =
-      capability === undefined
-        ? createMspTelemetryScheduler(mspClient, {singleFlight: true})
-        : capability.createScheduler({singleFlight: true});
+    const scheduler = capability.createScheduler({singleFlight: true});
     scheduler.registerPoll<MspAttitude>({
       id: ATTITUDE_TELEMETRY_POLL_ID,
       command: MSP_ATTITUDE,

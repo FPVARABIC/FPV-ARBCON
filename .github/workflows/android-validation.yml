@@ -133,12 +133,15 @@ jobs:
       - name: Jest
         run: npx jest --ci
 
-      # R2: MANDATORY CONTAINMENT GATE. Builds the real --dev false bundle
-      # and fails the workflow if the motor-test engine (or any Pass 7.7
-      # debug-panel token) is present, or if a positive control is missing.
-      # Placed after dependency installation and before ANY Release APK
-      # work, so a contaminated bundle can never be packaged or published.
-      - name: Production bundle containment scan
+      # MANDATORY GATE. Builds the real --dev false bundle and fails the
+      # workflow if a debug-only token is present, if the motor engine or
+      # the Arabic safety copy is MISSING (the single-app merge requires
+      # both to ship - their absence is what made every motors label render
+      # as a raw i18n key on the hardware-test device), if a positive
+      # control is missing, or if the engine boundary has been crossed in
+      # source. Placed after dependency installation and before ANY Release
+      # APK work, so a defective bundle can never be packaged or published.
+      - name: Production bundle and engine-boundary scan
         run: npm run scan:production-bundle
 
       - name: Setup JDK 17 (Temurin)
