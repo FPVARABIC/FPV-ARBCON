@@ -30,7 +30,7 @@ import {
   MotorsScreenView,
   MOTOR_TEST_LONG_PRESS_DELAY_MILLIS,
   MOTOR_TEST_OUTPUT_SLOTS,
-  EXPECTED_QUAD_X_REFERENCE,
+  computeMotorGlyphLayout,
   commandMayBeLive,
   derivePresentation,
 } from './MotorsScreen';
@@ -735,17 +735,17 @@ describe('MotorsScreen - no leaks, no stale mutation', () => {
 
 describe('MotorsScreen - expected reference is labelled as expected', () => {
   it('renders the accepted Quad X props-out mapping', () => {
-    expect(EXPECTED_QUAD_X_REFERENCE.map(e => [e.slot, e.directionKey])).toEqual(
-      [
-        [1, 'directionCcw'],
-        [2, 'directionCw'],
-        [3, 'directionCw'],
-        [4, 'directionCcw'],
-      ],
-    );
+    expect(
+      computeMotorGlyphLayout().map(cell => [cell.slot, cell.directionKey]),
+    ).toEqual([
+      [2, 'directionCw'],
+      [4, 'directionCcw'],
+      [1, 'directionCcw'],
+      [3, 'directionCw'],
+    ]);
     const rendered = render(new FakeOperator(snapshotFor({})));
     for (const slot of MOTOR_TEST_OUTPUT_SLOTS) {
-      expect(rendered.query(`motors-expected-${slot}`)).toBeDefined();
+      expect(rendered.query(`motors-diagram-slot-${slot}`)).toBeDefined();
     }
     // Explicitly labelled EXPECTED, not confirmed. This test asserts the
     // label only; it establishes NOTHING about real wiring, physical frame

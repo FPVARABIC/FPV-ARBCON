@@ -78,7 +78,9 @@ import {
   confirmObservation,
   EMPTY_VERIFICATION_STATE,
   finalizeVerification,
+  MOTOR_TEST_EXPECTED_CONFIGURATION,
   type MotorObservation,
+  type MotorPhysicalPosition,
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
 import type {MotorTestVerificationReceipt} from '../../core/state/motorTestController';
@@ -95,39 +97,103 @@ export const MOTOR_TEST_OUTPUT_SLOTS: readonly number[] = Object.freeze([
   1, 2, 3, 4,
 ]);
 
-/**
- * The EXPECTED Betaflight Quad X / props-out reference, shown so the
- * operator knows what to look for. Software has confirmed none of it: no
- * test in this repository establishes wiring, physical frame position or
- * rotation direction, and Phase 2I is where the operator's own physical
- * observations are collected.
- */
-export const EXPECTED_QUAD_X_REFERENCE: readonly {
+/* ================================================================== *
+ * THE MOTOR GLYPH LAYOUT.
+ *
+ * NAMING. This is `computeMotorGlyphLayout`, and the name is load-bearing:
+ * it computes where a LABEL is drawn on screen. It builds no payload,
+ * names no command, and its output can never be sent anywhere. A name like
+ * "computeMotorFrame" reads at a call site like something that produces
+ * wire data, and this must never be mistaken for that.
+ *
+ * WHAT WAS WRONG BEFORE. The cells were emitted in slot order (M1, M2, M3,
+ * M4) into a 2-column wrapping grid, which put M2 (front-right) and M1
+ * (rear-right) in the SAME top row - rotating the aircraft 90 degrees
+ * against reality. The labels were right; the geometry was not.
+ *
+ * THE CORRECT RTL PLACEMENT:
+ *
+ *      top-right    = M2  front-right
+ *      top-left     = M4  front-left
+ *      bottom-right = M1  rear-right
+ *      bottom-left  = M3  rear-left
+ *
+ * `row`/`side` are emitted as DATA rather than left implicit in array
+ * order, so a test can assert the spatial claim directly instead of
+ * inferring it from how flexbox happened to wrap.
+ *
+ * THE SLOT NUMBERS ARE THE SINGLE SOURCE OF TRUTH IN
+ * `MOTOR_TEST_EXPECTED_CONFIGURATION`. This module derives from it and
+ * never restates it - a second copy of the mapping is exactly how a
+ * diagram and a payload come to disagree.
+ * ================================================================== */
+
+export type MotorGlyphRow = 'FRONT' | 'REAR';
+export type MotorGlyphSide = 'RIGHT' | 'LEFT';
+
+export interface MotorGlyphCell {
+  /** MSP OUTPUT SLOT, 1..4 - the same number `pulseMotor()` takes. */
   readonly slot: number;
+  readonly row: MotorGlyphRow;
+  readonly side: MotorGlyphSide;
   readonly positionKey: string;
   readonly directionKey: string;
-}[] = Object.freeze([
-  Object.freeze({
-    slot: 1,
-    positionKey: 'positionRearRight',
-    directionKey: 'directionCcw',
-  }),
-  Object.freeze({
-    slot: 2,
-    positionKey: 'positionFrontRight',
-    directionKey: 'directionCw',
-  }),
-  Object.freeze({
-    slot: 3,
-    positionKey: 'positionRearLeft',
-    directionKey: 'directionCw',
-  }),
-  Object.freeze({
-    slot: 4,
-    positionKey: 'positionFrontLeft',
-    directionKey: 'directionCcw',
-  }),
+}
+
+const POSITION_GEOMETRY: Record<
+  MotorPhysicalPosition,
+  {row: MotorGlyphRow; side: MotorGlyphSide; positionKey: string}
+> = {
+  FRONT_RIGHT: {row: 'FRONT', side: 'RIGHT', positionKey: 'positionFrontRight'},
+  FRONT_LEFT: {row: 'FRONT', side: 'LEFT', positionKey: 'positionFrontLeft'},
+  REAR_RIGHT: {row: 'REAR', side: 'RIGHT', positionKey: 'positionRearRight'},
+  REAR_LEFT: {row: 'REAR', side: 'LEFT', positionKey: 'positionRearLeft'},
+};
+
+/**
+ * Render order, RTL: within each row the RIGHT cell comes first, because
+ * `flexDirection: 'row'` under the app's forceRTL lays the first child at
+ * the right edge. Rows run front-then-rear, top to bottom.
+ */
+const GLYPH_ORDER: readonly MotorPhysicalPosition[] = Object.freeze([
+  'FRONT_RIGHT',
+  'FRONT_LEFT',
+  'REAR_RIGHT',
+  'REAR_LEFT',
 ]);
+
+export function computeMotorGlyphLayout(): readonly MotorGlyphCell[] {
+  return Object.freeze(
+    GLYPH_ORDER.map(position => {
+      const expected = MOTOR_TEST_EXPECTED_CONFIGURATION.find(
+        entry => entry.position === position,
+      );
+      if (expected === undefined) {
+        // Unreachable while the accepted configuration covers all four
+        // positions, which its own tests assert. Throwing beats drawing a
+        // cell with no slot number on a motor diagram.
+        throw new Error(`No expected mapping for position ${position}`);
+      }
+      const geometry = POSITION_GEOMETRY[position];
+      return Object.freeze({
+        slot: expected.motorNumber,
+        row: geometry.row,
+        side: geometry.side,
+        positionKey: geometry.positionKey,
+        directionKey: expected.direction === 'CW' ? 'directionCw' : 'directionCcw',
+      });
+    }),
+  );
+}
+
+/** The two rendered rows, front first. */
+export function motorGlyphRows(): readonly (readonly MotorGlyphCell[])[] {
+  const cells = computeMotorGlyphLayout();
+  return Object.freeze([
+    cells.filter(cell => cell.row === 'FRONT'),
+    cells.filter(cell => cell.row === 'REAR'),
+  ]);
+}
 
 /**
  * How the screen presents the controller. Derived ONLY from the snapshot -
@@ -529,6 +595,13 @@ export function MotorsScreenView({
               <Text style={styles.checkLabel}>{t(`motorsScreen.${labelKey}`)}</Text>
             </Pressable>
           ))}
+          {/* The battery scope is a HARD limit enforced by the controller,
+              not a preference. Stated imperatively next to the checkbox
+              that claims it, so "4S only" is never something the operator
+              has to infer from a block reason after the fact. */}
+          <Text style={styles.batteryWarning} testID="motors-battery-scope-warning">
+            {t('motorsScreen.batteryScopeWarning')}
+          </Text>
           <Text style={styles.caption}>{t('motorsScreen.ackNotice')}</Text>
         </View>
 
@@ -608,29 +681,71 @@ export function MotorsScreenView({
           </View>
         </View>
 
-        {/* (5) The EXPECTED Quad X reference - labelled as expected. */}
+        {/* (5) The EXPECTED Quad X reference - labelled as expected, and
+            laid out so the top of the diagram IS the front of the
+            aircraft. */}
         <View style={styles.card} testID="motors-diagram">
           <Text style={styles.sectionTitle}>
             {t('motorsScreen.diagramHeading')}
           </Text>
-          <View style={styles.diagramGrid}>
-            {EXPECTED_QUAD_X_REFERENCE.map(entry => (
-              <View
-                key={entry.slot}
-                style={styles.diagramCell}
-                testID={`motors-expected-${entry.slot}`}>
-                <Text style={styles.slotLabel}>{`M${entry.slot}`}</Text>
-                <Text style={styles.diagramText}>
-                  {t(`motorsScreen.${entry.positionKey}`)}
-                </Text>
-                <Text style={styles.diagramText}>
-                  {t(`motorsScreen.${entry.directionKey}`)}
-                </Text>
-              </View>
-            ))}
+
+          {/* The front-of-aircraft indicator. Without it a square of four
+              cells is orientation-ambiguous, and an operator comparing it
+              to a drone facing the other way reads every position
+              backwards. */}
+          <View style={styles.frontIndicator} testID="motors-diagram-front">
+            <Text style={styles.frontArrow}>▲</Text>
+            <Text style={styles.frontLabel}>{t('motorsScreen.diagramFront')}</Text>
           </View>
+
+          {motorGlyphRows().map(row => (
+            <View key={row[0].row} style={styles.diagramRow}>
+              {row.map(cell => (
+                <View
+                  key={cell.slot}
+                  style={[
+                    styles.diagramCell,
+                    selectedSlot === cell.slot && styles.diagramCellSelected,
+                  ]}
+                  testID={`motors-diagram-cell-${cell.row}-${cell.side}`}>
+                  {/* The slot number rendered here is the SAME number
+                      handed to pulseMotor(), which the controller turns
+                      into payload index slot-1. A test asserts that
+                      identity end to end. */}
+                  <Text
+                    style={styles.slotLabel}
+                    testID={`motors-diagram-slot-${cell.slot}`}>
+                    {`M${cell.slot}`}
+                  </Text>
+                  <Text style={styles.diagramText}>
+                    {t(`motorsScreen.${cell.positionKey}`)}
+                  </Text>
+                  <Text style={styles.diagramText}>
+                    {t(`motorsScreen.${cell.directionKey}`)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ))}
+
+          <Text style={styles.caption} testID="motors-diagram-front-hint">
+            {t('motorsScreen.diagramFrontHint')}
+          </Text>
           <Text style={styles.caption} testID="motors-diagram-notice">
             {t('motorsScreen.diagramNotice')}
+          </Text>
+          {/* THE DIRECTIONS ARE NOT READ FROM THE FLIGHT CONTROLLER.
+              Investigated rather than assumed: the only MSP field that
+              looks related is MSP_MIXER_CONFIG's `yaw_motors_reversed`,
+              and at BETAFLIGHT_2025_12_2 the firmware uses it in exactly
+              one place - to flip the sign of the yaw PID term. It does not
+              remap outputs and is not evidence of physical rotation or of
+              props-out installation (see decodeMixerConfig.ts). There is
+              therefore nothing to derive from, and the CW/CCW labels are
+              stated as the Betaflight default rather than as this
+              aircraft's configuration. */}
+          <Text style={styles.caption} testID="motors-diagram-direction-source">
+            {t('motorsScreen.diagramDirectionSource')}
           </Text>
         </View>
 
@@ -818,16 +933,33 @@ const styles = StyleSheet.create({
     writingDirection: 'ltr',
   },
   slotSelected: {...typography.caption, color: colors.accent},
-  diagramGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  frontIndicator: {alignItems: 'center', gap: spacing.xs},
+  frontArrow: {fontSize: 18, color: colors.accent},
+  frontLabel: {
+    ...typography.caption,
+    color: colors.accent,
+    writingDirection: 'rtl',
+  },
+  /* TWO EXPLICIT ROWS, never a wrapping grid. A wrap depends on measured
+     cell widths to decide where the break falls, which is exactly how the
+     aircraft came to be drawn rotated 90 degrees. Each row is rendered
+     from its own data, front row first. */
+  diagramRow: {flexDirection: 'row', gap: spacing.sm},
   diagramCell: {
-    minWidth: '45%',
-    flexGrow: 1,
+    flex: 1,
     backgroundColor: colors.surfaceAlt,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radii.sm,
     padding: spacing.sm,
     gap: spacing.xs,
+  },
+  diagramCellSelected: {borderColor: colors.accent, borderWidth: 2},
+  batteryWarning: {
+    ...typography.body,
+    color: colors.warning,
+    writingDirection: 'rtl',
+    flexShrink: 1,
   },
   diagramText: {
     ...typography.caption,
