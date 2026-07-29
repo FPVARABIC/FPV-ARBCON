@@ -53,19 +53,24 @@ describe('Phase 2H - the Motors route', () => {
     expect(gate).not.toMatch(/^import .*MotorsScreen/m);
   });
 
-  it('resolves to undefined - and therefore registers no route - when __DEV__ is false', () => {
-    const previous = (global as {__DEV__?: boolean}).__DEV__;
-    jest.resetModules();
-    (global as {__DEV__?: boolean}).__DEV__ = false;
-    try {
-      const seam = require('./debugPanels');
-      expect(seam.DevBenchScreen).toBeUndefined();
-    } finally {
-      (global as {__DEV__?: boolean}).__DEV__ = previous;
+  it('resolves the screen and the route name regardless of __DEV__', () => {
+    // SINGLE-APP MERGE: Motors is reachable in every build. A build in
+    // which this resolves to `undefined` is the bench-variant failure mode
+    // - the screen present but unreachable, or reachable but unnamed.
+    for (const dev of [true, false]) {
+      const previous = (global as {__DEV__?: boolean}).__DEV__;
       jest.resetModules();
+      (global as {__DEV__?: boolean}).__DEV__ = dev;
+      try {
+        const seam = require('./debugPanels');
+        expect(typeof seam.DevBenchScreen).toBe('function');
+        expect(seam.DEV_BENCH_ROUTE_NAME).toBe('Motors');
+      } finally {
+        (global as {__DEV__?: boolean}).__DEV__ = previous;
+        jest.resetModules();
+      }
     }
   });
-
   it('resolves to a real component when __DEV__ is true', () => {
     const previous = (global as {__DEV__?: boolean}).__DEV__;
     jest.resetModules();

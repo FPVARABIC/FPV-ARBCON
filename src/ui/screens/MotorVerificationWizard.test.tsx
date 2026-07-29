@@ -351,20 +351,21 @@ describe('Phase 2I - development-only entry containment', () => {
     }
   });
 
-  it('resolves to undefined when __DEV__ is false', () => {
-    const previous = (global as {__DEV__?: boolean}).__DEV__;
-    jest.resetModules();
-    (global as {__DEV__?: boolean}).__DEV__ = false;
-    try {
-      const seam = require('./debugPanels');
-      expect(seam.DevBenchEntry).toBeUndefined();
-      expect(seam.DevBenchScreen).toBeUndefined();
-    } finally {
-      (global as {__DEV__?: boolean}).__DEV__ = previous;
+  it('resolves the entry regardless of __DEV__ - Motors ships in every build', () => {
+    for (const dev of [true, false]) {
+      const previous = (global as {__DEV__?: boolean}).__DEV__;
       jest.resetModules();
+      (global as {__DEV__?: boolean}).__DEV__ = dev;
+      try {
+        const seam = require('./debugPanels');
+        expect(typeof seam.DevBenchEntry).toBe('function');
+        expect(typeof seam.DevBenchScreen).toBe('function');
+      } finally {
+        (global as {__DEV__?: boolean}).__DEV__ = previous;
+        jest.resetModules();
+      }
     }
   });
-
   it('keeps the app entry free of any static motor-flow import', () => {
     const app = readFileSync(join(REPO_ROOT, 'App.tsx'), 'utf8');
     expect(app).not.toMatch(/from '\.\/src\/ui\/screens\/MotorsScreen'/);

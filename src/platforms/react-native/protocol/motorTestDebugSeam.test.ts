@@ -5,7 +5,7 @@
  * NO HARDWARE: no USB, FC, ESC, LiPo or motor is touched.
  */
 
-import {readFileSync, readdirSync} from 'fs';
+import {existsSync, readFileSync, readdirSync} from 'fs';
 import {join} from 'path';
 
 import {
@@ -58,19 +58,20 @@ describe('R2 - the seam is the ONLY runtime route to the engine', () => {
     expect(isMotorTestEngineBundled()).toBe(true);
   });
 
-  it('is reached only through a __DEV__-guarded require, never a static import', () => {
-    const executable = executableOf(join(__dirname, 'motorTestDebugSeam.ts'));
-    // A static import would be retained by Metro no matter what runtime
-    // guard wrapped its use - which is the entire defect R2 closes.
-    expect(executable).not.toMatch(
-      /^import\s+\{[^}]*createMotorTestSessionBinding/m,
-    );
-    expect(executable).toMatch(
-      /__DEV__[\s\S]{0,120}require\('\.\/motorTestSessionBinding'\)/,
-    );
-    expect(executable).toMatch(
-      /__DEV__[\s\S]{0,160}require\('[^']*motorTestTelemetryBarrier'\)/,
-    );
+  it('resolves the engine unconditionally - no build conditional survives', () => {
+    // SINGLE-APP MERGE: the __DEV__ gate and the build-variant selection
+    // are both gone on purpose. What must NOT come back is any branch at
+    // all: one implementation, every build.
+    for (const file of ['motorTestDebugSeam.ts', 'motorTestEngine.ts']) {
+      const executable = executableOf(join(__dirname, file));
+      expect(executable).not.toContain('__DEV__');
+      expect(executable).not.toContain('FPV_ARBCON_HARDWARE_TEST');
+      expect(executable).not.toContain('motorTestEngineVariant');
+    }
+    // And the values are real, never undefined.
+    expect(devMotorTestBindingFactory).toBeDefined();
+    expect(devMotorTestRegistryConstructor).toBeDefined();
+    expect(isMotorTestEngineBundled()).toBe(true);
   });
 
   it('uses no runtime feature flag, environment branch or escape hatch', () => {
@@ -94,13 +95,10 @@ describe('R2 - the seam is the ONLY runtime route to the engine', () => {
       if (
         file.endsWith('motorTestDebugSeam.ts') ||
         file.endsWith('motorTestSessionBinding.ts') ||
-        // R3: the HARDWARE TEST half of the build-variant seam. It is
-        // compiled ONLY into the internal Hardware Test variant - Metro
-        // resolves ./motorTestEngineVariant to it exclusively when
-        // FPV_ARBCON_HARDWARE_TEST=1 - so it is never part of a Production
-        // graph. The test immediately below proves its PRODUCTION sibling
-        // requires nothing, which is what actually keeps Production clean.
-        file.endsWith('motorTestEngineVariant.hardwareTest.ts')
+        // The ONE engine module. Exactly one file may require the
+        // binding, which is what keeps a second, unregistered capability
+        // for the same client unrepresentable.
+        file.endsWith('motorTestEngine.ts')
       ) {
         return false;
       }
@@ -116,25 +114,27 @@ describe('R2 - the seam is the ONLY runtime route to the engine', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('R3 - the PRODUCTION build variant imports no motor module at all', () => {
-    // This is the file an ordinary Production bundle actually compiles.
-    // It must contain no runtime reference to the binding, the barrier,
-    // the screen or the entry - only `import type`, which erases.
-    const executable = executableOf(join(__dirname, 'motorTestEngineVariant.ts'));
-    for (const forbidden of [
-      'require(',
-      'motorTestSessionBinding',
-      'motorTestTelemetryBarrier',
-      'MotorsScreen',
-      'MotorsDevEntry',
+  it('has no build-variant seam left to select between', () => {
+    // Both halves of the R3 seam are deleted, not left with one branch
+    // permanently taken. A dead seam is how a removed containment quietly
+    // comes back.
+    for (const gone of [
+      'motorTestEngineVariant.ts',
+      'motorTestEngineVariant.hardwareTest.ts',
     ]) {
-      expect(executable).not.toContain(forbidden);
+      expect(existsSync(join(__dirname, gone))).toBe(false);
     }
-    // Every export it provides is the absent value, so a Production build
-    // gets `undefined` rather than a stub that pretends to work.
-    expect(executable).toMatch(/variantMotorTestBindingFactory[^=]*=\s*undefined/);
-    expect(executable).toMatch(/variantBenchScreen[^=]*=\s*undefined/);
-    expect(executable).toMatch(/IS_HARDWARE_TEST_BUILD\s*=\s*false/);
+    // And the bundler rule that drove it is gone too.
+    const metro = readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'metro.config.js'),
+      'utf8',
+    );
+    const metroCode = metro
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    expect(metroCode).not.toContain('resolveRequest');
+    expect(metroCode).not.toContain('FPV_ARBCON_HARDWARE_TEST');
+    expect(metroCode).not.toContain('hardwareTest');
   });
 
   it('leaves no Release-reachable barrel exporting the binding at runtime', () => {
