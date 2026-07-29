@@ -145,9 +145,22 @@ jobs:
       # forcing the process to die would hide "something is still running
       # after teardown" in the one suite that drives the real motor
       # controller, which is the last place to accept that.
+      # TEMPORARY ONE-OFF DIAGNOSTIC - REMOVE ONCE THE LEAK IS NAMED.
+      #
+      # The leak does not reproduce locally in EITHER worker topology
+      # (default workers: 23s, exit 0; --maxWorkers=1: 35s, exit 0; both
+      # with no exit warning), so worker topology is not the discriminating
+      # variable - the CI environment is (Node v22.23.1 there vs v22.22.2
+      # locally). That is what makes it legitimate to accept
+      # --detectOpenHandles here even though Jest implies --runInBand with
+      # it: in-band is not what hides the leak.
+      #
+      # The handle report prints where the "did not exit" warning appeared,
+      # i.e. after the suites finish, so the 10-minute bound still captures
+      # it even if the process then hangs.
       - name: Jest
         timeout-minutes: 10
-        run: npx jest --ci
+        run: npx jest --ci --detectOpenHandles
 
       # MANDATORY GATE. Builds the real --dev false bundle and fails the
       # workflow if a debug-only token is present, if the motor engine or
