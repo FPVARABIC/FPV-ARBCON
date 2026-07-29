@@ -39,6 +39,12 @@ type DevBenchScreenComponent = typeof import('./MotorsScreen').default;
  * production bundle, not merely unrendered in it. */
 type DevBenchEntryComponent = typeof import('./MotorsDevEntry').default;
 
+import {
+  hardwareTestBenchEntry,
+  hardwareTestBenchRouteName,
+  hardwareTestBenchScreen,
+} from '../../platforms/react-native/protocol/motorTestDebugSeam';
+
 // NOTE: a static import would keep the debug panels in the production
 // import graph no matter what runtime guard wrapped it; a __DEV__-guarded
 // require() is the only form Metro's dead-code elimination can strip.
@@ -52,11 +58,14 @@ export const DevSerialPanel: SerialDebugPanel | undefined = __DEV__
 
 export const DevBenchScreen: DevBenchScreenComponent | undefined = __DEV__
   ? (require('./MotorsScreen').default as DevBenchScreenComponent)
-  : undefined;
+  : // R3: a RELEASE build carries the screen only when the build-variant
+    // seam was compiled as the Hardware Test one. Production resolves that
+    // seam to a module that imports no screen at all.
+    (hardwareTestBenchScreen as DevBenchScreenComponent | undefined);
 
 export const DevBenchEntry: DevBenchEntryComponent | undefined = __DEV__
   ? (require('./MotorsDevEntry').default as DevBenchEntryComponent)
-  : undefined;
+  : (hardwareTestBenchEntry as DevBenchEntryComponent | undefined);
 
 /**
  * Phase 2I - the route NAME, resolved through the same seam.
@@ -68,4 +77,4 @@ export const DevBenchEntry: DevBenchEntryComponent | undefined = __DEV__
  */
 export const DEV_BENCH_ROUTE_NAME: 'Motors' | undefined = __DEV__
   ? (require('./MotorsDevEntry').MOTORS_ROUTE_NAME as 'Motors')
-  : undefined;
+  : hardwareTestBenchRouteName;

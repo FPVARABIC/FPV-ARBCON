@@ -93,7 +93,14 @@ describe('R2 - the seam is the ONLY runtime route to the engine', () => {
     const offenders = productionSources().filter(file => {
       if (
         file.endsWith('motorTestDebugSeam.ts') ||
-        file.endsWith('motorTestSessionBinding.ts')
+        file.endsWith('motorTestSessionBinding.ts') ||
+        // R3: the HARDWARE TEST half of the build-variant seam. It is
+        // compiled ONLY into the internal Hardware Test variant - Metro
+        // resolves ./motorTestEngineVariant to it exclusively when
+        // FPV_ARBCON_HARDWARE_TEST=1 - so it is never part of a Production
+        // graph. The test immediately below proves its PRODUCTION sibling
+        // requires nothing, which is what actually keeps Production clean.
+        file.endsWith('motorTestEngineVariant.hardwareTest.ts')
       ) {
         return false;
       }
@@ -107,6 +114,27 @@ describe('R2 - the seam is the ONLY runtime route to the engine', () => {
         );
     });
     expect(offenders).toEqual([]);
+  });
+
+  it('R3 - the PRODUCTION build variant imports no motor module at all', () => {
+    // This is the file an ordinary Production bundle actually compiles.
+    // It must contain no runtime reference to the binding, the barrier,
+    // the screen or the entry - only `import type`, which erases.
+    const executable = executableOf(join(__dirname, 'motorTestEngineVariant.ts'));
+    for (const forbidden of [
+      'require(',
+      'motorTestSessionBinding',
+      'motorTestTelemetryBarrier',
+      'MotorsScreen',
+      'MotorsDevEntry',
+    ]) {
+      expect(executable).not.toContain(forbidden);
+    }
+    // Every export it provides is the absent value, so a Production build
+    // gets `undefined` rather than a stub that pretends to work.
+    expect(executable).toMatch(/variantMotorTestBindingFactory[^=]*=\s*undefined/);
+    expect(executable).toMatch(/variantBenchScreen[^=]*=\s*undefined/);
+    expect(executable).toMatch(/IS_HARDWARE_TEST_BUILD\s*=\s*false/);
   });
 
   it('leaves no Release-reachable barrel exporting the binding at runtime', () => {

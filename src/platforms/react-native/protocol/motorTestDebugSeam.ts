@@ -42,6 +42,14 @@
  * has no motor-test anchor, because Release has no motor test.
  */
 
+import {
+  variantMotorTestBindingFactory,
+  variantMotorTestRegistryConstructor,
+  variantBenchScreen,
+  variantBenchEntry,
+  variantBenchRouteName,
+  IS_HARDWARE_TEST_BUILD,
+} from './motorTestEngineVariant';
 import type {MotorTestSessionCapability} from './motorTestSessionBinding';
 import type {MotorTestTelemetryRegistry} from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
 import type {MspClient} from '../../../core/protocol/mspClient';
@@ -62,7 +70,12 @@ export const devMotorTestBindingFactory: MotorTestBindingFactory | undefined =
   __DEV__
     ? (require('./motorTestSessionBinding')
         .createMotorTestSessionBinding as MotorTestBindingFactory)
-    : undefined;
+    : // R3: a RELEASE build carries the engine only when the build-variant
+      // seam was compiled as the Hardware Test one. In an ordinary
+      // Production Release this resolves to the production variant module,
+      // whose value is `undefined` and which imports no motor module at
+      // all - so the engine is absent from the graph, not merely unused.
+      variantMotorTestBindingFactory;
 
 /**
  * The motor-test telemetry registry CONSTRUCTOR, or `undefined` in a
@@ -80,7 +93,7 @@ export const devMotorTestRegistryConstructor:
   | undefined = __DEV__
   ? (require('../../../core/protocol/telemetry/motorTestTelemetryBarrier')
       .MotorTestTelemetryRegistry as MotorTestRegistryConstructor)
-  : undefined;
+  : variantMotorTestRegistryConstructor;
 
 /**
  * Whether this build contains the motor-test engine at all.
@@ -91,6 +104,12 @@ export const devMotorTestRegistryConstructor:
  */
 export function isMotorTestEngineBundled(): boolean {
   return devMotorTestBindingFactory !== undefined;
+}
+
+/** True only in the internal Hardware Test variant. Used to render the
+ * build's own warning banner - never to authorise anything. */
+export function isHardwareTestBuild(): boolean {
+  return IS_HARDWARE_TEST_BUILD;
 }
 
 /* ------------------------------------------------------------------ *
@@ -148,3 +167,28 @@ export function readMotorTestCapability(
 ): MotorTestSessionCapability | undefined {
   return CAPABILITIES.get(sessionId);
 }
+
+
+/* ------------------------------------------------------------------ *
+ * R3 - the SCREEN side of the same build-variant seam.
+ *
+ * `debugPanels.ts` gates the motor-test screen on `__DEV__`, which is the
+ * right answer for a Debug build and the wrong one for the internal
+ * Hardware Test variant: that is a RELEASE build which must carry the
+ * screen. These three exports resolve through the same compiled-file seam
+ * as the engine, so an ordinary Production Release still contains no
+ * screen, no entry control and no route NAME.
+ * ------------------------------------------------------------------ */
+
+/** Structural types, so this module pulls no screen into the graph. */
+export type BenchScreenComponent = typeof import('../../../ui/screens/MotorsScreen').default;
+export type BenchEntryComponent = typeof import('../../../ui/screens/MotorsDevEntry').default;
+
+/** The motor-test screen for a Hardware Test build, else undefined. */
+export const hardwareTestBenchScreen: BenchScreenComponent | undefined = variantBenchScreen;
+
+/** The entry control for a Hardware Test build, else undefined. */
+export const hardwareTestBenchEntry: BenchEntryComponent | undefined = variantBenchEntry;
+
+/** The route name for a Hardware Test build, else undefined. */
+export const hardwareTestBenchRouteName: 'Motors' | undefined = variantBenchRouteName;

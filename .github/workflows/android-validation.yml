@@ -320,6 +320,79 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      # R3 - THE INTERNAL HARDWARE TEST APK.
+      #
+      # Built AFTER the Production release APK and its containment scan, so
+      # a contaminated Production bundle can never be masked by this one.
+      # FPV_ARBCON_HARDWARE_TEST=1 is what makes metro.config.js compile the
+      # hardware-test build-variant seam; android/app/build.gradle FAILS the
+      # bundle task without it, so this APK can never be labelled
+      # "Hardware Test" while lacking the engine.
+      #
+      # arm64-v8a only, matching the debug build: this is an internal
+      # single-device test artifact, not a distributable, and the 4-ABI
+      # build would double an already long native step.
+      - name: Assemble internal Hardware Test APK
+        working-directory: android
+        timeout-minutes: 40
+        env:
+          FPV_ARBCON_HARDWARE_TEST: '1'
+        run: |
+          ./gradlew :app:assembleHardwareTest \
+            -PreactNativeArchitectures=arm64-v8a \
+            --max-workers=2 \
+            --no-daemon \
+            --console=plain
+
+      - name: Locate and verify the Hardware Test APK
+        working-directory: android
+        run: |
+          HW_APK_PATH=$(find app/build/outputs/apk/hardwareTest -name '*.apk' | head -n 1)
+          if [ -z "$HW_APK_PATH" ]; then
+            echo "No Hardware Test APK produced" >&2
+            exit 1
+          fi
+          test -s "$HW_APK_PATH"
+          echo "Resolved Hardware Test APK: android/$HW_APK_PATH"
+          ls -la "$HW_APK_PATH"
+          echo "Hardware Test APK size (bytes): $(stat -c %s "$HW_APK_PATH")"
+          echo "Hardware Test APK SHA-256: $(sha256sum "$HW_APK_PATH" | cut -d' ' -f1)"
+          echo "HARDWARE_TEST_APK_PATH=android/$HW_APK_PATH" >> "$GITHUB_ENV"
+
+      - name: Verify the Hardware Test APK identity and Motors inclusion
+        working-directory: android
+        run: |
+          APK="${HARDWARE_TEST_APK_PATH#android/}"
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          # Application id, version and the visible launcher label.
+          "$AAPT" dump badging "$APK" | grep -E "^package:|^application-label" || true
+          "$AAPT" dump badging "$APK" | grep -q "package: name='com.fpvarbcon.hardwaretest'" \
+            || { echo "Hardware Test APK has the wrong application id" >&2; exit 1; }
+          "$AAPT" dump badging "$APK" | grep -q "FPV-ARBCON Hardware Test" \
+            || { echo "Hardware Test APK is not visibly labelled as a Hardware Test build" >&2; exit 1; }
+          # It must be signed and standalone, exactly like the release APK.
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$APK"
+          unzip -l "$APK" | grep -E 'assets/index\.android\.bundle|assets/.*\.hbc' \
+            || { echo "Hardware Test APK does not contain a packaged JS bundle" >&2; exit 1; }
+          # And it must ACTUALLY carry the engine - an unmistakable
+          # Hardware Test build that cannot test motors would be worse than
+          # no build at all.
+          mkdir -p /tmp/hwapk && unzip -o -q "$APK" 'assets/index.android.bundle' -d /tmp/hwapk
+          for token in MSP_SET_MOTOR encodeSetMotorPayload createMotorTestController; do
+            grep -q "$token" /tmp/hwapk/assets/index.android.bundle \
+              || { echo "Hardware Test bundle is missing $token" >&2; exit 1; }
+          done
+          echo "Hardware Test APK verified: correct id, label, signature, bundle and engine."
+
+      - name: Upload internal Hardware Test APK artifact
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-apk-hardware-test
+          path: ${{ env.HARDWARE_TEST_APK_PATH }}
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload JVM unit test reports
         if: always()
         uses: actions/upload-artifact@v7
