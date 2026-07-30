@@ -188,6 +188,7 @@ class ReducerBackedController implements MotorTestController {
         physicalStopConfirmed: false,
         deferredBehindActiveWrite: false,
         attributionAmbiguous: false,
+        attributionResolvedByConfirmation: false,
         wirePreemptionClaimed: false,
         submittedNextOnTransport: false,
         episodeId: 0,

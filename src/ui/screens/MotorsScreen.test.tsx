@@ -102,6 +102,9 @@ function snapshotFor(options: {
   reasons?: MotorTestActivationBlockReason[];
   mayHaveReachedFc?: boolean;
   attributionAmbiguous?: boolean;
+  attributionResolvedByConfirmation?: boolean;
+  stopOutcome?: MotorTestControllerSnapshot['stopExecution']['outcome'];
+  stopAcknowledged?: boolean;
   receipt?: MotorTestControllerSnapshot['verificationReceipt'];
 }): MotorTestControllerSnapshot {
   const machineName = options.machine ?? 'Ready';
@@ -120,14 +123,16 @@ function snapshotFor(options: {
     stopExecution: {
       attempts: 0,
       commandDispatched: false,
-      commandAcknowledged: false,
+      commandAcknowledged: options.stopAcknowledged ?? false,
       physicalStopConfirmed: false,
       deferredBehindActiveWrite: false,
       attributionAmbiguous: options.attributionAmbiguous ?? false,
+      attributionResolvedByConfirmation:
+        options.attributionResolvedByConfirmation ?? false,
       wirePreemptionClaimed: false,
       submittedNextOnTransport: false,
       episodeId: 0,
-      outcome: undefined,
+      outcome: options.stopOutcome,
     },
     activation: {
       allowed,
@@ -329,15 +334,99 @@ describe('MotorsScreen - state presentation', () => {
     acked.unmount();
   });
 
-  it('shows the emergency LiPo instruction and the new-session requirement on Fault', () => {
+  /* THE RED BANNER IS NOT "THERE WAS A FAULT".
+     On the device, ANY fault printed "stop could not be confirmed -
+     disconnect the LiPo", including one caused by a safety read that the
+     app's own stop had displaced. An operator whose motor had in fact
+     been stopped cleanly was told to pull the battery, which is exactly
+     how the one message that must never be ignored stops being read. */
+
+  it('shows the LiPo instruction when a command may be live and the stop is unconfirmed', () => {
     const rendered = render(
-      new FakeOperator(snapshotFor({machine: 'Fault', allowed: false})),
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Fault',
+          allowed: false,
+          mayHaveReachedFc: true,
+          stopOutcome: {kind: 'FAILED', reason: 'REQUEST_FAILED'},
+        }),
+      ),
     );
     const emergency = rendered.find('motors-emergency-text');
     expect(emergency.props.children).toBe(
       'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
     );
     expect(rendered.query('motors-new-session-text')).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('shows it for an ambiguity that was never resolved', () => {
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Fault',
+          allowed: false,
+          mayHaveReachedFc: true,
+          attributionAmbiguous: true,
+          attributionResolvedByConfirmation: false,
+          stopOutcome: {kind: 'FAILED', reason: 'ATTRIBUTION_AMBIGUOUS'},
+        }),
+      ),
+    );
+    expect(rendered.query('motors-fault-banner')).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('does NOT show it for a fault whose stop was genuinely acknowledged', () => {
+    // The exact device case: a monitoring read displaced by this app's own
+    // stop faulted the session, while the stop itself was acknowledged.
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Fault',
+          allowed: false,
+          mayHaveReachedFc: true,
+          stopAcknowledged: true,
+          stopOutcome: {kind: 'ACKNOWLEDGED'},
+        }),
+      ),
+    );
+    expect(rendered.query('motors-fault-banner')).toBeUndefined();
+    expect(rendered.query('motors-emergency-text')).toBeUndefined();
+    // The session did end, and the screen says so - without inventing a
+    // battery emergency.
+    expect(rendered.query('motors-fault-notice')).toBeDefined();
+    expect(texts(rendered)).toContain('انتهت جلسة الاختبار.');
+    expect(texts(rendered)).not.toContain(
+      'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
+    );
+    rendered.unmount();
+  });
+
+  it('does NOT show it when a resolved ambiguity ended in an acknowledged stop', () => {
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Fault',
+          allowed: false,
+          mayHaveReachedFc: true,
+          stopAcknowledged: true,
+          attributionAmbiguous: true,
+          attributionResolvedByConfirmation: true,
+          stopOutcome: {kind: 'ACKNOWLEDGED'},
+        }),
+      ),
+    );
+    expect(rendered.query('motors-fault-banner')).toBeUndefined();
+    rendered.unmount();
+  });
+
+  it('does NOT show it when no motor command was ever submitted', () => {
+    const rendered = render(
+      new FakeOperator(snapshotFor({machine: 'Fault', allowed: false})),
+    );
+    expect(rendered.query('motors-fault-banner')).toBeUndefined();
+    expect(rendered.query('motors-fault-notice')).toBeDefined();
     rendered.unmount();
   });
 

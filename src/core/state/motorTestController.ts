@@ -267,6 +267,7 @@ import {
 import {decodeAdvancedConfig} from '../protocol/msp/decoding/decodeAdvancedConfig';
 import {decodeFeatureConfig} from '../protocol/msp/decoding/decodeFeatureConfig';
 import {decodeMotorConfig} from '../protocol/msp/decoding/decodeMotorConfig';
+import type {MspEmergencyStopDispatch} from '../protocol/mspClient';
 import type {
   MotorTestBarrierHold,
   MotorTestTelemetryRegistry,
@@ -1052,10 +1053,27 @@ export interface MotorTestStopExecutionRecord {
   readonly deferredBehindActiveWrite: boolean;
   /**
    * Phase 2G: true when the stop displaced an already-written command
-   * 214, making any apparent acknowledgement unattributable. A full
-   * session reset is required; the lease is failed closed.
+   * 214, so the FIRST frame that resolved could belong to the displaced
+   * pulse rather than to this stop. It is a fact about that one exchange
+   * and is never cleared.
    */
   readonly attributionAmbiguous: boolean;
+  /**
+   * True when the ambiguity above was RESOLVED by a second, independently
+   * issued all-stop whose acknowledgement could not have been the
+   * displaced pulse's response.
+   *
+   * WHY THIS EXISTS RATHER THAN JUST CLEARING THE FLAG. A normal early
+   * release - the operator letting go while the pulse's own command 214
+   * is still unanswered - used to be permanently terminal, because an
+   * ambiguous first exchange was treated as unresolvable. It is not:
+   * exactly ONE non-stop 214 can be confused with the stop, the FIFO
+   * answers in order, and issuing a second all-stop therefore buys an
+   * acknowledgement that provably belongs to an all-stop frame. The first
+   * frame is still never accepted as proof - it is discarded, and this
+   * flag records that something else supplied the proof instead.
+   */
+  readonly attributionResolvedByConfirmation: boolean;
   /**
    * Phase 2G: PERMANENTLY false. Nothing in this codebase can preempt
    * bytes already handed to the transport. The strongest true statement
@@ -1081,6 +1099,7 @@ const NO_STOP_EXECUTION: MotorTestStopExecutionRecord = Object.freeze({
   physicalStopConfirmed: false as const,
   deferredBehindActiveWrite: false,
   attributionAmbiguous: false,
+  attributionResolvedByConfirmation: false,
   wirePreemptionClaimed: false as const,
   submittedNextOnTransport: false,
   episodeId: 0,
@@ -1519,6 +1538,69 @@ class MotorTestControllerImpl {
       return;
     }
     this.apply({authority, kind: 'STOP_TRIGGERED', reason}, reason);
+  }
+
+  /**
+   * Reports an ATTRIBUTABLE all-stop acknowledgement to the reducer.
+   *
+   * Reachable from exactly one place - the stop operation's own terminal
+   * outcome - and only for `ACKNOWLEDGED`. There is no path by which a
+   * caller, a timer, a late frame or a UI event can construct this event,
+   * which is what keeps "the machine left Stopping" tied to a real,
+   * attributable acknowledgement of a real all-stop frame.
+   */
+  private dispatchStopAcknowledged(): void {
+    const authority = this.authority;
+    if (authority === undefined) {
+      return;
+    }
+    this.apply({authority, kind: 'STOP_ACKNOWLEDGED'}, undefined);
+  }
+
+  /**
+   * Puts monitoring back after a stop that left the session genuinely
+   * usable, and proves the flight controller disarmed all over again
+   * before anything may be activated.
+   *
+   * EVERY CONDITION BELOW IS A REFUSAL TO RESUME, not a formality:
+   *   - a closing or closed controller has nothing to monitor;
+   *   - a reducer that did not land in `Ready` means the stop was a
+   *     locking or faulting one, and that session is over;
+   *   - a sealed stop or a latched safety event is terminal by
+   *     construction;
+   *   - a monitor whose last reading was ARMED or FAILED already reported
+   *     itself unsafe, and restarting it would paper over that.
+   *
+   * The fresh observation is AWAITED and then published, exactly as the
+   * setup boundary does, so the control becomes usable from the reading
+   * itself rather than from some unrelated later render.
+   */
+  private resumeMonitoringAfterStop(): void {
+    const monitor = this.safetyMonitor;
+    if (monitor === undefined || this.closing || this.phase !== 'ACTIVE') {
+      return;
+    }
+    if (this.stopSealed || this.activationBarred || this.stopInFlight !== undefined) {
+      return;
+    }
+    if (this.machine === undefined || this.machine.name !== 'Ready') {
+      return;
+    }
+    const status = monitor.snapshot().status;
+    if (status.kind === 'ARMED' || status.kind === 'FAILED') {
+      return;
+    }
+    monitor.start();
+    monitor
+      .observeNow()
+      .then(() => {
+        this.publish();
+      })
+      .catch(() => {
+        // observeNow is documented never to reject; the monitor's own
+        // failure path has already reported through `onUnsafe`.
+        this.publish();
+      });
   }
 
   /* --- cancellation ----------------------------------------------- */
@@ -2723,12 +2805,34 @@ class MotorTestControllerImpl {
           // session whose stop is unproven.
           this.stopSealed = true;
           this.dispatchFault('STOP_FAILED');
+        } else if (outcome.kind === 'ACKNOWLEDGED') {
+          // CORRECTION (2) - THE STOP IS REPORTED TO THE REDUCER.
+          //
+          // THE DEFECT THIS CLOSES. Nothing in this file had ever
+          // constructed `STOP_ACKNOWLEDGED`, so the accepted machine could
+          // not leave `Stopping` even after a perfect, fully attributable
+          // all-stop. `READY -> pulse -> release -> READY` was therefore
+          // structurally impossible: the operator was left in `Stopping`
+          // forever and a second motor needed a whole new session.
+          //
+          // The reducer - not this controller - decides where a confirmed
+          // stop lands, from the disposition the ORIGINAL trigger carried:
+          // `Ready` for a release, a selection change or the deadline;
+          // `Locked` for anything that invalidated a precondition. So a
+          // safety stop is not quietly turned into a recoverable one by
+          // this call.
+          this.dispatchStopAcknowledged();
         }
         // ALWAYS publish. A stop that completes outside teardown - the
         // interactive case, which is every release, deadline and safety
         // event - updates the stop record asynchronously, and a subscriber
         // that never sees it cannot report what actually happened.
         this.publish();
+        // Monitoring was suspended before the stop was registered, so a
+        // session that is genuinely alive again has to be given a fresh
+        // reading before it can activate anything. Fire-and-forget on
+        // purpose: nothing may gate a stop's own completion on a read.
+        this.resumeMonitoringAfterStop();
         return outcome;
       })
       .catch((error: unknown) => {
@@ -2750,6 +2854,7 @@ class MotorTestControllerImpl {
 
     let deferred = false;
     let ambiguous = false;
+    let resolvedByConfirmation = false;
     let submittedNext = false;
 
     const settle = (
@@ -2767,6 +2872,9 @@ class MotorTestControllerImpl {
           this.stopExecution.deferredBehindActiveWrite || deferred,
         attributionAmbiguous:
           this.stopExecution.attributionAmbiguous || ambiguous,
+        attributionResolvedByConfirmation:
+          this.stopExecution.attributionResolvedByConfirmation ||
+          resolvedByConfirmation,
         wirePreemptionClaimed: false as const,
         submittedNextOnTransport:
           this.stopExecution.submittedNextOnTransport || submittedNext,
@@ -2808,16 +2916,36 @@ class MotorTestControllerImpl {
       return settle({kind: 'SCOPE_REJECTED'}, false, false);
     }
 
+    // THE MONITOR IS SUSPENDED BEFORE THE STOP IS REGISTERED, and this
+    // one line is the whole of correction (1).
+    //
+    // THE DEFECT IT CLOSES, from the device. The priority stop purges the
+    // FIFO and displaces the active request. When that active request was
+    // the safety monitor's own MSP_STATUS_EX - which it very often is,
+    // because the monitor observes back-to-back - the observation rejected
+    // with MSP_DISPLACED_IN_FLIGHT_BY_EMERGENCY_STOP, `observeMotorArmedState`
+    // reported REQUEST_FAILED, the monitor published SAFETY_OBSERVATION_FAILED
+    // and called `onUnsafe`, and the controller faulted the session under
+    // SAFETY_MONITORING_FAILED. A perfectly successful stop therefore
+    // ended in "disconnect the LiPo".
+    //
+    // A read this controller cancelled ITSELF is an expected cancellation,
+    // never evidence that the flight controller became unsafe. `stop()`
+    // bumps the monitor's own generation, so the settling observation
+    // publishes nothing and cannot reach `onUnsafe` at all - the ambiguity
+    // is removed rather than filtered after the fact.
+    //
+    // It is stopped for EVERY stop path, including teardown: no stop may
+    // ever be gated on a read, and no read this controller displaced may
+    // ever be read as a safety signal.
+    this.safetyMonitor?.stop();
+
     // Phase 2G: the stop travels the PRIORITY route, not the ordinary
     // lease FIFO. The client purges everything still queued and makes this
     // the next transport submission. That is submission order only - it
     // preempts nothing already handed to the transport, and the dispatch's
     // own flags below are what keep this record honest about it.
-    const dispatch = lease.emergencyStop(
-      MSP_SET_MOTOR,
-      payload,
-      READ_REQUEST_OPTIONS,
-    );
+    const dispatch = this.dispatchAllStop(lease, payload);
     deferred = dispatch.deferredBehindActiveWrite;
     ambiguous = dispatch.attributionAmbiguous;
     // True in every case: the client took this out of its stop slot ahead
@@ -2849,23 +2977,74 @@ class MotorTestControllerImpl {
       );
     }
 
-    // Phase 2G: the response resolved, but it displaced an already-written
-    // command 214, so this frame may belong to the DISPLACED request
-    // rather than to this stop. Nothing here is an acknowledgement. The
-    // lease is failed closed so the identity cannot be reused, forcing a
-    // full session reset before any further attempt.
+    // Phase 2G / correction (3): the frame resolved, but this stop
+    // displaced an already-written command 214 - the pulse's own request -
+    // so THIS frame may be the pulse's response rather than the stop's.
+    // It is discarded as proof, exactly as before.
+    //
+    // WHAT IS NEW is that the ambiguity is now RESOLVED rather than
+    // treated as terminal. A normal early release always produces it, and
+    // permanently faulting a bench session for letting go of a button a
+    // few milliseconds early is not a safety property - it is a defect.
+    //
+    // The resolution is a counting argument, not an optimism: there is
+    // exactly ONE non-stop command 214 outstanding (the pulse), the link
+    // answers a single serialized FIFO in order, and both writes carry the
+    // IDENTICAL all-stop payload. So issuing one more all-stop and waiting
+    // for its acknowledgement guarantees that at least one genuine
+    // all-stop frame was received and processed by the flight controller,
+    // while the possibly-stale first frame is never counted as that proof.
     if (ambiguous) {
-      lease.failClosed();
-      return settle(
-        {kind: 'FAILED', reason: 'ATTRIBUTION_AMBIGUOUS'},
-        true,
-        false,
-      );
+      const confirmation = this.dispatchAllStop(lease, payload);
+      try {
+        await confirmation.frame;
+      } catch {
+        // The confirming stop itself failed. Nothing is proven and this
+        // stays terminal - the lease is already faulted by the client's
+        // own rejection policy.
+        return settle({kind: 'FAILED', reason: 'REQUEST_FAILED'}, true, false);
+      }
+      if (
+        !lease.isActive() ||
+        lease.officialSessionAuthority() !== authority ||
+        this.authority !== authority
+      ) {
+        return settle({kind: 'FAILED', reason: 'AUTHORITY_CHANGED'}, true, false);
+      }
+      if (confirmation.attributionAmbiguous) {
+        // Unreachable in practice - the pulse was the only competing 214
+        // and it is settled by now - but a second ambiguity would mean the
+        // counting argument above does not hold, and this must fail closed
+        // rather than resolve on an assumption. The lease is failed closed
+        // so the identity cannot be reused.
+        lease.failClosed();
+        return settle(
+          {kind: 'FAILED', reason: 'ATTRIBUTION_AMBIGUOUS'},
+          true,
+          false,
+        );
+      }
+      resolvedByConfirmation = true;
     }
 
     // ACKNOWLEDGED means received and processed. It is NOT a physical
     // stop, and `physicalStopConfirmed` stays false.
     return settle({kind: 'ACKNOWLEDGED'}, true, true);
+  }
+
+  /**
+   * THE ONE SITE THAT PUTS AN ALL-STOP ON THE WIRE.
+   *
+   * Extracted so the priority route has a single call site even though a
+   * stop may need two submissions to be attributable (see the ambiguity
+   * resolution above). Every argument is fixed by the caller from the
+   * protected vector builder; nothing here shapes a payload.
+   */
+  private dispatchAllStop(
+    lease: MotorTestLease,
+    payload: Uint8Array,
+  ): MspEmergencyStopDispatch {
+    return lease.emergencyStop(MSP_SET_MOTOR, payload, READ_REQUEST_OPTIONS);
   }
 
   /* --- teardown ---------------------------------------------------- */

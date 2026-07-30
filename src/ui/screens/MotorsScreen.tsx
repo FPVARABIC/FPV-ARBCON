@@ -304,6 +304,44 @@ export function commandMayBeLive(
   return snapshot?.pulse.mayHaveReachedFc === true;
 }
 
+/**
+ * Whether the operator must be told to disconnect the LiPo RIGHT NOW.
+ *
+ * THE DEFECT THIS CLOSES, from the device. The red banner was driven by
+ * the FAULT presentation alone, so ANY fault printed "stop could not be
+ * confirmed - disconnect the LiPo". A monitoring read displaced by the
+ * app's own stop faulted the session, and an operator whose motor had in
+ * fact been stopped cleanly was told to pull the battery. Crying wolf on
+ * a safe stop is not a conservative default - it teaches people to ignore
+ * the one message that must never be ignored.
+ *
+ * The instruction now requires BOTH halves of the thing it claims:
+ *   - a motor command may actually have reached the flight controller, and
+ *   - the stop that should have ended it is genuinely unconfirmed.
+ *
+ * A stop is confirmed when it was acknowledged AND its attribution is
+ * settled - either it was never ambiguous, or the ambiguity was resolved
+ * by a second all-stop whose acknowledgement could not have belonged to
+ * the displaced pulse. Anything else - failed, rejected, timed out, never
+ * attempted, or ambiguous and unresolved - is unconfirmed and keeps the
+ * banner. So does a fault that arrives while a stop is still in flight.
+ */
+export function stopIsGenuinelyUnconfirmed(
+  snapshot: MotorTestControllerSnapshot | undefined,
+): boolean {
+  if (!commandMayBeLive(snapshot) || snapshot === undefined) {
+    return false;
+  }
+  const stop = snapshot.stopExecution;
+  const attributionSettled =
+    !stop.attributionAmbiguous || stop.attributionResolvedByConfirmation;
+  const confirmed =
+    stop.outcome?.kind === 'ACKNOWLEDGED' &&
+    stop.commandAcknowledged &&
+    attributionSettled;
+  return !confirmed;
+}
+
 export interface MotorsScreenViewProps {
   /** The operator facade from the ONE official binding. Undefined when no
    * official session is active - the screen then renders inert. */
@@ -420,6 +458,7 @@ export function MotorsScreenView({
   const presentation = derivePresentation(snapshot);
   const receipt = snapshot?.verificationReceipt;
   const mayBeLive = commandMayBeLive(snapshot);
+  const stopUnconfirmed = stopIsGenuinelyUnconfirmed(snapshot);
   const controllerAllows = snapshot?.activation.allowed === true;
   const blockReasons = snapshot?.activation.reasons ?? [];
 
@@ -871,19 +910,37 @@ export function MotorsScreenView({
           ) : null}
         </View>
 
-        {/* (7) Fault: the emergency instruction, prominently. */}
+        {/* (7) Fault. TWO DIFFERENT MESSAGES, because they mean two very
+            different things to somebody standing next to an aircraft.
+
+            The LiPo instruction is reserved for a stop that is genuinely
+            unconfirmed while a command may be live - see
+            stopIsGenuinelyUnconfirmed(). Every other fault ends the
+            session and needs a reconnect, which is worth saying plainly,
+            but it is NOT a reason to tell somebody to pull a battery. */}
         {presentation === 'FAULT' ? (
-          <View style={styles.faultBanner} testID="motors-fault-banner">
-            <Text style={styles.dangerIcon}>⛔</Text>
-            <View style={styles.flexOne}>
-              <Text style={styles.faultText} testID="motors-emergency-text">
-                {t('motorsScreen.emergencyDisconnect')}
+          stopUnconfirmed ? (
+            <View style={styles.faultBanner} testID="motors-fault-banner">
+              <Text style={styles.dangerIcon}>⛔</Text>
+              <View style={styles.flexOne}>
+                <Text style={styles.faultText} testID="motors-emergency-text">
+                  {t('motorsScreen.emergencyDisconnect')}
+                </Text>
+                <Text style={styles.dangerBody} testID="motors-new-session-text">
+                  {t('motorsScreen.emergencyNewSession')}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.card} testID="motors-fault-notice">
+              <Text style={styles.blockHeading} testID="motors-fault-session-text">
+                {t('motorsScreen.faultSessionEnded')}
               </Text>
-              <Text style={styles.dangerBody} testID="motors-new-session-text">
-                {t('motorsScreen.emergencyNewSession')}
+              <Text style={styles.caption} testID="motors-fault-no-lipo-text">
+                {t('motorsScreen.faultNoBatteryAction')}
               </Text>
             </View>
-          </View>
+          )
         ) : null}
 
         {/* (4) The four selectable MSP output cards. */}
@@ -999,7 +1056,9 @@ export function MotorsScreenView({
             // teardown. Anything else keeps the fault presentation.
             safeTeardownConfirmed={
               presentation !== 'FAULT' &&
-              snapshot?.stopExecution.attributionAmbiguous !== true
+              (snapshot?.stopExecution.attributionAmbiguous !== true ||
+                snapshot?.stopExecution.attributionResolvedByConfirmation ===
+                  true)
             }
           />
         ) : null}

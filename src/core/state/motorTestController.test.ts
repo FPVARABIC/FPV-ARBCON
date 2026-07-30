@@ -2424,13 +2424,31 @@ describe('containment', () => {
       code.indexOf("'START_WRITE_CALLED'"),
     );
 
-    // THE SAFETY MEANING IS UNCHANGED AND STILL ENFORCED. These two are
-    // still forbidden outright:
-    //   STOP_ACKNOWLEDGED - the controller must never fabricate proof
-    //     that a stop was acknowledged; only a real attributable response
-    //     may ever produce that claim, and this pass does not grant it.
-    //   RECHECK_REQUESTED - no self-clearing re-arm path exists.
-    for (const forbidden of ['RECHECK_REQUESTED', 'STOP_ACKNOWLEDGED']) {
+    // STOP_ACKNOWLEDGED IS NOW CONSTRUCTED, AND THE GUARD IS STRONGER
+    // RATHER THAN GONE.
+    //
+    // It used to be forbidden outright, which was correct while nothing
+    // could produce an attributable acknowledgement - but it also meant
+    // the reducer could never leave `Stopping`, so a perfect release left
+    // the session unusable and a second motor needed a whole new one.
+    //
+    // The safety meaning is preserved by CONFINEMENT instead: exactly one
+    // construction site, inside one private helper, reached from exactly
+    // one place - the stop operation's own ACKNOWLEDGED outcome. No timer,
+    // no UI event, no late frame and no caller can reach it.
+    expect(code.match(/'STOP_ACKNOWLEDGED'/g) ?? []).toHaveLength(1);
+    expect(code).toMatch(
+      /private dispatchStopAcknowledged\(\)[\s\S]{0,400}?kind: 'STOP_ACKNOWLEDGED'/,
+    );
+    expect(code.match(/this\.dispatchStopAcknowledged\(\)/g) ?? []).toHaveLength(1);
+    // ... and that one call site is guarded by the acknowledged outcome.
+    expect(code).toMatch(
+      /outcome\.kind === 'ACKNOWLEDGED'[\s\S]{0,1200}?this\.dispatchStopAcknowledged\(\)/,
+    );
+
+    // RECHECK_REQUESTED stays forbidden outright: no self-clearing
+    // re-arm path exists.
+    for (const forbidden of ['RECHECK_REQUESTED']) {
       expect(code).not.toContain(forbidden);
     }
   });
@@ -2794,8 +2812,12 @@ describe('Phase 2G - stop dominance', () => {
     expect(submittedCommands(harness)[duringWrite]).toBe(MSP_SET_MOTOR_FIXTURE);
 
     // The record only carries the displacement facts once the stop has
-    // settled, so complete it before reading them.
+    // settled, so complete it before reading them. A displaced 214 makes
+    // the first exchange ambiguous, so the operation issues one confirming
+    // all-stop - two answers, not one.
     await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
     expect(
@@ -2934,33 +2956,78 @@ describe('Phase 2G - stop dominance', () => {
 });
 
 describe('Phase 2G - same-command (214) attribution ambiguity', () => {
-  it('never acknowledges a stop whose response cannot be told from the pulse’s', async () => {
+  it('never accepts the first frame as the stop, and resolves with a second all-stop', async () => {
     const harness = createHarness();
     await pulseAwaitingAck(harness);
 
     // The pulse write finished and its ACK is still outstanding. The stop
-    // displaces it - and both are command 214.
+    // displaces it - and both are command 214, so the first frame back
+    // could belong to either.
     harness.controller.requestStop('TOUCH_RELEASED');
     await flush();
     await settlePulseWrite(harness);
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
 
+    // THE FIRST FRAME PROVED NOTHING. The operation has not settled and
+    // has claimed no acknowledgement.
+    const midway = harness.controller.getSnapshot();
+    expect(midway.stopExecution.commandAcknowledged).toBe(false);
+    expect(midway.stopExecution.outcome).toBeUndefined();
+    // A CONFIRMING all-stop is on the wire, carrying the identical vector.
+    await settlePulseWrite(harness);
+    const stops = submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE).filter(
+      payload => payload.join(',') === EXPECTED_STOP_PAYLOAD.join(','),
+    );
+    expect(stops).toHaveLength(2);
+
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
+
     const snapshot = harness.controller.getSnapshot();
+    // The ambiguity is RECORDED - it genuinely happened - and recorded as
+    // resolved by something that could not have been the pulse's reply.
     expect(snapshot.stopExecution.attributionAmbiguous).toBe(true);
-    expect(snapshot.stopExecution.commandAcknowledged).toBe(false);
+    expect(snapshot.stopExecution.attributionResolvedByConfirmation).toBe(true);
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(true);
+    // An acknowledgement is still not a physical claim.
     expect(snapshot.stopExecution.physicalStopConfirmed).toBe(false);
-    expect(snapshot.stopExecution.outcome).toEqual({
-      kind: 'FAILED',
-      reason: 'ATTRIBUTION_AMBIGUOUS',
-    });
-    expect(snapshot.machine?.name).toBe('Fault');
-    // Telemetry stays paused and the barrier is still held.
+    expect(snapshot.stopExecution.outcome).toEqual({kind: 'ACKNOWLEDGED'});
+    // A normal early release is NOT terminal any more.
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.warnings).toHaveLength(0);
+    // Telemetry stays paused and the barrier is still held - the session
+    // was never torn down.
     expect(snapshot.telemetryHeld).toBe(true);
     expect(harness.scheduler.leases.some(l => !l.released)).toBe(true);
   });
 
-  it('requires a full session reset - the ambiguous stop can never be rearmed', async () => {
+  it('stays terminal when the CONFIRMING all-stop is itself rejected', async () => {
+    const harness = createHarness();
+    await pulseAwaitingAck(harness);
+
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await flush();
+    await settlePulseWrite(harness);
+    // First frame: consumed, proves nothing.
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
+    // The confirming all-stop is refused by the flight controller.
+    await settlePulseWrite(harness);
+    harness.transport.emitData(errorFrame(MSP_SET_MOTOR_FIXTURE));
+    await flush(20);
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.stopExecution.attributionResolvedByConfirmation).toBe(false);
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(false);
+    expect(snapshot.stopExecution.physicalStopConfirmed).toBe(false);
+    expect(snapshot.machine?.name).toBe('Fault');
+    // The one case the LiPo instruction exists for.
+    expect(snapshot.warnings.length).toBeGreaterThan(0);
+    expect(snapshot.telemetryHeld).toBe(true);
+  });
+
+  it('an unresolved stop can never be rearmed - a full session reset is required', async () => {
     const harness = createHarness();
     await pulseAwaitingAck(harness);
     harness.controller.requestStop('TOUCH_RELEASED');
@@ -2968,16 +3035,17 @@ describe('Phase 2G - same-command (214) attribution ambiguity', () => {
     await settlePulseWrite(harness);
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
+    await settlePulseWrite(harness);
+    harness.transport.emitData(errorFrame(MSP_SET_MOTOR_FIXTURE));
+    await flush(20);
 
-    const afterAmbiguous = submittedCommands(harness).length;
+    const afterUnresolved = submittedCommands(harness).length;
     const sealedEpisode = harness.controller.getSnapshot().stopExecution.episodeId;
 
-    // No further activation, and no further stop write, is possible: a
-    // sealed stop is terminal for this connection.
     expect(harness.controller.pulseMotor(1)).toBe('NOT_READY');
     harness.controller.requestStop('STOP_BUTTON_PRESSED');
     await flush(20);
-    expect(harness.transport.writeLog).toHaveLength(afterAmbiguous);
+    expect(harness.transport.writeLog).toHaveLength(afterUnresolved);
     expect(harness.controller.getSnapshot().stopExecution.episodeId).toBe(
       sealedEpisode,
     );
@@ -3005,6 +3073,10 @@ describe('Phase 2G - stop-operation generations', () => {
     expect(harness.transport.writeLog).toHaveLength(before + 1);
 
     await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
+    // The displaced 214 made the first exchange ambiguous, so ONE
+    // confirming all-stop follows. Still one operation, still one episode.
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
     const record = harness.controller.getSnapshot().stopExecution;
@@ -3257,22 +3329,33 @@ describe('Phase 2I - receipt eligibility', () => {
     await flush(20);
   });
 
-  it('mints no receipt when the stop is attributionally ambiguous', async () => {
+  it('mints no receipt when the pulse itself was never acknowledged', async () => {
     const harness = createHarness();
     await runSetup(harness);
     harness.controller.pulseMotor(1);
     await flush();
     await settlePulseWrite(harness);
-    // The stop displaces an already-written command 214 - so a later 214
-    // response cannot be told apart from the stop's own.
+    // The stop displaces an already-written command 214, so the first
+    // frame back cannot be told apart from the stop's own. The operation
+    // resolves that with a confirming all-stop, and the SESSION survives.
     harness.controller.requestStop('TOUCH_RELEASED');
     await flush();
+    await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
     await settlePulseWrite(harness);
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
 
     const snapshot = harness.controller.getSnapshot();
     expect(snapshot.stopExecution.attributionAmbiguous).toBe(true);
+    expect(snapshot.stopExecution.attributionResolvedByConfirmation).toBe(true);
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(true);
+    // ... and STILL no receipt. The displaced frame was consumed as the
+    // ambiguous one, so this attempt has no attributable pulse
+    // acknowledgement of its own - and an observation must never be
+    // recorded against an attempt that was not cleanly completed.
+    expect(snapshot.pulse.acknowledged).toBe(false);
     expect(snapshot.verificationReceipt).toBeUndefined();
   });
 

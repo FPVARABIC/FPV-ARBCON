@@ -38,7 +38,7 @@ import type {
   TelemetryPauseLease,
   TelemetryPauseReason,
 } from '../protocol/telemetry/telemetryTypes';
-import {MspClient} from '../protocol/mspClient';
+import {MSP_RESPONSE_TIMEOUT_MILLIS, MspClient} from '../protocol/mspClient';
 import type {MspSessionCompositeIdentity} from '../protocol/motorTestLease';
 import {FakeMspTransport} from '../protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../protocol/__testUtils__/mspFixtures';
@@ -957,5 +957,373 @@ describe('one serialized MSP request path', () => {
     expect(writtenCommand(harness.transport.writes[0].data)).toBe(
       MSP_SET_MOTOR_FIXTURE,
     );
+  });
+});
+
+/* ================================================================== *
+ * H. THE NORMAL RELEASE LIFECYCLE
+ *
+ * READY -> pulse M1 -> release -> confirmed all-stop -> READY -> M2.
+ *
+ * THE DEFECT THIS BLOCK EXISTS FOR, recorded from the device. Releasing
+ * the hold control put the app into a terminal fault showing "stop could
+ * not be confirmed - disconnect the LiPo", and a completely new session
+ * was required to test a second motor. Three separate causes, each
+ * sufficient on its own:
+ *
+ *   1. the controller never dispatched STOP_ACKNOWLEDGED, so the reducer
+ *      could never leave `Stopping` even after a perfect stop;
+ *   2. the priority stop displaced the safety monitor's in-flight
+ *      MSP_STATUS_EX, and that EXPECTED cancellation was reported as
+ *      SAFETY_OBSERVATION_FAILED -> SAFETY_MONITORING_FAILED -> Fault;
+ *   3. when the pulse's own command 214 was still unsettled, the stop
+ *      displaced it, the client raised attributionAmbiguous, and the
+ *      controller failed the lease closed.
+ *
+ * Every test below drives the REAL monitor and the REAL client.
+ * ================================================================== */
+
+/** Lets the monitor's scheduled next observation reach the transport, so
+ * a release genuinely races an in-flight MSP_STATUS_EX exactly as it does
+ * on a device. A macrotask turn, never a delay. */
+const nextMonitorTurn = (): Promise<void> =>
+  new Promise<void>(resolve => setTimeout(resolve, 0));
+
+/** Serves pending writes until `until()` holds or the bound is reached. */
+async function pump(harness: Harness, until: () => boolean): Promise<void> {
+  for (let step = 0; step < 80 && !until(); step++) {
+    await flush(4);
+    if (until()) {
+      return;
+    }
+    await serveOne(harness);
+  }
+  await flush(4);
+}
+
+const pendingCommands = (harness: Harness): number[] =>
+  harness.transport.writes.map(write => writtenCommand(write.data));
+
+const stopPayloads = (harness: Harness): number[][] =>
+  harness.writes
+    .filter(write => write.command === MSP_SET_MOTOR_FIXTURE)
+    .map(write => write.payload)
+    .filter(payload => payload.every((byte, index) => byte === EXPECTED_STOP_PAYLOAD[index]));
+
+describe('the normal release lifecycle', () => {
+  it('returns to READY when a release displaces an in-flight observation', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    // The monitor's next observation is genuinely on the wire.
+    await nextMonitorTurn();
+    await flush(10);
+    expect(pendingCommands(harness)).toContain(MSP_STATUS_EX);
+
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+    expect(harness.controller.getSnapshot().machine?.name).toBe('Pulsing');
+
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().activation.allowed === true,
+    );
+
+    const snapshot = harness.controller.getSnapshot();
+    // The displaced observation was EXPECTED - it is not evidence the FC
+    // became unsafe, and it must not fault anything.
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.phase).toBe('ACTIVE');
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(true);
+    expect(snapshot.stopExecution.outcome).toEqual({kind: 'ACKNOWLEDGED'});
+    // Monitoring resumed and proved the FC disarmed all over again.
+    expect(snapshot.armedStateEvidence).toBe('FRESH_DISARMED');
+    expect(snapshot.activation.allowed).toBe(true);
+    // The session was NEVER torn down: same lease, same barrier.
+    expect(snapshot.telemetryHeld).toBe(true);
+    expect(snapshot.teardown).toBeUndefined();
+    // And no LiPo instruction was ever warranted.
+    expect(snapshot.warnings).toHaveLength(0);
+  });
+
+  it('runs M1 -> release -> M2 inside ONE session', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().activation.allowed === true,
+    );
+    expect(harness.controller.getSnapshot().machine?.name).toBe('Ready');
+
+    // The SECOND motor, in the same session - no reconnect, no new lease.
+    expect(harness.controller.pulseMotor(2)).toBe('ACCEPTED');
+    await flush(10);
+    const write = harness.transport.writes[0];
+    expect(writtenCommand(write.data)).toBe(MSP_SET_MOTOR_FIXTURE);
+    // Slot 1 above stop, every other slot at stop.
+    expect(
+      Array.from(write.data.subarray(5, 5 + write.data[3])),
+    ).toEqual([0xe8, 0x03, 0x1a, 0x04, 0xe8, 0x03, 0xe8, 0x03]);
+
+    await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().activation.allowed === true,
+    );
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.pulse.attemptId).toBe(2);
+    // Two genuinely separate stop episodes, never one replayed.
+    expect(snapshot.stopExecution.episodeId).toBe(2);
+    expect(snapshot.warnings).toHaveLength(0);
+  });
+
+  it('survives a release while the pulse is still WRITING', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await flush(10);
+    // The pulse's bytes are at the transport and its write has not settled.
+    expect(harness.client.getActiveRequestPhase()).toBe('WRITING');
+
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().activation.allowed === true,
+    );
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(true);
+    // The stop waited for the uncancellable write rather than racing it -
+    // two concurrent writeBytes() calls must never occur.
+    expect(snapshot.stopExecution.deferredBehindActiveWrite).toBe(true);
+    expect(snapshot.warnings).toHaveLength(0);
+    // An all-stop vector genuinely reached the wire.
+    expect(stopPayloads(harness).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('survives a release while the pulse AWAITS its reply', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await flush(10);
+    harness.transport.resolveNextWrite();
+    await flush(10);
+    // Written, unanswered: the ambiguous case, because the displaced
+    // request carries command 214 exactly like the stop does.
+    expect(harness.client.getActiveRequestPhase()).toBe('AWAITING_RESPONSE');
+
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().activation.allowed === true,
+    );
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(true);
+    // The ambiguity is RECORDED - it really happened - and it is recorded
+    // as RESOLVED, by a second all-stop whose acknowledgement could not
+    // have been the displaced pulse's response.
+    expect(snapshot.stopExecution.attributionAmbiguous).toBe(true);
+    expect(snapshot.stopExecution.attributionResolvedByConfirmation).toBe(true);
+    expect(snapshot.warnings).toHaveLength(0);
+  });
+
+  it('survives a release AFTER the pulse was acknowledged', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+    expect(harness.controller.getSnapshot().pulse.acknowledged).toBe(true);
+
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().activation.allowed === true,
+    );
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.stopExecution.outcome).toEqual({kind: 'ACKNOWLEDGED'});
+    // Nothing was ambiguous: the pulse had already settled.
+    expect(snapshot.stopExecution.attributionAmbiguous).toBe(false);
+    expect(snapshot.warnings).toHaveLength(0);
+  });
+
+  it('stops the live motor on a selection change and starts nothing', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+
+    // The switch STOPS motor 1 and refuses to start motor 3.
+    expect(harness.controller.pulseMotor(3)).toBe('SWITCH_REQUIRES_NEW_ACTIVATION');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().activation.allowed === true,
+    );
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Ready');
+    // Motor 3 was NEVER commanded: slot 2 is at stop in every payload.
+    for (const write of harness.writes) {
+      if (write.command === MSP_SET_MOTOR_FIXTURE) {
+        expect(write.payload[4] + write.payload[5] * 256).toBe(1000);
+      }
+    }
+    // ... and a fresh long press is what starts it, in the same session.
+    expect(harness.controller.pulseMotor(3)).toBe('ACCEPTED');
+  });
+
+  it('never reports an expected monitor displacement as SAFETY_MONITORING_FAILED', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    await nextMonitorTurn();
+    await flush(10);
+    expect(pendingCommands(harness)).toContain(MSP_STATUS_EX);
+
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().activation.allowed === true,
+    );
+
+    const reasons = harness.controller
+      .getSnapshot()
+      .stopDescriptors.map(descriptor => descriptor.stopReason);
+    // The operator released. That is the ONLY stop reason that belongs in
+    // this session's record.
+    expect(reasons).toContain('TOUCH_RELEASED');
+    expect(reasons).not.toContain('SAFETY_MONITORING_FAILED');
+    expect(reasons).not.toContain('ARMED_STATE_DETECTED');
+  });
+});
+
+/* ================================================================== *
+ * I. WHAT MUST STILL BE TERMINAL
+ * ================================================================== */
+
+describe('genuinely unsafe outcomes stay terminal', () => {
+  it('a REJECTED stop is terminal and demands the LiPo be disconnected', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+
+    // The FC answers the all-stop with an MSP error.
+    harness.script.set(MSP_SET_MOTOR_FIXTURE, REJECT);
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().machine?.name === 'Fault',
+    );
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Fault');
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(false);
+    expect(snapshot.activation.reasons).toContain('REQUIRES_NEW_CONNECTION');
+    // The one case the red banner exists for.
+    expect(snapshot.warnings.length).toBeGreaterThan(0);
+    expect(harness.controller.pulseMotor(2)).not.toBe('ACCEPTED');
+  });
+
+  it('a stop that TIMES OUT is terminal and demands the LiPo be disconnected', async () => {
+    jest.useFakeTimers();
+    try {
+      const harness = harnessFor();
+      await runSetup(harness);
+      expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+      await flush(10);
+      harness.transport.resolveNextWrite();
+      await flush(10);
+      harness.transport.emitData(
+        buildMspFrameBytes(MSP_SET_MOTOR_FIXTURE, EMPTY, {
+          wireFormat: 'v1',
+          direction: 'response',
+        }),
+      );
+      await flush(10);
+
+      harness.controller.requestStop('TOUCH_RELEASED');
+      await flush(10);
+      // The all-stop reaches the transport and is NEVER answered.
+      harness.transport.resolveNextWrite();
+      await flush(10);
+      expect(harness.controller.getSnapshot().machine?.name).toBe('Stopping');
+
+      // The client's own response bound elapses.
+      jest.advanceTimersByTime(MSP_RESPONSE_TIMEOUT_MILLIS + 50);
+      await flush(30);
+
+      const snapshot = harness.controller.getSnapshot();
+      expect(snapshot.stopExecution.commandAcknowledged).toBe(false);
+      expect(snapshot.stopExecution.outcome).toEqual({
+        kind: 'FAILED',
+        reason: 'REQUEST_FAILED',
+      });
+      expect(snapshot.machine?.name).toBe('Fault');
+      expect(snapshot.warnings.length).toBeGreaterThan(0);
+      expect(harness.controller.pulseMotor(2)).not.toBe('ACCEPTED');
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
+
+  it('an ARMED flight controller observed mid-session is terminal', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    harness.script.set(MSP_STATUS_EX, reply(statusPayload(true)));
+    await nextMonitorTurn();
+    await pump(
+      harness,
+      () => harness.controller.getSnapshot().armedStateEvidence === 'FC_ARMED',
+    );
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.armedStateEvidence).toBe('FC_ARMED');
+    expect(snapshot.activation.reasons).toContain('FC_ARMED');
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+  });
+
+  it('a USB detach is terminal', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+    harness.invalidate('USB_DETACHED');
+    await flush(20);
+    expect(harness.controller.getSnapshot().outcome).toMatchObject({
+      requiresNewSession: true,
+    });
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+  });
+
+  it('a session replacement is terminal', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+    harness.invalidate('SESSION_CHANGED');
+    await flush(20);
+    expect(harness.controller.getSnapshot().outcome).toMatchObject({
+      requiresNewSession: true,
+    });
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
   });
 });
