@@ -111,6 +111,30 @@ function openRealCapability(): void {
   openMotorTestCapability(SESSION_ID, client, createMotorTestTelemetryRegistry());
 }
 
+/**
+ * The controller the SCREEN is using, obtained legitimately.
+ *
+ * `operatorPort()` constructs at most one controller per capability and
+ * returns it forever after, so this is the same instance the screen holds -
+ * not a copy and not a double. Deliberately NOT done by wrapping the
+ * capability: it is `Object.freeze`d on purpose (sealed facade), and an
+ * earlier attempt to monkey-patch it silently observed nothing, which made
+ * a test that could not fail correctly look like a failing fix.
+ */
+function screenController() {
+  const capability = readMotorTestCapability(SESSION_ID);
+  if (capability === undefined) {
+    throw new Error('no capability');
+  }
+  return capability.operatorPort(
+    {
+      readCurrentIdentity: () => undefined,
+      subscribeSessionInvalidated: () => () => {},
+    } as never,
+    () => Date.now(),
+  );
+}
+
 afterEach(() => {
   closeMotorTestCapability(SESSION_ID);
   transports.length = 0;
@@ -244,7 +268,7 @@ describe('Motors tab reachability with a session that arrives late', () => {
 });
 
 describe('Leaving Motors after starting a session still releases everything', () => {
-  it('routes a tab change away into the SAME bridge path, so the lease is released and telemetry resumes', () => {
+  it('hands the tab-blur source to the ONE bridge, and leaving does not unmount the panel', () => {
     // EXPLICITLY VERIFIED, NOT ASSUMED. The requirement is that starting a
     // session and then wandering off without testing must still release the
     // exclusive lease and un-pause telemetry. The teardown that does that is
@@ -284,6 +308,109 @@ describe('Leaving Motors after starting a session still releases everything', ()
     // an unmount here would drop the bridge with no stop requested at all.
     expect(() => shell.press('main-tab-SETUP')).not.toThrow();
     expect(shell.query('main-tab-panel-MOTORS').length).toBeGreaterThan(0);
+    shell.unmount();
+  });
+});
+
+describe('begin -> leave BEFORE holding releases the lease and resumes telemetry', () => {
+  /**
+   * THE SCENARIO. Press "start session", then leave the Motors tab without
+   * ever holding to test.
+   *
+   * WHY THE BRIDGE IS NOT ENOUGH. Tab-blur fires the accepted lifecycle
+   * bridge, which issues `requestStop(...)` - stop-a-pulse machinery. At
+   * `Ready`, having never pulsed, the accepted reducer CORRECTLY refuses to
+   * manufacture stop traffic for an activation that never began. So the
+   * bridge does the right thing and nothing gets released, because releasing
+   * is `endSession()` -> `runTeardown()`, which is a different call.
+   *
+   * Left unfixed, the exclusive MSP lease stays held and the MOTOR_TEST
+   * telemetry pause stays in force for the rest of the physical session:
+   * Setup's telemetry goes dead, no later motor session can acquire the
+   * lease, and recovery needs a cable pull.
+   */
+  /**
+   * !! NOT YET A REGRESSION GUARD FOR THE RELEASE FIX. READ BEFORE TRUSTING.
+   *
+   * This test passes, and it passes with `operator.endSession()` REMOVED from
+   * MotorsScreen's releaseOnLeave - verified by deleting that call and
+   * re-running. So it confirms the end state (teardown happened) but does NOT
+   * discriminate WHY: the bridge's blur handling calls `requestStop(...)` on a
+   * PREPARING controller, and that path can itself drive the controller to
+   * CLOSING independently of the release fix.
+   *
+   * `phase` is therefore the wrong discriminator, and a call count is
+   * unavailable because the capability is deliberately `Object.freeze`d.
+   * The open question - which of the two paths actually released the lease,
+   * and whether the release fix is load-bearing at all - is UNRESOLVED.
+   *
+   * Do not delete `releaseOnLeave` on the strength of this test, and do not
+   * cite this test as proof the fix works. It is retained because the end
+   * state it asserts is worth asserting; it is labelled because a test that
+   * cannot fail must never be mistaken for one that can.
+   */
+  it('reaches teardown when the operator leaves the tab after beginning (end state only - see note above)', async () => {
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    ReactTestRenderer.act(() => {
+      openRealCapability();
+    });
+
+    for (const key of ['propellers', 'secured', 'battery']) {
+      shell.press(`motors-ack-${key}`);
+    }
+
+    // Step 1: start the session, through the real control.
+    await ReactTestRenderer.act(async () => {
+      shell.find('motors-begin-session').props.onPress();
+      await Promise.resolve();
+    });
+
+    // The controller has genuinely begun: PREPARING is where the exclusive
+    // lease and the MOTOR_TEST telemetry pause are already held, which is
+    // exactly the window an earlier version of this fix leaked.
+    const controller = screenController();
+    expect(controller.getSnapshot().phase).not.toBe('IDLE');
+
+    // Step 2: leave WITHOUT ever holding to test.
+    await ReactTestRenderer.act(async () => {
+      shell.press('main-tab-SETUP');
+      await Promise.resolve();
+    });
+
+    // Teardown is what releases the lease and un-pauses telemetry. The
+    // controller's own phase is the statement that it ran - asserted here
+    // rather than a call count, so this cannot pass on a mock that merely
+    // recorded an invocation.
+    expect(['CLOSING', 'CLOSED']).toContain(
+      controller.getSnapshot().phase,
+    );
+    shell.unmount();
+  });
+
+  it('no-ops safely when there was never a session to begin with', () => {
+    // THE COMMON CASE. Plain tab switching, no beginSession() ever pressed.
+    // Releasing must not throw, and must not invent a teardown for a session
+    // that was never started.
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    ReactTestRenderer.act(() => {
+      openRealCapability();
+    });
+
+    // Away and back and away again, never pressing begin.
+    expect(() => {
+      shell.press('main-tab-SETUP');
+      shell.press('main-tab-MOTORS');
+      shell.press('main-tab-SETUP');
+    }).not.toThrow();
+    shell.unmount();
+  });
+
+  it('is safe with no capability at all - the very first tab switch', () => {
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    expect(() => shell.press('main-tab-SETUP')).not.toThrow();
     shell.unmount();
   });
 });

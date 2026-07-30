@@ -1352,7 +1352,39 @@ function MotorsScreenBinding({
       },
     });
     bridge.attach();
+
+    // The release subscription. Deliberately NOT inside the bridge: the
+    // bridge's contract is "request a whitelisted stop", and widening it to
+    // own session teardown would make one object responsible for two
+    // different safety obligations. This screen owns the second one, at the
+    // one seam where leaving is observable.
+    const releaseOnLeave = () => {
+      // GUARDED ON `phase`, NOT ON `machine`.
+      //
+      // My first attempt guarded on `machine === undefined`, and the
+      // begin-then-leave test caught it: `initializeSession()` acquires the
+      // exclusive lease and the telemetry pause DURING setup, while the
+      // machine does not exist yet (phase PREPARING). Guarding on `machine`
+      // therefore leaked exactly the window the operator is most likely to
+      // be in - the second or so between pressing begin and the session
+      // becoming Ready - leaving the lease held and telemetry paused.
+      //
+      // `IDLE` is the only phase in which nothing has been acquired and
+      // there is genuinely nothing to release. Everything else - PREPARING,
+      // ACTIVE, CLOSING, CLOSED - either holds something or has already
+      // begun releasing it, and `endSession()` is idempotent: it returns the
+      // one stored teardown promise however many times blur fires.
+      if (operator.getSnapshot().phase === 'IDLE') {
+        return;
+      }
+      void operator.endSession();
+    };
+    const unsubscribeRelease = subscribeTabBlur(releaseOnLeave);
+    const unsubscribeStackRelease = navigation.addListener('blur', releaseOnLeave);
+
     return () => {
+      unsubscribeRelease();
+      unsubscribeStackRelease();
       bridge.detach();
     };
   }, [operator, navigation, subscribeTabBlur]);
