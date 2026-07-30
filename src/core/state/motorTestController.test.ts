@@ -938,6 +938,66 @@ describe('MotorTestController - session/client coherence (B-1)', () => {
     expect(harness.invalidationListenerCount()).toBe(0);
   });
 
+  it('Step-1 retry after teardown never hands back the stale settled promise', async () => {
+    // THE CONFIRMED DEFECT (motorTestController.ts:1738-1745 before the
+    // fix). `setupPromise` was checked BEFORE the closed check, so once
+    // setup had run and teardown had reached CLOSED, every later
+    // initializeSession() returned that same settled promise - resolving
+    // to the snapshot captured WHEN IT SETTLED, not the current one.
+    //
+    // A SUCCESSFUL setup is used deliberately. A failing one tears down
+    // inside the same settle, so its final snapshot IS the settled one and
+    // both the fixed and unfixed orders return the same object - a test
+    // built on that fixture passes either way and proves nothing. Here the
+    // settled snapshot says READY/ACTIVE and the post-teardown snapshot
+    // says CLOSED, so the two are genuinely distinguishable.
+    const harness = createHarness();
+    const first = await runSetup(harness);
+    expect(first.outcome.kind).toBe('READY');
+    expect(first.phase).toBe('ACTIVE');
+
+    // Teardown of a LIVE session writes its stop vector, so the transport
+    // has to be driven for close() to settle - the same idiom the other
+    // close tests in this file use.
+    const closing = harness.controller.close();
+    await drive(harness, closing);
+    expect(harness.controller.getSnapshot().phase).toBe('CLOSED');
+
+    const writesBeforeRetry = harness.transport.writes.length;
+    const retry = await harness.controller.initializeSession();
+
+    // The retry reports the CLOSED reality, not the stale READY object.
+    expect(retry.phase).toBe('CLOSED');
+    expect(retry).toBe(harness.controller.getSnapshot());
+    expect(retry).not.toBe(first);
+    // NOTE, measured rather than assumed: after a CLEAN teardown the
+    // outcome stays READY - teardown only overwrites it on failure. So
+    // `phase` is the reliable terminal signal, and it is what the screen's
+    // reconnect instruction keys on first. Asserting `outcome !== READY`
+    // here would be asserting something untrue of a healthy close.
+    expect(first.outcome.kind).toBe('READY');
+    expect(retry.outcome.kind).toBe('READY');
+
+    // Setup was NOT re-run on this instance: a closed controller still
+    // holds its terminal outcome, teardown report, monitor and
+    // lease/authority fields, and reusing that session-bound evidence is
+    // exactly what must never happen.
+    expect(harness.transport.writes.length).toBe(writesBeforeRetry);
+    expect(harness.scheduler.activeMotorTestLeaseCount).toBe(0);
+  });
+
+  it('a closed controller can never write a motor command', async () => {
+    const harness = createHarness([], {telemetryClient: 'FOREIGN'});
+    await runSetup(harness);
+    await harness.controller.close();
+
+    const before = harness.transport.writes.length;
+    const result = harness.controller.pulseMotor(1);
+    expect(result).not.toBe('SUBMITTED');
+    expect(harness.transport.writes.length).toBe(before);
+    expect(harness.controller.getSnapshot().activation.allowed).toBe(false);
+  });
+
   it('a fabricated session anchor cannot bypass the ownership check', async () => {
     // Constructed by the caller rather than minted by the registry: it has
     // no recorded owner, so it can never satisfy the check.

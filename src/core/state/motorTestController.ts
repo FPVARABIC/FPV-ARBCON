@@ -1735,11 +1735,35 @@ class MotorTestControllerImpl {
   /* --- public operations ------------------------------------------ */
 
   initializeSession(): Promise<MotorTestControllerSnapshot> {
-    if (this.setupPromise !== undefined) {
-      return this.setupPromise;
-    }
+    // ORDER IS THE FIX, AND IT IS NOT COSMETIC.
+    //
+    // The closed check used to sit BELOW the cache check. Once setup had
+    // run and teardown had reached CLOSED, `setupPromise` was still a
+    // settled promise, so every later Step-1 press returned it - resolving
+    // to the snapshot captured WHEN THAT PROMISE SETTLED, not the current
+    // post-teardown one. The operator pressed a button and got a stale
+    // success/failure object back from a dead controller, with nothing
+    // saying a new connection was needed.
+    //
+    // Checked first, the closed controller now answers with its CURRENT
+    // snapshot, whose `outcome` carries `requiresNewSession: true` after
+    // any teardown-completing failure. The screen renders that as an
+    // explicit Arabic instruction to disconnect and reconnect.
+    //
+    // DELIBERATELY NOT "let runSetup() run again". This instance still
+    // holds its terminal outcome, teardown report, listener set, monitor,
+    // barrier and lease/authority fields. Re-running setup on top of that
+    // would reuse session-bound evidence, which is exactly what must never
+    // happen. A genuinely fresh attempt needs a genuinely fresh
+    // controller - see the note in motorTestSessionBinding.ts on why that
+    // cannot be minted under the current frozen-facade binding without a
+    // change-notification path, and why the operator is told to reconnect
+    // instead of being silently handed a corpse.
     if (this.closing || this.phase === 'CLOSED') {
       return Promise.resolve(this.snapshot);
+    }
+    if (this.setupPromise !== undefined) {
+      return this.setupPromise;
     }
     this.setupPromise = this.runSetup();
     return this.setupPromise;

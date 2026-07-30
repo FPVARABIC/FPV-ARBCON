@@ -379,7 +379,9 @@
     "beginSessionBusy": "جارٍ بدء الجلسة…",
     "beginSessionFailed": "تعذّر بدء الجلسة. راجع أسباب المنع أدناه.",
     "beginSessionNeedsAck": "أكّد النقاط الثلاث أعلاه أولًا.",
-    "holdHeading": "الخطوة ٢ — اختبار محرك واحد"
+    "holdHeading": "الخطوة ٢ — اختبار محرك واحد",
+    "requiresNewConnection": "الجلسة انتهت. افصل كابل USB وأعد توصيله لبدء جلسة جديدة.",
+    "diagnosticsToggle": "تفاصيل تقنية للمطوّر"
   },
   "motorVerification": {
     "title": "تأكيد الملاحظة البصرية",

@@ -344,7 +344,11 @@ describe('MotorsScreen - state presentation', () => {
     rendered.unmount();
   });
 
-  it('renders the authoritative blocking reasons, not a generic message', () => {
+  it('shows the FIRST CAUSAL reason only, with consequences in diagnostics', () => {
+    // CONTRACT CHANGED ON DEVICE EVIDENCE.
+    // `ARMING_RESTRICTION_NOT_CURRENT` is a teardown CONSEQUENCE. Showing
+    // it beside the real cause is what made one failure read as several
+    // independent hardware faults on the bench.
     const rendered = render(
       new FakeOperator(
         snapshotFor({
@@ -357,7 +361,53 @@ describe('MotorsScreen - state presentation', () => {
     expect(rendered.query('motors-block-SAFETY_EVENT_LATCHED')).toBeDefined();
     expect(
       rendered.query('motors-block-ARMING_RESTRICTION_NOT_CURRENT'),
+    ).toBeUndefined();
+
+    // The full array is not lost - it is one tap away, under diagnostics.
+    expect(rendered.query('motors-diagnostics')).toBeUndefined();
+    rendered.press('motors-diagnostics-toggle');
+    expect(
+      rendered.query('motors-diagnostic-ARMING_RESTRICTION_NOT_CURRENT'),
     ).toBeDefined();
+    expect(
+      rendered.query('motors-diagnostic-SAFETY_EVENT_LATCHED'),
+    ).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('never shows a teardown consequence as the headline cause', () => {
+    // The exact device presentation: a torn-down session emits its whole
+    // consequence set. None of them may become the headline.
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Locked',
+          allowed: false,
+          reasons: [
+            'SETUP_NOT_READY',
+            'MACHINE_NOT_READY',
+            'TELEMETRY_BARRIER_NOT_HELD',
+            'ARMING_RESTRICTION_NOT_CURRENT',
+            'AUTHORITY_STALE',
+            'MOTOR_SCOPE_UNSUPPORTED',
+          ],
+        }),
+      ),
+    );
+    // The real cause wins over all five consequences regardless of the
+    // order the controller happened to emit them in.
+    expect(
+      rendered.query('motors-block-MOTOR_SCOPE_UNSUPPORTED'),
+    ).toBeDefined();
+    for (const consequence of [
+      'SETUP_NOT_READY',
+      'MACHINE_NOT_READY',
+      'TELEMETRY_BARRIER_NOT_HELD',
+      'ARMING_RESTRICTION_NOT_CURRENT',
+      'AUTHORITY_STALE',
+    ]) {
+      expect(rendered.query(`motors-block-${consequence}`)).toBeUndefined();
+    }
     rendered.unmount();
   });
 

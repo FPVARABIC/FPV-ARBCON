@@ -216,6 +216,31 @@ export type MotorsScreenPresentation =
   | 'STOPPING'
   | 'FAULT';
 
+/**
+ * Root causes first, teardown consequences last.
+ *
+ * The tail of this list - SETUP_NOT_READY, MACHINE_NOT_READY,
+ * TELEMETRY_BARRIER_NOT_HELD, ARMING_RESTRICTION_NOT_CURRENT,
+ * AUTHORITY_STALE - is what a completed teardown always produces. Those
+ * are never the story when anything above them is present, and showing
+ * them as peers is what made one failure look like six.
+ */
+export const CAUSAL_BLOCK_REASON_ORDER: readonly MotorTestActivationBlockReason[] =
+  Object.freeze([
+    'MOTOR_SCOPE_UNSUPPORTED',
+    'SAFETY_EVENT_LATCHED',
+    'STOP_SEALED',
+    'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    'PULSE_ALREADY_LIVE',
+    'STOP_IN_PROGRESS',
+    'CONTROLLER_CLOSED',
+    'SETUP_NOT_READY',
+    'MACHINE_NOT_READY',
+    'TELEMETRY_BARRIER_NOT_HELD',
+    'ARMING_RESTRICTION_NOT_CURRENT',
+    'AUTHORITY_STALE',
+  ]);
+
 export function derivePresentation(
   snapshot: MotorTestControllerSnapshot | undefined,
 ): MotorsScreenPresentation {
@@ -382,6 +407,24 @@ export function MotorsScreenView({
   const controllerAllows = snapshot?.activation.allowed === true;
   const blockReasons = snapshot?.activation.reasons ?? [];
 
+  /**
+   * CAUSAL ORDER, most-primary first. `evaluateActivation()` emits its
+   * reasons in evaluation order, which is not the same thing: a torn-down
+   * session lists its consequences alongside whatever actually caused it.
+   * This picks the first reason that is a CAUSE rather than an effect, so
+   * the operator is told what to do about the aircraft or the cable, not
+   * what the controller's internals look like afterwards.
+   */
+  const primaryBlockReason = CAUSAL_BLOCK_REASON_ORDER.find(reason =>
+    blockReasons.includes(reason),
+  );
+  const requiresNewConnection =
+    snapshot?.phase === 'CLOSED' ||
+    (snapshot?.outcome.kind === 'FAILED_CLOSED' &&
+      snapshot.outcome.requiresNewSession) ||
+    (snapshot?.outcome.kind === 'BLOCKED' &&
+      snapshot.outcome.requiresNewSession);
+
   // The manual acknowledgement is VOLATILE and supplemental. It resets the
   // moment the session stops being one an operator has vouched for: a
   // lock, a fault, a session replacement or the loss of the operator port
@@ -492,6 +535,7 @@ export function MotorsScreenView({
    * pauses telemetry and establishes the arming restriction. None of that
    * may happen as a side effect of navigation - the operator asks for it.
    */
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [beginning, setBeginning] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
   /**
@@ -723,19 +767,71 @@ export function MotorsScreenView({
               {t('motorsScreen.statusAcknowledgedNotice')}
             </Text>
           ) : null}
-          {blockReasons.length > 0 ? (
+          {/* THE FIRST CAUSAL FAILURE, AND ONLY THAT.
+              A blocked session used to print all twelve reasons as a
+              bulleted list, so a single failure that tore the session down
+              presented as six independent hardware faults - SETUP_NOT_READY,
+              MACHINE_NOT_READY, ARMING_RESTRICTION_NOT_CURRENT,
+              AUTHORITY_STALE and the rest are CONSEQUENCES of teardown, not
+              separate things wrong with the aircraft. The operator now sees
+              the one reason that is actually actionable; the full array
+              stays available under diagnostics. */}
+          {primaryBlockReason !== undefined ? (
             <View style={styles.blockList} testID="motors-block-reasons">
               <Text style={styles.blockHeading}>
                 {t('motorsScreen.blockedHeading')}
               </Text>
-              {blockReasons.map((reason: MotorTestActivationBlockReason) => (
+              <Text
+                style={styles.blockReason}
+                testID={`motors-block-${primaryBlockReason}`}>
+                {t(`motorsScreen.blockReason.${primaryBlockReason}`)}
+              </Text>
+              {/* Terminal state is the one case with a concrete operator
+                  action attached, so it is stated as an instruction rather
+                  than left as a diagnosis. */}
+              {requiresNewConnection ? (
                 <Text
-                  key={reason}
                   style={styles.blockReason}
-                  testID={`motors-block-${reason}`}>
-                  • {t(`motorsScreen.blockReason.${reason}`)}
+                  testID="motors-requires-new-connection">
+                  {t('motorsScreen.requiresNewConnection')}
                 </Text>
-              ))}
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* DEVELOPER DIAGNOSTICS - collapsed by default, never shown to
+              the operator unless asked for. Everything the old list dumped
+              on screen lives here, plus the terminal outcome, setup step
+              and teardown report that were previously invisible. */}
+          {blockReasons.length > 0 || snapshot !== undefined ? (
+            <View>
+              <Pressable
+                onPress={() => setDiagnosticsOpen(current => !current)}
+                accessibilityRole="button"
+                testID="motors-diagnostics-toggle">
+                <Text style={styles.caption}>
+                  {t('motorsScreen.diagnosticsToggle')}
+                </Text>
+              </Pressable>
+              {diagnosticsOpen ? (
+                <View testID="motors-diagnostics">
+                  {blockReasons.map((reason: MotorTestActivationBlockReason) => (
+                    <Text
+                      key={reason}
+                      style={styles.caption}
+                      testID={`motors-diagnostic-${reason}`}>
+                      • {reason}
+                    </Text>
+                  ))}
+                  <Text style={styles.caption} testID="motors-diagnostic-outcome">
+                    outcome: {snapshot?.outcome.kind ?? 'NONE'} | setupStep:{' '}
+                    {snapshot?.setupStep ?? 'NONE'} | phase:{' '}
+                    {snapshot?.phase ?? 'NONE'} | machine:{' '}
+                    {String(snapshot?.machine?.name)} | teardownComplete:{' '}
+                    {String(snapshot?.teardown?.complete)}
+                  </Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
         </View>
