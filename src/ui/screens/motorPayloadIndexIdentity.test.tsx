@@ -58,6 +58,10 @@ jest.mock('../../platforms/react-native/protocol', () => ({
   mspSessionCoordinator: {
     getMotorTestSessionIdentity: () => ({physicalGeneration: 7, mspEpoch: 0}),
     subscribeMotorTestSessionInvalidated: () => () => {},
+    // Read by the container to display a bring-up cause in the blocked
+    // state. Undefined here is the truthful answer: this fixture opens the
+    // capability directly, so no bring-up step ever ran, let alone threw.
+    getSessionBringUpFailure: () => undefined,
   },
 }));
 

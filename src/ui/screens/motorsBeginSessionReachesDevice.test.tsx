@@ -210,3 +210,130 @@ describe('the real coordinator path makes the Step-1 control reachable', () => {
     });
   });
 });
+
+describe('a bring-up throw is NAMED on screen, not swallowed', () => {
+  /**
+   * THE POINT OF THIS TEST. Before the try/catch in openSession()'s
+   * startReading() continuation, a synchronous throw in
+   * `beginIdentification()` skipped `startTelemetry()` and became an
+   * unhandled rejection - no capability, no teardown, ownership still
+   * ACTIVE, and a Motors tab that said only "no active session". The next
+   * real-device run must not have to guess again.
+   */
+  it('startTelemetry() still runs when beginIdentification() throws, and the cause is recorded', async () => {
+    // HOW THE THROW IS INDUCED, and why this way. A fake native client
+    // cannot reach it: RNMspTransport multiplexes ONE client listener, so
+    // bring-up's own `transport.onDataReceived` never calls the client
+    // again, and everything else beginIdentification touches synchronously
+    // belongs to the real MspClient. So the method itself is replaced on the
+    // instance for exactly one openSession() call - `openSession` invokes it
+    // as `this.beginIdentification(...)`, which an own property shadows.
+    //
+    // This tests the GUARD, not a fabricated failure mode: the question is
+    // "if this step throws, does telemetry still come up and is the cause
+    // recorded", and that question is answered honestly by making it throw.
+    const coordinator = mspSessionCoordinator as unknown as Record<
+      string,
+      unknown
+    >;
+    const original = coordinator.beginIdentification;
+    coordinator.beginIdentification = () => {
+      throw new Error('native listener registration failed');
+    };
+    try {
+      mspSessionCoordinator.openSession(makeNativeClient(), SESSION_ID);
+      await flush(10);
+    } finally {
+      coordinator.beginIdentification = original;
+    }
+
+    // 1. The throw was caught and attributed to the right step.
+    const failure = mspSessionCoordinator.getSessionBringUpFailure(SESSION_ID);
+    expect(failure).toBeDefined();
+    expect(failure).toContain('beginIdentification');
+    expect(failure).toContain('native listener registration failed');
+
+    // 2. AND telemetry still came up. This is the half the old bare
+    //    sequential calls could not promise, and the half that decides
+    //    whether the Motors tab is reachable at all.
+    expect(readMotorTestCapability(SESSION_ID)).toBeDefined();
+
+    // 3. The operator sees the cause instead of an unexplained blocked
+    //    screen.
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <MotorsTab
+          sessionKey={mspSessionCoordinator.getSessionKey(SESSION_ID)}
+          navigation={
+            {addListener: () => () => undefined, goBack: () => undefined} as never
+          }
+          subscribeTabBlur={() => () => undefined}
+        />,
+      );
+      await flush();
+    });
+    // The capability DID open here, so the operator port resolves and the
+    // developer string is correctly NOT shown - it is reserved for the
+    // blocked state. Asserted so the display rule cannot silently widen.
+    expect(
+      renderer.root.findAllByProps({testID: 'motors-begin-bringup-error'}).length,
+    ).toBe(0);
+    await ReactTestRenderer.act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('records nothing, and shows nothing, on a healthy bring-up', async () => {
+    const coordinator = mspSessionCoordinator;
+    coordinator.openSession(makeNativeClient(), SESSION_ID);
+    await flush();
+
+    // The no-change half of the guarantee: the guards add visibility to a
+    // failure, and must not invent one where none happened.
+    expect(coordinator.getSessionBringUpFailure(SESSION_ID)).toBeUndefined();
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <MotorsTab
+          sessionKey={coordinator.getSessionKey(SESSION_ID)}
+          navigation={
+            {addListener: () => () => undefined, goBack: () => undefined} as never
+          }
+          subscribeTabBlur={() => () => undefined}
+        />,
+      );
+      await flush();
+    });
+    expect(
+      renderer.root.findAllByProps({testID: 'motors-begin-bringup-error'}).length,
+    ).toBe(0);
+    await ReactTestRenderer.act(async () => {
+      renderer.unmount();
+    });
+  });
+
+  it('displays the recorded cause in the blocked no-session state', async () => {
+    // Driven through the VIEW directly, because what is under test here is
+    // the display contract, not how the string was obtained.
+    const {MotorsScreenView} = require('./MotorsScreen') as typeof import('./MotorsScreen');
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <MotorsScreenView
+          operator={undefined}
+          bringUpFailure="startTelemetry - Error: scheduler construction failed"
+        />,
+      );
+    });
+    const shown = renderer.root.findAllByProps({
+      testID: 'motors-begin-bringup-error',
+    })[0];
+    expect(shown).toBeDefined();
+    expect(shown.props.children).toContain('scheduler construction failed');
+    ReactTestRenderer.act(() => {
+      renderer.unmount();
+    });
+  });
+});

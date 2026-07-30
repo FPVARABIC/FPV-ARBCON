@@ -321,6 +321,15 @@ interface SessionEntry {
    * not the earlier synchronous ownership->ACTIVE flip, is what "once
    * ownership reaches ACTIVE" means here). */
   telemetryScheduler: MspTelemetryScheduler | undefined;
+  /**
+   * The first bring-up step that threw for this session, if any, as a
+   * human-readable string. Diagnostic ONLY: nothing branches on it, no
+   * retry consults it, and it never affects ownership, identification or
+   * teardown. It exists so the Motors tab can say WHY no capability
+   * appeared instead of rendering a blocked screen with no reason - see
+   * the try/catch in openSession()'s startReading() continuation.
+   */
+  bringUpFailure: string | undefined;
   /** Phase 2E (P4): the authoritative motor-test capability for THIS
    * entry's exact mspClient. Created alongside the scheduler in
    * startTelemetry() and closed in stopTelemetry(), so an anchor can never
@@ -528,6 +537,7 @@ export class MspSessionCoordinator {
       identification: {status: 'IDLE'},
       metrics: undefined,
       telemetryScheduler: undefined,
+      bringUpFailure: undefined,
 
       tickIntervalHandle: undefined,
       mspClientStateUnsubscribe,
@@ -569,8 +579,41 @@ export class MspSessionCoordinator {
           // longer exists.
           return;
         }
-        this.beginIdentification(sessionId, mspClient, transport, generation);
-        this.startTelemetry(sessionId, mspClient);
+        // SESSION BRING-UP MUST NOT FAIL SILENTLY.
+        //
+        // WHAT WENT WRONG. These were two bare sequential calls. A
+        // synchronous throw in `beginIdentification()` would skip
+        // `startTelemetry()` entirely - and because a throw inside a
+        // fulfillment handler is NOT caught by that same `.then()`'s
+        // rejection handler (the second argument below only ever sees
+        // `startReading()`'s own rejection), it became an unhandled
+        // rejection: invisible in a release build, no teardown, ownership
+        // still ACTIVE. The operator's session would look connected while
+        // no motor-test capability was ever created, which presents on the
+        // Motors tab as a permanent "no active session" with no
+        // explanation. That is exactly the device report this closes.
+        //
+        // Each call is now guarded SEPARATELY and deliberately:
+        //   - identification failing must not starve telemetry, because
+        //     telemetry is what creates the motor-test capability;
+        //   - telemetry failing must be recorded rather than lost.
+        // Neither is recovered from or retried here. The error is stored so
+        // the UI can NAME it, which is the whole point - a silent undefined
+        // sent us guessing for two evenings.
+        try {
+          this.beginIdentification(sessionId, mspClient, transport, generation);
+        } catch (identificationError) {
+          this.recordBringUpFailure(
+            sessionId,
+            'beginIdentification',
+            identificationError,
+          );
+        }
+        try {
+          this.startTelemetry(sessionId, mspClient);
+        } catch (telemetryError) {
+          this.recordBringUpFailure(sessionId, 'startTelemetry', telemetryError);
+        }
       },
       error => this.handleStartReadingFailure(sessionId, generation, error),
     );
@@ -977,6 +1020,43 @@ export class MspSessionCoordinator {
    * convention above. Returns a fresh object each call (not a cached
    * reference) - callers must compare by value ({sessionId, generation}),
    * never by identity. */
+  /**
+   * Stores the FIRST bring-up failure for this session, never overwriting it
+   * with a later one: the first thing that broke is the cause, and anything
+   * after it is likely a consequence.
+   *
+   * Deliberately does not throw, log-and-rethrow, retry, or alter session
+   * state in any way. Recording only.
+   */
+  private recordBringUpFailure(
+    sessionId: string,
+    step: 'beginIdentification' | 'startTelemetry',
+    error: unknown,
+  ): void {
+    const entry = this.sessions.get(sessionId);
+    if (!entry || entry.bringUpFailure !== undefined) {
+      return;
+    }
+    const message =
+      error instanceof Error
+        ? `${error.name}: ${error.message}`
+        : String(error);
+    entry.bringUpFailure = `${step} - ${message}`;
+  }
+
+  /**
+   * The first bring-up step that threw for this session, or undefined when
+   * bring-up raised nothing.
+   *
+   * READ-ONLY DIAGNOSTIC. Returns a string, never the Error itself, so a
+   * caller cannot reach a stack, a cause chain or any live object through
+   * it. Undefined here means "nothing threw" - it does NOT mean the session
+   * is healthy, and nothing should treat it as an all-clear.
+   */
+  getSessionBringUpFailure(sessionId: string): string | undefined {
+    return this.sessions.get(sessionId)?.bringUpFailure;
+  }
+
   getSessionKey(sessionId: string): SetupUiSessionKey | undefined {
     const entry = this.sessions.get(sessionId);
     if (!entry) {

@@ -271,6 +271,16 @@ export interface MotorsScreenViewProps {
    * the lifecycle bridge and the route, never by this component. */
   readonly onRequestLeave?: () => void;
   /**
+   * The first session bring-up step that threw, verbatim, or undefined when
+   * nothing threw.
+   *
+   * SHOWN ONLY ALONGSIDE THE BLOCKED NO-SESSION STATE, and shown UNTRANSLATED
+   * on purpose: it is a developer-facing cause string, not operator copy, and
+   * inventing Arabic for an arbitrary runtime error would be worse than
+   * showing the real text. Nothing branches on it - it is display only.
+   */
+  readonly bringUpFailure?: string;
+  /**
    * Overrides the bottom safe-area padding.
    *
    * Hosted inside the main tab shell the persistent tab bar sits below
@@ -302,6 +312,7 @@ export function MotorsScreenView({
   operator,
   onRequestLeave,
   bottomInset,
+  bringUpFailure,
 }: MotorsScreenViewProps): React.JSX.Element {
   const {t} = useTranslation();
   const safeAreaInsets = useSafeAreaInsets();
@@ -898,6 +909,16 @@ export function MotorsScreenView({
             {operator === undefined ? (
               <Text style={styles.blockReason} testID="motors-begin-no-session">
                 {t('motorsScreen.noSession')}
+              </Text>
+            ) : null}
+            {/* The ACTUAL cause, when bring-up threw. This is the line that
+                is meant to end the guessing: previously a throw here left
+                `operator` silently undefined and the screen said nothing at
+                all. Rendered only in the blocked state, so a healthy session
+                never shows developer text. */}
+            {operator === undefined && bringUpFailure !== undefined ? (
+              <Text style={styles.caption} testID="motors-begin-bringup-error">
+                {bringUpFailure}
               </Text>
             ) : null}
             {operator !== undefined && !acknowledged ? (
@@ -1499,5 +1520,27 @@ function MotorsScreenBinding({
     };
   }, [operator, navigation, subscribeTabBlur]);
 
-  return <MotorsScreenView operator={operator} bottomInset={bottomInset} />;
+  /**
+   * Read during render rather than held in state, and the limitation is
+   * deliberate: a bring-up throw means no capability is ever stored, so the
+   * capability-opened subscription NEVER fires and there is no push signal
+   * to hang a setState on. Adding a timer to poll for a diagnostic string
+   * would put a timer in a screen whose header promises it creates none.
+   *
+   * The practical consequence, stated rather than hidden: the cause appears
+   * on the next re-render, which in this state is the operator's very next
+   * interaction (ticking any acknowledgement re-renders this tree). Good
+   * enough for a diagnostic, and it cannot go stale in the wrong direction -
+   * the string is only ever set once, never cleared.
+   */
+  const bringUpFailure = mspSessionCoordinator.getSessionBringUpFailure(
+    sessionKey.sessionId,
+  );
+  return (
+    <MotorsScreenView
+      operator={operator}
+      bottomInset={bottomInset}
+      bringUpFailure={bringUpFailure}
+    />
+  );
 }
