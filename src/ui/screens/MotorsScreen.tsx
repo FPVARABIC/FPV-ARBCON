@@ -1386,6 +1386,13 @@ function MotorsScreenBinding({
      *     `requestStop` drives the controller's OWN teardown, which
      *     releases at a point where its own in-flight work has settled.
      *
+     * KNOWN GAP, recorded in docs/ARCHITECTURE.md ("Known gaps - future
+     * hardening") rather than fixed here: the missing piece is a
+     * retry-on-settle inside `MspClient` itself, which would hold for every
+     * future caller instead of only for the one that remembered to wait.
+     * That file is frozen for this work and changing it needs its own
+     * approval, so this screen waits instead.
+     *
      * So the rule is: the controller's own stop path knows when releasing
      * is possible and an outside caller does not. Defer to it whenever it
      * is acting, and only step in for the states it leaves alone - a
