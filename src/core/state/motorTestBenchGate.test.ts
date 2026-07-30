@@ -1327,3 +1327,226 @@ describe('genuinely unsafe outcomes stay terminal', () => {
     expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
   });
 });
+
+/* ================================================================== *
+ * J. ALL FOUR MOTORS, ANY ORDER, REPEATEDLY, IN ONE SESSION
+ *
+ * SCOPE CORRECTION, RECORDED. The release lifecycle was first proven with
+ * "M1 then M2", and M1/M2 were only ever examples. The feature is four
+ * equal output slots: an operator must be able to test M1, M2, M3 and M4
+ * in ANY order, come back to one already tested, and repeat - all inside
+ * one continuous session, with no LiPo cycle, no USB re-plug, no new
+ * session and no repeated bring-up.
+ *
+ * These are ACCEPTANCE tests: they drive the real controller, the real
+ * lease, the real monitor and the real client, and they assert on the
+ * bytes that reached the wire per slot.
+ * ================================================================== */
+
+/** The exact MSP_SET_MOTOR payload for one slot at the fixed test value,
+ * every other output at stop. Built here from the slot index rather than
+ * copied, so a wrong-slot payload cannot pass by being pasted twice. */
+function expectedPayloadForSlot(slot: number): number[] {
+  const bytes: number[] = [];
+  for (let index = 0; index < 4; index++) {
+    bytes.push(...u16(index === slot - 1 ? 1050 : 1000));
+  }
+  return bytes;
+}
+
+/** One complete operator gesture: long press, confirm the FC saw it,
+ * release, and wait for the session to be activatable again. */
+async function testOneMotor(harness: Harness, slot: number): Promise<void> {
+  expect(harness.controller.pulseMotor(slot)).toBe('ACCEPTED');
+  await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+  expect(harness.controller.getSnapshot().pulse.motorNumber).toBe(slot);
+
+  harness.controller.requestStop('TOUCH_RELEASED');
+  await pump(
+    harness,
+    () => harness.controller.getSnapshot().activation.allowed === true,
+  );
+  expect(harness.controller.getSnapshot().machine?.name).toBe('Ready');
+}
+
+/** Every command-214 payload written, in order. */
+const motorPayloads = (harness: Harness): number[][] =>
+  harness.writes
+    .filter(write => write.command === MSP_SET_MOTOR_FIXTURE)
+    .map(write => write.payload);
+
+/** Only the payloads that drove some slot above stop. */
+const drivePayloads = (harness: Harness): number[][] =>
+  motorPayloads(harness).filter(
+    payload => payload.join(',') !== EXPECTED_STOP_PAYLOAD.join(','),
+  );
+
+describe('all four motors, one session', () => {
+  it.each([1, 2, 3, 4])(
+    'tests M%i and returns to READY without ending the session',
+    async slot => {
+      const harness = harnessFor();
+      await runSetup(harness);
+      const barrierHeldBefore = harness.controller.getSnapshot().telemetryHeld;
+
+      await testOneMotor(harness, slot);
+
+      const snapshot = harness.controller.getSnapshot();
+      expect(snapshot.outcome).toEqual({kind: 'READY'});
+      expect(snapshot.phase).toBe('ACTIVE');
+      expect(snapshot.warnings).toHaveLength(0);
+      // Same lease, same barrier, no teardown: no LiPo cycle, no re-plug.
+      expect(snapshot.telemetryHeld).toBe(barrierHeldBefore);
+      expect(snapshot.teardown).toBeUndefined();
+      // Exactly this slot was driven, and exactly once.
+      expect(drivePayloads(harness)).toEqual([expectedPayloadForSlot(slot)]);
+    },
+  );
+
+  it('runs M1 -> M2 -> M3 -> M4 in one session', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    for (const slot of [1, 2, 3, 4]) {
+      await testOneMotor(harness, slot);
+    }
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.pulse.attemptId).toBe(4);
+    expect(snapshot.stopExecution.episodeId).toBe(4);
+    expect(snapshot.warnings).toHaveLength(0);
+    // Four drives, one per slot, in the order requested.
+    expect(drivePayloads(harness)).toEqual([1, 2, 3, 4].map(expectedPayloadForSlot));
+  });
+
+  it('runs an ARBITRARY order - M3, M1, M4, M2 - in one session', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    const order = [3, 1, 4, 2];
+    for (const slot of order) {
+      await testOneMotor(harness, slot);
+    }
+
+    expect(harness.controller.getSnapshot().machine?.name).toBe('Ready');
+    expect(drivePayloads(harness)).toEqual(order.map(expectedPayloadForSlot));
+  });
+
+  it('returns to a PREVIOUSLY TESTED motor in the same session', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+
+    // The exact sequence the operator asked for.
+    const order = [1, 2, 3, 4, 1];
+    for (const slot of order) {
+      await testOneMotor(harness, slot);
+    }
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.activation.allowed).toBe(true);
+    expect(snapshot.pulse.attemptId).toBe(5);
+    // M1 was driven twice - the fifth drive is M1 again, not a stale
+    // replay of the first and not a refusal.
+    expect(drivePayloads(harness)).toEqual(order.map(expectedPayloadForSlot));
+    expect(snapshot.warnings).toHaveLength(0);
+    expect(snapshot.teardown).toBeUndefined();
+  });
+
+  it.each([1, 2, 3, 4])(
+    'repeats M%i three times in a row without a new session',
+    async slot => {
+      const harness = harnessFor();
+      await runSetup(harness);
+
+      await testOneMotor(harness, slot);
+      await testOneMotor(harness, slot);
+      await testOneMotor(harness, slot);
+
+      const snapshot = harness.controller.getSnapshot();
+      expect(snapshot.machine?.name).toBe('Ready');
+      expect(snapshot.pulse.attemptId).toBe(3);
+      // Three genuinely separate stop episodes - never one replayed.
+      expect(snapshot.stopExecution.episodeId).toBe(3);
+      expect(drivePayloads(harness)).toEqual([
+        expectedPayloadForSlot(slot),
+        expectedPayloadForSlot(slot),
+        expectedPayloadForSlot(slot),
+      ]);
+    },
+  );
+
+  it('never drives two slots at once, across a whole four-motor sweep', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+    for (const slot of [4, 2, 1, 3, 2]) {
+      await testOneMotor(harness, slot);
+    }
+
+    // THE PAYLOAD-ISOLATION INVARIANT, checked on every byte that was
+    // written rather than on the last one: at most one slot above stop.
+    for (const payload of motorPayloads(harness)) {
+      const values = [0, 1, 2, 3].map(
+        index => payload[index * 2] + payload[index * 2 + 1] * 256,
+      );
+      expect(values.filter(value => value !== 1000).length).toBeLessThanOrEqual(1);
+      for (const value of values) {
+        expect(value === 1000 || value === 1050).toBe(true);
+      }
+    }
+  });
+
+  it.each([
+    [1, 3],
+    [2, 4],
+    [3, 1],
+    [4, 2],
+  ])(
+    'a selection change from M%i to M%i stops the first and starts nothing',
+    async (from, to) => {
+      const harness = harnessFor();
+      await runSetup(harness);
+
+      expect(harness.controller.pulseMotor(from)).toBe('ACCEPTED');
+      await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+
+      expect(harness.controller.pulseMotor(to)).toBe(
+        'SWITCH_REQUIRES_NEW_ACTIVATION',
+      );
+      await pump(
+        harness,
+        () => harness.controller.getSnapshot().activation.allowed === true,
+      );
+
+      // Only the FIRST motor was ever driven by that gesture.
+      expect(drivePayloads(harness)).toEqual([expectedPayloadForSlot(from)]);
+      // ... and a NEW deliberate press is what starts the second one.
+      expect(harness.controller.pulseMotor(to)).toBe('ACCEPTED');
+      await pump(harness, () => harness.controller.getSnapshot().pulse.acknowledged);
+      expect(drivePayloads(harness)).toEqual([
+        expectedPayloadForSlot(from),
+        expectedPayloadForSlot(to),
+      ]);
+    },
+  );
+
+  it('does not repeat bring-up: no configuration or box read after setup', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+    const afterSetup = harness.commands.length;
+
+    for (const slot of [1, 2, 3, 4]) {
+      await testOneMotor(harness, slot);
+    }
+
+    // Everything after bring-up is motor commands and armed-state reads.
+    // The configuration and the box mapping are read ONCE per session.
+    const later = harness.commands.slice(afterSetup);
+    expect(later).not.toContain(MSP_MOTOR_CONFIG);
+    expect(later).not.toContain(MSP_ADVANCED_CONFIG);
+    expect(later).not.toContain(MSP_FEATURE_CONFIG);
+    expect(later).not.toContain(MSP_BOXIDS);
+    expect(later).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
+  });
+});

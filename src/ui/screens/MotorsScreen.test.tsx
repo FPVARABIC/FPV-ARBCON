@@ -1064,12 +1064,38 @@ describe('an unproven armed state locks the screen', () => {
     });
   }
 
-  it('presents a LOCKED state, never an actionable READY', () => {
+  it('never presents an actionable READY, and disables the control', () => {
     const rendered = render(new FakeOperator(monitorBlocked()));
-    expect(rendered.query('motors-status-LOCKED')).toBeDefined();
-    // The actionable ready presentation must be absent entirely.
+    // THE INVARIANT: no actionable ready presentation, and nothing an
+    // operator can press, whenever the authoritative gate refuses.
     expect(rendered.query('motors-status-READY')).toBeUndefined();
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
     rendered.unmount();
+  });
+
+  it('separates "re-reading the armed state" from "this session is locked"', () => {
+    // An unread armed state ALONE is the post-release re-verification
+    // window - mid-cycle, not broken. Anything terminal alongside it is a
+    // genuine lock. Both refuse activation; only one needs operator
+    // action, and conflating them is what wiped the acknowledgements after
+    // every single release.
+    const rendered = render(new FakeOperator(monitorBlocked()));
+    expect(rendered.query('motors-status-VERIFYING')).toBeDefined();
+    expect(rendered.query('motors-status-LOCKED')).toBeUndefined();
+    rendered.unmount();
+
+    const terminal = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Ready',
+          allowed: false,
+          reasons: ['ARMED_STATE_UNKNOWN_OR_STALE', 'REQUIRES_NEW_CONNECTION'],
+        }),
+      ),
+    );
+    expect(terminal.query('motors-status-LOCKED')).toBeDefined();
+    expect(terminal.query('motors-status-VERIFYING')).toBeUndefined();
+    terminal.unmount();
   });
 
   it('renders the exact Arabic blocking explanation', () => {
@@ -1134,13 +1160,194 @@ describe('an unproven armed state locks the screen', () => {
     rendered.unmount();
   });
 
-  it('derives LOCKED from the authoritative gate, not from the reducer name', () => {
+  it('derives the presentation from the authoritative gate, not the reducer name', () => {
     // Pure derivation: same reducer state, opposite gate verdict.
     expect(
       derivePresentation(
         snapshotFor({machine: 'Ready', allowed: true}),
       ),
     ).toBe('READY');
-    expect(derivePresentation(monitorBlocked())).toBe('LOCKED');
+    // Gate closed for the ONE mid-cycle reason: re-verifying.
+    expect(derivePresentation(monitorBlocked())).toBe('VERIFYING');
+    // Gate closed for anything else, or for more than that one reason:
+    // genuinely locked.
+    expect(
+      derivePresentation(
+        snapshotFor({
+          machine: 'Ready',
+          allowed: false,
+          reasons: ['ARMED_STATE_UNKNOWN_OR_STALE', 'FC_ARMED'],
+        }),
+      ),
+    ).toBe('LOCKED');
+    expect(
+      derivePresentation(
+        snapshotFor({machine: 'Ready', allowed: false, reasons: ['FC_ARMED']}),
+      ),
+    ).toBe('LOCKED');
+  });
+});
+
+/* ================================================================== *
+ * THE FOUR-MOTOR OPERATOR FLOW
+ *
+ * SCOPE CORRECTION, RECORDED. The operator must be able to test M1, M2,
+ * M3 and M4 in any order, repeatedly, inside ONE session. That is a
+ * screen-level contract as much as a controller one: a flow that silently
+ * makes somebody re-tick three safety checkboxes after every single
+ * release is not the feature, whatever the controller does underneath.
+ * ================================================================== */
+
+describe('MotorsScreen - the four-motor flow', () => {
+  /** The transient window every normal release passes through: the stop
+   * is confirmed and the reducer is back in `Ready`, but monitoring has
+   * been restarted and its fresh observation has not landed yet, so the
+   * authoritative gate is briefly closed. */
+  const reverifying = (): MotorTestControllerSnapshot =>
+    snapshotFor({
+      machine: 'Ready',
+      allowed: false,
+      mayHaveReachedFc: true,
+      stopAcknowledged: true,
+      stopOutcome: {kind: 'ACKNOWLEDGED'},
+      reasons: ['ARMED_STATE_UNKNOWN_OR_STALE'],
+    });
+
+  const readyAgain = (): MotorTestControllerSnapshot =>
+    snapshotFor({
+      machine: 'Ready',
+      allowed: true,
+      mayHaveReachedFc: true,
+      stopAcknowledged: true,
+      stopOutcome: {kind: 'ACKNOWLEDGED'},
+    });
+
+  it('keeps the acknowledgements through a normal release', () => {
+    // THE DEFECT THIS CLOSES. The reset was keyed on the LOCKED
+    // presentation, and a re-verifying session renders as LOCKED for the
+    // few milliseconds its fresh observation is in flight. So every
+    // release wiped all three checkboxes and the operator had to re-tick
+    // them before touching the next motor - four times over a sweep.
+    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+
+    act(() => {
+      operator.publish(reverifying());
+    });
+    act(() => {
+      operator.publish(readyAgain());
+    });
+
+    // Still vouched for: the session never ended, so the operator is not
+    // asked to vouch for it again.
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+    rendered.unmount();
+  });
+
+  it('does not present a re-verifying session as LOCKED', () => {
+    const rendered = render(new FakeOperator(reverifying()));
+    // It is not locked - nothing went wrong. It is confirming the flight
+    // controller is still disarmed before it will arm the control again.
+    expect(rendered.query('motors-status-LOCKED')).toBeUndefined();
+    expect(rendered.query('motors-status-VERIFYING')).toBeDefined();
+    // ... and the control stays disabled while that is true.
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    rendered.unmount();
+  });
+
+  it('still resets the acknowledgements when the session genuinely ends', () => {
+    for (const machine of ['Locked', 'Fault'] as const) {
+      const operator = new FakeOperator(snapshotFor({allowed: true}));
+      const rendered = render(operator);
+      acknowledgeAll(rendered);
+      expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+
+      act(() => {
+        operator.publish(snapshotFor({machine, allowed: false}));
+      });
+      act(() => {
+        operator.publish(snapshotFor({allowed: true}));
+      });
+      expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+      rendered.unmount();
+    }
+  });
+
+  it.each([1, 2, 3, 4])('pulses M%i from the selected card', slot => {
+    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+    rendered.press(`motors-slot-${slot}`);
+    longPress(rendered);
+    // The number on the card IS the number handed to the controller.
+    expect(operator.pulseCalls).toEqual([slot]);
+    rendered.unmount();
+  });
+
+  it('sweeps all four in an arbitrary order without re-acknowledging', () => {
+    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+
+    for (const slot of [3, 1, 4, 2, 3]) {
+      rendered.press(`motors-slot-${slot}`);
+      longPress(rendered);
+      pressOut(rendered);
+      // The release round trip the controller really performs.
+      act(() => {
+        operator.publish(reverifying());
+      });
+      act(() => {
+        operator.publish(readyAgain());
+      });
+    }
+
+    // Five deliberate presses, five commands, in the order requested -
+    // and one set of acknowledgements for the whole sweep.
+    expect(operator.pulseCalls).toEqual([3, 1, 4, 2, 3]);
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+    rendered.unmount();
+  });
+});
+
+/* ================================================================== *
+ * DIRECTION REVERSAL - AUDITED, AND STATED HONESTLY
+ * ================================================================== */
+
+describe('MotorsScreen - direction reversal', () => {
+  it('offers no reversal control of any kind', () => {
+    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+    // There is no control to press, so there is nothing that could fake a
+    // reversal by flipping a label while sending nothing.
+    for (const absent of [
+      'motors-reverse-direction',
+      'motors-direction-toggle',
+      'motors-set-direction',
+    ]) {
+      expect(rendered.query(absent)).toBeUndefined();
+    }
+    rendered.unmount();
+  });
+
+  it('states the reversal limitation, and names the tool that can do it', () => {
+    const rendered = render(new FakeOperator(snapshotFor({allowed: true})));
+    expect(rendered.query('motors-direction-reversal-support')).toBeDefined();
+    const rendering = texts(rendered);
+    expect(rendering).toContain('عكس اتجاه دوران محرك غير متاح في هذا التطبيق.');
+    expect(rendering).toContain('Betaflight Configurator');
+    rendered.unmount();
+  });
+
+  it('never presents the displayed directions as read from the aircraft', () => {
+    const rendered = render(new FakeOperator(snapshotFor({allowed: true})));
+    expect(rendered.query('motors-diagram-direction-source')).toBeDefined();
+    expect(texts(rendered)).toContain(
+      'اتجاهات الدوران المعروضة هي القيم الافتراضية لمخطط Betaflight Quad X، وليست قراءة من متحكم الطيران.',
+    );
+    rendered.unmount();
   });
 });

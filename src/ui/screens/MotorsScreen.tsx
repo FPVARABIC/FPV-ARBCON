@@ -207,6 +207,19 @@ export type MotorsScreenPresentation =
   | 'NO_SESSION'
   | 'CHECKING'
   | 'LOCKED'
+  /**
+   * The reducer is back in `Ready` after a confirmed stop, and the
+   * controller is taking one fresh armed-state reading before it will arm
+   * the control again.
+   *
+   * DISTINCT FROM `LOCKED` ON PURPOSE. Nothing went wrong here, and a
+   * session that is simply re-checking is not a session that needs
+   * operator action. Calling it locked also had a concrete cost: the
+   * manual acknowledgement reset was keyed on LOCKED, so every normal
+   * release wiped all three checkboxes and made the operator re-tick them
+   * before touching the next motor.
+   */
+  | 'VERIFYING'
   | 'READY'
   /** A command was submitted and no attributable response has arrived. It
    * may already be live, so this is stop-dominant. */
@@ -268,13 +281,27 @@ export function derivePresentation(
       return 'CHECKING';
     case 'Locked':
       return 'LOCKED';
-    case 'Ready':
+    case 'Ready': {
       // R1: `Ready` is the REDUCER's state, not a statement that anything
-      // may be started. When the authoritative gate refuses activation -
-      // notably while no continuous safety monitor exists - presenting an
-      // actionable READY would tell the operator something untrue. Locked
-      // is the honest presentation.
-      return snapshot.activation.allowed ? 'READY' : 'LOCKED';
+      // may be started. When the authoritative gate refuses activation,
+      // presenting an actionable READY would tell the operator something
+      // untrue.
+      if (snapshot.activation.allowed) {
+        return 'READY';
+      }
+      // WHICH KIND OF "not yet" IS THIS? A session whose ONLY outstanding
+      // reason is that the armed state has not been re-read is mid-cycle,
+      // not broken - it is the few milliseconds after a confirmed stop
+      // while the fresh observation is in flight. Anything else, including
+      // anything terminal, is a genuine lock.
+      const onlyReason =
+        snapshot.activation.reasons.length === 1
+          ? snapshot.activation.reasons[0]
+          : undefined;
+      return onlyReason === 'ARMED_STATE_UNKNOWN_OR_STALE'
+        ? 'VERIFYING'
+        : 'LOCKED';
+    }
     case 'Starting':
       return 'SUBMITTED_AWAITING_RESPONSE';
     case 'Pulsing':
@@ -485,16 +512,26 @@ export function MotorsScreenView({
   // lock, a fault, a session replacement or the loss of the operator port
   // (blur/detach both surface here as a changed binding or a changed
   // machine state). It is never persisted anywhere.
+  //
+  // KEYED ON THE REDUCER, NOT ON THE PRESENTATION. It used to reset on the
+  // LOCKED presentation, and a session that is merely re-reading the armed
+  // state after a confirmed stop renders as LOCKED for the few
+  // milliseconds that reading is in flight. So a perfectly normal release
+  // wiped all three checkboxes, and testing four motors meant ticking
+  // twelve. The reducer's own state is the honest boundary: `Locked` and
+  // `Fault` are real session endings, `Ready` is not - however briefly its
+  // gate happens to be closed.
+  const machineName = snapshot?.machine?.name;
   useEffect(() => {
     if (
       operator === undefined ||
-      presentation === 'LOCKED' ||
-      presentation === 'FAULT' ||
-      presentation === 'NO_SESSION'
+      machineName === undefined ||
+      machineName === 'Locked' ||
+      machineName === 'Fault'
     ) {
       setAcknowledgements(NO_ACKNOWLEDGEMENTS);
     }
-  }, [operator, presentation]);
+  }, [operator, machineName]);
 
   /**
    * Binds verification to the CURRENT official session, and clears it for
@@ -713,6 +750,8 @@ export function MotorsScreenView({
         return t('motorsScreen.statusChecking');
       case 'LOCKED':
         return t('motorsScreen.statusLocked');
+      case 'VERIFYING':
+        return t('motorsScreen.statusVerifying');
       case 'READY':
         return t('motorsScreen.statusReady');
       case 'SUBMITTED_AWAITING_RESPONSE':
@@ -1035,6 +1074,25 @@ export function MotorsScreenView({
               therefore nothing to derive from, and the CW/CCW labels are
               stated as the Betaflight default rather than as this
               aircraft's configuration. */}
+          {/* REVERSAL IS NOT OFFERED, AND THE SCREEN SAYS SO.
+              Audited rather than assumed. Real per-motor reversal on this
+              hardware means DShot special commands 20/21 followed by SAVE
+              (12), carried by MSP2_SEND_DSHOT_COMMAND, or the BLHeli
+              4-way passthrough interface. This build implements NEITHER -
+              there is no DShot-command encoder and no passthrough client
+              anywhere in it, and MSP_MIXER_CONFIG's `yaw_motors_reversed`
+              is a yaw PID sign flip, not an output direction.
+
+              And the readback matters as much as the write: at the pinned
+              Betaflight tag NO MSP command reports an ESC's spin
+              direction, so a DShot reversal could be SENT but never
+              CONFIRMED - it would be a persistent write to ESC EEPROM
+              whose result this app could not verify. Rather than offer
+              that, or fake it by flipping a label, the screen states the
+              limit and names the tool that does it properly. */}
+          <Text style={styles.caption} testID="motors-direction-reversal-support">
+            {t('motorsScreen.directionReversalUnsupported')}
+          </Text>
           <Text style={styles.caption} testID="motors-diagram-direction-source">
             {t('motorsScreen.diagramDirectionSource')}
           </Text>

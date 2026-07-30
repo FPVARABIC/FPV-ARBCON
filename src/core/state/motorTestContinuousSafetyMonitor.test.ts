@@ -216,3 +216,66 @@ describe('no production file can manufacture the permitting armed-state answer',
     ]);
   });
 });
+
+/* ================================================================== *
+ * NO PRODUCTION FILE CAN REVERSE A MOTOR'S DIRECTION
+ *
+ * The screen displays the Betaflight Quad X default rotation directions
+ * and says so. This block is the other half of that honesty: it proves
+ * nothing in the shipped source can SEND a direction change either, so
+ * the displayed labels can never quietly become a claim about something
+ * the app did.
+ *
+ * Real reversal on this hardware means DShot special commands 20/21
+ * followed by SAVE (12) over MSP2_SEND_DSHOT_COMMAND, or the BLHeli
+ * 4-way passthrough interface behind MSP_SET_PASSTHROUGH. Neither is
+ * implemented, and at the pinned Betaflight tag no MSP command reads an
+ * ESC's spin direction back - so a reversal could be written but never
+ * confirmed. Adding one of these tokens without also adding a genuine
+ * readback must fail this test and be argued for explicitly.
+ * ================================================================== */
+
+describe('no production file can command a motor direction change', () => {
+  const sources = productionSources();
+
+  it('implements no DShot special-command or passthrough path', () => {
+    const offenders: {file: string; token: string}[] = [];
+    for (const file of sources) {
+      const executable = executableOf(file);
+      for (const token of [
+        'MSP2_SEND_DSHOT_COMMAND',
+        'SEND_DSHOT_COMMAND',
+        'DSHOT_CMD_SPIN_DIRECTION',
+        'SPIN_DIRECTION_NORMAL',
+        'SPIN_DIRECTION_REVERSED',
+        'DSHOT_CMD_SAVE_SETTINGS',
+        'MSP_SET_PASSTHROUGH',
+        'fourWayInterface',
+        'blheliPassthrough',
+      ]) {
+        if (executable.includes(token)) {
+          offenders.push({file: file.replace(SRC_ROOT, 'src'), token});
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps yaw_motors_reversed out of every motor-direction decision', () => {
+    // The one MSP field that LOOKS like it means rotation direction. At
+    // the pinned tag the firmware uses it in exactly one place - to flip
+    // the sign of the yaw PID term - so it remaps no output and proves no
+    // rotation. Nothing may branch on it.
+    const offenders = sources.filter(file => {
+      const executable = executableOf(file);
+      return (
+        /yawMotorsReversed/.test(executable) &&
+        !file.endsWith(join('protocol', 'msp', 'decoding', 'decodeMixerConfig.ts')) &&
+        !file.endsWith(join('core', 'state', 'motorStaticFacts.ts')) &&
+        !file.endsWith(join('core', 'state', 'motorStaticCompatibility.ts')) &&
+        !file.endsWith(join('core', 'state', 'motorTestCapabilities.ts'))
+      );
+    });
+    expect(offenders.map(f => f.replace(SRC_ROOT, 'src'))).toEqual([]);
+  });
+});
