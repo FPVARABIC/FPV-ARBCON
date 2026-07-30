@@ -160,10 +160,13 @@ describe('the real coordinator path makes the Step-1 control reachable', () => {
     expect(
       renderer.root.findAllByProps({testID: 'motors-begin-no-session'}).length,
     ).toBeGreaterThan(0);
+    // NOT `disabled`: it must be pressable in order to REFUSE out loud.
+    // See the "every press answers" suite - a control disabled into silence
+    // is what produced "repeated presses, zero visible change" on hardware.
     expect(
       renderer.root.findAllByProps({testID: 'motors-begin-session'})[0].props
         .disabled,
-    ).toBe(true);
+    ).toBe(false);
 
     // Now let startTelemetry() run. The store subscription must pick it up.
     await ReactTestRenderer.act(async () => {
@@ -181,10 +184,11 @@ describe('the real coordinator path makes the Step-1 control reachable', () => {
     });
   });
 
-  it('never offers an ENABLED control without an operator port', async () => {
-    // The gate itself, asserted directly: no session key at all is the
-    // weakest possible state, and the control must be visible-but-refusing,
-    // never actionable.
+  it('offers a pressable control that refuses, with the reason, when there is no port', async () => {
+    // REVERSED, on hardware evidence. This asserted `disabled === true`,
+    // which meant onPress never fired and the operator got no answer at all.
+    // The refusal now lives inside the handler, which returns before
+    // `beginSession()` - same gate, but it speaks.
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     ReactTestRenderer.act(() => {
       renderer = ReactTestRenderer.create(
@@ -201,7 +205,7 @@ describe('the real coordinator path makes the Step-1 control reachable', () => {
       testID: 'motors-begin-session',
     })[0];
     expect(button).toBeDefined();
-    expect(button.props.disabled).toBe(true);
+    expect(button.props.disabled).toBe(false);
     expect(
       renderer.root.findAllByProps({testID: 'motors-begin-no-session'}).length,
     ).toBeGreaterThan(0);
@@ -332,6 +336,174 @@ describe('a bring-up throw is NAMED on screen, not swallowed', () => {
     })[0];
     expect(shown).toBeDefined();
     expect(shown.props.children).toContain('scheduler construction failed');
+    ReactTestRenderer.act(() => {
+      renderer.unmount();
+    });
+  });
+});
+
+describe('the recorded cause surfaces WITHOUT any further operator action', () => {
+  /**
+   * THE REAL-HARDWARE DEFECT THIS PINS DOWN. The cause string used to be
+   * read during render, on the assumption that the operator's next
+   * interaction would re-render the panel. Against an actual flight
+   * controller the acknowledgements had already been ticked BEFORE bring-up
+   * failed, so no further re-render ever came: the cause was recorded and
+   * invisible, and the button looked dead.
+   *
+   * The ordering here is the whole point - every interaction happens FIRST,
+   * and the failure lands afterwards with nothing to trigger a redraw but
+   * the subscription itself.
+   */
+  it('renders the cause when bring-up fails AFTER the acknowledgements are already ticked', async () => {
+    // ORDERING IS THE TEST. The panel is mounted and every acknowledgement
+    // is ticked BEFORE the session is opened, so when bring-up fails there
+    // is no subsequent interaction left to trigger a redraw. Only the
+    // subscription can surface the cause.
+    //
+    // `startTelemetry` is the step made to throw, not `beginIdentification`:
+    // telemetry is what creates the motor-test capability, so this both
+    // records a cause AND leaves the screen in the blocked no-session state
+    // the operator actually saw.
+    const coordinator = mspSessionCoordinator as unknown as Record<
+      string,
+      unknown
+    >;
+    const original = coordinator.startTelemetry;
+    coordinator.startTelemetry = () => {
+      throw new Error('handshake failed on real FC');
+    };
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    try {
+      // Mounted against a session that does not exist yet - exactly the tab
+      // shell's real situation while a connection is coming up.
+      await ReactTestRenderer.act(async () => {
+        renderer = ReactTestRenderer.create(
+          <MotorsTab
+            sessionKey={{sessionId: SESSION_ID, generation: 1}}
+            navigation={
+              {addListener: () => () => undefined, goBack: () => undefined} as never
+            }
+            subscribeTabBlur={() => () => undefined}
+          />,
+        );
+        await flush();
+      });
+
+      for (const key of ['propellers', 'secured', 'battery']) {
+        ReactTestRenderer.act(() => {
+          renderer.root
+            .findAllByProps({testID: `motors-ack-${key}`})[0]
+            .props.onPress();
+        });
+      }
+      expect(
+        renderer.root.findAllByProps({testID: 'motors-begin-bringup-error'})
+          .length,
+      ).toBe(0);
+
+      // The failure lands here, with NO user action after it.
+      await ReactTestRenderer.act(async () => {
+        mspSessionCoordinator.openSession(makeNativeClient(), SESSION_ID);
+        await flush(10);
+      });
+
+      expect(
+        mspSessionCoordinator.getSessionBringUpFailure(SESSION_ID),
+      ).toContain('startTelemetry');
+      const shown = renderer.root.findAllByProps({
+        testID: 'motors-begin-bringup-error',
+      });
+      expect(shown.length).toBeGreaterThan(0);
+      expect(String(shown[0].props.children)).toContain(
+        'handshake failed on real FC',
+      );
+    } finally {
+      coordinator.startTelemetry = original;
+      if (renderer !== undefined) {
+        ReactTestRenderer.act(() => {
+          renderer.unmount();
+        });
+      }
+    }
+  });
+});
+
+describe('every press answers, even when it refuses', () => {
+  const renderBlocked = () => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <MotorsTab
+          sessionKey={undefined}
+          navigation={
+            {addListener: () => () => undefined, goBack: () => undefined} as never
+          }
+          subscribeTabBlur={() => () => undefined}
+        />,
+      );
+    });
+    return renderer;
+  };
+
+  it('fires onPress at all - the control is not disabled into silence', () => {
+    // The device symptom was "repeated presses, zero visible change". With
+    // `disabled` set from the blocked state, onPress never fired, so no
+    // refusal could ever be shown. It must be pressable in order to refuse.
+    const renderer = renderBlocked();
+    const button = renderer.root.findAllByProps({
+      testID: 'motors-begin-session',
+    })[0];
+    expect(button.props.disabled).toBe(false);
+    ReactTestRenderer.act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('changes what is on screen on EVERY press, including repeats', () => {
+    const renderer = renderBlocked();
+    const press = () =>
+      ReactTestRenderer.act(() => {
+        renderer.root
+          .findAllByProps({testID: 'motors-begin-session'})[0]
+          .props.onPress();
+      });
+    const reasonText = () =>
+      String(
+        renderer.root.findAllByProps({testID: 'motors-begin-no-session'})[0]
+          .props.children,
+      );
+
+    const before = reasonText();
+    press();
+    const afterFirst = reasonText();
+    press();
+    const afterSecond = reasonText();
+
+    // Each press must be distinguishable from the last. A reason line that
+    // was ALREADY on screen is why the count exists: without it the second
+    // press is indistinguishable from a dead button.
+    expect(afterFirst).not.toBe(before);
+    expect(afterSecond).not.toBe(afterFirst);
+    ReactTestRenderer.act(() => {
+      renderer.unmount();
+    });
+  });
+
+  it('still cannot start a session while refusing', () => {
+    // The gate, asserted where it now lives. No port means nothing to call;
+    // the handler returns before `beginSession()` and the screen never
+    // leaves the blocked presentation.
+    const renderer = renderBlocked();
+    ReactTestRenderer.act(() => {
+      renderer.root
+        .findAllByProps({testID: 'motors-begin-session'})[0]
+        .props.onPress();
+    });
+    expect(
+      renderer.root.findAllByProps({testID: 'motors-status-NO_SESSION'}).length,
+    ).toBeGreaterThan(0);
     ReactTestRenderer.act(() => {
       renderer.unmount();
     });

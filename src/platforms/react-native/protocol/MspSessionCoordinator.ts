@@ -410,6 +410,8 @@ function unrefIfSupported(handle: unknown): void {
 
 export class MspSessionCoordinator {
   private readonly sessions = new Map<string, SessionEntry>();
+  /** Bring-up-failure listeners, keyed by sessionId. Module-private. */
+  private readonly bringUpFailureListeners = new Map<string, Set<() => void>>();
   private readonly ownershipStates = new Map<string, MspSessionOwnershipState>();
   private readonly ownershipListeners = new Set<() => void>();
   private readonly auxTelemetryListeners = new Set<() => void>();
@@ -837,9 +839,25 @@ export class MspSessionCoordinator {
       this.notifyIdentification();
     };
 
+    // GUARDED THE SAME WAY THE SYNCHRONOUS CALLS ARE, and for the same
+    // reason. Both arms are handled, so an identify() REJECTION is fine -
+    // but a throw inside `finish()` itself lands in this promise with
+    // nothing to catch it, and becomes an unhandled rejection: invisible in
+    // a release build. `finish()` is not trivial - it unsubscribes, checks
+    // the generation, publishes state and registers the battery poll off a
+    // real decode - and every one of those runs for the first time against
+    // a real flight controller's actual payloads, not the scripted
+    // fixture's. Recording beats losing it.
+    const settle = (identification: MspIdentificationState) => {
+      try {
+        finish(identification);
+      } catch (finishError) {
+        this.recordBringUpFailure(sessionId, 'beginIdentification', finishError);
+      }
+    };
     new MspIdentificationService(countingRequester).identify().then(
-      identity => finish({status: 'SUCCEEDED', identity}),
-      error => finish({status: 'FAILED', error}),
+      identity => settle({status: 'SUCCEEDED', identity}),
+      error => settle({status: 'FAILED', error}),
     );
   }
 
@@ -1042,6 +1060,51 @@ export class MspSessionCoordinator {
         ? `${error.name}: ${error.message}`
         : String(error);
     entry.bringUpFailure = `${step} - ${message}`;
+    // ANNOUNCE, don't wait to be asked.
+    //
+    // The first version of this only stored the string, and the Motors tab
+    // read it during render. On real hardware that made the cause
+    // INVISIBLE: with the acknowledgements already ticked before bring-up
+    // failed, nothing re-rendered the panel again, so the operator saw a
+    // blocked screen that never explained itself and a button that appeared
+    // to do nothing. A stored value nobody is told about is the same as no
+    // value at all.
+    //
+    // Iterated over a copy: a listener that unsubscribes itself must not
+    // mutate the set mid-iteration.
+    for (const listener of [
+      ...(this.bringUpFailureListeners.get(sessionId) ?? []),
+    ]) {
+      listener();
+    }
+  }
+
+  /**
+   * Notified when THIS session records its first bring-up failure. Returns
+   * an unsubscribe.
+   *
+   * Carries no payload: a listener learns only that something changed and
+   * must still call `getSessionBringUpFailure()`, so this cannot become a
+   * back channel for anything else.
+   */
+  subscribeSessionBringUpFailure(
+    sessionId: string,
+    listener: () => void,
+  ): () => void {
+    const existing =
+      this.bringUpFailureListeners.get(sessionId) ?? new Set<() => void>();
+    existing.add(listener);
+    this.bringUpFailureListeners.set(sessionId, existing);
+    return () => {
+      const set = this.bringUpFailureListeners.get(sessionId);
+      if (set === undefined) {
+        return;
+      }
+      set.delete(listener);
+      if (set.size === 0) {
+        this.bringUpFailureListeners.delete(sessionId);
+      }
+    };
   }
 
   /**

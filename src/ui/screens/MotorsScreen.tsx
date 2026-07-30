@@ -494,17 +494,38 @@ export function MotorsScreenView({
    */
   const [beginning, setBeginning] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
+  /**
+   * WHY EVERY PRESS IS COUNTED AND ANSWERED.
+   *
+   * On real hardware the operator pressed this button repeatedly and saw
+   * NOTHING change - because both guards below used to `return` silently.
+   * A control that refuses without saying so is indistinguishable from a
+   * dead one, and it cost a hardware session to discover that.
+   *
+   * The counter exists so the refusal is unmissable even when the same
+   * reason is ALREADY on screen: without it, the second press onto an
+   * already-visible reason line looks exactly like no response at all.
+   */
+  const [refusal, setRefusal] = useState<'NONE' | 'NO_SESSION' | 'NEEDS_ACK'>(
+    'NONE',
+  );
+  const [beginAttempts, setBeginAttempts] = useState(0);
 
   const handleBeginSession = useCallback(() => {
+    setBeginAttempts(previous => previous + 1);
     const port = operatorRef.current;
     if (port === undefined) {
+      // NEVER a silent return. This is the exact state the device was in.
+      setRefusal('NO_SESSION');
       return;
     }
     // The SAME manual gate the hold control uses. Re-read at call time: a
     // gate that was open when this closure was created proves nothing now.
     if (!allAcknowledged(acknowledgements)) {
+      setRefusal('NEEDS_ACK');
       return;
     }
+    setRefusal('NONE');
     setBeginning(true);
     setBeginFailed(false);
     void port
@@ -884,17 +905,30 @@ export function MotorsScreenView({
               {t('motorsScreen.beginSessionHeading')}
             </Text>
             <Text style={styles.caption}>{t('motorsScreen.beginSessionHint')}</Text>
+            {/* DISABLED ONLY WHILE A BEGIN IS ACTUALLY IN FLIGHT.
+                It used to be disabled whenever there was no operator port or
+                the acknowledgements were incomplete, which meant `onPress`
+                never fired at all and the operator got no answer of any
+                kind. Refusal now happens INSIDE `handleBeginSession`, where
+                it can say why. That is not a weaker gate: the handler
+                re-reads the port and the acknowledgements at call time and
+                returns before touching `beginSession()`, exactly as the
+                `disabled` prop did, and with no port there is nothing to
+                call in the first place.
+
+                `pressed` drives an immediate style change on touch-down -
+                before any async result exists - so a tap is visibly
+                registered even when the outcome takes a moment. */}
             <Pressable
               onPress={handleBeginSession}
-              disabled={operator === undefined || !acknowledged || beginning}
+              disabled={beginning}
               accessibilityRole="button"
-              accessibilityState={{
-                disabled: operator === undefined || !acknowledged || beginning,
-              }}
-              style={[
+              accessibilityState={{disabled: beginning}}
+              style={({pressed}) => [
                 styles.beginButton,
                 (operator === undefined || !acknowledged || beginning) &&
                   styles.beginButtonOff,
+                pressed && styles.beginButtonPressed,
               ]}
               testID="motors-begin-session">
               <Text style={styles.beginLabel}>
@@ -909,6 +943,7 @@ export function MotorsScreenView({
             {operator === undefined ? (
               <Text style={styles.blockReason} testID="motors-begin-no-session">
                 {t('motorsScreen.noSession')}
+                {beginAttempts > 0 ? ` (${beginAttempts})` : ''}
               </Text>
             ) : null}
             {/* The ACTUAL cause, when bring-up threw. This is the line that
@@ -922,8 +957,15 @@ export function MotorsScreenView({
               </Text>
             ) : null}
             {operator !== undefined && !acknowledged ? (
-              <Text style={styles.caption} testID="motors-begin-needs-ack">
+              <Text
+                style={
+                  refusal === 'NEEDS_ACK' ? styles.blockReason : styles.caption
+                }
+                testID="motors-begin-needs-ack">
                 {t('motorsScreen.beginSessionNeedsAck')}
+                {refusal === 'NEEDS_ACK' && beginAttempts > 0
+                  ? ` (${beginAttempts})`
+                  : ''}
               </Text>
             ) : null}
             {beginFailed ? (
@@ -1146,6 +1188,8 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   beginButtonOff: {borderColor: colors.disabled},
+  /** Touch-down feedback. Instant, and independent of any async outcome. */
+  beginButtonPressed: {borderColor: colors.textPrimary, opacity: 0.7},
   beginLabel: {
     ...typography.sectionTitle,
     color: colors.accent,
@@ -1521,21 +1565,40 @@ function MotorsScreenBinding({
   }, [operator, navigation, subscribeTabBlur]);
 
   /**
-   * Read during render rather than held in state, and the limitation is
-   * deliberate: a bring-up throw means no capability is ever stored, so the
-   * capability-opened subscription NEVER fires and there is no push signal
-   * to hang a setState on. Adding a timer to poll for a diagnostic string
-   * would put a timer in a screen whose header promises it creates none.
+   * REAL STATE, PUSHED - not a render-time read.
    *
-   * The practical consequence, stated rather than hidden: the cause appears
-   * on the next re-render, which in this state is the operator's very next
-   * interaction (ticking any acknowledgement re-renders this tree). Good
-   * enough for a diagnostic, and it cannot go stale in the wrong direction -
-   * the string is only ever set once, never cleared.
+   * WHAT THE FIRST VERSION GOT WRONG, and what it cost. This used to read
+   * `getSessionBringUpFailure()` during render, on the reasoning that the
+   * operator's next interaction would re-render the tree anyway. On real
+   * hardware that reasoning failed exactly as it deserved to: the
+   * acknowledgements had ALREADY been ticked before bring-up failed, so no
+   * further re-render ever happened, and the cause stayed invisible while
+   * the operator pressed a button that appeared to do nothing. "It shows up
+   * on the next interaction" is not a property you get to assume when the
+   * interactions have already happened.
+   *
+   * Same shape as the capability subscription below: read once immediately,
+   * so a failure recorded before this effect ran is not missed, then
+   * subscribe for one recorded later. No timer, no polling.
    */
-  const bringUpFailure = mspSessionCoordinator.getSessionBringUpFailure(
-    sessionKey.sessionId,
+  const [bringUpFailure, setBringUpFailure] = useState<string | undefined>(
+    undefined,
   );
+  useEffect(() => {
+    const read = () => {
+      const failure = mspSessionCoordinator.getSessionBringUpFailure(
+        sessionKey.sessionId,
+      );
+      if (failure !== undefined) {
+        setBringUpFailure(failure);
+      }
+    };
+    read();
+    return mspSessionCoordinator.subscribeSessionBringUpFailure(
+      sessionKey.sessionId,
+      read,
+    );
+  }, [sessionKey.sessionId]);
   return (
     <MotorsScreenView
       operator={operator}

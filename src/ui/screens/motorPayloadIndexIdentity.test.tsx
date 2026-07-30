@@ -62,6 +62,9 @@ jest.mock('../../platforms/react-native/protocol', () => ({
     // state. Undefined here is the truthful answer: this fixture opens the
     // capability directly, so no bring-up step ever ran, let alone threw.
     getSessionBringUpFailure: () => undefined,
+    // Paired with the getter: the container reads once AND subscribes,
+    // so a stub missing this is a TypeError at render time.
+    subscribeSessionBringUpFailure: () => () => {},
   },
 }));
 

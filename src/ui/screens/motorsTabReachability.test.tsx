@@ -211,13 +211,19 @@ describe('Motors tab reachability with a session that arrives late', () => {
     // navigation, which is exactly what was rejected.
     expect(readMotorTestCapability(SESSION_ID)).toBeDefined();
     expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
-    // Gated behind the same three acknowledgements as hold-to-test.
-    expect(shell.find('motors-begin-session').props.disabled).toBe(true);
+    // Still gated behind the same three acknowledgements as hold-to-test -
+    // but the gate is now enforced INSIDE the handler rather than by
+    // `disabled`, so the control can say why instead of ignoring the tap.
+    // See motorsBeginSessionReachesDevice.test.tsx for why that changed.
     expect(shell.query('motors-begin-needs-ack').length).toBeGreaterThan(0);
-    // Acknowledge all three, and it becomes genuinely pressable.
+    shell.press('motors-begin-session');
+    // Refused, and it said so - the session did not start.
+    expect(shell.query('motors-status-NO_SESSION').length).toBeGreaterThan(0);
+    // Acknowledge all three, and the hint is gone.
     for (const key of ['propellers', 'secured', 'battery']) {
       shell.press(`motors-ack-${key}`);
     }
+    expect(shell.query('motors-begin-needs-ack').length).toBe(0);
     expect(shell.find('motors-begin-session').props.disabled).toBe(false);
     shell.unmount();
   });
@@ -239,7 +245,7 @@ describe('Motors tab reachability with a session that arrives late', () => {
     shell.unmount();
   });
 
-  it('shows the begin control DISABLED, with a reason, before a capability exists', () => {
+  it('shows the begin control PRESSABLE-BUT-REFUSING, with a reason, before a capability exists', () => {
     // REVERSED ON DEVICE EVIDENCE, and the old rationale is worth recording
     // because it was wrong in an instructive way.
     //
@@ -259,7 +265,9 @@ describe('Motors tab reachability with a session that arrives late', () => {
     shell.press('main-tab-MOTORS');
     expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
     expect(shell.query('motors-begin-no-session').length).toBeGreaterThan(0);
-    expect(shell.query('motors-begin-session')[0].props.disabled).toBe(true);
+    // NOT disabled - see the note above. Disabling it is what made the
+    // hardware session read as "pressing does nothing".
+    expect(shell.query('motors-begin-session')[0].props.disabled).toBe(false);
     shell.unmount();
   });
 
@@ -273,10 +281,19 @@ describe('Motors tab reachability with a session that arrives late', () => {
     const begin = shell.find('motors-begin-session');
     const hold = shell.find('motors-hold-button');
     expect(begin).not.toBe(hold);
-    const flat = (style: unknown) =>
-      Array.isArray(style)
-        ? Object.assign({}, ...style.filter(Boolean))
-        : (style as Record<string, unknown>);
+    // `style` is now a FUNCTION on the begin control - Pressable's
+    // ({pressed}) form, which is what gives a tap instant visual feedback.
+    // Resolved at rest (pressed: false) so this still measures the resting
+    // appearance it is asserting about.
+    const flat = (style: unknown): Record<string, unknown> => {
+      const resolved =
+        typeof style === 'function'
+          ? (style as (state: {pressed: boolean}) => unknown)({pressed: false})
+          : style;
+      return Array.isArray(resolved)
+        ? Object.assign({}, ...resolved.filter(Boolean))
+        : (resolved as Record<string, unknown>);
+    };
     // The begin control is OUTLINED; hold-to-test is a filled surface.
     expect(flat(begin.props.style).borderWidth).toBe(2);
     expect(flat(begin.props.style).backgroundColor).toBeUndefined();
