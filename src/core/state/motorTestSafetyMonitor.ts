@@ -7,9 +7,9 @@
  * the whole life of the lease - deliberately, because the link is
  * single-flight and a motor test must own it. That left a real gap: a
  * pulse could be authorised by SETUP-TIME facts and then run with nothing
- * observing armed state, the arming restriction, or the battery while an
- * output was live. A pre-pulse snapshot is NOT continuous monitoring, and
- * a cached UI telemetry value is NOT a live observation.
+ * observing armed state while an output was live. A pre-pulse snapshot is
+ * NOT continuous monitoring, and a cached UI telemetry value is NOT a live
+ * observation.
  *
  * This module closes that gap with the smallest thing that can: ONE
  * observation at a time, on the SAME lease every other motor-test request
@@ -19,11 +19,20 @@
  *
  * WHAT IT READS, AND NOTHING ELSE
  * -------------------------------
- * Exactly what `acquireMotorDynamicSafetyObservation` reads - MSP_STATUS_EX
- * (150) and MSP_BATTERY_STATE (130), both OUT/read commands - plus the
- * identity checks that function already performs. This module imports no
- * encoder, builds no payload, and can send no write command: it cannot
- * construct MSP_SET_MOTOR even in principle.
+ * Exactly what `observeMotorArmedState` reads - MSP_STATUS_EX (150), an
+ * OUT/read command - plus the identity checks that function performs. This
+ * module imports no encoder, builds no payload, and can send no write
+ * command: it cannot construct MSP_SET_MOTOR even in principle.
+ *
+ * THE SIMPLIFICATION, STATED PLAINLY. This monitor used to run the full
+ * Pass 1D observation (MSP_STATUS_EX *and* MSP_BATTERY_STATE) through the
+ * Pass 1E policy evaluator, which required a Pass 1C static-compatibility
+ * result and treated a missing MSP arming restriction as a blocking
+ * reason. The bench-mode gate no longer establishes an arming restriction,
+ * so that clause could never be satisfied, and the pack-voltage policy was
+ * never part of the mandatory stop set. What remains is the ONE live fact
+ * the gate actually rests on: the flight controller reports itself
+ * DISARMED. Nothing else is inferred, and nothing weaker is accepted.
  *
  * HOW IT INTERACTS WITH STOP - THE POINT THAT MATTERS MOST
  * --------------------------------------------------------
@@ -59,17 +68,11 @@
  */
 
 import {
-  acquireMotorDynamicSafetyObservation,
-  type MotorDynamicSafetyObservationOutcome,
-} from './motorDynamicSafetyObservation';
-import {
-  evaluateMotorDynamicSafetyRequirements,
-  type MotorDynamicSafetyBlockingReason,
-} from './motorDynamicSafetyEvaluation';
-import type {MotorStaticCompatibilityEvaluation} from './motorStaticCompatibility';
-import type {MotorStaticFactsSessionIdentity} from './motorStaticFacts';
+  observeMotorArmedState,
+  type MotorArmedStateObservationOutcome,
+} from './motorArmedStateObservation';
 import type {MotorSessionIdentityProvider} from './motorFcFirmwareVersion';
-import type {BoxIdsResult} from '../protocol/msp/identification/BoxIdsAcquisition';
+import type {MotorStaticFactsSessionIdentity} from './motorStaticFacts';
 import type {MspRequester} from '../protocol/msp/identification/MspIdentificationService';
 import type {MspFrame} from '../protocol/mspTypes';
 import type {MspRequestOptions} from '../protocol/mspClient';
@@ -93,9 +96,8 @@ export const MOTOR_TEST_SAFETY_MAX_AGE_MILLIS = 750;
 /** Why the monitor considers the link unsafe. Every one of these is a
  * STOP trigger for the controller - none is advisory. */
 export type MotorTestSafetyUnsafeReason =
-  /** The FC reported a state that fails the accepted requirements
-   * (armed, arming restriction gone, battery not the approved 4S/OK). */
-  | 'SAFETY_REQUIREMENTS_BLOCKED'
+  /** A fresh reading proved the flight controller ARMED. */
+  | 'FC_ARMED_OBSERVED'
   /** A read failed: timeout, MSP error, transport failure, malformed
    * response, or an identity that moved under the read. */
   | 'SAFETY_OBSERVATION_FAILED'
@@ -110,10 +112,10 @@ export type MotorTestSafetyMonitorStatus =
       readonly observedAtMonotonicMillis: number;
       readonly sessionIdentity: MotorStaticFactsSessionIdentity;
     }
+  /** A completed reading proved the FC ARMED. Terminal for this session. */
   | {
-      readonly kind: 'BLOCKED';
+      readonly kind: 'ARMED';
       readonly observedAtMonotonicMillis: number;
-      readonly reasons: readonly MotorDynamicSafetyBlockingReason[];
     }
   | {readonly kind: 'FAILED'; readonly reason: MotorTestSafetyUnsafeReason};
 
@@ -129,15 +131,17 @@ export interface MotorTestSafetyMonitorSnapshot {
 export interface MotorTestSafetyMonitorOptions {
   /** The LIVE lease. Every observation travels this and nothing else. */
   readonly requester: MspRequester;
-  readonly staticCompatibility: MotorStaticCompatibilityEvaluation | undefined;
-  readonly boxIds: BoxIdsResult | undefined;
+  /** The session identity every observation must belong to. */
+  readonly expectedIdentity: MotorStaticFactsSessionIdentity;
+  /** MSP_BOXIDS permanent ids in wire order, already acquired for this
+   * same session. Never re-requested here. */
+  readonly boxIdPermanentIds: readonly number[] | undefined;
   readonly readCurrentIdentity: MotorSessionIdentityProvider;
   readonly readMonotonicMillis: () => number;
   /**
-   * Called when an observation proves the link unsafe, or when the
-   * monitor's own freshness bound lapses. The controller turns this
-   * straight into a priority stop; this module never stops anything
-   * itself and owns no motor vocabulary.
+   * Called when an observation proves the link unsafe. The controller
+   * turns this straight into a priority stop; this module never stops
+   * anything itself and owns no motor vocabulary.
    */
   readonly onUnsafe: (reason: MotorTestSafetyUnsafeReason) => void;
   /** Injectable so tests drive scheduling deterministically. */
@@ -174,6 +178,21 @@ export interface MotorTestSafetyMonitorLike {
   stop(): void;
   snapshot(): MotorTestSafetyMonitorSnapshot;
   isFreshlySatisfied(nowMonotonicMillis: number): boolean;
+  /**
+   * Resolves once a real observation has COMPLETED AND PUBLISHED.
+   *
+   * THE SETUP BOUNDARY DEPENDS ON THIS. `start()` is fire-and-forget by
+   * design - a stop must never be gated on a read - so without a way to
+   * join the first observation the controller would publish READY while
+   * the very fact READY rests on was still in flight, and the operator
+   * would be shown a gate whose verdict changed on the next unrelated
+   * render. Awaiting this is what makes the boundary deterministic; it is
+   * never a delay, a poll or a retry.
+   *
+   * Joins an outstanding observation rather than starting a second one, so
+   * calling it can never put two reads on the link at once.
+   */
+  observeNow(): Promise<void>;
 }
 
 export type MotorTestSafetyMonitorFactory = (
@@ -209,9 +228,9 @@ export class MotorTestSafetyMonitor implements MotorTestSafetyMonitorLike {
   }
 
   /**
-   * True only when the LAST completed observation satisfied every
-   * requirement AND is still inside the age bound. Anything else - never
-   * observed, blocked, failed, or merely old - is false.
+   * True only when the LAST completed observation proved DISARMED AND is
+   * still inside the age bound. Anything else - never observed, armed,
+   * failed, or merely old - is false.
    */
   isFreshlySatisfied(nowMonotonicMillis: number): boolean {
     if (this.status.kind !== 'SATISFIED') {
@@ -251,9 +270,8 @@ export class MotorTestSafetyMonitor implements MotorTestSafetyMonitorLike {
 
   /**
    * Performs one observation immediately, outside the loop's schedule,
-   * and resolves once it has published. Used by tests and by any caller
-   * that needs a completed reading before deciding. Never overlaps: if
-   * one is already outstanding, this joins it.
+   * and resolves once it has published. Never overlaps: if one is already
+   * outstanding, this joins it.
    */
   observeNow(): Promise<void> {
     if (this.inFlight !== undefined) {
@@ -273,19 +291,19 @@ export class MotorTestSafetyMonitor implements MotorTestSafetyMonitorLike {
   }
 
   private async observe(generation: number): Promise<void> {
-    let outcome: MotorDynamicSafetyObservationOutcome;
+    let outcome: MotorArmedStateObservationOutcome;
     try {
-      outcome = await acquireMotorDynamicSafetyObservation({
+      outcome = await observeMotorArmedState({
         requester: this.requester,
-        staticCompatibility: this.options.staticCompatibility,
-        boxIds: this.options.boxIds,
+        expectedIdentity: this.options.expectedIdentity,
+        boxIdPermanentIds: this.options.boxIdPermanentIds,
         readCurrentIdentity: this.options.readCurrentIdentity,
         readMonotonicMillis: this.options.readMonotonicMillis,
       });
     } catch {
-      // acquireMotorDynamicSafetyObservation is documented never to
-      // throw; this is belt-and-braces so a monitor failure can never
-      // become an unhandled rejection that silently ends monitoring.
+      // observeMotorArmedState is documented never to throw; this is
+      // belt-and-braces so a monitor failure can never become an unhandled
+      // rejection that silently ends monitoring.
       this.publishFailure(generation, 'SAFETY_OBSERVATION_FAILED');
       return;
     }
@@ -301,37 +319,23 @@ export class MotorTestSafetyMonitor implements MotorTestSafetyMonitorLike {
       return;
     }
 
-    const evaluation = evaluateMotorDynamicSafetyRequirements({
-      staticCompatibility: this.options.staticCompatibility,
-      dynamicObservation: outcome,
-      currentSessionIdentity: this.options.readCurrentIdentity(),
-    });
-    if (generation !== this.generation) {
-      return;
-    }
-
-    if (evaluation.kind !== 'EVALUATED') {
-      this.publishFailure(generation, 'SAFETY_OBSERVATION_FAILED');
-      return;
-    }
-    if (evaluation.status !== 'REQUIREMENTS_SATISFIED') {
+    if (outcome.observation.armedState !== 'DISARMED') {
       this.status = Object.freeze({
-        kind: 'BLOCKED' as const,
-        observedAtMonotonicMillis: this.options.readMonotonicMillis(),
-        reasons: evaluation.blockingReasons,
+        kind: 'ARMED' as const,
+        observedAtMonotonicMillis: outcome.observation.observedAtMonotonicMillis,
       });
-      this.options.onUnsafe('SAFETY_REQUIREMENTS_BLOCKED');
-      // Deliberately NOT rescheduled: a blocked observation is terminal
-      // for this session. The controller faults, and only a full reset
-      // may follow.
+      // Deliberately NOT rescheduled: an armed flight controller is
+      // terminal for this session. The controller stops and faults, and
+      // only a full reset may follow.
       this.started = false;
+      this.options.onUnsafe('FC_ARMED_OBSERVED');
       return;
     }
 
     this.status = Object.freeze({
       kind: 'SATISFIED' as const,
-      observedAtMonotonicMillis: this.options.readMonotonicMillis(),
-      sessionIdentity: evaluation.sessionIdentity,
+      observedAtMonotonicMillis: outcome.observation.observedAtMonotonicMillis,
+      sessionIdentity: outcome.observation.sessionIdentity,
     });
     this.scheduleNext(generation);
   }
@@ -341,8 +345,8 @@ export class MotorTestSafetyMonitor implements MotorTestSafetyMonitorLike {
       return;
     }
     this.status = Object.freeze({kind: 'FAILED' as const, reason});
-    // Terminal, same as BLOCKED: a read that failed while an output may
-    // be live is a stop, never something to retry underneath a pulse.
+    // Terminal, same as ARMED: a read that failed while an output may be
+    // live is a stop, never something to retry underneath a pulse.
     this.started = false;
     this.options.onUnsafe(reason);
   }
@@ -360,27 +364,4 @@ export class MotorTestSafetyMonitor implements MotorTestSafetyMonitorLike {
       this.runOnce(generation).catch(() => undefined);
     }, delay);
   }
-}
-
-/**
- * The single decision point the activation gate consults.
- *
- * Fails closed on every path that is not a fresh, satisfied observation
- * from a running monitor: no monitor at all, a monitor that has never
- * observed, a blocked or failed reading, or a reading that has aged past
- * `MOTOR_TEST_SAFETY_MAX_AGE_MILLIS`.
- */
-export function deriveContinuousSafetyMonitoring(
-  monitor: MotorTestSafetyMonitorLike | undefined,
-  nowMonotonicMillis: number,
-): 'AVAILABLE_ACCEPTED_SOURCE' | 'UNAVAILABLE_NO_ACCEPTED_SOURCE' {
-  if (monitor === undefined) {
-    return 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
-  }
-  if (!monitor.snapshot().running) {
-    return 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
-  }
-  return monitor.isFreshlySatisfied(nowMonotonicMillis)
-    ? 'AVAILABLE_ACCEPTED_SOURCE'
-    : 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
 }

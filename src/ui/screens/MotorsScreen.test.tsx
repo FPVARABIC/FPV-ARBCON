@@ -111,10 +111,8 @@ function snapshotFor(options: {
     setupStep: 'READY',
     machine: machineFor(machineName, options.startAcknowledged ?? false),
     outcome: {kind: 'READY'},
-    capabilities: undefined,
-    staticCompatibility: undefined,
-    dynamicEvaluation: undefined,
-    armingRestriction: {kind: 'NOT_ATTEMPTED'},
+    motorScope: {motorCount: 4, motorProtocolRaw: 7, feature3dEnabled: false},
+    armedStateEvidence: allowed ? 'FRESH_DISARMED' : 'UNKNOWN_OR_STALE',
     telemetryHeld: true,
     warnings: [],
     stopDescriptors: [],
@@ -145,7 +143,6 @@ function snapshotFor(options: {
       mayHaveReachedFc: options.mayHaveReachedFc ?? false,
       outcome: undefined,
     },
-    continuousSafetyMonitoring: 'UNAVAILABLE_NO_ACCEPTED_SOURCE',
   } as MotorTestControllerSnapshot;
 }
 
@@ -346,32 +343,35 @@ describe('MotorsScreen - state presentation', () => {
 
   it('shows the FIRST CAUSAL reason only, with consequences in diagnostics', () => {
     // CONTRACT CHANGED ON DEVICE EVIDENCE.
-    // `ARMING_RESTRICTION_NOT_CURRENT` is a teardown CONSEQUENCE. Showing
-    // it beside the real cause is what made one failure read as several
-    // independent hardware faults on the bench.
+    // A terminal fault always drags a dead link along with it, and the
+    // dead link is not the story. Showing both is what made one failure
+    // read as several independent hardware faults on the bench.
     const rendered = render(
       new FakeOperator(
         snapshotFor({
           machine: 'Locked',
           allowed: false,
-          reasons: ['SAFETY_EVENT_LATCHED', 'ARMING_RESTRICTION_NOT_CURRENT'],
+          reasons: ['REQUIRES_NEW_CONNECTION', 'CONTROLLER_LINK_UNAVAILABLE'],
         }),
       ),
     );
-    expect(rendered.query('motors-block-SAFETY_EVENT_LATCHED')).toBeDefined();
+    expect(rendered.query('motors-block-REQUIRES_NEW_CONNECTION')).toBeDefined();
     expect(
-      rendered.query('motors-block-ARMING_RESTRICTION_NOT_CURRENT'),
+      rendered.query('motors-block-CONTROLLER_LINK_UNAVAILABLE'),
     ).toBeUndefined();
 
     // The full array is not lost - it is one tap away, under diagnostics.
     expect(rendered.query('motors-diagnostics')).toBeUndefined();
     rendered.press('motors-diagnostics-toggle');
     expect(
-      rendered.query('motors-diagnostic-ARMING_RESTRICTION_NOT_CURRENT'),
+      rendered.query('motors-diagnostic-CONTROLLER_LINK_UNAVAILABLE'),
     ).toBeDefined();
     expect(
-      rendered.query('motors-diagnostic-SAFETY_EVENT_LATCHED'),
+      rendered.query('motors-diagnostic-REQUIRES_NEW_CONNECTION'),
     ).toBeDefined();
+    // Complete technical state stays behind the same toggle.
+    expect(rendered.query('motors-diagnostic-outcome')).toBeDefined();
+    expect(rendered.query('motors-diagnostic-evidence')).toBeDefined();
     rendered.unmount();
   });
 
@@ -384,30 +384,83 @@ describe('MotorsScreen - state presentation', () => {
           machine: 'Locked',
           allowed: false,
           reasons: [
-            'SETUP_NOT_READY',
-            'MACHINE_NOT_READY',
-            'TELEMETRY_BARRIER_NOT_HELD',
-            'ARMING_RESTRICTION_NOT_CURRENT',
-            'AUTHORITY_STALE',
+            'CONTROLLER_LINK_UNAVAILABLE',
+            'REQUIRES_NEW_CONNECTION',
+            'PULSE_OR_STOP_IN_PROGRESS',
             'MOTOR_SCOPE_UNSUPPORTED',
           ],
         }),
       ),
     );
-    // The real cause wins over all five consequences regardless of the
-    // order the controller happened to emit them in.
+    // The real cause wins over every consequence regardless of the order
+    // the controller happened to emit them in.
     expect(
       rendered.query('motors-block-MOTOR_SCOPE_UNSUPPORTED'),
     ).toBeDefined();
     for (const consequence of [
-      'SETUP_NOT_READY',
-      'MACHINE_NOT_READY',
-      'TELEMETRY_BARRIER_NOT_HELD',
-      'ARMING_RESTRICTION_NOT_CURRENT',
-      'AUTHORITY_STALE',
+      'CONTROLLER_LINK_UNAVAILABLE',
+      'REQUIRES_NEW_CONNECTION',
+      'PULSE_OR_STOP_IN_PROGRESS',
     ]) {
       expect(rendered.query(`motors-block-${consequence}`)).toBeUndefined();
     }
+    rendered.unmount();
+  });
+
+  it('shows an ARMED flight controller ahead of everything it caused', () => {
+    // An armed reading LOCKS the session, so it always arrives paired with
+    // the terminal reason. Being told to reconnect instead of being told
+    // the aircraft is armed would be a serious regression.
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Locked',
+          allowed: false,
+          reasons: ['REQUIRES_NEW_CONNECTION', 'FC_ARMED'],
+        }),
+      ),
+    );
+    expect(rendered.query('motors-block-FC_ARMED')).toBeDefined();
+    expect(
+      rendered.query('motors-block-REQUIRES_NEW_CONNECTION'),
+    ).toBeUndefined();
+    expect(texts(rendered)).toContain('وحدة التحكم مسلّحة؛ الاختبار ممنوع.');
+    rendered.unmount();
+  });
+
+  it('distinguishes an unreadable armed state from an armed one', () => {
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Locked',
+          allowed: false,
+          reasons: ['REQUIRES_NEW_CONNECTION', 'ARMED_STATE_UNKNOWN_OR_STALE'],
+        }),
+      ),
+    );
+    expect(
+      rendered.query('motors-block-ARMED_STATE_UNKNOWN_OR_STALE'),
+    ).toBeDefined();
+    expect(texts(rendered)).toContain(
+      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
+    );
+    // ... and never reported as an armed aircraft, which it is not.
+    expect(texts(rendered)).not.toContain('وحدة التحكم مسلّحة؛ الاختبار ممنوع.');
+    rendered.unmount();
+  });
+
+  it('names 3D specifically rather than as a generic scope refusal', () => {
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Locked',
+          allowed: false,
+          reasons: ['MOTOR_3D_ENABLED'],
+        }),
+      ),
+    );
+    expect(rendered.query('motors-block-MOTOR_3D_ENABLED')).toBeDefined();
+    expect(texts(rendered)).toContain('إعداد 3D غير مدعوم.');
     rendered.unmount();
   });
 
@@ -433,7 +486,7 @@ describe('MotorsScreen - activation gating', () => {
       snapshotFor({
         machine: 'Ready',
         allowed: false,
-        reasons: ['SAFETY_EVENT_LATCHED'],
+        reasons: ['REQUIRES_NEW_CONNECTION'],
       }),
     );
     const rendered = render(operator);
@@ -483,7 +536,7 @@ describe('MotorsScreen - activation gating', () => {
     // The gate closes WITHOUT a re-render reaching the handler's closure.
     operator.snapshot = snapshotFor({
       allowed: false,
-      reasons: ['AUTHORITY_STALE'],
+      reasons: ['CONTROLLER_LINK_UNAVAILABLE'],
     });
     longPress(rendered);
     expect(operator.pulseCalls).toEqual([]);
@@ -669,7 +722,7 @@ describe('MotorsScreen - safety dominance', () => {
           allowed: false,
           mayHaveReachedFc: true,
           attributionAmbiguous: true,
-          reasons: ['STOP_SEALED'],
+          reasons: ['REQUIRES_NEW_CONNECTION'],
         }),
       );
     });
@@ -684,11 +737,13 @@ describe('MotorsScreen - safety dominance', () => {
   });
 
   it.each([
-    'SAFETY_EVENT_LATCHED',
-    'AUTHORITY_STALE',
-    'ARMING_RESTRICTION_NOT_CURRENT',
+    'REQUIRES_NEW_CONNECTION',
+    'CONTROLLER_LINK_UNAVAILABLE',
+    'FC_ARMED',
+    'ARMED_STATE_UNKNOWN_OR_STALE',
+    'MOTOR_3D_ENABLED',
     'MOTOR_SCOPE_UNSUPPORTED',
-    'TELEMETRY_BARRIER_NOT_HELD',
+    'PULSE_OR_STOP_IN_PROGRESS',
   ] as const)('lets %s dominate UI interaction', reason => {
     const operator = new FakeOperator(snapshotFor({allowed: true}));
     const rendered = render(operator);
@@ -907,15 +962,16 @@ describe('MotorsScreen - pure derivations', () => {
  * transport, client, lease or device.
  * ================================================================== */
 
-describe('R1 - unavailable continuous monitoring locks the screen', () => {
-  /** Exactly what the real production controller publishes: the reducer
-   * is in `Ready`, every one-shot gate passed, and activation is refused
-   * solely because no continuous monitor exists. */
+describe('an unproven armed state locks the screen', () => {
+  /** Exactly what the real production controller publishes when a
+   * satisfied observation ages out mid-session: the reducer is still in
+   * `Ready`, and activation is refused solely because nothing currently
+   * proves the flight controller disarmed. */
   function monitorBlocked(): MotorTestControllerSnapshot {
     return snapshotFor({
       machine: 'Ready',
       allowed: false,
-      reasons: ['CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE'],
+      reasons: ['ARMED_STATE_UNKNOWN_OR_STALE'],
     });
   }
 
@@ -929,14 +985,12 @@ describe('R1 - unavailable continuous monitoring locks the screen', () => {
 
   it('renders the exact Arabic blocking explanation', () => {
     const rendered = render(new FakeOperator(monitorBlocked()));
-    const node = rendered.find(
-      'motors-block-CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
-    );
+    const node = rendered.find('motors-block-ARMED_STATE_UNKNOWN_OR_STALE');
     expect(JSON.stringify(node.props.children)).toContain(
-      'المراقبة المستمرة لحالة الأمان غير متاحة — اختبار المحركات مقفل.',
+      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
     );
     expect(texts(rendered)).toContain(
-      'المراقبة المستمرة لحالة الأمان غير متاحة — اختبار المحركات مقفل.',
+      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
     );
     rendered.unmount();
   });

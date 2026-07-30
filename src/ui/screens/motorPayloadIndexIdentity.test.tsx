@@ -31,14 +31,16 @@
 
 /**
  * JEST-ONLY MODULE REPLACEMENT, exactly as motorTestController.test.ts
- * does it and for the same reason: the production continuous-safety
- * monitor reader is hard-wired unavailable, which is an authoritative
- * activation blocker. Replacing THE MODULE inside Jest's own registry adds
- * no production seam, flag, option or environment branch - nothing in
- * production can import or reach this replacement.
+ * does it and for the same reason: this file is about the PAYLOAD INDEX
+ * IDENTITY, and a live observation loop competing for the fake link would
+ * make it a test of scheduling instead. Replacing THE MODULE inside Jest's
+ * own registry adds no production seam, flag, option or environment branch
+ * - nothing in production can import or reach this replacement, and the
+ * real decision path is proven in motorTestSafetyMonitor.test.ts and
+ * motorTestBenchGate.test.ts.
  */
 jest.mock('../../core/state/motorTestContinuousSafetyMonitor', () => ({
-  readContinuousSafetyMonitoring: () => 'AVAILABLE_ACCEPTED_SOURCE',
+  readMotorArmedStateEvidence: () => 'FRESH_DISARMED',
 }));
 
 jest.mock('react-native-safe-area-context', () => ({

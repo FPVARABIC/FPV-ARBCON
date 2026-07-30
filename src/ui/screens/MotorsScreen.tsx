@@ -217,28 +217,44 @@ export type MotorsScreenPresentation =
   | 'FAULT';
 
 /**
- * Root causes first, teardown consequences last.
+ * ROOT CAUSES FIRST, CONSEQUENCES LAST. The screen shows exactly one of
+ * these - the first that is present - and keeps the whole array behind the
+ * collapsed developer diagnostics.
  *
- * The tail of this list - SETUP_NOT_READY, MACHINE_NOT_READY,
- * TELEMETRY_BARRIER_NOT_HELD, ARMING_RESTRICTION_NOT_CURRENT,
- * AUTHORITY_STALE - is what a completed teardown always produces. Those
- * are never the story when anything above them is present, and showing
- * them as peers is what made one failure look like six.
+ * The ordering is a statement about WHAT THE OPERATOR SHOULD DO, and each
+ * position is deliberate:
+ *
+ *   FC_ARMED first, always. It is the most dangerous state the flight
+ *     controller can report and it has an unambiguous instruction. It also
+ *     forces REQUIRES_NEW_CONNECTION into the list alongside it (an armed
+ *     reading locks the session), and being told to reconnect instead of
+ *     being told the aircraft is armed would be a serious regression.
+ *
+ *   ARMED_STATE_UNKNOWN_OR_STALE next, for the same reason one step
+ *     weaker: a monitoring failure also locks and faults the session, so
+ *     it too arrives paired with REQUIRES_NEW_CONNECTION and must outrank
+ *     it.
+ *
+ *   MOTOR_3D_ENABLED before MOTOR_SCOPE_UNSUPPORTED, because 3D is a
+ *     single named setting the operator can turn off, while "unsupported
+ *     scope" covers motor count and protocol.
+ *
+ *   REQUIRES_NEW_CONNECTION before CONTROLLER_LINK_UNAVAILABLE, because a
+ *     terminal fault always drags a dead link along with it and the fault
+ *     is the actionable half.
+ *
+ *   CONTROLLER_LINK_UNAVAILABLE last. It is what EVERY teardown produces,
+ *     so it is only ever the story when nothing else is present.
  */
 export const CAUSAL_BLOCK_REASON_ORDER: readonly MotorTestActivationBlockReason[] =
   Object.freeze([
+    'FC_ARMED',
+    'ARMED_STATE_UNKNOWN_OR_STALE',
+    'MOTOR_3D_ENABLED',
     'MOTOR_SCOPE_UNSUPPORTED',
-    'SAFETY_EVENT_LATCHED',
-    'STOP_SEALED',
-    'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
-    'PULSE_ALREADY_LIVE',
-    'STOP_IN_PROGRESS',
-    'CONTROLLER_CLOSED',
-    'SETUP_NOT_READY',
-    'MACHINE_NOT_READY',
-    'TELEMETRY_BARRIER_NOT_HELD',
-    'ARMING_RESTRICTION_NOT_CURRENT',
-    'AUTHORITY_STALE',
+    'PULSE_OR_STOP_IN_PROGRESS',
+    'REQUIRES_NEW_CONNECTION',
+    'CONTROLLER_LINK_UNAVAILABLE',
   ]);
 
 export function derivePresentation(
@@ -770,12 +786,14 @@ export function MotorsScreenView({
           {/* THE FIRST CAUSAL FAILURE, AND ONLY THAT.
               A blocked session used to print all twelve reasons as a
               bulleted list, so a single failure that tore the session down
-              presented as six independent hardware faults - SETUP_NOT_READY,
-              MACHINE_NOT_READY, ARMING_RESTRICTION_NOT_CURRENT,
-              AUTHORITY_STALE and the rest are CONSEQUENCES of teardown, not
-              separate things wrong with the aircraft. The operator now sees
-              the one reason that is actually actionable; the full array
-              stays available under diagnostics. */}
+              presented as six independent hardware faults - the old
+              SETUP_NOT_READY, MACHINE_NOT_READY, ARMING_RESTRICTION_NOT_CURRENT
+              and AUTHORITY_STALE were CONSEQUENCES of teardown, not separate
+              things wrong with the aircraft. The reason set is now seven
+              operator-facing causes and only the first is shown; the full
+              array stays available under diagnostics, and the controller's
+              internal protections remain strictly stronger than what is
+              displayed. */}
           {primaryBlockReason !== undefined ? (
             <View style={styles.blockList} testID="motors-block-reasons">
               <Text style={styles.blockHeading}>
@@ -823,12 +841,29 @@ export function MotorsScreenView({
                       • {reason}
                     </Text>
                   ))}
+                  {/* COMPLETE TECHNICAL STATE, behind the toggle. The
+                      operator-facing reason set is deliberately narrow, so
+                      everything the gate actually consulted has to be
+                      readable somewhere - this is that somewhere. */}
                   <Text style={styles.caption} testID="motors-diagnostic-outcome">
                     outcome: {snapshot?.outcome.kind ?? 'NONE'} | setupStep:{' '}
                     {snapshot?.setupStep ?? 'NONE'} | phase:{' '}
                     {snapshot?.phase ?? 'NONE'} | machine:{' '}
                     {String(snapshot?.machine?.name)} | teardownComplete:{' '}
                     {String(snapshot?.teardown?.complete)}
+                  </Text>
+                  {/* The decoded scope is serialized WHOLE rather than
+                      field by field. Naming its fields here would put
+                      safety-relevant identifiers in this file even though
+                      nothing branches on them, and the containment test
+                      above rightly refuses that - a screen that can spell
+                      a safety field is one edit away from deciding on it.
+                      Serializing keeps every value visible and keeps this
+                      component unable to read any of them. */}
+                  <Text style={styles.caption} testID="motors-diagnostic-evidence">
+                    armedState: {snapshot?.armedStateEvidence ?? 'NONE'} |
+                    telemetryHeld: {String(snapshot?.telemetryHeld)} | scope:{' '}
+                    {JSON.stringify(snapshot?.motorScope ?? null)}
                   </Text>
                 </View>
               ) : null}

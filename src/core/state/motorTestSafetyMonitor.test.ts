@@ -25,9 +25,9 @@ import {
   MOTOR_TEST_SAFETY_MAX_AGE_MILLIS,
   MOTOR_TEST_SAFETY_OBSERVATION_TIMEOUT_MILLIS,
   MotorTestSafetyMonitor,
-  deriveContinuousSafetyMonitoring,
   type MotorTestSafetyUnsafeReason,
 } from './motorTestSafetyMonitor';
+import {readMotorArmedStateEvidence} from './motorTestContinuousSafetyMonitor';
 import {MSP_RESPONSE_TIMEOUT_MILLIS, MspClient} from '../protocol/mspClient';
 import {FakeMspTransport} from '../protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../protocol/__testUtils__/mspFixtures';
@@ -42,6 +42,8 @@ const flush = async (): Promise<void> => {
 /* ================================================================== *
  * A. The monitor itself
  * ================================================================== */
+
+const IDENTITY = {physicalGeneration: 1, mspEpoch: 0} as const;
 
 interface ControlledRequest {
   command: number;
@@ -63,16 +65,18 @@ function controlledRequester() {
   };
 }
 
-/** The monitor refuses to send anything without a proven static profile,
- * so a monitor built this way fails its observation without any traffic -
- * exactly the NOT_OBSERVED path we want for the failure tests. */
-function monitorWithoutProfile(onUnsafe: (r: MotorTestSafetyUnsafeReason) => void) {
+/**
+ * The monitor refuses to send anything without a box mapping, so a monitor
+ * built this way fails its observation without any traffic - exactly the
+ * NOT_OBSERVED path the failure tests want.
+ */
+function monitorWithoutMapping(onUnsafe: (r: MotorTestSafetyUnsafeReason) => void) {
   const timers: Array<() => void> = [];
   const monitor = new MotorTestSafetyMonitor({
     requester: {request: () => new Promise<MspFrame>(() => {})},
-    staticCompatibility: undefined,
-    boxIds: undefined,
-    readCurrentIdentity: () => ({physicalGeneration: 1, mspEpoch: 0}),
+    expectedIdentity: IDENTITY,
+    boxIdPermanentIds: undefined,
+    readCurrentIdentity: () => ({...IDENTITY}),
     readMonotonicMillis: () => 0,
     onUnsafe,
     setTimer: callback => {
@@ -86,17 +90,15 @@ function monitorWithoutProfile(onUnsafe: (r: MotorTestSafetyUnsafeReason) => voi
 
 describe('the dedicated safety monitor', () => {
   it('starts fail-closed: never observed is not a licence to activate', () => {
-    const {monitor} = monitorWithoutProfile(() => {});
+    const {monitor} = monitorWithoutMapping(() => {});
     expect(monitor.snapshot().status.kind).toBe('NEVER_OBSERVED');
     expect(monitor.isFreshlySatisfied(0)).toBe(false);
-    expect(deriveContinuousSafetyMonitoring(monitor, 0)).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
-    );
+    expect(readMotorArmedStateEvidence(monitor, 0)).toBe('UNKNOWN_OR_STALE');
   });
 
   it('turns a failed observation into an unsafe report and stops running', async () => {
     const reasons: MotorTestSafetyUnsafeReason[] = [];
-    const {monitor} = monitorWithoutProfile(r => reasons.push(r));
+    const {monitor} = monitorWithoutMapping(r => reasons.push(r));
 
     monitor.start();
     await flush();
@@ -109,20 +111,18 @@ describe('the dedicated safety monitor', () => {
     // Terminal: a failed read while an output may be live is a stop, not
     // something to retry underneath a pulse.
     expect(monitor.snapshot().running).toBe(false);
-    expect(deriveContinuousSafetyMonitoring(monitor, 0)).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
-    );
+    expect(readMotorArmedStateEvidence(monitor, 0)).toBe('UNKNOWN_OR_STALE');
   });
 
   it('never overlaps observations: a second request joins the outstanding one', async () => {
     const {pending, requester} = controlledRequester();
     const monitor = new MotorTestSafetyMonitor({
       requester,
-      // A real profile is not needed to prove single-flight: what matters
-      // is that only ONE request is ever outstanding.
-      staticCompatibility: undefined,
-      boxIds: undefined,
-      readCurrentIdentity: () => ({physicalGeneration: 1, mspEpoch: 0}),
+      expectedIdentity: IDENTITY,
+      // No mapping is needed to prove single-flight: what matters is that
+      // only ONE observation is ever outstanding.
+      boxIdPermanentIds: undefined,
+      readCurrentIdentity: () => ({...IDENTITY}),
       readMonotonicMillis: () => 0,
       onUnsafe: () => {},
       setTimer: () => 1,
@@ -133,14 +133,14 @@ describe('the dedicated safety monitor', () => {
     const second = monitor.observeNow();
     expect(second).toBe(first);
     await flush();
-    // The profile gate refuses before any byte is sent, which is itself
-    // the proof that a monitor cannot spend requests on an unproven scope.
+    // The mapping gate refuses before any byte is sent, which is itself the
+    // proof that a monitor cannot spend requests on unreadable evidence.
     expect(pending).toHaveLength(0);
   });
 
   it('abandons an in-flight observation on stop() and lets it publish nothing', async () => {
     const reasons: MotorTestSafetyUnsafeReason[] = [];
-    const {monitor} = monitorWithoutProfile(r => reasons.push(r));
+    const {monitor} = monitorWithoutMapping(r => reasons.push(r));
 
     monitor.start();
     monitor.stop();
@@ -154,7 +154,7 @@ describe('the dedicated safety monitor', () => {
 
   it('is idempotent: repeated start() does not create a second loop', async () => {
     const reasons: MotorTestSafetyUnsafeReason[] = [];
-    const {monitor} = monitorWithoutProfile(r => reasons.push(r));
+    const {monitor} = monitorWithoutMapping(r => reasons.push(r));
     monitor.start();
     monitor.start();
     monitor.start();
@@ -181,15 +181,9 @@ describe('the dedicated safety monitor', () => {
           return Promise.reject(new Error('no answer'));
         },
       },
-      staticCompatibility: {
-        kind: 'EVALUATED',
-        compatibility: {
-          status: 'SUPPORTED',
-          sessionIdentity: {physicalGeneration: 1, mspEpoch: 0},
-        },
-      } as never,
-      boxIds: {kind: 'READY', permanentIds: [0]} as never,
-      readCurrentIdentity: () => ({physicalGeneration: 1, mspEpoch: 0}),
+      expectedIdentity: IDENTITY,
+      boxIdPermanentIds: [0],
+      readCurrentIdentity: () => ({...IDENTITY}),
       readMonotonicMillis: () => 0,
       onUnsafe: () => {},
       setTimer: () => 1,
@@ -201,6 +195,228 @@ describe('the dedicated safety monitor', () => {
     for (const timeout of seen) {
       expect(timeout).toBe(MOTOR_TEST_SAFETY_OBSERVATION_TIMEOUT_MILLIS);
     }
+  });
+});
+
+/* ================================================================== *
+ * A2. THE PRODUCTION DECISION PATH, NOT MOCKED
+ *
+ * Every test below drives the REAL MotorTestSafetyMonitor over the REAL
+ * observeMotorArmedState against a scripted MSP_STATUS_EX payload. The
+ * decision - disarmed, armed, unreadable - is made by production code from
+ * real wire bytes; nothing here substitutes a status, a verdict or a
+ * module. The only stand-in is the requester, and it does exactly what the
+ * lease does: hand back a frame.
+ * ================================================================== */
+
+/** BOXARM's permanent id is 0; placed at index 2 so a hardcoded bit-0
+ * assumption would be caught. */
+const BOX_IDS = [5, 1, 0, 13];
+const ARM_BIT = 2;
+const ARMING_DISABLE_FLAGS_COUNT_FIXTURE = 29;
+
+const u16 = (value: number): number[] => [value % 256, Math.floor(value / 256) % 256];
+const u32 = (value: number): number[] => [
+  value % 256,
+  Math.floor(value / 256) % 256,
+  Math.floor(value / 65536) % 256,
+  Math.floor(value / 16777216) % 256,
+];
+
+/** MSP_STATUS_EX per msp.c:1094-1143 @ the pinned tag. */
+function statusPayload(armed: boolean): Uint8Array {
+  return Uint8Array.from([
+    ...u16(125),
+    ...u16(0),
+    ...u16(0x21),
+    ...u32(armed ? Math.pow(2, ARM_BIT) : 0),
+    2,
+    ...u16(15),
+    // --- 13-byte fixed prefix ends ---
+    4,
+    1,
+    0,
+    ARMING_DISABLE_FLAGS_COUNT_FIXTURE,
+    ...u32(0),
+    0,
+    ...u16(3400),
+    6,
+  ]);
+}
+
+interface ScriptedMonitorOptions {
+  readonly payload?: Uint8Array;
+  readonly reject?: boolean;
+  readonly identityAfterRead?: {physicalGeneration: number; mspEpoch: number};
+}
+
+function scriptedMonitor(options: ScriptedMonitorOptions) {
+  const reasons: MotorTestSafetyUnsafeReason[] = [];
+  const commands: number[] = [];
+  let reads = 0;
+  let now = 1_000;
+  const state: {identity: {physicalGeneration: number; mspEpoch: number}} = {
+    identity: {...IDENTITY},
+  };
+  const monitor = new MotorTestSafetyMonitor({
+    requester: {
+      request(command: number): Promise<MspFrame> {
+        commands.push(command);
+        reads += 1;
+        if (options.reject === true) {
+          return Promise.reject(new Error('rejected'));
+        }
+        if (options.identityAfterRead !== undefined) {
+          state.identity = {...options.identityAfterRead};
+        }
+        return Promise.resolve({
+          command,
+          payload: options.payload ?? statusPayload(false),
+        } as MspFrame);
+      },
+    },
+    expectedIdentity: IDENTITY,
+    boxIdPermanentIds: BOX_IDS,
+    readCurrentIdentity: () => ({...state.identity}),
+    readMonotonicMillis: () => {
+      now += 1;
+      return now;
+    },
+    onUnsafe: reason => reasons.push(reason),
+    // No timer fires, so exactly one observation happens per explicit call.
+    setTimer: () => 1,
+    clearTimer: () => {},
+  });
+  return {
+    monitor,
+    reasons,
+    commands,
+    readCount: () => reads,
+    nowAfter: (extra: number) => now + extra,
+  };
+}
+
+describe('the production observation decision path', () => {
+  it('accepts one real disarmed MSP_STATUS_EX and nothing else', async () => {
+    const {monitor, reasons, commands, readCount} = scriptedMonitor({});
+
+    monitor.start();
+    await monitor.observeNow();
+
+    expect(reasons).toEqual([]);
+    expect(monitor.snapshot().status.kind).toBe('SATISFIED');
+    expect(monitor.snapshot().completedObservations).toBe(1);
+    // ONE command, and it is the read. No battery read, no write, no second
+    // requester - the whole observation is one MSP_STATUS_EX.
+    expect(readCount()).toBe(1);
+    expect(commands).toEqual([150]);
+  });
+
+  it('reports a real ARMED reading as FC_ARMED and refuses to keep running', async () => {
+    const {monitor, reasons} = scriptedMonitor({payload: statusPayload(true)});
+
+    monitor.start();
+    await monitor.observeNow();
+
+    expect(reasons).toEqual(['FC_ARMED_OBSERVED']);
+    expect(monitor.snapshot().status.kind).toBe('ARMED');
+    expect(monitor.snapshot().running).toBe(false);
+    expect(readMotorArmedStateEvidence(monitor, 1_100)).toBe('FC_ARMED');
+  });
+
+  it('refuses a MALFORMED status payload rather than reading it as disarmed', async () => {
+    // Truncated below the 13-byte fixed prefix: undecodable, and never
+    // normalized into "no arm bit set".
+    const {monitor, reasons} = scriptedMonitor({
+      payload: Uint8Array.from([1, 2, 3]),
+    });
+
+    monitor.start();
+    await monitor.observeNow();
+
+    expect(reasons).toEqual(['SAFETY_OBSERVATION_FAILED']);
+    expect(readMotorArmedStateEvidence(monitor, 1_100)).toBe('UNKNOWN_OR_STALE');
+  });
+
+  it('refuses a REJECTED read', async () => {
+    const {monitor, reasons} = scriptedMonitor({reject: true});
+
+    monitor.start();
+    await monitor.observeNow();
+
+    expect(reasons).toEqual(['SAFETY_OBSERVATION_FAILED']);
+    expect(readMotorArmedStateEvidence(monitor, 1_100)).toBe('UNKNOWN_OR_STALE');
+  });
+
+  it('discards a reading whose session moved under it', async () => {
+    const {monitor, reasons} = scriptedMonitor({
+      identityAfterRead: {physicalGeneration: 2, mspEpoch: 0},
+    });
+
+    monitor.start();
+    await monitor.observeNow();
+
+    // The bytes were perfectly good; they simply describe a session that no
+    // longer exists, so they authorise nothing.
+    expect(reasons).toEqual(['SAFETY_OBSERVATION_FAILED']);
+    expect(readMotorArmedStateEvidence(monitor, 1_100)).toBe('UNKNOWN_OR_STALE');
+  });
+
+  it('lets a satisfied reading go STALE without any further event', async () => {
+    const {monitor, nowAfter} = scriptedMonitor({});
+
+    monitor.start();
+    await monitor.observeNow();
+    expect(monitor.snapshot().status.kind).toBe('SATISFIED');
+
+    // Inside the bound it permits; one millisecond past it does not. No
+    // callback, no timer and no new reading is involved - freshness is an
+    // age bound evaluated at read time.
+    expect(
+      readMotorArmedStateEvidence(monitor, nowAfter(MOTOR_TEST_SAFETY_MAX_AGE_MILLIS - 5)),
+    ).toBe('FRESH_DISARMED');
+    expect(
+      readMotorArmedStateEvidence(monitor, nowAfter(MOTOR_TEST_SAFETY_MAX_AGE_MILLIS + 50)),
+    ).toBe('UNKNOWN_OR_STALE');
+  });
+
+  it('observeNow() resolves only AFTER the observation has published', async () => {
+    let release: ((frame: MspFrame) => void) | undefined;
+    const monitor = new MotorTestSafetyMonitor({
+      requester: {
+        request: (command: number) =>
+          new Promise<MspFrame>(resolve => {
+            release = resolve;
+            void command;
+          }),
+      },
+      expectedIdentity: IDENTITY,
+      boxIdPermanentIds: BOX_IDS,
+      readCurrentIdentity: () => ({...IDENTITY}),
+      readMonotonicMillis: () => 1_000,
+      onUnsafe: () => {},
+      setTimer: () => 1,
+      clearTimer: () => {},
+    });
+
+    monitor.start();
+    let settled = false;
+    const joined = monitor.observeNow().then(() => {
+      settled = true;
+    });
+
+    await flush();
+    // Still in flight: the status has NOT been published, and joining it
+    // has therefore not resolved.
+    expect(settled).toBe(false);
+    expect(monitor.snapshot().status.kind).toBe('NEVER_OBSERVED');
+
+    release?.({command: 150, payload: statusPayload(false)} as MspFrame);
+    await joined;
+
+    expect(settled).toBe(true);
+    expect(monitor.snapshot().status.kind).toBe('SATISFIED');
+    expect(monitor.isFreshlySatisfied(1_000)).toBe(true);
   });
 });
 

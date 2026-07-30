@@ -445,20 +445,65 @@ describe('B-2E-1 - single authoritative controller', () => {
     expect(second.telemetrySession).not.toBe(first.telemetrySession);
     second.close();
   });
+
+  it('a newly connected canonical session inherits NOTHING from the closed one', async () => {
+    // THE RETRY CONTRACT, PROVEN ON STATE RATHER THAN ON IDENTITY. A
+    // closed controller keeps its terminal outcome, its scope, its
+    // evidence and its teardown report on purpose - re-running setup on
+    // top of that would reuse session-bound facts. So the operator is told
+    // to reconnect, and the connection they make must start from nothing.
+    // The first controller is closed WITHOUT a bring-up: this file has no
+    // scripted flight controller, and the fully-run-then-closed retry
+    // contract is proven against real traffic in motorTestController.test.ts.
+    // What matters here is the BINDING-level guarantee.
+    const registry = new MotorTestTelemetryRegistry();
+    const first = createMotorTestSessionBinding(makeClient(), {registry});
+    const firstOperator = first.operatorPort(...portArgs());
+    await firstOperator.endSession();
+
+    const closed = firstOperator.getSnapshot();
+    expect(closed.phase).toBe('CLOSED');
+    // The closed controller answers a retry with its OWN current state,
+    // and never re-runs setup.
+    expect(await firstOperator.beginSession()).toBe(closed);
+    first.close();
+
+    const second = createMotorTestSessionBinding(makeClient(), {registry});
+    const secondOperator = second.operatorPort(...portArgs());
+    const fresh = secondOperator.getSnapshot();
+
+    // Not one field carries over.
+    expect(fresh.phase).toBe('IDLE');
+    expect(fresh.outcome).toEqual({kind: 'PENDING'});
+    expect(fresh.setupStep).toBe('NOT_STARTED');
+    expect(fresh.machine).toBeUndefined();
+    expect(fresh.motorScope).toBeUndefined();
+    expect(fresh.teardown).toBeUndefined();
+    expect(fresh.armedStateEvidence).toBe('UNKNOWN_OR_STALE');
+    expect(fresh.pulse.attemptId).toBe(0);
+    expect(fresh.pulse.mayHaveReachedFc).toBe(false);
+    expect(fresh.stopExecution.attempts).toBe(0);
+    expect(fresh.verificationReceipt).toBeUndefined();
+    // ... and it is fail-closed from the start, exactly like any other
+    // controller that has proven nothing yet.
+    expect(fresh.activation.allowed).toBe(false);
+    expect(secondOperator.pulseMotor(1)).not.toBe('ACCEPTED');
+    second.close();
+  });
 });
 
 /* ------------------------------------------------------------------ *
- * REPAIR PASS R1 - THE REAL PRODUCTION BINDING CANNOT ACTIVATE
+ * THE REAL PRODUCTION BINDING CANNOT ACTIVATE WITHOUT PROVEN EVIDENCE
  *
- * This file deliberately does NOT mock the continuous-safety-monitor
- * module. Everything below runs against the REAL production reader, the
- * REAL binding, the REAL controller and the REAL request engine, so it
- * proves the shipped path - not a test-configured one.
+ * This file deliberately does NOT mock the armed-state-evidence module.
+ * Everything below runs against the REAL production reader, the REAL
+ * binding, the REAL controller and the REAL request engine, so it proves
+ * the shipped path - not a test-configured one.
  *
  * NO HARDWARE: FakeMspTransport only; no USB, FC, ESC, LiPo or motor.
  * ------------------------------------------------------------------ */
 
-describe('R1 - production binding fails closed without continuous monitoring', () => {
+describe('production binding fails closed without a fresh disarmed observation', () => {
   const portArgs = () => [portInput(), () => 0] as const;
 
   it('refuses activation through the real operator port and writes nothing', async () => {
@@ -470,13 +515,12 @@ describe('R1 - production binding fails closed without continuous monitoring', (
     // Before any session work: already blocked, and blocked for THIS
     // reason - not merely "not ready yet".
     const initial = operator.getSnapshot();
-    expect(initial.continuousSafetyMonitoring).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
-    );
+    expect(initial.armedStateEvidence).toBe('UNKNOWN_OR_STALE');
     expect(initial.activation.allowed).toBe(false);
     expect(initial.activation.reasons).toContain(
-      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+      'ARMED_STATE_UNKNOWN_OR_STALE',
     );
+    expect(initial.activation.reasons).toContain('CONTROLLER_LINK_UNAVAILABLE');
 
     // Activation is refused, and refused BEFORE any transport traffic.
     expect(operator.pulseMotor(1)).not.toBe('ACCEPTED');
@@ -502,25 +546,25 @@ describe('R1 - production binding fails closed without continuous monitoring', (
     const lifecycle = binding.lifecycleStopPort();
 
     expect(operator.getSnapshot().activation.reasons).toContain(
-      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+      'ARMED_STATE_UNKNOWN_OR_STALE',
     );
     expect(lifecycle?.getSnapshot().activation.reasons).toContain(
-      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+      'ARMED_STATE_UNKNOWN_OR_STALE',
     );
     expect(operator.getSnapshot().activation.allowed).toBe(false);
     expect(lifecycle?.getSnapshot().activation.allowed).toBe(false);
     binding.close();
   });
 
-  it('exposes no way through the binding to mark monitoring available', () => {
+  it('exposes no way through the binding to mark the evidence proven', () => {
     const registry = new MotorTestTelemetryRegistry();
     const binding = createMotorTestSessionBinding(makeClient(), {registry});
     const operator = binding.operatorPort(...portArgs());
 
     const surface = operator as unknown as Record<string, unknown>;
     for (const forbidden of [
-      'setContinuousSafetyMonitoring',
-      'continuousSafetyMonitoring',
+      'setArmedStateEvidence',
+      'armedStateEvidence',
       'setMonitoring',
       'enableMonitoring',
       'overrideActivation',
@@ -530,7 +574,7 @@ describe('R1 - production binding fails closed without continuous monitoring', (
     }
     const bindingSurface = binding as unknown as Record<string, unknown>;
     for (const forbidden of [
-      'setContinuousSafetyMonitoring',
+      'setArmedStateEvidence',
       'enableMonitoring',
       'overrideActivation',
     ]) {

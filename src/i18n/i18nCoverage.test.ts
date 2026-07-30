@@ -125,18 +125,13 @@ function resolve(key: string): unknown {
  * ------------------------------------------------------------------ */
 
 const BLOCK_REASONS: Record<MotorTestActivationBlockReason, true> = {
-  CONTROLLER_CLOSED: true,
-  SAFETY_EVENT_LATCHED: true,
-  STOP_IN_PROGRESS: true,
-  STOP_SEALED: true,
-  PULSE_ALREADY_LIVE: true,
-  SETUP_NOT_READY: true,
-  MACHINE_NOT_READY: true,
-  TELEMETRY_BARRIER_NOT_HELD: true,
-  ARMING_RESTRICTION_NOT_CURRENT: true,
+  CONTROLLER_LINK_UNAVAILABLE: true,
+  FC_ARMED: true,
+  ARMED_STATE_UNKNOWN_OR_STALE: true,
+  MOTOR_3D_ENABLED: true,
   MOTOR_SCOPE_UNSUPPORTED: true,
-  AUTHORITY_STALE: true,
-  CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE: true,
+  PULSE_OR_STOP_IN_PROGRESS: true,
+  REQUIRES_NEW_CONNECTION: true,
 };
 
 const POSITIONS: Record<MotorPhysicalPosition, true> = {

@@ -1,15 +1,15 @@
 /**
- * The SOURCE BOUNDARY around the continuous-safety-monitor decision point.
+ * The SOURCE BOUNDARY around the armed-state-evidence decision point.
  *
  * This file deliberately does NOT mock the module. It exercises the REAL
  * production reader and proves that the only way to reach
- * `AVAILABLE_ACCEPTED_SOURCE` is a running monitor holding a fresh,
- * satisfied observation - and that every other input fails closed.
+ * `FRESH_DISARMED` is a running monitor holding a fresh, satisfied
+ * observation - and that every other input fails closed.
  *
  * R1 originally proved the reader was hard-wired unavailable. That guard
  * is now obsolete BY DESIGN (motorTestSafetyMonitor.ts supplies a genuine
  * source), so it is replaced here by the stronger guard that actually
- * matters: no production file may MANUFACTURE the accepted state, and the
+ * matters: no production file may MANUFACTURE the permitting state, and the
  * controller may only ever COMPARE against it.
  *
  * NO HARDWARE. Nothing here opens a session, a transport or a device, and
@@ -19,7 +19,7 @@
 import {readFileSync, readdirSync} from 'fs';
 import {join} from 'path';
 
-import {readContinuousSafetyMonitoring} from './motorTestContinuousSafetyMonitor';
+import {readMotorArmedStateEvidence} from './motorTestContinuousSafetyMonitor';
 import {
   MOTOR_TEST_SAFETY_MAX_AGE_MILLIS,
   MotorTestSafetyMonitor,
@@ -74,9 +74,9 @@ function executableOf(file: string): string {
 function neverSettlingMonitor(): MotorTestSafetyMonitor {
   return new MotorTestSafetyMonitor({
     requester: {request: () => new Promise(() => {})},
-    staticCompatibility: undefined,
-    boxIds: undefined,
-    readCurrentIdentity: () => undefined,
+    expectedIdentity: {physicalGeneration: 1, mspEpoch: 0},
+    boxIdPermanentIds: [0],
+    readCurrentIdentity: () => ({physicalGeneration: 1, mspEpoch: 0}),
     readMonotonicMillis: () => 0,
     onUnsafe: () => {},
     setTimer: () => 1,
@@ -84,10 +84,10 @@ function neverSettlingMonitor(): MotorTestSafetyMonitor {
   });
 }
 
-describe('the continuous-safety-monitoring reader fails closed', () => {
+describe('the armed-state-evidence reader fails closed', () => {
   it('reports unavailable when there is no monitor at all', () => {
-    expect(readContinuousSafetyMonitoring(undefined, 0)).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+    expect(readMotorArmedStateEvidence(undefined, 0)).toBe(
+      'UNKNOWN_OR_STALE',
     );
   });
 
@@ -95,16 +95,16 @@ describe('the continuous-safety-monitoring reader fails closed', () => {
     const monitor = neverSettlingMonitor();
     monitor.start();
     expect(monitor.snapshot().status.kind).toBe('NEVER_OBSERVED');
-    expect(readContinuousSafetyMonitoring(monitor, 0)).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+    expect(readMotorArmedStateEvidence(monitor, 0)).toBe(
+      'UNKNOWN_OR_STALE',
     );
   });
 
   it('reports unavailable for a monitor that is not running', () => {
     const monitor = neverSettlingMonitor();
     expect(monitor.snapshot().running).toBe(false);
-    expect(readContinuousSafetyMonitoring(monitor, 0)).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+    expect(readMotorArmedStateEvidence(monitor, 0)).toBe(
+      'UNKNOWN_OR_STALE',
     );
   });
 
@@ -112,14 +112,14 @@ describe('the continuous-safety-monitoring reader fails closed', () => {
     const monitor = neverSettlingMonitor();
     monitor.start();
     for (const now of [0, 1, MOTOR_TEST_SAFETY_MAX_AGE_MILLIS, 10_000]) {
-      expect(readContinuousSafetyMonitoring(monitor, now)).toBe(
-        'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+      expect(readMotorArmedStateEvidence(monitor, now)).toBe(
+        'UNKNOWN_OR_STALE',
       );
     }
   });
 });
 
-describe('no production file can manufacture the accepted-monitor state', () => {
+describe('no production file can manufacture the permitting armed-state answer', () => {
   const sources = productionSources();
 
   it('finds the production source set (guards against a vacuous scan)', () => {
@@ -134,12 +134,12 @@ describe('no production file can manufacture the accepted-monitor state', () => 
     expect(offenders).toEqual([]);
   });
 
-  it('lets only the derivation itself PRODUCE the accepted state', () => {
-    // Comparing against the available state is the fail-closed gate
+  it('lets only the derivation itself PRODUCE the permitting state', () => {
+    // Comparing against the permitting state is the fail-closed gate
     // itself; RETURNING or ASSIGNING it is what would be a bypass. Exactly
     // one production module is allowed to produce it - the derivation that
     // requires a running monitor with a fresh satisfied observation.
-    const allowed = join('core', 'state', 'motorTestSafetyMonitor.ts');
+    const allowed = join('core', 'state', 'motorTestContinuousSafetyMonitor.ts');
     const offenders: string[] = [];
     for (const file of sources) {
       if (file.endsWith(allowed)) {
@@ -147,9 +147,9 @@ describe('no production file can manufacture the accepted-monitor state', () => 
       }
       const executable = executableOf(file);
       if (
-        /return\s+'AVAILABLE_ACCEPTED_SOURCE'/.test(executable) ||
-        /(?<![=!<>])=\s*'AVAILABLE_ACCEPTED_SOURCE'/.test(executable) ||
-        /:\s*'AVAILABLE_ACCEPTED_SOURCE'/.test(executable)
+        /return\s+'FRESH_DISARMED'/.test(executable) ||
+        /(?<![=!<>])=\s*'FRESH_DISARMED'/.test(executable) ||
+        /:\s*'FRESH_DISARMED'/.test(executable)
       ) {
         offenders.push(file);
       }
@@ -159,29 +159,27 @@ describe('no production file can manufacture the accepted-monitor state', () => 
 
   it('makes the single producer conditional on a fresh satisfied reading', () => {
     const executable = executableOf(
-      join(SRC_ROOT, 'core', 'state', 'motorTestSafetyMonitor.ts'),
+      join(SRC_ROOT, 'core', 'state', 'motorTestContinuousSafetyMonitor.ts'),
     );
-    // The producer is a ternary guarded by isFreshlySatisfied(), and both
-    // earlier returns are the unavailable state.
+    // The producer is a ternary guarded by isFreshlySatisfied(), and every
+    // earlier return is the fail-closed answer.
     expect(executable).toMatch(
-      /isFreshlySatisfied\([\s\S]*?\?[\s\S]*?'AVAILABLE_ACCEPTED_SOURCE'/,
+      /isFreshlySatisfied\([\s\S]*?\?[\s\S]*?'FRESH_DISARMED'/,
     );
     expect(
-      (executable.match(/'UNAVAILABLE_NO_ACCEPTED_SOURCE'/g) ?? []).length,
+      (executable.match(/'UNKNOWN_OR_STALE'/g) ?? []).length,
     ).toBeGreaterThanOrEqual(3);
   });
 
-  it('references the accepted state in the controller only as the gate comparison', () => {
+  it('lets the controller only COMPARE against the permitting state', () => {
     const executable = executableOf(
       join(SRC_ROOT, 'core', 'state', 'motorTestController.ts'),
     );
-    const occurrences = executable.match(/'AVAILABLE_ACCEPTED_SOURCE'/g) ?? [];
-    expect(occurrences).toHaveLength(1);
-    // ... and that single occurrence is a NEGATED comparison against the
-    // reader, so anything other than an accepted live source fails closed.
-    expect(executable).toMatch(
-      /readContinuousSafetyMonitoring\([\s\S]{0,120}?\)\s*!==\s*'AVAILABLE_ACCEPTED_SOURCE'/,
-    );
+    // Never produced here: only ever compared against, and both
+    // comparisons are the fail-closed direction.
+    expect(/return\s+'FRESH_DISARMED'/.test(executable)).toBe(false);
+    expect(/(?<![=!<>])=\s*'FRESH_DISARMED'/.test(executable)).toBe(false);
+    expect(executable).toMatch(/!==\s*'FRESH_DISARMED'/);
   });
 
   it('lets no production file supply the controller test seam', () => {

@@ -110,11 +110,14 @@ const REQUIRED_ENGINE_TOKENS = [
   'encodeSetMotorPayload',
   'emergencyStopWithMotorTestLease',
   'requestWithMotorTestLease',
-  'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+  'ARMED_STATE_UNKNOWN_OR_STALE',
   // This branch's safety monitor and displaced-response quarantine. They
   // did not exist on main; their absence would mean the merge dropped the
-  // very layer the runtime gates now rest on.
-  'deriveContinuousSafetyMonitoring',
+  // very layer the runtime gates now rest on. `observeMotorArmedState` is
+  // the ONE production read the whole bench gate rests on - if it is
+  // missing from the bundle, nothing is proving the FC disarmed.
+  'readMotorArmedStateEvidence',
+  'observeMotorArmedState',
   'MOTOR_TEST_SAFETY_OBSERVATION_TIMEOUT_MILLIS',
   'motors-screen',
   'motors-hold-button',
@@ -140,7 +143,7 @@ const REQUIRED_ARABIC_STRINGS = [
   // The emergency instruction after an unconfirmed stop.
   'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
   // A block reason, proving the whole blockReason subtree shipped.
-  'المراقبة المستمرة لحالة الأمان غير متاحة — اختبار المحركات مقفل.',
+  'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous.
