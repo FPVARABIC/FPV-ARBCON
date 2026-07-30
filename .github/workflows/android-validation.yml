@@ -24,7 +24,14 @@ name: Android Validation
 # primary hardware-validation download.
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      diagnostic_js_only:
+        description: >-
+          Diagnostic only: run Checkout -> Jest (with the open-handle
+          reporter) and skip every Android/Gradle step. Produces NO APKs.
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -161,9 +168,44 @@ jobs:
       # src/ui/screens/motorPayloadIndexIdentity.test.tsx - and
       # confirmation has to come from a normal, worker-topology run like
       # this one.
+      #
+      # THE DIAGNOSTIC BRANCH BELOW CHANGES NOTHING FOR A NORMAL RUN. With
+      # diagnostic_js_only unset - every push, and every dispatch that does
+      # not tick the box - this step is still exactly `npx jest --ci`, same
+      # worker topology, same command, no reporter loaded.
+      #
+      # The diagnostic branch pins --maxWorkers=1 on purpose. Measured, not
+      # assumed: locally 4 CPUs give Jest a default of 3 workers and the
+      # hang almost never appears; one worker makes Jest run in-band, which
+      # is what a 2-CPU runner does by default anyway, and is the only
+      # topology in which the leaked handle sits in the process that has to
+      # exit. Pinning it removes the CPU count as a variable.
       - name: Jest
         timeout-minutes: 10
-        run: npx jest --ci
+        env:
+          JEST_LEAK_OUT: ${{ github.workspace }}/jest-open-handles.txt
+        run: |
+          if [ "${{ inputs.diagnostic_js_only }}" = "true" ]; then
+            echo "DIAGNOSTIC RUN: open-handle reporter attached, one worker, no Android steps."
+            npx jest --ci --maxWorkers=1 \
+              --reporters=default \
+              --reporters=./scripts/ci-diagnostics/jestLeakReporter.js
+          else
+            npx jest --ci
+          fi
+
+      # always(), so it survives the Jest step being killed by its own
+      # timeout - which is the EXPECTED outcome of a diagnostic run that
+      # reproduces the hang. The reporter also prints to the log, so the
+      # evidence exists even if this upload finds nothing.
+      - name: Upload Jest open-handle report (diagnostic runs only)
+        if: ${{ always() && format('{0}', inputs.diagnostic_js_only) == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-jest-open-handles
+          path: jest-open-handles.txt
+          if-no-files-found: warn
+          retention-days: 14
 
       # MANDATORY GATE. Builds the real --dev false bundle and fails the
       # workflow if a debug-only token is present, if the motor engine or
@@ -174,15 +216,18 @@ jobs:
       # source. Placed after dependency installation and before ANY Release
       # APK work, so a defective bundle can never be packaged or published.
       - name: Production bundle and engine-boundary scan
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         run: npm run scan:production-bundle
 
       - name: Setup JDK 17 (Temurin)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Android SDK
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: android-actions/setup-android@v4
         with:
           # Must exactly match android/build.gradle: compileSdk/targetSdk 36,
@@ -190,13 +235,16 @@ jobs:
           packages: 'platform-tools platforms;android-36 build-tools;36.0.0 ndk;27.1.12297006'
 
       - name: Setup Gradle
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: gradle/actions/setup-gradle@v6
 
       - name: Make gradlew executable
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: chmod +x ./gradlew
 
       - name: Java / Gradle wrapper version proof
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: |
           java -version
@@ -204,18 +252,22 @@ jobs:
           ./gradlew --version
 
       - name: Dependency resolution (debugRuntimeClasspath)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: ./gradlew :app:dependencies --configuration debugRuntimeClasspath
 
       - name: usb-serial-for-android dependency insight
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: ./gradlew :app:dependencyInsight --dependency usb-serial-for-android --configuration debugRuntimeClasspath
 
       - name: Compile Kotlin (debug)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: ./gradlew :app:compileDebugKotlin
 
       - name: JVM unit tests (debug)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest
 
@@ -229,6 +281,7 @@ jobs:
       # fail with a readable tail instead of a silent runner death, and
       # timeout-minutes bounds it instead of the 6h default.
       - name: Android build diagnostics
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: |
           echo "Build diagnostics started at: $(date -u)"
@@ -242,6 +295,7 @@ jobs:
           free -h || true
 
       - name: Assemble debug APK
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         timeout-minutes: 30
         run: |
@@ -254,6 +308,7 @@ jobs:
             --console=plain
 
       - name: Locate and verify debug APK
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: |
           APK_PATH=$(find app/build/outputs/apk/debug -name '*.apk' | head -n 1)
@@ -278,7 +333,7 @@ jobs:
       # and documented so it can never be mistaken for the standalone
       # release APK.
       - name: Upload debug APK artifact (Metro-dependent, for FPV-BATT/FPV-TELEM log capture)
-        if: success()
+        if: ${{ success() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: fpv-arbcon-apk-debug
@@ -287,6 +342,7 @@ jobs:
           retention-days: 14
 
       - name: Disk before release build
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -302,11 +358,12 @@ jobs:
             2>/dev/null || true
 
       - name: Assemble release APK (standalone, no Metro required)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: ./gradlew :app:assembleRelease
 
       - name: Android failure disk diagnostics
-        if: ${{ failure() }}
+        if: ${{ failure() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
         shell: bash
         run: |
           echo "Disk state after failure:"
@@ -318,6 +375,7 @@ jobs:
             | tail -40 || true
 
       - name: Locate and verify standalone release APK
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: |
           RELEASE_APK_PATH=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
@@ -335,11 +393,13 @@ jobs:
           echo "RELEASE_APK_PATH=android/$RELEASE_APK_PATH" >> "$GITHUB_ENV"
 
       - name: Verify standalone release APK is signed
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: |
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "${RELEASE_APK_PATH#android/}"
 
       - name: Verify standalone release APK contains the JS bundle
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: |
           BUNDLE_PATH="${RELEASE_APK_PATH#android/}"
@@ -359,6 +419,7 @@ jobs:
       # Reported by count on every run - including zero - alongside the
       # APK's SHA-256, applicationId and versionName.
       - name: Release DEX check - com/fpvarbcon/debug must be absent
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         run: |
           set -euo pipefail
@@ -395,7 +456,7 @@ jobs:
           fi
 
       - name: Upload standalone release APK artifact (the only user-facing download)
-        if: success()
+        if: ${{ success() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: fpv-arbcon-apk
@@ -405,7 +466,7 @@ jobs:
 
 
       - name: Upload JVM unit test reports
-        if: always()
+        if: ${{ always() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: fpv-arbcon-unit-test-reports
@@ -414,7 +475,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Android lint report
-        if: always()
+        if: ${{ always() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: fpv-arbcon-lint-report
