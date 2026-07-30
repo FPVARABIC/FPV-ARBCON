@@ -351,37 +351,29 @@ describe('begin -> leave BEFORE holding releases the lease and resumes telemetry
    * the lease directly answers the real question without that confound.
    */
   /**
-   * !! STILL NOT A PROOF - THE PRECONDITION IS NEVER ESTABLISHED. Read this
-   * before trusting the assertions below.
+   * SCOPE, STATED HONESTLY: THIS IS THE DEGENERATE CASE ONLY.
    *
-   * Measured, not guessed: in this harness the transport is never served, so
+   * Measured, not guessed: this harness never serves the transport, so
    * `beginSession()` fails on its first evidence read and SELF-CLOSES. A
    * direct probe after 50 microtasks reports
    *
    *     PHASE: CLOSED | machine: undefined | leaseHeld: false | telemetryHeld: false
    *
-   * - i.e. nothing is held even BEFORE leaving the tab. So the two
-   * resource assertions below are trivially true, and the test passes
-   * identically with `releaseOnLeave()` present or deleted (verified both
-   * ways). It discriminates nothing.
+   * - nothing is held even BEFORE leaving. So this test cannot and does not
+   * prove that leaving releases anything; it passes identically with the
+   * release path present or deleted (verified both ways). What it DOES
+   * guard is still worth keeping and is all it now claims: a session that
+   * self-closes on unusable evidence leaves no lease and no telemetry pause
+   * behind, and leaving the tab afterwards does not resurrect either.
    *
-   * The `phase !== 'IDLE'` step above is likewise hollow: CLOSED satisfies
-   * it, which is why it looked like the session had begun.
-   *
-   * WHAT WOULD MAKE THIS REAL. Drive the MSP handshake so the controller
-   * reaches `Ready` with the lease genuinely held - the scripted-FC fixture
-   * in motorPayloadIndexIdentity.test.tsx (`script()` + `serveOne` +
-   * `drive`) already does exactly that and should be reused rather than
-   * reinvented. Only then does leaving test anything.
-   *
-   * WHY THIS MATTERS BEYOND THE TEST. `Ready` is precisely where
-   * `releaseOnLeave()` is expected to be load-bearing: at Ready the bridge's
-   * `requestStop` correctly does nothing (no pulse to stop), so no
-   * fault-driven teardown occurs and an explicit `endSession()` is the only
-   * thing that can free the lease. The incidental release seen at PREPARING
-   * does NOT generalise to Ready.
+   * THE REAL PROOF LIVES IN motorPayloadIndexIdentity.test.tsx, under
+   * `begin -> leave releases the lease and resumes telemetry`, which drives
+   * the scripted flight controller so the lease is genuinely held. Its
+   * three scenarios - departure during PREPARING, during a held-but-unsettled
+   * setup, and at genuine Ready - are where the load-bearing assertions are,
+   * and two of the three fail with the release path removed.
    */
-  it('leaves the lease FREE and telemetry RESUMED after begin -> leave (PRECONDITION NOT MET - see note)', async () => {
+  it('a self-closed session leaves nothing held, before or after leaving (degenerate case - see note)', async () => {
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
     ReactTestRenderer.act(() => {

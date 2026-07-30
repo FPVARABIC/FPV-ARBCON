@@ -1358,31 +1358,101 @@ function MotorsScreenBinding({
     // own session teardown would make one object responsible for two
     // different safety obligations. This screen owns the second one, at the
     // one seam where leaving is observable.
+    /**
+     * WAIT FOR THE SESSION TO SETTLE, THEN RELEASE - AND ONLY IF THE STOP
+     * PATH IS NOT ALREADY DOING IT.
+     *
+     * Both halves of that sentence were measured, not reasoned about, and
+     * each replaced a wrong earlier version of this function.
+     *
+     * (1) NOT GUARDED ON `machine`. The first attempt returned early when
+     *     `machine === undefined`. But `initializeSession()` takes the
+     *     exclusive lease and the telemetry pause DURING setup, before the
+     *     machine exists, so that guard leaked the likeliest operator
+     *     window - the second between pressing begin and reaching Ready.
+     *
+     * (2) NOT AN IMMEDIATE, UNCONDITIONAL `endSession()` either. That
+     *     version fixed the two settled cases and broke the unsettled one.
+     *     Tearing down while a lease-guarded setup request is still in
+     *     flight cannot work: `MspClient.releaseMotorTestLease` refuses
+     *     while `active`/`queue` is non-empty and answers
+     *     LEASE_WORK_UNSETTLED (mspClient.ts:1292), the controller
+     *     correctly treats unresolved ownership as a reason to KEEP
+     *     telemetry paused (motorTestController.ts:3219), and nothing ever
+     *     retries. The measured result was a session wedged for good:
+     *     phase CLOSED, machine Fault, lease held, telemetry paused
+     *     forever. Left to itself the same departure ended
+     *     CLOSED/Locked with leaseRelease RELEASED, because the bridge's
+     *     `requestStop` drives the controller's OWN teardown, which
+     *     releases at a point where its own in-flight work has settled.
+     *
+     * So the rule is: the controller's own stop path knows when releasing
+     * is possible and an outside caller does not. Defer to it whenever it
+     * is acting, and only step in for the states it leaves alone - a
+     * session sitting at Ready, or one still setting up that will reach
+     * Ready after the operator has already gone.
+     *
+     * This delays no stop and weakens no gate. A pulse in flight is the
+     * bridge's business and is unaffected: `requestStop` still fires
+     * synchronously on blur, exactly as before. All this decides is who
+     * hands back the lease afterwards, and when.
+     */
+    /** Settled = the controller is no longer mid-exchange, so a release can
+     * actually resolve. `Checking` and "no machine yet" are the unsettled
+     * setup states; `Pulsing`/`Stopping` belong to the stop path. */
+    const isSettledForRelease = (
+      snapshot: MotorTestControllerSnapshot,
+    ): boolean => {
+      const name = snapshot.machine?.name;
+      return name === 'Ready' || name === 'Locked' || name === 'Fault';
+    };
+
+    let releasePending = false;
+    let unsubscribeSettled: (() => void) | undefined;
+    const stopWaiting = () => {
+      unsubscribeSettled?.();
+      unsubscribeSettled = undefined;
+      releasePending = false;
+    };
+
+    const releaseIfStillHeld = () => {
+      const snapshot = operator.getSnapshot();
+      // Already closing or closed: the stop path owns this teardown, and
+      // `endSession()` on top of it is the race that wedged the lease.
+      if (snapshot.phase === 'CLOSING' || snapshot.phase === 'CLOSED') {
+        stopWaiting();
+        return;
+      }
+      if (!isSettledForRelease(snapshot)) {
+        return;
+      }
+      stopWaiting();
+      // Idempotent: returns the one stored teardown promise however many
+      // times blur fires.
+      void operator.endSession();
+    };
+
     const releaseOnLeave = () => {
-      // GUARDED ON `phase`, NOT ON `machine`.
-      //
-      // My first attempt guarded on `machine === undefined`, and the
-      // begin-then-leave test caught it: `initializeSession()` acquires the
-      // exclusive lease and the telemetry pause DURING setup, while the
-      // machine does not exist yet (phase PREPARING). Guarding on `machine`
-      // therefore leaked exactly the window the operator is most likely to
-      // be in - the second or so between pressing begin and the session
-      // becoming Ready - leaving the lease held and telemetry paused.
-      //
       // `IDLE` is the only phase in which nothing has been acquired and
-      // there is genuinely nothing to release. Everything else - PREPARING,
-      // ACTIVE, CLOSING, CLOSED - either holds something or has already
-      // begun releasing it, and `endSession()` is idempotent: it returns the
-      // one stored teardown promise however many times blur fires.
+      // there is genuinely nothing to release.
       if (operator.getSnapshot().phase === 'IDLE') {
         return;
       }
-      void operator.endSession();
+      if (releasePending) {
+        return;
+      }
+      releasePending = true;
+      // Subscribe FIRST, so a transition that lands between this call and
+      // the subscription cannot be missed, then evaluate immediately for
+      // the already-settled case.
+      unsubscribeSettled = operator.subscribe(releaseIfStillHeld);
+      releaseIfStillHeld();
     };
     const unsubscribeRelease = subscribeTabBlur(releaseOnLeave);
     const unsubscribeStackRelease = navigation.addListener('blur', releaseOnLeave);
 
     return () => {
+      stopWaiting();
       unsubscribeRelease();
       unsubscribeStackRelease();
       bridge.detach();

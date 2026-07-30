@@ -45,10 +45,33 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({top: 44, bottom: 34, left: 0, right: 0}),
 }));
 
+/**
+ * The Motors container reads the session identity from the coordinator
+ * singleton, which needs a real USB session to have one. Only that read and
+ * its invalidation subscription are replaced - the SAME two members this
+ * file's own `session` port already supplies to the controller directly. The
+ * lease, the barrier, the binding, the capability store and the controller
+ * are all real and untouched.
+ */
+jest.mock('../../platforms/react-native/protocol', () => ({
+  ...jest.requireActual('../../platforms/react-native/protocol'),
+  mspSessionCoordinator: {
+    getMotorTestSessionIdentity: () => ({physicalGeneration: 7, mspEpoch: 0}),
+    subscribeMotorTestSessionInvalidated: () => () => {},
+  },
+}));
+
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
+import MainTabsScreen from './MainTabsScreen';
+import {
+  closeMotorTestCapability,
+  createMotorTestTelemetryRegistry,
+  openMotorTestCapability,
+  readMotorTestCapability,
+} from '../../platforms/react-native/protocol/motorTestCapability';
 import {
   MotorsScreenView,
   MOTOR_TEST_LONG_PRESS_DELAY_MILLIS,
@@ -616,5 +639,241 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
     )) {
       expect(activeIndices(write.payload).length).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+
+/* ================================================================== *
+ * BEGIN -> LEAVE, AT TWO GENUINE STATES.
+ *
+ * Reuses this file's scripted flight controller verbatim - `script()`,
+ * `serveOne()`, `flush()` - so the controller actually advances instead of
+ * self-closing on an unserved transport. That self-closing is what made
+ * every earlier attempt at this assertion vacuous: nothing was ever held,
+ * so "released after leaving" was trivially true.
+ *
+ * The two resource signals are pre-existing public API:
+ * `MspClient.isMotorTestLeaseHeld()` and the snapshot's `telemetryHeld`
+ * (= `barrier?.isHeld()`).
+ * ================================================================== */
+
+const SHELL_SESSION_ID = 'shell-session';
+
+interface ShellFixture {
+  readonly client: MspClient;
+  readonly served: Harness;
+}
+
+function openShellCapability(): ShellFixture {
+  const transport = new FakeMspTransport();
+  const client = new MspClient(transport, SHELL_SESSION_ID);
+  openMotorTestCapability(
+    SHELL_SESSION_ID,
+    client,
+    createMotorTestTelemetryRegistry(),
+  );
+  // `serveOne` only ever touches transport/replies/writes, so this is the
+  // real fixture pointed at the screen's own client rather than a copy of it.
+  const served = {
+    transport,
+    controller: undefined as never,
+    replies: script(),
+    writes: [],
+  } as unknown as Harness;
+  return {client, served};
+}
+
+/** The controller the SCREEN is using. `operatorPort()` returns the same
+ * instance forever, so this is not a second controller. */
+function shellController() {
+  const capability = readMotorTestCapability(SHELL_SESSION_ID);
+  if (capability === undefined) {
+    throw new Error('no capability');
+  }
+  return capability.operatorPort(
+    {
+      readCurrentIdentity: () => ({physicalGeneration: 7, mspEpoch: 0}),
+      subscribeSessionInvalidated: () => () => {},
+    } as never,
+    () => Date.now(),
+  );
+}
+
+function renderTabShell() {
+  const navigation = {addListener: () => () => {}, goBack: () => {}} as never;
+  const route = {
+    key: 'Setup-1',
+    name: 'Setup' as const,
+    params: {sessionKey: {sessionId: SHELL_SESSION_ID, generation: 1}},
+  } as never;
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  ReactTestRenderer.act(() => {
+    renderer = ReactTestRenderer.create(
+      <MainTabsScreen navigation={navigation} route={route} />,
+    );
+  });
+  const find = (testID: string) => renderer.root.findAllByProps({testID})[0];
+  return {
+    renderer,
+    find,
+    press: (testID: string) =>
+      ReactTestRenderer.act(() => {
+        find(testID).props.onPress();
+      }),
+    unmount: () =>
+      ReactTestRenderer.act(() => {
+        renderer.unmount();
+      }),
+  };
+}
+
+afterEach(() => {
+  closeMotorTestCapability(SHELL_SESSION_ID);
+});
+
+describe('begin -> leave releases the lease and resumes telemetry', () => {
+  /**
+   * MEASURED STATE SEQUENCE, from a probe rather than assumed. Serving the
+   * script one reply at a time, the controller passes through:
+   *
+   *   phase=PREPARING machine=undefined lease=false tel=false   <- (a)
+   *   phase=ACTIVE    machine=Checking  lease=true  tel=true    <- (a2)
+   *   phase=ACTIVE    machine=Ready     lease=true  tel=true    <- (b)
+   *
+   * So the phase LITERALLY named `PREPARING` is a window in which nothing
+   * is held yet, and "held but not yet Ready" is a DIFFERENT state
+   * (`ACTIVE`/`Checking`). Both are real and both are covered, because they
+   * fail in different ways: (a) can only leak by acquiring AFTER departure,
+   * (a2) and (b) can only leak by failing to give back what is already
+   * held.
+   */
+  it('(a) leaving during genuine PREPARING ends with nothing held and nothing commanded', async () => {
+    const {client, served} = openShellCapability();
+    const shell = renderTabShell();
+    shell.press('main-tab-MOTORS');
+    for (const key of ['propellers', 'secured', 'battery']) {
+      shell.press(`motors-ack-${key}`);
+    }
+    const controller = shellController();
+
+    // Leave IMMEDIATELY - no flush, no served reply. Setup is in flight and
+    // has not taken anything yet, so the hazard in this exact window is not
+    // "does it give back what it holds" - it holds nothing - it is "does
+    // the in-flight acquisition land anyway, after the operator has already
+    // gone". Asserted rather than timed, so no microtask count is assumed.
+    ReactTestRenderer.act(() => {
+      shell.find('motors-begin-session').props.onPress();
+    });
+    expect(controller.getSnapshot().phase).not.toBe('ACTIVE');
+    expect(client.isMotorTestLeaseHeld()).toBe(false);
+
+    // Leave, then let the in-flight setup run to whatever conclusion it
+    // reaches.
+    await ReactTestRenderer.act(async () => {
+      shell.press('main-tab-SETUP');
+      for (let i = 0; i < 120; i++) {
+        await flush(2);
+        await serveOne(served);
+      }
+    });
+
+    // MEASURED, AND DELIBERATELY NOT ASSERTED AS "NEVER HELD". Setup that is
+    // already in flight does go on to take the lease after the operator has
+    // left - it cannot be recalled mid-exchange, and cutting it off is
+    // exactly what produced the wedged lease documented in
+    // `releaseOnLeave`. The hold is TRANSIENT and bounded by setup
+    // completing, after which the release happens. What matters is that it
+    // ends, and that nothing was commanded while it lasted.
+    expect(client.isMotorTestLeaseHeld()).toBe(false);
+    expect(controller.getSnapshot().telemetryHeld).toBe(false);
+
+    // Nothing drove an output at any point: no command-214 write carried a
+    // value above stop. This is the reason the transient hold is acceptable
+    // rather than merely tolerated.
+    for (const write of served.writes) {
+      if (write.command === MSP_SET_MOTOR_FIXTURE) {
+        expect(activeIndices(write.payload)).toEqual([]);
+      }
+    }
+    shell.unmount();
+  });
+
+  it('(a2) leaving while genuinely held but not yet Ready', async () => {
+    const {client, served} = openShellCapability();
+    const shell = renderTabShell();
+    shell.press('main-tab-MOTORS');
+    for (const key of ['propellers', 'secured', 'battery']) {
+      shell.press(`motors-ack-${key}`);
+    }
+    const controller = shellController();
+
+    await ReactTestRenderer.act(async () => {
+      shell.find('motors-begin-session').props.onPress();
+      for (
+        let i = 0;
+        i < 400 && !client.isMotorTestLeaseHeld();
+        i++
+      ) {
+        await flush(3);
+        await serveOne(served);
+      }
+    });
+
+    // Resources genuinely held, machine deliberately short of Ready.
+    expect(client.isMotorTestLeaseHeld()).toBe(true);
+    expect(controller.getSnapshot().telemetryHeld).toBe(true);
+    expect(controller.getSnapshot().machine?.name).not.toBe('Ready');
+
+    await ReactTestRenderer.act(async () => {
+      shell.press('main-tab-SETUP');
+      for (let i = 0; i < 120; i++) {
+        await flush(2);
+        await serveOne(served);
+      }
+    });
+
+    expect(client.isMotorTestLeaseHeld()).toBe(false);
+    expect(controller.getSnapshot().telemetryHeld).toBe(false);
+    shell.unmount();
+  });
+
+  it('(b) leaving after reaching genuine Ready', async () => {
+    const {client, served} = openShellCapability();
+    const shell = renderTabShell();
+    shell.press('main-tab-MOTORS');
+    for (const key of ['propellers', 'secured', 'battery']) {
+      shell.press(`motors-ack-${key}`);
+    }
+    const controller = shellController();
+
+    await ReactTestRenderer.act(async () => {
+      shell.find('motors-begin-session').props.onPress();
+      for (
+        let i = 0;
+        i < 400 && controller.getSnapshot().machine?.name !== 'Ready';
+        i++
+      ) {
+        await flush(3);
+        await serveOne(served);
+      }
+    });
+
+    // GENUINE Ready, with both resources genuinely held.
+    expect(controller.getSnapshot().machine?.name).toBe('Ready');
+    expect(client.isMotorTestLeaseHeld()).toBe(true);
+    expect(controller.getSnapshot().telemetryHeld).toBe(true);
+
+    // Leave WITHOUT ever holding to test.
+    await ReactTestRenderer.act(async () => {
+      shell.press('main-tab-SETUP');
+      for (let i = 0; i < 60; i++) {
+        await flush(2);
+        await serveOne(served);
+      }
+    });
+
+    expect(client.isMotorTestLeaseHeld()).toBe(false);
+    expect(controller.getSnapshot().telemetryHeld).toBe(false);
+    shell.unmount();
   });
 });
