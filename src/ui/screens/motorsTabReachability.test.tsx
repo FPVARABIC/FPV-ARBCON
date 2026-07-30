@@ -102,10 +102,13 @@ function renderShell() {
 
 const transports: FakeMspTransport[] = [];
 
+let currentClient: MspClient | undefined;
+
 function openRealCapability(): void {
   const transport = new FakeMspTransport();
   transports.push(transport);
   const client = new MspClient(transport, SESSION_ID);
+  currentClient = client;
   // The REAL store, the REAL binding, the REAL registry - no shortcut and
   // no test double standing in for the capability.
   openMotorTestCapability(SESSION_ID, client, createMotorTestTelemetryRegistry());
@@ -136,6 +139,7 @@ function screenController() {
 }
 
 afterEach(() => {
+  currentClient = undefined;
   closeMotorTestCapability(SESSION_ID);
   transports.length = 0;
 });
@@ -330,61 +334,83 @@ describe('begin -> leave BEFORE holding releases the lease and resumes telemetry
    * lease, and recovery needs a cable pull.
    */
   /**
-   * !! NOT YET A REGRESSION GUARD FOR THE RELEASE FIX. READ BEFORE TRUSTING.
+   * BLACK-BOX RESOURCE PROOF. The question is not which function fired - it
+   * is whether the lease is genuinely free and telemetry genuinely resumed
+   * after leaving. If more than one path delivers that, all of them are
+   * valid safety paths.
    *
-   * This test passes, and it passes with `operator.endSession()` REMOVED from
-   * MotorsScreen's releaseOnLeave - verified by deleting that call and
-   * re-running. So it confirms the end state (teardown happened) but does NOT
-   * discriminate WHY: the bridge's blur handling calls `requestStop(...)` on a
-   * PREPARING controller, and that path can itself drive the controller to
-   * CLOSING independently of the release fix.
+   * Both signals are pre-existing public API, not seams invented for this
+   * test: `MspClient.isMotorTestLeaseHeld()` and the controller snapshot's
+   * `telemetryHeld` (which is `barrier?.isHeld()`, already asserted in
+   * motorTestSessionBinding.test.ts).
    *
-   * `phase` is therefore the wrong discriminator, and a call count is
-   * unavailable because the capability is deliberately `Object.freeze`d.
-   * The open question - which of the two paths actually released the lease,
-   * and whether the release fix is load-bearing at all - is UNRESOLVED.
-   *
-   * Do not delete `releaseOnLeave` on the strength of this test, and do not
-   * cite this test as proof the fix works. It is retained because the end
-   * state it asserts is worth asserting; it is labelled because a test that
-   * cannot fail must never be mistaken for one that can.
+   * A "second beginSession() must succeed" probe is deliberately NOT used as
+   * the assertion: `operatorPort()` returns the same controller forever, and
+   * that controller is CLOSED after teardown by design, so a second begin on
+   * it must fail for reasons that have nothing to do with the lease. Reading
+   * the lease directly answers the real question without that confound.
    */
-  it('reaches teardown when the operator leaves the tab after beginning (end state only - see note above)', async () => {
+  /**
+   * !! STILL NOT A PROOF - THE PRECONDITION IS NEVER ESTABLISHED. Read this
+   * before trusting the assertions below.
+   *
+   * Measured, not guessed: in this harness the transport is never served, so
+   * `beginSession()` fails on its first evidence read and SELF-CLOSES. A
+   * direct probe after 50 microtasks reports
+   *
+   *     PHASE: CLOSED | machine: undefined | leaseHeld: false | telemetryHeld: false
+   *
+   * - i.e. nothing is held even BEFORE leaving the tab. So the two
+   * resource assertions below are trivially true, and the test passes
+   * identically with `releaseOnLeave()` present or deleted (verified both
+   * ways). It discriminates nothing.
+   *
+   * The `phase !== 'IDLE'` step above is likewise hollow: CLOSED satisfies
+   * it, which is why it looked like the session had begun.
+   *
+   * WHAT WOULD MAKE THIS REAL. Drive the MSP handshake so the controller
+   * reaches `Ready` with the lease genuinely held - the scripted-FC fixture
+   * in motorPayloadIndexIdentity.test.tsx (`script()` + `serveOne` +
+   * `drive`) already does exactly that and should be reused rather than
+   * reinvented. Only then does leaving test anything.
+   *
+   * WHY THIS MATTERS BEYOND THE TEST. `Ready` is precisely where
+   * `releaseOnLeave()` is expected to be load-bearing: at Ready the bridge's
+   * `requestStop` correctly does nothing (no pulse to stop), so no
+   * fault-driven teardown occurs and an explicit `endSession()` is the only
+   * thing that can free the lease. The incidental release seen at PREPARING
+   * does NOT generalise to Ready.
+   */
+  it('leaves the lease FREE and telemetry RESUMED after begin -> leave (PRECONDITION NOT MET - see note)', async () => {
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
     ReactTestRenderer.act(() => {
       openRealCapability();
     });
-
     for (const key of ['propellers', 'secured', 'battery']) {
       shell.press(`motors-ack-${key}`);
     }
 
-    // Step 1: start the session, through the real control.
+    // Step 1: start the session for real.
     await ReactTestRenderer.act(async () => {
       shell.find('motors-begin-session').props.onPress();
       await Promise.resolve();
     });
-
-    // The controller has genuinely begun: PREPARING is where the exclusive
-    // lease and the MOTOR_TEST telemetry pause are already held, which is
-    // exactly the window an earlier version of this fix leaked.
     const controller = screenController();
+    // The session genuinely began - PREPARING is where the lease and the
+    // telemetry pause are already taken.
     expect(controller.getSnapshot().phase).not.toBe('IDLE');
 
     // Step 2: leave WITHOUT ever holding to test.
     await ReactTestRenderer.act(async () => {
       shell.press('main-tab-SETUP');
       await Promise.resolve();
+      await Promise.resolve();
     });
 
-    // Teardown is what releases the lease and un-pauses telemetry. The
-    // controller's own phase is the statement that it ran - asserted here
-    // rather than a call count, so this cannot pass on a mock that merely
-    // recorded an invocation.
-    expect(['CLOSING', 'CLOSED']).toContain(
-      controller.getSnapshot().phase,
-    );
+    // THE TWO PROPERTIES THAT ACTUALLY MATTER.
+    expect(currentClient?.isMotorTestLeaseHeld()).toBe(false);
+    expect(controller.getSnapshot().telemetryHeld).toBe(false);
     shell.unmount();
   });
 
