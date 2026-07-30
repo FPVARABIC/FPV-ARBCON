@@ -844,8 +844,30 @@ export function MotorsScreenView({
         {/* (5b) STEP 1 - START THE SESSION. Deliberately a separate,
             differently-shaped, differently-coloured control from the
             hold-to-test button: this one reserves the channel, it does not
-            spin anything. Only offered while there is no machine yet. */}
-        {operator !== undefined && presentation === 'NO_SESSION' ? (
+            spin anything. Only offered while there is no machine yet.
+
+            THE CARD IS NO LONGER HIDDEN WHEN `operator` IS UNDEFINED, and
+            that is the whole point of this shape.
+
+            WHAT WENT WRONG ON THE DEVICE. This card used to require
+            `operator !== undefined` as well. `operator` is the port read
+            out of the motor-test capability store, which the coordinator
+            fills in `startTelemetry()` - a completely different condition
+            from the three acknowledgements, and one the operator has no
+            way to see or influence. On a real device the acknowledgements
+            were all ticked, the status read "no active session", and this
+            entire card was simply ABSENT: no control, no explanation, and
+            nothing to distinguish "waiting for the link" from "this build
+            shipped without the feature". Two evenings of investigation
+            went into a symptom the screen could have named itself.
+
+            So absence is replaced by a legible disabled state. The gate is
+            unchanged in strength - `handleBeginSession` cannot run without
+            an operator, because the Pressable stays `disabled` until one
+            exists - but the reason is now on screen. A control that cannot
+            act is still worth rendering when the alternative is a blank
+            gap that looks like a missing feature. */}
+        {presentation === 'NO_SESSION' ? (
           <View style={styles.card} testID="motors-begin-session-card">
             <Text style={styles.sectionTitle}>
               {t('motorsScreen.beginSessionHeading')}
@@ -853,12 +875,15 @@ export function MotorsScreenView({
             <Text style={styles.caption}>{t('motorsScreen.beginSessionHint')}</Text>
             <Pressable
               onPress={handleBeginSession}
-              disabled={!acknowledged || beginning}
+              disabled={operator === undefined || !acknowledged || beginning}
               accessibilityRole="button"
-              accessibilityState={{disabled: !acknowledged || beginning}}
+              accessibilityState={{
+                disabled: operator === undefined || !acknowledged || beginning,
+              }}
               style={[
                 styles.beginButton,
-                (!acknowledged || beginning) && styles.beginButtonOff,
+                (operator === undefined || !acknowledged || beginning) &&
+                  styles.beginButtonOff,
               ]}
               testID="motors-begin-session">
               <Text style={styles.beginLabel}>
@@ -867,7 +892,15 @@ export function MotorsScreenView({
                   : t('motorsScreen.beginSession')}
               </Text>
             </Pressable>
-            {!acknowledged ? (
+            {/* Reuses the existing status string rather than adding a new
+                one: it is already the exact truth here, and it is already
+                in the shipped bundle. */}
+            {operator === undefined ? (
+              <Text style={styles.blockReason} testID="motors-begin-no-session">
+                {t('motorsScreen.noSession')}
+              </Text>
+            ) : null}
+            {operator !== undefined && !acknowledged ? (
               <Text style={styles.caption} testID="motors-begin-needs-ack">
                 {t('motorsScreen.beginSessionNeedsAck')}
               </Text>

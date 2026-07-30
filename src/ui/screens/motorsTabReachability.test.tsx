@@ -239,13 +239,27 @@ describe('Motors tab reachability with a session that arrives late', () => {
     shell.unmount();
   });
 
-  it('never offers the begin control before a capability exists', () => {
-    // The control must not appear as decoration. Without a capability there
-    // is nothing to begin, and offering it would be a dead button - the
-    // exact silent-failure shape this whole investigation started from.
+  it('shows the begin control DISABLED, with a reason, before a capability exists', () => {
+    // REVERSED ON DEVICE EVIDENCE, and the old rationale is worth recording
+    // because it was wrong in an instructive way.
+    //
+    // This test used to assert the card was ABSENT without a capability, on
+    // the reasoning that offering a dead button would be a silent failure.
+    // Three screenshots from the release APK of run 30532042454 showed what
+    // absence actually looks like to an operator: acknowledgements all
+    // ticked, status reading "no active session", and no begin control
+    // anywhere in the scroll - indistinguishable from a build that shipped
+    // without the feature at all. The dead button was the lesser evil; the
+    // blank gap was the silent failure.
+    //
+    // The gate is not weakened by this. `disabled` stays true until an
+    // operator port genuinely exists, so no press can reach
+    // `beginSession()` - only the explanation is new.
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
-    expect(shell.query('motors-begin-session-card')).toHaveLength(0);
+    expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
+    expect(shell.query('motors-begin-no-session').length).toBeGreaterThan(0);
+    expect(shell.query('motors-begin-session')[0].props.disabled).toBe(true);
     shell.unmount();
   });
 
