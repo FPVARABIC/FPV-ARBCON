@@ -466,6 +466,59 @@ export function MotorsScreenView({
     port.requestStop(trigger);
   }, []);
 
+  /**
+   * STEP 1 OF TWO DELIBERATE ACTIONS: start the session.
+   *
+   * WHY THIS CONTROL EXISTS AT ALL. `beginSession()` -> the controller's
+   * `initializeSession()` is the ONLY thing that can start a session, and
+   * nothing in this screen ever called it. Without it the controller has no
+   * machine, `derivePresentation()` returns NO_SESSION forever, and the
+   * hold control below stays `disabled` - so the screen looked alive and
+   * responded to nothing. It had never been reachable in the project's
+   * history because the old bench variant was blocked by design.
+   *
+   * WHY IT IS NOT AUTOMATIC. `beginSession()` acquires the exclusive lease,
+   * pauses telemetry and establishes the arming restriction. None of that
+   * may happen as a side effect of navigation - the operator asks for it.
+   */
+  const [beginning, setBeginning] = useState(false);
+  const [beginFailed, setBeginFailed] = useState(false);
+
+  const handleBeginSession = useCallback(() => {
+    const port = operatorRef.current;
+    if (port === undefined) {
+      return;
+    }
+    // The SAME manual gate the hold control uses. Re-read at call time: a
+    // gate that was open when this closure was created proves nothing now.
+    if (!allAcknowledged(acknowledgements)) {
+      return;
+    }
+    setBeginning(true);
+    setBeginFailed(false);
+    void port
+      .beginSession()
+      .then(snapshot => {
+        if (!mountedRef.current) {
+          return;
+        }
+        // NEVER silently inert. If the session did not reach a machine the
+        // operator can act on, say so - the real blockReason list below is
+        // published by the controller and renders itself.
+        setBeginFailed(snapshot.machine === undefined);
+      })
+      .catch(() => {
+        if (mountedRef.current) {
+          setBeginFailed(true);
+        }
+      })
+      .then(() => {
+        if (mountedRef.current) {
+          setBeginning(false);
+        }
+      });
+  }, [acknowledgements]);
+
   const handleLongPress = useCallback(() => {
     if (holdActivatedRef.current) {
       return;
@@ -788,7 +841,46 @@ export function MotorsScreenView({
           />
         ) : null}
 
-        {/* (6) The ONE deliberate long-press control. */}
+        {/* (5b) STEP 1 - START THE SESSION. Deliberately a separate,
+            differently-shaped, differently-coloured control from the
+            hold-to-test button: this one reserves the channel, it does not
+            spin anything. Only offered while there is no machine yet. */}
+        {operator !== undefined && presentation === 'NO_SESSION' ? (
+          <View style={styles.card} testID="motors-begin-session-card">
+            <Text style={styles.sectionTitle}>
+              {t('motorsScreen.beginSessionHeading')}
+            </Text>
+            <Text style={styles.caption}>{t('motorsScreen.beginSessionHint')}</Text>
+            <Pressable
+              onPress={handleBeginSession}
+              disabled={!acknowledged || beginning}
+              accessibilityRole="button"
+              accessibilityState={{disabled: !acknowledged || beginning}}
+              style={[
+                styles.beginButton,
+                (!acknowledged || beginning) && styles.beginButtonOff,
+              ]}
+              testID="motors-begin-session">
+              <Text style={styles.beginLabel}>
+                {beginning
+                  ? t('motorsScreen.beginSessionBusy')
+                  : t('motorsScreen.beginSession')}
+              </Text>
+            </Pressable>
+            {!acknowledged ? (
+              <Text style={styles.caption} testID="motors-begin-needs-ack">
+                {t('motorsScreen.beginSessionNeedsAck')}
+              </Text>
+            ) : null}
+            {beginFailed ? (
+              <Text style={styles.blockReason} testID="motors-begin-failed">
+                {t('motorsScreen.beginSessionFailed')}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+
+        {/* (6) STEP 2 - the ONE deliberate long-press control. */}
         <Pressable
           onLongPress={handleLongPress}
           delayLongPress={MOTOR_TEST_LONG_PRESS_DELAY_MILLIS}
@@ -801,6 +893,7 @@ export function MotorsScreenView({
           accessibilityState={{disabled: !canActivate}}
           style={[styles.holdButton, !canActivate && styles.holdButtonOff]}
           testID="motors-hold-button">
+          <Text style={styles.holdStep}>{t('motorsScreen.holdHeading')}</Text>
           <Text style={styles.holdLabel}>
             {t('motorsScreen.holdToTest', {slot: `M${selectedSlot}`})}
           </Text>
@@ -984,6 +1077,30 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     writingDirection: 'rtl',
     flexShrink: 1,
+  },
+  beginButton: {
+    minHeight: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+    /* OUTLINED, not filled: the hold-to-test control is a large filled
+       surface. An operator must never mistake one for the other. */
+    borderColor: colors.accent,
+    borderWidth: 2,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  beginButtonOff: {borderColor: colors.disabled},
+  beginLabel: {
+    ...typography.sectionTitle,
+    color: colors.accent,
+    writingDirection: 'rtl',
+  },
+  holdStep: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
   },
   holdButton: {
     minHeight: MIN_TOUCH_TARGET + spacing.xl,

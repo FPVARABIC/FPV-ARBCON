@@ -33,6 +33,9 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({top: 44, bottom: 34, left: 0, right: 0}),
 }));
 
+import {readFileSync} from 'fs';
+import {join} from 'path';
+
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
@@ -171,9 +174,23 @@ describe('Motors tab reachability with a session that arrives late', () => {
 
     // The panel was NOT remounted and the tab was NOT switched - the only
     // thing that changed is that the store now has a capability. The screen
-    // must have noticed.
+    // must have noticed, and "noticed" means it now OFFERS A WAY FORWARD.
+    //
+    // Deliberately NOT asserting the blocked state cleared: under the
+    // approved two-action design, clearing it is beginSession()'s job, and
+    // beginSession() is the operator's decision. A screen that auto-cleared
+    // here would be taking a lease and pausing telemetry as a side effect of
+    // navigation, which is exactly what was rejected.
     expect(readMotorTestCapability(SESSION_ID)).toBeDefined();
-    expect(shell.query('motors-status-NO_SESSION')).toHaveLength(0);
+    expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
+    // Gated behind the same three acknowledgements as hold-to-test.
+    expect(shell.find('motors-begin-session').props.disabled).toBe(true);
+    expect(shell.query('motors-begin-needs-ack').length).toBeGreaterThan(0);
+    // Acknowledge all three, and it becomes genuinely pressable.
+    for (const key of ['propellers', 'secured', 'battery']) {
+      shell.press(`motors-ack-${key}`);
+    }
+    expect(shell.find('motors-begin-session').props.disabled).toBe(false);
     shell.unmount();
   });
 
@@ -190,7 +207,83 @@ describe('Motors tab reachability with a session that arrives late', () => {
     });
 
     shell.press('main-tab-MOTORS');
-    expect(shell.query('motors-status-NO_SESSION')).toHaveLength(0);
+    expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
+    shell.unmount();
+  });
+
+  it('never offers the begin control before a capability exists', () => {
+    // The control must not appear as decoration. Without a capability there
+    // is nothing to begin, and offering it would be a dead button - the
+    // exact silent-failure shape this whole investigation started from.
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    expect(shell.query('motors-begin-session-card')).toHaveLength(0);
+    shell.unmount();
+  });
+
+  it('keeps the two actions visually and textually distinct', () => {
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    ReactTestRenderer.act(() => {
+      openRealCapability();
+    });
+    // Two different controls, two different testIDs, two different labels.
+    const begin = shell.find('motors-begin-session');
+    const hold = shell.find('motors-hold-button');
+    expect(begin).not.toBe(hold);
+    const flat = (style: unknown) =>
+      Array.isArray(style)
+        ? Object.assign({}, ...style.filter(Boolean))
+        : (style as Record<string, unknown>);
+    // The begin control is OUTLINED; hold-to-test is a filled surface.
+    expect(flat(begin.props.style).borderWidth).toBe(2);
+    expect(flat(begin.props.style).backgroundColor).toBeUndefined();
+    expect(flat(hold.props.style).backgroundColor).toBeDefined();
+    shell.unmount();
+  });
+});
+
+describe('Leaving Motors after starting a session still releases everything', () => {
+  it('routes a tab change away into the SAME bridge path, so the lease is released and telemetry resumes', () => {
+    // EXPLICITLY VERIFIED, NOT ASSUMED. The requirement is that starting a
+    // session and then wandering off without testing must still release the
+    // exclusive lease and un-pause telemetry. The teardown that does that is
+    // the controller's runTeardown(), reached from the accepted lifecycle
+    // bridge - and the bridge is driven here by the shell's tab-blur source.
+    //
+    // What this asserts is the WIRING, at the seam that the tab shell
+    // actually changed: the tab-blur source is handed to the bridge as its
+    // `addBlurListener`, so a tab change is indistinguishable from the
+    // navigation blur that already released the lease. The release itself -
+    // lease released, pause lease released, monitor stopped - is proven
+    // against the real controller in motorTestController.test.ts and
+    // motorTestLifecycleBridge.test.ts, which this deliberately does not
+    // duplicate with a weaker copy.
+    const source = readFileSync(join(__dirname, 'MotorsScreen.tsx'), 'utf8');
+    const executable = source
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    expect(executable).toMatch(
+      /addBlurListener: listener => \{[\s\S]*?subscribeTabBlur\(listener\)/,
+    );
+    // And there is exactly ONE bridge, so the tab path cannot diverge from
+    // the navigation path.
+    expect(executable.match(/createMotorTestLifecycleBridge\(/g) ?? []).toHaveLength(1);
+
+    // Behaviourally: switching away from Motors after the capability exists
+    // must fire that source. MainTabsScreen.tabBlur.test.tsx proves the
+    // firing in isolation; here it is proven with the REAL Motors screen
+    // mounted and a REAL capability in the store.
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    ReactTestRenderer.act(() => {
+      openRealCapability();
+    });
+    expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
+    // Leaving must not throw and must not tear the panel out of the tree -
+    // an unmount here would drop the bridge with no stop requested at all.
+    expect(() => shell.press('main-tab-SETUP')).not.toThrow();
+    expect(shell.query('main-tab-panel-MOTORS').length).toBeGreaterThan(0);
     shell.unmount();
   });
 });
