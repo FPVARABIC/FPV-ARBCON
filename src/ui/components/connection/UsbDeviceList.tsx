@@ -1,10 +1,16 @@
 import React from 'react';
-import {ActivityIndicator, Pressable, StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import {colors, radii, spacing, typography} from '../../theme';
-import type {UsbSerialDeviceDescriptor} from '../../../platforms/react-native/transport';
-import {deviceKey} from './connectionTypes';
+import { colors, radii, spacing, typography } from '../../theme';
+import type { UsbSerialDeviceDescriptor } from '../../../platforms/react-native/transport';
+import { deviceKey } from './connectionTypes';
 import UsbDeviceRow from './UsbDeviceRow';
 
 interface Props {
@@ -28,7 +34,7 @@ export default function UsbDeviceList({
   onRefresh,
   onSelectDevice,
 }: Props): React.JSX.Element {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const showEmptyState = !scanning && hasScannedOnce && devices.length === 0;
 
   return (
@@ -41,13 +47,18 @@ export default function UsbDeviceList({
           disabled={refreshDisabled}
           accessibilityRole="button"
           accessibilityLabel={t('accessibility.refresh')}
-          accessibilityState={{disabled: refreshDisabled}}
-          style={[styles.refreshButton, refreshDisabled && styles.refreshButtonDisabled]}>
+          accessibilityState={{ disabled: refreshDisabled }}
+          style={[
+            styles.refreshButton,
+            refreshDisabled && styles.refreshButtonDisabled,
+          ]}
+        >
           <Text
             style={[
               styles.refreshButtonText,
               refreshDisabled && styles.refreshButtonTextDisabled,
-            ]}>
+            ]}
+          >
             {t('devices.refresh')}
           </Text>
         </Pressable>
@@ -60,16 +71,20 @@ export default function UsbDeviceList({
         </View>
       ) : hasScannedOnce ? (
         <Text style={styles.countText}>
-          {t('devices.countLabel', {count: devices.length})}
+          {t('devices.countLabel', { count: devices.length })}
         </Text>
       ) : (
-        <Text style={styles.notScannedText}>{t('devices.notScannedPrompt')}</Text>
+        <Text style={styles.notScannedText}>
+          {t('devices.notScannedPrompt')}
+        </Text>
       )}
 
       {showEmptyState ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyPrimary}>{t('devices.emptyPrimary')}</Text>
-          <Text style={styles.emptySecondary}>{t('devices.emptySecondary')}</Text>
+          <Text style={styles.emptySecondary}>
+            {t('devices.emptySecondary')}
+          </Text>
         </View>
       ) : null}
 
@@ -92,8 +107,18 @@ export default function UsbDeviceList({
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 3,
   },
   headerRow: {
     flexDirection: 'row',
@@ -105,14 +130,18 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   refreshButton: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.accent,
-    borderRadius: radii.sm,
+    minHeight: 44,
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accentSoft,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.sm,
   },
   refreshButtonDisabled: {
     borderColor: colors.disabled,
+    backgroundColor: colors.backgroundRaised,
   },
   refreshButtonText: {
     ...typography.body,
@@ -144,11 +173,11 @@ const styles = StyleSheet.create({
   },
   emptyState: {
     marginTop: spacing.md,
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
     borderRadius: radii.sm,
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: colors.backgroundRaised,
   },
   emptyPrimary: {
     ...typography.body,

@@ -161,7 +161,19 @@ export type MotorTestLockingStopReason =
   | 'ARMED_STATE_DETECTED'
   | 'ARMING_RESTRICTION_REMOVED'
   | 'BATTERY_CHANGED'
-  | 'BATTERY_BECAME_UNSAFE';
+  | 'BATTERY_BECAME_UNSAFE'
+  /**
+   * The dedicated safety observation path stopped being able to prove the
+   * flight controller disarmed - a rejected read, a malformed response, an
+   * identity that moved under the read, or a reading that aged out.
+   *
+   * ADDED BECAUSE THE ALTERNATIVE WAS A LIE. A monitoring failure used to
+   * be reported as `BATTERY_BECAME_UNSAFE`, which is the only locking
+   * reason that happened to be close enough to reuse. Nothing had observed
+   * the battery; the session was stopped for the right cause under the
+   * wrong name, and the operator was told about a pack that was never read.
+   */
+  | 'SAFETY_MONITORING_FAILED';
 
 export type MotorTestStopTriggerReason =
   | MotorTestNormalStopReason
@@ -410,6 +422,7 @@ export function dispositionForStopReason(
     case 'ARMING_RESTRICTION_REMOVED':
     case 'BATTERY_CHANGED':
     case 'BATTERY_BECAME_UNSAFE':
+    case 'SAFETY_MONITORING_FAILED':
       return 'Locked';
     default:
       assertExhaustive(reason);

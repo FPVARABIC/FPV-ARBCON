@@ -20,16 +20,19 @@
  */
 
 import React from 'react';
-import {Pressable, StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import {deriveConnectionIndicatorState} from './connectionIndicator';
-import type {SetupConnectionIndicatorState} from './connectionIndicator';
-import {useTopBarNotice} from './useTopBarNotice';
-import {useMspIdentificationState, useMspOwnershipState, useMspRecoveryState} from '../../../platforms/react-native/protocol';
-import {deriveFcFamily} from '../../../core';
-import type {ArmingReadiness} from '../../../core';
-import {colors, radii, spacing, typography} from '../../theme';
+import { deriveConnectionIndicatorState } from './connectionIndicator';
+import type { SetupConnectionIndicatorState } from './connectionIndicator';
+import { useTopBarNotice } from './useTopBarNotice';
+import {
+  useMspIdentificationState,
+  useMspOwnershipState,
+  useMspRecoveryState,
+} from '../../../platforms/react-native/protocol';
+import type { ArmingReadiness } from '../../../core';
+import { colors, radii, spacing, typography } from '../../theme';
 
 const INDICATOR_COLOR: Record<SetupConnectionIndicatorState, string> = {
   CONNECTED: colors.success,
@@ -61,7 +64,10 @@ const ARMING_BADGE_LABEL_KEY: Record<ArmingReadiness['status'], string> = {
   UNKNOWN: 'setupTopBar.armingBadge.unknown',
 };
 
-const NOTICE_BANNER_COLOR: Record<'CRITICAL' | 'ERROR' | 'WARNING' | 'INFO', string> = {
+const NOTICE_BANNER_COLOR: Record<
+  'CRITICAL' | 'ERROR' | 'WARNING' | 'INFO',
+  string
+> = {
   CRITICAL: colors.error,
   ERROR: colors.error,
   WARNING: colors.warning,
@@ -74,8 +80,12 @@ export interface TopSystemBarProps {
   armingReadiness: ArmingReadiness;
 }
 
-export default function TopSystemBar({sessionId, onBack, armingReadiness}: TopSystemBarProps): React.JSX.Element {
-  const {t} = useTranslation();
+export default function TopSystemBar({
+  sessionId,
+  onBack,
+  armingReadiness,
+}: TopSystemBarProps): React.JSX.Element {
+  const { t } = useTranslation();
   const ownership = useMspOwnershipState(sessionId);
   const identification = useMspIdentificationState(sessionId);
   const recovery = useMspRecoveryState(sessionId);
@@ -83,10 +93,13 @@ export default function TopSystemBar({sessionId, onBack, armingReadiness}: TopSy
   const indicator = deriveConnectionIndicatorState(ownership, recovery);
   const notice = useTopBarNotice(ownership, recovery, identification);
 
-  const boardName = identification.status === 'SUCCEEDED' ? identification.identity.board.boardName : undefined;
+  const boardName =
+    identification.status === 'SUCCEEDED'
+      ? identification.identity.board.boardName
+      : undefined;
   const firmwareLabel =
     identification.status === 'SUCCEEDED'
-      ? `${deriveFcFamily(identification.identity.firmware.identifier)} ${identification.identity.apiVersion.apiVersionMajor}.${identification.identity.apiVersion.apiVersionMinor}`
+      ? `MSP ${identification.identity.apiVersion.apiVersionMajor}.${identification.identity.apiVersion.apiVersionMinor}`
       : undefined;
 
   return (
@@ -97,31 +110,79 @@ export default function TopSystemBar({sessionId, onBack, armingReadiness}: TopSy
           accessibilityRole="button"
           accessibilityLabel={t('setupTopBar.back')}
           style={styles.backButton}
-          testID="setup-top-bar-back">
-          <Text style={styles.backButtonText}>{'‹'}</Text>
+          testID="setup-top-bar-back"
+        >
+          <Text style={styles.backButtonText}>{'›'}</Text>
         </Pressable>
-        <Text style={styles.title}>{t('setupTopBar.title')}</Text>
+        <View style={styles.titleGroup}>
+          <Text style={styles.eyebrow} numberOfLines={1}>
+            {t('app.name')}
+          </Text>
+          <Text style={styles.title} numberOfLines={1}>
+            {t('setupTopBar.title')}
+          </Text>
+        </View>
         <View
-          style={[styles.indicatorBadge, {borderColor: INDICATOR_COLOR[indicator]}]}
+          style={[
+            styles.indicatorBadge,
+            { borderColor: INDICATOR_COLOR[indicator] },
+          ]}
           accessibilityRole="text"
-          testID="setup-top-bar-connection-indicator">
-          <View style={[styles.indicatorDot, {backgroundColor: INDICATOR_COLOR[indicator]}]} />
-          <Text style={[styles.indicatorText, {color: INDICATOR_COLOR[indicator]}]}>{t(INDICATOR_LABEL_KEY[indicator])}</Text>
+          testID="setup-top-bar-connection-indicator"
+        >
+          <View
+            style={[
+              styles.indicatorDot,
+              { backgroundColor: INDICATOR_COLOR[indicator] },
+            ]}
+          />
+          <Text
+            style={[
+              styles.indicatorText,
+              { color: INDICATOR_COLOR[indicator] },
+            ]}
+            numberOfLines={1}
+          >
+            {t(INDICATOR_LABEL_KEY[indicator])}
+          </Text>
         </View>
       </View>
 
-      <View style={[styles.row, styles.secondRow]}>
-        <Text style={styles.identityText} testID="setup-top-bar-board-name">
-          {boardName ?? t('setupTopBar.boardPlaceholder')}
-        </Text>
-        <Text style={styles.identityText} testID="setup-top-bar-firmware">
-          {firmwareLabel ?? t('setupTopBar.boardPlaceholder')}
-        </Text>
+      <View style={styles.secondRow}>
+        <View style={styles.identityGroup}>
+          <View style={styles.identityChip}>
+            <Text
+              style={styles.identityText}
+              numberOfLines={1}
+              testID="setup-top-bar-board-name"
+            >
+              {boardName ?? t('setupTopBar.boardPlaceholder')}
+            </Text>
+          </View>
+          <View style={styles.identityChip}>
+            <Text
+              style={styles.identityText}
+              numberOfLines={1}
+              testID="setup-top-bar-firmware"
+            >
+              {firmwareLabel ?? t('setupTopBar.boardPlaceholder')}
+            </Text>
+          </View>
+        </View>
         <View
-          style={[styles.armingBadge, {borderColor: ARMING_BADGE_COLOR[armingReadiness.status]}]}
+          style={[
+            styles.armingBadge,
+            { borderColor: ARMING_BADGE_COLOR[armingReadiness.status] },
+          ]}
           accessibilityRole="text"
-          testID="setup-top-bar-arming-badge">
-          <Text style={[styles.armingBadgeText, {color: ARMING_BADGE_COLOR[armingReadiness.status]}]}>
+          testID="setup-top-bar-arming-badge"
+        >
+          <Text
+            style={[
+              styles.armingBadgeText,
+              { color: ARMING_BADGE_COLOR[armingReadiness.status] },
+            ]}
+          >
             {t(ARMING_BADGE_LABEL_KEY[armingReadiness.status])}
           </Text>
         </View>
@@ -129,11 +190,24 @@ export default function TopSystemBar({sessionId, onBack, armingReadiness}: TopSy
 
       {notice && (
         <View
-          style={[styles.noticeBanner, {borderColor: NOTICE_BANNER_COLOR[notice.severity]}]}
+          style={[
+            styles.noticeBanner,
+            { borderColor: NOTICE_BANNER_COLOR[notice.severity] },
+          ]}
           accessibilityRole="alert"
-          testID="setup-top-bar-notice">
-          <Text style={[styles.noticeTitle, {color: NOTICE_BANNER_COLOR[notice.severity]}]}>{notice.title}</Text>
-          {notice.message && <Text style={styles.noticeMessage}>{notice.message}</Text>}
+          testID="setup-top-bar-notice"
+        >
+          <Text
+            style={[
+              styles.noticeTitle,
+              { color: NOTICE_BANNER_COLOR[notice.severity] },
+            ]}
+          >
+            {notice.title}
+          </Text>
+          {notice.message && (
+            <Text style={styles.noticeMessage}>{notice.message}</Text>
+          )}
         </View>
       )}
     </View>
@@ -142,12 +216,12 @@ export default function TopSystemBar({sessionId, onBack, armingReadiness}: TopSy
 
 const styles = StyleSheet.create({
   container: {
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border,
-    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft,
+    backgroundColor: colors.backgroundRaised,
     paddingHorizontal: spacing.lg,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.sm,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
   },
   row: {
     flexDirection: 'row',
@@ -155,31 +229,51 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   secondRow: {
-    marginTop: spacing.xs,
+    marginTop: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    flexWrap: 'wrap',
   },
   backButton: {
     minWidth: 44,
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: radii.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   backButtonText: {
-    ...typography.title,
-    color: colors.textPrimary,
+    fontSize: 28,
+    lineHeight: 30,
+    color: colors.accent,
+  },
+  titleGroup: {
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: spacing.md,
+  },
+  eyebrow: {
+    ...typography.eyebrow,
+    color: colors.accent,
+    writingDirection: 'ltr',
   },
   title: {
-    ...typography.sectionTitle,
+    ...typography.title,
     color: colors.textPrimary,
-    flex: 1,
-    textAlign: 'center',
   },
   indicatorBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs / 2,
+    borderWidth: 1,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
+    flexShrink: 0,
   },
   indicatorDot: {
     width: 6,
@@ -193,25 +287,44 @@ const styles = StyleSheet.create({
   },
   identityText: {
     ...typography.caption,
-    color: colors.textSecondary,
+    color: colors.textPrimary,
+    fontWeight: '600',
+    writingDirection: 'ltr',
+  },
+  identityGroup: {
+    flexDirection: 'row',
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 180,
+    gap: spacing.sm,
+  },
+  identityChip: {
+    flexShrink: 1,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   armingBadge: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs / 2,
+    borderWidth: 1,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
   },
   armingBadgeText: {
     ...typography.caption,
     fontWeight: '600',
   },
   noticeBanner: {
-    marginTop: spacing.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.surfaceAlt,
+    marginTop: spacing.md,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.surface,
   },
   noticeTitle: {
     ...typography.body,

@@ -31,6 +31,15 @@ import org.junit.Test
  */
 class UsbSerialSessionIoLockTest {
 
+  @Test
+  fun `native timing policy cannot hide a quarter-second idle read in front of a motor or telemetry write`() {
+    assertEquals(25, RX_READ_TIMEOUT_MILLIS)
+    assertTrue(
+      "one fair-lock RX quantum plus the write timeout must stay inside the native stop budget",
+      NATIVE_IO_LOCK_WAIT_UPPER_BOUND_MILLIS <= MOTOR_STOP_NATIVE_WRITE_BUDGET_MILLIS,
+    )
+  }
+
   /** Mirrors UsbSerialSession's own ioLock usage exactly - see its class-level note. */
   private class FakePort {
     val ioLock = ReentrantLock(true)

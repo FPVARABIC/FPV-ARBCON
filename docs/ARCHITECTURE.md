@@ -36,3 +36,20 @@ Android. It is not assumed to be the only UI the core will ever have. Core
 models, protocol types, command behavior, validation rules, firmware adapters,
 and future state logic must never live under `src/ui` — they belong in
 `src/core` so they can be reused by a future Web or Desktop UI.
+
+## Known gaps — future hardening
+
+Recorded deliberately, not scheduled. Each needs its own approval before any
+change, because all of them sit in code that is currently frozen.
+
+- **`LEASE_WORK_UNSETTLED` never retries.** `MspClient.releaseMotorTestLease`
+  refuses to release the motor-test lease while lease-owned work is still
+  active or queued, and answers `LEASE_WORK_UNSETTLED`
+  (`src/core/protocol/mspClient.ts`). That refusal is correct — the request is
+  neither cancelled nor discarded — but nothing ever retries the release once
+  the work settles, so a caller that releases too early leaves the lease held
+  and telemetry paused for the remainder of the session. `MotorsScreen`
+  currently avoids this by waiting for the session to settle before releasing;
+  a retry-on-settle inside `MspClient` itself would be more robust than any
+  caller-side workaround, since it would hold for every future caller rather
+  than for the one that remembered.

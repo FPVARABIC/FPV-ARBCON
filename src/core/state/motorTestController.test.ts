@@ -21,34 +21,34 @@
  */
 
 /**
- * REPAIR PASS R1 - JEST-ONLY MODULE REPLACEMENT.
+ * JEST-ONLY MODULE REPLACEMENT for the armed-state-evidence reader.
  *
- * The production continuous-safety-monitor reader is hard-wired
- * unavailable, and R1 makes that an authoritative activation blocker. The
- * pulse/stop/timeout/race/receipt/authority coverage below must still
- * exercise the real engine, so this file replaces THE MODULE inside Jest's
- * own registry - it does not add a production seam, a flag, an option or
- * an environment branch. The replacement exists only here; no production
- * file can import or reach it, and a source-boundary test in
- * motorTestContinuousSafetyMonitor.test.ts proves that.
+ * The pulse/stop/timeout/race/receipt/authority coverage below is about
+ * the ENGINE, and a live observation loop competing for the fake link
+ * would make every request-sequence assertion here a test of scheduling
+ * instead. So this file replaces THE MODULE inside Jest's own registry -
+ * it adds no production seam, flag, option or environment branch. The
+ * replacement exists only here; no production file can import or reach it,
+ * and a source-boundary test in motorTestContinuousSafetyMonitor.test.ts
+ * proves that.
  *
- * The default is AVAILABLE so the accepted engine paths stay genuinely
- * exercised. Individual R1 tests below set it UNAVAILABLE to prove the
- * fail-closed behaviour at the controller level, and the REAL (unmocked)
- * production reader is proven separately in
- * motorTestContinuousSafetyMonitor.test.ts and in the production-binding
- * regression test in motorTestSessionBinding.test.ts.
+ * The default is FRESH_DISARMED so the accepted engine paths stay
+ * genuinely exercised. Individual tests below set it to FC_ARMED or
+ * UNKNOWN_OR_STALE to prove the fail-closed behaviour at the controller
+ * level. The REAL (unmocked) decision path is proven in
+ * motorTestSafetyMonitor.test.ts, in the end-to-end bench-gate suite in
+ * motorTestBenchGate.test.ts, and in the production-binding regression
+ * test in motorTestSessionBinding.test.ts.
  */
-let mockContinuousSafetyMonitoring:
-  | 'UNAVAILABLE_NO_ACCEPTED_SOURCE'
-  | 'AVAILABLE_ACCEPTED_SOURCE' = 'AVAILABLE_ACCEPTED_SOURCE';
+let mockArmedStateEvidence: 'FRESH_DISARMED' | 'FC_ARMED' | 'UNKNOWN_OR_STALE' =
+  'FRESH_DISARMED';
 
 jest.mock('./motorTestContinuousSafetyMonitor', () => ({
-  readContinuousSafetyMonitoring: () => mockContinuousSafetyMonitoring,
+  readMotorArmedStateEvidence: () => mockArmedStateEvidence,
 }));
 
 beforeEach(() => {
-  mockContinuousSafetyMonitoring = 'AVAILABLE_ACCEPTED_SOURCE';
+  mockArmedStateEvidence = 'FRESH_DISARMED';
 });
 
 import {readFileSync} from 'fs';
@@ -56,12 +56,9 @@ import {join} from 'path';
 
 import {
   applyMotorTestEffects,
-  classifyArmingRestrictionFailure,
+  classifyArmedStateObservationFailure,
   classifyBoxIdsFailure,
-  classifyDynamicObservationFailure,
-  classifyFirmwareVersionFailure,
   classifyLeaseFailure,
-  composeMotorTestProfileEvidence,
   createMotorTestController,
   EMPTY_MOTOR_TEST_EFFECT_RECORD,
   MOTOR_TEST_CONTROLLER_STOP_TRIGGERS,
@@ -93,6 +90,7 @@ import {
   type MotorTestEffect,
 } from './motorTestStateMachine';
 import {ARMING_DISABLE_FLAGS_COUNT} from './armingBlockers';
+import {FEATURE_3D_BIT} from '../protocol/msp/decoding/decodeFeatureConfig';
 import {ARMING_DISABLED_MSP_BIT_INDEX} from './motorArmingRestriction';
 import {FakeMspTransport} from '../protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../protocol/__testUtils__/mspFixtures';
@@ -388,6 +386,18 @@ class RecordingScheduler implements MotorTestBarrierScheduler {
  * ------------------------------------------------------------------ */
 
 interface Harness {
+  /** The controlled safety-monitor stand-in injected into the controller.
+   * `reportUnsafe` fires the very callback the real monitor calls. */
+  safetyMonitor: {
+    readonly started: number;
+    readonly stopped: number;
+    readonly observeNowCalls: number;
+    readonly running: boolean;
+    readonly firstObservationHeld: boolean;
+    releaseFirstObservation(): void;
+    requesterIsLease(): boolean;
+    reportUnsafe(reason: string): void;
+  };
   readonly transport: FakeMspTransport;
   /** The client the session port exposes - the one the controller would
    * lease and send every evidence request through. */
@@ -423,6 +433,9 @@ interface HarnessOptions {
   readonly telemetryClient?: 'MATCHING' | 'FOREIGN';
   /** An anchor this registry never minted, for the forged-session case. */
   readonly telemetrySession?: MotorTestTelemetrySession;
+  /** Makes the monitor stand-in's first `observeNow()` hang until
+   * `releaseFirstObservation()` is called. */
+  readonly holdFirstObservation?: boolean;
 }
 
 function createHarness(
@@ -483,6 +496,64 @@ function createHarness(
   };
 
   let monotonic = 1_000;
+
+  /**
+   * A CONTROLLED stand-in for the dedicated safety monitor.
+   *
+   * The real monitor runs a live observation loop on the lease. These
+   * suites are about the PULSE ENGINE, and a second reader competing for
+   * the fake link would make every request-sequence assertion here a test
+   * of scheduling rather than of the engine. The real loop has its own
+   * dedicated coverage in motorTestSafetyMonitor.test.ts, the whole
+   * production path end to end in motorTestBenchGate.test.ts, and the
+   * controller's reaction to an unsafe reading is exercised through
+   * `safetyMonitor.reportUnsafe(...)` below - the same callback the real
+   * monitor invokes.
+   *
+   * It never fabricates the GATE: the controller still asks
+   * readMotorArmedStateEvidence(), which this file mocks explicitly.
+   *
+   * `holdFirstObservation` makes `observeNow()` hang until released, which
+   * is how the setup boundary is proven: nothing may publish READY while
+   * the first observation is still outstanding.
+   */
+  let monitorRunning = false;
+  let onUnsafeCallback: ((reason: string) => void) | undefined;
+  let monitorRequester: unknown;
+  let releaseObservation: (() => void) | undefined;
+  const safetyMonitor = {
+    started: 0,
+    stopped: 0,
+    observeNowCalls: 0,
+    get running() {
+      return monitorRunning;
+    },
+    get firstObservationHeld() {
+      return releaseObservation !== undefined;
+    },
+    releaseFirstObservation() {
+      const release = releaseObservation;
+      releaseObservation = undefined;
+      release?.();
+    },
+    /** Reference identity: the monitor must be handed THE lease, not a
+     * second requester built beside it. */
+    requesterIsLease() {
+      return (
+        monitorRequester !== undefined &&
+        typeof (monitorRequester as {request?: unknown}).request ===
+          'function' &&
+        typeof (monitorRequester as {isActive?: unknown}).isActive ===
+          'function' &&
+        typeof (monitorRequester as {emergencyStop?: unknown})
+          .emergencyStop === 'function'
+      );
+    },
+    reportUnsafe(reason: string) {
+      onUnsafeCallback?.(reason);
+    },
+  };
+
   const controller = createMotorTestController({
     session,
     telemetryRegistry: registry,
@@ -491,9 +562,45 @@ function createHarness(
       monotonic += 5;
       return monotonic;
     },
+    createSafetyMonitor: monitorOptions => {
+      onUnsafeCallback = monitorOptions.onUnsafe as (reason: string) => void;
+      monitorRequester = monitorOptions.requester;
+      return {
+        start: () => {
+          monitorRunning = true;
+          safetyMonitor.started += 1;
+        },
+        stop: () => {
+          monitorRunning = false;
+          safetyMonitor.stopped += 1;
+        },
+        observeNow: () => {
+          safetyMonitor.observeNowCalls += 1;
+          if (options.holdFirstObservation !== true) {
+            return Promise.resolve();
+          }
+          return new Promise<void>(resolve => {
+            releaseObservation = resolve;
+          });
+        },
+        snapshot: () => ({
+          status: monitorRunning
+            ? ({
+                kind: 'SATISFIED' as const,
+                observedAtMonotonicMillis: monotonic,
+                sessionIdentity: {physicalGeneration: 0, mspEpoch: 0},
+              })
+            : ({kind: 'NEVER_OBSERVED' as const}),
+          running: monitorRunning,
+          completedObservations: monitorRunning ? 1 : 0,
+        }),
+        isFreshlySatisfied: () => monitorRunning,
+      };
+    },
   });
 
   return {
+    safetyMonitor,
     transport,
     client,
     telemetryOwner,
@@ -572,6 +679,26 @@ function runSetup(harness: Harness): Promise<MotorTestControllerSnapshot> {
   return drive(harness, harness.controller.initializeSession());
 }
 
+/**
+ * Serves transport writes until `until()` holds, or the bound is reached.
+ *
+ * Used where the operation must NOT be awaited - the whole point is to
+ * observe the controller mid-setup, while it is deliberately parked on the
+ * first observation.
+ */
+async function drivePending(
+  harness: Harness,
+  until: () => boolean,
+): Promise<void> {
+  for (let step = 0; step < 400 && !until(); step++) {
+    await flush(3);
+    if (until()) {
+      return;
+    }
+    await serveOne(harness);
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * The happy path
  * ------------------------------------------------------------------ */
@@ -585,46 +712,40 @@ describe('MotorTestController - supported profile', () => {
     expect(snapshot.setupStep).toBe('READY');
     expect(snapshot.phase).toBe('ACTIVE');
     expect(snapshot.machine?.name).toBe('Ready');
-    expect(snapshot.capabilities?.status).toBe('PROFILE_SUPPORTED');
-    expect(snapshot.staticCompatibility?.kind).toBe('EVALUATED');
-    expect(snapshot.dynamicEvaluation?.kind).toBe('EVALUATED');
-    expect(snapshot.armingRestriction).toMatchObject({
-      kind: 'ESTABLISHED',
-      evidenceScope: 'AGGREGATE_NOT_DESCRIPTOR_SPECIFIC',
-      receiptCurrentAtPublish: true,
+    expect(snapshot.motorScope).toEqual({
+      motorCount: 4,
+      motorProtocolRaw: 7,
+      feature3dEnabled: false,
     });
     expect(snapshot.telemetryHeld).toBe(true);
+    // READY is published only with a fresh disarmed observation already in
+    // hand, so the gate is open on the very snapshot setup returns.
+    expect(snapshot.activation.allowed).toBe(true);
   });
 
   it('sends every accepted read exactly once, in the required order', async () => {
     const harness = createHarness();
     await runSetup(harness);
 
+    // FOUR READS, AND NOT ONE MORE. The whole simplified chain is three
+    // configuration reads plus the box mapping. The safety monitor's own
+    // MSP_STATUS_EX does not appear here because this suite injects a
+    // controlled monitor stand-in; the real read is proven end to end in
+    // motorTestBenchGate.test.ts.
     expect(harness.commands).toEqual([
-      // (9a) trusted BOX evidence
-      MSP_BOXIDS,
-      // (9b) static facts: identification, then the four configs
-      MSP_API_VERSION,
-      MSP_FC_VARIANT,
-      MSP_BOARD_INFO,
-      MSP_MIXER_CONFIG,
+      // (7) only what the encoder needs
       MSP_MOTOR_CONFIG,
       MSP_ADVANCED_CONFIG,
       MSP_FEATURE_CONFIG,
-      // (9c) firmware version
-      MSP_FC_VERSION,
-      // (9f) the one-shot dynamic observation
-      MSP_STATUS_EX,
-      MSP_BATTERY_STATE,
-      // (9h) the restriction: the disable request, then a FRESH status
-      MSP_SET_ARMING_DISABLED_FIXTURE,
-      MSP_STATUS_EX,
+      // (8) only what armed state needs
+      MSP_BOXIDS,
     ]);
-    // MSP_BOXIDS keeps its at-most-once guarantee: the dynamic observer
-    // is handed the trusted snapshot, never a second request.
+    // MSP_BOXIDS keeps its at-most-once guarantee.
     expect(
       harness.commands.filter(command => command === MSP_BOXIDS),
     ).toHaveLength(1);
+    // Command 99 is not in the bundle any more, at all.
+    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
   });
 
   it('writes no motor command while the session is being prepared', async () => {
@@ -682,13 +803,13 @@ describe('MotorTestController - supported profile', () => {
     }
   });
 
-  it('binds capabilities to the same authority the reducer uses', async () => {
+  it('constructs the safety monitor with the SAME lease, and only one', async () => {
     const harness = createHarness();
-    const snapshot = await runSetup(harness);
-    expect(snapshot.capabilities).toBeDefined();
-    if (snapshot.capabilities !== undefined && snapshot.machine !== undefined) {
-      expect(snapshot.capabilities.authority).toBe(snapshot.machine.authority);
-    }
+    await runSetup(harness);
+    // One monitor, started once, and its requester is the very lease every
+    // other request in this session travels.
+    expect(harness.safetyMonitor.started).toBe(1);
+    expect(harness.safetyMonitor.requesterIsLease()).toBe(true);
   });
 
   it('treats a structurally identical authority clone as foreign', async () => {
@@ -732,7 +853,7 @@ describe('MotorTestController - supported profile', () => {
     expect(snapshot.phase).toBe('ACTIVE');
     expect(Object.isFrozen(snapshot.stopDescriptors)).toBe(true);
     expect(Object.isFrozen(snapshot.warnings)).toBe(true);
-    expect(Object.isFrozen(snapshot.capabilities)).toBe(true);
+    expect(Object.isFrozen(snapshot.motorScope)).toBe(true);
   });
 
   it('returns the same operation for a repeated initializeSession()', async () => {
@@ -746,21 +867,84 @@ describe('MotorTestController - supported profile', () => {
     ).toHaveLength(1);
   });
 
-  it('reports the continuous-monitoring gap rather than claiming coverage', async () => {
-    // R1: this file replaces the monitor module, so the production value
-    // must be reinstated here for this test to still mean what it did.
-    // The assertion is UNCHANGED and now carries MORE weight - the gap is
-    // no longer inert data, it fails activation closed.
-    mockContinuousSafetyMonitoring = 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
+  it('refuses READY when the first observation never becomes fresh', async () => {
+    // The monitor is joined and then judged. An evidence reader that never
+    // reports a fresh disarmed reading must stop setup at step 10 rather
+    // than publish a READY nothing is watching.
+    mockArmedStateEvidence = 'UNKNOWN_OR_STALE';
     const harness = createHarness();
     const snapshot = await runSetup(harness);
-    expect(snapshot.continuousSafetyMonitoring).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
-    );
+
+    expect(snapshot.outcome).toMatchObject({
+      kind: 'BLOCKED',
+      reason: 'FIRST_OBSERVATION_UNAVAILABLE',
+    });
+    expect(snapshot.setupStep).toBe('FIRST_OBSERVATION');
     expect(snapshot.activation.allowed).toBe(false);
-    expect(snapshot.activation.reasons).toContain(
-      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
-    );
+    expect(snapshot.activation.reasons).toContain('ARMED_STATE_UNKNOWN_OR_STALE');
+  });
+
+  it('refuses READY when the first observation proves the FC armed', async () => {
+    mockArmedStateEvidence = 'FC_ARMED';
+    const harness = createHarness();
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.outcome).toMatchObject({
+      kind: 'BLOCKED',
+      reason: 'FIRST_OBSERVATION_NOT_DISARMED',
+    });
+    expect(snapshot.activation.reasons).toContain('FC_ARMED');
+  });
+
+  it('awaits the first observation before publishing READY', async () => {
+    // Nothing may publish READY while the very fact READY rests on is
+    // still in flight. The stand-in holds its first observation open and
+    // the setup promise must not settle until it is released.
+    const harness = createHarness([], {holdFirstObservation: true});
+    let settled = false;
+    const pending = harness.controller
+      .initializeSession()
+      .then(value => {
+        settled = true;
+        return value;
+      });
+
+    await drivePending(harness, () => harness.safetyMonitor.firstObservationHeld);
+    expect(settled).toBe(false);
+    expect(harness.controller.getSnapshot().outcome.kind).toBe('PENDING');
+    expect(harness.controller.getSnapshot().setupStep).toBe('FIRST_OBSERVATION');
+
+    harness.safetyMonitor.releaseFirstObservation();
+    const snapshot = await drive(harness, pending);
+
+    expect(settled).toBe(true);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.activation.allowed).toBe(true);
+  });
+
+  it('notifies subscribers with an activatable snapshot the moment the observation lands', async () => {
+    // The defect this closes: READY used to publish before the first
+    // observation, so `allowed` only flipped when an UNRELATED render
+    // rebuilt the snapshot. A subscriber must see it become true from the
+    // observation alone.
+    const harness = createHarness([], {holdFirstObservation: true});
+    const allowedAtNotification: boolean[] = [];
+    harness.controller.subscribe(() => {
+      allowedAtNotification.push(
+        harness.controller.getSnapshot().activation.allowed,
+      );
+    });
+
+    const pending = harness.controller.initializeSession();
+    await drivePending(harness, () => harness.safetyMonitor.firstObservationHeld);
+    expect(allowedAtNotification).not.toContain(true);
+
+    harness.safetyMonitor.releaseFirstObservation();
+    await drive(harness, pending);
+
+    // No pulse, no press, no re-render: resolving the observation is what
+    // produced an activatable snapshot.
+    expect(allowedAtNotification).toContain(true);
   });
 });
 
@@ -875,6 +1059,66 @@ describe('MotorTestController - session/client coherence (B-1)', () => {
     expect(harness.invalidationListenerCount()).toBe(0);
   });
 
+  it('Step-1 retry after teardown never hands back the stale settled promise', async () => {
+    // THE CONFIRMED DEFECT (motorTestController.ts:1738-1745 before the
+    // fix). `setupPromise` was checked BEFORE the closed check, so once
+    // setup had run and teardown had reached CLOSED, every later
+    // initializeSession() returned that same settled promise - resolving
+    // to the snapshot captured WHEN IT SETTLED, not the current one.
+    //
+    // A SUCCESSFUL setup is used deliberately. A failing one tears down
+    // inside the same settle, so its final snapshot IS the settled one and
+    // both the fixed and unfixed orders return the same object - a test
+    // built on that fixture passes either way and proves nothing. Here the
+    // settled snapshot says READY/ACTIVE and the post-teardown snapshot
+    // says CLOSED, so the two are genuinely distinguishable.
+    const harness = createHarness();
+    const first = await runSetup(harness);
+    expect(first.outcome.kind).toBe('READY');
+    expect(first.phase).toBe('ACTIVE');
+
+    // Teardown of a LIVE session writes its stop vector, so the transport
+    // has to be driven for close() to settle - the same idiom the other
+    // close tests in this file use.
+    const closing = harness.controller.close();
+    await drive(harness, closing);
+    expect(harness.controller.getSnapshot().phase).toBe('CLOSED');
+
+    const writesBeforeRetry = harness.transport.writes.length;
+    const retry = await harness.controller.initializeSession();
+
+    // The retry reports the CLOSED reality, not the stale READY object.
+    expect(retry.phase).toBe('CLOSED');
+    expect(retry).toBe(harness.controller.getSnapshot());
+    expect(retry).not.toBe(first);
+    // NOTE, measured rather than assumed: after a CLEAN teardown the
+    // outcome stays READY - teardown only overwrites it on failure. So
+    // `phase` is the reliable terminal signal, and it is what the screen's
+    // reconnect instruction keys on first. Asserting `outcome !== READY`
+    // here would be asserting something untrue of a healthy close.
+    expect(first.outcome.kind).toBe('READY');
+    expect(retry.outcome.kind).toBe('READY');
+
+    // Setup was NOT re-run on this instance: a closed controller still
+    // holds its terminal outcome, teardown report, monitor and
+    // lease/authority fields, and reusing that session-bound evidence is
+    // exactly what must never happen.
+    expect(harness.transport.writes.length).toBe(writesBeforeRetry);
+    expect(harness.scheduler.activeMotorTestLeaseCount).toBe(0);
+  });
+
+  it('a closed controller can never write a motor command', async () => {
+    const harness = createHarness([], {telemetryClient: 'FOREIGN'});
+    await runSetup(harness);
+    await harness.controller.close();
+
+    const before = harness.transport.writes.length;
+    const result = harness.controller.pulseMotor(1);
+    expect(result).not.toBe('SUBMITTED');
+    expect(harness.transport.writes.length).toBe(before);
+    expect(harness.controller.getSnapshot().activation.allowed).toBe(false);
+  });
+
   it('a fabricated session anchor cannot bypass the ownership check', async () => {
     // Constructed by the caller rather than minted by the registry: it has
     // no recorded owner, so it can never satisfy the check.
@@ -928,152 +1172,91 @@ describe('MotorTestController - evidence failures', () => {
     expect(snapshot.machine?.name).toBe('Fault');
   });
 
-  it('locks on an unsupported static profile', async () => {
-    const harness = createHarness([
-      [MSP_BOARD_INFO, reply(boardInfoPayload('SOMEOTHERTARGET'))],
-    ]);
-    const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toEqual({
-      kind: 'BLOCKED',
-      reason: 'STATIC_PROFILE_UNSUPPORTED',
-      requiresNewSession: true,
-    });
-    expect(snapshot.machine?.name).toBe('Locked');
-    expect(snapshot.armingRestriction).toEqual({kind: 'NOT_ATTEMPTED'});
-  });
-
-  it('locks on a mixer the profile does not recognize', async () => {
-    const harness = createHarness([[MSP_MIXER_CONFIG, reply(mixerConfigPayload(5))]]);
-    const snapshot = await runSetup(harness);
-    expect(snapshot.outcome.kind).toBe('BLOCKED');
-    expect(snapshot.machine?.name).toBe('Locked');
-  });
-
-  it('locks on a malformed static-facts response', async () => {
-    const harness = createHarness([[MSP_MIXER_CONFIG, reply(EMPTY)]]);
+  it('locks on a malformed configuration response', async () => {
+    const harness = createHarness([[MSP_MOTOR_CONFIG, reply(EMPTY)]]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome).toMatchObject({
       kind: 'BLOCKED',
-      reason: 'STATIC_FACTS_MALFORMED',
+      reason: 'MOTOR_CONFIG_MALFORMED',
     });
   });
 
-  it('locks on an unusable identification response', async () => {
-    const harness = createHarness([[MSP_BOARD_INFO, reply(EMPTY)]]);
-    const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'STATIC_FACTS_MALFORMED',
-    });
-  });
-
-  it('locks on firmware older than the accepted API version', async () => {
-    const harness = createHarness([
-      [MSP_API_VERSION, reply(Uint8Array.from([0, 1, 41]))],
-    ]);
-    const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'STATIC_FACTS_MALFORMED',
-    });
-  });
-
-  it('fails closed when a static-facts request is rejected', async () => {
+  it('fails closed when a configuration request is rejected', async () => {
     const harness = createHarness([[MSP_ADVANCED_CONFIG, REJECT]]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome).toMatchObject({
       kind: 'FAILED_CLOSED',
-      reason: 'STATIC_FACTS_REQUEST_FAILED',
+      reason: 'MOTOR_CONFIG_REQUEST_FAILED',
       faultReason: 'MSP_RESPONSE_TIMEOUT',
     });
   });
 
-  it('fails closed when the firmware-version request is rejected', async () => {
-    const harness = createHarness([[MSP_FC_VERSION, REJECT]]);
-    const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'FAILED_CLOSED',
-      reason: 'FIRMWARE_VERSION_UNAVAILABLE',
-    });
+  it('reads configuration BEFORE the box mapping, and stops at the first failure', async () => {
+    const harness = createHarness([[MSP_MOTOR_CONFIG, REJECT]]);
+    await runSetup(harness);
+    // The box read is never spent once the configuration has already
+    // failed - ordering is what makes that true, not a guard.
+    expect(harness.commands).not.toContain(MSP_BOXIDS);
   });
+});
 
-  it('never reaches Ready with an armed flight controller', async () => {
+/* ------------------------------------------------------------------ *
+ * Removed gates - these used to end a session and no longer do
+ *
+ * Each fixture below is one the OLD proof chain refused. None of them
+ * affects how an MSP_SET_MOTOR frame is encoded, so refusing them was
+ * refusing a safe bench test for an unrelated reason.
+ * ------------------------------------------------------------------ */
+
+describe('MotorTestController - the removed proof chain', () => {
+  it('reaches READY on a board the old target profile did not recognize', async () => {
     const harness = createHarness([
-      [MSP_STATUS_EX, reply(statusPayload({armed: true}))],
+      [MSP_BOARD_INFO, reply(boardInfoPayload('SOMEOTHERTARGET'))],
     ]);
     const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'DYNAMIC_REQUIREMENTS_NOT_SATISFIED',
-    });
-    // The one write in the bundle never happened.
-    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
   });
 
-  it('never reaches Ready with a battery outside the accepted policy', async () => {
+  it('reaches READY with a mixer mode the old profile did not recognize', async () => {
+    const harness = createHarness([[MSP_MIXER_CONFIG, reply(mixerConfigPayload(5))]]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+  });
+
+  it('reaches READY without any firmware-version pinning', async () => {
+    const harness = createHarness([
+      [MSP_FC_VERSION, REJECT],
+      [MSP_API_VERSION, reply(Uint8Array.from([0, 1, 41]))],
+    ]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(harness.commands).not.toContain(MSP_FC_VERSION);
+    expect(harness.commands).not.toContain(MSP_API_VERSION);
+  });
+
+  it('reaches READY without reading the battery at all', async () => {
     const harness = createHarness([
       [MSP_BATTERY_STATE, reply(batteryPayload(6, 2500))],
     ]);
     const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'DYNAMIC_REQUIREMENTS_NOT_SATISFIED',
-    });
-    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    // Not merely tolerated - never requested. This module makes no claim
+    // about the pack, and the header says so.
+    expect(harness.commands).not.toContain(MSP_BATTERY_STATE);
   });
 
-  it('locks when the observation response is malformed', async () => {
-    const harness = createHarness([[MSP_BATTERY_STATE, reply(EMPTY)]]);
-    const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'DYNAMIC_OBSERVATION_UNAVAILABLE',
-    });
-  });
-
-  it('fails closed when the post-ACK evidence does not show the restriction', async () => {
-    const harness = createHarness();
-    // The FIRST status read (the dynamic observation) must still show the
-    // restriction, or the run would block before the write. Only the
-    // SECOND one - the fresh post-ACK read - is degraded.
-    let statusReads = 0;
-    harness.beforeReply = command => {
-      if (command === MSP_STATUS_EX) {
-        statusReads += 1;
-        if (statusReads === 2) {
-          harness.script.set(
-            MSP_STATUS_EX,
-            reply(statusPayload({mspRestrictionPresent: false})),
-          );
-        }
-      }
-    };
-    const snapshot = await runSetup(harness);
-    expect(statusReads).toBe(2);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'FAILED_CLOSED',
-      reason: 'ARMING_RESTRICTION_NOT_ESTABLISHED',
-      faultReason: 'WRITE_OUTCOME_UNKNOWN',
-    });
-    expect(snapshot.machine?.name).toBe('Fault');
-    expect(snapshot.armingRestriction).toEqual({
-      kind: 'NOT_ESTABLISHED',
-      reason: 'MSP_ARMING_RESTRICTION_NOT_OBSERVED',
-    });
-  });
-
-  it('fails closed when the arming-disable request itself is rejected', async () => {
+  it('reaches READY with no MSP arming restriction present', async () => {
     const harness = createHarness([
+      [MSP_STATUS_EX, reply(statusPayload({mspRestrictionPresent: false}))],
       [MSP_SET_ARMING_DISABLED_FIXTURE, REJECT],
     ]);
     const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'FAILED_CLOSED',
-      reason: 'ARMING_RESTRICTION_NOT_ESTABLISHED',
-      faultReason: 'WRITE_OUTCOME_UNKNOWN',
-    });
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
   });
+});
 
+describe('MotorTestController - evidence failures (continued)', () => {
   it('never publishes a Fault that claims a live motor command', async () => {
     const harness = createHarness([[MSP_BOXIDS, REJECT]]);
     const snapshot = await runSetup(harness);
@@ -1090,14 +1273,13 @@ describe('MotorTestController - evidence failures', () => {
  * ------------------------------------------------------------------ */
 
 describe('MotorTestController - session boundaries', () => {
+  /** Every command the simplified setup actually sends. A session that
+   * moves at ANY of these boundaries must fail closed. */
   const BOUNDARY_COMMANDS: readonly number[] = [
-    MSP_BOXIDS,
-    MSP_API_VERSION,
-    MSP_MIXER_CONFIG,
+    MSP_MOTOR_CONFIG,
+    MSP_ADVANCED_CONFIG,
     MSP_FEATURE_CONFIG,
-    MSP_FC_VERSION,
-    MSP_STATUS_EX,
-    MSP_BATTERY_STATE,
+    MSP_BOXIDS,
   ];
 
   it.each(BOUNDARY_COMMANDS)(
@@ -1247,7 +1429,7 @@ const TEARDOWN_STEPS = [
   'KEEP_TELEMETRY_PAUSED',
   'AUTHORIZED_TEARDOWN_ONLY',
   'EXECUTE_STOP_VECTOR',
-  'SETTLE_ARMING_RESTRICTION',
+  'STOP_SAFETY_MONITOR',
   'RELEASE_LEASE',
   'RELEASE_TELEMETRY_TOKENS',
 ];
@@ -1295,15 +1477,15 @@ describe('MotorTestController - teardown', () => {
     expect(harness.scheduler.activeMotorTestLeaseCount).toBe(0);
   });
 
-  it('never claims the arming restriction was removed', async () => {
+  it('stops the observation loop as part of teardown', async () => {
     const harness = createHarness();
     await runSetup(harness);
     const snapshot = await drive(harness, harness.controller.close());
-    expect(snapshot.teardown?.armingRestrictionRemovalSupported).toBe(false);
-    expect(snapshot.teardown?.armingRestrictionRemovalPerformed).toBe(false);
-    expect(
-      snapshot.teardown?.armingRestrictionReceiptCurrentAtTeardown,
-    ).toBe(true);
+    expect(snapshot.teardown?.safetyMonitorStopped).toBe(true);
+    // No observation may be outstanding against a lease that is about to
+    // be released.
+    expect(harness.safetyMonitor.running).toBe(false);
+    expect(harness.safetyMonitor.stopped).toBeGreaterThanOrEqual(1);
   });
 
   it('does not resume telemetry when the lease release is unresolved', async () => {
@@ -1467,26 +1649,24 @@ describe('Phase 2F - stop execution', () => {
     const harness = createHarness();
     await runSetup(harness);
     await drive(harness, harness.controller.close());
-    // The stop is the LAST command of the session and follows the
-    // arming-restriction traffic, proving it used the same held lease.
+    // The stop is the LAST command of the session and follows every
+    // evidence read, proving it used the same held lease.
     expect(harness.commands[harness.commands.length - 1]).toBe(
       MSP_SET_MOTOR_FIXTURE,
     );
     const stopIndex = harness.commands.lastIndexOf(MSP_SET_MOTOR_FIXTURE);
-    const armingIndex = harness.commands.indexOf(
-      MSP_SET_ARMING_DISABLED_FIXTURE,
-    );
-    expect(armingIndex).toBeGreaterThanOrEqual(0);
-    expect(stopIndex).toBeGreaterThan(armingIndex);
+    const lastEvidenceIndex = harness.commands.lastIndexOf(MSP_BOXIDS);
+    expect(lastEvidenceIndex).toBeGreaterThanOrEqual(0);
+    expect(stopIndex).toBeGreaterThan(lastEvidenceIndex);
   });
 
-  it('orders the stop before the arming-restriction settlement step', async () => {
+  it('orders the stop before the monitor stop and the lease release', async () => {
     const harness = createHarness();
     await runSetup(harness);
     const closed = await drive(harness, harness.controller.close());
     const steps = closed.teardown?.steps.map(s => s.step) ?? [];
     expect(steps.indexOf('EXECUTE_STOP_VECTOR')).toBeLessThan(
-      steps.indexOf('SETTLE_ARMING_RESTRICTION'),
+      steps.indexOf('STOP_SAFETY_MONITOR'),
     );
     expect(steps.indexOf('EXECUTE_STOP_VECTOR')).toBeLessThan(
       steps.indexOf('RELEASE_LEASE'),
@@ -1555,7 +1735,6 @@ describe('Phase 2F - stop execution', () => {
     expect(closed.stopExecution.commandAcknowledged).toBe(true);
     // The three statements stay separate. ACK is reception, not motion.
     expect(closed.stopExecution.physicalStopConfirmed).toBe(false);
-    expect(closed.teardown?.armingRestrictionRemovalPerformed).toBe(false);
   });
 
   it('a rejected stop fails closed: Fault, no clean close, telemetry held', async () => {
@@ -1646,25 +1825,14 @@ describe('Phase 2F - stop execution', () => {
   });
 
   it('a genuinely dead lease produces no new command-214 request', async () => {
-    // The accepted arming-restriction module fails the LEASE closed when
-    // the post-ACK evidence is unacceptable, so by teardown there is no
-    // live authority left to command anything through.
-    let statusReads = 0;
-    const harness = createHarness();
-    harness.beforeReply = command => {
-      if (command === MSP_STATUS_EX) {
-        statusReads += 1;
-        if (statusReads === 2) {
-          harness.script.set(
-            MSP_STATUS_EX,
-            reply(statusPayload({mspRestrictionPresent: false})),
-          );
-        }
-      }
-    };
+    // A rejected lease-scoped read fails the LEASE closed through Pass 2's
+    // own automatic route, so by teardown there is no live authority left
+    // to command anything through - and teardown must not manufacture one.
+    const harness = createHarness([[MSP_BOXIDS, REJECT]]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome).toMatchObject({
-      reason: 'ARMING_RESTRICTION_NOT_ESTABLISHED',
+      kind: 'FAILED_CLOSED',
+      reason: 'BOX_EVIDENCE_UNAVAILABLE',
     });
     expect(
       harness.writes.filter(w => w.command === MSP_SET_MOTOR_FIXTURE),
@@ -1691,22 +1859,17 @@ describe('Phase 2F - stop execution', () => {
     expect(closed.stopExecution.attempts).toBe(1);
   });
 
-  it('command 99 is never released before the stop attempt', async () => {
+  it('never sends command 99 at any point in the session', async () => {
     const harness = createHarness();
     await runSetup(harness);
     const closed = await drive(harness, harness.controller.close());
-    // There is no removal path at all, and the settlement step is ordered
-    // after the stop.
-    expect(closed.teardown?.armingRestrictionRemovalSupported).toBe(false);
-    expect(closed.teardown?.armingRestrictionRemovalPerformed).toBe(false);
     const steps = closed.teardown?.steps.map(s => s.step) ?? [];
     expect(steps.indexOf('EXECUTE_STOP_VECTOR')).toBeLessThan(
-      steps.indexOf('SETTLE_ARMING_RESTRICTION'),
+      steps.indexOf('RELEASE_LEASE'),
     );
-    // And exactly one command 99 was ever sent, during initiation.
-    expect(
-      harness.commands.filter(c => c === MSP_SET_ARMING_DISABLED_FIXTURE),
-    ).toHaveLength(1);
+    // The arming restriction is gone from the bundle: no establishment at
+    // setup, and nothing to settle at teardown.
+    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
   });
 
   it('emits no pulse value anywhere on the wire', async () => {
@@ -1818,12 +1981,9 @@ describe('MotorTestController - public surface', () => {
       'MOTOR_TEST_PULSE_MAX_DURATION_MILLIS',
       'MOTOR_TEST_PULSE_MOTOR_NUMBERS',
       'applyMotorTestEffects',
-      'classifyArmingRestrictionFailure',
+      'classifyArmedStateObservationFailure',
       'classifyBoxIdsFailure',
-      'classifyDynamicObservationFailure',
-      'classifyFirmwareVersionFailure',
       'classifyLeaseFailure',
-      'composeMotorTestProfileEvidence',
       'createMotorTestController',
     ]);
   });
@@ -2023,30 +2183,38 @@ describe('failure classification', () => {
     });
   });
 
-  it('fails closed for every post-submission arming-restriction reason', () => {
+  it('fails closed for a rejected or session-moved armed-state read', () => {
+    // Transport uncertainty and a session that moved under the read are the
+    // two cases where "we do not know" must be terminal.
+    expect(classifyArmedStateObservationFailure('REQUEST_FAILED')).toEqual({
+      disposition: 'FAULT',
+      faultReason: 'MSP_RESPONSE_TIMEOUT',
+    });
+    expect(
+      classifyArmedStateObservationFailure('SESSION_IDENTITY_CHANGED')
+        .disposition,
+    ).toBe('FAULT');
+    expect(
+      classifyArmedStateObservationFailure('SESSION_IDENTITY_UNAVAILABLE')
+        .disposition,
+    ).toBe('FAULT');
+  });
+
+  it('locks - never faults - for complete but unusable armed-state evidence', () => {
+    // A read that answered badly leaves nothing pending on the aircraft, so
+    // claiming the uncertainty a fault asserts would be false.
     for (const reason of [
-      'ARMING_DISABLE_REQUEST_FAILED',
-      'POST_ACK_STATUS_REQUEST_FAILED',
-      'SESSION_CHANGED_DURING_ESTABLISHMENT',
-      'FC_ARMED',
-      'MSP_ARMING_RESTRICTION_NOT_OBSERVED',
-      'INDEPENDENT_VERIFICATION_UNAVAILABLE',
-      'MALFORMED_STATUS_RESPONSE',
+      'ARMING_BOX_MAPPING_REQUIRED',
+      'ARMED_STATE_UNOBSERVABLE',
+      'MALFORMED_RESPONSE',
     ] as const) {
-      expect(classifyArmingRestrictionFailure(reason).disposition).toBe('FAULT');
+      expect(classifyArmedStateObservationFailure(reason)).toEqual({
+        disposition: 'LOCK',
+      });
     }
   });
 
-  it('locks only for the two genuinely pre-traffic restriction reasons', () => {
-    expect(classifyArmingRestrictionFailure('BOX_IDS_PROVENANCE_INVALID')).toEqual(
-      {disposition: 'LOCK'},
-    );
-    expect(
-      classifyArmingRestrictionFailure('ARMING_RESTRICTION_ALREADY_ESTABLISHED'),
-    ).toEqual({disposition: 'LOCK'});
-  });
-
-  it('classifies lease, firmware and observation failures conservatively', () => {
+  it('classifies lease failures conservatively', () => {
     expect(classifyLeaseFailure('MOTOR_TEST_LEASE_FAULT_LATCHED')).toEqual({
       disposition: 'FAULT',
       faultReason: 'DESYNCHRONIZED',
@@ -2057,89 +2225,80 @@ describe('failure classification', () => {
     expect(classifyLeaseFailure('MSP_CLIENT_UNAVAILABLE').disposition).toBe(
       'FAULT',
     );
-    expect(classifyFirmwareVersionFailure('REQUEST_FAILED').disposition).toBe(
-      'FAULT',
-    );
-    expect(classifyFirmwareVersionFailure('MALFORMED_RESPONSE')).toEqual({
-      disposition: 'LOCK',
-    });
-    expect(
-      classifyDynamicObservationFailure('SESSION_IDENTITY_CHANGED').disposition,
-    ).toBe('FAULT');
-    expect(classifyDynamicObservationFailure('MALFORMED_RESPONSE')).toEqual({
-      disposition: 'LOCK',
-    });
   });
 });
 
 /* ------------------------------------------------------------------ *
- * Evidence mapping
+ * Motor scope - the only configuration the encoder depends on
  * ------------------------------------------------------------------ */
 
-describe('composeMotorTestProfileEvidence', () => {
-  it('is a frozen projection that defaults nothing', () => {
-    const evidence = composeMotorTestProfileEvidence(
-      {
-        sessionIdentity: {physicalGeneration: 1, mspEpoch: 0},
-        facts: {
-          flightControllerIdentity: {
-            apiVersion: {
-              mspProtocolVersion: 0,
-              apiVersionMajor: 1,
-              apiVersionMinor: 47,
-            },
-            firmware: {identifier: 'BTFL', knownFamily: 'BETAFLIGHT'},
-            board: {
-              boardIdentifier: 'S405',
-              hardwareRevision: 0,
-              boardType: 0,
-              targetCapabilities: 0,
-              targetName: 'SPEEDYBEEF405V4',
-              boardName: 'SpeedyBee F405 V4',
-              manufacturerId: 'SPBE',
-              signature: Object.freeze([]),
-              mcuTypeId: 1,
-              trailingBytes: Object.freeze([]),
-            },
-          },
-          mixerModeRaw: 99,
-          yawMotorsReversedConfigured: true,
-          motorCount: 4,
-          motorPoleCount: 14,
-          motorProtocolRaw: 99,
-          motorIdleRaw: 550,
-          feature3dEnabled: false,
-          dshotTelemetryRaw: 0,
-        },
-      },
-      {
-        sessionIdentity: {physicalGeneration: 1, mspEpoch: 0},
-        firmwareVersion: {
-          yearOffsetRaw: 25,
-          year: 2025,
-          month: 12,
-          patch: 2,
-          versionString: '2025.12.2',
-          suffix: null,
-        },
-      },
-    );
-    expect(Object.isFrozen(evidence)).toBe(true);
-    // An unrecognized raw value becomes a distinct NON-MATCHING token, so
-    // the accepted composer reports it as unsupported rather than missing.
-    expect(evidence.mixerProfile).toBe('MIXER_MODE_RAW_99');
-    expect(evidence.motorProtocol).toBe('MOTOR_PROTOCOL_RAW_99');
-    expect(evidence.bidirectionalDshotEnabled).toBe(false);
-    expect(evidence.propsOutConfigured).toBe(true);
-    expect(evidence.boardTargetName).toBe('SPEEDYBEEF405V4');
-  });
-
+describe('the motor scope gate', () => {
   it('blocks and never writes when the motor protocol is unrecognized', async () => {
     const harness = createHarness([
       [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(6))],
     ]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome.kind).toBe('BLOCKED');
+    expect(snapshot.outcome).toMatchObject({reason: 'MOTOR_SCOPE_UNSUPPORTED'});
+    expect(harness.commands).not.toContain(MSP_SET_MOTOR_FIXTURE);
+  });
+
+  it('blocks on a motor count outside the one supported scope', async () => {
+    const harness = createHarness([[MSP_MOTOR_CONFIG, reply(motorConfigPayload(6))]]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toMatchObject({
+      kind: 'BLOCKED',
+      reason: 'MOTOR_SCOPE_UNSUPPORTED',
+    });
+    expect(snapshot.motorScope?.motorCount).toBe(6);
+  });
+
+  it('blocks with the dedicated 3D reason, and keeps the scope readable', async () => {
+    const harness = createHarness([
+      [MSP_FEATURE_CONFIG, reply(Uint8Array.from(u32(FEATURE_3D_BIT)))],
+    ]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toMatchObject({
+      kind: 'BLOCKED',
+      reason: 'MOTOR_SCOPE_UNSUPPORTED',
+    });
+    // The scope is RETAINED on failure so the gate can name 3D specifically
+    // rather than reporting a generic dead link.
+    expect(snapshot.motorScope?.feature3dEnabled).toBe(true);
+    expect(snapshot.activation.reasons).toContain('MOTOR_3D_ENABLED');
+  });
+
+  it('reads exactly the three configuration commands the encoder needs', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    const configReads = harness.commands.filter(command =>
+      [MSP_MOTOR_CONFIG, MSP_ADVANCED_CONFIG, MSP_FEATURE_CONFIG].includes(
+        command,
+      ),
+    );
+    expect(configReads).toEqual([
+      MSP_MOTOR_CONFIG,
+      MSP_ADVANCED_CONFIG,
+      MSP_FEATURE_CONFIG,
+    ]);
+    // The long identification/capability chain is gone: none of these is
+    // requested any more, and none of them ever affected encoding.
+    for (const removed of [
+      MSP_API_VERSION,
+      MSP_FC_VARIANT,
+      MSP_FC_VERSION,
+      MSP_BOARD_INFO,
+      MSP_MIXER_CONFIG,
+      MSP_BATTERY_STATE,
+    ]) {
+      expect(harness.commands).not.toContain(removed);
+    }
+  });
+
+  it('never establishes an arming restriction: command 99 is not sent at all', async () => {
+    const harness = createHarness();
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome.kind).toBe('READY');
     expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
   });
 });
@@ -2164,6 +2323,31 @@ describe('containment', () => {
     'utf8',
   );
 
+  it('introduces no second MSP requester and no parallel writer', () => {
+    // ONE REQUESTER FOR THE WHOLE BUNDLE. The monitor is constructed with
+    // the very lease every configuration read, the box read, the pulse and
+    // the emergency stop travel, so the MSP request path stays serialized
+    // and a stop can still displace whatever is on the wire.
+    expect(code).toMatch(/createSafetyMonitor\(\{\s*requester: lease,/);
+    // `requester:` appears exactly once in this file - there is no second
+    // place a requester could be handed to anything.
+    expect(code.match(/requester:/g) ?? []).toHaveLength(1);
+
+    // Nothing here can build a client, a transport or a second lease.
+    for (const forbidden of [
+      'new MspClient',
+      'acquireMotorTestLease({client: undefined',
+      'writeBytes',
+      'createMspTelemetryScheduler',
+    ]) {
+      expect(code).not.toContain(forbidden);
+    }
+    // Exactly one lease is ever acquired.
+    expect(code.match(/acquireMotorTestLease\(/g) ?? []).toHaveLength(1);
+    // And exactly one emergency-stop route exists.
+    expect(code.match(/\.emergencyStop\(/g) ?? []).toHaveLength(1);
+  });
+
   it('contains no motor-command capability beyond the authorised stop', () => {
     for (const forbidden of [
       'MotorSafetyBridge',
@@ -2182,8 +2366,15 @@ describe('containment', () => {
     // cannot exist without a timer - so the assertion is narrowed rather
     // than dropped: exactly ONE arm site and ONE clear site, both on the
     // pulse deadline.
-    expect(code.match(/setTimeout\(/g) ?? []).toHaveLength(1);
-    expect(code.match(/clearTimeout\(/g) ?? []).toHaveLength(1);
+    // TWO timer sites, both accounted for and neither hidden: the pulse
+    // deadline, and the safety monitor's injected scheduler. Any third
+    // one is a timer nobody declared, which is what this guards.
+    expect(code.match(/setTimeout\(/g) ?? []).toHaveLength(2);
+    expect(code.match(/clearTimeout\(/g) ?? []).toHaveLength(2);
+    // The monitor's pair is an INJECTION into the monitor, never a timer
+    // this controller arms against a motor output itself.
+    expect(code).toMatch(/setTimer:\s*\(callback, delayMs\) =>\s*setTimeout\(callback, delayMs\)/);
+    expect(code).toMatch(/clearTimer:\s*handle =>\s*clearTimeout\(/);
     expect(code).toContain('MOTOR_TEST_PULSE_MAX_DURATION_MILLIS');
 
     // Command 214 is never a numeric literal here.
@@ -2233,13 +2424,31 @@ describe('containment', () => {
       code.indexOf("'START_WRITE_CALLED'"),
     );
 
-    // THE SAFETY MEANING IS UNCHANGED AND STILL ENFORCED. These two are
-    // still forbidden outright:
-    //   STOP_ACKNOWLEDGED - the controller must never fabricate proof
-    //     that a stop was acknowledged; only a real attributable response
-    //     may ever produce that claim, and this pass does not grant it.
-    //   RECHECK_REQUESTED - no self-clearing re-arm path exists.
-    for (const forbidden of ['RECHECK_REQUESTED', 'STOP_ACKNOWLEDGED']) {
+    // STOP_ACKNOWLEDGED IS NOW CONSTRUCTED, AND THE GUARD IS STRONGER
+    // RATHER THAN GONE.
+    //
+    // It used to be forbidden outright, which was correct while nothing
+    // could produce an attributable acknowledgement - but it also meant
+    // the reducer could never leave `Stopping`, so a perfect release left
+    // the session unusable and a second motor needed a whole new one.
+    //
+    // The safety meaning is preserved by CONFINEMENT instead: exactly one
+    // construction site, inside one private helper, reached from exactly
+    // one place - the stop operation's own ACKNOWLEDGED outcome. No timer,
+    // no UI event, no late frame and no caller can reach it.
+    expect(code.match(/'STOP_ACKNOWLEDGED'/g) ?? []).toHaveLength(1);
+    expect(code).toMatch(
+      /private dispatchStopAcknowledged\(\)[\s\S]{0,400}?kind: 'STOP_ACKNOWLEDGED'/,
+    );
+    expect(code.match(/this\.dispatchStopAcknowledged\(\)/g) ?? []).toHaveLength(1);
+    // ... and that one call site is guarded by the acknowledged outcome.
+    expect(code).toMatch(
+      /outcome\.kind === 'ACKNOWLEDGED'[\s\S]{0,1200}?this\.dispatchStopAcknowledged\(\)/,
+    );
+
+    // RECHECK_REQUESTED stays forbidden outright: no self-clearing
+    // re-arm path exists.
+    for (const forbidden of ['RECHECK_REQUESTED']) {
       expect(code).not.toContain(forbidden);
     }
   });
@@ -2427,7 +2636,7 @@ describe('Phase 2G - activation refusals dispatch nothing', () => {
   it('refuses to pulse when the profile never reached Ready', async () => {
     // An unsupported mixer blocks setup, so no pulse may ever be
     // attempted - and nothing is written when one is requested.
-    const harness = createHarness([[MSP_MIXER_CONFIG, REJECT]]);
+    const harness = createHarness([[MSP_MOTOR_CONFIG, REJECT]]);
     await runSetup(harness);
     expect(harness.controller.getSnapshot().outcome.kind).not.toBe('READY');
     const before = harness.transport.writeLog.length;
@@ -2449,8 +2658,9 @@ describe('Phase 2G - activation refusals dispatch nothing', () => {
     // The accepted reducer deliberately leaves `Ready` unchanged here -
     // nothing was submitted, so it must not manufacture stop traffic. The
     // CONTROLLER's own activation bar is what refuses: the precondition
-    // that event invalidated has not come back.
-    expect(harness.controller.pulseMotor(1)).toBe('GATES_NOT_SATISFIED');
+    // that event invalidated has not come back, so the session is
+    // terminally REQUIRES_NEW_CONNECTION.
+    expect(harness.controller.pulseMotor(1)).toBe('NOT_READY');
     await flush();
     expect(harness.transport.writeLog).toHaveLength(before);
   });
@@ -2602,8 +2812,12 @@ describe('Phase 2G - stop dominance', () => {
     expect(submittedCommands(harness)[duringWrite]).toBe(MSP_SET_MOTOR_FIXTURE);
 
     // The record only carries the displacement facts once the stop has
-    // settled, so complete it before reading them.
+    // settled, so complete it before reading them. A displaced 214 makes
+    // the first exchange ambiguous, so the operation issues one confirming
+    // all-stop - two answers, not one.
     await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
     expect(
@@ -2742,33 +2956,78 @@ describe('Phase 2G - stop dominance', () => {
 });
 
 describe('Phase 2G - same-command (214) attribution ambiguity', () => {
-  it('never acknowledges a stop whose response cannot be told from the pulse’s', async () => {
+  it('never accepts the first frame as the stop, and resolves with a second all-stop', async () => {
     const harness = createHarness();
     await pulseAwaitingAck(harness);
 
     // The pulse write finished and its ACK is still outstanding. The stop
-    // displaces it - and both are command 214.
+    // displaces it - and both are command 214, so the first frame back
+    // could belong to either.
     harness.controller.requestStop('TOUCH_RELEASED');
     await flush();
     await settlePulseWrite(harness);
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
 
+    // THE FIRST FRAME PROVED NOTHING. The operation has not settled and
+    // has claimed no acknowledgement.
+    const midway = harness.controller.getSnapshot();
+    expect(midway.stopExecution.commandAcknowledged).toBe(false);
+    expect(midway.stopExecution.outcome).toBeUndefined();
+    // A CONFIRMING all-stop is on the wire, carrying the identical vector.
+    await settlePulseWrite(harness);
+    const stops = submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE).filter(
+      payload => payload.join(',') === EXPECTED_STOP_PAYLOAD.join(','),
+    );
+    expect(stops).toHaveLength(2);
+
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
+
     const snapshot = harness.controller.getSnapshot();
+    // The ambiguity is RECORDED - it genuinely happened - and recorded as
+    // resolved by something that could not have been the pulse's reply.
     expect(snapshot.stopExecution.attributionAmbiguous).toBe(true);
-    expect(snapshot.stopExecution.commandAcknowledged).toBe(false);
+    expect(snapshot.stopExecution.attributionResolvedByConfirmation).toBe(true);
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(true);
+    // An acknowledgement is still not a physical claim.
     expect(snapshot.stopExecution.physicalStopConfirmed).toBe(false);
-    expect(snapshot.stopExecution.outcome).toEqual({
-      kind: 'FAILED',
-      reason: 'ATTRIBUTION_AMBIGUOUS',
-    });
-    expect(snapshot.machine?.name).toBe('Fault');
-    // Telemetry stays paused and the barrier is still held.
+    expect(snapshot.stopExecution.outcome).toEqual({kind: 'ACKNOWLEDGED'});
+    // A normal early release is NOT terminal any more.
+    expect(snapshot.machine?.name).toBe('Ready');
+    expect(snapshot.warnings).toHaveLength(0);
+    // Telemetry stays paused and the barrier is still held - the session
+    // was never torn down.
     expect(snapshot.telemetryHeld).toBe(true);
     expect(harness.scheduler.leases.some(l => !l.released)).toBe(true);
   });
 
-  it('requires a full session reset - the ambiguous stop can never be rearmed', async () => {
+  it('stays terminal when the CONFIRMING all-stop is itself rejected', async () => {
+    const harness = createHarness();
+    await pulseAwaitingAck(harness);
+
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await flush();
+    await settlePulseWrite(harness);
+    // First frame: consumed, proves nothing.
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
+    // The confirming all-stop is refused by the flight controller.
+    await settlePulseWrite(harness);
+    harness.transport.emitData(errorFrame(MSP_SET_MOTOR_FIXTURE));
+    await flush(20);
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.stopExecution.attributionResolvedByConfirmation).toBe(false);
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(false);
+    expect(snapshot.stopExecution.physicalStopConfirmed).toBe(false);
+    expect(snapshot.machine?.name).toBe('Fault');
+    // The one case the LiPo instruction exists for.
+    expect(snapshot.warnings.length).toBeGreaterThan(0);
+    expect(snapshot.telemetryHeld).toBe(true);
+  });
+
+  it('an unresolved stop can never be rearmed - a full session reset is required', async () => {
     const harness = createHarness();
     await pulseAwaitingAck(harness);
     harness.controller.requestStop('TOUCH_RELEASED');
@@ -2776,15 +3035,17 @@ describe('Phase 2G - same-command (214) attribution ambiguity', () => {
     await settlePulseWrite(harness);
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
+    await settlePulseWrite(harness);
+    harness.transport.emitData(errorFrame(MSP_SET_MOTOR_FIXTURE));
+    await flush(20);
 
-    const afterAmbiguous = submittedCommands(harness).length;
+    const afterUnresolved = submittedCommands(harness).length;
     const sealedEpisode = harness.controller.getSnapshot().stopExecution.episodeId;
 
-    // No further activation, and no further stop write, is possible.
-    expect(harness.controller.pulseMotor(1)).toBe('STOP_PENDING');
+    expect(harness.controller.pulseMotor(1)).toBe('NOT_READY');
     harness.controller.requestStop('STOP_BUTTON_PRESSED');
     await flush(20);
-    expect(harness.transport.writeLog).toHaveLength(afterAmbiguous);
+    expect(harness.transport.writeLog).toHaveLength(afterUnresolved);
     expect(harness.controller.getSnapshot().stopExecution.episodeId).toBe(
       sealedEpisode,
     );
@@ -2793,7 +3054,6 @@ describe('Phase 2G - same-command (214) attribution ambiguity', () => {
     const closed = await drive(harness, harness.controller.close());
     expect(closed.teardown?.complete).toBe(false);
     expect(closed.stopExecution.physicalStopConfirmed).toBe(false);
-    expect(closed.teardown?.armingRestrictionRemovalPerformed).toBe(false);
     expect(closed.telemetryHeld).toBe(true);
   });
 });
@@ -2813,6 +3073,10 @@ describe('Phase 2G - stop-operation generations', () => {
     expect(harness.transport.writeLog).toHaveLength(before + 1);
 
     await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
+    // The displaced 214 made the first exchange ambiguous, so ONE
+    // confirming all-stop follows. Still one operation, still one episode.
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
     const record = harness.controller.getSnapshot().stopExecution;
@@ -2862,11 +3126,8 @@ describe('Phase 2G - stop-operation generations', () => {
     const closed = await drive(harness, harness.controller.close());
     const steps = closed.teardown?.steps.map(s => s.step) ?? [];
     expect(steps.indexOf('EXECUTE_STOP_VECTOR')).toBeLessThan(
-      steps.indexOf('SETTLE_ARMING_RESTRICTION'),
+      steps.indexOf('RELEASE_LEASE'),
     );
-    // Command 99 is never removed at all - by construction, not by order.
-    expect(closed.teardown?.armingRestrictionRemovalSupported).toBe(false);
-    expect(closed.teardown?.armingRestrictionRemovalPerformed).toBe(false);
     // A stop really was put on the wire during teardown.
     expect(submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE)).toContainEqual(
       EXPECTED_STOP_PAYLOAD,
@@ -2912,9 +3173,8 @@ describe('Phase 2G - stop uncertainty after a pulse', () => {
     expect(closed.stopExecution.commandAcknowledged).toBe(false);
     expect(closed.stopExecution.physicalStopConfirmed).toBe(false);
     expect(closed.teardown?.complete).toBe(false);
-    // Telemetry must NOT resume and the restriction must NOT be relaxed.
+    // Telemetry must NOT resume while the stop outcome is unknown.
     expect(closed.telemetryHeld).toBe(true);
-    expect(closed.teardown?.armingRestrictionRemovalPerformed).toBe(false);
     expect(harness.scheduler.leases.some(l => !l.released)).toBe(true);
   });
 
@@ -3069,22 +3329,33 @@ describe('Phase 2I - receipt eligibility', () => {
     await flush(20);
   });
 
-  it('mints no receipt when the stop is attributionally ambiguous', async () => {
+  it('mints no receipt when the pulse itself was never acknowledged', async () => {
     const harness = createHarness();
     await runSetup(harness);
     harness.controller.pulseMotor(1);
     await flush();
     await settlePulseWrite(harness);
-    // The stop displaces an already-written command 214 - so a later 214
-    // response cannot be told apart from the stop's own.
+    // The stop displaces an already-written command 214, so the first
+    // frame back cannot be told apart from the stop's own. The operation
+    // resolves that with a confirming all-stop, and the SESSION survives.
     harness.controller.requestStop('TOUCH_RELEASED');
     await flush();
+    await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
     await settlePulseWrite(harness);
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     await flush(20);
 
     const snapshot = harness.controller.getSnapshot();
     expect(snapshot.stopExecution.attributionAmbiguous).toBe(true);
+    expect(snapshot.stopExecution.attributionResolvedByConfirmation).toBe(true);
+    expect(snapshot.stopExecution.commandAcknowledged).toBe(true);
+    // ... and STILL no receipt. The displaced frame was consumed as the
+    // ambiguous one, so this attempt has no attributable pulse
+    // acknowledgement of its own - and an observation must never be
+    // recorded against an attempt that was not cleanly completed.
+    expect(snapshot.pulse.acknowledged).toBe(false);
     expect(snapshot.verificationReceipt).toBeUndefined();
   });
 
@@ -3137,47 +3408,65 @@ describe('Phase 2I - receipt eligibility', () => {
 });
 
 /* ------------------------------------------------------------------ *
- * REPAIR PASS R1 - FAIL CLOSED WITHOUT CONTINUOUS SAFETY MONITORING
+ * FAIL CLOSED WITHOUT A FRESH DISARMED OBSERVATION
  *
  * NO HARDWARE. Every byte is in-memory; no USB, FC, ESC, LiPo or motor is
- * touched. These tests set the Jest-only module replacement to the
- * PRODUCTION value (unavailable) and prove the controller refuses to
- * activate - before any vector, payload, attempt record, timer or
- * transport submission exists.
+ * touched. These tests drive the Jest-only module replacement to each
+ * non-permitting answer and prove the controller refuses to activate -
+ * before any vector, payload, attempt record, timer or transport
+ * submission exists.
  * ------------------------------------------------------------------ */
 
-describe('R1 - unavailable continuous monitoring blocks activation', () => {
-  beforeEach(() => {
-    // The production answer, reinstated over this file's default.
-    mockContinuousSafetyMonitoring = 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
-  });
-
-  it('publishes the blocker and refuses activation even after every one-shot setup check passes', async () => {
+describe('armed-state evidence blocks activation', () => {
+  /**
+   * Reaches READY with good evidence, then withdraws it.
+   *
+   * The withdrawal must happen AFTER setup, because setup itself now
+   * refuses to publish READY without a fresh disarmed reading - which is
+   * the whole point of the boundary and is proven separately above. What
+   * this block proves is the SECOND half: a session that legitimately
+   * reached READY loses the gate the instant the evidence stops being
+   * good, with no render, press or event required.
+   */
+  async function readyThenWithdrawEvidence(
+    evidence: 'FC_ARMED' | 'UNKNOWN_OR_STALE',
+  ): Promise<Harness> {
     const harness = createHarness();
     const snapshot = await runSetup(harness);
-
-    // Setup genuinely succeeded - this is not a blocked or failed session.
     expect(snapshot.outcome).toEqual({kind: 'READY'});
-    expect(snapshot.setupStep).toBe('READY');
-    expect(snapshot.machine?.name).toBe('Ready');
-    expect(snapshot.armingRestriction.kind).toBe('ESTABLISHED');
-    expect(snapshot.telemetryHeld).toBe(true);
+    expect(snapshot.activation.allowed).toBe(true);
+    mockArmedStateEvidence = evidence;
+    return harness;
+  }
 
-    // ... and activation is STILL refused, for exactly this reason.
-    expect(snapshot.continuousSafetyMonitoring).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
-    );
+  it('closes the gate the moment a satisfied reading goes stale', async () => {
+    const harness = await readyThenWithdrawEvidence('UNKNOWN_OR_STALE');
+
+    // Read FRESH on every evaluation: no publish, no event, no render.
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(harness.controller.pulseMotor(1)).toBe('GATES_NOT_SATISFIED');
+    void snapshot;
+  });
+
+  it('reports an ARMED flight controller as its own operator-facing reason', async () => {
+    const harness = await readyThenWithdrawEvidence('FC_ARMED');
+    harness.controller.requestStop('STOP_BUTTON_PRESSED');
+    await flush(20);
+
+    const snapshot = harness.controller.getSnapshot();
     expect(snapshot.activation.allowed).toBe(false);
-    expect(snapshot.activation.reasons).toContain(
-      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
+    expect(snapshot.activation.reasons).toContain('FC_ARMED');
+    // ... and never collapsed into the vaguer unreadable answer.
+    expect(snapshot.activation.reasons).not.toContain(
+      'ARMED_STATE_UNKNOWN_OR_STALE',
     );
   });
 
   it('refuses pulseMotor before any vector, payload, attempt or timer exists', async () => {
     jest.useFakeTimers();
     try {
-      const harness = createHarness();
-      await runSetup(harness);
+      const harness = await readyThenWithdrawEvidence('UNKNOWN_OR_STALE');
       const writesBefore = harness.transport.writeLog.length;
       expect(jest.getTimerCount()).toBe(0);
 
@@ -3205,8 +3494,7 @@ describe('R1 - unavailable continuous monitoring blocks activation', () => {
   });
 
   it('submits no MSP_SET_MOTOR (command 214) and encodes no motor payload', async () => {
-    const harness = createHarness();
-    await runSetup(harness);
+    const harness = await readyThenWithdrawEvidence('UNKNOWN_OR_STALE');
     const before = submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE).length;
 
     for (const motor of [1, 2, 3, 4]) {
@@ -3226,82 +3514,150 @@ describe('R1 - unavailable continuous monitoring blocks activation', () => {
   });
 
   it('keeps refusing across repeated attempts, with no cumulative state', async () => {
-    const harness = createHarness();
-    await runSetup(harness);
+    const harness = await readyThenWithdrawEvidence('UNKNOWN_OR_STALE');
     for (let attempt = 0; attempt < 5; attempt++) {
       expect(harness.controller.pulseMotor(2)).toBe('GATES_NOT_SATISFIED');
     }
     await flush(20);
+    // A refusal publishes nothing, so the LAST PUBLISHED snapshot is
+    // deliberately not the probe here - the five refusals above are, and
+    // each one re-ran the gate at call time. What the snapshot does prove
+    // is that no attempt state accumulated.
     const snapshot = harness.controller.getSnapshot();
     expect(snapshot.pulse.attemptId).toBe(0);
-    expect(snapshot.activation.allowed).toBe(false);
+    expect(snapshot.pulse.mayHaveReachedFc).toBe(false);
     expect(harness.transport.writeLog.map(writtenCommand)).not.toContain(
       MSP_SET_MOTOR_FIXTURE,
     );
   });
 
   it('mints no verification receipt while activation is blocked', async () => {
-    const harness = createHarness();
-    await runSetup(harness);
+    const harness = await readyThenWithdrawEvidence('UNKNOWN_OR_STALE');
     harness.controller.pulseMotor(1);
     await flush(20);
     // No attempt happened, so nothing is observation-eligible.
     expect(harness.controller.getSnapshot().verificationReceipt).toBeUndefined();
   });
 
-  it('is checked FRESH, so restoring an accepted monitor re-opens the gate and losing it closes it again', async () => {
-    const harness = createHarness();
-    await runSetup(harness);
-    expect(harness.controller.getSnapshot().activation.allowed).toBe(false);
+  it('is checked FRESH at CALL TIME, not from the last published snapshot', async () => {
+    const harness = await readyThenWithdrawEvidence('UNKNOWN_OR_STALE');
+    expect(harness.controller.pulseMotor(1)).toBe('GATES_NOT_SATISFIED');
 
-    // The gate is not cached at construction: `pulseMotor()` re-runs the
-    // SAME evaluation at call time, so it reflects the value as of the
-    // call - not as of setup, and not as of the last publish. (A cached
-    // snapshot read is deliberately NOT the probe here: getSnapshot()
-    // returns the last PUBLISHED snapshot, so it would prove nothing
-    // about freshness.)
-    mockContinuousSafetyMonitoring = 'AVAILABLE_ACCEPTED_SOURCE';
+    // Restoring the evidence re-opens the gate on the NEXT call, with no
+    // publish in between. A previously rendered button is not evidence:
+    // `pulseMotor()` re-runs the SAME evaluation at call time. (A cached
+    // snapshot read is deliberately NOT the probe here - getSnapshot()
+    // returns the last PUBLISHED snapshot, so it would prove nothing.)
+    mockArmedStateEvidence = 'FRESH_DISARMED';
     expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
     await flush(20);
-    expect(harness.controller.getSnapshot().activation.reasons).not.toContain(
-      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
-    );
 
-    // Losing the monitor mid-session closes the gate again immediately.
-    mockContinuousSafetyMonitoring = 'UNAVAILABLE_NO_ACCEPTED_SOURCE';
+    // Losing it again mid-session closes the gate immediately.
+    mockArmedStateEvidence = 'UNKNOWN_OR_STALE';
     harness.controller.requestStop('STOP_BUTTON_PRESSED');
     await flush(20);
     expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
     const closed = harness.controller.getSnapshot();
     expect(closed.activation.allowed).toBe(false);
-    expect(closed.activation.reasons).toContain(
-      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
-    );
+    expect(closed.activation.reasons).toContain('ARMED_STATE_UNKNOWN_OR_STALE');
   });
 
-  it('never renames the unavailable state as available, safe or monitored', async () => {
-    const harness = createHarness();
-    const snapshot = await runSetup(harness);
+  it('never renames an unproven armed state as available, safe or monitored', async () => {
+    const harness = await readyThenWithdrawEvidence('UNKNOWN_OR_STALE');
+    harness.controller.requestStop('STOP_BUTTON_PRESSED');
+    await flush(20);
+    const snapshot = harness.controller.getSnapshot();
     const serialized = JSON.stringify(snapshot);
     // Whole tokens only. A bare "SAFE" substring test would be satisfied
-    // by this repair's own CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE
-    // reason and would prove nothing.
+    // by an unrelated reason name and would prove nothing.
     for (const forbidden of [
-      'AVAILABLE_ACCEPTED_SOURCE',
       '"MONITORED"',
       '"SAFE"',
       'MONITORING_ACTIVE',
       'SAFETY_MONITORING_AVAILABLE',
+      'FRESH_DISARMED',
     ]) {
       expect(serialized).not.toContain(forbidden);
     }
-    expect(snapshot.continuousSafetyMonitoring).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
-    );
-    // The published value is the unavailable one, and the blocker names
-    // the absence rather than describing any coverage.
-    expect(snapshot.activation.reasons).toContain(
-      'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
-    );
+    expect(snapshot.armedStateEvidence).toBe('UNKNOWN_OR_STALE');
+    // The blocker names the absence rather than describing any coverage.
+    expect(snapshot.activation.reasons).toContain('ARMED_STATE_UNKNOWN_OR_STALE');
+  });
+});
+
+/* ================================================================== *
+ * The dedicated safety monitor, seen from the controller
+ * ================================================================== */
+
+describe('continuous safety monitoring is owned by the controller', () => {
+  it('starts the monitor as part of reaching Ready, not at the first pulse', async () => {
+    const harness = createHarness();
+    expect(harness.safetyMonitor.started).toBe(0);
+
+    await runSetup(harness);
+
+    // Started BEFORE Ready is published, so monitoring covers the whole
+    // window in which a pulse could be requested - never only the pulse.
+    expect(harness.safetyMonitor.started).toBe(1);
+    expect(harness.safetyMonitor.running).toBe(true);
+  });
+
+  it('stops the monitor when the session is torn down', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    expect(harness.safetyMonitor.running).toBe(true);
+
+    await drive(harness, harness.controller.close());
+
+    expect(harness.safetyMonitor.stopped).toBeGreaterThanOrEqual(1);
+    expect(harness.safetyMonitor.running).toBe(false);
+  });
+
+  it('an ARMED reading reaches the ordinary priority-stop path', async () => {
+    const harness = createHarness();
+    // A LIVE pulse, so the reducer genuinely emits a stop intent and the
+    // trigger NAME is observable rather than merely latched.
+    await pulseAwaitingAck(harness);
+
+    harness.safetyMonitor.reportUnsafe('FC_ARMED_OBSERVED');
+
+    const snapshot = harness.controller.getSnapshot();
+    // An armed flight controller is a LOCKING stop reason: the session may
+    // not be re-armed without a genuinely new connection.
+    expect(snapshot.activation.allowed).toBe(false);
+    expect(snapshot.activation.reasons).toContain('REQUIRES_NEW_CONNECTION');
+    // ... and it is the ACCEPTED armed-state trigger, named for what the
+    // flight controller actually reported.
+    expect(
+      snapshot.stopDescriptors.map(descriptor => descriptor.stopReason),
+    ).toContain('ARMED_STATE_DETECTED');
+  });
+
+  it('a FAILED reading stops AND faults, and stops the monitor', async () => {
+    const harness = createHarness();
+    await pulseAwaitingAck(harness);
+
+    harness.safetyMonitor.reportUnsafe('SAFETY_OBSERVATION_FAILED');
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.machine?.name).toBe('Fault');
+    // A faulted session monitors nothing further.
+    expect(harness.safetyMonitor.running).toBe(false);
+    expect(snapshot.activation.allowed).toBe(false);
+    // Named for what happened - never borrowed from the battery
+    // vocabulary, which nothing in this bundle reads any more.
+    expect(
+      snapshot.stopDescriptors.map(descriptor => descriptor.stopReason),
+    ).toContain('SAFETY_MONITORING_FAILED');
+  });
+
+  it('a STALE reading is treated exactly like a failed one', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    harness.safetyMonitor.reportUnsafe('SAFETY_OBSERVATION_STALE');
+
+    expect(harness.controller.getSnapshot().machine?.name).toBe('Fault');
+    expect(harness.safetyMonitor.running).toBe(false);
   });
 });

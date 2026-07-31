@@ -63,7 +63,10 @@ export type DroneSceneMaterial =
   | 'PROP_DISC_FRONT'
   | 'PROP_RING_REAR'
   | 'PROP_DISC_REAR'
-  | 'ARROW';
+  | 'ARROW'
+  /** The world-fixed level reference (horizon grid). Deliberately NOT
+   * rotated with the body - it is the thing the body is judged against. */
+  | 'LEVEL_GRID';
 
 /** Every shape in this scene - hub plates, standoffs, arms, motor
  * circles, prop rings/discs, the arrow's two pieces - is built and
@@ -123,26 +126,63 @@ const MOTOR_LAYOUT: Array<{angleDeg: number; isFront: boolean}> = [
   {angleDeg: 315, isFront: true}, // front-left
 ];
 
-// ---- Camera (3/4 diagonal chase angle - never near-overhead, per the
-// approved prototype spec) ----
-
-const CAMERA_AZIMUTH_DEG = -140; // behind the drone, offset to one side
-const CAMERA_ELEVATION_DEG = 28; // moderate downward tilt
+// ---- Camera ----
+//
+// The previous 3/4 diagonal chase angle (azimuth -140, elevation 28) was
+// the single biggest source of "the model looks tilted when the drone is
+// level" reports: an off-axis azimuth skews the airframe diagonally
+// across the viewport, and 28 degrees of downward tilt foreshortens the
+// far arms enough that a genuinely level quad reads as banked. Both are
+// pure PRESENTATION values - neither has ever fed the rotation math.
+//
+// Revised minimally rather than replaced: still a rear chase view, still
+// never near-overhead, but now placed EXACTLY behind the tail (azimuth
+// 180) so the airframe is left/right symmetric on screen, and lowered to
+// 16 degrees so a level quad projects as a level, near-horizontal frame
+// while the top surface (and the nose arrow) stay visible.
+const CAMERA_AZIMUTH_DEG = 180; // directly behind the tail - no diagonal skew
+const CAMERA_ELEVATION_DEG = 16; // gentle downward tilt; level reads as level
 const CAMERA_DISTANCE = 6;
 const FOCAL_LENGTH = 1.6;
 
 /** Pass 7.5D - the single presentation-scale knob for how large the
- * projected model appears inside the preview viewport. Chosen so the
- * NEUTRAL (0/0/0) model's projected width is ~65% of the preview's
- * usable width (measured 65.5% at 260x260; was 18.7% at the previous
- * 0.16), while every required verification pose (pitch/roll +-30, yaw
- * +-45, compound 20/-20/30) keeps >=12 logical units of clearance from
- * every viewport edge - verified by droneSceneGeometry.test.ts's
- * preview-sizing tests. Purely presentational: changes NOTHING about
- * rotation math, camera direction, geometry, or front identity. */
-const MODEL_PIXEL_SCALE_FACTOR = 0.56;
+ * projected model appears inside the preview viewport. Purely
+ * presentational: changes NOTHING about rotation math, camera
+ * direction, geometry, or front identity.
+ *
+ * FINAL-POLISH PASS: raised from 0.56 to 0.644, i.e. EXACTLY +15.0% of
+ * projected linear scale, because the model read as too small on real
+ * hardware. Measured at the 260x260 hero preview, neutral pose,
+ * model-owned primitives only (the world-fixed LEVEL_GRID is a horizon
+ * reference, not part of the model):
+ *
+ *              projected width   occupancy   worst-case clearance
+ *   0.56       163.53            62.9%       40.37
+ *   0.644      188.06            72.3%       26.93
+ *
+ * The clearance column is the minimum distance from ANY model-owned
+ * point to ANY canvas edge across a 980-pose matrix (roll and pitch
+ * -60..+60 in 15 degree steps x yaw 0..330 in 30 degree steps, plus the
+ * heading boundaries and the transform fixtures). Including the 1.2px
+ * stroke half-width added by the visibility polish below, the worst
+ * case is 25.73 - still more than double the 12-unit invariant the
+ * Pass-7.5D sizing tests enforce, and far above the 4px anti-aliasing
+ * inset. 0.66 (+17.9%) was also measured safe (24.37); the lower end of
+ * the requested 15-18% band was taken deliberately, because clipping
+ * safety outranks apparent size. */
+const MODEL_PIXEL_SCALE_FACTOR = 0.644;
 
 const CIRCLE_SEGMENT_COUNT = 24;
+
+/** Level-reference grid: a world-fixed horizontal lattice at the
+ * airframe's own y=0 plane. It is what makes "level" verifiable by eye -
+ * with no reference, a projected quad has nothing to be level RELATIVE
+ * to. Kept sparse and outside the prop discs so it never competes with
+ * the model itself. */
+const GRID_HALF_EXTENT = 3.2;
+const GRID_LINE_COUNT = 5; // lines per axis, including the two edges
+const GRID_LINE_HALF_WIDTH = 0.012;
+const GRID_Y = 0;
 
 function degToRad(deg: number): number {
   return (deg * Math.PI) / 180;
@@ -322,6 +362,39 @@ export function computeDroneScene(
   };
 
   const primitives: DroneScenePrimitive[] = [];
+
+  // Level reference grid - projected WITHOUT rotateBodyPoint, because it
+  // represents the world horizon the airframe is tilting against. If it
+  // rotated with the body it would prove nothing.
+  {
+    const projectWorldPolygon = (worldPoints: Vec3[]): {points: Vec2[]; depth: number} => {
+      const projected = worldPoints.map(point => project(point, camera, viewportMinDimension));
+      const depth = projected.reduce((sum, p) => sum + p.depth, 0) / projected.length;
+      return {points: projected.map(p => toViewport(p.screen, viewportSize.width, viewportSize.height)), depth};
+    };
+    for (let i = 0; i < GRID_LINE_COUNT; i++) {
+      const t = (i / (GRID_LINE_COUNT - 1)) * 2 - 1;
+      const offset = t * GRID_HALF_EXTENT;
+      // Line running along +/-X at a fixed Z.
+      const alongX: Vec3[] = [
+        {x: -GRID_HALF_EXTENT, y: GRID_Y, z: offset - GRID_LINE_HALF_WIDTH},
+        {x: GRID_HALF_EXTENT, y: GRID_Y, z: offset - GRID_LINE_HALF_WIDTH},
+        {x: GRID_HALF_EXTENT, y: GRID_Y, z: offset + GRID_LINE_HALF_WIDTH},
+        {x: -GRID_HALF_EXTENT, y: GRID_Y, z: offset + GRID_LINE_HALF_WIDTH},
+      ];
+      // Line running along +/-Z at a fixed X.
+      const alongZ: Vec3[] = [
+        {x: offset - GRID_LINE_HALF_WIDTH, y: GRID_Y, z: -GRID_HALF_EXTENT},
+        {x: offset - GRID_LINE_HALF_WIDTH, y: GRID_Y, z: GRID_HALF_EXTENT},
+        {x: offset + GRID_LINE_HALF_WIDTH, y: GRID_Y, z: GRID_HALF_EXTENT},
+        {x: offset + GRID_LINE_HALF_WIDTH, y: GRID_Y, z: -GRID_HALF_EXTENT},
+      ];
+      for (const line of [alongX, alongZ]) {
+        const {points, depth} = projectWorldPolygon(line);
+        primitives.push({kind: 'POLYGON', material: 'LEVEL_GRID', points, depth});
+      }
+    }
+  }
 
   // Hub bottom plate (wider).
   {
