@@ -913,7 +913,7 @@ describe('MspSessionCoordinator - Pass 7.4 real telemetry scheduler integration'
     coordinator.deactivateMspSession(SESSION_ID); // stop the real tick interval
   });
 
-  it('registers MSP_ATTITUDE at the confirmed real ~220ms interval, not some other cadence (the second real dispatch only happens once ~220ms have elapsed since the first)', async () => {
+  it('registers MSP_ATTITUDE at the responsive 50ms cadence without dispatching more than once per tick', async () => {
     const coordinator = new MspSessionCoordinator();
     const client = makeHappyFakeClient(SESSION_ID);
     client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
@@ -929,15 +929,14 @@ describe('MspSessionCoordinator - Pass 7.4 real telemetry scheduler integration'
     await flushAsync();
     expect(countAttitudeWrites()).toBe(1);
 
-    // Well under 220ms further - must NOT have dispatched again yet.
-    await jest.advanceTimersByTimeAsync(100);
+    // The second tick is fairly available to the immediately-due slow
+    // battery poll, so it cannot create a second attitude dispatch.
+    await jest.advanceTimersByTimeAsync(50);
     await flushAsync();
     expect(countAttitudeWrites()).toBe(1);
 
-    // The first dispatch's next-due time is dueAtMs = 50 + 220 = 270ms
-    // after registration. 50ms + 100ms so far = 150ms elapsed; this
-    // advance brings the total to 300ms, comfortably past 270ms.
-    await jest.advanceTimersByTimeAsync(150);
+    // The next tick returns to the primary attitude channel.
+    await jest.advanceTimersByTimeAsync(50);
     await flushAsync();
     expect(countAttitudeWrites()).toBe(2);
     coordinator.deactivateMspSession(SESSION_ID); // stop the real tick interval
@@ -1403,9 +1402,9 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
     await jest.advanceTimersByTimeAsync(2850); // t = 2950
     await flushAsync();
     expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
-    // Attitude was NOT starved meanwhile: ~2950ms / 220ms => at least 12
-    // attitude dispatches with instant fake responses.
-    expect(countWritesFor(client, MSP_ATTITUDE)).toBeGreaterThanOrEqual(12);
+    // Attitude was NOT starved meanwhile: the direct stream remains
+    // high-frequency even while the slow battery channel gets its slots.
+    expect(countWritesFor(client, MSP_ATTITUDE)).toBeGreaterThanOrEqual(50);
 
     // Past dueAt = 3100 (t=3250): exactly the second dispatch.
     await jest.advanceTimersByTimeAsync(300);

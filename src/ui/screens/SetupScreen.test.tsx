@@ -32,6 +32,7 @@ import type {RootStackParamList} from '../../navigation/types';
 import {
   mspSessionCoordinator,
   setupUiSessionStore,
+  fcToolsController,
   ATTITUDE_TELEMETRY_POLL_ID,
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
@@ -917,7 +918,7 @@ describe('SetupScreen - the display-only Heading reset', () => {
     return {client, renderer};
   }
 
-  /** Answers the attitude poll with a new sample and lets the REAL 220ms
+  /** Answers the attitude poll with a new sample and lets the REAL 50ms
    * poll cadence deliver it - no hand-driven scheduler poking. */
   async function pushAttitude(
     client: ReturnType<typeof makeFakeClient>,
@@ -932,6 +933,42 @@ describe('SetupScreen - the display-only Heading reset', () => {
       await flushAsync();
     });
   }
+
+  it('confines high-frequency attitude renders to the orientation hero instead of re-rendering the complete Setup screen', async () => {
+    const sessionKey = {sessionId: 'orientation-render-boundary', generation: 1};
+    const ensureBoxIdsMapping = jest.spyOn(fcToolsController, 'ensureBoxIdsMapping');
+    const orientationRenderer = OrientationRenderer as jest.Mock;
+    try {
+      const {client} = await mountWithAttitude(sessionKey, {
+        rollDecidegrees: 0,
+        pitchDecidegrees: 0,
+        yawDegrees: 0,
+      });
+
+      // Let identification and every immediately-due auxiliary publish
+      // before measuring the attitude-only interval below.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1000);
+        await flushAsync();
+      });
+      ensureBoxIdsMapping.mockClear();
+      orientationRenderer.mockClear();
+      client.setResponse(MSP_ATTITUDE, attitudePayload(120, -40, 33));
+
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(50);
+        await flushAsync();
+      });
+
+      expect(orientationRenderer).toHaveBeenCalled();
+      // SetupScreenContent's effect has no dependency array and therefore
+      // runs after every root render. Zero calls proves the fresh sample
+      // updated only LiveOrientationHero, not every card/tool below it.
+      expect(ensureBoxIdsMapping).not.toHaveBeenCalled();
+    } finally {
+      ensureBoxIdsMapping.mockRestore();
+    }
+  });
 
   it('later samples stay RELATIVE to the captured reference - the reset is a new zero, not a one-off nudge', async () => {
     const sessionKey = {sessionId: 'heading-reset-relative', generation: 1};
@@ -1181,11 +1218,11 @@ describe('SetupScreen - the display-only Heading reset', () => {
     expect(issued).not.toContain(68); // MSP_REBOOT
     expect(issued).not.toContain(250); // MSP_EEPROM_WRITE
 
-    // The attitude poll is still on its own 220ms cadence: ten pushes of
-    // 300ms each cannot have produced more than one request per cycle.
+    // The attitude poll runs on its own 50ms cadence without spawning
+    // more than one request per cycle.
     const attitudeRequests = issued.filter(command => command === MSP_ATTITUDE).length;
     expect(attitudeRequests).toBeGreaterThan(0);
-    expect(attitudeRequests).toBeLessThanOrEqual(Math.ceil((10 * 300) / 220));
+    expect(attitudeRequests).toBeLessThanOrEqual(Math.ceil((10 * 300) / 50));
 
     // The display followed every one of them, ending on the last:
     // roll 100 decidegrees = 10, raw pitch -50 decidegrees negated once
@@ -2554,9 +2591,9 @@ describe('SetupScreen - reset contract and apparent self-tilt', () => {
       // that have nothing to do with the reset.
       const afterPress = allText(renderer).filter(text => text.endsWith('°'));
       expect(afterPress.length).toBeGreaterThan(0);
-      // Short of the 220ms poll interval, so no NEW sample can arrive:
-      // anything that moved here would have to be a delayed update the
-      // press itself queued.
+      // The fake transport keeps returning the same sample. Anything
+      // that moved here would therefore have to be a delayed update the
+      // press itself queued, even though several genuine polls may run.
       await act(async () => {
         await jest.advanceTimersByTimeAsync(200);
         await flushAsync();

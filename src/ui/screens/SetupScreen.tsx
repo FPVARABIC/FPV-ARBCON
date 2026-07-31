@@ -92,6 +92,7 @@ import type {
   MspRawGpsCompact,
   MspStatusExDiagnostics,
   ArmingBlockReason,
+  OrientationViewOffset,
 } from '../../core';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
@@ -121,7 +122,6 @@ function SetupScreenContent({
 }): React.JSX.Element {
   const {sessionId} = sessionKey;
 
-  const attitude = useTelemetryValue<MspAttitude>(sessionId, ATTITUDE_TELEMETRY_POLL_ID);
   const armed = useTelemetryValue<boolean>(sessionId, ARMED_TELEMETRY_POLL_ID);
   const blockers = useTelemetryValue<ArmingBlockReason[]>(sessionId, ARMING_BLOCKERS_TELEMETRY_POLL_ID);
   // Pass 7.6b: the same generic hook/scheduler path attitude uses - the
@@ -200,19 +200,11 @@ function SetupScreenContent({
 
   const [uiState, setUiState] = useState(() => setupUiSessionStore.getState(sessionKey));
 
-  const orientationView = deriveOrientationViewState(attitude, uiState.orientationViewOffset);
   // Computed ONCE, threaded to both SafetyStrip and TopSystemBar's Row 2
   // arming badge - per Step 4's own established design, avoiding two
   // independently-derived ArmingReadiness values that could diverge by
   // a render tick.
   const armingReadiness = deriveArmingReadiness(armed, blockers);
-
-  // The display-only Heading reset may only capture a reference it
-  // genuinely has: a FRESH attitude sample belonging to the session that
-  // is ACTIVE right now. A STALE/WAITING/ERROR reading, or a session that
-  // is no longer active, means there is nothing truthful to zero against,
-  // so the control is disabled rather than freezing a guessed reference.
-  const canResetView = attitude.status === 'FRESH' && ownershipState === 'ACTIVE';
 
   const handleResetView = useCallback(() => {
     // Read the AUTHORITATIVE state at press time, from the coordinator
@@ -243,18 +235,10 @@ function SetupScreenContent({
     <View style={styles.root} testID="setup-screen">
       <TopSystemBar sessionId={sessionId} onBack={onBack} armingReadiness={armingReadiness} />
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <OrientationHero
-          orientationView={orientationView}
+        <LiveOrientationHero
+          sessionKey={sessionKey}
+          orientationViewOffset={uiState.orientationViewOffset}
           hasSeenResetHint={uiState.hasSeenOrientationResetHint}
-          // Diagnostics scope + sample identity. A sampleSeq is only
-          // comparable within one physical session, so it travels with
-          // the composite key; neither value affects what is drawn.
-          sessionToken={`${sessionKey.sessionId}:${sessionKey.generation}`}
-          sampleSeq={attitude.status === 'FRESH' || attitude.status === 'STALE' ? attitude.sampleSeq : undefined}
-          sampleReceivedAt={
-            attitude.status === 'FRESH' || attitude.status === 'STALE' ? attitude.updatedAtMs : undefined
-          }
-          canReset={canResetView}
           onResetView={handleResetView}
           onResetHintShown={handleResetHintShown}
         />
@@ -310,6 +294,48 @@ function SetupScreenContent({
         <DiagnosticsSection view={diagnosticsView} />
       </ScrollView>
     </View>
+  );
+}
+
+/**
+ * Owns the high-frequency attitude subscription so a 20Hz orientation
+ * stream only re-renders the model/readouts subtree. Before this boundary,
+ * every genuine attitude sample re-executed the complete Setup screen,
+ * including diagnostics, FC tools and all telemetry cards, even though
+ * none of them consumed that sample.
+ */
+function LiveOrientationHero({
+  sessionKey,
+  orientationViewOffset,
+  hasSeenResetHint,
+  onResetView,
+  onResetHintShown,
+}: {
+  sessionKey: SetupUiSessionKey;
+  orientationViewOffset: OrientationViewOffset;
+  hasSeenResetHint: boolean;
+  onResetView: () => void;
+  onResetHintShown: () => void;
+}): React.JSX.Element {
+  const attitude = useTelemetryValue<MspAttitude>(sessionKey.sessionId, ATTITUDE_TELEMETRY_POLL_ID);
+  const ownershipState = useMspOwnershipState(sessionKey.sessionId);
+  const orientationView = deriveOrientationViewState(attitude, orientationViewOffset);
+  const hasSample = attitude.status === 'FRESH' || attitude.status === 'STALE';
+
+  return (
+    <OrientationHero
+      orientationView={orientationView}
+      hasSeenResetHint={hasSeenResetHint}
+      // Diagnostics scope + sample identity. A sampleSeq is only
+      // comparable within one physical session, so it travels with the
+      // composite key; neither value affects what is drawn.
+      sessionToken={`${sessionKey.sessionId}:${sessionKey.generation}`}
+      sampleSeq={hasSample ? attitude.sampleSeq : undefined}
+      sampleReceivedAt={hasSample ? attitude.updatedAtMs : undefined}
+      canReset={attitude.status === 'FRESH' && ownershipState === 'ACTIVE'}
+      onResetView={onResetView}
+      onResetHintShown={onResetHintShown}
+    />
   );
 }
 

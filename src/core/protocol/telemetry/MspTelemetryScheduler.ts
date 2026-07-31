@@ -48,8 +48,8 @@
  * i.e. how overdue a poll is EXPRESSED AS A FRACTION OF ITS OWN INTERVAL,
  * not raw milliseconds - highest ratio wins; a strict tie in ratio is
  * broken by `priority` (higher wins). Raw-millisecond overdue was
- * deliberately rejected: a slow poll (e.g. 1000ms interval) is easily 5x
- * more raw-ms overdue than a fast poll (e.g. 220ms interval) can ever
+ * deliberately rejected: a slow poll (e.g. 1000ms interval) is easily 20x
+ * more raw-ms overdue than a fast poll (e.g. 50ms interval) can ever
  * get before the fast poll's own next deadline arrives, which would let
  * any slow poll systematically dominate selection purely by having a
  * long interval, starving the fast poll. Normalizing by each poll's own
@@ -58,18 +58,25 @@
  * answer, and is what the Fairness test in MspTelemetryScheduler.test.ts
  * exercises directly.
  *
+ * SINGLE-FLIGHT LIVENESS CAP. A primary whose interval is intentionally
+ * shorter than the link's temporary service time can remain more overdue
+ * by ratio forever, making a slow auxiliary mathematically unable to win.
+ * In singleFlight mode only, five consecutive priority>=0 dispatches
+ * therefore reserve the next slot for one due priority<0 poll. The
+ * existing reverse rule still reserves the slot after an auxiliary for a
+ * due primary. Together these bounds prevent starvation in either
+ * direction while never permitting concurrent requests or a backlog.
+ *
  * Only one dispatch is started per tick() call, by design: this keeps
  * tick() itself synchronous and its cost bounded regardless of how many
  * polls are simultaneously overdue, and it's what makes the deadline-
  * aware ranking meaningful at all (if every due poll fired every tick(),
  * there would be nothing to rank). A caller driving tick() frequently
  * relative to the fastest registered interval (as this pass's own tests
- * do, and as the real hardware ceiling from Pass 7.0 - ~220-225ms per
- * MSP_ATTITUDE round trip - implies any real polling loop naturally
- * would) still serves every due poll promptly; a caller invoking tick()
- * only rarely would see the same ranking logic simply catch up over
- * several calls. This is believed to be correct for this scheduler's
- * scope; if a future pass finds a real need to start multiple
+ * do) still serves every due poll promptly; a caller invoking tick() only
+ * rarely would see the same ranking logic simply catch up over several
+ * calls. This is believed to be correct for this scheduler's scope; if a
+ * future pass finds a real need to start multiple
  * concurrent dispatches within one tick() (e.g. a burst of first-ever
  * registrations all becoming due simultaneously at startup), that is a
  * deliberate change to make explicitly then, not something silently
@@ -249,8 +256,8 @@ export interface MspTelemetrySchedulerOptions {
   /** Defaults to RealClock (Date.now()-based). Inject a FakeClock in
    * tests - see clock.ts. */
   clock?: MonotonicClock;
-  /** Pass 7.6c - capacity-safe mode for the real serialized MSP link
-   * (~224ms measured round trip): when true, tick() starts NO new
+  /** Pass 7.6c - capacity-safe mode for the real serialized MSP link:
+   * when true, tick() starts NO new
    * dispatch while ANY poll is still in flight (global concurrency of
    * exactly one), and never dispatches two sub-zero-priority (auxiliary)
    * polls consecutively while a priority>=0 poll is due. Default false
@@ -273,6 +280,7 @@ export interface MspTelemetrySchedulerOptions {
  * carries a T-typed payload. */
 const WAITING_VALUE: TelemetryValue<never> = {status: 'WAITING'};
 const UNAVAILABLE_VALUE: TelemetryValue<never> = {status: 'UNAVAILABLE'};
+const MAX_CONSECUTIVE_PRIMARY_DISPATCHES = 5;
 
 class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private readonly polls = new Map<string, PollRuntimeState>();
@@ -289,6 +297,14 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private idleWaiters: Array<() => void> = [];
 
   private lastDispatchedPriority: number | undefined;
+  /**
+   * A fast primary cadence must not make every slow auxiliary's normalized
+   * overdue ratio mathematically unable to catch up on a degraded link.
+   * MAX_CONSECUTIVE_PRIMARY_DISPATCHES slots preserve responsive attitude
+   * updates; the next due auxiliary then gets one bounded slot before
+   * primary service resumes.
+   */
+  private consecutivePrimaryDispatches = 0;
 
   constructor(
     private readonly requester: MspRequester,
@@ -366,8 +382,8 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       this.refreshStaleness(poll, now);
     }
 
-    // Pass 7.6c singleFlight: with a genuinely serialized ~224ms MSP
-    // link, starting a second dispatch while one is outstanding only
+    // Pass 7.6c singleFlight: with a genuinely serialized MSP link,
+    // starting a second dispatch while one is outstanding only
     // builds a client-side queue (backlog) - so in this mode at most ONE
     // telemetry dispatch may be outstanding at any moment, scheduler-wide.
     const dispatchBlocked = this.singleFlight && this.inFlightCount > 0;
@@ -386,6 +402,20 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         }
       }
 
+      let restrictToAuxiliary = false;
+      if (
+        this.singleFlight &&
+        !restrictToPrimary &&
+        this.consecutivePrimaryDispatches >= MAX_CONSECUTIVE_PRIMARY_DISPATCHES
+      ) {
+        for (const poll of this.polls.values()) {
+          if (!poll.inFlight && now >= poll.dueAtMs && poll.definition.priority < 0) {
+            restrictToAuxiliary = true;
+            break;
+          }
+        }
+      }
+
       let best: PollRuntimeState | undefined;
       let bestRatio = -Infinity;
       for (const poll of this.polls.values()) {
@@ -393,6 +423,9 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
           continue;
         }
         if (restrictToPrimary && poll.definition.priority < 0) {
+          continue;
+        }
+        if (restrictToAuxiliary && poll.definition.priority >= 0) {
           continue;
         }
         const ratio = (now - poll.dueAtMs) / poll.definition.intervalMs;
@@ -406,6 +439,8 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
 
       if (best) {
         this.lastDispatchedPriority = best.definition.priority;
+        this.consecutivePrimaryDispatches =
+          best.definition.priority >= 0 ? this.consecutivePrimaryDispatches + 1 : 0;
         this.dispatch(best, now);
       }
     }
