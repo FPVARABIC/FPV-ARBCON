@@ -750,6 +750,31 @@ describe('MspTelemetryScheduler - Pass 7.6c singleFlight (global concurrency of 
 });
 
 describe('MspTelemetryScheduler - Pass 7.6c aux alternation (primary never starved by auxiliaries)', () => {
+  it('a 50ms primary cannot mathematically starve slow auxiliaries on a link whose service time is slower than that cadence', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester((command, payload) =>
+      makeFrame(command, payload.length ? payload : Uint8Array.from([1])),
+    );
+    const scheduler = createMspTelemetryScheduler(requester, {clock, singleFlight: true});
+    scheduler.registerPoll(definition('attitude', 108, 50, 500, 0));
+    scheduler.registerPoll(definition('battery', 130, 3000, 9000, -1));
+
+    // t=0 tie: primary wins. Thereafter model a slow 224ms round trip by
+    // advancing the clock only after each dispatch settles. The primary's
+    // overdue ratio is always much larger than battery's, so pure ratio
+    // selection would starve battery forever.
+    for (let slot = 0; slot < 7; slot++) {
+      scheduler.tick();
+      await scheduler.waitUntilIdle();
+      clock.advance(224);
+    }
+
+    const commands = requester.calls.map(call => call.command);
+    expect(commands.slice(0, 5)).toEqual([108, 108, 108, 108, 108]);
+    expect(commands[5]).toBe(130);
+    expect(commands[6]).toBe(108);
+  });
+
   it('after an auxiliary (priority < 0) dispatch, a due primary (priority >= 0) poll wins the next slot even when an auxiliary is MORE overdue by ratio', async () => {
     const clock = new FakeClock(0);
     const requester = createFakeRequester((command, payload) => makeFrame(command, payload.length ? payload : Uint8Array.from([1])));

@@ -787,7 +787,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     await settle(1100);
     const added = client.countOf(MSP_ATTITUDE) - before;
     expect(added).toBeGreaterThan(0);
-    expect(added).toBeLessThanOrEqual(6); // ~1100ms / 220ms, never doubled
+    expect(added).toBeLessThanOrEqual(24); // ~1100ms / 50ms plus timer edges, never doubled
     act(() => {
       remounted.unmount();
     });
