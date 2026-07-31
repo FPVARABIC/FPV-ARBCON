@@ -85,13 +85,42 @@ export default function FcToolsSection({
 
   return (
     <View style={styles.section} testID="fc-tools-section">
-      <Text
-        style={styles.sectionTitle}
-        accessibilityRole="header"
-        testID="fc-tools-title"
-      >
-        {t('fcTools.title')}
+      <View style={styles.sectionHeader}>
+        <View style={styles.sectionHeaderCopy}>
+          <Text style={styles.eyebrow}>{t('fcTools.title')}</Text>
+          <Text
+            style={styles.sectionTitle}
+            accessibilityRole="header"
+            testID="fc-tools-title"
+          >
+            {t('fcTools.sectionTitle')}
+          </Text>
+        </View>
+        <View style={styles.protectedPill}>
+          <Text style={styles.protectedPillText}>{t('fcTools.protected')}</Text>
+        </View>
+      </View>
+      <Text style={styles.sectionDescription}>
+        {t('fcTools.sectionDescription')}
       </Text>
+
+      <View style={styles.workflow} testID="fc-tools-workflow">
+        {(['prepare', 'calibrate', 'verify'] as const).map((step, index) => (
+          <View key={step} style={styles.workflowStep}>
+            <View style={styles.workflowNumber}>
+              <Text style={styles.workflowNumberText}>{index + 1}</Text>
+            </View>
+            <View style={styles.workflowCopy}>
+              <Text style={styles.workflowTitle}>
+                {t(`fcTools.workflow.${step}.title`)}
+              </Text>
+              <Text style={styles.workflowBody}>
+                {t(`fcTools.workflow.${step}.body`)}
+              </Text>
+            </View>
+          </View>
+        ))}
+      </View>
 
       {FC_TOOL_IDS.map(tool => {
         const availability = resolveFcToolAvailability(tool, { ...gate, busy });
@@ -102,7 +131,61 @@ export default function FcToolsSection({
             ? undefined
             : t(`fcTools.disabledReasons.${availability.reason}`);
         return (
-          <View key={tool} style={styles.tool} testID={`fc-tool-${tool}`}>
+          <View
+            key={tool}
+            style={[
+              styles.tool,
+              tool === 'REBOOT' ? styles.maintenanceTool : undefined,
+            ]}
+            testID={`fc-tool-${tool}`}
+          >
+            <View style={styles.toolHeadingRow}>
+              <View
+                style={[
+                  styles.toolMark,
+                  tool === 'ACC_CALIBRATION'
+                    ? styles.toolMarkPrimary
+                    : tool === 'MAG_CALIBRATION'
+                    ? styles.toolMarkInfo
+                    : styles.toolMarkMaintenance,
+                ]}
+              >
+                <Text style={styles.toolMarkText}>
+                  {t(`fcTools.toolMarks.${tool}`)}
+                </Text>
+              </View>
+              <View style={styles.toolHeadingCopy}>
+                <Text style={styles.toolHeading}>{name}</Text>
+                <Text
+                  style={styles.toolDescription}
+                  testID={`fc-tool-${tool}-description`}
+                >
+                  {description}
+                </Text>
+              </View>
+              <View
+                style={[
+                  styles.availabilityPill,
+                  availability.enabled
+                    ? styles.availabilityPillReady
+                    : styles.availabilityPillBlocked,
+                ]}
+              >
+                <Text
+                  style={
+                    availability.enabled
+                      ? styles.availabilityReadyText
+                      : styles.availabilityBlockedText
+                  }
+                >
+                  {t(
+                    availability.enabled
+                      ? 'fcTools.available'
+                      : 'fcTools.unavailable',
+                  )}
+                </Text>
+              </View>
+            </View>
             <Pressable
               onPress={() => onRequest(tool)}
               disabled={!availability.enabled}
@@ -129,15 +212,9 @@ export default function FcToolsSection({
                     : styles.toolNameDisabled
                 }
               >
-                {name}
+                {t(`fcTools.toolActions.${tool}`)}
               </Text>
             </Pressable>
-            <Text
-              style={styles.toolDescription}
-              testID={`fc-tool-${tool}-description`}
-            >
-              {description}
-            </Text>
             {reasonText !== undefined && (
               <Text style={styles.toolReason} testID={`fc-tool-${tool}-reason`}>
                 {reasonText}
@@ -146,6 +223,18 @@ export default function FcToolsSection({
           </View>
         );
       })}
+
+      {phase.kind === 'RUNNING' && (
+        <View style={styles.runningBanner} testID="fc-tools-running">
+          <View style={styles.runningDot} />
+          <View style={styles.runningCopy}>
+            <Text style={styles.runningTitle}>{t('fcTools.runningTitle')}</Text>
+            <Text style={styles.runningBody}>
+              {t(`fcTools.runningBodies.${phase.tool}`)}
+            </Text>
+          </View>
+        </View>
+      )}
 
       {phase.kind === 'CONFIRMING' && (
         <View
@@ -183,13 +272,25 @@ export default function FcToolsSection({
       )}
 
       {outcome !== undefined && (
-        <Text
-          style={styles.outcome}
+        <View
+          style={styles.outcomeCard}
           accessibilityRole="alert"
-          testID="fc-tools-outcome"
+          testID="fc-tools-outcome-card"
         >
-          {describeOutcome(outcome, t)}
-        </Text>
+          <Text
+            style={styles.outcome}
+            accessibilityRole="alert"
+            testID="fc-tools-outcome"
+          >
+            {describeOutcome(outcome, t)}
+          </Text>
+          {outcome.kind === 'ACCEPTED' &&
+            outcome.tool === 'ACC_CALIBRATION' && (
+              <Text style={styles.nextStepText}>
+                {t('fcTools.accVerificationStarted')}
+              </Text>
+            )}
+        </View>
       )}
     </View>
   );
@@ -235,15 +336,118 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 5 },
     elevation: 3,
   },
-  sectionTitle: {
-    ...typography.sectionTitle,
-    color: colors.accent,
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
   },
+  sectionHeaderCopy: { flex: 1 },
+  eyebrow: { ...typography.eyebrow, color: colors.accent },
+  sectionTitle: {
+    ...typography.title,
+    color: colors.textPrimary,
+    marginTop: 2,
+  },
+  protectedPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accentSoft,
+  },
+  protectedPillText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: '700',
+  },
+  sectionDescription: {
+    ...typography.body,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+  },
+  workflow: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    backgroundColor: colors.backgroundRaised,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    gap: spacing.sm,
+  },
+  workflowStep: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  workflowNumber: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: colors.accentSoft,
+  },
+  workflowNumberText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: '800',
+  },
+  workflowCopy: { flex: 1 },
+  workflowTitle: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: '700',
+  },
+  workflowBody: { ...typography.caption, color: colors.textSecondary },
   tool: {
     marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.borderSoft,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  maintenanceTool: { backgroundColor: colors.backgroundRaised },
+  toolHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  toolMark: {
+    minWidth: 42,
+    height: 34,
+    paddingHorizontal: spacing.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.sm,
+  },
+  toolMarkPrimary: { backgroundColor: colors.accentSoft },
+  toolMarkInfo: { backgroundColor: '#153A52' },
+  toolMarkMaintenance: { backgroundColor: '#343341' },
+  toolMarkText: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: '800',
+    writingDirection: 'ltr',
+  },
+  toolHeadingCopy: { flex: 1 },
+  toolHeading: { ...typography.sectionTitle, color: colors.textPrimary },
+  availabilityPill: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 3,
+    borderRadius: radii.pill,
+  },
+  availabilityPillReady: { backgroundColor: '#153D31' },
+  availabilityPillBlocked: { backgroundColor: '#3A3020' },
+  availabilityReadyText: {
+    ...typography.caption,
+    color: colors.success,
+    fontWeight: '700',
+  },
+  availabilityBlockedText: {
+    ...typography.caption,
+    color: colors.warning,
+    fontWeight: '700',
   },
   toolButton: {
     minHeight: MIN_TOUCH_TARGET,
@@ -272,7 +476,7 @@ const styles = StyleSheet.create({
   toolDescription: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
+    marginTop: 2,
   },
   toolReason: {
     ...typography.caption,
@@ -286,7 +490,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: colors.warning,
-    backgroundColor: colors.surface,
+    backgroundColor: colors.backgroundRaised,
   },
   confirmTitle: {
     ...typography.sectionTitle,
@@ -317,6 +521,47 @@ const styles = StyleSheet.create({
   outcome: {
     ...typography.body,
     color: colors.textPrimary,
+  },
+  outcomeCard: {
     marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.backgroundRaised,
+  },
+  nextStepText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: '700',
+    marginTop: spacing.sm,
+  },
+  runningBanner: {
+    marginTop: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accentStrong,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    alignItems: 'center',
+  },
+  runningDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: colors.accent,
+  },
+  runningCopy: { flex: 1 },
+  runningTitle: {
+    ...typography.body,
+    color: colors.textPrimary,
+    fontWeight: '700',
+  },
+  runningBody: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: 2,
   },
 });

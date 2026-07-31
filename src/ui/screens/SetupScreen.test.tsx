@@ -3013,9 +3013,9 @@ describe('SetupScreen - reset contract and apparent self-tilt', () => {
     expect(offset.rollDeg).toBe(0);
     expect(offset.pitchDeg).toBe(0);
     expect(offset.yawDeg).toBe(200);
-    // Roll 12.3 -> 12, pitch -(-45.6) -> 46 on screen, unchanged by reset.
-    expect(allText(renderer)).toContain('12°');
-    expect(allText(renderer)).toContain('46°');
+    // The precise 0.1° readings stay untouched by a heading-only reset.
+    expect(allText(renderer)).toContain('12.3°');
+    expect(allText(renderer)).toContain('45.6°');
   });
 
   it('is IDEMPOTENT - ten taps with no newer sample cannot accumulate a second rotation', async () => {

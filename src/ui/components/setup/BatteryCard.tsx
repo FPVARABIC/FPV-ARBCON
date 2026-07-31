@@ -15,10 +15,10 @@
  *    firmware's own verified meaning) while STILL showing the real
  *    measured voltage - a genuine reading is never hidden, and missing
  *    data is never turned into "0.00 V";
- *  - current / consumed-mAh are NOT rendered: MSP_BATTERY_STATE carries
- *    no current-meter-presence flag (SENSOR_VALIDITY UNPROVEN in the
- *    foundation), and the approved copy shows field labels only "when
- *    their values are semantically trustworthy";
+ *  - current / consumed-mAh are rendered only when the FC reports both a
+ *    detected pack and a non-zero value, explicitly labelled as reported.
+ *    Zero and not-present states remain hidden because this command cannot
+ *    distinguish residual registers from an absent meter;
  *  - no percentage, level bar, state-of-charge estimate, thresholds, or
  *    app-derived health - the approved "نسبة الشحن غير متاحة" line
  *    honestly replaces the reference mock's percentage bar;
@@ -85,12 +85,36 @@ export default function BatteryCard({
       : stateKey !== undefined
       ? t(stateKey)
       : t('batteryCard.stateUnknown');
+  // A NOT_DETECTED pack can leave non-zero measurement registers behind.
+  // Keep the real voltage visible for diagnosis, but do not present those
+  // residual registers as current/consumption for a battery the FC itself
+  // says it has not detected.
+  const canShowReportedDetails =
+    semantics.detection === 'DETECTED' &&
+    semantics.firmwareState !== 'NOT_PRESENT';
+  const currentText =
+    canShowReportedDetails &&
+    semantics.current.sensorValidity === 'REPORTED_NONZERO'
+      ? t('batteryCard.reportedCurrent', {
+          value: (semantics.current.centiamps / 100).toFixed(2),
+        })
+      : undefined;
+  const consumedText =
+    canShowReportedDetails &&
+    semantics.consumed.sensorValidity === 'REPORTED_NONZERO'
+      ? t('batteryCard.reportedConsumed', {
+          value: semantics.consumed.mah,
+        })
+      : undefined;
+  const reportedDetails = [currentText, consumedText].filter(
+    (value): value is string => value !== undefined,
+  );
 
   const accessibilityLabel = `${t('batteryCard.title')}، ${t(
     'batteryCard.voltageLabel',
   )} ${voltageText}، ${stateText}${
     isStale ? `، ${t('batteryCard.stale')}` : ''
-  }`;
+  }${reportedDetails.length > 0 ? `، ${reportedDetails.join('، ')}` : ''}`;
 
   return (
     <View
@@ -110,6 +134,15 @@ export default function BatteryCard({
         <Text style={styles.stateText} testID="battery-card-state">
           {stateText}
         </Text>
+        {reportedDetails.map((detail, index) => (
+          <Text
+            key={detail}
+            style={styles.reportedText}
+            testID={`battery-card-reported-${index}`}
+          >
+            {detail}
+          </Text>
+        ))}
         <Text style={styles.captionText}>
           {t('batteryCard.percentageUnavailable')}
         </Text>
@@ -186,6 +219,11 @@ const styles = StyleSheet.create({
   captionText: {
     ...typography.caption,
     color: colors.textSecondary,
+    marginTop: spacing.xs,
+  },
+  reportedText: {
+    ...typography.caption,
+    color: colors.info,
     marginTop: spacing.xs,
   },
   messageText: {

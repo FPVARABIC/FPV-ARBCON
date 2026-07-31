@@ -16,19 +16,26 @@ jest.mock('../../orientation3d', () => ({
 }));
 
 import React from 'react';
-import {Text} from 'react-native';
-import ReactTestRenderer, {act} from 'react-test-renderer';
+import { StyleSheet, Text, View } from 'react-native';
+import ReactTestRenderer, { act } from 'react-test-renderer';
 
-import OrientationHero, {computeOrientationHeroSize} from './OrientationHero';
-import {OrientationRenderer} from '../../orientation3d';
+import OrientationHero, {
+  computeOrientationHeroSize,
+  formatTiltDegrees,
+} from './OrientationHero';
+import { OrientationRenderer } from '../../orientation3d';
 import '../../../i18n';
 import i18n from '../../../i18n';
-import type {OrientationViewState} from '../../../core';
+import type { OrientationViewState } from '../../../core';
 
 const rendererMock = OrientationRenderer as unknown as jest.Mock;
 
 /** The pose handed to the 3D model on its most recent render. */
-function lastModelPose(): {rollDeg: number; pitchDeg: number; yawDeg: number} {
+function lastModelPose(): {
+  rollDeg: number;
+  pitchDeg: number;
+  yawDeg: number;
+} {
   const calls = rendererMock.mock.calls;
   expect(calls.length).toBeGreaterThan(0);
   return calls[calls.length - 1][0].orientation;
@@ -59,8 +66,11 @@ function allText(renderer: ReactTestRenderer.ReactTestRenderer): string[] {
   });
 }
 
-function findByTestID(renderer: ReactTestRenderer.ReactTestRenderer, testID: string) {
-  const matches = renderer.root.findAllByProps({testID});
+function findByTestID(
+  renderer: ReactTestRenderer.ReactTestRenderer,
+  testID: string,
+) {
+  const matches = renderer.root.findAllByProps({ testID });
   return matches.length > 0 ? matches[0] : null;
 }
 
@@ -82,7 +92,8 @@ function render(
   update: (next: OrientationViewState, sampleSeq?: number) => void;
 } {
   const onResetView = (overrides.onResetView as jest.Mock) ?? jest.fn();
-  const onResetHintShown = (overrides.onResetHintShown as jest.Mock) ?? jest.fn();
+  const onResetHintShown =
+    (overrides.onResetHintShown as jest.Mock) ?? jest.fn();
   const element = (view: OrientationViewState, sampleSeq?: number) => (
     <OrientationHero
       orientationView={view}
@@ -105,10 +116,15 @@ function render(
       renderer.update(element(next, sampleSeq));
     });
   };
-  return {renderer, onResetView, onResetHintShown, update};
+  return { renderer, onResetView, onResetHintShown, update };
 }
 
 describe('OrientationHero', () => {
+  it('shows the same sub-degree tilt the model receives instead of rounding it to a misleading zero', () => {
+    expect(formatTiltDegrees(0.4)).toBe('0.4°');
+    expect(formatTiltDegrees(-0.4)).toBe('-0.4°');
+    expect(formatTiltDegrees(-0.01)).toBe('0°');
+  });
   it('sizes the 3D stage for a narrow phone, a standard phone and a tablet', () => {
     expect(computeOrientationHeroSize(320)).toBe(260);
     expect(computeOrientationHeroSize(390)).toBe(330);
@@ -116,18 +132,16 @@ describe('OrientationHero', () => {
   });
 
   it('WAITING: shows the waiting message, no 3D model, no readouts, no reset button', () => {
-    const {renderer} = render({status: 'WAITING'});
+    const { renderer } = render({ status: 'WAITING' });
     expect(findByTestID(renderer, 'orientation-hero-waiting')).not.toBeNull();
-    expect(allText(renderer)).toContain(
-      i18n.t('orientationHero.waitingLabel'),
-    );
+    expect(allText(renderer)).toContain(i18n.t('orientationHero.waitingLabel'));
     expect(allText(renderer)).not.toContain(i18n.t('orientationHero.live'));
     expect(findByTestID(renderer, 'orientation-hero-reset-button')).toBeNull();
     expect(findByTestID(renderer, 'orientation-hero-roll')).toBeNull();
   });
 
   it('ERROR: shows the error message, no 3D model, no readouts', () => {
-    const {renderer} = render({status: 'ERROR'});
+    const { renderer } = render({ status: 'ERROR' });
     expect(findByTestID(renderer, 'orientation-hero-error')).not.toBeNull();
     expect(allText(renderer)).toContain(
       i18n.t('orientationHero.unavailableLabel'),
@@ -136,22 +150,66 @@ describe('OrientationHero', () => {
     expect(findByTestID(renderer, 'orientation-hero-reset-button')).toBeNull();
   });
 
-  it('LIVE: renders the 3D model wrapper, 3 rounded numeric readouts, and the reset button, with no stale label', () => {
-    const {renderer} = render({status: 'LIVE', rollDeg: 4.6, pitchDeg: -1.4, yawDeg: 273.5});
+  it('LIVE: renders the 3D model wrapper, precise tilt readouts, and the reset button, with no stale label', () => {
+    const { renderer } = render({
+      status: 'LIVE',
+      rollDeg: 4.6,
+      pitchDeg: -1.4,
+      yawDeg: 273.5,
+    });
     expect(findByTestID(renderer, 'orientation-hero')).not.toBeNull();
     expect(findByTestID(renderer, 'orientation-hero-stale-label')).toBeNull();
     expect(findByTestID(renderer, 'orientation-hero-roll')).not.toBeNull();
     const text = allText(renderer);
-    expect(text).toContain('5°'); // rollDeg rounded
-    expect(text).toContain('-1°'); // pitchDeg rounded
+    expect(text).toContain('4.6°');
+    expect(text).toContain('-1.4°');
     expect(text).toContain('274°'); // yawDeg rounded
-    expect(findByTestID(renderer, 'orientation-hero-reset-button')).not.toBeNull();
+    expect(
+      findByTestID(renderer, 'orientation-hero-reset-button'),
+    ).not.toBeNull();
     expect(allText(renderer)).toContain('مباشر');
   });
 
+  it('places the two live instruments directly after the 3D model and before the numeric readouts', () => {
+    const { renderer } = render({
+      status: 'LIVE',
+      rollDeg: 8.5,
+      pitchDeg: -3,
+      yawDeg: 42,
+    });
+    const ordered = renderer.root
+      .findAll(
+        node =>
+          node.type === View &&
+          (node.props.testID === 'orientation-hero-renderer-wrapper' ||
+            node.props.testID === 'flight-instruments' ||
+            node.props.testID === 'orientation-hero-roll'),
+      )
+      .map(node => node.props.testID);
+    expect(ordered).toEqual([
+      'orientation-hero-renderer-wrapper',
+      'flight-instruments',
+      'orientation-hero-roll',
+    ]);
+    expect(
+      findByTestID(renderer, 'artificial-horizon')?.props.accessibilityLabel,
+    ).toContain('8.5');
+    expect(
+      findByTestID(renderer, 'direction-compass')?.props.accessibilityLabel,
+    ).toContain('42');
+  });
+
   it('STALE: freezes the model/readouts at their last values, dimmed, and shows the stale label', () => {
-    const {renderer} = render({status: 'STALE', rollDeg: 10, pitchDeg: -5, yawDeg: 90, ageMs: 900});
-    expect(findByTestID(renderer, 'orientation-hero-stale-label')).not.toBeNull();
+    const { renderer } = render({
+      status: 'STALE',
+      rollDeg: 10,
+      pitchDeg: -5,
+      yawDeg: 90,
+      ageMs: 900,
+    });
+    expect(
+      findByTestID(renderer, 'orientation-hero-stale-label'),
+    ).not.toBeNull();
     const text = allText(renderer);
     expect(text).toContain('10°');
     expect(text).toContain('-5°');
@@ -161,54 +219,88 @@ describe('OrientationHero', () => {
   });
 
   it('sets an accessibility label from describeOrientationForAccessibility() on the renderer wrapper', () => {
-    const {renderer} = render({status: 'LIVE', rollDeg: 4, pitchDeg: 2, yawDeg: 274});
+    const { renderer } = render({
+      status: 'LIVE',
+      rollDeg: 4,
+      pitchDeg: 2,
+      yawDeg: 274,
+    });
     const wrapper = findByTestID(renderer, 'orientation-hero-renderer-wrapper');
-    expect(wrapper?.props.accessibilityLabel).toBe('ميلان 4 درجة لليمين، ارتفاع المقدمة 2 درجة، الاتجاه 274 درجة');
+    expect(wrapper?.props.accessibilityLabel).toBe(
+      'ميلان 4 درجة لليمين، ارتفاع المقدمة 2 درجة، الاتجاه 274 درجة',
+    );
   });
 
   describe('reset button + one-time hint', () => {
     it('pressing reset always calls onResetView()', async () => {
-      const {renderer, onResetView} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0}, {hasSeenResetHint: true});
+      const { renderer, onResetView } = render(
+        { status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
+        { hasSeenResetHint: true },
+      );
       await act(async () => {
-        findByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+        findByTestID(
+          renderer,
+          'orientation-hero-reset-button',
+        )!.props.onPress();
       });
       expect(onResetView).toHaveBeenCalledTimes(1);
     });
 
     it('when hasSeenResetHint is true, no hint appears and onResetHintShown() is never called', async () => {
-      const {renderer, onResetHintShown} = render(
-        {status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0},
-        {hasSeenResetHint: true},
+      const { renderer, onResetHintShown } = render(
+        { status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
+        { hasSeenResetHint: true },
       );
       await act(async () => {
-        findByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+        findByTestID(
+          renderer,
+          'orientation-hero-reset-button',
+        )!.props.onPress();
       });
       expect(findByTestID(renderer, 'orientation-hero-reset-hint')).toBeNull();
       expect(onResetHintShown).not.toHaveBeenCalled();
     });
 
     it('when hasSeenResetHint is false, the FIRST press shows the hint and calls onResetHintShown() exactly once', async () => {
-      const {renderer, onResetHintShown} = render(
-        {status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0},
-        {hasSeenResetHint: false},
+      const { renderer, onResetHintShown } = render(
+        { status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
+        { hasSeenResetHint: false },
       );
       await act(async () => {
-        findByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+        findByTestID(
+          renderer,
+          'orientation-hero-reset-button',
+        )!.props.onPress();
       });
-      expect(findByTestID(renderer, 'orientation-hero-reset-hint')).not.toBeNull();
-      expect(allText(renderer)).toContain('هذا يعيد ضبط زاوية العرض على الشاشة فقط: يجعل الاتجاه المعروض يبدأ من صفر بالنسبة للوضع الحالي. لا يُرسل أي أمر إلى وحدة التحكم بالطيران ولا يُجري أي معايرة لمستشعراتها.');
+      expect(
+        findByTestID(renderer, 'orientation-hero-reset-hint'),
+      ).not.toBeNull();
+      expect(allText(renderer)).toContain(
+        'هذا يعيد ضبط زاوية العرض على الشاشة فقط: يجعل الاتجاه المعروض يبدأ من صفر بالنسبة للوضع الحالي. لا يُرسل أي أمر إلى وحدة التحكم بالطيران ولا يُجري أي معايرة لمستشعراتها.',
+      );
       expect(onResetHintShown).toHaveBeenCalledTimes(1);
     });
 
     it('dismissing the hint hides it', async () => {
-      const {renderer} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0}, {hasSeenResetHint: false});
+      const { renderer } = render(
+        { status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
+        { hasSeenResetHint: false },
+      );
       await act(async () => {
-        findByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+        findByTestID(
+          renderer,
+          'orientation-hero-reset-button',
+        )!.props.onPress();
       });
-      expect(findByTestID(renderer, 'orientation-hero-reset-hint')).not.toBeNull();
+      expect(
+        findByTestID(renderer, 'orientation-hero-reset-hint'),
+      ).not.toBeNull();
 
       await act(async () => {
-        findByTestID(renderer, 'orientation-hero-reset-hint-dismiss')!.props.onPress();
+        findByTestID(
+          renderer,
+          'orientation-hero-reset-hint-dismiss',
+        )!.props.onPress();
       });
       expect(findByTestID(renderer, 'orientation-hero-reset-hint')).toBeNull();
     });
@@ -218,9 +310,17 @@ describe('OrientationHero', () => {
       // has no MSP-related prop at all (verified by this file's own
       // props usage above), so there is nothing here that COULD send an
       // MSP command - resetting is provably view-only by construction.
-      const {renderer, onResetView} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+      const { renderer, onResetView } = render({
+        status: 'LIVE',
+        rollDeg: 0,
+        pitchDeg: 0,
+        yawDeg: 0,
+      });
       await act(async () => {
-        findByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+        findByTestID(
+          renderer,
+          'orientation-hero-reset-button',
+        )!.props.onPress();
       });
       expect(onResetView).toHaveBeenCalledTimes(1);
     });
@@ -233,23 +333,33 @@ describe('OrientationHero', () => {
    */
   describe('reset availability', () => {
     it('unavailable: the button is disabled, announced as disabled, and explains why', () => {
-      const {renderer} = render({status: 'STALE', rollDeg: 1, pitchDeg: 2, yawDeg: 3, ageMs: 900}, {canReset: false});
+      const { renderer } = render(
+        { status: 'STALE', rollDeg: 1, pitchDeg: 2, yawDeg: 3, ageMs: 900 },
+        { canReset: false },
+      );
 
       const button = findByTestID(renderer, 'orientation-hero-reset-button');
       expect(button?.props.disabled).toBe(true);
-      expect(button?.props.accessibilityState).toEqual({disabled: true});
-      expect(findByTestID(renderer, 'orientation-hero-reset-unavailable')).not.toBeNull();
-      expect(allText(renderer)).toContain(i18n.t('orientationHero.resetUnavailable'));
+      expect(button?.props.accessibilityState).toEqual({ disabled: true });
+      expect(
+        findByTestID(renderer, 'orientation-hero-reset-unavailable'),
+      ).not.toBeNull();
+      expect(allText(renderer)).toContain(
+        i18n.t('orientationHero.resetUnavailable'),
+      );
     });
 
     it('unavailable: a press delivered anyway captures NOTHING and shows no hint', async () => {
-      const {renderer, onResetView, onResetHintShown} = render(
-        {status: 'STALE', rollDeg: 1, pitchDeg: 2, yawDeg: 3, ageMs: 900},
-        {canReset: false, hasSeenResetHint: false},
+      const { renderer, onResetView, onResetHintShown } = render(
+        { status: 'STALE', rollDeg: 1, pitchDeg: 2, yawDeg: 3, ageMs: 900 },
+        { canReset: false, hasSeenResetHint: false },
       );
 
       await act(async () => {
-        findByTestID(renderer, 'orientation-hero-reset-button')!.props.onPress();
+        findByTestID(
+          renderer,
+          'orientation-hero-reset-button',
+        )!.props.onPress();
       });
 
       expect(onResetView).not.toHaveBeenCalled();
@@ -258,12 +368,17 @@ describe('OrientationHero', () => {
     });
 
     it('available: the button is enabled, announced as enabled, and carries no unavailable note', () => {
-      const {renderer} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0}, {canReset: true});
+      const { renderer } = render(
+        { status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
+        { canReset: true },
+      );
 
       const button = findByTestID(renderer, 'orientation-hero-reset-button');
       expect(button?.props.disabled).toBe(false);
-      expect(button?.props.accessibilityState).toEqual({disabled: false});
-      expect(findByTestID(renderer, 'orientation-hero-reset-unavailable')).toBeNull();
+      expect(button?.props.accessibilityState).toEqual({ disabled: false });
+      expect(
+        findByTestID(renderer, 'orientation-hero-reset-unavailable'),
+      ).toBeNull();
     });
   });
 
@@ -289,28 +404,61 @@ describe('OrientationHero', () => {
     }
 
     it('the FIRST sample of a session reaches the model exactly as reported', () => {
-      render({status: 'LIVE', rollDeg: 12, pitchDeg: -4, yawDeg: 200});
-      expect(lastModelPose()).toEqual({rollDeg: 12, pitchDeg: -4, yawDeg: 200});
+      render({ status: 'LIVE', rollDeg: 12, pitchDeg: -4, yawDeg: 200 });
+      expect(lastModelPose()).toEqual({
+        rollDeg: 12,
+        pitchDeg: -4,
+        yawDeg: 200,
+      });
     });
 
     it('a burst of 100 samples ends on sample 100 in BOTH the model and the numbers, and cannot be undone', async () => {
       jest.useFakeTimers();
       try {
-        const {renderer, update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0}, {sessionToken: 's:1'});
+        const { renderer, update } = render(
+          { status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0 },
+          { sessionToken: 's:1' },
+        );
 
         for (let seq = 1; seq <= 100; seq++) {
-          update({status: 'LIVE', rollDeg: seq % 31, pitchDeg: -(seq % 17), yawDeg: (seq * 3) % 360}, seq);
+          update(
+            {
+              status: 'LIVE',
+              rollDeg: seq % 31,
+              pitchDeg: -(seq % 17),
+              yawDeg: (seq * 3) % 360,
+            },
+            seq,
+          );
         }
 
-        const final = {rollDeg: 100 % 31, pitchDeg: -(100 % 17), yawDeg: (100 * 3) % 360};
+        const final = {
+          rollDeg: 100 % 31,
+          pitchDeg: -(100 % 17),
+          yawDeg: (100 * 3) % 360,
+        };
         expect(lastModelPose()).toEqual(final);
         expect(allText(renderer)).toContain(`${final.rollDeg}°`);
         expect(allText(renderer)).toContain(`${final.yawDeg}°`);
+        expect(
+          findByTestID(renderer, 'artificial-horizon')?.props
+            .accessibilityLabel,
+        ).toContain(String(final.rollDeg));
+        expect(
+          StyleSheet.flatten(
+            findByTestID(renderer, 'direction-compass-dial')?.props.style,
+          ).transform,
+        ).toEqual([{ rotate: `-${final.yawDeg}deg` }]);
 
         // Nothing queued anywhere may resurrect samples 1-99.
         await flushEverythingDeferred();
         expect(lastModelPose()).toEqual(final);
         expect(allText(renderer)).toContain(`${final.yawDeg}°`);
+        expect(
+          StyleSheet.flatten(
+            findByTestID(renderer, 'direction-compass-dial')?.props.style,
+          ).transform,
+        ).toEqual([{ rotate: `-${final.yawDeg}deg` }]);
       } finally {
         jest.clearAllTimers();
         jest.useRealTimers();
@@ -318,66 +466,105 @@ describe('OrientationHero', () => {
     });
 
     it.each([
-      ['level', {rollDeg: 0, pitchDeg: 0, yawDeg: 0}],
-      ['roll right', {rollDeg: 27, pitchDeg: 0, yawDeg: 0}],
-      ['roll left', {rollDeg: -27, pitchDeg: 0, yawDeg: 0}],
-      ['pitch up', {rollDeg: 0, pitchDeg: 33, yawDeg: 0}],
-      ['pitch down', {rollDeg: 0, pitchDeg: -33, yawDeg: 0}],
-      ['heading just below the wrap', {rollDeg: 0, pitchDeg: 0, yawDeg: 359}],
-      ['heading just past the wrap', {rollDeg: 0, pitchDeg: 0, yawDeg: 1}],
-      ['compound', {rollDeg: -14, pitchDeg: 21, yawDeg: 274}],
-    ])('%s: the model receives EXACTLY the displayed numbers', (_label, pose) => {
-      const {renderer} = render({status: 'LIVE', ...pose});
+      ['level', { rollDeg: 0, pitchDeg: 0, yawDeg: 0 }],
+      ['roll right', { rollDeg: 27, pitchDeg: 0, yawDeg: 0 }],
+      ['roll left', { rollDeg: -27, pitchDeg: 0, yawDeg: 0 }],
+      ['pitch up', { rollDeg: 0, pitchDeg: 33, yawDeg: 0 }],
+      ['pitch down', { rollDeg: 0, pitchDeg: -33, yawDeg: 0 }],
+      ['heading just below the wrap', { rollDeg: 0, pitchDeg: 0, yawDeg: 359 }],
+      ['heading just past the wrap', { rollDeg: 0, pitchDeg: 0, yawDeg: 1 }],
+      ['compound', { rollDeg: -14, pitchDeg: 21, yawDeg: 274 }],
+    ])(
+      '%s: the model receives EXACTLY the displayed numbers',
+      (_label, pose) => {
+        const { renderer } = render({ status: 'LIVE', ...pose });
 
-      expect(lastModelPose()).toEqual(pose);
-      const text = allText(renderer);
-      expect(text).toContain(`${Math.round(pose.rollDeg)}°`);
-      expect(text).toContain(`${Math.round(pose.pitchDeg)}°`);
-      expect(text).toContain(`${Math.round(pose.yawDeg)}°`);
-    });
+        expect(lastModelPose()).toEqual(pose);
+        const text = allText(renderer);
+        expect(text).toContain(`${Math.round(pose.rollDeg)}°`);
+        expect(text).toContain(`${Math.round(pose.pitchDeg)}°`);
+        expect(text).toContain(`${Math.round(pose.yawDeg)}°`);
+      },
+    );
 
     it('crossing 359 -> 0 hands the model the reported heading, never a swept value in between', () => {
-      const {update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 359});
+      const { update } = render({
+        status: 'LIVE',
+        rollDeg: 0,
+        pitchDeg: 0,
+        yawDeg: 359,
+      });
       expect(lastModelPose().yawDeg).toBe(359);
 
-      update({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 1});
+      update({ status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 1 });
       // 1, not 180 and not 359: no interpolation exists to produce an
       // intermediate heading at all.
       expect(lastModelPose().yawDeg).toBe(1);
     });
 
     it('the numbers and the accessibility text follow the GENUINE sample', () => {
-      const {renderer, update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+      const { renderer, update } = render({
+        status: 'LIVE',
+        rollDeg: 0,
+        pitchDeg: 0,
+        yawDeg: 0,
+      });
 
-      update({status: 'LIVE', rollDeg: 30, pitchDeg: -20, yawDeg: 150});
+      update({ status: 'LIVE', rollDeg: 30, pitchDeg: -20, yawDeg: 150 });
 
       const text = allText(renderer);
       expect(text).toContain('30°');
       expect(text).toContain('-20°');
       expect(text).toContain('150°');
-      expect(findByTestID(renderer, 'orientation-hero-renderer-wrapper')?.props.accessibilityLabel).toBe(
-        'ميلان 30 درجة لليمين، انخفاض المقدمة 20 درجة، الاتجاه 150 درجة',
-      );
-      expect(lastModelPose()).toEqual({rollDeg: 30, pitchDeg: -20, yawDeg: 150});
+      expect(
+        findByTestID(renderer, 'orientation-hero-renderer-wrapper')?.props
+          .accessibilityLabel,
+      ).toBe('ميلان 30 درجة لليمين، انخفاض المقدمة 20 درجة، الاتجاه 150 درجة');
+      expect(lastModelPose()).toEqual({
+        rollDeg: 30,
+        pitchDeg: -20,
+        yawDeg: 150,
+      });
     });
 
     it('STALE hands the model the FROZEN genuine sample and invents no continued movement', () => {
-      const {update} = render({status: 'LIVE', rollDeg: 10, pitchDeg: 5, yawDeg: 90});
+      const { update } = render({
+        status: 'LIVE',
+        rollDeg: 10,
+        pitchDeg: 5,
+        yawDeg: 90,
+      });
       rendererMock.mockClear();
 
-      update({status: 'STALE', rollDeg: 10, pitchDeg: 5, yawDeg: 90, ageMs: 1200});
+      update({
+        status: 'STALE',
+        rollDeg: 10,
+        pitchDeg: 5,
+        yawDeg: 90,
+        ageMs: 1200,
+      });
 
-      expect(lastModelPose()).toEqual({rollDeg: 10, pitchDeg: 5, yawDeg: 90});
-      expect(rendererMock.mock.calls[rendererMock.mock.calls.length - 1][0].stale).toBe(true);
+      expect(lastModelPose()).toEqual({ rollDeg: 10, pitchDeg: 5, yawDeg: 90 });
+      expect(
+        rendererMock.mock.calls[rendererMock.mock.calls.length - 1][0].stale,
+      ).toBe(true);
     });
 
     it('a SESSION change shows the new session sample immediately, with no trace of the old attitude', () => {
-      const {renderer} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 350}, {sessionToken: 's:1'});
+      const { renderer } = render(
+        { status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 350 },
+        { sessionToken: 's:1' },
+      );
 
       act(() => {
         renderer.update(
           <OrientationHero
-            orientationView={{status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 20}}
+            orientationView={{
+              status: 'LIVE',
+              rollDeg: 0,
+              pitchDeg: 0,
+              yawDeg: 20,
+            }}
             hasSeenResetHint
             sessionToken="s:2"
             sampleSeq={1}
@@ -387,16 +574,24 @@ describe('OrientationHero', () => {
         );
       });
 
-      expect(lastModelPose()).toEqual({rollDeg: 0, pitchDeg: 0, yawDeg: 20});
+      expect(lastModelPose()).toEqual({ rollDeg: 0, pitchDeg: 0, yawDeg: 20 });
     });
 
     it('rendering samples schedules NO animation frame and NO timer from this component', () => {
       const raf = jest.spyOn(globalThis, 'requestAnimationFrame');
       const interval = jest.spyOn(globalThis, 'setInterval');
       try {
-        const {update} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+        const { update } = render({
+          status: 'LIVE',
+          rollDeg: 0,
+          pitchDeg: 0,
+          yawDeg: 0,
+        });
         for (let seq = 1; seq <= 25; seq++) {
-          update({status: 'LIVE', rollDeg: seq, pitchDeg: -seq, yawDeg: seq * 4}, seq);
+          update(
+            { status: 'LIVE', rollDeg: seq, pitchDeg: -seq, yawDeg: seq * 4 },
+            seq,
+          );
         }
         expect(raf).not.toHaveBeenCalled();
         expect(interval).not.toHaveBeenCalled();
@@ -407,14 +602,23 @@ describe('OrientationHero', () => {
     });
 
     it('non-finite angles are handed through unchanged rather than being smoothed into something invented', () => {
-      render({status: 'LIVE', rollDeg: Number.NaN, pitchDeg: 0, yawDeg: 0});
+      render({ status: 'LIVE', rollDeg: Number.NaN, pitchDeg: 0, yawDeg: 0 });
       expect(Number.isNaN(lastModelPose().rollDeg)).toBe(true);
     });
   });
 
   it('states plainly that Heading is relative, never claiming a magnetic compass', () => {
-    const {renderer} = render({status: 'LIVE', rollDeg: 0, pitchDeg: 0, yawDeg: 274});
-    expect(findByTestID(renderer, 'orientation-hero-heading-note')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('orientationHero.headingRelativeNote'));
+    const { renderer } = render({
+      status: 'LIVE',
+      rollDeg: 0,
+      pitchDeg: 0,
+      yawDeg: 274,
+    });
+    expect(
+      findByTestID(renderer, 'orientation-hero-heading-note'),
+    ).not.toBeNull();
+    expect(allText(renderer)).toContain(
+      i18n.t('orientationHero.headingRelativeNote'),
+    );
   });
 });

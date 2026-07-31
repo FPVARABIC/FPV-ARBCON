@@ -1,7 +1,9 @@
 /**
- * Pass 7.4, Step 5 - the real Setup screen, assembled from Regions 1+2
- * ONLY (TopSystemBar, OrientationHero, SafetyStrip) - Regions 3/4/5 are
- * genuinely absent, not placeholders, per this pass's own scope.
+ * The real Setup screen: connection state, live orientation model and
+ * instruments, calibration/maintenance tools, read-only stability check,
+ * arming readiness, telemetry summaries and detailed diagnostics. Protocol
+ * ownership stays in the coordinator; this screen only subscribes to its
+ * existing stores and dispatches through the established tool controller.
  *
  * The missing-sessionKey fallback (Pass 7.1's own defense-in-depth) is
  * unchanged: the only real call site (UsbConnectionScreen.tsx's
@@ -62,6 +64,7 @@ import { colors, spacing, typography } from '../theme';
 import {
   TopSystemBar,
   OrientationHero,
+  OrientationStabilityPanel,
   SafetyStrip,
   BatteryCard,
   ReceiverCard,
@@ -77,6 +80,7 @@ import {
   useMspRecoveryState,
   useSetupAppStatePhase,
   useFcToolArmedState,
+  useFcToolPublication,
   fcToolsController,
   useAuxTelemetryChannelState,
   useBatteryLatchedValue,
@@ -127,7 +131,10 @@ export default function SetupScreen({
   if (!sessionKey) {
     return (
       <View style={styles.missingSessionRoot}>
-        <Text style={styles.missingSessionTitle} testID="setup-screen-missing-session">
+        <Text
+          style={styles.missingSessionTitle}
+          testID="setup-screen-missing-session"
+        >
           {t('setupMissingSession.title')}
         </Text>
         <Text style={styles.placeholderText}>
@@ -162,6 +169,7 @@ function SetupScreenContent({
   sessionKey: SetupUiSessionKey;
   onBack: () => void;
 }): React.JSX.Element {
+  const { t } = useTranslation();
   const { sessionId } = sessionKey;
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const useSingleColumnCards = shouldUseSingleColumnTelemetryCards(
@@ -331,8 +339,8 @@ function SetupScreenContent({
           onResetHintShown={handleResetHintShown}
         />
         {/* FINAL-POLISH PASS: "أدوات وحدة التحكم" moved to sit directly
-            below the COMPLETE Orientation section (model, readouts,
-            note, reset button) - the calibration and reboot controls
+            below the COMPLETE Orientation section (model, instruments,
+            readouts, note, reset button) - calibration and reboot controls
             belong next to the thing they act on, not below the
             diagnostics. This is the SAME component invocation with the
             same props, relocated; nothing about its gating, its
@@ -358,6 +366,13 @@ function SetupScreenContent({
                 : undefined,
           }}
         />
+        <LiveOrientationStabilityPanel sessionKey={sessionKey} />
+        <SetupSectionHeading
+          eyebrow={t('setupSections.readiness.eyebrow')}
+          title={t('setupSections.readiness.title')}
+          description={t('setupSections.readiness.description')}
+          testID="setup-readiness-heading"
+        />
         <SafetyStrip readiness={armingReadiness} />
         {/* Pass 7.6c: the complete Region 3 2x2 card grid at the audited
             insertion point (after the approved Region 1+2 sequence).
@@ -366,6 +381,12 @@ function SetupScreenContent({
             row-wrapping renders row 1 as Battery (right) / Receiver
             (left) and row 2 as GPS (right) / FC (left). Display-only -
             no press actions, no navigation, no horizontal scroll. */}
+        <SetupSectionHeading
+          eyebrow={t('setupSections.overview.eyebrow')}
+          title={t('setupSections.overview.title')}
+          description={t('setupSections.overview.description')}
+          testID="setup-overview-heading"
+        />
         <View style={styles.cardGrid} testID="telemetry-card-grid">
           <View
             style={[
@@ -423,6 +444,31 @@ function SetupScreenContent({
   );
 }
 
+function SetupSectionHeading({
+  eyebrow,
+  title,
+  description,
+  testID,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  testID: string;
+}): React.JSX.Element {
+  return (
+    <View style={styles.sectionHeading} testID={testID}>
+      <View style={styles.sectionHeadingMark} />
+      <View style={styles.sectionHeadingCopy}>
+        <Text style={styles.sectionEyebrow}>{eyebrow}</Text>
+        <Text style={styles.sectionTitle} accessibilityRole="header">
+          {title}
+        </Text>
+        <Text style={styles.sectionDescription}>{description}</Text>
+      </View>
+    </View>
+  );
+}
+
 /**
  * Owns the high-frequency attitude subscription so a 20Hz orientation
  * stream only re-renders the model/readouts subtree. Before this boundary,
@@ -454,6 +500,9 @@ function LiveOrientationHero({
   );
   const hasSample = attitude.status === 'FRESH' || attitude.status === 'STALE';
 
+  const sampleSeq = hasSample ? attitude.sampleSeq : undefined;
+  const sampleReceivedAt = hasSample ? attitude.updatedAtMs : undefined;
+
   return (
     <OrientationHero
       orientationView={orientationView}
@@ -462,11 +511,42 @@ function LiveOrientationHero({
       // comparable within one physical session, so it travels with the
       // composite key; neither value affects what is drawn.
       sessionToken={`${sessionKey.sessionId}:${sessionKey.generation}`}
-      sampleSeq={hasSample ? attitude.sampleSeq : undefined}
-      sampleReceivedAt={hasSample ? attitude.updatedAtMs : undefined}
+      sampleSeq={sampleSeq}
+      sampleReceivedAt={sampleReceivedAt}
       canReset={attitude.status === 'FRESH' && ownershipState === 'ACTIVE'}
       onResetView={onResetView}
       onResetHintShown={onResetHintShown}
+    />
+  );
+}
+
+/** A second narrow 20Hz boundary: it observes the same scheduler cache as
+ * the model (no duplicate MSP poll) and keeps capture progress away from
+ * the rest of Setup. */
+function LiveOrientationStabilityPanel({
+  sessionKey,
+}: {
+  sessionKey: SetupUiSessionKey;
+}): React.JSX.Element {
+  const attitude = useTelemetryValue<MspAttitude>(
+    sessionKey.sessionId,
+    ATTITUDE_TELEMETRY_POLL_ID,
+  );
+  const orientationView = deriveOrientationViewState(attitude);
+  const hasSample = attitude.status === 'FRESH' || attitude.status === 'STALE';
+  const outcome = useFcToolPublication(sessionKey.sessionId);
+  const autoStartSignal =
+    outcome?.kind === 'ACCEPTED' && outcome.tool === 'ACC_CALIBRATION'
+      ? outcome
+      : undefined;
+
+  return (
+    <OrientationStabilityPanel
+      key={`${sessionKey.sessionId}:${sessionKey.generation}`}
+      orientationView={orientationView}
+      sampleSeq={hasSample ? attitude.sampleSeq : undefined}
+      sampleReceivedAt={hasSample ? attitude.updatedAtMs : undefined}
+      autoStartSignal={autoStartSignal}
     />
   );
 }
@@ -494,6 +574,31 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     marginTop: spacing.xs,
     paddingHorizontal: spacing.sm,
+  },
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+    gap: spacing.md,
+    marginTop: spacing.xl,
+    marginHorizontal: spacing.md,
+    paddingHorizontal: spacing.xs,
+  },
+  sectionHeadingMark: {
+    width: 3,
+    borderRadius: 2,
+    backgroundColor: colors.accent,
+  },
+  sectionHeadingCopy: { flex: 1 },
+  sectionEyebrow: { ...typography.eyebrow, color: colors.accent },
+  sectionTitle: {
+    ...typography.title,
+    color: colors.textPrimary,
+    marginTop: 2,
+  },
+  sectionDescription: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
   },
   cardCell: {
     width: '50%',

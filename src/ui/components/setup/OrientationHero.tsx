@@ -1,10 +1,12 @@
 /**
  * Pass 7.4, Step 5 - Setup Region 2's hero: the live 3D orientation model
- * (OrientationRenderer.tsx, Step 2) + its 3 plain numeric readouts (roll/
- * pitch/heading, no timing metadata) + the "إعادة ضبط عرض الاتجاه" reset
- * button + its one-time hint. All orientation math already happened
- * upstream (deriveOrientationViewState() - Step 1); this component only
- * renders whatever OrientationViewState it is given.
+ * (OrientationRenderer.tsx, Step 2) + an artificial horizon and relative
+ * direction compass + its 3 plain numeric readouts (roll/pitch/heading,
+ * no timing metadata) + the "إعادة ضبط عرض الاتجاه" reset button + its
+ * one-time hint. Every visual receives the SAME displayed sample; no
+ * instrument owns a poll, timer, interpolation or protocol path. All
+ * orientation math already happened upstream (deriveOrientationViewState()
+ * - Step 1); this component only renders that OrientationViewState.
  *
  * STALE freezes the 3D model and readouts at their last LIVE values
  * (dimmed via OrientationRenderer's own `stale` prop) and shows
@@ -49,6 +51,7 @@ import { orientationLatencyTracker } from '../../orientation3d/orientationLatenc
 import type { OrientationViewState } from '../../../core';
 import { describeOrientationForAccessibility } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
+import FlightInstruments, { roundHeadingDegrees } from './FlightInstruments';
 
 const HERO_MAX_SIZE = 340;
 const HERO_MIN_SIZE = 180;
@@ -62,6 +65,17 @@ const HERO_MIN_SIZE = 180;
 export function computeOrientationHeroSize(windowWidth: number): number {
   const usableWidth = Number.isFinite(windowWidth) ? windowWidth - 60 : 260;
   return Math.min(HERO_MAX_SIZE, Math.max(HERO_MIN_SIZE, usableWidth));
+}
+
+/** Roll/pitch arrive in 0.1 degree units. Keeping that one decimal makes
+ * a small visible model tilt explainable instead of showing a rounded 0°.
+ * Heading is still whole-degree wire data and is formatted separately. */
+export function formatTiltDegrees(value: number): string {
+  const normalized = Math.abs(value) < 0.05 ? 0 : value;
+  const oneDecimal = Math.round(normalized * 10) / 10;
+  return Number.isInteger(oneDecimal)
+    ? `${oneDecimal}°`
+    : `${oneDecimal.toFixed(1)}°`;
 }
 
 export interface OrientationHeroProps {
@@ -98,7 +112,7 @@ export default function OrientationHero({
   onResetHintShown,
 }: OrientationHeroProps): React.JSX.Element {
   const { t } = useTranslation();
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
   const heroSize = computeOrientationHeroSize(windowWidth);
   const [hintVisible, setHintVisible] = useState(false);
 
@@ -115,17 +129,15 @@ export default function OrientationHero({
     }
   };
 
-  const renderHeader = (
-    status: 'LIVE' | 'STALE' | 'WAITING' | 'ERROR',
-  ) => {
+  const renderHeader = (status: 'LIVE' | 'STALE' | 'WAITING' | 'ERROR') => {
     const labelKey =
       status === 'LIVE'
         ? 'orientationHero.live'
         : status === 'STALE'
-          ? 'orientationHero.staleLabel'
-          : status === 'WAITING'
-            ? 'orientationHero.waitingLabel'
-            : 'orientationHero.unavailableLabel';
+        ? 'orientationHero.staleLabel'
+        : status === 'WAITING'
+        ? 'orientationHero.waitingLabel'
+        : 'orientationHero.unavailableLabel';
     const isStaleStatus = status === 'STALE';
     const isErrorStatus = status === 'ERROR';
 
@@ -172,10 +184,18 @@ export default function OrientationHero({
       <View style={styles.container} testID="orientation-hero-waiting">
         {renderHeader('WAITING')}
         <View
-          style={[styles.rendererWrapper, { width: heroSize, height: heroSize }]}
+          style={[
+            styles.rendererWrapper,
+            { width: heroSize, height: heroSize },
+          ]}
         >
           <Text style={styles.messageText}>{t('orientationHero.waiting')}</Text>
         </View>
+        <FlightInstruments
+          status="WAITING"
+          stageWidth={heroSize}
+          fontScale={fontScale}
+        />
       </View>
     );
   }
@@ -185,12 +205,20 @@ export default function OrientationHero({
       <View style={styles.container} testID="orientation-hero-error">
         {renderHeader('ERROR')}
         <View
-          style={[styles.rendererWrapper, { width: heroSize, height: heroSize }]}
+          style={[
+            styles.rendererWrapper,
+            { width: heroSize, height: heroSize },
+          ]}
         >
           <Text style={[styles.messageText, { color: colors.error }]}>
             {t('orientationHero.error')}
           </Text>
         </View>
+        <FlightInstruments
+          status="ERROR"
+          stageWidth={heroSize}
+          fontScale={fontScale}
+        />
       </View>
     );
   }
@@ -253,28 +281,37 @@ export default function OrientationHero({
         </Text>
       )}
 
+      <FlightInstruments
+        status={isStale ? 'STALE' : 'LIVE'}
+        stageWidth={heroSize}
+        fontScale={fontScale}
+        rollDeg={displayed.rollDeg}
+        pitchDeg={displayed.pitchDeg}
+        headingDeg={displayed.yawDeg}
+      />
+
       <View style={styles.readoutsRow}>
         <View style={styles.readout} testID="orientation-hero-roll">
           <Text style={styles.readoutLabel}>
             {t('orientationHero.rollLabel')}
           </Text>
-          <Text style={styles.readoutValue}>{`${Math.round(
-            displayed.rollDeg,
-          )}°`}</Text>
+          <Text style={styles.readoutValue}>
+            {formatTiltDegrees(displayed.rollDeg)}
+          </Text>
         </View>
         <View style={styles.readout} testID="orientation-hero-pitch">
           <Text style={styles.readoutLabel}>
             {t('orientationHero.pitchLabel')}
           </Text>
-          <Text style={styles.readoutValue}>{`${Math.round(
-            displayed.pitchDeg,
-          )}°`}</Text>
+          <Text style={styles.readoutValue}>
+            {formatTiltDegrees(displayed.pitchDeg)}
+          </Text>
         </View>
         <View style={styles.readout} testID="orientation-hero-heading">
           <Text style={styles.readoutLabel}>
             {t('orientationHero.headingLabel')}
           </Text>
-          <Text style={styles.readoutValue}>{`${Math.round(
+          <Text style={styles.readoutValue}>{`${roundHeadingDegrees(
             displayed.yawDeg,
           )}°`}</Text>
         </View>

@@ -741,7 +741,19 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
         await flushAsync();
       });
       await settle(2200);
-      expect(allText(renderer)).not.toContain('ACC');
+      const sensorText = renderer.root
+        .find(node => node.props.testID === 'diagnostics-sensors')
+        .findAllByType(Text)
+        .map(node =>
+          Array.isArray(node.props.children)
+            ? node.props.children.join('')
+            : String(node.props.children),
+        );
+      // "ACC" is now also a permanent visual mark on the calibration
+      // card, so only the live diagnostics region can prove that the
+      // replacement generation did not inherit the old ACC bit.
+      expect(sensorText).toContain('GYRO');
+      expect(sensorText).not.toContain('ACC');
 
       // The dead client emitting a late frame changes nothing.
       const beforeLateFrame = allText(renderer);

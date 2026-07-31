@@ -150,13 +150,40 @@ export {
   createMspOperationCoordinator,
   MspExclusiveOperationInProgressError,
 } from './protocol';
-export {deriveOrientationViewState, describeOrientationForAccessibility} from './state';
-export type {OrientationViewOffset, OrientationViewState} from './state';
-export {deriveArmingReadiness, rankArmingBlockReasons, selectTopArmingBlockReasons} from './state';
-export type {ArmingBlockSeverity, ArmingBlockReason, ArmingReadiness, ArmingBlockReasonSelection} from './state';
-export {pickTopNotice} from './state';
-export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeScope} from './state';
-export {assembleMotorStaticFacts, bindMotorStaticFacts} from './state';
+export {
+  deriveOrientationViewState,
+  describeOrientationForAccessibility,
+} from './state';
+export type { OrientationViewOffset, OrientationViewState } from './state';
+export {
+  analyzeOrientationStability,
+  ORIENTATION_STABILITY_WINDOW_MS,
+  ORIENTATION_STABILITY_MIN_SAMPLES,
+  ORIENTATION_STABILITY_LIMITS,
+} from './state';
+export type {
+  OrientationStabilitySample,
+  OrientationStabilityResult,
+} from './state';
+export {
+  deriveArmingReadiness,
+  rankArmingBlockReasons,
+  selectTopArmingBlockReasons,
+} from './state';
+export type {
+  ArmingBlockSeverity,
+  ArmingBlockReason,
+  ArmingReadiness,
+  ArmingBlockReasonSelection,
+} from './state';
+export { pickTopNotice } from './state';
+export type {
+  SetupNotice,
+  SetupNoticeDomain,
+  SetupNoticeSeverity,
+  SetupNoticeScope,
+} from './state';
+export { assembleMotorStaticFacts, bindMotorStaticFacts } from './state';
 export type {
   MotorStaticFacts,
   MotorStaticFactsInput,
@@ -171,9 +198,18 @@ export type {
 // barrel) because src/core/state/index.ts is outside this pass's
 // authorized file allowlist - a deliberate, documented allowlist
 // constraint, not a new convention.
-export {deriveBatterySemantics} from './state/batteryTelemetry';
-export type {BatteryFirmwareState, BatterySensorValidity, BatterySemantics} from './state/batteryTelemetry';
-export {deriveReceiverRssi, isGpsPresent, deriveGpsCard, RSSI_MAX_VALUE} from './state/auxTelemetrySemantics';
+export { deriveBatterySemantics } from './state/batteryTelemetry';
+export type {
+  BatteryFirmwareState,
+  BatterySensorValidity,
+  BatterySemantics,
+} from './state/batteryTelemetry';
+export {
+  deriveReceiverRssi,
+  isGpsPresent,
+  deriveGpsCard,
+  RSSI_MAX_VALUE,
+} from './state/auxTelemetrySemantics';
 export {
   ARMING_DISABLE_FLAG_TOKENS,
   ARMING_DISABLE_FLAGS_COUNT,
@@ -184,11 +220,24 @@ export {
   decodeSensorPresence,
   deriveArmedState,
 } from './state/armingBlockers';
-export type {BoxIdsOwnerIdentity, BoxIdsResult} from './protocol';
-export type {ArmingBlockerBit, SensorPresenceBit, ArmedState} from './state/armingBlockers';
-export {resolveFcToolAvailability, resolveAllFcToolAvailability, FC_TOOL_IDS} from './state/fcTools';
-export type {FcToolId, FcToolBlockReason, FcToolAvailability, FcToolGateInput} from './state/fcTools';
-export {deriveSetupDiagnostics} from './state/setupDiagnostics';
+export type { BoxIdsOwnerIdentity, BoxIdsResult } from './protocol';
+export type {
+  ArmingBlockerBit,
+  SensorPresenceBit,
+  ArmedState,
+} from './state/armingBlockers';
+export {
+  resolveFcToolAvailability,
+  resolveAllFcToolAvailability,
+  FC_TOOL_IDS,
+} from './state/fcTools';
+export type {
+  FcToolId,
+  FcToolBlockReason,
+  FcToolAvailability,
+  FcToolGateInput,
+} from './state/fcTools';
+export { deriveSetupDiagnostics } from './state/setupDiagnostics';
 export type {
   SetupDiagnosticsInput,
   SetupDiagnosticsView,
@@ -200,4 +249,7 @@ export type {
   DiagnosticsSensors,
   DiagnosticsBlockers,
 } from './state/setupDiagnostics';
-export type {ReceiverRssiSemantics, GpsCardSemantics} from './state/auxTelemetrySemantics';
+export type {
+  ReceiverRssiSemantics,
+  GpsCardSemantics,
+} from './state/auxTelemetrySemantics';

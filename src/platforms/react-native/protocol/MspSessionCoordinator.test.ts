@@ -1940,7 +1940,21 @@ describe('MspSessionCoordinator - Pass 7.6c auxiliary Region 3 telemetry (Receiv
   const GOLDEN_ANALOG = Uint8Array.from([168, ...u16le(350), ...u16le(540), ...u16le(1234), ...u16le(1685)]);
   /** Verified 16-byte MSP_RAW_GPS payload: raw GPS_FIX bit (2), 11 sats,
    * deliberately NON-ZERO coordinate bytes (they must be dropped). */
-  const GOLDEN_RAW_GPS = Uint8Array.from([2, 11, 0x15, 0xcd, 0x5b, 0x07, 0xa1, 0x86, 0x01, 0x00, ...u16le(300), ...u16le(100), ...u16le(9000)]);
+  const GOLDEN_RAW_GPS = Uint8Array.from([
+    2,
+    11,
+    0x15,
+    0xcd,
+    0x5b,
+    0x07,
+    0xa1,
+    0x86,
+    0x01,
+    0x00,
+    ...u16le(300),
+    ...u16le(100),
+    ...u16le(900),
+  ]);
   /** Verified 13-byte MSP_STATUS_EX fixed prefix: 900us cycle, 7 i2c
    * errors, mask ACC|GPS|GYRO=41, cpu 42%. */
   const GOLDEN_STATUS_EX = Uint8Array.from([...u16le(900), ...u16le(7), ...u16le(41), 0, 0, 0, 0, 1, ...u16le(42)]);
@@ -2046,11 +2060,23 @@ describe('MspSessionCoordinator - Pass 7.6c auxiliary Region 3 telemetry (Receiv
       value: {legacyVoltageDecivolts: 168, consumedMah: 350, rssi: 540, amperageCentiamps: 1234, voltageCentivolts: 1685},
     });
     const gpsValue = scheduler?.getValue<MspRawGpsCompact>(GPS_TELEMETRY_POLL_ID);
-    expect(gpsValue).toMatchObject({status: 'FRESH', value: {hasFix: true, satelliteCount: 11}});
+    expect(gpsValue).toMatchObject({
+      status: 'FRESH',
+      value: {
+        hasFix: true,
+        satelliteCount: 11,
+        altitudeMeters: 300,
+        groundSpeedCentimetersPerSecond: 100,
+        groundCourseDecidegrees: 900,
+      },
+    });
     if (gpsValue?.status === 'FRESH') {
-      // Privacy by model shape: exactly these two keys, nothing else -
-      // the scripted payload deliberately carried non-zero coordinates.
-      expect(Object.keys(gpsValue.value).sort()).toEqual(['hasFix', 'satelliteCount']);
+      // Privacy by model shape: the scripted payload deliberately carries
+      // non-zero coordinates, but only non-location flight facts survive.
+      expect(gpsValue.value).not.toHaveProperty('latitude');
+      expect(gpsValue.value).not.toHaveProperty('longitude');
+      expect(gpsValue.value).not.toHaveProperty('latitudeDegrees');
+      expect(gpsValue.value).not.toHaveProperty('longitudeDegrees');
     }
     expect(scheduler?.getValue<MspStatusExCompact>(FC_STATUS_TELEMETRY_POLL_ID)).toMatchObject({
       status: 'FRESH',

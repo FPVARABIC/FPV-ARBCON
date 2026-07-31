@@ -1,4 +1,4 @@
-import {MspPayloadReader} from './MspPayloadReader';
+import { MspPayloadReader } from './MspPayloadReader';
 
 /**
  * Pass 7.6c - wire decoder for MSP_RAW_GPS (106), verified DIRECTLY at
@@ -15,38 +15,43 @@ import {MspPayloadReader} from './MspPayloadReader';
  *   offset 1   u8   numSat
  *   offset 2   u32  latitude   - PRIVACY: decoded past for cursor
  *   offset 6   u32  longitude  - integrity, NEVER retained
- *   offset 10  u16  altitude m
- *   offset 12  u16  ground speed
- *   offset 14  u16  ground course        (16 bytes mandatory)
+ *   offset 10  u16  altitude, metres
+ *   offset 12  u16  ground speed, cm/s
+ *   offset 14  u16  ground course, decidegrees (16 bytes mandatory)
  *   offset 16  u16  pdop - always emitted at API 1.47 (the "Added in
  *                   API version 1.44" comment is historical, not a
  *                   runtime conditional); treated as trailing/ignored
  *                   (the app's minimum accepted API is 1.42, so this
  *                   field may legitimately be absent on older builds).
  *
- * The compact model DELIBERATELY contains only {hasFix, satelliteCount}:
- * coordinates must never appear in state, UI, logs, snapshots, or test
- * artifacts (Pass 7.6c privacy rule) - enforced by the model shape
- * itself, not by discipline at call sites.
+ * Coordinates remain structurally excluded for privacy. The three
+ * non-location flight facts that follow them are retained for the Setup
+ * summary; none identifies a place on its own.
  */
 export interface MspRawGpsCompact {
   /** True when the raw fix flag byte is nonzero (the wire value is the
    * raw GPS_FIX bit, i.e. 2 when set). */
   hasFix: boolean;
   satelliteCount: number;
+  altitudeMeters?: number;
+  groundSpeedCentimetersPerSecond?: number;
+  groundCourseDecidegrees?: number;
 }
 
 export function decodeRawGps(payload: Uint8Array): MspRawGpsCompact {
   const reader = new MspPayloadReader(payload);
   const fixFlagRaw = reader.readU8();
   const satelliteCount = reader.readU8();
-  // Structural integrity for the remaining MANDATORY fields (lat, lon,
-  // alt, speed, course = 14 more bytes) without retaining any of them -
-  // a shorter payload is corruption, not a legitimate variant, at every
-  // accepted API version.
-  reader.readBytes(14);
+  // Coordinates are intentionally skipped and never enter the model.
+  reader.readBytes(8);
+  const altitudeMeters = reader.readU16LE();
+  const groundSpeedCentimetersPerSecond = reader.readU16LE();
+  const groundCourseDecidegrees = reader.readU16LE();
   return {
     hasFix: fixFlagRaw !== 0,
     satelliteCount,
+    altitudeMeters,
+    groundSpeedCentimetersPerSecond,
+    groundCourseDecidegrees,
   };
 }

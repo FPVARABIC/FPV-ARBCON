@@ -4,8 +4,12 @@
  * decoder/semantics split batteryTelemetry.ts established.
  */
 
-import type {MspAnalog, MspRawGpsCompact, MspStatusExCompact} from '../protocol';
-import {STATUS_SENSOR_GPS_BIT} from '../protocol';
+import type {
+  MspAnalog,
+  MspRawGpsCompact,
+  MspStatusExCompact,
+} from '../protocol';
+import { STATUS_SENSOR_GPS_BIT } from '../protocol';
 
 /** RSSI_MAX_VALUE (rx/rx.h:193 @ pin) - the verified getRssi() range. */
 export const RSSI_MAX_VALUE = 1023;
@@ -21,14 +25,17 @@ export const RSSI_MAX_VALUE = 1023;
  * to a percentage: round((rssi / 1023) * 100).
  */
 export type ReceiverRssiSemantics =
-  | {kind: 'PERCENT'; percent: number}
-  | {kind: 'NOT_DISTINGUISHABLE'};
+  | { kind: 'PERCENT'; percent: number }
+  | { kind: 'NOT_DISTINGUISHABLE' };
 
 export function deriveReceiverRssi(analog: MspAnalog): ReceiverRssiSemantics {
   if (analog.rssi === 0) {
-    return {kind: 'NOT_DISTINGUISHABLE'};
+    return { kind: 'NOT_DISTINGUISHABLE' };
   }
-  return {kind: 'PERCENT', percent: Math.round((analog.rssi / RSSI_MAX_VALUE) * 100)};
+  return {
+    kind: 'PERCENT',
+    percent: Math.round((analog.rssi / RSSI_MAX_VALUE) * 100),
+  };
 }
 
 /** A set GPS sensor-presence bit means DETECTED by the FC, never
@@ -40,9 +47,15 @@ export function isGpsPresent(statusEx: MspStatusExCompact): boolean {
 }
 
 export type GpsCardSemantics =
-  | {kind: 'NO_PRESENCE_PROOF'}
-  | {kind: 'NO_FIX'; satelliteCount: number}
-  | {kind: 'FIX'; satelliteCount: number};
+  | { kind: 'NO_PRESENCE_PROOF' }
+  | { kind: 'NO_FIX'; satelliteCount: number }
+  | {
+      kind: 'FIX';
+      satelliteCount: number;
+      altitudeMeters?: number;
+      groundSpeedMetersPerSecond?: number;
+      groundCourseDegrees?: number;
+    };
 
 /**
  * gpsPresent comes from the shared MSP_STATUS_EX decode (no duplicate
@@ -50,12 +63,36 @@ export type GpsCardSemantics =
  * proven (e.g. the FC channel is unavailable). Zero satellites alone
  * never proves GPS hardware is absent, and no-fix is not an error.
  */
-export function deriveGpsCard(gps: MspRawGpsCompact, gpsPresent: boolean | undefined): GpsCardSemantics {
+export function deriveGpsCard(
+  gps: MspRawGpsCompact,
+  gpsPresent: boolean | undefined,
+): GpsCardSemantics {
   if (gps.hasFix) {
-    return {kind: 'FIX', satelliteCount: gps.satelliteCount};
+    const groundCourseDegrees =
+      gps.groundCourseDecidegrees !== undefined &&
+      gps.groundCourseDecidegrees >= 0 &&
+      gps.groundCourseDecidegrees <= 3600
+        ? (gps.groundCourseDecidegrees % 3600) / 10
+        : undefined;
+    return {
+      kind: 'FIX',
+      satelliteCount: gps.satelliteCount,
+      ...(gps.altitudeMeters === undefined
+        ? {}
+        : { altitudeMeters: gps.altitudeMeters }),
+      ...(gps.groundSpeedCentimetersPerSecond === undefined
+        ? {}
+        : {
+            groundSpeedMetersPerSecond:
+              gps.groundSpeedCentimetersPerSecond / 100,
+          }),
+      ...(groundCourseDegrees === undefined
+        ? {}
+        : { groundCourseDegrees }),
+    };
   }
   if (gpsPresent === true) {
-    return {kind: 'NO_FIX', satelliteCount: gps.satelliteCount};
+    return { kind: 'NO_FIX', satelliteCount: gps.satelliteCount };
   }
-  return {kind: 'NO_PRESENCE_PROOF'};
+  return { kind: 'NO_PRESENCE_PROOF' };
 }
