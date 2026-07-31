@@ -1494,12 +1494,18 @@ export class MspClient {
   }
 
   private onWriteSettled(active: ActiveRequest, failureReason: unknown): void {
-    if (failureReason === undefined) {
-      if (active.settle.settled) {
-        // Early matching response already won the write-vs-response race -
-        // the response timer must never even start for it.
-        return;
+    if (active.settle.settled) {
+      // A matching response settled this request while the transport write
+      // was still pending. Its late write resolution OR rejection is
+      // diagnostic-only, but this is the first point at which the physical
+      // write slot is genuinely free. Release and pump exactly once.
+      if (this.active === active) {
+        this.active = undefined;
+        this.pump();
       }
+      return;
+    }
+    if (failureReason === undefined) {
       if (active.displacedByEmergencyStop) {
         // Phase 2G Pass 1: the uncancellable write has now settled, so the
         // transport is free. Settle this request as displaced INSTEAD of
@@ -1643,6 +1649,12 @@ export class MspClient {
       // Not reachable given the `!active.settle.settled` check above (JS is
       // single-threaded; nothing else can settle it between that check and
       // here) - kept as a defensive invariant, not relied on to be false.
+      return;
+    }
+    if (active.phase === 'WRITING') {
+      // The response won before the transport write settled. The caller's
+      // result is final, but the transport slot is not: onWriteSettled()
+      // performs the release/pump once the write Promise genuinely ends.
       return;
     }
     if (this.active === active) {
