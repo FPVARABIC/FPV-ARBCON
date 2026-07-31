@@ -23,15 +23,22 @@
  *    firmware actually confirmed.
  */
 
-import React, {useCallback} from 'react';
-import {Pressable, StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import React, { useCallback } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import {FC_TOOL_IDS, resolveFcToolAvailability} from '../../../core';
-import type {FcToolGateInput, FcToolId} from '../../../core';
-import {fcToolsController, useFcToolPhase, useFcToolPublication} from '../../../platforms/react-native/protocol';
-import type {FcToolOutcome, FcToolsController} from '../../../platforms/react-native/protocol';
-import {colors, radii, spacing, typography} from '../../theme';
+import { FC_TOOL_IDS, resolveFcToolAvailability } from '../../../core';
+import type { FcToolGateInput, FcToolId } from '../../../core';
+import {
+  fcToolsController,
+  useFcToolPhase,
+  useFcToolPublication,
+} from '../../../platforms/react-native/protocol';
+import type {
+  FcToolOutcome,
+  FcToolsController,
+} from '../../../platforms/react-native/protocol';
+import { colors, radii, spacing, typography } from '../../theme';
 
 /** Android's minimum recommended touch target. */
 const MIN_TOUCH_TARGET = 44;
@@ -45,8 +52,12 @@ export interface FcToolsSectionProps {
   controller?: FcToolsController;
 }
 
-export default function FcToolsSection({sessionId, gate, controller}: FcToolsSectionProps): React.JSX.Element {
-  const {t} = useTranslation();
+export default function FcToolsSection({
+  sessionId,
+  gate,
+  controller,
+}: FcToolsSectionProps): React.JSX.Element {
+  const { t } = useTranslation();
   const active = controller ?? fcToolsController;
   const phase = useFcToolPhase(active);
   // Scoped to THIS session and THIS mounted instance (A-1): a
@@ -74,29 +85,57 @@ export default function FcToolsSection({sessionId, gate, controller}: FcToolsSec
 
   return (
     <View style={styles.section} testID="fc-tools-section">
-      <Text style={styles.sectionTitle} accessibilityRole="header" testID="fc-tools-title">
+      <Text
+        style={styles.sectionTitle}
+        accessibilityRole="header"
+        testID="fc-tools-title"
+      >
         {t('fcTools.title')}
       </Text>
 
       {FC_TOOL_IDS.map(tool => {
-        const availability = resolveFcToolAvailability(tool, {...gate, busy});
+        const availability = resolveFcToolAvailability(tool, { ...gate, busy });
         const name = t(`fcTools.toolNames.${tool}`);
         const description = t(`fcTools.toolDescriptions.${tool}`);
-        const reasonText = availability.reason === undefined ? undefined : t(`fcTools.disabledReasons.${availability.reason}`);
+        const reasonText =
+          availability.reason === undefined
+            ? undefined
+            : t(`fcTools.disabledReasons.${availability.reason}`);
         return (
           <View key={tool} style={styles.tool} testID={`fc-tool-${tool}`}>
             <Pressable
               onPress={() => onRequest(tool)}
               disabled={!availability.enabled}
               accessibilityRole="button"
-              accessibilityState={{disabled: !availability.enabled}}
-              accessibilityLabel={reasonText === undefined ? name : `${name}، ${reasonText}`}
-              accessibilityHint={availability.enabled ? t('fcTools.hint') : undefined}
-              style={[styles.toolButton, availability.enabled ? styles.toolButtonEnabled : styles.toolButtonDisabled]}
-              testID={`fc-tool-${tool}-button`}>
-              <Text style={availability.enabled ? styles.toolNameEnabled : styles.toolNameDisabled}>{name}</Text>
+              accessibilityState={{ disabled: !availability.enabled }}
+              accessibilityLabel={
+                reasonText === undefined ? name : `${name}، ${reasonText}`
+              }
+              accessibilityHint={
+                availability.enabled ? t('fcTools.hint') : undefined
+              }
+              style={[
+                styles.toolButton,
+                availability.enabled
+                  ? styles.toolButtonEnabled
+                  : styles.toolButtonDisabled,
+              ]}
+              testID={`fc-tool-${tool}-button`}
+            >
+              <Text
+                style={
+                  availability.enabled
+                    ? styles.toolNameEnabled
+                    : styles.toolNameDisabled
+                }
+              >
+                {name}
+              </Text>
             </Pressable>
-            <Text style={styles.toolDescription} testID={`fc-tool-${tool}-description`}>
+            <Text
+              style={styles.toolDescription}
+              testID={`fc-tool-${tool}-description`}
+            >
               {description}
             </Text>
             {reasonText !== undefined && (
@@ -109,7 +148,11 @@ export default function FcToolsSection({sessionId, gate, controller}: FcToolsSec
       })}
 
       {phase.kind === 'CONFIRMING' && (
-        <View style={styles.confirmation} accessibilityRole="alert" testID="fc-tools-confirmation">
+        <View
+          style={styles.confirmation}
+          accessibilityRole="alert"
+          testID="fc-tools-confirmation"
+        >
           <Text style={styles.confirmTitle}>{t('fcTools.confirmTitle')}</Text>
           <Text style={styles.confirmBody} testID="fc-tools-confirmation-body">
             {t(`fcTools.confirmBodies.${phase.tool}`)}
@@ -119,22 +162,32 @@ export default function FcToolsSection({sessionId, gate, controller}: FcToolsSec
             accessibilityRole="button"
             accessibilityLabel={t('fcTools.confirmAction')}
             style={[styles.toolButton, styles.confirmButton]}
-            testID="fc-tools-confirm">
-            <Text style={styles.confirmActionText}>{t('fcTools.confirmAction')}</Text>
+            testID="fc-tools-confirm"
+          >
+            <Text style={styles.confirmActionText}>
+              {t('fcTools.confirmAction')}
+            </Text>
           </Pressable>
           <Pressable
             onPress={onCancel}
             accessibilityRole="button"
             accessibilityLabel={t('fcTools.cancelAction')}
             style={[styles.toolButton, styles.cancelButton]}
-            testID="fc-tools-cancel">
-            <Text style={styles.cancelActionText}>{t('fcTools.cancelAction')}</Text>
+            testID="fc-tools-cancel"
+          >
+            <Text style={styles.cancelActionText}>
+              {t('fcTools.cancelAction')}
+            </Text>
           </Pressable>
         </View>
       )}
 
       {outcome !== undefined && (
-        <Text style={styles.outcome} accessibilityRole="alert" testID="fc-tools-outcome">
+        <Text
+          style={styles.outcome}
+          accessibilityRole="alert"
+          testID="fc-tools-outcome"
+        >
           {describeOutcome(outcome, t)}
         </Text>
       )}
@@ -156,7 +209,9 @@ function describeOutcome(outcome: FcToolOutcome, t: Translate): string {
     case 'FAILED':
       return t('fcTools.outcomeFailed');
     case 'REJECTED':
-      return t('fcTools.outcomeRejected', {reason: t(`fcTools.disabledReasons.${outcome.reason}`)});
+      return t('fcTools.outcomeRejected', {
+        reason: t(`fcTools.disabledReasons.${outcome.reason}`),
+      });
     case 'CANCELLED':
       return t('fcTools.outcomeCancelled');
     default:
@@ -169,18 +224,26 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     marginHorizontal: spacing.md,
     marginBottom: spacing.md,
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceAlt,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surface,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 3,
   },
   sectionTitle: {
     ...typography.sectionTitle,
-    color: colors.textPrimary,
+    color: colors.accent,
   },
   tool: {
     marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderSoft,
   },
   toolButton: {
     minHeight: MIN_TOUCH_TARGET,
@@ -190,12 +253,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
   },
   toolButtonEnabled: {
-    borderColor: colors.accent,
-    backgroundColor: colors.surface,
+    borderColor: colors.accentStrong,
+    backgroundColor: colors.accentSoft,
   },
   toolButtonDisabled: {
-    borderColor: colors.border,
-    backgroundColor: 'transparent',
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.backgroundRaised,
   },
   toolNameEnabled: {
     ...typography.body,

@@ -52,25 +52,24 @@ import {
   View,
   type GestureResponderEvent,
 } from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {useTranslation} from 'react-i18next';
+import { useTranslation } from 'react-i18next';
 
-import {colors, radii, spacing, typography} from '../theme';
+import { colors, radii, spacing, typography } from '../theme';
 import type {
   MotorTestActivationBlockReason,
   MotorTestControllerSnapshot,
 } from '../../core/state/motorTestController';
-import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
-import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
-import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
-import {createMotorTestLifecycleBridge} from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
+import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
+import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
+import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
+import { createMotorTestLifecycleBridge } from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
 import {
   readMotorTestCapability,
   subscribeMotorTestCapabilityOpened,
 } from '../../platforms/react-native/protocol/motorTestCapability';
-import type {NativeStackScreenProps} from '@react-navigation/native-stack';
-import type {RootStackParamList} from '../../navigation/types';
-import {AppState, BackHandler} from 'react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import type { RootStackParamList } from '../../navigation/types';
+import { AppState, BackHandler } from 'react-native';
 import {
   MotorVerificationWizard,
   MotorTestReport,
@@ -86,7 +85,7 @@ import {
   type MotorPhysicalPosition,
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
-import type {MotorTestVerificationReceipt} from '../../core/state/motorTestController';
+import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
 
 /**
  * The intentional long-press delay. No accepted shared constant exists
@@ -145,12 +144,16 @@ export interface MotorGlyphCell {
 
 const POSITION_GEOMETRY: Record<
   MotorPhysicalPosition,
-  {row: MotorGlyphRow; side: MotorGlyphSide; positionKey: string}
+  { row: MotorGlyphRow; side: MotorGlyphSide; positionKey: string }
 > = {
-  FRONT_RIGHT: {row: 'FRONT', side: 'RIGHT', positionKey: 'positionFrontRight'},
-  FRONT_LEFT: {row: 'FRONT', side: 'LEFT', positionKey: 'positionFrontLeft'},
-  REAR_RIGHT: {row: 'REAR', side: 'RIGHT', positionKey: 'positionRearRight'},
-  REAR_LEFT: {row: 'REAR', side: 'LEFT', positionKey: 'positionRearLeft'},
+  FRONT_RIGHT: {
+    row: 'FRONT',
+    side: 'RIGHT',
+    positionKey: 'positionFrontRight',
+  },
+  FRONT_LEFT: { row: 'FRONT', side: 'LEFT', positionKey: 'positionFrontLeft' },
+  REAR_RIGHT: { row: 'REAR', side: 'RIGHT', positionKey: 'positionRearRight' },
+  REAR_LEFT: { row: 'REAR', side: 'LEFT', positionKey: 'positionRearLeft' },
 };
 
 /**
@@ -183,7 +186,8 @@ export function computeMotorGlyphLayout(): readonly MotorGlyphCell[] {
         row: geometry.row,
         side: geometry.side,
         positionKey: geometry.positionKey,
-        directionKey: expected.direction === 'CW' ? 'directionCw' : 'directionCcw',
+        directionKey:
+          expected.direction === 'CW' ? 'directionCw' : 'directionCcw',
       });
     }),
   );
@@ -387,13 +391,9 @@ export interface MotorsScreenViewProps {
    */
   readonly bringUpFailure?: string;
   /**
-   * Overrides the bottom safe-area padding.
-   *
-   * Hosted inside the main tab shell the persistent tab bar sits below
-   * this screen and already consumes the gesture-navigation inset, so the
-   * screen must not add it a second time - the emergency Stop control
-   * would float above a strip of empty space. Omitted (standalone), the
-   * real inset is used.
+   * Additional bottom spacing supplied by a future host. The application
+   * root already owns the device safe area, so this screen must never add
+   * the same system inset a second time.
    */
   readonly bottomInset?: number;
 }
@@ -420,12 +420,8 @@ export function MotorsScreenView({
   bottomInset,
   bringUpFailure,
 }: MotorsScreenViewProps): React.JSX.Element {
-  const {t} = useTranslation();
-  const safeAreaInsets = useSafeAreaInsets();
-  const insets = {
-    ...safeAreaInsets,
-    bottom: bottomInset ?? safeAreaInsets.bottom,
-  };
+  const { t } = useTranslation();
+  const effectiveBottomInset = bottomInset ?? 0;
 
   // The snapshot is the ONLY source of controller truth. `useState` plus an
   // explicit subscription rather than useSyncExternalStore: the controller
@@ -570,7 +566,11 @@ export function MotorsScreenView({
       observation: MotorObservation,
     ) => {
       setVerification(current => {
-        const result = confirmObservation(current, confirmedReceipt, observation);
+        const result = confirmObservation(
+          current,
+          confirmedReceipt,
+          observation,
+        );
         // A rejected confirmation - stale session, finalized, aborted, or
         // an output already confirmed - changes nothing at all.
         return result.kind === 'ACCEPTED' ? result.state : current;
@@ -593,7 +593,7 @@ export function MotorsScreenView({
   const canActivate = controllerAllows && acknowledged;
 
   const toggle = useCallback((key: keyof Acknowledgements) => {
-    setAcknowledgements(current => ({...current, [key]: !current[key]}));
+    setAcknowledgements(current => ({ ...current, [key]: !current[key] }));
   }, []);
 
   /**
@@ -602,15 +602,18 @@ export function MotorsScreenView({
    * controller - the controller registers the emergency stop inside this
    * very call.
    */
-  const stopNow = useCallback((trigger: 'TOUCH_RELEASED' | 'STOP_BUTTON_PRESSED') => {
-    const port = operatorRef.current;
-    if (port === undefined) {
-      return;
-    }
-    // Repeated callbacks are expected and safe: the controller joins
-    // concurrent triggers onto one stop episode and one transport write.
-    port.requestStop(trigger);
-  }, []);
+  const stopNow = useCallback(
+    (trigger: 'TOUCH_RELEASED' | 'STOP_BUTTON_PRESSED') => {
+      const port = operatorRef.current;
+      if (port === undefined) {
+        return;
+      }
+      // Repeated callbacks are expected and safe: the controller joins
+      // concurrent triggers onto one stop episode and one transport write.
+      port.requestStop(trigger);
+    },
+    [],
+  );
 
   /**
    * STEP 1 OF TWO DELIBERATE ACTIONS: start the session.
@@ -628,6 +631,7 @@ export function MotorsScreenView({
    * may happen as a side effect of navigation - the operator asks for it.
    */
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [referenceOpen, setReferenceOpen] = useState(false);
   const [beginning, setBeginning] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
   /**
@@ -729,20 +733,17 @@ export function MotorsScreenView({
    * current episode and does NOT start the new one. The controller
    * enforces this too; the screen simply must not pretend otherwise.
    */
-  const handleSelectSlot = useCallback(
-    (slot: number) => {
-      const port = operatorRef.current;
-      if (port !== undefined && commandMayBeLive(port.getSnapshot())) {
-        const machine = port.getSnapshot().machine?.name;
-        if (machine === 'Starting' || machine === 'Pulsing') {
-          holdActivatedRef.current = false;
-          port.requestStop('MOTOR_SELECTION_CHANGED');
-        }
+  const handleSelectSlot = useCallback((slot: number) => {
+    const port = operatorRef.current;
+    if (port !== undefined && commandMayBeLive(port.getSnapshot())) {
+      const machine = port.getSnapshot().machine?.name;
+      if (machine === 'Starting' || machine === 'Pulsing') {
+        holdActivatedRef.current = false;
+        port.requestStop('MOTOR_SELECTION_CHANGED');
       }
-      setSelectedSlot(slot);
-    },
-    [],
-  );
+    }
+    setSelectedSlot(slot);
+  }, []);
 
   const statusText = useMemo(() => {
     switch (presentation) {
@@ -771,27 +772,71 @@ export function MotorsScreenView({
     presentation === 'FAULT'
       ? colors.error
       : presentation === 'READY'
-        ? colors.success
-        : presentation === 'LOCKED'
-          ? colors.warning
-          : colors.textSecondary;
+      ? colors.success
+      : presentation === 'LOCKED'
+      ? colors.warning
+      : colors.textSecondary;
+
+  /**
+   * One control, rendered at the point that matches the current flow:
+   * beside the output selector once the session exists, or directly after
+   * the Step-1 card before it exists. This prevents the optional reference
+   * and verification report from pushing the primary action down the page.
+   */
+  const holdControl = (
+    <Pressable
+      onLongPress={handleLongPress}
+      delayLongPress={MOTOR_TEST_LONG_PRESS_DELAY_MILLIS}
+      onPressOut={handlePressOut}
+      onResponderTerminate={(_event: GestureResponderEvent) =>
+        handlePressOut()
+      }
+      disabled={!canActivate}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !canActivate }}
+      style={[styles.holdButton, !canActivate && styles.holdButtonOff]}
+      testID="motors-hold-button"
+    >
+      <Text
+        style={[styles.holdStep, canActivate && styles.holdSupportingActive]}
+      >
+        {t('motorsScreen.holdHeading')}
+      </Text>
+      <Text style={[styles.holdLabel, !canActivate && styles.holdLabelOff]}>
+        {t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
+      </Text>
+      <Text
+        style={[styles.caption, canActivate && styles.holdSupportingActive]}
+      >
+        {t('motorsScreen.holdHint')}
+      </Text>
+    </Pressable>
+  );
 
   return (
     <View
       style={[
         styles.root,
-        {paddingTop: insets.top, paddingBottom: insets.bottom},
+        { paddingBottom: effectiveBottomInset },
       ]}
-      testID="motors-screen">
+      testID="motors-screen"
+    >
       {/* Scrollable body. The emergency Stop control below is deliberately
           OUTSIDE this ScrollView so it can never be scrolled out of reach,
           and the body's bottom padding keeps it from being covered. */}
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title} testID="motors-title">
-          {t('motorsScreen.title')}
-        </Text>
+        contentContainerStyle={styles.scrollContent}
+      >
+        <View style={styles.screenHeader}>
+          <Text style={styles.eyebrow}>{t('motorsScreen.eyebrow')}</Text>
+          <Text style={styles.title} testID="motors-title">
+            {t('motorsScreen.title')}
+          </Text>
+          <Text style={styles.screenSubtitle}>
+            {t('motorsScreen.subtitle')}
+          </Text>
+        </View>
 
         {/* (1) Propeller removal - highest priority, text AND icon, never
             colour alone. */}
@@ -823,24 +868,31 @@ export function MotorsScreenView({
               key={key}
               onPress={() => toggle(key)}
               accessibilityRole="checkbox"
-              accessibilityState={{checked: acknowledgements[key]}}
+              accessibilityState={{ checked: acknowledgements[key] }}
               style={styles.checkRow}
-              testID={`motors-ack-${key}`}>
+              testID={`motors-ack-${key}`}
+            >
               <Text
                 style={[
                   styles.checkBox,
                   acknowledgements[key] && styles.checkBoxOn,
-                ]}>
+                ]}
+              >
                 {acknowledgements[key] ? '☑' : '☐'}
               </Text>
-              <Text style={styles.checkLabel}>{t(`motorsScreen.${labelKey}`)}</Text>
+              <Text style={styles.checkLabel}>
+                {t(`motorsScreen.${labelKey}`)}
+              </Text>
             </Pressable>
           ))}
           {/* The battery scope is a HARD limit enforced by the controller,
               not a preference. Stated imperatively next to the checkbox
               that claims it, so "4S only" is never something the operator
               has to infer from a block reason after the fact. */}
-          <Text style={styles.batteryWarning} testID="motors-battery-scope-warning">
+          <Text
+            style={styles.batteryWarning}
+            testID="motors-battery-scope-warning"
+          >
             {t('motorsScreen.batteryScopeWarning')}
           </Text>
           <Text style={styles.caption}>{t('motorsScreen.ackNotice')}</Text>
@@ -852,8 +904,9 @@ export function MotorsScreenView({
             {t('motorsScreen.statusHeading')}
           </Text>
           <Text
-            style={[styles.statusText, {color: statusColor}]}
-            testID={`motors-status-${presentation}`}>
+            style={[styles.statusText, { color: statusColor }]}
+            testID={`motors-status-${presentation}`}
+          >
             {statusText}
           </Text>
           {presentation === 'ACKNOWLEDGED' ? (
@@ -879,7 +932,8 @@ export function MotorsScreenView({
               </Text>
               <Text
                 style={styles.blockReason}
-                testID={`motors-block-${primaryBlockReason}`}>
+                testID={`motors-block-${primaryBlockReason}`}
+              >
                 {t(`motorsScreen.blockReason.${primaryBlockReason}`)}
               </Text>
               {/* Terminal state is the one case with a concrete operator
@@ -888,7 +942,8 @@ export function MotorsScreenView({
               {requiresNewConnection ? (
                 <Text
                   style={styles.blockReason}
-                  testID="motors-requires-new-connection">
+                  testID="motors-requires-new-connection"
+                >
                   {t('motorsScreen.requiresNewConnection')}
                 </Text>
               ) : null}
@@ -904,26 +959,35 @@ export function MotorsScreenView({
               <Pressable
                 onPress={() => setDiagnosticsOpen(current => !current)}
                 accessibilityRole="button"
-                testID="motors-diagnostics-toggle">
+                accessibilityState={{ expanded: diagnosticsOpen }}
+                style={styles.diagnosticsToggle}
+                testID="motors-diagnostics-toggle"
+              >
                 <Text style={styles.caption}>
                   {t('motorsScreen.diagnosticsToggle')}
                 </Text>
               </Pressable>
               {diagnosticsOpen ? (
                 <View testID="motors-diagnostics">
-                  {blockReasons.map((reason: MotorTestActivationBlockReason) => (
-                    <Text
-                      key={reason}
-                      style={styles.caption}
-                      testID={`motors-diagnostic-${reason}`}>
-                      • {reason}
-                    </Text>
-                  ))}
+                  {blockReasons.map(
+                    (reason: MotorTestActivationBlockReason) => (
+                      <Text
+                        key={reason}
+                        style={styles.caption}
+                        testID={`motors-diagnostic-${reason}`}
+                      >
+                        • {reason}
+                      </Text>
+                    ),
+                  )}
                   {/* COMPLETE TECHNICAL STATE, behind the toggle. The
                       operator-facing reason set is deliberately narrow, so
                       everything the gate actually consulted has to be
                       readable somewhere - this is that somewhere. */}
-                  <Text style={styles.caption} testID="motors-diagnostic-outcome">
+                  <Text
+                    style={styles.caption}
+                    testID="motors-diagnostic-outcome"
+                  >
                     outcome: {snapshot?.outcome.kind ?? 'NONE'} | setupStep:{' '}
                     {snapshot?.setupStep ?? 'NONE'} | phase:{' '}
                     {snapshot?.phase ?? 'NONE'} | machine:{' '}
@@ -938,7 +1002,10 @@ export function MotorsScreenView({
                       a safety field is one edit away from deciding on it.
                       Serializing keeps every value visible and keeps this
                       component unable to read any of them. */}
-                  <Text style={styles.caption} testID="motors-diagnostic-evidence">
+                  <Text
+                    style={styles.caption}
+                    testID="motors-diagnostic-evidence"
+                  >
                     armedState: {snapshot?.armedStateEvidence ?? 'NONE'} |
                     telemetryHeld: {String(snapshot?.telemetryHeld)} | scope:{' '}
                     {JSON.stringify(snapshot?.motorScope ?? null)}
@@ -965,14 +1032,20 @@ export function MotorsScreenView({
                 <Text style={styles.faultText} testID="motors-emergency-text">
                   {t('motorsScreen.emergencyDisconnect')}
                 </Text>
-                <Text style={styles.dangerBody} testID="motors-new-session-text">
+                <Text
+                  style={styles.dangerBody}
+                  testID="motors-new-session-text"
+                >
                   {t('motorsScreen.emergencyNewSession')}
                 </Text>
               </View>
             </View>
           ) : (
             <View style={styles.card} testID="motors-fault-notice">
-              <Text style={styles.blockHeading} testID="motors-fault-session-text">
+              <Text
+                style={styles.blockHeading}
+                testID="motors-fault-session-text"
+              >
                 {t('motorsScreen.faultSessionEnded')}
               </Text>
               <Text style={styles.caption} testID="motors-fault-no-lipo-text">
@@ -993,12 +1066,13 @@ export function MotorsScreenView({
                 key={slot}
                 onPress={() => handleSelectSlot(slot)}
                 accessibilityRole="radio"
-                accessibilityState={{selected: selectedSlot === slot}}
+                accessibilityState={{ selected: selectedSlot === slot }}
                 style={[
                   styles.slotCard,
                   selectedSlot === slot && styles.slotCardSelected,
                 ]}
-                testID={`motors-slot-${slot}`}>
+                testID={`motors-slot-${slot}`}
+              >
                 {/* Forced LTR so M1..M4 stay readable inside the RTL page. */}
                 <Text style={styles.slotLabel}>{`M${slot}`}</Text>
                 {selectedSlot === slot ? (
@@ -1011,60 +1085,99 @@ export function MotorsScreenView({
           </View>
         </View>
 
+        {presentation !== 'NO_SESSION' ? holdControl : null}
+
         {/* (5) The EXPECTED Quad X reference - labelled as expected, and
             laid out so the top of the diagram IS the front of the
             aircraft. */}
         <View style={styles.card} testID="motors-diagram">
-          <Text style={styles.sectionTitle}>
-            {t('motorsScreen.diagramHeading')}
-          </Text>
+          <Pressable
+            onPress={() => setReferenceOpen(current => !current)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: referenceOpen }}
+            style={styles.referenceHeader}
+            testID="motors-diagram-toggle"
+          >
+            <View style={styles.flexOne}>
+              <Text style={styles.sectionTitle}>
+                {t('motorsScreen.diagramHeading')}
+              </Text>
+              <Text style={styles.caption}>
+                {t('motorsScreen.diagramSummary')}
+              </Text>
+            </View>
+            <View style={styles.referenceToggle}>
+              <Text style={styles.referenceToggleText}>
+                {t(
+                  referenceOpen
+                    ? 'motorsScreen.hideReference'
+                    : 'motorsScreen.showReference',
+                )}
+              </Text>
+              <Text style={styles.referenceToggleIcon}>
+                {referenceOpen ? '⌃' : '⌄'}
+              </Text>
+            </View>
+          </Pressable>
 
-          {/* The front-of-aircraft indicator. Without it a square of four
+          <View
+            style={!referenceOpen ? styles.hiddenDetails : undefined}
+            accessibilityElementsHidden={!referenceOpen}
+            importantForAccessibility={
+              referenceOpen ? 'auto' : 'no-hide-descendants'
+            }
+            testID="motors-diagram-details"
+          >
+            {/* The front-of-aircraft indicator. Without it a square of four
               cells is orientation-ambiguous, and an operator comparing it
               to a drone facing the other way reads every position
               backwards. */}
-          <View style={styles.frontIndicator} testID="motors-diagram-front">
-            <Text style={styles.frontArrow}>▲</Text>
-            <Text style={styles.frontLabel}>{t('motorsScreen.diagramFront')}</Text>
-          </View>
+            <View style={styles.frontIndicator} testID="motors-diagram-front">
+              <Text style={styles.frontArrow}>▲</Text>
+              <Text style={styles.frontLabel}>
+                {t('motorsScreen.diagramFront')}
+              </Text>
+            </View>
 
-          {motorGlyphRows().map(row => (
-            <View key={row[0].row} style={styles.diagramRow}>
-              {row.map(cell => (
-                <View
-                  key={cell.slot}
-                  style={[
-                    styles.diagramCell,
-                    selectedSlot === cell.slot && styles.diagramCellSelected,
-                  ]}
-                  testID={`motors-diagram-cell-${cell.row}-${cell.side}`}>
-                  {/* The slot number rendered here is the SAME number
+            {motorGlyphRows().map(row => (
+              <View key={row[0].row} style={styles.diagramRow}>
+                {row.map(cell => (
+                  <View
+                    key={cell.slot}
+                    style={[
+                      styles.diagramCell,
+                      selectedSlot === cell.slot && styles.diagramCellSelected,
+                    ]}
+                    testID={`motors-diagram-cell-${cell.row}-${cell.side}`}
+                  >
+                    {/* The slot number rendered here is the SAME number
                       handed to pulseMotor(), which the controller turns
                       into payload index slot-1. A test asserts that
                       identity end to end. */}
-                  <Text
-                    style={styles.slotLabel}
-                    testID={`motors-diagram-slot-${cell.slot}`}>
-                    {`M${cell.slot}`}
-                  </Text>
-                  <Text style={styles.diagramText}>
-                    {t(`motorsScreen.${cell.positionKey}`)}
-                  </Text>
-                  <Text style={styles.diagramText}>
-                    {t(`motorsScreen.${cell.directionKey}`)}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ))}
+                    <Text
+                      style={styles.slotLabel}
+                      testID={`motors-diagram-slot-${cell.slot}`}
+                    >
+                      {`M${cell.slot}`}
+                    </Text>
+                    <Text style={styles.diagramText}>
+                      {t(`motorsScreen.${cell.positionKey}`)}
+                    </Text>
+                    <Text style={styles.diagramText}>
+                      {t(`motorsScreen.${cell.directionKey}`)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ))}
 
-          <Text style={styles.caption} testID="motors-diagram-front-hint">
-            {t('motorsScreen.diagramFrontHint')}
-          </Text>
-          <Text style={styles.caption} testID="motors-diagram-notice">
-            {t('motorsScreen.diagramNotice')}
-          </Text>
-          {/* THE DIRECTIONS ARE NOT READ FROM THE FLIGHT CONTROLLER.
+            <Text style={styles.caption} testID="motors-diagram-front-hint">
+              {t('motorsScreen.diagramFrontHint')}
+            </Text>
+            <Text style={styles.caption} testID="motors-diagram-notice">
+              {t('motorsScreen.diagramNotice')}
+            </Text>
+            {/* THE DIRECTIONS ARE NOT READ FROM THE FLIGHT CONTROLLER.
               Investigated rather than assumed: the only MSP field that
               looks related is MSP_MIXER_CONFIG's `yaw_motors_reversed`,
               and at BETAFLIGHT_2025_12_2 the firmware uses it in exactly
@@ -1074,7 +1187,7 @@ export function MotorsScreenView({
               therefore nothing to derive from, and the CW/CCW labels are
               stated as the Betaflight default rather than as this
               aircraft's configuration. */}
-          {/* REVERSAL IS NOT OFFERED, AND THE SCREEN SAYS SO.
+            {/* REVERSAL IS NOT OFFERED, AND THE SCREEN SAYS SO.
               Audited rather than assumed. Real per-motor reversal on this
               hardware means DShot special commands 20/21 followed by SAVE
               (12), carried by MSP2_SEND_DSHOT_COMMAND, or the BLHeli
@@ -1090,22 +1203,31 @@ export function MotorsScreenView({
               whose result this app could not verify. Rather than offer
               that, or fake it by flipping a label, the screen states the
               limit and names the tool that does it properly. */}
-          <Text style={styles.caption} testID="motors-direction-reversal-support">
-            {t('motorsScreen.directionReversalUnsupported')}
-          </Text>
-          <Text style={styles.caption} testID="motors-diagram-direction-source">
-            {t('motorsScreen.diagramDirectionSource')}
-          </Text>
+            <Text
+              style={styles.caption}
+              testID="motors-direction-reversal-support"
+            >
+              {t('motorsScreen.directionReversalUnsupported')}
+            </Text>
+            <Text
+              style={styles.caption}
+              testID="motors-diagram-direction-source"
+            >
+              {t('motorsScreen.diagramDirectionSource')}
+            </Text>
+          </View>
         </View>
 
         {/* Phase 2I - the observation wizard. It CANNOT activate anything;
             a new output always needs a fresh long press below. */}
-        <MotorVerificationWizard
-          receipt={receipt}
-          state={verification}
-          onConfirm={handleConfirmObservation}
-          onMultipleMotorsReported={handleMultipleMotors}
-        />
+        {receipt !== undefined || verification.sessionToken !== undefined ? (
+          <MotorVerificationWizard
+            receipt={receipt}
+            state={verification}
+            onConfirm={handleConfirmObservation}
+            onMultipleMotorsReported={handleMultipleMotors}
+          />
+        ) : null}
 
         {verification.sessionToken !== undefined ? (
           <MotorTestReport
@@ -1152,7 +1274,9 @@ export function MotorsScreenView({
             <Text style={styles.sectionTitle}>
               {t('motorsScreen.beginSessionHeading')}
             </Text>
-            <Text style={styles.caption}>{t('motorsScreen.beginSessionHint')}</Text>
+            <Text style={styles.caption}>
+              {t('motorsScreen.beginSessionHint')}
+            </Text>
             {/* DISABLED ONLY WHILE A BEGIN IS ACTUALLY IN FLIGHT.
                 It used to be disabled whenever there was no operator port or
                 the acknowledgements were incomplete, which meant `onPress`
@@ -1171,14 +1295,15 @@ export function MotorsScreenView({
               onPress={handleBeginSession}
               disabled={beginning}
               accessibilityRole="button"
-              accessibilityState={{disabled: beginning}}
-              style={({pressed}) => [
+              accessibilityState={{ disabled: beginning }}
+              style={({ pressed }) => [
                 styles.beginButton,
                 (operator === undefined || !acknowledged || beginning) &&
                   styles.beginButtonOff,
                 pressed && styles.beginButtonPressed,
               ]}
-              testID="motors-begin-session">
+              testID="motors-begin-session"
+            >
               <Text style={styles.beginLabel}>
                 {beginning
                   ? t('motorsScreen.beginSessionBusy')
@@ -1209,7 +1334,8 @@ export function MotorsScreenView({
                 style={
                   refusal === 'NEEDS_ACK' ? styles.blockReason : styles.caption
                 }
-                testID="motors-begin-needs-ack">
+                testID="motors-begin-needs-ack"
+              >
                 {t('motorsScreen.beginSessionNeedsAck')}
                 {refusal === 'NEEDS_ACK' && beginAttempts > 0
                   ? ` (${beginAttempts})`
@@ -1224,32 +1350,17 @@ export function MotorsScreenView({
           </View>
         ) : null}
 
-        {/* (6) STEP 2 - the ONE deliberate long-press control. */}
-        <Pressable
-          onLongPress={handleLongPress}
-          delayLongPress={MOTOR_TEST_LONG_PRESS_DELAY_MILLIS}
-          onPressOut={handlePressOut}
-          onResponderTerminate={(_event: GestureResponderEvent) =>
-            handlePressOut()
-          }
-          disabled={!canActivate}
-          accessibilityRole="button"
-          accessibilityState={{disabled: !canActivate}}
-          style={[styles.holdButton, !canActivate && styles.holdButtonOff]}
-          testID="motors-hold-button">
-          <Text style={styles.holdStep}>{t('motorsScreen.holdHeading')}</Text>
-          <Text style={styles.holdLabel}>
-            {t('motorsScreen.holdToTest', {slot: `M${selectedSlot}`})}
-          </Text>
-          <Text style={styles.caption}>{t('motorsScreen.holdHint')}</Text>
-        </Pressable>
+        {/* (6) STEP 2 remains after Step 1 while no session exists. Once
+            READY, the same element moves beside the output selector above. */}
+        {presentation === 'NO_SESSION' ? holdControl : null}
 
         {onRequestLeave !== undefined ? (
           <Pressable
             onPress={onRequestLeave}
             accessibilityRole="button"
             style={styles.leaveButton}
-            testID="motors-leave">
+            testID="motors-leave"
+          >
             <Text style={styles.leaveLabel}>{t('motorsScreen.title')}</Text>
           </Pressable>
         ) : null}
@@ -1261,9 +1372,13 @@ export function MotorsScreenView({
       <Pressable
         onPress={handleStopPress}
         accessibilityRole="button"
-        accessibilityState={{disabled: false}}
-        style={[styles.stopButton, {marginBottom: insets.bottom + spacing.md}]}
-        testID="motors-stop-button">
+        accessibilityState={{ disabled: false }}
+        style={[
+          styles.stopButton,
+          { marginBottom: effectiveBottomInset + spacing.md },
+        ]}
+        testID="motors-stop-button"
+      >
         <Text style={styles.stopIcon}>⏹</Text>
         <Text style={styles.stopLabel}>{t('motorsScreen.stop')}</Text>
       </Pressable>
@@ -1279,21 +1394,46 @@ export function MotorsScreenView({
 const MIN_TOUCH_TARGET = 44;
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: colors.background},
-  scroll: {flex: 1},
-  scrollContent: {padding: spacing.lg, paddingBottom: spacing.xl, gap: spacing.md},
-  flexOne: {flex: 1},
-  title: {...typography.title, color: colors.textPrimary, writingDirection: 'rtl'},
+  root: { flex: 1, backgroundColor: colors.background },
+  scroll: { flex: 1 },
+  scrollContent: {
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.md,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
+  },
+  flexOne: { flex: 1 },
+  screenHeader: {
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
+  },
+  eyebrow: {
+    ...typography.eyebrow,
+    color: colors.accent,
+    writingDirection: 'rtl',
+  },
+  title: {
+    ...typography.display,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  screenSubtitle: {
+    ...typography.body,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+  },
   dangerBanner: {
     flexDirection: 'row',
     gap: spacing.sm,
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: '#2C1D22',
     borderColor: colors.error,
-    borderWidth: 2,
-    borderRadius: radii.md,
-    padding: spacing.md,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
   },
-  dangerIcon: {fontSize: 22, color: colors.error},
+  dangerIcon: { fontSize: 22, color: colors.error },
   dangerTitle: {
     ...typography.sectionTitle,
     color: colors.error,
@@ -1309,11 +1449,11 @@ const styles = StyleSheet.create({
   faultBanner: {
     flexDirection: 'row',
     gap: spacing.sm,
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: '#2C1D22',
     borderColor: colors.error,
     borderWidth: 2,
-    borderRadius: radii.md,
-    padding: spacing.md,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
   },
   faultText: {
     ...typography.title,
@@ -1323,25 +1463,34 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: colors.surface,
-    borderColor: colors.border,
+    borderColor: colors.borderSoft,
     borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.md,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
     gap: spacing.sm,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    elevation: 3,
   },
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
     writingDirection: 'rtl',
   },
-  statusText: {...typography.body, writingDirection: 'rtl', flexShrink: 1},
+  statusText: { ...typography.body, writingDirection: 'rtl', flexShrink: 1 },
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'rtl',
     flexShrink: 1,
   },
-  blockList: {gap: spacing.xs},
+  blockList: { gap: spacing.xs },
+  diagnosticsToggle: {
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
+  },
   blockHeading: {
     ...typography.caption,
     color: colors.warning,
@@ -1358,16 +1507,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
     minHeight: MIN_TOUCH_TARGET,
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.sm,
   },
-  checkBox: {fontSize: 20, color: colors.textSecondary},
-  checkBoxOn: {color: colors.success},
+  checkBox: { fontSize: 20, color: colors.textSecondary },
+  checkBoxOn: { color: colors.success },
   checkLabel: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
     flexShrink: 1,
   },
-  slotRow: {flexDirection: 'row', gap: spacing.sm},
+  slotRow: { flexDirection: 'row', gap: spacing.sm },
   slotCard: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET + spacing.lg,
@@ -1379,7 +1531,11 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     padding: spacing.sm,
   },
-  slotCardSelected: {borderColor: colors.accent, borderWidth: 2},
+  slotCardSelected: {
+    borderColor: colors.accent,
+    borderWidth: 2,
+    backgroundColor: colors.accentSoft,
+  },
   slotLabel: {
     ...typography.mono,
     color: colors.textPrimary,
@@ -1387,9 +1543,37 @@ const styles = StyleSheet.create({
     // the RTL page instead of being reordered around the digit.
     writingDirection: 'ltr',
   },
-  slotSelected: {...typography.caption, color: colors.accent},
-  frontIndicator: {alignItems: 'center', gap: spacing.xs},
-  frontArrow: {fontSize: 18, color: colors.accent},
+  slotSelected: { ...typography.caption, color: colors.accent },
+  referenceHeader: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  referenceToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  referenceToggleText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  referenceToggleIcon: {
+    color: colors.accent,
+    fontSize: 14,
+  },
+  hiddenDetails: {
+    display: 'none',
+  },
+  frontIndicator: { alignItems: 'center', gap: spacing.xs },
+  frontArrow: { fontSize: 18, color: colors.accent },
   frontLabel: {
     ...typography.caption,
     color: colors.accent,
@@ -1399,7 +1583,7 @@ const styles = StyleSheet.create({
      cell widths to decide where the break falls, which is exactly how the
      aircraft came to be drawn rotated 90 degrees. Each row is rendered
      from its own data, front row first. */
-  diagramRow: {flexDirection: 'row', gap: spacing.sm},
+  diagramRow: { flexDirection: 'row', gap: spacing.sm },
   diagramCell: {
     flex: 1,
     backgroundColor: colors.surfaceAlt,
@@ -1409,7 +1593,7 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     gap: spacing.xs,
   },
-  diagramCellSelected: {borderColor: colors.accent, borderWidth: 2},
+  diagramCellSelected: { borderColor: colors.accent, borderWidth: 2 },
   batteryWarning: {
     ...typography.body,
     color: colors.warning,
@@ -1435,9 +1619,9 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     marginTop: spacing.sm,
   },
-  beginButtonOff: {borderColor: colors.disabled},
+  beginButtonOff: { borderColor: colors.disabled },
   /** Touch-down feedback. Instant, and independent of any async outcome. */
-  beginButtonPressed: {borderColor: colors.textPrimary, opacity: 0.7},
+  beginButtonPressed: { borderColor: colors.textPrimary, opacity: 0.7 },
   beginLabel: {
     ...typography.sectionTitle,
     color: colors.accent,
@@ -1452,21 +1636,31 @@ const styles = StyleSheet.create({
     minHeight: MIN_TOUCH_TARGET + spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: colors.accent,
     borderColor: colors.accent,
     borderWidth: 2,
     borderRadius: radii.md,
     padding: spacing.md,
     gap: spacing.xs,
   },
-  holdButtonOff: {borderColor: colors.disabled, opacity: 0.5},
+  holdButtonOff: {
+    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.disabled,
+    opacity: 0.6,
+  },
   holdLabel: {
     ...typography.sectionTitle,
-    color: colors.textPrimary,
+    color: colors.accentText,
     writingDirection: 'rtl',
     flexShrink: 1,
   },
-  leaveButton: {minHeight: MIN_TOUCH_TARGET, justifyContent: 'center'},
+  holdLabelOff: {
+    color: colors.textPrimary,
+  },
+  holdSupportingActive: {
+    color: colors.accentText,
+  },
+  leaveButton: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center' },
   leaveLabel: {
     ...typography.caption,
     color: colors.textSecondary,
@@ -1477,21 +1671,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    marginHorizontal: spacing.lg,
+    width: '90%',
+    maxWidth: 724,
+    alignSelf: 'center',
     minHeight: MIN_TOUCH_TARGET + spacing.lg,
     backgroundColor: colors.error,
-    borderRadius: radii.md,
+    borderRadius: radii.lg,
     padding: spacing.md,
+    shadowColor: colors.error,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    elevation: 4,
   },
-  stopIcon: {fontSize: 22, color: colors.textPrimary},
+  stopIcon: { fontSize: 22, color: colors.textPrimary },
   stopLabel: {
     ...typography.title,
     color: colors.textPrimary,
     writingDirection: 'rtl',
   },
-  liveStrip: {height: 3, backgroundColor: colors.warning},
+  liveStrip: { height: 3, backgroundColor: colors.warning },
 });
-
 
 /* ================================================================== *
  * The tab container.
@@ -1608,22 +1808,23 @@ function MotorsScreenBinding({
       if (capability === undefined) {
         return false;
       }
-      setOperator(existing =>
-        existing ??
-        capability.operatorPort(
-          {
-            readCurrentIdentity: () =>
-              mspSessionCoordinator.getMotorTestSessionIdentity(
-                sessionKey.sessionId,
-              ),
-            subscribeSessionInvalidated: listener =>
-              mspSessionCoordinator.subscribeMotorTestSessionInvalidated(
-                sessionKey.sessionId,
-                listener,
-              ),
-          },
-          () => Date.now(),
-        ),
+      setOperator(
+        existing =>
+          existing ??
+          capability.operatorPort(
+            {
+              readCurrentIdentity: () =>
+                mspSessionCoordinator.getMotorTestSessionIdentity(
+                  sessionKey.sessionId,
+                ),
+              subscribeSessionInvalidated: listener =>
+                mspSessionCoordinator.subscribeMotorTestSessionInvalidated(
+                  sessionKey.sessionId,
+                  listener,
+                ),
+            },
+            () => Date.now(),
+          ),
       );
       return true;
     };
@@ -1636,8 +1837,6 @@ function MotorsScreenBinding({
       resolve();
     });
   }, [sessionKey.sessionId]);
-
-
 
   /**
    * The ACCEPTED lifecycle bridge owns every lifecycle trigger. This
@@ -1802,7 +2001,10 @@ function MotorsScreenBinding({
       releaseIfStillHeld();
     };
     const unsubscribeRelease = subscribeTabBlur(releaseOnLeave);
-    const unsubscribeStackRelease = navigation.addListener('blur', releaseOnLeave);
+    const unsubscribeStackRelease = navigation.addListener(
+      'blur',
+      releaseOnLeave,
+    );
 
     return () => {
       stopWaiting();

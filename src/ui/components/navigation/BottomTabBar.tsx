@@ -7,42 +7,36 @@
  * ScrollView. No absolute positioning, no z-index, and nothing a screen
  * can scroll it behind or under.
  *
- * HORIZONTALLY SCROLLABLE, NEVER TRUNCATED. There are more tabs than fit
- * on a 390pt screen, so the strip itself scrolls. Labels are laid out at
- * their natural width with no `numberOfLines` and no ellipsis: an Arabic
- * label clipped to "الم…" is worse than one the operator has to scroll to.
+ * ONLY WORKING DESTINATIONS ARE VISIBLE. Roadmap tabs used to occupy most
+ * of this primary navigation while doing nothing. The two implemented
+ * destinations now share the width and read like an intentional product,
+ * while MAIN_TABS still retains the future route definitions.
  *
- * RTL. Tabs are ordered right-to-left by MAIN_TABS and land that way under
- * the app's `forceRTL`. The initial scroll offset is computed explicitly
- * (see computeTabBarInitialScrollOffset) so the RIGHT edge is what the
- * operator sees first in either layout direction.
+ * RTL. Tabs retain MAIN_TABS product order and land right-to-left under
+ * the app's `forceRTL`.
  *
  * IT OWNS NO STATE AND NO SESSION. It reports a press and nothing else.
  * Which tab is active, whether a tab change is permitted, and what a tab
  * change must stop are all decided by the shell above it.
  */
 
-import React, {useCallback, useRef} from 'react';
-import {
-  I18nManager,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {useTranslation} from 'react-i18next';
+import React from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import {colors, radii, spacing, typography} from '../../theme';
-import {
-  MAIN_TABS,
-  computeTabBarInitialScrollOffset,
-  type MainTabKey,
-} from '../../../navigation/tabs';
+import { colors, radii, spacing, typography } from '../../theme';
+import { MAIN_TABS, type MainTabKey } from '../../../navigation/tabs';
 
 /** Minimum touch target, matching the rest of the app's controls. */
 const MIN_TOUCH_TARGET = 44;
+const VISIBLE_TABS = MAIN_TABS.filter(tab => tab.implemented);
+const TAB_ICON: Record<MainTabKey, string> = {
+  SETUP: '⌁',
+  MOTORS: '◉',
+  PORTS: '↔',
+  RECEIVER: '⌁',
+  PID: '∿',
+};
 
 export interface BottomTabBarProps {
   readonly activeTab: MainTabKey;
@@ -53,128 +47,101 @@ export default function BottomTabBar({
   activeTab,
   onSelectTab,
 }: BottomTabBarProps): React.JSX.Element {
-  const {t} = useTranslation();
-  const insets = useSafeAreaInsets();
-  const scrollRef = useRef<ScrollView | null>(null);
-  const layoutWidthRef = useRef(0);
-  /** The initial position is applied ONCE. Re-applying it on every content
-   * size change would yank the strip back under the operator's finger. */
-  const initialOffsetAppliedRef = useRef(false);
-
-  const applyInitialOffset = useCallback(
-    (contentWidth: number) => {
-      if (initialOffsetAppliedRef.current || layoutWidthRef.current === 0) {
-        return;
-      }
-      initialOffsetAppliedRef.current = true;
-      const x = computeTabBarInitialScrollOffset({
-        contentWidth,
-        layoutWidth: layoutWidthRef.current,
-        isRTL: I18nManager.isRTL,
-      });
-      scrollRef.current?.scrollTo({x, y: 0, animated: false});
-    },
-    [],
-  );
+  const { t } = useTranslation();
 
   return (
     <View
-      style={[styles.bar, {paddingBottom: insets.bottom}]}
+      style={styles.bar}
       accessibilityRole="tablist"
       accessibilityLabel={t('tabs.barAccessibilityLabel')}
-      testID="main-tab-bar">
-      <ScrollView
-        ref={scrollRef}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        onLayout={event => {
-          layoutWidthRef.current = event.nativeEvent.layout.width;
-        }}
-        onContentSizeChange={applyInitialOffset}
-        contentContainerStyle={styles.strip}
-        testID="main-tab-bar-scroll">
-        {MAIN_TABS.map(tab => {
+      testID="main-tab-bar"
+    >
+      <View style={styles.strip} testID="main-tab-bar-scroll">
+        {VISIBLE_TABS.map(tab => {
           const isActive = tab.key === activeTab;
-          const isDisabled = !tab.implemented;
           return (
             <Pressable
               key={tab.key}
-              onPress={isDisabled ? undefined : () => onSelectTab(tab.key)}
-              disabled={isDisabled}
+              onPress={() => onSelectTab(tab.key)}
               accessibilityRole="tab"
-              accessibilityState={{selected: isActive, disabled: isDisabled}}
-              style={[
-                styles.tab,
-                isActive && styles.tabActive,
-                isDisabled && styles.tabDisabled,
-              ]}
-              testID={`main-tab-${tab.key}`}>
-              <Text
-                style={[
-                  styles.label,
-                  isActive && styles.labelActive,
-                  isDisabled && styles.labelDisabled,
-                ]}>
+              accessibilityState={{ selected: isActive, disabled: false }}
+              style={[styles.tab, isActive && styles.tabActive]}
+              testID={`main-tab-${tab.key}`}
+            >
+              <View
+                style={[styles.iconBubble, isActive && styles.iconBubbleActive]}
+              >
+                <Text style={[styles.icon, isActive && styles.iconActive]}>
+                  {TAB_ICON[tab.key]}
+                </Text>
+              </View>
+              <Text style={[styles.label, isActive && styles.labelActive]}>
                 {t(tab.labelKey)}
               </Text>
-              {isDisabled ? (
-                <Text style={styles.unavailable}>{t('tabs.unavailable')}</Text>
-              ) : null}
             </Pressable>
           );
         })}
-      </ScrollView>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   bar: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.backgroundRaised,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: colors.borderSoft,
+    paddingTop: spacing.sm,
   },
   strip: {
     flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.sm,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
   },
   tab: {
+    flex: 1,
     minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.sm,
-    // The active indicator is a border, not a colour swap alone - the same
-    // never-colour-alone rule the safety banners follow.
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
+    gap: 2,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.md,
   },
   tabActive: {
-    backgroundColor: colors.surfaceAlt,
-    borderBottomColor: colors.accent,
+    backgroundColor: colors.accentSoft,
   },
-  tabDisabled: {
-    // No background: a disabled tab must not read as a pressable surface.
-    borderBottomColor: 'transparent',
+  iconBubble: {
+    width: 30,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
+  },
+  iconBubbleActive: {
+    backgroundColor: colors.accent,
+  },
+  icon: {
+    fontSize: 15,
+    color: colors.textMuted,
+    writingDirection: 'ltr',
+  },
+  iconActive: {
+    color: colors.accentText,
   },
   label: {
-    ...typography.sectionTitle,
+    ...typography.caption,
+    fontWeight: '700',
     color: colors.textSecondary,
     writingDirection: 'rtl',
   },
   labelActive: {
     color: colors.accent,
-  },
-  labelDisabled: {
-    color: colors.disabled,
-  },
-  unavailable: {
-    ...typography.caption,
-    color: colors.disabled,
-    writingDirection: 'rtl',
   },
 });

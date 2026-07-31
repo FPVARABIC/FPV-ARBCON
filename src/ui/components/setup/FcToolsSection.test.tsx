@@ -11,13 +11,17 @@
  */
 
 import React from 'react';
-import ReactTestRenderer, {act} from 'react-test-renderer';
-import {Text} from 'react-native';
+import ReactTestRenderer, { act } from 'react-test-renderer';
+import { Text } from 'react-native';
 
 import FcToolsSection from './FcToolsSection';
 import '../../../i18n';
-import type {FcToolGateInput, SensorPresenceBit} from '../../../core';
-import type {FcToolOutcome, FcToolPhase, FcToolsController} from '../../../platforms/react-native/protocol';
+import type { FcToolGateInput, SensorPresenceBit } from '../../../core';
+import type {
+  FcToolOutcome,
+  FcToolPhase,
+  FcToolsController,
+} from '../../../platforms/react-native/protocol';
 
 /** The EXACT acknowledgement copy. A non-error response proves only
  * that the firmware received and parsed the command: msp.c's
@@ -31,7 +35,8 @@ const TRUTHFUL_ACK =
 
 /** The exact sentence this replaced - it affirmatively claimed that
  * execution had begun, which the firmware contract does not support. */
-const FORMER_AFFIRMATIVE_ACK = 'قبل متحكم الطيران الأمر وبدأ التنفيذ. لا يستطيع التطبيق تأكيد اكتماله.';
+const FORMER_AFFIRMATIVE_ACK =
+  'قبل متحكم الطيران الأمر وبدأ التنفيذ. لا يستطيع التطبيق تأكيد اكتماله.';
 
 /** Affirmative PHRASES that must never appear anywhere in the rendered
  * tree. Deliberately phrases, not bare words: the truthful sentence
@@ -53,9 +58,9 @@ const FORBIDDEN_AFFIRMATIVE_PHRASES = [
 ];
 
 const WITH_MAG: readonly SensorPresenceBit[] = [
-  {kind: 'KNOWN', bit: 0, token: 'ACC'},
-  {kind: 'KNOWN', bit: 2, token: 'MAG'},
-  {kind: 'KNOWN', bit: 5, token: 'GYRO'},
+  { kind: 'KNOWN', bit: 0, token: 'ACC' },
+  { kind: 'KNOWN', bit: 2, token: 'MAG' },
+  { kind: 'KNOWN', bit: 5, token: 'GYRO' },
 ];
 
 /**
@@ -68,8 +73,10 @@ const WITH_MAG: readonly SensorPresenceBit[] = [
  */
 function makeFakeController() {
   const listeners = new Set<() => void>();
-  let phase: FcToolPhase = {kind: 'IDLE'};
-  let published: {outcome: FcToolOutcome; sessionId: string; sequence: number} | undefined;
+  let phase: FcToolPhase = { kind: 'IDLE' };
+  let published:
+    | { outcome: FcToolOutcome; sessionId: string; sequence: number }
+    | undefined;
   let sequence = 0;
   let revoked = false;
   const calls: string[] = [];
@@ -88,7 +95,10 @@ function makeFakeController() {
       if (published === undefined || revoked) {
         return undefined;
       }
-      if (published.sequence <= mountedAtSequence || published.sessionId !== sessionId) {
+      if (
+        published.sequence <= mountedAtSequence ||
+        published.sessionId !== sessionId
+      ) {
         return undefined;
       }
       return published.outcome;
@@ -102,7 +112,7 @@ function makeFakeController() {
       if (phase.kind !== 'IDLE') {
         return false;
       }
-      phase = {kind: 'CONFIRMING', tool: tool as never, sessionId};
+      phase = { kind: 'CONFIRMING', tool: tool as never, sessionId };
       published = undefined;
       notify();
       return true;
@@ -113,8 +123,12 @@ function makeFakeController() {
         return;
       }
       sequence += 1;
-      published = {outcome: {kind: 'CANCELLED', tool: phase.tool}, sessionId: phase.sessionId, sequence};
-      phase = {kind: 'IDLE'};
+      published = {
+        outcome: { kind: 'CANCELLED', tool: phase.tool },
+        sessionId: phase.sessionId,
+        sequence,
+      };
+      phase = { kind: 'IDLE' };
       notify();
     },
     confirm: async () => {
@@ -123,14 +137,18 @@ function makeFakeController() {
         return published?.outcome as FcToolOutcome;
       }
       sequence += 1;
-      published = {outcome: {kind: 'ACCEPTED', tool: phase.tool}, sessionId: phase.sessionId, sequence};
-      phase = {kind: 'IDLE'};
+      published = {
+        outcome: { kind: 'ACCEPTED', tool: phase.tool },
+        sessionId: phase.sessionId,
+        sequence,
+      };
+      phase = { kind: 'IDLE' };
       notify();
       return published.outcome;
     },
     setOutcome: (next: FcToolOutcome, sessionId = 's1') => {
       sequence += 1;
-      published = {outcome: next, sessionId, sequence};
+      published = { outcome: next, sessionId, sequence };
       notify();
     },
     /** Simulates a replacement owner becoming current. */
@@ -142,8 +160,19 @@ function makeFakeController() {
   return controller as unknown as FcToolsController & typeof controller;
 }
 
-function gate(overrides: Partial<FcToolGateInput> = {}): Omit<FcToolGateInput, 'busy'> {
-  const {connected, appActive, recovering, compatibility, dataState, readingMalformed, armedState, sensors} = {
+function gate(
+  overrides: Partial<FcToolGateInput> = {},
+): Omit<FcToolGateInput, 'busy'> {
+  const {
+    connected,
+    appActive,
+    recovering,
+    compatibility,
+    dataState,
+    readingMalformed,
+    armedState,
+    sensors,
+  } = {
     connected: true,
     appActive: true,
     recovering: false,
@@ -154,7 +183,16 @@ function gate(overrides: Partial<FcToolGateInput> = {}): Omit<FcToolGateInput, '
     sensors: WITH_MAG,
     ...overrides,
   };
-  return {connected, appActive, recovering, compatibility, dataState, readingMalformed, armedState, sensors};
+  return {
+    connected,
+    appActive,
+    recovering,
+    compatibility,
+    dataState,
+    readingMalformed,
+    armedState,
+    sensors,
+  };
 }
 
 function render(
@@ -164,7 +202,11 @@ function render(
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   act(() => {
     renderer = ReactTestRenderer.create(
-      <FcToolsSection sessionId="s1" gate={gateInput} controller={controller} />,
+      <FcToolsSection
+        sessionId="s1"
+        gate={gateInput}
+        controller={controller}
+      />,
     );
   });
   return renderer;
@@ -173,18 +215,26 @@ function render(
 function texts(renderer: ReactTestRenderer.ReactTestRenderer): string[] {
   return renderer.root
     .findAllByType(Text)
-    .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : String(node.props.children)));
+    .map(node =>
+      Array.isArray(node.props.children)
+        ? node.props.children.join('')
+        : String(node.props.children),
+    );
 }
 
 /** The Pressable ELEMENT (the one carrying onPress/disabled/style) -
  * RN's Pressable renders a host View that also forwards the testID. */
 function button(renderer: ReactTestRenderer.ReactTestRenderer, testID: string) {
   return renderer.root.findAll(
-    node => node.props.testID === testID && typeof node.props.onPress === 'function',
+    node =>
+      node.props.testID === testID && typeof node.props.onPress === 'function',
   )[0];
 }
 
-function press(renderer: ReactTestRenderer.ReactTestRenderer, testID: string): void {
+function press(
+  renderer: ReactTestRenderer.ReactTestRenderer,
+  testID: string,
+): void {
   act(() => {
     button(renderer, testID).props.onPress();
   });
@@ -199,13 +249,25 @@ function unmount(renderer: ReactTestRenderer.ReactTestRenderer): void {
 describe('FcToolsSection - what is offered', () => {
   it('renders the exact Arabic title and exactly the three proven tools - no placeholder', () => {
     const renderer = render(makeFakeController());
-    expect(texts(renderer)).toEqual(expect.arrayContaining(['أدوات وحدة التحكم']));
     expect(texts(renderer)).toEqual(
-      expect.arrayContaining(['معايرة مقياس التسارع', 'معايرة البوصلة المغناطيسية', 'إعادة تشغيل متحكم الطيران']),
+      expect.arrayContaining(['أدوات وحدة التحكم']),
+    );
+    expect(texts(renderer)).toEqual(
+      expect.arrayContaining([
+        'معايرة مقياس التسارع',
+        'معايرة البوصلة المغناطيسية',
+        'إعادة تشغيل متحكم الطيران',
+      ]),
     );
     // Nothing forbidden is offered.
     const all = texts(renderer).join(' | ');
-    for (const forbidden of ['المحرك', 'تسليح', 'إعادة ضبط المصنع', 'CLI', 'تحديث البرنامج']) {
+    for (const forbidden of [
+      'المحرك',
+      'تسليح',
+      'إعادة ضبط المصنع',
+      'CLI',
+      'تحديث البرنامج',
+    ]) {
       expect(all).not.toContain(forbidden);
     }
     unmount(renderer);
@@ -216,8 +278,12 @@ describe('FcToolsSection - what is offered', () => {
     for (const tool of ['ACC_CALIBRATION', 'MAG_CALIBRATION', 'REBOOT']) {
       const control = button(renderer, `fc-tool-${tool}-button`);
       expect(control.props.accessibilityRole).toBe('button');
-      const styles = control.props.style as Array<{minHeight?: number} | undefined>;
-      expect(styles.find(style => style?.minHeight !== undefined)?.minHeight).toBeGreaterThanOrEqual(44);
+      const styles = control.props.style as Array<
+        { minHeight?: number } | undefined
+      >;
+      expect(
+        styles.find(style => style?.minHeight !== undefined)?.minHeight,
+      ).toBeGreaterThanOrEqual(44);
     }
     unmount(renderer);
   });
@@ -225,41 +291,66 @@ describe('FcToolsSection - what is offered', () => {
 
 describe('FcToolsSection - disabled states name their reason in text', () => {
   const cases: Array<[Partial<FcToolGateInput>, string]> = [
-    [{connected: false}, 'غير متاح: لا يوجد اتصال نشط'],
-    [{appActive: false}, 'غير متاح: التطبيق ليس في المقدمة'],
-    [{recovering: true}, 'غير متاح: جارٍ استعادة الاتصال'],
-    [{compatibility: 'IDENTIFYING'}, 'غير متاح: لم يكتمل التعرّف على متحكم الطيران'],
-    [{compatibility: 'OTHER_FIRMWARE_OR_API'}, 'غير متاح: يتطلب Betaflight بواجهة MSP 1.47'],
-    [{dataState: 'WAITING'}, 'غير متاح: لا توجد قراءة حالية من متحكم الطيران'],
-    [{dataState: 'STALE'}, 'غير متاح: القراءة غير محدثة'],
-    [{armedState: 'ARMED'}, 'غير متاح: الطائرة مسلّحة'],
-    [{armedState: 'UNKNOWN'}, 'غير متاح: تعذّر تأكيد أن الطائرة غير مسلّحة'],
+    [{ connected: false }, 'غير متاح: لا يوجد اتصال نشط'],
+    [{ appActive: false }, 'غير متاح: التطبيق ليس في المقدمة'],
+    [{ recovering: true }, 'غير متاح: جارٍ استعادة الاتصال'],
+    [
+      { compatibility: 'IDENTIFYING' },
+      'غير متاح: لم يكتمل التعرّف على متحكم الطيران',
+    ],
+    [
+      { compatibility: 'OTHER_FIRMWARE_OR_API' },
+      'غير متاح: يتطلب واجهة MSP 1.47 المدعومة',
+    ],
+    [
+      { dataState: 'WAITING' },
+      'غير متاح: لا توجد قراءة حالية من متحكم الطيران',
+    ],
+    [{ dataState: 'STALE' }, 'غير متاح: القراءة غير محدثة'],
+    [{ armedState: 'ARMED' }, 'غير متاح: الطائرة مسلّحة'],
+    [{ armedState: 'UNKNOWN' }, 'غير متاح: تعذّر تأكيد أن الطائرة غير مسلّحة'],
   ];
 
-  it.each(cases)('%j shows "%s" and disables the control', (overrides, expected) => {
-    const renderer = render(makeFakeController(), gate(overrides));
-    expect(texts(renderer)).toContain(expected);
-    const control = button(renderer, 'fc-tool-ACC_CALIBRATION-button');
-    expect(control.props.disabled).toBe(true);
-    expect(control.props.accessibilityState).toEqual({disabled: true});
-    expect(String(control.props.accessibilityLabel)).toContain(expected);
-    unmount(renderer);
-  });
+  it.each(cases)(
+    '%j shows "%s" and disables the control',
+    (overrides, expected) => {
+      const renderer = render(makeFakeController(), gate(overrides));
+      expect(texts(renderer)).toContain(expected);
+      const control = button(renderer, 'fc-tool-ACC_CALIBRATION-button');
+      expect(control.props.disabled).toBe(true);
+      expect(control.props.accessibilityState).toEqual({ disabled: true });
+      expect(String(control.props.accessibilityLabel)).toContain(expected);
+      unmount(renderer);
+    },
+  );
 
   it('a disabled control cannot open a confirmation at all', () => {
     const controller = makeFakeController();
-    const renderer = render(controller, gate({armedState: 'ARMED'}));
-    expect(button(renderer, 'fc-tool-ACC_CALIBRATION-button').props.disabled).toBe(true);
-    expect(controller.getPhase()).toEqual({kind: 'IDLE'});
+    const renderer = render(controller, gate({ armedState: 'ARMED' }));
+    expect(
+      button(renderer, 'fc-tool-ACC_CALIBRATION-button').props.disabled,
+    ).toBe(true);
+    expect(controller.getPhase()).toEqual({ kind: 'IDLE' });
     unmount(renderer);
   });
 
   it('shows the magnetometer requirement on that control ONLY', () => {
-    const renderer = render(makeFakeController(), gate({sensors: [{kind: 'KNOWN', bit: 5, token: 'GYRO'}]}));
-    expect(texts(renderer)).toContain('غير متاح: لم يُبلِّغ متحكم الطيران عن اكتشاف بوصلة');
-    expect(button(renderer, 'fc-tool-MAG_CALIBRATION-button').props.disabled).toBe(true);
-    expect(button(renderer, 'fc-tool-ACC_CALIBRATION-button').props.disabled).toBe(false);
-    expect(button(renderer, 'fc-tool-REBOOT-button').props.disabled).toBe(false);
+    const renderer = render(
+      makeFakeController(),
+      gate({ sensors: [{ kind: 'KNOWN', bit: 5, token: 'GYRO' }] }),
+    );
+    expect(texts(renderer)).toContain(
+      'غير متاح: لم يُبلِّغ متحكم الطيران عن اكتشاف بوصلة',
+    );
+    expect(
+      button(renderer, 'fc-tool-MAG_CALIBRATION-button').props.disabled,
+    ).toBe(true);
+    expect(
+      button(renderer, 'fc-tool-ACC_CALIBRATION-button').props.disabled,
+    ).toBe(false);
+    expect(button(renderer, 'fc-tool-REBOOT-button').props.disabled).toBe(
+      false,
+    );
     unmount(renderer);
   });
 });
@@ -270,7 +361,10 @@ describe('FcToolsSection - confirmation', () => {
     const renderer = render(controller);
     press(renderer, 'fc-tool-ACC_CALIBRATION-button');
 
-    expect(renderer.root.findAll(n => n.props.testID === 'fc-tools-confirmation').length).toBeGreaterThan(0);
+    expect(
+      renderer.root.findAll(n => n.props.testID === 'fc-tools-confirmation')
+        .length,
+    ).toBeGreaterThan(0);
     expect(texts(renderer)).toContain('نعم، المراوح مفكوكة — تابع');
     expect(controller.calls).toEqual(['request:ACC_CALIBRATION']);
     unmount(renderer);
@@ -328,7 +422,9 @@ describe('FcToolsSection - confirmation', () => {
     press(renderer, 'fc-tool-REBOOT-button');
 
     for (const tool of ['ACC_CALIBRATION', 'MAG_CALIBRATION', 'REBOOT']) {
-      expect(button(renderer, `fc-tool-${tool}-button`).props.disabled).toBe(true);
+      expect(button(renderer, `fc-tool-${tool}-button`).props.disabled).toBe(
+        true,
+      );
     }
     expect(texts(renderer)).toContain('غير متاح: توجد عملية قيد التنفيذ');
     unmount(renderer);
@@ -345,11 +441,17 @@ describe('FcToolsSection - confirmation', () => {
     act(() => {
       control.props.onPress();
     });
-    expect(controller.calls.filter(c => c === 'request:ACC_CALIBRATION')).toHaveLength(2);
+    expect(
+      controller.calls.filter(c => c === 'request:ACC_CALIBRATION'),
+    ).toHaveLength(2);
     // Exactly one confirmation panel exists (the Text element plus its
     // host node are the same single panel).
     expect(
-      renderer.root.findAll(n => typeof n.type === 'string' && n.props.testID === 'fc-tools-confirmation'),
+      renderer.root.findAll(
+        n =>
+          typeof n.type === 'string' &&
+          n.props.testID === 'fc-tools-confirmation',
+      ),
     ).toHaveLength(1);
     unmount(renderer);
   });
@@ -357,30 +459,51 @@ describe('FcToolsSection - confirmation', () => {
 
 describe('FcToolsSection - truthful outcome copy', () => {
   const cases: Array<[FcToolOutcome, string]> = [
-    [{kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'}, TRUTHFUL_ACK],
-    [{kind: 'REBOOT_REQUESTED'}, 'أُرسل أمر إعادة التشغيل. يُتوقَّع انقطاع الاتصال؛ لم تُؤكَّد إعادة الاتصال.'],
-    [{kind: 'UNCONFIRMED', tool: 'REBOOT'}, 'تعذّر تأكيد النتيجة. لم يُعَد الإرسال تلقائيًا.'],
-    [{kind: 'FAILED', tool: 'ACC_CALIBRATION', error: new Error('x')}, 'رفض متحكم الطيران الأمر أو لم يُرسَل.'],
-    [{kind: 'SESSION_ENDED', tool: 'REBOOT'}, 'انتهت الجلسة قبل اكتمال العملية.'],
+    [{ kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' }, TRUTHFUL_ACK],
+    [
+      { kind: 'REBOOT_REQUESTED' },
+      'أُرسل أمر إعادة التشغيل. يُتوقَّع انقطاع الاتصال؛ لم تُؤكَّد إعادة الاتصال.',
+    ],
+    [
+      { kind: 'UNCONFIRMED', tool: 'REBOOT' },
+      'تعذّر تأكيد النتيجة. لم يُعَد الإرسال تلقائيًا.',
+    ],
+    [
+      { kind: 'FAILED', tool: 'ACC_CALIBRATION', error: new Error('x') },
+      'رفض متحكم الطيران الأمر أو لم يُرسَل.',
+    ],
+    [
+      { kind: 'SESSION_ENDED', tool: 'REBOOT' },
+      'انتهت الجلسة قبل اكتمال العملية.',
+    ],
   ];
 
-  it.each(cases)('%j renders its exact, non-overstating text', (outcome, expected) => {
-    const controller = makeFakeController();
-    const renderer = render(controller);
-    act(() => {
-      controller.setOutcome(outcome);
-    });
-    expect(texts(renderer)).toContain(expected);
-    unmount(renderer);
-  });
+  it.each(cases)(
+    '%j renders its exact, non-overstating text',
+    (outcome, expected) => {
+      const controller = makeFakeController();
+      const renderer = render(controller);
+      act(() => {
+        controller.setOutcome(outcome);
+      });
+      expect(texts(renderer)).toContain(expected);
+      unmount(renderer);
+    },
+  );
 
   it('a rejected action states that nothing was sent, with the reason', () => {
     const controller = makeFakeController();
     const renderer = render(controller);
     act(() => {
-      controller.setOutcome({kind: 'REJECTED', tool: 'ACC_CALIBRATION', reason: 'ARMED'});
+      controller.setOutcome({
+        kind: 'REJECTED',
+        tool: 'ACC_CALIBRATION',
+        reason: 'ARMED',
+      });
     });
-    const outcomeText = texts(renderer).find(text => text.startsWith('لم يُرسل أي أمر'));
+    const outcomeText = texts(renderer).find(text =>
+      text.startsWith('لم يُرسل أي أمر'),
+    );
     expect(outcomeText).toBeDefined();
     expect(outcomeText).toContain('غير متاح: الطائرة مسلّحة');
     unmount(renderer);
@@ -392,7 +515,7 @@ describe('FcToolsSection - truthful outcome copy', () => {
       const controller = makeFakeController();
       const renderer = render(controller);
       act(() => {
-        controller.setOutcome({kind: 'ACCEPTED', tool});
+        controller.setOutcome({ kind: 'ACCEPTED', tool });
       });
 
       const rendered = texts(renderer);
@@ -409,7 +532,7 @@ describe('FcToolsSection - truthful outcome copy', () => {
       const controller = makeFakeController();
       const renderer = render(controller);
       act(() => {
-        controller.setOutcome({kind: 'ACCEPTED', tool});
+        controller.setOutcome({ kind: 'ACCEPTED', tool });
       });
       const all = texts(renderer).join(' | ');
       for (const phrase of FORBIDDEN_AFFIRMATIVE_PHRASES) {
@@ -423,7 +546,7 @@ describe('FcToolsSection - truthful outcome copy', () => {
     const controller = makeFakeController();
     const renderer = render(controller);
     act(() => {
-      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+      controller.setOutcome({ kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' });
     });
 
     const sentence = texts(renderer).find(text => text.includes('لا يؤكد'));
@@ -454,16 +577,20 @@ describe('FcToolsSection - truthful outcome copy', () => {
     }
     // The descriptions state what the app REQUESTS, conditionally.
     expect(all).toContain('يطلب من متحكم الطيران بدء معايرة مقياس التسارع');
-    expect(all).not.toContain('يبدأ متحكم الطيران معايرة مقياس التسارع ويحفظ النتيجة بنفسه.');
+    expect(all).not.toContain(
+      'يبدأ متحكم الطيران معايرة مقياس التسارع ويحفظ النتيجة بنفسه.',
+    );
     unmount(renderer);
   });
 
   it('a subscriber that mounts AFTER publication never consumes the old outcome', () => {
     const controller = makeFakeController();
     // Published while nothing is mounted.
-    controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+    controller.setOutcome({ kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' });
     const renderer = render(controller);
-    expect(renderer.root.findAll(n => n.props.testID === 'fc-tools-outcome')).toEqual([]);
+    expect(
+      renderer.root.findAll(n => n.props.testID === 'fc-tools-outcome'),
+    ).toEqual([]);
     unmount(renderer);
   });
 
@@ -471,7 +598,7 @@ describe('FcToolsSection - truthful outcome copy', () => {
     const controller = makeFakeController();
     const first = render(controller);
     act(() => {
-      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+      controller.setOutcome({ kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' });
     });
     expect(texts(first)).toContain(TRUTHFUL_ACK);
     unmount(first);
@@ -479,7 +606,9 @@ describe('FcToolsSection - truthful outcome copy', () => {
     const second = render(controller);
     expect(texts(second)).not.toContain(TRUTHFUL_ACK);
     // ...and therefore no new alert node exists to be announced.
-    expect(second.root.findAll(n => n.props.testID === 'fc-tools-outcome')).toEqual([]);
+    expect(
+      second.root.findAll(n => n.props.testID === 'fc-tools-outcome'),
+    ).toEqual([]);
     unmount(second);
   });
 
@@ -487,7 +616,7 @@ describe('FcToolsSection - truthful outcome copy', () => {
     const controller = makeFakeController();
     const renderer = render(controller);
     act(() => {
-      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+      controller.setOutcome({ kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' });
     });
     expect(texts(renderer)).toContain(TRUTHFUL_ACK);
     act(() => {
@@ -501,18 +630,21 @@ describe('FcToolsSection - truthful outcome copy', () => {
     const controller = makeFakeController();
     const renderer = render(controller);
     act(() => {
-      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'}, 'some-other-session');
+      controller.setOutcome(
+        { kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' },
+        'some-other-session',
+      );
     });
     expect(texts(renderer)).not.toContain(TRUTHFUL_ACK);
     unmount(renderer);
   });
 
-  it('unmounting an OLD instance cannot clear a NEWER instance\'s outcome', () => {
+  it("unmounting an OLD instance cannot clear a NEWER instance's outcome", () => {
     const controller = makeFakeController();
     const older = render(controller);
     const newer = render(controller);
     act(() => {
-      controller.setOutcome({kind: 'ACCEPTED', tool: 'ACC_CALIBRATION'});
+      controller.setOutcome({ kind: 'ACCEPTED', tool: 'ACC_CALIBRATION' });
     });
     expect(texts(newer)).toContain(TRUTHFUL_ACK);
     // The stale instance goes away; its cleanup touches no shared state.
@@ -525,9 +657,11 @@ describe('FcToolsSection - truthful outcome copy', () => {
     const controller = makeFakeController();
     const renderer = render(controller);
     act(() => {
-      controller.setOutcome({kind: 'UNCONFIRMED', tool: 'REBOOT'});
+      controller.setOutcome({ kind: 'UNCONFIRMED', tool: 'REBOOT' });
     });
-    const node = renderer.root.find(n => typeof n.type === 'string' && n.props.testID === 'fc-tools-outcome');
+    const node = renderer.root.find(
+      n => typeof n.type === 'string' && n.props.testID === 'fc-tools-outcome',
+    );
     expect(node.props.accessibilityRole).toBe('alert');
     unmount(renderer);
   });

@@ -27,12 +27,16 @@
  */
 
 import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import { StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import type {MspBatteryState, TelemetryValue, BatteryFirmwareState} from '../../../core';
-import {deriveBatterySemantics} from '../../../core';
-import {colors, radii, spacing, typography} from '../../theme';
+import type {
+  MspBatteryState,
+  TelemetryValue,
+  BatteryFirmwareState,
+} from '../../../core';
+import { deriveBatterySemantics } from '../../../core';
+import { colors, radii, spacing, typography } from '../../theme';
 
 const STALE_OPACITY = 0.45;
 
@@ -44,17 +48,31 @@ function firmwareStateKey(state: BatteryFirmwareState): string | undefined {
   return typeof state === 'string' ? `batteryCard.state.${state}` : undefined;
 }
 
-export default function BatteryCard({telemetry}: BatteryCardProps): React.JSX.Element {
-  const {t} = useTranslation();
+export default function BatteryCard({
+  telemetry,
+}: BatteryCardProps): React.JSX.Element {
+  const { t } = useTranslation();
 
   if (telemetry.status === 'UNAVAILABLE') {
-    return renderMessage(t('batteryCard.title'), t('batteryCard.unavailable'), 'battery-card-unavailable');
+    return renderMessage(
+      t('batteryCard.title'),
+      t('batteryCard.unavailable'),
+      'battery-card-unavailable',
+    );
   }
   if (telemetry.status === 'WAITING') {
-    return renderMessage(t('batteryCard.title'), t('batteryCard.waiting'), 'battery-card-waiting');
+    return renderMessage(
+      t('batteryCard.title'),
+      t('batteryCard.waiting'),
+      'battery-card-waiting',
+    );
   }
   if (telemetry.status === 'ERROR') {
-    return renderMessage(t('batteryCard.title'), t('batteryCard.error'), 'battery-card-error');
+    return renderMessage(
+      t('batteryCard.title'),
+      t('batteryCard.error'),
+      'battery-card-error',
+    );
   }
 
   const isStale = telemetry.status === 'STALE';
@@ -65,10 +83,12 @@ export default function BatteryCard({telemetry}: BatteryCardProps): React.JSX.El
     semantics.detection === 'NOT_DETECTED'
       ? t('batteryCard.notDetected')
       : stateKey !== undefined
-        ? t(stateKey)
-        : t('batteryCard.stateUnknown');
+      ? t(stateKey)
+      : t('batteryCard.stateUnknown');
 
-  const accessibilityLabel = `${t('batteryCard.title')}، ${t('batteryCard.voltageLabel')} ${voltageText}، ${stateText}${
+  const accessibilityLabel = `${t('batteryCard.title')}، ${t(
+    'batteryCard.voltageLabel',
+  )} ${voltageText}، ${stateText}${
     isStale ? `، ${t('batteryCard.stale')}` : ''
   }`;
 
@@ -77,7 +97,8 @@ export default function BatteryCard({telemetry}: BatteryCardProps): React.JSX.El
       style={styles.container}
       accessible
       accessibilityLabel={accessibilityLabel}
-      testID={isStale ? 'battery-card-stale' : 'battery-card-live'}>
+      testID={isStale ? 'battery-card-stale' : 'battery-card-live'}
+    >
       <View style={isStale ? styles.staleContent : undefined}>
         <Text style={styles.title}>{t('batteryCard.title')}</Text>
         <View style={styles.valueRow}>
@@ -89,7 +110,9 @@ export default function BatteryCard({telemetry}: BatteryCardProps): React.JSX.El
         <Text style={styles.stateText} testID="battery-card-state">
           {stateText}
         </Text>
-        <Text style={styles.captionText}>{t('batteryCard.percentageUnavailable')}</Text>
+        <Text style={styles.captionText}>
+          {t('batteryCard.percentageUnavailable')}
+        </Text>
       </View>
       {isStale && (
         <Text style={styles.staleLabel} testID="battery-card-stale-label">
@@ -100,9 +123,18 @@ export default function BatteryCard({telemetry}: BatteryCardProps): React.JSX.El
   );
 }
 
-function renderMessage(title: string, message: string, testID: string): React.JSX.Element {
+function renderMessage(
+  title: string,
+  message: string,
+  testID: string,
+): React.JSX.Element {
   return (
-    <View style={styles.container} accessible accessibilityLabel={`${title}، ${message}`} testID={testID}>
+    <View
+      style={styles.container}
+      accessible
+      accessibilityLabel={`${title}، ${message}`}
+      testID={testID}
+    >
       <Text style={styles.title}>{title}</Text>
       <Text style={styles.messageText}>{message}</Text>
     </View>
@@ -114,16 +146,21 @@ const styles = StyleSheet.create({
     // Pass 7.6c: outer placement margins moved to SetupScreen's card
     // grid cells (the card now lives in the 2x2 grid); flex: 1 lets all
     // four cards in a grid row stretch to equal height.
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
     borderRadius: radii.md,
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: colors.surface,
     flex: 1,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   title: {
     ...typography.sectionTitle,
-    color: colors.textPrimary,
+    color: colors.accent,
   },
   valueRow: {
     flexDirection: 'row',

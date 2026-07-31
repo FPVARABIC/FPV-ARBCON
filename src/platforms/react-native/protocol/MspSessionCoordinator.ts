@@ -111,20 +111,24 @@ import type {AuxTelemetryDebugLogger} from './auxTelemetryDebugLog';
  * (useTelemetryValue() consumers) never duplicates this string. */
 export const ATTITUDE_TELEMETRY_POLL_ID = 'attitude';
 
-/** Confirmed real-hardware ceiling (Pass 7.0, Betaflight STM32F405,
- * medianRtt=224ms across two separate runs) - NOT a 100ms/10Hz
- * placeholder. */
-const ATTITUDE_POLL_INTERVAL_MS = 220;
+/**
+ * Responsive Setup orientation cadence. Pass 7.0's ~224ms median was not
+ * the FC/USB throughput ceiling: Android's receive loop held the shared
+ * read/write lock for a 200ms idle-read quantum before a queued request
+ * could be written. With that native quantum reduced and the scheduler
+ * kept single-flight, 50ms gives the model a direct 20Hz stream without
+ * building a request backlog. Auxiliary polls can consume one slot, after
+ * which the primary-priority rule returns the next slot to attitude.
+ */
+const ATTITUDE_POLL_INTERVAL_MS = 50;
 
-/** ~3x the poll interval - tolerates a couple of missed cycles (e.g. one
- * Pass 6.2b desync/recovery pause) without immediately flipping the UI
- * to STALE, while still being short enough that genuinely stopped data
- * is flagged within roughly a second, not several. */
-const ATTITUDE_POLL_STALE_AFTER_MS = 700;
+/** Ten missed 20Hz samples before a freeze is labelled stale. This keeps
+ * one slow auxiliary round trip from flashing a false stale state while
+ * still flagging genuinely stopped data within half a second. */
+const ATTITUDE_POLL_STALE_AFTER_MS = 500;
 
-/** How often the real tick() driver below fires - well under
- * ATTITUDE_POLL_INTERVAL_MS (Pass 7.2's own tick() is a safe, cheap
- * no-op when nothing is due, per that pass's own design). */
+/** The tick cadence intentionally matches the fastest poll. tick() is a
+ * safe no-op while the prior single-flight request is still outstanding. */
 const TELEMETRY_TICK_INTERVAL_MS = 50;
 
 /**
@@ -156,19 +160,13 @@ export const ARMING_BLOCKERS_TELEMETRY_POLL_ID = 'armingBlockers';
  * telemetry. */
 export const BATTERY_TELEMETRY_POLL_ID = 'battery';
 
-/** Pass 7.6a - deliberately conservative (a BINDING product correction,
- * not a guess): Pass 7.0 measured the serialized MSP queue's real
- * capacity at ~4.54 successful requests/s with attitude alone already
- * demanding ~4.55/s at its 220ms cadence - there is NO demonstrated
- * spare 1-req/s headroom. Battery data changes slowly; 3000ms bounds the
- * added demand to ~0.33 req/s (~7%), the first poll is still immediately
- * due at registration (registerPoll() marks dueAtMs=now), and later
- * changes surface within ~3s. Perceptual impact on attitude smoothness
- * is checked on hardware in Pass 7.6b. */
+/** Battery data changes slowly. A 3000ms cadence bounds its demand to
+ * ~0.33 req/s, keeps ample room for the responsive attitude stream, and
+ * still publishes a first value immediately because registerPoll() marks
+ * dueAtMs=now. */
 const BATTERY_POLL_INTERVAL_MS = 3000;
 
-/** 3x the poll interval - same missed-cycles tolerance ratio the
- * attitude poll's own stale threshold uses (220ms -> 700ms). */
+/** Three missed battery intervals before the value is labelled stale. */
 const BATTERY_POLL_STALE_AFTER_MS = 9000;
 
 /** Strictly below attitude's priority 0: the scheduler's overdue-ratio
@@ -180,8 +178,8 @@ const BATTERY_POLL_PRIORITY = -1;
 /**
  * Pass 7.6c: the three auxiliary Region 3 polls - Betaflight-gated exactly
  * like battery, registered in the SAME identification finish(). All three
- * are deliberately slow (the ~224ms serialized link has no spare fast-
- * cadence headroom - see BATTERY_POLL_INTERVAL_MS's own capacity note),
+ * are deliberately slow because their data changes slowly and the
+ * orientation stream owns the responsive path,
  * phase-staggered so they can never all become due in one startup burst,
  * and strictly below battery's priority so exact overdue-ratio ties
  * resolve toward the older channels. The scheduler runs in singleFlight
@@ -907,8 +905,8 @@ export class MspSessionCoordinator {
       return;
     }
 
-    // Pass 7.6c: singleFlight - the real MSP link is serialized at
-    // ~224ms per round trip, so at most ONE telemetry dispatch may be
+    // Pass 7.6c: singleFlight - the real MSP link is serialized, so at
+    // most ONE telemetry dispatch may be
     // outstanding at any moment (see MspTelemetrySchedulerOptions).
     // Phase 2E (P4) - THE AUTHORITATIVE CONSTRUCTION BOUNDARY.
     //

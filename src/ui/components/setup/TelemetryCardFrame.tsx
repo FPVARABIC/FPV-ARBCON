@@ -22,16 +22,21 @@
  */
 
 import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import { StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import type {TelemetryValue} from '../../../core';
-import type {AuxTelemetryChannelState} from '../../../platforms/react-native/protocol';
-import {colors, radii, spacing, typography} from '../../theme';
+import type { TelemetryValue } from '../../../core';
+import type { AuxTelemetryChannelState } from '../../../platforms/react-native/protocol';
+import { colors, radii, spacing, typography } from '../../theme';
 
 const STALE_OPACITY = 0.45;
 
-export type AuxCardGateVariant = 'disconnected' | 'unsupported' | 'unavailable' | 'waiting' | 'error';
+export type AuxCardGateVariant =
+  | 'disconnected'
+  | 'unsupported'
+  | 'unavailable'
+  | 'waiting'
+  | 'error';
 
 /** The shared lifecycle-state precedence above; undefined = render real
  * content (FRESH or STALE). Pure - unit-testable without rendering. */
@@ -84,7 +89,7 @@ export default function TelemetryCardFrame({
   contentAccessibilityLabel,
   children,
 }: TelemetryCardFrameProps): React.JSX.Element {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
 
   if (gate !== undefined) {
     const message = t(`telemetryCards.state.${gate}`);
@@ -93,7 +98,8 @@ export default function TelemetryCardFrame({
         style={styles.container}
         accessible
         accessibilityLabel={`${title}، ${message}`}
-        testID={`${testIDPrefix}-${gate}`}>
+        testID={`${testIDPrefix}-${gate}`}
+      >
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.messageText}>{message}</Text>
       </View>
@@ -105,8 +111,13 @@ export default function TelemetryCardFrame({
     <View
       style={styles.container}
       accessible
-      accessibilityLabel={stale ? `${contentAccessibilityLabel}، ${staleText}` : contentAccessibilityLabel}
-      testID={stale ? `${testIDPrefix}-stale` : `${testIDPrefix}-live`}>
+      accessibilityLabel={
+        stale
+          ? `${contentAccessibilityLabel}، ${staleText}`
+          : contentAccessibilityLabel
+      }
+      testID={stale ? `${testIDPrefix}-stale` : `${testIDPrefix}-live`}
+    >
       <View style={stale ? styles.staleContent : undefined}>
         <Text style={styles.title}>{title}</Text>
         {children}
@@ -156,16 +167,21 @@ export const telemetryCardContentStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   container: {
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
     borderRadius: radii.md,
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: colors.surface,
     flex: 1,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   title: {
     ...typography.sectionTitle,
-    color: colors.textPrimary,
+    color: colors.accent,
   },
   messageText: {
     ...typography.body,

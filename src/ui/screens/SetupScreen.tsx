@@ -45,12 +45,20 @@
  * otherwise resolve this before that change ships.
  */
 
-import React, {useCallback, useEffect, useState} from 'react';
-import {ScrollView, StyleSheet, Text, View} from 'react-native';
-import type {NativeStackScreenProps} from '@react-navigation/native-stack';
+import React, { useCallback, useEffect, useState } from 'react';
+import {
+  ScrollView,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { useTranslation } from 'react-i18next';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import type {RootStackParamList} from '../../navigation/types';
-import {colors, spacing, typography} from '../theme';
+import type { RootStackParamList } from '../../navigation/types';
+import { colors, spacing, typography } from '../theme';
 import {
   TopSystemBar,
   OrientationHero,
@@ -83,8 +91,13 @@ import {
   GPS_TELEMETRY_POLL_ID,
   FC_STATUS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
-import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
-import {deriveOrientationViewState, deriveArmingReadiness, isGpsPresent, deriveSetupDiagnostics} from '../../core';
+import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
+import {
+  deriveOrientationViewState,
+  deriveArmingReadiness,
+  isGpsPresent,
+  deriveSetupDiagnostics,
+} from '../../core';
 import type {
   MspAttitude,
   MspBatteryState,
@@ -92,24 +105,54 @@ import type {
   MspRawGpsCompact,
   MspStatusExDiagnostics,
   ArmingBlockReason,
+  OrientationViewOffset,
 } from '../../core';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
-export default function SetupScreen({route, navigation}: Props): React.JSX.Element {
+export function shouldUseSingleColumnTelemetryCards(
+  windowWidth: number,
+  fontScale: number,
+): boolean {
+  return windowWidth / Math.max(fontScale, 1) < 360;
+}
+
+export default function SetupScreen({
+  route,
+  navigation,
+}: Props): React.JSX.Element {
+  const { t } = useTranslation();
   const sessionKey = route.params?.sessionKey;
 
   if (!sessionKey) {
     return (
       <View style={styles.missingSessionRoot}>
-        <Text style={styles.placeholderText} testID="setup-screen-missing-session">
-          شاشة الإعداد (قيد الإنشاء)
+        <Text style={styles.missingSessionTitle} testID="setup-screen-missing-session">
+          {t('setupMissingSession.title')}
         </Text>
+        <Text style={styles.placeholderText}>
+          {t('setupMissingSession.message')}
+        </Text>
+        <Pressable
+          onPress={() => navigation.goBack()}
+          accessibilityRole="button"
+          style={styles.missingSessionButton}
+          testID="setup-screen-missing-session-back"
+        >
+          <Text style={styles.missingSessionButtonText}>
+            {t('setupMissingSession.back')}
+          </Text>
+        </Pressable>
       </View>
     );
   }
 
-  return <SetupScreenContent sessionKey={sessionKey} onBack={() => navigation.goBack()} />;
+  return (
+    <SetupScreenContent
+      sessionKey={sessionKey}
+      onBack={() => navigation.goBack()}
+    />
+  );
 }
 
 function SetupScreenContent({
@@ -119,16 +162,26 @@ function SetupScreenContent({
   sessionKey: SetupUiSessionKey;
   onBack: () => void;
 }): React.JSX.Element {
-  const {sessionId} = sessionKey;
+  const { sessionId } = sessionKey;
+  const { width: windowWidth, fontScale } = useWindowDimensions();
+  const useSingleColumnCards = shouldUseSingleColumnTelemetryCards(
+    windowWidth,
+    fontScale,
+  );
 
-  const attitude = useTelemetryValue<MspAttitude>(sessionId, ATTITUDE_TELEMETRY_POLL_ID);
   const armed = useTelemetryValue<boolean>(sessionId, ARMED_TELEMETRY_POLL_ID);
-  const blockers = useTelemetryValue<ArmingBlockReason[]>(sessionId, ARMING_BLOCKERS_TELEMETRY_POLL_ID);
+  const blockers = useTelemetryValue<ArmingBlockReason[]>(
+    sessionId,
+    ARMING_BLOCKERS_TELEMETRY_POLL_ID,
+  );
   // Pass 7.6b: the same generic hook/scheduler path attitude uses - the
   // poll itself exists only for identified-compatible Betaflight sessions
   // (Pass 7.6a), so every other session renders the card's honest
   // "unavailable" state through the exact same UNAVAILABLE mechanism.
-  const batteryPolled = useTelemetryValue<MspBatteryState>(sessionId, BATTERY_TELEMETRY_POLL_ID);
+  const batteryPolled = useTelemetryValue<MspBatteryState>(
+    sessionId,
+    BATTERY_TELEMETRY_POLL_ID,
+  );
   // Pass 7.7: once the one-strike battery timeout breaker has fired, the
   // poll is unregistered (scheduler reports UNAVAILABLE). The latch is the
   // truthful replacement: the pre-timeout reading frozen as STALE (no
@@ -139,17 +192,37 @@ function SetupScreenContent({
   // Pass 7.6c: Region 3's remaining channels - the same generic hook/
   // scheduler path, plus the per-channel circuit-breaker verdicts from
   // the coordinator.
-  const receiver = useTelemetryValue<MspAnalog>(sessionId, RECEIVER_TELEMETRY_POLL_ID);
-  const gps = useTelemetryValue<MspRawGpsCompact>(sessionId, GPS_TELEMETRY_POLL_ID);
-  const fcStatus = useTelemetryValue<MspStatusExDiagnostics>(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
-  const receiverChannelState = useAuxTelemetryChannelState(sessionId, RECEIVER_TELEMETRY_POLL_ID);
-  const gpsChannelState = useAuxTelemetryChannelState(sessionId, GPS_TELEMETRY_POLL_ID);
-  const fcChannelState = useAuxTelemetryChannelState(sessionId, FC_STATUS_TELEMETRY_POLL_ID);
+  const receiver = useTelemetryValue<MspAnalog>(
+    sessionId,
+    RECEIVER_TELEMETRY_POLL_ID,
+  );
+  const gps = useTelemetryValue<MspRawGpsCompact>(
+    sessionId,
+    GPS_TELEMETRY_POLL_ID,
+  );
+  const fcStatus = useTelemetryValue<MspStatusExDiagnostics>(
+    sessionId,
+    FC_STATUS_TELEMETRY_POLL_ID,
+  );
+  const receiverChannelState = useAuxTelemetryChannelState(
+    sessionId,
+    RECEIVER_TELEMETRY_POLL_ID,
+  );
+  const gpsChannelState = useAuxTelemetryChannelState(
+    sessionId,
+    GPS_TELEMETRY_POLL_ID,
+  );
+  const fcChannelState = useAuxTelemetryChannelState(
+    sessionId,
+    FC_STATUS_TELEMETRY_POLL_ID,
+  );
   const ownershipState = useMspOwnershipState(sessionId);
   const connected = ownershipState === 'ACTIVE';
 
   const freshStatusValue =
-    fcStatus.status === 'FRESH' || fcStatus.status === 'STALE' ? fcStatus.value : undefined;
+    fcStatus.status === 'FRESH' || fcStatus.status === 'STALE'
+      ? fcStatus.value
+      : undefined;
 
   // Pass 7.7, Region 4: derived from the SAME identification state
   // Region 1 already reads and the SAME single FC-status poll Region 3
@@ -161,7 +234,10 @@ function SetupScreenContent({
     status: fcStatus.status,
     value: freshStatusValue,
     identificationStatus: identification.status,
-    identity: identification.status === 'SUCCEEDED' ? identification.identity : undefined,
+    identity:
+      identification.status === 'SUCCEEDED'
+        ? identification.identity
+        : undefined,
   });
 
   // Pass 7.7, Region 5 inputs. The armed state is read ONLY from the
@@ -186,7 +262,8 @@ function SetupScreenContent({
   // GPS presence proof comes from the SHARED MSP_STATUS_EX decode (a
   // stale sensor mask still proves the FC detected the hardware);
   // undefined = not provable right now.
-  const gpsPresent = freshStatusValue === undefined ? undefined : isGpsPresent(freshStatusValue);
+  const gpsPresent =
+    freshStatusValue === undefined ? undefined : isGpsPresent(freshStatusValue);
 
   // Pass 7.7: the ONE AppState owner (module singleton) pauses/resumes
   // telemetry through the scheduler's own lease API. The screen only
@@ -198,21 +275,15 @@ function SetupScreenContent({
     setupAppStateTelemetryOwner.track(sessionId);
   }, [sessionId]);
 
-  const [uiState, setUiState] = useState(() => setupUiSessionStore.getState(sessionKey));
+  const [uiState, setUiState] = useState(() =>
+    setupUiSessionStore.getState(sessionKey),
+  );
 
-  const orientationView = deriveOrientationViewState(attitude, uiState.orientationViewOffset);
   // Computed ONCE, threaded to both SafetyStrip and TopSystemBar's Row 2
   // arming badge - per Step 4's own established design, avoiding two
   // independently-derived ArmingReadiness values that could diverge by
   // a render tick.
   const armingReadiness = deriveArmingReadiness(armed, blockers);
-
-  // The display-only Heading reset may only capture a reference it
-  // genuinely has: a FRESH attitude sample belonging to the session that
-  // is ACTIVE right now. A STALE/WAITING/ERROR reading, or a session that
-  // is no longer active, means there is nothing truthful to zero against,
-  // so the control is disabled rather than freezing a guessed reference.
-  const canResetView = attitude.status === 'FRESH' && ownershipState === 'ACTIVE';
 
   const handleResetView = useCallback(() => {
     // Read the AUTHORITATIVE state at press time, from the coordinator
@@ -230,31 +301,32 @@ function SetupScreenContent({
     if (current === undefined || current.status !== 'FRESH') {
       return;
     }
-    setupUiSessionStore.resetOrientationViewOffset(sessionKey, current.value.yawDegrees);
+    setupUiSessionStore.resetOrientationViewOffset(
+      sessionKey,
+      current.value.yawDegrees,
+    );
     setUiState(setupUiSessionStore.getState(sessionKey));
   }, [sessionKey, sessionId]);
 
   const handleResetHintShown = useCallback(() => {
-    setupUiSessionStore.update(sessionKey, {hasSeenOrientationResetHint: true});
+    setupUiSessionStore.update(sessionKey, {
+      hasSeenOrientationResetHint: true,
+    });
     setUiState(setupUiSessionStore.getState(sessionKey));
   }, [sessionKey]);
 
   return (
     <View style={styles.root} testID="setup-screen">
-      <TopSystemBar sessionId={sessionId} onBack={onBack} armingReadiness={armingReadiness} />
+      <TopSystemBar
+        sessionId={sessionId}
+        onBack={onBack}
+        armingReadiness={armingReadiness}
+      />
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <OrientationHero
-          orientationView={orientationView}
+        <LiveOrientationHero
+          sessionKey={sessionKey}
+          orientationViewOffset={uiState.orientationViewOffset}
           hasSeenResetHint={uiState.hasSeenOrientationResetHint}
-          // Diagnostics scope + sample identity. A sampleSeq is only
-          // comparable within one physical session, so it travels with
-          // the composite key; neither value affects what is drawn.
-          sessionToken={`${sessionKey.sessionId}:${sessionKey.generation}`}
-          sampleSeq={attitude.status === 'FRESH' || attitude.status === 'STALE' ? attitude.sampleSeq : undefined}
-          sampleReceivedAt={
-            attitude.status === 'FRESH' || attitude.status === 'STALE' ? attitude.updatedAtMs : undefined
-          }
-          canReset={canResetView}
           onResetView={handleResetView}
           onResetHintShown={handleResetHintShown}
         />
@@ -273,12 +345,17 @@ function SetupScreenContent({
           gate={{
             connected,
             appActive: appStatePhase === 'ACTIVE',
-            recovering: recoveryState !== undefined && recoveryState !== 'READY',
+            recovering:
+              recoveryState !== undefined && recoveryState !== 'READY',
             compatibility: diagnosticsView.compatibility,
             dataState: diagnosticsView.dataState,
-            readingMalformed: freshStatusValue?.readiness.malformedTail === true,
+            readingMalformed:
+              freshStatusValue?.readiness.malformedTail === true,
             armedState: cachedArmedState,
-            sensors: diagnosticsView.sensors.kind === 'REPORTED' ? diagnosticsView.sensors.bits : undefined,
+            sensors:
+              diagnosticsView.sensors.kind === 'REPORTED'
+                ? diagnosticsView.sensors.bits
+                : undefined,
           }}
         />
         <SafetyStrip readiness={armingReadiness} />
@@ -290,17 +367,50 @@ function SetupScreenContent({
             (left) and row 2 as GPS (right) / FC (left). Display-only -
             no press actions, no navigation, no horizontal scroll. */}
         <View style={styles.cardGrid} testID="telemetry-card-grid">
-          <View style={styles.cardCell}>
+          <View
+            style={[
+              styles.cardCell,
+              useSingleColumnCards && styles.cardCellFull,
+            ]}
+          >
             <BatteryCard telemetry={battery} />
           </View>
-          <View style={styles.cardCell}>
-            <ReceiverCard connected={connected} channelState={receiverChannelState} telemetry={receiver} />
+          <View
+            style={[
+              styles.cardCell,
+              useSingleColumnCards && styles.cardCellFull,
+            ]}
+          >
+            <ReceiverCard
+              connected={connected}
+              channelState={receiverChannelState}
+              telemetry={receiver}
+            />
           </View>
-          <View style={styles.cardCell}>
-            <GpsCard connected={connected} channelState={gpsChannelState} telemetry={gps} gpsPresent={gpsPresent} />
+          <View
+            style={[
+              styles.cardCell,
+              useSingleColumnCards && styles.cardCellFull,
+            ]}
+          >
+            <GpsCard
+              connected={connected}
+              channelState={gpsChannelState}
+              telemetry={gps}
+              gpsPresent={gpsPresent}
+            />
           </View>
-          <View style={styles.cardCell}>
-            <FlightControllerCard connected={connected} channelState={fcChannelState} telemetry={fcStatus} />
+          <View
+            style={[
+              styles.cardCell,
+              useSingleColumnCards && styles.cardCellFull,
+            ]}
+          >
+            <FlightControllerCard
+              connected={connected}
+              channelState={fcChannelState}
+              telemetry={fcStatus}
+            />
           </View>
         </View>
         {/* Pass 7.7: Region 4 immediately after Region 3. Region 5
@@ -310,6 +420,54 @@ function SetupScreenContent({
         <DiagnosticsSection view={diagnosticsView} />
       </ScrollView>
     </View>
+  );
+}
+
+/**
+ * Owns the high-frequency attitude subscription so a 20Hz orientation
+ * stream only re-renders the model/readouts subtree. Before this boundary,
+ * every genuine attitude sample re-executed the complete Setup screen,
+ * including diagnostics, FC tools and all telemetry cards, even though
+ * none of them consumed that sample.
+ */
+function LiveOrientationHero({
+  sessionKey,
+  orientationViewOffset,
+  hasSeenResetHint,
+  onResetView,
+  onResetHintShown,
+}: {
+  sessionKey: SetupUiSessionKey;
+  orientationViewOffset: OrientationViewOffset;
+  hasSeenResetHint: boolean;
+  onResetView: () => void;
+  onResetHintShown: () => void;
+}): React.JSX.Element {
+  const attitude = useTelemetryValue<MspAttitude>(
+    sessionKey.sessionId,
+    ATTITUDE_TELEMETRY_POLL_ID,
+  );
+  const ownershipState = useMspOwnershipState(sessionKey.sessionId);
+  const orientationView = deriveOrientationViewState(
+    attitude,
+    orientationViewOffset,
+  );
+  const hasSample = attitude.status === 'FRESH' || attitude.status === 'STALE';
+
+  return (
+    <OrientationHero
+      orientationView={orientationView}
+      hasSeenResetHint={hasSeenResetHint}
+      // Diagnostics scope + sample identity. A sampleSeq is only
+      // comparable within one physical session, so it travels with the
+      // composite key; neither value affects what is drawn.
+      sessionToken={`${sessionKey.sessionId}:${sessionKey.generation}`}
+      sampleSeq={hasSample ? attitude.sampleSeq : undefined}
+      sampleReceivedAt={hasSample ? attitude.updatedAtMs : undefined}
+      canReset={attitude.status === 'FRESH' && ownershipState === 'ACTIVE'}
+      onResetView={onResetView}
+      onResetHintShown={onResetHintShown}
+    />
   );
 }
 
@@ -326,22 +484,47 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   scrollContent: {
-    paddingBottom: spacing.xl,
+    paddingBottom: spacing.xxl,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
   },
   cardGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.md,
+    marginTop: spacing.xs,
+    paddingHorizontal: spacing.sm,
   },
   cardCell: {
     width: '50%',
     padding: spacing.xs,
+  },
+  cardCellFull: {
+    width: '100%',
   },
   placeholderText: {
     ...typography.body,
     color: colors.textPrimary,
     marginTop: spacing.md,
     textAlign: 'center',
+  },
+  missingSessionTitle: {
+    ...typography.title,
+    color: colors.textPrimary,
+    textAlign: 'center',
+  },
+  missingSessionButton: {
+    minHeight: 48,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: colors.accent,
+  },
+  missingSessionButtonText: {
+    ...typography.body,
+    color: colors.accentText,
+    fontWeight: '700',
   },
 });

@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { I18nManager, StyleSheet } from 'react-native';
+import { I18nManager, StatusBar, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   NavigationContainer,
@@ -20,6 +20,7 @@ import './src/i18n';
 import { MainTabsScreen, UsbConnectionScreen } from './src/ui';
 import { useMspOwnershipState } from './src/platforms/react-native/protocol';
 import type { RootStackParamList } from './src/navigation/types';
+import { colors } from './src/ui/theme';
 
 if (!I18nManager.isRTL) {
   I18nManager.allowRTL(true);
@@ -141,6 +142,10 @@ function App(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={colors.backgroundRaised}
+      />
       <NavigationContainer
         ref={navigationRef}
         onReady={handleNavigationReady}
@@ -157,6 +162,7 @@ function App(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.backgroundRaised,
   },
 });
 

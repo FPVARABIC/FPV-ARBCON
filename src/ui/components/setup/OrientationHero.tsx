@@ -30,21 +30,39 @@
  * pattern SafetyStrip.tsx/TopSystemBar.tsx already established.
  */
 
-import React, {useState} from 'react';
-import {Pressable, StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import React, { useState } from 'react';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import {OrientationRenderer} from '../../orientation3d';
+import { OrientationRenderer } from '../../orientation3d';
 // Imported from its own module, not the orientation3d barrel: several
 // screen-level suites jest.mock() that barrel down to OrientationRenderer
 // alone (the Skia component cannot mount under Jest), and the
 // diagnostics tracker must keep working in exactly those tests.
-import {orientationLatencyTracker} from '../../orientation3d/orientationLatencyDebugLog';
-import type {OrientationViewState} from '../../../core';
-import {describeOrientationForAccessibility} from '../../../core';
-import {colors, radii, spacing, typography} from '../../theme';
+import { orientationLatencyTracker } from '../../orientation3d/orientationLatencyDebugLog';
+import type { OrientationViewState } from '../../../core';
+import { describeOrientationForAccessibility } from '../../../core';
+import { colors, radii, spacing, typography } from '../../theme';
 
-const HERO_SIZE = 260;
+const HERO_MAX_SIZE = 340;
+const HERO_MIN_SIZE = 180;
+
+/**
+ * Keeps the model inside a narrow phone while letting it breathe on the
+ * tablet used for the real bench. The 60px allowance is the card's own
+ * horizontal margin and padding; the upper bound avoids an oversized GPU
+ * surface on a wide tablet.
+ */
+export function computeOrientationHeroSize(windowWidth: number): number {
+  const usableWidth = Number.isFinite(windowWidth) ? windowWidth - 60 : 260;
+  return Math.min(HERO_MAX_SIZE, Math.max(HERO_MIN_SIZE, usableWidth));
+}
 
 export interface OrientationHeroProps {
   orientationView: OrientationViewState;
@@ -79,7 +97,9 @@ export default function OrientationHero({
   onResetView,
   onResetHintShown,
 }: OrientationHeroProps): React.JSX.Element {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
+  const { width: windowWidth } = useWindowDimensions();
+  const heroSize = computeOrientationHeroSize(windowWidth);
   const [hintVisible, setHintVisible] = useState(false);
 
   const handleReset = () => {
@@ -95,10 +115,67 @@ export default function OrientationHero({
     }
   };
 
+  const renderHeader = (
+    status: 'LIVE' | 'STALE' | 'WAITING' | 'ERROR',
+  ) => {
+    const labelKey =
+      status === 'LIVE'
+        ? 'orientationHero.live'
+        : status === 'STALE'
+          ? 'orientationHero.staleLabel'
+          : status === 'WAITING'
+            ? 'orientationHero.waitingLabel'
+            : 'orientationHero.unavailableLabel';
+    const isStaleStatus = status === 'STALE';
+    const isErrorStatus = status === 'ERROR';
+
+    return (
+      <View style={styles.headerRow}>
+        <View style={styles.headerCopy}>
+          <Text style={styles.eyebrow}>{t('orientationHero.eyebrow')}</Text>
+          <Text style={styles.title}>{t('orientationHero.title')}</Text>
+        </View>
+        <View
+          style={[
+            styles.liveBadge,
+            status !== 'LIVE' && styles.inactiveBadge,
+            isStaleStatus && styles.staleBadge,
+            isErrorStatus && styles.errorBadge,
+          ]}
+          testID="orientation-hero-status-badge"
+        >
+          <View
+            style={[
+              styles.liveDot,
+              status !== 'LIVE' && styles.inactiveDot,
+              isStaleStatus && styles.staleDot,
+              isErrorStatus && styles.errorDot,
+            ]}
+          />
+          <Text
+            style={[
+              styles.liveText,
+              status !== 'LIVE' && styles.inactiveText,
+              isStaleStatus && styles.staleText,
+              isErrorStatus && styles.errorText,
+            ]}
+          >
+            {t(labelKey)}
+          </Text>
+        </View>
+      </View>
+    );
+  };
+
   if (orientationView.status === 'WAITING') {
     return (
       <View style={styles.container} testID="orientation-hero-waiting">
-        <Text style={styles.messageText}>{t('orientationHero.waiting')}</Text>
+        {renderHeader('WAITING')}
+        <View
+          style={[styles.rendererWrapper, { width: heroSize, height: heroSize }]}
+        >
+          <Text style={styles.messageText}>{t('orientationHero.waiting')}</Text>
+        </View>
       </View>
     );
   }
@@ -106,13 +183,21 @@ export default function OrientationHero({
   if (orientationView.status === 'ERROR') {
     return (
       <View style={styles.container} testID="orientation-hero-error">
-        <Text style={[styles.messageText, {color: colors.error}]}>{t('orientationHero.error')}</Text>
+        {renderHeader('ERROR')}
+        <View
+          style={[styles.rendererWrapper, { width: heroSize, height: heroSize }]}
+        >
+          <Text style={[styles.messageText, { color: colors.error }]}>
+            {t('orientationHero.error')}
+          </Text>
+        </View>
       </View>
     );
   }
 
   const isStale = orientationView.status === 'STALE';
-  const accessibilityText = describeOrientationForAccessibility(orientationView);
+  const accessibilityText =
+    describeOrientationForAccessibility(orientationView);
 
   // THE displayed sample. One object, built once, handed to the model
   // and read by the numeric readouts below - so "the number and the
@@ -129,7 +214,9 @@ export default function OrientationHero({
   // is a no-op outside __DEV__, is idempotent per sample, and schedules
   // nothing.
   const sampleIdentity =
-    sessionToken !== undefined && sampleSeq !== undefined ? {sessionToken, sampleSeq} : undefined;
+    sessionToken !== undefined && sampleSeq !== undefined
+      ? { sessionToken, sampleSeq }
+      : undefined;
   if (sampleIdentity !== undefined) {
     orientationLatencyTracker.noteHeroSample(
       sampleIdentity,
@@ -141,18 +228,20 @@ export default function OrientationHero({
 
   return (
     <View style={styles.container} testID="orientation-hero">
+      {renderHeader(isStale ? 'STALE' : 'LIVE')}
       <View
-        style={styles.rendererWrapper}
+        style={[styles.rendererWrapper, { width: heroSize, height: heroSize }]}
         accessible
         accessibilityLabel={accessibilityText}
-        testID="orientation-hero-renderer-wrapper">
+        testID="orientation-hero-renderer-wrapper"
+      >
         <OrientationRenderer
           // The latest GENUINE sample, directly. No animation, no queue,
           // no pending target: a newer sample simply replaces this prop,
           // so an older pose can never be drawn after a newer one.
           orientation={displayed}
-          width={HERO_SIZE}
-          height={HERO_SIZE}
+          width={heroSize}
+          height={heroSize}
           stale={isStale}
           sampleIdentity={sampleIdentity}
         />
@@ -166,16 +255,28 @@ export default function OrientationHero({
 
       <View style={styles.readoutsRow}>
         <View style={styles.readout} testID="orientation-hero-roll">
-          <Text style={styles.readoutLabel}>{t('orientationHero.rollLabel')}</Text>
-          <Text style={styles.readoutValue}>{`${Math.round(displayed.rollDeg)}°`}</Text>
+          <Text style={styles.readoutLabel}>
+            {t('orientationHero.rollLabel')}
+          </Text>
+          <Text style={styles.readoutValue}>{`${Math.round(
+            displayed.rollDeg,
+          )}°`}</Text>
         </View>
         <View style={styles.readout} testID="orientation-hero-pitch">
-          <Text style={styles.readoutLabel}>{t('orientationHero.pitchLabel')}</Text>
-          <Text style={styles.readoutValue}>{`${Math.round(displayed.pitchDeg)}°`}</Text>
+          <Text style={styles.readoutLabel}>
+            {t('orientationHero.pitchLabel')}
+          </Text>
+          <Text style={styles.readoutValue}>{`${Math.round(
+            displayed.pitchDeg,
+          )}°`}</Text>
         </View>
         <View style={styles.readout} testID="orientation-hero-heading">
-          <Text style={styles.readoutLabel}>{t('orientationHero.headingLabel')}</Text>
-          <Text style={styles.readoutValue}>{`${Math.round(displayed.yawDeg)}°`}</Text>
+          <Text style={styles.readoutLabel}>
+            {t('orientationHero.headingLabel')}
+          </Text>
+          <Text style={styles.readoutValue}>{`${Math.round(
+            displayed.yawDeg,
+          )}°`}</Text>
         </View>
       </View>
 
@@ -183,7 +284,10 @@ export default function OrientationHero({
           app never claims a compass it cannot prove, and after the
           display-only reset the number is explicitly relative to the
           captured reference. */}
-      <Text style={styles.headingNoteText} testID="orientation-hero-heading-note">
+      <Text
+        style={styles.headingNoteText}
+        testID="orientation-hero-heading-note"
+      >
         {t('orientationHero.headingRelativeNote')}
       </Text>
 
@@ -191,16 +295,30 @@ export default function OrientationHero({
         onPress={handleReset}
         disabled={!canReset}
         accessibilityRole="button"
-        accessibilityState={{disabled: !canReset}}
+        accessibilityState={{ disabled: !canReset }}
         accessibilityLabel={t('orientationHero.resetButton')}
-        style={canReset ? styles.resetButton : [styles.resetButton, styles.resetButtonDisabled]}
-        testID="orientation-hero-reset-button">
-        <Text style={canReset ? styles.resetButtonText : [styles.resetButtonText, styles.resetButtonTextDisabled]}>
+        style={
+          canReset
+            ? styles.resetButton
+            : [styles.resetButton, styles.resetButtonDisabled]
+        }
+        testID="orientation-hero-reset-button"
+      >
+        <Text
+          style={
+            canReset
+              ? styles.resetButtonText
+              : [styles.resetButtonText, styles.resetButtonTextDisabled]
+          }
+        >
           {t('orientationHero.resetButton')}
         </Text>
       </Pressable>
       {!canReset && (
-        <Text style={styles.resetUnavailableText} testID="orientation-hero-reset-unavailable">
+        <Text
+          style={styles.resetUnavailableText}
+          testID="orientation-hero-reset-unavailable"
+        >
           {t('orientationHero.resetUnavailable')}
         </Text>
       )}
@@ -213,8 +331,11 @@ export default function OrientationHero({
             accessibilityRole="button"
             accessibilityLabel={t('orientationHero.resetHintDismiss')}
             style={styles.hintDismiss}
-            testID="orientation-hero-reset-hint-dismiss">
-            <Text style={styles.hintDismissText}>{t('orientationHero.resetHintDismiss')}</Text>
+            testID="orientation-hero-reset-hint-dismiss"
+          >
+            <Text style={styles.hintDismissText}>
+              {t('orientationHero.resetHintDismiss')}
+            </Text>
           </Pressable>
         </View>
       )}
@@ -225,16 +346,103 @@ export default function OrientationHero({
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.lg,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surface,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 7 },
+    elevation: 4,
   },
   messageText: {
     ...typography.body,
     color: colors.textSecondary,
   },
   rendererWrapper: {
-    width: HERO_SIZE,
-    height: HERO_SIZE,
+    marginTop: spacing.sm,
+    borderRadius: radii.lg,
+    overflow: 'hidden',
+    backgroundColor: colors.backgroundRaised,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  headerCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  eyebrow: {
+    ...typography.eyebrow,
+    color: colors.accent,
+  },
+  title: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+    marginTop: 1,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accentStrong,
+  },
+  staleBadge: {
+    backgroundColor: colors.backgroundRaised,
+    borderColor: colors.warning,
+  },
+  inactiveBadge: {
+    backgroundColor: colors.backgroundRaised,
+    borderColor: colors.border,
+  },
+  errorBadge: {
+    borderColor: colors.error,
+  },
+  liveDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginEnd: spacing.sm,
+    backgroundColor: colors.success,
+  },
+  staleDot: {
+    backgroundColor: colors.warning,
+  },
+  inactiveDot: {
+    backgroundColor: colors.textMuted,
+  },
+  errorDot: {
+    backgroundColor: colors.error,
+  },
+  liveText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: '700',
+  },
+  staleText: {
+    color: colors.warning,
+  },
+  inactiveText: {
+    color: colors.textSecondary,
+  },
+  errorText: {
+    color: colors.error,
   },
   staleLabel: {
     ...typography.caption,
@@ -246,29 +454,38 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginTop: spacing.md,
+    marginTop: spacing.lg,
+    gap: spacing.sm,
   },
   readout: {
     alignItems: 'center',
     flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radii.sm,
+    backgroundColor: colors.backgroundRaised,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   readoutLabel: {
     ...typography.caption,
     color: colors.textSecondary,
   },
   readoutValue: {
-    ...typography.sectionTitle,
-    color: colors.textPrimary,
+    ...typography.title,
+    color: colors.accent,
     marginTop: spacing.xs / 2,
   },
   resetButton: {
-    marginTop: spacing.md,
+    marginTop: spacing.lg,
     minHeight: 44,
-    paddingHorizontal: spacing.md,
+    width: '100%',
+    alignItems: 'center',
+    paddingHorizontal: spacing.lg,
     justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.accentStrong,
+    borderRadius: radii.md,
+    backgroundColor: colors.accentSoft,
   },
   headingNoteText: {
     ...typography.caption,
@@ -291,14 +508,16 @@ const styles = StyleSheet.create({
   resetButtonText: {
     ...typography.body,
     color: colors.accent,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   hintBanner: {
     marginTop: spacing.sm,
     width: '100%',
     padding: spacing.md,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: radii.sm,
+    backgroundColor: colors.backgroundRaised,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   hintText: {
     ...typography.caption,

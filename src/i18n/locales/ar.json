@@ -5,6 +5,7 @@
   },
   "connection": {
     "screenTitle": "اتصال متحكم الطيران",
+    "startHere": "ابدأ من هنا",
     "sessionIdLabel": "معرف الجلسة",
     "state": {
       "disconnected": "غير متصل",
@@ -46,6 +47,9 @@
   },
   "serialConfiguration": {
     "sectionTitle": "إعدادات الاتصال التسلسلي",
+    "automaticLabel": "إعداد تلقائي",
+    "showTechnical": "إظهار التفاصيل",
+    "hideTechnical": "إخفاء التفاصيل",
     "baudRate": "معدل البث",
     "dataBits": "بتات البيانات",
     "stopBits": "بتات التوقف",
@@ -155,9 +159,19 @@
       "unknown": "غير مؤكدة"
     }
   },
+  "setupMissingSession": {
+    "title": "تعذّر فتح شاشة الإعداد",
+    "message": "لا توجد جلسة اتصال صالحة. ارجع إلى شاشة الاتصال ثم أعد توصيل متحكم الطيران.",
+    "back": "العودة إلى الاتصال"
+  },
   "orientationHero": {
+    "eyebrow": "اتجاه الطائرة المباشر",
+    "title": "حركة متزامنة مع متحكم الطيران",
+    "live": "مباشر",
     "waiting": "بانتظار بيانات الاتجاه...",
     "error": "تعذّر عرض الاتجاه",
+    "waitingLabel": "بانتظار البيانات",
+    "unavailableLabel": "غير متاح",
     "staleLabel": "البيانات متأخرة",
     "rollLabel": "الدوران",
     "pitchLabel": "الميل",
@@ -214,13 +228,15 @@
   },
   "diagnostics": {
     "title": "التشخيص والجاهزية",
+    "showDetails": "عرض التفاصيل",
+    "hideDetails": "إخفاء التفاصيل",
     "identityHeading": "متحكم الطيران",
     "identityIdentifying": "جارٍ التعرّف على متحكم الطيران",
     "identityFailed": "تعذّر التعرّف على متحكم الطيران",
     "identityBoard": "اللوحة: {{value}}",
     "identityFirmware": "البرنامج الثابت: {{identifier}} — واجهة MSP {{major}}.{{minor}}",
     "compatibilityHeading": "التوافق",
-    "compatibilityBetaflight147": "متوافق: Betaflight بواجهة MSP 1.47",
+    "compatibilityBetaflight147": "متوافق مع واجهة MSP 1.47",
     "compatibilityOther": "واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط",
     "compatibilityIdentifying": "لم يكتمل التعرّف بعد",
     "compatibilityFailed": "تعذّر التحقّق من التوافق",
@@ -285,7 +301,7 @@
       "BUSY": "غير متاح: توجد عملية قيد التنفيذ",
       "RECOVERING": "غير متاح: جارٍ استعادة الاتصال",
       "IDENTIFYING": "غير متاح: لم يكتمل التعرّف على متحكم الطيران",
-      "INCOMPATIBLE": "غير متاح: يتطلب Betaflight بواجهة MSP 1.47",
+      "INCOMPATIBLE": "غير متاح: يتطلب واجهة MSP 1.47 المدعومة",
       "NO_READING": "غير متاح: لا توجد قراءة حالية من متحكم الطيران",
       "STALE_READING": "غير متاح: القراءة غير محدثة",
       "MALFORMED_READING": "غير متاح: قراءة متحكم الطيران غير مكتملة أو غير متسقة",
@@ -320,7 +336,9 @@
     "barAccessibilityLabel": "شريط التنقل الرئيسي"
   },
   "motorsScreen": {
+    "eyebrow": "مختبر العتاد",
     "title": "اختبار المحركات",
+    "subtitle": "اختبر كل مخرج على حدة وتوقف فور إفلات زر الاختبار.",
     "propellerWarning": "أزل جميع المراوح قبل المتابعة",
     "propellerWarningDetail": "تشغيل محرك ومروحة مركّبة قد يسبب إصابة بالغة.",
     "acknowledgeHeading": "تأكيد يدوي مطلوب",
@@ -352,11 +370,14 @@
     "outputSlot": "مخرج {{slot}}",
     "selected": "محدد",
     "diagramHeading": "المرجع المتوقع — Quad X (مراوح للخارج)",
+    "diagramSummary": "ترتيب M1–M4 واتجاه الدوران المرجعي",
+    "showReference": "عرض المرجع",
+    "hideReference": "إخفاء المرجع",
     "diagramNotice": "هذا هو الإعداد المتوقع، وليس نتيجة مؤكدة من البرنامج.",
     "diagramFront": "مقدمة الطائرة",
     "diagramFrontHint": "الأعلى في هذا الرسم = مقدمة الطائرة. أدر الطائرة حتى تطابق هذا الاتجاه قبل المقارنة.",
-    "diagramDirectionSource": "اتجاهات الدوران المعروضة هي القيم الافتراضية لمخطط Betaflight Quad X، وليست قراءة من متحكم الطيران. لا يوجد في MSP حقل يثبت اتجاه دوران فعلي، ولا يثبت تركيب المراوح للخارج.",
-    "directionReversalUnsupported": "عكس اتجاه دوران محرك غير متاح في هذا التطبيق. العكس الحقيقي يتطلب أوامر DShot الخاصة أو واجهة BLHeli، وهي غير مطبَّقة هنا؛ كما لا يوفّر بروتوكول MSP أي قراءة تؤكد اتجاه الدوران بعد تغييره. استخدم Betaflight Configurator أو BLHeli/AM32 Configurator لعكس الاتجاه، ثم أعد الاختبار هنا للتحقق بصريًا.",
+    "diagramDirectionSource": "اتجاهات الدوران المعروضة مرجع شائع لمخطط Quad X وليست قراءة من متحكم الطيران. لا يوجد في MSP حقل يثبت اتجاه الدوران الفعلي أو تركيب المراوح للخارج.",
+    "directionReversalUnsupported": "عكس اتجاه المحرك غير متاح حاليًا من داخل التطبيق. استخدم أداة إعداد ESC متوافقة، ثم أعد الاختبار هنا للتحقق بصريًا.",
     "batteryScopeWarning": "استخدم بطارية 4S فقط. لا توصّل بطارية 6S إطلاقًا — النطاق المدعوم للاختبار هو 4S وحدها، وأي بطارية خارج هذا النطاق تمنع الاختبار.",
     "positionRearRight": "خلفي يمين",
     "positionFrontRight": "أمامي يمين",

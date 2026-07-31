@@ -19,7 +19,7 @@ import React from 'react';
 import {Text} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 
-import OrientationHero from './OrientationHero';
+import OrientationHero, {computeOrientationHeroSize} from './OrientationHero';
 import {OrientationRenderer} from '../../orientation3d';
 import '../../../i18n';
 import i18n from '../../../i18n';
@@ -109,9 +109,19 @@ function render(
 }
 
 describe('OrientationHero', () => {
+  it('sizes the 3D stage for a narrow phone, a standard phone and a tablet', () => {
+    expect(computeOrientationHeroSize(320)).toBe(260);
+    expect(computeOrientationHeroSize(390)).toBe(330);
+    expect(computeOrientationHeroSize(1200)).toBe(340);
+  });
+
   it('WAITING: shows the waiting message, no 3D model, no readouts, no reset button', () => {
     const {renderer} = render({status: 'WAITING'});
     expect(findByTestID(renderer, 'orientation-hero-waiting')).not.toBeNull();
+    expect(allText(renderer)).toContain(
+      i18n.t('orientationHero.waitingLabel'),
+    );
+    expect(allText(renderer)).not.toContain(i18n.t('orientationHero.live'));
     expect(findByTestID(renderer, 'orientation-hero-reset-button')).toBeNull();
     expect(findByTestID(renderer, 'orientation-hero-roll')).toBeNull();
   });
@@ -119,6 +129,10 @@ describe('OrientationHero', () => {
   it('ERROR: shows the error message, no 3D model, no readouts', () => {
     const {renderer} = render({status: 'ERROR'});
     expect(findByTestID(renderer, 'orientation-hero-error')).not.toBeNull();
+    expect(allText(renderer)).toContain(
+      i18n.t('orientationHero.unavailableLabel'),
+    );
+    expect(allText(renderer)).not.toContain(i18n.t('orientationHero.live'));
     expect(findByTestID(renderer, 'orientation-hero-reset-button')).toBeNull();
   });
 
@@ -132,6 +146,7 @@ describe('OrientationHero', () => {
     expect(text).toContain('-1°'); // pitchDeg rounded
     expect(text).toContain('274°'); // yawDeg rounded
     expect(findByTestID(renderer, 'orientation-hero-reset-button')).not.toBeNull();
+    expect(allText(renderer)).toContain('مباشر');
   });
 
   it('STALE: freezes the model/readouts at their last values, dimmed, and shows the stale label', () => {
@@ -142,6 +157,7 @@ describe('OrientationHero', () => {
     expect(text).toContain('-5°');
     expect(text).toContain('90°');
     expect(text).toContain('البيانات متأخرة');
+    expect(text).not.toContain('مباشر');
   });
 
   it('sets an accessibility label from describeOrientationForAccessibility() on the renderer wrapper', () => {
