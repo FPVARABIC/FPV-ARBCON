@@ -289,10 +289,13 @@ describe('Arabic catalogue coverage', () => {
       expect(typeof value).toBe('string');
       expect((value as string).trim().length).toBeGreaterThan(10);
     }
-    // The three facts the operator must not have to infer.
+    // The three facts the operator must not have to infer. Battery copy is
+    // intentionally honest: the motor-test controller does not read cell
+    // count, so the catalogue may not resurrect the removed 4S/6S claim.
     expect(propellers as string).toContain('أزل');
-    expect(battery as string).toContain('4S');
-    expect(battery as string).toContain('6S');
+    expect(battery as string).toContain('لا يقرأ');
+    expect(battery as string).toContain('مطابقة');
+    expect(battery as string).not.toContain('4S فقط');
     expect(emergency as string).toContain('LiPo');
   });
 });

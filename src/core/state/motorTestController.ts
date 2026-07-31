@@ -91,17 +91,16 @@
  *     promise, client, transport, writer, command, payload, lease, motor
  *     value or native handle.
  *
- * REACHABILITY IS CONTROLLED SEPARATELY, AND NOT HERE
- * ---------------------------------------------------
- * Whether a shipped build can reach this file is NOT decided in this file
- * and must not be inferred from it. It is decided elsewhere: by the
- * build-time containment seam (`motorTestDebugSeam.ts`, a `__DEV__`-guarded
- * `require`), by there being no production navigation route to the motors
- * screen, and by the CI scan that fails if this module's symbols appear in
- * a `--dev false` bundle. Those are BUILD- and NAVIGATION-level controls,
- * and a change to any of them could make this file reachable in production
- * without editing a line of it. That is exactly why the invariants above
- * may never be relaxed on the grounds that "nothing calls it".
+ * REACHABILITY IN THE UNIFIED APPLICATION
+ * ---------------------------------------
+ * This controller deliberately ships in the standalone application and is
+ * reached from the Motors tab through the official session capability. The
+ * old `__DEV__` containment seam and separate hardware-test application no
+ * longer exist. The production-bundle scan therefore proves that the engine
+ * and Arabic safety copy are present, while its source-boundary checks prove
+ * that command encoding and MSP_SET_MOTOR dispatch remain confined here.
+ * Runtime authority, lease, telemetry-barrier and armed-state checks are the
+ * real activation boundary and may never be relaxed on UI assumptions.
  *
  * AN ACK IS NOT PHYSICAL MOTION, AND NOT A PHYSICAL STOP
  * ------------------------------------------------------
@@ -1196,7 +1195,8 @@ const STOP_TRIGGER_SET: ReadonlySet<string> = new Set<string>(
  */
 export interface MotorTestController {
   /**
-   * Prepares the safety session: barrier, lease, evidence, restriction.
+   * Prepares the safety session: barrier, lease, motor scope and one fresh
+   * disarmed-state observation.
    *
    * Named for what it does. It starts NO motor, submits no activation and
    * cannot reach `Starting` or `Pulsing`. Calling it again returns the
@@ -1365,15 +1365,15 @@ class MotorTestControllerImpl {
    * was ever submitted - it must not manufacture stop traffic for an
    * activation that never began, and that reasoning is correct for the
    * reducer's own job. But it means a LOCKING safety event that arrives
-   * while idle (armed state detected, arming restriction removed, battery
-   * changed or became unsafe, navigation blur, background) leaves the
-   * machine in `Ready` - and `Ready` is exactly what this controller's
-   * activation gate consults.
+   * while idle (armed state detected, monitoring failure, navigation blur,
+   * background or session invalidation) leaves the machine in `Ready` - and
+   * `Ready` is exactly what this controller's activation gate consults.
    *
-   * Without this bar, a battery that just became unsafe would still admit
-   * a fresh pulse. The precondition that event invalidated has not come
-   * back, so activation is barred for the rest of this session. Normal
-   * reasons - release, stop button, motor switch, deadline - never set it.
+   * Without this bar, a controller that just reported itself armed or lost
+   * its safety observation could still admit a fresh pulse. The precondition
+   * that event invalidated has not come back, so activation is barred for the
+   * rest of this session. Normal reasons - release, stop button, motor switch,
+   * deadline - never set it.
    */
   private activationBarred = false;
 

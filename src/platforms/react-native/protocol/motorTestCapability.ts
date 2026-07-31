@@ -25,16 +25,19 @@
  *   - single-motor payload only, fixed low pulse;
  *   - 3-second deadline measured from command start;
  *   - explicit STOP with queue priority;
- *   - continuous MSP_STATUS_EX / MSP_BATTERY_STATE monitoring, whose
- *     absence is itself an authoritative blocker;
- *   - armed-state and arming-restriction blocks;
- *   - battery scope enforcement (4S only; 6S rejected);
- *   - 3D-mode rejection;
+ *   - continuous MSP_STATUS_EX armed-state monitoring, whose absence is
+ *     itself an authoritative blocker;
+ *   - a fresh disarmed-state observation before activation and throughout
+ *     every live pulse;
+ *   - supported motor count/protocol scope and 3D-mode rejection;
  *   - displaced-response quarantine, and the native write timeout
  *     (`TX_WRITE_TIMEOUT_MILLIS`, UsbSerialTransportModule.kt:1329 - the
  *     value there is 150, read rather than assumed).
  *
- * None of them is touched by this module, and none may be weakened,
+ * The current controller does NOT infer or enforce a battery cell count;
+ * battery suitability remains an explicit operator acknowledgement rather
+ * than a claim derived from MSP. None of the runtime gates above is touched
+ * by this module, and none may be weakened,
  * simplified or refactored as a consequence of the merge.
  *
  * WHAT IT IS NOT. Not a feature flag, not a runtime toggle, not a caller

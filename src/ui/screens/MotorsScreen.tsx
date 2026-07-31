@@ -15,10 +15,11 @@
  *   - It never creates a second session, authority, controller, queue or
  *     three-second timer. The controller owns the watchdog; a UI timer
  *     racing it could only ever disagree with it.
- *   - It re-derives NO safety condition. Battery, armed state, lease,
- *     authority, scope and capability are evaluated once, in the
- *     controller, and read here as `snapshot.activation` - the SAME
- *     evaluation `pulseMotor()` itself performs.
+ *   - It re-derives NO safety condition. Armed state, lease, authority,
+ *     scope and capability are evaluated once, in the controller, and read
+ *     here as `snapshot.activation` - the SAME evaluation `pulseMotor()`
+ *     itself performs. Battery suitability is a manual acknowledgement and
+ *     is never presented as an automatic controller fact.
  *
  * WHY `Ready` IS NOT THE GATE. Phase 2G established that a locking safety
  * event arriving while idle leaves the accepted reducer in `Ready` - it
@@ -77,15 +78,26 @@ import {
 import {
   abortVerificationAsUnsafe,
   beginVerification,
+  confirmedCount,
   confirmObservation,
   EMPTY_VERIFICATION_STATE,
+  expectedFor,
   finalizeVerification,
   MOTOR_TEST_EXPECTED_CONFIGURATION,
   type MotorObservation,
-  type MotorPhysicalPosition,
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
+import { MotorAirframeDiagram } from './MotorAirframeDiagram';
+import { MotorConfigurationSummary } from './MotorConfigurationSummary';
+
+// Kept as public exports for the payload-identity and screen contract tests.
+// Their implementation lives with the diagram so slot geometry has one
+// source of truth.
+export {
+  computeMotorGlyphLayout,
+  motorGlyphRows,
+} from './MotorAirframeDiagram';
 
 /**
  * The intentional long-press delay. No accepted shared constant exists
@@ -98,109 +110,6 @@ export const MOTOR_TEST_LONG_PRESS_DELAY_MILLIS = 800;
 export const MOTOR_TEST_OUTPUT_SLOTS: readonly number[] = Object.freeze([
   1, 2, 3, 4,
 ]);
-
-/* ================================================================== *
- * THE MOTOR GLYPH LAYOUT.
- *
- * NAMING. This is `computeMotorGlyphLayout`, and the name is load-bearing:
- * it computes where a LABEL is drawn on screen. It builds no payload,
- * names no command, and its output can never be sent anywhere. A name like
- * "computeMotorFrame" reads at a call site like something that produces
- * wire data, and this must never be mistaken for that.
- *
- * WHAT WAS WRONG BEFORE. The cells were emitted in slot order (M1, M2, M3,
- * M4) into a 2-column wrapping grid, which put M2 (front-right) and M1
- * (rear-right) in the SAME top row - rotating the aircraft 90 degrees
- * against reality. The labels were right; the geometry was not.
- *
- * THE CORRECT RTL PLACEMENT:
- *
- *      top-right    = M2  front-right
- *      top-left     = M4  front-left
- *      bottom-right = M1  rear-right
- *      bottom-left  = M3  rear-left
- *
- * `row`/`side` are emitted as DATA rather than left implicit in array
- * order, so a test can assert the spatial claim directly instead of
- * inferring it from how flexbox happened to wrap.
- *
- * THE SLOT NUMBERS ARE THE SINGLE SOURCE OF TRUTH IN
- * `MOTOR_TEST_EXPECTED_CONFIGURATION`. This module derives from it and
- * never restates it - a second copy of the mapping is exactly how a
- * diagram and a payload come to disagree.
- * ================================================================== */
-
-export type MotorGlyphRow = 'FRONT' | 'REAR';
-export type MotorGlyphSide = 'RIGHT' | 'LEFT';
-
-export interface MotorGlyphCell {
-  /** MSP OUTPUT SLOT, 1..4 - the same number `pulseMotor()` takes. */
-  readonly slot: number;
-  readonly row: MotorGlyphRow;
-  readonly side: MotorGlyphSide;
-  readonly positionKey: string;
-  readonly directionKey: string;
-}
-
-const POSITION_GEOMETRY: Record<
-  MotorPhysicalPosition,
-  { row: MotorGlyphRow; side: MotorGlyphSide; positionKey: string }
-> = {
-  FRONT_RIGHT: {
-    row: 'FRONT',
-    side: 'RIGHT',
-    positionKey: 'positionFrontRight',
-  },
-  FRONT_LEFT: { row: 'FRONT', side: 'LEFT', positionKey: 'positionFrontLeft' },
-  REAR_RIGHT: { row: 'REAR', side: 'RIGHT', positionKey: 'positionRearRight' },
-  REAR_LEFT: { row: 'REAR', side: 'LEFT', positionKey: 'positionRearLeft' },
-};
-
-/**
- * Render order, RTL: within each row the RIGHT cell comes first, because
- * `flexDirection: 'row'` under the app's forceRTL lays the first child at
- * the right edge. Rows run front-then-rear, top to bottom.
- */
-const GLYPH_ORDER: readonly MotorPhysicalPosition[] = Object.freeze([
-  'FRONT_RIGHT',
-  'FRONT_LEFT',
-  'REAR_RIGHT',
-  'REAR_LEFT',
-]);
-
-export function computeMotorGlyphLayout(): readonly MotorGlyphCell[] {
-  return Object.freeze(
-    GLYPH_ORDER.map(position => {
-      const expected = MOTOR_TEST_EXPECTED_CONFIGURATION.find(
-        entry => entry.position === position,
-      );
-      if (expected === undefined) {
-        // Unreachable while the accepted configuration covers all four
-        // positions, which its own tests assert. Throwing beats drawing a
-        // cell with no slot number on a motor diagram.
-        throw new Error(`No expected mapping for position ${position}`);
-      }
-      const geometry = POSITION_GEOMETRY[position];
-      return Object.freeze({
-        slot: expected.motorNumber,
-        row: geometry.row,
-        side: geometry.side,
-        positionKey: geometry.positionKey,
-        directionKey:
-          expected.direction === 'CW' ? 'directionCw' : 'directionCcw',
-      });
-    }),
-  );
-}
-
-/** The two rendered rows, front first. */
-export function motorGlyphRows(): readonly (readonly MotorGlyphCell[])[] {
-  const cells = computeMotorGlyphLayout();
-  return Object.freeze([
-    cells.filter(cell => cell.row === 'FRONT'),
-    cells.filter(cell => cell.row === 'REAR'),
-  ]);
-}
 
 /**
  * How the screen presents the controller. Derived ONLY from the snapshot -
@@ -627,11 +536,11 @@ export function MotorsScreenView({
    * history because the old bench variant was blocked by design.
    *
    * WHY IT IS NOT AUTOMATIC. `beginSession()` acquires the exclusive lease,
-   * pauses telemetry and establishes the arming restriction. None of that
-   * may happen as a side effect of navigation - the operator asks for it.
+   * pauses telemetry, reads the supported motor scope and awaits a fresh
+   * disarmed-state observation. None of that may happen as a side effect of
+   * navigation - the operator asks for it.
    */
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [referenceOpen, setReferenceOpen] = useState(false);
   const [beginning, setBeginning] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
   /**
@@ -777,6 +686,22 @@ export function MotorsScreenView({
       ? colors.warning
       : colors.textSecondary;
 
+  const selectedExpected = expectedFor(selectedSlot);
+  const verifiedSlots = verification.entries
+    .filter(entry => entry.observation !== undefined)
+    .map(entry => entry.motorNumber);
+  const liveSlot =
+    presentation === 'SUBMITTED_AWAITING_RESPONSE' ||
+    presentation === 'ACKNOWLEDGED' ||
+    presentation === 'STOPPING'
+      ? snapshot?.pulse.motorNumber
+      : undefined;
+  const airframeEntries = MOTOR_TEST_EXPECTED_CONFIGURATION.map(entry => ({
+    slot: entry.motorNumber,
+    position: entry.position,
+    direction: entry.direction,
+  }));
+
   /**
    * One control, rendered at the point that matches the current flow:
    * beside the output selector once the session exists, or directly after
@@ -812,6 +737,71 @@ export function MotorsScreenView({
       </Text>
     </Pressable>
   );
+
+  const beginSessionControl =
+    presentation === 'NO_SESSION' ? (
+      <View style={styles.sessionCard} testID="motors-begin-session-card">
+        <View style={styles.sessionStepBadge}>
+          <Text style={styles.sessionStepNumber}>١</Text>
+        </View>
+        <View style={styles.sessionContent}>
+          <Text style={styles.sectionTitle}>
+            {t('motorsScreen.beginSessionHeading')}
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorsScreen.beginSessionHint')}
+          </Text>
+          <Pressable
+            onPress={handleBeginSession}
+            disabled={beginning}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: beginning }}
+            style={({ pressed }) => [
+              styles.beginButton,
+              (operator === undefined || !acknowledged || beginning) &&
+                styles.beginButtonOff,
+              pressed && styles.beginButtonPressed,
+            ]}
+            testID="motors-begin-session"
+          >
+            <Text style={styles.beginLabel}>
+              {beginning
+                ? t('motorsScreen.beginSessionBusy')
+                : t('motorsScreen.beginSession')}
+            </Text>
+          </Pressable>
+          {operator === undefined ? (
+            <Text style={styles.blockReason} testID="motors-begin-no-session">
+              {t('motorsScreen.noSession')}
+              {beginAttempts > 0 ? ` (${beginAttempts})` : ''}
+            </Text>
+          ) : null}
+          {operator === undefined && bringUpFailure !== undefined ? (
+            <Text style={styles.caption} testID="motors-begin-bringup-error">
+              {bringUpFailure}
+            </Text>
+          ) : null}
+          {operator !== undefined && !acknowledged ? (
+            <Text
+              style={
+                refusal === 'NEEDS_ACK' ? styles.blockReason : styles.caption
+              }
+              testID="motors-begin-needs-ack"
+            >
+              {t('motorsScreen.beginSessionNeedsAck')}
+              {refusal === 'NEEDS_ACK' && beginAttempts > 0
+                ? ` (${beginAttempts})`
+                : ''}
+            </Text>
+          ) : null}
+          {beginFailed ? (
+            <Text style={styles.blockReason} testID="motors-begin-failed">
+              {t('motorsScreen.beginSessionFailed')}
+            </Text>
+          ) : null}
+        </View>
+      </View>
+    ) : null;
 
   return (
     <View
@@ -885,10 +875,10 @@ export function MotorsScreenView({
               </Text>
             </Pressable>
           ))}
-          {/* The battery scope is a HARD limit enforced by the controller,
-              not a preference. Stated imperatively next to the checkbox
-              that claims it, so "4S only" is never something the operator
-              has to infer from a block reason after the fact. */}
+          {/* Battery suitability is a MANUAL bench acknowledgement. The
+              accepted controller no longer reads pack cell count, voltage
+              policy or the FC battery classification, so the screen names
+              that limitation instead of presenting a fake automatic gate. */}
           <Text
             style={styles.batteryWarning}
             testID="motors-battery-scope-warning"
@@ -898,17 +888,28 @@ export function MotorsScreenView({
           <Text style={styles.caption}>{t('motorsScreen.ackNotice')}</Text>
         </View>
 
-        {/* (3) Authoritative status and blocking reasons. */}
-        <View style={styles.card} testID="motors-status">
-          <Text style={styles.sectionTitle}>
-            {t('motorsScreen.statusHeading')}
-          </Text>
-          <Text
-            style={[styles.statusText, { color: statusColor }]}
-            testID={`motors-status-${presentation}`}
-          >
-            {statusText}
-          </Text>
+        {/* Session initiation belongs before the bench. It is a distinct,
+            deliberate action and cannot be confused with the hold control
+            that may actually spin a motor. */}
+        {beginSessionControl}
+
+        {/* Compact authoritative status. The first causal reason remains
+            operator-facing; the full internal state stays collapsed. */}
+        <View style={styles.statusCard} testID="motors-status">
+          <View style={styles.statusRow}>
+            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+            <View style={styles.flexOne}>
+              <Text style={styles.statusHeading}>
+                {t('motorsScreen.statusHeading')}
+              </Text>
+              <Text
+                style={[styles.statusText, { color: statusColor }]}
+                testID={`motors-status-${presentation}`}
+              >
+                {statusText}
+              </Text>
+            </View>
+          </View>
           {presentation === 'ACKNOWLEDGED' ? (
             <Text style={styles.caption} testID="motors-ack-notice">
               {t('motorsScreen.statusAcknowledgedNotice')}
@@ -1055,166 +1056,144 @@ export function MotorsScreenView({
           )
         ) : null}
 
-        {/* (4) The four selectable MSP output cards. */}
-        <View style={styles.card} testID="motors-outputs">
-          <Text style={styles.sectionTitle}>
-            {t('motorsScreen.outputsHeading')}
-          </Text>
-          <View style={styles.slotRow}>
-            {MOTOR_TEST_OUTPUT_SLOTS.map(slot => (
-              <Pressable
-                key={slot}
-                onPress={() => handleSelectSlot(slot)}
-                accessibilityRole="radio"
-                accessibilityState={{ selected: selectedSlot === slot }}
-                style={[
-                  styles.slotCard,
-                  selectedSlot === slot && styles.slotCardSelected,
-                ]}
-                testID={`motors-slot-${slot}`}
-              >
-                {/* Forced LTR so M1..M4 stay readable inside the RTL page. */}
-                <Text style={styles.slotLabel}>{`M${slot}`}</Text>
-                {selectedSlot === slot ? (
-                  <Text style={styles.slotSelected}>
-                    ✓ {t('motorsScreen.selected')}
-                  </Text>
-                ) : null}
-              </Pressable>
-            ))}
-          </View>
-        </View>
-
-        {presentation !== 'NO_SESSION' ? holdControl : null}
-
-        {/* (5) The EXPECTED Quad X reference - labelled as expected, and
-            laid out so the top of the diagram IS the front of the
-            aircraft. */}
-        <View style={styles.card} testID="motors-diagram">
-          <Pressable
-            onPress={() => setReferenceOpen(current => !current)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: referenceOpen }}
-            style={styles.referenceHeader}
-            testID="motors-diagram-toggle"
-          >
+        {/* The primary workspace. Selection, real FC facts, airframe
+            reference and the hold action stay together so the operator
+            never has to translate between separate cards. */}
+        <View style={styles.benchCard} testID="motors-workspace">
+          <View style={styles.benchHeadingRow}>
             <View style={styles.flexOne}>
               <Text style={styles.sectionTitle}>
+                {t('motorsScreen.workspaceHeading')}
+              </Text>
+              <Text style={styles.caption}>
+                {t('motorsScreen.workspaceSubtitle')}
+              </Text>
+            </View>
+            <View style={styles.progressBadge} testID="motors-progress">
+              <Text style={styles.progressText}>
+                {t('motorsScreen.verificationProgress', {
+                  done: confirmedCount(verification),
+                  total: MOTOR_TEST_OUTPUT_SLOTS.length,
+                })}
+              </Text>
+            </View>
+          </View>
+
+          <MotorConfigurationSummary scope={snapshot?.motorScope} />
+
+          <View style={styles.outputSection} testID="motors-outputs">
+            <Text style={styles.miniHeading}>
+              {t('motorsScreen.outputsHeading')}
+            </Text>
+            <View style={styles.slotRow}>
+              {MOTOR_TEST_OUTPUT_SLOTS.map(slot => (
+                <Pressable
+                  key={slot}
+                  onPress={() => handleSelectSlot(slot)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: selectedSlot === slot }}
+                  style={[
+                    styles.slotCard,
+                    selectedSlot === slot && styles.slotCardSelected,
+                    liveSlot === slot && styles.slotCardLive,
+                  ]}
+                  testID={`motors-slot-${slot}`}
+                >
+                  <Text
+                    style={[
+                      styles.slotLabel,
+                      liveSlot === slot && styles.slotLabelLive,
+                    ]}
+                  >
+                    {`M${slot}`}
+                  </Text>
+                  {selectedSlot === slot ? (
+                    <Text style={styles.slotSelected}>
+                      ✓ {t('motorsScreen.selected')}
+                    </Text>
+                  ) : null}
+                </Pressable>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.airframeSection} testID="motors-diagram">
+            <View style={styles.airframeHeading}>
+              <Text style={styles.miniHeading}>
                 {t('motorsScreen.diagramHeading')}
               </Text>
               <Text style={styles.caption}>
                 {t('motorsScreen.diagramSummary')}
               </Text>
             </View>
-            <View style={styles.referenceToggle}>
-              <Text style={styles.referenceToggleText}>
-                {t(
-                  referenceOpen
-                    ? 'motorsScreen.hideReference'
-                    : 'motorsScreen.showReference',
-                )}
-              </Text>
-              <Text style={styles.referenceToggleIcon}>
-                {referenceOpen ? '⌃' : '⌄'}
-              </Text>
-            </View>
-          </Pressable>
-
-          <View
-            style={!referenceOpen ? styles.hiddenDetails : undefined}
-            accessibilityElementsHidden={!referenceOpen}
-            importantForAccessibility={
-              referenceOpen ? 'auto' : 'no-hide-descendants'
-            }
-            testID="motors-diagram-details"
-          >
-            {/* The front-of-aircraft indicator. Without it a square of four
-              cells is orientation-ambiguous, and an operator comparing it
-              to a drone facing the other way reads every position
-              backwards. */}
-            <View style={styles.frontIndicator} testID="motors-diagram-front">
-              <Text style={styles.frontArrow}>▲</Text>
-              <Text style={styles.frontLabel}>
-                {t('motorsScreen.diagramFront')}
-              </Text>
-            </View>
-
-            {motorGlyphRows().map(row => (
-              <View key={row[0].row} style={styles.diagramRow}>
-                {row.map(cell => (
-                  <View
-                    key={cell.slot}
-                    style={[
-                      styles.diagramCell,
-                      selectedSlot === cell.slot && styles.diagramCellSelected,
-                    ]}
-                    testID={`motors-diagram-cell-${cell.row}-${cell.side}`}
-                  >
-                    {/* The slot number rendered here is the SAME number
-                      handed to pulseMotor(), which the controller turns
-                      into payload index slot-1. A test asserts that
-                      identity end to end. */}
-                    <Text
-                      style={styles.slotLabel}
-                      testID={`motors-diagram-slot-${cell.slot}`}
-                    >
-                      {`M${cell.slot}`}
-                    </Text>
-                    <Text style={styles.diagramText}>
-                      {t(`motorsScreen.${cell.positionKey}`)}
-                    </Text>
-                    <Text style={styles.diagramText}>
-                      {t(`motorsScreen.${cell.directionKey}`)}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ))}
-
+            <MotorAirframeDiagram
+              entries={airframeEntries}
+              selectedSlot={selectedSlot}
+              liveSlot={liveSlot}
+              verifiedSlots={verifiedSlots}
+              onSelectSlot={handleSelectSlot}
+            />
             <Text style={styles.caption} testID="motors-diagram-front-hint">
               {t('motorsScreen.diagramFrontHint')}
             </Text>
-            <Text style={styles.caption} testID="motors-diagram-notice">
+            <Text style={styles.referenceNotice} testID="motors-diagram-notice">
               {t('motorsScreen.diagramNotice')}
             </Text>
-            {/* THE DIRECTIONS ARE NOT READ FROM THE FLIGHT CONTROLLER.
-              Investigated rather than assumed: the only MSP field that
-              looks related is MSP_MIXER_CONFIG's `yaw_motors_reversed`,
-              and at BETAFLIGHT_2025_12_2 the firmware uses it in exactly
-              one place - to flip the sign of the yaw PID term. It does not
-              remap outputs and is not evidence of physical rotation or of
-              props-out installation (see decodeMixerConfig.ts). There is
-              therefore nothing to derive from, and the CW/CCW labels are
-              stated as the Betaflight default rather than as this
-              aircraft's configuration. */}
-            {/* REVERSAL IS NOT OFFERED, AND THE SCREEN SAYS SO.
-              Audited rather than assumed. Real per-motor reversal on this
-              hardware means DShot special commands 20/21 followed by SAVE
-              (12), carried by MSP2_SEND_DSHOT_COMMAND, or the BLHeli
-              4-way passthrough interface. This build implements NEITHER -
-              there is no DShot-command encoder and no passthrough client
-              anywhere in it, and MSP_MIXER_CONFIG's `yaw_motors_reversed`
-              is a yaw PID sign flip, not an output direction.
+          </View>
 
-              And the readback matters as much as the write: at the pinned
-              Betaflight tag NO MSP command reports an ESC's spin
-              direction, so a DShot reversal could be SENT but never
-              CONFIRMED - it would be a persistent write to ESC EEPROM
-              whose result this app could not verify. Rather than offer
-              that, or fake it by flipping a label, the screen states the
-              limit and names the tool that does it properly. */}
-            <Text
-              style={styles.caption}
-              testID="motors-direction-reversal-support"
-            >
-              {t('motorsScreen.directionReversalUnsupported')}
-            </Text>
-            <Text
-              style={styles.caption}
-              testID="motors-diagram-direction-source"
-            >
-              {t('motorsScreen.diagramDirectionSource')}
-            </Text>
+          <View style={styles.selectedMotorPanel} testID="motors-selected-summary">
+            <View style={styles.selectedMotorBadge}>
+              <Text style={styles.selectedMotorSlot}>{`M${selectedSlot}`}</Text>
+            </View>
+            <View style={styles.flexOne}>
+              <Text style={styles.miniHeading}>
+                {t('motorsScreen.selectedMotorHeading')}
+              </Text>
+              <Text style={styles.caption}>
+                {t('motorsScreen.selectedMotorExpected', {
+                  position:
+                    selectedExpected === undefined
+                      ? '—'
+                      : t(
+                          `motorVerification.position.${selectedExpected.position}`,
+                        ),
+                  direction:
+                    selectedExpected === undefined
+                      ? '—'
+                      : t(
+                          `motorVerification.direction.${selectedExpected.direction}`,
+                        ),
+                })}
+              </Text>
+            </View>
+          </View>
+
+          {holdControl}
+
+          <View style={styles.directionNotice}>
+            <View style={styles.directionIcon}>
+              <Text style={styles.directionIconText}>↻</Text>
+            </View>
+            <View style={styles.flexOne}>
+              <Text style={styles.miniHeading}>
+                {t('motorsScreen.directionFeatureHeading')}
+              </Text>
+              <Text
+                style={styles.caption}
+                testID="motors-direction-reversal-support"
+              >
+                {t('motorsScreen.directionReversalUnsupported')}
+              </Text>
+              <Text style={styles.caption}>
+                {t('motorsScreen.directionFeatureState')}
+              </Text>
+              <Text
+                style={styles.caption}
+                testID="motors-diagram-direction-source"
+              >
+                {t('motorsScreen.diagramDirectionSource')}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -1242,117 +1221,6 @@ export function MotorsScreenView({
             }
           />
         ) : null}
-
-        {/* (5b) STEP 1 - START THE SESSION. Deliberately a separate,
-            differently-shaped, differently-coloured control from the
-            hold-to-test button: this one reserves the channel, it does not
-            spin anything. Only offered while there is no machine yet.
-
-            THE CARD IS NO LONGER HIDDEN WHEN `operator` IS UNDEFINED, and
-            that is the whole point of this shape.
-
-            WHAT WENT WRONG ON THE DEVICE. This card used to require
-            `operator !== undefined` as well. `operator` is the port read
-            out of the motor-test capability store, which the coordinator
-            fills in `startTelemetry()` - a completely different condition
-            from the three acknowledgements, and one the operator has no
-            way to see or influence. On a real device the acknowledgements
-            were all ticked, the status read "no active session", and this
-            entire card was simply ABSENT: no control, no explanation, and
-            nothing to distinguish "waiting for the link" from "this build
-            shipped without the feature". Two evenings of investigation
-            went into a symptom the screen could have named itself.
-
-            So absence is replaced by a legible disabled state. The gate is
-            unchanged in strength - `handleBeginSession` cannot run without
-            an operator, because the Pressable stays `disabled` until one
-            exists - but the reason is now on screen. A control that cannot
-            act is still worth rendering when the alternative is a blank
-            gap that looks like a missing feature. */}
-        {presentation === 'NO_SESSION' ? (
-          <View style={styles.card} testID="motors-begin-session-card">
-            <Text style={styles.sectionTitle}>
-              {t('motorsScreen.beginSessionHeading')}
-            </Text>
-            <Text style={styles.caption}>
-              {t('motorsScreen.beginSessionHint')}
-            </Text>
-            {/* DISABLED ONLY WHILE A BEGIN IS ACTUALLY IN FLIGHT.
-                It used to be disabled whenever there was no operator port or
-                the acknowledgements were incomplete, which meant `onPress`
-                never fired at all and the operator got no answer of any
-                kind. Refusal now happens INSIDE `handleBeginSession`, where
-                it can say why. That is not a weaker gate: the handler
-                re-reads the port and the acknowledgements at call time and
-                returns before touching `beginSession()`, exactly as the
-                `disabled` prop did, and with no port there is nothing to
-                call in the first place.
-
-                `pressed` drives an immediate style change on touch-down -
-                before any async result exists - so a tap is visibly
-                registered even when the outcome takes a moment. */}
-            <Pressable
-              onPress={handleBeginSession}
-              disabled={beginning}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: beginning }}
-              style={({ pressed }) => [
-                styles.beginButton,
-                (operator === undefined || !acknowledged || beginning) &&
-                  styles.beginButtonOff,
-                pressed && styles.beginButtonPressed,
-              ]}
-              testID="motors-begin-session"
-            >
-              <Text style={styles.beginLabel}>
-                {beginning
-                  ? t('motorsScreen.beginSessionBusy')
-                  : t('motorsScreen.beginSession')}
-              </Text>
-            </Pressable>
-            {/* Reuses the existing status string rather than adding a new
-                one: it is already the exact truth here, and it is already
-                in the shipped bundle. */}
-            {operator === undefined ? (
-              <Text style={styles.blockReason} testID="motors-begin-no-session">
-                {t('motorsScreen.noSession')}
-                {beginAttempts > 0 ? ` (${beginAttempts})` : ''}
-              </Text>
-            ) : null}
-            {/* The ACTUAL cause, when bring-up threw. This is the line that
-                is meant to end the guessing: previously a throw here left
-                `operator` silently undefined and the screen said nothing at
-                all. Rendered only in the blocked state, so a healthy session
-                never shows developer text. */}
-            {operator === undefined && bringUpFailure !== undefined ? (
-              <Text style={styles.caption} testID="motors-begin-bringup-error">
-                {bringUpFailure}
-              </Text>
-            ) : null}
-            {operator !== undefined && !acknowledged ? (
-              <Text
-                style={
-                  refusal === 'NEEDS_ACK' ? styles.blockReason : styles.caption
-                }
-                testID="motors-begin-needs-ack"
-              >
-                {t('motorsScreen.beginSessionNeedsAck')}
-                {refusal === 'NEEDS_ACK' && beginAttempts > 0
-                  ? ` (${beginAttempts})`
-                  : ''}
-              </Text>
-            ) : null}
-            {beginFailed ? (
-              <Text style={styles.blockReason} testID="motors-begin-failed">
-                {t('motorsScreen.beginSessionFailed')}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
-
-        {/* (6) STEP 2 remains after Step 1 while no session exists. Once
-            READY, the same element moves beside the output selector above. */}
-        {presentation === 'NO_SESSION' ? holdControl : null}
 
         {onRequestLeave !== undefined ? (
           <Pressable
@@ -1474,6 +1342,85 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 3,
   },
+  sessionCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderColor: colors.accent,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+  },
+  sessionStepBadge: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: colors.accentSoft,
+    borderColor: colors.accent,
+    borderWidth: 1,
+  },
+  sessionStepNumber: {
+    ...typography.sectionTitle,
+    color: colors.accent,
+  },
+  sessionContent: {flex: 1, gap: spacing.sm},
+  statusCard: {
+    gap: spacing.sm,
+    backgroundColor: colors.backgroundRaised,
+    borderColor: colors.borderSoft,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
+  },
+  statusRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  statusDot: {width: 10, height: 10, borderRadius: 5},
+  statusHeading: {
+    ...typography.caption,
+    color: colors.textMuted,
+    writingDirection: 'rtl',
+  },
+  benchCard: {
+    gap: spacing.lg,
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    shadowColor: colors.shadow,
+    shadowOffset: {width: 0, height: 10},
+    shadowOpacity: 0.2,
+    shadowRadius: 18,
+    elevation: 4,
+  },
+  benchHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+  },
+  progressBadge: {
+    maxWidth: 126,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceAlt,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  progressText: {
+    ...typography.caption,
+    color: colors.success,
+    fontWeight: '700',
+    textAlign: 'center',
+    writingDirection: 'rtl',
+  },
+  outputSection: {gap: spacing.sm},
+  miniHeading: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: '800',
+    writingDirection: 'rtl',
+  },
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
@@ -1536,6 +1483,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     backgroundColor: colors.accentSoft,
   },
+  slotCardLive: {
+    borderColor: colors.warning,
+    backgroundColor: '#342A17',
+  },
   slotLabel: {
     ...typography.mono,
     color: colors.textPrimary,
@@ -1543,69 +1494,70 @@ const styles = StyleSheet.create({
     // the RTL page instead of being reordered around the digit.
     writingDirection: 'ltr',
   },
+  slotLabelLive: {color: colors.warning},
   slotSelected: { ...typography.caption, color: colors.accent },
-  referenceHeader: {
-    minHeight: 52,
+  airframeSection: {
+    gap: spacing.sm,
+    borderTopColor: colors.borderSoft,
+    borderTopWidth: 1,
+    paddingTop: spacing.lg,
+  },
+  airframeHeading: {gap: 2},
+  referenceNotice: {
+    ...typography.caption,
+    color: colors.warning,
+    writingDirection: 'rtl',
+  },
+  selectedMotorPanel: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-  },
-  referenceToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    backgroundColor: colors.accentSoft,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  referenceToggleText: {
-    ...typography.caption,
-    color: colors.accent,
-    fontWeight: '700',
-    writingDirection: 'rtl',
-  },
-  referenceToggleIcon: {
-    color: colors.accent,
-    fontSize: 14,
-  },
-  hiddenDetails: {
-    display: 'none',
-  },
-  frontIndicator: { alignItems: 'center', gap: spacing.xs },
-  frontArrow: { fontSize: 18, color: colors.accent },
-  frontLabel: {
-    ...typography.caption,
-    color: colors.accent,
-    writingDirection: 'rtl',
-  },
-  /* TWO EXPLICIT ROWS, never a wrapping grid. A wrap depends on measured
-     cell widths to decide where the break falls, which is exactly how the
-     aircraft came to be drawn rotated 90 degrees. Each row is rendered
-     from its own data, front row first. */
-  diagramRow: { flexDirection: 'row', gap: spacing.sm },
-  diagramCell: {
-    flex: 1,
-    backgroundColor: colors.surfaceAlt,
-    borderColor: colors.border,
+    backgroundColor: colors.backgroundRaised,
+    borderColor: colors.accent,
     borderWidth: 1,
-    borderRadius: radii.sm,
-    padding: spacing.sm,
-    gap: spacing.xs,
+    borderRadius: radii.md,
+    padding: spacing.md,
   },
-  diagramCellSelected: { borderColor: colors.accent, borderWidth: 2 },
+  selectedMotorBadge: {
+    width: 52,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 26,
+    backgroundColor: colors.accentSoft,
+    borderColor: colors.accent,
+    borderWidth: 2,
+  },
+  selectedMotorSlot: {
+    ...typography.title,
+    color: colors.accent,
+    writingDirection: 'ltr',
+  },
   batteryWarning: {
     ...typography.body,
     color: colors.warning,
     writingDirection: 'rtl',
     flexShrink: 1,
   },
-  diagramText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    writingDirection: 'rtl',
-    flexShrink: 1,
+  directionNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.sm,
+    backgroundColor: colors.backgroundRaised,
+    borderColor: colors.borderSoft,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    padding: spacing.md,
   },
+  directionIcon: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 17,
+    backgroundColor: colors.surfaceAlt,
+  },
+  directionIconText: {fontSize: 22, color: colors.accent},
   beginButton: {
     minHeight: MIN_TOUCH_TARGET,
     alignItems: 'center',

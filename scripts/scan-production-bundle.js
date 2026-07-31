@@ -138,8 +138,9 @@ const REQUIRED_ENGINE_TOKENS = [
 const REQUIRED_ARABIC_STRINGS = [
   // The propeller warning - the single most important string in the app.
   'أزل جميع المراوح قبل المتابعة',
-  // The battery scope limit.
-  'استخدم بطارية 4S فقط',
+  // The honest manual battery-suitability boundary. This build does not
+  // read cell count inside the motor-test controller.
+  'لا يقرأ هذا الإصدار عدد خلايا البطارية آليًا',
   // The emergency instruction after an unconfirmed stop.
   'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
   // A block reason, proving the whole blockReason subtree shipped.

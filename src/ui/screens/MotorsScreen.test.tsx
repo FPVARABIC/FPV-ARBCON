@@ -564,13 +564,16 @@ describe('MotorsScreen - state presentation', () => {
  * ================================================================== */
 
 describe('MotorsScreen - activation gating', () => {
-  it('keeps the primary hold control before optional reference and verification content once ready', () => {
+  it('keeps session setup before one integrated motor workspace', () => {
     const rendered = render(new FakeOperator(snapshotFor({allowed: true})));
     const ids = rendered.tree.root
       .findAll(node => typeof node.props?.testID === 'string')
       .map(node => node.props.testID as string);
-    expect(ids.indexOf('motors-hold-button')).toBeLessThan(
-      ids.indexOf('motors-diagram'),
+    expect(ids.indexOf('motors-begin-session-card')).toBeLessThan(
+      ids.indexOf('motors-workspace'),
+    );
+    expect(ids.indexOf('motors-diagram')).toBeLessThan(
+      ids.indexOf('motors-hold-button'),
     );
     rendered.unmount();
   });
@@ -981,6 +984,23 @@ describe('MotorsScreen - expected reference is labelled as expected', () => {
     rendered.unmount();
   });
 
+  it('uses the airframe itself as a real selector for the exact output slot', () => {
+    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+
+    ReactTestRenderer.act(() => {
+      rendered.find('motors-airframe-slot-4').props.onPress();
+    });
+    expect(
+      rendered.find('motors-airframe-slot-4').props.accessibilityState.selected,
+    ).toBe(true);
+
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([4]);
+    rendered.unmount();
+  });
+
   it('makes no physical-stop, rotation, RPM or temperature claim', () => {
     const rendered = render(
       new FakeOperator(
@@ -1030,8 +1050,9 @@ describe('MotorsScreen - containment', () => {
   });
 
   it('re-derives no safety condition of its own', () => {
-    // Battery, armed state, lease, authority, scope and capability are
-    // evaluated once, in the controller. The screen reads the verdict.
+    // Armed state, lease, authority, scope and capability are evaluated
+    // once, in the controller. The screen reads the verdict. Battery
+    // suitability is deliberately manual, not an invented automatic fact.
     for (const forbidden of [
       'batteryCellCount',
       'isArmed',
