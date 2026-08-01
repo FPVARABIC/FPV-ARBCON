@@ -146,7 +146,7 @@ function snapshotFor(options: {
 /* ------------------------------------------------------------------ *
  * The operator-port double
  *
- * Exactly the six members of the real sealed facade. It CANNOT reach a
+ * Exactly the members of the real sealed facade. It CANNOT reach a
  * client, transport, lease, encoder or authority, because the real port
  * cannot either - so a test can never exercise a path production code
  * does not have.
@@ -154,6 +154,9 @@ function snapshotFor(options: {
 
 class FakeOperator implements MotorTestOperatorPort {
   snapshot: MotorTestControllerSnapshot;
+  beginCalls = 0;
+  renewCalls = 0;
+  beginResult: Promise<MotorTestControllerSnapshot> | undefined;
   readonly pulseCalls: number[] = [];
   readonly stopCalls: MotorTestStopTriggerReason[] = [];
   pulseResult: MotorTestPulseRequestResult = 'ACCEPTED';
@@ -164,7 +167,8 @@ class FakeOperator implements MotorTestOperatorPort {
   }
 
   beginSession(): Promise<MotorTestControllerSnapshot> {
-    return Promise.resolve(this.snapshot);
+    this.beginCalls += 1;
+    return this.beginResult ?? Promise.resolve(this.snapshot);
   }
 
   getSnapshot(): MotorTestControllerSnapshot {
@@ -181,6 +185,34 @@ class FakeOperator implements MotorTestOperatorPort {
   pulseMotor(motorNumber: number): MotorTestPulseRequestResult {
     this.pulseCalls.push(motorNumber);
     return this.pulseResult;
+  }
+
+  renewPulseHold(): 'RENEWED' | 'NO_ACTIVE_PULSE' {
+    this.renewCalls += 1;
+    return this.snapshot.pulse.mayHaveReachedFc
+      ? 'RENEWED'
+      : 'NO_ACTIVE_PULSE';
+  }
+
+  setEscDirection(
+    motorNumber: number,
+    direction: import('../../core').DshotEscDirection,
+  ): Promise<import('../../core/state/motorTestController').MotorTestEscDirectionOutcome> {
+    return Promise.resolve({
+      kind: 'ACKNOWLEDGED',
+      motorNumber,
+      direction,
+      physicallyVerified: false,
+    });
+  }
+
+  refreshDiagnostics() {
+    return Promise.resolve(
+      this.snapshot.diagnostics ?? {
+        outputs: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+        escTelemetry: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+      },
+    );
   }
 
   requestStop(trigger: MotorTestStopTriggerReason): MotorTestStopRequestResult {
@@ -251,16 +283,17 @@ function render(operator: MotorTestOperatorPort | undefined): Rendered {
   };
 }
 
-/** Ticks every acknowledgement checkbox - the supplemental UI gate. */
+/** Compatibility helper for older flow tests. The checkbox ritual was
+ * intentionally removed; the controller is now the only gate. */
 function acknowledgeAll(rendered: Rendered): void {
-  rendered.press('motors-ack-propellers');
-  rendered.press('motors-ack-secured');
-  rendered.press('motors-ack-battery');
+  expect(rendered.query('motors-ack-propellers')).toBeUndefined();
 }
 
 function longPress(rendered: Rendered): void {
   act(() => {
-    rendered.find('motors-hold-button').props.onLongPress?.();
+    const hold = rendered.find('motors-hold-button');
+    hold.props.onPressIn?.();
+    hold.props.onLongPress?.();
   });
 }
 
@@ -564,12 +597,12 @@ describe('MotorsScreen - state presentation', () => {
  * ================================================================== */
 
 describe('MotorsScreen - activation gating', () => {
-  it('keeps session setup before one integrated motor workspace', () => {
+  it('keeps the safety notice before one integrated motor workspace', () => {
     const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
     const ids = rendered.tree.root
       .findAll(node => typeof node.props?.testID === 'string')
       .map(node => node.props.testID as string);
-    expect(ids.indexOf('motors-begin-session-card')).toBeLessThan(
+    expect(ids.indexOf('motors-acknowledgements')).toBeLessThan(
       ids.indexOf('motors-workspace'),
     );
     expect(ids.indexOf('motors-diagram')).toBeLessThan(
@@ -578,14 +611,13 @@ describe('MotorsScreen - activation gating', () => {
     rendered.unmount();
   });
 
-  it('keeps Step 1 before the hold control when no session exists', () => {
+  it('removes the separate Step-1 ceremony and leaves a lazy hold control', () => {
     const rendered = render(undefined);
     const ids = rendered.tree.root
       .findAll(node => typeof node.props?.testID === 'string')
       .map(node => node.props.testID as string);
-    expect(ids.indexOf('motors-begin-session-card')).toBeLessThan(
-      ids.indexOf('motors-hold-button'),
-    );
+    expect(ids).not.toContain('motors-begin-session-card');
+    expect(ids).toContain('motors-hold-button');
     rendered.unmount();
   });
 
@@ -607,34 +639,29 @@ describe('MotorsScreen - activation gating', () => {
     rendered.unmount();
   });
 
-  it('requires the manual acknowledgement even when the controller allows', () => {
+  it('does not require checkbox rituals when the controller allows', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
-    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
-    longPress(rendered);
-    expect(operator.pulseCalls).toEqual([]);
-
-    acknowledgeAll(rendered);
     expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+    expect(rendered.query('motors-ack-propellers')).toBeUndefined();
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([1]);
     rendered.unmount();
   });
 
-  it('resets the manual acknowledgement on lock, fault and session loss', () => {
+  it('keeps warnings informational while lock and fault remain controller gates', () => {
     for (const machine of ['Locked', 'Fault'] as const) {
       const operator = new FakeOperator(snapshotFor({ allowed: true }));
       const rendered = render(operator);
-      acknowledgeAll(rendered);
       expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
 
       act(() => {
         operator.publish(snapshotFor({ machine, allowed: false }));
       });
-      // Back to allowed, but the acknowledgement is GONE - the operator
-      // must vouch again after any boundary.
       act(() => {
         operator.publish(snapshotFor({ allowed: true }));
       });
-      expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+      expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
       rendered.unmount();
     }
   });
@@ -689,12 +716,55 @@ describe('MotorsScreen - long-press contract', () => {
     rendered.unmount();
   });
 
+  it('never lets a new short touch inherit an older gesture pending setup', async () => {
+    const initial = {
+      ...snapshotFor({allowed: false}),
+      phase: 'IDLE' as const,
+      setupStep: 'NOT_STARTED' as const,
+      machine: undefined,
+      telemetryHeld: false,
+    } as MotorTestControllerSnapshot;
+    const operator = new FakeOperator(initial);
+    let resolveBegin!: (snapshot: MotorTestControllerSnapshot) => void;
+    operator.beginResult = new Promise(resolve => {
+      resolveBegin = resolve;
+    });
+    const rendered = render(operator);
+    const hold = rendered.find('motors-hold-button');
+
+    // Gesture A reaches long-press and starts protected preparation, then
+    // leaves before it resolves.
+    act(() => {
+      hold.props.onPressIn?.();
+      hold.props.onLongPress?.();
+      hold.props.onPressOut?.();
+    });
+    expect(operator.beginCalls).toBe(1);
+
+    // Gesture B is only a short touch; its long-press threshold has NOT
+    // fired when gesture A's async setup resolves.
+    act(() => hold.props.onPressIn?.());
+    operator.snapshot = snapshotFor({allowed: true});
+    await act(async () => {
+      resolveBegin(operator.snapshot);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(operator.pulseCalls).toEqual([]);
+
+    pressOut(rendered);
+    rendered.unmount();
+  });
+
   it('activates exactly the selected output, exactly once per hold', () => {
     const { operator, rendered } = readyRendered();
     rendered.press('motors-slot-3');
     longPress(rendered);
-    longPress(rendered);
-    longPress(rendered);
+    act(() => {
+      const hold = rendered.find('motors-hold-button');
+      hold.props.onLongPress?.();
+      hold.props.onLongPress?.();
+    });
     expect(operator.pulseCalls).toEqual([3]);
     rendered.unmount();
   });
@@ -937,16 +1007,24 @@ describe('MotorsScreen - no leaks, no stale mutation', () => {
     });
   });
 
-  it('creates no timer of its own', () => {
+  it('renews the live pulse while the original touch is held and clears its only timer', () => {
     jest.useFakeTimers();
     try {
       const operator = new FakeOperator(snapshotFor({ allowed: true }));
       const rendered = render(operator);
       acknowledgeAll(rendered);
       longPress(rendered);
-      // The three-second watchdog belongs to the controller. A UI timer
-      // racing it could only ever disagree with it.
-      expect(jest.getTimerCount()).toBe(0);
+      expect(jest.getTimerCount()).toBe(1);
+      operator.snapshot = snapshotFor({
+        machine: 'Pulsing',
+        mayHaveReachedFc: true,
+        allowed: false,
+      });
+      act(() => {
+        jest.advanceTimersByTime(900);
+      });
+      expect(operator.renewCalls).toBe(3);
+      expect(jest.getTimerCount()).toBe(1);
       rendered.unmount();
       expect(jest.getTimerCount()).toBe(0);
     } finally {
@@ -1066,9 +1144,9 @@ describe('MotorsScreen - containment', () => {
     expect(executable).toContain('activation.allowed');
   });
 
-  it('creates no second session, controller or timer', () => {
+  it('creates no second session or controller and only the declared heartbeat timer', () => {
     expect(executable).not.toContain('createMotorTestController');
-    expect(executable).not.toContain('setInterval');
+    expect(executable.match(/setInterval\(/g) ?? []).toHaveLength(1);
     expect(executable).not.toContain('setTimeout');
     // The one binding it does use resolves the EXISTING capability -
     // R2 moved that lookup into the build-time containment seam.
@@ -1132,8 +1210,8 @@ describe('an unproven armed state locks the screen', () => {
     // An unread armed state ALONE is the post-release re-verification
     // window - mid-cycle, not broken. Anything terminal alongside it is a
     // genuine lock. Both refuse activation; only one needs operator
-    // action, and conflating them is what wiped the acknowledgements after
-    // every single release.
+    // action; conflating them used to make every ordinary release look like
+    // a terminal session failure.
     const rendered = render(new FakeOperator(monitorBlocked()));
     expect(rendered.query('motors-status-VERIFYING')).toBeDefined();
     expect(rendered.query('motors-status-LOCKED')).toBeUndefined();
@@ -1279,15 +1357,9 @@ describe('MotorsScreen - the four-motor flow', () => {
       stopOutcome: { kind: 'ACKNOWLEDGED' },
     });
 
-  it('keeps the acknowledgements through a normal release', () => {
-    // THE DEFECT THIS CLOSES. The reset was keyed on the LOCKED
-    // presentation, and a re-verifying session renders as LOCKED for the
-    // few milliseconds its fresh observation is in flight. So every
-    // release wiped all three checkboxes and the operator had to re-tick
-    // them before touching the next motor - four times over a sweep.
+  it('returns directly to the reusable hold flow after a normal release', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
-    acknowledgeAll(rendered);
     expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
 
     act(() => {
@@ -1297,8 +1369,6 @@ describe('MotorsScreen - the four-motor flow', () => {
       operator.publish(readyAgain());
     });
 
-    // Still vouched for: the session never ended, so the operator is not
-    // asked to vouch for it again.
     expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
     rendered.unmount();
   });
@@ -1314,11 +1384,10 @@ describe('MotorsScreen - the four-motor flow', () => {
     rendered.unmount();
   });
 
-  it('still resets the acknowledgements when the session genuinely ends', () => {
+  it('keeps a genuinely ended session blocked without adding checkbox state', () => {
     for (const machine of ['Locked', 'Fault'] as const) {
       const operator = new FakeOperator(snapshotFor({ allowed: true }));
       const rendered = render(operator);
-      acknowledgeAll(rendered);
       expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
 
       act(() => {
@@ -1327,7 +1396,7 @@ describe('MotorsScreen - the four-motor flow', () => {
       act(() => {
         operator.publish(snapshotFor({ allowed: true }));
       });
-      expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+      expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
       rendered.unmount();
     }
   });
@@ -1343,7 +1412,7 @@ describe('MotorsScreen - the four-motor flow', () => {
     rendered.unmount();
   });
 
-  it('sweeps all four in an arbitrary order without re-acknowledging', () => {
+  it('sweeps all four in an arbitrary order without repeating setup ceremony', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
@@ -1361,8 +1430,8 @@ describe('MotorsScreen - the four-motor flow', () => {
       });
     }
 
-    // Five deliberate presses, five commands, in the order requested -
-    // and one set of acknowledgements for the whole sweep.
+    // Five deliberate presses, five commands, in the order requested,
+    // without any checkbox or explicit-start intermission.
     expect(operator.pulseCalls).toEqual([3, 1, 4, 2, 3]);
     expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
     rendered.unmount();
@@ -1374,19 +1443,13 @@ describe('MotorsScreen - the four-motor flow', () => {
  * ================================================================== */
 
 describe('MotorsScreen - direction handling', () => {
-  it('does not put an unreviewed reversal shortcut in the live hold workspace', () => {
+  it('puts a reviewed persistent direction tool in the selected-motor workspace', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
-    // There is no control to press, so there is nothing that could fake a
-    // reversal by flipping a label while sending nothing.
-    for (const absent of [
-      'motors-reverse-direction',
-      'motors-direction-toggle',
-      'motors-set-direction',
-    ]) {
-      expect(rendered.query(absent)).toBeUndefined();
-    }
+    expect(rendered.query('esc-direction-panel')).toBeDefined();
+    expect(rendered.query('esc-direction-review')).toBeDefined();
+    expect(rendered.query('esc-direction-apply')).toBeUndefined();
     rendered.unmount();
   });
 

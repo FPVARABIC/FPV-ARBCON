@@ -282,6 +282,29 @@ export class MotorTestLease {
     return client.requestWithMotorTestLease(token, command, payload, options);
   }
 
+  /** A fixed optional request whose confirmed MSP error means unsupported,
+   * not a broken link. Every ambiguous transport failure still kills the
+   * lease. This is used for diagnostics reads and the fixed DShot command. */
+  requestOptional(
+    command: number,
+    payload: Uint8Array,
+    options: MspRequestOptions,
+  ): Promise<MspFrame> {
+    const client = LEASE_CLIENTS.get(this);
+    const token = LEASE_TOKENS.get(this);
+    if (client === undefined || token === undefined) {
+      return Promise.reject(
+        new Error('MotorTestLease: capability is not a genuine lease'),
+      );
+    }
+    return client.requestOptionalWithMotorTestLease(
+      token,
+      command,
+      payload,
+      options,
+    );
+  }
+
   /**
    * Phase 2G Pass 1 - submit an EMERGENCY STOP as the client's next
    * transport write.

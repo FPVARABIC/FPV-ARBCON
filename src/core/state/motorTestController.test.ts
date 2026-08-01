@@ -62,6 +62,7 @@ import {
   createMotorTestController,
   EMPTY_MOTOR_TEST_EFFECT_RECORD,
   MOTOR_TEST_CONTROLLER_STOP_TRIGGERS,
+  MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS,
   type MotorTestController,
   type MotorTestControllerSessionPort,
   type MotorTestControllerSnapshot,
@@ -104,8 +105,11 @@ import {
   MSP_FC_VERSION,
   MSP_FEATURE_CONFIG,
   MSP_MIXER_CONFIG,
+  MSP_MOTOR,
   MSP_MOTOR_CONFIG,
+  MSP_MOTOR_TELEMETRY,
   MSP_STATUS_EX,
+  MSP2_SEND_DSHOT_COMMAND,
 } from '../protocol/msp/commands/mspCommands';
 
 const EMPTY = new Uint8Array(0);
@@ -299,6 +303,16 @@ function writtenCommand(data: Uint8Array): number {
   return data[4];
 }
 
+function writtenV2Command(data: Uint8Array): number {
+  expect(Array.from(data.subarray(0, 3))).toEqual([0x24, 0x58, 0x3c]);
+  return data[4] + data[5] * 256;
+}
+
+function writtenV2Payload(data: Uint8Array): number[] {
+  const payloadLength = data[6] + data[7] * 256;
+  return Array.from(data.subarray(8, 8 + payloadLength));
+}
+
 function responseFrame(command: number, payload: Uint8Array): Uint8Array {
   return buildMspFrameBytes(command, payload, {
     wireFormat: 'v1',
@@ -310,6 +324,16 @@ function errorFrame(command: number): Uint8Array {
   return buildMspFrameBytes(command, EMPTY, {
     wireFormat: 'v1',
     direction: 'error',
+  });
+}
+
+function v2ResponseFrame(
+  command: number,
+  direction: 'response' | 'error' = 'response',
+): Uint8Array {
+  return buildMspFrameBytes(command, EMPTY, {
+    wireFormat: 'v2',
+    direction,
   });
 }
 
@@ -1887,11 +1911,190 @@ describe('Phase 2F - stop execution', () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * Same-session ESC direction and truthful diagnostic reads
+ * ------------------------------------------------------------------ */
+
+describe('MotorTestController - same-session ESC direction', () => {
+  it('writes one persistent reverse command for the selected motor and remains ready', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    const changing = harness.controller.setEscDirection(3, 'REVERSED');
+    await flush();
+
+    expect(harness.transport.writes).toHaveLength(1);
+    const frame = harness.transport.writes[0].data;
+    expect(writtenV2Command(frame)).toBe(MSP2_SEND_DSHOT_COMMAND);
+    expect(writtenV2Payload(frame)).toEqual([1, 2, 2, 8, 12]);
+
+    harness.transport.resolveNextWrite();
+    await flush();
+    harness.transport.emitData(v2ResponseFrame(MSP2_SEND_DSHOT_COMMAND));
+
+    await expect(changing).resolves.toEqual({
+      kind: 'ACKNOWLEDGED',
+      motorNumber: 3,
+      direction: 'REVERSED',
+      physicallyVerified: false,
+    });
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      phase: 'ACTIVE',
+      outcome: {kind: 'READY'},
+      activation: {allowed: true},
+    });
+  });
+
+  it('treats a confirmed firmware rejection as unsupported without poisoning the session', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    const changing = harness.controller.setEscDirection(1, 'NORMAL');
+    await flush();
+    harness.transport.resolveNextWrite();
+    await flush();
+    harness.transport.emitData(
+      v2ResponseFrame(MSP2_SEND_DSHOT_COMMAND, 'error'),
+    );
+
+    await expect(changing).resolves.toEqual({
+      kind: 'REJECTED',
+      reason: 'UNSUPPORTED',
+    });
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      phase: 'ACTIVE',
+      outcome: {kind: 'READY'},
+      activation: {allowed: true},
+    });
+  });
+});
+
+describe('MotorTestController - live motor diagnostics', () => {
+  it('publishes decoded MSP_MOTOR and ESC telemetry values from fresh replies', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    const refreshing = harness.controller.refreshDiagnostics();
+    await flush();
+    expect(writtenCommand(harness.transport.writes[0].data)).toBe(MSP_MOTOR);
+    harness.transport.resolveNextWrite();
+    await flush();
+    harness.transport.emitData(
+      responseFrame(
+        MSP_MOTOR,
+        Uint8Array.from(
+          [1000, 1050, 1075, 1100, 1000, 1000, 1000, 1000].flatMap(u16),
+        ),
+      ),
+    );
+
+    await flush();
+    expect(writtenCommand(harness.transport.writes[0].data)).toBe(
+      MSP_MOTOR_TELEMETRY,
+    );
+    harness.transport.resolveNextWrite();
+    await flush();
+    harness.transport.emitData(
+      responseFrame(
+        MSP_MOTOR_TELEMETRY,
+        Uint8Array.from([
+          1,
+          ...u32(12_345),
+          ...u16(125),
+          47,
+          ...u16(1_680),
+          ...u16(1_234),
+          ...u16(56),
+        ]),
+      ),
+    );
+
+    await expect(refreshing).resolves.toMatchObject({
+      outputs: {
+        state: 'FRESH',
+        value: {values: [1000, 1050, 1075, 1100, 1000, 1000, 1000, 1000]},
+      },
+      escTelemetry: {
+        state: 'FRESH',
+        value: {
+          motorCount: 1,
+          motors: [
+            {
+              rpm: 12_345,
+              invalidPercentRaw: 125,
+              temperatureCelsius: 47,
+              voltageCentivolts: 1_680,
+              currentCentiamps: 1_234,
+              consumptionMah: 56,
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  it('labels confirmed unsupported ESC telemetry without displaying invented values or closing', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    const refreshing = harness.controller.refreshDiagnostics();
+    await flush();
+    harness.transport.resolveNextWrite();
+    await flush();
+    harness.transport.emitData(
+      responseFrame(
+        MSP_MOTOR,
+        Uint8Array.from(new Array(8).fill(1000).flatMap(u16)),
+      ),
+    );
+    await flush();
+    harness.transport.resolveNextWrite();
+    await flush();
+    harness.transport.emitData(errorFrame(MSP_MOTOR_TELEMETRY));
+
+    await expect(refreshing).resolves.toMatchObject({
+      outputs: {state: 'FRESH'},
+      escTelemetry: {state: 'UNSUPPORTED', value: undefined},
+    });
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      phase: 'ACTIVE',
+      activation: {allowed: true},
+    });
+  });
+
+  it('turns an ambiguous diagnostics link failure during a pulse into an immediate stop fault', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    expect(harness.controller.pulseMotor(2)).toBe('ACCEPTED');
+    await flush();
+    await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    expect(harness.controller.getSnapshot().machine?.name).toBe('Pulsing');
+
+    const refreshing = harness.controller.refreshDiagnostics();
+    await flush();
+    expect(writtenCommand(harness.transport.writes[0].data)).toBe(MSP_MOTOR);
+    harness.transport.rejectNextWrite('WRITE_FAILED');
+    await refreshing;
+    await flush(20);
+
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.diagnostics?.outputs.state).toBe('LINK_FAILED');
+    expect(snapshot.machine?.name).toBe('Fault');
+    expect(snapshot.activation.allowed).toBe(false);
+    // The earlier pulse ACK remains an honest historical fact; the failed
+    // all-stop is recorded separately and is what makes this terminal.
+    expect(snapshot.pulse.outcome).toMatchObject({kind: 'ACKNOWLEDGED'});
+    expect(snapshot.stopExecution.attempts).toBe(1);
+    expect(snapshot.stopExecution.outcome?.kind).not.toBe('ACKNOWLEDGED');
+  });
+});
+
+/* ------------------------------------------------------------------ *
  * The public surface
  * ------------------------------------------------------------------ */
 
 describe('MotorTestController - public surface', () => {
-  it('exposes exactly six frozen operations, one of which activates', () => {
+  it('exposes exactly nine frozen operations, one of which activates', () => {
     const controller = createHarness().controller;
     expect(Object.keys(controller).sort()).toEqual([
       'close',
@@ -1900,7 +2103,10 @@ describe('MotorTestController - public surface', () => {
       // Phase 2G's ONE activating operation. Superseded assertion: this
       // list was five before a pulse path existed.
       'pulseMotor',
+      'refreshDiagnostics',
+      'renewPulseHold',
       'requestStop',
+      'setEscDirection',
       'subscribe',
     ]);
     expect(Object.isFrozen(controller)).toBe(true);
@@ -1978,7 +2184,7 @@ describe('MotorTestController - public surface', () => {
       // them accepts an authority, a lease, a client or live state, and
       // none of them is a function.
       'MOTOR_TEST_FIXED_PULSE_VALUE',
-      'MOTOR_TEST_PULSE_MAX_DURATION_MILLIS',
+      'MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS',
       'MOTOR_TEST_PULSE_MOTOR_NUMBERS',
       'applyMotorTestEffects',
       'classifyArmedStateObservationFailure',
@@ -2362,7 +2568,7 @@ describe('containment', () => {
       expect(code).not.toContain(forbidden);
     }
     // SUPERSEDED: setTimeout was forbidden outright before a pulse
-    // existed. It is now required - the 3-second maximum-duration cutoff
+    // existed. It is now required - the lost-touch heartbeat fail-safe
     // cannot exist without a timer - so the assertion is narrowed rather
     // than dropped: exactly ONE arm site and ONE clear site, both on the
     // pulse deadline.
@@ -2375,7 +2581,7 @@ describe('containment', () => {
     // this controller arms against a motor output itself.
     expect(code).toMatch(/setTimer:\s*\(callback, delayMs\) =>\s*setTimeout\(callback, delayMs\)/);
     expect(code).toMatch(/clearTimer:\s*handle =>\s*clearTimeout\(/);
-    expect(code).toContain('MOTOR_TEST_PULSE_MAX_DURATION_MILLIS');
+    expect(code).toContain('MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS');
 
     // Command 214 is never a numeric literal here.
     expect(code).not.toMatch(/\b214\b/);
@@ -2388,7 +2594,8 @@ describe('containment', () => {
     expect(code.match(/\b1050\b/g) ?? []).toHaveLength(1);
     expect(code).toMatch(/MOTOR_TEST_FIXED_PULSE_VALUE = 1050;/);
     // No value above the approved fixed pulse exists anywhere.
-    for (const forbiddenValue of [1100, 1200, 1500, 1800, 2000]) {
+    // 1200 is a time-only lost-heartbeat bound, not a motor magnitude.
+    for (const forbiddenValue of [1100, 1500, 1800, 2000]) {
       expect(code).not.toMatch(new RegExp(`\\b${forbiddenValue}\\b`));
     }
     // Phase 2G: exactly TWO dispatch sites exist in this whole file - the
@@ -2576,7 +2783,7 @@ describe('Phase 2G - pulse vectors are byte-exact', () => {
       // The selected slot is the requested one, and only that one.
       expect(values.indexOf(1050)).toBe(motor - 1);
 
-      // Disarm the 3-second watchdog before the test ends. A live timer
+      // Disarm the hold-heartbeat watchdog before the test ends. A live timer
       // outliving its test is exactly the open handle requirement 22
       // forbids - and leaving one here would also mean this suite depended
       // on real elapsed time.
@@ -2674,7 +2881,7 @@ describe('Phase 2G - activation refusals dispatch nothing', () => {
   });
 });
 
-describe('Phase 2G - the three-second watchdog', () => {
+describe('Phase 2G - the renewable hold heartbeat', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => {
     jest.clearAllTimers();
@@ -2698,40 +2905,47 @@ describe('Phase 2G - the three-second watchdog', () => {
     });
   });
 
-  it('registers the stop by 3000ms and submits it as the next write by 3100ms', async () => {
+  it('keeps a healthy held pulse alive beyond three seconds and stops after heartbeat loss', async () => {
     const harness = createHarness();
     await runSetup(harness);
     harness.controller.pulseMotor(1);
     await flush();
     await settlePulseWrite(harness);
-    // The pulse is ACKNOWLEDGED first, deliberately: the client's own
-    // response timeout is 2000ms, SHORTER than this 3000ms deadline, so an
-    // unanswered pulse is failed by the client at 2s and never reaches the
-    // watchdog at all (proven separately, below). The watchdog governs the
-    // case this one models - a pulse that succeeded and is now simply
-    // running too long.
+    // The pulse is acknowledged first. From here duration is owned by the
+    // original touch, not by an arbitrary three-second cap.
     await answer(harness, MSP_SET_MOTOR_FIXTURE);
     const beforeDeadline = submittedCommands(harness).length;
 
-    jest.advanceTimersByTime(2999);
+    for (let elapsed = 0; elapsed < 6_000; elapsed += 900) {
+      jest.advanceTimersByTime(900);
+      await flush();
+      expect(harness.controller.renewPulseHold()).toBe('RENEWED');
+      expect(submittedCommands(harness)).toHaveLength(beforeDeadline);
+      expect(harness.controller.getSnapshot().machine?.name).toBe('Pulsing');
+    }
+
+    jest.advanceTimersByTime(MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS - 1);
     await flush();
     expect(submittedCommands(harness)).toHaveLength(beforeDeadline);
 
-    jest.advanceTimersByTime(1); // exactly 3000ms
+    jest.advanceTimersByTime(1);
     await flush();
-    // Registered AND submitted - the transport was free, so it is the very
-    // next writeBytes invocation. This is submission order only; no
-    // on-wire or end-to-end bound is claimed.
+    // Heartbeat silence registers and submits the all-stop immediately
+    // when the short fail-safe window expires.
     expect(submittedCommands(harness)).toHaveLength(beforeDeadline + 1);
     expect(submittedCommands(harness)[beforeDeadline]).toBe(
       MSP_SET_MOTOR_FIXTURE,
     );
-
-    jest.advanceTimersByTime(100); // 3100ms
-    await flush();
-    expect(submittedCommands(harness)).toHaveLength(beforeDeadline + 1);
-    // The pulse cannot continue logically past the deadline.
     expect(harness.controller.getSnapshot().machine?.name).not.toBe('Pulsing');
+  });
+
+  it('cannot use a heartbeat to start or resurrect a pulse', async () => {
+    const harness = createHarness();
+    expect(harness.controller.renewPulseHold()).toBe('NO_ACTIVE_PULSE');
+    await runSetup(harness);
+    const writesAfterSetup = harness.transport.writeLog.length;
+    expect(harness.controller.renewPulseHold()).toBe('NO_ACTIVE_PULSE');
+    expect(harness.transport.writeLog).toHaveLength(writesAfterSetup);
   });
 
   it('leaves no timer behind after a stop, a close, a detach or a fault', async () => {
@@ -2884,7 +3098,7 @@ describe('Phase 2G - stop dominance', () => {
     expect(payloads.filter(p => p[0] === 0x1a)).toHaveLength(1);
   });
 
-  it('takes the stop route and faults on a genuine 2000ms pulse response timeout', async () => {
+  it('takes the stop route when touch ownership is not renewed during a stalled response', async () => {
     jest.useFakeTimers();
     try {
       const harness = createHarness();
@@ -2893,10 +3107,14 @@ describe('Phase 2G - stop dominance', () => {
       await flush();
       await settlePulseWrite(harness); // AWAITING_RESPONSE, no answer coming
 
-      // The CLIENT's own response timeout (2000ms) is SHORTER than the
-      // 3000ms pulse deadline, so an unanswered pulse is failed here -
-      // the watchdog is never reached, and the stop route runs 1000ms
-      // earlier than the deadline would have allowed.
+      // No UI heartbeat is supplied in this controller-level test. The
+      // lost-touch fail-safe therefore dominates the client's response
+      // timeout and sends the all-stop first.
+      jest.advanceTimersByTime(MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS);
+      await flush(30);
+      // The priority all-stop write now owns the transport. Settle its
+      // native write, but deliberately provide no MSP acknowledgement.
+      await settlePulseWrite(harness);
       jest.advanceTimersByTime(2000);
       await flush(30);
 
@@ -2904,7 +3122,7 @@ describe('Phase 2G - stop dominance', () => {
       expect(snapshot.pulse.acknowledged).toBe(false);
       expect(snapshot.pulse.outcome).toMatchObject({
         kind: 'FAILED',
-        reason: 'REQUEST_FAILED',
+        reason: 'STOP_DOMINATED',
       });
       expect(snapshot.machine?.name).toBe('Fault');
       // Nothing is left armed.
@@ -3323,7 +3541,7 @@ describe('Phase 2I - receipt eligibility', () => {
     // Submitted, may be live, NOT acknowledged.
     expect(harness.controller.getSnapshot().verificationReceipt).toBeUndefined();
 
-    // Disarm the 3-second watchdog before the test ends. A live timer
+    // Disarm the hold-heartbeat watchdog before the test ends. A live timer
     // outliving its test is exactly the leak requirement 29 forbids.
     harness.controller.requestStop('STOP_BUTTON_PRESSED');
     await flush(20);
@@ -3376,7 +3594,7 @@ describe('Phase 2I - receipt eligibility', () => {
     harness.controller.pulseMotor(1);
     await flush();
     // The write must actually be SERVED for the rejection to arrive -
-    // flushing microtasks alone leaves the request (and the 3-second
+    // flushing microtasks alone leaves the request (and the hold-heartbeat
     // watchdog) outstanding, which is a real timer leaking out of the
     // test.
     await serveOne(harness);
@@ -3446,7 +3664,6 @@ describe('armed-state evidence blocks activation', () => {
     const snapshot = harness.controller.getSnapshot();
     expect(snapshot.outcome).toEqual({kind: 'READY'});
     expect(harness.controller.pulseMotor(1)).toBe('GATES_NOT_SATISFIED');
-    void snapshot;
   });
 
   it('reports an ARMED flight controller as its own operator-facing reason', async () => {

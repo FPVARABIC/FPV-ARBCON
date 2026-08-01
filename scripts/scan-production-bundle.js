@@ -268,6 +268,7 @@ const ENGINE_BOUNDARIES = [
     token: 'encodeDshotEscDirection',
     from: 'src/core/protocol/msp/encoding/encodeDshotEscDirection.ts',
     importers: [
+      'src/core/state/motorTestController.ts',
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
     ],
   },
@@ -282,6 +283,7 @@ const ENGINE_BOUNDARIES = [
     token: 'MSP2_SEND_DSHOT_COMMAND',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
+      'src/core/state/motorTestController.ts',
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
     ],
   },

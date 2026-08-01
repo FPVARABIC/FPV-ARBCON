@@ -231,6 +231,21 @@ class ReducerBackedController implements MotorTestController {
     return 'GATES_NOT_SATISFIED';
   }
 
+  renewPulseHold(): 'NO_ACTIVE_PULSE' {
+    return 'NO_ACTIVE_PULSE';
+  }
+
+  setEscDirection(): Promise<{kind: 'REJECTED'; reason: 'NOT_READY'}> {
+    return Promise.resolve({kind: 'REJECTED', reason: 'NOT_READY'});
+  }
+
+  refreshDiagnostics() {
+    return Promise.resolve({
+      outputs: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+      escTelemetry: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+    });
+  }
+
   initializeSession(): Promise<MotorTestControllerSnapshot> {
     return Promise.resolve(this.getSnapshot());
   }

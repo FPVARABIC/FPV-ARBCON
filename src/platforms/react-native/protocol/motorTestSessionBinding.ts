@@ -116,6 +116,13 @@ export interface MotorTestOperatorPort {
    * listener must remain structurally incapable of starting a motor.
    */
   pulseMotor(motorNumber: number): MotorTestPulseRequestResult;
+  /** Renews only an already-live pulse's touch-owner fail-safe. */
+  renewPulseHold(): import('../../../core/state/motorTestController').MotorTestHoldHeartbeatResult;
+  setEscDirection(
+    motorNumber: number,
+    direction: import('../../../core').DshotEscDirection,
+  ): Promise<import('../../../core/state/motorTestController').MotorTestEscDirectionOutcome>;
+  refreshDiagnostics(): Promise<import('../../../core/state/motorTestController').MotorTestDiagnosticsSnapshot>;
   /**
    * Phase 2H - the operator's own stop route, forwarded unchanged. The
    * screen that can activate must be able to stop; whitelist-only, exactly
@@ -267,7 +274,7 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
     readMonotonicMillis: () => number,
   ): MotorTestOperatorPort {
     const controller = this.ensureController(port, readMonotonicMillis);
-    // A frozen facade with exactly six members: no controller, no
+    // A frozen, capability-scoped facade: no controller, no
     // client, no lease, no authority token, no mutable internal.
     return Object.freeze({
       beginSession: () =>
@@ -277,6 +284,13 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
       getSnapshot: () => controller.getSnapshot(),
       subscribe: (listener: () => void) => controller.subscribe(listener),
       pulseMotor: (motorNumber: number) => controller.pulseMotor(motorNumber),
+      renewPulseHold: () => controller.renewPulseHold(),
+      setEscDirection: (
+        motorNumber: number,
+        direction: import('../../../core').DshotEscDirection,
+      ) =>
+        controller.setEscDirection(motorNumber, direction),
+      refreshDiagnostics: () => controller.refreshDiagnostics(),
       requestStop: (trigger: MotorTestStopTriggerReason) =>
         controller.requestStop(trigger),
       endSession: () => controller.close(),

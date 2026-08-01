@@ -238,6 +238,7 @@ describe('the ESC-direction command stays inside its dedicated transaction', () 
         join('src', 'core', 'protocol', 'index.ts'),
         join('src', 'core', 'protocol', 'msp', 'commands', 'mspCommands.ts'),
         join('src', 'core', 'protocol', 'msp', 'index.ts'),
+        join('src', 'core', 'state', 'motorTestController.ts'),
         join(
           'src',
           'platforms',

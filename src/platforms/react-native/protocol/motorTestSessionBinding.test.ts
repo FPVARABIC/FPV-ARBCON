@@ -112,7 +112,10 @@ describe('createMotorTestSessionBinding - A/A construction', () => {
       // Phase 2G's one activating operation. The binding does not add,
       // remove or wrap it - it is the controller's own surface, unchanged.
       'pulseMotor',
+      'refreshDiagnostics',
+      'renewPulseHold',
       'requestStop',
+      'setEscDirection',
       'subscribe',
     ]);
     binding.close();
@@ -389,7 +392,10 @@ describe('B-2E-1 - single authoritative controller', () => {
       // command 99; it is refused outright by the controller's own
       // activation gate until beginSession has done all of that.
       'pulseMotor',
+      'refreshDiagnostics',
+      'renewPulseHold',
       'requestStop',
+      'setEscDirection',
       'subscribe',
     ]);
     expect(Object.isFrozen(operator)).toBe(true);

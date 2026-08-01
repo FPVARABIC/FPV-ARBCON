@@ -18,8 +18,8 @@
  * STATE PRESERVATION. A tab is mounted the first time it is opened and
  * stays mounted afterwards, hidden with `display: 'none'` rather than
  * unmounted. Two reasons, both load-bearing:
- *   1. A screen's own state (Setup's scroll position, Motors' volatile
- *      acknowledgements and verification observations) survives a tab
+ *   1. A screen's own state (Setup's scroll position and Motors' volatile
+ *      verification observations) survives a tab
  *      switch instead of being silently discarded.
  *   2. The Motors lifecycle bridge STAYS ATTACHED. An unmount would tear
  *      the bridge down without any stop being requested, which is the one

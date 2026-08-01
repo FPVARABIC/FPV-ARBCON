@@ -7,6 +7,11 @@ import type {
   MspMotorTelemetry,
   TelemetryValue,
 } from '../../core';
+import type {
+  MotorTestDiagnosticsChannelState as ControllerDiagnosticsChannelState,
+  MotorTestDiagnosticsSnapshot,
+} from '../../core/state/motorTestController';
+import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
 import {
   acquireMotorDiagnosticsTelemetry,
   getMotorDiagnosticsAvailability,
@@ -23,6 +28,7 @@ const VISIBLE_MOTOR_COUNT = 4;
 const OUTPUT_STOP_VALUE = 1000;
 const OUTPUT_FULL_VALUE = 2000;
 const RPM_METER_MAX = 50_000;
+const LEASED_DIAGNOSTICS_STALE_AFTER_MILLIS = 2_000;
 
 export function motorOutputPercent(value: number): number {
   return Math.max(
@@ -92,9 +98,16 @@ function channelText(
 }
 
 function visibleValue<T>(value: TelemetryValue<T>): T | undefined {
-  return value.status === 'FRESH' || value.status === 'STALE'
-    ? value.value
-    : undefined;
+  return value.status === 'FRESH' ? value.value : undefined;
+}
+
+function leasedAvailability(
+  channel: {readonly state: ControllerDiagnosticsChannelState} | undefined,
+): MotorDiagnosticsChannelState {
+  if (channel === undefined || channel.state === 'WAITING') {
+    return 'WAITING_FOR_SESSION';
+  }
+  return channel.state === 'FRESH' ? 'ACTIVE' : channel.state;
 }
 
 function Meter({ percent, danger }: { percent: number; danger?: boolean }) {
@@ -113,12 +126,19 @@ function Meter({ percent, danger }: { percent: number; danger?: boolean }) {
 
 export interface MotorDiagnosticsPanelProps {
   readonly sessionId: string;
+  readonly operator?: MotorTestOperatorPort;
+  readonly activeMotorTest?: boolean;
+  readonly motorTestDiagnostics?: MotorTestDiagnosticsSnapshot;
 }
 
 export function MotorDiagnosticsPanel({
   sessionId,
+  operator,
+  activeMotorTest = false,
+  motorTestDiagnostics,
 }: MotorDiagnosticsPanelProps): React.JSX.Element {
   const { t } = useTranslation();
+  const [nowMillis, setNowMillis] = useState(() => Date.now());
   const availability = useAvailability(sessionId);
   const outputsValue = useTelemetryValue<MspMotorOutputs>(
     sessionId,
@@ -128,8 +148,77 @@ export function MotorDiagnosticsPanel({
     sessionId,
     MOTOR_ESC_TELEMETRY_POLL_ID,
   );
-  const outputs = visibleValue(outputsValue);
-  const escTelemetry = visibleValue(escValue);
+
+  useEffect(() => {
+    if (!activeMotorTest || operator === undefined) {
+      return;
+    }
+    let active = true;
+    const refresh = () => {
+      setNowMillis(Date.now());
+      operator
+        .refreshDiagnostics()
+        .catch(() => undefined)
+        .finally(() => {
+          if (active) {
+            setNowMillis(Date.now());
+          }
+        });
+    };
+    refresh();
+    const timer = setInterval(refresh, 650);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [activeMotorTest, operator]);
+
+  const leasedOutputs = motorTestDiagnostics?.outputs;
+  const leasedEsc = motorTestDiagnostics?.escTelemetry;
+  const leasedOutputsFresh =
+    leasedOutputs?.state === 'FRESH' &&
+    leasedOutputs.observedAtMillis !== undefined &&
+    Math.max(0, nowMillis - leasedOutputs.observedAtMillis) <=
+      LEASED_DIAGNOSTICS_STALE_AFTER_MILLIS;
+  const leasedEscFresh =
+    leasedEsc?.state === 'FRESH' &&
+    leasedEsc.observedAtMillis !== undefined &&
+    Math.max(0, nowMillis - leasedEsc.observedAtMillis) <=
+      LEASED_DIAGNOSTICS_STALE_AFTER_MILLIS;
+  const outputs = activeMotorTest
+    ? leasedOutputsFresh
+      ? leasedOutputs.value
+      : undefined
+    : visibleValue(outputsValue);
+  const escTelemetry = activeMotorTest
+    ? leasedEscFresh
+      ? leasedEsc.value
+      : undefined
+    : visibleValue(escValue);
+  const outputsAvailability: MotorDiagnosticsChannelState = activeMotorTest
+    ? leasedAvailability(leasedOutputs)
+    : availability.outputs;
+  const escAvailability: MotorDiagnosticsChannelState = activeMotorTest
+    ? leasedAvailability(leasedEsc)
+    : availability.escTelemetry;
+  const outputsStatus: TelemetryValue<unknown>['status'] = activeMotorTest
+    ? leasedOutputsFresh
+      ? 'FRESH'
+      : leasedOutputs?.state === 'FRESH'
+        ? 'STALE'
+        : leasedOutputs?.state === 'WAITING' || leasedOutputs === undefined
+          ? 'WAITING'
+          : 'ERROR'
+    : outputsValue.status;
+  const escStatus: TelemetryValue<unknown>['status'] = activeMotorTest
+    ? leasedEscFresh
+      ? 'FRESH'
+      : leasedEsc?.state === 'FRESH'
+        ? 'STALE'
+        : leasedEsc?.state === 'WAITING' || leasedEsc === undefined
+          ? 'WAITING'
+          : 'ERROR'
+    : escValue.status;
 
   const outputSlots = useMemo(
     () =>
@@ -152,14 +241,13 @@ export function MotorDiagnosticsPanel({
           <View
             style={[
               styles.statusDot,
-              availability.outputs === 'ACTIVE' &&
-              outputsValue.status === 'FRESH'
+              outputsAvailability === 'ACTIVE' && outputsStatus === 'FRESH'
                 ? styles.statusDotLive
                 : styles.statusDotIdle,
             ]}
           />
           <Text style={styles.badgeText}>
-            {channelText(t, availability.outputs, outputsValue.status)}
+            {channelText(t, outputsAvailability, outputsStatus)}
           </Text>
         </View>
       </View>
@@ -207,7 +295,7 @@ export function MotorDiagnosticsPanel({
             </Text>
           </View>
           <Text style={styles.channelState}>
-            {channelText(t, availability.escTelemetry, escValue.status)}
+            {channelText(t, escAvailability, escStatus)}
           </Text>
         </View>
 
@@ -276,7 +364,7 @@ export function MotorDiagnosticsPanel({
         ) : (
           <View style={styles.emptyState}>
             <Text style={styles.emptyTitle}>
-              {channelText(t, availability.escTelemetry, escValue.status)}
+              {channelText(t, escAvailability, escStatus)}
             </Text>
             <Text style={styles.caption}>
               {t('motorDiagnostics.noEscTelemetry')}

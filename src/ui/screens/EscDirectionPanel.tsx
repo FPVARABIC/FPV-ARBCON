@@ -1,33 +1,20 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import type { DshotEscDirection } from '../../core';
-import type { MotorVerificationState } from '../../core/state/motorVerificationModel';
-import {
-  motorConfigurationController,
-  type EscDirectionOutcome,
-} from '../../platforms/react-native/protocol';
+import type { MotorTestEscDirectionOutcome } from '../../core/state/motorTestController';
+import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography } from '../theme';
 
-export interface EscDirectionControllerPort {
-  setEscDirection(
-    sessionId: string,
-    motorNumber: number,
-    direction: DshotEscDirection,
-  ): Promise<EscDirectionOutcome>;
-}
-
 export interface EscDirectionPanelProps {
-  readonly sessionId: string;
-  readonly verification: MotorVerificationState;
-  readonly onEndMotorTestSession: () => Promise<void>;
-  readonly controller?: EscDirectionControllerPort;
+  readonly selectedMotor: number;
+  readonly operator: MotorTestOperatorPort | undefined;
 }
 
 function resultText(
   t: (key: string) => string,
-  outcome: EscDirectionOutcome,
+  outcome: MotorTestEscDirectionOutcome,
 ): { text: string; danger: boolean } {
   switch (outcome.kind) {
     case 'ACKNOWLEDGED':
@@ -37,70 +24,80 @@ function resultText(
     case 'REJECTED':
       return {
         text:
-          outcome.reason === 'ESC_DIRECTION_UNSUPPORTED'
+          outcome.reason === 'UNSUPPORTED'
             ? t('escDirection.unsupported')
             : t('escDirection.rejected'),
         danger: true,
       };
-    case 'SESSION_ENDED':
-      return { text: t('escDirection.sessionEnded'), danger: true };
-    case 'FAILED':
-      return { text: t('escDirection.failed'), danger: true };
   }
 }
 
 export function EscDirectionPanel({
-  sessionId,
-  verification,
-  onEndMotorTestSession,
-  controller = motorConfigurationController,
+  selectedMotor,
+  operator,
 }: EscDirectionPanelProps): React.JSX.Element {
   const { t } = useTranslation();
-  const observedMotors = useMemo(
-    () =>
-      verification.entries
-        .filter(entry => entry.observation?.kind === 'OBSERVED')
-        .map(entry => entry.motorNumber),
-    [verification.entries],
-  );
-  const [motorNumber, setMotorNumber] = useState(observedMotors[0] ?? 1);
   const [direction, setDirection] = useState<DshotEscDirection>('NORMAL');
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<
     { text: string; danger: boolean } | undefined
   >();
-  const selectedObserved = observedMotors.includes(motorNumber);
+  const operationRef = useRef<object | undefined>(undefined);
+  const selectedMotorRef = useRef(selectedMotor);
+  selectedMotorRef.current = selectedMotor;
+  const available = operator?.getSnapshot().activation.allowed === true;
+
+  // Direction is a per-output operation. Changing the selected output or
+  // replacing the session invalidates every pending presentation result:
+  // an acknowledgement for M1 must never be rendered under an M2 heading.
+  useEffect(() => {
+    operationRef.current = undefined;
+    setDirection('NORMAL');
+    setReviewing(false);
+    setBusy(false);
+    setResult(undefined);
+  }, [operator, selectedMotor]);
 
   const apply = useCallback(async () => {
-    if (!reviewing || busy || !selectedObserved) {
+    if (!reviewing || busy || !available || operator === undefined) {
       return;
     }
+    const operation = {};
+    operationRef.current = operation;
+    const targetMotor = selectedMotor;
     setBusy(true);
     setResult(undefined);
     try {
-      await onEndMotorTestSession();
-      const outcome = await controller.setEscDirection(
-        sessionId,
-        motorNumber,
-        direction,
-      );
+      const outcome = await operator.setEscDirection(targetMotor, direction);
+      if (
+        operationRef.current !== operation ||
+        selectedMotorRef.current !== targetMotor
+      ) {
+        return;
+      }
       setResult(resultText(t, outcome));
       setReviewing(false);
     } catch {
-      setResult({ text: t('escDirection.failed'), danger: true });
+      if (
+        operationRef.current === operation &&
+        selectedMotorRef.current === targetMotor
+      ) {
+        setResult({ text: t('escDirection.failed'), danger: true });
+      }
     } finally {
-      setBusy(false);
+      if (operationRef.current === operation) {
+        operationRef.current = undefined;
+        setBusy(false);
+      }
     }
   }, [
     busy,
-    controller,
     direction,
-    motorNumber,
-    onEndMotorTestSession,
+    available,
+    operator,
     reviewing,
-    selectedObserved,
-    sessionId,
+    selectedMotor,
     t,
   ]);
 
@@ -111,38 +108,9 @@ export function EscDirectionPanel({
       <Text style={styles.caption}>{t('escDirection.subtitle')}</Text>
       <Text style={styles.warning}>{t('escDirection.physicalCaveat')}</Text>
 
-      <Text style={styles.sectionTitle}>{t('escDirection.motor')}</Text>
-      <View style={styles.optionRow}>
-        {[1, 2, 3, 4].map(slot => {
-          const available = observedMotors.includes(slot);
-          return (
-            <Pressable
-              key={slot}
-              onPress={() => {
-                if (available && !busy) {
-                  setMotorNumber(slot);
-                  setReviewing(false);
-                  setResult(undefined);
-                }
-              }}
-              disabled={!available || busy}
-              accessibilityRole="radio"
-              accessibilityState={{
-                selected: motorNumber === slot,
-                disabled: !available || busy,
-              }}
-              style={[
-                styles.option,
-                motorNumber === slot && styles.optionSelected,
-                !available && styles.optionDisabled,
-              ]}
-              testID={`esc-direction-motor-${slot}`}
-            >
-              <Text style={styles.optionText}>{`M${slot}`}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <Text style={styles.sectionTitle} testID="esc-direction-selected-motor">
+        {t('escDirection.motor')}: {`M${selectedMotor}`}
+      </Text>
 
       <Text style={styles.sectionTitle}>{t('escDirection.target')}</Text>
       <View style={styles.optionRow}>
@@ -178,7 +146,7 @@ export function EscDirectionPanel({
         <View style={styles.confirmation} testID="esc-direction-confirmation">
           <Text style={styles.sectionTitle}>
             {t('escDirection.confirmTitle', {
-              motor: motorNumber,
+              motor: selectedMotor,
               direction:
                 direction === 'NORMAL'
                   ? t('escDirection.normal')
@@ -201,12 +169,12 @@ export function EscDirectionPanel({
       ) : (
         <Pressable
           onPress={() => setReviewing(true)}
-          disabled={!selectedObserved || busy}
+          disabled={!available || busy}
           accessibilityRole="button"
-          accessibilityState={{ disabled: !selectedObserved || busy }}
+          accessibilityState={{ disabled: !available || busy }}
           style={[
             styles.primaryButton,
-            (!selectedObserved || busy) && styles.optionDisabled,
+            (!available || busy) && styles.optionDisabled,
           ]}
           testID="esc-direction-review"
         >
@@ -216,9 +184,9 @@ export function EscDirectionPanel({
         </Pressable>
       )}
 
-      {observedMotors.length === 0 ? (
+      {!available ? (
         <Text style={styles.caption} testID="esc-direction-needs-observation">
-          {t('escDirection.needsObservation')}
+          {t('escDirection.needsReadySession')}
         </Text>
       ) : null}
       {result !== undefined ? (

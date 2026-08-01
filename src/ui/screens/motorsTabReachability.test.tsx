@@ -178,12 +178,9 @@ describe('Motors tab reachability with a session that arrives late', () => {
     expect(fired).toEqual(['VISIBLE']);
   });
 
-  /* LAYER 2 - RED ON PURPOSE until beginSession() is wired to a control.
-   * MotorsScreen has never called beginSession(), so the controller has no
-   * machine, derivePresentation() returns NO_SESSION and the hold control
-   * stays disabled. These two assert the END STATE the operator needs and
-   * must stay red until that is fixed. Deliberately not skipped: skipping a
-   * safety-reachability assertion is how this whole class of bug hid. */
+  /* LAYER 2 - the capability must make the one primary hold control usable.
+   * There is deliberately no separate Step-1 ceremony: the first intentional
+   * long press performs session preparation before it can pulse. */
   it('PICKS UP a capability that appears AFTER the panel mounted', () => {
     // THE REGRESSION. The capability is created in the coordinator's
     // startTelemetry(), in the continuation of client.startReading().
@@ -202,29 +199,14 @@ describe('Motors tab reachability with a session that arrives late', () => {
 
     // The panel was NOT remounted and the tab was NOT switched - the only
     // thing that changed is that the store now has a capability. The screen
-    // must have noticed, and "noticed" means it now OFFERS A WAY FORWARD.
-    //
-    // Deliberately NOT asserting the blocked state cleared: under the
-    // approved two-action design, clearing it is beginSession()'s job, and
-    // beginSession() is the operator's decision. A screen that auto-cleared
-    // here would be taking a lease and pausing telemetry as a side effect of
-    // navigation, which is exactly what was rejected.
+    // must have noticed, and "noticed" means the primary action is now
+    // reachable. Merely rendering still takes no lease and sends no command.
     expect(readMotorTestCapability(SESSION_ID)).toBeDefined();
-    expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
-    // Still gated behind the same three acknowledgements as hold-to-test -
-    // but the gate is now enforced INSIDE the handler rather than by
-    // `disabled`, so the control can say why instead of ignoring the tap.
-    // See motorsBeginSessionReachesDevice.test.tsx for why that changed.
-    expect(shell.query('motors-begin-needs-ack').length).toBeGreaterThan(0);
-    shell.press('motors-begin-session');
-    // Refused, and it said so - the session did not start.
+    expect(shell.query('motors-begin-session-card')).toHaveLength(0);
+    expect(shell.query('motors-ack-propellers')).toHaveLength(0);
+    expect(shell.find('motors-hold-button').props.disabled).toBe(false);
+    // Nothing starts merely because the capability appeared.
     expect(shell.query('motors-status-NO_SESSION').length).toBeGreaterThan(0);
-    // Acknowledge all three, and the hint is gone.
-    for (const key of ['propellers', 'secured', 'battery']) {
-      shell.press(`motors-ack-${key}`);
-    }
-    expect(shell.query('motors-begin-needs-ack').length).toBe(0);
-    expect(shell.find('motors-begin-session').props.disabled).toBe(false);
     shell.unmount();
   });
 
@@ -241,63 +223,29 @@ describe('Motors tab reachability with a session that arrives late', () => {
     });
 
     shell.press('main-tab-MOTORS');
-    expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
+    expect(shell.find('motors-hold-button').props.disabled).toBe(false);
     shell.unmount();
   });
 
-  it('shows the begin control PRESSABLE-BUT-REFUSING, with a reason, before a capability exists', () => {
-    // REVERSED ON DEVICE EVIDENCE, and the old rationale is worth recording
-    // because it was wrong in an instructive way.
-    //
-    // This test used to assert the card was ABSENT without a capability, on
-    // the reasoning that offering a dead button would be a silent failure.
-    // Three screenshots from the release APK of run 30532042454 showed what
-    // absence actually looks like to an operator: acknowledgements all
-    // ticked, status reading "no active session", and no begin control
-    // anywhere in the scroll - indistinguishable from a build that shipped
-    // without the feature at all. The dead button was the lesser evil; the
-    // blank gap was the silent failure.
-    //
-    // The gate is not weakened by this. `disabled` stays true until an
-    // operator port genuinely exists, so no press can reach
-    // `beginSession()` - only the explanation is new.
+  it('shows one disabled hold control before a capability exists', () => {
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
-    expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
-    expect(shell.query('motors-begin-no-session').length).toBeGreaterThan(0);
-    // NOT disabled - see the note above. Disabling it is what made the
-    // hardware session read as "pressing does nothing".
-    expect(shell.query('motors-begin-session')[0].props.disabled).toBe(false);
+    expect(shell.query('motors-begin-session-card')).toHaveLength(0);
+    expect(shell.find('motors-hold-button').props.disabled).toBe(true);
+    expect(shell.query('motors-status-NO_SESSION').length).toBeGreaterThan(0);
     shell.unmount();
   });
 
-  it('keeps the two actions visually and textually distinct', () => {
+  it('has one primary motor action rather than two competing actions', () => {
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
     ReactTestRenderer.act(() => {
       openRealCapability();
     });
-    // Two different controls, two different testIDs, two different labels.
-    const begin = shell.find('motors-begin-session');
     const hold = shell.find('motors-hold-button');
-    expect(begin).not.toBe(hold);
-    // `style` is now a FUNCTION on the begin control - Pressable's
-    // ({pressed}) form, which is what gives a tap instant visual feedback.
-    // Resolved at rest (pressed: false) so this still measures the resting
-    // appearance it is asserting about.
-    const flat = (style: unknown): Record<string, unknown> => {
-      const resolved =
-        typeof style === 'function'
-          ? (style as (state: {pressed: boolean}) => unknown)({pressed: false})
-          : style;
-      return Array.isArray(resolved)
-        ? Object.assign({}, ...resolved.filter(Boolean))
-        : (resolved as Record<string, unknown>);
-    };
-    // The begin control is OUTLINED; hold-to-test is a filled surface.
-    expect(flat(begin.props.style).borderWidth).toBe(2);
-    expect(flat(begin.props.style).backgroundColor).toBeUndefined();
-    expect(flat(hold.props.style).backgroundColor).toBeDefined();
+    expect(shell.query('motors-begin-session')).toHaveLength(0);
+    expect(hold.props.delayLongPress).toBe(800);
+    expect(hold.props.disabled).toBe(false);
     shell.unmount();
   });
 });
@@ -338,7 +286,7 @@ describe('Leaving Motors after starting a session still releases everything', ()
     ReactTestRenderer.act(() => {
       openRealCapability();
     });
-    expect(shell.query('motors-begin-session-card').length).toBeGreaterThan(0);
+    expect(shell.find('motors-hold-button').props.disabled).toBe(false);
     // Leaving must not throw and must not tear the panel out of the tree -
     // an unmount here would drop the bridge with no stop requested at all.
     expect(() => shell.press('main-tab-SETUP')).not.toThrow();
@@ -410,13 +358,10 @@ describe('begin -> leave BEFORE holding releases the lease and resumes telemetry
     ReactTestRenderer.act(() => {
       openRealCapability();
     });
-    for (const key of ['propellers', 'secured', 'battery']) {
-      shell.press(`motors-ack-${key}`);
-    }
-
-    // Step 1: start the session for real.
+    // The first intentional long press starts preparation; there is no
+    // separate begin button or checkbox ritual.
+    expect(shell.longPress('motors-hold-button')).toBe('FIRED');
     await ReactTestRenderer.act(async () => {
-      shell.find('motors-begin-session').props.onPress();
       await Promise.resolve();
     });
     const controller = screenController();

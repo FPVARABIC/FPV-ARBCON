@@ -4,6 +4,8 @@ import ReactTestRenderer, { act } from 'react-test-renderer';
 import '../../i18n';
 import i18n from '../../i18n';
 import type { TelemetryValue } from '../../core';
+import type { MotorTestDiagnosticsSnapshot } from '../../core/state/motorTestController';
+import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
 import {
   MotorDiagnosticsPanel,
   motorOutputPercent,
@@ -107,6 +109,126 @@ describe('MotorDiagnosticsPanel', () => {
     expect(
       tree.root.findAllByProps({ testID: 'esc-telemetry-1' }),
     ).toHaveLength(0);
+    act(() => tree.unmount());
+  });
+
+  it('renders only fresh values read through the protected motor-test lease', async () => {
+    const observedAtMillis = Date.now();
+    const diagnostics: MotorTestDiagnosticsSnapshot = {
+      outputs: {
+        state: 'FRESH',
+        value: {values: [1000, 1111, 1222, 1333]},
+        observedAtMillis,
+      },
+      escTelemetry: {
+        state: 'FRESH',
+        value: {
+          motorCount: 1,
+          motors: [
+            {
+              rpm: 9_876,
+              invalidPercentRaw: 25,
+              temperatureCelsius: 39,
+              voltageCentivolts: 1650,
+              currentCentiamps: 210,
+              consumptionMah: 44,
+            },
+          ],
+        },
+        observedAtMillis,
+      },
+    };
+    const operator = {
+      refreshDiagnostics: jest.fn(async () => diagnostics),
+    } as unknown as MotorTestOperatorPort;
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <MotorDiagnosticsPanel
+          sessionId="fc-leased"
+          operator={operator}
+          activeMotorTest
+          motorTestDiagnostics={diagnostics}
+        />,
+      );
+    });
+    const text = JSON.stringify(tree.toJSON());
+    expect(text).toContain('1111');
+    expect(text).toContain('9876 RPM');
+    expect(operator.refreshDiagnostics).toHaveBeenCalledTimes(1);
+    act(() => tree.unmount());
+  });
+
+  it('expires a protected-session value when its own observation timestamp is old', async () => {
+    const diagnostics: MotorTestDiagnosticsSnapshot = {
+      outputs: {
+        state: 'FRESH',
+        value: {values: [1999, 1999, 1999, 1999]},
+        observedAtMillis: Date.now() - 10_000,
+      },
+      escTelemetry: {
+        state: 'UNSUPPORTED',
+        value: undefined,
+        observedAtMillis: Date.now(),
+      },
+    };
+    const operator = {
+      refreshDiagnostics: jest.fn(async () => diagnostics),
+    } as unknown as MotorTestOperatorPort;
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <MotorDiagnosticsPanel
+          sessionId="fc-old-leased-value"
+          operator={operator}
+          activeMotorTest
+          motorTestDiagnostics={diagnostics}
+        />,
+      );
+    });
+    const text = JSON.stringify(tree.toJSON());
+    expect(text).toContain('قراءة قديمة');
+    expect(text).toContain('غير مدعوم من البرنامج الثابت');
+    expect(text).not.toContain('1999');
+    act(() => tree.unmount());
+  });
+
+  it('never presents cached stale numbers or unsupported ESC zeros as live', async () => {
+    mockOutputValue = {
+      status: 'STALE',
+      value: {values: [2000, 2000, 2000, 2000]},
+      updatedAtMs: 1,
+      ageMs: 10_000,
+    };
+    mockEscValue = {
+      status: 'STALE',
+      value: {
+        motorCount: 1,
+        motors: [
+          {
+            rpm: 54_321,
+            invalidPercentRaw: 0,
+            temperatureCelsius: 0,
+            voltageCentivolts: 0,
+            currentCentiamps: 0,
+            consumptionMah: 0,
+          },
+        ],
+      },
+      updatedAtMs: 1,
+      ageMs: 10_000,
+    };
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <MotorDiagnosticsPanel sessionId="fc-stale" />,
+      );
+    });
+    const text = JSON.stringify(tree.toJSON());
+    expect(text).toContain('قراءة قديمة');
+    expect(text).not.toContain('54321 RPM');
+    expect(text).not.toContain('2000');
+    expect(text.match(/—/g)?.length).toBeGreaterThanOrEqual(4);
     act(() => tree.unmount());
   });
 });

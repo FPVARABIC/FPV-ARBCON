@@ -168,8 +168,10 @@ const ENUMERATED_FAMILIES: readonly {
   {prefix: 'motorVerification.direction', members: Object.keys(DIRECTIONS)},
   {prefix: 'motorVerification.outcome', members: Object.keys(OUTCOMES)},
   {
-    // MotorsScreen builds these from `positionKey`/`directionKey` values
-    // and from the acknowledgement label keys.
+    // MotorsScreen builds these from `positionKey`/`directionKey` values.
+    // The compact bench-warning strings are ordinary literal lookups and
+    // are covered by the source scanner above; there is no acknowledgement
+    // key family after removal of the checkbox ritual.
     prefix: 'motorsScreen',
     members: [
       'positionFrontRight',
@@ -178,9 +180,6 @@ const ENUMERATED_FAMILIES: readonly {
       'positionRearLeft',
       'directionCw',
       'directionCcw',
-      'ackPropellers',
-      'ackSecured',
-      'ackBattery',
     ],
   },
   {

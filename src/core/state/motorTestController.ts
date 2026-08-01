@@ -74,11 +74,12 @@
  *     it was built may not be true when it is acted on;
  *   - a pulse is FIXED, never operator-shaped: exactly one motor of four
  *     at exactly `MOTOR_TEST_FIXED_PULSE_VALUE`, every other output at the
- *     accepted stop value, bounded by
- *     `MOTOR_TEST_PULSE_MAX_DURATION_MILLIS` and enforced by a watchdog
- *     armed at SUBMISSION, never at acknowledgement;
- *   - there is no generic `dispatch(event)`; the public surface is six
- *     named operations, and the only event any caller can influence
+ *     accepted stop value. A touch-owner heartbeat renews a short
+ *     fail-safe watchdog while the operator keeps holding; losing the
+ *     gesture, the JS owner, or the heartbeat requests an all-stop;
+ *   - there is no generic `dispatch(event)`; the public surface exposes
+ *     only named, capability-scoped operations, and the only event any
+ *     caller can influence
  *     directly is a whitelisted `STOP_TRIGGERED`. `SUBMIT_START_INTENT`
  *     is still never constructed anywhere in this file - the reducer's
  *     handling of it is a fail-closed tripwire, not a path;
@@ -230,7 +231,10 @@ import type {MspClient} from '../protocol/mspClient';
 import {
   MSP_ADVANCED_CONFIG,
   MSP_FEATURE_CONFIG,
+  MSP_MOTOR,
   MSP_MOTOR_CONFIG,
+  MSP_MOTOR_TELEMETRY,
+  MSP2_SEND_DSHOT_COMMAND,
 } from '../protocol/msp/commands/mspCommands';
 // R2: motor-only command id, declared outside the Release-reachable
 // command table so its NAME does not ship in a Release bundle. Same id,
@@ -266,7 +270,24 @@ import {
 import {decodeAdvancedConfig} from '../protocol/msp/decoding/decodeAdvancedConfig';
 import {decodeFeatureConfig} from '../protocol/msp/decoding/decodeFeatureConfig';
 import {decodeMotorConfig} from '../protocol/msp/decoding/decodeMotorConfig';
-import type {MspEmergencyStopDispatch} from '../protocol/mspClient';
+import {
+  decodeMotorOutputs,
+  type MspMotorOutputs,
+} from '../protocol/msp/decoding/decodeMotorOutputs';
+import {
+  decodeMotorTelemetry,
+  type MspMotorTelemetry,
+} from '../protocol/msp/decoding/decodeMotorTelemetry';
+import {MspPayloadReadError} from '../protocol/msp/decoding/MspPayloadReader';
+import {
+  MspClientError,
+  MspMotorTestStopDisplacementError,
+  type MspEmergencyStopDispatch,
+} from '../protocol/mspClient';
+import {
+  encodeDshotEscDirection,
+  type DshotEscDirection,
+} from '../protocol/msp/encoding/encodeDshotEscDirection';
 import type {
   MotorTestBarrierHold,
   MotorTestTelemetryRegistry,
@@ -979,8 +1000,8 @@ export interface MotorTestPulseRecord {
   readonly motorNumber: number | undefined;
   readonly submitted: boolean;
   readonly acknowledged: boolean;
-  /** True once the 3-second watchdog was armed. Armed from SUBMISSION
-   * START, never from acknowledgement. */
+  /** True once the touch-heartbeat watchdog was armed. Armed from
+   * SUBMISSION START, never from acknowledgement. */
   readonly deadlineArmedAtSubmission: boolean;
   /**
    * Latched true the moment activation is accepted and NEVER cleared for
@@ -1031,9 +1052,35 @@ const NO_PULSE: MotorTestPulseRecord = Object.freeze({
   outcome: undefined,
 });
 
-/** The maximum time a pulse may remain logically live, measured from
- * SUBMISSION START - not from acknowledgement. */
-export const MOTOR_TEST_PULSE_MAX_DURATION_MILLIS = 3000;
+/**
+ * Maximum silence between two confirmations that the original touch still
+ * owns the pulse. This is deliberately a short fail-safe window, NOT a
+ * maximum motor-test duration: a healthy held gesture renews it and may run
+ * for as long as the operator keeps their finger down.
+ */
+export const MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS = 1200;
+
+export type MotorTestHoldHeartbeatResult =
+  | 'RENEWED'
+  | 'NO_ACTIVE_PULSE'
+  | 'CONTROLLER_CLOSED';
+
+export type MotorTestEscDirectionOutcome =
+  | {
+      readonly kind: 'ACKNOWLEDGED';
+      readonly motorNumber: number;
+      readonly direction: DshotEscDirection;
+      readonly physicallyVerified: false;
+    }
+  | {
+      readonly kind: 'REJECTED';
+      readonly reason:
+        | 'NOT_READY'
+        | 'BUSY'
+        | 'UNSUPPORTED'
+        | 'INVALID_MOTOR';
+    }
+  | {readonly kind: 'UNCONFIRMED'};
 
 export interface MotorTestStopExecutionRecord {
   /** How many real command-214 operations ran. Concurrent triggers join
@@ -1105,6 +1152,34 @@ const NO_STOP_EXECUTION: MotorTestStopExecutionRecord = Object.freeze({
   outcome: undefined,
 });
 
+export type MotorTestDiagnosticsChannelState =
+  | 'WAITING'
+  | 'FRESH'
+  | 'UNSUPPORTED'
+  | 'MALFORMED_RESPONSE'
+  | 'LINK_FAILED';
+
+export interface MotorTestDiagnosticsChannel<T> {
+  readonly state: MotorTestDiagnosticsChannelState;
+  readonly value: T | undefined;
+  readonly observedAtMillis: number | undefined;
+}
+
+export interface MotorTestDiagnosticsSnapshot {
+  readonly outputs: MotorTestDiagnosticsChannel<MspMotorOutputs>;
+  readonly escTelemetry: MotorTestDiagnosticsChannel<MspMotorTelemetry>;
+}
+
+const WAITING_DIAGNOSTICS_CHANNEL = Object.freeze({
+  state: 'WAITING' as const,
+  value: undefined,
+  observedAtMillis: undefined,
+});
+const WAITING_DIAGNOSTICS: MotorTestDiagnosticsSnapshot = Object.freeze({
+  outputs: WAITING_DIAGNOSTICS_CHANNEL,
+  escTelemetry: WAITING_DIAGNOSTICS_CHANNEL,
+});
+
 export interface MotorTestControllerSnapshot {
   readonly phase: MotorTestControllerPhase;
   readonly setupStep: MotorTestSetupStep;
@@ -1145,6 +1220,8 @@ export interface MotorTestControllerSnapshot {
    * captured once could outlive the condition it described.
    */
   readonly armedStateEvidence: MotorTestArmedStateEvidence;
+  /** Fixed read-only probes sent through the SAME exclusive lease. */
+  readonly diagnostics?: MotorTestDiagnosticsSnapshot;
 }
 
 export type MotorTestStopRequestResult =
@@ -1220,6 +1297,19 @@ export interface MotorTestController {
    * transport is never touched.
    */
   pulseMotor(motorNumber: number): MotorTestPulseRequestResult;
+  /**
+   * Renews the fail-safe for the already-live pulse. It cannot start a
+   * motor, select an output, change a magnitude or resurrect a stopped
+   * attempt. The UI calls it only while the original Pressable owns touch.
+   */
+  renewPulseHold(): MotorTestHoldHeartbeatResult;
+  /** Persists one selected DShot ESC direction without ending the session. */
+  setEscDirection(
+    motorNumber: number,
+    direction: DshotEscDirection,
+  ): Promise<MotorTestEscDirectionOutcome>;
+  /** Refreshes the fixed read-only output and ESC telemetry channels. */
+  refreshDiagnostics(): Promise<MotorTestDiagnosticsSnapshot>;
   /** Idempotent. Concurrent callers observe the same operation. */
   close(): Promise<MotorTestControllerSnapshot>;
 }
@@ -1355,6 +1445,11 @@ class MotorTestControllerImpl {
   private pulseAttempt: object | undefined;
   private pulseAttemptCounter = 0;
   private pulseDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A persistent ESC command is serialized on the same lease and blocks
+   * pulse activation until its post-write disarmed observation completes. */
+  private directionChangeInFlight = false;
+  private diagnostics: MotorTestDiagnosticsSnapshot = WAITING_DIAGNOSTICS;
+  private diagnosticsPromise: Promise<MotorTestDiagnosticsSnapshot> | undefined;
   /** Latched at activation, never cleared. See MotorTestPulseRecord. */
   private pulseMayHaveReachedFc = false;
   /**
@@ -1409,6 +1504,7 @@ class MotorTestControllerImpl {
       // Read FRESH, never cached at construction: a value captured once
       // could outlive the condition it described.
       armedStateEvidence: this.readArmedStateEvidence(),
+      diagnostics: this.diagnostics,
     });
   }
 
@@ -1806,6 +1902,239 @@ class MotorTestControllerImpl {
     return 'ACCEPTED';
   }
 
+  renewPulseHold(): MotorTestHoldHeartbeatResult {
+    if (this.phase === 'CLOSED' || this.phase === 'CLOSING' || this.closing) {
+      return 'CONTROLLER_CLOSED';
+    }
+    const attempt = this.pulseAttempt;
+    if (attempt === undefined) {
+      return 'NO_ACTIVE_PULSE';
+    }
+    this.armPulseDeadline(attempt);
+    return 'RENEWED';
+  }
+
+  async setEscDirection(
+    motorNumber: number,
+    direction: DshotEscDirection,
+  ): Promise<MotorTestEscDirectionOutcome> {
+    if (
+      !Number.isInteger(motorNumber) ||
+      motorNumber < 1 ||
+      motorNumber > MOTOR_VECTOR_MOTOR_COUNT
+    ) {
+      return {kind: 'REJECTED', reason: 'INVALID_MOTOR'};
+    }
+    if (
+      this.directionChangeInFlight ||
+      this.pulseAttempt !== undefined ||
+      this.stopInFlight !== undefined
+    ) {
+      return {kind: 'REJECTED', reason: 'BUSY'};
+    }
+    if (!this.evaluateActivation().allowed) {
+      return {kind: 'REJECTED', reason: 'NOT_READY'};
+    }
+    const lease = this.lease;
+    const authority = this.authority;
+    if (lease === undefined || authority === undefined) {
+      return {kind: 'REJECTED', reason: 'NOT_READY'};
+    }
+
+    let payload: Uint8Array;
+    try {
+      assertSupportedMotorScope(this.motorScope as MotorVectorScope);
+      payload = encodeDshotEscDirection(motorNumber - 1, direction);
+    } catch {
+      return {kind: 'REJECTED', reason: 'UNSUPPORTED'};
+    }
+
+    this.directionChangeInFlight = true;
+    this.safetyMonitor?.stop();
+    this.publish();
+    let remoteUnsupported = false;
+    try {
+      await lease.requestOptional(MSP2_SEND_DSHOT_COMMAND, payload, {
+        wireFormat: 'v2',
+      });
+    } catch (error) {
+      remoteUnsupported =
+        error instanceof MspClientError && error.code === 'MSP_REMOTE_ERROR';
+      if (!remoteUnsupported) {
+        this.directionChangeInFlight = false;
+        this.activationBarred = true;
+        this.dispatchFault('WRITE_OUTCOME_UNKNOWN');
+        this.publish();
+        return {kind: 'UNCONFIRMED'};
+      }
+    }
+    this.directionChangeInFlight = false;
+
+    if (
+      !lease.isActive() ||
+      lease.officialSessionAuthority() !== authority ||
+      this.authority !== authority
+    ) {
+      this.activationBarred = true;
+      this.dispatchFault('WRITE_OUTCOME_UNKNOWN');
+      this.publish();
+      return {kind: 'UNCONFIRMED'};
+    }
+
+    const monitor = this.safetyMonitor;
+    if (monitor === undefined) {
+      this.activationBarred = true;
+      this.dispatchFault('MSP_RESPONSE_TIMEOUT');
+      this.publish();
+      return {kind: 'UNCONFIRMED'};
+    }
+    try {
+      monitor.start();
+      await monitor.observeNow();
+    } catch {
+      if (!this.closing && this.phase !== 'CLOSED') {
+        this.activationBarred = true;
+        this.dispatchFault('MSP_RESPONSE_TIMEOUT');
+        this.publish();
+      }
+      return {kind: 'UNCONFIRMED'};
+    }
+    // The awaited observation cannot authorise a result after teardown,
+    // replacement or lease invalidation. The direction command is never
+    // retried; the caller receives an unconfirmed outcome.
+    if (
+      this.closing ||
+      this.phase !== 'ACTIVE' ||
+      !lease.isActive() ||
+      lease.officialSessionAuthority() !== authority ||
+      this.authority !== authority
+    ) {
+      return {kind: 'UNCONFIRMED'};
+    }
+    if (this.readArmedStateEvidence() !== 'FRESH_DISARMED') {
+      this.activationBarred = true;
+      this.dispatchFault('MSP_RESPONSE_TIMEOUT');
+      this.publish();
+      return {kind: 'UNCONFIRMED'};
+    }
+    this.publish();
+    return remoteUnsupported
+      ? {kind: 'REJECTED', reason: 'UNSUPPORTED'}
+      : Object.freeze({
+          kind: 'ACKNOWLEDGED' as const,
+          motorNumber,
+          direction,
+          physicallyVerified: false as const,
+        });
+  }
+
+  refreshDiagnostics(): Promise<MotorTestDiagnosticsSnapshot> {
+    const existing = this.diagnosticsPromise;
+    if (existing !== undefined) {
+      return existing;
+    }
+    if (
+      this.phase !== 'ACTIVE' ||
+      this.closing ||
+      this.directionChangeInFlight ||
+      this.stopInFlight !== undefined ||
+      this.lease?.isActive() !== true
+    ) {
+      return Promise.resolve(this.diagnostics);
+    }
+    const started = this.runDiagnosticsRefresh();
+    this.diagnosticsPromise = started;
+    return started.finally(() => {
+      if (this.diagnosticsPromise === started) {
+        this.diagnosticsPromise = undefined;
+      }
+    });
+  }
+
+  private async runDiagnosticsRefresh(): Promise<MotorTestDiagnosticsSnapshot> {
+    const lease = this.lease;
+    if (lease === undefined) {
+      return this.diagnostics;
+    }
+    const read = async <T>(
+      command: number,
+      decode: (payload: Uint8Array) => T,
+      previous: MotorTestDiagnosticsChannel<T>,
+    ): Promise<MotorTestDiagnosticsChannel<T>> => {
+      try {
+        const frame = await lease.requestOptional(command, EMPTY_PAYLOAD, {
+          wireFormat: 'v1',
+          responseTimeoutMs: 500,
+        });
+        return Object.freeze({
+          state: 'FRESH' as const,
+          value: decode(frame.payload),
+          observedAtMillis: this.deps.readMonotonicMillis(),
+        });
+      } catch (error) {
+        if (error instanceof MspMotorTestStopDisplacementError) {
+          return previous;
+        }
+        if (error instanceof MspClientError && error.code === 'MSP_REMOTE_ERROR') {
+          return Object.freeze({
+            state: 'UNSUPPORTED' as const,
+            value: undefined,
+            observedAtMillis: this.deps.readMonotonicMillis(),
+          });
+        }
+        if (error instanceof MspPayloadReadError) {
+          return Object.freeze({
+            state: 'MALFORMED_RESPONSE' as const,
+            value: undefined,
+            observedAtMillis: this.deps.readMonotonicMillis(),
+          });
+        }
+        return Object.freeze({
+          state: 'LINK_FAILED' as const,
+          value: undefined,
+          observedAtMillis: this.deps.readMonotonicMillis(),
+        });
+      }
+    };
+
+    const outputs = await read(
+      MSP_MOTOR,
+      decodeMotorOutputs,
+      this.diagnostics.outputs,
+    );
+    this.diagnostics = Object.freeze({...this.diagnostics, outputs});
+    this.publish();
+    if (outputs.state === 'LINK_FAILED') {
+      // A transport-ambiguous read failure is a link failure, even though
+      // the command itself was read-only. If a motor pulse is live, the
+      // normal monitor-failure route clears its heartbeat and registers the
+      // priority all-stop immediately; if no pulse has ever been submitted,
+      // it simply faults the unusable test session.
+      this.onSafetyMonitorUnsafe('SAFETY_OBSERVATION_FAILED');
+      return this.diagnostics;
+    }
+    if (
+      !lease.isActive() ||
+      this.closing ||
+      this.phase !== 'ACTIVE' ||
+      this.stopInFlight !== undefined ||
+      this.directionChangeInFlight
+    ) {
+      return this.diagnostics;
+    }
+    const escTelemetry = await read(
+      MSP_MOTOR_TELEMETRY,
+      decodeMotorTelemetry,
+      this.diagnostics.escTelemetry,
+    );
+    this.diagnostics = Object.freeze({...this.diagnostics, escTelemetry});
+    this.publish();
+    if (escTelemetry.state === 'LINK_FAILED') {
+      this.onSafetyMonitorUnsafe('SAFETY_OBSERVATION_FAILED');
+    }
+    return this.diagnostics;
+  }
+
   /**
    * THE authoritative activation evaluation. Every accepted guard, all at
    * once, in one place. Called by `pulseMotor()` before any activation and
@@ -1852,6 +2181,7 @@ class MotorTestControllerImpl {
     if (
       this.pulseAttempt !== undefined ||
       this.stopInFlight !== undefined ||
+      this.directionChangeInFlight ||
       machineName === 'Starting' ||
       machineName === 'Pulsing' ||
       machineName === 'Stopping'
@@ -2046,9 +2376,9 @@ class MotorTestControllerImpl {
     } catch {
       // Write failure, response timeout, desync, detach, close, or
       // displacement by our own stop. Every one of them ends the attempt
-      // and takes the stop route - WITHOUT waiting for the 3-second
-      // deadline, which would leave a possibly-live output commanded for
-      // the full window after we already know something went wrong.
+      // and takes the stop route WITHOUT waiting for the touch-heartbeat
+      // deadline, which would leave a possibly-live output commanded after
+      // we already know something went wrong.
       if (this.pulseAttempt === attempt) {
         this.endPulseAttempt({kind: 'FAILED', reason: 'REQUEST_FAILED'});
         this.failPulseClosed('WRITE_OUTCOME_UNKNOWN');
@@ -2120,10 +2450,11 @@ class MotorTestControllerImpl {
         // session - the reference test is the whole guard.
         return;
       }
-      // The DESIGNED maximum-duration cutoff. An ordinary stop reason, not
-      // a fault: the machine only faults if the stop itself fails.
+      // The touch owner stopped proving liveness. This is an ordinary stop
+      // reason, not a fault: the machine only faults if the stop itself
+      // fails. A healthy held gesture keeps renewing this timer.
       this.requestStop('PULSE_DEADLINE_ELAPSED');
-    }, MOTOR_TEST_PULSE_MAX_DURATION_MILLIS);
+    }, MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS);
   }
 
   private clearPulseDeadline(): void {
@@ -3287,7 +3618,7 @@ class MotorTestControllerImpl {
  * `acquireMotorTestLease` - both official issuers - and both live in
  * private fields the returned surface never exposes.
  *
- * The returned object is a frozen literal with exactly five methods, so
+ * The returned object is a frozen literal with an explicit tested surface, so
  * the public surface is fixed at construction and cannot be extended,
  * replaced or reached around.
  */
@@ -3302,6 +3633,10 @@ export function createMotorTestController(
     requestStop: (trigger: MotorTestStopTriggerReason) =>
       controller.requestStop(trigger),
     pulseMotor: (motorNumber: number) => controller.pulseMotor(motorNumber),
+    renewPulseHold: () => controller.renewPulseHold(),
+    setEscDirection: (motorNumber: number, direction: DshotEscDirection) =>
+      controller.setEscDirection(motorNumber, direction),
+    refreshDiagnostics: () => controller.refreshDiagnostics(),
     close: () => controller.close(),
   });
 }

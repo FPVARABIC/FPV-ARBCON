@@ -12,13 +12,14 @@
  *   - It never names command 214, 1050 or 1000, and never builds a
  *     payload. The only motor-shaped value it handles is an output slot
  *     number, 1..4, which it hands to the controller unchanged.
- *   - It never creates a second session, authority, controller, queue or
- *     three-second timer. The controller owns the watchdog; a UI timer
- *     racing it could only ever disagree with it.
+ *   - It never creates a second session, authority, controller or queue.
+ *     Its only timer is a touch-owner heartbeat: it cannot start a motor
+ *     and merely renews the controller's short fail-safe while the same
+ *     Pressable still owns the gesture.
  *   - It re-derives NO safety condition. Armed state, lease, authority,
  *     scope and capability are evaluated once, in the controller, and read
  *     here as `snapshot.activation` - the SAME evaluation `pulseMotor()`
- *     itself performs. Battery suitability is a manual acknowledgement and
+ *     itself performs. Battery suitability is an explicit bench warning and
  *     is never presented as an automatic controller fact.
  *
  * WHY `Ready` IS NOT THE GATE. Phase 2G established that a locking safety
@@ -32,10 +33,10 @@
  * turned, at what speed, in which direction, or that any motor stopped.
  * No string in this file claims otherwise, and a test asserts it.
  *
- * THE MANUAL ACKNOWLEDGEMENT IS SUPPLEMENTAL. It is volatile component
- * state, never persisted, and it can only ever ADD a condition on top of
- * the controller's own. It resets on blur, session change, detach, lock
- * and fault.
+ * Bench warnings are always visible, but there is no checkbox ritual and
+ * no separate "start session" ceremony. The first intentional long press
+ * lazily prepares the protected session; a release during that preparation
+ * starts nothing.
  */
 
 import React, {
@@ -109,6 +110,7 @@ export {
  * single Pressable below.
  */
 export const MOTOR_TEST_LONG_PRESS_DELAY_MILLIS = 800;
+export const MOTOR_TEST_HOLD_HEARTBEAT_INTERVAL_MILLIS = 300;
 
 /** MSP OUTPUT SLOTS. Not airframe positions, not rotation directions. */
 export const MOTOR_TEST_OUTPUT_SLOTS: readonly number[] = Object.freeze([
@@ -315,22 +317,6 @@ export interface MotorsScreenViewProps {
   readonly sessionId?: string;
 }
 
-interface Acknowledgements {
-  readonly propellers: boolean;
-  readonly secured: boolean;
-  readonly battery: boolean;
-}
-
-const NO_ACKNOWLEDGEMENTS: Acknowledgements = Object.freeze({
-  propellers: false,
-  secured: false,
-  battery: false,
-});
-
-function allAcknowledged(value: Acknowledgements): boolean {
-  return value.propellers && value.secured && value.battery;
-}
-
 export function MotorsScreenView({
   operator,
   onRequestLeave,
@@ -358,14 +344,21 @@ export function MotorsScreenView({
   const [verification, setVerification] = useState<MotorVerificationState>(
     EMPTY_VERIFICATION_STATE,
   );
-  const [acknowledgements, setAcknowledgements] =
-    useState<Acknowledgements>(NO_ACKNOWLEDGEMENTS);
-
+  const [advancedVerificationOpen, setAdvancedVerificationOpen] =
+    useState(false);
   /** Guards every asynchronous continuation. A callback that survives
    * unmount must never call setState. */
   const mountedRef = useRef(true);
   /** One continuous hold may activate at most once. Reset on release. */
   const holdActivatedRef = useRef(false);
+  /** True only while the primary Pressable still owns the original touch. */
+  const holdOwnedRef = useRef(false);
+  /** Unique identity for that exact gesture. A later short touch must never
+   * inherit an earlier gesture's pending session-preparation continuation. */
+  const holdGestureRef = useRef<object | undefined>(undefined);
+  const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(
+    undefined,
+  );
   /** Read at CALL time, so a stale closure still sees live state - the
    * same reasoning UsbSerialDebugPanel's own mspActiveRef guard uses. */
   const operatorRef = useRef(operator);
@@ -375,6 +368,12 @@ export function MotorsScreenView({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      holdOwnedRef.current = false;
+      holdGestureRef.current = undefined;
+      if (heartbeatTimerRef.current !== undefined) {
+        clearInterval(heartbeatTimerRef.current);
+        heartbeatTimerRef.current = undefined;
+      }
     };
   }, []);
 
@@ -420,32 +419,6 @@ export function MotorsScreenView({
       snapshot.outcome.requiresNewSession) ||
     (snapshot?.outcome.kind === 'BLOCKED' &&
       snapshot.outcome.requiresNewSession);
-
-  // The manual acknowledgement is VOLATILE and supplemental. It resets the
-  // moment the session stops being one an operator has vouched for: a
-  // lock, a fault, a session replacement or the loss of the operator port
-  // (blur/detach both surface here as a changed binding or a changed
-  // machine state). It is never persisted anywhere.
-  //
-  // KEYED ON THE REDUCER, NOT ON THE PRESENTATION. It used to reset on the
-  // LOCKED presentation, and a session that is merely re-reading the armed
-  // state after a confirmed stop renders as LOCKED for the few
-  // milliseconds that reading is in flight. So a perfectly normal release
-  // wiped all three checkboxes, and testing four motors meant ticking
-  // twelve. The reducer's own state is the honest boundary: `Locked` and
-  // `Fault` are real session endings, `Ready` is not - however briefly its
-  // gate happens to be closed.
-  const machineName = snapshot?.machine?.name;
-  useEffect(() => {
-    if (
-      operator === undefined ||
-      machineName === undefined ||
-      machineName === 'Locked' ||
-      machineName === 'Fault'
-    ) {
-      setAcknowledgements(NO_ACKNOWLEDGEMENTS);
-    }
-  }, [operator, machineName]);
 
   /**
    * Binds verification to the CURRENT official session, and clears it for
@@ -505,14 +478,7 @@ export function MotorsScreenView({
     setVerification(current => finalizeVerification(current));
   }, []);
 
-  const acknowledged = allAcknowledged(acknowledgements);
-  // BOTH gates, and the controller's is the authoritative one. The manual
-  // gate can only ever subtract permission, never add it.
-  const canActivate = controllerAllows && acknowledged;
-
-  const toggle = useCallback((key: keyof Acknowledgements) => {
-    setAcknowledgements(current => ({ ...current, [key]: !current[key] }));
-  }, []);
+  const canActivate = controllerAllows;
 
   /**
    * THE ONE STOP ROUTE. Every release, cancellation and Stop press goes
@@ -534,81 +500,20 @@ export function MotorsScreenView({
   );
 
   /**
-   * STEP 1 OF TWO DELIBERATE ACTIONS: start the session.
-   *
-   * WHY THIS CONTROL EXISTS AT ALL. `beginSession()` -> the controller's
-   * `initializeSession()` is the ONLY thing that can start a session, and
-   * nothing in this screen ever called it. Without it the controller has no
-   * machine, `derivePresentation()` returns NO_SESSION forever, and the
-   * hold control below stays `disabled` - so the screen looked alive and
-   * responded to nothing. It had never been reachable in the project's
-   * history because the old bench variant was blocked by design.
-   *
-   * WHY IT IS NOT AUTOMATIC. `beginSession()` acquires the exclusive lease,
-   * pauses telemetry, reads the supported motor scope and awaits a fresh
-   * disarmed-state observation. None of that may happen as a side effect of
-   * navigation - the operator asks for it.
+   * Session preparation is LAZY: navigation and settings remain read-only,
+   * and the first intentional long press is the explicit operator action
+   * that starts setup. If the finger leaves before setup resolves, no pulse
+   * is submitted.
    */
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [beginning, setBeginning] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
-  /**
-   * WHY EVERY PRESS IS COUNTED AND ANSWERED.
-   *
-   * On real hardware the operator pressed this button repeatedly and saw
-   * NOTHING change - because both guards below used to `return` silently.
-   * A control that refuses without saying so is indistinguishable from a
-   * dead one, and it cost a hardware session to discover that.
-   *
-   * The counter exists so the refusal is unmissable even when the same
-   * reason is ALREADY on screen: without it, the second press onto an
-   * already-visible reason line looks exactly like no response at all.
-   */
-  const [refusal, setRefusal] = useState<'NONE' | 'NO_SESSION' | 'NEEDS_ACK'>(
-    'NONE',
-  );
-  const [beginAttempts, setBeginAttempts] = useState(0);
-
-  const handleBeginSession = useCallback(() => {
-    setBeginAttempts(previous => previous + 1);
-    const port = operatorRef.current;
-    if (port === undefined) {
-      // NEVER a silent return. This is the exact state the device was in.
-      setRefusal('NO_SESSION');
-      return;
-    }
-    // The SAME manual gate the hold control uses. Re-read at call time: a
-    // gate that was open when this closure was created proves nothing now.
-    if (!allAcknowledged(acknowledgements)) {
-      setRefusal('NEEDS_ACK');
-      return;
-    }
-    setRefusal('NONE');
-    setBeginning(true);
-    setBeginFailed(false);
-    void port
-      .beginSession()
-      .then(snapshot => {
-        if (!mountedRef.current) {
-          return;
-        }
-        // NEVER silently inert. If the session did not reach a machine the
-        // operator can act on, say so - the real blockReason list below is
-        // published by the controller and renders itself.
-        setBeginFailed(snapshot.machine === undefined);
-      })
-      .catch(() => {
-        if (mountedRef.current) {
-          setBeginFailed(true);
-        }
-      })
-      .then(() => {
-        if (mountedRef.current) {
-          setBeginning(false);
-        }
-      });
-  }, [acknowledgements]);
-
+  const holdDisabled =
+    operator === undefined ||
+    requiresNewConnection ||
+    (!beginning && snapshot?.machine !== undefined && !canActivate);
+  /** Ends the exclusive test session before the optional output-reorder
+   * transaction, which deliberately owns a separate interlock. */
   const handleEndSessionForConfiguration = useCallback(async () => {
     const port = operatorRef.current;
     if (port === undefined) {
@@ -617,28 +522,96 @@ export function MotorsScreenView({
     await port.endSession();
   }, []);
 
+  const clearHoldHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current !== undefined) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = undefined;
+    }
+  }, []);
+
+  const startHoldHeartbeat = useCallback(
+    (port: MotorTestOperatorPort) => {
+      clearHoldHeartbeat();
+      heartbeatTimerRef.current = setInterval(() => {
+        if (!holdOwnedRef.current || !holdActivatedRef.current) {
+          clearHoldHeartbeat();
+          return;
+        }
+        if (port.renewPulseHold() !== 'RENEWED') {
+          clearHoldHeartbeat();
+        }
+      }, MOTOR_TEST_HOLD_HEARTBEAT_INTERVAL_MILLIS);
+    },
+    [clearHoldHeartbeat],
+  );
+
+  const handlePressIn = useCallback(() => {
+    holdOwnedRef.current = true;
+    holdGestureRef.current = {};
+    holdActivatedRef.current = false;
+    clearHoldHeartbeat();
+  }, [clearHoldHeartbeat]);
+
   const handleLongPress = useCallback(() => {
     if (holdActivatedRef.current) {
+      return;
+    }
+    const gesture = holdGestureRef.current;
+    if (gesture === undefined) {
       return;
     }
     const port = operatorRef.current;
     if (port === undefined) {
       return;
     }
-    // Re-read the authoritative gate at CALL time. A gate that was open
-    // when this closure was created proves nothing about now.
-    if (!port.getSnapshot().activation.allowed) {
+    const activateIfStillOwned = () => {
+      const current = port.getSnapshot();
+      if (!mountedRef.current) {
+        return;
+      }
+      if (
+        !holdOwnedRef.current ||
+        holdGestureRef.current !== gesture ||
+        !current.activation.allowed
+      ) {
+        setBeginFailed(current.machine === undefined);
+        return;
+      }
+      holdActivatedRef.current = true;
+      if (port.pulseMotor(selectedSlot) === 'ACCEPTED') {
+        startHoldHeartbeat(port);
+      } else {
+        holdActivatedRef.current = false;
+      }
+    };
+
+    const current = port.getSnapshot();
+    if (current.machine === undefined) {
+      setBeginning(true);
+      setBeginFailed(false);
+      port
+        .beginSession()
+        .then(() => activateIfStillOwned())
+        .catch(() => {
+          if (mountedRef.current) {
+            setBeginFailed(true);
+          }
+        })
+        .finally(() => {
+          if (mountedRef.current) {
+            setBeginning(false);
+          }
+        });
       return;
     }
-    if (!allAcknowledged(acknowledgements)) {
-      return;
-    }
-    holdActivatedRef.current = true;
-    port.pulseMotor(selectedSlot);
-  }, [acknowledgements, selectedSlot]);
+    activateIfStillOwned();
+  }, [selectedSlot, startHoldHeartbeat]);
 
   /** Release AND responder termination land here. Both must stop. */
   const handlePressOut = useCallback(() => {
+    holdOwnedRef.current = false;
+    holdGestureRef.current = undefined;
+    clearHoldHeartbeat();
     const activated = holdActivatedRef.current;
     holdActivatedRef.current = false;
     // Stop whenever a command may be live - including the pre-ACK window,
@@ -647,12 +620,15 @@ export function MotorsScreenView({
     if (activated || commandMayBeLive(operatorRef.current?.getSnapshot())) {
       stopNow('TOUCH_RELEASED');
     }
-  }, [stopNow]);
+  }, [clearHoldHeartbeat, stopNow]);
 
   const handleStopPress = useCallback(() => {
+    holdOwnedRef.current = false;
+    holdGestureRef.current = undefined;
+    clearHoldHeartbeat();
     holdActivatedRef.current = false;
     stopNow('STOP_BUTTON_PRESSED');
-  }, [stopNow]);
+  }, [clearHoldHeartbeat, stopNow]);
 
   /**
    * Selecting a different output while something may be live STOPS the
@@ -665,11 +641,14 @@ export function MotorsScreenView({
       const machine = port.getSnapshot().machine?.name;
       if (machine === 'Starting' || machine === 'Pulsing') {
         holdActivatedRef.current = false;
+        holdOwnedRef.current = false;
+        holdGestureRef.current = undefined;
+        clearHoldHeartbeat();
         port.requestStop('MOTOR_SELECTION_CHANGED');
       }
     }
     setSelectedSlot(slot);
-  }, []);
+  }, [clearHoldHeartbeat]);
 
   const statusText = useMemo(() => {
     switch (presentation) {
@@ -719,28 +698,34 @@ export function MotorsScreenView({
     direction: entry.direction,
   }));
 
-  /**
-   * One control, rendered at the point that matches the current flow:
-   * beside the output selector once the session exists, or directly after
-   * the Step-1 card before it exists. This prevents the optional reference
-   * and verification report from pushing the primary action down the page.
-   */
+  /** One primary control beside the selected output. Its first long press
+   * prepares the protected session lazily, so no second action competes
+   * with it. */
   const holdControl = (
     <Pressable
+      onPressIn={handlePressIn}
       onLongPress={handleLongPress}
       delayLongPress={MOTOR_TEST_LONG_PRESS_DELAY_MILLIS}
       onPressOut={handlePressOut}
       onResponderTerminate={(_event: GestureResponderEvent) => handlePressOut()}
-      disabled={!canActivate}
+      disabled={holdDisabled}
       accessibilityRole="button"
-      accessibilityState={{ disabled: !canActivate }}
-      style={[styles.holdButton, !canActivate && styles.holdButtonOff]}
+      accessibilityState={{
+        disabled: holdDisabled,
+        busy: beginning,
+      }}
+      style={[
+        styles.holdButton,
+        holdDisabled && styles.holdButtonOff,
+      ]}
       testID="motors-hold-button"
     >
       <Text
         style={[styles.holdStep, canActivate && styles.holdSupportingActive]}
       >
-        {t('motorsScreen.holdHeading')}
+        {beginning
+          ? t('motorsScreen.beginSessionBusy')
+          : t('motorsScreen.holdHeading')}
       </Text>
       <Text style={[styles.holdLabel, !canActivate && styles.holdLabelOff]}>
         {t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
@@ -752,71 +737,6 @@ export function MotorsScreenView({
       </Text>
     </Pressable>
   );
-
-  const beginSessionControl =
-    presentation === 'NO_SESSION' ? (
-      <View style={styles.sessionCard} testID="motors-begin-session-card">
-        <View style={styles.sessionStepBadge}>
-          <Text style={styles.sessionStepNumber}>١</Text>
-        </View>
-        <View style={styles.sessionContent}>
-          <Text style={styles.sectionTitle}>
-            {t('motorsScreen.beginSessionHeading')}
-          </Text>
-          <Text style={styles.caption}>
-            {t('motorsScreen.beginSessionHint')}
-          </Text>
-          <Pressable
-            onPress={handleBeginSession}
-            disabled={beginning}
-            accessibilityRole="button"
-            accessibilityState={{ disabled: beginning }}
-            style={({ pressed }) => [
-              styles.beginButton,
-              (operator === undefined || !acknowledged || beginning) &&
-                styles.beginButtonOff,
-              pressed && styles.beginButtonPressed,
-            ]}
-            testID="motors-begin-session"
-          >
-            <Text style={styles.beginLabel}>
-              {beginning
-                ? t('motorsScreen.beginSessionBusy')
-                : t('motorsScreen.beginSession')}
-            </Text>
-          </Pressable>
-          {operator === undefined ? (
-            <Text style={styles.blockReason} testID="motors-begin-no-session">
-              {t('motorsScreen.noSession')}
-              {beginAttempts > 0 ? ` (${beginAttempts})` : ''}
-            </Text>
-          ) : null}
-          {operator === undefined && bringUpFailure !== undefined ? (
-            <Text style={styles.caption} testID="motors-begin-bringup-error">
-              {bringUpFailure}
-            </Text>
-          ) : null}
-          {operator !== undefined && !acknowledged ? (
-            <Text
-              style={
-                refusal === 'NEEDS_ACK' ? styles.blockReason : styles.caption
-              }
-              testID="motors-begin-needs-ack"
-            >
-              {t('motorsScreen.beginSessionNeedsAck')}
-              {refusal === 'NEEDS_ACK' && beginAttempts > 0
-                ? ` (${beginAttempts})`
-                : ''}
-            </Text>
-          ) : null}
-          {beginFailed ? (
-            <Text style={styles.blockReason} testID="motors-begin-failed">
-              {t('motorsScreen.beginSessionFailed')}
-            </Text>
-          ) : null}
-        </View>
-      </View>
-    ) : null;
 
   return (
     <View
@@ -840,70 +760,47 @@ export function MotorsScreenView({
           </Text>
         </View>
 
-        {/* (1) Propeller removal - highest priority, text AND icon, never
-            colour alone. */}
+        {/* One compact bench notice, not a confirmation ritual. Propeller
+            removal stays first, with text AND icon rather than colour alone. */}
         <View style={styles.dangerBanner} testID="motors-propeller-warning">
           <Text style={styles.dangerIcon}>⚠</Text>
-          <View style={styles.flexOne}>
+          <View
+            style={[styles.flexOne, styles.safetyNoticeCopy]}
+            testID="motors-acknowledgements"
+          >
             <Text style={styles.dangerTitle}>
               {t('motorsScreen.propellerWarning')}
             </Text>
             <Text style={styles.dangerBody}>
               {t('motorsScreen.propellerWarningDetail')}
             </Text>
+            <Text style={styles.checkLabel}>• {t('motorsScreen.ackSecured')}</Text>
+            <Text style={styles.checkLabel}>• {t('motorsScreen.ackBattery')}</Text>
+            <Text
+              style={styles.batteryWarning}
+              testID="motors-battery-scope-warning"
+            >
+              {t('motorsScreen.batteryScopeWarning')}
+            </Text>
+            <Text style={styles.caption}>{t('motorsScreen.ackNotice')}</Text>
           </View>
         </View>
 
-        {/* (2) Volatile manual acknowledgement - supplemental only. */}
-        <View style={styles.card} testID="motors-acknowledgements">
-          <Text style={styles.sectionTitle}>
-            {t('motorsScreen.acknowledgeHeading')}
-          </Text>
-          {(
-            [
-              ['propellers', 'ackPropellers'],
-              ['secured', 'ackSecured'],
-              ['battery', 'ackBattery'],
-            ] as const
-          ).map(([key, labelKey]) => (
-            <Pressable
-              key={key}
-              onPress={() => toggle(key)}
-              accessibilityRole="checkbox"
-              accessibilityState={{ checked: acknowledgements[key] }}
-              style={styles.checkRow}
-              testID={`motors-ack-${key}`}
-            >
+        {beginFailed || (operator === undefined && bringUpFailure !== undefined) ? (
+          <View style={styles.card} testID="motors-begin-failed">
+            <Text style={styles.blockReason}>
+              {t('motorsScreen.beginSessionFailed')}
+            </Text>
+            {bringUpFailure !== undefined ? (
               <Text
-                style={[
-                  styles.checkBox,
-                  acknowledgements[key] && styles.checkBoxOn,
-                ]}
+                style={styles.caption}
+                testID="motors-begin-bringup-error"
               >
-                {acknowledgements[key] ? '☑' : '☐'}
+                {bringUpFailure}
               </Text>
-              <Text style={styles.checkLabel}>
-                {t(`motorsScreen.${labelKey}`)}
-              </Text>
-            </Pressable>
-          ))}
-          {/* Battery suitability is a MANUAL bench acknowledgement. The
-              accepted controller no longer reads pack cell count, voltage
-              policy or the FC battery classification, so the screen names
-              that limitation instead of presenting a fake automatic gate. */}
-          <Text
-            style={styles.batteryWarning}
-            testID="motors-battery-scope-warning"
-          >
-            {t('motorsScreen.batteryScopeWarning')}
-          </Text>
-          <Text style={styles.caption}>{t('motorsScreen.ackNotice')}</Text>
-        </View>
-
-        {/* Session initiation belongs before the bench. It is a distinct,
-            deliberate action and cannot be confused with the hold control
-            that may actually spin a motor. */}
-        {beginSessionControl}
+            ) : null}
+          </View>
+        ) : null}
 
         {/* Compact authoritative status. The first causal reason remains
             operator-facing; the full internal state stays collapsed. */}
@@ -1192,39 +1089,25 @@ export function MotorsScreenView({
           </View>
 
           {holdControl}
+          <EscDirectionPanel
+            selectedMotor={selectedSlot}
+            operator={operator}
+          />
         </View>
 
-        {/* Phase 2I - the observation wizard. It CANNOT activate anything;
-            a new output always needs a fresh long press below. */}
-        {receipt !== undefined || verification.sessionToken !== undefined ? (
-          <MotorVerificationWizard
-            receipt={receipt}
-            state={verification}
-            onConfirm={handleConfirmObservation}
-            onMultipleMotorsReported={handleMultipleMotors}
-          />
-        ) : null}
-
-        {verification.sessionToken !== undefined ? (
-          <MotorTestReport
-            state={verification}
-            // A normal completed report requires an attributable safe
-            // teardown. Anything else keeps the fault presentation.
-            safeTeardownConfirmed={
-              presentation !== 'FAULT' &&
-              (snapshot?.stopExecution.attributionAmbiguous !== true ||
-                snapshot?.stopExecution.attributionResolvedByConfirmation ===
-                  true)
-            }
-          />
-        ) : null}
-
-        {/* Monitoring follows the complete test/observation flow. It is
-            read-only and uses the canonical scheduler; a held motor-test
-            barrier naturally makes values STALE rather than letting this
-            panel compete with a stop command. */}
+        {/* Outside a test lease monitoring uses the canonical scheduler.
+            While the lease is held it performs fixed read-only requests
+            through that SAME serialized lease, without bypassing pulse or
+            stop ownership. */}
         {sessionId !== undefined ? (
-          <MotorDiagnosticsPanel sessionId={sessionId} />
+          <MotorDiagnosticsPanel
+            sessionId={sessionId}
+            operator={operator}
+            activeMotorTest={
+              snapshot?.phase === 'ACTIVE' && snapshot.outcome.kind === 'READY'
+            }
+            motorTestDiagnostics={snapshot?.diagnostics}
+          />
         ) : null}
 
         {/* Persistent configuration is a separate transaction from bench
@@ -1234,20 +1117,50 @@ export function MotorsScreenView({
           <MotorConfigurationPanel sessionId={sessionId} />
         ) : null}
 
-        {verification.sessionToken !== undefined && sessionId !== undefined ? (
-          <MotorOutputReorderPanel
-            sessionId={sessionId}
-            verification={verification}
-            onEndMotorTestSession={handleEndSessionForConfiguration}
-          />
-        ) : null}
+        <Pressable
+          onPress={() => setAdvancedVerificationOpen(open => !open)}
+          accessibilityRole="button"
+          accessibilityState={{expanded: advancedVerificationOpen}}
+          style={styles.card}
+          testID="motors-advanced-verification-toggle"
+        >
+          <Text style={styles.sectionTitle}>
+            {t('motorsScreen.advancedVerification')}
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorsScreen.advancedVerificationHint')}
+          </Text>
+        </Pressable>
 
-        {verification.sessionToken !== undefined && sessionId !== undefined ? (
-          <EscDirectionPanel
-            sessionId={sessionId}
-            verification={verification}
-            onEndMotorTestSession={handleEndSessionForConfiguration}
-          />
+        {advancedVerificationOpen ? (
+          <View style={styles.advancedStack} testID="motors-advanced-verification">
+            {receipt !== undefined || verification.sessionToken !== undefined ? (
+              <MotorVerificationWizard
+                receipt={receipt}
+                state={verification}
+                onConfirm={handleConfirmObservation}
+                onMultipleMotorsReported={handleMultipleMotors}
+              />
+            ) : null}
+            {verification.sessionToken !== undefined ? (
+              <MotorTestReport
+                state={verification}
+                safeTeardownConfirmed={
+                  presentation !== 'FAULT' &&
+                  (snapshot?.stopExecution.attributionAmbiguous !== true ||
+                    snapshot?.stopExecution.attributionResolvedByConfirmation ===
+                      true)
+                }
+              />
+            ) : null}
+            {verification.sessionToken !== undefined && sessionId !== undefined ? (
+              <MotorOutputReorderPanel
+                sessionId={sessionId}
+                verification={verification}
+                onEndMotorTestSession={handleEndSessionForConfiguration}
+              />
+            ) : null}
+          </View>
         ) : null}
 
         {onRequestLeave !== undefined ? (
@@ -1301,6 +1214,7 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   flexOne: { flex: 1 },
+  advancedStack: { gap: spacing.md },
   screenHeader: {
     gap: spacing.xs,
     paddingVertical: spacing.sm,
@@ -1342,6 +1256,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
     flexShrink: 1,
   },
+  safetyNoticeCopy: { gap: spacing.xs },
   faultBanner: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -1961,7 +1876,7 @@ function MotorsScreenBinding({
       stopWaiting();
       // Idempotent: returns the one stored teardown promise however many
       // times blur fires.
-      void operator.endSession();
+      operator.endSession().catch(() => undefined);
     };
 
     const releaseOnLeave = () => {

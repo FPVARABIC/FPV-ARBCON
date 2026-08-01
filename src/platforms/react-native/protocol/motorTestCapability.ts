@@ -23,7 +23,7 @@
  * the sole remaining barrier:
  *
  *   - single-motor payload only, fixed low pulse;
- *   - 3-second deadline measured from command start;
+ *   - renewable touch heartbeat with a short lost-touch deadline;
  *   - explicit STOP with queue priority;
  *   - continuous MSP_STATUS_EX armed-state monitoring, whose absence is
  *     itself an authoritative blocker;
@@ -35,7 +35,7 @@
  *     value there is 150, read rather than assumed).
  *
  * The current controller does NOT infer or enforce a battery cell count;
- * battery suitability remains an explicit operator acknowledgement rather
+ * battery suitability remains an explicit operator warning rather
  * than a claim derived from MSP. None of the runtime gates above is touched
  * by this module, and none may be weakened,
  * simplified or refactored as a consequence of the merge.

@@ -1,13 +1,11 @@
 import React from 'react';
-import ReactTestRenderer, { act } from 'react-test-renderer';
+import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
 import i18n from '../../i18n';
-import type { MotorVerificationState } from '../../core/state/motorVerificationModel';
-import {
-  EscDirectionPanel,
-  type EscDirectionControllerPort,
-} from './EscDirectionPanel';
+import type {MotorTestControllerSnapshot} from '../../core/state/motorTestController';
+import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
+import {EscDirectionPanel} from './EscDirectionPanel';
 
 beforeAll(async () => {
   if (!i18n.isInitialized) {
@@ -15,104 +13,118 @@ beforeAll(async () => {
   }
 });
 
-function state(observed: boolean): MotorVerificationState {
-  return Object.freeze({
-    sessionToken: {},
-    finalized: false,
-    aborted: false,
-    entries: Object.freeze(
-      [1, 2, 3, 4].map(motorNumber =>
-        Object.freeze(
-          motorNumber === 1 && observed
-            ? {
-                motorNumber,
-                outcome: 'DIRECTION_MISMATCH' as const,
-                observation: Object.freeze({
-                  kind: 'OBSERVED' as const,
-                  position: 'REAR_RIGHT' as const,
-                  direction: 'CW' as const,
-                }),
-                attemptId: 1,
-              }
-            : {
-                motorNumber,
-                outcome: 'UNTESTED' as const,
-                observation: undefined,
-                attemptId: undefined,
-              },
-        ),
-      ),
-    ),
-  });
+function operator(allowed: boolean): MotorTestOperatorPort {
+  const snapshot = {
+    activation: {allowed, reasons: allowed ? [] : ['CONTROLLER_LINK_UNAVAILABLE']},
+  } as unknown as MotorTestControllerSnapshot;
+  return {
+    beginSession: async () => snapshot,
+    getSnapshot: () => snapshot,
+    subscribe: () => () => undefined,
+    pulseMotor: () => 'GATES_NOT_SATISFIED',
+    renewPulseHold: () => 'NO_ACTIVE_PULSE',
+    setEscDirection: jest.fn(async (motorNumber, direction) => ({
+      kind: 'ACKNOWLEDGED' as const,
+      motorNumber,
+      direction,
+      physicallyVerified: false as const,
+    })),
+    refreshDiagnostics: async () => ({
+      outputs: {state: 'WAITING', value: undefined, observedAtMillis: undefined},
+      escTelemetry: {state: 'WAITING', value: undefined, observedAtMillis: undefined},
+    }),
+    requestStop: () => 'ACCEPTED',
+    endSession: async () => snapshot,
+  };
 }
 
 describe('EscDirectionPanel', () => {
-  it('requires a physical observation before direction controls can write', async () => {
+  it('requires a ready protected motor-test session', async () => {
     let tree!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       tree = ReactTestRenderer.create(
-        <EscDirectionPanel
-          sessionId="fc-1"
-          verification={state(false)}
-          onEndMotorTestSession={jest.fn(async () => undefined)}
-          controller={{ setEscDirection: jest.fn() } as never}
-        />,
+        <EscDirectionPanel selectedMotor={1} operator={operator(false)} />,
       );
     });
     expect(
-      tree.root.findByProps({ testID: 'esc-direction-review' }).props.disabled,
+      tree.root.findByProps({testID: 'esc-direction-review'}).props.disabled,
     ).toBe(true);
     expect(
-      tree.root.findByProps({ testID: 'esc-direction-needs-observation' }),
+      tree.root.findByProps({testID: 'esc-direction-needs-observation'}),
     ).toBeDefined();
     act(() => tree.unmount());
   });
 
-  it('uses review confirmation, ends the test, and forwards one exact ESC command', async () => {
-    const controller: EscDirectionControllerPort = {
-      setEscDirection: jest.fn(async (_sessionId, motorNumber, direction) => ({
-        kind: 'ACKNOWLEDGED' as const,
-        motorNumber,
-        direction,
-        physicallyVerified: false as const,
-      })),
-    };
-    const endSession = jest.fn(async () => undefined);
+  it('keeps the same session and forwards the selected motor and direction once', async () => {
+    const port = operator(true);
     let tree!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       tree = ReactTestRenderer.create(
-        <EscDirectionPanel
-          sessionId="fc-1"
-          verification={state(true)}
-          onEndMotorTestSession={endSession}
-          controller={controller}
-        />,
+        <EscDirectionPanel selectedMotor={3} operator={port} />,
       );
     });
     act(() => {
-      tree.root
-        .findByProps({ testID: 'esc-direction-reversed' })
-        .props.onPress();
-      tree.root.findByProps({ testID: 'esc-direction-review' }).props.onPress();
+      tree.root.findByProps({testID: 'esc-direction-reversed'}).props.onPress();
+      tree.root.findByProps({testID: 'esc-direction-review'}).props.onPress();
     });
     expect(
-      tree.root.findByProps({ testID: 'esc-direction-confirmation' }),
+      tree.root.findByProps({testID: 'esc-direction-confirmation'}),
     ).toBeDefined();
-    expect(controller.setEscDirection).not.toHaveBeenCalled();
+    expect(port.setEscDirection).not.toHaveBeenCalled();
 
     await act(async () => {
-      await tree.root
-        .findByProps({ testID: 'esc-direction-apply' })
-        .props.onPress();
+      await tree.root.findByProps({testID: 'esc-direction-apply'}).props.onPress();
     });
-    expect(endSession).toHaveBeenCalledTimes(1);
-    expect(controller.setEscDirection).toHaveBeenCalledWith(
-      'fc-1',
-      1,
-      'REVERSED',
+    expect(port.setEscDirection).toHaveBeenCalledWith(3, 'REVERSED');
+    expect(JSON.stringify(tree.toJSON())).toContain(
+      'لم يثبت التطبيق الاتجاه ميكانيكيًا',
     );
-    const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('لم يثبت التطبيق الاتجاه ميكانيكيًا');
+    act(() => tree.unmount());
+  });
+
+  it('never labels an acknowledgement from the previous motor as the new selection', async () => {
+    let resolveDirection!: (value: {
+      kind: 'ACKNOWLEDGED';
+      motorNumber: number;
+      direction: 'REVERSED';
+      physicallyVerified: false;
+    }) => void;
+    const pending = new Promise<{
+      kind: 'ACKNOWLEDGED';
+      motorNumber: number;
+      direction: 'REVERSED';
+      physicallyVerified: false;
+    }>(resolve => {
+      resolveDirection = resolve;
+    });
+    const port = operator(true);
+    port.setEscDirection = jest.fn(() => pending);
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <EscDirectionPanel selectedMotor={1} operator={port} />,
+      );
+    });
+    act(() => {
+      tree.root.findByProps({testID: 'esc-direction-reversed'}).props.onPress();
+      tree.root.findByProps({testID: 'esc-direction-review'}).props.onPress();
+    });
+    act(() => {
+      tree.update(<EscDirectionPanel selectedMotor={2} operator={port} />);
+    });
+    await act(async () => {
+      resolveDirection({
+        kind: 'ACKNOWLEDGED',
+        motorNumber: 1,
+        direction: 'REVERSED',
+        physicallyVerified: false,
+      });
+      await pending;
+    });
+
+    const rendered = JSON.stringify(tree.toJSON());
+    expect(rendered).not.toContain('أقرّ متحكم الطيران أمر الاتجاه والحفظ');
+    expect(rendered).toContain('M2');
     act(() => tree.unmount());
   });
 });

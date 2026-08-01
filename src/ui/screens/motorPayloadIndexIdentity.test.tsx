@@ -407,6 +407,26 @@ class FakeOperator implements MotorTestOperatorPort {
     this.pulsed.push(motorNumber);
     return {accepted: true} as never;
   }
+  renewPulseHold() {
+    return 'RENEWED' as const;
+  }
+  setEscDirection(
+    motorNumber: number,
+    direction: import('../../core').DshotEscDirection,
+  ) {
+    return Promise.resolve({
+      kind: 'ACKNOWLEDGED' as const,
+      motorNumber,
+      direction,
+      physicallyVerified: false as const,
+    });
+  }
+  refreshDiagnostics() {
+    return Promise.resolve({
+      outputs: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+      escTelemetry: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+    });
+  }
   requestStop() {
     return {accepted: true} as never;
   }
@@ -509,16 +529,12 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
       ReactTestRenderer.act(() => {
         rendered.find(`motors-slot-${slot}`).props.onPress();
       });
-      // Acknowledge, the way an operator must, or activation is refused.
-      for (const key of ['propellers', 'secured', 'battery']) {
-        ReactTestRenderer.act(() => {
-          rendered.find(`motors-ack-${key}`).props.onPress();
-        });
-      }
       // The long press is the ONE activation gesture.
       expect(MOTOR_TEST_LONG_PRESS_DELAY_MILLIS).toBe(800);
       ReactTestRenderer.act(() => {
-        rendered.find('motors-hold-button').props.onLongPress();
+        const hold = rendered.find('motors-hold-button');
+        hold.props.onPressIn();
+        hold.props.onLongPress();
       });
 
       // The number the screen submitted is the number on the cell.
@@ -729,6 +745,12 @@ function renderTabShell() {
       ReactTestRenderer.act(() => {
         find(testID).props.onPress();
       }),
+    longPress: (testID: string) =>
+      ReactTestRenderer.act(() => {
+        const node = find(testID);
+        node.props.onPressIn();
+        node.props.onLongPress();
+      }),
     unmount: () =>
       ReactTestRenderer.act(() => {
         renderer.unmount();
@@ -760,9 +782,6 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const {client, served} = openShellCapability();
     const shell = renderTabShell();
     shell.press('main-tab-MOTORS');
-    for (const key of ['propellers', 'secured', 'battery']) {
-      shell.press(`motors-ack-${key}`);
-    }
     const controller = shellController();
 
     // Leave IMMEDIATELY - no flush, no served reply. Setup is in flight and
@@ -771,7 +790,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     // the in-flight acquisition land anyway, after the operator has already
     // gone". Asserted rather than timed, so no microtask count is assumed.
     ReactTestRenderer.act(() => {
-      shell.find('motors-begin-session').props.onPress();
+      shell.longPress('motors-hold-button');
     });
     expect(controller.getSnapshot().phase).not.toBe('ACTIVE');
     expect(client.isMotorTestLeaseHeld()).toBe(false);
@@ -811,13 +830,10 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const {client, served} = openShellCapability();
     const shell = renderTabShell();
     shell.press('main-tab-MOTORS');
-    for (const key of ['propellers', 'secured', 'battery']) {
-      shell.press(`motors-ack-${key}`);
-    }
     const controller = shellController();
 
     await ReactTestRenderer.act(async () => {
-      shell.find('motors-begin-session').props.onPress();
+      shell.longPress('motors-hold-button');
       for (
         let i = 0;
         i < 400 && !client.isMotorTestLeaseHeld();
@@ -850,13 +866,11 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const {client, served} = openShellCapability();
     const shell = renderTabShell();
     shell.press('main-tab-MOTORS');
-    for (const key of ['propellers', 'secured', 'battery']) {
-      shell.press(`motors-ack-${key}`);
-    }
     const controller = shellController();
 
     await ReactTestRenderer.act(async () => {
-      shell.find('motors-begin-session').props.onPress();
+      shell.longPress('motors-hold-button');
+      shell.find('motors-hold-button').props.onPressOut();
       for (
         let i = 0;
         i < 400 && controller.getSnapshot().machine?.name !== 'Ready';

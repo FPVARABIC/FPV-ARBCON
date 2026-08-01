@@ -998,6 +998,36 @@ export class MspClient {
   }
 
   /**
+   * Lease-scoped optional request. A confirmed MSP error frame is a
+   * definite firmware-level "unsupported/refused" answer and therefore
+   * does not poison the lease. Every transport-ambiguous failure remains
+   * fail-closed exactly as on requestWithMotorTestLease().
+   */
+  requestOptionalWithMotorTestLease(
+    token: unknown,
+    command: number,
+    payload: Uint8Array,
+    options: MspRequestOptions,
+  ): Promise<MspFrame> {
+    if (!this.isMotorTestLeaseToken(token)) {
+      return Promise.reject(
+        new MspMotorTestLeaseBlockedError('MSP_MOTOR_TEST_LEASE_CAPABILITY_INVALID'),
+      );
+    }
+    const promise = this.enqueue(command, payload, options);
+    promise.catch((reason: unknown) => {
+      if (
+        reason instanceof MspMotorTestStopDisplacementError ||
+        (reason instanceof MspClientError && reason.code === 'MSP_REMOTE_ERROR')
+      ) {
+        return;
+      }
+      this.faultMotorTestLease();
+    });
+    return promise;
+  }
+
+  /**
    * Phase 2G Pass 1 - submit the lease-owned EMERGENCY STOP as the next
    * transport write.
    *
