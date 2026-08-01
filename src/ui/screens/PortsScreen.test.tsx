@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
+import { Alert } from 'react-native';
 
 import '../../i18n';
 import type { MspSerialPortRecord } from '../../core/protocol/msp';
@@ -38,6 +39,7 @@ function snapshot(
     serialRxProvider: 7,
     buildOptionIds: undefined,
     vtxTableAvailable: true,
+    vtxTableConfigured: true,
     ...options,
   });
 }
@@ -109,7 +111,53 @@ describe('PortsScreen', () => {
       screen.find('ports-20-role-TELEMETRY_SMARTPORT').props.disabled,
     ).toBe(true);
     expect(screen.find('ports-20-role-BLACKBOX').props.disabled).toBe(false);
+    expect(
+      screen.find('ports-20-role-BLACKBOX').props.accessibilityRole,
+    ).toBe('radio');
+    expect(
+      screen.find('ports-20-role-BLACKBOX').props.accessibilityLabel,
+    ).toBeTruthy();
     screen.unmount();
+  });
+
+  it('shows the active baud rates without forcing the operator to expand a port', async () => {
+    const screen = await render(controllerFor());
+    expect(screen.find('ports-baud-summary-20').props.children).toContain(
+      '115200',
+    );
+    screen.unmount();
+  });
+
+  it('warns only when the connected firmware has a VTX table that is incomplete', async () => {
+    const vtxPorts = Object.freeze([
+      port(20, 1),
+      port(0, 1 + 2 ** 17),
+    ]);
+    const incomplete = await render(
+      controllerFor(
+        snapshot({
+          ports: vtxPorts,
+          vtxTableAvailable: true,
+          vtxTableConfigured: false,
+        }),
+      ),
+    );
+    expect(
+      incomplete.query('ports-vtx-table-warning').length,
+    ).toBeGreaterThan(0);
+    incomplete.unmount();
+
+    const unavailable = await render(
+      controllerFor(
+        snapshot({
+          ports: vtxPorts,
+          vtxTableAvailable: false,
+          vtxTableConfigured: false,
+        }),
+      ),
+    );
+    expect(unavailable.query('ports-vtx-table-warning')).toHaveLength(0);
+    unavailable.unmount();
   });
 
   it('passes an immutable edited port table to the real transaction boundary', async () => {
@@ -123,6 +171,30 @@ describe('PortsScreen', () => {
     const desired = controller.save.mock.calls[0][2];
     expect(desired[1].functionMask).toBe(2 ** 1);
     expect(desired[1].extensionBytes).toEqual(Uint8Array.from([0xa5]));
+    screen.unmount();
+  });
+
+  it('asks before reloading and discarding unsaved changes', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(jest.fn());
+    const controller = controllerFor();
+    const screen = await render(controller);
+    await screen.press('ports-card-toggle-0');
+    await screen.press('ports-0-role-GPS');
+
+    await screen.press('ports-reload');
+
+    expect(controller.load).toHaveBeenCalledTimes(1);
+    expect(alert).toHaveBeenCalledTimes(1);
+    const actions = alert.mock.calls[0][2] ?? [];
+    const discard = actions.find(action => action.style === 'destructive');
+    expect(discard?.onPress).toBeDefined();
+    await ReactTestRenderer.act(async () => {
+      discard?.onPress?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(controller.load).toHaveBeenCalledTimes(2);
+    alert.mockRestore();
     screen.unmount();
   });
 

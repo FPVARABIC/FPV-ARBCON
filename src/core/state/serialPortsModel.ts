@@ -161,7 +161,13 @@ export interface SerialPortsSnapshot {
   readonly serialRxProvider: number;
   /** undefined means build options could not be queried, not "none compiled". */
   readonly buildOptionIds?: ReadonlySet<number>;
+  /** Whether this firmware exposes configurable VTX tables. */
   readonly vtxTableAvailable?: boolean;
+  /**
+   * True only when an exposed VTX table contains at least one band, channel
+   * and power level. Undefined means the optional evidence could not be read.
+   */
+  readonly vtxTableConfigured?: boolean;
 }
 
 export type SerialPortsValidationCode =

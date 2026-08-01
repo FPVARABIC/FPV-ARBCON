@@ -580,6 +580,7 @@ export class PortsConfigurationController {
     let serialRxProvider = 0;
     let buildOptionIds: ReadonlySet<number> | undefined;
     let vtxTableAvailable: boolean | undefined;
+    let vtxTableConfigured: boolean | undefined;
     try {
       const frame = await requester.request(MSP_RX_CONFIG, EMPTY, {
         wireFormat: 'v1',
@@ -602,7 +603,13 @@ export class PortsConfigurationController {
       const frame = await requester.request(MSP_VTX_CONFIG, EMPTY, {
         wireFormat: 'v1',
       });
-      vtxTableAvailable = decodeVtxTableStatus(frame.payload).tableAvailable;
+      const status = decodeVtxTableStatus(frame.payload);
+      vtxTableAvailable = status.tableAvailable;
+      vtxTableConfigured =
+        status.tableAvailable &&
+        status.bands > 0 &&
+        status.channels > 0 &&
+        status.powerLevels > 0;
     } catch {
       /* VTX is optional. */
     }
@@ -614,6 +621,7 @@ export class PortsConfigurationController {
       serialRxProvider,
       buildOptionIds,
       vtxTableAvailable,
+      vtxTableConfigured,
     });
   }
 }

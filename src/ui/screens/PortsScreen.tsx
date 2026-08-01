@@ -14,6 +14,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -143,6 +144,9 @@ function RoleSwitch({
         value={value}
         disabled={disabled}
         onValueChange={onChange}
+        accessibilityLabel={label}
+        accessibilityRole="switch"
+        accessibilityState={{ checked: value, disabled }}
         trackColor={{ false: colors.disabled, true: colors.accentStrong }}
         thumbColor={value ? colors.accent : colors.textSecondary}
         testID={testID}
@@ -152,6 +156,7 @@ function RoleSwitch({
 }
 
 function ChoiceGroup({
+  categoryKey,
   title,
   roles,
   selected,
@@ -161,6 +166,7 @@ function ChoiceGroup({
   isRoleDisabled,
   onSelect,
 }: {
+  readonly categoryKey: 'telemetry' | 'sensors' | 'peripherals';
   readonly title: string;
   readonly roles: typeof SERIAL_ROLE_DEFINITIONS;
   readonly selected?: SerialRoleKey;
@@ -178,12 +184,18 @@ function ChoiceGroup({
         <Pressable
           disabled={disabled}
           onPress={() => onSelect(undefined)}
+          accessibilityLabel={`${title}: ${t('portsConfiguration.none')}`}
+          accessibilityRole="radio"
+          accessibilityState={{
+            selected: selected === undefined,
+            disabled,
+          }}
           style={[
             styles.chip,
             selected === undefined && styles.chipSelected,
             disabled && styles.disabled,
           ]}
-          testID={`ports-${portIdentifier}-${title}-none`}
+          testID={`ports-${portIdentifier}-${categoryKey}-none`}
         >
           <Text
             style={[
@@ -203,6 +215,12 @@ function ChoiceGroup({
               key={role.key}
               disabled={disabled || !available || roleDisabled}
               onPress={() => onSelect(role.key)}
+              accessibilityLabel={`${title}: ${t(roleLabelKey(role.key))}`}
+              accessibilityRole="radio"
+              accessibilityState={{
+                selected: active,
+                disabled: disabled || !available || roleDisabled,
+              }}
               style={[
                 styles.chip,
                 active && styles.chipSelected,
@@ -255,6 +273,11 @@ function BaudSelector({
               key={index}
               disabled={disabled}
               onPress={() => onChange(index)}
+              accessibilityLabel={`${t(
+                `portsConfiguration.baud.${field}`,
+              )}: ${SERIAL_BAUD_RATES[index]}`}
+              accessibilityRole="radio"
+              accessibilityState={{ selected, disabled }}
               style={[
                 styles.baudChip,
                 selected && styles.chipSelected,
@@ -311,11 +334,30 @@ function PortCard({
   );
   const unknownMask = unknownSerialFunctionMask(port);
   const isUsb = port.identifier === 20;
+  const baudSummary = useMemo(() => {
+    const values: string[] = [];
+    const append = (role: SerialRoleKey, index: number) => {
+      const baud = SERIAL_BAUD_RATES[index];
+      if (baud !== undefined) values.push(`${t(roleLabelKey(role))}: ${baud}`);
+    };
+    if (hasSerialRole(port, 'MSP')) append('MSP', port.mspBaudIndex);
+    if (sensor === 'GPS') append('GPS', port.gpsBaudIndex);
+    if (telemetry !== undefined)
+      append(telemetry, port.telemetryBaudIndex);
+    if (peripheral === 'BLACKBOX')
+      append('BLACKBOX', port.blackboxBaudIndex);
+    return values.join(' · ');
+  }, [peripheral, port, sensor, t, telemetry]);
 
   return (
     <View style={styles.portCard} testID={`ports-card-${port.identifier}`}>
       <Pressable
         onPress={() => setExpanded(value => !value)}
+        accessibilityLabel={`${serialPortDisplayName(port.identifier)}: ${
+          expanded
+            ? t('portsConfiguration.collapsePort')
+            : t('portsConfiguration.editPort')
+        }`}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
         style={styles.portHeader}
@@ -345,6 +387,14 @@ function PortCard({
       {roles.length > 0 ? (
         <Text style={styles.roleSummary}>
           {roles.map(role => t(roleLabelKey(role))).join(' · ')}
+        </Text>
+      ) : null}
+      {baudSummary.length > 0 ? (
+        <Text
+          style={[styles.baudSummary, styles.ltr]}
+          testID={`ports-baud-summary-${port.identifier}`}
+        >
+          {baudSummary}
         </Text>
       ) : null}
       {unknownMask !== 0 ? (
@@ -386,6 +436,7 @@ function PortCard({
           ) : null}
 
           <ChoiceGroup
+            categoryKey="telemetry"
             title={t('portsConfiguration.telemetry')}
             roles={TELEMETRY_ROLES}
             selected={telemetry}
@@ -405,6 +456,7 @@ function PortCard({
             />
           ) : null}
           <ChoiceGroup
+            categoryKey="sensors"
             title={t('portsConfiguration.sensors')}
             roles={SENSOR_ROLES}
             selected={sensor}
@@ -423,6 +475,7 @@ function PortCard({
             />
           ) : null}
           <ChoiceGroup
+            categoryKey="peripherals"
             title={t('portsConfiguration.peripherals')}
             roles={PERIPHERAL_ROLES}
             selected={peripheral}
@@ -611,6 +664,33 @@ export default function PortsScreen({
     );
   }, [controller, dirty, draft, issues.length, original, sessionKey]);
 
+  const reloadNow = useCallback(() => {
+    setSaveOutcome(undefined);
+    setReloadToken(token => token + 1);
+  }, []);
+
+  const requestReload = useCallback(() => {
+    if (!dirty) {
+      reloadNow();
+      return;
+    }
+    Alert.alert(
+      t('portsConfiguration.discardChangesTitle'),
+      t('portsConfiguration.discardChangesBody'),
+      [
+        {
+          text: t('portsConfiguration.cancel'),
+          style: 'cancel',
+        },
+        {
+          text: t('portsConfiguration.discardAndReload'),
+          style: 'destructive',
+          onPress: reloadNow,
+        },
+      ],
+    );
+  }, [dirty, reloadNow, t]);
+
   const loadMessage =
     loadOutcome?.kind === 'REJECTED'
       ? t(blockReasonKey(loadOutcome.reason))
@@ -658,7 +738,9 @@ export default function PortsScreen({
             <Text style={styles.errorText}>{loadMessage}</Text>
             <Pressable
               style={styles.secondaryButton}
-              onPress={() => setReloadToken(token => token + 1)}
+              accessibilityRole="button"
+              accessibilityLabel={t('portsConfiguration.reload')}
+              onPress={reloadNow}
               testID="ports-retry-load"
             >
               <Text style={styles.secondaryButtonText}>
@@ -699,9 +781,13 @@ export default function PortsScreen({
               </View>
             </View>
 
-            {snapshot.vtxTableAvailable === false &&
+            {snapshot.vtxTableAvailable === true &&
+            snapshot.vtxTableConfigured === false &&
             draft.some(port => hasSerialRole(port, 'VTX_MSP')) ? (
-              <View style={styles.noticeCard}>
+              <View
+                style={styles.noticeCard}
+                testID="ports-vtx-table-warning"
+              >
                 <Text style={styles.noticeText}>
                   {t('portsConfiguration.vtxTableMissing')}
                 </Text>
@@ -779,6 +865,11 @@ export default function PortsScreen({
             <View style={styles.actions}>
               <Pressable
                 disabled={controlsDisabled || !dirty}
+                accessibilityRole="button"
+                accessibilityLabel={t('portsConfiguration.reset')}
+                accessibilityState={{
+                  disabled: controlsDisabled || !dirty,
+                }}
                 onPress={() => {
                   setDraft(original?.ports ?? []);
                   setSaveOutcome(undefined);
@@ -795,7 +886,10 @@ export default function PortsScreen({
               </Pressable>
               <Pressable
                 disabled={controlsDisabled}
-                onPress={() => setReloadToken(token => token + 1)}
+                accessibilityRole="button"
+                accessibilityLabel={t('portsConfiguration.reload')}
+                accessibilityState={{ disabled: controlsDisabled }}
+                onPress={requestReload}
                 style={[
                   styles.secondaryButton,
                   controlsDisabled && styles.disabled,
@@ -808,6 +902,12 @@ export default function PortsScreen({
               </Pressable>
               <Pressable
                 disabled={controlsDisabled || !dirty || issues.length > 0}
+                accessibilityRole="button"
+                accessibilityLabel={t('portsConfiguration.saveAndReboot')}
+                accessibilityState={{
+                  disabled:
+                    controlsDisabled || !dirty || issues.length > 0,
+                }}
                 onPress={handleSave}
                 style={[
                   styles.saveButton,
@@ -1007,6 +1107,11 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'right',
     writingDirection: 'rtl',
+  },
+  baudSummary: {
+    ...typography.caption,
+    color: colors.accent,
+    textAlign: 'left',
   },
   preservedNotice: {
     flexDirection: 'row',

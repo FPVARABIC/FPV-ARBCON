@@ -6,11 +6,14 @@ import {
   MSP2_COMMON_SERIAL_CONFIG,
   MSP2_COMMON_SET_SERIAL_CONFIG,
   MSP_BOXIDS,
+  MSP_BUILD_INFO,
   MSP_EEPROM_WRITE,
   MSP_FEATURE_CONFIG,
   MSP_REBOOT,
+  MSP_RX_CONFIG,
   MSP_SET_FEATURE_CONFIG,
   MSP_STATUS_EX,
+  MSP_VTX_CONFIG,
 } from '../../../core/protocol/msp/commands/mspCommands';
 import {
   encodeSerialPorts,
@@ -216,6 +219,30 @@ describe('PortsConfigurationController', () => {
       options: { wireFormat: 'v2' },
     });
     expect(h.telemetry.acquirePauseLease).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes an available but incomplete VTX table from an unavailable table', async () => {
+    const h = harness();
+    enqueueSnapshot(h.client);
+    h.client.enqueue(MSP_RX_CONFIG, { payload: Uint8Array.from([9]) });
+    h.client.enqueue(MSP_BUILD_INFO, {
+      payload: Uint8Array.from([...new Array(26).fill(0), 0, 0]),
+    });
+    h.client.enqueue(MSP_VTX_CONFIG, {
+      payload: Uint8Array.from([
+        3, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 8, 4,
+      ]),
+    });
+
+    const loaded = await h.controller.load(key);
+
+    expect(loaded).toMatchObject({
+      kind: 'LOADED',
+      snapshot: {
+        vtxTableAvailable: true,
+        vtxTableConfigured: false,
+      },
+    });
   });
 
   it('fails closed for a different firmware family before any MSP request', async () => {
