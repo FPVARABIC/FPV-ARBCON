@@ -32,16 +32,21 @@
  * fires one event and the bridge decides everything else.
  */
 
-import React, {useCallback, useRef, useState} from 'react';
-import {StyleSheet, View} from 'react-native';
-import type {NativeStackScreenProps} from '@react-navigation/native-stack';
+import React, { useCallback, useRef, useState } from 'react';
+import { StyleSheet, View } from 'react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import {colors} from '../theme';
+import { colors } from '../theme';
 import BottomTabBar from '../components/navigation/BottomTabBar';
 import SetupScreen from './SetupScreen';
 import MotorsTab from './MotorsScreen';
-import {INITIAL_MAIN_TAB, isTabSelectable, type MainTabKey} from '../../navigation/tabs';
-import type {RootStackParamList} from '../../navigation/types';
+import PortsScreen from './PortsScreen';
+import {
+  INITIAL_MAIN_TAB,
+  isTabSelectable,
+  type MainTabKey,
+} from '../../navigation/tabs';
+import type { RootStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
@@ -97,14 +102,16 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
         {mountedTabs.includes('SETUP') ? (
           <View
             style={activeTab === 'SETUP' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-SETUP">
+            testID="main-tab-panel-SETUP"
+          >
             <SetupScreen {...props} />
           </View>
         ) : null}
         {mountedTabs.includes('MOTORS') ? (
           <View
             style={activeTab === 'MOTORS' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-MOTORS">
+            testID="main-tab-panel-MOTORS"
+          >
             <MotorsTab
               sessionKey={props.route.params?.sessionKey}
               navigation={props.navigation}
@@ -115,6 +122,14 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             />
           </View>
         ) : null}
+        {mountedTabs.includes('PORTS') ? (
+          <View
+            style={activeTab === 'PORTS' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-PORTS"
+          >
+            <PortsScreen sessionKey={props.route.params?.sessionKey} />
+          </View>
+        ) : null}
       </View>
       <BottomTabBar activeTab={activeTab} onSelectTab={handleSelectTab} />
     </View>
@@ -122,11 +137,11 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: colors.background},
-  content: {flex: 1},
-  visible: {flex: 1},
+  root: { flex: 1, backgroundColor: colors.background },
+  content: { flex: 1 },
+  visible: { flex: 1 },
   /* Hidden, NOT unmounted - see the Motors-bridge note in this file's
      header. `display: 'none'` removes it from layout entirely, so a hidden
      tab cannot occupy space or intercept touches. */
-  hidden: {display: 'none'},
+  hidden: { display: 'none' },
 });

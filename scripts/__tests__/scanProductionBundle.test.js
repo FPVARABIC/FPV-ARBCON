@@ -291,6 +291,7 @@ describe('scanner - the engine boundary is the remaining structural containment'
 
   it('names every boundary it enforces, so the set cannot shrink unnoticed', () => {
     expect(ENGINE_BOUNDARIES.map(entry => entry.token).sort()).toEqual([
+      'MSP2_COMMON_SET_SERIAL_CONFIG',
       'MSP2_SEND_DSHOT_COMMAND',
       'MSP2_SET_MOTOR_OUTPUT_REORDERING',
       'MSP_EEPROM_WRITE',

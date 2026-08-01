@@ -1,6 +1,7 @@
 export {
   MSP_API_VERSION,
   MSP_FC_VARIANT,
+  MSP_BUILD_INFO,
   MSP_BOARD_INFO,
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
@@ -27,6 +28,10 @@ export {
   MSP_SET_MOTOR_3D_CONFIG,
   MSP_SET_MOTOR_CONFIG,
   MSP_EEPROM_WRITE,
+  MSP_RX_CONFIG,
+  MSP_VTX_CONFIG,
+  MSP2_COMMON_SERIAL_CONFIG,
+  MSP2_COMMON_SET_SERIAL_CONFIG,
 } from './commands/mspCommands';
 export {
   BETAFLIGHT_SOURCE_REPO,
@@ -108,6 +113,17 @@ export {
   MOTOR_OUTPUT_ORDER_MAX_COUNT,
 } from './decoding/decodeMotorOutputOrder';
 export type { MspMotorOutputOrder } from './decoding/decodeMotorOutputOrder';
+export {
+  decodeSerialPorts,
+  encodeSerialPorts,
+  SERIAL_PORT_RECORD_MIN_BYTES,
+} from './decoding/decodeSerialPorts';
+export type { MspSerialPortRecord } from './decoding/decodeSerialPorts';
+export { decodeBuildOptions } from './decoding/decodeBuildOptions';
+export type { MspBuildOptions } from './decoding/decodeBuildOptions';
+export { decodeSerialRxProvider } from './decoding/decodeSerialRxProvider';
+export { decodeVtxTableStatus } from './decoding/decodeVtxTableStatus';
+export type { MspVtxTableStatus } from './decoding/decodeVtxTableStatus';
 export {
   encodeMotorOutputOrder,
   MotorOutputOrderEncodeError,

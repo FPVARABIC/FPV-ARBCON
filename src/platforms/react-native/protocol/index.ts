@@ -55,6 +55,18 @@ export {
   motorConfigurationController,
 } from './MotorConfigurationController';
 export {
+  PortsConfigurationController,
+  portsConfigurationController,
+} from './PortsConfigurationController';
+export type {
+  PortsBlockReason,
+  PortsLoadOutcome,
+  PortsSaveOutcome,
+  PortsSessionCoordinator,
+  PortsAppStateOwner,
+  PortsConfigurationControllerOptions,
+} from './PortsConfigurationController';
+export {
   acquireMotorDiagnosticsTelemetry,
   getMotorDiagnosticsAvailability,
   subscribeMotorDiagnosticsAvailability,

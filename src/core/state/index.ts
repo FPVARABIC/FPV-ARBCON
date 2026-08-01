@@ -43,6 +43,36 @@ export {
   bindMotorStaticFacts,
 } from './motorStaticFacts';
 export {
+  SERIAL_BAUD_RATES,
+  SERIAL_ROLE_DEFINITIONS,
+  SERIAL_KNOWN_FUNCTION_MASK,
+  serialPortDisplayName,
+  serialRoleIsAvailable,
+  hasSerialRole,
+  enabledSerialRoles,
+  unknownSerialFunctionMask,
+  setSerialRole,
+  setSerialBaud,
+  availableBaudIndexes,
+  validateSerialPorts,
+  normalizeSerialPortsForSave,
+  deriveSerialPortsFeatureMask,
+  FEATURE_RX_SERIAL_BIT,
+  FEATURE_GPS_BIT,
+  FEATURE_TELEMETRY_BIT,
+  FEATURE_ESC_SENSOR_BIT_FOR_PORTS,
+  serialPortsEqual,
+} from './serialPortsModel';
+export type {
+  SerialRoleCategory,
+  SerialRoleKey,
+  SerialRoleDefinition,
+  SerialPortsSnapshot,
+  SerialPortsValidationCode,
+  SerialPortsValidationIssue,
+  SerialBaudField,
+} from './serialPortsModel';
+export {
   FEATURE_MOTOR_STOP_BIT,
   FEATURE_ESC_SENSOR_BIT,
   MOTOR_PROTOCOL_RAW_MIN,

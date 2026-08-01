@@ -28,16 +28,21 @@
  * counterpart is `scripts/scan-production-bundle.js`.
  */
 
-import {readFileSync, readdirSync, statSync} from 'fs';
-import {join} from 'path';
+import { readFileSync, readdirSync, statSync } from 'fs';
+import { join } from 'path';
 
 import ar from './locales/ar.json';
-import type {MotorTestActivationBlockReason} from '../core/state/motorTestController';
+import type { MotorTestActivationBlockReason } from '../core/state/motorTestController';
 import type {
   MotorPhysicalPosition,
   MotorRotationDirection,
   MotorVerificationOutcome,
 } from '../core/state/motorVerificationModel';
+import type {
+  SerialPortsValidationCode,
+  SerialRoleKey,
+} from '../core/state/serialPortsModel';
+import type { PortsBlockReason } from '../platforms/react-native/protocol';
 
 const REPO_ROOT = join(__dirname, '..', '..');
 const SCAN_ROOTS = [join(REPO_ROOT, 'src'), join(REPO_ROOT, 'App.tsx')];
@@ -92,16 +97,16 @@ function scanSource(): {
   for (const file of SOURCE_FILES) {
     const text = readFileSync(file, 'utf8');
     for (const match of text.matchAll(LITERAL_KEY_PATTERN)) {
-      literals.push({key: match[2], file: relative(file)});
+      literals.push({ key: match[2], file: relative(file) });
     }
     for (const match of text.matchAll(TEMPLATE_PREFIX_PATTERN)) {
       const prefix = match[1].replace(/\.$/, '');
       if (prefix.length > 0) {
-        prefixes.push({key: prefix, file: relative(file)});
+        prefixes.push({ key: prefix, file: relative(file) });
       }
     }
   }
-  return {literals, prefixes};
+  return { literals, prefixes };
 }
 
 function resolve(key: string): unknown {
@@ -160,15 +165,84 @@ const OUTCOMES: Record<MotorVerificationOutcome, true> = {
   UNSAFE_OR_AMBIGUOUS: true,
 };
 
+const PORT_ROLES: Record<SerialRoleKey, true> = {
+  MSP: true,
+  GPS: true,
+  TELEMETRY_FRSKY: true,
+  TELEMETRY_HOTT: true,
+  TELEMETRY_LTM: true,
+  TELEMETRY_SMARTPORT: true,
+  RX_SERIAL: true,
+  BLACKBOX: true,
+  TELEMETRY_MAVLINK: true,
+  ESC_SENSOR: true,
+  TBS_SMARTAUDIO: true,
+  TELEMETRY_IBUS: true,
+  IRC_TRAMP: true,
+  RUNCAM_DEVICE_CONTROL: true,
+  LIDAR_TF: true,
+  FRSKY_OSD: true,
+  VTX_MSP: true,
+};
+
+const PORT_BLOCK_REASONS: Record<PortsBlockReason, true> = {
+  DISCONNECTED: true,
+  IDENTIFYING: true,
+  UNSUPPORTED_FIRMWARE: true,
+  APP_BACKGROUNDED: true,
+  LINK_RECOVERING: true,
+  FC_ARMED: true,
+  ARMED_STATE_UNKNOWN: true,
+  MOTOR_TEST_ACTIVE: true,
+  CONFIGURATION_BUSY: true,
+  STALE_BASE: true,
+  INVALID_CONFIGURATION: true,
+};
+
+const PORT_VALIDATION: Record<SerialPortsValidationCode, true> = {
+  NO_MSP_PORT: true,
+  TOO_MANY_MSP_PORTS: true,
+  USB_MSP_REQUIRED: true,
+  ROLE_ASSIGNED_MORE_THAN_ONCE: true,
+  INVALID_PORT_SHARING: true,
+  VTX_MSP_REQUIRES_MSP_OR_RX: true,
+  SOFTSERIAL_MSP_OR_RX: true,
+  SOFTSERIAL_BAUD_TOO_HIGH: true,
+  UNSUPPORTED_BAUD_INDEX: true,
+  ROLE_NOT_COMPILED: true,
+  ROLE_NOT_SUPPORTED_BY_API: true,
+  DUPLICATE_PORT_IDENTIFIER: true,
+};
+
 /** Families whose members are produced by a template at runtime. */
 const ENUMERATED_FAMILIES: readonly {
   readonly prefix: string;
   readonly members: readonly string[];
 }[] = [
-  {prefix: 'motorsScreen.blockReason', members: Object.keys(BLOCK_REASONS)},
-  {prefix: 'motorVerification.position', members: Object.keys(POSITIONS)},
-  {prefix: 'motorVerification.direction', members: Object.keys(DIRECTIONS)},
-  {prefix: 'motorVerification.outcome', members: Object.keys(OUTCOMES)},
+  { prefix: 'motorsScreen.blockReason', members: Object.keys(BLOCK_REASONS) },
+  { prefix: 'motorVerification.position', members: Object.keys(POSITIONS) },
+  { prefix: 'motorVerification.direction', members: Object.keys(DIRECTIONS) },
+  { prefix: 'motorVerification.outcome', members: Object.keys(OUTCOMES) },
+  { prefix: 'portsConfiguration.roles', members: Object.keys(PORT_ROLES) },
+  {
+    prefix: 'portsConfiguration.blockReason',
+    members: Object.keys(PORT_BLOCK_REASONS),
+  },
+  {
+    prefix: 'portsConfiguration.validation',
+    members: Object.keys(PORT_VALIDATION),
+  },
+  {
+    prefix: 'portsConfiguration.outcome',
+    members: [
+      'noChanges',
+      'saved',
+      'savedUnverified',
+      'unconfirmed',
+      'sessionEnded',
+      'failed',
+    ],
+  },
   {
     // MotorsScreen builds these from `positionKey`/`directionKey` values.
     // The compact bench-warning strings are ordinary literal lookups and
@@ -207,7 +281,7 @@ const ENUMERATED_FAMILIES: readonly {
 ];
 
 describe('Arabic catalogue coverage', () => {
-  const {literals, prefixes} = scanSource();
+  const { literals, prefixes } = scanSource();
 
   it('scans a non-empty set of source files (the scan is not vacuous)', () => {
     expect(SOURCE_FILES.length).toBeGreaterThan(20);
@@ -271,7 +345,9 @@ describe('Arabic catalogue coverage', () => {
     const index = readFileSync(join(__dirname, 'index.ts'), 'utf8');
     // Comments are stripped first: this file DOCUMENTS the removed seam by
     // name, and that documentation must not be what the assertion trips on.
-    const code = index.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    const code = index
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
     // The seam that caused the on-device defect must not come back: no
     // __DEV__, no conditional require, no second resource file merged in.
     expect(code).not.toContain('__DEV__');

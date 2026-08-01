@@ -108,8 +108,9 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
 
   it('does not fire on tab changes that do not involve Motors', () => {
     const shell = renderShell();
-    // PORTS is disabled and has no press handler at all, so this exercises
-    // the one other reachable transition: SETUP -> SETUP.
+    // Ports is a real, selectable screen in the same application. Moving
+    // SETUP -> PORTS -> SETUP must not manufacture a Motors blur event.
+    shell.press('main-tab-PORTS');
     shell.press('main-tab-SETUP');
     expect(fires).toEqual([]);
     shell.unmount();

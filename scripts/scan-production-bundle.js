@@ -144,6 +144,14 @@ const REQUIRED_ENGINE_TOKENS = [
   'encodeDshotEscDirection',
   'MSP2_SET_MOTOR_OUTPUT_REORDERING',
   'MSP2_SEND_DSHOT_COMMAND',
+  // Ports is a real production editor, not a static tab.
+  'PortsConfigurationController',
+  'ports-screen',
+  'ports-save',
+  'MSP2_COMMON_SERIAL_CONFIG',
+  'MSP2_COMMON_SET_SERIAL_CONFIG',
+  'decodeSerialPorts',
+  'encodeSerialPorts',
 ];
 
 /**
@@ -172,6 +180,8 @@ const REQUIRED_ARABIC_STRINGS = [
   'إعادة ترتيب مخارج المحركات',
   'اتجاه دوران DShot',
   'لم يثبت التطبيق الاتجاه ميكانيكيًا',
+  'حفظ وإعادة تشغيل المتحكم',
+  'يجب الإبقاء على منفذ MSP واحد على الأقل.',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous.
@@ -220,6 +230,7 @@ const ENGINE_BOUNDARIES = [
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+      'src/platforms/react-native/protocol/PortsConfigurationController.ts',
     ],
   },
   {
@@ -227,6 +238,14 @@ const ENGINE_BOUNDARIES = [
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+      'src/platforms/react-native/protocol/PortsConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP2_COMMON_SET_SERIAL_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/PortsConfigurationController.ts',
     ],
   },
   {
