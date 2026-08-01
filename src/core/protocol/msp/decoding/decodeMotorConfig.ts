@@ -2,10 +2,11 @@ import {MspPayloadReader} from './MspPayloadReader';
 
 /**
  * Motor read-capability pass - wire decoder for MSP_MOTOR_CONFIG (131),
- * verified verbatim against src/main/msp/msp.c @
- * BETAFLIGHT_2025_12_2_COMMIT. Exactly 10 bytes:
+ * verified verbatim against src/main/msp/msp.c for the reviewed Betaflight
+ * API-1.46, API-1.47 and API-1.48 read adapters. The semantic change in the
+ * first field is recorded below; all offsets remain exactly 10 bytes:
  *
- *   offset 0  u16  0 - "was minthrottle until after 4.5" (REMOVED field)
+ *   offset 0  u16  minthrottle at API 1.46; structural 0 at API 1.47+
  *   offset 2  u16  maxthrottle
  *   offset 4  u16  mincommand
  *   offset 6  u8   getMotorCount()
@@ -15,10 +16,11 @@ import {MspPayloadReader} from './MspPayloadReader';
  *
  * All 10 bytes are REQUIRED; trailing bytes are permitted and ignored.
  *
- * THE FIRST FIELD IS NOT A MINIMUM THROTTLE. The firmware hard-codes it
- * to 0 with the comment "was minthrottle until after 4.5". It is decoded
- * into an explicitly-named deprecated field so nothing downstream can
- * mistake a structural zero for a real throttle endpoint.
+ * The first field changes meaning across the reviewed boundary. API 1.46
+ * still emits its historical minthrottle; API 1.47+ hard-code zero with the
+ * comment "was minthrottle until after 4.5". It remains isolated under a
+ * deprecated name because no shared write/configuration decision may treat
+ * it as a portable throttle endpoint.
  *
  * THIS COMMAND IS THE ONLY AUTHORITY FOR MOTOR COUNT. MSP_MOTOR always
  * returns eight values regardless of the airframe, so counting its
@@ -29,7 +31,7 @@ import {MspPayloadReader} from './MspPayloadReader';
  * those apart. Interpreting it is deliberately somebody else's job.
  */
 export interface MspMotorConfig {
-  /** u16, hard-coded 0 at this tag. A removed field, never a throttle. */
+  /** u16. Historical minthrottle at API 1.46; structural zero at 1.47+. */
   readonly deprecatedMinThrottle: number;
   readonly maxThrottle: number;
   readonly minCommand: number;

@@ -34,6 +34,7 @@ import {
   type MotorTestState,
 } from '../../../core/state/motorTestStateMachine';
 import {FakeMspTransport} from '../../../core/protocol/__testUtils__/mspFakeTransport';
+import {betaflightApi147Identity} from '../../../core/protocol/__testUtils__/motorFirmwareFixtures';
 
 /* ------------------------------------------------------------------ *
  * Platform doubles - pure subscription seams
@@ -176,10 +177,9 @@ class ReducerBackedController implements MotorTestController {
       setupStep: 'READY',
       machine: this.state,
       outcome: {kind: 'READY'},
-      capabilities: undefined,
-      staticCompatibility: undefined,
-      dynamicEvaluation: undefined,
-      armingRestriction: {kind: 'NOT_ATTEMPTED'},
+      firmwareCompatibility: undefined,
+      motorScope: undefined,
+      motorDiagnosticsSupport: undefined,
       telemetryHeld: true,
       warnings: [],
       stopDescriptors: [],
@@ -191,12 +191,13 @@ class ReducerBackedController implements MotorTestController {
         physicalStopConfirmed: false,
         deferredBehindActiveWrite: false,
         attributionAmbiguous: false,
+        attributionResolvedByConfirmation: false,
         wirePreemptionClaimed: false,
         submittedNextOnTransport: false,
         episodeId: 0,
         outcome: undefined,
       },
-      activation: {allowed: false, reasons: ['MACHINE_NOT_READY']},
+      activation: {allowed: false, reasons: ['CONTROLLER_LINK_UNAVAILABLE']},
       verificationReceipt: undefined,
       pulse: {
         attemptId: 0,
@@ -207,7 +208,7 @@ class ReducerBackedController implements MotorTestController {
         mayHaveReachedFc: false,
         outcome: undefined,
       },
-      continuousSafetyMonitoring: 'UNAVAILABLE_NO_ACCEPTED_SOURCE',
+      armedStateEvidence: 'UNKNOWN_OR_STALE',
     };
   }
 
@@ -231,6 +232,21 @@ class ReducerBackedController implements MotorTestController {
    * incapable of activating anything - so this must never succeed. */
   pulseMotor(): 'GATES_NOT_SATISFIED' {
     return 'GATES_NOT_SATISFIED';
+  }
+
+  renewPulseHold(): 'NO_ACTIVE_PULSE' {
+    return 'NO_ACTIVE_PULSE';
+  }
+
+  setEscDirection(): Promise<{kind: 'REJECTED'; reason: 'NOT_READY'}> {
+    return Promise.resolve({kind: 'REJECTED', reason: 'NOT_READY'});
+  }
+
+  refreshDiagnostics() {
+    return Promise.resolve({
+      outputs: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+      escTelemetry: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+    });
   }
 
   initializeSession(): Promise<MotorTestControllerSnapshot> {
@@ -652,15 +668,13 @@ describe('lifecycle bridge - containment', () => {
     }
   });
 
-  it('unavailable continuous monitoring is not activation permission', () => {
+  it('unproven armed state is not activation permission', () => {
     // Even with the setup outcome named READY, the disclosures stand and
     // the bridge exposes nothing that could act on them.
     const rig = rigFor(pulsingController());
     const snapshot = rig.controller.getSnapshot();
     expect(snapshot.outcome).toEqual({kind: 'READY'});
-    expect(snapshot.continuousSafetyMonitoring).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
-    );
+    expect(snapshot.armedStateEvidence).toBe('UNKNOWN_OR_STALE');
     const surface = rig.bridge as unknown as Record<string, unknown>;
     expect(surface.activate).toBeUndefined();
     expect(surface.canActivate).toBeUndefined();
@@ -679,6 +693,11 @@ describe('lifecycle bridge - containment', () => {
       binding.controllerDependencies(
         {
           readCurrentIdentity: () => ({physicalGeneration: 1, mspEpoch: 0}),
+          readFirmwareIdentification: () => ({
+            status: 'SUCCEEDED',
+            identity: betaflightApi147Identity(),
+          }),
+          subscribeFirmwareIdentification: () => () => undefined,
           subscribeSessionInvalidated: () => () => undefined,
         },
         () => 0,
@@ -689,10 +708,8 @@ describe('lifecycle bridge - containment', () => {
     bridge.attach();
 
     const snapshot = controller.getSnapshot();
-    expect(snapshot.continuousSafetyMonitoring).toBe(
-      'UNAVAILABLE_NO_ACCEPTED_SOURCE',
-    );
-    expect(snapshot.teardown?.armingRestrictionRemovalSupported).toBeUndefined();
+    expect(snapshot.armedStateEvidence).toBe('UNKNOWN_OR_STALE');
+    expect(snapshot.teardown?.safetyMonitorStopped).toBeUndefined();
 
     // No authority yet, so a lifecycle event records nothing and sends
     // nothing.
@@ -701,8 +718,9 @@ describe('lifecycle bridge - containment', () => {
 
     bridge.detach();
     const closed = await controller.close();
-    expect(closed.teardown?.armingRestrictionRemovalSupported).toBe(false);
-    expect(closed.teardown?.armingRestrictionRemovalPerformed).toBe(false);
+    // No monitor was ever constructed, so there is nothing to stop - and
+    // the report says so rather than claiming a stop it never performed.
+    expect(closed.teardown?.safetyMonitorStopped).toBe(false);
     binding.close();
   });
 });

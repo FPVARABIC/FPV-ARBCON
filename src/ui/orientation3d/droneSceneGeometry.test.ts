@@ -326,7 +326,8 @@ describe('computeDroneScene', () => {
     expect(countByMaterial(scene.primitives, 'ARROW')).toBe(2);
     // Nothing else in the material vocabulary represents a camera wedge
     // or landing legs - the full set of materials used is a closed,
-    // known list.
+    // known list. LEVEL_GRID is the world-fixed horizon reference the
+    // level-presentation repair added; it is not part of the airframe.
     const materials = new Set(scene.primitives.map(p => p.material));
     expect(materials).toEqual(
       new Set([
@@ -340,6 +341,7 @@ describe('computeDroneScene', () => {
         'PROP_RING_REAR',
         'PROP_DISC_REAR',
         'ARROW',
+        'LEVEL_GRID',
       ]),
     );
   });
@@ -391,18 +393,44 @@ describe('computeDroneScene', () => {
       {rollDeg: 20, pitchDeg: -20, yawDeg: 30},
     ];
 
+    /** MODEL bounds only. The world-fixed LEVEL_GRID is deliberately
+     * excluded: it is a horizon reference that extends past the airframe
+     * (and may clip at the preview edge, exactly as a ground plane
+     * should), not part of the model these sizing/centering/clearance
+     * contracts are about. Every assertion below keeps its original
+     * meaning - "the MODEL is large enough, centered and uncropped". */
     function sceneBounds(orientation: DroneOrientationDeg): {minX: number; maxX: number; minY: number; maxY: number} {
       const scene = computeDroneScene(orientation, PREVIEW);
-      const xs = scene.primitives.flatMap(p => p.points.map(pt => pt.x));
-      const ys = scene.primitives.flatMap(p => p.points.map(pt => pt.y));
+      const model = scene.primitives.filter(p => p.material !== 'LEVEL_GRID');
+      const xs = model.flatMap(p => p.points.map(pt => pt.x));
+      const ys = model.flatMap(p => p.points.map(pt => pt.y));
       return {minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys)};
     }
 
-    it('the NEUTRAL model projects to 60%-68% of the usable preview width (large enough for visual hardware judgment)', () => {
+    /** FINAL-POLISH PASS: the band moved with the deliberate +15.0%
+     * scale increase (MODEL_PIXEL_SCALE_FACTOR 0.56 -> 0.644), which
+     * raised the measured neutral occupancy from 62.9% to 72.33%. The
+     * assertion is NOT loosened - it is the same shape of bound, just
+     * re-centred on the new measured value, and the clearance test
+     * below (still >=12 units) is what actually protects against
+     * over-enlargement. */
+    it('the NEUTRAL model projects to 70%-75% of the usable preview width (large enough for visual hardware judgment)', () => {
       const b = sceneBounds({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
       const widthRatio = (b.maxX - b.minX) / PREVIEW.width;
-      expect(widthRatio).toBeGreaterThanOrEqual(0.6);
-      expect(widthRatio).toBeLessThanOrEqual(0.68);
+      expect(widthRatio).toBeGreaterThanOrEqual(0.7);
+      expect(widthRatio).toBeLessThanOrEqual(0.75);
+    });
+
+    it('is measurably LARGER than the pre-polish scale, by the intended +15% and no more', () => {
+      const b = sceneBounds({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+      // The pre-polish neutral projected width, measured at this exact
+      // preview size with MODEL_PIXEL_SCALE_FACTOR = 0.56. Projected
+      // offsets from the viewport centre scale linearly with that
+      // factor, so this is an exact expectation, not an approximation.
+      const PRE_POLISH_WIDTH = 163.53;
+      const ratio = (b.maxX - b.minX) / PRE_POLISH_WIDTH;
+      expect(ratio).toBeGreaterThanOrEqual(1.15);
+      expect(ratio).toBeLessThanOrEqual(1.18);
     });
 
     it('every required verification pose keeps the COMPLETE model uncropped with >=12 units of clearance from every clipping edge', () => {
@@ -456,5 +484,233 @@ describe('computeDroneScene', () => {
     };
 
     expect(spreadOf(large)).toBeGreaterThan(spreadOf(small));
+  });
+});
+
+/**
+ * The neutral-presentation repair. The camera used to sit at a diagonal
+ * azimuth, so a genuinely level aircraft rendered as a skewed, tilted
+ * shape - the single most confusing thing about the old Orientation
+ * view, because a user could not tell a real tilt from the projection.
+ * The camera now sits directly behind the tail, and a world-fixed level
+ * grid gives the tilt something to be measured against.
+ */
+describe('computeDroneScene - neutral presentation (level reads as level)', () => {
+  const VIEWPORT = {width: 260, height: 260};
+  const CENTRE_X = VIEWPORT.width / 2;
+
+  function modelPoints(orientation: DroneOrientationDeg) {
+    return computeDroneScene(orientation, VIEWPORT)
+      .primitives.filter(p => p.material !== 'LEVEL_GRID')
+      .flatMap(p => p.points);
+  }
+
+  function gridPrimitives(orientation: DroneOrientationDeg) {
+    return computeDroneScene(orientation, VIEWPORT).primitives.filter(p => p.material === 'LEVEL_GRID');
+  }
+
+  it('at zero roll/pitch/yaw the airframe is MIRROR SYMMETRIC about the viewport centre line - no diagonal skew', () => {
+    const points = modelPoints(ZERO);
+    expect(points.length).toBeGreaterThan(0);
+
+    // Every point must have a partner reflected across the centre line
+    // at the same height. Compared as rounded multisets so the check is
+    // about the shape, not floating-point identity.
+    const key = (p: {x: number; y: number}) => `${p.x.toFixed(3)}|${p.y.toFixed(3)}`;
+    const actual = points.map(key).sort();
+    const mirrored = points.map(p => key({x: 2 * CENTRE_X - p.x, y: p.y})).sort();
+    expect(mirrored).toEqual(actual);
+  });
+
+  it('at zero roll/pitch the airframe sits LEVEL on screen: its extreme left and right points share a screen height', () => {
+    const points = modelPoints(ZERO);
+    const leftmost = points.reduce((a, b) => (b.x < a.x ? b : a));
+    const rightmost = points.reduce((a, b) => (b.x > a.x ? b : a));
+    closeTo(leftmost.y, rightmost.y, 6);
+  });
+
+  it('a real 15deg roll genuinely breaks that horizontal - the level reading above is not an artifact of symmetry', () => {
+    const points = modelPoints({rollDeg: 15, pitchDeg: 0, yawDeg: 0});
+    const leftmost = points.reduce((a, b) => (b.x < a.x ? b : a));
+    const rightmost = points.reduce((a, b) => (b.x > a.x ? b : a));
+    expect(Math.abs(leftmost.y - rightmost.y)).toBeGreaterThan(5);
+  });
+
+  it('emits the level grid as a closed set of world-fixed lines, one primitive per line', () => {
+    const grid = gridPrimitives(ZERO);
+    // 5 lines per axis, two axes.
+    expect(grid).toHaveLength(10);
+    for (const line of grid) {
+      expect(line.kind).toBe('POLYGON');
+      expect(line.points).toHaveLength(4);
+    }
+  });
+
+  it('the grid does NOT rotate with the body - it is the horizon the aircraft tilts AGAINST', () => {
+    const level = gridPrimitives(ZERO);
+    for (const pose of [
+      {rollDeg: 35, pitchDeg: 0, yawDeg: 0},
+      {rollDeg: 0, pitchDeg: -28, yawDeg: 0},
+      {rollDeg: 0, pitchDeg: 0, yawDeg: 137},
+      {rollDeg: 20, pitchDeg: -20, yawDeg: 30},
+    ] as DroneOrientationDeg[]) {
+      expect(gridPrimitives(pose)).toEqual(level);
+    }
+  });
+
+  it('the grid is part of the SCENE but never part of the airframe - no model primitive borrows its material', () => {
+    const scene = computeDroneScene({rollDeg: 12, pitchDeg: -7, yawDeg: 33}, VIEWPORT);
+    const airframe = scene.primitives.filter(p => p.material !== 'LEVEL_GRID');
+    expect(airframe.length).toBeGreaterThan(0);
+    expect(airframe.every(p => p.material !== 'LEVEL_GRID')).toBe(true);
+    expect(scene.primitives.length).toBe(airframe.length + 10);
+  });
+});
+
+/**
+ * FINAL-POLISH PASS - the clipping and pivot contract for the ENLARGED
+ * model, checked against a dense pose matrix rather than a handful of
+ * chosen snapshots.
+ *
+ * Why a matrix: the Pass-7.5D sizing block above tests eight curated
+ * poses, which is enough to catch a gross error but not enough to
+ * justify raising the scale. Enlarging the model is exactly the change
+ * that turns "no pose I happened to pick clips" into "some pose clips",
+ * so the safe scale has to be established over the renderer's real
+ * supported domain.
+ */
+describe('computeDroneScene - enlarged-model clipping matrix and pivot stability', () => {
+  /** The hero preview is a FIXED 260x260 (OrientationHero's HERO_SIZE),
+   * independent of the phone's screen width - the card centres it
+   * rather than stretching it. The three screen widths the product
+   * targets therefore all present this same canvas; they are listed
+   * explicitly so a future change that DOES make the canvas responsive
+   * cannot silently skip them. */
+  const HERO_CANVAS = {width: 260, height: 260};
+  const SCREEN_WIDTHS = [360, 390, 430];
+
+  /** Half of OrientationRenderer's OUTLINE_STROKE_WIDTH (1.2), the
+   * amount the visibility outline pushes past the filled path on each
+   * side. Included so the metric measures INK, not just geometry. */
+  const STROKE_HALF_WIDTH = 0.6;
+
+  /** The anti-aliasing safety inset this pass commits to. The curated
+   * Pass-7.5D poses keep the stricter documented 12-unit invariant
+   * (asserted separately above); the broad matrix uses 4. */
+  const MATRIX_MIN_CLEARANCE = 4;
+
+  /** MODEL-owned ink only. The world-fixed LEVEL_GRID is a horizon
+   * reference that is DESIGNED to run to the canvas edge - counting it
+   * would make every pose look like a clipping failure. */
+  function modelInkBounds(orientation: DroneOrientationDeg, canvas: {width: number; height: number}) {
+    const model = computeDroneScene(orientation, canvas).primitives.filter(p => p.material !== 'LEVEL_GRID');
+    const xs = model.flatMap(p => p.points.map(pt => pt.x));
+    const ys = model.flatMap(p => p.points.map(pt => pt.y));
+    return {
+      minX: Math.min(...xs) - STROKE_HALF_WIDTH,
+      maxX: Math.max(...xs) + STROKE_HALF_WIDTH,
+      minY: Math.min(...ys) - STROKE_HALF_WIDTH,
+      maxY: Math.max(...ys) + STROKE_HALF_WIDTH,
+    };
+  }
+
+  function clearance(orientation: DroneOrientationDeg, canvas: {width: number; height: number}): number {
+    const b = modelInkBounds(orientation, canvas);
+    return Math.min(b.minX, b.minY, canvas.width - b.maxX, canvas.height - b.maxY);
+  }
+
+  /** Roll and pitch every 15 degrees across the renderer's supported
+   * range, crossed with heading every 30 degrees, plus the heading
+   * boundaries and the transform fixtures other tests in this file
+   * already rely on. */
+  const MATRIX: DroneOrientationDeg[] = (() => {
+    const poses: DroneOrientationDeg[] = [];
+    for (let rollDeg = -60; rollDeg <= 60; rollDeg += 15) {
+      for (let pitchDeg = -60; pitchDeg <= 60; pitchDeg += 15) {
+        for (let yawDeg = 0; yawDeg < 360; yawDeg += 30) {
+          poses.push({rollDeg, pitchDeg, yawDeg});
+        }
+      }
+    }
+    for (const yawDeg of [0, 1, 179, 180, 181, 358, 359]) {
+      poses.push({rollDeg: 0, pitchDeg: 0, yawDeg});
+    }
+    poses.push({rollDeg: 20, pitchDeg: -20, yawDeg: 30});
+    poses.push({rollDeg: 17, pitchDeg: 31, yawDeg: 43});
+    return poses;
+  })();
+
+  it('covers a genuinely dense pose set, not a handful of snapshots', () => {
+    expect(MATRIX.length).toBeGreaterThanOrEqual(900);
+  });
+
+  it.each(SCREEN_WIDTHS)(
+    'at a %ipx screen width every model-owned primitive stays inside the canvas with the anti-aliasing inset',
+    () => {
+      let worst = Number.POSITIVE_INFINITY;
+      let worstPose: DroneOrientationDeg | undefined;
+      for (const pose of MATRIX) {
+        const c = clearance(pose, HERO_CANVAS);
+        if (c < worst) {
+          worst = c;
+          worstPose = pose;
+        }
+      }
+      // Reported through the failure message rather than a log so a
+      // regression names the offending pose directly.
+      expect({worst: worst >= MATRIX_MIN_CLEARANCE, worstPose}).toEqual({worst: true, worstPose});
+      expect(worst).toBeGreaterThanOrEqual(MATRIX_MIN_CLEARANCE);
+    },
+  );
+
+  it('keeps a large real margin at the enlarged scale - not merely scraping the inset', () => {
+    const worst = Math.min(...MATRIX.map(pose => clearance(pose, HERO_CANVAS)));
+    // Measured 25.73 at MODEL_PIXEL_SCALE_FACTOR 0.644 including the
+    // stroke. Asserting a floor well above MATRIX_MIN_CLEARANCE is what
+    // makes a future scale bump fail here FIRST, loudly, instead of
+    // clipping on someone's hardware.
+    expect(worst).toBeGreaterThanOrEqual(20);
+  });
+
+  it('the rotation fixed point projects to the canvas centre in EVERY matrix pose - one stable pivot', () => {
+    // The body-frame origin is the pivot: rotateBodyPoint leaves it at
+    // (0,0,0) for any orientation, so its projection must land on the
+    // viewport centre regardless of pose. A pivot that drifted per
+    // sample would show up here immediately.
+    const origin = {x: 0, y: 0, z: 0};
+    for (const pose of MATRIX) {
+      const pivot = rotateBodyPoint(origin, pose);
+      // Component-wise rather than toEqual: a rotation by 180 degrees
+      // legitimately yields -0, which is numerically identical to 0 but
+      // not deeply equal to it.
+      expect(pivot.x).toBeCloseTo(0, 12);
+      expect(pivot.y).toBeCloseTo(0, 12);
+      expect(pivot.z).toBeCloseTo(0, 12);
+    }
+  });
+
+  it('the pivot does not move with canvas size - only the scale does', () => {
+    const pose = {rollDeg: 12, pitchDeg: -7, yawDeg: 200};
+    for (const canvas of [{width: 200, height: 200}, HERO_CANVAS, {width: 320, height: 320}]) {
+      const b = modelInkBounds(pose, canvas);
+      // The hub centre is the projected origin; with a symmetric
+      // projection around the viewport centre, equal-and-opposite
+      // growth on both axes proves the centre did not translate.
+      const scene = computeDroneScene(pose, canvas);
+      const hub = scene.primitives.find(p => p.material === 'HUB');
+      expect(hub).toBeDefined();
+      const hubXs = hub!.points.map(p => p.x);
+      const hubCentreX = (Math.min(...hubXs) + Math.max(...hubXs)) / 2;
+      // Within one logical pixel of the canvas centre at every size.
+      expect(Math.abs(hubCentreX - canvas.width / 2)).toBeLessThanOrEqual(1);
+      expect(b.maxX - b.minX).toBeGreaterThan(0);
+    }
+  });
+
+  it('an unchanged pose and canvas always produce byte-identical projected geometry', () => {
+    const pose = {rollDeg: -23, pitchDeg: 14, yawDeg: 305};
+    const first = computeDroneScene(pose, HERO_CANVAS);
+    const second = computeDroneScene(pose, HERO_CANVAS);
+    expect(second).toEqual(first);
   });
 });

@@ -179,6 +179,45 @@ export const MSP_MOTOR_3D_CONFIG = 124;
  * a minimum throttle. */
 export const MSP_MOTOR_CONFIG = 131;
 
+/** API-1.47 per-ESC telemetry: u8 count followed by 13 bytes per motor
+ * (RPM, invalid %, temperature, voltage, current, consumption). */
+export const MSP_MOTOR_TELEMETRY = 139;
+
+/** API-1.47 MSP v2 motor resource ordering. The GET returns u8 count then
+ * count physical output indices. The SET accepts the same shape. */
+export const MSP2_MOTOR_OUTPUT_REORDERING = 0x3001;
+export const MSP2_SET_MOTOR_OUTPUT_REORDERING = 0x3002;
+export const MSP2_SEND_DSHOT_COMMAND = 0x3003;
+
+/**
+ * Motor-configuration WRITE commands for the API-1.47 transaction.
+ *
+ * These constants do not authorize a write on their own. The only runtime
+ * consumer is the dedicated motor-configuration transaction, which pauses
+ * telemetry, proves a fresh disarmed state, rejects an active motor-test
+ * lifecycle, captures the canonical session identity, and never retries an
+ * ambiguous write automatically.
+ *
+ * Values and payloads were checked against Betaflight Configurator 2025.12.2
+ * (`MSPCodes.js` and `MSPHelper.crunch`) and the matching firmware MSP
+ * handlers. Keeping them beside their READ counterparts makes each read / set
+ * pair auditable without importing the motor-test command module.
+ */
+export const MSP_SET_FEATURE_CONFIG = 37;
+export const MSP_SET_MIXER_CONFIG = 43;
+export const MSP_SET_ADVANCED_CONFIG = 91;
+export const MSP_SET_MOTOR_3D_CONFIG = 217;
+export const MSP_SET_MOTOR_CONFIG = 222;
+
+/**
+ * Persists previously acknowledged MSP_SET_* values. Unlike accelerometer
+ * and magnetometer calibration (which persist internally), a configuration
+ * edit is not durable until this command is acknowledged. It is therefore
+ * scoped only to MotorConfigurationTransaction; Setup calibration and reboot
+ * paths remain forbidden from sending it.
+ */
+export const MSP_EEPROM_WRITE = 250;
+
 /**
  * THE ONLY MOTOR *WRITE* COMMAND IN THIS REPOSITORY, AND A CONSTANT ONLY.
  *

@@ -73,11 +73,32 @@ export type MspPollDefinition<T> = {
  * ever made visible via tick() re-evaluating staleness and replacing the
  * cached value, not by a bare clock advance alone.
  */
+/**
+ * `sampleSeq` identifies WHICH genuine sample a value came from.
+ *
+ * It exists because `updatedAtMs` cannot serve as a sample identity: two
+ * dispatches can legitimately settle inside the same clock millisecond
+ * (trivially so under an injected FakeClock), and a STALE recomputation
+ * deliberately keeps the ORIGINAL `updatedAtMs`. `sampleSeq` increments
+ * once per successful decode and is carried unchanged through the
+ * FRESH -> STALE transition, so "the model and the numbers are showing
+ * the same sample" and "sample N+1 superseded sample N" are both
+ * decidable facts rather than timing inferences.
+ *
+ * Scope: per scheduler, therefore per session (the coordinator creates
+ * one scheduler per physical session), starting at 1. A replacement
+ * session restarts the count - deliberately, since a sequence is only
+ * ever compared within one session identity, and every consumer that
+ * records it also records the composite session key.
+ *
+ * Optional purely so this addition cannot invalidate an existing
+ * hand-built TelemetryValue literal; the scheduler always sets it.
+ */
 export type TelemetryValue<T> =
   | {status: 'UNAVAILABLE'}
   | {status: 'WAITING'}
-  | {status: 'FRESH'; value: T; updatedAtMs: number}
-  | {status: 'STALE'; value: T; updatedAtMs: number; ageMs: number}
+  | {status: 'FRESH'; value: T; updatedAtMs: number; sampleSeq?: number}
+  | {status: 'STALE'; value: T; updatedAtMs: number; ageMs: number; sampleSeq?: number}
   | {status: 'ERROR'; error: unknown; updatedAtMs?: number};
 
 /**

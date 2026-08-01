@@ -217,6 +217,40 @@ describe('MspClient - write-vs-response race (registration-before-write ordering
     }
   });
 
+  it('an early response does not release the transport slot to a queued same-command request until the first write settles', async () => {
+    jest.useFakeTimers();
+    try {
+      const { transport, client } = makeClient();
+      const first = client.request(1, EMPTY, { wireFormat: 'v1' });
+      const second = client.request(1, EMPTY, { wireFormat: 'v1' });
+
+      // The first response wins while its transport write is still pending.
+      transport.emitData(responseFrame(1));
+      await expect(first).resolves.toMatchObject({ command: 1 });
+
+      // The second identical command must remain queued. Starting it here
+      // would make a late first response indistinguishable from its own and
+      // can orphan the second request's response timer during teardown.
+      expect(transport.writes).toHaveLength(1);
+      expect(client.getActiveRequestPhase()).toBe('WRITING');
+
+      transport.resolveNextWrite();
+      await flushMicrotasks();
+      expect(transport.writes).toHaveLength(1); // first removed, second submitted
+
+      transport.resolveNextWrite();
+      await flushMicrotasks();
+      expect(client.getActiveRequestPhase()).toBe('AWAITING_RESPONSE');
+      transport.emitData(responseFrame(1));
+      await expect(second).resolves.toMatchObject({ command: 1 });
+
+      client.dispose();
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('REGRESSION: a correctly-matched response settling the request as success before a LATER write-Promise rejection (WRITE_FAILED) must NOT trigger desynchronization', async () => {
     const { transport, client } = makeClient();
     const promise = client.request(1, Uint8Array.from([1]), { wireFormat: 'v1' });
@@ -1001,7 +1035,7 @@ function acquireToken(client: MspClient): unknown {
 }
 
 describe('MspClient - Phase 2G: drained boundary and unreachability', () => {
-  it('refuses ownership unless the request engine is genuinely drained, so the lease always begins from an empty transport boundary', () => {
+  it('refuses ownership unless the request engine is genuinely drained, so the lease always begins from an empty transport boundary', async () => {
     const { transport, client } = makeClient();
 
     // One active request is enough to deny ownership.
@@ -1020,13 +1054,18 @@ describe('MspClient - Phase 2G: drained boundary and unreachability', () => {
       reason: 'MSP_CLIENT_NOT_IDLE',
     });
 
+    // The response arrived in the same turn as resolveNextWrite(), before
+    // that Promise's continuation ran. The next request is deliberately
+    // not submitted until the settled write releases the transport slot.
+    await flushMicrotasks();
     transport.resolveNextWrite();
     transport.emitData(responseFrame(2));
+    await flushMicrotasks();
     // Only now, with nothing active and nothing queued, is the boundary
     // drained and ownership available.
     expect(client.tryAcquireMotorTestLease().kind).toBe('ACQUIRED');
 
-    return Promise.all([active, queued]);
+    await Promise.all([active, queued]);
   });
 
   it('keeps ordinary callers out of the engine entirely while a lease is held, so nothing can ever be queued ahead of a stop', async () => {

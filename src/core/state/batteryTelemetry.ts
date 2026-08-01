@@ -13,7 +13,7 @@
  * conclusions the protocol cannot support.
  */
 
-import type {MspBatteryState} from '../protocol';
+import type { MspBatteryState } from '../protocol';
 
 /**
  * Verified batteryState_e (src/main/sensors/battery.h:99-105 @
@@ -28,14 +28,19 @@ export type BatteryFirmwareState =
   | 'CRITICAL'
   | 'NOT_PRESENT'
   | 'INIT'
-  | {kind: 'UNKNOWN'; raw: number};
+  | { kind: 'UNKNOWN'; raw: number };
 
 /** MSP_BATTERY_STATE carries no current-meter-presence flag (verified:
  * battery.c getAmperage() returns the meter register with no validity
  * bit on this wire) - so a raw 0.00A / 0mAh cannot be distinguished from
  * a disabled, absent, or unconfigured sensor by this command alone. The
- * value is preserved, but its trustworthiness is explicitly UNPROVEN. */
-export type BatterySensorValidity = 'UNPROVEN';
+ * value is preserved, but its trustworthiness is explicitly UNPROVEN.
+ * A non-zero value proves only that the FC reported a non-zero wire value,
+ * so the UI may show it explicitly as "reported" without
+ * claiming the sensor is configured or accurate. A zero remains
+ * indistinguishable and stays hidden.
+ */
+export type BatterySensorValidity = 'UNPROVEN' | 'REPORTED_NONZERO';
 
 export interface BatterySemantics {
   /** cellCount === 0 means "battery not detected" (the encoder's own
@@ -51,8 +56,8 @@ export interface BatterySemantics {
   cellCount: number;
   /** CONFIGURED capacity - configuration, not remaining capacity. */
   configuredCapacityMah: number;
-  current: {centiamps: number; sensorValidity: BatterySensorValidity};
-  consumed: {mah: number; sensorValidity: BatterySensorValidity};
+  current: { centiamps: number; sensorValidity: BatterySensorValidity };
+  consumed: { mah: number; sensorValidity: BatterySensorValidity };
 }
 
 function mapFirmwareState(raw: number): BatteryFirmwareState {
@@ -68,7 +73,7 @@ function mapFirmwareState(raw: number): BatteryFirmwareState {
     case 4:
       return 'INIT';
     default:
-      return {kind: 'UNKNOWN', raw};
+      return { kind: 'UNKNOWN', raw };
   }
 }
 
@@ -80,7 +85,14 @@ export function deriveBatterySemantics(raw: MspBatteryState): BatterySemantics {
     legacyVoltageVolts: raw.legacyVoltageDecivolts / 10,
     cellCount: raw.cellCount,
     configuredCapacityMah: raw.configuredCapacityMah,
-    current: {centiamps: raw.amperageCentiamps, sensorValidity: 'UNPROVEN'},
-    consumed: {mah: raw.consumedMah, sensorValidity: 'UNPROVEN'},
+    current: {
+      centiamps: raw.amperageCentiamps,
+      sensorValidity:
+        raw.amperageCentiamps === 0 ? 'UNPROVEN' : 'REPORTED_NONZERO',
+    },
+    consumed: {
+      mah: raw.consumedMah,
+      sensorValidity: raw.consumedMah === 0 ? 'UNPROVEN' : 'REPORTED_NONZERO',
+    },
   };
 }

@@ -54,7 +54,11 @@ import {
   MotorTestTelemetryRegistry,
   type MotorTestTelemetrySession,
 } from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
-import type {MspClient} from '../../../core/protocol/mspClient';
+import type { MspClient } from '../../../core/protocol/mspClient';
+import {
+  isMotorConfigurationTransactionActive,
+  MotorConfigurationTransactionInProgressError,
+} from './motorConfigurationInterlock';
 import {
   createMotorTestController,
   type MotorTestController,
@@ -65,7 +69,7 @@ import {
   type MotorTestPulseRequestResult,
   type MotorTestStopRequestResult,
 } from '../../../core/state/motorTestController';
-import type {MotorTestStopTriggerReason} from '../../../core/state/motorTestStateMachine';
+import type { MotorTestStopTriggerReason } from '../../../core/state/motorTestStateMachine';
 
 /**
  * The session port members a consumer is allowed to supply.
@@ -112,6 +116,13 @@ export interface MotorTestOperatorPort {
    * listener must remain structurally incapable of starting a motor.
    */
   pulseMotor(motorNumber: number): MotorTestPulseRequestResult;
+  /** Renews only an already-live pulse's touch-owner fail-safe. */
+  renewPulseHold(): import('../../../core/state/motorTestController').MotorTestHoldHeartbeatResult;
+  setEscDirection(
+    motorNumber: number,
+    direction: import('../../../core').DshotEscDirection,
+  ): Promise<import('../../../core/state/motorTestController').MotorTestEscDirectionOutcome>;
+  refreshDiagnostics(): Promise<import('../../../core/state/motorTestController').MotorTestDiagnosticsSnapshot>;
   /**
    * Phase 2H - the operator's own stop route, forwarded unchanged. The
    * screen that can activate must be able to stop; whitelist-only, exactly
@@ -153,7 +164,9 @@ export interface MotorTestSessionCapability {
    * names. The caller chooses poll behaviour; it does not choose the
    * client.
    */
-  createScheduler(options?: MspTelemetrySchedulerOptions): MspTelemetryScheduler;
+  createScheduler(
+    options?: MspTelemetrySchedulerOptions,
+  ): MspTelemetryScheduler;
   /**
    * Assembles the controller's dependencies with the captured client and
    * this anchor. The caller supplies only the read/lifecycle members.
@@ -207,7 +220,7 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
   /** The ONE captured reference. Private, never re-assigned, never
    * exposed, and never a parameter of any method below. */
   private readonly client: MspClient;
-  private readonly registrations: {unregister(): void}[] = [];
+  private readonly registrations: { unregister(): void }[] = [];
   private closed = false;
   /** THE ONE controller for this session. Constructed at most once, never
    * replaced, never exposed. */
@@ -244,6 +257,13 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
       session: Object.freeze({
         client: this.client,
         readCurrentIdentity: () => port.readCurrentIdentity(),
+        readFirmwareIdentification: () =>
+          port.readFirmwareIdentification(),
+        subscribeFirmwareIdentification: (
+          listener: Parameters<
+            MotorTestControllerSessionPort['subscribeFirmwareIdentification']
+          >[0],
+        ) => port.subscribeFirmwareIdentification(listener),
         subscribeSessionInvalidated: (
           listener: Parameters<
             MotorTestControllerSessionPort['subscribeSessionInvalidated']
@@ -261,13 +281,23 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
     readMonotonicMillis: () => number,
   ): MotorTestOperatorPort {
     const controller = this.ensureController(port, readMonotonicMillis);
-    // A frozen facade with exactly six members: no controller, no
+    // A frozen, capability-scoped facade: no controller, no
     // client, no lease, no authority token, no mutable internal.
     return Object.freeze({
-      beginSession: () => controller.initializeSession(),
+      beginSession: () =>
+        isMotorConfigurationTransactionActive(this.client)
+          ? Promise.reject(new MotorConfigurationTransactionInProgressError())
+          : controller.initializeSession(),
       getSnapshot: () => controller.getSnapshot(),
       subscribe: (listener: () => void) => controller.subscribe(listener),
       pulseMotor: (motorNumber: number) => controller.pulseMotor(motorNumber),
+      renewPulseHold: () => controller.renewPulseHold(),
+      setEscDirection: (
+        motorNumber: number,
+        direction: import('../../../core').DshotEscDirection,
+      ) =>
+        controller.setEscDirection(motorNumber, direction),
+      refreshDiagnostics: () => controller.refreshDiagnostics(),
       requestStop: (trigger: MotorTestStopTriggerReason) =>
         controller.requestStop(trigger),
       endSession: () => controller.close(),

@@ -1,10 +1,10 @@
-import React, {useCallback, useEffect, useReducer, useRef} from 'react';
-import {ScrollView, StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
-import type {NativeStackScreenProps} from '@react-navigation/native-stack';
+import React, { useCallback, useEffect, useReducer, useRef } from 'react';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import type {RootStackParamList} from '../../navigation/types';
-import {colors, spacing, typography} from '../theme';
+import type { RootStackParamList } from '../../navigation/types';
+import { colors, spacing, typography } from '../theme';
 import {
   ConnectionActions,
   ConnectionHeader,
@@ -15,7 +15,10 @@ import {
   formatHex,
   shortenSessionId,
 } from '../components/connection';
-import type {ConnectionState, ValidationLogEntry} from '../components/connection';
+import type {
+  ConnectionState,
+  ValidationLogEntry,
+} from '../components/connection';
 import {
   isSupportedDevice,
   localizeTransportError,
@@ -37,7 +40,7 @@ import {
 // panels are reached only through debugPanels.ts, which resolves them
 // behind __DEV__ so a production bundle never retains them. Each render
 // site below is null in a release build.
-import {DevAppLogPanel, DevBenchEntry, DevSerialPanel} from './debugPanels';
+import { DevAppLogPanel, DevSerialPanel } from './debugPanels';
 
 /**
  * Owned by the UI/client, not the Kotlin transport defaults. Approved as a
@@ -88,29 +91,32 @@ interface ScreenState {
    * connection; 'sessionDetachedDuringConnection' covers a physical detach
    * of the device an active session was open on.
    */
-  hotplugMessageKey: 'deviceDetached' | 'sessionDetachedDuringConnection' | null;
+  hotplugMessageKey:
+    | 'deviceDetached'
+    | 'sessionDetachedDuringConnection'
+    | null;
   log: ValidationLogEntry[];
   logExpanded: boolean;
   nextLogId: number;
 }
 
 type Action =
-  | {type: 'SCAN_START'}
-  | {type: 'SCAN_SUCCESS'; devices: UsbSerialDeviceDescriptor[]}
-  | {type: 'SCAN_FAILURE'; error: TransportError; message: string}
-  | {type: 'SELECT_DEVICE'; device: UsbSerialDeviceDescriptor}
-  | {type: 'SELECT_PORT'; portIndex: number}
-  | {type: 'CONNECT_START'}
-  | {type: 'CONNECT_SUCCESS'; sessionId: string}
-  | {type: 'CONNECT_FAILURE'; error: TransportError; message: string}
-  | {type: 'DISCONNECT_START'}
-  | {type: 'DISCONNECT_SUCCESS'}
-  | {type: 'DISCONNECT_FAILURE'; error: TransportError; message: string}
-  | {type: 'CLEAR_LOG'}
-  | {type: 'TOGGLE_LOG'}
-  | {type: 'DEVICE_ATTACHED_LOG'}
-  | {type: 'DEVICE_DETACHED'; identity: UsbDeviceHotplugEvent}
-  | {type: 'SESSION_DETACHED'; sessionId: string};
+  | { type: 'SCAN_START' }
+  | { type: 'SCAN_SUCCESS'; devices: UsbSerialDeviceDescriptor[] }
+  | { type: 'SCAN_FAILURE'; error: TransportError; message: string }
+  | { type: 'SELECT_DEVICE'; device: UsbSerialDeviceDescriptor }
+  | { type: 'SELECT_PORT'; portIndex: number }
+  | { type: 'CONNECT_START' }
+  | { type: 'CONNECT_SUCCESS'; sessionId: string }
+  | { type: 'CONNECT_FAILURE'; error: TransportError; message: string }
+  | { type: 'DISCONNECT_START' }
+  | { type: 'DISCONNECT_SUCCESS' }
+  | { type: 'DISCONNECT_FAILURE'; error: TransportError; message: string }
+  | { type: 'CLEAR_LOG' }
+  | { type: 'TOGGLE_LOG' }
+  | { type: 'DEVICE_ATTACHED_LOG' }
+  | { type: 'DEVICE_DETACHED'; identity: UsbDeviceHotplugEvent }
+  | { type: 'SESSION_DETACHED'; sessionId: string };
 
 const initialState: ScreenState = {
   connectionState: 'idle',
@@ -149,13 +155,16 @@ function appendLog(
   // Newest first, bounded to MAX_LOG_ENTRIES so memory cannot grow without
   // limit across a long physical-testing session.
   const log = [entry, ...state.log].slice(0, MAX_LOG_ENTRIES);
-  return {log, nextLogId: state.nextLogId + 1};
+  return { log, nextLogId: state.nextLogId + 1 };
 }
 
 function reducer(state: ScreenState, action: Action): ScreenState {
   switch (action.type) {
     case 'SCAN_START': {
-      if (BUSY_STATES.has(state.connectionState) || state.connectionState === 'connected') {
+      if (
+        BUSY_STATES.has(state.connectionState) ||
+        state.connectionState === 'connected'
+      ) {
         return state;
       }
       return {
@@ -181,11 +190,13 @@ function reducer(state: ScreenState, action: Action): ScreenState {
         ? action.devices.find(d => deviceKey(d) === state.selectedDeviceKey)
         : undefined;
       const selectedPortIndex =
-        selectedDevice && state.selectedPortIndex !== null && state.selectedPortIndex < selectedDevice.portCount
+        selectedDevice &&
+        state.selectedPortIndex !== null &&
+        state.selectedPortIndex < selectedDevice.portCount
           ? state.selectedPortIndex
           : selectedDevice?.portCount === 1
-            ? 0
-            : null;
+          ? 0
+          : null;
 
       const scanCompletedLog = appendLog(state, 'validationLog.scanCompleted', {
         count: action.devices.length,
@@ -199,26 +210,38 @@ function reducer(state: ScreenState, action: Action): ScreenState {
       let autoSelectedPortIndex: number | null = null;
       let autoSelectLog: Pick<ScreenState, 'log' | 'nextLogId'> | null = null;
       const supportedDevices = action.devices.filter(isSupportedDevice);
-      if (!stillPresent && !state.requiresCableReset && supportedDevices.length === 1) {
+      if (
+        !stillPresent &&
+        !state.requiresCableReset &&
+        supportedDevices.length === 1
+      ) {
         const onlySupported = supportedDevices[0];
         autoSelectedDeviceKey = deviceKey(onlySupported);
         autoSelectedPortIndex = onlySupported.portCount === 1 ? 0 : null;
         autoSelectLog = appendLog(
-          {...state, ...scanCompletedLog},
+          { ...state, ...scanCompletedLog },
           'validationLog.autoSelected',
         );
       }
 
       const detectionMessageKey: ScreenState['detectionMessageKey'] =
-        supportedDevices.length === 0 ? null : supportedDevices.length === 1 ? 'oneSupported' : 'multipleSupported';
+        supportedDevices.length === 0
+          ? null
+          : supportedDevices.length === 1
+          ? 'oneSupported'
+          : 'multipleSupported';
 
       return {
         ...state,
         connectionState: 'ready',
         devices: action.devices,
         hasScannedOnce: true,
-        selectedDeviceKey: stillPresent ? state.selectedDeviceKey : autoSelectedDeviceKey,
-        selectedPortIndex: stillPresent ? selectedPortIndex : autoSelectedPortIndex,
+        selectedDeviceKey: stillPresent
+          ? state.selectedDeviceKey
+          : autoSelectedDeviceKey,
+        selectedPortIndex: stillPresent
+          ? selectedPortIndex
+          : autoSelectedPortIndex,
         detectionMessageKey,
         // A completed scan is exactly what lifts a post-CLOSE_FAILED cable
         // reset requirement - a fresh scan is the only thing that clears it.
@@ -239,7 +262,10 @@ function reducer(state: ScreenState, action: Action): ScreenState {
       };
     }
     case 'SELECT_DEVICE': {
-      if (BUSY_STATES.has(state.connectionState) || state.connectionState === 'connected') {
+      if (
+        BUSY_STATES.has(state.connectionState) ||
+        state.connectionState === 'connected'
+      ) {
         return state;
       }
       const key = deviceKey(action.device);
@@ -255,13 +281,19 @@ function reducer(state: ScreenState, action: Action): ScreenState {
       };
     }
     case 'SELECT_PORT': {
-      if (BUSY_STATES.has(state.connectionState) || state.connectionState === 'connected') {
+      if (
+        BUSY_STATES.has(state.connectionState) ||
+        state.connectionState === 'connected'
+      ) {
         return state;
       }
-      return {...state, selectedPortIndex: action.portIndex};
+      return { ...state, selectedPortIndex: action.portIndex };
     }
     case 'CONNECT_START': {
-      if (BUSY_STATES.has(state.connectionState) || state.connectionState === 'connected') {
+      if (
+        BUSY_STATES.has(state.connectionState) ||
+        state.connectionState === 'connected'
+      ) {
         return state;
       }
       return {
@@ -278,7 +310,9 @@ function reducer(state: ScreenState, action: Action): ScreenState {
         connectionState: 'connected',
         activeSessionId: action.sessionId,
         lastResult: 'connectSuccess',
-        ...appendLog(state, 'validationLog.connectSucceeded', {sessionId: action.sessionId}),
+        ...appendLog(state, 'validationLog.connectSucceeded', {
+          sessionId: action.sessionId,
+        }),
       };
     }
     case 'CONNECT_FAILURE': {
@@ -338,11 +372,14 @@ function reducer(state: ScreenState, action: Action): ScreenState {
       };
     }
     case 'CLEAR_LOG':
-      return {...state, log: []};
+      return { ...state, log: [] };
     case 'TOGGLE_LOG':
-      return {...state, logExpanded: !state.logExpanded};
+      return { ...state, logExpanded: !state.logExpanded };
     case 'DEVICE_ATTACHED_LOG':
-      return {...state, ...appendLog(state, 'validationLog.usbDeviceAttached')};
+      return {
+        ...state,
+        ...appendLog(state, 'validationLog.usbDeviceAttached'),
+      };
     case 'DEVICE_DETACHED': {
       // Instant local reconciliation - Android already told us exactly which
       // device disappeared, so there is no need to wait for (or trigger) a
@@ -350,7 +387,9 @@ function reducer(state: ScreenState, action: Action): ScreenState {
       const key = deviceKey(action.identity);
       const matchesSelected = state.selectedDeviceKey === key;
       const wasListed = state.devices.some(d => deviceKey(d) === key);
-      const devices = wasListed ? state.devices.filter(d => deviceKey(d) !== key) : state.devices;
+      const devices = wasListed
+        ? state.devices.filter(d => deviceKey(d) !== key)
+        : state.devices;
 
       // A paired SESSION_DETACHED dispatch (same physical event) may have
       // already set the more specific "session detached during connection"
@@ -363,11 +402,11 @@ function reducer(state: ScreenState, action: Action): ScreenState {
 
       const detachedLog = appendLog(state, 'validationLog.usbDeviceDetached');
       if (!matchesSelected) {
-        return {...state, devices, hotplugMessageKey, ...detachedLog};
+        return { ...state, devices, hotplugMessageKey, ...detachedLog };
       }
 
       const staleClearedLog = appendLog(
-        {...state, ...detachedLog},
+        { ...state, ...detachedLog },
         'validationLog.staleSelectionCleared',
       );
       return {
@@ -417,14 +456,17 @@ interface Props {
    * it is absent. The real app (App.tsx) always provides it via
    * Stack.Screen's component prop.
    */
-  navigation?: NativeStackScreenProps<RootStackParamList, 'Connection'>['navigation'];
+  navigation?: NativeStackScreenProps<
+    RootStackParamList,
+    'Connection'
+  >['navigation'];
 }
 
 export default function UsbConnectionScreen({
   client = usbSerialTransportClient,
   navigation,
 }: Props): React.JSX.Element {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const [state, dispatch] = useReducer(reducer, initialState);
   const mountedRef = useRef(true);
   useEffect(
@@ -442,7 +484,8 @@ export default function UsbConnectionScreen({
   // whenever state.activeSessionId is null.
   const mspOwnershipState = useMspOwnershipState(state.activeSessionId ?? '');
   const mspActive = mspOwnershipState !== 'INACTIVE';
-  const selectedDevice = state.devices.find(d => deviceKey(d) === state.selectedDeviceKey) ?? null;
+  const selectedDevice =
+    state.devices.find(d => deviceKey(d) === state.selectedDeviceKey) ?? null;
   const canConnect =
     !isBusy &&
     !isConnected &&
@@ -497,13 +540,13 @@ export default function UsbConnectionScreen({
     try {
       do {
         rescanQueuedRef.current = false;
-        dispatch({type: 'SCAN_START'});
+        dispatch({ type: 'SCAN_START' });
         try {
           const devices = await client.listDevices();
           if (!mountedRef.current) {
             return;
           }
-          dispatch({type: 'SCAN_SUCCESS', devices});
+          dispatch({ type: 'SCAN_SUCCESS', devices });
         } catch (error) {
           if (!mountedRef.current) {
             return;
@@ -570,20 +613,20 @@ export default function UsbConnectionScreen({
       if (!mountedRef.current) {
         return;
       }
-      dispatch({type: 'DEVICE_ATTACHED_LOG'});
+      dispatch({ type: 'DEVICE_ATTACHED_LOG' });
       handleRefreshRef.current();
     });
     const unsubscribeDetached = client.onDeviceDetached(identity => {
       if (!mountedRef.current) {
         return;
       }
-      dispatch({type: 'DEVICE_DETACHED', identity});
+      dispatch({ type: 'DEVICE_DETACHED', identity });
     });
     const unsubscribeSessionDetached = client.onSessionDetached(event => {
       if (!mountedRef.current) {
         return;
       }
-      dispatch({type: 'SESSION_DETACHED', sessionId: event.sessionId});
+      dispatch({ type: 'SESSION_DETACHED', sessionId: event.sessionId });
     });
     return () => {
       unsubscribeAttached();
@@ -594,13 +637,13 @@ export default function UsbConnectionScreen({
 
   const handleSelectDevice = useCallback(
     (device: UsbSerialDeviceDescriptor) => {
-      dispatch({type: 'SELECT_DEVICE', device});
+      dispatch({ type: 'SELECT_DEVICE', device });
     },
     [],
   );
 
   const handleSelectPort = useCallback((portIndex: number) => {
-    dispatch({type: 'SELECT_PORT', portIndex});
+    dispatch({ type: 'SELECT_PORT', portIndex });
   }, []);
 
   const handleConnect = useCallback(async () => {
@@ -613,7 +656,7 @@ export default function UsbConnectionScreen({
     ) {
       return;
     }
-    dispatch({type: 'CONNECT_START'});
+    dispatch({ type: 'CONNECT_START' });
     try {
       const sessionId = await client.openDevice(
         selectedDevice.deviceId,
@@ -638,9 +681,9 @@ export default function UsbConnectionScreen({
       // this screen standalone (see the Props doc comment above).
       const sessionKey = mspSessionCoordinator.getSessionKey(sessionId);
       if (sessionKey) {
-        navigation?.navigate('Setup', {sessionKey});
+        navigation?.navigate('Setup', { sessionKey });
       }
-      dispatch({type: 'CONNECT_SUCCESS', sessionId});
+      dispatch({ type: 'CONNECT_SUCCESS', sessionId });
     } catch (error) {
       if (!mountedRef.current) {
         return;
@@ -655,7 +698,7 @@ export default function UsbConnectionScreen({
       // translation (ar.json), not a fallback to 'errors.UNKNOWN'.
       const transportError: TransportError =
         error instanceof MspOwnershipActivationError
-          ? {code: 'MSP_ACTIVATION_FAILED', nativeMessage: error.message}
+          ? { code: 'MSP_ACTIVATION_FAILED', nativeMessage: error.message }
           : (error as TransportError);
       dispatch({
         type: 'CONNECT_FAILURE',
@@ -679,7 +722,7 @@ export default function UsbConnectionScreen({
       return;
     }
     const sessionId = state.activeSessionId;
-    dispatch({type: 'DISCONNECT_START'});
+    dispatch({ type: 'DISCONNECT_START' });
     try {
       await client.closeSession(sessionId);
       if (!mountedRef.current) {
@@ -689,7 +732,7 @@ export default function UsbConnectionScreen({
       // in handleConnect() above - see MspSessionCoordinator.ts's own doc
       // comment on why this must run BEFORE DISCONNECT_SUCCESS dispatches.
       mspSessionCoordinator.deactivateMspSession(sessionId);
-      dispatch({type: 'DISCONNECT_SUCCESS'});
+      dispatch({ type: 'DISCONNECT_SUCCESS' });
     } catch (error) {
       if (!mountedRef.current) {
         return;
@@ -703,8 +746,11 @@ export default function UsbConnectionScreen({
     }
   }, [client, state.activeSessionId, state.connectionState, t]);
 
-  const handleToggleLog = useCallback(() => dispatch({type: 'TOGGLE_LOG'}), []);
-  const handleClearLog = useCallback(() => dispatch({type: 'CLEAR_LOG'}), []);
+  const handleToggleLog = useCallback(
+    () => dispatch({ type: 'TOGGLE_LOG' }),
+    [],
+  );
+  const handleClearLog = useCallback(() => dispatch({ type: 'CLEAR_LOG' }), []);
 
   const logExpanded = state.logExpanded || state.connectionState === 'error';
 
@@ -714,10 +760,23 @@ export default function UsbConnectionScreen({
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled">
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.instructionBlock}>
-          <Text style={styles.instructionPrimary}>{t('connection.instructionPrimary')}</Text>
-          <Text style={styles.instructionSecondary}>{t('connection.instructionSecondary')}</Text>
+          <View style={styles.instructionIcon} accessibilityElementsHidden>
+            <Text style={styles.instructionIconText}>USB</Text>
+          </View>
+          <View style={styles.instructionCopy}>
+            <Text style={styles.instructionEyebrow}>
+              {t('connection.startHere')}
+            </Text>
+            <Text style={styles.instructionPrimary}>
+              {t('connection.instructionPrimary')}
+            </Text>
+            <Text style={styles.instructionSecondary}>
+              {t('connection.instructionSecondary')}
+            </Text>
+          </View>
         </View>
 
         {/* DEBUG-ONLY (Pass 5.4, isolated in Pass 7.7): absent from every
@@ -730,15 +789,21 @@ export default function UsbConnectionScreen({
           </View>
         ) : null}
 
-        {state.connectionState === 'ready' && state.detectionMessageKey === 'oneSupported' ? (
+        {state.connectionState === 'ready' &&
+        state.detectionMessageKey === 'oneSupported' ? (
           <View style={styles.detectionBanner} accessibilityRole="text">
-            <Text style={styles.detectionBannerText}>{t('devices.supportedDetected')}</Text>
+            <Text style={styles.detectionBannerText}>
+              {t('devices.supportedDetected')}
+            </Text>
           </View>
         ) : null}
 
-        {state.connectionState === 'ready' && state.detectionMessageKey === 'multipleSupported' ? (
+        {state.connectionState === 'ready' &&
+        state.detectionMessageKey === 'multipleSupported' ? (
           <View style={styles.detectionBanner} accessibilityRole="text">
-            <Text style={styles.detectionBannerText}>{t('devices.multipleSupportedGuidance')}</Text>
+            <Text style={styles.detectionBannerText}>
+              {t('devices.multipleSupportedGuidance')}
+            </Text>
           </View>
         ) : null}
 
@@ -779,7 +844,11 @@ export default function UsbConnectionScreen({
           connectionState={state.connectionState}
           canConnect={canConnect}
           lastResult={state.lastResult}
-          shortSessionId={state.activeSessionId ? shortenSessionId(state.activeSessionId) : null}
+          shortSessionId={
+            state.activeSessionId
+              ? shortenSessionId(state.activeSessionId)
+              : null
+          }
           onConnect={handleConnect}
           onDisconnect={handleDisconnect}
         />
@@ -797,22 +866,14 @@ export default function UsbConnectionScreen({
           />
         ) : null}
 
-        {DevBenchEntry && isConnected && state.activeSessionId ? (
-          // Phase 2I: the ONE development-only way into the motor-test
-          // flow. Absent from a production bundle - see MotorsDevEntry.tsx.
-          <DevBenchEntry
-            sessionId={state.activeSessionId}
-            // The navigator, not a route-bound callback - see
-            // MotorsDevEntry.tsx on why the route name must not appear
-            // here. `navigate` is typed loosely on purpose so this file
-            // never names a motor-test route at all.
-            navigate={(route, params) =>
-              (navigation as unknown as {
-                navigate: (r: string, p: unknown) => void;
-              } | undefined)?.navigate(route, params)
-            }
-          />
-        ) : null}
+        {/* SINGLE-APP MERGE: the development-only motor-test entry that
+            used to sit here is GONE - the control itself, not just its
+            import. Motors is a tab in the main shell now, so leaving this
+            pressable would be a SECOND, ungoverned way in: it navigated
+            straight to the screen from the connection screen, bypassing
+            the shell that owns which tab is active and that fires the
+            lifecycle bridge's blur source when the operator leaves Motors.
+            This screen's job ends at handing the session key to 'Setup'. */}
 
         <ValidationLog
           entries={state.log}
@@ -834,15 +895,54 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: spacing.xl,
+    paddingBottom: spacing.xxl,
+    width: '100%',
+    maxWidth: 760,
+    alignSelf: 'center',
   },
   instructionBlock: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: 16,
+    backgroundColor: colors.surface,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.22,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  instructionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accentStrong,
+  },
+  instructionIconText: {
+    ...typography.eyebrow,
+    color: colors.accent,
+    writingDirection: 'ltr',
+  },
+  instructionCopy: {
+    flex: 1,
+  },
+  instructionEyebrow: {
+    ...typography.eyebrow,
+    color: colors.accent,
+    marginBottom: spacing.xs,
   },
   instructionPrimary: {
     ...typography.body,
     color: colors.textPrimary,
+    fontWeight: '600',
   },
   instructionSecondary: {
     ...typography.caption,
@@ -852,11 +952,11 @@ const styles = StyleSheet.create({
   errorBanner: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.lg,
+    borderWidth: 1,
     borderColor: colors.error,
-    borderRadius: 4,
-    backgroundColor: colors.surfaceAlt,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
   },
   errorBannerText: {
     ...typography.body,
@@ -865,11 +965,11 @@ const styles = StyleSheet.create({
   detectionBanner: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.lg,
+    borderWidth: 1,
     borderColor: colors.success,
-    borderRadius: 4,
-    backgroundColor: colors.surfaceAlt,
+    borderRadius: 14,
+    backgroundColor: colors.accentSoft,
   },
   detectionBannerText: {
     ...typography.body,
@@ -878,11 +978,11 @@ const styles = StyleSheet.create({
   hotplugBanner: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
+    padding: spacing.lg,
+    borderWidth: 1,
     borderColor: colors.warning,
-    borderRadius: 4,
-    backgroundColor: colors.surfaceAlt,
+    borderRadius: 14,
+    backgroundColor: colors.surface,
   },
   hotplugBannerText: {
     ...typography.body,

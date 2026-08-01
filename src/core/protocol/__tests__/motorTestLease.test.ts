@@ -719,6 +719,37 @@ describe('invalidation and fault latching', () => {
     expect(lease.isActive()).toBe(false);
   });
 
+  it('keeps the lease active only for a confirmed optional-command rejection', async () => {
+    const {transport, client} = makeClient();
+    const lease = acquireOrThrow(client);
+    const optional = lease.requestOptional(HARMLESS_COMMAND, EMPTY, {
+      wireFormat: 'v1',
+    });
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(
+      buildMspFrameBytes(HARMLESS_COMMAND, EMPTY, {
+        wireFormat: 'v1',
+        direction: 'error',
+      }),
+    );
+
+    await expect(optional).rejects.toMatchObject({code: 'MSP_REMOTE_ERROR'});
+    expect(lease.isActive()).toBe(true);
+
+    // The same exact lease remains capable of a later ordinary read. This
+    // exception is for a matched firmware "unsupported" reply only; write,
+    // timeout, detach and parser failures still fault through the normal path.
+    const following = lease.request(HARMLESS_COMMAND, EMPTY, {
+      wireFormat: 'v1',
+    });
+    transport.resolveNextWrite();
+    await flushMicrotasks();
+    transport.emitData(responseFrame(HARMLESS_COMMAND));
+    await expect(following).resolves.toMatchObject({command: HARMLESS_COMMAND});
+    expect(lease.isActive()).toBe(true);
+  });
+
   it('a recovery probe returning the client to READY never revives the capability', async () => {
     const {transport, client} = makeClient();
     const lease = acquireOrThrow(client);
@@ -1081,6 +1112,7 @@ describe('semantic exclusions', () => {
       'officialSessionAuthority',
       'release',
       'request',
+      'requestOptional',
       'sessionIdentity',
     ]);
   });

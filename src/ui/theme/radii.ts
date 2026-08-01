@@ -1,11 +1,9 @@
-/**
- * Kept small on purpose - square or lightly rounded technical panels, not
- * ornamental cards.
- */
 export const radii = {
   none: 0,
-  sm: 4,
-  md: 6,
+  sm: 10,
+  md: 16,
+  lg: 22,
+  pill: 999,
 } as const;
 
 export type ThemeRadii = typeof radii;

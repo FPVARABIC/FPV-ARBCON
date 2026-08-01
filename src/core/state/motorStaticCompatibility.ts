@@ -1,4 +1,8 @@
 /**
+ * LEGACY AUDIT ARTIFACT — NOT USED BY THE CURRENT MOTOR-TEST RUNTIME.
+ * The live path uses the versioned firmware capability matrix and its
+ * reviewed motor-vector adapter instead of this single-board profile.
+ *
  * Pass 1C - PURE, DETERMINISTIC, FAIL-CLOSED evaluation of already
  * acquired static motor facts against the single supported v1 profile.
  *

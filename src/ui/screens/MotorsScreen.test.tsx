@@ -13,24 +13,16 @@
  * such claim either.
  */
 
-/** The real hook needs a provider that only exists inside a mounted app.
- * Stubbed to a fixed inset so these tests exercise THIS screen rather than
- * react-native-safe-area-context; the safe-area padding itself is layout,
- * not a safety behaviour. */
-jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({top: 44, bottom: 34, left: 0, right: 0}),
-}));
-
 import React from 'react';
-import ReactTestRenderer, {act} from 'react-test-renderer';
-import {readFileSync} from 'fs';
-import {join} from 'path';
+import ReactTestRenderer, { act } from 'react-test-renderer';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 import {
   MotorsScreenView,
   MOTOR_TEST_LONG_PRESS_DELAY_MILLIS,
   MOTOR_TEST_OUTPUT_SLOTS,
-  EXPECTED_QUAD_X_REFERENCE,
+  computeMotorGlyphLayout,
   commandMayBeLive,
   derivePresentation,
 } from './MotorsScreen';
@@ -42,8 +34,8 @@ import type {
   MotorTestPulseRequestResult,
   MotorTestStopRequestResult,
 } from '../../core/state/motorTestController';
-import type {MotorTestStopTriggerReason} from '../../core/state/motorTestStateMachine';
-import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
+import type { MotorTestStopTriggerReason } from '../../core/state/motorTestStateMachine';
+import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
 
 /* ------------------------------------------------------------------ *
  * Snapshot fixtures - plain data, no controller internals
@@ -63,7 +55,7 @@ type MachineName =
 function machineFor(name: MachineName, startAcknowledged = false) {
   switch (name) {
     case 'Starting':
-      return {name, authority: AUTHORITY, startSubmitted: true} as const;
+      return { name, authority: AUTHORITY, startSubmitted: true } as const;
     case 'Pulsing':
       return {
         name,
@@ -91,7 +83,7 @@ function machineFor(name: MachineName, startAcknowledged = false) {
         startMayHaveReachedFc: true,
       } as const;
     default:
-      return {name, authority: AUTHORITY} as const;
+      return { name, authority: AUTHORITY } as const;
   }
 }
 
@@ -102,6 +94,9 @@ function snapshotFor(options: {
   reasons?: MotorTestActivationBlockReason[];
   mayHaveReachedFc?: boolean;
   attributionAmbiguous?: boolean;
+  attributionResolvedByConfirmation?: boolean;
+  stopOutcome?: MotorTestControllerSnapshot['stopExecution']['outcome'];
+  stopAcknowledged?: boolean;
   receipt?: MotorTestControllerSnapshot['verificationReceipt'];
 }): MotorTestControllerSnapshot {
   const machineName = options.machine ?? 'Ready';
@@ -110,11 +105,16 @@ function snapshotFor(options: {
     phase: 'ACTIVE',
     setupStep: 'READY',
     machine: machineFor(machineName, options.startAcknowledged ?? false),
-    outcome: {kind: 'READY'},
-    capabilities: undefined,
-    staticCompatibility: undefined,
-    dynamicEvaluation: undefined,
-    armingRestriction: {kind: 'NOT_ATTEMPTED'},
+    outcome: { kind: 'READY' },
+    firmwareCompatibility: undefined,
+    motorScope: { motorCount: 4, motorProtocolRaw: 7, feature3dEnabled: false },
+    motorDiagnosticsSupport: {
+      motorCount: 4,
+      dshotTelemetryEnabled: true,
+      escSensorEnabled: false,
+      escTelemetrySource: 'BIDIRECTIONAL_DSHOT',
+    },
+    armedStateEvidence: allowed ? 'FRESH_DISARMED' : 'UNKNOWN_OR_STALE',
     telemetryHeld: true,
     warnings: [],
     stopDescriptors: [],
@@ -122,14 +122,16 @@ function snapshotFor(options: {
     stopExecution: {
       attempts: 0,
       commandDispatched: false,
-      commandAcknowledged: false,
+      commandAcknowledged: options.stopAcknowledged ?? false,
       physicalStopConfirmed: false,
       deferredBehindActiveWrite: false,
       attributionAmbiguous: options.attributionAmbiguous ?? false,
+      attributionResolvedByConfirmation:
+        options.attributionResolvedByConfirmation ?? false,
       wirePreemptionClaimed: false,
       submittedNextOnTransport: false,
       episodeId: 0,
-      outcome: undefined,
+      outcome: options.stopOutcome,
     },
     activation: {
       allowed,
@@ -145,14 +147,13 @@ function snapshotFor(options: {
       mayHaveReachedFc: options.mayHaveReachedFc ?? false,
       outcome: undefined,
     },
-    continuousSafetyMonitoring: 'UNAVAILABLE_NO_ACCEPTED_SOURCE',
   } as MotorTestControllerSnapshot;
 }
 
 /* ------------------------------------------------------------------ *
  * The operator-port double
  *
- * Exactly the six members of the real sealed facade. It CANNOT reach a
+ * Exactly the members of the real sealed facade. It CANNOT reach a
  * client, transport, lease, encoder or authority, because the real port
  * cannot either - so a test can never exercise a path production code
  * does not have.
@@ -160,6 +161,9 @@ function snapshotFor(options: {
 
 class FakeOperator implements MotorTestOperatorPort {
   snapshot: MotorTestControllerSnapshot;
+  beginCalls = 0;
+  renewCalls = 0;
+  beginResult: Promise<MotorTestControllerSnapshot> | undefined;
   readonly pulseCalls: number[] = [];
   readonly stopCalls: MotorTestStopTriggerReason[] = [];
   pulseResult: MotorTestPulseRequestResult = 'ACCEPTED';
@@ -170,7 +174,8 @@ class FakeOperator implements MotorTestOperatorPort {
   }
 
   beginSession(): Promise<MotorTestControllerSnapshot> {
-    return Promise.resolve(this.snapshot);
+    this.beginCalls += 1;
+    return this.beginResult ?? Promise.resolve(this.snapshot);
   }
 
   getSnapshot(): MotorTestControllerSnapshot {
@@ -187,6 +192,34 @@ class FakeOperator implements MotorTestOperatorPort {
   pulseMotor(motorNumber: number): MotorTestPulseRequestResult {
     this.pulseCalls.push(motorNumber);
     return this.pulseResult;
+  }
+
+  renewPulseHold(): 'RENEWED' | 'NO_ACTIVE_PULSE' {
+    this.renewCalls += 1;
+    return this.snapshot.pulse.mayHaveReachedFc
+      ? 'RENEWED'
+      : 'NO_ACTIVE_PULSE';
+  }
+
+  setEscDirection(
+    motorNumber: number,
+    direction: import('../../core').DshotEscDirection,
+  ): Promise<import('../../core/state/motorTestController').MotorTestEscDirectionOutcome> {
+    return Promise.resolve({
+      kind: 'ACKNOWLEDGED',
+      motorNumber,
+      direction,
+      physicallyVerified: false,
+    });
+  }
+
+  refreshDiagnostics() {
+    return Promise.resolve(
+      this.snapshot.diagnostics ?? {
+        outputs: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+        escTelemetry: {state: 'WAITING' as const, value: undefined, observedAtMillis: undefined},
+      },
+    );
   }
 
   requestStop(trigger: MotorTestStopTriggerReason): MotorTestStopRequestResult {
@@ -257,16 +290,17 @@ function render(operator: MotorTestOperatorPort | undefined): Rendered {
   };
 }
 
-/** Ticks every acknowledgement checkbox - the supplemental UI gate. */
+/** Compatibility helper for older flow tests. The checkbox ritual was
+ * intentionally removed; the controller is now the only gate. */
 function acknowledgeAll(rendered: Rendered): void {
-  rendered.press('motors-ack-propellers');
-  rendered.press('motors-ack-secured');
-  rendered.press('motors-ack-battery');
+  expect(rendered.query('motors-ack-propellers')).toBeUndefined();
 }
 
 function longPress(rendered: Rendered): void {
   act(() => {
-    rendered.find('motors-hold-button').props.onLongPress?.();
+    const hold = rendered.find('motors-hold-button');
+    hold.props.onPressIn?.();
+    hold.props.onLongPress?.();
   });
 }
 
@@ -300,7 +334,7 @@ describe('MotorsScreen - state presentation', () => {
     ['Fault', 'FAULT'],
   ] as const)('presents %s as %s', (machine, expected) => {
     const rendered = render(
-      new FakeOperator(snapshotFor({machine: machine as MachineName})),
+      new FakeOperator(snapshotFor({ machine: machine as MachineName })),
     );
     expect(rendered.query(`motors-status-${expected}`)).toBeDefined();
     rendered.unmount();
@@ -309,7 +343,7 @@ describe('MotorsScreen - state presentation', () => {
   it('distinguishes a submitted-but-unacknowledged pulse from an acknowledged one', () => {
     const preAck = render(
       new FakeOperator(
-        snapshotFor({machine: 'Pulsing', startAcknowledged: false}),
+        snapshotFor({ machine: 'Pulsing', startAcknowledged: false }),
       ),
     );
     // The accepted reducer is already in `Pulsing` here, at the write
@@ -323,7 +357,7 @@ describe('MotorsScreen - state presentation', () => {
 
     const acked = render(
       new FakeOperator(
-        snapshotFor({machine: 'Pulsing', startAcknowledged: true}),
+        snapshotFor({ machine: 'Pulsing', startAcknowledged: true }),
       ),
     );
     expect(acked.query('motors-status-ACKNOWLEDGED')).toBeDefined();
@@ -332,9 +366,23 @@ describe('MotorsScreen - state presentation', () => {
     acked.unmount();
   });
 
-  it('shows the emergency LiPo instruction and the new-session requirement on Fault', () => {
+  /* THE RED BANNER IS NOT "THERE WAS A FAULT".
+     On the device, ANY fault printed "stop could not be confirmed -
+     disconnect the LiPo", including one caused by a safety read that the
+     app's own stop had displaced. An operator whose motor had in fact
+     been stopped cleanly was told to pull the battery, which is exactly
+     how the one message that must never be ignored stops being read. */
+
+  it('shows the LiPo instruction when a command may be live and the stop is unconfirmed', () => {
     const rendered = render(
-      new FakeOperator(snapshotFor({machine: 'Fault', allowed: false})),
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Fault',
+          allowed: false,
+          mayHaveReachedFc: true,
+          stopOutcome: { kind: 'FAILED', reason: 'REQUEST_FAILED' },
+        }),
+      ),
     );
     const emergency = rendered.find('motors-emergency-text');
     expect(emergency.props.children).toBe(
@@ -344,20 +392,200 @@ describe('MotorsScreen - state presentation', () => {
     rendered.unmount();
   });
 
-  it('renders the authoritative blocking reasons, not a generic message', () => {
+  it('shows it for an ambiguity that was never resolved', () => {
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Fault',
+          allowed: false,
+          mayHaveReachedFc: true,
+          attributionAmbiguous: true,
+          attributionResolvedByConfirmation: false,
+          stopOutcome: { kind: 'FAILED', reason: 'ATTRIBUTION_AMBIGUOUS' },
+        }),
+      ),
+    );
+    expect(rendered.query('motors-fault-banner')).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('does NOT show it for a fault whose stop was genuinely acknowledged', () => {
+    // The exact device case: a monitoring read displaced by this app's own
+    // stop faulted the session, while the stop itself was acknowledged.
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Fault',
+          allowed: false,
+          mayHaveReachedFc: true,
+          stopAcknowledged: true,
+          stopOutcome: { kind: 'ACKNOWLEDGED' },
+        }),
+      ),
+    );
+    expect(rendered.query('motors-fault-banner')).toBeUndefined();
+    expect(rendered.query('motors-emergency-text')).toBeUndefined();
+    // The session did end, and the screen says so - without inventing a
+    // battery emergency.
+    expect(rendered.query('motors-fault-notice')).toBeDefined();
+    expect(texts(rendered)).toContain('انتهت جلسة الاختبار.');
+    expect(texts(rendered)).not.toContain(
+      'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
+    );
+    rendered.unmount();
+  });
+
+  it('does NOT show it when a resolved ambiguity ended in an acknowledged stop', () => {
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Fault',
+          allowed: false,
+          mayHaveReachedFc: true,
+          stopAcknowledged: true,
+          attributionAmbiguous: true,
+          attributionResolvedByConfirmation: true,
+          stopOutcome: { kind: 'ACKNOWLEDGED' },
+        }),
+      ),
+    );
+    expect(rendered.query('motors-fault-banner')).toBeUndefined();
+    rendered.unmount();
+  });
+
+  it('does NOT show it when no motor command was ever submitted', () => {
+    const rendered = render(
+      new FakeOperator(snapshotFor({ machine: 'Fault', allowed: false })),
+    );
+    expect(rendered.query('motors-fault-banner')).toBeUndefined();
+    expect(rendered.query('motors-fault-notice')).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('shows the FIRST CAUSAL reason only, with consequences in diagnostics', () => {
+    // CONTRACT CHANGED ON DEVICE EVIDENCE.
+    // A terminal fault always drags a dead link along with it, and the
+    // dead link is not the story. Showing both is what made one failure
+    // read as several independent hardware faults on the bench.
     const rendered = render(
       new FakeOperator(
         snapshotFor({
           machine: 'Locked',
           allowed: false,
-          reasons: ['SAFETY_EVENT_LATCHED', 'ARMING_RESTRICTION_NOT_CURRENT'],
+          reasons: ['REQUIRES_NEW_CONNECTION', 'CONTROLLER_LINK_UNAVAILABLE'],
         }),
       ),
     );
-    expect(rendered.query('motors-block-SAFETY_EVENT_LATCHED')).toBeDefined();
     expect(
-      rendered.query('motors-block-ARMING_RESTRICTION_NOT_CURRENT'),
+      rendered.query('motors-block-REQUIRES_NEW_CONNECTION'),
     ).toBeDefined();
+    expect(
+      rendered.query('motors-block-CONTROLLER_LINK_UNAVAILABLE'),
+    ).toBeUndefined();
+
+    // The full array is not lost - it is one tap away, under diagnostics.
+    expect(rendered.query('motors-diagnostics')).toBeUndefined();
+    rendered.press('motors-diagnostics-toggle');
+    expect(
+      rendered.query('motors-diagnostic-CONTROLLER_LINK_UNAVAILABLE'),
+    ).toBeDefined();
+    expect(
+      rendered.query('motors-diagnostic-REQUIRES_NEW_CONNECTION'),
+    ).toBeDefined();
+    // Complete technical state stays behind the same toggle.
+    expect(rendered.query('motors-diagnostic-outcome')).toBeDefined();
+    expect(rendered.query('motors-diagnostic-evidence')).toBeDefined();
+    rendered.unmount();
+  });
+
+  it('never shows a teardown consequence as the headline cause', () => {
+    // The exact device presentation: a torn-down session emits its whole
+    // consequence set. None of them may become the headline.
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Locked',
+          allowed: false,
+          reasons: [
+            'CONTROLLER_LINK_UNAVAILABLE',
+            'REQUIRES_NEW_CONNECTION',
+            'PULSE_OR_STOP_IN_PROGRESS',
+            'MOTOR_SCOPE_UNSUPPORTED',
+          ],
+        }),
+      ),
+    );
+    // The real cause wins over every consequence regardless of the order
+    // the controller happened to emit them in.
+    expect(
+      rendered.query('motors-block-MOTOR_SCOPE_UNSUPPORTED'),
+    ).toBeDefined();
+    for (const consequence of [
+      'CONTROLLER_LINK_UNAVAILABLE',
+      'REQUIRES_NEW_CONNECTION',
+      'PULSE_OR_STOP_IN_PROGRESS',
+    ]) {
+      expect(rendered.query(`motors-block-${consequence}`)).toBeUndefined();
+    }
+    rendered.unmount();
+  });
+
+  it('shows an ARMED flight controller ahead of everything it caused', () => {
+    // An armed reading LOCKS the session, so it always arrives paired with
+    // the terminal reason. Being told to reconnect instead of being told
+    // the aircraft is armed would be a serious regression.
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Locked',
+          allowed: false,
+          reasons: ['REQUIRES_NEW_CONNECTION', 'FC_ARMED'],
+        }),
+      ),
+    );
+    expect(rendered.query('motors-block-FC_ARMED')).toBeDefined();
+    expect(
+      rendered.query('motors-block-REQUIRES_NEW_CONNECTION'),
+    ).toBeUndefined();
+    expect(texts(rendered)).toContain('وحدة التحكم مسلّحة؛ الاختبار ممنوع.');
+    rendered.unmount();
+  });
+
+  it('distinguishes an unreadable armed state from an armed one', () => {
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Locked',
+          allowed: false,
+          reasons: ['REQUIRES_NEW_CONNECTION', 'ARMED_STATE_UNKNOWN_OR_STALE'],
+        }),
+      ),
+    );
+    expect(
+      rendered.query('motors-block-ARMED_STATE_UNKNOWN_OR_STALE'),
+    ).toBeDefined();
+    expect(texts(rendered)).toContain(
+      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
+    );
+    // ... and never reported as an armed aircraft, which it is not.
+    expect(texts(rendered)).not.toContain(
+      'وحدة التحكم مسلّحة؛ الاختبار ممنوع.',
+    );
+    rendered.unmount();
+  });
+
+  it('names 3D specifically rather than as a generic scope refusal', () => {
+    const rendered = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Locked',
+          allowed: false,
+          reasons: ['MOTOR_3D_ENABLED'],
+        }),
+      ),
+    );
+    expect(rendered.query('motors-block-MOTOR_3D_ENABLED')).toBeDefined();
+    expect(texts(rendered)).toContain('إعداد 3D غير مدعوم.');
     rendered.unmount();
   });
 
@@ -376,6 +604,30 @@ describe('MotorsScreen - state presentation', () => {
  * ================================================================== */
 
 describe('MotorsScreen - activation gating', () => {
+  it('keeps the safety notice before one integrated motor workspace', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const ids = rendered.tree.root
+      .findAll(node => typeof node.props?.testID === 'string')
+      .map(node => node.props.testID as string);
+    expect(ids.indexOf('motors-acknowledgements')).toBeLessThan(
+      ids.indexOf('motors-workspace'),
+    );
+    expect(ids.indexOf('motors-diagram')).toBeLessThan(
+      ids.indexOf('motors-hold-button'),
+    );
+    rendered.unmount();
+  });
+
+  it('removes the separate Step-1 ceremony and leaves a lazy hold control', () => {
+    const rendered = render(undefined);
+    const ids = rendered.tree.root
+      .findAll(node => typeof node.props?.testID === 'string')
+      .map(node => node.props.testID as string);
+    expect(ids).not.toContain('motors-begin-session-card');
+    expect(ids).toContain('motors-hold-button');
+    rendered.unmount();
+  });
+
   it('does NOT enable activation on Ready alone when the controller bars it', () => {
     // Exactly the Phase 2G finding: a locking safety event while idle
     // leaves the reducer in Ready while activation must stay barred.
@@ -383,7 +635,7 @@ describe('MotorsScreen - activation gating', () => {
       snapshotFor({
         machine: 'Ready',
         allowed: false,
-        reasons: ['SAFETY_EVENT_LATCHED'],
+        reasons: ['REQUIRES_NEW_CONNECTION'],
       }),
     );
     const rendered = render(operator);
@@ -394,46 +646,41 @@ describe('MotorsScreen - activation gating', () => {
     rendered.unmount();
   });
 
-  it('requires the manual acknowledgement even when the controller allows', () => {
-    const operator = new FakeOperator(snapshotFor({allowed: true}));
+  it('does not require checkbox rituals when the controller allows', () => {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
-    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
-    longPress(rendered);
-    expect(operator.pulseCalls).toEqual([]);
-
-    acknowledgeAll(rendered);
     expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+    expect(rendered.query('motors-ack-propellers')).toBeUndefined();
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([1]);
     rendered.unmount();
   });
 
-  it('resets the manual acknowledgement on lock, fault and session loss', () => {
+  it('keeps warnings informational while lock and fault remain controller gates', () => {
     for (const machine of ['Locked', 'Fault'] as const) {
-      const operator = new FakeOperator(snapshotFor({allowed: true}));
+      const operator = new FakeOperator(snapshotFor({ allowed: true }));
       const rendered = render(operator);
-      acknowledgeAll(rendered);
       expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
 
       act(() => {
-        operator.publish(snapshotFor({machine, allowed: false}));
+        operator.publish(snapshotFor({ machine, allowed: false }));
       });
-      // Back to allowed, but the acknowledgement is GONE - the operator
-      // must vouch again after any boundary.
       act(() => {
-        operator.publish(snapshotFor({allowed: true}));
+        operator.publish(snapshotFor({ allowed: true }));
       });
-      expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+      expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
       rendered.unmount();
     }
   });
 
   it('re-reads the authoritative gate at call time, not at render time', () => {
-    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
     // The gate closes WITHOUT a re-render reaching the handler's closure.
     operator.snapshot = snapshotFor({
       allowed: false,
-      reasons: ['AUTHORITY_STALE'],
+      reasons: ['CONTROLLER_LINK_UNAVAILABLE'],
     });
     longPress(rendered);
     expect(operator.pulseCalls).toEqual([]);
@@ -446,22 +693,22 @@ describe('MotorsScreen - activation gating', () => {
  * ================================================================== */
 
 describe('MotorsScreen - long-press contract', () => {
-  function readyRendered(): {operator: FakeOperator; rendered: Rendered} {
-    const operator = new FakeOperator(snapshotFor({allowed: true}));
+  function readyRendered(): { operator: FakeOperator; rendered: Rendered } {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
-    return {operator, rendered};
+    return { operator, rendered };
   }
 
   it('uses an intentional 800ms delay', () => {
     expect(MOTOR_TEST_LONG_PRESS_DELAY_MILLIS).toBe(800);
-    const {rendered} = readyRendered();
+    const { rendered } = readyRendered();
     expect(rendered.find('motors-hold-button').props.delayLongPress).toBe(800);
     rendered.unmount();
   });
 
   it('never activates on press-in, on a tap, or on a plain press', () => {
-    const {operator, rendered} = readyRendered();
+    const { operator, rendered } = readyRendered();
     const hold = rendered.find('motors-hold-button');
     act(() => {
       hold.props.onPressIn?.();
@@ -476,18 +723,61 @@ describe('MotorsScreen - long-press contract', () => {
     rendered.unmount();
   });
 
+  it('never lets a new short touch inherit an older gesture pending setup', async () => {
+    const initial = {
+      ...snapshotFor({allowed: false}),
+      phase: 'IDLE' as const,
+      setupStep: 'NOT_STARTED' as const,
+      machine: undefined,
+      telemetryHeld: false,
+    } as MotorTestControllerSnapshot;
+    const operator = new FakeOperator(initial);
+    let resolveBegin!: (snapshot: MotorTestControllerSnapshot) => void;
+    operator.beginResult = new Promise(resolve => {
+      resolveBegin = resolve;
+    });
+    const rendered = render(operator);
+    const hold = rendered.find('motors-hold-button');
+
+    // Gesture A reaches long-press and starts protected preparation, then
+    // leaves before it resolves.
+    act(() => {
+      hold.props.onPressIn?.();
+      hold.props.onLongPress?.();
+      hold.props.onPressOut?.();
+    });
+    expect(operator.beginCalls).toBe(1);
+
+    // Gesture B is only a short touch; its long-press threshold has NOT
+    // fired when gesture A's async setup resolves.
+    act(() => hold.props.onPressIn?.());
+    operator.snapshot = snapshotFor({allowed: true});
+    await act(async () => {
+      resolveBegin(operator.snapshot);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(operator.pulseCalls).toEqual([]);
+
+    pressOut(rendered);
+    rendered.unmount();
+  });
+
   it('activates exactly the selected output, exactly once per hold', () => {
-    const {operator, rendered} = readyRendered();
+    const { operator, rendered } = readyRendered();
     rendered.press('motors-slot-3');
     longPress(rendered);
-    longPress(rendered);
-    longPress(rendered);
+    act(() => {
+      const hold = rendered.find('motors-hold-button');
+      hold.props.onLongPress?.();
+      hold.props.onLongPress?.();
+    });
     expect(operator.pulseCalls).toEqual([3]);
     rendered.unmount();
   });
 
   it('stops on release during the pre-acknowledgement window', () => {
-    const {operator, rendered} = readyRendered();
+    const { operator, rendered } = readyRendered();
     longPress(rendered);
     // The controller latches mayHaveReachedFc at activation, BEFORE any
     // acknowledgement - so a release here must still stop.
@@ -507,7 +797,7 @@ describe('MotorsScreen - long-press contract', () => {
   });
 
   it('stops on release during an acknowledged pulse', () => {
-    const {operator, rendered} = readyRendered();
+    const { operator, rendered } = readyRendered();
     longPress(rendered);
     act(() => {
       operator.publish(
@@ -525,11 +815,15 @@ describe('MotorsScreen - long-press contract', () => {
   });
 
   it('follows the same stop route when the gesture is terminated', () => {
-    const {operator, rendered} = readyRendered();
+    const { operator, rendered } = readyRendered();
     longPress(rendered);
     act(() => {
       operator.publish(
-        snapshotFor({machine: 'Pulsing', mayHaveReachedFc: true, allowed: false}),
+        snapshotFor({
+          machine: 'Pulsing',
+          mayHaveReachedFc: true,
+          allowed: false,
+        }),
       );
     });
     act(() => {
@@ -540,11 +834,15 @@ describe('MotorsScreen - long-press contract', () => {
   });
 
   it('lets repeated release and Stop callbacks reach the controller, which joins them', () => {
-    const {operator, rendered} = readyRendered();
+    const { operator, rendered } = readyRendered();
     longPress(rendered);
     act(() => {
       operator.publish(
-        snapshotFor({machine: 'Pulsing', mayHaveReachedFc: true, allowed: false}),
+        snapshotFor({
+          machine: 'Pulsing',
+          mayHaveReachedFc: true,
+          allowed: false,
+        }),
       );
     });
     pressOut(rendered);
@@ -564,12 +862,16 @@ describe('MotorsScreen - long-press contract', () => {
   });
 
   it('stops the live episode on a motor switch and never auto-starts the second output', () => {
-    const {operator, rendered} = readyRendered();
+    const { operator, rendered } = readyRendered();
     rendered.press('motors-slot-1');
     longPress(rendered);
     act(() => {
       operator.publish(
-        snapshotFor({machine: 'Pulsing', mayHaveReachedFc: true, allowed: false}),
+        snapshotFor({
+          machine: 'Pulsing',
+          mayHaveReachedFc: true,
+          allowed: false,
+        }),
       );
     });
 
@@ -589,7 +891,7 @@ describe('MotorsScreen - long-press contract', () => {
       'Fault',
     ] as const) {
       const operator = new FakeOperator(
-        snapshotFor({machine, allowed: false, mayHaveReachedFc: true}),
+        snapshotFor({ machine, allowed: false, mayHaveReachedFc: true }),
       );
       const rendered = render(operator);
       const stop = rendered.find('motors-stop-button');
@@ -608,7 +910,7 @@ describe('MotorsScreen - long-press contract', () => {
 
 describe('MotorsScreen - safety dominance', () => {
   it('surfaces a command-214 attribution ambiguity as Fault, never as success', () => {
-    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
 
@@ -619,7 +921,7 @@ describe('MotorsScreen - safety dominance', () => {
           allowed: false,
           mayHaveReachedFc: true,
           attributionAmbiguous: true,
-          reasons: ['STOP_SEALED'],
+          reasons: ['REQUIRES_NEW_CONNECTION'],
         }),
       );
     });
@@ -634,18 +936,20 @@ describe('MotorsScreen - safety dominance', () => {
   });
 
   it.each([
-    'SAFETY_EVENT_LATCHED',
-    'AUTHORITY_STALE',
-    'ARMING_RESTRICTION_NOT_CURRENT',
+    'REQUIRES_NEW_CONNECTION',
+    'CONTROLLER_LINK_UNAVAILABLE',
+    'FC_ARMED',
+    'ARMED_STATE_UNKNOWN_OR_STALE',
+    'MOTOR_3D_ENABLED',
     'MOTOR_SCOPE_UNSUPPORTED',
-    'TELEMETRY_BARRIER_NOT_HELD',
+    'PULSE_OR_STOP_IN_PROGRESS',
   ] as const)('lets %s dominate UI interaction', reason => {
-    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
     act(() => {
       operator.publish(
-        snapshotFor({machine: 'Locked', allowed: false, reasons: [reason]}),
+        snapshotFor({ machine: 'Locked', allowed: false, reasons: [reason] }),
       );
     });
     expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
@@ -672,14 +976,14 @@ describe('MotorsScreen - no leaks, no stale mutation', () => {
     // A publish arriving after unmount must be inert - no setState, no
     // throw, no warning.
     expect(() => {
-      operator.publish(snapshotFor({machine: 'Fault'}));
+      operator.publish(snapshotFor({ machine: 'Fault' }));
     }).not.toThrow();
   });
 
   it('binds to the replacement operator and never to the old one', () => {
-    const first = new FakeOperator(snapshotFor({allowed: true}));
+    const first = new FakeOperator(snapshotFor({ allowed: true }));
     const second = new FakeOperator(
-      snapshotFor({machine: 'Checking', allowed: false}),
+      snapshotFor({ machine: 'Checking', allowed: false }),
     );
     let tree!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
@@ -693,7 +997,7 @@ describe('MotorsScreen - no leaks, no stale mutation', () => {
     expect(first.listenerCount).toBe(0);
     expect(second.listenerCount).toBe(1);
     act(() => {
-      first.publish(snapshotFor({machine: 'Fault'}));
+      first.publish(snapshotFor({ machine: 'Fault' }));
     });
     // Still showing the REPLACEMENT session's state, not the stale
     // operator's Fault. (findAll matches the composite and its host node,
@@ -710,16 +1014,24 @@ describe('MotorsScreen - no leaks, no stale mutation', () => {
     });
   });
 
-  it('creates no timer of its own', () => {
+  it('renews the live pulse while the original touch is held and clears its only timer', () => {
     jest.useFakeTimers();
     try {
-      const operator = new FakeOperator(snapshotFor({allowed: true}));
+      const operator = new FakeOperator(snapshotFor({ allowed: true }));
       const rendered = render(operator);
       acknowledgeAll(rendered);
       longPress(rendered);
-      // The three-second watchdog belongs to the controller. A UI timer
-      // racing it could only ever disagree with it.
-      expect(jest.getTimerCount()).toBe(0);
+      expect(jest.getTimerCount()).toBe(1);
+      operator.snapshot = snapshotFor({
+        machine: 'Pulsing',
+        mayHaveReachedFc: true,
+        allowed: false,
+      });
+      act(() => {
+        jest.advanceTimersByTime(900);
+      });
+      expect(operator.renewCalls).toBe(3);
+      expect(jest.getTimerCount()).toBe(1);
       rendered.unmount();
       expect(jest.getTimerCount()).toBe(0);
     } finally {
@@ -735,17 +1047,17 @@ describe('MotorsScreen - no leaks, no stale mutation', () => {
 
 describe('MotorsScreen - expected reference is labelled as expected', () => {
   it('renders the accepted Quad X props-out mapping', () => {
-    expect(EXPECTED_QUAD_X_REFERENCE.map(e => [e.slot, e.directionKey])).toEqual(
-      [
-        [1, 'directionCcw'],
-        [2, 'directionCw'],
-        [3, 'directionCw'],
-        [4, 'directionCcw'],
-      ],
-    );
+    expect(
+      computeMotorGlyphLayout().map(cell => [cell.slot, cell.directionKey]),
+    ).toEqual([
+      [2, 'directionCw'],
+      [4, 'directionCcw'],
+      [1, 'directionCcw'],
+      [3, 'directionCw'],
+    ]);
     const rendered = render(new FakeOperator(snapshotFor({})));
     for (const slot of MOTOR_TEST_OUTPUT_SLOTS) {
-      expect(rendered.query(`motors-expected-${slot}`)).toBeDefined();
+      expect(rendered.query(`motors-diagram-slot-${slot}`)).toBeDefined();
     }
     // Explicitly labelled EXPECTED, not confirmed. This test asserts the
     // label only; it establishes NOTHING about real wiring, physical frame
@@ -757,10 +1069,27 @@ describe('MotorsScreen - expected reference is labelled as expected', () => {
     rendered.unmount();
   });
 
+  it('uses the airframe itself as a real selector for the exact output slot', () => {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+
+    ReactTestRenderer.act(() => {
+      rendered.find('motors-airframe-slot-4').props.onPress();
+    });
+    expect(
+      rendered.find('motors-airframe-slot-4').props.accessibilityState.selected,
+    ).toBe(true);
+
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([4]);
+    rendered.unmount();
+  });
+
   it('makes no physical-stop, rotation, RPM or temperature claim', () => {
     const rendered = render(
       new FakeOperator(
-        snapshotFor({machine: 'Pulsing', startAcknowledged: true}),
+        snapshotFor({ machine: 'Pulsing', startAcknowledged: true }),
       ),
     );
     const rendering = texts(rendered);
@@ -806,8 +1135,9 @@ describe('MotorsScreen - containment', () => {
   });
 
   it('re-derives no safety condition of its own', () => {
-    // Battery, armed state, lease, authority, scope and capability are
-    // evaluated once, in the controller. The screen reads the verdict.
+    // Armed state, lease, authority, scope and capability are evaluated
+    // once, in the controller. The screen reads the verdict. Battery
+    // suitability is deliberately manual, not an invented automatic fact.
     for (const forbidden of [
       'batteryCellCount',
       'isArmed',
@@ -821,9 +1151,9 @@ describe('MotorsScreen - containment', () => {
     expect(executable).toContain('activation.allowed');
   });
 
-  it('creates no second session, controller or timer', () => {
+  it('creates no second session or controller and only the declared heartbeat timer', () => {
     expect(executable).not.toContain('createMotorTestController');
-    expect(executable).not.toContain('setInterval');
+    expect(executable.match(/setInterval\(/g) ?? []).toHaveLength(1);
     expect(executable).not.toContain('setTimeout');
     // The one binding it does use resolves the EXISTING capability -
     // R2 moved that lookup into the build-time containment seam.
@@ -838,15 +1168,19 @@ describe('MotorsScreen - containment', () => {
 describe('MotorsScreen - pure derivations', () => {
   it('derives NO_SESSION without a machine', () => {
     expect(derivePresentation(undefined)).toBe('NO_SESSION');
-    expect(
-      derivePresentation({...snapshotFor({}), machine: undefined}),
-    ).toBe('NO_SESSION');
+    expect(derivePresentation({ ...snapshotFor({}), machine: undefined })).toBe(
+      'NO_SESSION',
+    );
   });
 
   it('reads may-be-live from the controller record only', () => {
     expect(commandMayBeLive(undefined)).toBe(false);
-    expect(commandMayBeLive(snapshotFor({mayHaveReachedFc: false}))).toBe(false);
-    expect(commandMayBeLive(snapshotFor({mayHaveReachedFc: true}))).toBe(true);
+    expect(commandMayBeLive(snapshotFor({ mayHaveReachedFc: false }))).toBe(
+      false,
+    );
+    expect(commandMayBeLive(snapshotFor({ mayHaveReachedFc: true }))).toBe(
+      true,
+    );
   });
 });
 
@@ -857,36 +1191,61 @@ describe('MotorsScreen - pure derivations', () => {
  * transport, client, lease or device.
  * ================================================================== */
 
-describe('R1 - unavailable continuous monitoring locks the screen', () => {
-  /** Exactly what the real production controller publishes: the reducer
-   * is in `Ready`, every one-shot gate passed, and activation is refused
-   * solely because no continuous monitor exists. */
+describe('an unproven armed state locks the screen', () => {
+  /** Exactly what the real production controller publishes when a
+   * satisfied observation ages out mid-session: the reducer is still in
+   * `Ready`, and activation is refused solely because nothing currently
+   * proves the flight controller disarmed. */
   function monitorBlocked(): MotorTestControllerSnapshot {
     return snapshotFor({
       machine: 'Ready',
       allowed: false,
-      reasons: ['CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE'],
+      reasons: ['ARMED_STATE_UNKNOWN_OR_STALE'],
     });
   }
 
-  it('presents a LOCKED state, never an actionable READY', () => {
+  it('never presents an actionable READY, and disables the control', () => {
     const rendered = render(new FakeOperator(monitorBlocked()));
-    expect(rendered.query('motors-status-LOCKED')).toBeDefined();
-    // The actionable ready presentation must be absent entirely.
+    // THE INVARIANT: no actionable ready presentation, and nothing an
+    // operator can press, whenever the authoritative gate refuses.
     expect(rendered.query('motors-status-READY')).toBeUndefined();
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
     rendered.unmount();
+  });
+
+  it('separates "re-reading the armed state" from "this session is locked"', () => {
+    // An unread armed state ALONE is the post-release re-verification
+    // window - mid-cycle, not broken. Anything terminal alongside it is a
+    // genuine lock. Both refuse activation; only one needs operator
+    // action; conflating them used to make every ordinary release look like
+    // a terminal session failure.
+    const rendered = render(new FakeOperator(monitorBlocked()));
+    expect(rendered.query('motors-status-VERIFYING')).toBeDefined();
+    expect(rendered.query('motors-status-LOCKED')).toBeUndefined();
+    rendered.unmount();
+
+    const terminal = render(
+      new FakeOperator(
+        snapshotFor({
+          machine: 'Ready',
+          allowed: false,
+          reasons: ['ARMED_STATE_UNKNOWN_OR_STALE', 'REQUIRES_NEW_CONNECTION'],
+        }),
+      ),
+    );
+    expect(terminal.query('motors-status-LOCKED')).toBeDefined();
+    expect(terminal.query('motors-status-VERIFYING')).toBeUndefined();
+    terminal.unmount();
   });
 
   it('renders the exact Arabic blocking explanation', () => {
     const rendered = render(new FakeOperator(monitorBlocked()));
-    const node = rendered.find(
-      'motors-block-CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE',
-    );
+    const node = rendered.find('motors-block-ARMED_STATE_UNKNOWN_OR_STALE');
     expect(JSON.stringify(node.props.children)).toContain(
-      'المراقبة المستمرة لحالة الأمان غير متاحة — اختبار المحركات مقفل.',
+      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
     );
     expect(texts(rendered)).toContain(
-      'المراقبة المستمرة لحالة الأمان غير متاحة — اختبار المحركات مقفل.',
+      'تعذّرت قراءة حالة التسليح أو أصبحت القراءة قديمة.',
     );
     rendered.unmount();
   });
@@ -941,13 +1300,180 @@ describe('R1 - unavailable continuous monitoring locks the screen', () => {
     rendered.unmount();
   });
 
-  it('derives LOCKED from the authoritative gate, not from the reducer name', () => {
+  it('derives the presentation from the authoritative gate, not the reducer name', () => {
     // Pure derivation: same reducer state, opposite gate verdict.
     expect(
-      derivePresentation(
-        snapshotFor({machine: 'Ready', allowed: true}),
-      ),
+      derivePresentation(snapshotFor({ machine: 'Ready', allowed: true })),
     ).toBe('READY');
-    expect(derivePresentation(monitorBlocked())).toBe('LOCKED');
+    // Gate closed for the ONE mid-cycle reason: re-verifying.
+    expect(derivePresentation(monitorBlocked())).toBe('VERIFYING');
+    // Gate closed for anything else, or for more than that one reason:
+    // genuinely locked.
+    expect(
+      derivePresentation(
+        snapshotFor({
+          machine: 'Ready',
+          allowed: false,
+          reasons: ['ARMED_STATE_UNKNOWN_OR_STALE', 'FC_ARMED'],
+        }),
+      ),
+    ).toBe('LOCKED');
+    expect(
+      derivePresentation(
+        snapshotFor({
+          machine: 'Ready',
+          allowed: false,
+          reasons: ['FC_ARMED'],
+        }),
+      ),
+    ).toBe('LOCKED');
+  });
+});
+
+/* ================================================================== *
+ * THE FOUR-MOTOR OPERATOR FLOW
+ *
+ * SCOPE CORRECTION, RECORDED. The operator must be able to test M1, M2,
+ * M3 and M4 in any order, repeatedly, inside ONE session. That is a
+ * screen-level contract as much as a controller one: a flow that silently
+ * makes somebody re-tick three safety checkboxes after every single
+ * release is not the feature, whatever the controller does underneath.
+ * ================================================================== */
+
+describe('MotorsScreen - the four-motor flow', () => {
+  /** The transient window every normal release passes through: the stop
+   * is confirmed and the reducer is back in `Ready`, but monitoring has
+   * been restarted and its fresh observation has not landed yet, so the
+   * authoritative gate is briefly closed. */
+  const reverifying = (): MotorTestControllerSnapshot =>
+    snapshotFor({
+      machine: 'Ready',
+      allowed: false,
+      mayHaveReachedFc: true,
+      stopAcknowledged: true,
+      stopOutcome: { kind: 'ACKNOWLEDGED' },
+      reasons: ['ARMED_STATE_UNKNOWN_OR_STALE'],
+    });
+
+  const readyAgain = (): MotorTestControllerSnapshot =>
+    snapshotFor({
+      machine: 'Ready',
+      allowed: true,
+      mayHaveReachedFc: true,
+      stopAcknowledged: true,
+      stopOutcome: { kind: 'ACKNOWLEDGED' },
+    });
+
+  it('returns directly to the reusable hold flow after a normal release', () => {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
+    const rendered = render(operator);
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+
+    act(() => {
+      operator.publish(reverifying());
+    });
+    act(() => {
+      operator.publish(readyAgain());
+    });
+
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+    rendered.unmount();
+  });
+
+  it('does not present a re-verifying session as LOCKED', () => {
+    const rendered = render(new FakeOperator(reverifying()));
+    // It is not locked - nothing went wrong. It is confirming the flight
+    // controller is still disarmed before it will arm the control again.
+    expect(rendered.query('motors-status-LOCKED')).toBeUndefined();
+    expect(rendered.query('motors-status-VERIFYING')).toBeDefined();
+    // ... and the control stays disabled while that is true.
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    rendered.unmount();
+  });
+
+  it('keeps a genuinely ended session blocked without adding checkbox state', () => {
+    for (const machine of ['Locked', 'Fault'] as const) {
+      const operator = new FakeOperator(snapshotFor({ allowed: true }));
+      const rendered = render(operator);
+      expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+
+      act(() => {
+        operator.publish(snapshotFor({ machine, allowed: false }));
+      });
+      act(() => {
+        operator.publish(snapshotFor({ allowed: true }));
+      });
+      expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+      rendered.unmount();
+    }
+  });
+
+  it.each([1, 2, 3, 4])('pulses M%i from the selected card', slot => {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+    rendered.press(`motors-slot-${slot}`);
+    longPress(rendered);
+    // The number on the card IS the number handed to the controller.
+    expect(operator.pulseCalls).toEqual([slot]);
+    rendered.unmount();
+  });
+
+  it('sweeps all four in an arbitrary order without repeating setup ceremony', () => {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+
+    for (const slot of [3, 1, 4, 2, 3]) {
+      rendered.press(`motors-slot-${slot}`);
+      longPress(rendered);
+      pressOut(rendered);
+      // The release round trip the controller really performs.
+      act(() => {
+        operator.publish(reverifying());
+      });
+      act(() => {
+        operator.publish(readyAgain());
+      });
+    }
+
+    // Five deliberate presses, five commands, in the order requested,
+    // without any checkbox or explicit-start intermission.
+    expect(operator.pulseCalls).toEqual([3, 1, 4, 2, 3]);
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+    rendered.unmount();
+  });
+});
+
+/* ================================================================== *
+ * DIRECTION REFERENCE - PHYSICAL CLAIMS REMAIN HONEST
+ * ================================================================== */
+
+describe('MotorsScreen - direction handling', () => {
+  it('puts a reviewed persistent direction tool in the selected-motor workspace', () => {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
+    const rendered = render(operator);
+    acknowledgeAll(rendered);
+    expect(rendered.query('esc-direction-panel')).toBeDefined();
+    expect(rendered.query('esc-direction-review')).toBeDefined();
+    expect(rendered.query('esc-direction-apply')).toBeUndefined();
+    rendered.unmount();
+  });
+
+  it('removes the obsolete unsupported-direction copy', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const rendering = texts(rendered);
+    expect(rendering).not.toContain('عكس اتجاه المحرك غير متاح حاليًا');
+    expect(rendering).not.toContain('Betaflight');
+    rendered.unmount();
+  });
+
+  it('never presents the displayed directions as read from the aircraft', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    expect(rendered.query('motors-diagram-direction-source')).toBeDefined();
+    expect(texts(rendered)).toContain(
+      'اتجاهات الدوران المعروضة مرجع شائع لمخطط Quad X وليست قراءة من متحكم الطيران.',
+    );
+    rendered.unmount();
   });
 });

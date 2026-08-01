@@ -25,18 +25,18 @@
  * Every state is conveyed in TEXT; color is only ever an addition.
  */
 
-import React from 'react';
-import {StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import {BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION} from '../../../core';
+import { BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION } from '../../../core';
 import type {
   DiagnosticsBlockers,
   DiagnosticsDataState,
   DiagnosticsSensors,
   SetupDiagnosticsView,
 } from '../../../core';
-import {colors, radii, spacing, typography} from '../../theme';
+import { colors, radii, spacing, typography } from '../../theme';
 
 /** The exact translate function useTranslation() hands back - keeps the
  * two pure copy helpers below out of the component without loosening
@@ -71,15 +71,26 @@ export interface DiagnosticsSectionProps {
   view: SetupDiagnosticsView;
 }
 
-export default function DiagnosticsSection({view}: DiagnosticsSectionProps): React.JSX.Element {
-  const {t} = useTranslation();
+export default function DiagnosticsSection({
+  view,
+}: DiagnosticsSectionProps): React.JSX.Element {
+  const { t } = useTranslation();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const stale = view.dataState === 'STALE';
 
   const identityLines: string[] = [];
   if (view.identity === undefined) {
-    identityLines.push(t(view.compatibility === 'IDENTIFICATION_FAILED' ? 'diagnostics.identityFailed' : 'diagnostics.identityIdentifying'));
+    identityLines.push(
+      t(
+        view.compatibility === 'IDENTIFICATION_FAILED'
+          ? 'diagnostics.identityFailed'
+          : 'diagnostics.identityIdentifying',
+      ),
+    );
   } else {
-    identityLines.push(t('diagnostics.identityBoard', {value: view.identity.boardName}));
+    identityLines.push(
+      t('diagnostics.identityBoard', { value: view.identity.boardName }),
+    );
     identityLines.push(
       t('diagnostics.identityFirmware', {
         identifier: view.identity.firmwareIdentifier,
@@ -93,10 +104,10 @@ export default function DiagnosticsSection({view}: DiagnosticsSectionProps): Rea
     view.compatibility === 'BETAFLIGHT_API_1_47'
       ? 'diagnostics.compatibilityBetaflight147'
       : view.compatibility === 'OTHER_FIRMWARE_OR_API'
-        ? 'diagnostics.compatibilityOther'
-        : view.compatibility === 'IDENTIFICATION_FAILED'
-          ? 'diagnostics.compatibilityFailed'
-          : 'diagnostics.compatibilityIdentifying',
+      ? 'diagnostics.compatibilityOther'
+      : view.compatibility === 'IDENTIFICATION_FAILED'
+      ? 'diagnostics.compatibilityFailed'
+      : 'diagnostics.compatibilityIdentifying',
   );
 
   const dataStateText = t(DATA_STATE_LABEL_KEY[view.dataState]);
@@ -105,41 +116,73 @@ export default function DiagnosticsSection({view}: DiagnosticsSectionProps): Rea
 
   return (
     <View style={styles.section} testID="diagnostics-section">
-      <Text style={styles.sectionTitle} accessibilityRole="header" testID="diagnostics-title">
-        {t('diagnostics.title')}
-      </Text>
+      <Pressable
+        onPress={() => setDetailsOpen(current => !current)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: detailsOpen }}
+        style={styles.sectionHeader}
+        testID="diagnostics-toggle"
+      >
+        <View style={styles.sectionHeading}>
+          <Text
+            style={styles.sectionTitle}
+            accessibilityRole="header"
+            testID="diagnostics-title"
+          >
+            {t('diagnostics.title')}
+          </Text>
+          <Text style={styles.sectionSummary}>{dataStateText}</Text>
+        </View>
+        <View style={styles.togglePill}>
+          <Text style={styles.toggleText}>
+            {t(
+              detailsOpen
+                ? 'diagnostics.hideDetails'
+                : 'diagnostics.showDetails',
+            )}
+          </Text>
+          <Text style={styles.toggleIcon}>{detailsOpen ? '⌃' : '⌄'}</Text>
+        </View>
+      </Pressable>
 
-      <Block
-        testID="diagnostics-identity"
-        heading={t('diagnostics.identityHeading')}
-        lines={identityLines}
-        dim={false}
-      />
-      <Block
-        testID="diagnostics-compatibility"
-        heading={t('diagnostics.compatibilityHeading')}
-        lines={[compatibilityText]}
-        dim={false}
-      />
-      <Block
-        testID="diagnostics-reading-state"
-        heading={t('diagnostics.stateHeading')}
-        lines={[dataStateText]}
-        lineColor={DATA_STATE_COLOR[view.dataState]}
-        dim={false}
-      />
-      <Block
-        testID="diagnostics-sensors"
-        heading={t('diagnostics.sensorsHeading')}
-        lines={sensorLines}
-        dim={stale}
-      />
-      <Block
-        testID="diagnostics-blockers"
-        heading={t('diagnostics.blockersHeading')}
-        lines={blockerLines}
-        dim={stale}
-      />
+      <View
+        style={!detailsOpen ? styles.detailsCollapsed : undefined}
+        accessibilityElementsHidden={!detailsOpen}
+        importantForAccessibility={detailsOpen ? 'auto' : 'no-hide-descendants'}
+        testID="diagnostics-details"
+      >
+        <Block
+          testID="diagnostics-identity"
+          heading={t('diagnostics.identityHeading')}
+          lines={identityLines}
+          dim={false}
+        />
+        <Block
+          testID="diagnostics-compatibility"
+          heading={t('diagnostics.compatibilityHeading')}
+          lines={[compatibilityText]}
+          dim={false}
+        />
+        <Block
+          testID="diagnostics-reading-state"
+          heading={t('diagnostics.stateHeading')}
+          lines={[dataStateText]}
+          lineColor={DATA_STATE_COLOR[view.dataState]}
+          dim={false}
+        />
+        <Block
+          testID="diagnostics-sensors"
+          heading={t('diagnostics.sensorsHeading')}
+          lines={sensorLines}
+          dim={stale}
+        />
+        <Block
+          testID="diagnostics-blockers"
+          heading={t('diagnostics.blockersHeading')}
+          lines={blockerLines}
+          dim={stale}
+        />
+      </View>
     </View>
   );
 }
@@ -154,13 +197,18 @@ function describeSensors(sensors: DiagnosticsSensors, t: Translate): string[] {
     return [t('diagnostics.sensorsNoneInReading')];
   }
   return sensors.bits.map(bit =>
-    bit.kind === 'KNOWN' ? bit.token : t('diagnostics.sensorsUnknownBit', {hex: bit.hex}),
+    bit.kind === 'KNOWN'
+      ? bit.token
+      : t('diagnostics.sensorsUnknownBit', { hex: bit.hex }),
   );
 }
 
 /** Blocker copy: source-proven Arabic where proven, canonical token
  * otherwise, unknown bits preserved numerically AND in hex. */
-function describeBlockers(blockers: DiagnosticsBlockers, t: Translate): string[] {
+function describeBlockers(
+  blockers: DiagnosticsBlockers,
+  t: Translate,
+): string[] {
   if (blockers.kind === 'UNCONFIRMED') {
     return [t('diagnostics.blockersUnconfirmed')];
   }
@@ -173,12 +221,17 @@ function describeBlockers(blockers: DiagnosticsBlockers, t: Translate): string[]
   }
   return blockers.bits.map(bit => {
     if (bit.kind === 'UNKNOWN') {
-      return t('diagnostics.blockersUnknownBit', {bit: bit.bit, hex: bit.hex});
+      return t('diagnostics.blockersUnknownBit', {
+        bit: bit.bit,
+        hex: bit.hex,
+      });
     }
     if (!BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION.includes(bit.token)) {
-      return t('diagnostics.blockerFallback', {token: bit.token});
+      return t('diagnostics.blockerFallback', { token: bit.token });
     }
-    return `${t(`diagnostics.blockerDescriptions.${bit.token}`)} (${bit.token})`;
+    return `${t(`diagnostics.blockerDescriptions.${bit.token}`)} (${
+      bit.token
+    })`;
   });
 }
 
@@ -202,13 +255,18 @@ function Block({
       style={[styles.block, dim ? styles.dimmed : undefined]}
       accessible
       accessibilityLabel={`${heading}، ${lines.join('، ')}`}
-      testID={testID}>
+      testID={testID}
+    >
       <Text style={styles.blockHeading}>{heading}</Text>
       {lines.map((line, index) => (
         <Text
           key={`${testID}-${index}`}
-          style={[styles.blockLine, lineColor !== undefined ? {color: lineColor} : undefined]}
-          testID={`${testID}-line-${index}`}>
+          style={[
+            styles.blockLine,
+            lineColor !== undefined ? { color: lineColor } : undefined,
+          ]}
+          testID={`${testID}-line-${index}`}
+        >
           {line}
         </Text>
       ))}
@@ -220,18 +278,65 @@ const styles = StyleSheet.create({
   section: {
     marginTop: spacing.md,
     marginHorizontal: spacing.md,
-    padding: spacing.md,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceAlt,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surface,
+    shadowColor: colors.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    elevation: 4,
+  },
+  sectionHeader: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+  },
+  sectionHeading: {
+    flex: 1,
+    gap: spacing.xs,
   },
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  sectionSummary: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+  },
+  togglePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radii.pill,
+  },
+  toggleText: {
+    ...typography.caption,
+    color: colors.accent,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  toggleIcon: {
+    color: colors.accent,
+    fontSize: 14,
+  },
+  detailsCollapsed: {
+    display: 'none',
   },
   block: {
     marginTop: spacing.md,
+    paddingTop: spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.borderSoft,
   },
   dimmed: {
     opacity: STALE_OPACITY,

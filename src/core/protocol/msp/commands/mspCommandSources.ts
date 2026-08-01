@@ -243,16 +243,19 @@
  *   the variable-length flight-mode tail, arming-disable flags, config
  *   state) is version-variable trailing data and is deliberately
  *   ignored.
-  */
+ */
 
-export const BETAFLIGHT_SOURCE_REPO = 'https://github.com/betaflight/betaflight';
-export const BETAFLIGHT_PINNED_COMMIT = '0ccf59553351860fcedbaed952dbf3694f10f768';
+export const BETAFLIGHT_SOURCE_REPO =
+  'https://github.com/betaflight/betaflight';
+export const BETAFLIGHT_PINNED_COMMIT =
+  '0ccf59553351860fcedbaed952dbf3694f10f768';
 
 /** Pass 7.6c closure: the immutable commit of release tag 2025.12.5 -
  * the DIRECT public authority for the MSP API 1.47 contract (its
  * msp_protocol.h declares API_VERSION_MINOR 47). Resolved via
  * `git ls-remote refs/tags/2025.12.5` and audited at this exact SHA. */
-export const BETAFLIGHT_API147_COMMIT = '7348054f268f0058574719c134e9f149565bb8ea';
+export const BETAFLIGHT_API147_COMMIT =
+  '7348054f268f0058574719c134e9f149565bb8ea';
 
 /**
  * Motor read-capability pass: the immutable commit of release tag
@@ -273,13 +276,15 @@ export const BETAFLIGHT_API147_COMMIT = '7348054f268f0058574719c134e9f149565bb8e
  * decoders keep their own pinned authority and this pass gains a
  * verifiable one, with no contradiction between the two.
  */
-export const BETAFLIGHT_2025_12_2_COMMIT = '79065c96ba0bb5cdc675e67d7093e05dab8b330e';
+export const BETAFLIGHT_2025_12_2_COMMIT =
+  '79065c96ba0bb5cdc675e67d7093e05dab8b330e';
 
 export const INAV_SOURCE_REPO = 'https://github.com/iNavFlight/inav';
 export const INAV_PINNED_COMMIT = 'c5c593d71d33c8e284bf9cd34381588fda7a98c8';
 
 export const EMUFLIGHT_SOURCE_REPO = 'https://github.com/emuflight/EmuFlight';
-export const EMUFLIGHT_PINNED_COMMIT = '0a569000b9dfa5b6d8f807bd2e56b634027d84cd';
+export const EMUFLIGHT_PINNED_COMMIT =
+  '0a569000b9dfa5b6d8f807bd2e56b634027d84cd';
 
 /**
  * ==========================================================================
@@ -343,9 +348,13 @@ export const EMUFLIGHT_PINNED_COMMIT = '0a569000b9dfa5b6d8f807bd2e56b634027d84cd
  *    after (or racing with) the ack: a MISSING ack does not prove the
  *    reboot failed, and the app must never resend it automatically.
  *
- * 4. MSP_EEPROM_WRITE (250) remains PROHIBITED by this project. Neither
+ * 4. MSP_EEPROM_WRITE (250) remains PROHIBITED to Region 5. Neither
  *    calibration needs it (both persist FC-side, as recorded above), so
- *    nothing in Region 5 sends it.
+ *    FcToolsController and SetupScreen never send it. The later, separate
+ *    MotorConfigurationController is the only authorized consumer: unlike
+ *    calibration, acknowledged MSP_SET_* configuration changes are not
+ *    durable until this command is acknowledged. Its source boundary is
+ *    enforced by scan-production-bundle.js.
  */
 
 /**

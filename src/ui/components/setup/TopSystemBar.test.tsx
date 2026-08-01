@@ -8,19 +8,29 @@
  */
 
 import React from 'react';
-import {Text} from 'react-native';
-import ReactTestRenderer, {act} from 'react-test-renderer';
+import { Text } from 'react-native';
+import ReactTestRenderer, { act } from 'react-test-renderer';
 
 import TopSystemBar from './TopSystemBar';
 import '../../../i18n';
-import {mspSessionCoordinator} from '../../../platforms/react-native/protocol';
-import {MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO} from '../../../core';
-import type {ArmingReadiness} from '../../../core';
-import {buildMspFrameBytes} from '../../../core/protocol/__testUtils__/mspFixtures';
-import {base64ToBytes, bytesToBase64} from '../../../platforms/react-native/protocol/base64';
-import type {UsbSerialDataEvent, UsbSerialSessionDetachedEvent, UsbSerialTransportClient} from '../../../platforms/react-native/transport';
+import { mspSessionCoordinator } from '../../../platforms/react-native/protocol';
+import { MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO } from '../../../core';
+import type { ArmingReadiness } from '../../../core';
+import { buildMspFrameBytes } from '../../../core/protocol/__testUtils__/mspFixtures';
+import {
+  base64ToBytes,
+  bytesToBase64,
+} from '../../../platforms/react-native/protocol/base64';
+import type {
+  UsbSerialDataEvent,
+  UsbSerialSessionDetachedEvent,
+  UsbSerialTransportClient,
+} from '../../../platforms/react-native/transport';
 
-const UNKNOWN_ARMING: ArmingReadiness = {status: 'UNKNOWN', cause: 'UNAVAILABLE'};
+const UNKNOWN_ARMING: ArmingReadiness = {
+  status: 'UNKNOWN',
+  cause: 'UNAVAILABLE',
+};
 
 function ascii(text: string): number[] {
   return text.split('').map(c => c.charCodeAt(0));
@@ -48,11 +58,16 @@ function boardInfoPayload(boardName = 'MyBoard'): Uint8Array {
   ]);
 }
 
-function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean} = {}) {
+function makeFakeClient(
+  sessionId: string,
+  options: { deferStartReading?: boolean } = {},
+) {
   const dataListeners = new Set<(event: UsbSerialDataEvent) => void>();
-  const detachListeners = new Set<(event: UsbSerialSessionDetachedEvent) => void>();
+  const detachListeners = new Set<
+    (event: UsbSerialSessionDetachedEvent) => void
+  >();
   const responses = new Map<number, Uint8Array>();
-  let rejectNextWriteReason: {reason: unknown} | undefined;
+  let rejectNextWriteReason: { reason: unknown } | undefined;
   let resolveStartReadingImpl: () => void = () => undefined;
   const startReadingPromise = options.deferStartReading
     ? new Promise<void>(resolve => {
@@ -63,7 +78,7 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
   const fake = {
     writeBytes: jest.fn((_sessionId: string, dataBase64: string) => {
       if (rejectNextWriteReason) {
-        const {reason} = rejectNextWriteReason;
+        const { reason } = rejectNextWriteReason;
         rejectNextWriteReason = undefined;
         return Promise.reject(reason);
       }
@@ -71,9 +86,15 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
       const command = bytes[4];
       const payload = responses.get(command);
       if (payload) {
-        const frameBytes = buildMspFrameBytes(command, payload, {wireFormat: 'v1', direction: 'response'});
+        const frameBytes = buildMspFrameBytes(command, payload, {
+          wireFormat: 'v1',
+          direction: 'response',
+        });
         Promise.resolve().then(() => {
-          const event: UsbSerialDataEvent = {sessionId, dataBase64: bytesToBase64(frameBytes)};
+          const event: UsbSerialDataEvent = {
+            sessionId,
+            dataBase64: bytesToBase64(frameBytes),
+          };
           for (const listener of Array.from(dataListeners)) {
             listener(event);
           }
@@ -85,10 +106,12 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
       dataListeners.add(cb);
       return jest.fn(() => dataListeners.delete(cb));
     }),
-    onSessionDetached: jest.fn((cb: (event: UsbSerialSessionDetachedEvent) => void) => {
-      detachListeners.add(cb);
-      return jest.fn(() => detachListeners.delete(cb));
-    }),
+    onSessionDetached: jest.fn(
+      (cb: (event: UsbSerialSessionDetachedEvent) => void) => {
+        detachListeners.add(cb);
+        return jest.fn(() => detachListeners.delete(cb));
+      },
+    ),
     stopReading: jest.fn().mockResolvedValue(undefined),
     startReading: jest.fn(() => startReadingPromise),
     resolveStartReading: () => {
@@ -98,7 +121,7 @@ function makeFakeClient(sessionId: string, options: {deferStartReading?: boolean
       responses.set(command, payload);
     },
     rejectNextWrite: (reason: unknown = new Error('fake write failure')) => {
-      rejectNextWriteReason = {reason};
+      rejectNextWriteReason = { reason };
     },
     emitSessionDetached: (event: UsbSerialSessionDetachedEvent) => {
       for (const listener of Array.from(detachListeners)) {
@@ -125,8 +148,11 @@ function allText(renderer: ReactTestRenderer.ReactTestRenderer): string[] {
   });
 }
 
-function findByTestID(renderer: ReactTestRenderer.ReactTestRenderer, testID: string) {
-  const matches = renderer.root.findAllByProps({testID});
+function findByTestID(
+  renderer: ReactTestRenderer.ReactTestRenderer,
+  testID: string,
+) {
+  const matches = renderer.root.findAllByProps({ testID });
   return matches.length > 0 ? matches[0] : null;
 }
 
@@ -135,7 +161,11 @@ describe('TopSystemBar', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = ReactTestRenderer.create(
-        <TopSystemBar sessionId="never-opened" onBack={jest.fn()} armingReadiness={UNKNOWN_ARMING} />,
+        <TopSystemBar
+          sessionId="never-opened"
+          onBack={jest.fn()}
+          armingReadiness={UNKNOWN_ARMING}
+        />,
       );
     });
     expect(allText(renderer)).toContain('غير متصل');
@@ -149,20 +179,27 @@ describe('TopSystemBar', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = ReactTestRenderer.create(
-        <TopSystemBar sessionId={sessionId} onBack={jest.fn()} armingReadiness={UNKNOWN_ARMING} />,
+        <TopSystemBar
+          sessionId={sessionId}
+          onBack={jest.fn()}
+          armingReadiness={UNKNOWN_ARMING}
+        />,
       );
     });
     expect(allText(renderer)).toContain('غير متصل');
 
     await act(async () => {
-      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      mspSessionCoordinator.openSession(
+        client as unknown as UsbSerialTransportClient,
+        sessionId,
+      );
       await flushAsync();
     });
 
     expect(allText(renderer)).toContain('متصل');
     expect(allText(renderer)).not.toContain('غير متصل');
     expect(allText(renderer)).toContain('MyBoard');
-    expect(allText(renderer)).toContain('BETAFLIGHT 1.48');
+    expect(allText(renderer)).toContain('MSP 1.48');
     // No notice banner while genuinely connected with successful identification.
     expect(findByTestID(renderer, 'setup-top-bar-notice')).toBeNull();
 
@@ -180,14 +217,21 @@ describe('TopSystemBar', () => {
     // this test relied on catching a transient moment before any
     // microtask flush, which act()'s own aggressive draining does not
     // reliably preserve.
-    const client = makeFakeClient(sessionId, {deferStartReading: true});
+    const client = makeFakeClient(sessionId, { deferStartReading: true });
 
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = ReactTestRenderer.create(
-        <TopSystemBar sessionId={sessionId} onBack={jest.fn()} armingReadiness={UNKNOWN_ARMING} />,
+        <TopSystemBar
+          sessionId={sessionId}
+          onBack={jest.fn()}
+          armingReadiness={UNKNOWN_ARMING}
+        />,
       );
-      mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      mspSessionCoordinator.openSession(
+        client as unknown as UsbSerialTransportClient,
+        sessionId,
+      );
       await flushAsync();
     });
 
@@ -198,7 +242,9 @@ describe('TopSystemBar', () => {
       client.resolveStartReading();
       await flushAsync();
     });
-    expect(findByTestID(renderer, 'setup-top-bar-board-name')?.props.children).toBe('MyBoard');
+    expect(
+      findByTestID(renderer, 'setup-top-bar-board-name')?.props.children,
+    ).toBe('MyBoard');
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -213,9 +259,16 @@ describe('TopSystemBar', () => {
     let mspClient: ReturnType<typeof mspSessionCoordinator.openSession>;
     await act(async () => {
       renderer = ReactTestRenderer.create(
-        <TopSystemBar sessionId={sessionId} onBack={jest.fn()} armingReadiness={UNKNOWN_ARMING} />,
+        <TopSystemBar
+          sessionId={sessionId}
+          onBack={jest.fn()}
+          armingReadiness={UNKNOWN_ARMING}
+        />,
       );
-      mspClient = mspSessionCoordinator.openSession(client as unknown as UsbSerialTransportClient, sessionId);
+      mspClient = mspSessionCoordinator.openSession(
+        client as unknown as UsbSerialTransportClient,
+        sessionId,
+      );
       await flushAsync();
     });
     expect(allText(renderer)).toContain('متصل');
@@ -233,7 +286,9 @@ describe('TopSystemBar', () => {
     // fixture cannot reliably freeze.
     await act(async () => {
       client.rejectNextWrite('write failed');
-      await mspClient!.request(1, new Uint8Array(0), {wireFormat: 'v1'}).catch(() => undefined);
+      await mspClient!
+        .request(1, new Uint8Array(0), { wireFormat: 'v1' })
+        .catch(() => undefined);
       await flushAsync();
     });
 
@@ -250,7 +305,11 @@ describe('TopSystemBar', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = ReactTestRenderer.create(
-        <TopSystemBar sessionId="never-opened" onBack={onBack} armingReadiness={UNKNOWN_ARMING} />,
+        <TopSystemBar
+          sessionId="never-opened"
+          onBack={onBack}
+          armingReadiness={UNKNOWN_ARMING}
+        />,
       );
     });
 
@@ -263,16 +322,20 @@ describe('TopSystemBar', () => {
 
   it('renders each ArmingReadiness status as its own distinct badge label', async () => {
     const cases: Array<[ArmingReadiness, string]> = [
-      [{status: 'ARMED'}, 'مسلّحة'],
-      [{status: 'READY'}, 'جاهزة'],
-      [{status: 'BLOCKED', reasons: []}, 'غير جاهزة'],
-      [{status: 'UNKNOWN', cause: 'WAITING'}, 'غير مؤكدة'],
+      [{ status: 'ARMED' }, 'مسلّحة'],
+      [{ status: 'READY' }, 'جاهزة'],
+      [{ status: 'BLOCKED', reasons: [] }, 'غير جاهزة'],
+      [{ status: 'UNKNOWN', cause: 'WAITING' }, 'غير مؤكدة'],
     ];
     for (const [readiness, expectedLabel] of cases) {
       let renderer!: ReactTestRenderer.ReactTestRenderer;
       await act(async () => {
         renderer = ReactTestRenderer.create(
-          <TopSystemBar sessionId="never-opened" onBack={jest.fn()} armingReadiness={readiness} />,
+          <TopSystemBar
+            sessionId="never-opened"
+            onBack={jest.fn()}
+            armingReadiness={readiness}
+          />,
         );
       });
       expect(allText(renderer!)).toContain(expectedLabel);
@@ -284,7 +347,11 @@ describe('TopSystemBar', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = ReactTestRenderer.create(
-        <TopSystemBar sessionId={sessionId} onBack={jest.fn()} armingReadiness={UNKNOWN_ARMING} />,
+        <TopSystemBar
+          sessionId={sessionId}
+          onBack={jest.fn()}
+          armingReadiness={UNKNOWN_ARMING}
+        />,
       );
     });
     expect(allText(renderer!).join(' ')).not.toContain(sessionId);

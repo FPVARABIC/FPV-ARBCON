@@ -1,13 +1,77 @@
-export {deriveOrientationViewState, describeOrientationForAccessibility} from './orientationViewModel';
-export type {OrientationViewOffset, OrientationViewState} from './orientationViewModel';
+export {
+  deriveOrientationViewState,
+  describeOrientationForAccessibility,
+} from './orientationViewModel';
+export type {
+  OrientationViewOffset,
+  OrientationViewState,
+} from './orientationViewModel';
 
-export {deriveArmingReadiness, rankArmingBlockReasons, selectTopArmingBlockReasons} from './armingReadiness';
-export type {ArmingBlockSeverity, ArmingBlockReason, ArmingReadiness, ArmingBlockReasonSelection} from './armingReadiness';
+export {
+  analyzeOrientationStability,
+  ORIENTATION_STABILITY_WINDOW_MS,
+  ORIENTATION_STABILITY_MIN_SAMPLES,
+  ORIENTATION_STABILITY_LIMITS,
+} from './orientationStability';
+export type {
+  OrientationStabilitySample,
+  OrientationStabilityResult,
+} from './orientationStability';
 
-export {pickTopNotice} from './setupNotice';
-export type {SetupNotice, SetupNoticeDomain, SetupNoticeSeverity, SetupNoticeScope} from './setupNotice';
+export {
+  deriveArmingReadiness,
+  rankArmingBlockReasons,
+  selectTopArmingBlockReasons,
+} from './armingReadiness';
+export type {
+  ArmingBlockSeverity,
+  ArmingBlockReason,
+  ArmingReadiness,
+  ArmingBlockReasonSelection,
+} from './armingReadiness';
 
-export {assembleMotorStaticFacts, bindMotorStaticFacts} from './motorStaticFacts';
+export { pickTopNotice } from './setupNotice';
+export type {
+  SetupNotice,
+  SetupNoticeDomain,
+  SetupNoticeSeverity,
+  SetupNoticeScope,
+} from './setupNotice';
+
+export {
+  assembleMotorStaticFacts,
+  bindMotorStaticFacts,
+} from './motorStaticFacts';
+export {
+  FEATURE_MOTOR_STOP_BIT,
+  FEATURE_ESC_SENSOR_BIT,
+  MOTOR_PROTOCOL_RAW_MIN,
+  MOTOR_PROTOCOL_RAW_MAX,
+  MOTOR_PROTOCOL_DSHOT_MIN,
+  MOTOR_PROTOCOL_DSHOT_MAX,
+  createMotorConfigurationDraft,
+  hasFeature,
+  setFeature,
+  validateMotorConfigurationDraft,
+  motorConfigurationDraftsEqual,
+} from './motorConfigurationModel';
+export {
+  deriveMotorDiagnosticsSupport,
+  hasEscTelemetrySource,
+  visibleMotorTelemetryMetrics,
+} from './motorDiagnosticsSemantics';
+export type {
+  MotorEscTelemetrySource,
+  MotorDiagnosticsSupport,
+  MotorTelemetryVisibleMetrics,
+} from './motorDiagnosticsSemantics';
+export type {
+  MotorConfigurationSnapshot,
+  MotorConfigurationDraft,
+  MotorConfigurationValidationCode,
+  MotorConfigurationValidationIssue,
+  MotorConfigurationValidationResult,
+} from './motorConfigurationModel';
 export type {
   MotorStaticFacts,
   MotorStaticFactsInput,

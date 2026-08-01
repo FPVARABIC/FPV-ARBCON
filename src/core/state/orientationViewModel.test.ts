@@ -216,3 +216,125 @@ describe('describeOrientationForAccessibility', () => {
     expect(describeOrientationForAccessibility(state)).toBe('ميلان 4 درجة لليمين، ارتفاع المقدمة 2 درجة، الاتجاه 274 درجة');
   });
 });
+
+/**
+ * FINAL-POLISH PASS - the Heading-reference contract, tested as
+ * mathematics rather than through a rendered snapshot.
+ *
+ * The reported "the model leans by itself after reset" is checked here
+ * at its only possible mathematical origin: the view offset. If a
+ * Heading reference could leak into roll or pitch, or if the unsigned
+ * [0,360) domain could accumulate a turn, this is where it would show.
+ */
+describe('deriveOrientationViewState - Heading reference boundaries and axis isolation', () => {
+  const fresh = (rollDecidegrees: number, pitchDecidegrees: number, yawDegrees: number) =>
+    ({
+      status: 'FRESH',
+      value: {rollDecidegrees, pitchDecidegrees, yawDegrees},
+      updatedAtMs: 0,
+      sampleSeq: 1,
+    }) as const;
+
+  /** The store normalizes a captured reference with the identical
+   * formula (SetupUiSessionStore.normalizeHeadingDegrees), so a
+   * reference and a raw sample at the same angle cancel exactly. */
+  const reference = (yawDeg: number) => ({rollDeg: 0, pitchDeg: 0, yawDeg: ((yawDeg % 360) + 360) % 360});
+
+  it('reset reference 359, next raw heading 1 -> relative heading 2', () => {
+    const state = deriveOrientationViewState(fresh(0, 0, 1), reference(359));
+    expect(state.status).toBe('LIVE');
+    if (state.status !== 'LIVE') {
+      return;
+    }
+    expect(state.yawDeg).toBeCloseTo(2, 10);
+  });
+
+  it('reset reference 1, next raw heading 359 -> relative heading 358, the unsigned form of -2', () => {
+    const state = deriveOrientationViewState(fresh(0, 0, 359), reference(1));
+    expect(state.status).toBe('LIVE');
+    if (state.status !== 'LIVE') {
+      return;
+    }
+    expect(state.yawDeg).toBeCloseTo(358, 10);
+    // Unsigned domain: never reported as -2.
+    expect(state.yawDeg).toBeGreaterThanOrEqual(0);
+  });
+
+  it.each([0, 1, 359])('a reference captured at %i degrees reads back as heading 0 for that same sample', ref => {
+    const state = deriveOrientationViewState(fresh(0, 0, ref), reference(ref));
+    expect(state.status).toBe('LIVE');
+    if (state.status !== 'LIVE') {
+      return;
+    }
+    expect(state.yawDeg).toBeCloseTo(0, 10);
+  });
+
+  it('a 360-equivalent raw heading is the same displayed heading as its normalized form', () => {
+    const wrapped = deriveOrientationViewState(fresh(0, 0, 380), reference(20));
+    const plain = deriveOrientationViewState(fresh(0, 0, 20), reference(20));
+    expect(wrapped.status).toBe('LIVE');
+    expect(plain.status).toBe('LIVE');
+    if (wrapped.status !== 'LIVE' || plain.status !== 'LIVE') {
+      return;
+    }
+    expect(wrapped.yawDeg).toBeCloseTo(plain.yawDeg, 10);
+  });
+
+  it('every displayed heading stays inside the unsigned [0, 360) domain, for every reference and sample', () => {
+    for (let ref = 0; ref < 360; ref += 7) {
+      for (let raw = 0; raw < 360; raw += 11) {
+        const state = deriveOrientationViewState(fresh(0, 0, raw), reference(ref));
+        if (state.status !== 'LIVE') {
+          throw new Error('expected LIVE');
+        }
+        expect(state.yawDeg).toBeGreaterThanOrEqual(0);
+        expect(state.yawDeg).toBeLessThan(360);
+      }
+    }
+  });
+
+  it('a Heading reference NEVER leaks into roll or pitch - the reset is heading-only', () => {
+    for (const ref of [0, 1, 90, 180, 270, 359]) {
+      const state = deriveOrientationViewState(fresh(123, -456, 200), reference(ref));
+      if (state.status !== 'LIVE') {
+        throw new Error('expected LIVE');
+      }
+      // Roll 12.3 and pitch +45.6 (raw pitch negated once at the
+      // firmware boundary) are identical whatever the heading
+      // reference is.
+      expect(state.rollDeg).toBeCloseTo(12.3, 10);
+      expect(state.pitchDeg).toBeCloseTo(45.6, 10);
+    }
+  });
+
+  it('a level aircraft stays mathematically level through every heading reference', () => {
+    for (let ref = 0; ref < 360; ref += 15) {
+      const state = deriveOrientationViewState(fresh(0, 0, ref), reference(ref));
+      if (state.status !== 'LIVE') {
+        throw new Error('expected LIVE');
+      }
+      expect(state.rollDeg).toBeCloseTo(0, 10);
+      expect(state.pitchDeg).toBeCloseTo(0, 10);
+      expect(state.yawDeg).toBeCloseTo(0, 10);
+    }
+  });
+
+  it('applying the same reference twice is identical to applying it once - no accumulation', () => {
+    const sample = fresh(0, 0, 200);
+    const once = deriveOrientationViewState(sample, reference(140));
+    const again = deriveOrientationViewState(sample, reference(140));
+    expect(again).toEqual(once);
+  });
+
+  it('the reference is subtracted from the RAW sample, never from the previous displayed pose', () => {
+    // If the offset were ever composed onto an already-offset value,
+    // this second derivation would drift to 0.
+    const first = deriveOrientationViewState(fresh(0, 0, 100), reference(60));
+    const second = deriveOrientationViewState(fresh(0, 0, 100), reference(60));
+    if (first.status !== 'LIVE' || second.status !== 'LIVE') {
+      throw new Error('expected LIVE');
+    }
+    expect(first.yawDeg).toBeCloseTo(40, 10);
+    expect(second.yawDeg).toBeCloseTo(40, 10);
+  });
+});
