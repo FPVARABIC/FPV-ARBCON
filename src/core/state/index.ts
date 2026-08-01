@@ -42,6 +42,26 @@ export {
   assembleMotorStaticFacts,
   bindMotorStaticFacts,
 } from './motorStaticFacts';
+export {
+  FEATURE_MOTOR_STOP_BIT,
+  FEATURE_ESC_SENSOR_BIT,
+  MOTOR_PROTOCOL_RAW_MIN,
+  MOTOR_PROTOCOL_RAW_MAX,
+  MOTOR_PROTOCOL_DSHOT_MIN,
+  MOTOR_PROTOCOL_DSHOT_MAX,
+  createMotorConfigurationDraft,
+  hasFeature,
+  setFeature,
+  validateMotorConfigurationDraft,
+  motorConfigurationDraftsEqual,
+} from './motorConfigurationModel';
+export type {
+  MotorConfigurationSnapshot,
+  MotorConfigurationDraft,
+  MotorConfigurationValidationCode,
+  MotorConfigurationValidationIssue,
+  MotorConfigurationValidationResult,
+} from './motorConfigurationModel';
 export type {
   MotorStaticFacts,
   MotorStaticFactsInput,

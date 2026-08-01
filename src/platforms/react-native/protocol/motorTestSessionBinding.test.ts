@@ -15,11 +15,15 @@ import {
   createMotorTestSessionBinding,
   type MotorTestSessionCapability,
 } from './motorTestSessionBinding';
-import {MotorTestTelemetryRegistry} from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
-import {MspClient} from '../../../core/protocol/mspClient';
-import {createMotorTestController} from '../../../core/state/motorTestController';
-import {FakeMspTransport} from '../../../core/protocol/__testUtils__/mspFakeTransport';
-import type {MspSessionCompositeIdentity} from '../../../core/protocol/motorTestLease';
+import { MotorTestTelemetryRegistry } from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
+import { MspClient } from '../../../core/protocol/mspClient';
+import { createMotorTestController } from '../../../core/state/motorTestController';
+import { FakeMspTransport } from '../../../core/protocol/__testUtils__/mspFakeTransport';
+import type { MspSessionCompositeIdentity } from '../../../core/protocol/motorTestLease';
+import {
+  acquireMotorConfigurationInterlock,
+  MotorConfigurationTransactionInProgressError,
+} from './motorConfigurationInterlock';
 
 const IDENTITY: MspSessionCompositeIdentity = {
   physicalGeneration: 3,
@@ -34,7 +38,7 @@ function makeClient(): MspClient {
 
 function portInput() {
   return {
-    readCurrentIdentity: () => ({...IDENTITY}),
+    readCurrentIdentity: () => ({ ...IDENTITY }),
     subscribeSessionInvalidated: () => () => undefined,
   };
 }
@@ -43,7 +47,7 @@ describe('createMotorTestSessionBinding - A/A construction', () => {
   it('mints the anchor for the exact captured client', async () => {
     const registry = new MotorTestTelemetryRegistry();
     const clientA = makeClient();
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
 
     // The registry accepts the anchor only for that very reference, so a
     // successful acquisition IS the ownership proof.
@@ -61,7 +65,7 @@ describe('createMotorTestSessionBinding - A/A construction', () => {
   it('gives the controller the same client reference throughout', () => {
     const registry = new MotorTestTelemetryRegistry();
     const clientA = makeClient();
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
 
     const deps = binding.controllerDependencies(portInput(), () => 0);
     expect(deps.session.client).toBe(clientA);
@@ -73,10 +77,10 @@ describe('createMotorTestSessionBinding - A/A construction', () => {
   it('registers every scheduler it creates under its own anchor', async () => {
     const registry = new MotorTestTelemetryRegistry();
     const clientA = makeClient();
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
 
     expect(registry.registeredSchedulerCount(binding.telemetrySession)).toBe(0);
-    binding.createScheduler({singleFlight: true});
+    binding.createScheduler({ singleFlight: true });
     expect(registry.registeredSchedulerCount(binding.telemetrySession)).toBe(1);
     binding.createScheduler();
     expect(registry.registeredSchedulerCount(binding.telemetrySession)).toBe(2);
@@ -96,7 +100,7 @@ describe('createMotorTestSessionBinding - A/A construction', () => {
   it('drives the real controller to Ready-eligible dependencies', () => {
     const registry = new MotorTestTelemetryRegistry();
     const clientA = makeClient();
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
     const controller = createMotorTestController(
       binding.controllerDependencies(portInput(), () => 0),
     );
@@ -118,7 +122,7 @@ describe('createMotorTestSessionBinding - A/A construction', () => {
 describe('createMotorTestSessionBinding - A/B is unrepresentable', () => {
   it('exposes no member that could name a second client', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     const surface = binding as unknown as Record<string, unknown>;
 
     expect(Object.keys(binding).sort()).toEqual([
@@ -149,7 +153,7 @@ describe('createMotorTestSessionBinding - A/B is unrepresentable', () => {
     const registry = new MotorTestTelemetryRegistry();
     const clientA = makeClient();
     const clientB = makeClient();
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
 
     // A caller may try; the type has no `client` member and the binding
     // overwrites it from the captured reference regardless.
@@ -168,7 +172,7 @@ describe('createMotorTestSessionBinding - A/B is unrepresentable', () => {
     const registry = new MotorTestTelemetryRegistry();
     const clientA = makeClient();
     const clientB = makeClient();
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
 
     const attempt = await registry.acquireBarrier(
       binding.telemetrySession,
@@ -187,13 +191,13 @@ describe('createMotorTestSessionBinding - A/B is unrepresentable', () => {
     const clientB = makeClient();
     // Structurally indistinguishable: both fresh clients are at epoch 0.
     expect(clientA.getEpoch()).toBe(clientB.getEpoch());
-    expect({physicalGeneration: 3, mspEpoch: clientA.getEpoch()}).toEqual({
+    expect({ physicalGeneration: 3, mspEpoch: clientA.getEpoch() }).toEqual({
       physicalGeneration: 3,
       mspEpoch: clientB.getEpoch(),
     });
     expect(clientA).not.toBe(clientB);
 
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
     const attempt = await registry.acquireBarrier(
       binding.telemetrySession,
       clientB,
@@ -204,10 +208,27 @@ describe('createMotorTestSessionBinding - A/B is unrepresentable', () => {
 });
 
 describe('createMotorTestSessionBinding - lifetime', () => {
+  it('refuses beginSession while the same client is in a configuration transaction', async () => {
+    const registry = new MotorTestTelemetryRegistry();
+    const client = makeClient();
+    const binding = createMotorTestSessionBinding(client, { registry });
+    const operator = binding.operatorPort(portInput(), () => 0);
+    const transaction = acquireMotorConfigurationInterlock(client);
+
+    await expect(operator.beginSession()).rejects.toBeInstanceOf(
+      MotorConfigurationTransactionInProgressError,
+    );
+    expect(operator.getSnapshot().phase).toBe('IDLE');
+    expect(operator.getSnapshot().setupStep).toBe('NOT_STARTED');
+
+    transaction.release();
+    binding.close();
+  });
+
   it('close() unregisters schedulers, closes the anchor and is idempotent', async () => {
     const registry = new MotorTestTelemetryRegistry();
     const clientA = makeClient();
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
     binding.createScheduler();
     binding.createScheduler();
     expect(registry.registeredSchedulerCount(binding.telemetrySession)).toBe(2);
@@ -234,7 +255,7 @@ describe('createMotorTestSessionBinding - lifetime', () => {
   it('releases every pause token held when the anchor closes', async () => {
     const registry = new MotorTestTelemetryRegistry();
     const clientA = makeClient();
-    const binding = createMotorTestSessionBinding(clientA, {registry});
+    const binding = createMotorTestSessionBinding(clientA, { registry });
     const scheduler = binding.createScheduler();
 
     const held = await registry.acquireBarrier(
@@ -254,7 +275,7 @@ describe('createMotorTestSessionBinding - lifetime', () => {
   it('a closed binding cannot be revived by a newer client', async () => {
     const registry = new MotorTestTelemetryRegistry();
     const oldClient = makeClient();
-    const binding = createMotorTestSessionBinding(oldClient, {registry});
+    const binding = createMotorTestSessionBinding(oldClient, { registry });
     binding.close();
 
     // Reconnect: same textual session id, brand-new client.
@@ -269,7 +290,7 @@ describe('createMotorTestSessionBinding - lifetime', () => {
     expect(revived.kind).toBe('NOT_ACQUIRED');
 
     // The replacement gets its own capability, and it works.
-    const replacement = createMotorTestSessionBinding(newClient, {registry});
+    const replacement = createMotorTestSessionBinding(newClient, { registry });
     expect(replacement.telemetrySession).not.toBe(binding.telemetrySession);
     const held = await registry.acquireBarrier(
       replacement.telemetrySession,
@@ -286,7 +307,7 @@ describe('createMotorTestSessionBinding - lifetime', () => {
     const registry = new MotorTestTelemetryRegistry();
     const binding: MotorTestSessionCapability = createMotorTestSessionBinding(
       makeClient(),
-      {registry},
+      { registry },
     );
     binding.close();
     binding.createScheduler();
@@ -304,7 +325,7 @@ describe('B-2E-1 - single authoritative controller', () => {
 
   it('constructs exactly one controller and reuses it', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
 
     const first = binding.operatorPort(...portArgs());
     const second = binding.operatorPort(...portArgs());
@@ -317,7 +338,7 @@ describe('B-2E-1 - single authoritative controller', () => {
 
   it('the lifecycle port shares the operator port controller and authority', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     const operator = binding.operatorPort(...portArgs());
     const lifecycle = binding.lifecycleStopPort();
     expect(lifecycle).toBeDefined();
@@ -327,7 +348,7 @@ describe('B-2E-1 - single authoritative controller', () => {
 
   it('a lifecycle listener can never bring a controller into existence', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     // No operator port taken yet -> no controller -> no stop port.
     expect(binding.lifecycleStopPort()).toBeUndefined();
     // Asking again still does not create one.
@@ -339,7 +360,7 @@ describe('B-2E-1 - single authoritative controller', () => {
     const registry = new MotorTestTelemetryRegistry();
     const transport = new FakeMspTransport();
     const client = new MspClient(transport, 'operator-no-write');
-    const binding = createMotorTestSessionBinding(client, {registry});
+    const binding = createMotorTestSessionBinding(client, { registry });
 
     const operator = binding.operatorPort(...portArgs());
     operator.getSnapshot();
@@ -355,7 +376,7 @@ describe('B-2E-1 - single authoritative controller', () => {
 
   it('beginSession is the only member that can initiate', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     const operator = binding.operatorPort(...portArgs());
     expect(Object.keys(operator).sort()).toEqual([
       'beginSession',
@@ -380,7 +401,7 @@ describe('B-2E-1 - single authoritative controller', () => {
 
   it('keeps the lifecycle stop port structurally incapable of activating a motor', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     binding.operatorPort(...portArgs());
     const lifecycle = binding.lifecycleStopPort();
     // Phase 2H: pulseMotor is deliberately ABSENT here. A navigation,
@@ -394,7 +415,7 @@ describe('B-2E-1 - single authoritative controller', () => {
 
   it('the lifecycle facade cannot initialize, close or reach internals', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     binding.operatorPort(...portArgs());
     const lifecycle = binding.lifecycleStopPort();
     expect(Object.keys(lifecycle ?? {}).sort()).toEqual([
@@ -419,7 +440,7 @@ describe('B-2E-1 - single authoritative controller', () => {
 
   it('closing the binding also closes the controller it owned', async () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     const operator = binding.operatorPort(...portArgs());
     binding.close();
     // Phase 2F made teardown genuinely asynchronous (it awaits the
@@ -435,11 +456,11 @@ describe('B-2E-1 - single authoritative controller', () => {
 
   it('a replacement session gets a different controller entirely', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const first = createMotorTestSessionBinding(makeClient(), {registry});
+    const first = createMotorTestSessionBinding(makeClient(), { registry });
     const firstSnapshot = first.operatorPort(...portArgs()).getSnapshot();
     first.close();
 
-    const second = createMotorTestSessionBinding(makeClient(), {registry});
+    const second = createMotorTestSessionBinding(makeClient(), { registry });
     const secondSnapshot = second.operatorPort(...portArgs()).getSnapshot();
     expect(secondSnapshot).not.toBe(firstSnapshot);
     expect(second.telemetrySession).not.toBe(first.telemetrySession);
@@ -457,7 +478,7 @@ describe('B-2E-1 - single authoritative controller', () => {
     // contract is proven against real traffic in motorTestController.test.ts.
     // What matters here is the BINDING-level guarantee.
     const registry = new MotorTestTelemetryRegistry();
-    const first = createMotorTestSessionBinding(makeClient(), {registry});
+    const first = createMotorTestSessionBinding(makeClient(), { registry });
     const firstOperator = first.operatorPort(...portArgs());
     await firstOperator.endSession();
 
@@ -468,13 +489,13 @@ describe('B-2E-1 - single authoritative controller', () => {
     expect(await firstOperator.beginSession()).toBe(closed);
     first.close();
 
-    const second = createMotorTestSessionBinding(makeClient(), {registry});
+    const second = createMotorTestSessionBinding(makeClient(), { registry });
     const secondOperator = second.operatorPort(...portArgs());
     const fresh = secondOperator.getSnapshot();
 
     // Not one field carries over.
     expect(fresh.phase).toBe('IDLE');
-    expect(fresh.outcome).toEqual({kind: 'PENDING'});
+    expect(fresh.outcome).toEqual({ kind: 'PENDING' });
     expect(fresh.setupStep).toBe('NOT_STARTED');
     expect(fresh.machine).toBeUndefined();
     expect(fresh.motorScope).toBeUndefined();
@@ -509,7 +530,7 @@ describe('production binding fails closed without a fresh disarmed observation',
   it('refuses activation through the real operator port and writes nothing', async () => {
     const registry = new MotorTestTelemetryRegistry();
     const client = makeClient();
-    const binding = createMotorTestSessionBinding(client, {registry});
+    const binding = createMotorTestSessionBinding(client, { registry });
     const operator = binding.operatorPort(...portArgs());
 
     // Before any session work: already blocked, and blocked for THIS
@@ -540,7 +561,7 @@ describe('production binding fails closed without a fresh disarmed observation',
 
   it('keeps the reason present on the real binding no matter how the port is taken', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     // Both facades read the SAME controller, so both must agree.
     const operator = binding.operatorPort(...portArgs());
     const lifecycle = binding.lifecycleStopPort();
@@ -558,7 +579,7 @@ describe('production binding fails closed without a fresh disarmed observation',
 
   it('exposes no way through the binding to mark the evidence proven', () => {
     const registry = new MotorTestTelemetryRegistry();
-    const binding = createMotorTestSessionBinding(makeClient(), {registry});
+    const binding = createMotorTestSessionBinding(makeClient(), { registry });
     const operator = binding.operatorPort(...portArgs());
 
     const surface = operator as unknown as Record<string, unknown>;

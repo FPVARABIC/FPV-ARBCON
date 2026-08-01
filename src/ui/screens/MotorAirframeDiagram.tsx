@@ -32,6 +32,15 @@ export interface MotorAirframeDiagramProps {
   readonly onSelectSlot: (slot: number) => void;
 }
 
+/**
+ * The first integrated workspace used the full 390 px reference width for
+ * the airframe. On a tablet that made a supporting reference dominate the
+ * whole Motors workflow. Keep the diagram deliberately compact: 195 is
+ * exactly half of the former 390 px cap, while the selected-output panel
+ * below remains the readable source for the long position/direction text.
+ */
+export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = 195;
+
 // Emission order is explicit and mirrors the accepted identity test: right
 // first, left second. The row itself has an explicit RTL direction, so right
 // remains on the physical right regardless of the host device's locale.
@@ -236,7 +245,7 @@ export function MotorAirframeDiagram({
         <Text style={styles.frontText}>{t('motorsScreen.diagramFront')}</Text>
       </View>
 
-      <View style={styles.stage}>
+      <View style={styles.stage} testID="motors-airframe-stage">
         <View style={[styles.arm, styles.armForward]} />
         <View style={[styles.arm, styles.armBackward]} />
         <View style={styles.bodyShadow} />
@@ -279,7 +288,7 @@ export function MotorAirframeDiagram({
 const styles = StyleSheet.create({
   root: { gap: spacing.sm },
   frontMarker: { alignItems: 'center', gap: 2 },
-  frontArrow: { fontSize: 20, lineHeight: 22, color: colors.accent },
+  frontArrow: { fontSize: 15, lineHeight: 17, color: colors.accent },
   frontText: {
     ...typography.caption,
     color: colors.accent,
@@ -288,7 +297,7 @@ const styles = StyleSheet.create({
   },
   stage: {
     width: '100%',
-    maxWidth: 390,
+    maxWidth: MOTOR_AIRFRAME_STAGE_MAX_WIDTH,
     aspectRatio: 1.12,
     alignSelf: 'center',
     position: 'relative',
@@ -296,15 +305,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#091D26',
     borderColor: colors.borderSoft,
     borderWidth: 1,
-    borderRadius: radii.lg,
+    borderRadius: radii.md,
   },
   arm: {
     position: 'absolute',
-    left: '14%',
+    left: '12%',
     top: '48%',
-    width: '72%',
-    height: 12,
-    marginTop: -6,
+    width: '76%',
+    height: 7,
+    marginTop: -3.5,
     borderRadius: radii.pill,
     backgroundColor: '#2B5864',
     borderColor: colors.border,
@@ -314,81 +323,83 @@ const styles = StyleSheet.create({
   armBackward: { transform: [{ rotate: '-38deg' }] },
   bodyShadow: {
     position: 'absolute',
-    left: '39%',
-    top: '35%',
-    width: '22%',
-    height: '32%',
-    borderRadius: radii.lg,
+    left: '40%',
+    top: '36%',
+    width: '20%',
+    height: '29%',
+    borderRadius: radii.md,
     backgroundColor: colors.shadow,
     opacity: 0.5,
     transform: [{ translateY: 5 }],
   },
   body: {
     position: 'absolute',
-    left: '39%',
-    top: '34%',
-    width: '22%',
-    height: '32%',
+    left: '40%',
+    top: '35%',
+    width: '20%',
+    height: '29%',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radii.lg,
+    borderRadius: radii.md,
     borderColor: colors.accent,
     borderWidth: 1,
     backgroundColor: colors.surfaceRaised,
   },
   bodyNose: {
     position: 'absolute',
-    top: -10,
+    top: -7,
     width: 0,
     height: 0,
-    borderLeftWidth: 12,
-    borderRightWidth: 12,
-    borderBottomWidth: 18,
+    borderLeftWidth: 8,
+    borderRightWidth: 8,
+    borderBottomWidth: 12,
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
     borderBottomColor: colors.accent,
   },
   bodyCore: {
-    width: 22,
-    height: 34,
+    width: 13,
+    height: 21,
     borderRadius: radii.sm,
     backgroundColor: colors.backgroundRaised,
     borderColor: colors.border,
     borderWidth: 1,
   },
   bodyLabel: {
-    ...typography.eyebrow,
+    ...typography.caption,
     position: 'absolute',
-    bottom: spacing.xs,
+    bottom: 1,
+    fontSize: 8,
+    lineHeight: 9,
     color: colors.textMuted,
     writingDirection: 'ltr',
   },
   motorRow: {
     position: 'absolute',
-    left: spacing.sm,
-    right: spacing.sm,
+    left: spacing.xs,
+    right: spacing.xs,
     flexDirection: 'row',
     direction: 'rtl',
     justifyContent: 'space-between',
   },
-  frontRow: { top: spacing.sm },
-  rearRow: { bottom: spacing.sm },
+  frontRow: { top: spacing.xs },
+  rearRow: { bottom: spacing.xs },
   motorCell: {
-    width: '34%',
-    minWidth: 104,
-    maxWidth: 124,
+    width: '39%',
+    minWidth: 68,
+    maxWidth: 76,
   },
   motorNode: {
     width: '100%',
-    minHeight: 106,
+    minHeight: 66,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: spacing.xs,
+    gap: 1,
     backgroundColor: '#0D2934',
     borderColor: colors.border,
     borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.xs,
+    borderRadius: radii.sm,
+    padding: 2,
   },
   motorNodeSelected: {
     borderColor: colors.accent,
@@ -403,9 +414,9 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   rotor: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     borderColor: colors.textSecondary,
@@ -415,40 +426,42 @@ const styles = StyleSheet.create({
   rotorLive: { borderColor: colors.warning, backgroundColor: '#3B2C12' },
   blade: {
     position: 'absolute',
-    width: 45,
-    height: 7,
+    width: 26,
+    height: 4,
     borderRadius: radii.pill,
     backgroundColor: colors.textMuted,
   },
   bladeA: { transform: [{ rotate: '32deg' }] },
   bladeB: { transform: [{ rotate: '-32deg' }] },
   hub: {
-    width: 13,
-    height: 13,
-    borderRadius: 7,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: colors.textPrimary,
     borderColor: colors.background,
     borderWidth: 2,
   },
   directionBadge: {
     position: 'absolute',
-    right: -9,
-    bottom: -7,
-    width: 26,
-    height: 26,
+    right: -7,
+    bottom: -5,
+    width: 19,
+    height: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 13,
+    borderRadius: 10,
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
     borderWidth: 1,
   },
   directionBadgeLive: { borderColor: colors.warning },
-  directionSymbol: { fontSize: 18, lineHeight: 21, color: colors.accent },
+  directionSymbol: { fontSize: 13, lineHeight: 15, color: colors.accent },
   nodeCopy: { alignItems: 'center', gap: 1 },
   slotLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   slot: {
     ...typography.mono,
+    fontSize: 11,
+    lineHeight: 13,
     color: colors.textPrimary,
     fontWeight: '800',
     writingDirection: 'ltr',
@@ -457,6 +470,8 @@ const styles = StyleSheet.create({
   verifiedMark: { color: colors.success, fontWeight: '900' },
   position: {
     ...typography.caption,
+    fontSize: 9,
+    lineHeight: 11,
     color: colors.textSecondary,
     textAlign: 'center',
     writingDirection: 'rtl',

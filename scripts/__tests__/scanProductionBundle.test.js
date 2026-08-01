@@ -52,7 +52,10 @@ describe('scanner - importing it does not build anything', () => {
     // would have shelled out to Metro before this test ever ran.
     expect(typeof analyzeBundle).toBe('function');
     expect(typeof analyzeEngineBoundaries).toBe('function');
-    expect(POSITIVE_CONTROLS).toEqual(['diagnostics-section', 'fc-tools-section']);
+    expect(POSITIVE_CONTROLS).toEqual([
+      'diagnostics-section',
+      'fc-tools-section',
+    ]);
   });
 
   it('counts non-overlapping occurrences', () => {
@@ -87,7 +90,11 @@ describe('scanner - the debug-only tokens are still strictly forbidden', () => {
   });
 
   it('reports ALL forbidden tokens, not just the first', () => {
-    const injected = ['captureAppLog', 'UsbBoundedProcessReader', 'debug-clear-log'];
+    const injected = [
+      'captureAppLog',
+      'UsbBoundedProcessReader',
+      'debug-clear-log',
+    ];
     const result = analyzeBundle(`${cleanBundle()};${injected.join(';')};`);
     expect(result.ok).toBe(false);
     for (const token of injected) {
@@ -96,7 +103,9 @@ describe('scanner - the debug-only tokens are still strictly forbidden', () => {
   });
 
   it('records a count and a byte offset for each match', () => {
-    const result = analyzeBundle(`${cleanBundle()};captureAppLog;captureAppLog;`);
+    const result = analyzeBundle(
+      `${cleanBundle()};captureAppLog;captureAppLog;`,
+    );
     const entry = result.forbidden.find(item => item.token === 'captureAppLog');
     expect(entry).toBeDefined();
     expect(entry.count).toBe(2);
@@ -104,7 +113,11 @@ describe('scanner - the debug-only tokens are still strictly forbidden', () => {
   });
 
   it('still forbids the removed development-only motor entry', () => {
-    for (const token of ['dev-open-motor-test', 'DevBenchScreen', 'DevBenchEntry']) {
+    for (const token of [
+      'dev-open-motor-test',
+      'DevBenchScreen',
+      'DevBenchEntry',
+    ]) {
       expect(FORBIDDEN_TOKENS).toContain(token);
       expect(analyzeBundle(`${cleanBundle()};${token};`).ok).toBe(false);
     }
@@ -146,7 +159,9 @@ describe('scanner - the Arabic safety copy must be in the shipped bytes', () => 
       ';',
       REQUIRED_ENGINE_TOKENS.join(';'),
       ';',
-      REQUIRED_ARABIC_STRINGS.map(text => `"${escapeNonAscii(text)}"`).join(';'),
+      REQUIRED_ARABIC_STRINGS.map(text => `"${escapeNonAscii(text)}"`).join(
+        ';',
+      ),
       ';',
     ].join('');
     const result = analyzeBundle(escaped);
@@ -208,12 +223,43 @@ describe('scanner - the engine boundary is the remaining structural containment'
   });
 
   it('fails when a second module imports the vector builders or the command id', () => {
-    for (const token of ['buildSingleMotorVector', 'buildAllStopVector', 'MSP_SET_MOTOR']) {
+    for (const token of [
+      'buildSingleMotorVector',
+      'buildAllStopVector',
+      'MSP_SET_MOTOR',
+    ]) {
       const sources = readSourceTree();
       sources['src/rogue.ts'] = `import {${token}} from './somewhere';`;
       const result = analyzeEngineBoundaries(sources);
       expect(result.ok).toBe(false);
       expect(result.violations.map(entry => entry.token)).toContain(token);
+    }
+  });
+
+  it('confines persistent motor-setting writes to MotorConfigurationController', () => {
+    for (const token of [
+      'encodeChangedMotorConfiguration',
+      'MSP_EEPROM_WRITE',
+      'MSP_SET_FEATURE_CONFIG',
+      'MSP_SET_MIXER_CONFIG',
+      'MSP_SET_ADVANCED_CONFIG',
+      'MSP_SET_MOTOR_3D_CONFIG',
+      'MSP_SET_MOTOR_CONFIG',
+      'encodeMotorOutputOrder',
+      'encodeDshotEscDirection',
+      'MSP2_SET_MOTOR_OUTPUT_REORDERING',
+      'MSP2_SEND_DSHOT_COMMAND',
+    ]) {
+      const sources = readSourceTree();
+      sources[
+        'src/ui/screens/RogueSettings.tsx'
+      ] = `import {${token}} from './somewhere';`;
+      const result = analyzeEngineBoundaries(sources);
+      expect(result.ok).toBe(false);
+      expect(result.violations).toContainEqual({
+        token,
+        importer: 'src/ui/screens/RogueSettings.tsx',
+      });
     }
   });
 
@@ -245,9 +291,20 @@ describe('scanner - the engine boundary is the remaining structural containment'
 
   it('names every boundary it enforces, so the set cannot shrink unnoticed', () => {
     expect(ENGINE_BOUNDARIES.map(entry => entry.token).sort()).toEqual([
+      'MSP2_SEND_DSHOT_COMMAND',
+      'MSP2_SET_MOTOR_OUTPUT_REORDERING',
+      'MSP_EEPROM_WRITE',
+      'MSP_SET_ADVANCED_CONFIG',
+      'MSP_SET_FEATURE_CONFIG',
+      'MSP_SET_MIXER_CONFIG',
       'MSP_SET_MOTOR',
+      'MSP_SET_MOTOR_3D_CONFIG',
+      'MSP_SET_MOTOR_CONFIG',
       'buildAllStopVector',
       'buildSingleMotorVector',
+      'encodeChangedMotorConfiguration',
+      'encodeDshotEscDirection',
+      'encodeMotorOutputOrder',
       'encodeSetMotorPayload',
     ]);
   });
@@ -258,7 +315,7 @@ describe('scanner - build failure is never a pass', () => {
     // main() returns 2 for a generation failure and 1 for a scan failure,
     // so a broken build can never be read as success. analyzeBundle is
     // never reached when generation throws.
-    const {main} = require('../scan-production-bundle');
+    const { main } = require('../scan-production-bundle');
     expect(typeof main).toBe('function');
     expect(analyzeBundle('').ok).toBe(false);
   });

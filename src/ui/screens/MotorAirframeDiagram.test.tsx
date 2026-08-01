@@ -2,11 +2,13 @@ import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { StyleSheet } from 'react-native';
 
 import '../../i18n';
 import i18n from '../../i18n';
 import { MOTOR_TEST_EXPECTED_CONFIGURATION } from '../../core/state/motorVerificationModel';
 import {
+  MOTOR_AIRFRAME_STAGE_MAX_WIDTH,
   MotorAirframeDiagram,
   orderAirframeEntries,
 } from './MotorAirframeDiagram';
@@ -71,6 +73,27 @@ describe('MotorAirframeDiagram', () => {
     expect(() => orderAirframeEntries(ENTRIES.slice(0, 3))).toThrow(
       'Missing motor reference',
     );
+  });
+
+  it('caps the airframe stage at exactly half of the former 390 px width', () => {
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      tree = ReactTestRenderer.create(
+        <MotorAirframeDiagram
+          entries={ENTRIES}
+          selectedSlot={1}
+          verifiedSlots={[]}
+          onSelectSlot={() => undefined}
+        />,
+      );
+    });
+
+    expect(MOTOR_AIRFRAME_STAGE_MAX_WIDTH).toBe(195);
+    const stage = tree.root.find(
+      node => node.props?.testID === 'motors-airframe-stage',
+    );
+    expect(StyleSheet.flatten(stage.props.style).maxWidth).toBe(195);
+    act(() => tree.unmount());
   });
 
   it('remains a geometry and selection layer with no command path', () => {

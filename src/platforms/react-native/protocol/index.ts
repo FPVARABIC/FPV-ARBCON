@@ -1,4 +1,4 @@
-export {RNMspTransport} from './RNMspTransport';
+export { RNMspTransport } from './RNMspTransport';
 export {
   MspSessionCoordinator,
   mspSessionCoordinator,
@@ -19,17 +19,76 @@ export type {
   SetupUiSessionKey,
   AuxTelemetryChannelState,
 } from './MspSessionCoordinator';
-export {useMspOwnershipState, useMspIdentificationState, useMspRecoveryState} from './useMspSessionState';
-export {useTelemetryValue} from './useTelemetryValue';
-export {useAuxTelemetryChannelState, useBatteryLatchedValue} from './useAuxTelemetry';
-export {SetupAppStateTelemetryOwner, setupAppStateTelemetryOwner} from './setupAppStateTelemetryOwner';
-export type {SetupAppStatePhase, SetupAppStateTelemetryOwnerOptions} from './setupAppStateTelemetryOwner';
-export {FcToolsController, fcToolsController} from './FcToolsController';
-export type {FcToolPhase, FcToolOutcome, FcToolOutcomeOrigin, FcToolPublication, FcToolsControllerOptions} from './FcToolsController';
-export {useFcToolPhase, useFcToolPublication, useFcToolArmedState} from './useFcTools';
-export {useSetupAppStatePhase} from './useSetupAppState';
-export {SetupUiSessionStore, setupUiSessionStore} from './SetupUiSessionStore';
-export type {SetupUiSessionState} from './SetupUiSessionStore';
+export {
+  useMspOwnershipState,
+  useMspIdentificationState,
+  useMspRecoveryState,
+} from './useMspSessionState';
+export { useTelemetryValue } from './useTelemetryValue';
+export {
+  useAuxTelemetryChannelState,
+  useBatteryLatchedValue,
+} from './useAuxTelemetry';
+export {
+  SetupAppStateTelemetryOwner,
+  setupAppStateTelemetryOwner,
+} from './setupAppStateTelemetryOwner';
+export type {
+  SetupAppStatePhase,
+  SetupAppStateTelemetryOwnerOptions,
+} from './setupAppStateTelemetryOwner';
+export { FcToolsController, fcToolsController } from './FcToolsController';
+export type {
+  FcToolPhase,
+  FcToolOutcome,
+  FcToolOutcomeOrigin,
+  FcToolPublication,
+  FcToolsControllerOptions,
+} from './FcToolsController';
+export {
+  useFcToolPhase,
+  useFcToolPublication,
+  useFcToolArmedState,
+} from './useFcTools';
+export {
+  MotorConfigurationController,
+  motorConfigurationController,
+} from './MotorConfigurationController';
+export {
+  acquireMotorDiagnosticsTelemetry,
+  getMotorDiagnosticsAvailability,
+  subscribeMotorDiagnosticsAvailability,
+  classifyMotorDiagnosticsFailure,
+  MOTOR_OUTPUTS_TELEMETRY_POLL_ID,
+  MOTOR_ESC_TELEMETRY_POLL_ID,
+} from './motorDiagnosticsTelemetry';
+export type {
+  MotorDiagnosticsAvailability,
+  MotorDiagnosticsChannelState,
+} from './motorDiagnosticsTelemetry';
+export {
+  acquireMotorConfigurationInterlock,
+  isMotorConfigurationTransactionActive,
+  MotorConfigurationTransactionInProgressError,
+} from './motorConfigurationInterlock';
+export type { MotorConfigurationInterlockLease } from './motorConfigurationInterlock';
+export type {
+  MotorConfigurationBlockReason,
+  MotorConfigurationLoadOutcome,
+  MotorConfigurationSaveOutcome,
+  MotorOutputOrderLoadOutcome,
+  MotorOutputOrderSaveOutcome,
+  EscDirectionOutcome,
+  MotorConfigurationControllerOptions,
+  MotorConfigurationSessionCoordinator,
+  MotorConfigurationAppStateOwner,
+} from './MotorConfigurationController';
+export { useSetupAppStatePhase } from './useSetupAppState';
+export {
+  SetupUiSessionStore,
+  setupUiSessionStore,
+} from './SetupUiSessionStore';
+export type { SetupUiSessionState } from './SetupUiSessionStore';
 /* Phase 2E/2H - the ONE official motor-test binding. Only the sealed
  * facades are exported: no controller class, no client, no lease, no
  * authority token and no transport ever leaves this module. */

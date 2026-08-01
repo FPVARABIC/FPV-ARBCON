@@ -90,6 +90,10 @@ import {
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
 import { MotorAirframeDiagram } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
+import { MotorConfigurationPanel } from './MotorConfigurationPanel';
+import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
+import { MotorOutputReorderPanel } from './MotorOutputReorderPanel';
+import { EscDirectionPanel } from './EscDirectionPanel';
 
 // Kept as public exports for the payload-identity and screen contract tests.
 // Their implementation lives with the diagram so slot geometry has one
@@ -305,6 +309,10 @@ export interface MotorsScreenViewProps {
    * the same system inset a second time.
    */
   readonly bottomInset?: number;
+  /** Canonical session id for the independent settings transaction. The
+   * presentation-only tests omit it, so no configuration I/O can start from
+   * an unbound view. */
+  readonly sessionId?: string;
 }
 
 interface Acknowledgements {
@@ -328,6 +336,7 @@ export function MotorsScreenView({
   onRequestLeave,
   bottomInset,
   bringUpFailure,
+  sessionId,
 }: MotorsScreenViewProps): React.JSX.Element {
   const { t } = useTranslation();
   const effectiveBottomInset = bottomInset ?? 0;
@@ -600,6 +609,14 @@ export function MotorsScreenView({
       });
   }, [acknowledgements]);
 
+  const handleEndSessionForConfiguration = useCallback(async () => {
+    const port = operatorRef.current;
+    if (port === undefined) {
+      throw new Error('Motor-test operator is unavailable.');
+    }
+    await port.endSession();
+  }, []);
+
   const handleLongPress = useCallback(() => {
     if (holdActivatedRef.current) {
       return;
@@ -713,9 +730,7 @@ export function MotorsScreenView({
       onLongPress={handleLongPress}
       delayLongPress={MOTOR_TEST_LONG_PRESS_DELAY_MILLIS}
       onPressOut={handlePressOut}
-      onResponderTerminate={(_event: GestureResponderEvent) =>
-        handlePressOut()
-      }
+      onResponderTerminate={(_event: GestureResponderEvent) => handlePressOut()}
       disabled={!canActivate}
       accessibilityRole="button"
       accessibilityState={{ disabled: !canActivate }}
@@ -805,10 +820,7 @@ export function MotorsScreenView({
 
   return (
     <View
-      style={[
-        styles.root,
-        { paddingBottom: effectiveBottomInset },
-      ]}
+      style={[styles.root, { paddingBottom: effectiveBottomInset }]}
       testID="motors-screen"
     >
       {/* Scrollable body. The emergency Stop control below is deliberately
@@ -897,7 +909,9 @@ export function MotorsScreenView({
             operator-facing; the full internal state stays collapsed. */}
         <View style={styles.statusCard} testID="motors-status">
           <View style={styles.statusRow}>
-            <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+            <View
+              style={[styles.statusDot, { backgroundColor: statusColor }]}
+            />
             <View style={styles.flexOne}>
               <Text style={styles.statusHeading}>
                 {t('motorsScreen.statusHeading')}
@@ -1139,9 +1153,18 @@ export function MotorsScreenView({
             <Text style={styles.referenceNotice} testID="motors-diagram-notice">
               {t('motorsScreen.diagramNotice')}
             </Text>
+            <Text
+              style={styles.caption}
+              testID="motors-diagram-direction-source"
+            >
+              {t('motorsScreen.diagramDirectionSource')}
+            </Text>
           </View>
 
-          <View style={styles.selectedMotorPanel} testID="motors-selected-summary">
+          <View
+            style={styles.selectedMotorPanel}
+            testID="motors-selected-summary"
+          >
             <View style={styles.selectedMotorBadge}>
               <Text style={styles.selectedMotorSlot}>{`M${selectedSlot}`}</Text>
             </View>
@@ -1169,32 +1192,6 @@ export function MotorsScreenView({
           </View>
 
           {holdControl}
-
-          <View style={styles.directionNotice}>
-            <View style={styles.directionIcon}>
-              <Text style={styles.directionIconText}>↻</Text>
-            </View>
-            <View style={styles.flexOne}>
-              <Text style={styles.miniHeading}>
-                {t('motorsScreen.directionFeatureHeading')}
-              </Text>
-              <Text
-                style={styles.caption}
-                testID="motors-direction-reversal-support"
-              >
-                {t('motorsScreen.directionReversalUnsupported')}
-              </Text>
-              <Text style={styles.caption}>
-                {t('motorsScreen.directionFeatureState')}
-              </Text>
-              <Text
-                style={styles.caption}
-                testID="motors-diagram-direction-source"
-              >
-                {t('motorsScreen.diagramDirectionSource')}
-              </Text>
-            </View>
-          </View>
         </View>
 
         {/* Phase 2I - the observation wizard. It CANNOT activate anything;
@@ -1219,6 +1216,37 @@ export function MotorsScreenView({
                 snapshot?.stopExecution.attributionResolvedByConfirmation ===
                   true)
             }
+          />
+        ) : null}
+
+        {/* Monitoring follows the complete test/observation flow. It is
+            read-only and uses the canonical scheduler; a held motor-test
+            barrier naturally makes values STALE rather than letting this
+            panel compete with a stop command. */}
+        {sessionId !== undefined ? (
+          <MotorDiagnosticsPanel sessionId={sessionId} />
+        ) : null}
+
+        {/* Persistent configuration is a separate transaction from bench
+            testing. It owns no motor pulse path and is deliberately bound to
+            the canonical session id rather than to the MotorTest operator. */}
+        {sessionId !== undefined ? (
+          <MotorConfigurationPanel sessionId={sessionId} />
+        ) : null}
+
+        {verification.sessionToken !== undefined && sessionId !== undefined ? (
+          <MotorOutputReorderPanel
+            sessionId={sessionId}
+            verification={verification}
+            onEndMotorTestSession={handleEndSessionForConfiguration}
+          />
+        ) : null}
+
+        {verification.sessionToken !== undefined && sessionId !== undefined ? (
+          <EscDirectionPanel
+            sessionId={sessionId}
+            verification={verification}
+            onEndMotorTestSession={handleEndSessionForConfiguration}
           />
         ) : null}
 
@@ -1366,7 +1394,7 @@ const styles = StyleSheet.create({
     ...typography.sectionTitle,
     color: colors.accent,
   },
-  sessionContent: {flex: 1, gap: spacing.sm},
+  sessionContent: { flex: 1, gap: spacing.sm },
   statusCard: {
     gap: spacing.sm,
     backgroundColor: colors.backgroundRaised,
@@ -1375,8 +1403,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: spacing.md,
   },
-  statusRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
-  statusDot: {width: 10, height: 10, borderRadius: 5},
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
+  statusDot: { width: 10, height: 10, borderRadius: 5 },
   statusHeading: {
     ...typography.caption,
     color: colors.textMuted,
@@ -1390,7 +1418,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     padding: spacing.lg,
     shadowColor: colors.shadow,
-    shadowOffset: {width: 0, height: 10},
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.2,
     shadowRadius: 18,
     elevation: 4,
@@ -1414,7 +1442,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     writingDirection: 'rtl',
   },
-  outputSection: {gap: spacing.sm},
+  outputSection: { gap: spacing.sm },
   miniHeading: {
     ...typography.caption,
     color: colors.textPrimary,
@@ -1494,7 +1522,7 @@ const styles = StyleSheet.create({
     // the RTL page instead of being reordered around the digit.
     writingDirection: 'ltr',
   },
-  slotLabelLive: {color: colors.warning},
+  slotLabelLive: { color: colors.warning },
   slotSelected: { ...typography.caption, color: colors.accent },
   airframeSection: {
     gap: spacing.sm,
@@ -1502,7 +1530,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     paddingTop: spacing.lg,
   },
-  airframeHeading: {gap: 2},
+  airframeHeading: { gap: 2 },
   referenceNotice: {
     ...typography.caption,
     color: colors.warning,
@@ -1557,7 +1585,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: colors.surfaceAlt,
   },
-  directionIconText: {fontSize: 22, color: colors.accent},
+  directionIconText: { fontSize: 22, color: colors.accent },
   beginButton: {
     minHeight: MIN_TOUCH_TARGET,
     alignItems: 'center',
@@ -2006,6 +2034,7 @@ function MotorsScreenBinding({
       operator={operator}
       bottomInset={bottomInset}
       bringUpFailure={bringUpFailure}
+      sessionId={sessionKey.sessionId}
     />
   );
 }

@@ -565,7 +565,7 @@ describe('MotorsScreen - state presentation', () => {
 
 describe('MotorsScreen - activation gating', () => {
   it('keeps session setup before one integrated motor workspace', () => {
-    const rendered = render(new FakeOperator(snapshotFor({allowed: true})));
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
     const ids = rendered.tree.root
       .findAll(node => typeof node.props?.testID === 'string')
       .map(node => node.props.testID as string);
@@ -985,7 +985,7 @@ describe('MotorsScreen - expected reference is labelled as expected', () => {
   });
 
   it('uses the airframe itself as a real selector for the exact output slot', () => {
-    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
 
@@ -1370,11 +1370,11 @@ describe('MotorsScreen - the four-motor flow', () => {
 });
 
 /* ================================================================== *
- * DIRECTION REVERSAL - AUDITED, AND STATED HONESTLY
+ * DIRECTION REFERENCE - PHYSICAL CLAIMS REMAIN HONEST
  * ================================================================== */
 
-describe('MotorsScreen - direction reversal', () => {
-  it('offers no reversal control of any kind', () => {
+describe('MotorsScreen - direction handling', () => {
+  it('does not put an unreviewed reversal shortcut in the live hold workspace', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
@@ -1390,14 +1390,10 @@ describe('MotorsScreen - direction reversal', () => {
     rendered.unmount();
   });
 
-  it('states the reversal limitation without advertising another application', () => {
+  it('removes the obsolete unsupported-direction copy', () => {
     const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
-    expect(rendered.query('motors-direction-reversal-support')).toBeDefined();
     const rendering = texts(rendered);
-    expect(rendering).toContain(
-      'عكس اتجاه المحرك غير متاح حاليًا من داخل التطبيق.',
-    );
-    expect(rendering).toContain('أداة إعداد ESC متوافقة');
+    expect(rendering).not.toContain('عكس اتجاه المحرك غير متاح حاليًا');
     expect(rendering).not.toContain('Betaflight');
     rendered.unmount();
   });
