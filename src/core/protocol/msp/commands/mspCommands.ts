@@ -36,6 +36,9 @@ export const MSP_FC_VARIANT = 2;
  */
 export const MSP_FC_VERSION = 3;
 
+/** Build feature identifiers compiled into the connected target. */
+export const MSP_BUILD_INFO = 5;
+
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_PINNED_COMMIT:
  * `#define MSP_BOARD_INFO  4    // out message: Get board information` */
 export const MSP_BOARD_INFO = 4;
@@ -217,6 +220,16 @@ export const MSP_SET_MOTOR_CONFIG = 222;
  * paths remain forbidden from sending it.
  */
 export const MSP_EEPROM_WRITE = 250;
+
+/** Serial receiver provider; byte zero identifies the active provider. */
+export const MSP_RX_CONFIG = 44;
+
+/** Read-only VTX state/table availability used by Ports. */
+export const MSP_VTX_CONFIG = 88;
+
+/** Betaflight's versioned MSP v2 serial-port read and write commands. */
+export const MSP2_COMMON_SERIAL_CONFIG = 0x1009;
+export const MSP2_COMMON_SET_SERIAL_CONFIG = 0x100a;
 
 /**
  * THE ONLY MOTOR *WRITE* COMMAND IN THIS REPOSITORY, AND A CONSTANT ONLY.

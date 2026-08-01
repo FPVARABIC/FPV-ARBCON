@@ -53,7 +53,7 @@ describe('BottomTabBar - order and labels', () => {
     // Emission order IS right-to-left order: the first child of a
     // `flexDirection: 'row'` container sits at the right edge under RTL.
     expect(firstIndex('SETUP')).toBeLessThan(firstIndex('MOTORS'));
-    expect(firstIndex('PORTS')).toBe(-1);
+    expect(firstIndex('MOTORS')).toBeLessThan(firstIndex('PORTS'));
     expect(firstIndex('RECEIVER')).toBe(-1);
     expect(firstIndex('PID')).toBe(-1);
     rendered.unmount();
@@ -71,7 +71,7 @@ describe('BottomTabBar - order and labels', () => {
       );
     expect(texts).toContain(i18n.t('tabs.setup'));
     expect(texts).toContain(i18n.t('tabs.motors'));
-    expect(texts).not.toContain(i18n.t('tabs.ports'));
+    expect(texts).toContain(i18n.t('tabs.ports'));
     expect(texts).not.toContain(i18n.t('tabs.receiver'));
     expect(texts).not.toContain(i18n.t('tabs.pid'));
     // A raw key rendered on screen is the exact defect this whole pass
@@ -108,7 +108,7 @@ describe('BottomTabBar - roadmap tabs', () => {
         }),
       ).toHaveLength(0);
     }
-    expect(isTabSelectable('PORTS')).toBe(false);
+    expect(isTabSelectable('PORTS')).toBe(true);
     expect(isTabSelectable('RECEIVER')).toBe(false);
     expect(isTabSelectable('PID')).toBe(false);
     expect(pressed).toEqual([]);
@@ -211,14 +211,19 @@ describe('MainTabsScreen - the shell', () => {
     shell.unmount();
   });
 
-  it('does not expose or render an unfinished destination', () => {
+  it('mounts the integrated Ports destination only after it is selected', () => {
     const shell = renderShell();
     expect(
-      shell.renderer.root.findAllByProps({ testID: 'main-tab-PORTS' }),
-    ).toHaveLength(0);
+      shell.renderer.root.findAllByProps({ testID: 'main-tab-PORTS' }).length,
+    ).toBeGreaterThan(0);
     expect(
       shell.renderer.root.findAllByProps({ testID: 'main-tab-panel-PORTS' }),
     ).toHaveLength(0);
+    shell.press('main-tab-PORTS');
+    expect(
+      shell.renderer.root.findAllByProps({ testID: 'main-tab-panel-PORTS' })
+        .length,
+    ).toBeGreaterThan(0);
     shell.unmount();
   });
 

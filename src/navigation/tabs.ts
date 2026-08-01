@@ -33,11 +33,31 @@ export interface MainTabDefinition {
  * this order is the product order, not a mirrored one.
  */
 export const MAIN_TABS: readonly MainTabDefinition[] = Object.freeze([
-  Object.freeze({key: 'SETUP' as const, labelKey: 'tabs.setup', implemented: true}),
-  Object.freeze({key: 'MOTORS' as const, labelKey: 'tabs.motors', implemented: true}),
-  Object.freeze({key: 'PORTS' as const, labelKey: 'tabs.ports', implemented: false}),
-  Object.freeze({key: 'RECEIVER' as const, labelKey: 'tabs.receiver', implemented: false}),
-  Object.freeze({key: 'PID' as const, labelKey: 'tabs.pid', implemented: false}),
+  Object.freeze({
+    key: 'SETUP' as const,
+    labelKey: 'tabs.setup',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'MOTORS' as const,
+    labelKey: 'tabs.motors',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'PORTS' as const,
+    labelKey: 'tabs.ports',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'RECEIVER' as const,
+    labelKey: 'tabs.receiver',
+    implemented: false,
+  }),
+  Object.freeze({
+    key: 'PID' as const,
+    labelKey: 'tabs.pid',
+    implemented: false,
+  }),
 ]);
 
 /** The tab a freshly-connected session lands on. */
