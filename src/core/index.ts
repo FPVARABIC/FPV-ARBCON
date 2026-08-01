@@ -208,6 +208,16 @@ export type {
   SetupNoticeScope,
 } from './state';
 export { assembleMotorStaticFacts, bindMotorStaticFacts } from './state';
+export {
+  deriveMotorDiagnosticsSupport,
+  hasEscTelemetrySource,
+  visibleMotorTelemetryMetrics,
+} from './state';
+export type {
+  MotorEscTelemetrySource,
+  MotorDiagnosticsSupport,
+  MotorTelemetryVisibleMetrics,
+} from './state';
 export type {
   MotorStaticFacts,
   MotorStaticFactsInput,

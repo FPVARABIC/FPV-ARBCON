@@ -8,7 +8,11 @@ export interface MspMotorTelemetryEntry {
   /** Raw hundredths of a percent: 10000 means 100.00%. */
   readonly invalidPercentRaw: number;
   readonly temperatureCelsius: number;
+  /** Raw u16 field. Centivolts for FEATURE_ESC_SENSOR; whole volts for the
+   * reviewed DShot-only firmware branch. Normalize only after source proof. */
   readonly voltageCentivolts: number;
+  /** Raw u16 field. Centiamps for FEATURE_ESC_SENSOR; whole amps for the
+   * reviewed DShot-only firmware branch. Normalize only after source proof. */
   readonly currentCentiamps: number;
   readonly consumptionMah: number;
 }
@@ -19,9 +23,12 @@ export interface MspMotorTelemetry {
 }
 
 /**
- * Decodes API-1.47 MSP_MOTOR_TELEMETRY (139):
- * u8 count, then count * (u32 RPM, u16 invalid%, u8 °C, u16 cV, u16 cA,
- * u16 mAh). A count above the firmware's eight output slots is malformed,
+ * Decodes the reviewed Betaflight API-1.47/API-1.48
+ * MSP_MOTOR_TELEMETRY (139) layout:
+ * u8 count, then count * (u32 RPM, u16 invalid%, u8 °C, u16 voltage,
+ * u16 current, u16 mAh). Voltage/current units are source-dependent (see
+ * the entry fields); this decoder preserves raw wire values. A count above
+ * the firmware's eight output slots is malformed,
  * never a reason to allocate or read an attacker-selected number of entries.
  */
 export function decodeMotorTelemetry(payload: Uint8Array): MspMotorTelemetry {

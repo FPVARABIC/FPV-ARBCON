@@ -26,16 +26,17 @@
  * What the simplified chain proves is smaller and all of it load-bearing:
  *
  *   1. one current session identity, captured and revalidated;
- *   2. the coordinator-wide telemetry barrier, so nothing else is talking;
- *   3. one genuine lease and its non-forgeable official authority;
- *   4. the configuration the encoder needs - motor count, motor protocol,
+ *   2. one identified firmware/API with a reviewed motor-write adapter;
+ *   3. the coordinator-wide telemetry barrier, so nothing else is talking;
+ *   4. one genuine lease and its non-forgeable official authority;
+ *   5. the configuration the encoder needs - motor count, motor protocol,
  *      and FEATURE_3D disabled, because 3D INVERTS STOP SEMANTICS;
- *   5. the MSP_BOXIDS mapping, because the ARM bit position is
+ *   6. the MSP_BOXIDS mapping, because the ARM bit position is
  *      configuration dependent and must never be guessed;
- *   6. ONE FRESH PRODUCTION OBSERVATION, awaited before READY, proving the
+ *   7. ONE FRESH PRODUCTION OBSERVATION, awaited before READY, proving the
  *      flight controller reports itself DISARMED.
  *
- * (6) IS AWAITED, NOT FIRED AND FORGOTTEN. The monitor used to be started
+ * (7) IS AWAITED, NOT FIRED AND FORGOTTEN. The monitor used to be started
  * asynchronously and READY published immediately after, so the snapshot
  * said "not ready, nothing is watching" until some unrelated render
  * happened to rebuild it. The setup boundary now joins the first real
@@ -213,9 +214,9 @@
  * the FC's own battery classification were previously part of the proof
  * chain via the Pass 1E policy. They are not read any more, so this module
  * makes NO claim about the battery and never will until something reads it
- * again. The operator-facing 4S instruction and the manual acknowledgement
- * checklist on the screen are what stand in that place, and they are
- * exactly as weak as they sound.
+ * again. The operator-facing instruction therefore asks for a battery and
+ * ESC combination suitable for the actual build; it does not claim that
+ * 4S is universal or automatically verified.
  */
 
 import {
@@ -228,6 +229,12 @@ import {
   type MspSessionCompositeIdentity,
 } from '../protocol/motorTestLease';
 import type {MspClient} from '../protocol/mspClient';
+import type {FlightControllerIdentity} from '../protocol/msp/identification/mspIdentificationTypes';
+import {
+  motorFirmwareSupports,
+  resolveMotorFirmwareCompatibility,
+  type MotorFirmwareCompatibility,
+} from '../firmware-adapters/motorFirmwareCompatibility';
 import {
   MSP_ADVANCED_CONFIG,
   MSP_FEATURE_CONFIG,
@@ -244,7 +251,8 @@ import {MSP_SET_MOTOR} from '../protocol/msp/commands/motorTestCommands';
 // modules and are reused unchanged - this controller neither duplicates
 // their logic nor introduces a second encoder. `assertSupportedMotorScope`
 // rejects 3D FIRST (3D inverts stop semantics), then a motor count other
-// than four, then any raw protocol other than DSHOT600 at the pinned tag.
+// than four, then any raw protocol outside the reviewed DShot-family
+// values at the pinned tag.
 import {
   assertSupportedMotorScope,
   buildAllStopVector,
@@ -278,6 +286,11 @@ import {
   decodeMotorTelemetry,
   type MspMotorTelemetry,
 } from '../protocol/msp/decoding/decodeMotorTelemetry';
+import {
+  deriveMotorDiagnosticsSupport,
+  hasEscTelemetrySource,
+  type MotorDiagnosticsSupport,
+} from './motorDiagnosticsSemantics';
 import {MspPayloadReadError} from '../protocol/msp/decoding/MspPayloadReader';
 import {
   MspClientError,
@@ -331,9 +344,24 @@ export type MotorTestSessionInvalidationReason =
 export type MotorTestControllerUnsubscribe = () => void;
 
 /**
+ * Identification is owned by the platform session coordinator, but the
+ * motor write gate consumes only this narrow, read-only projection. The
+ * shape intentionally matches the coordinator state without importing a
+ * React Native module into core.
+ */
+export type MotorTestFirmwareIdentificationState =
+  | {readonly status: 'IDLE'}
+  | {readonly status: 'RUNNING'}
+  | {
+      readonly status: 'SUCCEEDED';
+      readonly identity: FlightControllerIdentity;
+    }
+  | {readonly status: 'FAILED'; readonly error: unknown};
+
+/**
  * The narrow read/lifecycle slice of the platform session layer.
  *
- * Deliberately three members and nothing else. It exposes the canonical
+ * It exposes the canonical
  * `MspClient` ONLY so the production factory can hand it to
  * `acquireMotorTestLease`, which is the official issuer; this module
  * calls no method on it, and after acquisition every request goes through
@@ -344,6 +372,12 @@ export interface MotorTestControllerSessionPort {
   readonly client: MspClient | undefined;
   /** The composite identity currently in force, or undefined. */
   readCurrentIdentity(): MspSessionCompositeIdentity | undefined;
+  /** Current firmware-identification evidence for the same session. */
+  readFirmwareIdentification(): MotorTestFirmwareIdentificationState;
+  /** Notifies when identification moves IDLE -> RUNNING -> terminal. */
+  subscribeFirmwareIdentification(
+    listener: () => void,
+  ): MotorTestControllerUnsubscribe;
   /** Genuine invalidation signals. Returns an unsubscribe function. */
   subscribeSessionInvalidated(
     listener: (reason: MotorTestSessionInvalidationReason) => void,
@@ -644,6 +678,7 @@ export type MotorTestControllerPhase =
 export type MotorTestSetupStep =
   | 'NOT_STARTED'
   | 'SESSION_ANCHOR'
+  | 'FIRMWARE_COMPATIBILITY'
   | 'TELEMETRY_BARRIER'
   | 'POST_BARRIER_REVALIDATION'
   | 'LEASE_ACQUISITION'
@@ -673,6 +708,8 @@ export type MotorTestSetupBlockedReason =
   | 'TELEMETRY_QUIESCENCE_TIMEOUT'
   | 'LEASE_NOT_ACQUIRED'
   | 'OFFICIAL_AUTHORITY_UNAVAILABLE'
+  | 'FIRMWARE_IDENTITY_UNAVAILABLE'
+  | 'FIRMWARE_UNSUPPORTED'
   | 'BOX_EVIDENCE_UNAVAILABLE'
   | 'MOTOR_CONFIG_REQUEST_FAILED'
   | 'MOTOR_CONFIG_MALFORMED'
@@ -887,6 +924,10 @@ export type MotorTestActivationBlockReason =
    * reading has aged past `MOTOR_TEST_SAFETY_MAX_AGE_MILLIS`.
    */
   | 'ARMED_STATE_UNKNOWN_OR_STALE'
+  /** Firmware identification did not produce usable session-bound data. */
+  | 'FIRMWARE_IDENTITY_UNAVAILABLE'
+  /** No reviewed motor-write adapter matches the identified firmware/API. */
+  | 'FIRMWARE_UNSUPPORTED'
   /**
    * FEATURE_3D is enabled. Called out separately from the general scope
    * refusal because it is the one configuration whose effect INVERTS: with
@@ -1028,6 +1069,8 @@ function mapActivationBlockToPulseResult(
       return 'NOT_READY';
     case 'FC_ARMED':
     case 'ARMED_STATE_UNKNOWN_OR_STALE':
+    case 'FIRMWARE_IDENTITY_UNAVAILABLE':
+    case 'FIRMWARE_UNSUPPORTED':
     case 'MOTOR_3D_ENABLED':
     case 'MOTOR_SCOPE_UNSUPPORTED':
       return 'GATES_NOT_SATISFIED';
@@ -1059,6 +1102,14 @@ const NO_PULSE: MotorTestPulseRecord = Object.freeze({
  * for as long as the operator keeps their finger down.
  */
 export const MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS = 1200;
+
+/**
+ * Identification normally finishes before an operator reaches the Motors
+ * control. This bound exists for the real race where a very fast long press
+ * arrives while identification is still RUNNING; it waits for real evidence
+ * instead of either guessing or permanently killing the session at once.
+ */
+const MOTOR_TEST_FIRMWARE_IDENTIFICATION_TIMEOUT_MILLIS = 12_000;
 
 export type MotorTestHoldHeartbeatResult =
   | 'RENEWED'
@@ -1155,6 +1206,7 @@ const NO_STOP_EXECUTION: MotorTestStopExecutionRecord = Object.freeze({
 export type MotorTestDiagnosticsChannelState =
   | 'WAITING'
   | 'FRESH'
+  | 'NOT_ENABLED'
   | 'UNSUPPORTED'
   | 'MALFORMED_RESPONSE'
   | 'LINK_FAILED';
@@ -1187,12 +1239,17 @@ export interface MotorTestControllerSnapshot {
    * exists. Undefined before that, by construction. */
   readonly machine: MotorTestState | undefined;
   readonly outcome: MotorTestSetupOutcome;
+  /** Versioned adapter verdict consulted by the actual motor write gate. */
+  readonly firmwareCompatibility: MotorFirmwareCompatibility | undefined;
   /**
    * The decoded configuration the encoder is scoped against, once read.
    * Undefined before step 7, which is why a pre-evidence stop is
    * unattemptable and a pre-evidence pulse is unencodable.
    */
   readonly motorScope: MotorVectorScope | undefined;
+  /** Truthful source model for command-139 fields, derived from the same
+   * MSP_MOTOR_CONFIG response as motorScope. */
+  readonly motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
   /** Whether this controller currently holds the telemetry barrier. */
   readonly telemetryHeld: boolean;
   readonly warnings: readonly MotorTestControllerWarning[];
@@ -1349,6 +1406,10 @@ interface SetupFailure {
   readonly classification: MotorTestFailureClass;
 }
 
+interface FirmwareIdentityAcquisition {
+  readonly identity: FlightControllerIdentity;
+}
+
 function failure(
   reason: MotorTestSetupBlockedReason,
   classification: MotorTestFailureClass,
@@ -1358,6 +1419,15 @@ function failure(
 
 function isFailure(value: object): value is SetupFailure {
   return 'classification' in value;
+}
+
+function assertExhaustiveIdentificationState(
+  _value: never,
+): SetupFailure {
+  return failure(
+    'UNEXPECTED_SERVICE_EXCEPTION',
+    fault('NATIVE_EXCEPTION'),
+  );
 }
 
 class MotorTestControllerImpl {
@@ -1389,6 +1459,8 @@ class MotorTestControllerImpl {
   private safetyMonitor: MotorTestSafetyMonitorLike | undefined;
   private barrier: MotorTestBarrierHold | undefined;
   private boxIds: MotorTestBoxIdsSnapshot | undefined;
+  /** Exact firmware/API adapter verdict for this physical session. */
+  private firmwareCompatibility: MotorFirmwareCompatibility | undefined;
 
   private machine: MotorTestState | undefined;
   private effectRecord: MotorTestEffectRecord = EMPTY_MOTOR_TEST_EFFECT_RECORD;
@@ -1405,6 +1477,7 @@ class MotorTestControllerImpl {
    * than "no link".
    */
   private motorScope: MotorVectorScope | undefined;
+  private motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
   private stopExecution: MotorTestStopExecutionRecord = NO_STOP_EXECUTION;
   /**
    * The ONE in-flight stop operation FOR THE CURRENT EPISODE. Concurrent
@@ -1492,7 +1565,9 @@ class MotorTestControllerImpl {
       setupStep: this.setupStep,
       machine: this.machine,
       outcome: this.outcome,
+      firmwareCompatibility: this.firmwareCompatibility,
       motorScope: this.motorScope,
+      motorDiagnosticsSupport: this.motorDiagnosticsSupport,
       telemetryHeld: this.barrier?.isHeld() ?? false,
       warnings: this.effectRecord.warnings,
       stopDescriptors: this.effectRecord.stopDescriptors,
@@ -2122,6 +2197,22 @@ class MotorTestControllerImpl {
     ) {
       return this.diagnostics;
     }
+    // Betaflight serializes a valid all-zero command-139 payload when
+    // neither bidirectional DShot nor FEATURE_ESC_SENSOR is enabled. A
+    // successful reply is therefore not capability evidence. Refuse the
+    // request entirely when the earlier MSP_MOTOR_CONFIG read proved that
+    // there is no source, preserving NOT_ENABLED instead of publishing
+    // synthetic-looking zero measurements as FRESH.
+    if (!hasEscTelemetrySource(this.motorDiagnosticsSupport)) {
+      const escTelemetry = Object.freeze({
+        state: 'NOT_ENABLED' as const,
+        value: undefined,
+        observedAtMillis: this.deps.readMonotonicMillis(),
+      });
+      this.diagnostics = Object.freeze({...this.diagnostics, escTelemetry});
+      this.publish();
+      return this.diagnostics;
+    }
     const escTelemetry = await read(
       MSP_MOTOR_TELEMETRY,
       decodeMotorTelemetry,
@@ -2194,6 +2285,18 @@ class MotorTestControllerImpl {
       reasons.push('CONTROLLER_LINK_UNAVAILABLE');
     }
 
+    // Firmware capability is independent from the decoded motor scope.
+    // A different firmware may expose fields that happen to decode to the
+    // same numbers while assigning different semantics to command 214.
+    if (this.firmwareCompatibility?.status === 'UNSUPPORTED') {
+      reasons.push('FIRMWARE_UNSUPPORTED');
+    } else if (
+      this.outcome.kind === 'BLOCKED' &&
+      this.outcome.reason === 'FIRMWARE_IDENTITY_UNAVAILABLE'
+    ) {
+      reasons.push('FIRMWARE_IDENTITY_UNAVAILABLE');
+    }
+
     // (3) Motor scope, re-run LIVE on every evaluation and never trusted
     // from setup alone. A scope that was never read is setup
     // incompleteness, NOT a statement about the aircraft's configuration:
@@ -2243,6 +2346,15 @@ class MotorTestControllerImpl {
    */
   private hasLiveWritableSession(): boolean {
     if (this.closing || this.phase !== 'ACTIVE') {
+      return false;
+    }
+    if (
+      this.firmwareCompatibility === undefined ||
+      !motorFirmwareSupports(
+        this.firmwareCompatibility,
+        'MOTOR_TEST_WRITE',
+      )
+    ) {
       return false;
     }
     if (this.outcome.kind !== 'READY') {
@@ -2625,6 +2737,123 @@ class MotorTestControllerImpl {
 
   /* --- setup ------------------------------------------------------- */
 
+  /**
+   * Joins the coordinator's one identification attempt for this physical
+   * session. The subscription is installed before the second read, closing
+   * the read/subscribe race; a replacement/detach and a bounded timeout both
+   * settle the wait without manufacturing identity evidence.
+   */
+  private awaitFirmwareIdentity(
+    generation: number,
+  ): Promise<FirmwareIdentityAcquisition | SetupFailure> {
+    const session = this.deps.session;
+    const read = ():
+      | FirmwareIdentityAcquisition
+      | SetupFailure
+      | undefined => {
+      const cancelled = this.cancellation(generation);
+      if (cancelled !== undefined) {
+        return cancelled;
+      }
+      let state: MotorTestFirmwareIdentificationState;
+      try {
+        state = session.readFirmwareIdentification();
+      } catch {
+        return failure(
+          'UNEXPECTED_SERVICE_EXCEPTION',
+          fault('NATIVE_EXCEPTION'),
+        );
+      }
+      switch (state.status) {
+        case 'SUCCEEDED':
+          return {identity: state.identity};
+        case 'FAILED':
+          return failure('FIRMWARE_IDENTITY_UNAVAILABLE', LOCK);
+        case 'IDLE':
+        case 'RUNNING':
+          return undefined;
+        default:
+          return assertExhaustiveIdentificationState(state);
+      }
+    };
+
+    const immediate = read();
+    if (immediate !== undefined) {
+      return Promise.resolve(immediate);
+    }
+
+    return new Promise(resolve => {
+      let settled = false;
+      let unsubscribeIdentification: MotorTestControllerUnsubscribe =
+        () => undefined;
+      let unsubscribeInvalidation: MotorTestControllerUnsubscribe =
+        () => undefined;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = (result: FirmwareIdentityAcquisition | SetupFailure) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        unsubscribeIdentification();
+        unsubscribeInvalidation();
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+        }
+        resolve(result);
+      };
+      const examine = () => {
+        const result = read();
+        if (result !== undefined) {
+          finish(result);
+        }
+      };
+
+      try {
+        const identificationUnsubscribe =
+          session.subscribeFirmwareIdentification(examine);
+        // A valid implementation may publish the current value while the
+        // listener is being registered. `finish()` then runs before the
+        // returned unsubscriber can be assigned, so release it explicitly.
+        if (settled) {
+          identificationUnsubscribe();
+          return;
+        }
+        unsubscribeIdentification = identificationUnsubscribe;
+
+        const invalidationUnsubscribe =
+          session.subscribeSessionInvalidated(() => {
+            finish(failure('SESSION_CHANGED', fault('SESSION_CHANGED')));
+          });
+        if (settled) {
+          invalidationUnsubscribe();
+          unsubscribeIdentification();
+          return;
+        }
+        unsubscribeInvalidation = invalidationUnsubscribe;
+
+        timeoutHandle = setTimeout(() => {
+          finish(failure('FIRMWARE_IDENTITY_UNAVAILABLE', LOCK));
+        }, MOTOR_TEST_FIRMWARE_IDENTIFICATION_TIMEOUT_MILLIS);
+        const unref = (
+          timeoutHandle as unknown as {readonly unref?: () => void}
+        ).unref;
+        unref?.call(timeoutHandle);
+
+        // Closes the transition that may have happened after the first read
+        // and before the subscriptions were installed.
+        examine();
+      } catch {
+        finish(
+          failure(
+            'UNEXPECTED_SERVICE_EXCEPTION',
+            fault('NATIVE_EXCEPTION'),
+          ),
+        );
+      }
+    });
+  }
+
   private async runSetup(): Promise<MotorTestControllerSnapshot> {
     // (2) Establish the controller cancellation/generation identity.
     this.invalidateContinuations();
@@ -2679,6 +2908,34 @@ class MotorTestControllerImpl {
     // detach during the barrier cannot be missed.
     this.attachSessionListener();
     this.publish();
+
+    // ---- (2) Identify the exact reviewed firmware adapter. ----------
+    // Generic MSP compatibility is not enough for a write: another
+    // firmware can return payloads that happen to decode while assigning
+    // different semantics to command 214 or to protocol enum values.
+    this.setupStep = 'FIRMWARE_COMPATIBILITY';
+    this.publish();
+    const firmware = await this.awaitFirmwareIdentity(generation);
+    if (isFailure(firmware)) {
+      return firmware;
+    }
+    const afterIdentification = this.revalidate(generation);
+    if (afterIdentification !== undefined) {
+      return afterIdentification;
+    }
+    const firmwareCompatibility = resolveMotorFirmwareCompatibility(
+      firmware.identity,
+    );
+    this.firmwareCompatibility = firmwareCompatibility;
+    this.publish();
+    if (
+      !motorFirmwareSupports(
+        firmwareCompatibility,
+        'MOTOR_TEST_WRITE',
+      )
+    ) {
+      return failure('FIRMWARE_UNSUPPORTED', LOCK);
+    }
 
     // ---- (3)(4)(5) The coordinator-wide barrier. --------------------
     // One accepted call performs all three in the required order: it
@@ -2800,10 +3057,10 @@ class MotorTestControllerImpl {
    * Steps 7 to 11 of the simplified sequence.
    *
    * WHAT IT NO LONGER DOES, and why each removal is safe:
-   *   - the four-command identification chain (FC_VARIANT, FC_VERSION,
-   *     API_VERSION, BOARD_INFO) and the pinned firmware version. None of
-   *     them affects how an MSP_SET_MOTOR frame is encoded; the decoded
-   *     configuration below does, and it is still read;
+   *   - a second four-command identification chain inside this exclusive
+   *     lease. Firmware identity is mandatory again, but it is joined from
+   *     the coordinator's canonical identification attempt before the
+   *     telemetry barrier; it is not re-requested here;
    *   - MSP_MIXER_CONFIG and the composed capability profile. Mixer mode
    *     and the props-out flag never entered the vector builder;
    *   - the Pass 1E battery policy. It is no longer read at all, and this
@@ -2836,6 +3093,17 @@ class MotorTestControllerImpl {
     // Retained BEFORE the guard runs, so a refusal can still say which
     // configuration was refused. See the field's own comment.
     this.motorScope = scopeRead.scope;
+    this.motorDiagnosticsSupport = scopeRead.diagnosticsSupport;
+    if (!hasEscTelemetrySource(scopeRead.diagnosticsSupport)) {
+      this.diagnostics = Object.freeze({
+        ...this.diagnostics,
+        escTelemetry: Object.freeze({
+          state: 'NOT_ENABLED' as const,
+          value: undefined,
+          observedAtMillis: this.deps.readMonotonicMillis(),
+        }),
+      });
+    }
     this.publish();
     try {
       // 3D first - it inverts stop semantics - then motor count, then the
@@ -2983,7 +3251,13 @@ class MotorTestControllerImpl {
   private async readMotorScope(
     generation: number,
     lease: MotorTestLease,
-  ): Promise<{readonly scope: MotorVectorScope} | SetupFailure> {
+  ): Promise<
+    | {
+        readonly scope: MotorVectorScope;
+        readonly diagnosticsSupport: MotorDiagnosticsSupport;
+      }
+    | SetupFailure
+  > {
     const motor = await this.readDecoded(
       generation,
       lease,
@@ -3023,6 +3297,7 @@ class MotorTestControllerImpl {
         motorProtocolRaw: advanced.value.motorProtocolRaw,
         feature3dEnabled: feature.value.feature3dEnabled,
       }),
+      diagnosticsSupport: deriveMotorDiagnosticsSupport(motor.value),
     };
   }
 

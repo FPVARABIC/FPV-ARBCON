@@ -73,10 +73,15 @@ describe('assertSupportedMotorScope', () => {
     }
   });
 
-  it('rejects every motor protocol except raw DSHOT600', () => {
+  it('accepts the reviewed DShot family and rejects PWM-family/disabled values', () => {
+    for (const motorProtocolRaw of [5, 6, 7, 8]) {
+      expect(() =>
+        assertSupportedMotorScope(inScope({motorProtocolRaw})),
+      ).not.toThrow();
+    }
     // PWM 0, ONESHOT125 1, ONESHOT42 2, MULTISHOT 3, BRUSHED 4,
-    // DSHOT150 5, DSHOT300 6, PROSHOT1000 8, DISABLED 9 at the pinned tag.
-    for (const motorProtocolRaw of [0, 1, 2, 3, 4, 5, 6, 8, 9, 255]) {
+    // and DISABLED 9 remain outside this adapter.
+    for (const motorProtocolRaw of [0, 1, 2, 3, 4, 9, 255]) {
       expect(() => assertSupportedMotorScope(inScope({motorProtocolRaw}))).toThrow(
         MotorVectorScopeError,
       );

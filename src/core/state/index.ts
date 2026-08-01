@@ -55,6 +55,16 @@ export {
   validateMotorConfigurationDraft,
   motorConfigurationDraftsEqual,
 } from './motorConfigurationModel';
+export {
+  deriveMotorDiagnosticsSupport,
+  hasEscTelemetrySource,
+  visibleMotorTelemetryMetrics,
+} from './motorDiagnosticsSemantics';
+export type {
+  MotorEscTelemetrySource,
+  MotorDiagnosticsSupport,
+  MotorTelemetryVisibleMetrics,
+} from './motorDiagnosticsSemantics';
 export type {
   MotorConfigurationSnapshot,
   MotorConfigurationDraft,

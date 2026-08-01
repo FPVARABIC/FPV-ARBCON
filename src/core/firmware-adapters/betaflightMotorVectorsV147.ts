@@ -1,17 +1,20 @@
 /**
  * Pass 1B - pure Betaflight API-1.47 motor VECTOR logic: which logical
- * external values belong in an MSP_SET_MOTOR request, for the one
- * narrowly approved configuration.
+ * external values belong in an MSP_SET_MOTOR request, for the reviewed
+ * Betaflight API-1.46/1.47/1.48 digital-motor configuration.
  *
- * PURE AND UNREACHABLE. No I/O, no transport, no MspClient, no timers,
- * no React/React Native, no state. Nothing in this repository calls it.
- * Producing a vector is inert; it becomes a motor command only if some
- * future, separately-approved code sends it, which Pass 1B does not
- * authorize.
+ * PURE PRODUCTION BUILDING BLOCK. No I/O, no transport, no MspClient, no
+ * timers, no React/React Native and no mutable state. The live controller
+ * reaches it only after the versioned firmware gate, session lease and
+ * safety evidence have passed. Producing a vector alone remains inert and
+ * never authorizes its use.
  *
- * APPROVED SCOPE, ENFORCED NOT ASSUMED: exactly four motors, DSHOT600
- * only, 3D mode disabled. Anything else is rejected before a single
- * value is produced.
+ * APPROVED SCOPE, ENFORCED NOT ASSUMED: exactly four motors, one of the
+ * DShot-family protocols (DSHOT150/300/600 or PROSHOT1000), and 3D mode
+ * disabled. Betaflight routes those four protocols through the same
+ * DShot external-value converter; analog PWM-family protocols use a
+ * different motor-device conversion and remain rejected until their own
+ * reviewed adapter exists.
  *
  * WHY 3D IS A HARD REJECT, from drivers/dshot.c:75-94 @
  * BETAFLIGHT_2025_12_2_COMMIT (79065c96ba0bb5cdc675e67d7093e05dab8b330e):
@@ -42,7 +45,7 @@
  * airframe corner an index sits at, and it never remaps outputs.
  */
 
-import {MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2} from '../protocol/msp/decoding/decodeAdvancedConfig';
+import {MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48} from '../protocol/msp/decoding/decodeAdvancedConfig';
 import {
   MSP_SET_MOTOR_EXTERNAL_MAX_VALUE,
   MSP_SET_MOTOR_EXTERNAL_MIN_VALUE,
@@ -106,7 +109,7 @@ export class MotorVectorValueError extends Error {
 }
 
 /**
- * Throws unless the decoded configuration is inside the one approved
+ * Throws unless the decoded configuration is inside the reviewed
  * scope. 3D is checked FIRST because it inverts stop semantics; a caller
  * that ignored the ordering could otherwise build a "stop" vector for a
  * 3D aircraft.
@@ -124,10 +127,15 @@ export function assertSupportedMotorScope(scope: MotorVectorScope): void {
         'Motor count must come from MSP_MOTOR_CONFIG offset 6.',
     );
   }
-  if (scope.motorProtocolRaw !== MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2) {
+  if (
+    !MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48.includes(
+      scope.motorProtocolRaw,
+    )
+  ) {
     throw new MotorVectorScopeError(
-      `Motor vectors are refused: only raw motor protocol ${MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2} (DSHOT600 at the pinned tag) ` +
-        `is in scope, received ${String(scope.motorProtocolRaw)}. The raw MSP_ADVANCED_CONFIG byte is compared, never a display-adjusted value.`,
+      'Motor vectors are refused: only the reviewed Betaflight API-1.46..1.48 DShot-family raw protocols ' +
+        `[${MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48.join(', ')}] are in scope, received ${String(scope.motorProtocolRaw)}. ` +
+        'The raw MSP_ADVANCED_CONFIG byte is compared, never a display-adjusted value.',
     );
   }
 }

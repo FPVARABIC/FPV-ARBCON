@@ -34,6 +34,7 @@ import {
   type MotorTestState,
 } from '../../../core/state/motorTestStateMachine';
 import {FakeMspTransport} from '../../../core/protocol/__testUtils__/mspFakeTransport';
+import {betaflightApi147Identity} from '../../../core/protocol/__testUtils__/motorFirmwareFixtures';
 
 /* ------------------------------------------------------------------ *
  * Platform doubles - pure subscription seams
@@ -176,7 +177,9 @@ class ReducerBackedController implements MotorTestController {
       setupStep: 'READY',
       machine: this.state,
       outcome: {kind: 'READY'},
+      firmwareCompatibility: undefined,
       motorScope: undefined,
+      motorDiagnosticsSupport: undefined,
       telemetryHeld: true,
       warnings: [],
       stopDescriptors: [],
@@ -690,6 +693,11 @@ describe('lifecycle bridge - containment', () => {
       binding.controllerDependencies(
         {
           readCurrentIdentity: () => ({physicalGeneration: 1, mspEpoch: 0}),
+          readFirmwareIdentification: () => ({
+            status: 'SUCCEEDED',
+            identity: betaflightApi147Identity(),
+          }),
+          subscribeFirmwareIdentification: () => () => undefined,
           subscribeSessionInvalidated: () => () => undefined,
         },
         () => 0,

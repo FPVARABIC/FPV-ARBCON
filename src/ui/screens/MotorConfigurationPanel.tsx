@@ -537,7 +537,10 @@ export function MotorConfigurationPanel({
               label={t('motorConfiguration.escSensor')}
               detail={t('motorConfiguration.escSensorDetail')}
               value={draft.escSensorEnabled}
-              disabled={disabled || !digitalProtocol}
+              // Serial ESC telemetry is an independent Betaflight feature;
+              // unlike bidirectional DShot it is not coupled to the motor
+              // signalling family and can accompany analog protocols.
+              disabled={disabled}
               onValueChange={value => setBoolean('escSensorEnabled', value)}
               testID="motor-config-esc-sensor"
             />

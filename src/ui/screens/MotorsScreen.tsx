@@ -167,6 +167,9 @@ export type MotorsScreenPresentation =
  *     it too arrives paired with REQUIRES_NEW_CONNECTION and must outrank
  *     it.
  *
+ *   Firmware identity/compatibility next. A decoded configuration cannot
+ *     authorize writes until its firmware family and API adapter match.
+ *
  *   MOTOR_3D_ENABLED before MOTOR_SCOPE_UNSUPPORTED, because 3D is a
  *     single named setting the operator can turn off, while "unsupported
  *     scope" covers motor count and protocol.
@@ -182,6 +185,8 @@ export const CAUSAL_BLOCK_REASON_ORDER: readonly MotorTestActivationBlockReason[
   Object.freeze([
     'FC_ARMED',
     'ARMED_STATE_UNKNOWN_OR_STALE',
+    'FIRMWARE_IDENTITY_UNAVAILABLE',
+    'FIRMWARE_UNSUPPORTED',
     'MOTOR_3D_ENABLED',
     'MOTOR_SCOPE_UNSUPPORTED',
     'PULSE_OR_STOP_IN_PROGRESS',
@@ -920,7 +925,8 @@ export function MotorsScreenView({
                   >
                     armedState: {snapshot?.armedStateEvidence ?? 'NONE'} |
                     telemetryHeld: {String(snapshot?.telemetryHeld)} | scope:{' '}
-                    {JSON.stringify(snapshot?.motorScope ?? null)}
+                    {JSON.stringify(snapshot?.motorScope ?? null)} | firmware:{' '}
+                    {JSON.stringify(snapshot?.firmwareCompatibility ?? null)}
                   </Text>
                 </View>
               ) : null}
@@ -1107,6 +1113,7 @@ export function MotorsScreenView({
               snapshot?.phase === 'ACTIVE' && snapshot.outcome.kind === 'READY'
             }
             motorTestDiagnostics={snapshot?.diagnostics}
+            support={snapshot?.motorDiagnosticsSupport}
           />
         ) : null}
 
@@ -1712,6 +1719,12 @@ function MotorsScreenBinding({
                 mspSessionCoordinator.getMotorTestSessionIdentity(
                   sessionKey.sessionId,
                 ),
+              readFirmwareIdentification: () =>
+                mspSessionCoordinator.getIdentificationState(
+                  sessionKey.sessionId,
+                ),
+              subscribeFirmwareIdentification: listener =>
+                mspSessionCoordinator.subscribeIdentificationState(listener),
               subscribeSessionInvalidated: listener =>
                 mspSessionCoordinator.subscribeMotorTestSessionInvalidated(
                   sessionKey.sessionId,

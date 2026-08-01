@@ -257,6 +257,13 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
       session: Object.freeze({
         client: this.client,
         readCurrentIdentity: () => port.readCurrentIdentity(),
+        readFirmwareIdentification: () =>
+          port.readFirmwareIdentification(),
+        subscribeFirmwareIdentification: (
+          listener: Parameters<
+            MotorTestControllerSessionPort['subscribeFirmwareIdentification']
+          >[0],
+        ) => port.subscribeFirmwareIdentification(listener),
         subscribeSessionInvalidated: (
           listener: Parameters<
             MotorTestControllerSessionPort['subscribeSessionInvalidated']

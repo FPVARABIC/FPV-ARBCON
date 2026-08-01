@@ -2,7 +2,9 @@ import {MspPayloadReader} from './MspPayloadReader';
 
 /**
  * Pass 7.7 - BOUNDED readiness parse of MSP_STATUS_EX's OPTIONAL TAIL,
- * verified directly at the pinned API-1.47 authority
+ * verified directly at the pinned API-1.47 authority and rechecked against
+ * API 1.48. API 1.48 appends battery-profile bytes after all fields consumed
+ * here; the decoder deliberately ignores that forward-compatible suffix.
  * (BETAFLIGHT_API147_COMMIT = 7348054f268f0058574719c134e9f149565bb8ea):
  *
  *   msp.c:1094-1140 (case MSP_STATUS_EX), after the 13-byte fixed prefix

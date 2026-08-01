@@ -65,6 +65,11 @@ import {
   type MotorConfigurationValidationIssue,
 } from '../../../core/state/motorConfigurationModel';
 import { deriveArmedState } from '../../../core/state/armingBlockers';
+import {
+  motorFirmwareSupports,
+  resolveMotorFirmwareCompatibility,
+  type MotorFirmwareCapability,
+} from '../../../core/firmware-adapters/motorFirmwareCompatibility';
 import { readMotorTestCapability } from './motorTestCapability';
 import { mspSessionCoordinator } from './MspSessionCoordinator';
 import type {
@@ -601,7 +606,7 @@ export class MotorConfigurationController {
       return { kind: 'FAILED', error };
     }
 
-    const preflight = this.captureSession(sessionId);
+    const preflight = this.captureSession(sessionId, 'ESC_DIRECTION_WRITE');
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
@@ -636,14 +641,18 @@ export class MotorConfigurationController {
               },
         execute: async requester => {
           this.assertLivePreflight(sessionId, client, generation, epoch);
-          const configuration = await this.readSnapshot(requester);
-          const protocol = configuration.advanced.motorProtocolRaw;
+          // Direction needs only these three stable motor facts. Do not
+          // couple the API-1.46/1.48 direction adapter to the wider
+          // API-1.47 configuration transaction (mixer and 3D-range reads),
+          // whose payloads are deliberately not granted write parity.
+          const configuration = await this.readEscDirectionScope(requester);
+          const protocol = configuration.motorProtocolRaw;
           if (
             motorNumber < 1 ||
-            motorNumber > configuration.motor.motorCount ||
+            motorNumber > configuration.motorCount ||
             protocol < 5 ||
             protocol > 8 ||
-            configuration.feature.feature3dEnabled
+            configuration.feature3dEnabled
           ) {
             throw new MotorConfigurationPreflightError(
               'ESC_DIRECTION_UNSUPPORTED',
@@ -974,7 +983,11 @@ export class MotorConfigurationController {
     this.assertLivePreflight(sessionId, client, generation, epoch);
   }
 
-  private captureSession(sessionId: string):
+  private captureSession(
+    sessionId: string,
+    requiredCapability: MotorFirmwareCapability =
+      'MOTOR_CONFIGURATION_WRITE',
+  ):
     | {
         readonly client: MotorConfigurationClient;
         readonly scheduler: MspTelemetryScheduler;
@@ -988,7 +1001,10 @@ export class MotorConfigurationController {
     if (this.isMotorTestActive(sessionId)) {
       return { reason: 'MOTOR_TEST_ACTIVE' };
     }
-    const compatibility = this.compatibilityOf(sessionId);
+    const compatibility = this.compatibilityOf(
+      sessionId,
+      requiredCapability,
+    );
     if (compatibility !== undefined) {
       return { reason: compatibility };
     }
@@ -1016,6 +1032,7 @@ export class MotorConfigurationController {
 
   private compatibilityOf(
     sessionId: string,
+    requiredCapability: MotorFirmwareCapability,
   ): MotorConfigurationBlockReason | undefined {
     const state = this.coordinator.getIdentificationState(sessionId);
     if (state.status === 'IDLE' || state.status === 'RUNNING') {
@@ -1024,10 +1041,11 @@ export class MotorConfigurationController {
     if (state.status === 'FAILED') {
       return 'INCOMPATIBLE_FIRMWARE';
     }
-    const { firmware, apiVersion } = state.identity;
-    return firmware.identifier === 'BTFL' &&
-      apiVersion.apiVersionMajor === 1 &&
-      apiVersion.apiVersionMinor === 47
+    const compatibility = resolveMotorFirmwareCompatibility(state.identity);
+    return motorFirmwareSupports(
+      compatibility,
+      requiredCapability,
+    )
       ? undefined
       : 'INCOMPATIBLE_FIRMWARE';
   }
@@ -1109,6 +1127,33 @@ export class MotorConfigurationController {
       this.read(requester, MSP_ADVANCED_CONFIG, decodeAdvancedConfig),
     ]);
     return Object.freeze({ feature, mixer, motor, motor3d, advanced });
+  }
+
+  /**
+   * Minimal read model for a persistent DShot direction command.
+   *
+   * The direction adapters for API 1.46 and 1.48 were admitted only after
+   * these exact motor-relevant fields were reviewed. Keeping this separate
+   * from readSnapshot() prevents an unrelated API-1.47 settings payload from
+   * becoming an accidental prerequisite for the direction operation.
+   */
+  private async readEscDirectionScope(
+    requester: MspRequester,
+  ): Promise<{
+    readonly motorCount: number;
+    readonly motorProtocolRaw: number;
+    readonly feature3dEnabled: boolean;
+  }> {
+    const [feature, motor, advanced] = await Promise.all([
+      this.read(requester, MSP_FEATURE_CONFIG, decodeFeatureConfig),
+      this.read(requester, MSP_MOTOR_CONFIG, decodeMotorConfig),
+      this.read(requester, MSP_ADVANCED_CONFIG, decodeAdvancedConfig),
+    ]);
+    return Object.freeze({
+      motorCount: motor.motorCount,
+      motorProtocolRaw: advanced.motorProtocolRaw,
+      feature3dEnabled: feature.feature3dEnabled,
+    });
   }
 
   private async readOutputOrder(

@@ -1,4 +1,8 @@
 /**
+ * LEGACY AUDIT ARTIFACT — NOT USED BY THE CURRENT MOTOR-TEST RUNTIME.
+ * The live path uses `motorFirmwareCompatibility.ts` plus the reviewed
+ * version-specific motor-vector adapter.
+ *
  * Phase 2B - the PURE, session-bound motor-test capability snapshot.
  *
  * WHAT THIS MODULE IS

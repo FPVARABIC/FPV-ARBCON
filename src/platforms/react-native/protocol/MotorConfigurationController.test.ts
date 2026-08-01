@@ -220,6 +220,53 @@ async function loadOriginal(harness: ReturnType<typeof makeHarness>) {
 }
 
 describe('MotorConfigurationController', () => {
+  it('shares the versioned firmware gate and refuses INAV before any request', async () => {
+    const harness = makeHarness();
+    const compatible = compatibleIdentity();
+    if (compatible.status !== 'SUCCEEDED') {
+      throw new Error('fixture must be identified');
+    }
+    harness.state.identification = {
+      status: 'SUCCEEDED',
+      identity: {
+        ...compatible.identity,
+        firmware: {identifier: 'INAV', knownFamily: 'INAV'},
+        apiVersion: {
+          ...compatible.identity.apiVersion,
+          apiVersionMajor: 2,
+          apiVersionMinor: 5,
+        },
+      },
+    };
+
+    await expect(harness.controller.load('fc-1')).resolves.toEqual({
+      kind: 'REJECTED',
+      reason: 'INCOMPATIBLE_FIRMWARE',
+    });
+    expect(harness.client.calls).toEqual([]);
+  });
+
+  it('keeps general configuration writes disabled on the partial API-1.48 adapter', async () => {
+    const harness = makeHarness();
+    const compatible = compatibleIdentity();
+    if (compatible.status !== 'SUCCEEDED') {
+      throw new Error('fixture must be identified');
+    }
+    harness.state.identification = {
+      status: 'SUCCEEDED',
+      identity: {
+        ...compatible.identity,
+        apiVersion: {...compatible.identity.apiVersion, apiVersionMinor: 48},
+      },
+    };
+
+    await expect(harness.controller.load('fc-1')).resolves.toEqual({
+      kind: 'REJECTED',
+      reason: 'INCOMPATIBLE_FIRMWARE',
+    });
+    expect(harness.client.calls).toEqual([]);
+  });
+
   it('loads all five groups under one telemetry pause lease', async () => {
     const harness = makeHarness();
     const loaded = await loadOriginal(harness);
@@ -537,6 +584,58 @@ describe('MotorConfigurationController', () => {
       MSP_EEPROM_WRITE,
     );
   });
+
+  it.each([46, 48])(
+    'allows the independently verified minimal DShot direction operation on API 1.%s',
+    async apiVersionMinor => {
+      const harness = makeHarness();
+      const compatible = compatibleIdentity();
+      if (compatible.status !== 'SUCCEEDED') {
+        throw new Error('fixture must be identified');
+      }
+      harness.state.identification = {
+        status: 'SUCCEEDED',
+        identity: {
+          ...compatible.identity,
+          apiVersion: {...compatible.identity.apiVersion, apiVersionMinor},
+        },
+      };
+      enqueueSnapshot(harness.client, 550, 6);
+      harness.client.enqueue(MSP_BOXIDS, {payload: Uint8Array.from([0])});
+      harness.client.enqueue(MSP_STATUS_EX, {
+        payload: statusPayload(false),
+      });
+      harness.client.enqueue(MSP2_SEND_DSHOT_COMMAND, {
+        payload: Uint8Array.from([]),
+      });
+
+      await expect(
+        harness.controller.setEscDirection('fc-1', 2, 'NORMAL'),
+      ).resolves.toMatchObject({
+        kind: 'ACKNOWLEDGED',
+        motorNumber: 2,
+        direction: 'NORMAL',
+        physicallyVerified: false,
+      });
+      expect(
+        harness.client.calls.filter(
+          call => call.command === MSP2_SEND_DSHOT_COMMAND,
+        ),
+      ).toHaveLength(1);
+      const commands = harness.client.calls.map(call => call.command);
+      expect(commands).toEqual(
+        expect.arrayContaining([
+          MSP_FEATURE_CONFIG,
+          MSP_MOTOR_CONFIG,
+          MSP_ADVANCED_CONFIG,
+          MSP_STATUS_EX,
+          MSP2_SEND_DSHOT_COMMAND,
+        ]),
+      );
+      expect(commands).not.toContain(MSP_MIXER_CONFIG);
+      expect(commands).not.toContain(MSP_MOTOR_3D_CONFIG);
+    },
+  );
 
   it('rejects ESC direction for a non-DShot motor protocol', async () => {
     const harness = makeHarness();

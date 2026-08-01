@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { TextInput } from 'react-native';
+import { Switch, TextInput } from 'react-native';
 
 import '../../i18n';
 import i18n from '../../i18n';
@@ -162,6 +162,26 @@ describe('MotorConfigurationPanel', () => {
       tree.root.findByProps({ testID: 'motor-config-review-save' }).props
         .disabled,
     ).toBe(true);
+    act(() => tree.unmount());
+  });
+
+  it('keeps serial ESC telemetry configurable for analog motor protocols', async () => {
+    const tree = await render(controllerDouble());
+    await act(async () => {
+      tree.root
+        .findByProps({testID: 'motor-config-protocol-0'})
+        .props.onPress();
+    });
+    expect(
+      tree.root
+        .findByProps({testID: 'motor-config-bidirectional-dshot'})
+        .findByType(Switch).props.disabled,
+    ).toBe(true);
+    expect(
+      tree.root
+        .findByProps({testID: 'motor-config-esc-sensor'})
+        .findByType(Switch).props.disabled,
+    ).toBe(false);
     act(() => tree.unmount());
   });
 

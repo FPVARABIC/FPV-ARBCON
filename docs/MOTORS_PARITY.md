@@ -27,8 +27,10 @@ release available at the time (`2025.12.2`, tag commit `a2d0f506`):
 | Live motor configuration summary | Complete, read-only             | Motor count, protocol, and 3D state come from the controller's decoded session scope. Missing data stays unavailable.                   |
 | Armed-state monitoring           | Complete                        | One fresh disarmed observation is awaited before Ready and monitoring continues during the usable session.                              |
 | Honest battery boundary          | Complete                        | The controller does not infer cell count; the UI asks for manual battery/ESC suitability and never claims automatic 4S enforcement.     |
+| Versioned firmware write gate    | Complete for reviewed adapters  | Motor writes require an identified `BTFL` API 1.46, 1.47 or separately bounded 1.48 profile; other families/API revisions receive no motor write capability. |
+| Digital protocol bench scope     | Complete for reviewed family    | DSHOT150/300/600 and PROSHOT1000 share the reviewed non-3D external-value contract; analog and 3D remain fail-closed.                    |
 | Independent Motor/ESC settings   | Complete for API 1.47           | Five groups load under one exclusive transaction; changed groups only are persisted once and read back once.                            |
-| Live motor/ESC readings          | Complete with capability limits | MSP_MOTOR and MSP_MOTOR_TELEMETRY use the canonical scheduler, freshness labels and bounded unsupported/link breakers.                  |
+| Live motor/ESC readings          | Complete with capability limits | MSP_MOTOR uses real FC values. ESC telemetry is source-gated from MSP_MOTOR_CONFIG; structural zero replies are never presented as measurements. |
 | Output reordering                | Complete for four-motor profile | Four attributed visual observations derive an MSP v2 map; save requires review, fresh DISARMED proof and readback.                      |
 | Persistent DShot direction       | Complete for one ESC            | One reviewed blocking DShot direction+save command; acknowledgement is never presented as physical CW/CCW proof.                        |
 
@@ -107,8 +109,9 @@ an unchecked item is real remaining work. The upstream UI is not copied.
       DShot percentage and ESC temperature.
 - [x] Per-ESC voltage, current and consumed-mAh from MSP motor telemetry when
       the ESC/firmware actually supplies it.
-- [ ] Capability/source labels for UART ESC telemetry, bidirectional DShot and
-      Extended DShot Telemetry.
+- [x] Capability/source labels for serial ESC telemetry, bidirectional DShot
+      and their combined precedence. A DShot-only zero extended field remains
+      unavailable because command 139 has no per-field presence bits.
 - [x] Freshness, unavailable, unsupported and malformed states;
       a missing value must never look like zero.
 - [x] Telemetry quality warning around the upstream 1% error guidance, without
@@ -125,10 +128,17 @@ an unchecked item is real remaining work. The upstream UI is not copied.
 
 ### 7. Product and protocol foundations
 
-- [ ] Version adapters for every read and write payload, not one payload shape
-      applied to every firmware.
-- [ ] Feature-capability detection for firmware builds that omit ESC telemetry,
-      DShot telemetry or output reordering.
+- [x] One central versioned capability matrix prevents a payload shape from
+      being applied to an unidentified or different firmware.
+- [x] Add a separately bounded Betaflight API 1.48 bench adapter; it grants
+      motor test/direction operations but not the unreviewed general settings
+      writes.
+- [ ] Add independently reviewed adapters for INAV, EmuFlight and unknown
+      families; the matrix deliberately grants them no write capability yet.
+- [x] Runtime source detection for bidirectional DShot and ESC-sensor
+      telemetry using the raw MSP_MOTOR_CONFIG capability bytes.
+- [ ] Build-time feature detection for output reordering and other optional
+      commands that have no equivalent capability byte.
 - [x] A configuration transaction capability separate from the motor-pulse
       capability. A settings screen must never obtain the pulse controller's
       lease or encoder.
@@ -159,6 +169,49 @@ create attractive but non-functional UI, which this project forbids.
    priority, save and visual verification.
 6. **Variable motor controls:** per-output and master values only after their
    independent rate-limit/stop contract passes Android hardware tests.
+
+## Current firmware/protocol support boundary
+
+This table is enforced by the motor write gate, not merely documented in the
+UI. “Read-only” means the application may still identify and display the
+connection through its generic MSP surfaces, but the Motors subsystem will not
+send a state-changing motor command under an unreviewed adapter.
+
+| Firmware identity | MSP API | Motor/ESC writes | Bench protocols |
+| --- | --- | --- | --- |
+| `BTFL` | `1.46` | Bench test and DShot direction through `BETAFLIGHT_API_1_46`; general configuration writes remain blocked | DSHOT150, DSHOT300, DSHOT600, PROSHOT1000; four outputs; non-3D |
+| `BTFL` | `1.47` | Enabled through `BETAFLIGHT_API_1_47` | DSHOT150, DSHOT300, DSHOT600, PROSHOT1000; four outputs; non-3D |
+| `BTFL` | `1.48` | Bench test and DShot direction through `BETAFLIGHT_API_1_48`; general configuration writes remain blocked | DSHOT150, DSHOT300, DSHOT600, PROSHOT1000; four outputs; non-3D |
+| `BTFL` | any other API | Read-only / fail-closed | None until a matching adapter and wire fixtures are added |
+| `INAV`, `EMUF`, unknown | any | Read-only / fail-closed | None until a family-specific adapter and hardware validation exist |
+
+No battery cell-count restriction participates in this matrix. Battery/ESC
+voltage suitability is hardware-specific and remains an explicit operator
+responsibility until a verified per-profile electrical policy exists; the app
+does not silently treat 4S as universal.
+
+### Telemetry truth boundary
+
+`MSP_MOTOR_TELEMETRY` is not itself proof that ESC telemetry exists. The
+reviewed Betaflight implementations serialize one zero-filled record per motor
+when both `useDshotTelemetry` and `FEATURE_ESC_SENSOR` are disabled. The app
+therefore derives a source model from the already-read `MSP_MOTOR_CONFIG`
+bytes before requesting or rendering command 139:
+
+- no source: command 139 is not requested through either the protected test
+  lease or the screen-level background scheduler;
+- bidirectional DShot: RPM and invalid-packet percentage are authoritative;
+  extended temperature/current/voltage appear only when a non-zero value is
+  actually supplied, because the wire payload has no field-presence mask;
+  its source-specific whole-volt/whole-amp fields are normalized before UI
+  rendering rather than being misread as ESC-sensor centi-units;
+- ESC sensor: RPM, temperature, voltage, current and consumption are exposed,
+  including genuine zero values;
+- both sources: DShot RPM has firmware-defined precedence and ESC sensor owns
+  the electrical/consumption fields.
+
+This deliberately sacrifices a potentially genuine DShot-only zero extended
+value rather than inventing certainty the MSP payload cannot carry.
 
 ## Target screen tree
 

@@ -18,6 +18,7 @@ export const MOTOR_ESC_TELEMETRY_POLL_ID = 'motorEscTelemetry';
 export type MotorDiagnosticsChannelState =
   | 'WAITING_FOR_SESSION'
   | 'ACTIVE'
+  | 'NOT_ENABLED'
   | 'UNSUPPORTED'
   | 'MALFORMED_RESPONSE'
   | 'LINK_FAILED';
@@ -35,6 +36,7 @@ const WAITING_AVAILABILITY: MotorDiagnosticsAvailability = Object.freeze({
 interface Registration {
   readonly sessionId: string;
   references: number;
+  escTelemetryReferences: number;
   scheduler: MspTelemetryScheduler | undefined;
   unregisterOutputs: (() => void) | undefined;
   unregisterEscTelemetry: (() => void) | undefined;
@@ -50,6 +52,18 @@ interface Registration {
 }
 
 const registrations = new Map<string, Registration>();
+
+function waitingAvailability(
+  registration: Pick<Registration, 'escTelemetryReferences'>,
+): MotorDiagnosticsAvailability {
+  return Object.freeze({
+    outputs: 'WAITING_FOR_SESSION',
+    escTelemetry:
+      registration.escTelemetryReferences > 0
+        ? 'WAITING_FOR_SESSION'
+        : 'NOT_ENABLED',
+  });
+}
 
 export function classifyMotorDiagnosticsFailure(
   error: unknown,
@@ -154,7 +168,45 @@ function detachScheduler(registration: Registration): void {
   registration.escLastValue = undefined;
   registration.outputConsecutiveFailures = 0;
   registration.escConsecutiveFailures = 0;
-  registration.availability = WAITING_AVAILABILITY;
+  registration.availability = waitingAvailability(registration);
+}
+
+function reconcileEscTelemetryPoll(registration: Registration): void {
+  const scheduler = registration.scheduler;
+  if (scheduler === undefined) {
+    publish(
+      registration,
+      'escTelemetry',
+      registration.escTelemetryReferences > 0
+        ? 'WAITING_FOR_SESSION'
+        : 'NOT_ENABLED',
+    );
+    return;
+  }
+  if (registration.escTelemetryReferences <= 0) {
+    registration.unregisterEscTelemetry?.();
+    registration.unregisterEscTelemetry = undefined;
+    registration.escLastValue = undefined;
+    registration.escConsecutiveFailures = 0;
+    publish(registration, 'escTelemetry', 'NOT_ENABLED');
+    return;
+  }
+  if (registration.unregisterEscTelemetry !== undefined) {
+    return;
+  }
+  registration.escLastValue = undefined;
+  registration.escConsecutiveFailures = 0;
+  registration.unregisterEscTelemetry =
+    scheduler.registerPoll<MspMotorTelemetry>({
+      id: MOTOR_ESC_TELEMETRY_POLL_ID,
+      command: MSP_MOTOR_TELEMETRY,
+      intervalMs: 500,
+      staleAfterMs: 1_500,
+      priority: -2,
+      initialDelayMs: 250,
+      decode: decodeMotorTelemetry,
+    });
+  publish(registration, 'escTelemetry', 'ACTIVE');
 }
 
 function attachCurrentScheduler(registration: Registration): void {
@@ -162,6 +214,7 @@ function attachCurrentScheduler(registration: Registration): void {
     registration.sessionId,
   );
   if (scheduler === registration.scheduler) {
+    reconcileEscTelemetryPoll(registration);
     return;
   }
   detachScheduler(registration);
@@ -175,7 +228,8 @@ function attachCurrentScheduler(registration: Registration): void {
   registration.scheduler = scheduler;
   registration.availability = Object.freeze({
     outputs: 'ACTIVE',
-    escTelemetry: 'ACTIVE',
+    escTelemetry:
+      registration.escTelemetryReferences > 0 ? 'ACTIVE' : 'NOT_ENABLED',
   });
   registration.unregisterOutputs = scheduler.registerPoll<MspMotorOutputs>({
     id: MOTOR_OUTPUTS_TELEMETRY_POLL_ID,
@@ -185,16 +239,7 @@ function attachCurrentScheduler(registration: Registration): void {
     priority: -1,
     decode: decodeMotorOutputs,
   });
-  registration.unregisterEscTelemetry =
-    scheduler.registerPoll<MspMotorTelemetry>({
-      id: MOTOR_ESC_TELEMETRY_POLL_ID,
-      command: MSP_MOTOR_TELEMETRY,
-      intervalMs: 500,
-      staleAfterMs: 1_500,
-      priority: -2,
-      initialDelayMs: 250,
-      decode: decodeMotorTelemetry,
-    });
+  reconcileEscTelemetryPoll(registration);
 
   registration.unsubscribeScheduler = scheduler.subscribe(() => {
     if (registration.scheduler !== scheduler) {
@@ -230,6 +275,7 @@ function createRegistration(sessionId: string): Registration {
   registration = {
     sessionId,
     references: 0,
+    escTelemetryReferences: 0,
     scheduler: undefined,
     unregisterOutputs: undefined,
     unregisterEscTelemetry: undefined,
@@ -258,6 +304,7 @@ function createRegistration(sessionId: string): Registration {
  */
 export function acquireMotorDiagnosticsTelemetry(
   sessionId: string,
+  escTelemetryEnabled = true,
 ): () => void {
   let registration = registrations.get(sessionId);
   if (registration === undefined) {
@@ -265,6 +312,9 @@ export function acquireMotorDiagnosticsTelemetry(
     registrations.set(sessionId, registration);
   }
   registration.references += 1;
+  if (escTelemetryEnabled) {
+    registration.escTelemetryReferences += 1;
+  }
   attachCurrentScheduler(registration);
 
   let released = false;
@@ -278,7 +328,14 @@ export function acquireMotorDiagnosticsTelemetry(
       return;
     }
     current.references -= 1;
+    if (escTelemetryEnabled) {
+      current.escTelemetryReferences = Math.max(
+        0,
+        current.escTelemetryReferences - 1,
+      );
+    }
     if (current.references > 0) {
+      reconcileEscTelemetryPoll(current);
       return;
     }
     detachScheduler(current);

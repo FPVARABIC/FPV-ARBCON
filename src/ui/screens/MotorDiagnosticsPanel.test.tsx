@@ -6,6 +6,7 @@ import i18n from '../../i18n';
 import type { TelemetryValue } from '../../core';
 import type { MotorTestDiagnosticsSnapshot } from '../../core/state/motorTestController';
 import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
+import { acquireMotorDiagnosticsTelemetry } from '../../platforms/react-native/protocol';
 import {
   MotorDiagnosticsPanel,
   motorOutputPercent,
@@ -39,6 +40,7 @@ describe('MotorDiagnosticsPanel', () => {
   beforeEach(() => {
     mockOutputValue = { status: 'UNAVAILABLE' };
     mockEscValue = { status: 'UNAVAILABLE' };
+    jest.mocked(acquireMotorDiagnosticsTelemetry).mockClear();
   });
 
   it('uses stable absolute scales for FC output and RPM meters', () => {
@@ -75,7 +77,15 @@ describe('MotorDiagnosticsPanel', () => {
     let tree!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       tree = ReactTestRenderer.create(
-        <MotorDiagnosticsPanel sessionId="fc-live" />,
+        <MotorDiagnosticsPanel
+          sessionId="fc-live"
+          support={{
+            motorCount: 4,
+            dshotTelemetryEnabled: true,
+            escSensorEnabled: true,
+            escTelemetrySource: 'BIDIRECTIONAL_DSHOT_AND_ESC_SENSOR',
+          }}
+        />,
       );
     });
     const text = JSON.stringify(tree.toJSON());
@@ -149,6 +159,12 @@ describe('MotorDiagnosticsPanel', () => {
           operator={operator}
           activeMotorTest
           motorTestDiagnostics={diagnostics}
+          support={{
+            motorCount: 4,
+            dshotTelemetryEnabled: true,
+            escSensorEnabled: true,
+            escTelemetrySource: 'BIDIRECTIONAL_DSHOT_AND_ESC_SENSOR',
+          }}
         />,
       );
     });
@@ -229,6 +245,74 @@ describe('MotorDiagnosticsPanel', () => {
     expect(text).not.toContain('54321 RPM');
     expect(text).not.toContain('2000');
     expect(text.match(/—/g)?.length).toBeGreaterThanOrEqual(4);
+    act(() => tree.unmount());
+  });
+
+  it('suppresses a fresh all-zero reply when FC settings prove telemetry is disabled', async () => {
+    mockEscValue = {
+      status: 'FRESH',
+      value: {
+        motorCount: 1,
+        motors: [
+          {
+            rpm: 0,
+            invalidPercentRaw: 0,
+            temperatureCelsius: 0,
+            voltageCentivolts: 0,
+            currentCentiamps: 0,
+            consumptionMah: 0,
+          },
+        ],
+      },
+      updatedAtMs: 1,
+    };
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <MotorDiagnosticsPanel
+          sessionId="fc-disabled-telemetry"
+          support={{
+            motorCount: 4,
+            dshotTelemetryEnabled: false,
+            escSensorEnabled: false,
+            escTelemetrySource: 'NONE',
+          }}
+        />,
+      );
+    });
+    const text = JSON.stringify(tree.toJSON());
+    expect(text).toContain('لا يوجد مصدر تليمترية مفعّل');
+    expect(text).toContain('أثبت متحكم الطيران');
+    expect(tree.root.findAllByProps({testID: 'esc-telemetry-1'})).toHaveLength(
+      0,
+    );
+    expect(text).not.toContain('0 RPM');
+    expect(acquireMotorDiagnosticsTelemetry).toHaveBeenCalledWith(
+      'fc-disabled-telemetry',
+      false,
+    );
+    act(() => tree.unmount());
+  });
+
+  it('requests the background ESC poll only after a real source is proven', async () => {
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <MotorDiagnosticsPanel
+          sessionId="fc-source-enabled"
+          support={{
+            motorCount: 4,
+            dshotTelemetryEnabled: true,
+            escSensorEnabled: false,
+            escTelemetrySource: 'BIDIRECTIONAL_DSHOT',
+          }}
+        />,
+      );
+    });
+    expect(acquireMotorDiagnosticsTelemetry).toHaveBeenCalledWith(
+      'fc-source-enabled',
+      true,
+    );
     act(() => tree.unmount());
   });
 });

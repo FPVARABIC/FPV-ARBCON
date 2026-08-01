@@ -42,6 +42,7 @@ import {MSP_RESPONSE_TIMEOUT_MILLIS, MspClient} from '../protocol/mspClient';
 import type {MspSessionCompositeIdentity} from '../protocol/motorTestLease';
 import {FakeMspTransport} from '../protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../protocol/__testUtils__/mspFixtures';
+import {betaflightApi147Identity} from '../protocol/__testUtils__/motorFirmwareFixtures';
 import {ARMING_DISABLE_FLAGS_COUNT} from './armingBlockers';
 import {FEATURE_3D_BIT} from '../protocol/msp/decoding/decodeFeatureConfig';
 import {
@@ -269,6 +270,11 @@ function createHarness(
             physicalGeneration: state.identity.physicalGeneration,
             mspEpoch: state.identity.mspEpoch,
           },
+    readFirmwareIdentification: () => ({
+      status: 'SUCCEEDED',
+      identity: betaflightApi147Identity(),
+    }),
+    subscribeFirmwareIdentification: () => () => undefined,
     subscribeSessionInvalidated: listener => {
       listeners.add(listener);
       return () => {
@@ -597,6 +603,22 @@ describe('observations that must block activation', () => {
  * ================================================================== */
 
 describe('motor scope through the real configuration reads', () => {
+  it.each([
+    [5, 'DSHOT150'],
+    [6, 'DSHOT300'],
+    [7, 'DSHOT600'],
+    [8, 'PROSHOT1000'],
+  ])('accepts raw protocol %i (%s) through the real setup path', async raw => {
+    const harness = harnessFor([
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(raw))],
+    ]);
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.outcome.kind).toBe('READY');
+    expect(snapshot.motorScope?.motorProtocolRaw).toBe(raw);
+    expect(snapshot.activation.allowed).toBe(true);
+  });
+
   it('refuses a 3D-configured aircraft with the dedicated reason', async () => {
     const harness = harnessFor([
       [MSP_FEATURE_CONFIG, reply(featureConfigPayload(FEATURE_3D_BIT))],
@@ -628,9 +650,9 @@ describe('motor scope through the real configuration reads', () => {
     expect(snapshot.activation.reasons).not.toContain('MOTOR_3D_ENABLED');
   });
 
-  it('refuses a raw motor protocol the encoder is not scoped for', async () => {
+  it('refuses an analog raw motor protocol the digital adapter is not scoped for', async () => {
     const harness = harnessFor([
-      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(6))],
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(4))],
     ]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome).toMatchObject({

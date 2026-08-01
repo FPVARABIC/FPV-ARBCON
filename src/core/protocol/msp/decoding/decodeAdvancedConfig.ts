@@ -3,7 +3,10 @@ import {MspPayloadReader} from './MspPayloadReader';
 /**
  * Motor read-capability pass - wire decoder for MSP_ADVANCED_CONFIG (90),
  * verified verbatim against src/main/msp/msp.c:1846-1864 @
- * BETAFLIGHT_2025_12_2_COMMIT. Exactly 20 bytes, in this order:
+ * BETAFLIGHT_2025_12_2_COMMIT. The motor-relevant raw fields used by the
+ * bounded bench adapter were rechecked against API 1.46 and API 1.48;
+ * general configuration writes outside API 1.47 remain disabled. Exactly
+ * 20 bytes, in this order:
  *
  *   offset  0  u8   deprecated gyro-sync denominator (hard-coded 1 since API 1.43)
  *   offset  1  u8   pid_process_denom
@@ -55,7 +58,25 @@ import {MspPayloadReader} from './MspPayloadReader';
  * DSHOT600 at this pinned commit, so the name records this codebase's
  * interpretation rather than claiming an upstream API contract.
  */
+export const MOTOR_PROTOCOL_RAW_DSHOT150_AT_2025_12_2 = 5;
+export const MOTOR_PROTOCOL_RAW_DSHOT300_AT_2025_12_2 = 6;
 export const MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2 = 7;
+export const MOTOR_PROTOCOL_RAW_PROSHOT1000_AT_2025_12_2 = 8;
+
+/**
+ * The digital motor protocols that Betaflight 2025.12.2 routes through its
+ * DShot motor-device family.  That family owns the shared external-value
+ * conversion used by MSP_SET_MOTOR: in non-3D mode, 1000 is stop and
+ * 1001..2000 are active values.  Keeping this list next to the versioned
+ * raw enum values prevents a UI label from becoming a write capability.
+ */
+export const MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48: readonly number[] =
+  Object.freeze([
+    MOTOR_PROTOCOL_RAW_DSHOT150_AT_2025_12_2,
+    MOTOR_PROTOCOL_RAW_DSHOT300_AT_2025_12_2,
+    MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2,
+    MOTOR_PROTOCOL_RAW_PROSHOT1000_AT_2025_12_2,
+  ]);
 
 export interface MspAdvancedConfig {
   /** u8. Removed from the firmware in API 1.43; hard-coded 1. */

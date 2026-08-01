@@ -11,6 +11,12 @@ import type {
   MotorTestDiagnosticsChannelState as ControllerDiagnosticsChannelState,
   MotorTestDiagnosticsSnapshot,
 } from '../../core/state/motorTestController';
+import {
+  hasEscTelemetrySource,
+  visibleMotorTelemetryMetrics,
+  type MotorDiagnosticsSupport,
+  type MotorTelemetryVisibleMetrics,
+} from '../../core/state/motorDiagnosticsSemantics';
 import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
 import {
   acquireMotorDiagnosticsTelemetry,
@@ -24,7 +30,8 @@ import {
 } from '../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography } from '../theme';
 
-const VISIBLE_MOTOR_COUNT = 4;
+const DEFAULT_VISIBLE_MOTOR_COUNT = 4;
+const MAX_VISIBLE_MOTOR_COUNT = 8;
 const OUTPUT_STOP_VALUE = 1000;
 const OUTPUT_FULL_VALUE = 2000;
 const RPM_METER_MAX = 50_000;
@@ -45,13 +52,19 @@ export function rpmMeterPercent(rpm: number): number {
   return Math.max(0, Math.min(100, (rpm / RPM_METER_MAX) * 100));
 }
 
-function useAvailability(sessionId: string): MotorDiagnosticsAvailability {
+function useAvailability(
+  sessionId: string,
+  escTelemetryEnabled: boolean,
+): MotorDiagnosticsAvailability {
   const [availability, setAvailability] = useState(() =>
     getMotorDiagnosticsAvailability(sessionId),
   );
 
   useEffect(() => {
-    const release = acquireMotorDiagnosticsTelemetry(sessionId);
+    const release = acquireMotorDiagnosticsTelemetry(
+      sessionId,
+      escTelemetryEnabled,
+    );
     const publish = () =>
       setAvailability(getMotorDiagnosticsAvailability(sessionId));
     const unsubscribe = subscribeMotorDiagnosticsAvailability(
@@ -63,7 +76,7 @@ function useAvailability(sessionId: string): MotorDiagnosticsAvailability {
       unsubscribe();
       release();
     };
-  }, [sessionId]);
+  }, [escTelemetryEnabled, sessionId]);
 
   return availability;
 }
@@ -75,6 +88,9 @@ function channelText(
 ): string {
   if (channel === 'UNSUPPORTED') {
     return t('motorDiagnostics.unsupported');
+  }
+  if (channel === 'NOT_ENABLED') {
+    return t('motorDiagnostics.notEnabled');
   }
   if (channel === 'MALFORMED_RESPONSE') {
     return t('motorDiagnostics.malformed');
@@ -129,6 +145,7 @@ export interface MotorDiagnosticsPanelProps {
   readonly operator?: MotorTestOperatorPort;
   readonly activeMotorTest?: boolean;
   readonly motorTestDiagnostics?: MotorTestDiagnosticsSnapshot;
+  readonly support?: MotorDiagnosticsSupport;
 }
 
 export function MotorDiagnosticsPanel({
@@ -136,10 +153,12 @@ export function MotorDiagnosticsPanel({
   operator,
   activeMotorTest = false,
   motorTestDiagnostics,
+  support,
 }: MotorDiagnosticsPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const [nowMillis, setNowMillis] = useState(() => Date.now());
-  const availability = useAvailability(sessionId);
+  const escTelemetryEnabled = hasEscTelemetrySource(support);
+  const availability = useAvailability(sessionId, escTelemetryEnabled);
   const outputsValue = useTelemetryValue<MspMotorOutputs>(
     sessionId,
     MOTOR_OUTPUTS_TELEMETRY_POLL_ID,
@@ -190,7 +209,10 @@ export function MotorDiagnosticsPanel({
       ? leasedOutputs.value
       : undefined
     : visibleValue(outputsValue);
-  const escTelemetry = activeMotorTest
+  const sourceProvenUnavailable = support?.escTelemetrySource === 'NONE';
+  const escTelemetry = sourceProvenUnavailable
+    ? undefined
+    : activeMotorTest
     ? leasedEscFresh
       ? leasedEsc.value
       : undefined
@@ -198,9 +220,12 @@ export function MotorDiagnosticsPanel({
   const outputsAvailability: MotorDiagnosticsChannelState = activeMotorTest
     ? leasedAvailability(leasedOutputs)
     : availability.outputs;
-  const escAvailability: MotorDiagnosticsChannelState = activeMotorTest
-    ? leasedAvailability(leasedEsc)
-    : availability.escTelemetry;
+  const escAvailability: MotorDiagnosticsChannelState =
+    sourceProvenUnavailable
+      ? 'NOT_ENABLED'
+      : activeMotorTest
+        ? leasedAvailability(leasedEsc)
+        : availability.escTelemetry;
   const outputsStatus: TelemetryValue<unknown>['status'] = activeMotorTest
     ? leasedOutputsFresh
       ? 'FRESH'
@@ -210,23 +235,33 @@ export function MotorDiagnosticsPanel({
           ? 'WAITING'
           : 'ERROR'
     : outputsValue.status;
-  const escStatus: TelemetryValue<unknown>['status'] = activeMotorTest
-    ? leasedEscFresh
-      ? 'FRESH'
-      : leasedEsc?.state === 'FRESH'
-        ? 'STALE'
-        : leasedEsc?.state === 'WAITING' || leasedEsc === undefined
-          ? 'WAITING'
-          : 'ERROR'
-    : escValue.status;
+  const escStatus: TelemetryValue<unknown>['status'] =
+    sourceProvenUnavailable
+      ? 'UNAVAILABLE'
+      : activeMotorTest
+        ? leasedEscFresh
+          ? 'FRESH'
+          : leasedEsc?.state === 'FRESH'
+            ? 'STALE'
+            : leasedEsc?.state === 'WAITING' || leasedEsc === undefined
+              ? 'WAITING'
+              : 'ERROR'
+        : escValue.status;
+
+  const visibleMotorCount =
+    support !== undefined &&
+    Number.isInteger(support.motorCount) &&
+    support.motorCount > 0
+      ? Math.min(MAX_VISIBLE_MOTOR_COUNT, support.motorCount)
+      : DEFAULT_VISIBLE_MOTOR_COUNT;
 
   const outputSlots = useMemo(
     () =>
-      Array.from({ length: VISIBLE_MOTOR_COUNT }, (_, index) => ({
+      Array.from({ length: visibleMotorCount }, (_, index) => ({
         slot: index + 1,
         value: outputs?.values[index],
       })),
-    [outputs],
+    [outputs, visibleMotorCount],
   );
 
   return (
@@ -299,7 +334,16 @@ export function MotorDiagnosticsPanel({
           </Text>
         </View>
 
-        {escTelemetry?.motors.some(motor => motor.invalidPercentRaw >= 100) ? (
+        <Text style={styles.sourceText} testID="esc-telemetry-source">
+          {support === undefined
+            ? t('motorDiagnostics.sourceUnknown')
+            : t(
+                `motorDiagnostics.source.${support.escTelemetrySource}`,
+              )}
+        </Text>
+
+        {support?.dshotTelemetryEnabled === true &&
+        escTelemetry?.motors.some(motor => motor.invalidPercentRaw >= 100) ? (
           <Text
             style={styles.qualityWarning}
             testID="esc-telemetry-quality-warning"
@@ -311,9 +355,13 @@ export function MotorDiagnosticsPanel({
         {escTelemetry !== undefined && escTelemetry.motors.length > 0 ? (
           <View style={styles.escList}>
             {escTelemetry.motors
-              .slice(0, VISIBLE_MOTOR_COUNT)
+              .slice(0, visibleMotorCount)
               .map((motor, index) => {
-                const invalidPercent = motor.invalidPercentRaw / 100;
+                const metrics = visibleMotorTelemetryMetrics(motor, support);
+                const invalidPercent =
+                  metrics.invalidPercentRaw === undefined
+                    ? undefined
+                    : metrics.invalidPercentRaw / 100;
                 return (
                   <View
                     key={index}
@@ -323,40 +371,24 @@ export function MotorDiagnosticsPanel({
                     <View style={styles.valueRow}>
                       <Text style={styles.slotName}>{`M${index + 1}`}</Text>
                       <Text style={styles.rpmValue}>
-                        {t('motorDiagnostics.rpmValue', { rpm: motor.rpm })}
+                        {metrics.rpm === undefined
+                          ? '— RPM'
+                          : t('motorDiagnostics.rpmValue', {
+                              rpm: metrics.rpm,
+                            })}
                       </Text>
                     </View>
                     <Meter
-                      percent={rpmMeterPercent(motor.rpm)}
-                      danger={invalidPercent >= 1}
+                      percent={
+                        metrics.rpm === undefined
+                          ? 0
+                          : rpmMeterPercent(metrics.rpm)
+                      }
+                      danger={
+                        invalidPercent !== undefined && invalidPercent >= 1
+                      }
                     />
-                    <View style={styles.metricGrid}>
-                      <Text style={styles.metric}>
-                        {t('motorDiagnostics.invalidPercent', {
-                          value: invalidPercent.toFixed(2),
-                        })}
-                      </Text>
-                      <Text style={styles.metric}>
-                        {t('motorDiagnostics.temperature', {
-                          value: motor.temperatureCelsius,
-                        })}
-                      </Text>
-                      <Text style={styles.metric}>
-                        {t('motorDiagnostics.voltage', {
-                          value: (motor.voltageCentivolts / 100).toFixed(2),
-                        })}
-                      </Text>
-                      <Text style={styles.metric}>
-                        {t('motorDiagnostics.current', {
-                          value: (motor.currentCentiamps / 100).toFixed(2),
-                        })}
-                      </Text>
-                      <Text style={styles.metric}>
-                        {t('motorDiagnostics.consumption', {
-                          value: motor.consumptionMah,
-                        })}
-                      </Text>
-                    </View>
+                    <EscMetrics metrics={metrics} />
                   </View>
                 );
               })}
@@ -372,6 +404,54 @@ export function MotorDiagnosticsPanel({
           </View>
         )}
       </View>
+    </View>
+  );
+}
+
+function EscMetrics({
+  metrics,
+}: {
+  readonly metrics: MotorTelemetryVisibleMetrics;
+}): React.JSX.Element {
+  const {t} = useTranslation();
+  const unavailable = t('motorDiagnostics.metricUnavailable');
+  return (
+    <View style={styles.metricGrid}>
+      <Text style={styles.metric}>
+        {metrics.invalidPercentRaw === undefined
+          ? t('motorDiagnostics.invalidPercentUnavailable', {
+              value: unavailable,
+            })
+          : t('motorDiagnostics.invalidPercent', {
+              value: (metrics.invalidPercentRaw / 100).toFixed(2),
+            })}
+      </Text>
+      <Text style={styles.metric}>
+        {t('motorDiagnostics.temperature', {
+          value: metrics.temperatureCelsius ?? unavailable,
+        })}
+      </Text>
+      <Text style={styles.metric}>
+        {t('motorDiagnostics.voltage', {
+          value:
+            metrics.voltageVolts === undefined
+              ? unavailable
+              : metrics.voltageVolts.toFixed(2),
+        })}
+      </Text>
+      <Text style={styles.metric}>
+        {t('motorDiagnostics.current', {
+          value:
+            metrics.currentAmps === undefined
+              ? unavailable
+              : metrics.currentAmps.toFixed(2),
+        })}
+      </Text>
+      <Text style={styles.metric}>
+        {t('motorDiagnostics.consumption', {
+          value: metrics.consumptionMah ?? unavailable,
+        })}
+      </Text>
     </View>
   );
 }
@@ -440,6 +520,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accent,
     fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  sourceText: {
+    ...typography.caption,
+    color: colors.textMuted,
     writingDirection: 'rtl',
   },
   outputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },

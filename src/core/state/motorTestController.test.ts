@@ -10,8 +10,8 @@
  * REAL Phase 2C MotorTestTelemetryRegistry and the REAL reducer.
  *
  * NOTHING IS REIMPLEMENTED HERE. The narrow fakes are exactly two:
- *  - a session port (three members: a client reference, an identity read
- *    and an invalidation subscription) - a read/lifecycle dependency;
+ *  - a session port (client reference, physical and firmware identity
+ *    reads, and lifecycle subscriptions) - a read-only dependency;
  *  - a telemetry scheduler stand-in implementing exactly the two methods
  *    the barrier is allowed to call.
  * Neither can mint a lease, an authority or a receipt.
@@ -66,6 +66,7 @@ import {
   type MotorTestController,
   type MotorTestControllerSessionPort,
   type MotorTestControllerSnapshot,
+  type MotorTestFirmwareIdentificationState,
   type MotorTestPulseRequestResult,
   type MotorTestSessionInvalidationReason,
 } from './motorTestController';
@@ -95,6 +96,7 @@ import {FEATURE_3D_BIT} from '../protocol/msp/decoding/decodeFeatureConfig';
 import {ARMING_DISABLED_MSP_BIT_INDEX} from './motorArmingRestriction';
 import {FakeMspTransport} from '../protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../protocol/__testUtils__/mspFixtures';
+import {betaflightApi147Identity} from '../protocol/__testUtils__/motorFirmwareFixtures';
 import {
   MSP_ADVANCED_CONFIG,
   MSP_API_VERSION,
@@ -182,15 +184,19 @@ function mixerConfigPayload(mixerModeRaw = 3): Uint8Array {
   return Uint8Array.from([mixerModeRaw, 1]);
 }
 
-function motorConfigPayload(motorCount = 4): Uint8Array {
+function motorConfigPayload(
+  motorCount = 4,
+  dshotTelemetryRaw = 0,
+  escSensorRaw = 0,
+): Uint8Array {
   return Uint8Array.from([
     ...u16(0),
     ...u16(2000),
     ...u16(1000),
     motorCount,
     14,
-    0,
-    0,
+    dshotTelemetryRaw,
+    escSensorRaw,
   ]);
 }
 
@@ -442,6 +448,10 @@ interface Harness {
   /** Makes the narrow identity read THROW, which is a different fact from
    * "there is no identity" and must not be reported as one. */
   failIdentityReads(): void;
+  setFirmwareIdentification(
+    state: MotorTestFirmwareIdentificationState,
+  ): void;
+  firmwareIdentificationListenerCount(): number;
   invalidate(reason: MotorTestSessionInvalidationReason): void;
   invalidationListenerCount(): number;
 }
@@ -460,6 +470,10 @@ interface HarnessOptions {
   /** Makes the monitor stand-in's first `observeNow()` hang until
    * `releaseFirstObservation()` is called. */
   readonly holdFirstObservation?: boolean;
+  readonly firmwareIdentification?: MotorTestFirmwareIdentificationState;
+  /** Simulates a provider publishing from inside subscribe(). */
+  readonly firmwareIdentificationOnSubscribe?:
+    MotorTestFirmwareIdentificationState;
 }
 
 function createHarness(
@@ -488,12 +502,19 @@ function createHarness(
   const listeners = new Set<
     (reason: MotorTestSessionInvalidationReason) => void
   >();
+  const firmwareListeners = new Set<() => void>();
   const state: {
     identity: MspSessionCompositeIdentity | undefined;
     throwOnRead: boolean;
+    firmwareIdentification: MotorTestFirmwareIdentificationState;
   } = {
     identity: {physicalGeneration: PHYSICAL_GENERATION, mspEpoch: 0},
     throwOnRead: false,
+    firmwareIdentification:
+      options.firmwareIdentification ?? {
+        status: 'SUCCEEDED',
+        identity: betaflightApi147Identity(),
+      },
   };
 
   const session: MotorTestControllerSessionPort = {
@@ -510,6 +531,18 @@ function createHarness(
             physicalGeneration: state.identity.physicalGeneration,
             mspEpoch: state.identity.mspEpoch,
           };
+    },
+    readFirmwareIdentification: () => state.firmwareIdentification,
+    subscribeFirmwareIdentification: listener => {
+      firmwareListeners.add(listener);
+      if (options.firmwareIdentificationOnSubscribe !== undefined) {
+        state.firmwareIdentification =
+          options.firmwareIdentificationOnSubscribe;
+        listener();
+      }
+      return () => {
+        firmwareListeners.delete(listener);
+      };
     },
     subscribeSessionInvalidated: listener => {
       listeners.add(listener);
@@ -643,6 +676,13 @@ function createHarness(
     failIdentityReads: () => {
       state.throwOnRead = true;
     },
+    setFirmwareIdentification: next => {
+      state.firmwareIdentification = next;
+      for (const listener of Array.from(firmwareListeners)) {
+        listener();
+      }
+    },
+    firmwareIdentificationListenerCount: () => firmwareListeners.size,
     invalidate: reason => {
       for (const listener of Array.from(listeners)) {
         listener(reason);
@@ -1808,9 +1848,9 @@ describe('Phase 2F - stop execution', () => {
   });
 
   it('an unsupported scope dispatches nothing at all', async () => {
-    // Motor protocol 6 is not DSHOT600 at the pinned tag.
+    // Motor protocol 4 is BRUSHED/PWM-family, not a reviewed digital scope.
     const harness = createHarness([
-      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(6))],
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(4))],
     ]);
     const snapshot = await runSetup(harness);
     // The profile blocked before the restriction, and the scope guard
@@ -1970,7 +2010,9 @@ describe('MotorTestController - same-session ESC direction', () => {
 
 describe('MotorTestController - live motor diagnostics', () => {
   it('publishes decoded MSP_MOTOR and ESC telemetry values from fresh replies', async () => {
-    const harness = createHarness();
+    const harness = createHarness([
+      [MSP_MOTOR_CONFIG, reply(motorConfigPayload(4, 1, 1))],
+    ]);
     await runSetup(harness);
 
     const refreshing = harness.controller.refreshDiagnostics();
@@ -2033,7 +2075,9 @@ describe('MotorTestController - live motor diagnostics', () => {
   });
 
   it('labels confirmed unsupported ESC telemetry without displaying invented values or closing', async () => {
-    const harness = createHarness();
+    const harness = createHarness([
+      [MSP_MOTOR_CONFIG, reply(motorConfigPayload(4, 1, 0))],
+    ]);
     await runSetup(harness);
 
     const refreshing = harness.controller.refreshDiagnostics();
@@ -2059,6 +2103,38 @@ describe('MotorTestController - live motor diagnostics', () => {
       phase: 'ACTIVE',
       activation: {allowed: true},
     });
+  });
+
+  it('does not request command 139 when FC configuration proves no telemetry source', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    expect(harness.controller.getSnapshot()).toMatchObject({
+      motorDiagnosticsSupport: {
+        motorCount: 4,
+        dshotTelemetryEnabled: false,
+        escSensorEnabled: false,
+        escTelemetrySource: 'NONE',
+      },
+      diagnostics: {escTelemetry: {state: 'NOT_ENABLED'}},
+    });
+
+    const refreshing = harness.controller.refreshDiagnostics();
+    await flush();
+    expect(writtenCommand(harness.transport.writes[0].data)).toBe(MSP_MOTOR);
+    harness.transport.resolveNextWrite();
+    await flush();
+    harness.transport.emitData(
+      responseFrame(
+        MSP_MOTOR,
+        Uint8Array.from(new Array(8).fill(1000).flatMap(u16)),
+      ),
+    );
+
+    await expect(refreshing).resolves.toMatchObject({
+      outputs: {state: 'FRESH'},
+      escTelemetry: {state: 'NOT_ENABLED', value: undefined},
+    });
+    expect(harness.transport.writes).toHaveLength(0);
   });
 
   it('turns an ambiguous diagnostics link failure during a pulse into an immediate stop fault', async () => {
@@ -2435,13 +2511,156 @@ describe('failure classification', () => {
 });
 
 /* ------------------------------------------------------------------ *
+ * Firmware identity and versioned adapter gate
+ * ------------------------------------------------------------------ */
+
+describe('the versioned motor firmware gate', () => {
+  it('handles synchronous identification publication without leaking its subscription', async () => {
+    const harness = createHarness([], {
+      firmwareIdentification: {status: 'RUNNING'},
+      firmwareIdentificationOnSubscribe: {
+        status: 'SUCCEEDED',
+        identity: betaflightApi147Identity(),
+      },
+    });
+
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.outcome.kind).toBe('READY');
+    expect(harness.firmwareIdentificationListenerCount()).toBe(0);
+    expect(snapshot.firmwareCompatibility).toMatchObject({
+      status: 'SUPPORTED',
+      adapterId: 'BETAFLIGHT_API_1_47',
+    });
+  });
+
+  it('waits for the coordinator identification result before any MSP request', async () => {
+    const harness = createHarness([], {
+      firmwareIdentification: {status: 'RUNNING'},
+    });
+    const setup = harness.controller.initializeSession();
+    await flush(10);
+
+    expect(harness.controller.getSnapshot().setupStep).toBe(
+      'FIRMWARE_COMPATIBILITY',
+    );
+    expect(harness.commands).toEqual([]);
+    expect(harness.transport.writes).toEqual([]);
+
+    harness.setFirmwareIdentification({
+      status: 'SUCCEEDED',
+      identity: betaflightApi147Identity(),
+    });
+    const snapshot = await drive(harness, setup);
+    expect(snapshot.outcome.kind).toBe('READY');
+    expect(snapshot.firmwareCompatibility).toMatchObject({
+      status: 'SUPPORTED',
+      adapterId: 'BETAFLIGHT_API_1_47',
+    });
+  });
+
+  it('refuses INAV before pausing telemetry, leasing, or sending any request', async () => {
+    const identity = betaflightApi147Identity();
+    const harness = createHarness([], {
+      firmwareIdentification: {
+        status: 'SUCCEEDED',
+        identity: {
+          ...identity,
+          apiVersion: {
+            ...identity.apiVersion,
+            apiVersionMajor: 2,
+            apiVersionMinor: 5,
+          },
+          firmware: {identifier: 'INAV', knownFamily: 'INAV'},
+        },
+      },
+    });
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.outcome).toMatchObject({
+      kind: 'BLOCKED',
+      reason: 'FIRMWARE_UNSUPPORTED',
+    });
+    expect(snapshot.firmwareCompatibility).toMatchObject({
+      status: 'UNSUPPORTED',
+      reason: 'FIRMWARE_FAMILY_UNSUPPORTED',
+    });
+    expect(snapshot.activation.reasons).toContain('FIRMWARE_UNSUPPORTED');
+    expect(harness.commands).toEqual([]);
+    expect(harness.scheduler.leases).toEqual([]);
+  });
+
+  it('admits the separately reviewed Betaflight API-1.48 bench adapter', async () => {
+    const identity = betaflightApi147Identity();
+    const harness = createHarness([], {
+      firmwareIdentification: {
+        status: 'SUCCEEDED',
+        identity: {
+          ...identity,
+          apiVersion: {...identity.apiVersion, apiVersionMinor: 48},
+        },
+      },
+    });
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.firmwareCompatibility).toMatchObject({
+      status: 'SUPPORTED',
+      adapterId: 'BETAFLIGHT_API_1_48',
+    });
+    expect(snapshot.outcome.kind).toBe('READY');
+    expect(snapshot.activation.allowed).toBe(true);
+  });
+
+  it('admits the separately reviewed Betaflight API-1.46 bench adapter', async () => {
+    const identity = betaflightApi147Identity();
+    const harness = createHarness([], {
+      firmwareIdentification: {
+        status: 'SUCCEEDED',
+        identity: {
+          ...identity,
+          apiVersion: {...identity.apiVersion, apiVersionMinor: 46},
+        },
+      },
+    });
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.firmwareCompatibility).toMatchObject({
+      status: 'SUPPORTED',
+      adapterId: 'BETAFLIGHT_API_1_46',
+    });
+    expect(snapshot.outcome.kind).toBe('READY');
+    expect(snapshot.activation.allowed).toBe(true);
+  });
+
+  it('refuses an unverified future Betaflight API before all requests', async () => {
+    const identity = betaflightApi147Identity();
+    const harness = createHarness([], {
+      firmwareIdentification: {
+        status: 'SUCCEEDED',
+        identity: {
+          ...identity,
+          apiVersion: {...identity.apiVersion, apiVersionMinor: 49},
+        },
+      },
+    });
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.firmwareCompatibility).toMatchObject({
+      status: 'UNSUPPORTED',
+      reason: 'API_VERSION_UNVERIFIED',
+    });
+    expect(harness.commands).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
  * Motor scope - the only configuration the encoder depends on
  * ------------------------------------------------------------------ */
 
 describe('the motor scope gate', () => {
   it('blocks and never writes when the motor protocol is unrecognized', async () => {
     const harness = createHarness([
-      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(6))],
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(4))],
     ]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome.kind).toBe('BLOCKED');
@@ -2572,11 +2791,11 @@ describe('containment', () => {
     // cannot exist without a timer - so the assertion is narrowed rather
     // than dropped: exactly ONE arm site and ONE clear site, both on the
     // pulse deadline.
-    // TWO timer sites, both accounted for and neither hidden: the pulse
-    // deadline, and the safety monitor's injected scheduler. Any third
-    // one is a timer nobody declared, which is what this guards.
-    expect(code.match(/setTimeout\(/g) ?? []).toHaveLength(2);
-    expect(code.match(/clearTimeout\(/g) ?? []).toHaveLength(2);
+    // THREE timer sites, all accounted for and none hidden: the pulse
+    // deadline, the safety monitor's injected scheduler, and the bounded
+    // wait for the coordinator's firmware identification result.
+    expect(code.match(/setTimeout\(/g) ?? []).toHaveLength(3);
+    expect(code.match(/clearTimeout\(/g) ?? []).toHaveLength(3);
     // The monitor's pair is an INJECTION into the monitor, never a timer
     // this controller arms against a motor output itself.
     expect(code).toMatch(/setTimer:\s*\(callback, delayMs\) =>\s*setTimeout\(callback, delayMs\)/);

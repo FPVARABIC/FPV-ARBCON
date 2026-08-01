@@ -19,6 +19,7 @@ import { MotorTestTelemetryRegistry } from '../../../core/protocol/telemetry/mot
 import { MspClient } from '../../../core/protocol/mspClient';
 import { createMotorTestController } from '../../../core/state/motorTestController';
 import { FakeMspTransport } from '../../../core/protocol/__testUtils__/mspFakeTransport';
+import { betaflightApi147Identity } from '../../../core/protocol/__testUtils__/motorFirmwareFixtures';
 import type { MspSessionCompositeIdentity } from '../../../core/protocol/motorTestLease';
 import {
   acquireMotorConfigurationInterlock,
@@ -39,6 +40,11 @@ function makeClient(): MspClient {
 function portInput() {
   return {
     readCurrentIdentity: () => ({ ...IDENTITY }),
+    readFirmwareIdentification: () => ({
+      status: 'SUCCEEDED' as const,
+      identity: betaflightApi147Identity(),
+    }),
+    subscribeFirmwareIdentification: () => () => undefined,
     subscribeSessionInvalidated: () => () => undefined,
   };
 }

@@ -59,6 +59,19 @@ jest.mock('../../platforms/react-native/protocol', () => ({
   ...jest.requireActual('../../platforms/react-native/protocol'),
   mspSessionCoordinator: {
     getMotorTestSessionIdentity: () => ({physicalGeneration: 7, mspEpoch: 0}),
+    getIdentificationState: () => ({
+      status: 'SUCCEEDED',
+      identity: {
+        apiVersion: {
+          mspProtocolVersion: 0,
+          apiVersionMajor: 1,
+          apiVersionMinor: 47,
+        },
+        firmware: {identifier: 'BTFL', knownFamily: 'BETAFLIGHT'},
+        board: {},
+      },
+    }),
+    subscribeIdentificationState: () => () => {},
     subscribeMotorTestSessionInvalidated: () => () => {},
     // Read by the container to display a bring-up cause in the blocked
     // state. Undefined here is the truthful answer: this fixture opens the
@@ -105,6 +118,7 @@ import {ARMING_DISABLE_FLAGS_COUNT} from '../../core/state/armingBlockers';
 import {ARMING_DISABLED_MSP_BIT_INDEX} from '../../core/state/motorArmingRestriction';
 import {FakeMspTransport} from '../../core/protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../../core/protocol/__testUtils__/mspFixtures';
+import {betaflightApi147Identity} from '../../core/protocol/__testUtils__/motorFirmwareFixtures';
 import {MOTOR_TEST_EXPECTED_CONFIGURATION} from '../../core/state/motorVerificationModel';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 import {
@@ -267,6 +281,11 @@ function createHarness(): Harness {
       physicalGeneration: PHYSICAL_GENERATION,
       mspEpoch: 0,
     }),
+    readFirmwareIdentification: () => ({
+      status: 'SUCCEEDED',
+      identity: betaflightApi147Identity(),
+    }),
+    subscribeFirmwareIdentification: () => () => undefined,
     subscribeSessionInvalidated: listener => {
       listeners.add(listener);
       return () => {
@@ -718,6 +737,11 @@ function shellController() {
   return capability.operatorPort(
     {
       readCurrentIdentity: () => ({physicalGeneration: 7, mspEpoch: 0}),
+      readFirmwareIdentification: () => ({
+        status: 'SUCCEEDED',
+        identity: betaflightApi147Identity(),
+      }),
+      subscribeFirmwareIdentification: () => () => {},
       subscribeSessionInvalidated: () => () => {},
     } as never,
     () => Date.now(),
