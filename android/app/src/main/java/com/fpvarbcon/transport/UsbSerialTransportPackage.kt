@@ -5,7 +5,6 @@ import com.facebook.react.bridge.NativeModule
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.module.model.ReactModuleInfo
 import com.facebook.react.module.model.ReactModuleInfoProvider
-import com.facebook.fbreact.specs.NativeUsbSerialTransportSpec
 
 /**
  * Registers UsbSerialTransportModule. This is a first-party in-app native
