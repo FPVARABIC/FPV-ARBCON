@@ -13,6 +13,7 @@ const mockedNative = NativeUsbSerialTransport as unknown as {
   writeBytes: jest.Mock;
   onDataReceived: jest.Mock;
   onError: jest.Mock;
+  unprotectDfuDevice: jest.Mock;
 };
 
 const CONFIGURATION: SerialConfiguration = {
@@ -192,6 +193,21 @@ describe('UsbSerialTransportClient.stopReading', () => {
       code: 'UNKNOWN_ERROR',
       nativeMessage: 'boom',
     });
+  });
+});
+
+describe('UsbSerialTransportClient DFU read-unprotect', () => {
+  it('forwards the exact selected device and normalizes a native failure', async () => {
+    mockedNative.unprotectDfuDevice.mockRejectedValueOnce({
+      code: 'DFU_UNPROTECT_FAILED',
+      message: 'protected',
+    });
+    const client = new UsbSerialTransportClient();
+    await expect(client.unprotectDfuDevice(17)).rejects.toEqual({
+      code: 'DFU_UNPROTECT_FAILED',
+      nativeMessage: 'protected',
+    });
+    expect(mockedNative.unprotectDfuDevice).toHaveBeenCalledWith(17);
   });
 });
 

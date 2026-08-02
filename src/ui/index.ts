@@ -1,1 +1,7 @@
-export {UsbConnectionScreen, SetupScreen, MainTabsScreen} from './screens';
+export {
+  UsbConnectionScreen,
+  SetupScreen,
+  MainTabsScreen,
+  StartScreen,
+  FirmwareFlasherScreen,
+} from './screens';

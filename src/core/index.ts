@@ -6,6 +6,8 @@ export type {
   TransportUnsubscribe,
 } from './transport';
 
+export * from './firmware-flasher';
+
 export type {
   MspWireFormat,
   MspProtocolVersion,

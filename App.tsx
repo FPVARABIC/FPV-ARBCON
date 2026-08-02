@@ -17,7 +17,12 @@ import './src/i18n';
 // SINGLE-APP MERGE: the 'Setup' route now renders the main TAB SHELL
 // (Setup / Motors / Ports / Receiver / PID), not the Setup screen alone.
 // The route name is unchanged on purpose - see src/navigation/types.ts.
-import { MainTabsScreen, UsbConnectionScreen } from './src/ui';
+import {
+  FirmwareFlasherScreen,
+  MainTabsScreen,
+  StartScreen,
+  UsbConnectionScreen,
+} from './src/ui';
 import { useMspOwnershipState } from './src/platforms/react-native/protocol';
 import type { RootStackParamList } from './src/navigation/types';
 import { colors } from './src/ui/theme';
@@ -89,7 +94,7 @@ function App(): React.JSX.Element {
       if (params?.sessionKey) {
         setTrackedSessionId(params.sessionKey.sessionId);
       }
-    } else if (currentRoute?.name === 'Connection') {
+    } else if (currentRoute?.name === 'Connection' || currentRoute?.name === 'Start') {
       setTrackedSessionId(null);
     }
   }, [navigationRef]);
@@ -150,9 +155,11 @@ function App(): React.JSX.Element {
         ref={navigationRef}
         onReady={handleNavigationReady}
         onStateChange={handleNavigationStateChange}>
-        <Stack.Navigator initialRouteName="Connection" screenOptions={{ headerShown: false }}>
+        <Stack.Navigator initialRouteName="Start" screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Start" component={StartScreen} />
           <Stack.Screen name="Connection" component={UsbConnectionScreen} />
           <Stack.Screen name="Setup" component={MainTabsScreen} />
+          <Stack.Screen name="FirmwareFlasher" component={FirmwareFlasherScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaView>

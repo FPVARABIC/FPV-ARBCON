@@ -6,6 +6,9 @@ import type {
   UsbSerialDeviceDescriptor,
   UsbSerialErrorEvent,
   UsbSerialSessionDetachedEvent,
+  FirmwareFileSelection,
+  DfuDeviceDescriptor,
+  DfuFlashProgressEvent,
 } from './native/NativeUsbSerialTransport';
 import {normalizeNativeError} from './transportErrors';
 
@@ -85,6 +88,42 @@ function isValidDescriptor(value: unknown): value is UsbSerialDeviceDescriptor {
     (candidate.manufacturerName === undefined ||
       typeof candidate.manufacturerName === 'string')
   );
+}
+
+function isValidFirmwareFile(value: unknown): value is FirmwareFileSelection {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.name === 'string' && candidate.name.length > 0 &&
+    typeof candidate.sizeBytes === 'number' && candidate.sizeBytes > 0 &&
+    typeof candidate.dataBase64 === 'string' && candidate.dataBase64.length > 0;
+}
+
+function isValidDfuDescriptor(value: unknown): value is DfuDeviceDescriptor {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.deviceId === 'number' &&
+    typeof candidate.vendorId === 'number' &&
+    typeof candidate.productId === 'number' &&
+    typeof candidate.interfaceNumber === 'number' &&
+    typeof candidate.alternateSetting === 'number' &&
+    (candidate.productName === undefined || typeof candidate.productName === 'string') &&
+    (candidate.manufacturerName === undefined || typeof candidate.manufacturerName === 'string') &&
+    (candidate.memoryLayout === undefined || typeof candidate.memoryLayout === 'string');
+}
+
+function isValidDfuProgress(value: unknown): value is DfuFlashProgressEvent {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return typeof candidate.phase === 'string' &&
+    typeof candidate.percent === 'number' && candidate.percent >= 0 && candidate.percent <= 100 &&
+    typeof candidate.bytesProcessed === 'number' && candidate.bytesProcessed >= 0 &&
+    typeof candidate.totalBytes === 'number' && candidate.totalBytes >= 0;
 }
 
 /**
@@ -186,6 +225,96 @@ export class UsbSerialTransportClient {
     }
   }
 
+  async setControlLines(sessionId: string, dtr: boolean, rts: boolean): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.setControlLines(sessionId, dtr, rts);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
+  async setBaudRate(sessionId: string, baudRate: number): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.setBaudRate(sessionId, baudRate);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
+  async listDfuDevices(): Promise<DfuDeviceDescriptor[]> {
+    let result: unknown;
+    try {
+      result = await NativeUsbSerialTransport.listDfuDevices();
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+    if (!Array.isArray(result)) {
+      throw normalizeNativeError(new Error('listDfuDevices resolved with a non-array result.'));
+    }
+    return result.filter(isValidDfuDescriptor);
+  }
+
+  async pickFirmwareFile(): Promise<FirmwareFileSelection | null> {
+    let result: unknown;
+    try {
+      result = await NativeUsbSerialTransport.pickFirmwareFile();
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+    if (result === null) {
+      return null;
+    }
+    if (!isValidFirmwareFile(result)) {
+      throw normalizeNativeError(new Error('pickFirmwareFile resolved with an invalid file result.'));
+    }
+    return result;
+  }
+
+  async saveFirmwareFile(filename: string, mimeType: string, dataBase64: string): Promise<boolean> {
+    let result: unknown;
+    try {
+      result = await NativeUsbSerialTransport.saveFirmwareFile(filename, mimeType, dataBase64);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+    if (typeof result !== 'boolean') {
+      throw normalizeNativeError(new Error('saveFirmwareFile resolved with a non-boolean result.'));
+    }
+    return result;
+  }
+
+  async flashDfuFirmware(deviceId: number, intelHexBase64: string, fullErase: boolean): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.flashDfuFirmware(deviceId, intelHexBase64, fullErase);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
+  async cancelDfuFlash(): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.cancelDfuFlash();
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
+  async exitDfuMode(deviceId: number): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.exitDfuMode(deviceId);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
+  async unprotectDfuDevice(deviceId: number): Promise<void> {
+    try {
+      await NativeUsbSerialTransport.unprotectDfuDevice(deviceId);
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+  }
+
   /**
    * Subscribes to received serial data. dataBase64 is delivered exactly as
    * the native side encoded it - this client does not decode, interpret, or
@@ -248,6 +377,15 @@ export class UsbSerialTransportClient {
   onSessionDetached(callback: (event: UsbSerialSessionDetachedEvent) => void): () => void {
     const subscription = NativeUsbSerialTransport.onSessionDetached(event => {
       if (isValidSessionDetachedEvent(event)) {
+        callback(event);
+      }
+    });
+    return () => subscription.remove();
+  }
+
+  onDfuFlashProgress(callback: (event: DfuFlashProgressEvent) => void): () => void {
+    const subscription = NativeUsbSerialTransport.onDfuFlashProgress(event => {
+      if (isValidDfuProgress(event)) {
         callback(event);
       }
     });

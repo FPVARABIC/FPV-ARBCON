@@ -24,6 +24,8 @@
 import type {SetupUiSessionKey} from '../platforms/react-native/protocol';
 
 export type RootStackParamList = {
+  Start: undefined;
   Connection: undefined;
   Setup: {sessionKey: SetupUiSessionKey};
+  FirmwareFlasher: undefined;
 };

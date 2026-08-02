@@ -394,6 +394,13 @@ function renderApp(): Promise<ReactTestRenderer.ReactTestRenderer> {
         await act(async () => {
           renderer = ReactTestRenderer.create(<App />);
         });
+        // The product now starts on a real choice screen. These legacy
+        // connection/session lifecycle tests intentionally continue through
+        // its connection path before observing the existing USB flow.
+        await act(async () => {
+          findByTestID(renderer as ReactTestRenderer.ReactTestRenderer, 'start-connection').props.onPress();
+          await flushSchedulerTick();
+        });
         // Own the scan settlement in its own awaited act() scope: React
         // defers a mount's passive effects until the creating act()
         // scope pops, so the auto-scan cannot even have started inside

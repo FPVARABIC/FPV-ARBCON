@@ -131,6 +131,10 @@ internal class UsbSerialSessionRegistry {
   @Synchronized
   fun get(sessionId: String): UsbSerialSession? = sessions[sessionId]
 
+  /** Prevents a raw flasher from racing an active MSP/raw-serial owner. */
+  @Synchronized
+  fun hasActiveSessionOrReservation(): Boolean = sessions.isNotEmpty() || reservations.isNotEmpty()
+
   /**
    * Atomically removes and returns the active session for [deviceId], if
    * any - used when the device has physically detached and its session

@@ -31,14 +31,14 @@ import {MAIN_TABS, INITIAL_MAIN_TAB, isTabSelectable} from '../../navigation/tab
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 
 describe('Motors reachability after the single-app merge', () => {
-  it('is no longer a stack route - the stack is Connection + Setup only', () => {
-    // Compile-time proof: the param list has exactly these two members.
+  it('is no longer a stack route - it stays inside Setup while Start and Firmware Flasher are independent routes', () => {
+    // Compile-time proof: Motors is absent while the four real stack routes remain.
     const params: RootStackParamList['Setup'] = {
       sessionKey: {sessionId: 's-1', generation: 3},
     };
     expect(params.sessionKey.sessionId).toBe('s-1');
-    const names: (keyof RootStackParamList)[] = ['Connection', 'Setup'];
-    expect(names).toHaveLength(2);
+    const names: (keyof RootStackParamList)[] = ['Start', 'Connection', 'Setup', 'FirmwareFlasher'];
+    expect(names).toHaveLength(4);
   });
 
   it('is a selectable tab in the main shell, alongside the disabled roadmap tabs', () => {

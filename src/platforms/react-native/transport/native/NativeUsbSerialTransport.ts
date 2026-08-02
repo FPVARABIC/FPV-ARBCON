@@ -58,6 +58,30 @@ export type UsbSerialErrorEvent = {
   recoverable: boolean;
 };
 
+export type FirmwareFileSelection = {
+  name: string;
+  sizeBytes: number;
+  dataBase64: string;
+};
+
+export type DfuDeviceDescriptor = {
+  deviceId: number;
+  vendorId: number;
+  productId: number;
+  productName?: string;
+  manufacturerName?: string;
+  interfaceNumber: number;
+  alternateSetting: number;
+  memoryLayout?: string;
+};
+
+export type DfuFlashProgressEvent = {
+  phase: string;
+  percent: number;
+  bytesProcessed: number;
+  totalBytes: number;
+};
+
 export interface Spec extends TurboModule {
   listDevices(): Promise<UsbSerialDeviceDescriptor[]>;
 
@@ -70,6 +94,23 @@ export interface Spec extends TurboModule {
   closeSession(sessionId: string): Promise<void>;
 
   writeBytes(sessionId: string, dataBase64: string): Promise<void>;
+
+  setControlLines(sessionId: string, dtr: boolean, rts: boolean): Promise<void>;
+  setBaudRate(sessionId: string, baudRate: number): Promise<void>;
+
+  listDfuDevices(): Promise<DfuDeviceDescriptor[]>;
+
+  pickFirmwareFile(): Promise<FirmwareFileSelection | null>;
+
+  saveFirmwareFile(filename: string, mimeType: string, dataBase64: string): Promise<boolean>;
+
+  flashDfuFirmware(deviceId: number, intelHexBase64: string, fullErase: boolean): Promise<void>;
+
+  cancelDfuFlash(): Promise<void>;
+
+  exitDfuMode(deviceId: number): Promise<void>;
+
+  unprotectDfuDevice(deviceId: number): Promise<void>;
 
   /**
    * Starts a receive loop for an already-open session. Explicit only - never
@@ -93,6 +134,7 @@ export interface Spec extends TurboModule {
   readonly onError: EventEmitter<UsbSerialErrorEvent>;
   readonly onDeviceAttached: EventEmitter<UsbDeviceHotplugEvent>;
   readonly onDeviceDetached: EventEmitter<UsbDeviceHotplugEvent>;
+  readonly onDfuFlashProgress: EventEmitter<DfuFlashProgressEvent>;
 }
 
 export default TurboModuleRegistry.getEnforcing<Spec>('UsbSerialTransport');
