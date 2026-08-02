@@ -52,7 +52,10 @@ import {
   usbSerialTransportClient,
 } from '../../platforms/react-native/transport';
 import type {UsbSerialTransportClient} from '../../platforms/react-native/transport';
-import {FirmwareBootloaderController} from '../../platforms/react-native/protocol/FirmwareBootloaderController';
+import {
+  FirmwareBootloaderController,
+  FirmwareDetectionError,
+} from '../../platforms/react-native/protocol/FirmwareBootloaderController';
 import {CliBackupService, isPlausibleCliBackup} from '../../platforms/react-native/protocol/CliBackupService';
 import {EspFirmwareFlasher} from '../../platforms/react-native/protocol/EspFirmwareFlasher';
 import {ReactNativeSerialPort} from '../../platforms/react-native/protocol/ReactNativeSerialPort';
@@ -69,6 +72,12 @@ import {
   FirmwareSection,
   FirmwareToggle,
 } from '../components/firmware';
+import {
+  firmwareFamilyLabel,
+  firmwareFilenameLabel,
+  sanitizeUserVisibleText,
+  usbProductLabel,
+} from '../presentation/brandSafeText';
 import {colors, radii, spacing, typography} from '../theme';
 
 type ScreenDependencies = {
@@ -140,13 +149,47 @@ function releaseLabel(release: FirmwareRelease): string {
 }
 
 function deviceLabel(device: UsbSerialDeviceDescriptor): string {
-  const name = device.productName ?? device.manufacturerName ?? device.driverType;
+  const name = usbProductLabel(
+    device.productName ?? device.manufacturerName,
+    device.driverType,
+  );
   return `${name} • ${device.vendorId.toString(16).padStart(4, '0')}:${device.productId.toString(16).padStart(4, '0')}`;
 }
 
 function dfuLabel(device: DfuDeviceDescriptor): string {
-  const name = device.productName ?? device.manufacturerName ?? 'STM32 DFU';
+  const name = usbProductLabel(
+    device.productName ?? device.manufacturerName,
+    'STM32 DFU',
+  );
   return `${name} • ${device.vendorId.toString(16).padStart(4, '0')}:${device.productId.toString(16).padStart(4, '0')}`;
+}
+
+/**
+ * Android USB device ids can change after a detach/reattach or driver
+ * re-enumeration.  A stale id must not make the one physically attached
+ * controller look absent.  Recovery is intentionally limited to exactly
+ * one candidate; with two devices the operator must choose again.
+ */
+export function resolveSerialSelection(
+  devices: readonly UsbSerialDeviceDescriptor[],
+  selectedDeviceId: number | null,
+): UsbSerialDeviceDescriptor | undefined {
+  const exact =
+    selectedDeviceId === null
+      ? undefined
+      : devices.find(device => device.deviceId === selectedDeviceId);
+  return exact ?? (devices.length === 1 ? devices[0] : undefined);
+}
+
+export function resolveDfuSelection(
+  devices: readonly DfuDeviceDescriptor[],
+  selectedDeviceId: number | null,
+): DfuDeviceDescriptor | undefined {
+  const exact =
+    selectedDeviceId === null
+      ? undefined
+      : devices.find(device => device.deviceId === selectedDeviceId);
+  return exact ?? (devices.length === 1 ? devices[0] : undefined);
 }
 
 function defaultValue(options: readonly FirmwareBuildOption[]): string {
@@ -302,13 +345,13 @@ export default function FirmwareFlasherScreen({
   const cloudBuild = useMemo(() => new CloudBuildCoordinator(buildApi), [buildApi]);
 
   const appendLog = useCallback((line: string) => {
-    const clean = line.trim();
+    const clean = sanitizeUserVisibleText(line.trim());
     if (!clean) return;
     setLogLines(previous => [`${new Date().toLocaleTimeString('ar')} — ${clean}`, ...previous].slice(0, MAX_LOG_LINES));
   }, []);
 
   const setFailure = useCallback((error: unknown) => {
-    const message = errorMessage(error);
+    const message = sanitizeUserVisibleText(errorMessage(error));
     setOperation('error');
     setStatus(message);
     appendLog(`خطأ: ${message}`);
@@ -319,7 +362,7 @@ export default function FirmwareFlasherScreen({
     if (!force && now - lastProgressAt.current < 80 && percent < 100) return;
     lastProgressAt.current = now;
     setProgress(Math.max(0, Math.min(100, percent)));
-    setStatus(message);
+    setStatus(sanitizeUserVisibleText(message));
   }, []);
 
   const refreshDevices = useCallback(async () => {
@@ -591,7 +634,7 @@ export default function FirmwareFlasherScreen({
     setHexMethod(parsed.kind === 'HEX' ? 'dfu' : 'serial');
     setOperation('idle');
     setProgress(0);
-    setStatus(`الملف صالح: ${parsed.filename}`);
+    setStatus(`الملف صالح: ${firmwareFilenameLabel(parsed.filename)}`);
     appendLog(`نجح تحقق ${parsed.kind}: ${firmwareDescription(parsed)}.`);
     setStep('flash');
   }, [appendLog]);
@@ -629,9 +672,9 @@ export default function FirmwareFlasherScreen({
       }
       const lines = parseUnifiedConfigText(text);
       setConfigurationLines(lines);
-      setConfigurationLabel(selection.name);
+      setConfigurationLabel(firmwareFilenameLabel(selection.name));
       setOperation('idle');
-      setStatus(`Unified Config صالح: ${selection.name}. سيُدخل في منطقة Custom Defaults عند تفليش HEX.`);
+      setStatus(`Unified Config صالح: ${firmwareFilenameLabel(selection.name)}. سيُدخل في منطقة Custom Defaults عند تفليش HEX.`);
       appendLog(`تم تحميل Unified Config محلي (${lines.length} سطراً).`);
     } catch (error) {
       setFailure(error);
@@ -707,16 +750,37 @@ export default function FirmwareFlasherScreen({
     setOperation('detecting');
     setStatus('التعرف على Flight Controller عبر MSP…');
     try {
-      const selection = selectedSerialId === null
-        ? undefined
-        : {deviceId: selectedSerialId, portIndex: selectedPortIndex};
+      // Enumerate at the moment of the action. Android can assign a new
+      // deviceId between the last rendered list and this press; reusing the
+      // stale id is what previously produced "selected serial not found"
+      // even while one controller was plainly visible on screen.
+      const devices = (await client.listDevices()).filter(isSupportedDevice);
+      const chosen = resolveSerialSelection(devices, selectedSerialId);
+      if (!chosen) {
+        throw new FirmwareDetectionError(
+          devices.length > 1
+            ? 'اختر جهاز USB واحداً يدوياً قبل التعرف التلقائي.'
+            : 'لم يُعثر على Flight Controller تسلسلي مدعوم.',
+        );
+      }
+      if (selectedPortIndex < 0 || selectedPortIndex >= chosen.portCount) {
+        throw new FirmwareDetectionError('منفذ USB serial المحدد غير صالح؛ اختر المنفذ من القائمة ثم أعد المحاولة.');
+      }
+      if (chosen.deviceId !== selectedSerialId) {
+        setSelectedSerialId(chosen.deviceId);
+        appendLog('تغيّر معرّف USB؛ أُعيد ربط المتحكم الوحيد قبل التعرف التلقائي.');
+      }
+      const selection = {
+        deviceId: chosen.deviceId,
+        portIndex: selectedPortIndex,
+      };
       const detected = await bootloader.detectFlightController(controller.signal, selection);
       try {
         const identity = detected.identity;
         const target = identity.board.targetName || identity.board.boardName || identity.board.boardIdentifier;
         setDetectedTarget(target);
         setDetectedSummary(
-          `${identity.firmware.knownFamily} • ${identity.board.boardName || identity.board.boardIdentifier} • Target ${target}`,
+          `${firmwareFamilyLabel(identity.firmware.knownFamily)} • ${identity.board.boardName || identity.board.boardIdentifier} • Target ${target}`,
         );
         setSelectedSerialId(detected.device.deviceId);
         const catalogMatch = targets.find(item => item.target.toUpperCase() === target.toUpperCase());
@@ -727,7 +791,7 @@ export default function FirmwareFlasherScreen({
         setStatus(catalogMatch
           ? `تم التعرف واختيار ${catalogMatch.target}.`
           : `تم التعرف على ${target}، لكنه غير موجود في القائمة المحمّلة.`);
-        appendLog(`Auto detect: ${target} (${identity.firmware.knownFamily}).`);
+        appendLog(`Auto detect: ${target} (${firmwareFamilyLabel(identity.firmware.knownFamily)}).`);
       } finally {
         await detected.release();
       }
@@ -741,6 +805,7 @@ export default function FirmwareFlasherScreen({
   }, [
     appendLog,
     bootloader,
+    client,
     refreshDevices,
     selectedPortIndex,
     selectedSerialId,
@@ -753,9 +818,13 @@ export default function FirmwareFlasherScreen({
     setBuildLogLoading(true);
     try {
       const log = await buildApi.loadBuildLog(buildKey);
-      setBuildLogText(log.trim() || 'سجل Build فارغ.');
+      setBuildLogText(
+        sanitizeUserVisibleText(log.trim() || 'سجل Build فارغ.'),
+      );
     } catch (error) {
-      setBuildLogText(`تعذر تحميل سجل Build: ${errorMessage(error)}`);
+      setBuildLogText(
+        `تعذر تحميل سجل Build: ${sanitizeUserVisibleText(errorMessage(error))}`,
+      );
     } finally {
       setBuildLogLoading(false);
     }
@@ -763,10 +832,16 @@ export default function FirmwareFlasherScreen({
 
   const requireOneSerial = useCallback(async (): Promise<UsbSerialDeviceDescriptor> => {
     const devices = (await client.listDevices()).filter(isSupportedDevice);
-    const chosen = selectedSerialId === null
-      ? devices.length === 1 ? devices[0] : undefined
-      : devices.find(device => device.deviceId === selectedSerialId);
+    const chosen = resolveSerialSelection(devices, selectedSerialId);
     if (!chosen) {
+      if (devices.length === 0) {
+        const dfu = await client.listDfuDevices();
+        if (dfu.length > 0) {
+          throw new Error(
+            'الجهاز متصل في وضع DFU بالفعل، وليس Serial. فعّل «بدون تسلسل إعادة تشغيل»، اختر جهاز DFU، وأكّد Target يدوياً.',
+          );
+        }
+      }
       throw new Error(devices.length > 1
         ? 'اختر جهاز serial واحداً يدوياً قبل المتابعة.'
         : 'لم يُعثر على جهاز serial المحدد.');
@@ -774,8 +849,12 @@ export default function FirmwareFlasherScreen({
     if (selectedPortIndex < 0 || selectedPortIndex >= chosen.portCount) {
       throw new Error('رقم منفذ serial المحدد غير صالح.');
     }
+    if (chosen.deviceId !== selectedSerialId) {
+      setSelectedSerialId(chosen.deviceId);
+      appendLog('تغيّر معرّف USB بعد إعادة التعداد؛ أُعيد ربط الجهاز الوحيد المتصل بأمان.');
+    }
     return chosen;
-  }, [client, selectedPortIndex, selectedSerialId]);
+  }, [appendLog, client, selectedPortIndex, selectedSerialId]);
 
   const saveCurrentFirmware = useCallback(async () => {
     if (!firmware) return;
@@ -783,13 +862,13 @@ export default function FirmwareFlasherScreen({
     setStatus('اختر مكان حفظ Firmware…');
     try {
       const saved = await client.saveFirmwareFile(
-        firmware.filename,
+        firmwareFilenameLabel(firmware.filename),
         'application/octet-stream',
         bytesToBase64(firmware.bytes),
       );
       setOperation(saved ? 'success' : 'idle');
       setStatus(saved ? 'تم حفظ Firmware بنجاح.' : 'أُلغيَ حفظ Firmware دون تغيير الملف.');
-      if (saved) appendLog(`حُفظ ${firmware.filename}.`);
+      if (saved) appendLog(`حُفظ ${firmwareFilenameLabel(firmware.filename)}.`);
     } catch (error) {
       setFailure(error);
     }
@@ -849,10 +928,9 @@ export default function FirmwareFlasherScreen({
     let dfu: DfuDeviceDescriptor;
     if (noReboot) {
       const devices = await client.listDfuDevices();
-      const chosen = selectedDfuId === null
-        ? devices.length === 1 ? devices[0] : undefined
-        : devices.find(device => device.deviceId === selectedDfuId);
+      const chosen = resolveDfuSelection(devices, selectedDfuId);
       if (!chosen) throw new Error('اختر جهاز DFU واحداً؛ لن يخمّن التطبيق جهاز التفليش.');
+      if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       dfu = chosen;
     } else {
       if (serial === null) throw new Error('لم يُحدد جهاز serial لإعادة التشغيل إلى DFU.');
@@ -1071,10 +1149,9 @@ export default function FirmwareFlasherScreen({
   const exitDfu = useCallback(async () => {
     try {
       const devices = await client.listDfuDevices();
-      const chosen = selectedDfuId === null
-        ? devices.length === 1 ? devices[0] : undefined
-        : devices.find(device => device.deviceId === selectedDfuId);
+      const chosen = resolveDfuSelection(devices, selectedDfuId);
       if (!chosen) throw new Error('اختر جهاز DFU واحداً للخروج الآمن.');
+      if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       setOperation('flashing');
       setStatus('إرسال أمر الخروج من DFU…');
       await client.exitDfuMode(chosen.deviceId);
@@ -1094,10 +1171,9 @@ export default function FirmwareFlasherScreen({
     }
     try {
       const devices = await client.listDfuDevices();
-      const chosen = selectedDfuId === null
-        ? devices.length === 1 ? devices[0] : undefined
-        : devices.find(device => device.deviceId === selectedDfuId);
+      const chosen = resolveDfuSelection(devices, selectedDfuId);
       if (!chosen) throw new Error('اختر جهاز DFU واحداً لإزالة Read Protection.');
+      if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       setOperation('flashing');
       setStatus('إزالة Read Protection؛ لا تفصل USB حتى يعيد الجهاز التشغيل…');
       appendLog('بدأ DFU read-unprotect؛ هذه العملية تمسح Flash بحكم STM32 ROM.');
@@ -1579,14 +1655,14 @@ export default function FirmwareFlasherScreen({
             ) : null}
 
             {firmware ? (
-              <FirmwareNotice title={`${firmware.kind} صالح • ${firmware.filename}`} text={firmwareDescription(firmware)} tone="success" />
+              <FirmwareNotice title={`${firmware.kind} صالح • ${firmwareFilenameLabel(firmware.filename)}`} text={firmwareDescription(firmware)} tone="success" />
             ) : null}
           </>
         ) : (
           <>
             <FirmwareSection title="Firmware المحمّل" caption="لا يكفي امتداد الملف؛ تم تحليل البنية والعناوين والـ checksum.">
               {firmware ? (
-                <FirmwareNotice title={`${firmware.kind} • ${firmware.filename}`} text={firmwareDescription(firmware)} tone="success" />
+                <FirmwareNotice title={`${firmware.kind} • ${firmwareFilenameLabel(firmware.filename)}`} text={firmwareDescription(firmware)} tone="success" />
               ) : (
                 <FirmwareNotice title="لا يوجد ملف" text="ارجع إلى الخطوة الأولى وحمّل Firmware صالحاً." tone="warning" />
               )}
@@ -1630,6 +1706,41 @@ export default function FirmwareFlasherScreen({
                 <View style={styles.flexOne}><FirmwareButton title="تحديث أجهزة USB" onPress={() => refreshDevices().catch(setFailure)} disabled={isBusy} tone="secondary" /></View>
                 <View style={styles.flexOne}><FirmwareButton title="Auto detect" onPress={autoDetect} disabled={isBusy} tone="secondary" /></View>
               </View>
+              {firmware?.kind === 'HEX' && hexMethod === 'dfu' ? (
+                noReboot ? (
+                  dfuDevices.length > 0 ? (
+                    <FirmwareNotice
+                      title="وضع DFU جاهز"
+                      text="الجهاز ظاهر كـ STM32 DFU. سيبدأ DfuSe مباشرةً بعد إقرارات الأمان من دون البحث عن Serial."
+                      tone="success"
+                    />
+                  ) : (
+                    <FirmwareNotice
+                      title="ينتظر DFU اليدوي"
+                      text="خيار «بدون تسلسل إعادة تشغيل» مفعّل، لكن لا يوجد جهاز DFU الآن. اضغط BOOT أثناء توصيل USB ثم حدّث الأجهزة."
+                      tone="warning"
+                    />
+                  )
+                ) : serialDevices.length > 0 ? (
+                  <FirmwareNotice
+                    title="الوضع العادي مكتشف"
+                    text="الجهاز ظاهر كمنفذ USB عادي. عند البدء سيقرأ التطبيق هوية Target، يرسل أمر MSP الآمن للدخول إلى Bootloader، ثم ينتظر ظهور DFU تلقائياً قبل أي مسح."
+                    tone="info"
+                  />
+                ) : dfuDevices.length > 0 ? (
+                  <FirmwareNotice
+                    title="الجهاز في DFU بالفعل"
+                    text="فعّل «بدون تسلسل إعادة تشغيل» وأكّد Target يدوياً؛ لا يوجد منفذ Serial يمكن استخدامه للتعرف التلقائي أو النسخة الاحتياطية."
+                    tone="warning"
+                  />
+                ) : (
+                  <FirmwareNotice
+                    title="لا يوجد مسار USB جاهز"
+                    text="صِل Flight Controller بكابل بيانات ثم حدّث الأجهزة. سيظهر إما كمنفذ Serial عادي أو كجهاز STM32 DFU."
+                    tone="warning"
+                  />
+                )
+              ) : null}
               <View style={styles.twoButtons}>
                 <View style={styles.flexOne}>
                   <FirmwareButton

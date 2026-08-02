@@ -24,7 +24,7 @@ export class BuildApiError extends Error {
 function sameOriginUrl(path: string): string {
   const url = new URL(path, BUILD_ORIGIN);
   if (url.origin !== BUILD_ORIGIN || url.protocol !== 'https:') {
-    throw new BuildApiError('تم رفض عنوان تنزيل Firmware خارج خادم Betaflight الرسمي.');
+    throw new BuildApiError('تم رفض عنوان تنزيل Firmware خارج خادم البناء الموثوق.');
   }
   return url.toString();
 }
@@ -40,7 +40,7 @@ function contentLength(response: Response): number | undefined {
 
 async function ensureResponse(response: Response): Promise<void> {
   if (!response.ok) {
-    throw new BuildApiError(`خادم Betaflight أعاد HTTP ${response.status}.`, response.status);
+    throw new BuildApiError(`خادم Firmware أعاد HTTP ${response.status}.`, response.status);
   }
 }
 

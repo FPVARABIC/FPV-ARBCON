@@ -6,6 +6,10 @@ import { colors, radii, spacing, typography } from '../../theme';
 import { isSupportedDevice } from '../../../platforms/react-native/transport';
 import type { UsbSerialDeviceDescriptor } from '../../../platforms/react-native/transport';
 import { formatHex } from './format';
+import {
+  usbManufacturerLabel,
+  usbProductLabel,
+} from '../../presentation/brandSafeText';
 
 interface Props {
   device: UsbSerialDeviceDescriptor;
@@ -25,6 +29,11 @@ export default function UsbDeviceRow({
   const { t } = useTranslation();
   const supported = isSupportedDevice(device);
   const selectable = supported && !disabled;
+  const productLabel = usbProductLabel(
+    device.productName,
+    t('devices.unknownProductName'),
+  );
+  const manufacturerLabel = usbManufacturerLabel(device.manufacturerName);
 
   return (
     <Pressable
@@ -32,9 +41,7 @@ export default function UsbDeviceRow({
       onPress={selectable ? onSelect : undefined}
       accessibilityRole="radio"
       accessibilityState={{ selected, disabled: !selectable }}
-      accessibilityLabel={`${t('accessibility.selectDevice')}: ${
-        device.productName ?? t('devices.unknownProductName')
-      }`}
+      accessibilityLabel={`${t('accessibility.selectDevice')}: ${productLabel}`}
       style={[
         styles.row,
         selected && styles.rowSelected,
@@ -43,7 +50,7 @@ export default function UsbDeviceRow({
     >
       <View style={styles.headerLine}>
         <Text style={styles.productName} numberOfLines={1}>
-          {device.productName ?? t('devices.unknownProductName')}
+          {productLabel}
         </Text>
         <View
           style={[
@@ -69,9 +76,9 @@ export default function UsbDeviceRow({
         ) : null}
       </View>
 
-      {device.manufacturerName ? (
+      {manufacturerLabel ? (
         <Text style={styles.manufacturer} numberOfLines={1}>
-          {device.manufacturerName}
+          {manufacturerLabel}
         </Text>
       ) : null}
 

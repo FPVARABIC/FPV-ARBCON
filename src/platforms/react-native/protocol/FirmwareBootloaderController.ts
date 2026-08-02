@@ -60,7 +60,7 @@ export class DetectedFlightController {
 
   async rebootToBootloader(selectedTarget: string, allowMismatch = false): Promise<1 | 4> {
     if (this.identity.firmware.knownFamily !== 'BETAFLIGHT') {
-      throw new FirmwareDetectionError('إعادة التشغيل التلقائية إلى bootloader متاحة لـ Betaflight فقط.');
+      throw new FirmwareDetectionError('إعادة التشغيل التلقائية إلى bootloader غير مدعومة لعائلة Firmware المكتشفة.');
     }
     if (!allowMismatch && !this.targetMatches(selectedTarget)) {
       throw new FirmwareDetectionError(

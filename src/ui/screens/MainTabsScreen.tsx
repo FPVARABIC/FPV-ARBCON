@@ -33,7 +33,7 @@
  */
 
 import React, { useCallback, useRef, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Alert, StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { colors } from '../theme';
@@ -66,6 +66,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
    * when called from a stale closure.
    */
   const tabBlurListeners = useRef(new Set<() => void>());
+  const dirtyTabs = useRef(new Set<MainTabKey>());
   const subscribeTabBlur = useCallback((listener: () => void) => {
     tabBlurListeners.current.add(listener);
     return () => {
@@ -73,19 +74,37 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     };
   }, []);
 
-  const handleSelectTab = useCallback(
+  const reportDirty = useCallback((tab: MainTabKey, dirty: boolean) => {
+    if (dirty) dirtyTabs.current.add(tab);
+    else dirtyTabs.current.delete(tab);
+  }, []);
+  const reportMotorsDirty = useCallback(
+    (dirty: boolean) => reportDirty('MOTORS', dirty),
+    [reportDirty],
+  );
+  const reportPortsDirty = useCallback(
+    (dirty: boolean) => reportDirty('PORTS', dirty),
+    [reportDirty],
+  );
+
+  const performTabSwitch = useCallback(
     (next: MainTabKey) => {
-      if (next === activeTab || !isTabSelectable(next)) {
-        return;
-      }
       if (activeTab === 'MOTORS') {
-        // FIRE BEFORE THE SWITCH. The listeners are notified while the
-        // Motors screen is still the one in front of the operator, so the
-        // bridge's stop obligation is registered against a screen that has
-        // not yet been hidden. Iterated over a copy: a listener that
-        // unsubscribes itself must not mutate the set mid-iteration.
-        for (const listener of [...tabBlurListeners.current]) {
-          listener();
+        try {
+          // FIRE BEFORE THE SWITCH. The listeners are notified while the
+          // Motors screen is still visible, so its accepted stop/release
+          // path gets first ownership of departure.
+          for (const listener of [...tabBlurListeners.current]) listener();
+        } catch {
+          // A failed safety listener used to abort setActiveTab silently,
+          // making the navigation look broken. Keep the operator in place
+          // and explain why; never hide a potentially live motor surface.
+          Alert.alert(
+            'تعذر الانتقال بأمان',
+            'لم يكتمل مسار إيقاف المحركات. استخدم زر الإيقاف الطارئ ثم أعد المحاولة.',
+            [{ text: 'حسناً' }],
+          );
+          return;
         }
       }
       setMountedTabs(current =>
@@ -94,6 +113,30 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       setActiveTab(next);
     },
     [activeTab],
+  );
+
+  const handleSelectTab = useCallback(
+    (next: MainTabKey) => {
+      if (next === activeTab || !isTabSelectable(next)) {
+        return;
+      }
+      if (dirtyTabs.current.has(activeTab)) {
+        Alert.alert(
+          'تغييرات غير محفوظة',
+          'لديك مسودة لم تُحفظ. ابقَ في الشاشة للحفظ، أو انتقل مؤقتاً؛ ستبقى المسودة في هذه الشاشة ما دام التطبيق مفتوحاً.',
+          [
+            { text: 'البقاء للحفظ', style: 'cancel' },
+            {
+              text: 'الانتقال مؤقتاً',
+              onPress: () => performTabSwitch(next),
+            },
+          ],
+        );
+        return;
+      }
+      performTabSwitch(next);
+    },
+    [activeTab, performTabSwitch],
   );
 
   return (
@@ -116,6 +159,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
               sessionKey={props.route.params?.sessionKey}
               navigation={props.navigation}
               subscribeTabBlur={subscribeTabBlur}
+              onConfigurationDirtyChange={reportMotorsDirty}
               // The tab bar below already consumes the bottom safe-area
               // inset; the screen must not add it a second time.
               bottomInset={0}
@@ -127,7 +171,10 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             style={activeTab === 'PORTS' ? styles.visible : styles.hidden}
             testID="main-tab-panel-PORTS"
           >
-            <PortsScreen sessionKey={props.route.params?.sessionKey} />
+            <PortsScreen
+              sessionKey={props.route.params?.sessionKey}
+              onDirtyChange={reportPortsDirty}
+            />
           </View>
         ) : null}
       </View>

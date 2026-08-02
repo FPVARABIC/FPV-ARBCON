@@ -11,7 +11,10 @@ import {bytesToBase64} from '../../platforms/react-native/protocol/base64';
 import {FirmwareBootloaderController} from '../../platforms/react-native/protocol/FirmwareBootloaderController';
 import type {UsbSerialTransportClient} from '../../platforms/react-native/transport';
 import type {DfuDeviceDescriptor} from '../../platforms/react-native/transport/native/NativeUsbSerialTransport';
-import FirmwareFlasherScreen from './FirmwareFlasherScreen';
+import FirmwareFlasherScreen, {
+  resolveDfuSelection,
+  resolveSerialSelection,
+} from './FirmwareFlasherScreen';
 
 const VALID_HEX = ':020000040800F2\n:0400000001020304F2\n:00000001FF\n';
 
@@ -87,6 +90,34 @@ async function flushAsyncEffects(rounds = 8): Promise<void> {
 }
 
 describe('FirmwareFlasherScreen', () => {
+  it('recovers a stale Android USB id only when one serial device is unambiguous', () => {
+    const only = {
+      deviceId: 41,
+      vendorId: 0x0483,
+      productId: 0x5740,
+      productName: 'Flight Controller',
+      manufacturerName: 'FPV',
+      driverType: 'CDC_ACM',
+      portCount: 1,
+    } as const;
+    expect(resolveSerialSelection([only], 12)).toBe(only);
+    expect(resolveSerialSelection([only, {...only, deviceId: 42}], 12)).toBeUndefined();
+  });
+
+  it('recovers a stale DFU id only when one bootloader is unambiguous', () => {
+    const only = {
+      deviceId: 77,
+      vendorId: 0x0483,
+      productId: 0xdf11,
+      productName: 'STM32 BOOTLOADER',
+      manufacturerName: 'STMicroelectronics',
+      interfaceNumber: 0,
+      alternateSetting: 0,
+    } as DfuDeviceDescriptor;
+    expect(resolveDfuSelection([only], 10)).toBe(only);
+    expect(resolveDfuSelection([only, {...only, deviceId: 78}], 10)).toBeUndefined();
+  });
+
   it('shows the build-configuration contract before a board is selected', async () => {
     const {renderer} = await renderScreen();
     expect(renderer.root.findAllByProps({testID: 'build-configuration'}).length).toBeGreaterThan(0);
@@ -211,6 +242,49 @@ describe('FirmwareFlasherScreen', () => {
     expect(detect).toHaveBeenCalledWith(expect.any(AbortSignal), {deviceId: 41, portIndex: 1});
     expect(release).toHaveBeenCalledTimes(1);
     expect(allText(renderer)).toContain('تم التعرف واختيار S405');
+    detect.mockRestore();
+    act(() => renderer.unmount());
+  });
+
+  it('re-enumerates and safely recovers a changed Android USB id before auto detection', async () => {
+    const client = fakeClient();
+    const previous = {
+      deviceId: 12,
+      vendorId: 0x0483,
+      productId: 0x5740,
+      productName: 'Flight Controller',
+      manufacturerName: 'FPV',
+      driverType: 'CDC',
+      portCount: 1,
+    };
+    const current = {...previous, deviceId: 41};
+    client.listDevices.mockResolvedValue([previous] as never);
+    const release = jest.fn(async () => undefined);
+    const detect = jest
+      .spyOn(FirmwareBootloaderController.prototype, 'detectFlightController')
+      .mockResolvedValue({
+        device: current,
+        identity: {
+          firmware: {knownFamily: 'BETAFLIGHT'},
+          board: {
+            targetName: 'SPEEDYBEEF405V5',
+            boardName: 'SPEEDYBEEF405V5',
+            boardIdentifier: 'S405',
+          },
+        },
+        release,
+      } as never);
+
+    const {renderer} = await renderScreen(client);
+    client.listDevices.mockResolvedValue([current] as never);
+    await press(renderer, 'auto-detect-fc');
+
+    expect(detect).toHaveBeenCalledWith(expect.any(AbortSignal), {
+      deviceId: 41,
+      portIndex: 0,
+    });
+    expect(allText(renderer)).toContain('أُعيد ربط المتحكم الوحيد');
+    expect(release).toHaveBeenCalledTimes(1);
     detect.mockRestore();
     act(() => renderer.unmount());
   });

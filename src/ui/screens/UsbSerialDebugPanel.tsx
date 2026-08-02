@@ -17,6 +17,7 @@ import {
   bytesToHex,
   parseByteInput,
 } from './usbSerialDebugPanelBytes';
+import {firmwareFamilyLabel} from '../presentation/brandSafeText';
 
 /**
  * TEMPORARY DEBUG SCAFFOLDING (Pass 5.3) - NOT a real app screen, NOT part
@@ -448,7 +449,7 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
             معرّف البرنامج الثابت: <Text style={styles.identityValue}>{identificationState.identity.firmware.identifier}</Text>
           </Text>
           <Text style={styles.identityLabel}>
-            الفئة: <Text style={styles.identityValue}>{identificationState.identity.firmware.knownFamily}</Text>
+            الفئة: <Text style={styles.identityValue}>{firmwareFamilyLabel(identificationState.identity.firmware.knownFamily)}</Text>
           </Text>
           <Text style={styles.identityLabel}>
             اسم اللوحة: <Text style={styles.identityValue}>{identificationState.identity.board.targetName}</Text>

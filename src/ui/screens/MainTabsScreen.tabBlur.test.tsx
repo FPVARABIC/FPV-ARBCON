@@ -25,6 +25,8 @@ jest.mock('react-native-safe-area-context', () => ({
 
 const fires: string[] = [];
 let unsubscribeCount = 0;
+let mockReportMotorsDirty: ((dirty: boolean) => void) | undefined;
+let mockThrowOnBlur = false;
 
 jest.mock('./MotorsScreen', () => {
   const ReactModule = require('react');
@@ -33,16 +35,21 @@ jest.mock('./MotorsScreen', () => {
     __esModule: true,
     default: function MotorsTabProbe({
       subscribeTabBlur,
+      onConfigurationDirtyChange,
     }: {
       subscribeTabBlur: (listener: () => void) => () => void;
+      onConfigurationDirtyChange?: (dirty: boolean) => void;
     }) {
+      mockReportMotorsDirty = onConfigurationDirtyChange;
       ReactModule.useEffect(() => {
         const unsubscribe = subscribeTabBlur(() => {
+          if (mockThrowOnBlur) throw new Error('safety stop failed');
           fires.push('blur');
         });
         return () => {
           unsubscribeCount += 1;
           unsubscribe();
+          mockReportMotorsDirty = undefined;
         };
       }, [subscribeTabBlur]);
       return ReactModule.createElement(Text, {testID: 'motors-probe'}, 'probe');
@@ -52,6 +59,7 @@ jest.mock('./MotorsScreen', () => {
 
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
+import {Alert} from 'react-native';
 
 import '../../i18n';
 import MainTabsScreen from './MainTabsScreen';
@@ -85,6 +93,9 @@ function renderShell() {
 beforeEach(() => {
   fires.length = 0;
   unsubscribeCount = 0;
+  mockReportMotorsDirty = undefined;
+  mockThrowOnBlur = false;
+  jest.restoreAllMocks();
 });
 
 describe('Leaving the Motors tab triggers the existing stop/release path', () => {
@@ -130,6 +141,45 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     shell.press('main-tab-MOTORS');
     shell.press('main-tab-SETUP');
     expect(fires).toEqual(['blur', 'blur']);
+    shell.unmount();
+  });
+
+  it('moves immediately when nothing changed, but asks before leaving a draft', () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+
+    ReactTestRenderer.act(() => mockReportMotorsDirty?.(true));
+    shell.press('main-tab-PORTS');
+
+    expect(fires).toEqual([]);
+    expect(alert).toHaveBeenCalledTimes(1);
+    expect(alert.mock.calls[0][0]).toBe('تغييرات غير محفوظة');
+
+    const buttons = alert.mock.calls[0][2];
+    ReactTestRenderer.act(() => buttons?.[1]?.onPress?.());
+    expect(fires).toEqual(['blur']);
+    shell.unmount();
+  });
+
+  it('stays on Motors and explains the failure if the safety blur path throws', () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    mockThrowOnBlur = true;
+
+    shell.press('main-tab-SETUP');
+
+    expect(fires).toEqual([]);
+    expect(alert).toHaveBeenCalledWith(
+      'تعذر الانتقال بأمان',
+      expect.stringContaining('الإيقاف الطارئ'),
+      expect.any(Array),
+    );
+    const motorsPanel = shell.renderer.root.findByProps({
+      testID: 'main-tab-panel-MOTORS',
+    });
+    expect(motorsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
     shell.unmount();
   });
 });

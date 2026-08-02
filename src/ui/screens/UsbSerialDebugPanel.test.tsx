@@ -666,7 +666,8 @@ describe('UsbSerialDebugPanel - Pass 6.4b identification result display (SUCCEED
     expect(renderer.root.findAllByProps({testID: 'msp-identity-section'}).length).toBeGreaterThan(0);
     const text = logText(renderer);
     expect(text).toContain('BTFL');
-    expect(text).toContain('BETAFLIGHT');
+    expect(text).toContain('MSP متوافق');
+    expect(text).not.toContain('BETAFLIGHT');
     expect(text).toContain('MATEKF722');
   });
 

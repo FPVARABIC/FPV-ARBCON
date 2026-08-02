@@ -22,6 +22,7 @@ import ReactTestRenderer, { act } from 'react-test-renderer';
 import OrientationHero, {
   computeOrientationHeroSize,
   formatTiltDegrees,
+  shouldUseOrientationSidebar,
 } from './OrientationHero';
 import { OrientationRenderer } from '../../orientation3d';
 import '../../../i18n';
@@ -129,6 +130,9 @@ describe('OrientationHero', () => {
     expect(computeOrientationHeroSize(320)).toBe(260);
     expect(computeOrientationHeroSize(390)).toBe(330);
     expect(computeOrientationHeroSize(1200)).toBe(340);
+    expect(shouldUseOrientationSidebar(800, 1)).toBe(true);
+    expect(shouldUseOrientationSidebar(620, 1.2)).toBe(false);
+    expect(computeOrientationHeroSize(800, true)).toBe(410);
   });
 
   it('WAITING: shows the waiting message, no 3D model, no readouts, no reset button', () => {

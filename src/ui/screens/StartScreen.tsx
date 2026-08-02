@@ -99,7 +99,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
       <RouteCard
         eyebrow="المسار الأول"
         title="الاتصال بوحدة التحكم"
-        description="اكتشاف USB، التحقق من Betaflight، ثم الدخول إلى مساحة الضبط الكاملة."
+        description="اكتشاف USB، التحقق من توافق MSP، ثم الدخول إلى مساحة الضبط الكاملة."
         bullets={['Setup ومؤشرات الطيران', 'المحركات وفحوص الأمان', 'Ports والاستقبال وPID']}
         button="اكتشاف Flight Controller"
         testID="start-connection"

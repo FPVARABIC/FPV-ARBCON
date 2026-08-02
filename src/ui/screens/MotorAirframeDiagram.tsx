@@ -33,13 +33,15 @@ export interface MotorAirframeDiagramProps {
 }
 
 /**
- * The first integrated workspace used the full 390 px reference width for
- * the airframe. On a tablet that made a supporting reference dominate the
- * whole Motors workflow. Keep the diagram deliberately compact: 195 is
- * exactly half of the former 390 px cap, while the selected-output panel
- * below remains the readable source for the long position/direction text.
+ * This is a teaching aid, not a control surface.  The previous 195 x 174
+ * stage still dominated the real tablet workflow.  156 / 1.42 produces a
+ * stage whose area is 50.5% of that version while every motor node keeps a
+ * real 44dp touch target.  Shrinking the linear dimensions by 50% would
+ * make the four selectors inaccessible, so the area is the correct safety-
+ * preserving measure here.
  */
-export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = 195;
+export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = 156;
+export const MOTOR_AIRFRAME_STAGE_ASPECT_RATIO = 1.42;
 
 // Emission order is explicit and mirrors the accepted identity test: right
 // first, left second. The row itself has an explicit RTL direction, so right
@@ -248,11 +250,11 @@ export function MotorAirframeDiagram({
       <View style={styles.stage} testID="motors-airframe-stage">
         <View style={[styles.arm, styles.armForward]} />
         <View style={[styles.arm, styles.armBackward]} />
-        <View style={styles.bodyShadow} />
         <View style={styles.body}>
           <View style={styles.bodyNose} />
+          <View style={styles.bodyPlate} />
           <View style={styles.bodyCore} />
-          <Text style={styles.bodyLabel}>FPV</Text>
+          <View style={styles.tailMark} />
         </View>
 
         <View style={[styles.motorRow, styles.frontRow]}>
@@ -286,9 +288,9 @@ export function MotorAirframeDiagram({
 }
 
 const styles = StyleSheet.create({
-  root: { gap: spacing.sm },
-  frontMarker: { alignItems: 'center', gap: 2 },
-  frontArrow: { fontSize: 15, lineHeight: 17, color: colors.accent },
+  root: { gap: spacing.xs },
+  frontMarker: { alignItems: 'center', gap: 1 },
+  frontArrow: { fontSize: 12, lineHeight: 13, color: colors.accent },
   frontText: {
     ...typography.caption,
     color: colors.accent,
@@ -298,7 +300,7 @@ const styles = StyleSheet.create({
   stage: {
     width: '100%',
     maxWidth: MOTOR_AIRFRAME_STAGE_MAX_WIDTH,
-    aspectRatio: 1.12,
+    aspectRatio: MOTOR_AIRFRAME_STAGE_ASPECT_RATIO,
     alignSelf: 'center',
     position: 'relative',
     overflow: 'hidden',
@@ -309,11 +311,11 @@ const styles = StyleSheet.create({
   },
   arm: {
     position: 'absolute',
-    left: '12%',
+    left: '13%',
     top: '48%',
-    width: '76%',
-    height: 7,
-    marginTop: -3.5,
+    width: '74%',
+    height: 5,
+    marginTop: -2.5,
     borderRadius: radii.pill,
     backgroundColor: '#2B5864',
     borderColor: colors.border,
@@ -321,77 +323,76 @@ const styles = StyleSheet.create({
   },
   armForward: { transform: [{ rotate: '38deg' }] },
   armBackward: { transform: [{ rotate: '-38deg' }] },
-  bodyShadow: {
-    position: 'absolute',
-    left: '40%',
-    top: '36%',
-    width: '20%',
-    height: '29%',
-    borderRadius: radii.md,
-    backgroundColor: colors.shadow,
-    opacity: 0.5,
-    transform: [{ translateY: 5 }],
-  },
   body: {
     position: 'absolute',
-    left: '40%',
-    top: '35%',
-    width: '20%',
-    height: '29%',
+    left: '35%',
+    top: '31%',
+    width: '30%',
+    height: '38%',
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radii.md,
+    borderRadius: radii.sm,
     borderColor: colors.accent,
     borderWidth: 1,
-    backgroundColor: colors.surfaceRaised,
+    backgroundColor: '#123642',
   },
   bodyNose: {
     position: 'absolute',
-    top: -7,
+    top: -6,
     width: 0,
     height: 0,
-    borderLeftWidth: 8,
-    borderRightWidth: 8,
-    borderBottomWidth: 12,
+    borderLeftWidth: 7,
+    borderRightWidth: 7,
+    borderBottomWidth: 9,
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
     borderBottomColor: colors.accent,
   },
-  bodyCore: {
-    width: 13,
-    height: 21,
+  bodyPlate: {
+    position: 'absolute',
+    left: '13%',
+    right: '13%',
+    top: '18%',
+    bottom: '16%',
     borderRadius: radii.sm,
-    backgroundColor: colors.backgroundRaised,
+    backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
     borderWidth: 1,
   },
-  bodyLabel: {
-    ...typography.caption,
+  bodyCore: {
+    width: '38%',
+    height: '42%',
+    borderRadius: radii.pill,
+    backgroundColor: colors.accentSoft,
+    borderColor: colors.accentStrong,
+    borderWidth: 1,
+  },
+  tailMark: {
     position: 'absolute',
-    bottom: 1,
-    fontSize: 8,
-    lineHeight: 9,
-    color: colors.textMuted,
-    writingDirection: 'ltr',
+    bottom: 3,
+    width: '28%',
+    height: 3,
+    borderRadius: radii.pill,
+    backgroundColor: colors.textMuted,
   },
   motorRow: {
     position: 'absolute',
-    left: spacing.xs,
-    right: spacing.xs,
+    left: 4,
+    right: 4,
     flexDirection: 'row',
     direction: 'rtl',
     justifyContent: 'space-between',
   },
-  frontRow: { top: spacing.xs },
-  rearRow: { bottom: spacing.xs },
+  frontRow: { top: 3 },
+  rearRow: { bottom: 3 },
   motorCell: {
-    width: '39%',
-    minWidth: 68,
-    maxWidth: 76,
+    width: '35%',
+    minWidth: 48,
+    maxWidth: 54,
   },
   motorNode: {
     width: '100%',
-    minHeight: 66,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 1,
@@ -399,7 +400,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radii.sm,
-    padding: 2,
+    padding: 1,
   },
   motorNodeSelected: {
     borderColor: colors.accent,
@@ -414,39 +415,39 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   rotor: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 21,
+    height: 21,
+    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
     borderColor: colors.textSecondary,
-    borderWidth: 2,
+    borderWidth: 1,
     backgroundColor: colors.backgroundRaised,
   },
   rotorLive: { borderColor: colors.warning, backgroundColor: '#3B2C12' },
   blade: {
     position: 'absolute',
-    width: 26,
-    height: 4,
+    width: 18,
+    height: 3,
     borderRadius: radii.pill,
     backgroundColor: colors.textMuted,
   },
   bladeA: { transform: [{ rotate: '32deg' }] },
   bladeB: { transform: [{ rotate: '-32deg' }] },
   hub: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
     backgroundColor: colors.textPrimary,
     borderColor: colors.background,
-    borderWidth: 2,
+    borderWidth: 1,
   },
   directionBadge: {
     position: 'absolute',
-    right: -7,
-    bottom: -5,
-    width: 19,
-    height: 19,
+    right: -6,
+    bottom: -4,
+    width: 15,
+    height: 15,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: 10,
@@ -455,13 +456,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   directionBadgeLive: { borderColor: colors.warning },
-  directionSymbol: { fontSize: 13, lineHeight: 15, color: colors.accent },
+  directionSymbol: { fontSize: 10, lineHeight: 12, color: colors.accent },
   nodeCopy: { alignItems: 'center', gap: 1 },
   slotLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   slot: {
     ...typography.mono,
-    fontSize: 11,
-    lineHeight: 13,
+    fontSize: 9,
+    lineHeight: 10,
     color: colors.textPrimary,
     fontWeight: '800',
     writingDirection: 'ltr',
@@ -470,8 +471,8 @@ const styles = StyleSheet.create({
   verifiedMark: { color: colors.success, fontWeight: '900' },
   position: {
     ...typography.caption,
-    fontSize: 9,
-    lineHeight: 11,
+    fontSize: 7,
+    lineHeight: 8,
     color: colors.textSecondary,
     textAlign: 'center',
     writingDirection: 'rtl',
@@ -480,7 +481,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: spacing.md,
+    gap: spacing.sm,
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   legendDot: { width: 8, height: 8, borderRadius: 4 },

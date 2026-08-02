@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -25,6 +25,7 @@ export interface MotorOutputReorderPanelProps {
   readonly verification: MotorVerificationState;
   readonly onEndMotorTestSession: () => Promise<void>;
   readonly controller?: MotorOutputOrderControllerPort;
+  readonly onDirtyChange?: (dirty: boolean) => void;
 }
 
 type Phase = 'IDLE' | 'PREPARING' | 'REVIEW' | 'SAVING' | 'DONE' | 'ERROR';
@@ -56,6 +57,7 @@ export function MotorOutputReorderPanel({
   verification,
   onEndMotorTestSession,
   controller = motorConfigurationController,
+  onDirtyChange,
 }: MotorOutputReorderPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<Phase>('IDLE');
@@ -70,6 +72,12 @@ export function MotorOutputReorderPanel({
     [verification],
   );
   const ready = evidence.kind === 'READY';
+
+  useEffect(() => {
+    const dirty = phase === 'REVIEW';
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [onDirtyChange, phase]);
 
   const prepare = useCallback(async () => {
     if (!ready || phase === 'PREPARING' || phase === 'SAVING') {

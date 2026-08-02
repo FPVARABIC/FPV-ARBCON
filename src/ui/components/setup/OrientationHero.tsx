@@ -54,7 +54,9 @@ import { colors, radii, spacing, typography } from '../../theme';
 import FlightInstruments, { roundHeadingDegrees } from './FlightInstruments';
 
 const HERO_MAX_SIZE = 340;
+const HERO_TABLET_MAX_SIZE = 410;
 const HERO_MIN_SIZE = 180;
+const SIDEBAR_LAYOUT_MIN_WIDTH = 620;
 
 /**
  * Keeps the model inside a narrow phone while letting it breathe on the
@@ -62,9 +64,26 @@ const HERO_MIN_SIZE = 180;
  * horizontal margin and padding; the upper bound avoids an oversized GPU
  * surface on a wide tablet.
  */
-export function computeOrientationHeroSize(windowWidth: number): number {
-  const usableWidth = Number.isFinite(windowWidth) ? windowWidth - 60 : 260;
-  return Math.min(HERO_MAX_SIZE, Math.max(HERO_MIN_SIZE, usableWidth));
+export function shouldUseOrientationSidebar(
+  windowWidth: number,
+  fontScale = 1,
+): boolean {
+  const safeScale =
+    Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  return Number.isFinite(windowWidth) && windowWidth / safeScale >= SIDEBAR_LAYOUT_MIN_WIDTH;
+}
+
+export function computeOrientationHeroSize(
+  windowWidth: number,
+  sidebar = false,
+): number {
+  const usableWidth = Number.isFinite(windowWidth)
+    ? windowWidth - (sidebar ? 220 : 60)
+    : 260;
+  return Math.min(
+    sidebar ? HERO_TABLET_MAX_SIZE : HERO_MAX_SIZE,
+    Math.max(HERO_MIN_SIZE, usableWidth),
+  );
 }
 
 /** Roll/pitch arrive in 0.1 degree units. Keeping that one decimal makes
@@ -113,7 +132,9 @@ export default function OrientationHero({
 }: OrientationHeroProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
-  const heroSize = computeOrientationHeroSize(windowWidth);
+  const sidebar = shouldUseOrientationSidebar(windowWidth, fontScale);
+  const heroSize = computeOrientationHeroSize(windowWidth, sidebar);
+  const instrumentStageWidth = sidebar ? 156 : heroSize;
   const [hintVisible, setHintVisible] = useState(false);
 
   const handleReset = () => {
@@ -183,19 +204,23 @@ export default function OrientationHero({
     return (
       <View style={styles.container} testID="orientation-hero-waiting">
         {renderHeader('WAITING')}
-        <View
-          style={[
-            styles.rendererWrapper,
-            { width: heroSize, height: heroSize },
-          ]}
-        >
-          <Text style={styles.messageText}>{t('orientationHero.waiting')}</Text>
+        <View style={[styles.visuals, sidebar && styles.visualsSidebar]}>
+          <View
+            style={[
+              styles.rendererWrapper,
+              { width: heroSize, height: heroSize },
+            ]}
+          >
+            <Text style={styles.messageText}>{t('orientationHero.waiting')}</Text>
+          </View>
+          <FlightInstruments
+            status="WAITING"
+            stageWidth={instrumentStageWidth}
+            fontScale={fontScale}
+            layout={sidebar ? 'sidebar' : 'row'}
+            sizeScale={sidebar ? 0.8 : 1}
+          />
         </View>
-        <FlightInstruments
-          status="WAITING"
-          stageWidth={heroSize}
-          fontScale={fontScale}
-        />
       </View>
     );
   }
@@ -204,21 +229,25 @@ export default function OrientationHero({
     return (
       <View style={styles.container} testID="orientation-hero-error">
         {renderHeader('ERROR')}
-        <View
-          style={[
-            styles.rendererWrapper,
-            { width: heroSize, height: heroSize },
-          ]}
-        >
-          <Text style={[styles.messageText, { color: colors.error }]}>
-            {t('orientationHero.error')}
-          </Text>
+        <View style={[styles.visuals, sidebar && styles.visualsSidebar]}>
+          <View
+            style={[
+              styles.rendererWrapper,
+              { width: heroSize, height: heroSize },
+            ]}
+          >
+            <Text style={[styles.messageText, { color: colors.error }]}>
+              {t('orientationHero.error')}
+            </Text>
+          </View>
+          <FlightInstruments
+            status="ERROR"
+            stageWidth={instrumentStageWidth}
+            fontScale={fontScale}
+            layout={sidebar ? 'sidebar' : 'row'}
+            sizeScale={sidebar ? 0.8 : 1}
+          />
         </View>
-        <FlightInstruments
-          status="ERROR"
-          stageWidth={heroSize}
-          fontScale={fontScale}
-        />
       </View>
     );
   }
@@ -257,21 +286,34 @@ export default function OrientationHero({
   return (
     <View style={styles.container} testID="orientation-hero">
       {renderHeader(isStale ? 'STALE' : 'LIVE')}
-      <View
-        style={[styles.rendererWrapper, { width: heroSize, height: heroSize }]}
-        accessible
-        accessibilityLabel={accessibilityText}
-        testID="orientation-hero-renderer-wrapper"
-      >
-        <OrientationRenderer
-          // The latest GENUINE sample, directly. No animation, no queue,
-          // no pending target: a newer sample simply replaces this prop,
-          // so an older pose can never be drawn after a newer one.
-          orientation={displayed}
-          width={heroSize}
-          height={heroSize}
-          stale={isStale}
-          sampleIdentity={sampleIdentity}
+      <View style={[styles.visuals, sidebar && styles.visualsSidebar]}>
+        <View
+          style={[styles.rendererWrapper, { width: heroSize, height: heroSize }]}
+          accessible
+          accessibilityLabel={accessibilityText}
+          testID="orientation-hero-renderer-wrapper"
+        >
+          <OrientationRenderer
+            // The latest GENUINE sample, directly. No animation, no queue,
+            // no pending target: a newer sample simply replaces this prop,
+            // so an older pose can never be drawn after a newer one.
+            orientation={displayed}
+            width={heroSize}
+            height={heroSize}
+            stale={isStale}
+            sampleIdentity={sampleIdentity}
+          />
+        </View>
+
+        <FlightInstruments
+          status={isStale ? 'STALE' : 'LIVE'}
+          stageWidth={instrumentStageWidth}
+          fontScale={fontScale}
+          layout={sidebar ? 'sidebar' : 'row'}
+          sizeScale={sidebar ? 0.8 : 1}
+          rollDeg={displayed.rollDeg}
+          pitchDeg={displayed.pitchDeg}
+          headingDeg={displayed.yawDeg}
         />
       </View>
 
@@ -280,15 +322,6 @@ export default function OrientationHero({
           {t('orientationHero.staleLabel')}
         </Text>
       )}
-
-      <FlightInstruments
-        status={isStale ? 'STALE' : 'LIVE'}
-        stageWidth={heroSize}
-        fontScale={fontScale}
-        rollDeg={displayed.rollDeg}
-        pitchDeg={displayed.pitchDeg}
-        headingDeg={displayed.yawDeg}
-      />
 
       <View style={styles.readoutsRow}>
         <View style={styles.readout} testID="orientation-hero-roll">
@@ -409,6 +442,17 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  visuals: {
+    width: '100%',
+    alignItems: 'center',
+  },
+  visualsSidebar: {
+    direction: 'ltr',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.md,
   },
   headerRow: {
     width: '100%',

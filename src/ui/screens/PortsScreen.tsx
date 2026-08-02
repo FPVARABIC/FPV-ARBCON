@@ -85,6 +85,7 @@ export interface PortsControllerPort {
 export interface PortsScreenProps {
   readonly sessionKey?: SetupUiSessionKey;
   readonly controller?: PortsControllerPort;
+  readonly onDirtyChange?: (dirty: boolean) => void;
 }
 
 type ScreenPhase = 'IDLE' | 'LOADING' | 'READY' | 'SAVING' | 'ERROR';
@@ -503,6 +504,7 @@ function PortCard({
 export default function PortsScreen({
   sessionKey,
   controller = portsConfigurationController,
+  onDirtyChange,
 }: PortsScreenProps): React.JSX.Element {
   const { t } = useTranslation();
   const ownership = useMspOwnershipState(sessionKey?.sessionId ?? '');
@@ -569,6 +571,11 @@ export default function PortsScreen({
   const dirty =
     original !== undefined && !serialPortsEqual(original.ports, draft);
   const controlsDisabled = phase === 'LOADING' || phase === 'SAVING';
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
 
   const updateRole = useCallback(
     (identifier: number, role: SerialRoleKey, value: boolean) => {
@@ -937,7 +944,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
     gap: spacing.lg,
     width: '100%',
-    maxWidth: 920,
+    maxWidth: 1180,
     alignSelf: 'center',
   },
   hero: { alignItems: 'flex-end', gap: spacing.xs },

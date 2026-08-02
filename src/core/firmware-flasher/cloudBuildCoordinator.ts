@@ -75,7 +75,7 @@ export class CloudBuildCoordinator {
       phase: 'downloading',
       percent: 94,
       ...(response.key === undefined ? {} : {key: response.key}),
-      message: 'تنزيل Firmware من خادم Betaflight الرسمي…',
+      message: 'تنزيل Firmware من خادم البناء الرسمي…',
     });
     const firmware = await this.downloadWithOneRetry(response.url, signal);
     onUpdate({
@@ -104,7 +104,7 @@ export class CloudBuildCoordinator {
       }
       if (status.status === 'success') return status.configuration;
       if (status.status === 'failed') {
-        throw new Error(status.message ?? 'فشل خادم Betaflight في بناء Firmware.');
+        throw new Error(status.message ?? 'فشل خادم Firmware في إتمام البناء.');
       }
       if (this.now() >= deadline) {
         throw new Error('انتهت مهلة بناء Firmware دون نتيجة نهائية.');

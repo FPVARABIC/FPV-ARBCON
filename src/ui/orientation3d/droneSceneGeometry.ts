@@ -150,11 +150,11 @@ const FOCAL_LENGTH = 1.6;
  * presentational: changes NOTHING about rotation math, camera
  * direction, geometry, or front identity.
  *
- * The approved 0.644 presentation was visually too dominant on the
- * phone.  0.322 is exactly 50% of that projected linear scale.  Only the
- * model shrinks: the responsive Canvas, world-fixed level grid, live MSP
- * sample, rotation pivot and camera remain unchanged. */
-const MODEL_PIXEL_SCALE_FACTOR = 0.322;
+ * The model was first reduced to 0.322.  In the new tablet composition it
+ * sits beside two compact instruments, so 0.370 restores 14.9% of linear
+ * size without returning anywhere near the original 0.644 presentation.
+ * The Canvas, world-fixed grid, MSP sample, pivot and camera stay intact. */
+const MODEL_PIXEL_SCALE_FACTOR = 0.37;
 
 const CIRCLE_SEGMENT_COUNT = 24;
 

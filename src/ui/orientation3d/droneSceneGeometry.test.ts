@@ -407,22 +407,20 @@ describe('computeDroneScene', () => {
       return {minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys)};
     }
 
-    /** 0.322 is exactly half the approved 0.644 presentation scale.
-     * Neutral occupancy therefore moves from 72.33% to about 36.17%
-     * while the Canvas and instruments keep their original layout. */
-    it('the NEUTRAL model projects to 35%-38% of the preview width', () => {
+    /** 0.370 is a 14.9% lift from the reduced 0.322 presentation. */
+    it('the NEUTRAL model projects to 41%-43% of the preview width', () => {
       const b = sceneBounds({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
       const widthRatio = (b.maxX - b.minX) / PREVIEW.width;
-      expect(widthRatio).toBeGreaterThanOrEqual(0.35);
-      expect(widthRatio).toBeLessThanOrEqual(0.38);
+      expect(widthRatio).toBeGreaterThanOrEqual(0.41);
+      expect(widthRatio).toBeLessThanOrEqual(0.43);
     });
 
-    it('is exactly half the previously approved 0.644 presentation', () => {
+    it('stays well below the original 0.644 presentation', () => {
       const b = sceneBounds({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
       const PREVIOUS_APPROVED_WIDTH = 188.06;
       const ratio = (b.maxX - b.minX) / PREVIOUS_APPROVED_WIDTH;
-      expect(ratio).toBeGreaterThanOrEqual(0.499);
-      expect(ratio).toBeLessThanOrEqual(0.501);
+      expect(ratio).toBeGreaterThanOrEqual(0.573);
+      expect(ratio).toBeLessThanOrEqual(0.576);
     });
 
     it('every required verification pose keeps the COMPLETE model uncropped with >=12 units of clearance from every clipping edge', () => {
@@ -653,9 +651,9 @@ describe('computeDroneScene - half-scale clipping matrix and pivot stability', (
     },
   );
 
-  it('keeps the expected large margin at half scale', () => {
+  it('keeps a large margin after the measured tablet-size lift', () => {
     const worst = Math.min(...MATRIX.map(pose => clearance(pose, HERO_CANVAS)));
-    expect(worst).toBeGreaterThanOrEqual(70);
+    expect(worst).toBeGreaterThanOrEqual(60);
   });
 
   it('the rotation fixed point projects to the canvas centre in EVERY matrix pose - one stable pivot', () => {

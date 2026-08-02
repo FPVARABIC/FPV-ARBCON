@@ -69,6 +69,7 @@ describe('FlightInstruments geometry', () => {
     expect(shouldStackFlightInstruments(330, 1.5)).toBe(true);
     expect(shouldStackFlightInstruments(330, Number.NaN)).toBe(false);
     expect(computeFlightInstrumentSize(180, true)).toBe(156);
+    expect(computeFlightInstrumentSize(156, true, 0.8)).toBe(112);
   });
 
   it('normalizes compass headings and signed bank angles', () => {
@@ -156,6 +157,30 @@ describe('FlightInstruments rendering contract', () => {
     expect(
       renderer.root.findAllByProps({ testID: 'flight-instruments-row' }),
     ).toHaveLength(0);
+  });
+
+  it('renders two separate 20%-smaller sidebar cards with the compass above the horizon', () => {
+    const renderer = render({
+      status: 'LIVE',
+      stageWidth: 156,
+      layout: 'sidebar',
+      sizeScale: 0.8,
+      headingDeg: 45,
+    });
+    const stack = byTestID(renderer, 'flight-instruments-stacked');
+    const faces = stack.findAll(
+      node =>
+        node.props.testID === 'direction-compass' ||
+        node.props.testID === 'artificial-horizon',
+    );
+    expect([...new Set(faces.map(node => node.props.testID))]).toEqual([
+      'direction-compass',
+      'artificial-horizon',
+    ]);
+    expect(
+      StyleSheet.flatten(byTestID(renderer, 'direction-compass').props.style)
+        .width,
+    ).toBe(112);
   });
 
   it('keeps stale values visible but labels them as delayed', () => {

@@ -29,6 +29,10 @@ export interface FlightInstrumentsProps {
   status: FlightInstrumentsStatus;
   stageWidth: number;
   fontScale?: number;
+  /** Tablet hero layout: two independent compact cards stacked beside 3D. */
+  layout?: 'row' | 'sidebar';
+  /** Pure presentation scale; 0.8 is used for the requested 20% reduction. */
+  sizeScale?: number;
   rollDeg?: number;
   pitchDeg?: number;
   headingDeg?: number;
@@ -47,6 +51,7 @@ export function shouldStackFlightInstruments(
 export function computeFlightInstrumentSize(
   stageWidth: number,
   stacked = false,
+  sizeScale = 1,
 ): number {
   // The panel has horizontal padding on both sides. The side-by-side
   // layout also reserves one inter-gauge gap; a stacked layout does not.
@@ -55,9 +60,13 @@ export function computeFlightInstrumentSize(
       ? stageWidth - spacing.md * 2
       : (stageWidth - spacing.md * 3) / 2
     : 130;
-  return Math.round(
-    Math.min(MAX_INSTRUMENT_SIZE, Math.max(MIN_INSTRUMENT_SIZE, available)),
+  const base = Math.min(
+    MAX_INSTRUMENT_SIZE,
+    Math.max(MIN_INSTRUMENT_SIZE, available),
   );
+  const safeScale =
+    Number.isFinite(sizeScale) && sizeScale > 0 ? sizeScale : 1;
+  return Math.max(MIN_INSTRUMENT_SIZE, Math.round(base * safeScale));
 }
 
 export function normalizeHeadingDegrees(value: number): number {
@@ -210,11 +219,13 @@ function ArtificialHorizon({
   rollDeg,
   pitchDeg,
   available,
+  card,
 }: {
   size: number;
   rollDeg: number;
   pitchDeg: number;
   available: boolean;
+  card?: boolean;
 }): React.JSX.Element {
   const { t } = useTranslation();
   const worldSize = size * ARTIFICIAL_HORIZON_WORLD_SCALE;
@@ -225,7 +236,13 @@ function ArtificialHorizon({
   const aircraftCenterSize = Math.max(8, size * 0.064);
 
   return (
-    <View style={[styles.instrumentColumn, { width: size }]}>
+    <View
+      style={[
+        styles.instrumentColumn,
+        { width: card ? size + spacing.sm * 2 : size },
+        card && styles.sidebarInstrumentCard,
+      ]}
+    >
       <Text style={styles.instrumentLabel} numberOfLines={2}>
         {t('flightInstruments.horizon')}
       </Text>
@@ -334,16 +351,24 @@ function DirectionCompass({
   size,
   headingDeg,
   available,
+  card,
 }: {
   size: number;
   headingDeg: number;
   available: boolean;
+  card?: boolean;
 }): React.JSX.Element {
   const { t } = useTranslation();
   const heading = normalizeHeadingDegrees(headingDeg);
 
   return (
-    <View style={[styles.instrumentColumn, { width: size }]}>
+    <View
+      style={[
+        styles.instrumentColumn,
+        { width: card ? size + spacing.sm * 2 : size },
+        card && styles.sidebarInstrumentCard,
+      ]}
+    >
       <Text style={styles.instrumentLabel} numberOfLines={2}>
         {t('flightInstruments.compass')}
       </Text>
@@ -405,22 +430,25 @@ function FlightInstruments({
   status,
   stageWidth,
   fontScale = 1,
+  layout = 'row',
+  sizeScale = 1,
   rollDeg = 0,
   pitchDeg = 0,
   headingDeg = 0,
 }: FlightInstrumentsProps): React.JSX.Element {
   const { t } = useTranslation();
-  const stacked = shouldStackFlightInstruments(stageWidth, fontScale);
-  const size = computeFlightInstrumentSize(stageWidth, stacked);
+  const sidebar = layout === 'sidebar';
+  const stacked = sidebar || shouldStackFlightInstruments(stageWidth, fontScale);
+  const size = computeFlightInstrumentSize(stageWidth, stacked, sizeScale);
   const available = status === 'LIVE' || status === 'STALE';
 
   return (
     <View
-      style={styles.container}
+      style={[styles.container, sidebar && styles.sidebarContainer]}
       testID="flight-instruments"
       accessibilityState={{ disabled: !available }}
     >
-      <View style={styles.headerRow}>
+      {!sidebar ? <View style={styles.headerRow}>
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>{t('flightInstruments.eyebrow')}</Text>
           <Text style={styles.title} accessibilityRole="header">
@@ -446,30 +474,51 @@ function FlightInstruments({
             {t(statusTranslationKey(status))}
           </Text>
         </View>
-      </View>
+      </View> : null}
 
       <View
         style={[
           styles.instrumentsRow,
           stacked && styles.instrumentsRowStacked,
+          sidebar && styles.instrumentsRowSidebar,
         ]}
         testID={stacked ? 'flight-instruments-stacked' : 'flight-instruments-row'}
       >
-        <ArtificialHorizon
-          size={size}
-          rollDeg={rollDeg}
-          pitchDeg={pitchDeg}
-          available={available}
-        />
-        <DirectionCompass
-          size={size}
-          headingDeg={headingDeg}
-          available={available}
-        />
+        {sidebar ? (
+          <>
+            <DirectionCompass
+              size={size}
+              headingDeg={headingDeg}
+              available={available}
+              card
+            />
+            <ArtificialHorizon
+              size={size}
+              rollDeg={rollDeg}
+              pitchDeg={pitchDeg}
+              available={available}
+              card
+            />
+          </>
+        ) : (
+          <>
+            <ArtificialHorizon
+              size={size}
+              rollDeg={rollDeg}
+              pitchDeg={pitchDeg}
+              available={available}
+            />
+            <DirectionCompass
+              size={size}
+              headingDeg={headingDeg}
+              available={available}
+            />
+          </>
+        )}
       </View>
-      <Text style={styles.relativeNote}>
+      {!sidebar ? <Text style={styles.relativeNote}>
         {t('flightInstruments.relativeNote')}
-      </Text>
+      </Text> : null}
     </View>
   );
 }
@@ -485,6 +534,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderSoft,
     backgroundColor: colors.backgroundRaised,
+  },
+  sidebarContainer: {
+    width: 'auto',
+    marginTop: 0,
+    padding: 0,
+    borderWidth: 0,
+    backgroundColor: 'transparent',
   },
   headerRow: {
     flexDirection: 'row',
@@ -527,7 +583,18 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'center',
   },
+  instrumentsRowSidebar: {
+    marginTop: 0,
+    gap: spacing.sm,
+  },
   instrumentColumn: { alignItems: 'center' },
+  sidebarInstrumentCard: {
+    padding: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.backgroundRaised,
+  },
   instrumentLabel: {
     ...typography.caption,
     color: colors.textSecondary,
