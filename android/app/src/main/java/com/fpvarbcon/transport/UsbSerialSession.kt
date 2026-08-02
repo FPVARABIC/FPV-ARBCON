@@ -133,6 +133,21 @@ internal class UsbSerialSession(
       buffer.size
     }
 
+  /** DTR/RTS are native bootloader control lines and share the same port lock as RX/TX. */
+  fun setControlLines(dtr: Boolean, rts: Boolean) {
+    ioLock.withLock {
+      port.setDTR(dtr)
+      port.setRTS(rts)
+    }
+  }
+
+  fun setBaudRate(baudRate: Int) {
+    require(baudRate in 1_200..3_000_000) { "Baud rate is outside the supported range." }
+    ioLock.withLock {
+      port.setParameters(baudRate, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+    }
+  }
+
   /** Enqueues [request] on this session's own write queue - see [UsbSerialWriteQueue.enqueue]. */
   fun enqueueWrite(request: UsbSerialWriteRequest): UsbSerialWriteQueue.EnqueueResult = writeQueue.enqueue(request)
 

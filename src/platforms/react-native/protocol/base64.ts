@@ -37,7 +37,8 @@ export function bytesToBase64(bytes: Uint8Array): string {
 export function base64ToBytes(base64: string): Uint8Array {
   // eslint-disable-next-line no-div-regex -- a literal regex, not division.
   const clean = base64.replace(/=+$/, '');
-  const bytes: number[] = [];
+  const bytes = new Uint8Array(Math.floor(clean.length * 6 / 8));
+  let outputOffset = 0;
   let buffer = 0;
   let bitsCollected = 0;
   for (const char of clean) {
@@ -49,8 +50,46 @@ export function base64ToBytes(base64: string): Uint8Array {
     bitsCollected += 6;
     if (bitsCollected >= 8) {
       bitsCollected -= 8;
-      bytes.push((buffer >> bitsCollected) & 0xff);
+      bytes[outputOffset] = (buffer >> bitsCollected) & 0xff;
+      outputOffset += 1;
     }
   }
-  return Uint8Array.from(bytes);
+  return outputOffset === bytes.length ? bytes : bytes.slice(0, outputOffset);
+}
+
+/**
+ * Decodes large document-provider payloads in bounded slices. The native
+ * Android file read already runs on its own worker; yielding here prevents
+ * the JS event loop from being monopolized when the Base64 bridge payload is
+ * several MiB. Protocol receive chunks remain on the synchronous fast path.
+ */
+export async function base64ToBytesAsync(
+  base64: string,
+  yieldEveryCharacters = 64 * 1024,
+): Promise<Uint8Array> {
+  if (!Number.isInteger(yieldEveryCharacters) || yieldEveryCharacters < 4) {
+    throw new Error('Base64 yield interval must be an integer of at least four characters.');
+  }
+  // eslint-disable-next-line no-div-regex -- a literal regex, not division.
+  const clean = base64.replace(/=+$/, '');
+  const bytes = new Uint8Array(Math.floor(clean.length * 6 / 8));
+  let outputOffset = 0;
+  let buffer = 0;
+  let bitsCollected = 0;
+  for (let index = 0; index < clean.length; index += 1) {
+    const value = BASE64_CHARS.indexOf(clean[index]);
+    if (value !== -1) {
+      buffer = (buffer << 6) | value;
+      bitsCollected += 6;
+      if (bitsCollected >= 8) {
+        bitsCollected -= 8;
+        bytes[outputOffset] = (buffer >> bitsCollected) & 0xff;
+        outputOffset += 1;
+      }
+    }
+    if ((index + 1) % yieldEveryCharacters === 0) {
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+    }
+  }
+  return outputOffset === bytes.length ? bytes : bytes.slice(0, outputOffset);
 }

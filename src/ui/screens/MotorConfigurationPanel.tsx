@@ -55,6 +55,7 @@ export interface MotorConfigurationControllerPort {
 export interface MotorConfigurationPanelProps {
   readonly sessionId: string;
   readonly controller?: MotorConfigurationControllerPort;
+  readonly onDirtyChange?: (dirty: boolean) => void;
 }
 
 function numericTextFor(draft: MotorConfigurationDraft): NumericText {
@@ -246,6 +247,7 @@ function NumberField({
 export function MotorConfigurationPanel({
   sessionId,
   controller = motorConfigurationController,
+  onDirtyChange,
 }: MotorConfigurationPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<'LOADING' | 'IDLE' | 'SAVING'>('LOADING');
@@ -315,6 +317,10 @@ export function MotorConfigurationPanel({
       createMotorConfigurationDraft(original),
       effectiveDraft,
     );
+  useEffect(() => {
+    onDirtyChange?.(changed);
+    return () => onDirtyChange?.(false);
+  }, [changed, onDirtyChange]);
   const canReview =
     phase === 'IDLE' &&
     changed &&

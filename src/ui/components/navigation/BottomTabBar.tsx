@@ -8,7 +8,7 @@
  * can scroll it behind or under.
  *
  * ONLY WORKING DESTINATIONS ARE VISIBLE. Roadmap tabs used to occupy most
- * of this primary navigation while doing nothing. The two implemented
+ * of this primary navigation while doing nothing. The implemented
  * destinations now share the width and read like an intentional product,
  * while MAIN_TABS still retains the future route definitions.
  *
@@ -101,7 +101,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.sm,
     width: '100%',
-    maxWidth: 760,
+    maxWidth: 1180,
     alignSelf: 'center',
   },
   tab: {

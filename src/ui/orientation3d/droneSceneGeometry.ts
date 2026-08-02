@@ -145,32 +145,16 @@ const CAMERA_ELEVATION_DEG = 16; // gentle downward tilt; level reads as level
 const CAMERA_DISTANCE = 6;
 const FOCAL_LENGTH = 1.6;
 
-/** Pass 7.5D - the single presentation-scale knob for how large the
+/** The single presentation-scale knob for how large the
  * projected model appears inside the preview viewport. Purely
  * presentational: changes NOTHING about rotation math, camera
  * direction, geometry, or front identity.
  *
- * FINAL-POLISH PASS: raised from 0.56 to 0.644, i.e. EXACTLY +15.0% of
- * projected linear scale, because the model read as too small on real
- * hardware. Measured at the 260x260 hero preview, neutral pose,
- * model-owned primitives only (the world-fixed LEVEL_GRID is a horizon
- * reference, not part of the model):
- *
- *              projected width   occupancy   worst-case clearance
- *   0.56       163.53            62.9%       40.37
- *   0.644      188.06            72.3%       26.93
- *
- * The clearance column is the minimum distance from ANY model-owned
- * point to ANY canvas edge across a 980-pose matrix (roll and pitch
- * -60..+60 in 15 degree steps x yaw 0..330 in 30 degree steps, plus the
- * heading boundaries and the transform fixtures). Including the 1.2px
- * stroke half-width added by the visibility polish below, the worst
- * case is 25.73 - still more than double the 12-unit invariant the
- * Pass-7.5D sizing tests enforce, and far above the 4px anti-aliasing
- * inset. 0.66 (+17.9%) was also measured safe (24.37); the lower end of
- * the requested 15-18% band was taken deliberately, because clipping
- * safety outranks apparent size. */
-const MODEL_PIXEL_SCALE_FACTOR = 0.644;
+ * The model was first reduced to 0.322.  In the new tablet composition it
+ * sits beside two compact instruments, so 0.370 restores 14.9% of linear
+ * size without returning anywhere near the original 0.644 presentation.
+ * The Canvas, world-fixed grid, MSP sample, pivot and camera stay intact. */
+const MODEL_PIXEL_SCALE_FACTOR = 0.37;
 
 const CIRCLE_SEGMENT_COUNT = 24;
 

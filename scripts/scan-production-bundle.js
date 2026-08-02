@@ -152,6 +152,19 @@ const REQUIRED_ENGINE_TOKENS = [
   'MSP2_COMMON_SET_SERIAL_CONFIG',
   'decodeSerialPorts',
   'encodeSerialPorts',
+  // Firmware Flasher and the new landing route are product surfaces, not
+  // optional debug code. Their protocol owners must ship in Release.
+  'firmware-flasher-screen',
+  'start-connection',
+  'start-firmware',
+  'start-safe-flash',
+  'CloudBuildCoordinator',
+  'FirmwareBootloaderController',
+  'Stm32SerialFlasher',
+  'EspFirmwareFlasher',
+  'parseFirmwareFile',
+  'applyCustomDefaultsToFirmware',
+  'unprotectDfuDevice',
 ];
 
 /**
@@ -182,6 +195,13 @@ const REQUIRED_ARABIC_STRINGS = [
   'لم يثبت التطبيق الاتجاه ميكانيكيًا',
   'حفظ وإعادة تشغيل المتحكم',
   'يجب الإبقاء على منفذ MSP واحد على الأقل.',
+  // Firmware erase gates: absence would turn a present flasher into an
+  // untranslated or unsafe release surface.
+  'أزلت جميع المراوح',
+  'فصلت البطارية والطاقة من USB فقط',
+  'تجاوز عدم تطابق Target',
+  'إزالة DFU Read Protection',
+  'Unified Config / Custom Defaults',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous.

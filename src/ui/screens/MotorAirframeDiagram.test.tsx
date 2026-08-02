@@ -9,6 +9,7 @@ import i18n from '../../i18n';
 import { MOTOR_TEST_EXPECTED_CONFIGURATION } from '../../core/state/motorVerificationModel';
 import {
   MOTOR_AIRFRAME_STAGE_MAX_WIDTH,
+  MOTOR_AIRFRAME_STAGE_ASPECT_RATIO,
   MotorAirframeDiagram,
   orderAirframeEntries,
 } from './MotorAirframeDiagram';
@@ -75,7 +76,7 @@ describe('MotorAirframeDiagram', () => {
     );
   });
 
-  it('caps the airframe stage at exactly half of the former 390 px width', () => {
+  it('uses about half the previous stage area while preserving touch targets', () => {
     let tree!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
       tree = ReactTestRenderer.create(
@@ -88,11 +89,17 @@ describe('MotorAirframeDiagram', () => {
       );
     });
 
-    expect(MOTOR_AIRFRAME_STAGE_MAX_WIDTH).toBe(195);
+    expect(MOTOR_AIRFRAME_STAGE_MAX_WIDTH).toBe(156);
+    const oldArea = (195 * 195) / 1.12;
+    const newArea =
+      (MOTOR_AIRFRAME_STAGE_MAX_WIDTH * MOTOR_AIRFRAME_STAGE_MAX_WIDTH) /
+      MOTOR_AIRFRAME_STAGE_ASPECT_RATIO;
+    expect(newArea / oldArea).toBeGreaterThanOrEqual(0.49);
+    expect(newArea / oldArea).toBeLessThanOrEqual(0.51);
     const stage = tree.root.find(
       node => node.props?.testID === 'motors-airframe-stage',
     );
-    expect(StyleSheet.flatten(stage.props.style).maxWidth).toBe(195);
+    expect(StyleSheet.flatten(stage.props.style).maxWidth).toBe(156);
     act(() => tree.unmount());
   });
 

@@ -320,6 +320,7 @@ export interface MotorsScreenViewProps {
    * presentation-only tests omit it, so no configuration I/O can start from
    * an unbound view. */
   readonly sessionId?: string;
+  readonly onConfigurationDirtyChange?: (dirty: boolean) => void;
 }
 
 export function MotorsScreenView({
@@ -328,6 +329,7 @@ export function MotorsScreenView({
   bottomInset,
   bringUpFailure,
   sessionId,
+  onConfigurationDirtyChange,
 }: MotorsScreenViewProps): React.JSX.Element {
   const { t } = useTranslation();
   const effectiveBottomInset = bottomInset ?? 0;
@@ -351,6 +353,20 @@ export function MotorsScreenView({
   );
   const [advancedVerificationOpen, setAdvancedVerificationOpen] =
     useState(false);
+  const [motorConfigurationDirty, setMotorConfigurationDirty] = useState(false);
+  const [outputOrderDirty, setOutputOrderDirty] = useState(false);
+  const [escDirectionDirty, setEscDirectionDirty] = useState(false);
+  useEffect(() => {
+    onConfigurationDirtyChange?.(
+      motorConfigurationDirty || outputOrderDirty || escDirectionDirty,
+    );
+    return () => onConfigurationDirtyChange?.(false);
+  }, [
+    escDirectionDirty,
+    motorConfigurationDirty,
+    onConfigurationDirtyChange,
+    outputOrderDirty,
+  ]);
   /** Guards every asynchronous continuation. A callback that survives
    * unmount must never call setState. */
   const mountedRef = useRef(true);
@@ -1098,6 +1114,7 @@ export function MotorsScreenView({
           <EscDirectionPanel
             selectedMotor={selectedSlot}
             operator={operator}
+            onDirtyChange={setEscDirectionDirty}
           />
         </View>
 
@@ -1121,7 +1138,10 @@ export function MotorsScreenView({
             testing. It owns no motor pulse path and is deliberately bound to
             the canonical session id rather than to the MotorTest operator. */}
         {sessionId !== undefined ? (
-          <MotorConfigurationPanel sessionId={sessionId} />
+          <MotorConfigurationPanel
+            sessionId={sessionId}
+            onDirtyChange={setMotorConfigurationDirty}
+          />
         ) : null}
 
         <Pressable
@@ -1165,6 +1185,7 @@ export function MotorsScreenView({
                 sessionId={sessionId}
                 verification={verification}
                 onEndMotorTestSession={handleEndSessionForConfiguration}
+                onDirtyChange={setOutputOrderDirty}
               />
             ) : null}
           </View>
@@ -1217,7 +1238,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
     gap: spacing.md,
     width: '100%',
-    maxWidth: 760,
+    maxWidth: 1180,
     alignSelf: 'center',
   },
   flexOne: { flex: 1 },
@@ -1629,6 +1650,7 @@ export interface MotorsTabProps {
    */
   readonly subscribeTabBlur: (listener: () => void) => () => void;
   readonly bottomInset?: number;
+  readonly onConfigurationDirtyChange?: (dirty: boolean) => void;
 }
 
 export default function MotorsTab({
@@ -1636,12 +1658,19 @@ export default function MotorsTab({
   navigation,
   subscribeTabBlur,
   bottomInset,
+  onConfigurationDirtyChange,
 }: MotorsTabProps): React.JSX.Element {
   if (!sessionKey) {
     // No live session: the screen renders inert and blocked. That is the
     // correct presentation for a tab opened before a connection exists -
     // not an error, and not something to hide the tab over.
-    return <MotorsScreenView operator={undefined} bottomInset={bottomInset} />;
+    return (
+      <MotorsScreenView
+        operator={undefined}
+        bottomInset={bottomInset}
+        onConfigurationDirtyChange={onConfigurationDirtyChange}
+      />
+    );
   }
   return (
     <MotorsScreenBinding
@@ -1649,6 +1678,7 @@ export default function MotorsTab({
       navigation={navigation}
       subscribeTabBlur={subscribeTabBlur}
       bottomInset={bottomInset}
+      onConfigurationDirtyChange={onConfigurationDirtyChange}
       key={sessionKey.sessionId}
     />
   );
@@ -1659,11 +1689,13 @@ function MotorsScreenBinding({
   navigation,
   subscribeTabBlur,
   bottomInset,
+  onConfigurationDirtyChange,
 }: {
   sessionKey: SetupUiSessionKey;
   navigation: MotorsHostNavigation;
   subscribeTabBlur: (listener: () => void) => () => void;
   bottomInset?: number;
+  onConfigurationDirtyChange?: (dirty: boolean) => void;
 }): React.JSX.Element {
   /**
    * EXACTLY ONE binding owns the current official session. The capability
@@ -1963,6 +1995,7 @@ function MotorsScreenBinding({
       bottomInset={bottomInset}
       bringUpFailure={bringUpFailure}
       sessionId={sessionKey.sessionId}
+      onConfigurationDirtyChange={onConfigurationDirtyChange}
     />
   );
 }

@@ -10,6 +10,7 @@ import { colors, radii, spacing, typography } from '../theme';
 export interface EscDirectionPanelProps {
   readonly selectedMotor: number;
   readonly operator: MotorTestOperatorPort | undefined;
+  readonly onDirtyChange?: (dirty: boolean) => void;
 }
 
 function resultText(
@@ -35,6 +36,7 @@ function resultText(
 export function EscDirectionPanel({
   selectedMotor,
   operator,
+  onDirtyChange,
 }: EscDirectionPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const [direction, setDirection] = useState<DshotEscDirection>('NORMAL');
@@ -47,6 +49,11 @@ export function EscDirectionPanel({
   const selectedMotorRef = useRef(selectedMotor);
   selectedMotorRef.current = selectedMotor;
   const available = operator?.getSnapshot().activation.allowed === true;
+
+  useEffect(() => {
+    onDirtyChange?.(reviewing);
+    return () => onDirtyChange?.(false);
+  }, [onDirtyChange, reviewing]);
 
   // Direction is a per-output operation. Changing the selected output or
   // replacing the session invalidates every pending presentation result:

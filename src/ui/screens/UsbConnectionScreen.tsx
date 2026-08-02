@@ -897,7 +897,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: spacing.xxl,
     width: '100%',
-    maxWidth: 760,
+    maxWidth: 1180,
     alignSelf: 'center',
   },
   instructionBlock: {
