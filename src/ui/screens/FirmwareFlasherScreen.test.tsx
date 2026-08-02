@@ -3,9 +3,12 @@ jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTranspor
 import React from 'react';
 import {Text} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
+import {readFileSync} from 'node:fs';
+import {join} from 'node:path';
 
 import type {BetaflightTarget} from '../../core/firmware-flasher';
 import {bytesToBase64} from '../../platforms/react-native/protocol/base64';
+import {FirmwareBootloaderController} from '../../platforms/react-native/protocol/FirmwareBootloaderController';
 import type {UsbSerialTransportClient} from '../../platforms/react-native/transport';
 import type {DfuDeviceDescriptor} from '../../platforms/react-native/transport/native/NativeUsbSerialTransport';
 import FirmwareFlasherScreen from './FirmwareFlasherScreen';
@@ -39,6 +42,7 @@ function fakeApi(targets: readonly BetaflightTarget[] = []) {
     loadCommits: jest.fn(),
     requestBuild: jest.fn(),
     requestBuildStatus: jest.fn(),
+    loadBuildLog: jest.fn(async () => 'Build complete'),
     loadFirmware: jest.fn(),
   };
 }
@@ -74,7 +78,23 @@ async function renderScreen(client = fakeClient(), api = fakeApi()) {
   return {renderer, client, api};
 }
 
+async function flushAsyncEffects(rounds = 8): Promise<void> {
+  await act(async () => {
+    for (let index = 0; index < rounds; index += 1) {
+      await Promise.resolve();
+    }
+  });
+}
+
 describe('FirmwareFlasherScreen', () => {
+  it('shows the build-configuration contract before a board is selected', async () => {
+    const {renderer} = await renderScreen();
+    expect(renderer.root.findAllByProps({testID: 'build-configuration'}).length).toBeGreaterThan(0);
+    expect(allText(renderer)).toContain('Radio وTelemetry وOSD وMotor');
+    expect(renderer.root.findByProps({testID: 'build-firmware'}).props.disabled).toBe(true);
+    act(() => renderer.unmount());
+  });
+
   it('loads a local HEX after active interactions, validates it and selects the DFU path', async () => {
     const {renderer, client} = await renderScreen();
     await press(renderer, 'firmware-source-local');
@@ -94,16 +114,58 @@ describe('FirmwareFlasherScreen', () => {
       mcu: 'STM32',
     }));
     const {renderer} = await renderScreen(fakeClient(), fakeApi(targets));
-    const search = renderer.root.findAllByProps({testID: 'target-search'})[0];
-    await act(async () => {
-      search.props.onFocus();
-      await Promise.resolve();
-    });
+    await press(renderer, 'target-selector');
     const mountedTargetRows = renderer.root.findAll(node =>
-      typeof node.props.testID === 'string' && node.props.testID.startsWith('target-'),
+      typeof node.props.testID === 'string' && node.props.testID.startsWith('target-TARGET_'),
     );
     expect(mountedTargetRows.length).toBeGreaterThan(0);
     expect(mountedTargetRows.length).toBeLessThan(2000);
+    act(() => renderer.unmount());
+  });
+
+  it('shows the complete online board, release and Cloud Build configuration with the official empty None option', async () => {
+    const api = fakeApi([{target: 'S405', group: 'supported', manufacturer: 'FPV', mcu: 'STM32F405'}]);
+    api.loadTargetReleases.mockResolvedValue({releases: [
+      {release: '4.6.0', label: '2026-06-01', type: 'Stable'},
+      {release: '4.7.0-RC1', label: '2026-07-01', type: 'ReleaseCandidate'},
+    ]});
+    api.loadBuild.mockResolvedValue({
+      target: 'S405',
+      release: '4.6.0',
+      releaseType: 'Stable',
+      cloudBuild: true,
+      manufacturer: 'FPV',
+      mcu: 'STM32F405',
+      date: '2026-06-01',
+    });
+    api.loadOptions.mockResolvedValue({
+      radioProtocols: [{name: 'CRSF', value: 'RX_CRSF', default: true}],
+      telemetryProtocols: [
+        {name: '[None]', value: '', default: true},
+        {name: 'SmartPort', value: 'TELEMETRY_SMARTPORT'},
+      ],
+      motorProtocols: [{name: 'DShot', value: 'DSHOT', default: true}],
+      generalOptions: [
+        {name: 'GPS', value: 'GPS'},
+        {name: 'OSD', groupedName: 'MSP DisplayPort', value: 'OSD_HD', group: 'OSD', default: true},
+      ],
+    });
+
+    const {renderer} = await renderScreen(fakeClient(), api);
+    await press(renderer, 'target-selector');
+    await press(renderer, 'target-S405');
+    await flushAsyncEffects();
+
+    expect(renderer.root.findAllByProps({testID: 'build-configuration'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'release-channel-stable'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'build-mode-cloud'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'radio-protocol-selector'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'telemetry-protocol-selector'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'osd-protocol-selector'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'motor-protocol-selector'}).length).toBeGreaterThan(0);
+    expect(allText(renderer)).toContain('[None]');
+    expect(allText(renderer)).toContain('المعلومات داخل FPV-ARBCON');
+    expect(api.loadBuild).toHaveBeenCalledWith('S405', '4.6.0', expect.any(AbortSignal));
     act(() => renderer.unmount());
   });
 
@@ -114,6 +176,42 @@ describe('FirmwareFlasherScreen', () => {
     expect(allText(renderer)).toContain('المسار المحلي ما زال متاحاً');
     await press(renderer, 'firmware-source-local');
     expect(renderer.root.findAllByProps({testID: 'pick-local-firmware'}).length).toBeGreaterThan(0);
+    act(() => renderer.unmount());
+  });
+
+  it('honours the manually selected USB device and port during auto detection', async () => {
+    const client = fakeClient();
+    const serialDevice = {
+      deviceId: 41,
+      vendorId: 0x0483,
+      productId: 0x5740,
+      productName: 'Flight Controller',
+      manufacturerName: 'FPV',
+      driverType: 'CDC',
+      portCount: 2,
+    };
+    client.listDevices.mockResolvedValue([serialDevice] as never);
+    const release = jest.fn(async () => undefined);
+    const detect = jest.spyOn(FirmwareBootloaderController.prototype, 'detectFlightController')
+      .mockResolvedValue({
+        device: serialDevice,
+        identity: {
+          firmware: {knownFamily: 'Betaflight'},
+          board: {targetName: 'S405', boardName: 'S405', boardIdentifier: 'S405'},
+        },
+        release,
+      } as never);
+
+    const api = fakeApi([{target: 'S405'}]);
+    api.loadTargetReleases.mockResolvedValue({releases: []});
+    const {renderer} = await renderScreen(client, api);
+    await press(renderer, 'detect-port-1');
+    await press(renderer, 'auto-detect-fc');
+
+    expect(detect).toHaveBeenCalledWith(expect.any(AbortSignal), {deviceId: 41, portIndex: 1});
+    expect(release).toHaveBeenCalledTimes(1);
+    expect(allText(renderer)).toContain('تم التعرف واختيار S405');
+    detect.mockRestore();
     act(() => renderer.unmount());
   });
 
@@ -173,5 +271,13 @@ describe('FirmwareFlasherScreen', () => {
     expect(client.unprotectDfuDevice).toHaveBeenCalledWith(17);
     expect(allText(renderer)).toContain('أزيلت Read Protection');
     act(() => renderer.unmount());
+  });
+
+  it('keeps every help and build-log action inside FPV-ARBCON and lazy-loads the flasher outside the Motors startup graph', () => {
+    const screenSource = readFileSync(join(__dirname, 'FirmwareFlasherScreen.tsx'), 'utf8');
+    const appSource = readFileSync(join(__dirname, '../../../App.tsx'), 'utf8');
+    expect(screenSource).not.toMatch(/\bLinking\b|openURL|betaflight\.com\/docs|github\.com\/betaflight/);
+    expect(appSource).not.toMatch(/import\s*\{[^}]*FirmwareFlasherScreen/s);
+    expect(appSource).toContain('<Stack.Screen name="FirmwareFlasher" getComponent={getFirmwareFlasherScreen} />');
   });
 });

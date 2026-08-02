@@ -143,7 +143,13 @@ function parseOptionArray(value: unknown, context: string): readonly FirmwareBui
   if (!Array.isArray(value)) return [];
   return value.map((item, index) => {
     const option = record(item, `${context} رقم ${index + 1}`);
-    const optionValue = nonEmptyString(option.value, `قيمة ${context}`);
+    // The official Build API deliberately represents its safe "[None]"
+    // choice with an empty string. Empty therefore means "do not add a
+    // build define"; it is data, not a malformed response.
+    if (typeof option.value !== 'string') {
+      throw new Error(`قيمة ${context} غير موجودة أو غير صالحة.`);
+    }
+    const optionValue = option.value.trim();
     const group = typeof option.group === 'string' && option.group.trim().length > 0
       ? option.group.trim()
       : undefined;

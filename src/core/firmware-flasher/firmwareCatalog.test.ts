@@ -30,7 +30,10 @@ describe('firmware catalog normalization', () => {
   it('normalizes all protocol families including OSD extracted from general options', () => {
     const options = parseBuildOptions({
       radioProtocols: [{name: 'CRSF', value: 'RX_CRSF', default: true, includesTelemetry: true}],
-      telemetryProtocols: [{name: 'SmartPort', value: 'TELEMETRY_SMARTPORT'}],
+      telemetryProtocols: [
+        {name: '[None]', value: ''},
+        {name: 'SmartPort', value: 'TELEMETRY_SMARTPORT'},
+      ],
       motorProtocols: [{name: 'DShot', value: 'DSHOT'}],
       generalOptions: [
         {name: 'GPS', value: 'GPS'},
@@ -38,6 +41,7 @@ describe('firmware catalog normalization', () => {
       ],
     });
     expect(options.radioProtocols[0]).toMatchObject({value: 'RX_CRSF', includesTelemetry: true});
+    expect(options.telemetryProtocols[0]).toMatchObject({name: '[None]', value: ''});
     expect(options.osdProtocols.map(option => option.value)).toEqual(['OSD_HD']);
     expect(options.generalOptions.map(option => option.value)).toEqual(['GPS']);
   });

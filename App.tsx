@@ -18,7 +18,6 @@ import './src/i18n';
 // (Setup / Motors / Ports / Receiver / PID), not the Setup screen alone.
 // The route name is unchanged on purpose - see src/navigation/types.ts.
 import {
-  FirmwareFlasherScreen,
   MainTabsScreen,
   StartScreen,
   UsbConnectionScreen,
@@ -33,6 +32,17 @@ if (!I18nManager.isRTL) {
 }
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+/**
+ * Keep the firmware tool outside the connection/Motors module graph until
+ * the operator explicitly opens it.  The flasher pulls in catalogue,
+ * parsing and bootloader engines (including esptool); evaluating those at
+ * application start would make an independent tool part of the critical
+ * connection path for no user benefit.
+ */
+function getFirmwareFlasherScreen() {
+  return require('./src/ui/screens/FirmwareFlasherScreen').default;
+}
 
 function App(): React.JSX.Element {
   // Pass 7.1: useNavigationContainerRef() (not the module-level
@@ -159,7 +169,7 @@ function App(): React.JSX.Element {
           <Stack.Screen name="Start" component={StartScreen} />
           <Stack.Screen name="Connection" component={UsbConnectionScreen} />
           <Stack.Screen name="Setup" component={MainTabsScreen} />
-          <Stack.Screen name="FirmwareFlasher" component={FirmwareFlasherScreen} />
+          <Stack.Screen name="FirmwareFlasher" getComponent={getFirmwareFlasherScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaView>

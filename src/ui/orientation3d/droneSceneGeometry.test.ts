@@ -375,7 +375,7 @@ describe('computeDroneScene', () => {
     expect(sceneA).toEqual(sceneB);
   });
 
-  describe('Pass 7.5D preview sizing - enlarged, centered, uncropped', () => {
+  describe('orientation preview sizing - half-scale, centered, uncropped', () => {
     // The hero preview is a fixed 260x260 wrapper (OrientationHero's
     // HERO_SIZE); the Skia canvas clips to it, and no control overlays
     // it, so the wrapper edges ARE the clipping edges.
@@ -407,30 +407,22 @@ describe('computeDroneScene', () => {
       return {minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys)};
     }
 
-    /** FINAL-POLISH PASS: the band moved with the deliberate +15.0%
-     * scale increase (MODEL_PIXEL_SCALE_FACTOR 0.56 -> 0.644), which
-     * raised the measured neutral occupancy from 62.9% to 72.33%. The
-     * assertion is NOT loosened - it is the same shape of bound, just
-     * re-centred on the new measured value, and the clearance test
-     * below (still >=12 units) is what actually protects against
-     * over-enlargement. */
-    it('the NEUTRAL model projects to 70%-75% of the usable preview width (large enough for visual hardware judgment)', () => {
+    /** 0.322 is exactly half the approved 0.644 presentation scale.
+     * Neutral occupancy therefore moves from 72.33% to about 36.17%
+     * while the Canvas and instruments keep their original layout. */
+    it('the NEUTRAL model projects to 35%-38% of the preview width', () => {
       const b = sceneBounds({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
       const widthRatio = (b.maxX - b.minX) / PREVIEW.width;
-      expect(widthRatio).toBeGreaterThanOrEqual(0.7);
-      expect(widthRatio).toBeLessThanOrEqual(0.75);
+      expect(widthRatio).toBeGreaterThanOrEqual(0.35);
+      expect(widthRatio).toBeLessThanOrEqual(0.38);
     });
 
-    it('is measurably LARGER than the pre-polish scale, by the intended +15% and no more', () => {
+    it('is exactly half the previously approved 0.644 presentation', () => {
       const b = sceneBounds({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
-      // The pre-polish neutral projected width, measured at this exact
-      // preview size with MODEL_PIXEL_SCALE_FACTOR = 0.56. Projected
-      // offsets from the viewport centre scale linearly with that
-      // factor, so this is an exact expectation, not an approximation.
-      const PRE_POLISH_WIDTH = 163.53;
-      const ratio = (b.maxX - b.minX) / PRE_POLISH_WIDTH;
-      expect(ratio).toBeGreaterThanOrEqual(1.15);
-      expect(ratio).toBeLessThanOrEqual(1.18);
+      const PREVIOUS_APPROVED_WIDTH = 188.06;
+      const ratio = (b.maxX - b.minX) / PREVIOUS_APPROVED_WIDTH;
+      expect(ratio).toBeGreaterThanOrEqual(0.499);
+      expect(ratio).toBeLessThanOrEqual(0.501);
     });
 
     it('every required verification pose keeps the COMPLETE model uncropped with >=12 units of clearance from every clipping edge', () => {
@@ -568,18 +560,16 @@ describe('computeDroneScene - neutral presentation (level reads as level)', () =
 });
 
 /**
- * FINAL-POLISH PASS - the clipping and pivot contract for the ENLARGED
- * model, checked against a dense pose matrix rather than a handful of
+ * Clipping and pivot contract for the half-scale model, checked against
+ * a dense pose matrix rather than a handful of
  * chosen snapshots.
  *
  * Why a matrix: the Pass-7.5D sizing block above tests eight curated
  * poses, which is enough to catch a gross error but not enough to
- * justify raising the scale. Enlarging the model is exactly the change
- * that turns "no pose I happened to pick clips" into "some pose clips",
- * so the safe scale has to be established over the renderer's real
- * supported domain.
+ * establish that shrinking presentation does not translate the pivot,
+ * alter orientation geometry, or create a pose-dependent crop.
  */
-describe('computeDroneScene - enlarged-model clipping matrix and pivot stability', () => {
+describe('computeDroneScene - half-scale clipping matrix and pivot stability', () => {
   /** The hero preview is a FIXED 260x260 (OrientationHero's HERO_SIZE),
    * independent of the phone's screen width - the card centres it
    * rather than stretching it. The three screen widths the product
@@ -663,13 +653,9 @@ describe('computeDroneScene - enlarged-model clipping matrix and pivot stability
     },
   );
 
-  it('keeps a large real margin at the enlarged scale - not merely scraping the inset', () => {
+  it('keeps the expected large margin at half scale', () => {
     const worst = Math.min(...MATRIX.map(pose => clearance(pose, HERO_CANVAS)));
-    // Measured 25.73 at MODEL_PIXEL_SCALE_FACTOR 0.644 including the
-    // stroke. Asserting a floor well above MATRIX_MIN_CLEARANCE is what
-    // makes a future scale bump fail here FIRST, loudly, instead of
-    // clipping on someone's hardware.
-    expect(worst).toBeGreaterThanOrEqual(20);
+    expect(worst).toBeGreaterThanOrEqual(70);
   });
 
   it('the rotation fixed point projects to the canvas centre in EVERY matrix pose - one stable pivot', () => {

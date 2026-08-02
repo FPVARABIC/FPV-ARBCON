@@ -1,6 +1,7 @@
 const BUILD_ORIGIN = 'https://build.betaflight.com';
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_BINARY_BYTES = 8 * 1024 * 1024;
+const MAX_BUILD_LOG_BYTES = 512 * 1024;
 
 export type BetaflightTarget = {
   readonly target: string;
@@ -113,6 +114,23 @@ export class BetaflightBuildApi {
 
   requestBuildStatus(key: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     return this.json(`/api/builds/${encodeURIComponent(key)}/status`, {signal});
+  }
+
+  async loadBuildLog(key: string, signal?: AbortSignal): Promise<string> {
+    const response = await this.fetchImpl(
+      sameOriginUrl(`/api/builds/${encodeURIComponent(key)}/log`),
+      {signal, headers: {'X-CFG-VER': 'FPV-ARBCON/1.0'}},
+    );
+    await ensureResponse(response);
+    const declared = contentLength(response);
+    if (declared !== undefined && declared > MAX_BUILD_LOG_BYTES) {
+      throw new BuildApiError('سجل Build أكبر من الحد الآمن للعرض داخل التطبيق.');
+    }
+    const log = await response.text();
+    if (log.length > MAX_BUILD_LOG_BYTES) {
+      throw new BuildApiError('سجل Build أكبر من الحد الآمن للعرض داخل التطبيق.');
+    }
+    return log;
   }
 
   async loadFirmware(path: string, signal?: AbortSignal): Promise<Uint8Array> {

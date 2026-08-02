@@ -7,8 +7,9 @@ import React, {
 } from 'react';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
+  ActivityIndicator,
   FlatList,
-  Linking,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -80,6 +81,7 @@ type Step = 'board' | 'flash';
 type SourceMode = 'online' | 'local';
 type HexMethod = 'dfu' | 'serial';
 type BackupMode = 'ask' | 'always' | 'never';
+type LoadState = 'idle' | 'loading' | 'ready' | 'error';
 type Operation =
   | 'idle'
   | 'loading'
@@ -157,19 +159,47 @@ function OptionGroup({
   selected,
   onChange,
   disabled = false,
+  testIDPrefix,
 }: {
   readonly title: string;
   readonly options: readonly FirmwareBuildOption[];
   readonly selected: string;
   readonly onChange: (value: string) => void;
   readonly disabled?: boolean;
+  readonly testIDPrefix: string;
 }): React.JSX.Element | null {
+  const [open, setOpen] = useState(false);
   if (options.length === 0) return null;
-  const choices = [{value: '', label: 'بدون'}, ...options.map(option => ({value: option.value, label: option.name}))];
+  const choices = [
+    ...(options.some(option => option.value === '') ? [] : [{value: '', label: 'بدون'}]),
+    ...options.map(option => ({value: option.value, label: option.name})),
+  ].filter((choice, index, all) => all.findIndex(candidate => candidate.value === choice.value) === index);
+  const selectedLabel = choices.find(choice => choice.value === selected)?.label ?? 'اختر';
   return (
     <View style={styles.optionGroup}>
       <Text style={styles.fieldLabel}>{title}</Text>
-      <FirmwareChoice value={selected} choices={choices} onChange={onChange} disabled={disabled} />
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${title}: ${selectedLabel}`}
+        disabled={disabled}
+        testID={`${testIDPrefix}-selector`}
+        onPress={() => setOpen(value => !value)}
+        style={[styles.selectorButton, disabled && styles.dimmed]}>
+        <Text style={styles.selectorValue}>{selectedLabel}</Text>
+        <Text style={styles.selectorHint}>{open ? 'إخفاء الخيارات' : 'اختيار أو تغيير'}</Text>
+      </Pressable>
+      {open ? (
+        <FirmwareChoice
+          value={selected}
+          choices={choices}
+          onChange={value => {
+            onChange(value);
+            setOpen(false);
+          }}
+          disabled={disabled}
+          testIDPrefix={testIDPrefix}
+        />
+      ) : null}
     </View>
   );
 }
@@ -187,18 +217,6 @@ function afterInteractions(): Promise<void> {
   });
 }
 
-function officialDocumentationUrl(url: string): string {
-  const parsed = new URL(url);
-  const betaflightHost = parsed.protocol === 'https:' &&
-    (parsed.hostname === 'betaflight.com' || parsed.hostname.endsWith('.betaflight.com'));
-  const betaflightGithub = parsed.protocol === 'https:' && parsed.hostname === 'github.com' &&
-    parsed.pathname.toLowerCase().startsWith('/betaflight/');
-  if (!betaflightHost && !betaflightGithub) {
-    throw new Error('تم رفض رابط توثيق خارج نطاقات Betaflight الرسمية.');
-  }
-  return parsed.toString();
-}
-
 export default function FirmwareFlasherScreen({
   navigation,
   client = usbSerialTransportClient,
@@ -207,20 +225,31 @@ export default function FirmwareFlasherScreen({
   const [step, setStep] = useState<Step>('board');
   const [sourceMode, setSourceMode] = useState<SourceMode>('online');
   const [targets, setTargets] = useState<readonly BetaflightTarget[]>([]);
+  const [targetsLoadState, setTargetsLoadState] = useState<LoadState>('loading');
+  const [targetsLoadError, setTargetsLoadError] = useState<string | null>(null);
   const [targetQuery, setTargetQuery] = useState('');
   const [targetListOpen, setTargetListOpen] = useState(false);
   const [selectedTarget, setSelectedTarget] = useState('');
   const [releases, setReleases] = useState<readonly FirmwareRelease[]>([]);
-  const [showDevelopment, setShowDevelopment] = useState(false);
+  const [releasesLoadState, setReleasesLoadState] = useState<LoadState>('idle');
+  const [releasesLoadError, setReleasesLoadError] = useState<string | null>(null);
+  const [releaseChannel, setReleaseChannel] = useState<FirmwareRelease['channel']>('stable');
+  const [releaseListOpen, setReleaseListOpen] = useState(false);
   const [selectedRelease, setSelectedRelease] = useState('');
   const [targetDetail, setTargetDetail] = useState<FirmwareTargetDetail | null>(null);
+  const [detailLoadState, setDetailLoadState] = useState<LoadState>('idle');
+  const [detailLoadError, setDetailLoadError] = useState<string | null>(null);
   const [buildOptions, setBuildOptions] = useState<FirmwareBuildOptions>(EMPTY_BUILD_OPTIONS);
+  const [buildOptionsLoadState, setBuildOptionsLoadState] = useState<LoadState>('idle');
+  const [buildOptionsLoadError, setBuildOptionsLoadError] = useState<string | null>(null);
   const [coreBuild, setCoreBuild] = useState(false);
   const [radioProtocol, setRadioProtocol] = useState('');
   const [telemetryProtocol, setTelemetryProtocol] = useState('');
   const [osdProtocol, setOsdProtocol] = useState('');
   const [motorProtocol, setMotorProtocol] = useState('');
   const [generalOptions, setGeneralOptions] = useState<readonly string[]>([]);
+  const [generalOptionsExpanded, setGeneralOptionsExpanded] = useState(false);
+  const [expertMode, setExpertMode] = useState(false);
   const [osdOmissionConfirmed, setOsdOmissionConfirmed] = useState(false);
   const [customDefines, setCustomDefines] = useState('');
   const [commit, setCommit] = useState('');
@@ -259,6 +288,10 @@ export default function FirmwareFlasherScreen({
   const [status, setStatus] = useState('اختر Target وإصداراً من الإنترنت أو حمّل ملفاً من الجهاز.');
   const [logLines, setLogLines] = useState<readonly string[]>([]);
   const [buildKey, setBuildKey] = useState<string | null>(null);
+  const [buildLogText, setBuildLogText] = useState<string | null>(null);
+  const [buildLogLoading, setBuildLogLoading] = useState(false);
+  const [showFlashGuide, setShowFlashGuide] = useState(false);
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const operationController = useRef<AbortController | null>(null);
   const lastProgressAt = useRef(0);
   const mounted = useRef(true);
@@ -307,17 +340,23 @@ export default function FirmwareFlasherScreen({
   useEffect(() => {
     mounted.current = true;
     const controller = new AbortController();
+    setTargetsLoadState('loading');
+    setTargetsLoadError(null);
     buildApi.loadTargets(controller.signal)
       .then(loadedTargets => {
         if (!mounted.current) return;
         setTargets(loadedTargets);
-        appendLog(`تم تحميل ${loadedTargets.length} Target من Betaflight.`);
+        setTargetsLoadState('ready');
+        appendLog(`تم تحميل ${loadedTargets.length} Target من المصدر الرسمي.`);
       })
       .catch(error => {
         if (!mounted.current || controller.signal.aborted) return;
         // Online failure must never disable local firmware or USB discovery.
-        setStatus(`تعذر تحميل القائمة عبر الإنترنت؛ المسار المحلي ما زال متاحاً. ${errorMessage(error)}`);
-        appendLog(`تعذر تحديث قائمة Targets: ${errorMessage(error)}`);
+        const message = errorMessage(error);
+        setTargetsLoadState('error');
+        setTargetsLoadError(message);
+        setStatus(`تعذر تحميل القائمة عبر الإنترنت؛ المسار المحلي ما زال متاحاً. ${message}`);
+        appendLog(`تعذر تحديث قائمة Targets: ${message}`);
       });
     refreshDevices().catch(error => {
       if (mounted.current) appendLog(`تعذر اكتشاف USB: ${errorMessage(error)}`);
@@ -342,42 +381,88 @@ export default function FirmwareFlasherScreen({
       setReleases([]);
       setSelectedRelease('');
       setTargetDetail(null);
+      setReleasesLoadState('idle');
+      setReleasesLoadError(null);
       return;
     }
     const controller = new AbortController();
+    setReleasesLoadState('loading');
+    setReleasesLoadError(null);
+    setSelectedRelease('');
     buildApi.loadTargetReleases(selectedTarget, controller.signal)
       .then(parseTargetReleases)
       .then(items => {
         if (controller.signal.aborted) return;
         setReleases(items);
-        const allowed = items.filter(item => showDevelopment || item.channel !== 'development');
-        setSelectedRelease(previous => allowed.some(item => item.release === previous)
-          ? previous
-          : allowed[0]?.release ?? '');
+        setReleasesLoadState('ready');
       })
       .catch(error => {
-        if (!controller.signal.aborted) setFailure(error);
+        if (controller.signal.aborted) return;
+        const message = errorMessage(error);
+        setReleases([]);
+        setReleasesLoadState('error');
+        setReleasesLoadError(message);
+        setStatus(`تعذر تحميل إصدارات ${selectedTarget}: ${message}`);
       });
     return () => controller.abort();
-  }, [buildApi, selectedTarget, setFailure, showDevelopment]);
+  }, [buildApi, selectedTarget]);
+
+  useEffect(() => {
+    if (releases.length === 0) {
+      setSelectedRelease('');
+      return;
+    }
+    const availableChannels = new Set(releases.map(release => release.channel));
+    if (!availableChannels.has(releaseChannel)) {
+      const fallback = (['stable', 'candidate', 'development'] as const)
+        .find(channel => availableChannels.has(channel));
+      if (fallback !== undefined) setReleaseChannel(fallback);
+      return;
+    }
+    const channelReleases = releases.filter(release => release.channel === releaseChannel);
+    setSelectedRelease(previous => channelReleases.some(release => release.release === previous)
+      ? previous
+      : channelReleases[0]?.release ?? '');
+    setReleaseListOpen(false);
+  }, [releaseChannel, releases]);
 
   useEffect(() => {
     if (!selectedTarget || !selectedRelease) {
       setTargetDetail(null);
       setBuildOptions(EMPTY_BUILD_OPTIONS);
+      setDetailLoadState('idle');
+      setDetailLoadError(null);
+      setBuildOptionsLoadState('idle');
+      setBuildOptionsLoadError(null);
       return;
     }
     const controller = new AbortController();
+    setDetailLoadState('loading');
+    setDetailLoadError(null);
+    setBuildOptionsLoadState('loading');
+    setBuildOptionsLoadError(null);
+    setTargetDetail(null);
+    setBuildOptions(EMPTY_BUILD_OPTIONS);
     Promise.all([
       buildApi.loadBuild(selectedTarget, selectedRelease, controller.signal),
-      buildApi.loadOptions(selectedRelease, controller.signal).catch(error => {
-        appendLog(`تعذر تحميل خيارات Cloud Build؛ Core Build ما زال متاحاً: ${errorMessage(error)}`);
-        return {};
-      }),
-    ]).then(([detailInput, optionsInput]) => {
+      buildApi.loadOptions(selectedRelease, controller.signal)
+        .then(input => ({input, error: null as string | null}))
+        .catch(error => ({input: null, error: errorMessage(error)})),
+    ]).then(([detailInput, optionsResult]) => {
       if (controller.signal.aborted) return;
       const detail = parseTargetDetail(detailInput, selectedTarget, selectedRelease);
-      const options = parseBuildOptions(optionsInput);
+      setTargetDetail(detail);
+      setDetailLoadState('ready');
+
+      let options = EMPTY_BUILD_OPTIONS;
+      let optionsError = optionsResult.error;
+      if (optionsResult.input !== null) {
+        try {
+          options = parseBuildOptions(optionsResult.input);
+        } catch (error) {
+          optionsError = errorMessage(error);
+        }
+      }
       const hasCloudOptions = [
         options.radioProtocols,
         options.telemetryProtocols,
@@ -385,23 +470,39 @@ export default function FirmwareFlasherScreen({
         options.motorProtocols,
         options.generalOptions,
       ].some(items => items.length > 0);
-      setTargetDetail(detail);
       setBuildOptions(options);
+      setBuildOptionsLoadState(optionsError === null ? 'ready' : 'error');
+      setBuildOptionsLoadError(optionsError);
+      if (optionsError !== null) {
+        appendLog(`تعذر تحميل خيارات Cloud Build؛ Core Build ما زال متاحاً: ${optionsError}`);
+      }
       setCoreBuild(!detail.cloudBuild || !hasCloudOptions);
       setRadioProtocol(defaultValue(options.radioProtocols));
       setTelemetryProtocol(defaultValue(options.telemetryProtocols));
       setOsdProtocol(defaultValue(options.osdProtocols));
       setMotorProtocol(defaultValue(options.motorProtocols));
       setGeneralOptions(options.generalOptions.filter(option => option.default).map(option => option.value));
-      setConfigurationLines(detail.configuration ?? null);
-      setConfigurationLabel(detail.configuration ? `الإعداد الافتراضي لـ ${detail.target}` : null);
+      const configuration = detail.configuration !== undefined && detail.configuration.length > 0
+        ? detail.configuration
+        : null;
+      setConfigurationLines(configuration);
+      setConfigurationLabel(configuration ? `الإعداد الافتراضي لـ ${detail.target}` : null);
       setUnstableConfirmed(false);
+      setExpertMode(false);
+      setGeneralOptionsExpanded(false);
       appendLog(`تفاصيل ${selectedTarget} / ${selectedRelease} جاهزة.`);
     }).catch(error => {
-      if (!controller.signal.aborted) setFailure(error);
+      if (controller.signal.aborted) return;
+      const message = errorMessage(error);
+      setTargetDetail(null);
+      setDetailLoadState('error');
+      setDetailLoadError(message);
+      setBuildOptionsLoadState('error');
+      setBuildOptionsLoadError('لم تُحمّل الخيارات لأن تفاصيل الإصدار لم تكتمل.');
+      setStatus(`تعذر تحميل تفاصيل البناء: ${message}`);
     });
     return () => controller.abort();
-  }, [appendLog, buildApi, selectedRelease, selectedTarget, setFailure]);
+  }, [appendLog, buildApi, selectedRelease, selectedTarget]);
 
   useEffect(() => {
     if (targetDetail?.releaseType.toLowerCase() !== 'unstable') {
@@ -448,12 +549,24 @@ export default function FirmwareFlasherScreen({
   }, [osdProtocol]);
 
   const visibleReleases = useMemo(
-    () => releases.filter(release => showDevelopment || release.channel !== 'development'),
-    [releases, showDevelopment],
+    () => releases.filter(release => release.channel === releaseChannel),
+    [releaseChannel, releases],
   );
+  const releaseChannelChoices = useMemo(() => {
+    const available = new Set(releases.map(release => release.channel));
+    return ([
+      {value: 'stable', label: 'Stable / مستقر'},
+      {value: 'candidate', label: 'Release Candidate'},
+      {value: 'development', label: 'Development / تطويري'},
+    ] as const).filter(choice => available.has(choice.value));
+  }, [releases]);
   const selectedReleaseInfo = useMemo(
     () => releases.find(release => release.release === selectedRelease),
     [releases, selectedRelease],
+  );
+  const selectedTargetInfo = useMemo(
+    () => targets.find(target => target.target === selectedTarget),
+    [selectedTarget, targets],
   );
   const filteredCommits = useMemo(() => {
     const query = commit.trim().toLowerCase();
@@ -541,6 +654,7 @@ export default function FirmwareFlasherScreen({
     operationController.current = controller;
     setOperation('building');
     setBuildKey(null);
+    setBuildLogText(null);
     setProgress(0);
     try {
       const request = createBuildRequest(targetDetail, {
@@ -593,7 +707,10 @@ export default function FirmwareFlasherScreen({
     setOperation('detecting');
     setStatus('التعرف على Flight Controller عبر MSP…');
     try {
-      const detected = await bootloader.detectFlightController(controller.signal);
+      const selection = selectedSerialId === null
+        ? undefined
+        : {deviceId: selectedSerialId, portIndex: selectedPortIndex};
+      const detected = await bootloader.detectFlightController(controller.signal, selection);
       try {
         const identity = detected.identity;
         const target = identity.board.targetName || identity.board.boardName || identity.board.boardIdentifier;
@@ -602,7 +719,6 @@ export default function FirmwareFlasherScreen({
           `${identity.firmware.knownFamily} • ${identity.board.boardName || identity.board.boardIdentifier} • Target ${target}`,
         );
         setSelectedSerialId(detected.device.deviceId);
-        setSelectedPortIndex(0);
         const catalogMatch = targets.find(item => item.target.toUpperCase() === target.toUpperCase());
         if (catalogMatch) {
           setSelectedTarget(catalogMatch.target);
@@ -622,7 +738,28 @@ export default function FirmwareFlasherScreen({
     } finally {
       if (operationController.current === controller) operationController.current = null;
     }
-  }, [appendLog, bootloader, refreshDevices, setFailure, targets]);
+  }, [
+    appendLog,
+    bootloader,
+    refreshDevices,
+    selectedPortIndex,
+    selectedSerialId,
+    setFailure,
+    targets,
+  ]);
+
+  const loadBuildLogInsideApp = useCallback(async () => {
+    if (!buildKey || buildLogLoading) return;
+    setBuildLogLoading(true);
+    try {
+      const log = await buildApi.loadBuildLog(buildKey);
+      setBuildLogText(log.trim() || 'سجل Build فارغ.');
+    } catch (error) {
+      setBuildLogText(`تعذر تحميل سجل Build: ${errorMessage(error)}`);
+    } finally {
+      setBuildLogLoading(false);
+    }
+  }, [buildApi, buildKey, buildLogLoading]);
 
   const requireOneSerial = useCallback(async (): Promise<UsbSerialDeviceDescriptor> => {
     const devices = (await client.listDevices()).filter(isSupportedDevice);
@@ -1013,6 +1150,80 @@ export default function FirmwareFlasherScreen({
 
   return (
     <View style={styles.root} testID="firmware-flasher-screen">
+      <Modal
+        visible={targetListOpen}
+        animationType="slide"
+        onRequestClose={() => setTargetListOpen(false)}>
+        <View style={styles.modalRoot} testID="target-picker-modal">
+          <View style={styles.modalHeader}>
+            <View style={styles.flexOne}>
+              <Text style={styles.modalTitle}>اختيار Flight Controller</Text>
+              <Text style={styles.selectorHint}>ابحث باسم Target أو الشركة أو MCU</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="إغلاق قائمة اللوحات"
+              onPress={() => setTargetListOpen(false)}
+              style={styles.modalClose}>
+              <Text style={styles.modalCloseText}>×</Text>
+            </Pressable>
+          </View>
+          <TextInput
+            value={targetQuery}
+            onChangeText={setTargetQuery}
+            autoFocus
+            placeholder="مثال: SPEEDYBEEF405V4"
+            placeholderTextColor={colors.textMuted}
+            style={styles.input}
+            testID="target-search"
+          />
+          {targetsLoadState === 'loading' ? (
+            <View style={styles.loadingRow}>
+              <ActivityIndicator color={colors.accent} />
+              <Text style={styles.loadingText}>يجري تحميل قائمة اللوحات…</Text>
+            </View>
+          ) : null}
+          {targetsLoadState === 'error' ? (
+            <FirmwareNotice
+              title="تعذر تحميل قائمة اللوحات"
+              text={targetsLoadError ?? 'تحقق من الإنترنت أو استخدم ملف Firmware محلياً.'}
+              tone="error"
+            />
+          ) : null}
+          <FlatList
+            data={filteredTargets}
+            keyExtractor={item => item.target}
+            style={styles.targetList}
+            contentContainerStyle={styles.targetListContent}
+            initialNumToRender={14}
+            maxToRenderPerBatch={18}
+            windowSize={7}
+            removeClippedSubviews
+            keyboardShouldPersistTaps="handled"
+            renderItem={({item}) => (
+              <Pressable
+                testID={`target-${item.target}`}
+                onPress={() => {
+                  setSelectedTarget(item.target);
+                  setTargetMismatchOverride(false);
+                  setTargetListOpen(false);
+                  setTargetQuery('');
+                }}
+                style={[styles.targetRow, selectedTarget === item.target && styles.targetRowSelected]}>
+                <View style={styles.targetCopy}>
+                  <Text style={styles.targetName}>{item.target}</Text>
+                  <Text style={styles.targetMeta}>{item.manufacturer ?? 'مصنّع غير معلن'} • {item.mcu ?? 'MCU غير معلن'}</Text>
+                </View>
+                <Text style={styles.targetGroup}>{groupLabel(item.group)}</Text>
+              </Pressable>
+            )}
+            ListEmptyComponent={targetsLoadState === 'ready'
+              ? <Text style={styles.emptyText}>لا توجد Targets مطابقة.</Text>
+              : null}
+          />
+        </View>
+      </Modal>
+
       <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
@@ -1064,7 +1275,7 @@ export default function FirmwareFlasherScreen({
                 value={sourceMode}
                 disabled={isBusy}
                 testIDPrefix="firmware-source"
-                choices={[{value: 'online', label: 'Betaflight عبر الإنترنت'}, {value: 'local', label: 'ملف من الجهاز'}]}
+                choices={[{value: 'online', label: 'Firmware الرسمي عبر الإنترنت'}, {value: 'local', label: 'ملف من الجهاز'}]}
                 onChange={setSourceMode}
               />
               {sourceMode === 'local' ? (
@@ -1072,7 +1283,7 @@ export default function FirmwareFlasherScreen({
               ) : null}
             </FirmwareSection>
 
-            <FirmwareSection title="Unified Config / Custom Defaults" caption="ميزة Betaflight الأصلية: تُدخل الإعدادات داخل منطقة يعلنها HEX، ولا تكتب فوق Firmware عشوائياً.">
+            <FirmwareSection title="Unified Config / Custom Defaults" caption="تُدخل الإعدادات داخل منطقة يعلنها HEX، ولا تكتب فوق Firmware عشوائياً.">
               <View style={styles.twoButtons}>
                 <View style={styles.flexOne}>
                   <FirmwareButton title="اختيار Unified Config" onPress={pickLocalConfiguration} disabled={isBusy} tone="secondary" testID="pick-unified-config" />
@@ -1094,213 +1305,269 @@ export default function FirmwareFlasherScreen({
 
             {sourceMode === 'online' ? (
               <>
-                <FirmwareSection title="Flight Controller والـ Target" caption="التعرف التلقائي يقرأ MSP_BOARD_INFO ولا يعتمد على اسم USB.">
-                  <FirmwareButton title="التعرف التلقائي على اللوحة" onPress={autoDetect} disabled={isBusy} testID="auto-detect-fc" />
+                <FirmwareSection title="Flight Controller والـ Target" caption="اختر جهاز USB عند التعدد، أو استخدم التعرف التلقائي الذي يقرأ MSP_BOARD_INFO فعلياً.">
+                  <View style={styles.twoButtons}>
+                    <View style={styles.flexOne}>
+                      <FirmwareButton
+                        title="تحديث أجهزة USB"
+                        onPress={() => refreshDevices().catch(setFailure)}
+                        disabled={isBusy}
+                        tone="secondary"
+                        testID="refresh-detect-devices"
+                      />
+                    </View>
+                    <View style={styles.flexOne}>
+                      <FirmwareButton title="التعرف التلقائي" onPress={autoDetect} disabled={isBusy} testID="auto-detect-fc" />
+                    </View>
+                  </View>
+                  {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>جهاز USB المستخدم في Auto Detect</Text> : (
+                    <FirmwareNotice title="لا يوجد جهاز Serial" text="يمكنك اختيار Target يدوياً، أو توصيل Flight Controller ثم الضغط على تحديث." tone="info" />
+                  )}
+                  {serialDevices.map(device => (
+                    <Pressable
+                      key={device.deviceId}
+                      testID={`detect-serial-device-${device.deviceId}`}
+                      disabled={isBusy}
+                      onPress={() => { setSelectedSerialId(device.deviceId); setSelectedPortIndex(0); }}
+                      style={[styles.deviceRow, selectedSerialId === device.deviceId && styles.deviceRowSelected]}>
+                      <Text style={styles.deviceName}>{deviceLabel(device)}</Text>
+                      <Text style={styles.deviceMeta}>{device.driverType} • {device.portCount} منفذ</Text>
+                    </Pressable>
+                  ))}
+                  {selectedSerial && selectedSerial.portCount > 1 ? (
+                    <FirmwareChoice
+                      value={String(selectedPortIndex)}
+                      choices={Array.from({length: selectedSerial.portCount}, (_, index) => ({value: String(index), label: `المنفذ ${index}`}))}
+                      onChange={value => setSelectedPortIndex(Number(value))}
+                      disabled={isBusy}
+                      testIDPrefix="detect-port"
+                    />
+                  ) : null}
                   {detectedSummary ? <FirmwareNotice title="نتيجة التعرف" text={detectedSummary} tone="success" /> : null}
-                  <TextInput
-                    value={targetQuery}
-                    onChangeText={setTargetQuery}
-                    onFocus={() => setTargetListOpen(true)}
-                    editable={!isBusy}
-                    placeholder="ابحث باسم Target أو الشركة أو MCU"
-                    placeholderTextColor={colors.textMuted}
-                    style={styles.input}
-                    testID="target-search"
-                  />
                   <Pressable
                     disabled={isBusy}
-                    onPress={() => setTargetListOpen(value => !value)}
-                    style={styles.selectorButton}>
+                    testID="target-selector"
+                    onPress={() => setTargetListOpen(true)}
+                    style={[styles.selectorButton, isBusy && styles.dimmed]}>
                     <Text style={styles.selectorValue}>{selectedTarget || 'اختر Target يدوياً'}</Text>
-                    <Text style={styles.selectorHint}>{targetListOpen ? 'إخفاء القائمة' : 'عرض القائمة'}</Text>
+                    <Text style={styles.selectorHint}>فتح قائمة واضحة قابلة للبحث</Text>
                   </Pressable>
-                  {targetListOpen ? (
-                    <FlatList
-                      data={filteredTargets}
-                      keyExtractor={item => item.target}
-                      style={styles.targetList}
-                      nestedScrollEnabled
-                      initialNumToRender={12}
-                      maxToRenderPerBatch={16}
-                      windowSize={5}
-                      removeClippedSubviews
-                      keyboardShouldPersistTaps="handled"
-                      renderItem={({item}) => (
-                        <Pressable
-                          testID={`target-${item.target}`}
-                          onPress={() => {
-                            setSelectedTarget(item.target);
-                            setTargetMismatchOverride(false);
-                            setTargetListOpen(false);
-                            setTargetQuery('');
-                          }}
-                          style={[styles.targetRow, selectedTarget === item.target && styles.targetRowSelected]}>
-                          <View style={styles.targetCopy}>
-                            <Text style={styles.targetName}>{item.target}</Text>
-                            <Text style={styles.targetMeta}>{item.manufacturer ?? 'مصنّع غير معلن'} • {item.mcu ?? 'MCU غير معلن'}</Text>
-                          </View>
-                          <Text style={styles.targetGroup}>{groupLabel(item.group)}</Text>
-                        </Pressable>
-                      )}
-                      ListEmptyComponent={<Text style={styles.emptyText}>لا توجد Targets مطابقة.</Text>}
+                  {selectedTargetInfo ? (
+                    <FirmwareNotice
+                      title={`تصنيف اللوحة: ${groupLabel(selectedTargetInfo.group)}`}
+                      text={`${selectedTargetInfo.manufacturer ?? 'المصنّع غير معلن'} • ${selectedTargetInfo.mcu ?? 'MCU غير معلن'} • Target ${selectedTargetInfo.target}`}
+                      tone={selectedTargetInfo.group === 'supported'
+                        ? 'success'
+                        : selectedTargetInfo.group === 'legacy' ? 'warning' : 'info'}
                     />
                   ) : null}
+                  {targetsLoadState === 'loading' ? <FirmwareNotice title="قائمة اللوحات" text="يجري تحميلها الآن؛ الاختيار المحلي وUSB يبقيان متاحين." /> : null}
+                  {targetsLoadState === 'error' ? <FirmwareNotice title="القائمة غير متاحة" text={targetsLoadError ?? 'استخدم الملف المحلي أو أعد المحاولة.'} tone="error" /> : null}
                 </FirmwareSection>
 
-                <FirmwareSection title="الإصدار ونوع البناء" caption="Stable وRelease Candidate ظاهران افتراضياً؛ Development يحتاج إقراراً منفصلاً.">
-                  <FirmwareToggle
-                    label="إظهار الإصدارات التطويرية"
-                    detail="قد تحتوي تغييرات غير مستقرة أو غير مكتملة الاختبار."
-                    value={showDevelopment}
-                    onValueChange={setShowDevelopment}
-                    disabled={isBusy}
-                    warning
-                    testID="show-development"
-                  />
-                  <View style={styles.choiceRows}>
-                    {visibleReleases.map(release => (
-                      <Pressable
-                        key={release.release}
-                        disabled={isBusy}
-                        onPress={() => setSelectedRelease(release.release)}
-                        style={[styles.releaseRow, selectedRelease === release.release && styles.releaseRowSelected]}>
-                        <Text style={[styles.releaseText, selectedRelease === release.release && styles.releaseTextSelected]}>{releaseLabel(release)}</Text>
-                        <Text style={styles.releaseMeta}>{release.label}</Text>
-                      </Pressable>
-                    ))}
-                  </View>
-                  {targetDetail?.cloudBuild && cloudOptionsAvailable ? (
+                <FirmwareSection title="إصدار Firmware" caption="اختر القناة أولاً، ثم الإصدار والتاريخ بوضوح. الإصدارات التطويرية تحتاج إقراراً منفصلاً قبل التفليش.">
+                  {releasesLoadState === 'loading' ? (
+                    <FirmwareNotice title="تحميل الإصدارات" text={`يجري جلب الإصدارات المتاحة لـ ${selectedTarget}.`} />
+                  ) : null}
+                  {releasesLoadState === 'error' ? (
+                    <FirmwareNotice title="تعذر تحميل الإصدارات" text={releasesLoadError ?? 'أعد اختيار اللوحة أو استخدم ملفاً محلياً.'} tone="error" />
+                  ) : null}
+                  {releaseChannelChoices.length > 0 ? (
                     <FirmwareChoice
-                      value={coreBuild ? 'core' : 'cloud'}
-                      choices={[{value: 'core', label: 'Core Build'}, {value: 'cloud', label: 'Cloud Build مخصص'}]}
-                      onChange={value => setCoreBuild(value === 'core')}
+                      value={releaseChannel}
+                      choices={releaseChannelChoices}
+                      onChange={value => setReleaseChannel(value)}
                       disabled={isBusy}
+                      testIDPrefix="release-channel"
                     />
                   ) : null}
+                  {visibleReleases.length > 0 ? (
+                    <>
+                      <Pressable
+                        testID="release-selector"
+                        disabled={isBusy}
+                        onPress={() => setReleaseListOpen(value => !value)}
+                        style={[styles.selectorButton, isBusy && styles.dimmed]}>
+                        <Text style={styles.selectorValue}>
+                          {selectedReleaseInfo ? releaseLabel(selectedReleaseInfo) : 'اختر إصدار Firmware'}
+                        </Text>
+                        <Text style={styles.selectorHint}>
+                          {selectedReleaseInfo?.label ?? 'الإصدار والتاريخ'} • {releaseListOpen ? 'إخفاء القائمة' : 'عرض القائمة'}
+                        </Text>
+                      </Pressable>
+                      {releaseListOpen ? (
+                        <View style={styles.choiceRows}>
+                          {visibleReleases.map(release => (
+                            <Pressable
+                              key={release.release}
+                              testID={`release-${release.release}`}
+                              disabled={isBusy}
+                              onPress={() => {
+                                setSelectedRelease(release.release);
+                                setReleaseListOpen(false);
+                              }}
+                              style={[styles.releaseRow, selectedRelease === release.release && styles.releaseRowSelected]}>
+                              <Text style={[styles.releaseText, selectedRelease === release.release && styles.releaseTextSelected]}>{releaseLabel(release)}</Text>
+                              <Text style={styles.releaseMeta}>تاريخ الإصدار: {release.label}</Text>
+                            </Pressable>
+                          ))}
+                        </View>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {detailLoadState === 'loading' ? <FirmwareNotice title="تفاصيل البناء" text="يجري تحميل معلومات Target وخيارات البناء…" /> : null}
+                  {detailLoadState === 'error' ? <FirmwareNotice title="تعذر تحميل تفاصيل البناء" text={detailLoadError ?? 'اختر إصداراً آخر أو أعد المحاولة.'} tone="error" /> : null}
                   {targetDetail ? (
                     <>
                       <FirmwareNotice
                         title={`${targetDetail.target} • ${targetDetail.release}`}
                         text={`${targetDetail.manufacturer ?? 'المصنّع غير معلن'} • ${targetDetail.mcu ?? 'MCU غير معلن'} • ${targetDetail.date ?? 'تاريخ البناء يحدده الخادم'} • ${targetDetail.cloudBuild ? 'يدعم Cloud Build' : 'Core Build جاهز'}`}
                       />
-                      <View style={styles.twoButtons}>
-                        <View style={styles.flexOne}>
-                          <FirmwareButton
-                            title="توثيق Target"
-                            tone="secondary"
-                            onPress={() => Linking.openURL(officialDocumentationUrl(
-                              `https://betaflight.com/docs/wiki/boards/current/${encodeURIComponent(targetDetail.target)}`,
-                            )).catch(setFailure)}
-                          />
-                        </View>
-                        {targetDetail.releaseUrl ? (
-                          <View style={styles.flexOne}>
-                            <FirmwareButton
-                              title="ملاحظات الإصدار"
-                              tone="secondary"
-                              onPress={() => {
-                                try {
-                                  const url = officialDocumentationUrl(targetDetail.releaseUrl!);
-                                  Linking.openURL(url).catch(setFailure);
-                                } catch (error) {
-                                  setFailure(error);
-                                }
-                              }}
-                            />
-                          </View>
-                        ) : null}
-                      </View>
+                      <FirmwareNotice
+                        title="المعلومات داخل FPV-ARBCON"
+                        text="لن يفتح اختيار اللوحة أو الإصدار أي تطبيق أو موقع خارجي؛ جميع خطوات البناء والتفليش تبقى داخل هذه الشاشة."
+                        tone="success"
+                      />
                     </>
                   ) : null}
                 </FirmwareSection>
 
-                {targetDetail?.cloudBuild && !coreBuild ? (
-                  <FirmwareSection title="خيارات Cloud Build" caption="نفس عائلات الخيارات: الراديو، Telemetry، OSD، المحركات والميزات العامة.">
-                    <OptionGroup title="بروتوكول الراديو" options={buildOptions.radioProtocols} selected={radioProtocol} onChange={setRadioProtocol} />
-                    <OptionGroup
-                      title="Telemetry"
-                      options={selectedRadioIncludesTelemetry
-                        ? [{name: 'مضمّن تلقائياً مع بروتوكول الراديو', value: '-1', default: true, includesTelemetry: true}]
-                        : buildOptions.telemetryProtocols}
-                      selected={telemetryProtocol}
-                      onChange={setTelemetryProtocol}
-                      disabled={selectedRadioIncludesTelemetry}
-                    />
-                    <OptionGroup title="OSD" options={buildOptions.osdProtocols} selected={osdProtocol} onChange={setOsdProtocol} />
-                    {!coreBuild && buildOptions.osdProtocols.length > 0 && !osdProtocol ? (
-                      <FirmwareToggle
-                        label="متابعة Cloud Build بدون OSD"
-                        detail="إقرار صريح؛ Betaflight يحذّر أيضاً عند ترك OSD بلا اختيار."
-                        value={osdOmissionConfirmed}
-                        onValueChange={setOsdOmissionConfirmed}
+                <FirmwareSection
+                  title="تهيئة البناء"
+                  caption="Core Build أو Cloud Build، ثم Radio وTelemetry وOSD وMotor وبقية الخيارات."
+                  testID="build-configuration">
+                  {targetDetail ? (
+                    <>
+                    {targetDetail.cloudBuild ? (
+                      <FirmwareChoice
+                        value={coreBuild ? 'core' : 'cloud'}
+                        choices={[{value: 'core', label: 'Core Build'}, {value: 'cloud', label: 'Cloud Build مخصص'}]}
+                        onChange={value => {
+                          if (value === 'cloud' && !cloudOptionsAvailable) {
+                            setStatus('خيارات Cloud Build لم تجهز بعد؛ أبقِ Core Build أو أعد اختيار الإصدار.');
+                            return;
+                          }
+                          setCoreBuild(value === 'core');
+                        }}
                         disabled={isBusy}
-                        warning
-                        testID="confirm-no-osd"
+                        testIDPrefix="build-mode"
+                      />
+                    ) : (
+                      <FirmwareNotice title="Core Build" text="هذا الإصدار لا يعلن Cloud Build؛ سيُستخدم البناء الأساسي الكامل." />
+                    )}
+                    {buildOptionsLoadState === 'loading' ? <FirmwareNotice title="خيارات البناء" text="يجري تحميل Radio وTelemetry وOSD وMotor والخيارات الأخرى…" /> : null}
+                    {buildOptionsLoadState === 'error' ? (
+                      <FirmwareNotice
+                        title="Cloud Build غير متاح حالياً"
+                        text={`${buildOptionsLoadError ?? 'تعذر تحميل الخيارات.'} ما زال Core Build متاحاً بأمان.`}
+                        tone="warning"
                       />
                     ) : null}
-                    <OptionGroup title="بروتوكول المحركات" options={buildOptions.motorProtocols} selected={motorProtocol} onChange={setMotorProtocol} />
-                    {buildOptions.generalOptions.length > 0 ? (
-                      <View style={styles.optionGroup}>
-                        <Text style={styles.fieldLabel}>خيارات عامة</Text>
-                        {buildOptions.generalOptions.map(option => (
-                          <FirmwareToggle
-                            key={option.value}
-                            label={option.name}
-                            detail={option.value}
-                            value={generalOptions.includes(option.value)}
-                            onValueChange={enabled => setGeneralOptions(previous => enabled
-                              ? Array.from(new Set([...previous, option.value]))
-                              : previous.filter(value => value !== option.value))}
-                          />
-                        ))}
-                      </View>
-                    ) : null}
-                    <Text style={styles.fieldLabel}>Custom Defines (تفصلها مسافات)</Text>
-                    <TextInput
-                      value={customDefines}
-                      onChangeText={setCustomDefines}
-                      editable={!isBusy}
-                      autoCapitalize="characters"
-                      placeholder="USE_BARO=BMP280 USE_GPS"
-                      placeholderTextColor={colors.textMuted}
-                      style={[styles.input, styles.monoInput]}
-                    />
-                    {isDevelopment ? (
+                    {targetDetail.cloudBuild && !coreBuild ? (
                       <>
-                        <Text style={styles.fieldLabel}>Commit SHA اختياري</Text>
-                        <TextInput
-                          value={commit}
-                          onChangeText={setCommit}
-                          editable={!isBusy}
-                          autoCapitalize="none"
-                          placeholder="SHA من قائمة Commits"
-                          placeholderTextColor={colors.textMuted}
-                          style={[styles.input, styles.monoInput]}
+                        <OptionGroup testIDPrefix="radio-protocol" title="بروتوكول الراديو" options={buildOptions.radioProtocols} selected={radioProtocol} onChange={setRadioProtocol} />
+                        <OptionGroup
+                          testIDPrefix="telemetry-protocol"
+                          title="Telemetry"
+                          options={selectedRadioIncludesTelemetry
+                            ? [{name: 'مضمّن تلقائياً مع بروتوكول الراديو', value: '-1', default: true, includesTelemetry: true}]
+                            : buildOptions.telemetryProtocols}
+                          selected={telemetryProtocol}
+                          onChange={setTelemetryProtocol}
+                          disabled={selectedRadioIncludesTelemetry}
                         />
-                        {commits.length > 0 ? (
-                          <FlatList
-                            data={filteredCommits}
-                            keyExtractor={item => item.sha}
-                            style={styles.commitList}
-                            nestedScrollEnabled
-                            initialNumToRender={8}
-                            maxToRenderPerBatch={12}
-                            windowSize={4}
-                            keyboardShouldPersistTaps="handled"
-                            renderItem={({item}) => (
-                              <Pressable
-                                onPress={() => setCommit(item.sha)}
-                                style={[styles.commitRow, commit === item.sha && styles.targetRowSelected]}>
-                                <Text style={styles.commitMessage}>{item.message}</Text>
-                                <Text style={styles.commitSha}>{item.sha}</Text>
-                              </Pressable>
-                            )}
+                        <OptionGroup testIDPrefix="osd-protocol" title="OSD" options={buildOptions.osdProtocols} selected={osdProtocol} onChange={setOsdProtocol} />
+                        {buildOptions.osdProtocols.length > 0 && !osdProtocol ? (
+                          <FirmwareToggle
+                            label="متابعة Cloud Build بدون OSD"
+                            detail="إقرار صريح قبل بناء Firmware بلا OSD."
+                            value={osdOmissionConfirmed}
+                            onValueChange={setOsdOmissionConfirmed}
+                            disabled={isBusy}
+                            warning
+                            testID="confirm-no-osd"
                           />
+                        ) : null}
+                        <OptionGroup testIDPrefix="motor-protocol" title="بروتوكول المحركات" options={buildOptions.motorProtocols} selected={motorProtocol} onChange={setMotorProtocol} />
+                        {buildOptions.generalOptions.length > 0 ? (
+                          <View style={styles.optionGroup}>
+                            <FirmwareButton
+                              title={`${generalOptionsExpanded ? 'إخفاء' : 'عرض'} الخيارات الأخرى (${buildOptions.generalOptions.length})`}
+                              onPress={() => setGeneralOptionsExpanded(value => !value)}
+                              disabled={isBusy}
+                              tone="secondary"
+                              testID="toggle-general-build-options"
+                            />
+                            {generalOptionsExpanded ? buildOptions.generalOptions.map(option => (
+                              <FirmwareToggle
+                                key={option.value}
+                                label={option.name}
+                                detail={option.value}
+                                value={generalOptions.includes(option.value)}
+                                onValueChange={enabled => setGeneralOptions(previous => enabled
+                                  ? Array.from(new Set([...previous, option.value]))
+                                  : previous.filter(value => value !== option.value))}
+                              />
+                            )) : null}
+                          </View>
+                        ) : null}
+                        <FirmwareToggle
+                          label="وضع الخبير"
+                          detail="يعرض Custom Defines واختيار Commit التطويري؛ اتركه مغلقاً للاستخدام العادي."
+                          value={expertMode}
+                          onValueChange={setExpertMode}
+                          disabled={isBusy}
+                          testID="firmware-expert-mode"
+                        />
+                        {expertMode ? (
+                          <>
+                            <Text style={styles.fieldLabel}>Custom Defines (تفصلها مسافات)</Text>
+                            <TextInput
+                              value={customDefines}
+                              onChangeText={setCustomDefines}
+                              editable={!isBusy}
+                              autoCapitalize="characters"
+                              placeholder="USE_BARO=BMP280 USE_GPS"
+                              placeholderTextColor={colors.textMuted}
+                              style={[styles.input, styles.monoInput]}
+                            />
+                            {isDevelopment ? (
+                              <>
+                                <Text style={styles.fieldLabel}>Commit SHA اختياري</Text>
+                                <TextInput
+                                  value={commit}
+                                  onChangeText={setCommit}
+                                  editable={!isBusy}
+                                  autoCapitalize="none"
+                                  placeholder="اكتب SHA أو ابحث في القائمة"
+                                  placeholderTextColor={colors.textMuted}
+                                  style={[styles.input, styles.monoInput]}
+                                />
+                                {filteredCommits.slice(0, 20).map(item => (
+                                  <Pressable
+                                    key={item.sha}
+                                    onPress={() => setCommit(item.sha)}
+                                    style={[styles.commitRow, commit === item.sha && styles.targetRowSelected]}>
+                                    <Text style={styles.commitMessage}>{item.message}</Text>
+                                    <Text style={styles.commitSha}>{item.sha}</Text>
+                                  </Pressable>
+                                ))}
+                                {filteredCommits.length > 20 ? <Text style={styles.selectorHint}>اكتب جزءاً من SHA أو الرسالة لتضييق النتائج.</Text> : null}
+                              </>
+                            ) : null}
+                          </>
                         ) : null}
                       </>
                     ) : null}
-                  </FirmwareSection>
-                ) : null}
+                    </>
+                  ) : (
+                    <FirmwareNotice
+                      title="تهيئة البناء جاهزة"
+                      text="اختر Flight Controller وإصدار Firmware أعلاه؛ ستظهر هنا مباشرة خيارات Core/Cloud وRadio وTelemetry وOSD وMotor والخيارات الأخرى."
+                      tone="info"
+                    />
+                  )}
+                </FirmwareSection>
 
                 <FirmwareButton
                   title="بناء وتنزيل Firmware"
@@ -1368,17 +1635,33 @@ export default function FirmwareFlasherScreen({
                   <FirmwareButton
                     title="إجراء التفليش الأساسي"
                     tone="secondary"
-                    onPress={() => Linking.openURL(officialDocumentationUrl('https://betaflight.com/docs/wiki/app/firmware-flasher-tab#basic-flashing-procedure')).catch(setFailure)}
+                    onPress={() => setShowFlashGuide(value => !value)}
+                    testID="toggle-flash-guide"
                   />
                 </View>
                 <View style={styles.flexOne}>
                   <FirmwareButton
                     title="استكشاف أعطال Firmware"
                     tone="secondary"
-                    onPress={() => Linking.openURL(officialDocumentationUrl('https://betaflight.com/docs/wiki/app/firmware-flasher-tab#troubleshooting')).catch(setFailure)}
+                    onPress={() => setShowTroubleshooting(value => !value)}
+                    testID="toggle-flash-troubleshooting"
                   />
                 </View>
               </View>
+              {showFlashGuide ? (
+                <FirmwareNotice
+                  title="الإجراء الأساسي داخل FPV-ARBCON"
+                  text="أزل المراوح وافصل البطارية، اختر Target والإصدار أو ملفاً محلياً، تحقق من صيغة HEX/UF2/BIN، صِل USB فقط، اختر جهازاً واحداً، أكّد بوابة الأمان، ثم ابدأ ولا تفصل الكابل حتى يكتمل التحقق وإعادة التشغيل."
+                  tone="info"
+                />
+              ) : null}
+              {showTroubleshooting ? (
+                <FirmwareNotice
+                  title="استكشاف الأعطال داخل التطبيق"
+                  text="إذا لم يظهر الجهاز: بدّل كابل USB إلى كابل بيانات، امنح إذن USB، أعد إدخال BOOT/DFU ثم حدّث الأجهزة. عند تعدد الأجهزة اختر الجهاز والمنفذ يدوياً. لا تتجاوز عدم تطابق Target، ولا تستخدم المسح الكامل إلا للاستعادة المتقدمة."
+                  tone="warning"
+                />
+              ) : null}
               {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>أجهزة Serial</Text> : null}
               {serialDevices.map(device => (
                 <Pressable
@@ -1537,11 +1820,20 @@ export default function FirmwareFlasherScreen({
         <FirmwareSection title="حالة العملية" caption="آخر 60 رسالة فقط تُحفظ في الذاكرة لمنع نمو السجل وإبطاء الشاشة.">
           <FirmwareProgress percent={progress} label={status} />
           {buildKey ? (
-            <FirmwareButton
-              title="فتح سجل Build الرسمي"
-              onPress={() => Linking.openURL(`https://build.betaflight.com/api/builds/${encodeURIComponent(buildKey)}/log`).catch(setFailure)}
-              tone="secondary"
-            />
+            <>
+              <FirmwareButton
+                title={buildLogLoading ? 'تحميل سجل Build…' : 'عرض سجل Build داخل التطبيق'}
+                onPress={loadBuildLogInsideApp}
+                disabled={buildLogLoading}
+                tone="secondary"
+                testID="load-build-log"
+              />
+              {buildLogText ? (
+                <View style={styles.logBox} testID="build-log">
+                  <Text style={styles.logLine}>{buildLogText}</Text>
+                </View>
+              ) : null}
+            </>
           ) : null}
           <View style={styles.twoButtons}>
             <View style={styles.flexOne}>
@@ -1569,6 +1861,27 @@ export default function FirmwareFlasherScreen({
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
+  modalRoot: {
+    flex: 1,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    gap: spacing.md,
+    backgroundColor: colors.background,
+  },
+  modalHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  modalTitle: {...typography.title, color: colors.textPrimary},
+  modalClose: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+  },
+  modalCloseText: {fontSize: 30, lineHeight: 32, color: colors.textPrimary},
+  loadingRow: {minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm},
+  loadingText: {...typography.body, color: colors.textSecondary},
   header: {
     minHeight: 72,
     flexDirection: 'row',
@@ -1609,7 +1922,8 @@ const styles = StyleSheet.create({
   selectorButton: {padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border},
   selectorValue: {...typography.sectionTitle, color: colors.textPrimary},
   selectorHint: {...typography.caption, color: colors.textMuted},
-  targetList: {maxHeight: 280, borderRadius: radii.md, backgroundColor: colors.backgroundRaised},
+  targetList: {flex: 1, borderRadius: radii.md, backgroundColor: colors.backgroundRaised},
+  targetListContent: {paddingBottom: spacing.xl},
   targetRow: {minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft},
   targetRowSelected: {backgroundColor: colors.accentSoft},
   targetCopy: {flex: 1},
@@ -1631,7 +1945,6 @@ const styles = StyleSheet.create({
   deviceRowSelected: {borderColor: colors.accent, backgroundColor: colors.accentSoft},
   deviceName: {...typography.sectionTitle, color: colors.textPrimary},
   deviceMeta: {...typography.caption, color: colors.textMuted},
-  commitList: {maxHeight: 220, borderRadius: radii.md, backgroundColor: colors.backgroundRaised},
   commitRow: {padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, gap: 2},
   commitMessage: {...typography.caption, color: colors.textPrimary, fontWeight: '700'},
   commitSha: {...typography.mono, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr'},

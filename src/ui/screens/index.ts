@@ -1,6 +1,5 @@
 export { default as UsbConnectionScreen } from './UsbConnectionScreen';
 export { default as StartScreen } from './StartScreen';
-export { default as FirmwareFlasherScreen } from './FirmwareFlasherScreen';
 export { default as SetupScreen } from './SetupScreen';
 export { default as PortsScreen } from './PortsScreen';
 /* SINGLE-APP MERGE: the shell the 'Setup' stack route renders - Setup and

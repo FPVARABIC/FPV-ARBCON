@@ -41,4 +41,14 @@ describe('BetaflightBuildApi', () => {
     const malformed = new BetaflightBuildApi(jest.fn(async () => response({text: '{'})) as unknown as typeof fetch);
     await expect(malformed.loadTargets()).rejects.toThrow(/JSON/);
   });
+
+  it('loads a bounded build log from the official origin for in-app display', async () => {
+    const fetcher = jest.fn(async () => response({text: 'compile ok\nlink ok\n', length: '19'}));
+    const api = new BetaflightBuildApi(fetcher as unknown as typeof fetch);
+
+    await expect(api.loadBuildLog('build/key')).resolves.toBe('compile ok\nlink ok\n');
+    expect((fetcher.mock.calls as unknown[][])[0][0]).toBe(
+      'https://build.betaflight.com/api/builds/build%2Fkey/log',
+    );
+  });
 });

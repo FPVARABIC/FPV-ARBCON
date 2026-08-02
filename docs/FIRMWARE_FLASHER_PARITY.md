@@ -21,14 +21,14 @@
 | شاشة بداية بمسارين | تبويب Landing ثم Flasher | اتصال إلى Setup/Motors/Ports أو Flasher مستقل | `StartScreen.tsx`, `StartScreen.test.tsx`, `App.test.tsx` |
 | Target عبر الإنترنت | Supported / community / legacy وبحث | نفس المجموعات والبحث باسم Target/الشركة/MCU، مع `FlatList` افتراضية | `firmwareCatalog.ts`, اختبار 2000 Target |
 | Auto detect للـ FC | قراءة اللوحة ثم اختيار Target | MSP identity حقيقي، Betaflight family، Target/board/capabilities، اختيار الجهاز والمنفذ يدوياً عند التعدد | `FirmwareBootloaderController.ts/.test.ts` |
-| Stable / RC / Development | نعم | نعم، Development مخفي افتراضياً وله إقرار مخاطر مستقل | `parseTargetReleases`, `FirmwareFlasherScreen` |
+| Stable / RC / Development | نعم | نعم؛ القناة المختارة واضحة، وDevelopment لا يمكن تفليشه قبل إقرار مخاطر مستقل | `parseTargetReleases`, `FirmwareFlasherScreen` |
 | Core Build | نعم | نعم | `createBuildRequest` (`CORE_BUILD`) |
 | Cloud Build | نعم | نعم | `CloudBuildCoordinator`, polling متسلسل وحد زمني وإلغاء |
-| خيارات البناء | Radio، Telemetry، OSD، motor، general | جميعها، مع تعطيل Telemetry عندما تكون مضمّنة في radio | `parseBuildOptions`, واجهة Cloud Build |
+| خيارات البناء | Radio، Telemetry، OSD، motor، general | قسم ظاهر قبل الاختيار، ثم جميع الخيارات مع قبول `[None]` ذي القيمة الفارغة وتعطيل Telemetry عندما تكون مضمّنة في radio | `parseBuildOptions`, `FirmwareFlasherScreen.test.tsx` |
 | Custom Defines | نعم | نعم، مع whitelist وطول/عدد محدودين ومنع payload غير صالح | `normalizeCustomDefines` واختباراته |
 | Unified Config / Custom Defaults | نعم، إدخال داخل المساحة التي يعلنها HEX | نعم، من الخادم أو ملف محلي، مع تحقق pointer/capacity/overlap وإعادة تسلسل HEX صحيحة | `customDefaults.ts/.test.ts` |
-| Commit تطويري | قائمة commits | قائمة افتراضية قابلة للبحث + SHA يدوي، ولا يرسل commit للإصدار المستقر | `parseCommits`, `createBuildRequest` |
-| Build status/log/cancel | queued/processing/log/cancel | نفس الحالات، رابط log رسمي، AbortController، وطلب status واحد فقط في كل لحظة | `cloudBuildCoordinator.test.ts` |
+| Commit تطويري | قائمة commits | قائمة محدودة إلى 20 نتيجة مرئية قابلة للتضييق + SHA يدوي، ولا يرسل commit للإصدار المستقر | `parseCommits`, `createBuildRequest` |
+| Build status/log/cancel | queued/processing/log/cancel | نفس الحالات، عرض log محدود الحجم داخل FPV-ARBCON، AbortController، وطلب status واحد فقط في كل لحظة | `buildApi.test.ts`, `cloudBuildCoordinator.test.ts` |
 | ملف محلي | HEX/UF2/BIN | HEX/UF2/BIN من Android document provider | Native SAF + `parseFirmwareFile` |
 | حفظ Firmware | نعم | نعم عبر Android SAF، بلا إظهار زر إلغاء زائف أثناء نافذة الحفظ | `saveFirmwareFile` وحالة `saving` |
 | HEX validation | Intel HEX | checksum/EOF/record types/32-bit ranges/overlap/entry، ودمج خطي الذاكرة | `intelHex.ts/.test.ts`, `IntelHexFirmware.kt` |
@@ -49,6 +49,8 @@
 | Target mismatch | تحذير | حظر افتراضي، وتجاوز خبير صريح فقط مع عرض الفعلي والمحدد | `targetMatches`, safety gate |
 | Unstable warning | نعم | حظر حتى الإقرار | safety gate |
 | Progress / cancellation | نعم | build/DFU/STM/ESP/restore progress، throttled إلى 80ms، log محدود إلى 60، إلغاء فعلي | الشاشة والمحركات |
+| البقاء داخل التطبيق | يفتح روابط دعم/إصدار/دليل خارجية | لا يفتح أي رابط من الشاشة؛ الدليل والأعطال وسجل Build داخل FPV-ARBCON | اختبار منع `Linking/openURL` في `FirmwareFlasherScreen.test.tsx` |
+| عزل بقية الأنظمة | تبويب داخل تطبيق سطح المكتب | تحميل كسول؛ لا تُقيّم محركات catalogue/esptool أثناء بدء الاتصال أو Motors/Setup | `App.tsx`, اختبار `getComponent` |
 | RTL/العربية | ليست واجهة عربية أصلية | واجهة عربية RTL كاملة مع إبقاء أسماء البروتوكولات التقنية المعروفة | `StartScreen`, `FirmwareFlasherScreen` |
 
 ## نواحٍ أقوى من النسخة المرجعية
@@ -58,10 +60,12 @@
 3. Android Backup ليس “skip”: ينفذ `diff all` فعلياً ويحفظه قبل erase، ويلغي التفليش إذا ألغى المستخدم حفظ النسخة المطلوبة.
 4. Cloud polling لا يستخدم `setInterval(async ...)`؛ لذلك لا يمكن أن تتداخل طلبات status البطيئة.
 5. تحليل آلاف سجلات HEX يخصص كل منطقة متصلة مرة واحدة، بدلاً من نسخ prefix كاملاً مع كل سجل.
-6. قوائم Targets وCommits افتراضية، والتقدم throttled والسجل bounded لمنع lag ونمو الذاكرة.
+6. قائمة Targets افتراضية، ونتائج Commits محدودة، والتقدم throttled والسجلات bounded لمنع lag ونمو الذاكرة.
 7. مسارات USB ترفض التعدد الغامض ولا تخمّن الجهاز أو المنفذ.
 8. DFU memory layout و`wTransferSize` يُقرآن من raw descriptors إذا لم يوفر Android اسم الواجهة مباشرة.
 9. فشل الإنترنت لا يعطل اختيار Firmware محلي أو اكتشاف USB.
+10. خيارات Cloud Build لا تختفي بسبب تمثيل `[None]` الرسمي بقيمة فارغة؛ هذا السيناريو مغطى باختبار واجهة كامل.
+11. محرك Flasher محمّل عند فتح الشاشة فقط، لذلك دمجه لا يضيف عملاً إلى مسار بدء Motors/Setup/Ports.
 
 ## حدود صريحة لا يجوز إخفاؤها
 

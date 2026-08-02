@@ -3,5 +3,4 @@ export {
   SetupScreen,
   MainTabsScreen,
   StartScreen,
-  FirmwareFlasherScreen,
 } from './screens';
