@@ -383,6 +383,53 @@ export default function FirmwareFlasherScreen({
     appendLog(`اكتشاف USB: ${supported.length} serial و${dfu.length} DFU.`);
   }, [appendLog, client]);
 
+  /**
+   * THE BROWSER'S EXPLICIT DEVICE CHOOSERS - not offered on Android.
+   *
+   * A browser lists only ports and USB devices the operator has already
+   * authorized, and the chooser that grants that authorization may only be
+   * opened from a real user gesture. Without these two buttons the
+   * flasher's own "تحديث أجهزة USB" scan legitimately finds nothing on a
+   * first visit, and no board can ever be flashed from a browser.
+   *
+   * Both call the picker STRAIGHT from the press handler - any await
+   * before it would end the user gesture and the browser would refuse.
+   * A dismissed chooser resolves null, which is a cancellation and not an
+   * error, so nothing is logged and no failure is raised.
+   */
+  // Probed defensively: `client` is an injected dependency and this
+  // screen's tests supply minimal stand-ins. "Does this client offer a
+  // picker?" is answered by whether the method exists at all.
+  const supportsSerialPicker = useMemo(
+    () => typeof client.supportsDevicePicker === 'function' && client.supportsDevicePicker(),
+    [client],
+  );
+  const supportsDfuPicker = useMemo(
+    () => typeof client.supportsDfuDevicePicker === 'function' && client.supportsDfuDevicePicker(),
+    [client],
+  );
+
+  const chooseSerialDevice = useCallback(() => {
+    client.requestDevicePermission()
+      .then(device => {
+        if (!mounted.current || device === null) return;
+        // Re-enumerate rather than trusting the returned descriptor:
+        // listDevices() stays the single source of truth for what is
+        // authorized and connectable.
+        return refreshDevices();
+      })
+      .catch(setFailure);
+  }, [client, refreshDevices, setFailure]);
+
+  const chooseDfuDevice = useCallback(() => {
+    client.requestDfuDevicePermission()
+      .then(device => {
+        if (!mounted.current || device === null) return;
+        return refreshDevices();
+      })
+      .catch(setFailure);
+  }, [client, refreshDevices, setFailure]);
+
   useEffect(() => {
     mounted.current = true;
     const controller = new AbortController();
@@ -1730,6 +1777,35 @@ export default function FirmwareFlasherScreen({
                 <View style={styles.flexOne}><FirmwareButton title="تحديث أجهزة USB" onPress={() => refreshDevices().catch(setFailure)} disabled={isBusy} tone="secondary" /></View>
                 <View style={styles.flexOne}><FirmwareButton title="Auto detect" onPress={autoDetect} disabled={isBusy} tone="secondary" /></View>
               </View>
+              {/* Browser only - see chooseSerialDevice()/chooseDfuDevice().
+                  Android raises its own system permission dialog during
+                  open() and renders neither button. */}
+              {supportsSerialPicker || supportsDfuPicker ? (
+                <View style={styles.twoButtons}>
+                  {supportsSerialPicker ? (
+                    <View style={styles.flexOne}>
+                      <FirmwareButton
+                        title="اختيار جهاز USB"
+                        onPress={chooseSerialDevice}
+                        disabled={isBusy}
+                        tone="secondary"
+                        testID="firmware-choose-serial-device"
+                      />
+                    </View>
+                  ) : null}
+                  {supportsDfuPicker ? (
+                    <View style={styles.flexOne}>
+                      <FirmwareButton
+                        title="اختيار STM32 DFU"
+                        onPress={chooseDfuDevice}
+                        disabled={isBusy}
+                        tone="secondary"
+                        testID="firmware-choose-dfu-device"
+                      />
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
               {firmware?.kind === 'HEX' && hexMethod === 'dfu' ? (
                 noReboot ? (
                   dfuDevices.length > 0 ? (

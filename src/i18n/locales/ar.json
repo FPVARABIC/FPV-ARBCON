@@ -39,7 +39,9 @@
     "supportedDetected": "تم اكتشاف جهاز USB مدعوم. يمكنك الآن الاتصال.",
     "multipleSupportedGuidance": "تم العثور على أكثر من جهاز مدعوم. اختر الجهاز الذي تريد الاتصال به.",
     "deviceDetached": "تم فصل جهاز USB.",
-    "sessionDetachedDuringConnection": "انقطع الاتصال بعد فصل جهاز USB."
+    "sessionDetachedDuringConnection": "انقطع الاتصال بعد فصل جهاز USB.",
+    "chooseDevice": "اختيار جهاز USB",
+    "chooseDeviceHint": "يعرض المتصفح المنافذ التي سبق السماح بها فقط. اضغط هنا لاختيار جهاز جديد ومنحه الإذن مرة واحدة."
   },
   "ports": {
     "portNumber": "المنفذ {{number}}",

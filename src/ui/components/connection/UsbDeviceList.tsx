@@ -22,6 +22,21 @@ interface Props {
   selectionDisabled: boolean;
   onRefresh: () => void;
   onSelectDevice: (device: UsbSerialDeviceDescriptor) => void;
+  /**
+   * THE BROWSER'S EXPLICIT DEVICE CHOOSER, and the reason it is optional.
+   *
+   * A browser will not list a serial port until the user has picked it
+   * once from the browser's own chooser, and that chooser may only be
+   * opened from a real user gesture. So on Web this button is not a
+   * convenience - without it the ordinary scan finds nothing on a first
+   * visit and the app can never reach a first connection.
+   *
+   * Android has no equivalent: its permission dialog is raised by the
+   * system during open(). It passes nothing here, the button is not
+   * rendered, and the screen is unchanged.
+   */
+  onRequestDevice?: () => void;
+  requestDeviceDisabled?: boolean;
 }
 
 export default function UsbDeviceList({
@@ -33,6 +48,8 @@ export default function UsbDeviceList({
   selectionDisabled,
   onRefresh,
   onSelectDevice,
+  onRequestDevice,
+  requestDeviceDisabled = false,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const showEmptyState = !scanning && hasScannedOnce && devices.length === 0;
@@ -78,6 +95,32 @@ export default function UsbDeviceList({
           {t('devices.notScannedPrompt')}
         </Text>
       )}
+
+      {onRequestDevice ? (
+        <View style={styles.pickerSection}>
+          <Pressable
+            testID="usb-request-device-button"
+            onPress={requestDeviceDisabled ? undefined : onRequestDevice}
+            disabled={requestDeviceDisabled}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: requestDeviceDisabled }}
+            style={[
+              styles.pickerButton,
+              requestDeviceDisabled && styles.pickerButtonDisabled,
+            ]}
+          >
+            <Text
+              style={[
+                styles.pickerButtonText,
+                requestDeviceDisabled && styles.refreshButtonTextDisabled,
+              ]}
+            >
+              {t('devices.chooseDevice')}
+            </Text>
+          </Pressable>
+          <Text style={styles.pickerHint}>{t('devices.chooseDeviceHint')}</Text>
+        </View>
+      ) : null}
 
       {showEmptyState ? (
         <View style={styles.emptyState}>
@@ -150,6 +193,36 @@ const styles = StyleSheet.create({
   },
   refreshButtonTextDisabled: {
     color: colors.disabled,
+  },
+  pickerSection: {
+    marginTop: spacing.md,
+    gap: spacing.xs,
+  },
+  pickerButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: radii.sm,
+    backgroundColor: colors.accentSoft,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  pickerButtonDisabled: {
+    borderColor: colors.disabled,
+    backgroundColor: colors.backgroundRaised,
+  },
+  pickerButtonText: {
+    ...typography.body,
+    color: colors.accent,
+    fontWeight: '700',
+  },
+  pickerHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'right',
+    writingDirection: 'rtl',
   },
   scanningRow: {
     flexDirection: 'row',

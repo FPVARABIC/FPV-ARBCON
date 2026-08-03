@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useReducer, useRef } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+} from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -564,6 +570,65 @@ export default function UsbConnectionScreen({
     }
   }, [client, t, isBusy, isConnected]);
 
+  /**
+   * THE EXPLICIT DEVICE CHOOSER - browser only, and load-bearing there.
+   *
+   * `supportsDevicePicker()` is false on Android, where the system raises
+   * its own permission dialog during open(); the button below is simply
+   * not rendered and nothing about this screen changes. In a browser it is
+   * the ONLY way a port can ever become visible: navigator.serial.getPorts()
+   * returns only ports the user has already authorized, so a first visit
+   * scans and legitimately finds nothing until the operator picks a device
+   * here.
+   *
+   * The picker is called STRAIGHT from the press handler, with no await
+   * before it, because browsers require requestPort() to happen inside a
+   * user gesture and any prior await ends that gesture.
+   *
+   * A dismissed chooser resolves null and is NOT an error - the operator
+   * changed their mind. Only a genuine failure is reported, through the
+   * same SCAN_FAILURE path and the same Arabic localization every other
+   * transport error uses.
+   */
+  const supportsDevicePicker = useMemo(
+    // Probed defensively rather than called outright. `client` is an
+    // injected dependency - every test in this file and in
+    // App.test.tsx supplies its own minimal stand-in - and the question
+    // being asked here is exactly "does this client offer a picker?". A
+    // client that does not have the method does not offer one; that is an
+    // answer, not a crash.
+    () =>
+      typeof client.supportsDevicePicker === 'function' &&
+      client.supportsDevicePicker(),
+    [client],
+  );
+
+  const handleRequestDevice = useCallback(() => {
+    client
+      .requestDevicePermission()
+      .then(device => {
+        if (!mountedRef.current || device === null) {
+          return;
+        }
+        // Re-enumerate rather than injecting the returned descriptor into
+        // state: getPorts() is the single source of truth for what is
+        // authorized, and a device that appeared only because this call
+        // returned it would be a device the ordinary scan cannot confirm.
+        handleRefreshRef.current();
+      })
+      .catch(error => {
+        if (!mountedRef.current) {
+          return;
+        }
+        const transportError = error as TransportError;
+        dispatch({
+          type: 'SCAN_FAILURE',
+          error: transportError,
+          message: localizeTransportError(t, transportError),
+        });
+      });
+  }, [client, t]);
+
   // One automatic enumeration per mounted screen instance - same scan path
   // and reducer actions as manual تحديث (handleRefresh), never openDevice()/
   // closeSession(). The ref (not the effect dep array) is what makes this
@@ -828,6 +893,9 @@ export default function UsbConnectionScreen({
           selectionDisabled={isBusy || isConnected}
           onRefresh={handleRefresh}
           onSelectDevice={handleSelectDevice}
+          // Undefined on Android, so the button is not rendered there.
+          onRequestDevice={supportsDevicePicker ? handleRequestDevice : undefined}
+          requestDeviceDisabled={isBusy || isConnected}
         />
 
         {selectedDevice ? (
