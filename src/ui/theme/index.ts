@@ -8,3 +8,14 @@ export {radii} from './radii';
 export type {ThemeRadii} from './radii';
 
 export {typography} from './typography';
+
+export {
+  CONTENT_MAX_WIDTH,
+  LAYOUT_BREAKPOINTS,
+  WORKSPACE_MAX_WIDTH,
+  contentEnvelope,
+  effectiveWidth,
+  isDesktopTier,
+  resolveLayoutTier,
+} from './layout';
+export type {LayoutTier} from './layout';

@@ -5,12 +5,25 @@ import React, {
   useReducer,
   useRef,
 } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useTranslation } from 'react-i18next';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import type { RootStackParamList } from '../../navigation/types';
-import { colors, spacing, typography } from '../theme';
+import {
+  colors,
+  contentEnvelope,
+  isDesktopTier,
+  resolveLayoutTier,
+  spacing,
+  typography,
+} from '../theme';
 import {
   ConnectionActions,
   ConnectionHeader,
@@ -871,15 +884,22 @@ export default function UsbConnectionScreen({
 
   const logExpanded = state.logExpanded || state.connectionState === 'error';
 
-  return (
-    <View style={styles.root}>
-      <ConnectionHeader connectionState={state.connectionState} />
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.instructionBlock}>
+  /**
+   * DESKTOP SPLIT (AUD-004). On a 1920px window this screen was a single
+   * ~1140px column of stacked cards with the whole lower half empty.
+   * The split is by ROLE, not by pixel count: the right-hand (primary,
+   * RTL-first) column carries everything the operator ACTS on - devices,
+   * serial configuration, connect/disconnect - and the left carries what
+   * they READ - guidance, banners, the validation log, the report action.
+   * Both stay in one scroll container so nothing can scroll out of sync.
+   */
+  const {width, fontScale} = useWindowDimensions();
+  const tier = resolveLayoutTier(width, fontScale);
+  const twoColumn = isDesktopTier(tier);
+
+  const guidance = (
+    <>
+      <View style={styles.instructionBlock}>
           <View style={styles.instructionIcon} accessibilityElementsHidden>
             <Text style={styles.instructionIconText}>USB</Text>
           </View>
@@ -894,11 +914,11 @@ export default function UsbConnectionScreen({
               {t('connection.instructionSecondary')}
             </Text>
           </View>
-        </View>
+      </View>
 
-        {/* DEBUG-ONLY (Pass 5.4, isolated in Pass 7.7): absent from every
-            production bundle - DevAppLogPanel is undefined there. */}
-        {DevAppLogPanel ? <DevAppLogPanel /> : null}
+      {/* DEBUG-ONLY (Pass 5.4, isolated in Pass 7.7): absent from every
+          production bundle - DevAppLogPanel is undefined there. */}
+      {DevAppLogPanel ? <DevAppLogPanel /> : null}
 
         {state.errorMessage ? (
           <View style={styles.errorBanner} accessibilityRole="alert">
@@ -924,19 +944,23 @@ export default function UsbConnectionScreen({
           </View>
         ) : null}
 
-        {state.hotplugMessageKey ? (
-          <View style={styles.hotplugBanner} accessibilityRole="text">
-            <Text style={styles.hotplugBannerText}>
-              {t(
-                state.hotplugMessageKey === 'deviceDetached'
-                  ? 'devices.deviceDetached'
-                  : 'devices.sessionDetachedDuringConnection',
-              )}
-            </Text>
-          </View>
-        ) : null}
+      {state.hotplugMessageKey ? (
+        <View style={styles.hotplugBanner} accessibilityRole="text">
+          <Text style={styles.hotplugBannerText}>
+            {t(
+              state.hotplugMessageKey === 'deviceDetached'
+                ? 'devices.deviceDetached'
+                : 'devices.sessionDetachedDuringConnection',
+            )}
+          </Text>
+        </View>
+      ) : null}
+    </>
+  );
 
-        <UsbDeviceList
+  const actions = (
+    <>
+      <UsbDeviceList
           devices={state.devices}
           scanning={state.connectionState === 'scanning'}
           hasScannedOnce={state.hasScannedOnce}
@@ -995,8 +1019,13 @@ export default function UsbConnectionScreen({
             lifecycle bridge's blur source when the operator leaves Motors.
             This screen's job ends at handing the session key to 'Setup'. */}
 
-        {isConnectionReportSupported() ? (
-          <View style={styles.reportRow}>
+    </>
+  );
+
+  const evidence = (
+    <>
+      {isConnectionReportSupported() ? (
+        <View style={styles.reportRow}>
             <Text
               testID="copy-connection-report"
               accessibilityRole="button"
@@ -1016,12 +1045,45 @@ export default function UsbConnectionScreen({
           </View>
         ) : null}
 
-        <ValidationLog
-          entries={state.log}
-          expanded={logExpanded}
-          onToggle={handleToggleLog}
-          onClear={handleClearLog}
-        />
+      <ValidationLog
+        entries={state.log}
+        expanded={logExpanded}
+        onToggle={handleToggleLog}
+        onClear={handleClearLog}
+      />
+    </>
+  );
+
+  return (
+    <View style={styles.root}>
+      <ConnectionHeader connectionState={state.connectionState} />
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {maxWidth: contentEnvelope(tier, twoColumn)},
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
+        {twoColumn ? (
+          // RTL: the FIRST child of a row-reverse container is the
+          // RIGHTMOST, so `actions` - what the operator came here to do -
+          // sits under their reading start, exactly as index 0 of the tab
+          // strip does (src/navigation/tabs.ts).
+          <View style={styles.columns} testID="connection-columns">
+            <View style={styles.columnPrimary}>{actions}</View>
+            <View style={styles.columnSecondary}>
+              {guidance}
+              {evidence}
+            </View>
+          </View>
+        ) : (
+          <>
+            {guidance}
+            {actions}
+            {evidence}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -1032,6 +1094,16 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  columns: {
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-start',
+    gap: spacing.lg,
+  },
+  /* 3:2. The primary column holds the device list and the connect action
+     and needs the room; the secondary is guidance and a log, which read
+     better narrow than stretched. */
+  columnPrimary: {flexGrow: 3, flexShrink: 1, flexBasis: 0, gap: spacing.lg},
+  columnSecondary: {flexGrow: 2, flexShrink: 1, flexBasis: 0, gap: spacing.lg},
   reportRow: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
