@@ -1,4 +1,6 @@
 /**
+ * LEGACY AUDIT ARTIFACT — NOT USED BY THE CURRENT MOTOR-TEST RUNTIME.
+ *
  * Pass 1E - a PURE, DETERMINISTIC, SESSION-BOUND evaluation of already
  * acquired facts against one narrow project policy.
  *
@@ -95,7 +97,8 @@ import type {MotorStaticFactsSessionIdentity} from './motorStaticFacts';
  * reported.
  * ------------------------------------------------------------------ */
 
-/** Exactly 4 detected cells. There is no 6S path in this project. */
+/** Exactly 4 detected cells in this legacy evaluator only. The current
+ * runtime deliberately does not impose a universal cell-count policy. */
 export const POLICY_REQUIRED_CELL_COUNT = 4;
 
 /** 14.00 V, inclusive. */
@@ -469,7 +472,7 @@ export function evaluateMotorDynamicSafetyRequirements(
     blockers.add('BATTERY_NOT_DETECTED');
   } else if (battery.cellCount !== POLICY_REQUIRED_CELL_COUNT) {
     // Includes 6. Ordinary observed data that fails policy - it creates
-    // no alternate 6S path anywhere in this module.
+    // no alternate 6S path anywhere in this legacy module.
     blockers.add('BATTERY_CELL_COUNT_NOT_ALLOWED');
   }
 

@@ -1,11 +1,15 @@
 import React from 'react';
-import {Pressable, StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import {colors, radii, spacing, typography} from '../../theme';
-import {isSupportedDevice} from '../../../platforms/react-native/transport';
-import type {UsbSerialDeviceDescriptor} from '../../../platforms/react-native/transport';
-import {formatHex} from './format';
+import { colors, radii, spacing, typography } from '../../theme';
+import { isSupportedDevice } from '../../../platforms/react-native/transport';
+import type { UsbSerialDeviceDescriptor } from '../../../platforms/react-native/transport';
+import { formatHex } from './format';
+import {
+  usbManufacturerLabel,
+  usbProductLabel,
+} from '../../presentation/brandSafeText';
 
 interface Props {
   device: UsbSerialDeviceDescriptor;
@@ -22,58 +26,74 @@ export default function UsbDeviceRow({
   onSelect,
   testID,
 }: Props): React.JSX.Element {
-  const {t} = useTranslation();
+  const { t } = useTranslation();
   const supported = isSupportedDevice(device);
   const selectable = supported && !disabled;
+  const productLabel = usbProductLabel(
+    device.productName,
+    t('devices.unknownProductName'),
+  );
+  const manufacturerLabel = usbManufacturerLabel(device.manufacturerName);
 
   return (
     <Pressable
       testID={testID}
       onPress={selectable ? onSelect : undefined}
       accessibilityRole="radio"
-      accessibilityState={{selected, disabled: !selectable}}
-      accessibilityLabel={`${t('accessibility.selectDevice')}: ${
-        device.productName ?? t('devices.unknownProductName')
-      }`}
+      accessibilityState={{ selected, disabled: !selectable }}
+      accessibilityLabel={`${t('accessibility.selectDevice')}: ${productLabel}`}
       style={[
         styles.row,
         selected && styles.rowSelected,
         !supported && styles.rowUnsupported,
-      ]}>
+      ]}
+    >
       <View style={styles.headerLine}>
         <Text style={styles.productName} numberOfLines={1}>
-          {device.productName ?? t('devices.unknownProductName')}
+          {productLabel}
         </Text>
         <View
           style={[
             styles.statusBadge,
-            {borderColor: supported ? colors.success : colors.disabled},
-          ]}>
+            { borderColor: supported ? colors.success : colors.disabled },
+          ]}
+        >
           <Text
             style={[
               styles.statusText,
-              {color: supported ? colors.success : colors.textSecondary},
-            ]}>
+              { color: supported ? colors.success : colors.textSecondary },
+            ]}
+          >
             {supported ? t('devices.supported') : t('devices.unsupported')}
           </Text>
         </View>
         {selected ? (
           <View style={styles.selectedBadge}>
-            <Text style={styles.selectedBadgeText}>{t('devices.selectedBadge')}</Text>
+            <Text style={styles.selectedBadgeText}>
+              {t('devices.selectedBadge')}
+            </Text>
           </View>
         ) : null}
       </View>
 
-      {device.manufacturerName ? (
+      {manufacturerLabel ? (
         <Text style={styles.manufacturer} numberOfLines={1}>
-          {device.manufacturerName}
+          {manufacturerLabel}
         </Text>
       ) : null}
 
-      <View style={styles.detailsGrid}>
+      <View style={[styles.detailsGrid, !selected && styles.detailsCollapsed]}>
         <DetailItem label={t('devices.driverType')} value={device.driverType} />
-        <DetailItem label={t('devices.vid')} value={formatHex(device.vendorId)} ltr />
-        <DetailItem label={t('devices.pid')} value={formatHex(device.productId)} ltr />
+        <DetailItem
+          label={t('devices.vid')}
+          value={formatHex(device.vendorId)}
+          ltr
+        />
+        <DetailItem
+          label={t('devices.pid')}
+          value={formatHex(device.productId)}
+          ltr
+        />
         <DetailItem
           label={t('devices.portCount')}
           value={String(device.portCount)}
@@ -81,7 +101,11 @@ export default function UsbDeviceRow({
         />
       </View>
 
-      {!supported ? <Text style={styles.unsupportedHint}>{t('devices.unsupportedHint')}</Text> : null}
+      {!supported ? (
+        <Text style={styles.unsupportedHint}>
+          {t('devices.unsupportedHint')}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -105,15 +129,21 @@ function DetailItem({
 
 const styles = StyleSheet.create({
   row: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: colors.border,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
     borderRadius: radii.sm,
-    backgroundColor: colors.surface,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
+    backgroundColor: colors.backgroundRaised,
+    padding: spacing.lg,
+    marginTop: spacing.md,
   },
   rowSelected: {
     borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.12,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   rowUnsupported: {
     opacity: 0.7,
@@ -134,9 +164,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs / 2,
   },
   statusBadge: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.xs,
+    borderWidth: 1,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
     marginStart: spacing.sm,
   },
   statusText: {
@@ -145,13 +176,14 @@ const styles = StyleSheet.create({
   },
   selectedBadge: {
     backgroundColor: colors.accent,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.xs,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
     marginStart: spacing.xs,
   },
   selectedBadgeText: {
     ...typography.caption,
-    color: colors.background,
+    color: colors.accentText,
     fontWeight: '700',
   },
   detailsGrid: {
@@ -159,6 +191,9 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     marginTop: spacing.sm,
     gap: spacing.md,
+  },
+  detailsCollapsed: {
+    display: 'none',
   },
   detailItem: {
     minWidth: 80,

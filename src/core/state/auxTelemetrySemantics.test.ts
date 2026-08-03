@@ -45,6 +45,32 @@ describe('deriveGpsCard', () => {
     expect(deriveGpsCard(fix, undefined)).toEqual({kind: 'FIX', satelliteCount: 11});
   });
 
+  it('converts non-location GPS units and refuses an impossible course instead of displaying a plausible-looking value', () => {
+    expect(deriveGpsCard({
+      hasFix: true,
+      satelliteCount: 11,
+      altitudeMeters: 300,
+      groundSpeedCentimetersPerSecond: 125,
+      groundCourseDecidegrees: 905,
+    }, true)).toEqual({
+      kind: 'FIX',
+      satelliteCount: 11,
+      altitudeMeters: 300,
+      groundSpeedMetersPerSecond: 1.25,
+      groundCourseDegrees: 90.5,
+    });
+    expect(deriveGpsCard({
+      hasFix: true,
+      satelliteCount: 11,
+      groundCourseDecidegrees: 10_000,
+    }, true)).toEqual({kind: 'FIX', satelliteCount: 11});
+    expect(deriveGpsCard({
+      hasFix: true,
+      satelliteCount: 11,
+      groundCourseDecidegrees: 3_600,
+    }, true)).toMatchObject({groundCourseDegrees: 0});
+  });
+
   it('no fix with proven presence yields NO_FIX with the satellite count (not an error state)', () => {
     expect(deriveGpsCard(noFix, true)).toEqual({kind: 'NO_FIX', satelliteCount: 3});
   });

@@ -5,17 +5,15 @@
  * NO HARDWARE: no USB, FC, ESC, LiPo or motor is touched.
  */
 
-import {readFileSync, readdirSync} from 'fs';
+import {existsSync, readFileSync, readdirSync} from 'fs';
 import {join} from 'path';
 
 import {
-  devMotorTestBindingFactory,
-  devMotorTestRegistryConstructor,
-  isMotorTestEngineBundled,
+  createMotorTestTelemetryRegistry,
   openMotorTestCapability,
   closeMotorTestCapability,
   readMotorTestCapability,
-} from './motorTestDebugSeam';
+} from './motorTestCapability';
 import {MspClient} from '../../../core/protocol/mspClient';
 import {MotorTestTelemetryRegistry} from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
 import {FakeMspTransport} from '../../../core/protocol/__testUtils__/mspFakeTransport';
@@ -50,31 +48,35 @@ function executableOf(file: string): string {
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
 }
 
-describe('R2 - the seam is the ONLY runtime route to the engine', () => {
-  it('resolves the engine in Jest, where __DEV__ is true', () => {
-    expect(__DEV__).toBe(true);
-    expect(devMotorTestBindingFactory).toBeDefined();
-    expect(devMotorTestRegistryConstructor).toBeDefined();
-    expect(isMotorTestEngineBundled()).toBe(true);
+describe('The capability store is the ONLY runtime route to the engine', () => {
+  it('resolves the engine with no regard for __DEV__', () => {
+    // The store does not consult __DEV__ at all any more. Asserting the
+    // value of __DEV__ here would test Jest, not the product; what matters
+    // is that the engine module resolves and the registry constructs.
+    expect(createMotorTestTelemetryRegistry()).toBeDefined();
+    expect(typeof openMotorTestCapability).toBe('function');
   });
 
-  it('is reached only through a __DEV__-guarded require, never a static import', () => {
-    const executable = executableOf(join(__dirname, 'motorTestDebugSeam.ts'));
-    // A static import would be retained by Metro no matter what runtime
-    // guard wrapped its use - which is the entire defect R2 closes.
-    expect(executable).not.toMatch(
-      /^import\s+\{[^}]*createMotorTestSessionBinding/m,
-    );
+  it('resolves the engine unconditionally - no build conditional survives', () => {
+    // SINGLE-APP MERGE: the __DEV__ gate and the build-variant selection
+    // are both gone on purpose. What must NOT come back is any branch at
+    // all: one implementation, every build.
+    const executable = executableOf(join(__dirname, 'motorTestCapability.ts'));
+    expect(executable).not.toContain('__DEV__');
+    expect(executable).not.toContain('FPV_ARBCON_HARDWARE_TEST');
+    expect(executable).not.toContain('motorTestEngineVariant');
+    // The binding is a STATIC import now - no require(), no deferral, no
+    // cycle to break, because nothing here reaches a screen any more.
+    expect(executable).not.toContain('require(');
     expect(executable).toMatch(
-      /__DEV__[\s\S]{0,120}require\('\.\/motorTestSessionBinding'\)/,
+      /import\s*\{[\s\S]{0,80}createMotorTestSessionBinding/,
     );
-    expect(executable).toMatch(
-      /__DEV__[\s\S]{0,160}require\('[^']*motorTestTelemetryBarrier'\)/,
-    );
+    // And the registry factory really constructs one.
+    expect(createMotorTestTelemetryRegistry()).toBeDefined();
   });
 
   it('uses no runtime feature flag, environment branch or escape hatch', () => {
-    const executable = executableOf(join(__dirname, 'motorTestDebugSeam.ts'));
+    const executable = executableOf(join(__dirname, 'motorTestCapability.ts'));
     for (const forbidden of [
       'NODE_ENV',
       'process.env',
@@ -92,8 +94,12 @@ describe('R2 - the seam is the ONLY runtime route to the engine', () => {
     // a value re-export or a require() counts as a runtime reference.
     const offenders = productionSources().filter(file => {
       if (
-        file.endsWith('motorTestDebugSeam.ts') ||
-        file.endsWith('motorTestSessionBinding.ts')
+        file.endsWith('motorTestCapability.ts') ||
+        file.endsWith('motorTestSessionBinding.ts') ||
+        // The ONE engine module. Exactly one file may require the
+        // binding, which is what keeps a second, unregistered capability
+        // for the same client unrepresentable.
+        file.endsWith('motorTestCapability.ts')
       ) {
         return false;
       }
@@ -107,6 +113,31 @@ describe('R2 - the seam is the ONLY runtime route to the engine', () => {
         );
     });
     expect(offenders).toEqual([]);
+  });
+
+  it('has no build-variant seam left to select between', () => {
+    // Both halves of the R3 seam are deleted, not left with one branch
+    // permanently taken. A dead seam is how a removed containment quietly
+    // comes back.
+    for (const gone of [
+      'motorTestEngineVariant.ts',
+      'motorTestEngineVariant.hardwareTest.ts',
+      'motorTestEngine.ts',
+      'motorTestDebugSeam.ts',
+    ]) {
+      expect(existsSync(join(__dirname, gone))).toBe(false);
+    }
+    // And the bundler rule that drove it is gone too.
+    const metro = readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'metro.config.js'),
+      'utf8',
+    );
+    const metroCode = metro
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    expect(metroCode).not.toContain('resolveRequest');
+    expect(metroCode).not.toContain('FPV_ARBCON_HARDWARE_TEST');
+    expect(metroCode).not.toContain('hardwareTest');
   });
 
   it('leaves no Release-reachable barrel exporting the binding at runtime', () => {
@@ -151,10 +182,18 @@ describe('R2 - the capability store preserves Debug behaviour', () => {
     expect(readMotorTestCapability('s-1')).toBeUndefined();
   });
 
-  it('returns undefined - and stores nothing - without a registry', () => {
-    // The Release shape: no registry, therefore no capability at all.
-    expect(openMotorTestCapability('s-2', makeClient(), undefined)).toBeUndefined();
-    expect(readMotorTestCapability('s-2')).toBeUndefined();
+  it('is TOTAL - a registry is required by the type, so there is no no-capability shape', () => {
+    // This replaces "returns undefined without a registry". That branch
+    // described the Release build, which no longer exists. The registry is
+    // now a required parameter and the coordinator holds it as a readonly
+    // field initialised inline, so no caller can reach this function
+    // without one - which is exactly why the coordinator's fallback that
+    // read the undefined case was deleted rather than left unreachable.
+    const registry = createMotorTestTelemetryRegistry();
+    const capability = openMotorTestCapability('s-2', makeClient(), registry);
+    expect(capability).toBeDefined();
+    expect(readMotorTestCapability('s-2')).toBe(capability);
+    closeMotorTestCapability('s-2');
   });
 
   it('closes idempotently and tolerates an unknown session', () => {

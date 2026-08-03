@@ -13,15 +13,29 @@ export {
 } from './mspTypes';
 
 export { MSP_DIAGNOSTIC_CODES } from './mspErrors';
-export type { MspDiagnosticCode, MspDiagnosticDetailMap, MspDiagnosticDetail } from './mspErrors';
+export type {
+  MspDiagnosticCode,
+  MspDiagnosticDetailMap,
+  MspDiagnosticDetail,
+} from './mspErrors';
 
-export { xorChecksumStep, xorChecksum, crc8DvbS2Step, crc8DvbS2 } from './mspChecksum';
+export {
+  xorChecksumStep,
+  xorChecksum,
+  crc8DvbS2Step,
+  crc8DvbS2,
+} from './mspChecksum';
 
 export { encode } from './mspEncoder';
 export type { MspEncodeOptions } from './mspEncoder';
 
 export { createMspStreamParser } from './mspStreamParser';
-export type { MspStreamParser, MspStreamParserOptions, MspIngestEvent, MspIngestResult } from './mspStreamParser';
+export type {
+  MspStreamParser,
+  MspStreamParserOptions,
+  MspIngestEvent,
+  MspIngestResult,
+} from './mspStreamParser';
 
 export type {
   MspTransport,
@@ -50,23 +64,68 @@ export type {
 export {
   MSP_API_VERSION,
   MSP_FC_VARIANT,
+  MSP_BUILD_INFO,
   MSP_BOARD_INFO,
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
   MSP_RAW_GPS,
+  MSP_COMP_GPS,
+  MSP_GPS_CONFIG,
+  MSP_GPS_SV_INFO,
   MSP_ANALOG,
   MSP_STATUS_EX,
   MSP_BOXIDS,
   MSP_ACC_CALIBRATION,
   MSP_MAG_CALIBRATION,
   MSP_REBOOT,
+  MSP_NAME,
+  MSP_SET_NAME,
   STATUS_SENSOR_GPS_BIT,
   MSP_FEATURE_CONFIG,
+  MSP_SET_FEATURE_CONFIG,
+  MSP_RX_CONFIG,
+  MSP_SET_RX_CONFIG,
+  MSP_ARMING_CONFIG,
+  MSP_SET_ARMING_CONFIG,
+  MSP_BEEPER_CONFIG,
+  MSP_SET_BEEPER_CONFIG,
+  MSP2_GET_TEXT,
+  MSP2_SET_TEXT,
   MSP_MIXER_CONFIG,
   MSP_ADVANCED_CONFIG,
   MSP_MOTOR,
   MSP_MOTOR_3D_CONFIG,
   MSP_MOTOR_CONFIG,
+  MSP_MOTOR_TELEMETRY,
+  MSP2_MOTOR_OUTPUT_REORDERING,
+  MSP2_SET_MOTOR_OUTPUT_REORDERING,
+  MSP2_SEND_DSHOT_COMMAND,
+  MSP_SET_MIXER_CONFIG,
+  MSP_SET_ADVANCED_CONFIG,
+  MSP_SET_MOTOR_3D_CONFIG,
+  MSP_SET_MOTOR_CONFIG,
+  MSP_SET_GPS_CONFIG,
+  MSP_EEPROM_WRITE,
+  MSP_VTX_CONFIG,
+  MSP2_COMMON_SERIAL_CONFIG,
+  MSP2_COMMON_SET_SERIAL_CONFIG,
+} from './msp';
+
+export {
+  decodeDetailedGps,
+  decodeCompGps,
+  decodeGpsConfiguration,
+  decodeGpsSatelliteInfo,
+  GPS_SATELLITE_MAX_COUNT,
+  encodeGpsConfiguration,
+} from './msp';
+export type {
+  MspDetailedGps,
+  MspCompGps,
+  MspGpsConfiguration,
+  GpsConstellation,
+  MspGpsSatellite,
+  MspGpsSatelliteInfo,
 } from './msp';
 export {
   BETAFLIGHT_SOURCE_REPO,
@@ -78,11 +137,33 @@ export {
   EMUFLIGHT_SOURCE_REPO,
   EMUFLIGHT_PINNED_COMMIT,
 } from './msp';
-export {MspPayloadReader, MspPayloadReadError} from './msp';
-export {decodeApiVersion, decodeFcVariant, decodeBoardInfo, decodeAttitude, decodeBatteryState, decodeAnalog, decodeRawGps, decodeStatusEx} from './msp';
-export {decodeStatusExReadiness, STATUS_EX_FIXED_PREFIX_BYTES, decodeStatusExDiagnostics} from './msp';
-export type {MspStatusExReadiness, MspStatusExDiagnostics} from './msp';
-export type {MspApiVersion, MspFcVariantRaw, MspBoardInfo, MspAttitude, MspBatteryState, MspAnalog, MspRawGpsCompact, MspStatusExCompact} from './msp';
+export { MspPayloadReader, MspPayloadReadError } from './msp';
+export {
+  decodeApiVersion,
+  decodeFcVariant,
+  decodeBoardInfo,
+  decodeAttitude,
+  decodeBatteryState,
+  decodeAnalog,
+  decodeRawGps,
+  decodeStatusEx,
+} from './msp';
+export {
+  decodeStatusExReadiness,
+  STATUS_EX_FIXED_PREFIX_BYTES,
+  decodeStatusExDiagnostics,
+} from './msp';
+export type { MspStatusExReadiness, MspStatusExDiagnostics } from './msp';
+export type {
+  MspApiVersion,
+  MspFcVariantRaw,
+  MspBoardInfo,
+  MspAttitude,
+  MspBatteryState,
+  MspAnalog,
+  MspRawGpsCompact,
+  MspStatusExCompact,
+} from './msp';
 export {
   decodeFeatureConfig,
   FEATURE_3D_BIT,
@@ -95,6 +176,34 @@ export {
   decodeMotor3dConfig,
   decodeMotorOutputs,
   MSP_MOTOR_OUTPUT_SLOT_COUNT,
+  decodeMotorTelemetry,
+  MSP_MOTOR_TELEMETRY_MAX_COUNT,
+  decodeMotorOutputOrder,
+  MOTOR_OUTPUT_ORDER_MAX_COUNT,
+  encodeMotorOutputOrder,
+  MotorOutputOrderEncodeError,
+  encodeDshotEscDirection,
+  DshotEscDirectionEncodeError,
+  decodeSerialPorts,
+  encodeSerialPorts,
+  SERIAL_PORT_RECORD_MIN_BYTES,
+  decodeBuildOptions,
+  decodeSerialRxProvider,
+  decodeVtxTableStatus,
+  decodeArmingConfig,
+  decodeBeeperConfig,
+  decodeRxConfig,
+  decodeMspText,
+  MSP_TEXT_PILOT_NAME,
+  MSP_TEXT_CRAFT_NAME,
+  MSP_TEXT_MAX_BYTES,
+  encodeArmingConfiguration,
+  encodeBeeperConfiguration,
+  encodeAdvancedGeneralConfiguration,
+  encodeRxCameraAngle,
+  encodeMspTextRequest,
+  encodeMspText,
+  encodeChangedGeneralConfiguration,
 } from './msp';
 export type {
   MspFeatureConfig,
@@ -103,18 +212,41 @@ export type {
   MspMotorConfig,
   MspMotor3dConfig,
   MspMotorOutputs,
+  MspMotorTelemetry,
+  MspMotorTelemetryEntry,
+  MspMotorOutputOrder,
+  DshotEscDirection,
+  MspSerialPortRecord,
+  MspBuildOptions,
+  MspVtxTableStatus,
+  MspArmingConfig,
+  MspBeeperConfig,
+  MspRxConfig,
+  MspTextValue,
+  GeneralConfigurationWriteGroup,
+  EncodedGeneralConfigurationWrite,
 } from './msp';
 export {
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
 } from './msp';
-export type {MspCompatibilityResult} from './msp';
-export {deriveFcFamily, MspIdentificationService, MspIncompatibleFirmwareError, BoxIdsAcquisition} from './msp';
-export type {BoxIdsOwnerIdentity, BoxIdsResult} from './msp';
-export type {MspFcFamily, MspFcVariant, FlightControllerIdentity, MspRequester} from './msp';
+export type { MspCompatibilityResult } from './msp';
+export {
+  deriveFcFamily,
+  MspIdentificationService,
+  MspIncompatibleFirmwareError,
+  BoxIdsAcquisition,
+} from './msp';
+export type { BoxIdsOwnerIdentity, BoxIdsResult } from './msp';
+export type {
+  MspFcFamily,
+  MspFcVariant,
+  FlightControllerIdentity,
+  MspRequester,
+} from './msp';
 
-export {RealClock, FakeClock, createMspTelemetryScheduler} from './telemetry';
+export { RealClock, FakeClock, createMspTelemetryScheduler } from './telemetry';
 export type {
   MonotonicClock,
   MspPollDefinition,

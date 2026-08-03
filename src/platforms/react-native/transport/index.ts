@@ -10,6 +10,9 @@ export type {
   UsbSerialSessionDetachedEvent,
   UsbSerialErrorEvent,
   UsbDeviceHotplugEvent,
+  FirmwareFileSelection,
+  DfuDeviceDescriptor,
+  DfuFlashProgressEvent,
 } from './native';
 
 export {

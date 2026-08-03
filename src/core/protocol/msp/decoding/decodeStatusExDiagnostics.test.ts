@@ -67,6 +67,20 @@ describe('decodeStatusExDiagnostics', () => {
     expect(decoded.sensorPresenceMask).toBe(41);
   });
 
+  it('ignores the API-1.48 battery-profile suffix after the safety fields', () => {
+    // profiles=3, rate=0, no extended flags, blocker count=29, mask=0,
+    // config=0, coreTemp=41, rateProfileCount=6, batteryProfiles=3,
+    // selectedBatteryProfile=1.
+    const payload = withTail(0, [
+      3, 0, 0, 29, 0, 0, 0, 0, 0, 41, 0, 6, 3, 1,
+    ]);
+    const decoded = decodeStatusExDiagnostics(payload);
+
+    expect(decoded.readiness.armingDisableFlags).toBe(0);
+    expect(decoded.readiness.rebootRequired).toBe(false);
+    expect(decoded.readiness.malformedTail).toBeUndefined();
+  });
+
   it('a shorter VALID payload simply reports fewer readiness fields', () => {
     const decoded = decodeStatusExDiagnostics(withTail(0, [3, 0]));
     expect(decoded.readiness.pidProfileCount).toBe(3);

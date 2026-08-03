@@ -360,7 +360,7 @@ describe('MspTelemetryScheduler - TelemetryValue transitions', () => {
     requester.resolveNext(makeFrame(1201, Uint8Array.from([42])));
     await scheduler.waitUntilIdle();
 
-    expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 42, updatedAtMs: 0});
+    expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 42, updatedAtMs: 0, sampleSeq: 1});
   });
 
   it('FRESH -> STALE once staleAfterMs elapses without a fresh update, made visible via tick() (Pass 7.4: getValue() is a stable cache lookup, not a live computation - see MspTelemetryScheduler.ts\'s own class-level doc comment on why pure clock-advance alone, with no tick(), no longer transitions the reported status)', async () => {
@@ -373,15 +373,16 @@ describe('MspTelemetryScheduler - TelemetryValue transitions', () => {
     scheduler.tick();
     requester.resolveNext(makeFrame(1202, Uint8Array.from([7])));
     await scheduler.waitUntilIdle();
-    expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 7, updatedAtMs: 0});
+    expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 7, updatedAtMs: 0, sampleSeq: 1});
 
     clock.advance(499);
     scheduler.tick();
-    expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 7, updatedAtMs: 0});
+    expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 7, updatedAtMs: 0, sampleSeq: 1});
 
     clock.advance(1); // now exactly staleAfterMs (500) old
     scheduler.tick();
-    expect(scheduler.getValue<number>('a')).toEqual({status: 'STALE', value: 7, updatedAtMs: 0, ageMs: 500});
+    // The sample is unchanged, only older - so it keeps its own sampleSeq.
+    expect(scheduler.getValue<number>('a')).toEqual({status: 'STALE', value: 7, updatedAtMs: 0, ageMs: 500, sampleSeq: 1});
   });
 
   it('a poll that is FRESH but not yet stale is left with the SAME cached reference across repeated getValue() calls (no tick, no dispatch, no change) - the referential-stability contract useSyncExternalStore requires', () => {
@@ -408,7 +409,7 @@ describe('MspTelemetryScheduler - TelemetryValue transitions', () => {
     scheduler.tick();
     requester.resolveNext(makeFrame(1203, Uint8Array.from([3])));
     await scheduler.waitUntilIdle();
-    expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 3, updatedAtMs: 0});
+    expect(scheduler.getValue<number>('a')).toEqual({status: 'FRESH', value: 3, updatedAtMs: 0, sampleSeq: 1});
 
     clock.advance(100);
     scheduler.tick();
@@ -749,6 +750,31 @@ describe('MspTelemetryScheduler - Pass 7.6c singleFlight (global concurrency of 
 });
 
 describe('MspTelemetryScheduler - Pass 7.6c aux alternation (primary never starved by auxiliaries)', () => {
+  it('a 50ms primary cannot mathematically starve slow auxiliaries on a link whose service time is slower than that cadence', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester((command, payload) =>
+      makeFrame(command, payload.length ? payload : Uint8Array.from([1])),
+    );
+    const scheduler = createMspTelemetryScheduler(requester, {clock, singleFlight: true});
+    scheduler.registerPoll(definition('attitude', 108, 50, 500, 0));
+    scheduler.registerPoll(definition('battery', 130, 3000, 9000, -1));
+
+    // t=0 tie: primary wins. Thereafter model a slow 224ms round trip by
+    // advancing the clock only after each dispatch settles. The primary's
+    // overdue ratio is always much larger than battery's, so pure ratio
+    // selection would starve battery forever.
+    for (let slot = 0; slot < 7; slot++) {
+      scheduler.tick();
+      await scheduler.waitUntilIdle();
+      clock.advance(224);
+    }
+
+    const commands = requester.calls.map(call => call.command);
+    expect(commands.slice(0, 5)).toEqual([108, 108, 108, 108, 108]);
+    expect(commands[5]).toBe(130);
+    expect(commands[6]).toBe(108);
+  });
+
   it('after an auxiliary (priority < 0) dispatch, a due primary (priority >= 0) poll wins the next slot even when an auxiliary is MORE overdue by ratio', async () => {
     const clock = new FakeClock(0);
     const requester = createFakeRequester((command, payload) => makeFrame(command, payload.length ? payload : Uint8Array.from([1])));
@@ -799,5 +825,120 @@ describe('MspTelemetryScheduler - Pass 7.6c aux alternation (primary never starv
     scheduler.tick();
     await scheduler.waitUntilIdle();
     expect(requester.calls.map(c => c.command)).toEqual([108, 110, 106]);
+  });
+});
+
+/**
+ * sampleSeq exists so a consumer can say WHICH genuine sample it is
+ * looking at. That is what makes "the 3D model and the numeric readouts
+ * are showing the same sample" and "sample N+1 superseded sample N"
+ * checkable facts rather than timing guesses - see TelemetryValue's own
+ * doc comment.
+ */
+describe('MspTelemetryScheduler - genuine-sample identity', () => {
+  it('increments once per SUCCESSFUL decode, and is stable while nothing new arrives', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 1301, 100, 100_000));
+
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1301, Uint8Array.from([1])));
+    await scheduler.waitUntilIdle();
+    const first = scheduler.getValue<number>('a');
+    expect(first.status === 'FRESH' && first.sampleSeq).toBe(1);
+
+    // Repeated reads of the same sample are the same sample.
+    const reread = scheduler.getValue<number>('a');
+    expect(reread.status === 'FRESH' && reread.sampleSeq).toBe(1);
+
+    clock.advance(100);
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1301, Uint8Array.from([2])));
+    await scheduler.waitUntilIdle();
+    const second = scheduler.getValue<number>('a');
+    expect(second.status === 'FRESH' && second.sampleSeq).toBe(2);
+  });
+
+  it('does NOT advance on a failed dispatch - an error is not a new sample', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 1302, 100, 100_000));
+
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1302, Uint8Array.from([1])));
+    await scheduler.waitUntilIdle();
+
+    clock.advance(100);
+    scheduler.tick();
+    requester.rejectNext(new Error('boom'));
+    await scheduler.waitUntilIdle();
+
+    clock.advance(100);
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1302, Uint8Array.from([3])));
+    await scheduler.waitUntilIdle();
+
+    // 1 then 2 - the failure in between consumed no sequence number.
+    const value = scheduler.getValue<number>('a');
+    expect(value.status === 'FRESH' && value.sampleSeq).toBe(2);
+  });
+
+  it('survives the FRESH -> STALE transition unchanged - a stale value is still sample N', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 1303, 100_000, 500));
+
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1303, Uint8Array.from([9])));
+    await scheduler.waitUntilIdle();
+
+    clock.advance(500);
+    scheduler.tick();
+    const value = scheduler.getValue<number>('a');
+    expect(value.status).toBe('STALE');
+    expect(value.status === 'STALE' && value.sampleSeq).toBe(1);
+  });
+
+  it('is scheduler-wide, so two polls never claim the same sample identity', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 1304, 100_000, 100_000));
+    scheduler.registerPoll(definition('b', 1305, 100_000, 100_000));
+
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1304, Uint8Array.from([1])));
+    await scheduler.waitUntilIdle();
+    scheduler.tick();
+    requester.resolveNext(makeFrame(1305, Uint8Array.from([2])));
+    await scheduler.waitUntilIdle();
+
+    const a = scheduler.getValue<number>('a');
+    const b = scheduler.getValue<number>('b');
+    expect(a.status === 'FRESH' && a.sampleSeq).toBe(1);
+    expect(b.status === 'FRESH' && b.sampleSeq).toBe(2);
+  });
+
+  it('a REPLACEMENT scheduler starts its own count - a sequence is only meaningful within one session', async () => {
+    const clock = new FakeClock(0);
+    const first = createFakeRequester();
+    const schedulerA = createMspTelemetryScheduler(first, {clock});
+    schedulerA.registerPoll(definition('a', 1306, 100_000, 100_000));
+    schedulerA.tick();
+    first.resolveNext(makeFrame(1306, Uint8Array.from([1])));
+    await schedulerA.waitUntilIdle();
+
+    const second = createFakeRequester();
+    const schedulerB = createMspTelemetryScheduler(second, {clock});
+    schedulerB.registerPoll(definition('a', 1306, 100_000, 100_000));
+    schedulerB.tick();
+    second.resolveNext(makeFrame(1306, Uint8Array.from([1])));
+    await schedulerB.waitUntilIdle();
+
+    const value = schedulerB.getValue<number>('a');
+    expect(value.status === 'FRESH' && value.sampleSeq).toBe(1);
   });
 });

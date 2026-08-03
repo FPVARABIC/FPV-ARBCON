@@ -20,13 +20,16 @@
  * merely an informational one.
  */
 
-import React, {useState} from 'react';
-import {Pressable, StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import React, { useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import type {ArmingBlockReason, ArmingReadiness} from '../../../core';
-import {rankArmingBlockReasons, selectTopArmingBlockReasons} from '../../../core';
-import {colors, radii, spacing, typography} from '../../theme';
+import type { ArmingBlockReason, ArmingReadiness } from '../../../core';
+import {
+  rankArmingBlockReasons,
+  selectTopArmingBlockReasons,
+} from '../../../core';
+import { colors, radii, spacing, typography } from '../../theme';
 
 /** Never color-alone (per this pass's own accessibility requirement) -
  * every compact status also carries distinct Arabic text, and every
@@ -47,17 +50,26 @@ export interface SafetyStripProps {
   readiness: ArmingReadiness;
 }
 
-export default function SafetyStrip({readiness}: SafetyStripProps): React.JSX.Element {
-  const {t} = useTranslation();
+export default function SafetyStrip({
+  readiness,
+}: SafetyStripProps): React.JSX.Element {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   if (readiness.status === 'ARMED') {
     return (
       <View
-        style={[styles.container, styles.compact, {borderColor: colors.error}]}
+        style={[
+          styles.container,
+          styles.compact,
+          { borderColor: colors.error },
+        ]}
         accessibilityRole="text"
-        testID="safety-strip-armed">
-        <Text style={[styles.statusText, {color: colors.error}]}>{t('safetyStrip.armed')}</Text>
+        testID="safety-strip-armed"
+      >
+        <Text style={[styles.statusText, { color: colors.error }]}>
+          {t('safetyStrip.armed')}
+        </Text>
       </View>
     );
   }
@@ -65,10 +77,17 @@ export default function SafetyStrip({readiness}: SafetyStripProps): React.JSX.El
   if (readiness.status === 'READY') {
     return (
       <View
-        style={[styles.container, styles.compact, {borderColor: colors.success}]}
+        style={[
+          styles.container,
+          styles.compact,
+          { borderColor: colors.success },
+        ]}
         accessibilityRole="text"
-        testID="safety-strip-ready">
-        <Text style={[styles.statusText, {color: colors.success}]}>{t('safetyStrip.ready')}</Text>
+        testID="safety-strip-ready"
+      >
+        <Text style={[styles.statusText, { color: colors.success }]}>
+          {t('safetyStrip.ready')}
+        </Text>
       </View>
     );
   }
@@ -81,26 +100,52 @@ export default function SafetyStrip({readiness}: SafetyStripProps): React.JSX.El
     // all, so there is nothing stale left to accidentally render.
     return (
       <View
-        style={[styles.container, styles.compact, {borderColor: colors.warning}]}
+        style={[
+          styles.container,
+          styles.compact,
+          { borderColor: colors.warning },
+        ]}
         accessibilityRole="text"
-        testID="safety-strip-unknown">
-        <Text style={[styles.statusText, {color: colors.warning}]}>{t('safetyStrip.unknown')}</Text>
+        testID="safety-strip-unknown"
+      >
+        <Text style={[styles.statusText, { color: colors.warning }]}>
+          {t('safetyStrip.unknown')}
+        </Text>
       </View>
     );
   }
 
   // BLOCKED - auto-expanded per spec.
-  const {shown, remainingCount} = selectTopArmingBlockReasons(readiness.reasons);
-  const visibleReasons = expanded ? rankArmingBlockReasons(readiness.reasons) : shown;
+  const { shown, remainingCount } = selectTopArmingBlockReasons(
+    readiness.reasons,
+  );
+  const visibleReasons = expanded
+    ? rankArmingBlockReasons(readiness.reasons)
+    : shown;
 
   return (
-    <View style={[styles.container, {borderColor: colors.error}]} testID="safety-strip-blocked">
-      <Text style={[styles.statusText, {color: colors.error}]} accessibilityRole="header">
+    <View
+      style={[styles.container, { borderColor: colors.error }]}
+      testID="safety-strip-blocked"
+    >
+      <Text
+        style={[styles.statusText, { color: colors.error }]}
+        accessibilityRole="header"
+      >
         {t('safetyStrip.blockedHeading')}
       </Text>
       {visibleReasons.map(reason => (
-        <View key={reason.code} style={styles.reasonRow} testID={`safety-strip-reason-${reason.code}`}>
-          <View style={[styles.reasonDot, {backgroundColor: SEVERITY_COLOR[reason.severity]}]} />
+        <View
+          key={reason.code}
+          style={styles.reasonRow}
+          testID={`safety-strip-reason-${reason.code}`}
+        >
+          <View
+            style={[
+              styles.reasonDot,
+              { backgroundColor: SEVERITY_COLOR[reason.severity] },
+            ]}
+          />
           <Text style={styles.reasonText}>{reason.message}</Text>
         </View>
       ))}
@@ -108,10 +153,16 @@ export default function SafetyStrip({readiness}: SafetyStripProps): React.JSX.El
         <Pressable
           onPress={() => setExpanded(true)}
           accessibilityRole="button"
-          accessibilityLabel={t('safetyStrip.showAllReasonsAccessibilityLabel', {count: remainingCount})}
+          accessibilityLabel={t(
+            'safetyStrip.showAllReasonsAccessibilityLabel',
+            { count: remainingCount },
+          )}
           style={styles.showAllLink}
-          testID="safety-strip-show-all">
-          <Text style={styles.showAllText}>{t('safetyStrip.showAllReasons')}</Text>
+          testID="safety-strip-show-all"
+        >
+          <Text style={styles.showAllText}>
+            {t('safetyStrip.showAllReasons')}
+          </Text>
         </Pressable>
       )}
     </View>
@@ -120,11 +171,18 @@ export default function SafetyStrip({readiness}: SafetyStripProps): React.JSX.El
 
 const styles = StyleSheet.create({
   container: {
-    borderWidth: StyleSheet.hairlineWidth,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     backgroundColor: colors.surface,
+    shadowColor: colors.shadow,
+    shadowOpacity: 0.14,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   compact: {
     flexDirection: 'row',

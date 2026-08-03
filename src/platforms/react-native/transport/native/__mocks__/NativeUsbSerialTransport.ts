@@ -9,6 +9,15 @@ const NativeUsbSerialTransport = {
   openDevice: jest.fn(),
   closeSession: jest.fn(),
   writeBytes: jest.fn(),
+  setControlLines: jest.fn(),
+  setBaudRate: jest.fn(),
+  listDfuDevices: jest.fn(),
+  pickFirmwareFile: jest.fn(),
+  saveFirmwareFile: jest.fn(),
+  flashDfuFirmware: jest.fn(),
+  cancelDfuFlash: jest.fn(),
+  exitDfuMode: jest.fn(),
+  unprotectDfuDevice: jest.fn(),
   startReading: jest.fn(),
   stopReading: jest.fn(),
   onDataReceived: jest.fn(() => ({remove: jest.fn()})),
@@ -16,6 +25,7 @@ const NativeUsbSerialTransport = {
   onError: jest.fn(() => ({remove: jest.fn()})),
   onDeviceAttached: jest.fn(() => ({remove: jest.fn()})),
   onDeviceDetached: jest.fn(() => ({remove: jest.fn()})),
+  onDfuFlashProgress: jest.fn(() => ({remove: jest.fn()})),
 };
 
 export default NativeUsbSerialTransport;

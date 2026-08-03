@@ -5,7 +5,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { I18nManager, StyleSheet } from 'react-native';
+import { I18nManager, StatusBar, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   NavigationContainer,
@@ -14,13 +14,17 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import './src/i18n';
-import { SetupScreen, UsbConnectionScreen } from './src/ui';
-// Phase 2H: resolved through the SAME __DEV__ seam the debug panels use -
-// `undefined` in a production bundle, where the route below is therefore
-// never registered at all.
-import { DevBenchScreen, DEV_BENCH_ROUTE_NAME } from './src/ui/screens/debugPanels';
+// SINGLE-APP MERGE: the 'Setup' route now renders the main TAB SHELL
+// (Setup / Motors / Ports / Receiver / PID), not the Setup screen alone.
+// The route name is unchanged on purpose - see src/navigation/types.ts.
+import {
+  MainTabsScreen,
+  StartScreen,
+  UsbConnectionScreen,
+} from './src/ui';
 import { useMspOwnershipState } from './src/platforms/react-native/protocol';
 import type { RootStackParamList } from './src/navigation/types';
+import { colors } from './src/ui/theme';
 
 if (!I18nManager.isRTL) {
   I18nManager.allowRTL(true);
@@ -28,6 +32,17 @@ if (!I18nManager.isRTL) {
 }
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
+
+/**
+ * Keep the firmware tool outside the connection/Motors module graph until
+ * the operator explicitly opens it.  The flasher pulls in catalogue,
+ * parsing and bootloader engines (including esptool); evaluating those at
+ * application start would make an independent tool part of the critical
+ * connection path for no user benefit.
+ */
+function getFirmwareFlasherScreen() {
+  return require('./src/ui/screens/FirmwareFlasherScreen').default;
+}
 
 function App(): React.JSX.Element {
   // Pass 7.1: useNavigationContainerRef() (not the module-level
@@ -89,7 +104,7 @@ function App(): React.JSX.Element {
       if (params?.sessionKey) {
         setTrackedSessionId(params.sessionKey.sessionId);
       }
-    } else if (currentRoute?.name === 'Connection') {
+    } else if (currentRoute?.name === 'Connection' || currentRoute?.name === 'Start') {
       setTrackedSessionId(null);
     }
   }, [navigationRef]);
@@ -142,19 +157,19 @@ function App(): React.JSX.Element {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar
+        barStyle="light-content"
+        backgroundColor={colors.backgroundRaised}
+      />
       <NavigationContainer
         ref={navigationRef}
         onReady={handleNavigationReady}
         onStateChange={handleNavigationStateChange}>
-        <Stack.Navigator initialRouteName="Connection" screenOptions={{ headerShown: false }}>
+        <Stack.Navigator initialRouteName="Start" screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Start" component={StartScreen} />
           <Stack.Screen name="Connection" component={UsbConnectionScreen} />
-          <Stack.Screen name="Setup" component={SetupScreen} />
-          {DevBenchScreen === undefined || DEV_BENCH_ROUTE_NAME === undefined ? null : (
-            // Both the component AND the route name come from the
-            // __DEV__ seam, so a production bundle contains neither - the
-            // route is not merely unregistered, it is unnamed.
-            <Stack.Screen name={DEV_BENCH_ROUTE_NAME} component={DevBenchScreen} />
-          )}
+          <Stack.Screen name="Setup" component={MainTabsScreen} />
+          <Stack.Screen name="FirmwareFlasher" getComponent={getFirmwareFlasherScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaView>
@@ -164,6 +179,7 @@ function App(): React.JSX.Element {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.backgroundRaised,
   },
 });
 

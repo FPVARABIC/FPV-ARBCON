@@ -913,7 +913,7 @@ describe('MspSessionCoordinator - Pass 7.4 real telemetry scheduler integration'
     coordinator.deactivateMspSession(SESSION_ID); // stop the real tick interval
   });
 
-  it('registers MSP_ATTITUDE at the confirmed real ~220ms interval, not some other cadence (the second real dispatch only happens once ~220ms have elapsed since the first)', async () => {
+  it('registers MSP_ATTITUDE at the responsive 50ms cadence without dispatching more than once per tick', async () => {
     const coordinator = new MspSessionCoordinator();
     const client = makeHappyFakeClient(SESSION_ID);
     client.setResponse(MSP_ATTITUDE, attitudePayload(1, 1, 1));
@@ -929,15 +929,14 @@ describe('MspSessionCoordinator - Pass 7.4 real telemetry scheduler integration'
     await flushAsync();
     expect(countAttitudeWrites()).toBe(1);
 
-    // Well under 220ms further - must NOT have dispatched again yet.
-    await jest.advanceTimersByTimeAsync(100);
+    // The second tick is fairly available to the immediately-due slow
+    // battery poll, so it cannot create a second attitude dispatch.
+    await jest.advanceTimersByTimeAsync(50);
     await flushAsync();
     expect(countAttitudeWrites()).toBe(1);
 
-    // The first dispatch's next-due time is dueAtMs = 50 + 220 = 270ms
-    // after registration. 50ms + 100ms so far = 150ms elapsed; this
-    // advance brings the total to 300ms, comfortably past 270ms.
-    await jest.advanceTimersByTimeAsync(150);
+    // The next tick returns to the primary attitude channel.
+    await jest.advanceTimersByTimeAsync(50);
     await flushAsync();
     expect(countAttitudeWrites()).toBe(2);
     coordinator.deactivateMspSession(SESSION_ID); // stop the real tick interval
@@ -1403,9 +1402,9 @@ describe('MspSessionCoordinator - Pass 7.6a Betaflight-gated battery telemetry p
     await jest.advanceTimersByTimeAsync(2850); // t = 2950
     await flushAsync();
     expect(countWritesFor(client, MSP_BATTERY_STATE)).toBe(1);
-    // Attitude was NOT starved meanwhile: ~2950ms / 220ms => at least 12
-    // attitude dispatches with instant fake responses.
-    expect(countWritesFor(client, MSP_ATTITUDE)).toBeGreaterThanOrEqual(12);
+    // Attitude was NOT starved meanwhile: the direct stream remains
+    // high-frequency even while the slow battery channel gets its slots.
+    expect(countWritesFor(client, MSP_ATTITUDE)).toBeGreaterThanOrEqual(50);
 
     // Past dueAt = 3100 (t=3250): exactly the second dispatch.
     await jest.advanceTimersByTimeAsync(300);
@@ -1941,7 +1940,21 @@ describe('MspSessionCoordinator - Pass 7.6c auxiliary Region 3 telemetry (Receiv
   const GOLDEN_ANALOG = Uint8Array.from([168, ...u16le(350), ...u16le(540), ...u16le(1234), ...u16le(1685)]);
   /** Verified 16-byte MSP_RAW_GPS payload: raw GPS_FIX bit (2), 11 sats,
    * deliberately NON-ZERO coordinate bytes (they must be dropped). */
-  const GOLDEN_RAW_GPS = Uint8Array.from([2, 11, 0x15, 0xcd, 0x5b, 0x07, 0xa1, 0x86, 0x01, 0x00, ...u16le(300), ...u16le(100), ...u16le(9000)]);
+  const GOLDEN_RAW_GPS = Uint8Array.from([
+    2,
+    11,
+    0x15,
+    0xcd,
+    0x5b,
+    0x07,
+    0xa1,
+    0x86,
+    0x01,
+    0x00,
+    ...u16le(300),
+    ...u16le(100),
+    ...u16le(900),
+  ]);
   /** Verified 13-byte MSP_STATUS_EX fixed prefix: 900us cycle, 7 i2c
    * errors, mask ACC|GPS|GYRO=41, cpu 42%. */
   const GOLDEN_STATUS_EX = Uint8Array.from([...u16le(900), ...u16le(7), ...u16le(41), 0, 0, 0, 0, 1, ...u16le(42)]);
@@ -2047,11 +2060,23 @@ describe('MspSessionCoordinator - Pass 7.6c auxiliary Region 3 telemetry (Receiv
       value: {legacyVoltageDecivolts: 168, consumedMah: 350, rssi: 540, amperageCentiamps: 1234, voltageCentivolts: 1685},
     });
     const gpsValue = scheduler?.getValue<MspRawGpsCompact>(GPS_TELEMETRY_POLL_ID);
-    expect(gpsValue).toMatchObject({status: 'FRESH', value: {hasFix: true, satelliteCount: 11}});
+    expect(gpsValue).toMatchObject({
+      status: 'FRESH',
+      value: {
+        hasFix: true,
+        satelliteCount: 11,
+        altitudeMeters: 300,
+        groundSpeedCentimetersPerSecond: 100,
+        groundCourseDecidegrees: 900,
+      },
+    });
     if (gpsValue?.status === 'FRESH') {
-      // Privacy by model shape: exactly these two keys, nothing else -
-      // the scripted payload deliberately carried non-zero coordinates.
-      expect(Object.keys(gpsValue.value).sort()).toEqual(['hasFix', 'satelliteCount']);
+      // Privacy by model shape: the scripted payload deliberately carries
+      // non-zero coordinates, but only non-location flight facts survive.
+      expect(gpsValue.value).not.toHaveProperty('latitude');
+      expect(gpsValue.value).not.toHaveProperty('longitude');
+      expect(gpsValue.value).not.toHaveProperty('latitudeDegrees');
+      expect(gpsValue.value).not.toHaveProperty('longitudeDegrees');
     }
     expect(scheduler?.getValue<MspStatusExCompact>(FC_STATUS_TELEMETRY_POLL_ID)).toMatchObject({
       status: 'FRESH',

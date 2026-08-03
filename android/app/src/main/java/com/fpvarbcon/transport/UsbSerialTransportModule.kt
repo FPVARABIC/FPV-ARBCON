@@ -1,11 +1,16 @@
 package com.fpvarbcon.transport
 
+import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Base64
 import com.facebook.react.bridge.Arguments
+import com.facebook.react.bridge.BaseActivityEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
@@ -14,8 +19,11 @@ import com.facebook.react.bridge.WritableMap
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
 import java.util.UUID
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -236,6 +244,498 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
    * race ahead of a submission that step made.
    */
   private val lifecycleLock = Any()
+
+  private val fileOperationLock = Any()
+  private var pendingOpenPromise: Promise? = null
+  private var pendingSave: PendingFirmwareSave? = null
+  private val dfuOperationLock = Any()
+  private var activeDfuOperation: ActiveDfuOperation? = null
+  private var activeDfuMaintenance: ActiveDfuMaintenance? = null
+
+  private val fileActivityListener =
+    object : BaseActivityEventListener() {
+      override fun onActivityResult(activity: Activity, requestCode: Int, resultCode: Int, data: Intent?) {
+        when (requestCode) {
+          PICK_FIRMWARE_REQUEST_CODE -> completeFirmwarePick(resultCode, data?.data)
+          SAVE_FIRMWARE_REQUEST_CODE -> completeFirmwareSave(resultCode, data?.data)
+        }
+      }
+    }
+
+  init {
+    reactApplicationContext.addActivityEventListener(fileActivityListener)
+  }
+
+  override fun listDfuDevices(promise: Promise) {
+    try {
+      val result = Arguments.createArray()
+      usbManager.deviceList.values
+        .filter(::isSupportedDfuDevice)
+        .forEach { device ->
+          val dfuInterface = findDfuInterface(device) ?: return@forEach
+          val map = Arguments.createMap().apply {
+            putInt("deviceId", device.deviceId)
+            putInt("vendorId", device.vendorId)
+            putInt("productId", device.productId)
+            device.productName?.let { putString("productName", it) }
+            device.manufacturerName?.let { putString("manufacturerName", it) }
+            putInt("interfaceNumber", dfuInterface.id)
+            putInt("alternateSetting", dfuInterface.alternateSetting)
+            runCatching { dfuInterface.name }.getOrNull()?.let { putString("memoryLayout", it) }
+          }
+          result.pushMap(map)
+        }
+      promise.resolve(result)
+    } catch (error: Exception) {
+      promise.reject("DFU_ENUMERATION_FAILED", error.message ?: "Unable to enumerate DFU devices.")
+    }
+  }
+
+  override fun flashDfuFirmware(
+    deviceIdArg: Double,
+    intelHexBase64: String,
+    fullErase: Boolean,
+    promise: Promise,
+  ) {
+    if (sessionRegistry.hasActiveSessionOrReservation()) {
+      promise.reject("DEVICE_ALREADY_IN_USE", "Disconnect the active serial session before DFU flashing.")
+      return
+    }
+    val firmware = try {
+      if (intelHexBase64.length > MAX_FIRMWARE_BASE64_CHARS) {
+        throw IllegalArgumentException("Firmware payload exceeds the safe file limit.")
+      }
+      val raw = Base64.decode(intelHexBase64, Base64.NO_WRAP)
+      if (raw.isEmpty() || raw.size > MAX_FIRMWARE_FILE_BYTES) {
+        throw IllegalArgumentException("Firmware payload is empty or too large.")
+      }
+      IntelHexFirmware.parse(raw.toString(Charsets.US_ASCII))
+    } catch (error: Exception) {
+      promise.reject("INVALID_FIRMWARE", error.message ?: "Intel HEX firmware is invalid.")
+      return
+    }
+    val deviceId = deviceIdArg.toInt()
+    val device = usbManager.deviceList.values.find { it.deviceId == deviceId && isSupportedDfuDevice(it) }
+    if (device == null || findDfuInterface(device) == null) {
+      promise.reject("DFU_DEVICE_NOT_FOUND", "No supported DFU device with id $deviceId is attached.")
+      return
+    }
+    val operation = ActiveDfuOperation(promise)
+    synchronized(dfuOperationLock) {
+      if (activeDfuOperation != null || activeDfuMaintenance != null) {
+        promise.reject("DFU_OPERATION_BUSY", "A DFU operation is already active.")
+        return
+      }
+      activeDfuOperation = operation
+    }
+    try {
+      permissionRequester.requestPermission(device) { granted, failureMessage ->
+        try {
+          if (!granted) {
+            settleDfuFailure(
+              operation,
+              UsbTransportException("USB_PERMISSION_DENIED", failureMessage ?: "USB permission was denied."),
+            )
+            return@requestPermission
+          }
+          if (operation.cancelled.get()) {
+            settleDfuFailure(operation, UsbTransportException("DFU_CANCELLED", "DFU flash was cancelled."))
+            return@requestPermission
+          }
+          val current = usbManager.deviceList.values.find {
+            it.deviceId == device.deviceId && it.vendorId == device.vendorId && it.productId == device.productId
+          }
+          val dfuInterface = current?.let(::findDfuInterface)
+          if (current == null || dfuInterface == null) {
+            settleDfuFailure(operation, UsbTransportException("DFU_DEVICE_NOT_FOUND", "DFU device detached."))
+            return@requestPermission
+          }
+          Thread(
+            {
+              try {
+                DfuFlashWorker(
+                  usbManager,
+                  current,
+                  dfuInterface,
+                  firmware,
+                  fullErase,
+                  operation.cancelled,
+                  ::emitDfuProgress,
+                ).run()
+                settleDfuSuccess(operation)
+              } catch (_: CancellationException) {
+                settleDfuFailure(operation, UsbTransportException("DFU_CANCELLED", "DFU flash was cancelled."))
+              } catch (error: UsbTransportException) {
+                settleDfuFailure(operation, error)
+              } catch (error: Exception) {
+                settleDfuFailure(
+                  operation,
+                  UsbTransportException("DFU_FLASH_FAILED", error.message ?: "DFU flashing failed."),
+                )
+              }
+            },
+            "DfuFlash-$deviceId",
+          ).apply { isDaemon = true }.start()
+        } catch (error: Exception) {
+          settleDfuFailure(
+            operation,
+            UsbTransportException("DFU_FLASH_FAILED", error.message ?: "Unable to start DFU flashing."),
+          )
+        }
+      }
+    } catch (error: Exception) {
+      settleDfuFailure(
+        operation,
+        UsbTransportException("USB_PERMISSION_REQUEST_FAILED", error.message ?: "Unable to request USB permission."),
+      )
+    }
+  }
+
+  override fun cancelDfuFlash(promise: Promise) {
+    synchronized(dfuOperationLock) { activeDfuOperation }?.cancelled?.set(true)
+    promise.resolve(null)
+  }
+
+  override fun exitDfuMode(deviceIdArg: Double, promise: Promise) {
+    if (sessionRegistry.hasActiveSessionOrReservation()) {
+      promise.reject("DEVICE_ALREADY_IN_USE", "Disconnect the active serial session before DFU maintenance.")
+      return
+    }
+    val deviceId = deviceIdArg.toInt()
+    val device = usbManager.deviceList.values.find { it.deviceId == deviceId && isSupportedDfuDevice(it) }
+    if (device == null || findDfuInterface(device) == null) {
+      promise.reject("DFU_DEVICE_NOT_FOUND", "No supported DFU device with id $deviceId is attached.")
+      return
+    }
+    val operation = beginDfuMaintenance(promise)
+    if (operation == null) {
+      promise.reject("DFU_OPERATION_BUSY", "A DFU operation is already active.")
+      return
+    }
+    try {
+      permissionRequester.requestPermission(device) { granted, failureMessage ->
+        try {
+          if (!granted) {
+            settleDfuMaintenanceFailure(
+              operation,
+              UsbTransportException("USB_PERMISSION_DENIED", failureMessage ?: "USB permission was denied."),
+            )
+            return@requestPermission
+          }
+          val current = usbManager.deviceList.values.find {
+            it.deviceId == device.deviceId && it.vendorId == device.vendorId && it.productId == device.productId
+          }
+          val dfuInterface = current?.let(::findDfuInterface)
+          if (current == null || dfuInterface == null) {
+            settleDfuMaintenanceFailure(
+              operation,
+              UsbTransportException("DFU_DEVICE_NOT_FOUND", "DFU device detached."),
+            )
+            return@requestPermission
+          }
+          Thread(
+            {
+              try {
+                DfuExitWorker(usbManager, current, dfuInterface).run()
+                settleDfuMaintenanceSuccess(operation)
+              } catch (error: UsbTransportException) {
+                settleDfuMaintenanceFailure(operation, error)
+              } catch (error: Exception) {
+                settleDfuMaintenanceFailure(
+                  operation,
+                  UsbTransportException("DFU_EXIT_FAILED", error.message ?: "Unable to exit DFU mode."),
+                )
+              }
+            },
+            "DfuExit-$deviceId",
+          ).apply { isDaemon = true }.start()
+        } catch (error: Exception) {
+          settleDfuMaintenanceFailure(
+            operation,
+            UsbTransportException("DFU_EXIT_FAILED", error.message ?: "Unable to start DFU exit."),
+          )
+        }
+      }
+    } catch (error: Exception) {
+      settleDfuMaintenanceFailure(
+        operation,
+        UsbTransportException("USB_PERMISSION_REQUEST_FAILED", error.message ?: "Unable to request USB permission."),
+      )
+    }
+  }
+
+  override fun unprotectDfuDevice(deviceIdArg: Double, promise: Promise) {
+    if (sessionRegistry.hasActiveSessionOrReservation()) {
+      promise.reject("DEVICE_ALREADY_IN_USE", "Disconnect the active serial session before DFU maintenance.")
+      return
+    }
+    val deviceId = deviceIdArg.toInt()
+    val device = usbManager.deviceList.values.find { it.deviceId == deviceId && isSupportedDfuDevice(it) }
+    if (device == null || findDfuInterface(device) == null) {
+      promise.reject("DFU_DEVICE_NOT_FOUND", "No supported DFU device with id $deviceId is attached.")
+      return
+    }
+    val operation = beginDfuMaintenance(promise)
+    if (operation == null) {
+      promise.reject("DFU_OPERATION_BUSY", "A DFU operation is already active.")
+      return
+    }
+    try {
+      permissionRequester.requestPermission(device) { granted, failureMessage ->
+        try {
+          if (!granted) {
+            settleDfuMaintenanceFailure(
+              operation,
+              UsbTransportException("USB_PERMISSION_DENIED", failureMessage ?: "USB permission was denied."),
+            )
+            return@requestPermission
+          }
+          val current = usbManager.deviceList.values.find {
+            it.deviceId == device.deviceId && it.vendorId == device.vendorId && it.productId == device.productId
+          }
+          val dfuInterface = current?.let(::findDfuInterface)
+          if (current == null || dfuInterface == null) {
+            settleDfuMaintenanceFailure(
+              operation,
+              UsbTransportException("DFU_DEVICE_NOT_FOUND", "DFU device detached."),
+            )
+            return@requestPermission
+          }
+          Thread(
+            {
+              try {
+                DfuUnprotectWorker(usbManager, current, dfuInterface).run()
+                settleDfuMaintenanceSuccess(operation)
+              } catch (error: UsbTransportException) {
+                settleDfuMaintenanceFailure(operation, error)
+              } catch (error: Exception) {
+                settleDfuMaintenanceFailure(
+                  operation,
+                  UsbTransportException(
+                    "DFU_UNPROTECT_FAILED",
+                    error.message ?: "Unable to remove DFU read protection.",
+                  ),
+                )
+              }
+            },
+            "DfuUnprotect-$deviceId",
+          ).apply { isDaemon = true }.start()
+        } catch (error: Exception) {
+          settleDfuMaintenanceFailure(
+            operation,
+            UsbTransportException("DFU_UNPROTECT_FAILED", error.message ?: "Unable to start DFU read-unprotect."),
+          )
+        }
+      }
+    } catch (error: Exception) {
+      settleDfuMaintenanceFailure(
+        operation,
+        UsbTransportException("USB_PERMISSION_REQUEST_FAILED", error.message ?: "Unable to request USB permission."),
+      )
+    }
+  }
+
+  private fun beginDfuMaintenance(promise: Promise): ActiveDfuMaintenance? = synchronized(dfuOperationLock) {
+    if (activeDfuOperation != null || activeDfuMaintenance != null) {
+      null
+    } else {
+      ActiveDfuMaintenance(promise).also { activeDfuMaintenance = it }
+    }
+  }
+
+  private fun settleDfuMaintenanceSuccess(operation: ActiveDfuMaintenance) {
+    if (!operation.settled.compareAndSet(false, true)) return
+    synchronized(dfuOperationLock) {
+      if (activeDfuMaintenance === operation) activeDfuMaintenance = null
+    }
+    operation.promise.resolve(null)
+  }
+
+  private fun settleDfuMaintenanceFailure(
+    operation: ActiveDfuMaintenance,
+    error: UsbTransportException,
+  ) {
+    if (!operation.settled.compareAndSet(false, true)) return
+    synchronized(dfuOperationLock) {
+      if (activeDfuMaintenance === operation) activeDfuMaintenance = null
+    }
+    operation.promise.rejectTransportError(error)
+  }
+
+  private fun emitDfuProgress(progress: DfuFlashProgress) {
+    emitOnDfuFlashProgress(
+      Arguments.createMap().apply {
+        putString("phase", progress.phase)
+        putDouble("percent", progress.percent.toDouble())
+        putDouble("bytesProcessed", progress.bytesProcessed.toDouble())
+        putDouble("totalBytes", progress.totalBytes.toDouble())
+      },
+    )
+  }
+
+  private fun settleDfuSuccess(operation: ActiveDfuOperation) {
+    if (!operation.settled.compareAndSet(false, true)) return
+    synchronized(dfuOperationLock) {
+      if (activeDfuOperation === operation) activeDfuOperation = null
+    }
+    operation.promise.resolve(null)
+  }
+
+  private fun settleDfuFailure(operation: ActiveDfuOperation, error: UsbTransportException) {
+    if (!operation.settled.compareAndSet(false, true)) return
+    synchronized(dfuOperationLock) {
+      if (activeDfuOperation === operation) activeDfuOperation = null
+    }
+    operation.promise.rejectTransportError(error)
+  }
+
+  override fun pickFirmwareFile(promise: Promise) {
+    synchronized(fileOperationLock) {
+      if (pendingOpenPromise != null || pendingSave != null) {
+        promise.reject("FILE_OPERATION_BUSY", "Another firmware file operation is already active.")
+        return
+      }
+      pendingOpenPromise = promise
+    }
+    val activity = currentActivity
+    if (activity == null) {
+      synchronized(fileOperationLock) { pendingOpenPromise = null }
+      promise.reject("NO_ACTIVITY", "No foreground Android activity is available.")
+      return
+    }
+    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+      addCategory(Intent.CATEGORY_OPENABLE)
+      type = "*/*"
+      putExtra(
+        Intent.EXTRA_MIME_TYPES,
+        arrayOf("application/octet-stream", "text/plain", "application/x-ihex"),
+      )
+    }
+    try {
+      activity.startActivityForResult(intent, PICK_FIRMWARE_REQUEST_CODE)
+    } catch (error: Exception) {
+      synchronized(fileOperationLock) { pendingOpenPromise = null }
+      promise.reject("FILE_PICK_FAILED", error.message ?: "Unable to open the file picker.")
+    }
+  }
+
+  override fun saveFirmwareFile(filename: String, mimeType: String, dataBase64: String, promise: Promise) {
+    val safeName = sanitizeFirmwareFilename(filename)
+    val bytes = try {
+      if (dataBase64.length > MAX_FIRMWARE_BASE64_CHARS) {
+        throw IllegalArgumentException("Firmware payload exceeds the safe file limit.")
+      }
+      Base64.decode(dataBase64, Base64.NO_WRAP)
+    } catch (error: Exception) {
+      promise.reject("FILE_SAVE_FAILED", error.message ?: "Firmware data is not valid Base64.")
+      return
+    }
+    if (bytes.isEmpty() || bytes.size > MAX_FIRMWARE_FILE_BYTES) {
+      promise.reject("FILE_SAVE_FAILED", "Firmware data is empty or exceeds the safe file limit.")
+      return
+    }
+    synchronized(fileOperationLock) {
+      if (pendingOpenPromise != null || pendingSave != null) {
+        promise.reject("FILE_OPERATION_BUSY", "Another firmware file operation is already active.")
+        return
+      }
+      pendingSave = PendingFirmwareSave(promise, bytes)
+    }
+    val activity = currentActivity
+    if (activity == null) {
+      synchronized(fileOperationLock) { pendingSave = null }
+      promise.reject("NO_ACTIVITY", "No foreground Android activity is available.")
+      return
+    }
+    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+      addCategory(Intent.CATEGORY_OPENABLE)
+      type = mimeType.ifBlank { "application/octet-stream" }
+      putExtra(Intent.EXTRA_TITLE, safeName)
+    }
+    try {
+      activity.startActivityForResult(intent, SAVE_FIRMWARE_REQUEST_CODE)
+    } catch (error: Exception) {
+      synchronized(fileOperationLock) { pendingSave = null }
+      promise.reject("FILE_SAVE_FAILED", error.message ?: "Unable to open the save picker.")
+    }
+  }
+
+  private fun completeFirmwarePick(resultCode: Int, uri: Uri?) {
+    val promise = synchronized(fileOperationLock) { pendingOpenPromise.also { pendingOpenPromise = null } } ?: return
+    if (resultCode != Activity.RESULT_OK || uri == null) {
+      promise.resolve(null)
+      return
+    }
+    Thread(
+      {
+        try {
+          val bytes = readBoundedFile(uri)
+          val name = queryDisplayName(uri) ?: uri.lastPathSegment?.substringAfterLast('/') ?: "firmware"
+          val map = Arguments.createMap().apply {
+            putString("name", name)
+            putDouble("sizeBytes", bytes.size.toDouble())
+            putString("dataBase64", Base64.encodeToString(bytes, Base64.NO_WRAP))
+          }
+          promise.resolve(map)
+        } catch (error: Exception) {
+          promise.reject("FILE_READ_FAILED", error.message ?: "Unable to read the selected firmware file.")
+        }
+      },
+      "FirmwareFileRead",
+    ).apply { isDaemon = true }.start()
+  }
+
+  private fun completeFirmwareSave(resultCode: Int, uri: Uri?) {
+    val pending = synchronized(fileOperationLock) { pendingSave.also { pendingSave = null } } ?: return
+    if (resultCode != Activity.RESULT_OK || uri == null) {
+      pending.promise.resolve(false)
+      return
+    }
+    Thread(
+      {
+        try {
+          reactApplicationContext.contentResolver.openOutputStream(uri, "w").use { output ->
+            requireNotNull(output) { "Android could not open the destination file." }
+            output.write(pending.bytes)
+            output.flush()
+          }
+          pending.promise.resolve(true)
+        } catch (error: Exception) {
+          pending.promise.reject("FILE_SAVE_FAILED", error.message ?: "Unable to save the firmware file.")
+        }
+      },
+      "FirmwareFileSave",
+    ).apply { isDaemon = true }.start()
+  }
+
+  private fun readBoundedFile(uri: Uri): ByteArray {
+    val output = ByteArrayOutputStream()
+    reactApplicationContext.contentResolver.openInputStream(uri).use { input ->
+      requireNotNull(input) { "Android could not open the selected file." }
+      val buffer = ByteArray(32 * 1024)
+      while (true) {
+        val read = input.read(buffer)
+        if (read < 0) break
+        if (output.size() + read > MAX_FIRMWARE_FILE_BYTES) {
+          throw IllegalArgumentException("Firmware file exceeds the safe file limit.")
+        }
+        output.write(buffer, 0, read)
+      }
+    }
+    if (output.size() == 0) throw IllegalArgumentException("Firmware file is empty.")
+    return output.toByteArray()
+  }
+
+  private fun queryDisplayName(uri: Uri): String? =
+    reactApplicationContext.contentResolver.query(
+      uri,
+      arrayOf(OpenableColumns.DISPLAY_NAME),
+      null,
+      null,
+      null,
+    )?.use { cursor ->
+      if (!cursor.moveToFirst()) null else cursor.getString(0)?.takeIf { it.isNotBlank() }
+    }
 
   override fun listDevices(promise: Promise) {
     try {
@@ -709,6 +1209,49 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  override fun setControlLines(sessionId: String, dtr: Boolean, rts: Boolean, promise: Promise) {
+    val session = sessionRegistry.get(sessionId)
+    if (session == null) {
+      promise.rejectTransportError(UsbTransportException("UNKNOWN_SESSION", "No active session with id $sessionId."))
+      return
+    }
+    Thread(
+      {
+        try {
+          session.setControlLines(dtr, rts)
+          promise.resolve(null)
+        } catch (error: Exception) {
+          promise.rejectTransportError(
+            UsbTransportException("CONTROL_LINES_FAILED", error.message ?: "Failed to set DTR/RTS."),
+          )
+        }
+      },
+      "UsbSerialControl-$sessionId",
+    ).apply { isDaemon = true }.start()
+  }
+
+  override fun setBaudRate(sessionId: String, baudRateArg: Double, promise: Promise) {
+    val session = sessionRegistry.get(sessionId)
+    if (session == null) {
+      promise.rejectTransportError(UsbTransportException("UNKNOWN_SESSION", "No active session with id $sessionId."))
+      return
+    }
+    val baudRate = baudRateArg.toInt()
+    Thread(
+      {
+        try {
+          session.setBaudRate(baudRate)
+          promise.resolve(null)
+        } catch (error: Exception) {
+          promise.rejectTransportError(
+            UsbTransportException("BAUD_RATE_FAILED", error.message ?: "Failed to change the baud rate."),
+          )
+        }
+      },
+      "UsbSerialBaud-$sessionId",
+    ).apply { isDaemon = true }.start()
+  }
+
   /**
    * Starts a receive loop for an already-open session. Explicit and
    * idempotent-by-rejection: calling this while a receive loop is genuinely
@@ -1151,6 +1694,28 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
   override fun invalidate() {
     super.invalidate()
 
+    reactApplicationContext.removeActivityEventListener(fileActivityListener)
+    val abandonedFileOperations =
+      synchronized(fileOperationLock) {
+        val open = pendingOpenPromise
+        val save = pendingSave
+        pendingOpenPromise = null
+        pendingSave = null
+        open to save
+      }
+    abandonedFileOperations.first?.reject("MODULE_INVALIDATED", "Firmware file operation was cancelled.")
+    abandonedFileOperations.second?.promise?.reject("MODULE_INVALIDATED", "Firmware file operation was cancelled.")
+    synchronized(dfuOperationLock) { activeDfuOperation }?.let { operation ->
+      operation.cancelled.set(true)
+      settleDfuFailure(operation, UsbTransportException("MODULE_INVALIDATED", "DFU operation was cancelled."))
+    }
+    synchronized(dfuOperationLock) { activeDfuMaintenance }?.let { operation ->
+      settleDfuMaintenanceFailure(
+        operation,
+        UsbTransportException("MODULE_INVALIDATED", "DFU maintenance operation was detached from React Native."),
+      )
+    }
+
     hotplugMonitor.stop()
 
     val drainedSessions =
@@ -1251,21 +1816,23 @@ private sealed class StartReadingAttemptOutcome {
  * is required for cooperative cancellation. Chosen as a balance between
  * prompt stop responsiveness and not waking up needlessly often.
  *
- * PASS5.3-STEP1 re-evaluated this value, since it now also bounds
- * worst-case TX lock-acquisition latency under UsbSerialSession's shared
- * fair ioLock (a write queued while RX holds the lock is guaranteed to go
- * next, but only once RX's current read call itself returns - see
- * ioLock's own note). Left unchanged deliberately: shrinking it would
- * lower that worst case but multiply how often read() is called with no
- * data arriving - for the entire lifetime of every active receive loop,
- * not just while a write is pending - trading a rare, one-time,
- * ~200ms-bounded TX delay for a permanent, continuous increase in
- * CPU/USB-bus/battery overhead. No confirmed real-world MSP
- * responsiveness requirement is known yet that would justify that
- * trade - the conservative choice is to keep this value as-is pending
- * one, not to guess a smaller number aggressively.
+ * SETUP ORIENTATION LATENCY CORRECTION. Real-device measurement had been
+ * interpreted as an FC/link ceiling (~224ms median MSP_ATTITUDE RTT), but
+ * this module itself imposed almost that entire delay: RX held the shared
+ * read/write lock for up to 200ms while idle, so a newly queued telemetry
+ * write frequently waited for that read quantum before it was even put on
+ * USB. The same artificial wait also sat in front of emergency motor-stop
+ * writes.
+ *
+ * 25ms keeps the receive loop blocking (40 idle wake-ups/s, not a busy
+ * spin), still provides cooperative cancellation, and bounds the
+ * lock-induced part of every TX latency to one short frame interval. The
+ * fair-lock guarantee is unchanged: a queued writer still wins the very
+ * next release. This value is internal rather than private so the JVM
+ * timing-policy test can keep the responsiveness budget from silently
+ * regressing.
  */
-private const val RX_READ_TIMEOUT_MILLIS = 200
+internal const val RX_READ_TIMEOUT_MILLIS = 25
 
 /**
  * How long a startReading() attempt waits, at most, for a still-retiring
@@ -1293,14 +1860,53 @@ private const val RX_RESTART_WAIT_MILLIS = (RX_READ_TIMEOUT_MILLIS + 100).toLong
  * configures, that takes well under this bound to physically transmit
  * even with no contention at all. No confirmed real-world MSP
  * responsiveness or throughput requirement is known yet at this pass -
- * 1000ms is chosen conservatively (generous headroom over both of the
+ * the bound is chosen conservatively (generous headroom over both of the
  * above combined) rather than aggressively, so a momentarily busy link
  * does not spuriously fail a normal write, while still bounding a
  * genuinely stuck write so it can never block this session's write-queue
  * consumer thread - and therefore every write queued behind it -
  * indefinitely.
+ *
+ * R4 - WHY THIS IS 150ms AND NOT 1000ms.
+ *
+ * This constant is the REAL upper bound on how long an emergency motor
+ * STOP can be delayed, and it is the only one that matters. The stop
+ * cannot cancel a write already handed to the native layer: this queue is
+ * strict-FIFO with a single consumer thread and UsbSerialSession.write()
+ * additionally holds ioLock, so the stop's frame cannot begin execution
+ * at the writer until the in-flight write returns or times out. Neither
+ * the JS response timeout nor the motor-test safety read's 400ms response
+ * bound constrains that at all - they bound waiting for an ANSWER, not
+ * the preceding write.
+ *
+ * At 1000ms the worst-case stop delay was ~1000ms, four times the 250ms
+ * maximum the motor-test safety contract requires. 150ms restores the
+ * guarantee with large margin over physical reality: an MSP command frame
+ * is 6-20 bytes, which a USB bulk transfer completes in well under a
+ * millisecond, so 150ms is still ~100x the realistic duration. A write
+ * that genuinely takes longer than this means the link is stalled - the
+ * exact situation in which failing fast and faulting is correct and
+ * waiting is not.
+ *
+ * The bound applies uniformly to every write rather than only to
+ * motor-test traffic: a per-caller timeout would put the safety-critical
+ * choice in the hands of each call site, and any site that got it wrong
+ * would silently reintroduce the delay.
  */
-private const val TX_WRITE_TIMEOUT_MILLIS = 1000
+private const val TX_WRITE_TIMEOUT_MILLIS = 150
+
+/**
+ * Product bound for the native portion of an emergency stop: at most one
+ * in-flight RX lock quantum plus the write call's own timeout. Response
+ * confirmation has a separate JS-side bound.
+ */
+internal const val MOTOR_STOP_NATIVE_WRITE_BUDGET_MILLIS = 250
+
+/** Package-visible combined bound for the JVM timing-policy regression
+ * test; the individual write timeout remains private because it is an
+ * implementation detail already guarded by the JS stop-latency suite. */
+internal const val NATIVE_IO_LOCK_WAIT_UPPER_BOUND_MILLIS =
+  RX_READ_TIMEOUT_MILLIS + TX_WRITE_TIMEOUT_MILLIS
 
 /**
  * The single overall bound (Pass 5.4, PASS5.4-CONNECT-TIMEOUT) covering an
@@ -1322,6 +1928,30 @@ private const val TX_WRITE_TIMEOUT_MILLIS = 1000
  * is a considered starting point, not a measured one.
  */
 private const val CONNECT_TIMEOUT_MILLIS = 15_000L
+
+private const val PICK_FIRMWARE_REQUEST_CODE = 0x4650
+private const val SAVE_FIRMWARE_REQUEST_CODE = 0x4651
+private const val MAX_FIRMWARE_FILE_BYTES = 16 * 1024 * 1024
+private const val MAX_FIRMWARE_BASE64_CHARS = 23 * 1024 * 1024
+
+private data class PendingFirmwareSave(val promise: Promise, val bytes: ByteArray)
+private data class ActiveDfuOperation(
+  val promise: Promise,
+  val cancelled: AtomicBoolean = AtomicBoolean(false),
+  val settled: AtomicBoolean = AtomicBoolean(false),
+)
+private data class ActiveDfuMaintenance(
+  val promise: Promise,
+  val settled: AtomicBoolean = AtomicBoolean(false),
+)
+
+private fun sanitizeFirmwareFilename(filename: String): String {
+  val leaf = filename.substringAfterLast('/').substringAfterLast('\\')
+  return leaf
+    .replace(Regex("[\\u0000-\\u001f]"), "_")
+    .take(120)
+    .ifBlank { "firmware.bin" }
+}
 
 private fun closeQuietly(port: UsbSerialPort) {
   try {

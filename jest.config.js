@@ -6,7 +6,7 @@ module.exports = {
   // packages, so these must be added or Jest fails to parse their `export`
   // syntax.
   transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native(-community)?|@react-navigation|react-native-screens|react-native-safe-area-context|@shopify/react-native-skia)/)',
+    'node_modules/(?!((jest-)?react-native|@react-native(-community)?|@react-navigation|react-native-screens|react-native-safe-area-context|@shopify/react-native-skia|esptool-js)/)',
   ],
   // Pass 7.4: OrientationRenderer.tsx (src/ui/orientation3d) imports the
   // real @shopify/react-native-skia - it has no native module to run

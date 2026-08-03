@@ -36,6 +36,9 @@ export const MSP_FC_VARIANT = 2;
  */
 export const MSP_FC_VERSION = 3;
 
+/** Build feature identifiers compiled into the connected target. */
+export const MSP_BUILD_INFO = 5;
+
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_PINNED_COMMIT:
  * `#define MSP_BOARD_INFO  4    // out message: Get board information` */
 export const MSP_BOARD_INFO = 4;
@@ -56,6 +59,15 @@ export const MSP_BATTERY_STATE = 130;
  * speed, ground course` - only fix + numsat are consumed; coordinates are
  * never retained (decodeRawGps.ts). */
 export const MSP_RAW_GPS = 106;
+
+/** Betaflight 2025.12.2: distance and direction from the armed/home point. */
+export const MSP_COMP_GPS = 107;
+
+/** Betaflight 2025.12.2: six-byte GPS provider/SBAS/automation config. */
+export const MSP_GPS_CONFIG = 132;
+
+/** Betaflight 2025.12.2: per-satellite channel, id, quality and C/N0. */
+export const MSP_GPS_SV_INFO = 164;
 
 /** src/main/msp/msp_protocol.h:181 @ BETAFLIGHT_API147_COMMIT (Pass 7.6c,
  * the direct API-1.47 authority - release 2025.12.5):
@@ -148,6 +160,21 @@ export const MSP_REBOOT = 68;
  * for whether 3D mode is active. */
 export const MSP_FEATURE_CONFIG = 36;
 
+/** General configuration groups used by the integrated Configurations area.
+ * Values and payload layouts are pinned to Betaflight 2025.12.2 / MSP 1.47.
+ * The SET commands are consumed only by the guarded configuration
+ * transaction; declaring them here does not create an unguarded write path. */
+export const MSP_NAME = 10;
+export const MSP_SET_NAME = 11;
+export const MSP_RX_CONFIG = 44;
+export const MSP_SET_RX_CONFIG = 45;
+export const MSP_ARMING_CONFIG = 61;
+export const MSP_SET_ARMING_CONFIG = 62;
+export const MSP_BEEPER_CONFIG = 184;
+export const MSP_SET_BEEPER_CONFIG = 185;
+export const MSP2_GET_TEXT = 0x3006;
+export const MSP2_SET_TEXT = 0x3007;
+
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
  * `#define MSP_MIXER_CONFIG 42` - msp.c, 2 bytes: u8 mixerMode, u8
  * yaw_motors_reversed. MIXER_QUADX (3) and MIXER_QUADX_1234 (26) are
@@ -178,6 +205,55 @@ export const MSP_MOTOR_3D_CONFIG = 124;
  * for motor count. Its first u16 is a removed field hard-coded to 0, not
  * a minimum throttle. */
 export const MSP_MOTOR_CONFIG = 131;
+
+/** API-1.47 per-ESC telemetry: u8 count followed by 13 bytes per motor
+ * (RPM, invalid %, temperature, voltage, current, consumption). */
+export const MSP_MOTOR_TELEMETRY = 139;
+
+/** API-1.47 MSP v2 motor resource ordering. The GET returns u8 count then
+ * count physical output indices. The SET accepts the same shape. */
+export const MSP2_MOTOR_OUTPUT_REORDERING = 0x3001;
+export const MSP2_SET_MOTOR_OUTPUT_REORDERING = 0x3002;
+export const MSP2_SEND_DSHOT_COMMAND = 0x3003;
+
+/**
+ * Motor-configuration WRITE commands for the API-1.47 transaction.
+ *
+ * These constants do not authorize a write on their own. The only runtime
+ * consumer is the dedicated motor-configuration transaction, which pauses
+ * telemetry, proves a fresh disarmed state, rejects an active motor-test
+ * lifecycle, captures the canonical session identity, and never retries an
+ * ambiguous write automatically.
+ *
+ * Values and payloads were checked against Betaflight Configurator 2025.12.2
+ * (`MSPCodes.js` and `MSPHelper.crunch`) and the matching firmware MSP
+ * handlers. Keeping them beside their READ counterparts makes each read / set
+ * pair auditable without importing the motor-test command module.
+ */
+export const MSP_SET_FEATURE_CONFIG = 37;
+export const MSP_SET_MIXER_CONFIG = 43;
+export const MSP_SET_ADVANCED_CONFIG = 91;
+export const MSP_SET_MOTOR_3D_CONFIG = 217;
+export const MSP_SET_MOTOR_CONFIG = 222;
+
+/** Writes the complete six-byte MSP_GPS_CONFIG payload. */
+export const MSP_SET_GPS_CONFIG = 223;
+
+/**
+ * Persists previously acknowledged MSP_SET_* values. Unlike accelerometer
+ * and magnetometer calibration (which persist internally), a configuration
+ * edit is not durable until this command is acknowledged. It is therefore
+ * scoped only to MotorConfigurationTransaction; Setup calibration and reboot
+ * paths remain forbidden from sending it.
+ */
+export const MSP_EEPROM_WRITE = 250;
+
+/** Read-only VTX state/table availability used by Ports. */
+export const MSP_VTX_CONFIG = 88;
+
+/** Betaflight's versioned MSP v2 serial-port read and write commands. */
+export const MSP2_COMMON_SERIAL_CONFIG = 0x1009;
+export const MSP2_COMMON_SET_SERIAL_CONFIG = 0x100a;
 
 /**
  * THE ONLY MOTOR *WRITE* COMMAND IN THIS REPOSITORY, AND A CONSTANT ONLY.

@@ -1,9 +1,15 @@
 import React from 'react';
-import {ActivityIndicator, Pressable, StyleSheet, Text, View} from 'react-native';
-import {useTranslation} from 'react-i18next';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { useTranslation } from 'react-i18next';
 
-import {colors, radii, spacing, typography} from '../../theme';
-import type {ConnectionState} from './connectionTypes';
+import { colors, radii, spacing, typography } from '../../theme';
+import type { ConnectionState } from './connectionTypes';
 
 interface Props {
   connectionState: ConnectionState;
@@ -22,25 +28,31 @@ export default function ConnectionActions({
   onConnect,
   onDisconnect,
 }: Props): React.JSX.Element {
-  const {t} = useTranslation();
-  const showDisconnect = connectionState === 'connected' || connectionState === 'disconnecting';
+  const { t } = useTranslation();
+  const showDisconnect =
+    connectionState === 'connected' || connectionState === 'disconnecting';
 
   return (
     <View style={styles.container}>
       {showDisconnect ? (
         <Pressable
           testID="usb-disconnect-button"
-          onPress={connectionState === 'disconnecting' ? undefined : onDisconnect}
+          onPress={
+            connectionState === 'disconnecting' ? undefined : onDisconnect
+          }
           disabled={connectionState === 'disconnecting'}
           accessibilityRole="button"
           accessibilityLabel={t('accessibility.disconnect')}
-          accessibilityState={{disabled: connectionState === 'disconnecting'}}
-          style={[styles.button, styles.disconnectButton]}>
+          accessibilityState={{ disabled: connectionState === 'disconnecting' }}
+          style={[styles.button, styles.disconnectButton]}
+        >
           {connectionState === 'disconnecting' ? (
             <ActivityIndicator color={colors.textPrimary} size="small" />
           ) : null}
           <Text style={styles.buttonText}>
-            {connectionState === 'disconnecting' ? t('actions.disconnecting') : t('actions.disconnect')}
+            {connectionState === 'disconnecting'
+              ? t('actions.disconnecting')
+              : t('actions.disconnect')}
           </Text>
         </Pressable>
       ) : (
@@ -50,20 +62,29 @@ export default function ConnectionActions({
           disabled={!canConnect}
           accessibilityRole="button"
           accessibilityLabel={t('accessibility.connect')}
-          accessibilityState={{disabled: !canConnect}}
-          style={[styles.button, styles.connectButton, !canConnect && styles.buttonDisabled]}>
+          accessibilityState={{ disabled: !canConnect }}
+          style={[
+            styles.button,
+            styles.connectButton,
+            !canConnect && styles.buttonDisabled,
+          ]}
+        >
           {connectionState === 'connecting' ? (
             <ActivityIndicator color={colors.background} size="small" />
           ) : null}
           <Text style={[styles.buttonText, styles.connectButtonText]}>
-            {connectionState === 'connecting' ? t('actions.connecting') : t('actions.connect')}
+            {connectionState === 'connecting'
+              ? t('actions.connecting')
+              : t('actions.connect')}
           </Text>
         </Pressable>
       )}
 
       {lastResult ? (
         <Text testID="usb-last-result" style={styles.resultText}>
-          {lastResult === 'connectSuccess' ? t('actions.connectSuccess') : t('actions.disconnectSuccess')}
+          {lastResult === 'connectSuccess'
+            ? t('actions.connectSuccess')
+            : t('actions.disconnectSuccess')}
         </Text>
       ) : null}
 
@@ -79,27 +100,35 @@ export default function ConnectionActions({
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.lg,
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
   },
   button: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    borderRadius: radii.sm,
+    borderRadius: radii.md,
     paddingVertical: spacing.md,
-    minHeight: 48,
+    minHeight: 54,
   },
   connectButton: {
     backgroundColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
   disconnectButton: {
-    borderWidth: StyleSheet.hairlineWidth,
+    borderWidth: 1,
     borderColor: colors.error,
+    backgroundColor: colors.surface,
   },
   buttonDisabled: {
-    backgroundColor: colors.disabled,
+    backgroundColor: colors.surfaceRaised,
+    shadowOpacity: 0,
+    elevation: 0,
   },
   buttonText: {
     ...typography.body,
@@ -107,7 +136,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   connectButtonText: {
-    color: colors.background,
+    color: colors.accentText,
   },
   resultText: {
     ...typography.caption,

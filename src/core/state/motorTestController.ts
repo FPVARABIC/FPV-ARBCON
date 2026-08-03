@@ -7,8 +7,46 @@
  * The thinnest possible composition of the already-accepted motor-test
  * contracts. It captures one official session authority, holds the
  * coordinator-wide telemetry barrier, owns one genuine `MotorTestLease`,
- * gathers the accepted session-bound evidence, establishes the accepted
- * arming restriction, and drives the accepted pure reducer.
+ * reads only the configuration the command encoder needs, acquires the box
+ * mapping that makes armed state readable, and drives the accepted pure
+ * reducer.
+ *
+ * THE GATE SIMPLIFICATION, AND WHAT IT COST
+ * -----------------------------------------
+ * Setup used to prove eleven things before it would publish READY: the
+ * four-command identification chain, a pinned firmware version, a static
+ * compatibility profile, a composed capability profile, a one-shot dynamic
+ * observation, a 4S battery policy, and an MSP arming restriction it wrote
+ * to the flight controller and then re-read. Most of that proved facts
+ * unrelated to encoding a safe MSP_SET_MOTOR frame, and the arming
+ * restriction in particular was a WRITE performed in the name of safety
+ * whose receipt could never detect its own removal - its own doc comment
+ * said so.
+ *
+ * What the simplified chain proves is smaller and all of it load-bearing:
+ *
+ *   1. one current session identity, captured and revalidated;
+ *   2. one identified firmware/API with a reviewed motor-write adapter;
+ *   3. the coordinator-wide telemetry barrier, so nothing else is talking;
+ *   4. one genuine lease and its non-forgeable official authority;
+ *   5. the configuration the encoder needs - motor count, motor protocol,
+ *      and FEATURE_3D disabled, because 3D INVERTS STOP SEMANTICS;
+ *   6. the MSP_BOXIDS mapping, because the ARM bit position is
+ *      configuration dependent and must never be guessed;
+ *   7. ONE FRESH PRODUCTION OBSERVATION, awaited before READY, proving the
+ *      flight controller reports itself DISARMED.
+ *
+ * (7) IS AWAITED, NOT FIRED AND FORGOTTEN. The monitor used to be started
+ * asynchronously and READY published immediately after, so the snapshot
+ * said "not ready, nothing is watching" until some unrelated render
+ * happened to rebuild it. The setup boundary now joins the first real
+ * observation and refuses READY unless that observation is fresh,
+ * session-bound and disarmed - see `MotorTestSafetyMonitorLike.observeNow`.
+ *
+ * NOTHING WAS TRADED AWAY ON THE WRITE PATH. Exactly one output at exactly
+ * MOTOR_TEST_FIXED_PULSE_VALUE, every other output at stop, command 214,
+ * the same encoder, the same watchdog, the same serialized transport, the
+ * same emergency stop and the same all-stop vector.
  *
  * IT CAN REACH THE MOTOR-COMMAND PATH
  * -----------------------------------
@@ -31,17 +69,18 @@
  * conventions, and they must keep holding on their own merits:
  *   - `evaluateActivation()` is the SINGLE gate. `pulseMotor` consults it
  *     and the published snapshot carries its verdict, so the UI projection
- *     IS the gate rather than a second, weaker copy of the rule. Since
- *     Repair Pass R1 its first check is continuous safety monitoring,
- *     which no production source satisfies, so production activation is
- *     fail-closed (see the R1 note below);
+ *     IS the gate rather than a second, weaker copy of the rule. It is
+ *     re-evaluated inside `pulseMotor()` at CALL TIME - a button that
+ *     rendered enabled is not evidence, and a snapshot that was true when
+ *     it was built may not be true when it is acted on;
  *   - a pulse is FIXED, never operator-shaped: exactly one motor of four
  *     at exactly `MOTOR_TEST_FIXED_PULSE_VALUE`, every other output at the
- *     accepted stop value, bounded by
- *     `MOTOR_TEST_PULSE_MAX_DURATION_MILLIS` and enforced by a watchdog
- *     armed at SUBMISSION, never at acknowledgement;
- *   - there is no generic `dispatch(event)`; the public surface is six
- *     named operations, and the only event any caller can influence
+ *     accepted stop value. A touch-owner heartbeat renews a short
+ *     fail-safe watchdog while the operator keeps holding; losing the
+ *     gesture, the JS owner, or the heartbeat requests an all-stop;
+ *   - there is no generic `dispatch(event)`; the public surface exposes
+ *     only named, capability-scoped operations, and the only event any
+ *     caller can influence
  *     directly is a whitelisted `STOP_TRIGGERED`. `SUBMIT_START_INTENT`
  *     is still never constructed anywhere in this file - the reducer's
  *     handling of it is a fail-closed tripwire, not a path;
@@ -54,17 +93,16 @@
  *     promise, client, transport, writer, command, payload, lease, motor
  *     value or native handle.
  *
- * REACHABILITY IS CONTROLLED SEPARATELY, AND NOT HERE
- * ---------------------------------------------------
- * Whether a shipped build can reach this file is NOT decided in this file
- * and must not be inferred from it. It is decided elsewhere: by the
- * build-time containment seam (`motorTestDebugSeam.ts`, a `__DEV__`-guarded
- * `require`), by there being no production navigation route to the motors
- * screen, and by the CI scan that fails if this module's symbols appear in
- * a `--dev false` bundle. Those are BUILD- and NAVIGATION-level controls,
- * and a change to any of them could make this file reachable in production
- * without editing a line of it. That is exactly why the invariants above
- * may never be relaxed on the grounds that "nothing calls it".
+ * REACHABILITY IN THE UNIFIED APPLICATION
+ * ---------------------------------------
+ * This controller deliberately ships in the standalone application and is
+ * reached from the Motors tab through the official session capability. The
+ * old `__DEV__` containment seam and separate hardware-test application no
+ * longer exist. The production-bundle scan therefore proves that the engine
+ * and Arabic safety copy are present, while its source-boundary checks prove
+ * that command encoding and MSP_SET_MOTOR dispatch remain confined here.
+ * Runtime authority, lease, telemetry-barrier and armed-state checks are the
+ * real activation boundary and may never be relaxed on UI assumptions.
  *
  * AN ACK IS NOT PHYSICAL MOTION, AND NOT A PHYSICAL STOP
  * ------------------------------------------------------
@@ -122,12 +160,12 @@
  *
  * GUARD SITES
  * -----------
- * There are 15 call sites of the two boundary guards in this file: 14
- * are boundary checks on the setup path, and the 15th is `revalidate`'s
- * own internal delegation to `cancellation` (a cancelled continuation is
- * cancelled first, whatever the session says). Two of the 14 live inside
- * `readDecoded`, which runs once per config read, so a full successful
- * setup evaluates more guards than there are sites.
+ * Every awaited boundary on the setup path is followed by either
+ * `cancellation()` or `revalidate()`, and `revalidate` delegates to
+ * `cancellation` first (a cancelled continuation is cancelled first,
+ * whatever the session says). Two of the sites live inside `readDecoded`,
+ * which runs once per config read, so a successful setup evaluates more
+ * guards than there are literal call sites.
  *
  * SESSION/CLIENT COHERENCE (correction B-1)
  * -----------------------------------------
@@ -153,48 +191,32 @@
  * that `Ready` or the pulse path is unreachable in general (see the
  * safety-critical note at the top of this file).
  *
- * THE SIGNAL GAP, STATED PLAINLY
- * ------------------------------
- * The governing requirement asks for armed-state, arming-restriction-loss
- * and battery-unsafe/change signals from "an existing accepted,
- * session-bound, FRESH source", with no new polling loop and no reuse of
- * paused telemetry.
+ * ONE OBSERVATION PATH, ONE REQUESTER
+ * -----------------------------------
+ * `MotorTestSafetyMonitor` is constructed with THE SAME LEASE every
+ * configuration read, every box read, every motor command and every
+ * emergency stop travels. There is no second requester, no second client,
+ * no second transport and no parallel writer anywhere in this bundle, which
+ * is what keeps the MSP request path serialized and keeps a stop able to
+ * displace whatever is on the wire.
  *
- * NO SUCH CONTINUOUS SOURCE EXISTS IN THIS REPOSITORY, and this module
- * claims no coverage it does not have:
- *   - `acquireMotorDynamicSafetyObservation` is a ONE-SHOT read. It is
- *     used here exactly once, as a Ready gate. It is not a monitor;
- *   - `MspTelemetryScheduler` is the only continuous source, and this
- *     controller has just PAUSED it. Reading its cache would be reading
- *     values the barrier itself froze - the requirement forbids that, and
- *     so does honesty;
- *   - `MotorArmingRestrictionReceipt.isCurrent()` proves only that the
- *     lease is still live and the receipt is still this session's
- *     recorded one. It does NOT re-read the FC, so it cannot detect
- *     restriction removal. Its own doc comment says so.
- * Therefore: continuous armed-state, restriction-loss and battery
- * monitoring is an OPEN GAP. It is reported, not papered over - the
- * snapshot carries it in `continuousSafetyMonitoring`.
+ * The monitor reads MSP_STATUS_EX and nothing else, imports no encoder, and
+ * cannot construct a write command even in principle. It runs from the
+ * moment before READY is published until teardown or the first fault.
  *
- * REPAIR PASS R1 CORRECTION. That report used to be INERT: the gap was
- * published as data and then ignored by the activation gate, so a session
- * whose one-shot setup checks all passed could still activate a motor
- * with nothing watching the live condition. It is now an AUTHORITATIVE
- * BLOCKER - `evaluateActivation()` checks it first, on every evaluation,
- * and refuses activation while no accepted source exists. R1 does not
- * implement such a source; it stops the absence from being survivable.
- * `requestStop` accepts the corresponding trigger reasons so that a
- * genuine source added later routes into the same safety path, but this
- * module never manufactures them.
+ * WHAT MONITORING STILL DOES NOT PROVE. Each observation proves what the
+ * flight controller reported at one instant. It is not proof that a motor
+ * is turning, that one stopped, or that the fact is still true between two
+ * readings. Freshness is an AGE BOUND on a real reading, never a claim of
+ * continuous truth.
  *
- * ARMING-RESTRICTION TEARDOWN, STATED PLAINLY
- * -------------------------------------------
- * The accepted abstraction has NO removal operation - motorArmingRestriction.ts
- * deliberately does not implement, expose or encode the inverse payload.
- * Teardown therefore SETTLES rather than releases: it records one final
- * `isCurrent()` observation while the lease is still valid, and reports
- * `removalSupported: false, removalPerformed: false`. This module never
- * claims the restriction was removed, and never claims physical safety.
+ * WHAT IS NO LONGER MONITORED, SAID OUT LOUD. Pack voltage, cell count and
+ * the FC's own battery classification were previously part of the proof
+ * chain via the Pass 1E policy. They are not read any more, so this module
+ * makes NO claim about the battery and never will until something reads it
+ * again. The operator-facing instruction therefore asks for a battery and
+ * ESC combination suitable for the actual build; it does not claim that
+ * 4S is universal or automatically verified.
  */
 
 import {
@@ -207,11 +229,19 @@ import {
   type MspSessionCompositeIdentity,
 } from '../protocol/motorTestLease';
 import type {MspClient} from '../protocol/mspClient';
+import type {FlightControllerIdentity} from '../protocol/msp/identification/mspIdentificationTypes';
+import {
+  motorFirmwareSupports,
+  resolveMotorFirmwareCompatibility,
+  type MotorFirmwareCompatibility,
+} from '../firmware-adapters/motorFirmwareCompatibility';
 import {
   MSP_ADVANCED_CONFIG,
   MSP_FEATURE_CONFIG,
-  MSP_MIXER_CONFIG,
+  MSP_MOTOR,
   MSP_MOTOR_CONFIG,
+  MSP_MOTOR_TELEMETRY,
+  MSP2_SEND_DSHOT_COMMAND,
 } from '../protocol/msp/commands/mspCommands';
 // R2: motor-only command id, declared outside the Release-reachable
 // command table so its NAME does not ship in a Release bundle. Same id,
@@ -221,7 +251,8 @@ import {MSP_SET_MOTOR} from '../protocol/msp/commands/motorTestCommands';
 // modules and are reused unchanged - this controller neither duplicates
 // their logic nor introduces a second encoder. `assertSupportedMotorScope`
 // rejects 3D FIRST (3D inverts stop semantics), then a motor count other
-// than four, then any raw protocol other than DSHOT600 at the pinned tag.
+// than four, then any raw protocol outside the reviewed DShot-family
+// values at the pinned tag.
 import {
   assertSupportedMotorScope,
   buildAllStopVector,
@@ -230,70 +261,57 @@ import {
   type MotorVectorScope,
 } from '../firmware-adapters/betaflightMotorVectorsV147';
 import {
-  readContinuousSafetyMonitoring,
-  type MotorTestContinuousSafetyMonitoringState,
+  readMotorArmedStateEvidence,
+  type MotorTestArmedStateEvidence,
 } from './motorTestContinuousSafetyMonitor';
+import {
+  MotorTestSafetyMonitor,
+  type MotorTestSafetyMonitorFactory,
+  type MotorTestSafetyMonitorLike,
+  type MotorTestSafetyUnsafeReason,
+} from './motorTestSafetyMonitor';
+import type {MotorArmedStateObservationFailure} from './motorArmedStateObservation';
 import {
   encodeSetMotorPayload,
   MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
 } from '../protocol/msp/encoding/encodeSetMotorPayload';
-import {
-  decodeAdvancedConfig,
-  MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2,
-} from '../protocol/msp/decoding/decodeAdvancedConfig';
+import {decodeAdvancedConfig} from '../protocol/msp/decoding/decodeAdvancedConfig';
 import {decodeFeatureConfig} from '../protocol/msp/decoding/decodeFeatureConfig';
-import {
-  decodeMixerConfig,
-  MIXER_MODE_QUADX,
-} from '../protocol/msp/decoding/decodeMixerConfig';
 import {decodeMotorConfig} from '../protocol/msp/decoding/decodeMotorConfig';
-import {MspIdentificationService} from '../protocol/msp/identification/MspIdentificationService';
-import type {BoxIdsResult} from '../protocol/msp/identification/BoxIdsAcquisition';
+import {
+  decodeMotorOutputs,
+  type MspMotorOutputs,
+} from '../protocol/msp/decoding/decodeMotorOutputs';
+import {
+  decodeMotorTelemetry,
+  type MspMotorTelemetry,
+} from '../protocol/msp/decoding/decodeMotorTelemetry';
+import {
+  deriveMotorDiagnosticsSupport,
+  hasEscTelemetrySource,
+  type MotorDiagnosticsSupport,
+} from './motorDiagnosticsSemantics';
+import {MspPayloadReadError} from '../protocol/msp/decoding/MspPayloadReader';
+import {
+  MspClientError,
+  MspMotorTestStopDisplacementError,
+  type MspEmergencyStopDispatch,
+} from '../protocol/mspClient';
+import {
+  encodeDshotEscDirection,
+  type DshotEscDirection,
+} from '../protocol/msp/encoding/encodeDshotEscDirection';
 import type {
   MotorTestBarrierHold,
   MotorTestTelemetryRegistry,
   MotorTestTelemetrySession,
 } from '../protocol/telemetry/motorTestTelemetryBarrier';
-import {
-  establishMotorArmingRestriction,
-  type MotorArmingRestrictionEvidenceScope,
-  type MotorArmingRestrictionFailureReason,
-  type MotorArmingRestrictionReceipt,
-} from './motorArmingRestriction';
-import {
-  acquireMotorDynamicSafetyObservation,
-  type MotorDynamicSafetyObservationBlockedReason,
-} from './motorDynamicSafetyObservation';
-import {
-  evaluateMotorDynamicSafetyRequirements,
-  type MotorDynamicSafetyRequirementsEvaluation,
-} from './motorDynamicSafetyEvaluation';
-import {
-  acquireMotorFcFirmwareVersion,
-  type MotorFcFirmwareVersionBinding,
-  type MotorFcFirmwareVersionFailureReason,
-} from './motorFcFirmwareVersion';
-import {
-  assembleMotorStaticFacts,
-  bindMotorStaticFacts,
-  type MotorStaticFactsBinding,
-  type MotorStaticFactsSessionIdentity,
-} from './motorStaticFacts';
-import {
-  evaluateMotorStaticCompatibility,
-  type MotorStaticCompatibilityEvaluation,
-} from './motorStaticCompatibility';
+import type {MotorStaticFactsSessionIdentity} from './motorStaticFacts';
 import {
   acquireMotorTestBoxIds,
   type MotorTestBoxIdsFailureReason,
   type MotorTestBoxIdsSnapshot,
 } from './motorTestBoxIds';
-import {
-  composeMotorTestCapabilities,
-  isMotorTestProfileSupported,
-  type MotorTestCapabilities,
-  type MotorTestProfileEvidence,
-} from './motorTestCapabilities';
 import {
   createMotorTestState,
   motorTestTransition,
@@ -326,9 +344,24 @@ export type MotorTestSessionInvalidationReason =
 export type MotorTestControllerUnsubscribe = () => void;
 
 /**
+ * Identification is owned by the platform session coordinator, but the
+ * motor write gate consumes only this narrow, read-only projection. The
+ * shape intentionally matches the coordinator state without importing a
+ * React Native module into core.
+ */
+export type MotorTestFirmwareIdentificationState =
+  | {readonly status: 'IDLE'}
+  | {readonly status: 'RUNNING'}
+  | {
+      readonly status: 'SUCCEEDED';
+      readonly identity: FlightControllerIdentity;
+    }
+  | {readonly status: 'FAILED'; readonly error: unknown};
+
+/**
  * The narrow read/lifecycle slice of the platform session layer.
  *
- * Deliberately three members and nothing else. It exposes the canonical
+ * It exposes the canonical
  * `MspClient` ONLY so the production factory can hand it to
  * `acquireMotorTestLease`, which is the official issuer; this module
  * calls no method on it, and after acquisition every request goes through
@@ -339,6 +372,12 @@ export interface MotorTestControllerSessionPort {
   readonly client: MspClient | undefined;
   /** The composite identity currently in force, or undefined. */
   readCurrentIdentity(): MspSessionCompositeIdentity | undefined;
+  /** Current firmware-identification evidence for the same session. */
+  readFirmwareIdentification(): MotorTestFirmwareIdentificationState;
+  /** Notifies when identification moves IDLE -> RUNNING -> terminal. */
+  subscribeFirmwareIdentification(
+    listener: () => void,
+  ): MotorTestControllerUnsubscribe;
   /** Genuine invalidation signals. Returns an unsubscribe function. */
   subscribeSessionInvalidated(
     listener: (reason: MotorTestSessionInvalidationReason) => void,
@@ -364,6 +403,18 @@ export interface MotorTestControllerDependencies {
    * never a timer: nothing here schedules on it or compares it to a
    * deadline. */
   readonly readMonotonicMillis: () => number;
+  /**
+   * TEST SEAM ONLY, and deliberately optional.
+   *
+   * Production NEVER supplies this - `motorTestSessionBinding.ts` builds
+   * these dependencies and has no field for it, which a containment test
+   * asserts. Its only purpose is to let the pulse-engine suites drive the
+   * controller without a live observation loop competing for the fake
+   * link; the SAFETY DECISION is unaffected either way, because the gate
+   * always goes through `readContinuousSafetyMonitoring`, which requires a
+   * running monitor holding a fresh satisfied reading.
+   */
+  readonly createSafetyMonitor?: MotorTestSafetyMonitorFactory;
 }
 
 /* ------------------------------------------------------------------ *
@@ -586,107 +637,24 @@ export function classifyBoxIdsFailure(
   }
 }
 
-/** Exhaustive - adding a firmware-version failure reason must fail to
+/** Exhaustive - adding an armed-state observation failure must fail to
  * compile. */
-export function classifyFirmwareVersionFailure(
-  reason: MotorFcFirmwareVersionFailureReason,
+export function classifyArmedStateObservationFailure(
+  reason: MotorArmedStateObservationFailure,
 ): MotorTestFailureClass {
   switch (reason) {
     case 'SESSION_IDENTITY_UNAVAILABLE':
-    case 'SESSION_IDENTITY_MISMATCH':
     case 'SESSION_IDENTITY_CHANGED':
       return fault('SESSION_CHANGED');
     case 'REQUEST_FAILED':
       return fault('MSP_RESPONSE_TIMEOUT');
-    case 'MALFORMED_RESPONSE':
-      return LOCK;
-    default:
-      assertExhaustiveReason(reason);
-      return fault('NATIVE_EXCEPTION');
-  }
-}
-
-/** Exhaustive - adding an observation blocked reason must fail to
- * compile. */
-export function classifyDynamicObservationFailure(
-  reason: MotorDynamicSafetyObservationBlockedReason,
-): MotorTestFailureClass {
-  switch (reason) {
-    case 'SESSION_IDENTITY_UNAVAILABLE':
-    case 'SESSION_IDENTITY_MISMATCH':
-    case 'SESSION_IDENTITY_CHANGED':
-      return fault('SESSION_CHANGED');
-    case 'REQUEST_FAILED':
-      return fault('MSP_RESPONSE_TIMEOUT');
-    case 'STATIC_PROFILE_REQUIRED':
     case 'ARMING_BOX_MAPPING_REQUIRED':
     case 'ARMED_STATE_UNOBSERVABLE':
-    case 'ARMING_RESTRICTIONS_UNOBSERVABLE':
     case 'MALFORMED_RESPONSE':
       // Incomplete or unusable evidence with zero uncertain side effects:
-      // the accepted module sends only reads, and a read that answered
+      // the accepted module sends only a read, and a read that answered
       // badly leaves nothing pending on the aircraft.
       return LOCK;
-    default:
-      assertExhaustiveReason(reason);
-      return fault('NATIVE_EXCEPTION');
-  }
-}
-
-/**
- * Exhaustive - adding an arming-restriction failure reason must fail to
- * compile.
- *
- * The split here is the sharpest in this file, because command 99 is the
- * only session-bound WRITE in the whole bundle. Everything that can only
- * happen BEFORE it was submitted may lock; everything reachable at or
- * after submission must fail closed, because the write outcome is no
- * longer knowable from here.
- */
-export function classifyArmingRestrictionFailure(
-  reason: MotorArmingRestrictionFailureReason,
-): MotorTestFailureClass {
-  switch (reason) {
-    // --- Pre-submission, session-level ------------------------------
-    case 'CURRENT_SESSION_IDENTITY_UNAVAILABLE':
-    case 'REQUESTED_SESSION_IDENTITY_MISMATCH':
-    case 'MOTOR_TEST_LEASE_IDENTITY_MISMATCH':
-    case 'MOTOR_TEST_LEASE_INACTIVE':
-      return fault('SESSION_CHANGED');
-    case 'SESSION_IDENTITY_PROVIDER_FAILED':
-      return fault('NATIVE_EXCEPTION');
-    case 'ARMING_RESTRICTION_FAULT_LATCHED':
-      return fault('DESYNCHRONIZED');
-    case 'ARMING_RESTRICTION_ALREADY_ESTABLISHING':
-      // Two establishments for one authority. This controller starts at
-      // most one, so a second means something else is driving the same
-      // session - never continue under that ambiguity.
-      return fault('AUTHORITY_MISMATCH');
-    case 'ARMING_RESTRICTION_ALREADY_ESTABLISHED':
-      // A PREVIOUS controller established it for this same official
-      // session and holds the only receipt. Nothing is uncertain and
-      // nothing was written now - but this controller has no evidence of
-      // its own, so it must not claim any. A genuinely new official
-      // session (new client, or a rotated epoch) is required.
-      return LOCK;
-    case 'BOX_IDS_PROVENANCE_INVALID':
-      return LOCK;
-
-    // --- At or after submission -------------------------------------
-    case 'ARMING_DISABLE_REQUEST_FAILED':
-      // The write outcome is unknown by construction.
-      return fault('WRITE_OUTCOME_UNKNOWN');
-    case 'POST_ACK_STATUS_REQUEST_FAILED':
-      return fault('MSP_RESPONSE_TIMEOUT');
-    case 'SESSION_CHANGED_DURING_ESTABLISHMENT':
-      return fault('SESSION_CHANGED');
-    case 'FC_ARMED':
-    case 'MSP_ARMING_RESTRICTION_NOT_OBSERVED':
-    case 'INDEPENDENT_VERIFICATION_UNAVAILABLE':
-    case 'MALFORMED_STATUS_RESPONSE':
-      // Every one of these is reached only after command 99 went out, and
-      // the accepted module has already failed the lease closed.
-      return fault('WRITE_OUTCOME_UNKNOWN');
     default:
       assertExhaustiveReason(reason);
       return fault('NATIVE_EXCEPTION');
@@ -710,19 +678,20 @@ export type MotorTestControllerPhase =
 export type MotorTestSetupStep =
   | 'NOT_STARTED'
   | 'SESSION_ANCHOR'
+  | 'FIRMWARE_COMPATIBILITY'
   | 'TELEMETRY_BARRIER'
   | 'POST_BARRIER_REVALIDATION'
   | 'LEASE_ACQUISITION'
   | 'AUTHORITY_CAPTURE'
   | 'POST_LEASE_REVALIDATION'
-  | 'BOX_EVIDENCE'
-  | 'STATIC_FACTS'
-  | 'FIRMWARE_VERSION'
-  | 'STATIC_COMPATIBILITY'
-  | 'CAPABILITIES'
-  | 'DYNAMIC_OBSERVATION'
-  | 'DYNAMIC_EVALUATION'
-  | 'ARMING_RESTRICTION'
+  /** Step 7 - the minimal configuration the command encoder needs. */
+  | 'MOTOR_CONFIGURATION'
+  /** Step 8 - the MSP_BOXIDS mapping that makes armed state readable. */
+  | 'ARMED_STATE_EVIDENCE'
+  /** Step 9 - the monitor, constructed with the SAME lease. */
+  | 'SAFETY_MONITOR'
+  /** Step 10 - one fresh, satisfied, disarmed observation, AWAITED. */
+  | 'FIRST_OBSERVATION'
   | 'READY';
 
 export type MotorTestSetupBlockedReason =
@@ -739,18 +708,18 @@ export type MotorTestSetupBlockedReason =
   | 'TELEMETRY_QUIESCENCE_TIMEOUT'
   | 'LEASE_NOT_ACQUIRED'
   | 'OFFICIAL_AUTHORITY_UNAVAILABLE'
+  | 'FIRMWARE_IDENTITY_UNAVAILABLE'
+  | 'FIRMWARE_UNSUPPORTED'
   | 'BOX_EVIDENCE_UNAVAILABLE'
-  | 'STATIC_FACTS_REQUEST_FAILED'
-  | 'STATIC_FACTS_MALFORMED'
-  | 'FIRMWARE_VERSION_UNAVAILABLE'
-  | 'STATIC_PROFILE_NOT_EVALUATED'
-  | 'STATIC_PROFILE_UNSUPPORTED'
-  | 'CAPABILITY_PROFILE_UNSUPPORTED'
-  | 'DYNAMIC_OBSERVATION_UNAVAILABLE'
-  | 'DYNAMIC_REQUIREMENTS_NOT_EVALUATED'
-  | 'DYNAMIC_REQUIREMENTS_NOT_SATISFIED'
-  | 'ARMING_RESTRICTION_NOT_ESTABLISHED'
-  | 'ARMING_RESTRICTION_NOT_CURRENT'
+  | 'MOTOR_CONFIG_REQUEST_FAILED'
+  | 'MOTOR_CONFIG_MALFORMED'
+  /** FEATURE_3D enabled, a motor count other than four, or a raw motor
+   * protocol the encoder is not scoped for. Complete evidence, refused. */
+  | 'MOTOR_SCOPE_UNSUPPORTED'
+  /** The first production observation never completed usably. */
+  | 'FIRST_OBSERVATION_UNAVAILABLE'
+  /** The first production observation completed and proved ARMED. */
+  | 'FIRST_OBSERVATION_NOT_DISARMED'
   | 'TEARDOWN_INCOMPLETE'
   | 'UNEXPECTED_SERVICE_EXCEPTION';
 
@@ -780,26 +749,6 @@ export type MotorTestSetupOutcome =
       readonly requiresNewSession: true;
     };
 
-/**
- * What is known about the arming restriction.
- *
- * `receiptCurrentAtPublish` is a POINT-IN-TIME record taken when this
- * snapshot was built. It proves the lease was live and the receipt was
- * this session's recorded one at that instant. It does not re-read the
- * FC and is never evidence that the restriction is still in force.
- */
-export type MotorTestControllerArmingRestriction =
-  | {readonly kind: 'NOT_ATTEMPTED'}
-  | {
-      readonly kind: 'ESTABLISHED';
-      readonly evidenceScope: MotorArmingRestrictionEvidenceScope;
-      readonly receiptCurrentAtPublish: boolean;
-    }
-  | {
-      readonly kind: 'NOT_ESTABLISHED';
-      readonly reason: MotorArmingRestrictionFailureReason;
-    };
-
 export type MotorTestTeardownStepOutcome = 'DONE' | 'SKIPPED' | 'THREW';
 
 export type MotorTestTeardownStepName =
@@ -808,11 +757,12 @@ export type MotorTestTeardownStepName =
   | 'KEEP_TELEMETRY_PAUSED'
   | 'AUTHORIZED_TEARDOWN_ONLY'
   /** Phase 2F: the required command-214 all-stop attempt. Ordered AFTER
-   * authority validation and BEFORE any arming-restriction settlement, so
-   * the outputs are commanded to stop before anything that could relax
-   * the FC's arming restriction. */
+   * authority validation and BEFORE the lease is released, so the outputs
+   * are commanded to stop while a command can still be sent at all. */
   | 'EXECUTE_STOP_VECTOR'
-  | 'SETTLE_ARMING_RESTRICTION'
+  /** Step 9's monitor. Stopped before the lease is released so no
+   * observation can be outstanding against a dead lease. */
+  | 'STOP_SAFETY_MONITOR'
   | 'RELEASE_LEASE'
   | 'RELEASE_TELEMETRY_TOKENS';
 
@@ -827,13 +777,9 @@ export interface MotorTestTeardownStepReport {
  */
 export interface MotorTestTeardownReport {
   readonly steps: readonly MotorTestTeardownStepReport[];
-  /** The accepted abstraction has no removal operation, so this is
-   * permanently false and permanently honest. */
-  readonly armingRestrictionRemovalSupported: false;
-  readonly armingRestrictionRemovalPerformed: false;
-  /** Final `isCurrent()` observation, taken while the lease was still
-   * valid, or undefined when no receipt existed. */
-  readonly armingRestrictionReceiptCurrentAtTeardown: boolean | undefined;
+  /** Whether the dedicated observation loop was running and was stopped
+   * here. False when none had been constructed. */
+  readonly safetyMonitorStopped: boolean;
   /** The lease's own release verdict, `'NOT_HELD'` when none was ever
    * acquired, or `'THREW'` when the accepted call itself threw. */
   readonly leaseRelease: MotorTestLeaseReleaseResult | 'NOT_HELD' | 'THREW';
@@ -942,37 +888,62 @@ export type MotorTestPulseRequestResult =
  * private evaluator below produces this projection AND is the gate
  * `pulseMotor()` itself consults - there is exactly one implementation, so
  * a UI reading `allowed` can never disagree with what activation actually
- * does. Nothing here re-derives battery, armed, lease, authority, scope or
- * capability safety.
+ * does.
+ *
+ * THE REASON SET IS OPERATOR-FACING, AND THAT IS THE WHOLE POINT
+ * -------------------------------------------------------------
+ * There used to be twelve reasons, and a single teardown produced six of
+ * them at once - SETUP_NOT_READY, MACHINE_NOT_READY, TELEMETRY_BARRIER_NOT_HELD,
+ * ARMING_RESTRICTION_NOT_CURRENT, AUTHORITY_STALE and CONTROLLER_CLOSED are
+ * all CONSEQUENCES of the session ending, not six separate things wrong
+ * with the aircraft. Somebody reading that list learned nothing they could
+ * act on.
+ *
+ * These seven are what an operator can actually do something about. The
+ * INTERNAL protections are unchanged and remain strictly stronger: a
+ * closed controller, a stale requester, an inactive lease, a replaced
+ * session, a mismatched authority, an unheld barrier, a stop in progress
+ * and a sealed stop each still make a write impossible - they simply fold
+ * into the reason that is true and useful rather than being enumerated as
+ * separate hardware faults. `evaluateActivation()` below shows exactly
+ * which internal condition folds into which reason, and the full internal
+ * state stays available behind the screen's collapsed diagnostics.
  */
 export type MotorTestActivationBlockReason =
-  | 'CONTROLLER_CLOSED'
-  /** A locking safety event has occurred. See the activation bar. */
-  | 'SAFETY_EVENT_LATCHED'
-  | 'STOP_IN_PROGRESS'
-  /** A stop already ended unsafely. Permanent for this session. */
-  | 'STOP_SEALED'
-  | 'PULSE_ALREADY_LIVE'
-  | 'SETUP_NOT_READY'
-  | 'MACHINE_NOT_READY'
-  | 'TELEMETRY_BARRIER_NOT_HELD'
-  | 'ARMING_RESTRICTION_NOT_CURRENT'
-  | 'MOTOR_SCOPE_UNSUPPORTED'
-  | 'AUTHORITY_STALE'
   /**
-   * R1 - NO ACCEPTED, FRESH, SESSION-BOUND CONTINUOUS SAFETY MONITOR.
-   *
-   * Every other gate in this list is ONE-SHOT: it proves a condition held
-   * before the session began. None of them observes the seconds during
-   * which an output may actually be live - if the aircraft arms, the
-   * arming restriction is lost, or the battery becomes unsafe WHILE a
-   * pulse is running, nothing in this repository would notice.
-   *
-   * That absence was previously published as data and then ignored by the
-   * gate, so activation could proceed anyway. It is now an authoritative
-   * blocker: no monitor, no activation.
+   * There is no live, current, writable session: not started, still
+   * preparing, closing, closed, invalidated, replaced, barrier not held,
+   * lease inactive, or an authority that no longer matches.
    */
-  | 'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE';
+  | 'CONTROLLER_LINK_UNAVAILABLE'
+  /** A fresh production observation proved the flight controller ARMED. */
+  | 'FC_ARMED'
+  /**
+   * No fresh production observation proves DISARMED: none has completed,
+   * the read failed or was malformed, its session moved, or the last good
+   * reading has aged past `MOTOR_TEST_SAFETY_MAX_AGE_MILLIS`.
+   */
+  | 'ARMED_STATE_UNKNOWN_OR_STALE'
+  /** Firmware identification did not produce usable session-bound data. */
+  | 'FIRMWARE_IDENTITY_UNAVAILABLE'
+  /** No reviewed motor-write adapter matches the identified firmware/API. */
+  | 'FIRMWARE_UNSUPPORTED'
+  /**
+   * FEATURE_3D is enabled. Called out separately from the general scope
+   * refusal because it is the one configuration whose effect INVERTS: with
+   * 3D on, stop is external 1500 and 1000 is FULL REVERSE.
+   */
+  | 'MOTOR_3D_ENABLED'
+  /** Motor count or raw motor protocol outside the one supported scope. */
+  | 'MOTOR_SCOPE_UNSUPPORTED'
+  /** A pulse or a stop is already running. */
+  | 'PULSE_OR_STOP_IN_PROGRESS'
+  /**
+   * A terminal safety fault for this connection: a locking stop, a sealed
+   * stop, a faulted reducer or a failed-closed setup. Nothing short of a
+   * genuinely new canonical connection can clear it.
+   */
+  | 'REQUIRES_NEW_CONNECTION';
 
 export interface MotorTestActivationGate {
   /** True only when EVERY accepted guard is simultaneously satisfied. */
@@ -1070,8 +1041,8 @@ export interface MotorTestPulseRecord {
   readonly motorNumber: number | undefined;
   readonly submitted: boolean;
   readonly acknowledged: boolean;
-  /** True once the 3-second watchdog was armed. Armed from SUBMISSION
-   * START, never from acknowledgement. */
+  /** True once the touch-heartbeat watchdog was armed. Armed from
+   * SUBMISSION START, never from acknowledgement. */
   readonly deadlineArmedAtSubmission: boolean;
   /**
    * Latched true the moment activation is accepted and NEVER cleared for
@@ -1090,22 +1061,18 @@ function mapActivationBlockToPulseResult(
   reason: MotorTestActivationBlockReason | undefined,
 ): MotorTestPulseRequestResult {
   switch (reason) {
-    case 'CONTROLLER_CLOSED':
+    case 'CONTROLLER_LINK_UNAVAILABLE':
       return 'CONTROLLER_CLOSED';
-    case 'STOP_IN_PROGRESS':
-    case 'STOP_SEALED':
-    case 'PULSE_ALREADY_LIVE':
+    case 'PULSE_OR_STOP_IN_PROGRESS':
       return 'STOP_PENDING';
-    case 'MACHINE_NOT_READY':
+    case 'REQUIRES_NEW_CONNECTION':
       return 'NOT_READY';
-    case 'AUTHORITY_STALE':
-      return 'AUTHORITY_STALE';
-    case 'SAFETY_EVENT_LATCHED':
-    case 'SETUP_NOT_READY':
-    case 'TELEMETRY_BARRIER_NOT_HELD':
-    case 'ARMING_RESTRICTION_NOT_CURRENT':
+    case 'FC_ARMED':
+    case 'ARMED_STATE_UNKNOWN_OR_STALE':
+    case 'FIRMWARE_IDENTITY_UNAVAILABLE':
+    case 'FIRMWARE_UNSUPPORTED':
+    case 'MOTOR_3D_ENABLED':
     case 'MOTOR_SCOPE_UNSUPPORTED':
-    case 'CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE':
       return 'GATES_NOT_SATISFIED';
     case undefined:
       // Unreachable: only called when at least one reason exists. Fails
@@ -1128,9 +1095,43 @@ const NO_PULSE: MotorTestPulseRecord = Object.freeze({
   outcome: undefined,
 });
 
-/** The maximum time a pulse may remain logically live, measured from
- * SUBMISSION START - not from acknowledgement. */
-export const MOTOR_TEST_PULSE_MAX_DURATION_MILLIS = 3000;
+/**
+ * Maximum silence between two confirmations that the original touch still
+ * owns the pulse. This is deliberately a short fail-safe window, NOT a
+ * maximum motor-test duration: a healthy held gesture renews it and may run
+ * for as long as the operator keeps their finger down.
+ */
+export const MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS = 1200;
+
+/**
+ * Identification normally finishes before an operator reaches the Motors
+ * control. This bound exists for the real race where a very fast long press
+ * arrives while identification is still RUNNING; it waits for real evidence
+ * instead of either guessing or permanently killing the session at once.
+ */
+const MOTOR_TEST_FIRMWARE_IDENTIFICATION_TIMEOUT_MILLIS = 12_000;
+
+export type MotorTestHoldHeartbeatResult =
+  | 'RENEWED'
+  | 'NO_ACTIVE_PULSE'
+  | 'CONTROLLER_CLOSED';
+
+export type MotorTestEscDirectionOutcome =
+  | {
+      readonly kind: 'ACKNOWLEDGED';
+      readonly motorNumber: number;
+      readonly direction: DshotEscDirection;
+      readonly physicallyVerified: false;
+    }
+  | {
+      readonly kind: 'REJECTED';
+      readonly reason:
+        | 'NOT_READY'
+        | 'BUSY'
+        | 'UNSUPPORTED'
+        | 'INVALID_MOTOR';
+    }
+  | {readonly kind: 'UNCONFIRMED'};
 
 export interface MotorTestStopExecutionRecord {
   /** How many real command-214 operations ran. Concurrent triggers join
@@ -1149,10 +1150,27 @@ export interface MotorTestStopExecutionRecord {
   readonly deferredBehindActiveWrite: boolean;
   /**
    * Phase 2G: true when the stop displaced an already-written command
-   * 214, making any apparent acknowledgement unattributable. A full
-   * session reset is required; the lease is failed closed.
+   * 214, so the FIRST frame that resolved could belong to the displaced
+   * pulse rather than to this stop. It is a fact about that one exchange
+   * and is never cleared.
    */
   readonly attributionAmbiguous: boolean;
+  /**
+   * True when the ambiguity above was RESOLVED by a second, independently
+   * issued all-stop whose acknowledgement could not have been the
+   * displaced pulse's response.
+   *
+   * WHY THIS EXISTS RATHER THAN JUST CLEARING THE FLAG. A normal early
+   * release - the operator letting go while the pulse's own command 214
+   * is still unanswered - used to be permanently terminal, because an
+   * ambiguous first exchange was treated as unresolvable. It is not:
+   * exactly ONE non-stop 214 can be confused with the stop, the FIFO
+   * answers in order, and issuing a second all-stop therefore buys an
+   * acknowledgement that provably belongs to an all-stop frame. The first
+   * frame is still never accepted as proof - it is discarded, and this
+   * flag records that something else supplied the proof instead.
+   */
+  readonly attributionResolvedByConfirmation: boolean;
   /**
    * Phase 2G: PERMANENTLY false. Nothing in this codebase can preempt
    * bytes already handed to the transport. The strongest true statement
@@ -1178,10 +1196,40 @@ const NO_STOP_EXECUTION: MotorTestStopExecutionRecord = Object.freeze({
   physicalStopConfirmed: false as const,
   deferredBehindActiveWrite: false,
   attributionAmbiguous: false,
+  attributionResolvedByConfirmation: false,
   wirePreemptionClaimed: false as const,
   submittedNextOnTransport: false,
   episodeId: 0,
   outcome: undefined,
+});
+
+export type MotorTestDiagnosticsChannelState =
+  | 'WAITING'
+  | 'FRESH'
+  | 'NOT_ENABLED'
+  | 'UNSUPPORTED'
+  | 'MALFORMED_RESPONSE'
+  | 'LINK_FAILED';
+
+export interface MotorTestDiagnosticsChannel<T> {
+  readonly state: MotorTestDiagnosticsChannelState;
+  readonly value: T | undefined;
+  readonly observedAtMillis: number | undefined;
+}
+
+export interface MotorTestDiagnosticsSnapshot {
+  readonly outputs: MotorTestDiagnosticsChannel<MspMotorOutputs>;
+  readonly escTelemetry: MotorTestDiagnosticsChannel<MspMotorTelemetry>;
+}
+
+const WAITING_DIAGNOSTICS_CHANNEL = Object.freeze({
+  state: 'WAITING' as const,
+  value: undefined,
+  observedAtMillis: undefined,
+});
+const WAITING_DIAGNOSTICS: MotorTestDiagnosticsSnapshot = Object.freeze({
+  outputs: WAITING_DIAGNOSTICS_CHANNEL,
+  escTelemetry: WAITING_DIAGNOSTICS_CHANNEL,
 });
 
 export interface MotorTestControllerSnapshot {
@@ -1191,12 +1239,17 @@ export interface MotorTestControllerSnapshot {
    * exists. Undefined before that, by construction. */
   readonly machine: MotorTestState | undefined;
   readonly outcome: MotorTestSetupOutcome;
-  readonly capabilities: MotorTestCapabilities | undefined;
-  readonly staticCompatibility: MotorStaticCompatibilityEvaluation | undefined;
-  readonly dynamicEvaluation:
-    | MotorDynamicSafetyRequirementsEvaluation
-    | undefined;
-  readonly armingRestriction: MotorTestControllerArmingRestriction;
+  /** Versioned adapter verdict consulted by the actual motor write gate. */
+  readonly firmwareCompatibility: MotorFirmwareCompatibility | undefined;
+  /**
+   * The decoded configuration the encoder is scoped against, once read.
+   * Undefined before step 7, which is why a pre-evidence stop is
+   * unattemptable and a pre-evidence pulse is unencodable.
+   */
+  readonly motorScope: MotorVectorScope | undefined;
+  /** Truthful source model for command-139 fields, derived from the same
+   * MSP_MOTOR_CONFIG response as motorScope. */
+  readonly motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
   /** Whether this controller currently holds the telemetry barrier. */
   readonly telemetryHeld: boolean;
   readonly warnings: readonly MotorTestControllerWarning[];
@@ -1219,22 +1272,13 @@ export interface MotorTestControllerSnapshot {
    */
   readonly verificationReceipt: MotorTestVerificationReceipt | undefined;
   /**
-   * The open signal gap, carried in the data rather than only in a
-   * comment: no accepted source can provide continuous armed-state,
-   * arming-restriction-loss or battery monitoring while the barrier is
-   * held, so this controller does not monitor them and does not claim to.
+   * What the dedicated observation path currently proves about armed
+   * state, read FRESH on every publish rather than cached: a value
+   * captured once could outlive the condition it described.
    */
-  /**
-   * The live continuous-monitoring state, read fresh on every publish.
-   *
-   * R1: in production this is ALWAYS
-   * `'UNAVAILABLE_NO_ACCEPTED_SOURCE'` - the reader is hard-wired (see
-   * motorTestContinuousSafetyMonitor.ts) - and that value is now an
-   * authoritative activation blocker rather than an inert note. The type
-   * admits the available case only so the gate can express what it is
-   * checking for; nothing in production produces it.
-   */
-  readonly continuousSafetyMonitoring: MotorTestContinuousSafetyMonitoringState;
+  readonly armedStateEvidence: MotorTestArmedStateEvidence;
+  /** Fixed read-only probes sent through the SAME exclusive lease. */
+  readonly diagnostics?: MotorTestDiagnosticsSnapshot;
 }
 
 export type MotorTestStopRequestResult =
@@ -1264,6 +1308,7 @@ export const MOTOR_TEST_CONTROLLER_STOP_TRIGGERS: readonly MotorTestStopTriggerR
     'ARMING_RESTRICTION_REMOVED',
     'BATTERY_CHANGED',
     'BATTERY_BECAME_UNSAFE',
+    'SAFETY_MONITORING_FAILED',
   ] as const);
 
 const STOP_TRIGGER_SET: ReadonlySet<string> = new Set<string>(
@@ -1284,7 +1329,8 @@ const STOP_TRIGGER_SET: ReadonlySet<string> = new Set<string>(
  */
 export interface MotorTestController {
   /**
-   * Prepares the safety session: barrier, lease, evidence, restriction.
+   * Prepares the safety session: barrier, lease, motor scope and one fresh
+   * disarmed-state observation.
    *
    * Named for what it does. It starts NO motor, submits no activation and
    * cannot reach `Starting` or `Pulsing`. Calling it again returns the
@@ -1308,63 +1354,21 @@ export interface MotorTestController {
    * transport is never touched.
    */
   pulseMotor(motorNumber: number): MotorTestPulseRequestResult;
+  /**
+   * Renews the fail-safe for the already-live pulse. It cannot start a
+   * motor, select an output, change a magnitude or resurrect a stopped
+   * attempt. The UI calls it only while the original Pressable owns touch.
+   */
+  renewPulseHold(): MotorTestHoldHeartbeatResult;
+  /** Persists one selected DShot ESC direction without ending the session. */
+  setEscDirection(
+    motorNumber: number,
+    direction: DshotEscDirection,
+  ): Promise<MotorTestEscDirectionOutcome>;
+  /** Refreshes the fixed read-only output and ESC telemetry channels. */
+  refreshDiagnostics(): Promise<MotorTestDiagnosticsSnapshot>;
   /** Idempotent. Concurrent callers observe the same operation. */
   close(): Promise<MotorTestControllerSnapshot>;
-}
-
-/* ------------------------------------------------------------------ *
- * Evidence mapping
- * ------------------------------------------------------------------ */
-
-/**
- * Projects the accepted static facts plus the accepted firmware-version
- * binding onto the accepted capability evidence shape.
- *
- * Every mapping below is an explicit, documented rendering of a value the
- * FC actually reported. NOTHING IS DEFAULTED: a raw value the profile
- * does not recognize is rendered as a distinct non-matching token, which
- * the accepted composer reports as `EVIDENCE_UNSUPPORTED` - the honest
- * answer, and deliberately not `EVIDENCE_MISSING_OR_INVALID`, which would
- * claim the value could not be read when in fact it was.
- */
-export function composeMotorTestProfileEvidence(
-  staticFacts: MotorStaticFactsBinding,
-  firmwareVersion: MotorFcFirmwareVersionBinding,
-): MotorTestProfileEvidence {
-  const facts = staticFacts.facts;
-  const identity = facts.flightControllerIdentity;
-  const version = firmwareVersion.firmwareVersion;
-  return Object.freeze({
-    fcVariantIdentifier: identity.firmware.identifier,
-    apiVersionMajor: identity.apiVersion.apiVersionMajor,
-    apiVersionMinor: identity.apiVersion.apiVersionMinor,
-    firmwareYear: version.year,
-    firmwareMonth: version.month,
-    firmwarePatch: version.patch,
-    boardTargetName: identity.board.targetName,
-    // mixerMode_e raw -> token. QUAD_X is the only recognized value.
-    mixerProfile:
-      facts.mixerModeRaw === MIXER_MODE_QUADX
-        ? 'QUAD_X'
-        : `MIXER_MODE_RAW_${facts.mixerModeRaw}`,
-    motorCount: facts.motorCount,
-    // motorProtocolTypes_e raw -> token, pinned at 2025.12.2.
-    motorProtocol:
-      facts.motorProtocolRaw === MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2
-        ? 'DSHOT600'
-        : `MOTOR_PROTOCOL_RAW_${facts.motorProtocolRaw}`,
-    motorIdleHundredthsPercent: facts.motorIdleRaw,
-    feature3dEnabled: facts.feature3dEnabled,
-    // MSP_MIXER_CONFIG offset 1. The FC's STORED FLAG only - it is not a
-    // claim about physical propeller installation, and the accepted facts
-    // module says so in the field's own name.
-    propsOutConfigured: facts.yawMotorsReversedConfigured,
-    // Mirrors the accepted static check exactly: raw 0 is the supported
-    // value, anything else is treated as enabled. Raw 0 stays ambiguous
-    // between "disabled" and "not compiled in", and nothing here resolves
-    // that ambiguity.
-    bidirectionalDshotEnabled: facts.dshotTelemetryRaw !== 0,
-  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -1402,6 +1406,10 @@ interface SetupFailure {
   readonly classification: MotorTestFailureClass;
 }
 
+interface FirmwareIdentityAcquisition {
+  readonly identity: FlightControllerIdentity;
+}
+
 function failure(
   reason: MotorTestSetupBlockedReason,
   classification: MotorTestFailureClass,
@@ -1411,6 +1419,15 @@ function failure(
 
 function isFailure(value: object): value is SetupFailure {
   return 'classification' in value;
+}
+
+function assertExhaustiveIdentificationState(
+  _value: never,
+): SetupFailure {
+  return failure(
+    'UNEXPECTED_SERVICE_EXCEPTION',
+    fault('NATIVE_EXCEPTION'),
+  );
 }
 
 class MotorTestControllerImpl {
@@ -1436,25 +1453,31 @@ class MotorTestControllerImpl {
   /** The official authority, captured exactly once (see file header). */
   private authority: MspOfficialSessionAuthority | undefined;
   private lease: MotorTestLease | undefined;
+  /** The dedicated safety observation path for THIS session. Created and
+   * started only once every setup fact is proven, stopped on teardown and
+   * on any fault, and never shared with another session. */
+  private safetyMonitor: MotorTestSafetyMonitorLike | undefined;
   private barrier: MotorTestBarrierHold | undefined;
   private boxIds: MotorTestBoxIdsSnapshot | undefined;
-  private receipt: MotorArmingRestrictionReceipt | undefined;
+  /** Exact firmware/API adapter verdict for this physical session. */
+  private firmwareCompatibility: MotorFirmwareCompatibility | undefined;
 
   private machine: MotorTestState | undefined;
   private effectRecord: MotorTestEffectRecord = EMPTY_MOTOR_TEST_EFFECT_RECORD;
 
-  private capabilities: MotorTestCapabilities | undefined;
-  private staticCompatibility: MotorStaticCompatibilityEvaluation | undefined;
-  private dynamicEvaluation:
-    | MotorDynamicSafetyRequirementsEvaluation
-    | undefined;
-  private armingRestriction: MotorTestControllerArmingRestriction =
-    Object.freeze({kind: 'NOT_ATTEMPTED' as const});
   private teardownReport: MotorTestTeardownReport | undefined;
-  /** Phase 2F: the approved motor scope, captured from the SAME static
-   * facts the profile gates were evaluated against. Undefined until those
-   * facts exist, which is what makes a pre-evidence stop unattemptable. */
+  /**
+   * Phase 2F: the approved motor scope, captured from the SAME reads the
+   * scope guard is evaluated against. Undefined until step 7, which is what
+   * makes a pre-evidence stop unattemptable.
+   *
+   * IT IS RETAINED EVEN WHEN IT FAILS THE GUARD, deliberately: a session
+   * refused because FEATURE_3D is on must be able to SAY that, and a scope
+   * discarded on failure would leave the gate reporting nothing more useful
+   * than "no link".
+   */
   private motorScope: MotorVectorScope | undefined;
+  private motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
   private stopExecution: MotorTestStopExecutionRecord = NO_STOP_EXECUTION;
   /**
    * The ONE in-flight stop operation FOR THE CURRENT EPISODE. Concurrent
@@ -1495,6 +1518,11 @@ class MotorTestControllerImpl {
   private pulseAttempt: object | undefined;
   private pulseAttemptCounter = 0;
   private pulseDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A persistent ESC command is serialized on the same lease and blocks
+   * pulse activation until its post-write disarmed observation completes. */
+  private directionChangeInFlight = false;
+  private diagnostics: MotorTestDiagnosticsSnapshot = WAITING_DIAGNOSTICS;
+  private diagnosticsPromise: Promise<MotorTestDiagnosticsSnapshot> | undefined;
   /** Latched at activation, never cleared. See MotorTestPulseRecord. */
   private pulseMayHaveReachedFc = false;
   /**
@@ -1505,15 +1533,15 @@ class MotorTestControllerImpl {
    * was ever submitted - it must not manufacture stop traffic for an
    * activation that never began, and that reasoning is correct for the
    * reducer's own job. But it means a LOCKING safety event that arrives
-   * while idle (armed state detected, arming restriction removed, battery
-   * changed or became unsafe, navigation blur, background) leaves the
-   * machine in `Ready` - and `Ready` is exactly what this controller's
-   * activation gate consults.
+   * while idle (armed state detected, monitoring failure, navigation blur,
+   * background or session invalidation) leaves the machine in `Ready` - and
+   * `Ready` is exactly what this controller's activation gate consults.
    *
-   * Without this bar, a battery that just became unsafe would still admit
-   * a fresh pulse. The precondition that event invalidated has not come
-   * back, so activation is barred for the rest of this session. Normal
-   * reasons - release, stop button, motor switch, deadline - never set it.
+   * Without this bar, a controller that just reported itself armed or lost
+   * its safety observation could still admit a fresh pulse. The precondition
+   * that event invalidated has not come back, so activation is barred for the
+   * rest of this session. Normal reasons - release, stop button, motor switch,
+   * deadline - never set it.
    */
   private activationBarred = false;
 
@@ -1532,23 +1560,14 @@ class MotorTestControllerImpl {
   /* --- publication ------------------------------------------------ */
 
   private buildSnapshot(): MotorTestControllerSnapshot {
-    let armingRestriction = this.armingRestriction;
-    if (armingRestriction.kind === 'ESTABLISHED' && this.receipt !== undefined) {
-      armingRestriction = Object.freeze({
-        kind: 'ESTABLISHED' as const,
-        evidenceScope: armingRestriction.evidenceScope,
-        receiptCurrentAtPublish: this.receipt.isCurrent(),
-      });
-    }
     return Object.freeze({
       phase: this.phase,
       setupStep: this.setupStep,
       machine: this.machine,
       outcome: this.outcome,
-      capabilities: this.capabilities,
-      staticCompatibility: this.staticCompatibility,
-      dynamicEvaluation: this.dynamicEvaluation,
-      armingRestriction,
+      firmwareCompatibility: this.firmwareCompatibility,
+      motorScope: this.motorScope,
+      motorDiagnosticsSupport: this.motorDiagnosticsSupport,
       telemetryHeld: this.barrier?.isHeld() ?? false,
       warnings: this.effectRecord.warnings,
       stopDescriptors: this.effectRecord.stopDescriptors,
@@ -1559,8 +1578,17 @@ class MotorTestControllerImpl {
       verificationReceipt: this.evaluateVerificationReceipt(),
       // Read FRESH, never cached at construction: a value captured once
       // could outlive the condition it described.
-      continuousSafetyMonitoring: readContinuousSafetyMonitoring(),
+      armedStateEvidence: this.readArmedStateEvidence(),
+      diagnostics: this.diagnostics,
     });
+  }
+
+  /** The one place the monitor is turned into a gate input. */
+  private readArmedStateEvidence(): MotorTestArmedStateEvidence {
+    return readMotorArmedStateEvidence(
+      this.safetyMonitor,
+      this.deps.readMonotonicMillis(),
+    );
   }
 
   /**
@@ -1635,7 +1663,44 @@ class MotorTestControllerImpl {
     if (authority === undefined) {
       return;
     }
+    // A faulted session can never activate again, so monitoring it would
+    // buy nothing and could only produce further stop requests against a
+    // machine that is already dead. Stopped here, at the one choke point
+    // every fault passes through, rather than at each call site.
+    this.safetyMonitor?.stop();
     this.apply({authority, kind: 'FAULT_RAISED', reason}, undefined);
+  }
+
+  /**
+   * The dedicated safety monitor proved the link unsafe.
+   *
+   * EVERY branch reaches the SAME idempotent priority-stop path as a
+   * touch release or a deadline - `requestStop`, which registers the
+   * emergency stop synchronously before it returns. Nothing here writes a
+   * motor value, and nothing here waits on the monitor.
+   *
+   * AN ARMED READING is reported with the accepted `ARMED_STATE_DETECTED`
+   * trigger, so the operator is told the condition the flight controller
+   * itself reported. A FAILED or STALE reading additionally FAULTS under
+   * `SAFETY_MONITORING_FAILED`: a read that timed out or could not be
+   * trusted while an output may be live is exactly the case where the
+   * session must not be reusable, and it is named for what happened rather
+   * than borrowed from the battery vocabulary as it once was.
+   */
+  private onSafetyMonitorUnsafe(reason: MotorTestSafetyUnsafeReason): void {
+    if (reason === 'FC_ARMED_OBSERVED') {
+      this.requestStop('ARMED_STATE_DETECTED');
+      return;
+    }
+    // Stop FIRST - the stop is registered before the fault is dispatched,
+    // so a possibly-live output is addressed before the state machine is
+    // told the session is dead.
+    this.requestStop('SAFETY_MONITORING_FAILED');
+    this.dispatchFault('MSP_RESPONSE_TIMEOUT');
+    // requestStop() published BEFORE the fault existed, so without this a
+    // subscriber would be left holding a snapshot that shows the stop but
+    // not the Fault it caused.
+    this.publish();
   }
 
   private dispatchStop(reason: MotorTestStopTriggerReason): void {
@@ -1644,6 +1709,69 @@ class MotorTestControllerImpl {
       return;
     }
     this.apply({authority, kind: 'STOP_TRIGGERED', reason}, reason);
+  }
+
+  /**
+   * Reports an ATTRIBUTABLE all-stop acknowledgement to the reducer.
+   *
+   * Reachable from exactly one place - the stop operation's own terminal
+   * outcome - and only for `ACKNOWLEDGED`. There is no path by which a
+   * caller, a timer, a late frame or a UI event can construct this event,
+   * which is what keeps "the machine left Stopping" tied to a real,
+   * attributable acknowledgement of a real all-stop frame.
+   */
+  private dispatchStopAcknowledged(): void {
+    const authority = this.authority;
+    if (authority === undefined) {
+      return;
+    }
+    this.apply({authority, kind: 'STOP_ACKNOWLEDGED'}, undefined);
+  }
+
+  /**
+   * Puts monitoring back after a stop that left the session genuinely
+   * usable, and proves the flight controller disarmed all over again
+   * before anything may be activated.
+   *
+   * EVERY CONDITION BELOW IS A REFUSAL TO RESUME, not a formality:
+   *   - a closing or closed controller has nothing to monitor;
+   *   - a reducer that did not land in `Ready` means the stop was a
+   *     locking or faulting one, and that session is over;
+   *   - a sealed stop or a latched safety event is terminal by
+   *     construction;
+   *   - a monitor whose last reading was ARMED or FAILED already reported
+   *     itself unsafe, and restarting it would paper over that.
+   *
+   * The fresh observation is AWAITED and then published, exactly as the
+   * setup boundary does, so the control becomes usable from the reading
+   * itself rather than from some unrelated later render.
+   */
+  private resumeMonitoringAfterStop(): void {
+    const monitor = this.safetyMonitor;
+    if (monitor === undefined || this.closing || this.phase !== 'ACTIVE') {
+      return;
+    }
+    if (this.stopSealed || this.activationBarred || this.stopInFlight !== undefined) {
+      return;
+    }
+    if (this.machine === undefined || this.machine.name !== 'Ready') {
+      return;
+    }
+    const status = monitor.snapshot().status;
+    if (status.kind === 'ARMED' || status.kind === 'FAILED') {
+      return;
+    }
+    monitor.start();
+    monitor
+      .observeNow()
+      .then(() => {
+        this.publish();
+      })
+      .catch(() => {
+        // observeNow is documented never to reject; the monitor's own
+        // failure path has already reported through `onUnsafe`.
+        this.publish();
+      });
   }
 
   /* --- cancellation ----------------------------------------------- */
@@ -1660,11 +1788,35 @@ class MotorTestControllerImpl {
   /* --- public operations ------------------------------------------ */
 
   initializeSession(): Promise<MotorTestControllerSnapshot> {
-    if (this.setupPromise !== undefined) {
-      return this.setupPromise;
-    }
+    // ORDER IS THE FIX, AND IT IS NOT COSMETIC.
+    //
+    // The closed check used to sit BELOW the cache check. Once setup had
+    // run and teardown had reached CLOSED, `setupPromise` was still a
+    // settled promise, so every later Step-1 press returned it - resolving
+    // to the snapshot captured WHEN THAT PROMISE SETTLED, not the current
+    // post-teardown one. The operator pressed a button and got a stale
+    // success/failure object back from a dead controller, with nothing
+    // saying a new connection was needed.
+    //
+    // Checked first, the closed controller now answers with its CURRENT
+    // snapshot, whose `outcome` carries `requiresNewSession: true` after
+    // any teardown-completing failure. The screen renders that as an
+    // explicit Arabic instruction to disconnect and reconnect.
+    //
+    // DELIBERATELY NOT "let runSetup() run again". This instance still
+    // holds its terminal outcome, teardown report, listener set, monitor,
+    // barrier and lease/authority fields. Re-running setup on top of that
+    // would reuse session-bound evidence, which is exactly what must never
+    // happen. A genuinely fresh attempt needs a genuinely fresh
+    // controller - see the note in motorTestSessionBinding.ts on why that
+    // cannot be minted under the current frozen-facade binding without a
+    // change-notification path, and why the operator is told to reconnect
+    // instead of being silently handed a corpse.
     if (this.closing || this.phase === 'CLOSED') {
       return Promise.resolve(this.snapshot);
+    }
+    if (this.setupPromise !== undefined) {
+      return this.setupPromise;
     }
     this.setupPromise = this.runSetup();
     return this.setupPromise;
@@ -1825,90 +1977,426 @@ class MotorTestControllerImpl {
     return 'ACCEPTED';
   }
 
+  renewPulseHold(): MotorTestHoldHeartbeatResult {
+    if (this.phase === 'CLOSED' || this.phase === 'CLOSING' || this.closing) {
+      return 'CONTROLLER_CLOSED';
+    }
+    const attempt = this.pulseAttempt;
+    if (attempt === undefined) {
+      return 'NO_ACTIVE_PULSE';
+    }
+    this.armPulseDeadline(attempt);
+    return 'RENEWED';
+  }
+
+  async setEscDirection(
+    motorNumber: number,
+    direction: DshotEscDirection,
+  ): Promise<MotorTestEscDirectionOutcome> {
+    if (
+      !Number.isInteger(motorNumber) ||
+      motorNumber < 1 ||
+      motorNumber > MOTOR_VECTOR_MOTOR_COUNT
+    ) {
+      return {kind: 'REJECTED', reason: 'INVALID_MOTOR'};
+    }
+    if (
+      this.directionChangeInFlight ||
+      this.pulseAttempt !== undefined ||
+      this.stopInFlight !== undefined
+    ) {
+      return {kind: 'REJECTED', reason: 'BUSY'};
+    }
+    if (!this.evaluateActivation().allowed) {
+      return {kind: 'REJECTED', reason: 'NOT_READY'};
+    }
+    const lease = this.lease;
+    const authority = this.authority;
+    if (lease === undefined || authority === undefined) {
+      return {kind: 'REJECTED', reason: 'NOT_READY'};
+    }
+
+    let payload: Uint8Array;
+    try {
+      assertSupportedMotorScope(this.motorScope as MotorVectorScope);
+      payload = encodeDshotEscDirection(motorNumber - 1, direction);
+    } catch {
+      return {kind: 'REJECTED', reason: 'UNSUPPORTED'};
+    }
+
+    this.directionChangeInFlight = true;
+    this.safetyMonitor?.stop();
+    this.publish();
+    let remoteUnsupported = false;
+    try {
+      await lease.requestOptional(MSP2_SEND_DSHOT_COMMAND, payload, {
+        wireFormat: 'v2',
+      });
+    } catch (error) {
+      remoteUnsupported =
+        error instanceof MspClientError && error.code === 'MSP_REMOTE_ERROR';
+      if (!remoteUnsupported) {
+        this.directionChangeInFlight = false;
+        this.activationBarred = true;
+        this.dispatchFault('WRITE_OUTCOME_UNKNOWN');
+        this.publish();
+        return {kind: 'UNCONFIRMED'};
+      }
+    }
+    this.directionChangeInFlight = false;
+
+    if (
+      !lease.isActive() ||
+      lease.officialSessionAuthority() !== authority ||
+      this.authority !== authority
+    ) {
+      this.activationBarred = true;
+      this.dispatchFault('WRITE_OUTCOME_UNKNOWN');
+      this.publish();
+      return {kind: 'UNCONFIRMED'};
+    }
+
+    const monitor = this.safetyMonitor;
+    if (monitor === undefined) {
+      this.activationBarred = true;
+      this.dispatchFault('MSP_RESPONSE_TIMEOUT');
+      this.publish();
+      return {kind: 'UNCONFIRMED'};
+    }
+    try {
+      monitor.start();
+      await monitor.observeNow();
+    } catch {
+      if (!this.closing && this.phase !== 'CLOSED') {
+        this.activationBarred = true;
+        this.dispatchFault('MSP_RESPONSE_TIMEOUT');
+        this.publish();
+      }
+      return {kind: 'UNCONFIRMED'};
+    }
+    // The awaited observation cannot authorise a result after teardown,
+    // replacement or lease invalidation. The direction command is never
+    // retried; the caller receives an unconfirmed outcome.
+    if (
+      this.closing ||
+      this.phase !== 'ACTIVE' ||
+      !lease.isActive() ||
+      lease.officialSessionAuthority() !== authority ||
+      this.authority !== authority
+    ) {
+      return {kind: 'UNCONFIRMED'};
+    }
+    if (this.readArmedStateEvidence() !== 'FRESH_DISARMED') {
+      this.activationBarred = true;
+      this.dispatchFault('MSP_RESPONSE_TIMEOUT');
+      this.publish();
+      return {kind: 'UNCONFIRMED'};
+    }
+    this.publish();
+    return remoteUnsupported
+      ? {kind: 'REJECTED', reason: 'UNSUPPORTED'}
+      : Object.freeze({
+          kind: 'ACKNOWLEDGED' as const,
+          motorNumber,
+          direction,
+          physicallyVerified: false as const,
+        });
+  }
+
+  refreshDiagnostics(): Promise<MotorTestDiagnosticsSnapshot> {
+    const existing = this.diagnosticsPromise;
+    if (existing !== undefined) {
+      return existing;
+    }
+    if (
+      this.phase !== 'ACTIVE' ||
+      this.closing ||
+      this.directionChangeInFlight ||
+      this.stopInFlight !== undefined ||
+      this.lease?.isActive() !== true
+    ) {
+      return Promise.resolve(this.diagnostics);
+    }
+    const started = this.runDiagnosticsRefresh();
+    this.diagnosticsPromise = started;
+    return started.finally(() => {
+      if (this.diagnosticsPromise === started) {
+        this.diagnosticsPromise = undefined;
+      }
+    });
+  }
+
+  private async runDiagnosticsRefresh(): Promise<MotorTestDiagnosticsSnapshot> {
+    const lease = this.lease;
+    if (lease === undefined) {
+      return this.diagnostics;
+    }
+    const read = async <T>(
+      command: number,
+      decode: (payload: Uint8Array) => T,
+      previous: MotorTestDiagnosticsChannel<T>,
+    ): Promise<MotorTestDiagnosticsChannel<T>> => {
+      try {
+        const frame = await lease.requestOptional(command, EMPTY_PAYLOAD, {
+          wireFormat: 'v1',
+          responseTimeoutMs: 500,
+        });
+        return Object.freeze({
+          state: 'FRESH' as const,
+          value: decode(frame.payload),
+          observedAtMillis: this.deps.readMonotonicMillis(),
+        });
+      } catch (error) {
+        if (error instanceof MspMotorTestStopDisplacementError) {
+          return previous;
+        }
+        if (error instanceof MspClientError && error.code === 'MSP_REMOTE_ERROR') {
+          return Object.freeze({
+            state: 'UNSUPPORTED' as const,
+            value: undefined,
+            observedAtMillis: this.deps.readMonotonicMillis(),
+          });
+        }
+        if (error instanceof MspPayloadReadError) {
+          return Object.freeze({
+            state: 'MALFORMED_RESPONSE' as const,
+            value: undefined,
+            observedAtMillis: this.deps.readMonotonicMillis(),
+          });
+        }
+        return Object.freeze({
+          state: 'LINK_FAILED' as const,
+          value: undefined,
+          observedAtMillis: this.deps.readMonotonicMillis(),
+        });
+      }
+    };
+
+    const outputs = await read(
+      MSP_MOTOR,
+      decodeMotorOutputs,
+      this.diagnostics.outputs,
+    );
+    this.diagnostics = Object.freeze({...this.diagnostics, outputs});
+    this.publish();
+    if (outputs.state === 'LINK_FAILED') {
+      // A transport-ambiguous read failure is a link failure, even though
+      // the command itself was read-only. If a motor pulse is live, the
+      // normal monitor-failure route clears its heartbeat and registers the
+      // priority all-stop immediately; if no pulse has ever been submitted,
+      // it simply faults the unusable test session.
+      this.onSafetyMonitorUnsafe('SAFETY_OBSERVATION_FAILED');
+      return this.diagnostics;
+    }
+    if (
+      !lease.isActive() ||
+      this.closing ||
+      this.phase !== 'ACTIVE' ||
+      this.stopInFlight !== undefined ||
+      this.directionChangeInFlight
+    ) {
+      return this.diagnostics;
+    }
+    // Betaflight serializes a valid all-zero command-139 payload when
+    // neither bidirectional DShot nor FEATURE_ESC_SENSOR is enabled. A
+    // successful reply is therefore not capability evidence. Refuse the
+    // request entirely when the earlier MSP_MOTOR_CONFIG read proved that
+    // there is no source, preserving NOT_ENABLED instead of publishing
+    // synthetic-looking zero measurements as FRESH.
+    if (!hasEscTelemetrySource(this.motorDiagnosticsSupport)) {
+      const escTelemetry = Object.freeze({
+        state: 'NOT_ENABLED' as const,
+        value: undefined,
+        observedAtMillis: this.deps.readMonotonicMillis(),
+      });
+      this.diagnostics = Object.freeze({...this.diagnostics, escTelemetry});
+      this.publish();
+      return this.diagnostics;
+    }
+    const escTelemetry = await read(
+      MSP_MOTOR_TELEMETRY,
+      decodeMotorTelemetry,
+      this.diagnostics.escTelemetry,
+    );
+    this.diagnostics = Object.freeze({...this.diagnostics, escTelemetry});
+    this.publish();
+    if (escTelemetry.state === 'LINK_FAILED') {
+      this.onSafetyMonitorUnsafe('SAFETY_OBSERVATION_FAILED');
+    }
+    return this.diagnostics;
+  }
+
   /**
    * THE authoritative activation evaluation. Every accepted guard, all at
    * once, in one place. Called by `pulseMotor()` before any activation and
    * published verbatim on every snapshot.
    *
-   * Deliberately collects EVERY blocking reason rather than short-
-   * circuiting on the first: a screen that shows only "not ready" when
-   * three separate preconditions are unmet teaches the operator nothing.
+   * THE FIVE THINGS IT DIRECTLY REQUIRES:
+   *   1. a live current session/controller that is not closing, closed,
+   *      invalidated or replaced;
+   *   2. a fresh production observation proving the FC is DISARMED;
+   *   3. a supported motor scope with 3D disabled;
+   *   4. no pulse or stop operation already in progress;
+   *   5. no terminal safety fault for the current connection.
+   *
+   * INTERNAL PROTECTIONS ARE STRICTLY STRONGER THAN THE REASONS SHOWN, and
+   * that asymmetry is intentional. `hasLiveWritableSession()` below still
+   * requires the barrier held, the lease active, the authority equal BY
+   * REFERENCE on both the lease and the reducer, and the composite session
+   * identity still equal to the one-time anchor. A closed controller, a
+   * stale requester, an inactive lease, a replaced session or a mismatched
+   * authority therefore remains structurally incapable of writing - each
+   * simply folds into `CONTROLLER_LINK_UNAVAILABLE` instead of being
+   * enumerated as a separate operator-facing hardware fault.
+   *
+   * Collects EVERY applicable reason rather than short-circuiting, so the
+   * screen can pick the first CAUSAL one and keep the rest for diagnostics.
    */
   private evaluateActivation(): MotorTestActivationGate {
     const reasons: MotorTestActivationBlockReason[] = [];
+    const machineName = this.machine?.name;
 
-    // R1 - CHECKED FIRST, and read FRESH on every evaluation.
-    //
-    // Placed ahead of every one-shot gate deliberately: those gates all
-    // describe the past, and this one describes whether anything is
-    // watching the present. A session whose setup checks all passed is
-    // still not safe to activate if nothing is observing armed state,
-    // arming-restriction loss or battery condition while an output is
-    // live. Anything that is not an accepted live source fails closed.
-    if (readContinuousSafetyMonitoring() !== 'AVAILABLE_ACCEPTED_SOURCE') {
-      reasons.push('CONTINUOUS_SAFETY_MONITORING_UNAVAILABLE');
-    }
-
-    if (this.phase === 'CLOSED' || this.phase === 'CLOSING' || this.closing) {
-      reasons.push('CONTROLLER_CLOSED');
-    }
-    if (this.activationBarred) {
-      reasons.push('SAFETY_EVENT_LATCHED');
-    }
-    if (this.stopSealed) {
-      reasons.push('STOP_SEALED');
-    }
-    if (this.stopInFlight !== undefined) {
-      reasons.push('STOP_IN_PROGRESS');
-    }
-    if (this.pulseAttempt !== undefined) {
-      reasons.push('PULSE_ALREADY_LIVE');
-    }
-    if (this.phase !== 'ACTIVE' || this.outcome.kind !== 'READY') {
-      reasons.push('SETUP_NOT_READY');
-    }
-    if (this.machine === undefined || this.machine.name !== 'Ready') {
-      reasons.push('MACHINE_NOT_READY');
-    }
-    if (this.barrier === undefined) {
-      reasons.push('TELEMETRY_BARRIER_NOT_HELD');
-    }
+    // (5) A terminal safety fault for this connection. Checked first
+    // because everything else it produces is a consequence of it.
     if (
-      this.armingRestriction.kind !== 'ESTABLISHED' ||
-      this.receipt === undefined ||
-      !this.receipt.isCurrent()
+      this.activationBarred ||
+      this.stopSealed ||
+      this.outcome.kind === 'FAILED_CLOSED' ||
+      machineName === 'Fault'
     ) {
-      reasons.push('ARMING_RESTRICTION_NOT_CURRENT');
+      reasons.push('REQUIRES_NEW_CONNECTION');
     }
-    if (this.motorScope === undefined) {
-      reasons.push('MOTOR_SCOPE_UNSUPPORTED');
+
+    // (4) A pulse or a stop already running. Read from the controller's own
+    // records AND from the reducer, so neither alone can hide one.
+    if (
+      this.pulseAttempt !== undefined ||
+      this.stopInFlight !== undefined ||
+      this.directionChangeInFlight ||
+      machineName === 'Starting' ||
+      machineName === 'Pulsing' ||
+      machineName === 'Stopping'
+    ) {
+      reasons.push('PULSE_OR_STOP_IN_PROGRESS');
+    }
+
+    // (1) A live, current, writable session - every internal protection.
+    if (!this.hasLiveWritableSession()) {
+      reasons.push('CONTROLLER_LINK_UNAVAILABLE');
+    }
+
+    // Firmware capability is independent from the decoded motor scope.
+    // A different firmware may expose fields that happen to decode to the
+    // same numbers while assigning different semantics to command 214.
+    if (this.firmwareCompatibility?.status === 'UNSUPPORTED') {
+      reasons.push('FIRMWARE_UNSUPPORTED');
+    } else if (
+      this.outcome.kind === 'BLOCKED' &&
+      this.outcome.reason === 'FIRMWARE_IDENTITY_UNAVAILABLE'
+    ) {
+      reasons.push('FIRMWARE_IDENTITY_UNAVAILABLE');
+    }
+
+    // (3) Motor scope, re-run LIVE on every evaluation and never trusted
+    // from setup alone. A scope that was never read is setup
+    // incompleteness, NOT a statement about the aircraft's configuration:
+    // telling somebody their motor setup is unsupported when it has never
+    // been inspected would be a lie, so that case is reported as link
+    // unavailability instead.
+    const scope = this.motorScope;
+    if (scope === undefined) {
+      if (!reasons.includes('CONTROLLER_LINK_UNAVAILABLE')) {
+        reasons.push('CONTROLLER_LINK_UNAVAILABLE');
+      }
+    } else if (scope.feature3dEnabled) {
+      // Called out on its own because 3D INVERTS stop semantics.
+      reasons.push('MOTOR_3D_ENABLED');
     } else {
       try {
-        // The accepted guard, re-run LIVE on every evaluation: 3D
-        // disabled, exactly four motors, DSHOT600 raw. Never trusted from
-        // setup alone.
-        assertSupportedMotorScope(this.motorScope);
+        assertSupportedMotorScope(scope);
       } catch {
         reasons.push('MOTOR_SCOPE_UNSUPPORTED');
       }
     }
-    // Authority and lease by REFERENCE, never by value.
-    const lease = this.lease;
-    const authority = this.authority;
-    if (
-      lease === undefined ||
-      authority === undefined ||
-      !lease.isActive() ||
-      lease.officialSessionAuthority() !== authority ||
-      this.machine?.authority !== authority
-    ) {
-      reasons.push('AUTHORITY_STALE');
+
+    // (2) A fresh production observation proving DISARMED. Read FRESH, so
+    // an observation that ages out between two evaluations stops
+    // authorising anything without waiting for a render.
+    const armedEvidence = this.readArmedStateEvidence();
+    if (armedEvidence === 'FC_ARMED') {
+      reasons.push('FC_ARMED');
+    } else if (armedEvidence !== 'FRESH_DISARMED') {
+      reasons.push('ARMED_STATE_UNKNOWN_OR_STALE');
     }
 
     if (reasons.length === 0) {
       return ACTIVATION_ALLOWED;
     }
     return Object.freeze({allowed: false, reasons: Object.freeze(reasons)});
+  }
+
+  /**
+   * Every structural condition that must hold for this controller to be
+   * able to put a byte on the wire at all.
+   *
+   * NOTHING HERE IS COSMETIC. Each clause was a separately displayed
+   * activation reason before the simplification and each one still refuses
+   * a write; they are collapsed into one operator-facing statement, not
+   * into one weaker check.
+   */
+  private hasLiveWritableSession(): boolean {
+    if (this.closing || this.phase !== 'ACTIVE') {
+      return false;
+    }
+    if (
+      this.firmwareCompatibility === undefined ||
+      !motorFirmwareSupports(
+        this.firmwareCompatibility,
+        'MOTOR_TEST_WRITE',
+      )
+    ) {
+      return false;
+    }
+    if (this.outcome.kind !== 'READY') {
+      return false;
+    }
+    // The barrier must still be genuinely held - not merely once acquired.
+    if (this.barrier === undefined || !this.barrier.isHeld()) {
+      return false;
+    }
+    // Authority and lease by REFERENCE, never by value: a structurally
+    // identical clone of either fails here, which is the whole point of
+    // the authority being a non-forgeable object.
+    const lease = this.lease;
+    const authority = this.authority;
+    if (lease === undefined || authority === undefined) {
+      return false;
+    }
+    if (!lease.isActive() || lease.officialSessionAuthority() !== authority) {
+      return false;
+    }
+    const machine = this.machine;
+    if (machine === undefined || machine.authority !== authority) {
+      return false;
+    }
+    if (machine.name !== 'Ready') {
+      return false;
+    }
+    // The session must still be the very one the anchor described. A
+    // replacement reports a different composite identity even when the
+    // lease has not yet noticed.
+    const anchor = this.anchorIdentity;
+    if (anchor === undefined) {
+      return false;
+    }
+    let current: MspSessionCompositeIdentity | undefined;
+    try {
+      current = this.deps.session.readCurrentIdentity();
+    } catch {
+      // An identity provider that throws proves nothing. Fail closed.
+      return false;
+    }
+    return mspSessionCompositeIdentitiesMatch(current, anchor);
   }
 
   /**
@@ -2000,9 +2488,9 @@ class MotorTestControllerImpl {
     } catch {
       // Write failure, response timeout, desync, detach, close, or
       // displacement by our own stop. Every one of them ends the attempt
-      // and takes the stop route - WITHOUT waiting for the 3-second
-      // deadline, which would leave a possibly-live output commanded for
-      // the full window after we already know something went wrong.
+      // and takes the stop route WITHOUT waiting for the touch-heartbeat
+      // deadline, which would leave a possibly-live output commanded after
+      // we already know something went wrong.
       if (this.pulseAttempt === attempt) {
         this.endPulseAttempt({kind: 'FAILED', reason: 'REQUEST_FAILED'});
         this.failPulseClosed('WRITE_OUTCOME_UNKNOWN');
@@ -2074,10 +2562,11 @@ class MotorTestControllerImpl {
         // session - the reference test is the whole guard.
         return;
       }
-      // The DESIGNED maximum-duration cutoff. An ordinary stop reason, not
-      // a fault: the machine only faults if the stop itself fails.
+      // The touch owner stopped proving liveness. This is an ordinary stop
+      // reason, not a fault: the machine only faults if the stop itself
+      // fails. A healthy held gesture keeps renewing this timer.
       this.requestStop('PULSE_DEADLINE_ELAPSED');
-    }, MOTOR_TEST_PULSE_MAX_DURATION_MILLIS);
+    }, MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS);
   }
 
   private clearPulseDeadline(): void {
@@ -2248,6 +2737,123 @@ class MotorTestControllerImpl {
 
   /* --- setup ------------------------------------------------------- */
 
+  /**
+   * Joins the coordinator's one identification attempt for this physical
+   * session. The subscription is installed before the second read, closing
+   * the read/subscribe race; a replacement/detach and a bounded timeout both
+   * settle the wait without manufacturing identity evidence.
+   */
+  private awaitFirmwareIdentity(
+    generation: number,
+  ): Promise<FirmwareIdentityAcquisition | SetupFailure> {
+    const session = this.deps.session;
+    const read = ():
+      | FirmwareIdentityAcquisition
+      | SetupFailure
+      | undefined => {
+      const cancelled = this.cancellation(generation);
+      if (cancelled !== undefined) {
+        return cancelled;
+      }
+      let state: MotorTestFirmwareIdentificationState;
+      try {
+        state = session.readFirmwareIdentification();
+      } catch {
+        return failure(
+          'UNEXPECTED_SERVICE_EXCEPTION',
+          fault('NATIVE_EXCEPTION'),
+        );
+      }
+      switch (state.status) {
+        case 'SUCCEEDED':
+          return {identity: state.identity};
+        case 'FAILED':
+          return failure('FIRMWARE_IDENTITY_UNAVAILABLE', LOCK);
+        case 'IDLE':
+        case 'RUNNING':
+          return undefined;
+        default:
+          return assertExhaustiveIdentificationState(state);
+      }
+    };
+
+    const immediate = read();
+    if (immediate !== undefined) {
+      return Promise.resolve(immediate);
+    }
+
+    return new Promise(resolve => {
+      let settled = false;
+      let unsubscribeIdentification: MotorTestControllerUnsubscribe =
+        () => undefined;
+      let unsubscribeInvalidation: MotorTestControllerUnsubscribe =
+        () => undefined;
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = (result: FirmwareIdentityAcquisition | SetupFailure) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        unsubscribeIdentification();
+        unsubscribeInvalidation();
+        if (timeoutHandle !== undefined) {
+          clearTimeout(timeoutHandle);
+        }
+        resolve(result);
+      };
+      const examine = () => {
+        const result = read();
+        if (result !== undefined) {
+          finish(result);
+        }
+      };
+
+      try {
+        const identificationUnsubscribe =
+          session.subscribeFirmwareIdentification(examine);
+        // A valid implementation may publish the current value while the
+        // listener is being registered. `finish()` then runs before the
+        // returned unsubscriber can be assigned, so release it explicitly.
+        if (settled) {
+          identificationUnsubscribe();
+          return;
+        }
+        unsubscribeIdentification = identificationUnsubscribe;
+
+        const invalidationUnsubscribe =
+          session.subscribeSessionInvalidated(() => {
+            finish(failure('SESSION_CHANGED', fault('SESSION_CHANGED')));
+          });
+        if (settled) {
+          invalidationUnsubscribe();
+          unsubscribeIdentification();
+          return;
+        }
+        unsubscribeInvalidation = invalidationUnsubscribe;
+
+        timeoutHandle = setTimeout(() => {
+          finish(failure('FIRMWARE_IDENTITY_UNAVAILABLE', LOCK));
+        }, MOTOR_TEST_FIRMWARE_IDENTIFICATION_TIMEOUT_MILLIS);
+        const unref = (
+          timeoutHandle as unknown as {readonly unref?: () => void}
+        ).unref;
+        unref?.call(timeoutHandle);
+
+        // Closes the transition that may have happened after the first read
+        // and before the subscriptions were installed.
+        examine();
+      } catch {
+        finish(
+          failure(
+            'UNEXPECTED_SERVICE_EXCEPTION',
+            fault('NATIVE_EXCEPTION'),
+          ),
+        );
+      }
+    });
+  }
+
   private async runSetup(): Promise<MotorTestControllerSnapshot> {
     // (2) Establish the controller cancellation/generation identity.
     this.invalidateContinuations();
@@ -2302,6 +2908,34 @@ class MotorTestControllerImpl {
     // detach during the barrier cannot be missed.
     this.attachSessionListener();
     this.publish();
+
+    // ---- (2) Identify the exact reviewed firmware adapter. ----------
+    // Generic MSP compatibility is not enough for a write: another
+    // firmware can return payloads that happen to decode while assigning
+    // different semantics to command 214 or to protocol enum values.
+    this.setupStep = 'FIRMWARE_COMPATIBILITY';
+    this.publish();
+    const firmware = await this.awaitFirmwareIdentity(generation);
+    if (isFailure(firmware)) {
+      return firmware;
+    }
+    const afterIdentification = this.revalidate(generation);
+    if (afterIdentification !== undefined) {
+      return afterIdentification;
+    }
+    const firmwareCompatibility = resolveMotorFirmwareCompatibility(
+      firmware.identity,
+    );
+    this.firmwareCompatibility = firmwareCompatibility;
+    this.publish();
+    if (
+      !motorFirmwareSupports(
+        firmwareCompatibility,
+        'MOTOR_TEST_WRITE',
+      )
+    ) {
+      return failure('FIRMWARE_UNSUPPORTED', LOCK);
+    }
 
     // ---- (3)(4)(5) The coordinator-wide barrier. --------------------
     // One accepted call performs all three in the required order: it
@@ -2415,27 +3049,82 @@ class MotorTestControllerImpl {
       return afterLease;
     }
 
-    // ---- (9) Accepted session-bound facts and the restriction. ------
-    return this.runEvidenceSteps(generation, anchorIdentity, lease, authority);
+    // ---- (9) The minimal evidence, the monitor, the first observation.
+    return this.runBenchSteps(generation, anchorIdentity, lease);
   }
 
-  private async runEvidenceSteps(
+  /**
+   * Steps 7 to 11 of the simplified sequence.
+   *
+   * WHAT IT NO LONGER DOES, and why each removal is safe:
+   *   - a second four-command identification chain inside this exclusive
+   *     lease. Firmware identity is mandatory again, but it is joined from
+   *     the coordinator's canonical identification attempt before the
+   *     telemetry barrier; it is not re-requested here;
+   *   - MSP_MIXER_CONFIG and the composed capability profile. Mixer mode
+   *     and the props-out flag never entered the vector builder;
+   *   - the Pass 1E battery policy. It is no longer read at all, and this
+   *     module makes no claim about the pack - see the file header;
+   *   - the arming restriction: one MSP WRITE (command 99), its receipt,
+   *     and the receipt's currentness as an activation gate. The receipt
+   *     could not re-read the flight controller, so it could never detect
+   *     its own removal - it proved the lease was alive, which the lease
+   *     already proves. What replaces it is stronger: a repeated LIVE read
+   *     of the armed state itself.
+   *
+   * WHAT IT STILL PROVES, in order: motor scope with 3D disabled, the box
+   * mapping, and one fresh disarmed observation - AWAITED before READY.
+   */
+  private async runBenchSteps(
     generation: number,
     anchor: MspSessionCompositeIdentity,
     lease: MotorTestLease,
-    authority: MspOfficialSessionAuthority,
   ): Promise<SetupFailure | undefined> {
     const session = this.deps.session;
     const readCurrentIdentity = () => session.readCurrentIdentity();
-    const factsIdentity = asFactsIdentity(anchor);
+    const expectedIdentity = asFactsIdentity(anchor);
 
-    // ---- (9a) Trusted, session-bound BOX evidence. ------------------
-    this.setupStep = 'BOX_EVIDENCE';
+    // ---- (7) Only the configuration the encoder needs. ---------------
+    this.setupStep = 'MOTOR_CONFIGURATION';
+    const scopeRead = await this.readMotorScope(generation, lease);
+    if (isFailure(scopeRead)) {
+      return scopeRead;
+    }
+    // Retained BEFORE the guard runs, so a refusal can still say which
+    // configuration was refused. See the field's own comment.
+    this.motorScope = scopeRead.scope;
+    this.motorDiagnosticsSupport = scopeRead.diagnosticsSupport;
+    if (!hasEscTelemetrySource(scopeRead.diagnosticsSupport)) {
+      this.diagnostics = Object.freeze({
+        ...this.diagnostics,
+        escTelemetry: Object.freeze({
+          state: 'NOT_ENABLED' as const,
+          value: undefined,
+          observedAtMillis: this.deps.readMonotonicMillis(),
+        }),
+      });
+    }
+    this.publish();
+    try {
+      // 3D first - it inverts stop semantics - then motor count, then the
+      // raw protocol. The identical guard runs again inside
+      // `evaluateActivation()` on every evaluation and again inside
+      // `buildAllStopVector`/`buildSingleMotorVector`.
+      assertSupportedMotorScope(scopeRead.scope);
+    } catch {
+      // Complete, decoded evidence that fails the scope. Nothing was
+      // written and nothing is uncertain, so this LOCKS rather than
+      // claiming the ambiguity a fault would assert.
+      return failure('MOTOR_SCOPE_UNSUPPORTED', LOCK);
+    }
+
+    // ---- (8) Only the BOX evidence armed state needs. ----------------
+    this.setupStep = 'ARMED_STATE_EVIDENCE';
     const boxAcquisition = await acquireMotorTestBoxIds(lease);
     // A typed failure from an accepted module is more specific than the
-    // generic boundary check and is therefore consulted FIRST - a
-    // rejected request has already faulted the lease, and the boundary
-    // check would attribute that to a session change.
+    // generic boundary check and is therefore consulted FIRST - a rejected
+    // request has already faulted the lease, and the boundary check would
+    // attribute that to a session change.
     let boundary = this.cancellation(generation);
     if (boundary !== undefined) {
       return boundary;
@@ -2450,173 +3139,97 @@ class MotorTestControllerImpl {
     if (boundary !== undefined) {
       return boundary;
     }
-    const boxIds = boxAcquisition.snapshot;
-    this.boxIds = boxIds;
-    // The plain mapping the dynamic observer takes, DERIVED from the
-    // trusted snapshot rather than re-requested: MSP_BOXIDS keeps its
-    // single owner and its at-most-once guarantee.
-    const boxIdsResult: BoxIdsResult = Object.freeze({
-      kind: 'READY' as const,
-      permanentIds: boxIds.permanentIds,
-    });
+    this.boxIds = boxAcquisition.snapshot;
 
-    // ---- (9b) Static facts. -----------------------------------------
-    this.setupStep = 'STATIC_FACTS';
-    const staticFacts = await this.readStaticFacts(
-      generation,
-      lease,
-      factsIdentity,
-    );
-    if (isFailure(staticFacts)) {
-      return staticFacts;
-    }
-
-    // ---- (9c) Firmware version. -------------------------------------
-    this.setupStep = 'FIRMWARE_VERSION';
-    const versionAcquisition = await acquireMotorFcFirmwareVersion({
+    // ---- (9) The monitor, on THE SAME LEASE. -------------------------
+    //
+    // One requester for the whole bundle: configuration reads, the box
+    // read, every observation, every motor command and every emergency
+    // stop all travel this one lease and therefore one serialized FIFO.
+    // Nothing here constructs a second client, transport, queue or writer.
+    this.setupStep = 'SAFETY_MONITOR';
+    const createSafetyMonitor: MotorTestSafetyMonitorFactory =
+      this.deps.createSafetyMonitor ??
+      (options => new MotorTestSafetyMonitor(options));
+    const monitor = createSafetyMonitor({
       requester: lease,
-      expectedIdentity: factsIdentity,
-      readCurrentIdentity,
-    });
-    boundary = this.cancellation(generation);
-    if (boundary !== undefined) {
-      return boundary;
-    }
-    if (versionAcquisition.kind !== 'ACQUIRED') {
-      return failure(
-        'FIRMWARE_VERSION_UNAVAILABLE',
-        classifyFirmwareVersionFailure(versionAcquisition.reason),
-      );
-    }
-    boundary = this.revalidate(generation);
-    if (boundary !== undefined) {
-      return boundary;
-    }
-
-    // Phase 2F: capture the approved motor scope from the SAME facts the
-    // profile gates are about to be evaluated against. Nothing is
-    // re-read and nothing is defaulted, so a stop can never be encoded
-    // from a different reading than the one that authorised the session.
-    const facts = staticFacts.binding.facts;
-    this.motorScope = Object.freeze({
-      motorCount: facts.motorCount,
-      motorProtocolRaw: facts.motorProtocolRaw,
-      feature3dEnabled: facts.feature3dEnabled,
-    });
-
-    // ---- (9d) Static compatibility. Pure. ---------------------------
-    this.setupStep = 'STATIC_COMPATIBILITY';
-    const compatibility = evaluateMotorStaticCompatibility(
-      staticFacts.binding,
-      versionAcquisition.binding,
-    );
-    this.staticCompatibility = compatibility;
-    this.publish();
-    if (compatibility.kind !== 'EVALUATED') {
-      return failure('STATIC_PROFILE_NOT_EVALUATED', fault('SESSION_CHANGED'));
-    }
-    if (compatibility.compatibility.status !== 'SUPPORTED') {
-      return failure('STATIC_PROFILE_UNSUPPORTED', LOCK);
-    }
-
-    // ---- (9e) Capabilities, bound to the captured authority. --------
-    this.setupStep = 'CAPABILITIES';
-    const capabilities = composeMotorTestCapabilities(
-      authority,
-      composeMotorTestProfileEvidence(
-        staticFacts.binding,
-        versionAcquisition.binding,
-      ),
-    );
-    this.capabilities = capabilities;
-    this.publish();
-    if (!isMotorTestProfileSupported(capabilities)) {
-      return failure('CAPABILITY_PROFILE_UNSUPPORTED', LOCK);
-    }
-
-    // ---- (9f) One-shot dynamic observation. -------------------------
-    this.setupStep = 'DYNAMIC_OBSERVATION';
-    const observation = await acquireMotorDynamicSafetyObservation({
-      requester: lease,
-      staticCompatibility: compatibility,
-      boxIds: boxIdsResult,
+      expectedIdentity,
+      boxIdPermanentIds: boxAcquisition.snapshot.permanentIds,
       readCurrentIdentity,
       readMonotonicMillis: this.deps.readMonotonicMillis,
+      onUnsafe: reason => this.onSafetyMonitorUnsafe(reason),
+      setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+      clearTimer: handle =>
+        clearTimeout(handle as ReturnType<typeof setTimeout>),
     });
-    boundary = this.cancellation(generation);
-    if (boundary !== undefined) {
-      return boundary;
+    this.safetyMonitor = monitor;
+    monitor.start();
+    this.publish();
+
+    // ---- (10) ONE FRESH DISARMED OBSERVATION, AWAITED. ---------------
+    //
+    // THE DEFECT THIS CLOSES, recorded so it is never re-introduced. The
+    // monitor used to be started here and READY published on the very next
+    // line. `start()` is fire-and-forget by design, so the published
+    // snapshot said "nothing is watching" while the first observation was
+    // still on the wire, and it only became READY when some UNRELATED
+    // render happened to rebuild the snapshot. The operator saw a control
+    // that was disabled for a reason that had already stopped being true.
+    //
+    // Joining the monitor's own first observation is what makes the
+    // boundary deterministic. It is not a delay, a poll or a retry: it
+    // resolves exactly when a real production observation publishes.
+    this.setupStep = 'FIRST_OBSERVATION';
+    // Published BEFORE the await, so a subscriber watching a slow bring-up
+    // can see which step it is parked on rather than a step that already
+    // finished.
+    this.publish();
+    await monitor.observeNow();
+
+    // THE OBSERVATION'S OWN VERDICT IS CONSULTED FIRST, and the ordering
+    // is load-bearing rather than stylistic - the same rule the box and
+    // configuration reads already follow.
+    //
+    // An armed or failed reading calls `onUnsafe`, which routes into
+    // `requestStop`, which invalidates pending setup continuations
+    // SYNCHRONOUSLY. So by the time control returns here the generic
+    // boundary check would report STOP_REQUESTED_DURING_SETUP and bury the
+    // real cause - the operator would be told the bring-up was cancelled
+    // when in truth their flight controller was armed.
+    //
+    // Both fail closed; only the recorded reason differs, and it must be
+    // true. The boundary check still runs, immediately below.
+    const evidence = this.readArmedStateEvidence();
+    if (evidence === 'FC_ARMED') {
+      // A complete, trustworthy reading that says the aircraft is armed.
+      // Nothing is uncertain; this is a refusal, not a fault.
+      return failure('FIRST_OBSERVATION_NOT_DISARMED', LOCK);
     }
-    if (observation.kind !== 'OBSERVED') {
+    if (evidence !== 'FRESH_DISARMED') {
+      const status = monitor.snapshot().status;
       return failure(
-        'DYNAMIC_OBSERVATION_UNAVAILABLE',
-        classifyDynamicObservationFailure(observation.reason),
+        'FIRST_OBSERVATION_UNAVAILABLE',
+        // A read that failed is transport uncertainty and must fail
+        // closed. A reading that merely never became fresh had no
+        // uncertain side effect and locks.
+        status.kind === 'FAILED' ? fault('MSP_RESPONSE_TIMEOUT') : LOCK,
       );
     }
+
     boundary = this.revalidate(generation);
     if (boundary !== undefined) {
       return boundary;
-    }
-
-    // ---- (9g) Dynamic requirements. Pure. ---------------------------
-    this.setupStep = 'DYNAMIC_EVALUATION';
-    const evaluation = evaluateMotorDynamicSafetyRequirements({
-      staticCompatibility: compatibility,
-      dynamicObservation: observation,
-      currentSessionIdentity: readCurrentIdentity(),
-    });
-    this.dynamicEvaluation = evaluation;
-    this.publish();
-    if (evaluation.kind !== 'EVALUATED') {
-      return failure(
-        'DYNAMIC_REQUIREMENTS_NOT_EVALUATED',
-        fault('SESSION_CHANGED'),
-      );
-    }
-    if (evaluation.status !== 'REQUIREMENTS_SATISFIED') {
-      return failure('DYNAMIC_REQUIREMENTS_NOT_SATISFIED', LOCK);
-    }
-
-    // ---- (9h) The arming restriction. The only write in the bundle. -
-    this.setupStep = 'ARMING_RESTRICTION';
-    const establishment = await establishMotorArmingRestriction({
-      lease,
-      requestedIdentity: anchor,
-      readCurrentIdentity,
-      boxIds,
-    });
-    if (establishment.kind !== 'ESTABLISHED') {
-      this.armingRestriction = Object.freeze({
-        kind: 'NOT_ESTABLISHED' as const,
-        reason: establishment.reason,
-      });
-      this.publish();
-      return failure(
-        'ARMING_RESTRICTION_NOT_ESTABLISHED',
-        classifyArmingRestrictionFailure(establishment.reason),
-      );
-    }
-    this.receipt = establishment.receipt;
-    this.armingRestriction = Object.freeze({
-      kind: 'ESTABLISHED' as const,
-      evidenceScope: establishment.receipt.evidenceScope,
-      receiptCurrentAtPublish: establishment.receipt.isCurrent(),
-    });
-    this.publish();
-
-    // ---- (10) Revalidate after the last asynchronous boundary. ------
-    boundary = this.revalidate(generation);
-    if (boundary !== undefined) {
-      return boundary;
-    }
-    if (!establishment.receipt.isCurrent()) {
-      return failure(
-        'ARMING_RESTRICTION_NOT_CURRENT',
-        fault('WRITE_OUTCOME_UNKNOWN'),
-      );
     }
 
     // ---- (11) Ready - every mandatory fact valid for one authority. --
+    //
+    // Reached only with the first observation already published, so the
+    // snapshot built by the caller's `publish()` carries `allowed: true`
+    // immediately. Every subsequent observation continues on the same
+    // lease; an armed reading, a stale one, a rejected request, a
+    // malformed response, a session replacement or a monitoring failure
+    // all route into `onSafetyMonitorUnsafe` and from there into the
+    // existing stop/fault behaviour.
     this.setupStep = 'READY';
     this.dispatchGates(true);
     this.outcome = Object.freeze({kind: 'READY' as const});
@@ -2624,48 +3237,27 @@ class MotorTestControllerImpl {
   }
 
   /**
-   * The static-facts read sequence.
+   * Step 7 - the three reads the command encoder actually depends on.
    *
-   * Seven reads, every one through the lease and therefore through the
-   * canonical FIFO. A REJECTED REQUEST and a MALFORMED RESPONSE are
-   * separated deliberately: the first is transport uncertainty and must
-   * fail closed, the second is complete-but-unusable evidence and locks.
+   * MSP_MOTOR_CONFIG    offset 6  -> motor count, the ONLY authority for it
+   * MSP_ADVANCED_CONFIG offset 3  -> raw motorProtocolTypes_e
+   * MSP_FEATURE_CONFIG  bit 12    -> FEATURE_3D, the ONLY authority for it
+   *
+   * Every one travels the lease and therefore the canonical FIFO. A
+   * REJECTED REQUEST and a MALFORMED RESPONSE are separated deliberately:
+   * the first is transport uncertainty and must fail closed, the second is
+   * complete-but-unusable evidence and locks.
    */
-  private async readStaticFacts(
+  private async readMotorScope(
     generation: number,
     lease: MotorTestLease,
-    identity: MotorStaticFactsSessionIdentity,
-  ): Promise<{readonly binding: MotorStaticFactsBinding} | SetupFailure> {
-    const identification = new MspIdentificationService(lease);
-    let flightControllerIdentity;
-    try {
-      flightControllerIdentity = await identification.identify();
-    } catch (error) {
-      const cancelled = this.cancellation(generation);
-      if (cancelled !== undefined) {
-        return cancelled;
+  ): Promise<
+    | {
+        readonly scope: MotorVectorScope;
+        readonly diagnosticsSupport: MotorDiagnosticsSupport;
       }
-      // identify() propagates a rejected request unchanged and throws its
-      // own typed errors for an unusable answer. Both extend Error, so
-      // the discriminator is the accepted contract's own error names.
-      return isEvidenceQualityError(error)
-        ? failure('STATIC_FACTS_MALFORMED', LOCK)
-        : failure('STATIC_FACTS_REQUEST_FAILED', fault('MSP_RESPONSE_TIMEOUT'));
-    }
-    let boundary = this.revalidate(generation);
-    if (boundary !== undefined) {
-      return boundary;
-    }
-
-    const mixer = await this.readDecoded(
-      generation,
-      lease,
-      MSP_MIXER_CONFIG,
-      decodeMixerConfig,
-    );
-    if (isFailure(mixer)) {
-      return mixer;
-    }
+    | SetupFailure
+  > {
     const motor = await this.readDecoded(
       generation,
       lease,
@@ -2694,22 +3286,18 @@ class MotorTestControllerImpl {
       return feature;
     }
 
-    boundary = this.revalidate(generation);
+    const boundary = this.revalidate(generation);
     if (boundary !== undefined) {
       return boundary;
     }
 
     return {
-      binding: bindMotorStaticFacts(
-        identity,
-        assembleMotorStaticFacts({
-          flightControllerIdentity,
-          mixerConfig: mixer.value,
-          motorConfig: motor.value,
-          advancedConfig: advanced.value,
-          featureConfig: feature.value,
-        }),
-      ),
+      scope: Object.freeze({
+        motorCount: motor.value.motorCount,
+        motorProtocolRaw: advanced.value.motorProtocolRaw,
+        feature3dEnabled: feature.value.feature3dEnabled,
+      }),
+      diagnosticsSupport: deriveMotorDiagnosticsSupport(motor.value),
     };
   }
 
@@ -2734,7 +3322,7 @@ class MotorTestControllerImpl {
         return cancelled;
       }
       return failure(
-        'STATIC_FACTS_REQUEST_FAILED',
+        'MOTOR_CONFIG_REQUEST_FAILED',
         fault('MSP_RESPONSE_TIMEOUT'),
       );
     }
@@ -2745,7 +3333,7 @@ class MotorTestControllerImpl {
     try {
       return {value: decode(payload)};
     } catch {
-      return failure('STATIC_FACTS_MALFORMED', LOCK);
+      return failure('MOTOR_CONFIG_MALFORMED', LOCK);
     }
   }
 
@@ -2823,12 +3411,34 @@ class MotorTestControllerImpl {
           // session whose stop is unproven.
           this.stopSealed = true;
           this.dispatchFault('STOP_FAILED');
+        } else if (outcome.kind === 'ACKNOWLEDGED') {
+          // CORRECTION (2) - THE STOP IS REPORTED TO THE REDUCER.
+          //
+          // THE DEFECT THIS CLOSES. Nothing in this file had ever
+          // constructed `STOP_ACKNOWLEDGED`, so the accepted machine could
+          // not leave `Stopping` even after a perfect, fully attributable
+          // all-stop. `READY -> pulse -> release -> READY` was therefore
+          // structurally impossible: the operator was left in `Stopping`
+          // forever and a second motor needed a whole new session.
+          //
+          // The reducer - not this controller - decides where a confirmed
+          // stop lands, from the disposition the ORIGINAL trigger carried:
+          // `Ready` for a release, a selection change or the deadline;
+          // `Locked` for anything that invalidated a precondition. So a
+          // safety stop is not quietly turned into a recoverable one by
+          // this call.
+          this.dispatchStopAcknowledged();
         }
         // ALWAYS publish. A stop that completes outside teardown - the
         // interactive case, which is every release, deadline and safety
         // event - updates the stop record asynchronously, and a subscriber
         // that never sees it cannot report what actually happened.
         this.publish();
+        // Monitoring was suspended before the stop was registered, so a
+        // session that is genuinely alive again has to be given a fresh
+        // reading before it can activate anything. Fire-and-forget on
+        // purpose: nothing may gate a stop's own completion on a read.
+        this.resumeMonitoringAfterStop();
         return outcome;
       })
       .catch((error: unknown) => {
@@ -2850,6 +3460,7 @@ class MotorTestControllerImpl {
 
     let deferred = false;
     let ambiguous = false;
+    let resolvedByConfirmation = false;
     let submittedNext = false;
 
     const settle = (
@@ -2867,6 +3478,9 @@ class MotorTestControllerImpl {
           this.stopExecution.deferredBehindActiveWrite || deferred,
         attributionAmbiguous:
           this.stopExecution.attributionAmbiguous || ambiguous,
+        attributionResolvedByConfirmation:
+          this.stopExecution.attributionResolvedByConfirmation ||
+          resolvedByConfirmation,
         wirePreemptionClaimed: false as const,
         submittedNextOnTransport:
           this.stopExecution.submittedNextOnTransport || submittedNext,
@@ -2908,16 +3522,36 @@ class MotorTestControllerImpl {
       return settle({kind: 'SCOPE_REJECTED'}, false, false);
     }
 
+    // THE MONITOR IS SUSPENDED BEFORE THE STOP IS REGISTERED, and this
+    // one line is the whole of correction (1).
+    //
+    // THE DEFECT IT CLOSES, from the device. The priority stop purges the
+    // FIFO and displaces the active request. When that active request was
+    // the safety monitor's own MSP_STATUS_EX - which it very often is,
+    // because the monitor observes back-to-back - the observation rejected
+    // with MSP_DISPLACED_IN_FLIGHT_BY_EMERGENCY_STOP, `observeMotorArmedState`
+    // reported REQUEST_FAILED, the monitor published SAFETY_OBSERVATION_FAILED
+    // and called `onUnsafe`, and the controller faulted the session under
+    // SAFETY_MONITORING_FAILED. A perfectly successful stop therefore
+    // ended in "disconnect the LiPo".
+    //
+    // A read this controller cancelled ITSELF is an expected cancellation,
+    // never evidence that the flight controller became unsafe. `stop()`
+    // bumps the monitor's own generation, so the settling observation
+    // publishes nothing and cannot reach `onUnsafe` at all - the ambiguity
+    // is removed rather than filtered after the fact.
+    //
+    // It is stopped for EVERY stop path, including teardown: no stop may
+    // ever be gated on a read, and no read this controller displaced may
+    // ever be read as a safety signal.
+    this.safetyMonitor?.stop();
+
     // Phase 2G: the stop travels the PRIORITY route, not the ordinary
     // lease FIFO. The client purges everything still queued and makes this
     // the next transport submission. That is submission order only - it
     // preempts nothing already handed to the transport, and the dispatch's
     // own flags below are what keep this record honest about it.
-    const dispatch = lease.emergencyStop(
-      MSP_SET_MOTOR,
-      payload,
-      READ_REQUEST_OPTIONS,
-    );
+    const dispatch = this.dispatchAllStop(lease, payload);
     deferred = dispatch.deferredBehindActiveWrite;
     ambiguous = dispatch.attributionAmbiguous;
     // True in every case: the client took this out of its stop slot ahead
@@ -2949,23 +3583,74 @@ class MotorTestControllerImpl {
       );
     }
 
-    // Phase 2G: the response resolved, but it displaced an already-written
-    // command 214, so this frame may belong to the DISPLACED request
-    // rather than to this stop. Nothing here is an acknowledgement. The
-    // lease is failed closed so the identity cannot be reused, forcing a
-    // full session reset before any further attempt.
+    // Phase 2G / correction (3): the frame resolved, but this stop
+    // displaced an already-written command 214 - the pulse's own request -
+    // so THIS frame may be the pulse's response rather than the stop's.
+    // It is discarded as proof, exactly as before.
+    //
+    // WHAT IS NEW is that the ambiguity is now RESOLVED rather than
+    // treated as terminal. A normal early release always produces it, and
+    // permanently faulting a bench session for letting go of a button a
+    // few milliseconds early is not a safety property - it is a defect.
+    //
+    // The resolution is a counting argument, not an optimism: there is
+    // exactly ONE non-stop command 214 outstanding (the pulse), the link
+    // answers a single serialized FIFO in order, and both writes carry the
+    // IDENTICAL all-stop payload. So issuing one more all-stop and waiting
+    // for its acknowledgement guarantees that at least one genuine
+    // all-stop frame was received and processed by the flight controller,
+    // while the possibly-stale first frame is never counted as that proof.
     if (ambiguous) {
-      lease.failClosed();
-      return settle(
-        {kind: 'FAILED', reason: 'ATTRIBUTION_AMBIGUOUS'},
-        true,
-        false,
-      );
+      const confirmation = this.dispatchAllStop(lease, payload);
+      try {
+        await confirmation.frame;
+      } catch {
+        // The confirming stop itself failed. Nothing is proven and this
+        // stays terminal - the lease is already faulted by the client's
+        // own rejection policy.
+        return settle({kind: 'FAILED', reason: 'REQUEST_FAILED'}, true, false);
+      }
+      if (
+        !lease.isActive() ||
+        lease.officialSessionAuthority() !== authority ||
+        this.authority !== authority
+      ) {
+        return settle({kind: 'FAILED', reason: 'AUTHORITY_CHANGED'}, true, false);
+      }
+      if (confirmation.attributionAmbiguous) {
+        // Unreachable in practice - the pulse was the only competing 214
+        // and it is settled by now - but a second ambiguity would mean the
+        // counting argument above does not hold, and this must fail closed
+        // rather than resolve on an assumption. The lease is failed closed
+        // so the identity cannot be reused.
+        lease.failClosed();
+        return settle(
+          {kind: 'FAILED', reason: 'ATTRIBUTION_AMBIGUOUS'},
+          true,
+          false,
+        );
+      }
+      resolvedByConfirmation = true;
     }
 
     // ACKNOWLEDGED means received and processed. It is NOT a physical
     // stop, and `physicalStopConfirmed` stays false.
     return settle({kind: 'ACKNOWLEDGED'}, true, true);
+  }
+
+  /**
+   * THE ONE SITE THAT PUTS AN ALL-STOP ON THE WIRE.
+   *
+   * Extracted so the priority route has a single call site even though a
+   * stop may need two submissions to be attributable (see the ambiguity
+   * resolution above). Every argument is fixed by the caller from the
+   * protected vector builder; nothing here shapes a payload.
+   */
+  private dispatchAllStop(
+    lease: MotorTestLease,
+    payload: Uint8Array,
+  ): MspEmergencyStopDispatch {
+    return lease.emergencyStop(MSP_SET_MOTOR, payload, READ_REQUEST_OPTIONS);
   }
 
   /* --- teardown ---------------------------------------------------- */
@@ -2995,6 +3680,12 @@ class MotorTestControllerImpl {
     // Reached directly when teardown is entered without close() - the
     // watchdog must not survive either route.
     this.clearPulseDeadline();
+    // The dedicated safety monitor dies with the session, synchronously
+    // and before anything is awaited. An observation still in flight is
+    // ABANDONED rather than awaited - teardown must never be gated on a
+    // read completing - and its late result publishes nothing because
+    // stop() bumps the monitor's own generation.
+    this.safetyMonitor?.stop();
     this.endPulseAttempt({kind: 'FAILED', reason: 'STOP_DOMINATED'});
     this.phase = 'CLOSING';
     record('MARK_CLOSING', 'DONE');
@@ -3033,8 +3724,8 @@ class MotorTestControllerImpl {
     // (5) Phase 2F: THE REQUIRED COMMAND-214 STOP ATTEMPT.
     //
     // Ordered here deliberately: after the captured authority has been
-    // validated, and BEFORE anything that could settle or relax the FC's
-    // arming restriction. Outputs are commanded to stop first.
+    // validated, and BEFORE the lease is released. Outputs are commanded to
+    // stop while a command can still be sent at all.
     let stopUnsafe = false;
     try {
       const stopOutcome = await this.executeStopVector();
@@ -3064,8 +3755,8 @@ class MotorTestControllerImpl {
         // No pulse was ever submitted in this session, so nothing this
         // controller did could have commanded an output. Reporting
         // uncertainty here would clobber the far more specific cause that
-        // actually ended the session (an unestablished arming restriction,
-        // an unsupported profile).
+        // actually ended the session (an unsupported motor scope, an
+        // unreadable armed state).
         record('EXECUTE_STOP_VECTOR', 'SKIPPED');
       }
     } catch {
@@ -3073,18 +3764,19 @@ class MotorTestControllerImpl {
       record('EXECUTE_STOP_VECTOR', 'THREW');
     }
 
-    // (6) Settle the arming restriction while the lease is still valid.
-    let receiptCurrent: boolean | undefined;
+    // (6) Confirm the observation loop is down before the lease goes.
+    //
+    // It was already stopped synchronously in step 1 - a stop must never
+    // wait on a read - so this step RECORDS rather than acts. It exists
+    // because "no observation is outstanding against a dead lease" is a
+    // teardown fact somebody auditing this report needs to be able to see.
+    const safetyMonitorStopped = this.safetyMonitor !== undefined;
     try {
-      if (this.receipt !== undefined) {
-        receiptCurrent = this.receipt.isCurrent();
-        record('SETTLE_ARMING_RESTRICTION', 'DONE');
-      } else {
-        record('SETTLE_ARMING_RESTRICTION', 'SKIPPED');
-      }
+      this.safetyMonitor?.stop();
+      record('STOP_SAFETY_MONITOR', safetyMonitorStopped ? 'DONE' : 'SKIPPED');
     } catch {
       threw = true;
-      record('SETTLE_ARMING_RESTRICTION', 'THREW');
+      record('STOP_SAFETY_MONITOR', 'THREW');
     }
 
     // (7) Release the genuine lease.
@@ -3172,9 +3864,7 @@ class MotorTestControllerImpl {
 
     this.teardownReport = Object.freeze({
       steps: Object.freeze(steps),
-      armingRestrictionRemovalSupported: false as const,
-      armingRestrictionRemovalPerformed: false as const,
-      armingRestrictionReceiptCurrentAtTeardown: receiptCurrent,
+      safetyMonitorStopped,
       leaseRelease,
       telemetryTokensReleased: telemetryReleased,
       complete,
@@ -3194,22 +3884,6 @@ class MotorTestControllerImpl {
 }
 
 /**
- * Recognizes "the exchange completed but the answer was unusable" from
- * the accepted identification contract. Name-based, because both accepted
- * error classes extend `Error` and only their names are part of the
- * contract this module may rely on.
- */
-function isEvidenceQualityError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return (
-    error.name === 'MspPayloadReadError' ||
-    error.name === 'MspIncompatibleFirmwareError'
-  );
-}
-
-/**
  * The production factory - the ONLY way to obtain a controller.
  *
  * There is deliberately no exported constructor and no exported class: a
@@ -3219,7 +3893,7 @@ function isEvidenceQualityError(error: unknown): boolean {
  * `acquireMotorTestLease` - both official issuers - and both live in
  * private fields the returned surface never exposes.
  *
- * The returned object is a frozen literal with exactly five methods, so
+ * The returned object is a frozen literal with an explicit tested surface, so
  * the public surface is fixed at construction and cannot be extended,
  * replaced or reached around.
  */
@@ -3234,6 +3908,10 @@ export function createMotorTestController(
     requestStop: (trigger: MotorTestStopTriggerReason) =>
       controller.requestStop(trigger),
     pulseMotor: (motorNumber: number) => controller.pulseMotor(motorNumber),
+    renewPulseHold: () => controller.renewPulseHold(),
+    setEscDirection: (motorNumber: number, direction: DshotEscDirection) =>
+      controller.setEscDirection(motorNumber, direction),
+    refreshDiagnostics: () => controller.refreshDiagnostics(),
     close: () => controller.close(),
   });
 }

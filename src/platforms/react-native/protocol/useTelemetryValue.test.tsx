@@ -112,8 +112,18 @@ function makeFakeClient(sessionId: string) {
   return fake;
 }
 
-function TestHarness({sessionId}: {sessionId: string}): React.JSX.Element {
-  const value = useTelemetryValue<MspAttitude>(sessionId, ATTITUDE_TELEMETRY_POLL_ID);
+function TestHarness({
+  sessionId,
+  enabled = true,
+}: {
+  sessionId: string;
+  enabled?: boolean;
+}): React.JSX.Element {
+  const value = useTelemetryValue<MspAttitude>(
+    sessionId,
+    ATTITUDE_TELEMETRY_POLL_ID,
+    enabled,
+  );
   return <>{JSON.stringify(value)}</>;
 }
 
@@ -223,5 +233,45 @@ describe('useTelemetryValue', () => {
       client.emitSessionDetached({sessionId, deviceId: 1});
     });
     expect(renderer!.toJSON()).toBe(JSON.stringify({status: 'UNAVAILABLE'}));
+  });
+
+  it('does not re-render a hidden consumer at telemetry frequency and catches up when enabled again', async () => {
+    const sessionId = 'ht-session-hidden';
+    const client = makeFakeClient(sessionId);
+    client.setResponse(MSP_ATTITUDE, attitudePayload(10, 20, 30));
+
+    let renderer: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      renderer = ReactTestRenderer.create(
+        <TestHarness sessionId={sessionId} enabled={false} />,
+      );
+    });
+    expect(renderer!.toJSON()).toBe(JSON.stringify({status: 'UNAVAILABLE'}));
+
+    await act(async () => {
+      mspSessionCoordinator.openSession(
+        client as unknown as UsbSerialTransportClient,
+        sessionId,
+      );
+      await flushAsync();
+      await jest.advanceTimersByTimeAsync(50);
+      await flushAsync();
+    });
+    // The scheduler is live, but the hidden tree owns no subscription and
+    // therefore keeps its last rendered snapshot.
+    expect(renderer!.toJSON()).toBe(JSON.stringify({status: 'UNAVAILABLE'}));
+
+    await act(async () => {
+      renderer!.update(<TestHarness sessionId={sessionId} enabled />);
+    });
+    expect(JSON.parse(renderer!.toJSON() as unknown as string)).toMatchObject({
+      status: 'FRESH',
+      value: {rollDecidegrees: 10, pitchDecidegrees: 20, yawDegrees: 30},
+    });
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      renderer!.unmount();
+    });
   });
 });

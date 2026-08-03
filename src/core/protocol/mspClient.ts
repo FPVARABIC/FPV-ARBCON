@@ -554,6 +554,36 @@ export class MspClient {
   /** The registered stop awaiting submission, or undefined once pump()
    * has started it (or once it settled). */
   private emergencyStopPending: PendingRequest | undefined;
+  /**
+   * R5 - THE DISPLACED-RESPONSE QUARANTINE.
+   *
+   * MSP frames carry NO per-request correlation id: a response is matched
+   * by command alone. So when an emergency stop displaces a request whose
+   * bytes were ALREADY WRITTEN, that request's late response is
+   * byte-identical to the response of any later request carrying the same
+   * command - and would settle it with stale data.
+   *
+   * The concrete case this exists for: a safety observation of
+   * MSP_STATUS_EX is displaced by a stop, the stop is acknowledged, a
+   * FRESH MSP_STATUS_EX becomes active for the next safety gate, and the
+   * displaced read's answer finally arrives. Without this ledger that
+   * answer settles the fresh read, and a stale snapshot authorises the
+   * next pulse.
+   *
+   * `command -> how many late responses for it must be swallowed`. Armed
+   * only for a WRITTEN displaced request, and only when its command
+   * differs from the stop's own (an equal command is the pre-existing
+   * `attributionAmbiguous` case, which fails closed by caller contract and
+   * must not have the stop's own ACK eaten here).
+   *
+   * Released when the stop settles: the link answers in FIFO order, so by
+   * the time the stop's own response arrives, the displaced request's
+   * answer has either already been swallowed or is never coming.
+   */
+  private quarantinedResponses = new Map<number, number>();
+  /** The command of the registered stop, so a displacement settled later
+   * (the WRITING case) can compare against it. */
+  private emergencyStopCommand: number | undefined;
   /** Identity of the registered stop for as long as it is unsettled, used
    * to join repeat triggers and to clear the registration exactly once. */
   private emergencyStopSettle: SettleOnce<MspFrame> | undefined;
@@ -727,6 +757,10 @@ export class MspClient {
     // Pass 2: a closing client can never own anything again. Done first so
     // the rejections below cannot be observed by a still-live capability.
     this.invalidateMotorTestLease();
+    // R5: the displaced-response ledger belongs to THIS session's identity.
+    // Surviving disposal would let it swallow the first genuine frame of
+    // whatever session replaces this one.
+    this.quarantinedResponses.clear();
 
     // Best-effort, matching this codebase's existing "swallow and continue"
     // pattern (e.g. UsbSerialWriteQueue.runLoop()'s own task-wrapper catch,
@@ -964,6 +998,36 @@ export class MspClient {
   }
 
   /**
+   * Lease-scoped optional request. A confirmed MSP error frame is a
+   * definite firmware-level "unsupported/refused" answer and therefore
+   * does not poison the lease. Every transport-ambiguous failure remains
+   * fail-closed exactly as on requestWithMotorTestLease().
+   */
+  requestOptionalWithMotorTestLease(
+    token: unknown,
+    command: number,
+    payload: Uint8Array,
+    options: MspRequestOptions,
+  ): Promise<MspFrame> {
+    if (!this.isMotorTestLeaseToken(token)) {
+      return Promise.reject(
+        new MspMotorTestLeaseBlockedError('MSP_MOTOR_TEST_LEASE_CAPABILITY_INVALID'),
+      );
+    }
+    const promise = this.enqueue(command, payload, options);
+    promise.catch((reason: unknown) => {
+      if (
+        reason instanceof MspMotorTestStopDisplacementError ||
+        (reason instanceof MspClientError && reason.code === 'MSP_REMOTE_ERROR')
+      ) {
+        return;
+      }
+      this.faultMotorTestLease();
+    });
+    return promise;
+  }
+
+  /**
    * Phase 2G Pass 1 - submit the lease-owned EMERGENCY STOP as the next
    * transport write.
    *
@@ -1031,6 +1095,9 @@ export class MspClient {
     }
 
     const stopProtocolVersion = deriveProtocolVersion(options.wireFormat);
+    // Recorded BEFORE displacement so quarantineDisplacedResponse() can
+    // compare against it, including from the deferred WRITING path.
+    this.emergencyStopCommand = command;
 
     // (1) Purge the FIFO. Confirmed-not-sent, every one of them.
     const purged = this.queue.splice(0, this.queue.length);
@@ -1067,6 +1134,10 @@ export class MspClient {
         if (won && this.active === active) {
           this.active = undefined;
         }
+        // Its bytes are already on the wire, so exactly one late response
+        // for this command may still arrive. Quarantine it so it can never
+        // settle a later request that happens to share the command.
+        this.quarantineDisplacedResponse(active.command);
       } else {
         // WRITING. Do NOT settle it here and do NOT start a second write:
         // its writeBytes() promise is still outstanding and the engine's
@@ -1144,6 +1215,44 @@ export class MspClient {
     });
   }
 
+  /**
+   * Arms the quarantine for ONE late response of `command`.
+   *
+   * Called only for a request whose bytes reached the transport. A request
+   * purged from the FIFO was never written, has no response coming, and is
+   * deliberately not quarantined - swallowing a frame for it would eat a
+   * genuine answer belonging to something else.
+   */
+  private quarantineDisplacedResponse(command: number): void {
+    if (command === this.emergencyStopCommand) {
+      // Same command as the stop itself: the pre-existing
+      // attributionAmbiguous contract owns this case. Quarantining here
+      // would swallow the stop's own acknowledgement.
+      return;
+    }
+    this.quarantinedResponses.set(command, (this.quarantinedResponses.get(command) ?? 0) + 1);
+  }
+
+  /**
+   * Swallows one quarantined late response, if this frame is one.
+   *
+   * Returns true when the frame was consumed, in which case it settles
+   * NOTHING - not the active request, not a stop, not anything.
+   */
+  private consumeQuarantinedResponse(frame: MspFrame): boolean {
+    const remaining = this.quarantinedResponses.get(frame.command);
+    if (remaining === undefined || remaining <= 0) {
+      return false;
+    }
+    if (remaining === 1) {
+      this.quarantinedResponses.delete(frame.command);
+    } else {
+      this.quarantinedResponses.set(frame.command, remaining - 1);
+    }
+    this.emitDiagnostic({ type: 'UNSOLICITED_FRAME', frame });
+    return true;
+  }
+
   /** Clears the one-slot register, but only for the stop that actually
    * owns it - a late settle from a superseded stop can never clear a
    * newer registration. */
@@ -1154,8 +1263,14 @@ export class MspClient {
     this.emergencyStopSettle = undefined;
     this.emergencyStopFrame = undefined;
     this.emergencyStopPending = undefined;
+    this.emergencyStopCommand = undefined;
     this.emergencyStopAttributionAmbiguous = false;
     this.emergencyStopDeferredBehindActiveWrite = false;
+    // DELIBERATELY NOT cleared here. The adversarial case this exists for
+    // is a displaced request's answer arriving AFTER the stop's own ACK -
+    // clearing on stop-settle would disarm the quarantine exactly one
+    // moment before the frame it must swallow. It is released only by
+    // consumption, or by a session/epoch reset below.
   }
 
   /**
@@ -1409,12 +1524,18 @@ export class MspClient {
   }
 
   private onWriteSettled(active: ActiveRequest, failureReason: unknown): void {
-    if (failureReason === undefined) {
-      if (active.settle.settled) {
-        // Early matching response already won the write-vs-response race -
-        // the response timer must never even start for it.
-        return;
+    if (active.settle.settled) {
+      // A matching response settled this request while the transport write
+      // was still pending. Its late write resolution OR rejection is
+      // diagnostic-only, but this is the first point at which the physical
+      // write slot is genuinely free. Release and pump exactly once.
+      if (this.active === active) {
+        this.active = undefined;
+        this.pump();
       }
+      return;
+    }
+    if (failureReason === undefined) {
       if (active.displacedByEmergencyStop) {
         // Phase 2G Pass 1: the uncancellable write has now settled, so the
         // transport is free. Settle this request as displaced INSTEAD of
@@ -1432,6 +1553,10 @@ export class MspClient {
         if (wonDisplaced && this.active === active) {
           this.active = undefined;
         }
+        // Same reasoning as the AWAITING_RESPONSE branch: this request's
+        // bytes reached the transport, so its late response must never be
+        // allowed to settle a later same-command request.
+        this.quarantineDisplacedResponse(active.command);
         // Frees the slot for the registered stop, which pump() takes ahead
         // of the FIFO. This is the moment the stop becomes the next
         // transport submission.
@@ -1506,6 +1631,13 @@ export class MspClient {
   }
 
   private handleFrame(frame: MspFrame): void {
+    // R5: a quarantined late response is swallowed BEFORE any matching is
+    // attempted. Placing it here - rather than after the match - is the
+    // whole point: by the time `matches` is computed, a same-command frame
+    // is already indistinguishable from a genuine one.
+    if (this.consumeQuarantinedResponse(frame)) {
+      return;
+    }
     const active = this.active;
     const matches =
       active !== undefined &&
@@ -1549,6 +1681,12 @@ export class MspClient {
       // here) - kept as a defensive invariant, not relied on to be false.
       return;
     }
+    if (active.phase === 'WRITING') {
+      // The response won before the transport write settled. The caller's
+      // result is final, but the transport slot is not: onWriteSettled()
+      // performs the release/pump once the write Promise genuinely ends.
+      return;
+    }
     if (this.active === active) {
       this.active = undefined;
     }
@@ -1572,6 +1710,11 @@ export class MspClient {
     // reacquisition on this identity is refused and a full session reset is
     // required before any further stop attempt.
     this.abortRegisteredEmergencyStop('MSP_EMERGENCY_STOP_ABORTED_BY_DESYNC');
+
+    // The epoch rotates here, so nothing written under the old identity can
+    // still be answered under the new one. Carrying the quarantine across
+    // would swallow a genuine frame belonging to a different session.
+    this.quarantinedResponses.clear();
 
     const rejectedQueue = this.queue.splice(0, this.queue.length);
     for (const pending of rejectedQueue) {
@@ -1755,6 +1898,7 @@ export class MspClient {
     }
 
     this.abortRegisteredEmergencyStop('MSP_EMERGENCY_STOP_ABORTED_BY_SESSION_END');
+    this.quarantinedResponses.clear();
 
     const rejectedQueue = this.queue.splice(0, this.queue.length);
     for (const pending of rejectedQueue) {

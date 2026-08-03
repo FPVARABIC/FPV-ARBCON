@@ -1,5 +1,5 @@
 import * as base64 from './base64';
-import {bytesToBase64, base64ToBytes} from './base64';
+import {bytesToBase64, base64ToBytes, base64ToBytesAsync} from './base64';
 import {RNMspTransport} from './RNMspTransport';
 import type {UsbSerialDataEvent, UsbSerialSessionDetachedEvent, UsbSerialTransportClient} from '../transport';
 
@@ -70,6 +70,11 @@ describe('base64 round-trip (base64.ts)', () => {
   it('round-trips every single byte value 0-255', () => {
     const bytes = Uint8Array.from({length: 256}, (_, i) => i);
     expect(base64ToBytes(bytesToBase64(bytes))).toEqual(bytes);
+  });
+
+  it('decodes a large document payload incrementally without changing bytes', async () => {
+    const bytes = Uint8Array.from({length: 256 * 1024 + 3}, (_, i) => (i * 17 + 5) % 256);
+    await expect(base64ToBytesAsync(bytesToBase64(bytes), 32 * 1024)).resolves.toEqual(bytes);
   });
 });
 
