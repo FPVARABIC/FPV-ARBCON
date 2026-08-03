@@ -46,53 +46,19 @@ const EMPTY_PAYLOAD = new Uint8Array(0);
  * 6.2b recovery-probe precedent (MSP_PROBE_WIRE_FORMAT = 'v1', also used
  * for MSP_API_VERSION specifically).
  *
- * responseTimeoutMs raises the FIRST-CONTACT patience from the client's
- * 2000ms default. The real-user failure that motivated it: a flight
- * controller whose USB port was just opened may still be enumerating or
- * booting its MSP task - on the web transport especially, where opening
- * the port is the first electrical event the board sees from this app.
- * Identification is a one-time handshake: a longer ceiling costs nothing
- * when the board answers (the request resolves on the response) and only
- * delays the FAILED verdict when it truly never answers.
+ * NO responseTimeoutMs OVERRIDE, and no retry policy. Both were briefly
+ * added here and are deliberately restored - see
+ * docs/IDENTIFICATION_RETRY_DECISION.md for the evidence. In short: a
+ * probe against the REAL MspClient showed the retry loop never reached
+ * the wire at all (2 transport writes, the second being the client's own
+ * recovery probe), because a first-contact timeout synchronously latches
+ * desync and every later attempt is refused with MSP_RECOVERING. It also
+ * changed the user-visible failure code and, being shared core, changed
+ * Android with no Android evidence asking for it. First contact is ONE
+ * attempt at the client's own default timeout, and its rejection is
+ * final and unmodified.
  */
-const IDENTIFICATION_RESPONSE_TIMEOUT_MILLIS = 5_000;
-const IDENTIFICATION_REQUEST_OPTIONS: MspRequestOptions = {
-  wireFormat: 'v1',
-  responseTimeoutMs: IDENTIFICATION_RESPONSE_TIMEOUT_MILLIS,
-};
-
-/**
- * FIRST-CONTACT RETRIES - for the opening MSP_API_VERSION request only.
- *
- * Total attempts (1 original + retries) and the pause between them. Three
- * attempts with the 5s ceiling above bound the worst case at ~16s, which
- * covers every observed FC boot window while still ending in an honest
- * FAILED state for a board that genuinely never speaks. Later commands do
- * NOT retry: once the board has answered MSP_API_VERSION, the link is
- * proven, and a failure after that is information the operator should
- * see, not smooth over.
- */
-const FIRST_CONTACT_MAX_ATTEMPTS = 3;
-const FIRST_CONTACT_RETRY_DELAY_MILLIS = 500;
-
-/**
- * The two rejection codes that mean "the link may simply not be ready
- * yet" rather than "the board refused": MSP_TIMEOUT (no reply inside the
- * window) and MSP_RECOVERING (the client's own desync recovery - which a
- * first-contact timeout itself triggers - is momentarily holding new
- * requests). Everything else (MSP_REMOTE_ERROR, a decode failure, a
- * closed session) is a real answer about the link and fails immediately.
- */
-function isRetryableFirstContactError(error: unknown): boolean {
-  const code =
-    error && typeof error === 'object' && 'code' in error
-      ? (error as {code: unknown}).code
-      : undefined;
-  return code === 'MSP_TIMEOUT' || code === 'MSP_RECOVERING';
-}
-
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise(resolve => setTimeout(resolve, milliseconds));
+const IDENTIFICATION_REQUEST_OPTIONS: MspRequestOptions = {wireFormat: 'v1'};
 
 /** Thrown by identify() when the connected firmware's MSP_API_VERSION is
  * below mspCompatibility.ts's own documented minimum - the ONE typed error
@@ -163,7 +129,11 @@ export class MspIdentificationService {
    *    changed.
    */
   async identify(): Promise<FlightControllerIdentity> {
-    const apiVersionFrame = await this.requestFirstContact();
+    const apiVersionFrame = await this.requester.request(
+      MSP_API_VERSION,
+      EMPTY_PAYLOAD,
+      IDENTIFICATION_REQUEST_OPTIONS,
+    );
     const apiVersion = decodeOrThrow(MSP_API_VERSION, () => decodeApiVersion(apiVersionFrame.payload));
 
     const compatibility = checkMspCompatibility(apiVersion);
@@ -190,37 +160,5 @@ export class MspIdentificationService {
     const board = decodeOrThrow(MSP_BOARD_INFO, () => decodeBoardInfo(boardInfoFrame.payload));
 
     return {apiVersion, firmware, board};
-  }
-
-  /**
-   * The opening MSP_API_VERSION request, with bounded first-contact
-   * retries. See FIRST_CONTACT_MAX_ATTEMPTS above for why only this
-   * request retries and why only MSP_TIMEOUT/MSP_RECOVERING qualify.
-   * The last attempt's rejection is propagated UNCHANGED, preserving this
-   * service's documented contract of never reinterpreting the
-   * requester's own errors.
-   */
-  private async requestFirstContact(): Promise<MspFrame> {
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= FIRST_CONTACT_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        return await this.requester.request(
-          MSP_API_VERSION,
-          EMPTY_PAYLOAD,
-          IDENTIFICATION_REQUEST_OPTIONS,
-        );
-      } catch (error) {
-        lastError = error;
-        if (
-          attempt === FIRST_CONTACT_MAX_ATTEMPTS ||
-          !isRetryableFirstContactError(error)
-        ) {
-          throw error;
-        }
-        await delay(FIRST_CONTACT_RETRY_DELAY_MILLIS);
-      }
-    }
-    // Unreachable: the loop either returned or threw on its last pass.
-    throw lastError;
   }
 }
