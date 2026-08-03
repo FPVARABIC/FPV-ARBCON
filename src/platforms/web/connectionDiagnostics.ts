@@ -77,6 +77,19 @@ export function recordBytesWritten(count: number): void {
   writeCount += 1;
 }
 
+/** Checkpoint F: the SAME counters the connection report prints, exposed
+ * so the telemetry report can quote them without a second set of
+ * counters that could disagree with this one. The transport writes these
+ * once; both reports read them. */
+export function readByteCounters(): {
+  readonly bytesReceived: number;
+  readonly bytesWritten: number;
+  readonly receiveChunks: number;
+  readonly writeCount: number;
+} {
+  return {bytesReceived, bytesWritten, receiveChunks, writeCount};
+}
+
 /** Test seam and page-lifetime reset. */
 export function resetConnectionDiagnosticsForTests(): void {
   entries = [];

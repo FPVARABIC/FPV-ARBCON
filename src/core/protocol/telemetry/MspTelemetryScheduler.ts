@@ -173,7 +173,14 @@ import type {MspRequester} from '../msp/identification/MspIdentificationService'
 import type {MspRequestOptions} from '../mspClient';
 import type {MonotonicClock} from './clock';
 import {RealClock} from './clock';
-import type {MspPollDefinition, TelemetryPauseLease, TelemetryPauseReason, TelemetryValue} from './telemetryTypes';
+import type {
+  MspPollDefinition,
+  TelemetryPauseLease,
+  TelemetryPauseReason,
+  TelemetryPollDiagnostics,
+  TelemetrySchedulerDiagnostics,
+  TelemetryValue,
+} from './telemetryTypes';
 
 const EMPTY_PAYLOAD = new Uint8Array(0);
 
@@ -212,6 +219,13 @@ interface PollRuntimeState<T = unknown> {
    * getValue() itself. See this file's own class-level doc comment
    * ("getValue() MUST BE A STABLE CACHE LOOKUP") for why this exists. */
   cachedValue: TelemetryValue<T>;
+  /** Checkpoint F observability - see telemetryTypes.ts's own
+   * TelemetryPollDiagnostics doc comment. Written only; never read by
+   * any scheduling decision. */
+  requestCount: number;
+  responseCount: number;
+  errorCount: number;
+  lastErrorCode: string | undefined;
 }
 
 export interface MspTelemetryScheduler {
@@ -250,6 +264,11 @@ export interface MspTelemetryScheduler {
    * convention already established by subscribeOwnershipState()/
    * subscribeIdentificationState(). */
   subscribe(listener: () => void): () => void;
+  /** Checkpoint F: a read-only snapshot for a diagnostics report.
+   * Allocates a fresh object every call and is therefore NOT a
+   * useSyncExternalStore snapshot source - it is read on demand, at the
+   * moment a user asks for evidence. */
+  describeDiagnostics(): TelemetrySchedulerDiagnostics;
 }
 
 export interface MspTelemetrySchedulerOptions {
@@ -282,10 +301,46 @@ const WAITING_VALUE: TelemetryValue<never> = {status: 'WAITING'};
 const UNAVAILABLE_VALUE: TelemetryValue<never> = {status: 'UNAVAILABLE'};
 const MAX_CONSECUTIVE_PRIMARY_DISPATCHES = 5;
 
+/**
+ * Checkpoint F: reduces any thrown value to a SHORT, ENUMERATED tag for
+ * the diagnostics report.
+ *
+ * Deliberately never the error MESSAGE. A message is free text that a
+ * decoder can (and MspPayloadReader does) build out of byte offsets and
+ * lengths; a report a user pastes into a public issue must carry a code
+ * class, not something derived from the wire. `code` is MspClientError's
+ * own enumerated taxonomy ('MSP_TIMEOUT', 'MSP_RECOVERING', ...);
+ * everything else degrades to the constructor name, then to a bare
+ * 'UNKNOWN'.
+ */
+function describeErrorCode(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const code = (error as {code?: unknown}).code;
+    if (typeof code === 'string' && code.length > 0) {
+      return code;
+    }
+    const name = (error as {name?: unknown}).name;
+    if (typeof name === 'string' && name.length > 0) {
+      return name;
+    }
+  }
+  return 'UNKNOWN';
+}
+
 class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private readonly polls = new Map<string, PollRuntimeState>();
   private readonly activeLeaseIds = new Set<string>();
+  /** Checkpoint F: the REASON behind each active lease id, so a
+   * diagnostics report can say WHICH owner is holding polling off
+   * ('MOTOR_TEST' vs 'APP_BACKGROUND' vs 'EXCLUSIVE_OPERATION') rather
+   * than only that something is. Kept strictly in step with
+   * activeLeaseIds; consulted by nothing else. */
+  private readonly activeLeaseReasons = new Map<string, TelemetryPauseReason>();
   private readonly listeners = new Set<() => void>();
+  /** Checkpoint F: how many times tick() has run. A report showing zero
+   * ticks proves the driving interval never fired - a completely
+   * different failure from "ticks fired but nothing was due". */
+  private tickCount = 0;
   private nextLeaseSeq = 0;
   /** Monotonic genuine-sample counter, scheduler-wide (therefore
    * session-wide - one scheduler per physical session). Incremented
@@ -322,6 +377,10 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       lastOutcome: undefined,
       lastSuccessAtMs: undefined,
       cachedValue: WAITING_VALUE,
+      requestCount: 0,
+      responseCount: 0,
+      errorCount: 0,
+      lastErrorCode: undefined,
     };
     this.polls.set(definition.id, state as PollRuntimeState);
 
@@ -371,6 +430,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   }
 
   tick(): void {
+    this.tickCount += 1;
     const now = this.clock.now();
 
     // Staleness is a property of "time since last update," genuinely
@@ -469,6 +529,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   acquirePauseLease(reason: TelemetryPauseReason): TelemetryPauseLease {
     const id = `${reason}-${this.nextLeaseSeq++}`;
     this.activeLeaseIds.add(id);
+    this.activeLeaseReasons.set(id, reason);
     let released = false;
     return {
       id,
@@ -478,7 +539,43 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         }
         released = true;
         this.activeLeaseIds.delete(id);
+        this.activeLeaseReasons.delete(id);
       },
+    };
+  }
+
+  /** Checkpoint F. Pure read: allocates a snapshot, mutates nothing,
+   * touches neither the clock's scheduling role nor any poll's state. */
+  describeDiagnostics(): TelemetrySchedulerDiagnostics {
+    const polls: TelemetryPollDiagnostics[] = [];
+    for (const poll of this.polls.values()) {
+      const cached = poll.cachedValue;
+      polls.push({
+        id: poll.definition.id,
+        command: poll.definition.command,
+        intervalMs: poll.definition.intervalMs,
+        staleAfterMs: poll.definition.staleAfterMs,
+        priority: poll.definition.priority,
+        requestCount: poll.requestCount,
+        responseCount: poll.responseCount,
+        errorCount: poll.errorCount,
+        lastErrorCode: poll.lastErrorCode,
+        inFlight: poll.inFlight,
+        status: cached.status,
+        sampleSeq: cached.status === 'FRESH' || cached.status === 'STALE' ? cached.sampleSeq : undefined,
+        updatedAtMs:
+          cached.status === 'FRESH' || cached.status === 'STALE' || cached.status === 'ERROR'
+            ? cached.updatedAtMs
+            : undefined,
+      });
+    }
+    return {
+      tickCount: this.tickCount,
+      inFlightCount: this.inFlightCount,
+      // Insertion-ordered, so the report reads as the order the holds
+      // were actually taken.
+      pauseReasons: Array.from(this.activeLeaseReasons.values()),
+      polls,
     };
   }
 
@@ -514,6 +611,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     poll.inFlight = true;
     poll.dueAtMs = dispatchedAtMs + poll.definition.intervalMs;
     this.inFlightCount += 1;
+    poll.requestCount += 1;
 
     const payload = poll.definition.requestPayload ?? EMPTY_PAYLOAD;
     Promise.resolve(this.requester.request(poll.definition.command, payload, REQUEST_OPTIONS))
@@ -524,10 +622,13 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         poll.lastSuccessAtMs = updatedAtMs;
         // THE canonical publication boundary for a genuine sample.
         poll.cachedValue = {status: 'FRESH', value, updatedAtMs, sampleSeq: this.nextSampleSeq++};
+        poll.responseCount += 1;
       })
       .catch((error: unknown) => {
         poll.lastOutcome = {type: 'error', error};
         poll.cachedValue = {status: 'ERROR', error, updatedAtMs: poll.lastSuccessAtMs};
+        poll.errorCount += 1;
+        poll.lastErrorCode = describeErrorCode(error);
       })
       .finally(() => {
         poll.inFlight = false;

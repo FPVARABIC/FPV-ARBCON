@@ -48,6 +48,11 @@ import { OrientationRenderer } from '../../orientation3d';
 // alone (the Skia component cannot mount under Jest), and the
 // diagnostics tracker must keep working in exactly those tests.
 import { orientationLatencyTracker } from '../../orientation3d/orientationLatencyDebugLog';
+// Checkpoint F: the ALWAYS-ON counterpart to the tracker above, which is
+// __DEV__-gated and therefore silent in the build a user runs. Imported
+// from its own module for the same reason the tracker is - screen suites
+// jest.mock() the orientation3d barrel down to OrientationRenderer alone.
+import { orientationRenderObserver } from '../../orientation3d/orientationRenderObserver';
 import type { OrientationViewState } from '../../../core';
 import { describeOrientationForAccessibility } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
@@ -199,6 +204,24 @@ export default function OrientationHero({
       </View>
     );
   };
+
+  // Checkpoint F: recorded BEFORE the two pose-less early returns below,
+  // so a report can never say "STALE" while this component is actually
+  // rendering the error state (see orientationRenderObserver.ts's own
+  // noteHeroSample doc comment - that exact contradiction was observed
+  // and is what this placement fixes).
+  orientationRenderObserver.noteHeroSample(
+    sessionToken,
+    sampleSeq,
+    orientationView.status,
+    orientationView.status === 'LIVE' || orientationView.status === 'STALE'
+      ? {
+          rollDeg: orientationView.rollDeg,
+          pitchDeg: orientationView.pitchDeg,
+          yawDeg: orientationView.yawDeg,
+        }
+      : undefined,
+  );
 
   if (orientationView.status === 'WAITING') {
     return (

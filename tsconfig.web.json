@@ -57,7 +57,8 @@
     "src/platforms/mapLink.web.test.ts",
     "src/platforms/react-native/transport/native/NativeUsbSerialTransport.web.test.ts",
     "src/platforms/react-native/transport/native/webUsbDfu.web.test.ts",
-    "src/platforms/web/connectionDiagnostics.test.ts"
+    "src/platforms/web/connectionDiagnostics.test.ts",
+    "src/platforms/web/telemetryDiagnostics.test.ts"
   ],
   "exclude": [
     "**/node_modules",

@@ -36,6 +36,7 @@ import {computeDroneScene} from './droneSceneGeometry';
 import type {DroneOrientationDeg, DroneScenePrimitive} from './droneSceneGeometry';
 import {orientationLatencyTracker} from './orientationLatencyDebugLog';
 import type {OrientationLatencySampleIdentity} from './orientationLatencyDebugLog';
+import {orientationRenderObserver} from './orientationRenderObserver';
 import {
   OUTLINE_STROKE_WIDTH,
   appearanceFor,
@@ -94,6 +95,11 @@ export function OrientationRenderer({
     () => buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height),
     [rollDeg, pitchDeg, yawDeg, width, height],
   );
+
+  // Checkpoint F: the pose THIS renderer was handed, recorded before any
+  // identity gate below - "the SVG received a changed orientation prop"
+  // must stay provable even for a sample with no sequence number.
+  orientationRenderObserver.noteRendererPose({rollDeg, pitchDeg, yawDeg});
 
   if (sessionToken !== undefined && sampleSeq !== undefined) {
     const identity = {sessionToken, sampleSeq};

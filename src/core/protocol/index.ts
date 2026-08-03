@@ -253,6 +253,8 @@ export type {
   TelemetryValue,
   TelemetryPauseReason,
   TelemetryPauseLease,
+  TelemetryPollDiagnostics,
+  TelemetrySchedulerDiagnostics,
   MspTelemetryScheduler,
   MspTelemetrySchedulerOptions,
 } from './telemetry';

@@ -259,6 +259,8 @@
     "reportedCurrent": "التيار المُبلّغ: {{value}} A",
     "reportedConsumed": "الاستهلاك المُبلّغ: {{value}} mAh",
     "stateUnknown": "حالة البطارية غير معروفة",
+    "noMeasurement": "لا يوجد قياس جهد بطارية",
+    "reportedRawVoltage": "قراءة مقياس الجهد المُبلّغة من المتحكم: {{value}} V — ليست جهد حزمة بطارية",
     "state": {
       "OK": "طبيعية",
       "WARNING": "تحذير",
@@ -297,6 +299,10 @@
     }
   },
   "diagnostics": {
+    "copyTelemetryReport": "نسخ تقرير التليمترية",
+    "copyTelemetryReportHint": "تقرير تقني نصّي لتشخيص تجمّد بيانات Setup — يحوي عدّادات وحالات فقط، بلا أي بايتات أو محتوى برنامج ثابت.",
+    "copyTelemetryReportDone": "نُسخ تقرير التليمترية — ألصقه في بلاغك.",
+    "copyTelemetryReportFailed": "تعذّر النسخ إلى الحافظة في هذا المتصفح.",
     "title": "التشخيص والجاهزية",
     "showDetails": "عرض التفاصيل",
     "hideDetails": "إخفاء التفاصيل",
