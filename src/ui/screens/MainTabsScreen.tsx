@@ -42,6 +42,7 @@ import SetupScreen from './SetupScreen';
 import MotorsTab from './MotorsScreen';
 import PortsScreen from './PortsScreen';
 import GpsScreen from './GpsScreen';
+import ConfigurationsScreen from './ConfigurationsScreen';
 import {
   INITIAL_MAIN_TAB,
   isTabSelectable,
@@ -89,6 +90,10 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
   );
   const reportGpsDirty = useCallback(
     (dirty: boolean) => reportDirty('GPS', dirty),
+    [reportDirty],
+  );
+  const reportConfigurationsDirty = useCallback(
+    (dirty: boolean) => reportDirty('CONFIGURATIONS', dirty),
     [reportDirty],
   );
 
@@ -224,6 +229,24 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
               active={activeTab === 'GPS'}
               onOpenPorts={() => handleSelectTab('PORTS')}
               onDirtyChange={reportGpsDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('CONFIGURATIONS') ? (
+          <View
+            style={
+              activeTab === 'CONFIGURATIONS' ? styles.visible : styles.hidden
+            }
+            testID="main-tab-panel-CONFIGURATIONS"
+          >
+            <ConfigurationsScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'CONFIGURATIONS'}
+              onOpenSetup={() => handleSelectTab('SETUP')}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onOpenPorts={() => handleSelectTab('PORTS')}
+              onOpenGps={() => handleSelectTab('GPS')}
+              onDirtyChange={reportConfigurationsDirty}
             />
           </View>
         ) : null}

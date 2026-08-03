@@ -62,6 +62,19 @@ export {
   GpsConfigurationController,
   gpsConfigurationController,
 } from './GpsConfigurationController';
+export {
+  GeneralConfigurationController,
+  generalConfigurationController,
+} from './GeneralConfigurationController';
+export type {
+  GeneralConfigurationBlockReason,
+  GeneralConfigurationLoadOutcome,
+  GeneralConfigurationSaveStage,
+  GeneralConfigurationSaveOutcome,
+  GeneralConfigurationSessionCoordinator,
+  GeneralConfigurationAppStateOwner,
+  GeneralConfigurationControllerOptions,
+} from './GeneralConfigurationController';
 export type {
   GpsBlockReason,
   GpsLoadOutcome,

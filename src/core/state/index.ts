@@ -90,6 +90,29 @@ export type {
   GpsConfigurationValidationCode,
 } from './gpsConfigurationModel';
 export {
+  GENERAL_FEATURES,
+  BEEPER_CONDITIONS,
+  DSHOT_BEACON_CONDITIONS,
+  GENERAL_FEATURE_EDITABLE_MASK,
+  BEEPER_EDITABLE_MASK,
+  DSHOT_BEACON_EDITABLE_MASK,
+  createGeneralConfigurationDraft,
+  bitEnabled,
+  setMaskBit,
+  featureIsAvailable,
+  generalConfigurationDraftsEqual,
+  generalConfigurationSnapshotsEqual,
+  generalConfigurationChangedCount,
+  validateGeneralConfigurationDraft,
+} from './generalConfigurationModel';
+export type {
+  GeneralFeatureDefinition,
+  BeeperConditionDefinition,
+  GeneralConfigurationSnapshot,
+  GeneralConfigurationDraft,
+  GeneralConfigurationValidationCode,
+} from './generalConfigurationModel';
+export {
   FEATURE_MOTOR_STOP_BIT,
   FEATURE_ESC_SENSOR_BIT,
   MOTOR_PROTOCOL_RAW_MIN,

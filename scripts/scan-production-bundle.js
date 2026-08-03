@@ -161,6 +161,15 @@ const REQUIRED_ENGINE_TOKENS = [
   'decodeGpsSatelliteInfo',
   'encodeGpsConfiguration',
   'MSP_SET_GPS_CONFIG',
+  // General Configurations is a first-class production subsystem. Its
+  // complete encoder and guarded transaction must ship together.
+  'configurations-screen',
+  'GeneralConfigurationController',
+  'encodeChangedGeneralConfiguration',
+  'MSP_SET_ARMING_CONFIG',
+  'MSP_SET_BEEPER_CONFIG',
+  'MSP_SET_RX_CONFIG',
+  'MSP2_SET_TEXT',
   // Firmware Flasher and the new landing route are product surfaces, not
   // optional debug code. Their protocol owners must ship in Release.
   'firmware-flasher-screen',
@@ -215,6 +224,9 @@ const REQUIRED_ARABIC_STRINGS = [
   'لا يوجد منفذ GPS معيّن',
   'تهيئة GPS',
   'نتيجة إحدى الكتابات غير مؤكدة',
+  'التكوينات',
+  'حفظ جراحي موثّق',
+  'لا توجد روابط أو واجهات خارجية',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous.
@@ -265,6 +277,7 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
+      'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
   },
   {
@@ -274,6 +287,7 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
+      'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
   },
   {
@@ -302,6 +316,42 @@ const ENGINE_BOUNDARIES = [
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+      'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'encodeChangedGeneralConfiguration',
+    from: 'src/core/protocol/msp/encoding/encodeGeneralConfiguration.ts',
+    importers: [
+      'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_ARMING_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_BEEPER_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_RX_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP2_SET_TEXT',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
   },
   {

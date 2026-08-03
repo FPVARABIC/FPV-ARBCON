@@ -11,6 +11,7 @@ export type MainTabKey =
   | 'MOTORS'
   | 'PORTS'
   | 'GPS'
+  | 'CONFIGURATIONS'
   | 'RECEIVER'
   | 'PID';
 
@@ -57,6 +58,11 @@ export const MAIN_TABS: readonly MainTabDefinition[] = Object.freeze([
   Object.freeze({
     key: 'GPS' as const,
     labelKey: 'tabs.gps',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'CONFIGURATIONS' as const,
+    labelKey: 'tabs.configurations',
     implemented: true,
   }),
   Object.freeze({

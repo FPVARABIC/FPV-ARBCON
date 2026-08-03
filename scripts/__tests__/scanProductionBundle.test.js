@@ -236,7 +236,7 @@ describe('scanner - the engine boundary is the remaining structural containment'
     }
   });
 
-  it('confines persistent motor-setting writes to MotorConfigurationController', () => {
+  it('confines every persistent configuration write to its reviewed controller', () => {
     for (const token of [
       'encodeChangedMotorConfiguration',
       'MSP_EEPROM_WRITE',
@@ -244,6 +244,11 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'MSP_SET_GPS_CONFIG',
       'MSP_SET_MIXER_CONFIG',
       'MSP_SET_ADVANCED_CONFIG',
+      'encodeChangedGeneralConfiguration',
+      'MSP_SET_ARMING_CONFIG',
+      'MSP_SET_BEEPER_CONFIG',
+      'MSP_SET_RX_CONFIG',
+      'MSP2_SET_TEXT',
       'MSP_SET_MOTOR_3D_CONFIG',
       'MSP_SET_MOTOR_CONFIG',
       'encodeMotorOutputOrder',
@@ -295,16 +300,21 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'MSP2_COMMON_SET_SERIAL_CONFIG',
       'MSP2_SEND_DSHOT_COMMAND',
       'MSP2_SET_MOTOR_OUTPUT_REORDERING',
+      'MSP2_SET_TEXT',
       'MSP_EEPROM_WRITE',
       'MSP_SET_ADVANCED_CONFIG',
+      'MSP_SET_ARMING_CONFIG',
+      'MSP_SET_BEEPER_CONFIG',
       'MSP_SET_FEATURE_CONFIG',
       'MSP_SET_GPS_CONFIG',
       'MSP_SET_MIXER_CONFIG',
       'MSP_SET_MOTOR',
       'MSP_SET_MOTOR_3D_CONFIG',
       'MSP_SET_MOTOR_CONFIG',
+      'MSP_SET_RX_CONFIG',
       'buildAllStopVector',
       'buildSingleMotorVector',
+      'encodeChangedGeneralConfiguration',
       'encodeChangedMotorConfiguration',
       'encodeDshotEscDirection',
       'encodeMotorOutputOrder',

@@ -47,6 +47,7 @@ describe('Motors reachability after the single-app merge', () => {
       'MOTORS',
       'PORTS',
       'GPS',
+      'CONFIGURATIONS',
       'RECEIVER',
       'PID',
     ]);

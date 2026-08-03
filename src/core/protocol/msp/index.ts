@@ -15,7 +15,17 @@ export {
   MSP_ACC_CALIBRATION,
   MSP_MAG_CALIBRATION,
   MSP_REBOOT,
+  MSP_NAME,
+  MSP_SET_NAME,
   MSP_FEATURE_CONFIG,
+  MSP_RX_CONFIG,
+  MSP_SET_RX_CONFIG,
+  MSP_ARMING_CONFIG,
+  MSP_SET_ARMING_CONFIG,
+  MSP_BEEPER_CONFIG,
+  MSP_SET_BEEPER_CONFIG,
+  MSP2_GET_TEXT,
+  MSP2_SET_TEXT,
   MSP_MIXER_CONFIG,
   MSP_ADVANCED_CONFIG,
   MSP_MOTOR,
@@ -32,7 +42,6 @@ export {
   MSP_SET_MOTOR_CONFIG,
   MSP_SET_GPS_CONFIG,
   MSP_EEPROM_WRITE,
-  MSP_RX_CONFIG,
   MSP_VTX_CONFIG,
   MSP2_COMMON_SERIAL_CONFIG,
   MSP2_COMMON_SET_SERIAL_CONFIG,
@@ -145,6 +154,19 @@ export type { MspBuildOptions } from './decoding/decodeBuildOptions';
 export { decodeSerialRxProvider } from './decoding/decodeSerialRxProvider';
 export { decodeVtxTableStatus } from './decoding/decodeVtxTableStatus';
 export type { MspVtxTableStatus } from './decoding/decodeVtxTableStatus';
+export { decodeArmingConfig } from './decoding/decodeArmingConfig';
+export type { MspArmingConfig } from './decoding/decodeArmingConfig';
+export { decodeBeeperConfig } from './decoding/decodeBeeperConfig';
+export type { MspBeeperConfig } from './decoding/decodeBeeperConfig';
+export { decodeRxConfig } from './decoding/decodeRxConfig';
+export type { MspRxConfig } from './decoding/decodeRxConfig';
+export {
+  decodeMspText,
+  MSP_TEXT_PILOT_NAME,
+  MSP_TEXT_CRAFT_NAME,
+  MSP_TEXT_MAX_BYTES,
+} from './decoding/decodeMspText';
+export type { MspTextValue } from './decoding/decodeMspText';
 export {
   encodeMotorOutputOrder,
   MotorOutputOrderEncodeError,
@@ -169,6 +191,19 @@ export type {
   MotorConfigurationWriteGroup,
   EncodedMotorConfigurationWrite,
 } from './encoding/encodeMotorConfiguration';
+export {
+  encodeArmingConfiguration,
+  encodeBeeperConfiguration,
+  encodeAdvancedGeneralConfiguration,
+  encodeRxCameraAngle,
+  encodeMspTextRequest,
+  encodeMspText,
+  encodeChangedGeneralConfiguration,
+} from './encoding/encodeGeneralConfiguration';
+export type {
+  GeneralConfigurationWriteGroup,
+  EncodedGeneralConfigurationWrite,
+} from './encoding/encodeGeneralConfiguration';
 
 export {
   checkMspCompatibility,

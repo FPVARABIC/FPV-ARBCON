@@ -160,6 +160,21 @@ export const MSP_REBOOT = 68;
  * for whether 3D mode is active. */
 export const MSP_FEATURE_CONFIG = 36;
 
+/** General configuration groups used by the integrated Configurations area.
+ * Values and payload layouts are pinned to Betaflight 2025.12.2 / MSP 1.47.
+ * The SET commands are consumed only by the guarded configuration
+ * transaction; declaring them here does not create an unguarded write path. */
+export const MSP_NAME = 10;
+export const MSP_SET_NAME = 11;
+export const MSP_RX_CONFIG = 44;
+export const MSP_SET_RX_CONFIG = 45;
+export const MSP_ARMING_CONFIG = 61;
+export const MSP_SET_ARMING_CONFIG = 62;
+export const MSP_BEEPER_CONFIG = 184;
+export const MSP_SET_BEEPER_CONFIG = 185;
+export const MSP2_GET_TEXT = 0x3006;
+export const MSP2_SET_TEXT = 0x3007;
+
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
  * `#define MSP_MIXER_CONFIG 42` - msp.c, 2 bytes: u8 mixerMode, u8
  * yaw_motors_reversed. MIXER_QUADX (3) and MIXER_QUADX_1234 (26) are
@@ -232,9 +247,6 @@ export const MSP_SET_GPS_CONFIG = 223;
  * paths remain forbidden from sending it.
  */
 export const MSP_EEPROM_WRITE = 250;
-
-/** Serial receiver provider; byte zero identifies the active provider. */
-export const MSP_RX_CONFIG = 44;
 
 /** Read-only VTX state/table availability used by Ports. */
 export const MSP_VTX_CONFIG = 88;

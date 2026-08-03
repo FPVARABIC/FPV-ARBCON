@@ -7,6 +7,7 @@ const SCREEN_FILES = [
   'MotorsScreen.tsx',
   'PortsScreen.tsx',
   'GpsScreen.tsx',
+  'ConfigurationsScreen.tsx',
   'FirmwareFlasherScreen.tsx',
   'StartScreen.tsx',
 ] as const;
