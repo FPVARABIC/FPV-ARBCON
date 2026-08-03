@@ -114,6 +114,7 @@ import type {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'> & {
   readonly onOpenGps?: () => void;
+  readonly active?: boolean;
 };
 
 export function shouldUseSingleColumnTelemetryCards(
@@ -127,6 +128,7 @@ export default function SetupScreen({
   route,
   navigation,
   onOpenGps,
+  active = true,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const sessionKey = route.params?.sessionKey;
@@ -162,6 +164,7 @@ export default function SetupScreen({
       sessionKey={sessionKey}
       onBack={() => navigation.goBack()}
       onOpenGps={onOpenGps}
+      active={active}
     />
   );
 }
@@ -170,10 +173,12 @@ function SetupScreenContent({
   sessionKey,
   onBack,
   onOpenGps,
+  active,
 }: {
   sessionKey: SetupUiSessionKey;
   onBack: () => void;
   onOpenGps?: () => void;
+  active: boolean;
 }): React.JSX.Element {
   const { t } = useTranslation();
   const { sessionId } = sessionKey;
@@ -183,10 +188,15 @@ function SetupScreenContent({
     fontScale,
   );
 
-  const armed = useTelemetryValue<boolean>(sessionId, ARMED_TELEMETRY_POLL_ID);
+  const armed = useTelemetryValue<boolean>(
+    sessionId,
+    ARMED_TELEMETRY_POLL_ID,
+    active,
+  );
   const blockers = useTelemetryValue<ArmingBlockReason[]>(
     sessionId,
     ARMING_BLOCKERS_TELEMETRY_POLL_ID,
+    active,
   );
   // Pass 7.6b: the same generic hook/scheduler path attitude uses - the
   // poll itself exists only for identified-compatible Betaflight sessions
@@ -195,6 +205,7 @@ function SetupScreenContent({
   const batteryPolled = useTelemetryValue<MspBatteryState>(
     sessionId,
     BATTERY_TELEMETRY_POLL_ID,
+    active,
   );
   // Pass 7.7: once the one-strike battery timeout breaker has fired, the
   // poll is unregistered (scheduler reports UNAVAILABLE). The latch is the
@@ -209,14 +220,17 @@ function SetupScreenContent({
   const receiver = useTelemetryValue<MspAnalog>(
     sessionId,
     RECEIVER_TELEMETRY_POLL_ID,
+    active,
   );
   const gps = useTelemetryValue<MspRawGpsCompact>(
     sessionId,
     GPS_TELEMETRY_POLL_ID,
+    active,
   );
   const fcStatus = useTelemetryValue<MspStatusExDiagnostics>(
     sessionId,
     FC_STATUS_TELEMETRY_POLL_ID,
+    active,
   );
   const receiverChannelState = useAuxTelemetryChannelState(
     sessionId,
@@ -339,6 +353,7 @@ function SetupScreenContent({
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <LiveOrientationHero
           sessionKey={sessionKey}
+          active={active}
           orientationViewOffset={uiState.orientationViewOffset}
           hasSeenResetHint={uiState.hasSeenOrientationResetHint}
           onResetView={handleResetView}
@@ -372,7 +387,10 @@ function SetupScreenContent({
                 : undefined,
           }}
         />
-        <LiveOrientationStabilityPanel sessionKey={sessionKey} />
+        <LiveOrientationStabilityPanel
+          sessionKey={sessionKey}
+          active={active}
+        />
         <SetupSectionHeading
           eyebrow={t('setupSections.readiness.eyebrow')}
           title={t('setupSections.readiness.title')}
@@ -492,12 +510,14 @@ function SetupSectionHeading({
  */
 function LiveOrientationHero({
   sessionKey,
+  active,
   orientationViewOffset,
   hasSeenResetHint,
   onResetView,
   onResetHintShown,
 }: {
   sessionKey: SetupUiSessionKey;
+  active: boolean;
   orientationViewOffset: OrientationViewOffset;
   hasSeenResetHint: boolean;
   onResetView: () => void;
@@ -506,6 +526,7 @@ function LiveOrientationHero({
   const attitude = useTelemetryValue<MspAttitude>(
     sessionKey.sessionId,
     ATTITUDE_TELEMETRY_POLL_ID,
+    active,
   );
   const ownershipState = useMspOwnershipState(sessionKey.sessionId);
   const orientationView = deriveOrientationViewState(
@@ -539,12 +560,15 @@ function LiveOrientationHero({
  * the rest of Setup. */
 function LiveOrientationStabilityPanel({
   sessionKey,
+  active,
 }: {
   sessionKey: SetupUiSessionKey;
+  active: boolean;
 }): React.JSX.Element {
   const attitude = useTelemetryValue<MspAttitude>(
     sessionKey.sessionId,
     ATTITUDE_TELEMETRY_POLL_ID,
+    active,
   );
   const orientationView = deriveOrientationViewState(attitude);
   const hasSample = attitude.status === 'FRESH' || attitude.status === 'STALE';

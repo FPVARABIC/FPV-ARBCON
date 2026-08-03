@@ -33,13 +33,22 @@ export class ReactNativeSerialPort {
   private closed = true;
   private terminalError: Error | null = null;
   private deviceLostCallback: (() => void) | null = null;
+  private readonly handleAbort = () => {
+    this.fail(new RawSerialError('أُلغيَت عملية Firmware.'));
+  };
 
   constructor(
     private readonly client: UsbSerialTransportClient,
     private readonly deviceId: number,
     private readonly portIndex: number,
     private readonly signal?: AbortSignal,
-  ) {}
+  ) {
+    if (signal?.aborted) {
+      this.handleAbort();
+    } else {
+      signal?.addEventListener('abort', this.handleAbort, {once: true});
+    }
+  }
 
   setDeviceLostCallback(callback: (() => void) | null): void {
     this.deviceLostCallback = callback;
@@ -84,6 +93,14 @@ export class ReactNativeSerialPort {
       flowControl: serialOptions.flowControl === 'hardware' ? 'rtsCts' : 'off',
     };
     const sessionId = await this.client.openDevice(this.deviceId, this.portIndex, configuration);
+    // openDevice() is asynchronous and the AbortSignal may fire while native
+    // permission/open work is still pending. Never resurrect an operation
+    // that was cancelled during that window, and never leak the session that
+    // native just created for it.
+    if (this.signal?.aborted || this.terminalError !== null) {
+      await this.client.closeSession(sessionId).catch(() => undefined);
+      this.throwIfUnavailable();
+    }
     this.sessionId = sessionId;
     this.closed = false;
     this.baudrate = baud;
@@ -112,6 +129,7 @@ export class ReactNativeSerialPort {
     const sessionId = this.sessionId;
     this.sessionId = null;
     this.closed = true;
+    this.signal?.removeEventListener('abort', this.handleAbort);
     this.unsubscribeData?.();
     this.unsubscribeDetached?.();
     this.unsubscribeData = null;

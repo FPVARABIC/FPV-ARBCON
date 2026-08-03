@@ -134,6 +134,9 @@ describe('FirmwareFlasherScreen', () => {
     expect(allText(renderer)).toContain('HEX • verified.hex');
     expect(allText(renderer)).toContain('STM32 DFU (DfuSe)');
     expect(allText(renderer)).toContain('بوابة الأمان');
+    expect(allText(renderer)).toContain('الإعداد الآمن الموصى به');
+    expect(allText(renderer)).toContain('المسار البسيط جاهز');
+    expect(renderer.root.findAllByProps({testID: 'unprotect-dfu-device'})).toHaveLength(0);
     act(() => renderer.unmount());
   });
 
@@ -333,6 +336,7 @@ describe('FirmwareFlasherScreen', () => {
     const {renderer} = await renderScreen(client);
     await press(renderer, 'firmware-source-local');
     await press(renderer, 'pick-local-firmware');
+    await press(renderer, 'toggle-advanced-usb-recovery');
 
     expect(renderer.root.findByProps({testID: 'unprotect-dfu-device'}).props.disabled).toBe(true);
     await act(async () => {
@@ -351,6 +355,8 @@ describe('FirmwareFlasherScreen', () => {
     const screenSource = readFileSync(join(__dirname, 'FirmwareFlasherScreen.tsx'), 'utf8');
     const appSource = readFileSync(join(__dirname, '../../../App.tsx'), 'utf8');
     expect(screenSource).not.toMatch(/\bLinking\b|openURL|betaflight\.com\/docs|github\.com\/betaflight/);
+    expect(screenSource).toContain("navigation?.addListener('beforeRemove'");
+    expect(screenSource).toContain('client.cancelDfuFlash().catch');
     expect(appSource).not.toMatch(/import\s*\{[^}]*FirmwareFlasherScreen/s);
     expect(appSource).toContain('<Stack.Screen name="FirmwareFlasher" getComponent={getFirmwareFlasherScreen} />');
   });

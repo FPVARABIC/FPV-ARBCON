@@ -281,14 +281,17 @@ export default function GpsScreen({
   const rawTelemetry = useTelemetryValue<MspDetailedGps>(
     sessionId,
     GPS_DETAIL_RAW_POLL_ID,
+    active,
   );
   const homeTelemetry = useTelemetryValue<MspCompGps>(
     sessionId,
     GPS_DETAIL_HOME_POLL_ID,
+    active,
   );
   const satellitesTelemetry = useTelemetryValue<MspGpsSatelliteInfo>(
     sessionId,
     GPS_DETAIL_SATELLITES_POLL_ID,
+    active,
   );
   const raw = valueOf(rawTelemetry);
   const home = valueOf(homeTelemetry);
@@ -832,7 +835,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   content: {
     width: '100%',
-    maxWidth: 900,
+    maxWidth: 1180,
     alignSelf: 'center',
     padding: spacing.md,
     paddingBottom: spacing.xxl,

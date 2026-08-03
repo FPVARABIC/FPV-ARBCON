@@ -144,7 +144,7 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     shell.unmount();
   });
 
-  it('moves immediately when nothing changed, but asks before leaving a draft', () => {
+  it('stops immediately on the first departure tap, then asks what to do with a draft', () => {
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
@@ -152,13 +152,40 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     ReactTestRenderer.act(() => mockReportMotorsDirty?.(true));
     shell.press('main-tab-PORTS');
 
-    expect(fires).toEqual([]);
+    // The safety blur is not postponed behind a modal that the operator
+    // may leave open indefinitely.
+    expect(fires).toEqual(['blur']);
     expect(alert).toHaveBeenCalledTimes(1);
     expect(alert.mock.calls[0][0]).toBe('تغييرات غير محفوظة');
+    expect(alert.mock.calls[0][1]).toContain('تم إيقاف جلسة المحركات فوراً');
 
     const buttons = alert.mock.calls[0][2];
     ReactTestRenderer.act(() => buttons?.[1]?.onPress?.());
+    // Confirming the already-safe departure changes presentation only; it
+    // must not manufacture a second lifecycle event.
     expect(fires).toEqual(['blur']);
+    const portsPanel = shell.renderer.root.findByProps({
+      testID: 'main-tab-panel-PORTS',
+    });
+    expect(portsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
+    shell.unmount();
+  });
+
+  it('stops Motors even when the operator stays to save the draft', () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+
+    ReactTestRenderer.act(() => mockReportMotorsDirty?.(true));
+    shell.press('main-tab-PORTS');
+
+    const buttons = alert.mock.calls[0][2];
+    ReactTestRenderer.act(() => buttons?.[0]?.onPress?.());
+    expect(fires).toEqual(['blur']);
+    const motorsPanel = shell.renderer.root.findByProps({
+      testID: 'main-tab-panel-MOTORS',
+    });
+    expect(motorsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
     shell.unmount();
   });
 

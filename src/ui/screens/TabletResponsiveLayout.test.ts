@@ -6,6 +6,9 @@ const SCREEN_FILES = [
   'SetupScreen.tsx',
   'MotorsScreen.tsx',
   'PortsScreen.tsx',
+  'GpsScreen.tsx',
+  'FirmwareFlasherScreen.tsx',
+  'StartScreen.tsx',
 ] as const;
 
 describe('tablet responsive shell', () => {

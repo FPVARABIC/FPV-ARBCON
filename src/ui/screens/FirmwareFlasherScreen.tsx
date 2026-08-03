@@ -8,6 +8,7 @@ import React, {
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -335,6 +336,8 @@ export default function FirmwareFlasherScreen({
   const [buildLogLoading, setBuildLogLoading] = useState(false);
   const [showFlashGuide, setShowFlashGuide] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [advancedUsbRecoveryExpanded, setAdvancedUsbRecoveryExpanded] = useState(false);
+  const [advancedFlashOptionsExpanded, setAdvancedFlashOptionsExpanded] = useState(false);
   const operationController = useRef<AbortController | null>(null);
   const lastProgressAt = useRef(0);
   const mounted = useRef(true);
@@ -413,7 +416,15 @@ export default function FirmwareFlasherScreen({
     return () => {
       mounted.current = false;
       controller.abort();
-      operationController.current?.abort();
+      if (operationController.current !== null) {
+        operationController.current.abort();
+        // Native DFU runs on its own worker. Aborting the JS signal stops
+        // cloud/serial/ESP work, while this explicit call guarantees an
+        // unexpected route teardown cannot leave a native erase/write
+        // continuing with no screen and no cancel control in front of the
+        // operator. It is a harmless no-op when DFU is not the active path.
+        client.cancelDfuFlash().catch(() => undefined);
+      }
       unsubscribeAttach();
       unsubscribeDetach();
     };
@@ -1224,6 +1235,18 @@ export default function FirmwareFlasherScreen({
   const canCancel = ['building', 'detecting', 'backing-up', 'flashing', 'restoring'].includes(operation);
   const isDevelopment = selectedReleaseInfo?.channel === 'development';
 
+  useEffect(() => {
+    if (!isBusy) return;
+    return navigation?.addListener('beforeRemove', event => {
+      event.preventDefault();
+      Alert.alert(
+        'عملية Firmware قيد التنفيذ',
+        'ألغِ العملية من زر «إلغاء» وانتظر توقفها قبل مغادرة الشاشة.',
+        [{text: 'حسناً'}],
+      );
+    });
+  }, [isBusy, navigation]);
+
   return (
     <View style={styles.root} testID="firmware-flasher-screen">
       <Modal
@@ -1304,6 +1327,7 @@ export default function FirmwareFlasherScreen({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="العودة"
+          accessibilityState={{disabled: isBusy}}
           disabled={isBusy}
           onPress={() => navigation?.goBack()}
           style={[styles.backButton, isBusy && styles.dimmed]}>
@@ -1741,6 +1765,15 @@ export default function FirmwareFlasherScreen({
                   />
                 )
               ) : null}
+              <FirmwareButton
+                title={`${advancedUsbRecoveryExpanded ? 'إخفاء' : 'عرض'} أدوات USB والاستعادة المتقدمة`}
+                onPress={() => setAdvancedUsbRecoveryExpanded(value => !value)}
+                disabled={isBusy}
+                tone="secondary"
+                testID="toggle-advanced-usb-recovery"
+              />
+              {advancedUsbRecoveryExpanded ? (
+                <>
               <View style={styles.twoButtons}>
                 <View style={styles.flexOne}>
                   <FirmwareButton
@@ -1773,6 +1806,14 @@ export default function FirmwareFlasherScreen({
                   tone="warning"
                 />
               ) : null}
+                </>
+              ) : (
+                <FirmwareNotice
+                  title="المسار البسيط جاهز"
+                  text="عند وجود جهاز واحد يختاره التطبيق تلقائياً، ويعيد ربط Android USB ID إذا تغيّر. افتح الأدوات المتقدمة فقط للاستعادة أو التشخيص."
+                  tone="success"
+                />
+              )}
               {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>أجهزة Serial</Text> : null}
               {serialDevices.map(device => (
                 <Pressable
@@ -1804,26 +1845,44 @@ export default function FirmwareFlasherScreen({
                   <Text style={styles.deviceMeta}>Interface {device.interfaceNumber} • Alt {device.alternateSetting} • {device.memoryLayout ?? 'Memory layout سيُتحقق منه قبل المسح'}</Text>
                 </Pressable>
               ))}
-              <FirmwareButton title="الخروج من وضع DFU" onPress={exitDfu} disabled={isBusy || dfuDevices.length === 0} tone="secondary" />
-              <FirmwareToggle
-                label="أفهم أن إزالة Read Protection تمسح Flash بالكامل"
-                detail="خيار إنقاذ متقدم فقط للوحات STM32 المحمية؛ ستحتاج إعادة إدخال DFU والتفليش بعدها."
-                value={readUnprotectConfirmed}
-                onValueChange={setReadUnprotectConfirmed}
-                disabled={isBusy || dfuDevices.length === 0}
-                warning
-                testID="confirm-dfu-read-unprotect"
-              />
-              <FirmwareButton
-                title="إزالة DFU Read Protection"
-                onPress={unprotectDfu}
-                disabled={isBusy || dfuDevices.length === 0 || !readUnprotectConfirmed}
-                tone="danger"
-                testID="unprotect-dfu-device"
-              />
+              {advancedUsbRecoveryExpanded ? (
+                <>
+                  <FirmwareButton title="الخروج من وضع DFU" onPress={exitDfu} disabled={isBusy || dfuDevices.length === 0} tone="secondary" />
+                  <FirmwareToggle
+                    label="أفهم أن إزالة Read Protection تمسح Flash بالكامل"
+                    detail="خيار إنقاذ متقدم فقط للوحات STM32 المحمية؛ ستحتاج إعادة إدخال DFU والتفليش بعدها."
+                    value={readUnprotectConfirmed}
+                    onValueChange={setReadUnprotectConfirmed}
+                    disabled={isBusy || dfuDevices.length === 0}
+                    warning
+                    testID="confirm-dfu-read-unprotect"
+                  />
+                  <FirmwareButton
+                    title="إزالة DFU Read Protection"
+                    onPress={unprotectDfu}
+                    disabled={isBusy || dfuDevices.length === 0 || !readUnprotectConfirmed}
+                    tone="danger"
+                    testID="unprotect-dfu-device"
+                  />
+                </>
+              ) : null}
             </FirmwareSection>
 
-            <FirmwareSection title="خيارات التفليش والاستعادة" caption="الخيارات المتقدمة ظاهرة بوضوح ولا تُفعّل ضمنياً.">
+            <FirmwareSection title="خيارات التفليش والاستعادة" caption="الإعدادات الافتراضية هي المسار الموصى به؛ التفاصيل المتقدمة متاحة عند الحاجة.">
+              <FirmwareNotice
+                title="الإعداد الآمن الموصى به"
+                text="مسح انتقائي، دخول Bootloader تلقائي، Baud تلقائي، ونسخة CLI لهذا التشغيل مع استعادتها بعد النجاح."
+                tone="success"
+              />
+              <FirmwareButton
+                title={`${advancedFlashOptionsExpanded ? 'إخفاء' : 'عرض'} خيارات التفليش المتقدمة`}
+                onPress={() => setAdvancedFlashOptionsExpanded(value => !value)}
+                disabled={isBusy}
+                tone="secondary"
+                testID="toggle-advanced-flash-options"
+              />
+              {advancedFlashOptionsExpanded ? (
+                <>
               <FirmwareToggle
                 label="مسح كامل للـ Chip"
                 detail="يمسح كل القطاعات؛ المسح الانتقائي هو الخيار الافتراضي الأكثر أماناً."
@@ -1889,11 +1948,13 @@ export default function FirmwareFlasherScreen({
                 disabled={isBusy || backupMode === 'never'}
               />
               <FirmwareButton title="استعادة Backup CLI من ملف" onPress={restoreLocalBackup} disabled={isBusy || serialDevices.length === 0} tone="secondary" />
+                </>
+              ) : null}
             </FirmwareSection>
 
             <FirmwareSection title="بوابة الأمان" caption="لا يمكن تجاوز هذه الخطوات ضمنياً حتى مع Flash on connect.">
-              <FirmwareToggle label="أزلت جميع المراوح" value={propsRemoved} onValueChange={setPropsRemoved} disabled={isBusy} warning />
-              <FirmwareToggle label="فصلت البطارية والطاقة من USB فقط" value={usbPowerOnly} onValueChange={setUsbPowerOnly} disabled={isBusy} warning />
+              <FirmwareToggle label="أزلت جميع المراوح" value={propsRemoved} onValueChange={setPropsRemoved} disabled={isBusy} warning testID="confirm-props-removed" />
+              <FirmwareToggle label="فصلت البطارية والطاقة من USB فقط" value={usbPowerOnly} onValueChange={setUsbPowerOnly} disabled={isBusy} warning testID="confirm-usb-power-only" />
               {noReboot ? (
                 <FirmwareToggle
                   label="تحققت يدوياً من Target والـ bootloader"
@@ -2017,7 +2078,14 @@ const styles = StyleSheet.create({
   stepText: {...typography.caption, color: colors.textMuted, fontWeight: '800'},
   stepTextActive: {color: colors.accent},
   scroll: {flex: 1},
-  content: {padding: spacing.md, paddingBottom: spacing.xxl, gap: spacing.md},
+  content: {
+    width: '100%',
+    maxWidth: 1180,
+    alignSelf: 'center',
+    padding: spacing.md,
+    paddingBottom: spacing.xxl,
+    gap: spacing.md,
+  },
   input: {
     minHeight: 46,
     borderRadius: radii.md,

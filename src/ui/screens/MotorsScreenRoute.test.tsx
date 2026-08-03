@@ -213,13 +213,19 @@ describe('The main tab shell owns no session', () => {
   });
 
   it('fires the tab-blur source BEFORE switching away from Motors', () => {
-    // Order matters: the bridge must register its stop obligation while
-    // Motors is still the screen in front of the operator.
-    const guard = executable.indexOf("activeTab === 'MOTORS'");
-    const emit = executable.indexOf('listener();');
-    const switchTab = executable.indexOf('setActiveTab(next)');
+    // The stop helper owns the blur emission, and the normal departure path
+    // must call it successfully before committing the visual tab switch.
+    const guard = executable.indexOf("activeTab !== 'MOTORS'");
+    const emit = executable.indexOf('listener();', guard);
+    const departure = executable.indexOf('const performTabSwitch');
+    const requestStop = executable.indexOf(
+      'if (!requestMotorStopForDeparture())',
+      departure,
+    );
+    const switchTab = executable.indexOf('commitTabSwitch(next)', requestStop);
     expect(guard).toBeGreaterThan(-1);
     expect(emit).toBeGreaterThan(guard);
-    expect(switchTab).toBeGreaterThan(emit);
+    expect(requestStop).toBeGreaterThan(departure);
+    expect(switchTab).toBeGreaterThan(requestStop);
   });
 });

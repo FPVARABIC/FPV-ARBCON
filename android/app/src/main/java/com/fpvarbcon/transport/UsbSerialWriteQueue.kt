@@ -158,6 +158,17 @@ internal class UsbSerialWriteQueue(
         // failure here must never crash this thread or stop it from
         // draining whatever is queued behind it.
       }
+      // stopAndDrainPending() may interrupt this thread while the native
+      // write is still in progress. Some sinks consume/clear that
+      // interrupt while finishing their own bounded call, so relying on
+      // the next queue.take() to observe it can leave one daemon thread
+      // blocked forever after every closed session. The stop owns the
+      // pending queue under the same lock and drains it completely; once
+      // the one in-flight request has settled there is therefore nothing
+      // legitimate left for this consumer to process.
+      synchronized(lock) {
+        if (stopped) return
+      }
     }
   }
 

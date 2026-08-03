@@ -206,6 +206,45 @@ class UsbSerialWriteQueueTest {
   }
 
   @Test
+  fun `consumer thread terminates after an in-progress write settles even when the sink consumed the stop interrupt`() {
+    val sessionId = "stop-termination-${System.nanoTime()}"
+    val threadName = "UsbSerialTx-$sessionId"
+    val releaseWrite = CountDownLatch(1)
+    val writeStarted = CountDownLatch(1)
+    val writeCompleted = CountDownLatch(1)
+    val queue =
+      UsbSerialWriteQueue(
+        sessionId,
+        sink =
+          SerialWriteSink { buffer, _ ->
+            writeStarted.countDown()
+            // This helper deliberately consumes InterruptedException,
+            // matching native USB calls that do not preserve the flag.
+            awaitUninterruptibly(releaseWrite)
+            buffer.size
+          },
+      )
+
+    queue.enqueue(request { writeCompleted.countDown() })
+    assertTrue(writeStarted.await(2, TimeUnit.SECONDS))
+    queue.stopAndDrainPending()
+    releaseWrite.countDown()
+    assertTrue(writeCompleted.await(2, TimeUnit.SECONDS))
+
+    val deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+    while (
+      Thread.getAllStackTraces().keys.any { it.name == threadName } &&
+        System.nanoTime() < deadlineNanos
+    ) {
+      Thread.sleep(10)
+    }
+    assertTrue(
+      "the stopped session must not retain a blocked USB writer thread",
+      Thread.getAllStackTraces().keys.none { it.name == threadName },
+    )
+  }
+
+  @Test
   fun `stopAndDrainPending is idempotent`() {
     val queue = UsbSerialWriteQueue("s1", sink = SerialWriteSink { buffer, _ -> buffer.size })
 

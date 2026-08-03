@@ -130,7 +130,14 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
-  content: {padding: spacing.lg, paddingBottom: spacing.xxl, gap: spacing.lg},
+  content: {
+    width: '100%',
+    maxWidth: 1180,
+    alignSelf: 'center',
+    padding: spacing.lg,
+    paddingBottom: spacing.xxl,
+    gap: spacing.lg,
+  },
   brandRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   brandBadge: {
     width: 48,

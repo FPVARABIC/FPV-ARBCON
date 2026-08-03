@@ -92,32 +92,46 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     [reportDirty],
   );
 
+  const commitTabSwitch = useCallback((next: MainTabKey) => {
+    setMountedTabs(current =>
+      current.includes(next) ? current : [...current, next],
+    );
+    setActiveTab(next);
+  }, []);
+
+  const requestMotorStopForDeparture = useCallback((): boolean => {
+    if (activeTab !== 'MOTORS') {
+      return true;
+    }
+    try {
+      // FIRE ON THE FIRST DEPARTURE TAP, even when a dirty-draft prompt is
+      // about to keep the screen visible. The accepted bridge raises its
+      // stop obligation synchronously while controller teardown continues
+      // without blocking the UI. A later confirmation must not emit a
+      // second blur merely to finish the visual tab switch.
+      for (const listener of [...tabBlurListeners.current]) listener();
+      return true;
+    } catch {
+      // A failed safety listener used to abort setActiveTab silently,
+      // making the navigation look broken. Keep the operator in place and
+      // explain why; never hide a potentially live motor surface.
+      Alert.alert(
+        'تعذر الانتقال بأمان',
+        'لم يكتمل مسار إيقاف المحركات. استخدم زر الإيقاف الطارئ ثم أعد المحاولة.',
+        [{ text: 'حسناً' }],
+      );
+      return false;
+    }
+  }, [activeTab]);
+
   const performTabSwitch = useCallback(
     (next: MainTabKey) => {
-      if (activeTab === 'MOTORS') {
-        try {
-          // FIRE BEFORE THE SWITCH. The listeners are notified while the
-          // Motors screen is still visible, so its accepted stop/release
-          // path gets first ownership of departure.
-          for (const listener of [...tabBlurListeners.current]) listener();
-        } catch {
-          // A failed safety listener used to abort setActiveTab silently,
-          // making the navigation look broken. Keep the operator in place
-          // and explain why; never hide a potentially live motor surface.
-          Alert.alert(
-            'تعذر الانتقال بأمان',
-            'لم يكتمل مسار إيقاف المحركات. استخدم زر الإيقاف الطارئ ثم أعد المحاولة.',
-            [{ text: 'حسناً' }],
-          );
-          return;
-        }
+      if (!requestMotorStopForDeparture()) {
+        return;
       }
-      setMountedTabs(current =>
-        current.includes(next) ? current : [...current, next],
-      );
-      setActiveTab(next);
+      commitTabSwitch(next);
     },
-    [activeTab],
+    [commitTabSwitch, requestMotorStopForDeparture],
   );
 
   const handleSelectTab = useCallback(
@@ -126,14 +140,22 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
         return;
       }
       if (dirtyTabs.current.has(activeTab)) {
+        // Motors must be made safe BEFORE asking what to do with an
+        // unrelated configuration draft. The alert may remain open for an
+        // arbitrary time; motor pulses must not remain live behind it.
+        if (!requestMotorStopForDeparture()) {
+          return;
+        }
         Alert.alert(
           'تغييرات غير محفوظة',
-          'لديك مسودة لم تُحفظ. ابقَ في الشاشة للحفظ، أو انتقل مؤقتاً؛ ستبقى المسودة في هذه الشاشة ما دام التطبيق مفتوحاً.',
+          activeTab === 'MOTORS'
+            ? 'تم إيقاف جلسة المحركات فوراً. لديك تغييرات لم تُحفظ؛ عُد لحفظها أو انتقل إلى الشاشة المطلوبة دون حفظ.'
+            : 'لديك تغييرات لم تُحفظ. عُد لحفظها أو انتقل إلى الشاشة المطلوبة دون حفظ.',
           [
-            { text: 'البقاء للحفظ', style: 'cancel' },
+            { text: 'العودة للحفظ', style: 'cancel' },
             {
-              text: 'الانتقال مؤقتاً',
-              onPress: () => performTabSwitch(next),
+              text: 'الانتقال دون حفظ',
+              onPress: () => commitTabSwitch(next),
             },
           ],
         );
@@ -141,7 +163,12 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       }
       performTabSwitch(next);
     },
-    [activeTab, performTabSwitch],
+    [
+      activeTab,
+      commitTabSwitch,
+      performTabSwitch,
+      requestMotorStopForDeparture,
+    ],
   );
 
   return (
@@ -152,7 +179,11 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             style={activeTab === 'SETUP' ? styles.visible : styles.hidden}
             testID="main-tab-panel-SETUP"
           >
-            <SetupScreen {...props} onOpenGps={() => handleSelectTab('GPS')} />
+            <SetupScreen
+              {...props}
+              active={activeTab === 'SETUP'}
+              onOpenGps={() => handleSelectTab('GPS')}
+            />
           </View>
         ) : null}
         {mountedTabs.includes('MOTORS') ? (

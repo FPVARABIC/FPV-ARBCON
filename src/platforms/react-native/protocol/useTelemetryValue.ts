@@ -59,8 +59,16 @@ function subscribeTelemetry(sessionId: string, listener: () => void): () => void
   };
 }
 
-export function useTelemetryValue<T>(sessionId: string, pollId: string): TelemetryValue<T> {
-  const subscribe = useCallback((listener: () => void) => subscribeTelemetry(sessionId, listener), [sessionId]);
+export function useTelemetryValue<T>(
+  sessionId: string,
+  pollId: string,
+  enabled = true,
+): TelemetryValue<T> {
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      enabled ? subscribeTelemetry(sessionId, listener) : () => undefined,
+    [enabled, sessionId],
+  );
   const getSnapshot = useCallback((): TelemetryValue<T> => {
     const scheduler = mspSessionCoordinator.getTelemetryScheduler(sessionId);
     // UNAVAILABLE_VALUE-equivalent: no scheduler for this session at all

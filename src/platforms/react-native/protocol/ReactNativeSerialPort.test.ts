@@ -60,4 +60,38 @@ describe('ReactNativeSerialPort', () => {
     h.detach();
     await expect(read).rejects.toThrow(/فصل/);
   });
+
+  it('rejects an in-flight bootloader read immediately when the operation is cancelled', async () => {
+    const h = harness();
+    const controller = new AbortController();
+    const port = new ReactNativeSerialPort(h.client, 1, 0, controller.signal);
+    await port.connect();
+    const read = port.readExactly(1, 10_000);
+
+    controller.abort();
+
+    await expect(read).rejects.toThrow(/أُلغي/);
+    await port.disconnect();
+    expect(h.client.closeSession).toHaveBeenCalledWith('session-1');
+  });
+
+  it('closes a USB session that finishes opening after cancellation', async () => {
+    const h = harness();
+    let finishOpening!: (sessionId: string) => void;
+    (h.client.openDevice as jest.Mock).mockReturnValueOnce(
+      new Promise(resolve => {
+        finishOpening = resolve;
+      }),
+    );
+    const controller = new AbortController();
+    const port = new ReactNativeSerialPort(h.client, 1, 0, controller.signal);
+    const connect = port.connect();
+
+    controller.abort();
+    finishOpening('late-session');
+
+    await expect(connect).rejects.toThrow(/أُلغي/);
+    expect(h.client.closeSession).toHaveBeenCalledWith('late-session');
+    expect(h.client.startReading).not.toHaveBeenCalled();
+  });
 });
