@@ -1,8 +1,32 @@
 {
+  /*
+   * THE ANDROID / REACT-NATIVE TYPECHECK.
+   *
+   * The `exclude` list below is not tidiness - it is the type-level half
+   * of the platform seam. Web files are typechecked by tsconfig.web.json,
+   * which supplies `lib.dom` and resolves `.web` first. If they were
+   * checked here they would either fail (no `navigator`, no `Serial`) or,
+   * far worse, pass because someone added "dom" to this config's own
+   * `lib` - at which point Android code could reference `document` and
+   * compile cleanly right up until it ran on a phone.
+   *
+   * Neither direction leaks: DOM types stay out of Android, and the
+   * TurboModule spec stays out of the browser.
+   */
   "extends": "@react-native/typescript-config",
   "compilerOptions": {
     "types": ["jest", "node"]
   },
   "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["**/node_modules", "**/Pods"]
+  "exclude": [
+    "**/node_modules",
+    "**/Pods",
+    "dist-web",
+    "vite.config.mts",
+    "index.web.tsx",
+    "App.web.tsx",
+    "**/*.web.ts",
+    "**/*.web.tsx",
+    "src/platforms/web/**"
+  ]
 }

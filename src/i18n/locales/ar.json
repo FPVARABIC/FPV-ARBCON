@@ -1028,5 +1028,17 @@
       "CW": "باتجاه عقارب الساعة",
       "CCW": "عكس عقارب الساعة"
     }
+  },
+  "webPlatform": {
+    "loading": "جارٍ تحميل الأداة…",
+    "compatibilityTitle": "توافق المتصفح",
+    "serialLabel": "منفذ USB التسلسلي (Web Serial)",
+    "dfuLabel": "وضع STM32 DFU (WebUSB)",
+    "guidance": "افتح التطبيق عبر HTTPS في Chrome أو Edge على سطح المكتب لاستخدام الاتصال بمتحكم الطيران. فتح ملفات Firmware وإعداد البناء السحابي يعملان في كل الأحوال.",
+    "dismiss": "إخفاء",
+    "reason": {
+      "insecureContext": "يتطلب اتصالًا آمنًا (HTTPS)",
+      "unsupportedBrowser": "غير مدعوم في هذا المتصفح"
+    }
   }
 }

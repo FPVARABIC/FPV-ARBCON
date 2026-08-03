@@ -7,7 +7,6 @@ import React, {
 } from 'react';
 import {
   Alert,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -46,6 +45,7 @@ import {
   useMspOwnershipState,
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
+import { openMapLocation } from '../../platforms/mapLink';
 import { colors, radii, spacing, typography } from '../theme';
 
 export interface GpsControllerPort {
@@ -365,8 +365,14 @@ export default function GpsScreen({
 
   const openMap = useCallback(() => {
     if (raw?.hasFix !== true) return;
-    const url = `geo:${raw.latitudeDegrees},${raw.longitudeDegrees}?q=${raw.latitudeDegrees},${raw.longitudeDegrees}`;
-    Linking.openURL(url).catch(() => {});
+    // Platform seam, not a behaviour change: Android still opens the same
+    // `geo:` intent URI it always did, while the browser build resolves
+    // mapLink.web.ts and opens OpenStreetMap over HTTPS - nothing in a
+    // browser handles `geo:`. See src/platforms/mapLink.ts.
+    openMapLocation({
+      latitudeDegrees: raw.latitudeDegrees,
+      longitudeDegrees: raw.longitudeDegrees,
+    });
   }, [raw]);
 
   const loadMessage =

@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  FPV-ARBCON web shell.
+
+  dir="rtl" and lang="ar" are set on the DOCUMENT, not applied later by
+  JavaScript. The app is Arabic-first; deciding direction after hydration
+  produces a visible left-to-right flash on first paint and briefly lays
+  the tab strip out in the wrong order.
+-->
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>FPV-ARBCON — معايرة متحكم الطيران</title>
+    <meta name="description" content="أداة عربية لضبط ومعايرة متحكمات الطيران FPV عبر MSP." />
+    <meta name="theme-color" content="#0A202A" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <style>
+      /* react-native-web expects a full-height root it can flex into;
+         without this the app collapses to zero height. */
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background-color: #0a202a;
+        color: #f3f8f9;
+        font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Naskh Arabic',
+          'Noto Sans Arabic', Tahoma, Arial, sans-serif;
+        overscroll-behavior: none;
+      }
+      /* Shown until the entry chunk executes and replaces it. Plain CSS
+         and plain markup on purpose - it must be visible before any
+         JavaScript has run. */
+      #boot {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        font-size: 15px;
+        color: #a7bdc4;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="boot">جارٍ تشغيل FPV-ARBCON…</div>
+    </div>
+    <script type="module" src="/index.web.tsx"></script>
+  </body>
+</html>
