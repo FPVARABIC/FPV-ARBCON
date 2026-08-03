@@ -36,13 +36,11 @@ export default defineConfig(({mode}) => {
   const isProduction = mode === 'production';
 
   return {
-    plugins: [
-      react({
-        // react-native-web and this repo's own .web files are plain
-        // TS/TSX; the RN preset is Metro's business, not Vite's.
-        babel: {plugins: []},
-      }),
-    ],
+    // The plugin is configured with its defaults on purpose. This project's
+    // Babel setup (@react-native/babel-preset) is Metro's concern; the
+    // browser build compiles plain TS/TSX, and react-native-web ships
+    // already-transpiled JavaScript.
+    plugins: [react()],
 
     resolve: {
       // ORDER IS LOAD-BEARING. `.web.*` before the bare extensions.

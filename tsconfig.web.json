@@ -20,7 +20,15 @@
   "extends": "@react-native/typescript-config",
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["react", "react-dom", "w3c-web-serial", "w3c-web-usb", "vite/client"],
+    "types": [
+      "react",
+      "react-dom",
+      "w3c-web-serial",
+      "w3c-web-usb",
+      "vite/client",
+      /* For the web tests listed under `files` below. */
+      "jest"
+    ],
     "moduleSuffixes": [".web", ""],
     "jsx": "react-jsx",
     "noEmit": true,
@@ -32,6 +40,22 @@
     "vite.config.mts",
     "src/**/*.ts",
     "src/**/*.tsx"
+  ],
+  /*
+   * The browser's OWN tests, listed explicitly.
+   *
+   * `exclude` below drops every `*.test.ts(x)` because the Android suites
+   * must not be typechecked here - `moduleSuffixes` would resolve their
+   * imports to `.web` files they were never written against. But
+   * `exclude` only filters `include`, never `files`, so naming the web
+   * tests here is what puts them back under the typechecker. Without this
+   * they would be checked by neither project and could drift silently.
+   */
+  "files": [
+    "src/platforms/web/webAlert.test.tsx",
+    "src/platforms/web/webEnvironment.test.ts",
+    "src/platforms/mapLink.web.test.ts",
+    "src/platforms/react-native/transport/native/NativeUsbSerialTransport.web.test.ts"
   ],
   "exclude": [
     "**/node_modules",

@@ -27,6 +27,12 @@
     "App.web.tsx",
     "**/*.web.ts",
     "**/*.web.tsx",
+    /* Their tests too: a `.web.test.ts` file does not match the pattern
+     * above (it ends `.test.ts`), so without these two entries the
+     * browser transport's own tests would be typechecked against React
+     * Native's ambient types and fail for entirely the wrong reason. */
+    "**/*.web.test.ts",
+    "**/*.web.test.tsx",
     "src/platforms/web/**"
   ]
 }
