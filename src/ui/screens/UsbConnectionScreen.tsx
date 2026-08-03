@@ -42,6 +42,14 @@ import {
   mspSessionCoordinator,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
+// Platform seam (same pattern as the USB picker and the map link): real
+// on web, inert on Android. The web build records staged connection
+// evidence and can copy a technical report; Android renders nothing.
+import {
+  copyConnectionReportToClipboard,
+  isConnectionReportSupported,
+  recordConnectionStage,
+} from '../../platforms/connectionReport';
 // DEBUG-ONLY SCAFFOLDING (Pass 5.3/5.4, isolated in Pass 7.7) - both
 // panels are reached only through debugPanels.ts, which resolves them
 // behind __DEV__ so a production bundle never retains them. Each render
@@ -711,6 +719,43 @@ export default function UsbConnectionScreen({
     dispatch({ type: 'SELECT_PORT', portIndex });
   }, []);
 
+  /**
+   * "نسخ تقرير الاتصال" - web only (isConnectionReportSupported() is
+   * false on Android and the button below is not rendered there). The
+   * snapshot hands the report builder what only this screen knows: its
+   * state-machine phase, the last surfaced error, and the selection. The
+   * staged transport evidence and byte counters live in the web platform
+   * layer already. `copied` drives a transient Arabic confirmation.
+   */
+  const [reportCopied, setReportCopied] = React.useState<'idle' | 'copied' | 'failed'>('idle');
+  const handleCopyReport = useCallback(() => {
+    copyConnectionReportToClipboard({
+      connectionState: state.connectionState,
+      errorMessage: state.errorMessage ?? '',
+      selectedDevice: state.selectedDeviceKey ?? '',
+      requiresCableReset: state.requiresCableReset,
+      hasScannedOnce: state.hasScannedOnce,
+      deviceCount: state.devices.length,
+    })
+      .then(copied => {
+        if (mountedRef.current) {
+          setReportCopied(copied ? 'copied' : 'failed');
+        }
+      })
+      .catch(() => {
+        if (mountedRef.current) {
+          setReportCopied('failed');
+        }
+      });
+  }, [
+    state.connectionState,
+    state.devices.length,
+    state.errorMessage,
+    state.hasScannedOnce,
+    state.requiresCableReset,
+    state.selectedDeviceKey,
+  ]);
+
   const handleConnect = useCallback(async () => {
     if (
       !selectedDevice ||
@@ -722,6 +767,11 @@ export default function UsbConnectionScreen({
       return;
     }
     dispatch({ type: 'CONNECT_START' });
+    recordConnectionStage('CONNECT_PRESSED', {
+      vendorId: selectedDevice.vendorId,
+      productId: selectedDevice.productId,
+      portIndex: state.selectedPortIndex,
+    });
     try {
       const sessionId = await client.openDevice(
         selectedDevice.deviceId,
@@ -745,6 +795,7 @@ export default function UsbConnectionScreen({
       // connected state. navigation is only absent in tests that render
       // this screen standalone (see the Props doc comment above).
       const sessionKey = mspSessionCoordinator.getSessionKey(sessionId);
+      recordConnectionStage('MSP_SESSION_ACTIVATED', {sessionId});
       if (sessionKey) {
         navigation?.navigate('Setup', { sessionKey });
       }
@@ -765,6 +816,7 @@ export default function UsbConnectionScreen({
         error instanceof MspOwnershipActivationError
           ? { code: 'MSP_ACTIVATION_FAILED', nativeMessage: error.message }
           : (error as TransportError);
+      recordConnectionStage('CONNECT_FAILED', {code: transportError.code});
       dispatch({
         type: 'CONNECT_FAILURE',
         error: transportError,
@@ -943,6 +995,27 @@ export default function UsbConnectionScreen({
             lifecycle bridge's blur source when the operator leaves Motors.
             This screen's job ends at handing the session key to 'Setup'. */}
 
+        {isConnectionReportSupported() ? (
+          <View style={styles.reportRow}>
+            <Text
+              testID="copy-connection-report"
+              accessibilityRole="button"
+              onPress={handleCopyReport}
+              style={styles.reportButton}>
+              {t('connection.copyReport')}
+            </Text>
+            {reportCopied !== 'idle' ? (
+              <Text style={styles.reportFeedback} testID="copy-connection-report-result">
+                {t(
+                  reportCopied === 'copied'
+                    ? 'connection.copyReportDone'
+                    : 'connection.copyReportFailed',
+                )}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+
         <ValidationLog
           entries={state.log}
           expanded={logExpanded}
@@ -958,6 +1031,31 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  reportRow: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  reportButton: {
+    ...typography.body,
+    color: colors.accent,
+    fontWeight: '600',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    overflow: 'hidden',
+    textAlign: 'center',
+    writingDirection: 'rtl',
+  },
+  reportFeedback: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
   },
   scroll: {
     flex: 1,

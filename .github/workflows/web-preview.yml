@@ -129,6 +129,9 @@ jobs:
           # Shows the Arabic "preview, still REQUIRES HARDWARE TEST"
           # banner. A label only - it stubs nothing and fakes nothing.
           VITE_FPV_ARBCON_PREVIEW: 'true'
+          # Stamped into the connection diagnostics report so a user's
+          # copied evidence names the exact deployed commit.
+          FPV_ARBCON_COMMIT: ${{ github.sha }}
         run: npm run build:web
 
       - name: Prove the preview build is safe to publish

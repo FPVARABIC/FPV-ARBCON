@@ -45,6 +45,12 @@ class FakePort {
   written: Uint8Array[] = [];
   openError: unknown = null;
   closeError: unknown = null;
+  /** open() never settles - models a wedged driver (D1). */
+  openHangs = false;
+  /** getReader() throws - models a readable stream that cannot lock (D7). */
+  readerUnavailable = false;
+  /** The NEXT pending read() rejects - models a mid-session stream death (D2). */
+  failNextRead: unknown = null;
 
   private readerLocked = false;
   private writerLocked = false;
@@ -59,6 +65,9 @@ class FakePort {
   }
 
   async open(options: unknown): Promise<void> {
+    if (this.openHangs) {
+      return new Promise<void>(() => {});
+    }
     if (this.openError) {
       throw this.openError;
     }
@@ -105,12 +114,20 @@ class FakePort {
     // Arrow functions throughout so `this` stays lexical - no alias.
     return {
       getReader: () => {
+        if (this.readerUnavailable) {
+          throw new TypeError('cannot lock readable');
+        }
         if (this.readerLocked) {
           throw new TypeError('stream already locked');
         }
         this.readerLocked = true;
         return {
           read: async () => {
+            if (this.failNextRead) {
+              const failure = this.failNextRead;
+              this.failNextRead = null;
+              throw failure;
+            }
             if (this.finished) {
               return {value: undefined, done: true};
             }
@@ -377,11 +394,14 @@ describe('openDevice', () => {
     });
   });
 
-  it('rejects an unknown device id instead of opening something else', async () => {
+  it('rejects a stale/unknown device id as DEVICE_CHANGED, never as an unsupported board', async () => {
+    // D6: "هذا الجهاز غير مدعوم حاليًا" for a registry miss reads as a
+    // verdict about the BOARD. The truthful code already has copy that
+    // tells the operator to re-scan and retry.
     installSerial([new FakePort({})]);
 
     await expect(transport.openDevice(999, 0, CONFIG)).rejects.toMatchObject({
-      code: 'UNSUPPORTED_DEVICE',
+      code: 'DEVICE_CHANGED_DURING_OPEN',
     });
   });
 
@@ -796,5 +816,132 @@ describe('DFU surface', () => {
     await expect(
       transport.flashDfuFirmware(999_999, 'AA==', false),
     ).rejects.toMatchObject({code: 'DFU_DEVICE_NOT_FOUND'});
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Audit fixes D1 / D2 / D7 (docs/WEB_REAL_USER_AUDIT.md)
+ * ------------------------------------------------------------------ */
+
+describe('D1: connect timeout parity with Android', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('rejects CONNECT_TIMEOUT when port.open() never settles, instead of freezing forever', async () => {
+    const port = new FakePort({});
+    port.openHangs = true;
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+
+    const attempt = transport.openDevice(device.deviceId, 0, CONFIG);
+    // Handler attached before the clock is driven, awaited after - see
+    // the same pattern in MspIdentificationService.test.ts for why.
+    // eslint-disable-next-line jest/valid-expect -- awaited two lines below
+    const expectation = expect(attempt).rejects.toMatchObject({code: 'CONNECT_TIMEOUT'});
+    await jest.advanceTimersByTimeAsync(15_000);
+    await expectation;
+  });
+
+  it('does not fire the timeout on a normal, prompt open', async () => {
+    const port = new FakePort({});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+    await jest.advanceTimersByTimeAsync(20_000);
+
+    // The session is alive and usable long past the timeout window.
+    await expect(transport.writeBytes(sessionId, 'AA==')).resolves.toBeUndefined();
+  });
+});
+
+describe('D2: a dead receive stream surfaces as a session loss, not silence', () => {
+  it('emits onSessionDetached and forgets the session when the read stream errors mid-session', async () => {
+    const port = new FakePort({});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+    const detached: string[] = [];
+    const errors: string[] = [];
+    transport.onSessionDetached(event => detached.push(event.sessionId));
+    transport.onError(event => errors.push(event.code));
+    await transport.startReading(sessionId);
+
+    port.failNextRead = new DOMException('device lost', 'NetworkError');
+    port.deliver(Uint8Array.from([1])); // wakes the pending read, which then rejects
+    await settle();
+
+    // Both signals: the error (for the debug panel) AND the detach (for
+    // the coordinator surrender + screen banner every user actually has).
+    expect(errors).toEqual(['READ_FAILED']);
+    expect(detached).toEqual([sessionId]);
+    await expect(transport.writeBytes(sessionId, 'AA==')).rejects.toMatchObject({
+      code: 'UNKNOWN_SESSION',
+    });
+  });
+
+  it('stays SILENT on the detach hub during an ordinary stopReading/close teardown', async () => {
+    // The detach signal is meaningful precisely because teardown does not
+    // fire it: a deliberate close must never masquerade as a device loss.
+    const port = new FakePort({});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+    const detached: string[] = [];
+    transport.onSessionDetached(event => detached.push(event.sessionId));
+    await transport.startReading(sessionId);
+
+    await transport.stopReading(sessionId);
+    await transport.closeSession(sessionId);
+    await settle();
+
+    expect(detached).toEqual([]);
+  });
+});
+
+describe('D7: a failed receive-loop START also converges on session loss', () => {
+  it('emits onSessionDetached and frees the port when startReading cannot lock the stream', async () => {
+    const port = new FakePort({});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+    const detached: string[] = [];
+    transport.onSessionDetached(event => detached.push(event.sessionId));
+
+    port.readerUnavailable = true;
+    await expect(transport.startReading(sessionId)).rejects.toMatchObject({
+      code: 'READ_FAILED',
+    });
+    await settle();
+
+    expect(detached).toEqual([sessionId]);
+    // The port is genuinely free again - the user's retry can open it.
+    port.readerUnavailable = false;
+    port.opened = false;
+    await expect(transport.openDevice(device.deviceId, 0, CONFIG)).resolves.toEqual(
+      expect.any(String),
+    );
+  });
+
+  it('does NOT kill the session for RX_ALREADY_ACTIVE - a second start on a healthy loop', async () => {
+    const port = new FakePort({});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+    const detached: string[] = [];
+    transport.onSessionDetached(event => detached.push(event.sessionId));
+    await transport.startReading(sessionId);
+
+    await expect(transport.startReading(sessionId)).rejects.toMatchObject({
+      code: 'RX_ALREADY_ACTIVE',
+    });
+    await settle();
+
+    expect(detached).toEqual([]);
+    await expect(transport.writeBytes(sessionId, 'AA==')).resolves.toBeUndefined();
   });
 });

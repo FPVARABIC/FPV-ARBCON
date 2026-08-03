@@ -90,6 +90,13 @@ export default defineConfig(({mode}) => {
       // Some React Native dependencies still reference `global`.
       global: 'globalThis',
       'process.env.NODE_ENV': JSON.stringify(mode),
+      // Build identity for the connection diagnostics report. The Pages
+      // workflow passes the commit SHA; a local build reports 'dev'. Not
+      // secret either way - the deployed site is public and the SHA is
+      // exactly what a bug report needs to be reproducible.
+      __FPV_ARBCON_BUILD__: JSON.stringify(
+        process.env.FPV_ARBCON_COMMIT ?? 'dev',
+      ),
     },
 
     optimizeDeps: {

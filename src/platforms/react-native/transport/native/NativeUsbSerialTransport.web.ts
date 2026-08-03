@@ -67,6 +67,14 @@ import type {
   UsbSerialSessionDetachedEvent,
 } from './usbSerialTransportTypes';
 import {bytesToBase64, base64ToBytes} from '../../protocol/base64';
+// Bounded, non-secret staging evidence for the Arabic "copy connection
+// report" action. Byte COUNTS only - never payload bytes. See the module
+// header of connectionDiagnostics.ts for the record/refuse contract.
+import {
+  recordBytesReceived,
+  recordBytesWritten,
+  recordDiagnostic,
+} from '../../../web/connectionDiagnostics';
 import {
   cancelDfuFlash as cancelWebUsbDfuFlash,
   exitDfuMode as exitWebUsbDfuMode,
@@ -134,6 +142,54 @@ function fail(code: string, message: string): never {
  * ------------------------------------------------------------------ */
 
 const WEB_SERIAL_DRIVER_TYPE = 'WEB_SERIAL';
+
+/**
+ * D1 (docs/WEB_REAL_USER_AUDIT.md): the browser had NO connect timeout.
+ * Android bounds its whole open sequence with CONNECT_TIMEOUT_MILLIS =
+ * 15000 (UsbSerialTransportModule.kt), and the Arabic copy for
+ * errors.CONNECT_TIMEOUT has existed since Pass 5 - but the web path
+ * awaited port.open() unbounded, so a driver that never settles froze
+ * the connection screen in `connecting` forever, with every control
+ * disabled and no cancel. Same constant, same code, same user guidance
+ * (unplug/replug) as Android.
+ */
+const CONNECT_TIMEOUT_MILLIS = 15_000;
+
+/**
+ * Bounds port.open(). On timeout the eventual LATE settlement is not
+ * abandoned: a late success is immediately closed (the port would
+ * otherwise stay locked-open and un-openable until tab close), and a
+ * late failure is swallowed - the operator already got CONNECT_TIMEOUT.
+ */
+async function openWithTimeout(port: SerialPort, options: SerialOptions): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(
+        new WebTransportError(
+          'CONNECT_TIMEOUT',
+          `port.open() did not settle within ${CONNECT_TIMEOUT_MILLIS}ms.`,
+        ),
+      );
+    }, CONNECT_TIMEOUT_MILLIS);
+  });
+  const opening = port.open(options);
+  try {
+    await Promise.race([opening, timedOut]);
+  } catch (reason) {
+    if (reason instanceof WebTransportError && reason.code === 'CONNECT_TIMEOUT') {
+      opening.then(
+        () => {
+          port.close().catch(() => undefined);
+        },
+        () => undefined,
+      );
+    }
+    throw reason;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function serialApi(): Serial {
   if (typeof navigator === 'undefined' || !navigator.serial) {
@@ -347,7 +403,19 @@ class WebSerialSession {
       this.receiveRequested = false;
       fail('READ_FAILED', 'The port has no readable stream.');
     }
-    const reader = readable.getReader();
+    let reader: ReadableStreamDefaultReader<Uint8Array>;
+    try {
+      reader = readable.getReader();
+    } catch (reason) {
+      // A stream that exists but cannot be locked (already errored, or
+      // seized by another consumer) is the same operational fact as no
+      // stream at all - and it must surface under the transport's own
+      // code, not as a raw TypeError that bypasses the error contract
+      // every layer above localizes from. Found by the D7 test, which
+      // asserts the code, not just "it threw".
+      this.receiveRequested = false;
+      fail('READ_FAILED', describeReason(reason));
+    }
     this.reader = reader;
     this.readLoop = this.pump(reader);
   }
@@ -360,6 +428,7 @@ class WebSerialSession {
           return;
         }
         if (value && value.length > 0) {
+          recordBytesReceived(value.length);
           // Emitted EXACTLY as received - no reassembly, no splitting on
           // a frame boundary, no interpretation. The shared MSP parser
           // above already handles partial and coalesced frames, and
@@ -375,6 +444,7 @@ class WebSerialSession {
         // An expected cancel during teardown, not a fault.
         return;
       }
+      recordDiagnostic('RX_FAILED', {sessionId: this.sessionId, code: 'READ_FAILED'});
       onErrorHub.emit({
         sessionId: this.sessionId,
         deviceId: this.deviceId,
@@ -382,6 +452,25 @@ class WebSerialSession {
         message: describeReason(reason),
         recoverable: false,
       });
+      // D2 (docs/WEB_REAL_USER_AUDIT.md): onError's ONLY production
+      // subscriber is the __DEV__ debug panel, so in a release build a
+      // dead receive loop used to be COMPLETELY silent - the session
+      // stayed registered, receiveRequested stayed true, and the operator
+      // learned about it as an undifferentiated MSP timeout two seconds
+      // later. A Web Serial read-stream failure outside our own teardown
+      // means the device is gone or the driver gave up; report it the way
+      // the platform reports a physical unplug, which every shared layer
+      // (coordinator surrender, screen banner, session-loss redirect)
+      // already handles. Same shape the hot-plug 'disconnect' path emits.
+      this.closed = true;
+      this.receiveRequested = false;
+      sessionsById.delete(this.sessionId);
+      recordDiagnostic('SESSION_DETACHED', {
+        sessionId: this.sessionId,
+        deviceId: this.deviceId,
+        cause: 'READ_FAILED',
+      });
+      onSessionDetachedHub.emit({sessionId: this.sessionId, deviceId: this.deviceId});
     } finally {
       try {
         reader.releaseLock();
@@ -438,6 +527,7 @@ class WebSerialSession {
       // guarantee and MspSessionCoordinator's write/response pairing
       // depends on it.
       await this.writer.write(bytes);
+      recordBytesWritten(bytes.length);
     } catch (reason) {
       throw new WebTransportError('WRITE_FAILED', describeReason(reason));
     }
@@ -616,6 +706,7 @@ function installHotplugListeners(serial: Serial): void {
       if (session.port === port && !session.isClosed) {
         session.abandon().catch(() => undefined);
         sessionsById.delete(session.sessionId);
+        recordDiagnostic('SESSION_DETACHED', {sessionId: session.sessionId, deviceId});
         onSessionDetachedHub.emit({sessionId: session.sessionId, deviceId});
       }
     }
@@ -733,8 +824,10 @@ const NativeUsbSerialTransportWeb = {
     try {
       ports = await serial.getPorts();
     } catch (reason) {
+      recordDiagnostic('SCAN_FAILED', {code: 'DEVICE_ENUMERATION_FAILED'});
       throw new WebTransportError('DEVICE_ENUMERATION_FAILED', describeReason(reason));
     }
+    recordDiagnostic('SCAN_OK', {authorizedPorts: ports.length});
     return ports.map(describe);
   },
 
@@ -755,14 +848,23 @@ const NativeUsbSerialTransportWeb = {
       // the chooser without picking anything. That is a cancellation, not
       // a failure, and must not surface as an error.
       if (reason instanceof DOMException && reason.name === 'NotFoundError') {
+        recordDiagnostic('PICKER_DISMISSED');
         return null;
       }
       if (reason instanceof DOMException && reason.name === 'SecurityError') {
+        recordDiagnostic('PICKER_DENIED', {code: 'PERMISSION_DENIED'});
         throw new WebTransportError('PERMISSION_DENIED', describeReason(reason));
       }
+      recordDiagnostic('PICKER_FAILED', {code: 'PERMISSION_REQUEST_FAILED'});
       throw new WebTransportError('PERMISSION_REQUEST_FAILED', describeReason(reason));
     }
-    return describe(port);
+    const described = describe(port);
+    recordDiagnostic('PICKER_GRANTED', {
+      vendorId: described.vendorId,
+      productId: described.productId,
+      deviceId: described.deviceId,
+    });
+    return described;
   },
 
   async openDevice(
@@ -770,7 +872,9 @@ const NativeUsbSerialTransportWeb = {
     portIndex: number,
     configuration: SerialConfiguration,
   ): Promise<string> {
-    serialApi();
+    // D9: a connect that somehow precedes any scan (deep link, restored
+    // state) must still hear the detach that ends it.
+    installHotplugListeners(serialApi());
     if (portIndex !== 0) {
       // Web Serial exposes exactly one stream per port object; a
       // multi-port adapter appears as several SerialPorts instead.
@@ -778,7 +882,16 @@ const NativeUsbSerialTransportWeb = {
     }
     const port = portById.get(deviceId);
     if (!port) {
-      fail('UNSUPPORTED_DEVICE', `No authorized Web Serial port with id ${deviceId}.`);
+      // D6: this is a STALE id (page reloaded, registry reset, device
+      // re-enumerated) - not an unsupported device. The old code answered
+      // "هذا الجهاز غير مدعوم حاليًا", which reads as a verdict about the
+      // BOARD and sends the operator shopping for hardware faults.
+      // DEVICE_CHANGED_DURING_OPEN's copy ("تم فصل الجهاز أو تغييره أثناء
+      // محاولة الاتصال") tells them the truth: re-scan and retry.
+      fail(
+        'DEVICE_CHANGED_DURING_OPEN',
+        `No authorized Web Serial port with id ${deviceId}.`,
+      );
     }
     for (const session of sessionsById.values()) {
       if (session.port === port && !session.isClosed) {
@@ -786,26 +899,37 @@ const NativeUsbSerialTransportWeb = {
       }
     }
     const options = toSerialOptions(configuration);
+    recordDiagnostic('OPEN_REQUESTED', {
+      deviceId,
+      baudRate: configuration.baudRate,
+      dataBits: configuration.dataBits,
+      stopBits: configuration.stopBits,
+      parity: configuration.parity,
+      flowControl: configuration.flowControl,
+    });
     try {
-      await port.open(options);
+      await openWithTimeout(port, options);
     } catch (reason) {
-      if (reason instanceof DOMException) {
-        // InvalidStateError is the browser's "already open", which for
-        // this app means another tab or another session owns it.
-        if (reason.name === 'InvalidStateError') {
-          throw new WebTransportError('DEVICE_ALREADY_IN_USE', describeReason(reason));
-        }
-        if (reason.name === 'SecurityError') {
-          throw new WebTransportError('PERMISSION_DENIED', describeReason(reason));
-        }
-        if (reason.name === 'NotFoundError') {
-          throw new WebTransportError('DEVICE_CHANGED_DURING_OPEN', describeReason(reason));
-        }
+      if (reason instanceof WebTransportError && reason.code === 'CONNECT_TIMEOUT') {
+        recordDiagnostic('OPEN_FAILED', {deviceId, code: 'CONNECT_TIMEOUT'});
+        throw reason;
       }
-      throw new WebTransportError('OPEN_FAILED', describeReason(reason));
+      const code =
+        reason instanceof DOMException && reason.name === 'InvalidStateError'
+          ? 'DEVICE_ALREADY_IN_USE'
+          : reason instanceof DOMException && reason.name === 'SecurityError'
+            ? 'PERMISSION_DENIED'
+            : reason instanceof DOMException && reason.name === 'NotFoundError'
+              ? 'DEVICE_CHANGED_DURING_OPEN'
+              : 'OPEN_FAILED';
+      recordDiagnostic('OPEN_FAILED', {deviceId, code});
+      // InvalidStateError is the browser's "already open", which for
+      // this app means another tab or another session owns it.
+      throw new WebTransportError(code, describeReason(reason));
     }
     const session = new WebSerialSession(port, deviceId, configuration);
     sessionsById.set(session.sessionId, session);
+    recordDiagnostic('OPEN_OK', {deviceId, sessionId: session.sessionId});
     return session.sessionId;
   },
 
@@ -819,10 +943,33 @@ const NativeUsbSerialTransportWeb = {
     }
     sessionsById.delete(sessionId);
     await session.close();
+    recordDiagnostic('SESSION_CLOSED', {sessionId});
   },
 
   async startReading(sessionId: string): Promise<void> {
-    await requireSession(sessionId).startReading();
+    const session = requireSession(sessionId);
+    try {
+      await session.startReading();
+    } catch (reason) {
+      // D7: the coordinator reacts to a startReading rejection by tearing
+      // its own state down (handleStartReadingFailure -> physical-detach
+      // path) - but WITHOUT a transport-level detach event the connection
+      // screen kept showing "متصل" with a live session id while Setup
+      // showed connection lost. If the receive loop cannot start, the
+      // session is unusable: close it here and emit the same detach event
+      // a physical unplug produces, so BOTH shared listeners converge on
+      // the same truth. RX_ALREADY_ACTIVE is the one exception - a second
+      // start on a HEALTHY session must not kill it.
+      const code = reason instanceof WebTransportError ? reason.code : '';
+      if (code !== 'RX_ALREADY_ACTIVE') {
+        sessionsById.delete(sessionId);
+        await session.abandon();
+        recordDiagnostic('SESSION_DETACHED', {sessionId, cause: 'RX_START_FAILED'});
+        onSessionDetachedHub.emit({sessionId, deviceId: session.deviceId});
+      }
+      throw reason;
+    }
+    recordDiagnostic('RX_STARTED', {sessionId});
   },
 
   async stopReading(sessionId: string): Promise<void> {
@@ -844,6 +991,7 @@ const NativeUsbSerialTransportWeb = {
 
   async setBaudRate(sessionId: string, baudRate: number): Promise<void> {
     await requireSession(sessionId).changeBaudRate(baudRate);
+    recordDiagnostic('BAUD_CHANGED', {sessionId, baudRate});
   },
 
   pickFirmwareFile,

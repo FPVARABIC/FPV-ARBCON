@@ -16,7 +16,10 @@
       "error": "خطأ"
     },
     "instructionPrimary": "وصّل متحكم الطيران بالهاتف باستخدام كابل USB OTG، ثم اضغط على تحديث.",
-    "instructionSecondary": "لن يطلب التطبيق إذن USB إلا بعد اختيار الجهاز والضغط على اتصال."
+    "instructionSecondary": "لن يطلب التطبيق إذن USB إلا بعد اختيار الجهاز والضغط على اتصال.",
+    "copyReport": "نسخ تقرير الاتصال",
+    "copyReportDone": "نُسخ التقرير — ألصقه في بلاغك.",
+    "copyReportFailed": "تعذّر النسخ إلى الحافظة في هذا المتصفح."
   },
   "devices": {
     "sectionTitle": "أجهزة USB المتصلة",
