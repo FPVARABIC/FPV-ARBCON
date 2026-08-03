@@ -775,17 +775,26 @@ type UsbDeviceIdentity = {deviceId: number; vendorId: number; productId: number}
  * ------------------------------------------------------------------ */
 
 describe('DFU surface', () => {
-  it('reports no DFU devices rather than a fabricated one', async () => {
+  it('reports an empty DFU list on a browser with no WebUSB', async () => {
+    // Deliberately EMPTY rather than a rejection, and the asymmetry with
+    // listDevices() is the point: the flasher refreshes this alongside the
+    // serial scan, so rejecting would turn "no WebUSB in this browser"
+    // into a hard error on a screen whose serial paths work fine. The
+    // absence is reported by the compatibility notice and by the DFU
+    // actions themselves.
     installSerial([new FakePort({})]);
+    Reflect.deleteProperty(navigator as object, 'usb');
 
     await expect(transport.listDfuDevices()).resolves.toEqual([]);
   });
 
-  it('rejects a flash attempt instead of reporting a success that never happened', async () => {
+  it('rejects a flash attempt for a device that was never authorized', async () => {
+    // Never a fabricated success: an unknown id must fail, not silently
+    // select some other attached device.
     installSerial([new FakePort({})]);
 
-    await expect(transport.flashDfuFirmware(1, 'AA==', false)).rejects.toMatchObject({
-      code: 'NOT_IMPLEMENTED',
-    });
+    await expect(
+      transport.flashDfuFirmware(999_999, 'AA==', false),
+    ).rejects.toMatchObject({code: 'DFU_DEVICE_NOT_FOUND'});
   });
 });

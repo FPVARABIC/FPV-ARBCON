@@ -161,11 +161,17 @@ function isValidDfuProgress(value: unknown): value is DfuFlashProgressEvent {
  */
 type OptionalDevicePicker = {
   requestSerialDevice?: () => Promise<UsbSerialDeviceDescriptor | null>;
+  requestDfuDevice?: () => Promise<DfuDeviceDescriptor | null>;
 };
 
 function devicePicker(): OptionalDevicePicker['requestSerialDevice'] {
   return (NativeUsbSerialTransport as unknown as OptionalDevicePicker)
     .requestSerialDevice;
+}
+
+function dfuPicker(): OptionalDevicePicker['requestDfuDevice'] {
+  return (NativeUsbSerialTransport as unknown as OptionalDevicePicker)
+    .requestDfuDevice;
 }
 
 export class UsbSerialTransportClient {
@@ -208,6 +214,44 @@ export class UsbSerialTransportClient {
     if (!isValidDescriptor(result)) {
       throw normalizeNativeError(
         new Error('requestDevicePermission resolved with an invalid descriptor.'),
+      );
+    }
+    return result;
+  }
+
+  /** Whether this platform has an explicit "choose a DFU device" step. */
+  supportsDfuDevicePicker(): boolean {
+    return typeof dfuPicker() === 'function';
+  }
+
+  /**
+   * Opens the platform's WebUSB chooser, filtered to the bootloader
+   * identities this app supports. MUST be called from a user gesture.
+   * Resolves `null` when the operator dismissed it - a cancellation, not a
+   * failure.
+   */
+  async requestDfuDevicePermission(): Promise<DfuDeviceDescriptor | null> {
+    const request = dfuPicker();
+    if (!request) {
+      throw normalizeNativeError(
+        Object.assign(
+          new Error('This platform has no explicit DFU device picker.'),
+          {code: 'NOT_IMPLEMENTED'},
+        ),
+      );
+    }
+    let result: unknown;
+    try {
+      result = await request();
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+    if (result === null || result === undefined) {
+      return null;
+    }
+    if (!isValidDfuDescriptor(result)) {
+      throw normalizeNativeError(
+        new Error('requestDfuDevicePermission resolved with an invalid descriptor.'),
       );
     }
     return result;

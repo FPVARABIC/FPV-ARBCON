@@ -67,6 +67,14 @@ import type {
   UsbSerialSessionDetachedEvent,
 } from './usbSerialTransportTypes';
 import {bytesToBase64, base64ToBytes} from '../../protocol/base64';
+import {
+  cancelDfuFlash as cancelWebUsbDfuFlash,
+  exitDfuMode as exitWebUsbDfuMode,
+  flashDfuFirmware as flashWebUsbDfuFirmware,
+  listDfuDevices as listWebUsbDfuDevices,
+  requestDfuDevice as requestWebUsbDfuDevice,
+  unprotectDfuDevice as unprotectWebUsbDfuDevice,
+} from './webUsbDfu.web';
 
 /**
  * THIS FILE IS A COMPLETE DROP-IN, TYPES INCLUDED.
@@ -841,30 +849,59 @@ const NativeUsbSerialTransportWeb = {
   pickFirmwareFile,
   saveFirmwareFile,
 
-  /* ---- STM32 DFU over WebUSB: implemented in the following batch ---- */
+  /* ---- STM32 DFU / DfuSe over WebUSB (see webUsbDfu.web.ts) ---- */
 
+  /**
+   * Previously-authorized WebUSB devices ONLY, filtered to the bootloader
+   * identities the app supports. Never opens a chooser - the flasher polls
+   * this alongside the serial scan.
+   *
+   * A browser with no WebUSB resolves EMPTY rather than rejecting. That is
+   * a deliberate difference from listDevices(): the flasher calls this on
+   * every refresh, in parallel with the serial scan, and a rejection would
+   * turn "this browser has no WebUSB" into a hard error on a screen whose
+   * serial-based paths are working perfectly. The compatibility notice and
+   * the DFU actions below are where that absence is reported.
+   */
   async listDfuDevices(): Promise<DfuDeviceDescriptor[]> {
-    return [];
+    if (typeof navigator === 'undefined' || !navigator.usb) {
+      return [];
+    }
+    return listWebUsbDfuDevices();
+  },
+
+  /** WEB-ONLY. The only path that may open the WebUSB chooser. */
+  async requestDfuDevice(): Promise<DfuDeviceDescriptor | null> {
+    return requestWebUsbDfuDevice();
   },
 
   async flashDfuFirmware(
-    _deviceId: number,
-    _intelHexBase64: string,
-    _fullErase: boolean,
+    deviceId: number,
+    intelHexBase64: string,
+    fullErase: boolean,
   ): Promise<void> {
-    fail('NOT_IMPLEMENTED', 'WebUSB DFU flashing is not available in this build.');
+    await flashWebUsbDfuFirmware(
+      deviceId,
+      base64ToBytes(intelHexBase64),
+      fullErase,
+      progress => onDfuFlashProgressHub.emit(progress),
+    );
   },
 
   async cancelDfuFlash(): Promise<void> {
-    // Nothing can be in flight while flashDfuFirmware always rejects.
+    // Raises a flag every transfer and poll loop checks. Deliberately does
+    // NOT abort mid-transfer: interrupting an erase or a block write is
+    // how a board is left unbootable. The in-flight operation finishes its
+    // current step and then stops.
+    cancelWebUsbDfuFlash();
   },
 
-  async exitDfuMode(_deviceId: number): Promise<void> {
-    fail('NOT_IMPLEMENTED', 'WebUSB DFU is not available in this build.');
+  async exitDfuMode(deviceId: number): Promise<void> {
+    await exitWebUsbDfuMode(deviceId);
   },
 
-  async unprotectDfuDevice(_deviceId: number): Promise<void> {
-    fail('NOT_IMPLEMENTED', 'WebUSB DFU is not available in this build.');
+  async unprotectDfuDevice(deviceId: number): Promise<void> {
+    await unprotectWebUsbDfuDevice(deviceId);
   },
 
   onDataReceived: onDataReceivedHub.subscribe,
