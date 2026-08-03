@@ -47,7 +47,19 @@ import {useSessionLossRedirect} from './src/navigation/useSessionLossRedirect';
 import type {RootStackParamList} from './src/navigation/types';
 import {WebAlertHost, installWebAlert} from './src/platforms/web/webAlert';
 import {WebCompatibilityNotice} from './src/platforms/web/WebCompatibilityNotice';
+import {PreviewNotice} from './src/platforms/web/PreviewNotice';
 import {colors} from './src/ui/theme';
+
+/**
+ * True only in the GitHub Pages preview build, which sets
+ * VITE_FPV_ARBCON_PREVIEW=true. This is the ONLY place the flag is read -
+ * PreviewNotice itself takes no flag, so it stays a plain, testable
+ * component and the build-time condition stays in one place.
+ *
+ * `import.meta.env` is a Vite construct, which is why this read lives in
+ * this file: App.web.tsx is only ever compiled by Vite, never by Jest.
+ */
+const IS_PREVIEW_BUILD = import.meta.env.VITE_FPV_ARBCON_PREVIEW === 'true';
 
 // The shared screens are written for a genuinely RTL layout (see
 // src/navigation/tabs.ts on tab order). react-native-web reads this the
@@ -87,6 +99,10 @@ function App(): React.JSX.Element {
 
   return (
     <View style={styles.container}>
+      {/* Above the compatibility notice: "this build is unverified" is
+          the first thing a preview visitor must read. Purely a label -
+          see PreviewNotice for why it changes no behaviour. */}
+      {IS_PREVIEW_BUILD ? <PreviewNotice /> : null}
       <WebCompatibilityNotice />
       <View style={styles.navigator}>
         <NavigationContainer

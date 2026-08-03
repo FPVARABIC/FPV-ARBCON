@@ -1035,6 +1035,8 @@
     }
   },
   "webPlatform": {
+    "previewNotice": "نسخة معاينة — مسارات العتاد ما زالت REQUIRES HARDWARE TEST",
+    "previewDetail": "الاتصال الحقيقي بمتحكم الطيران يعمل كما هو ولم يُعطَّل. لا توجد أجهزة تجريبية ولا telemetry مصطنعة في هذه النسخة.",
     "loading": "جارٍ تحميل الأداة…",
     "compatibilityTitle": "توافق المتصفح",
     "serialLabel": "منفذ USB التسلسلي (Web Serial)",

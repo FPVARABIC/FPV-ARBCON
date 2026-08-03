@@ -32,10 +32,36 @@
 import {defineConfig} from 'vite';
 import react from '@vitejs/plugin-react';
 
+/**
+ * DEPLOYMENT KNOBS - environment-driven so the local run is untouched.
+ *
+ * All three default to the values the local `npm run web` / `npm run
+ * build:web` already used, so an unset environment behaves exactly as
+ * before. Only the GitHub Pages preview workflow sets them.
+ *
+ * FPV_ARBCON_WEB_BASE - GitHub Pages serves a project site from a
+ * SUBPATH (/FPV-ARBCON/), not from the origin root. Without this every
+ * asset and every lazy chunk would be requested from `/assets/...` and
+ * 404. It stays '/' locally, where the app is served from the root.
+ *
+ * FPV_ARBCON_WEB_SOURCEMAP - see the `sourcemap` entry below for the
+ * reasoning; the preview turns maps OFF, local builds keep them ON.
+ *
+ * VITE_FPV_ARBCON_PREVIEW - read by App.web.tsx (through
+ * import.meta.env, which is why it carries Vite's own VITE_ prefix) to
+ * show the preview banner. It changes NOTHING else: no transport is
+ * stubbed, no capability is faked, and the real connection path is
+ * untouched.
+ */
+const WEB_BASE = process.env.FPV_ARBCON_WEB_BASE ?? '/';
+const PUBLISH_SOURCEMAPS = process.env.FPV_ARBCON_WEB_SOURCEMAP !== 'false';
+
 export default defineConfig(({mode}) => {
   const isProduction = mode === 'production';
 
   return {
+    base: WEB_BASE,
+
     // The plugin is configured with its defaults on purpose. This project's
     // Babel setup (@react-native/babel-preset) is Metro's concern; the
     // browser build compiles plain TS/TSX, and react-native-web ships
@@ -73,10 +99,27 @@ export default defineConfig(({mode}) => {
 
     build: {
       outDir: 'dist-web',
-      // Real stack traces for a tool that talks to hardware. When an
-      // operator reports a flashing failure, a minified frame number is
-      // not evidence.
-      sourcemap: true,
+      /**
+       * ON locally, OFF for the public preview - a deliberate split, not
+       * an oversight.
+       *
+       * KEEPING THEM LOCALLY: real stack traces for a tool that talks to
+       * hardware. When an operator reports a flashing failure, a minified
+       * frame number is not evidence.
+       *
+       * DROPPING THEM FROM THE PREVIEW: the maps inline the complete
+       * original source of every module in the graph - this repository's
+       * own files AND every dependency - which is ~5MB of payload that a
+       * preview visitor downloads for no benefit to them. This repository
+       * is public, so no secret is exposed either way and that is NOT the
+       * argument; the argument is that a public preview should not serve
+       * the entire internal source tree, including the reasoning in the
+       * comments, as a side effect of being previewable. Debug builds are
+       * where maps belong. No credential, token or internal hostname
+       * exists in this source to leak in the first place - checked, not
+       * assumed.
+       */
+      sourcemap: PUBLISH_SOURCEMAPS,
       target: 'es2022',
       rollupOptions: {
         output: {
