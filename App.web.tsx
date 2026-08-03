@@ -92,7 +92,16 @@ function App(): React.JSX.Element {
         <NavigationContainer
           ref={navigationRef}
           onReady={onReady}
-          onStateChange={onStateChange}>
+          onStateChange={onStateChange}
+          // Found by loading the real production build in Chromium: React
+          // Navigation's web integration overwrites document.title with the
+          // ROUTE NAME on every navigation, so the browser tab read "Start",
+          // then "Connection". Those names are internal English identifiers
+          // (see src/navigation/types.ts, where the 'Setup' route actually
+          // renders the whole tab shell) - exactly the wrong thing to show
+          // as the window title of an Arabic-first product. Disabled so the
+          // curated Arabic <title> in index.html stands.
+          documentTitle={{enabled: false}}>
           {/* One Suspense boundary around the navigator, not one per
               screen: a per-screen boundary remounts its fallback on every
               navigation even for an already-downloaded chunk. */}

@@ -18,14 +18,29 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <style>
-      /* react-native-web expects a full-height root it can flex into;
-         without this the app collapses to zero height. */
       html,
       body,
       #root {
         height: 100%;
         margin: 0;
         padding: 0;
+      }
+      /*
+        #root MUST be a flex container, not just a full-height block.
+        Found by loading the real production build in Chromium: React
+        Native Web mounts an AppContainer styled `flex: 1 1 0%`, and
+        flex-grow does NOTHING inside a `display: block` parent. Every
+        descendant - the navigator, the screen, the ScrollView - is also
+        `flex: 1`, so the entire chain resolved to height 0 while the
+        content still PAINTED through overflow. The page therefore looked
+        completely correct and was quietly broken: nothing could scroll,
+        and clicks on the Start screen's buttons landed on #root instead
+        of the button, because the button's layout box had no ancestor
+        with height. A screenshot would never have caught this.
+      */
+      #root {
+        display: flex;
+        flex-direction: column;
       }
       body {
         background-color: #0a202a;

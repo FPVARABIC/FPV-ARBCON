@@ -169,6 +169,22 @@ const LAZY_ONLY_TOKENS = [
   { token: 'Stub is already running', route: 'FirmwareFlasher (esptool)' },
 ];
 
+/**
+ * CATEGORY E - the HTML shell's own layout contract.
+ *
+ * react-native-web mounts an AppContainer styled `flex: 1 1 0%`, and
+ * flex-grow does NOTHING inside a `display: block` parent. If #root ever
+ * loses `display: flex`, every descendant - navigator, screen, ScrollView,
+ * all of them `flex: 1` - resolves to height 0 while the content still
+ * PAINTS through overflow. That is the worst possible failure shape: the
+ * page looks completely correct, nothing scrolls, and clicks land on #root
+ * instead of the button under the cursor. It was found by driving the real
+ * build in Chromium, and no screenshot or unit test would have caught it.
+ */
+const REQUIRED_HTML_RULES = [
+  {pattern: /#root\s*\{[^}]*display:\s*flex/, description: '#root { display: flex }'},
+];
+
 /** Counts non-overlapping occurrences of a literal token. */
 function countOccurrences(haystack, token) {
   let count = 0;
@@ -207,6 +223,10 @@ function containsEitherForm(haystack, text) {
  * `combined` is every emitted chunk concatenated; `entry` is the entry
  * chunk alone, which is what category D is about.
  */
+function analyzeHtmlShell(html) {
+  return REQUIRED_HTML_RULES.filter(rule => !rule.pattern.test(html));
+}
+
 function analyzeWebBundle(combined, entry) {
   const forbidden = [];
   for (const token of FORBIDDEN_TOKENS) {
@@ -316,6 +336,9 @@ function main() {
   const bytes = combined.length;
   const sha256 = createHash('sha256').update(combined).digest('hex');
   const result = analyzeWebBundle(combined, entry.text);
+  const missingHtmlRules = analyzeHtmlShell(
+    readFileSync(join(OUTPUT_DIRECTORY, 'index.html'), 'utf8'),
+  );
 
   console.log(`Chunks: ${chunks.length}`);
   console.log(`Entry chunk: ${entry.name} (${entry.text.length} bytes)`);
@@ -381,20 +404,33 @@ function main() {
     );
   }
 
-  if (!result.ok) {
+  console.log('');
+  console.log('E. HTML shell layout contract');
+  for (const rule of missingHtmlRules) {
+    console.error(
+      `   MISSING SHELL RULE: ${rule.description} - without it every flex:1 descendant collapses to height 0 while still painting through overflow, so the page LOOKS correct but cannot scroll and swallows clicks.`,
+    );
+  }
+  if (missingHtmlRules.length === 0) {
+    console.log(`   ${REQUIRED_HTML_RULES.length} rule(s) present.`);
+  }
+
+  if (!result.ok || missingHtmlRules.length > 0) {
     console.error('');
     console.error('WEB SCAN FAILED.');
     return 1;
   }
   console.log('');
   console.log(
-    'OK - no Android/Node-only code in the browser bundle, Web Serial transport and Arabic safety copy both shipped, lazy routes still lazy.',
+    'OK - no Android/Node-only code in the browser bundle, Web Serial transport and Arabic safety copy both shipped, lazy routes still lazy, shell layout contract intact.',
   );
   return 0;
 }
 
 module.exports = {
+  analyzeHtmlShell,
   analyzeWebBundle,
+  REQUIRED_HTML_RULES,
   containsEitherForm,
   countOccurrences,
   escapeNonAscii,
