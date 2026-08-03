@@ -153,12 +153,27 @@ jobs:
           # 2. Assets are actually rewritten to the Pages subpath. Getting
           #    this wrong yields a page that loads its HTML and then 404s
           #    every chunk - the single most likely deployment failure.
-          if ! grep -q "${BASE_PATH}assets/" dist-web/index.html; then
-            echo "FAIL: index.html does not reference ${BASE_PATH}assets/ - the base path did not apply."
+          #
+          #    NORMALISE THE SEPARATOR RATHER THAN ASSUMING ONE. GitHub's
+          #    configure-pages emits base_path WITHOUT a trailing slash
+          #    ("/FPV-ARBCON"), while Vite normalises its own `base` to
+          #    have one, so the built HTML says "/FPV-ARBCON/assets/".
+          #    Concatenating "${BASE_PATH}assets/" therefore searched for
+          #    "/FPV-ARBCONassets/" and failed on a build that was
+          #    perfectly correct. Stripping any trailing slash and adding
+          #    exactly one back is right for both forms and can never
+          #    produce "//assets/" if GitHub's output changes later.
+          #    Also covers the root-site case, where BASE_PATH is "/" and
+          #    the prefix must be plain "/assets/".
+          ASSET_PREFIX="${BASE_PATH%/}/assets/"
+          # -F: match literally. The prefix is a path, not a pattern, and
+          # must not be reinterpreted as a regular expression.
+          if ! grep -Fq "${ASSET_PREFIX}" dist-web/index.html; then
+            echo "FAIL: index.html does not reference ${ASSET_PREFIX}."
             grep -o 'src="[^"]*"' dist-web/index.html || true
             exit 1
           fi
-          echo "OK: index.html references ${BASE_PATH}assets/."
+          echo "OK: index.html references ${ASSET_PREFIX}."
 
           # 3. The preview banner is genuinely in the shipped bytes.
           #    Non-ASCII may be emitted literally or \u-escaped, so both
