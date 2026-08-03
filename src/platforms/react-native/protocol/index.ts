@@ -58,6 +58,24 @@ export {
   PortsConfigurationController,
   portsConfigurationController,
 } from './PortsConfigurationController';
+export {
+  GpsConfigurationController,
+  gpsConfigurationController,
+} from './GpsConfigurationController';
+export type {
+  GpsBlockReason,
+  GpsLoadOutcome,
+  GpsSaveOutcome,
+  GpsSessionCoordinator,
+  GpsAppStateOwner,
+  GpsConfigurationControllerOptions,
+} from './GpsConfigurationController';
+export {
+  acquireGpsDetailTelemetry,
+  GPS_DETAIL_RAW_POLL_ID,
+  GPS_DETAIL_HOME_POLL_ID,
+  GPS_DETAIL_SATELLITES_POLL_ID,
+} from './gpsDetailTelemetry';
 export type {
   PortsBlockReason,
   PortsLoadOutcome,

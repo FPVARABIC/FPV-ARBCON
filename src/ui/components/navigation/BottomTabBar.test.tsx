@@ -54,6 +54,7 @@ describe('BottomTabBar - order and labels', () => {
     // `flexDirection: 'row'` container sits at the right edge under RTL.
     expect(firstIndex('SETUP')).toBeLessThan(firstIndex('MOTORS'));
     expect(firstIndex('MOTORS')).toBeLessThan(firstIndex('PORTS'));
+    expect(firstIndex('PORTS')).toBeLessThan(firstIndex('GPS'));
     expect(firstIndex('RECEIVER')).toBe(-1);
     expect(firstIndex('PID')).toBe(-1);
     rendered.unmount();
@@ -72,6 +73,7 @@ describe('BottomTabBar - order and labels', () => {
     expect(texts).toContain(i18n.t('tabs.setup'));
     expect(texts).toContain(i18n.t('tabs.motors'));
     expect(texts).toContain(i18n.t('tabs.ports'));
+    expect(texts).toContain(i18n.t('tabs.gps'));
     expect(texts).not.toContain(i18n.t('tabs.receiver'));
     expect(texts).not.toContain(i18n.t('tabs.pid'));
     // A raw key rendered on screen is the exact defect this whole pass
@@ -109,6 +111,7 @@ describe('BottomTabBar - roadmap tabs', () => {
       ).toHaveLength(0);
     }
     expect(isTabSelectable('PORTS')).toBe(true);
+    expect(isTabSelectable('GPS')).toBe(true);
     expect(isTabSelectable('RECEIVER')).toBe(false);
     expect(isTabSelectable('PID')).toBe(false);
     expect(pressed).toEqual([]);
@@ -175,6 +178,22 @@ function renderShell(sessionId = 'session-1') {
 }
 
 describe('MainTabsScreen - the shell', () => {
+  it('opens the integrated GPS destination directly from the live Setup GPS card', () => {
+    const shell = renderShell();
+    shell.press('setup-open-gps');
+    expect(shell.find('main-tab-panel-GPS')).toBeDefined();
+    expect(shell.find('gps-screen')).toBeDefined();
+    shell.unmount();
+  });
+
+  it('mounts the real GPS destination inside the same application shell', () => {
+    const shell = renderShell();
+    shell.press('main-tab-GPS');
+    expect(shell.find('main-tab-panel-GPS')).toBeDefined();
+    expect(shell.find('gps-screen')).toBeDefined();
+    shell.unmount();
+  });
+
   it('starts on Setup and mounts Motors only once it is opened', () => {
     const shell = renderShell();
     expect(

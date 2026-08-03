@@ -85,6 +85,7 @@ export interface PortsControllerPort {
 export interface PortsScreenProps {
   readonly sessionKey?: SetupUiSessionKey;
   readonly controller?: PortsControllerPort;
+  readonly onOpenGps?: () => void;
   readonly onDirtyChange?: (dirty: boolean) => void;
 }
 
@@ -274,9 +275,9 @@ function BaudSelector({
               key={index}
               disabled={disabled}
               onPress={() => onChange(index)}
-              accessibilityLabel={`${t(
-                `portsConfiguration.baud.${field}`,
-              )}: ${SERIAL_BAUD_RATES[index]}`}
+              accessibilityLabel={`${t(`portsConfiguration.baud.${field}`)}: ${
+                SERIAL_BAUD_RATES[index]
+              }`}
               accessibilityRole="radio"
               accessibilityState={{ selected, disabled }}
               style={[
@@ -343,10 +344,8 @@ function PortCard({
     };
     if (hasSerialRole(port, 'MSP')) append('MSP', port.mspBaudIndex);
     if (sensor === 'GPS') append('GPS', port.gpsBaudIndex);
-    if (telemetry !== undefined)
-      append(telemetry, port.telemetryBaudIndex);
-    if (peripheral === 'BLACKBOX')
-      append('BLACKBOX', port.blackboxBaudIndex);
+    if (telemetry !== undefined) append(telemetry, port.telemetryBaudIndex);
+    if (peripheral === 'BLACKBOX') append('BLACKBOX', port.blackboxBaudIndex);
     return values.join(' · ');
   }, [peripheral, port, sensor, t, telemetry]);
 
@@ -504,6 +503,7 @@ function PortCard({
 export default function PortsScreen({
   sessionKey,
   controller = portsConfigurationController,
+  onOpenGps,
   onDirtyChange,
 }: PortsScreenProps): React.JSX.Element {
   const { t } = useTranslation();
@@ -788,13 +788,46 @@ export default function PortsScreen({
               </View>
             </View>
 
+            <View
+              style={styles.gpsIntegrationCard}
+              testID="ports-gps-integration"
+            >
+              <View style={styles.gpsIntegrationCopy}>
+                <Text style={styles.summaryTitle}>
+                  {t('portsConfiguration.gpsIntegrationTitle')}
+                </Text>
+                <Text style={styles.gpsIntegrationText}>
+                  {draft.some(port => hasSerialRole(port, 'GPS'))
+                    ? draft
+                        .filter(port => hasSerialRole(port, 'GPS'))
+                        .map(
+                          port =>
+                            `${serialPortDisplayName(port.identifier)} · ${
+                              SERIAL_BAUD_RATES[port.gpsBaudIndex] ?? '?'
+                            }`,
+                        )
+                        .join('، ')
+                    : t('portsConfiguration.gpsNotAssigned')}
+                </Text>
+              </View>
+              {onOpenGps !== undefined ? (
+                <Pressable
+                  onPress={onOpenGps}
+                  style={styles.secondaryButton}
+                  accessibilityRole="button"
+                  testID="ports-open-gps"
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {t('portsConfiguration.openGps')}
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+
             {snapshot.vtxTableAvailable === true &&
             snapshot.vtxTableConfigured === false &&
             draft.some(port => hasSerialRole(port, 'VTX_MSP')) ? (
-              <View
-                style={styles.noticeCard}
-                testID="ports-vtx-table-warning"
-              >
+              <View style={styles.noticeCard} testID="ports-vtx-table-warning">
                 <Text style={styles.noticeText}>
                   {t('portsConfiguration.vtxTableMissing')}
                 </Text>
@@ -912,8 +945,7 @@ export default function PortsScreen({
                 accessibilityRole="button"
                 accessibilityLabel={t('portsConfiguration.saveAndReboot')}
                 accessibilityState={{
-                  disabled:
-                    controlsDisabled || !dirty || issues.length > 0,
+                  disabled: controlsDisabled || !dirty || issues.length > 0,
                 }}
                 onPress={handleSave}
                 style={[
@@ -1036,6 +1068,25 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   summaryDirty: { color: colors.warning },
+  gpsIntegrationCard: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+  },
+  gpsIntegrationCopy: { flex: 1, minWidth: 220 },
+  gpsIntegrationText: {
+    ...typography.body,
+    color: colors.textPrimary,
+    marginTop: spacing.xs,
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
   noticeCard: {
     backgroundColor: colors.accentSoft,
     borderRadius: radii.md,

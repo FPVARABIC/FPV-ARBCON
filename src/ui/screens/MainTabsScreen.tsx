@@ -41,6 +41,7 @@ import BottomTabBar from '../components/navigation/BottomTabBar';
 import SetupScreen from './SetupScreen';
 import MotorsTab from './MotorsScreen';
 import PortsScreen from './PortsScreen';
+import GpsScreen from './GpsScreen';
 import {
   INITIAL_MAIN_TAB,
   isTabSelectable,
@@ -84,6 +85,10 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
   );
   const reportPortsDirty = useCallback(
     (dirty: boolean) => reportDirty('PORTS', dirty),
+    [reportDirty],
+  );
+  const reportGpsDirty = useCallback(
+    (dirty: boolean) => reportDirty('GPS', dirty),
     [reportDirty],
   );
 
@@ -147,7 +152,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             style={activeTab === 'SETUP' ? styles.visible : styles.hidden}
             testID="main-tab-panel-SETUP"
           >
-            <SetupScreen {...props} />
+            <SetupScreen {...props} onOpenGps={() => handleSelectTab('GPS')} />
           </View>
         ) : null}
         {mountedTabs.includes('MOTORS') ? (
@@ -174,6 +179,20 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             <PortsScreen
               sessionKey={props.route.params?.sessionKey}
               onDirtyChange={reportPortsDirty}
+              onOpenGps={() => handleSelectTab('GPS')}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('GPS') ? (
+          <View
+            style={activeTab === 'GPS' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-GPS"
+          >
+            <GpsScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'GPS'}
+              onOpenPorts={() => handleSelectTab('PORTS')}
+              onDirtyChange={reportGpsDirty}
             />
           </View>
         ) : null}

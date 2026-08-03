@@ -73,6 +73,23 @@ export type {
   SerialBaudField,
 } from './serialPortsModel';
 export {
+  GPS_FEATURE_BIT,
+  GPS_PROVIDERS,
+  GPS_SBAS_MODES,
+  createGpsConfigurationDraft,
+  hasGpsFeature,
+  deriveGpsFeatureMask,
+  gpsDraftsEqual,
+  gpsConfigurationsEqual,
+  validateGpsDraft,
+  assignedGpsPorts,
+} from './gpsConfigurationModel';
+export type {
+  GpsConfigurationSnapshot,
+  GpsConfigurationDraft,
+  GpsConfigurationValidationCode,
+} from './gpsConfigurationModel';
+export {
   FEATURE_MOTOR_STOP_BIT,
   FEATURE_ESC_SENSOR_BIT,
   MOTOR_PROTOCOL_RAW_MIN,

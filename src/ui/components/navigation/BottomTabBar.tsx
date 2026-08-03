@@ -34,6 +34,7 @@ const TAB_ICON: Record<MainTabKey, string> = {
   SETUP: '⌁',
   MOTORS: '◉',
   PORTS: '↔',
+  GPS: '⌖',
   RECEIVER: '⌁',
   PID: '∿',
 };

@@ -60,6 +60,15 @@ export const MSP_BATTERY_STATE = 130;
  * never retained (decodeRawGps.ts). */
 export const MSP_RAW_GPS = 106;
 
+/** Betaflight 2025.12.2: distance and direction from the armed/home point. */
+export const MSP_COMP_GPS = 107;
+
+/** Betaflight 2025.12.2: six-byte GPS provider/SBAS/automation config. */
+export const MSP_GPS_CONFIG = 132;
+
+/** Betaflight 2025.12.2: per-satellite channel, id, quality and C/N0. */
+export const MSP_GPS_SV_INFO = 164;
+
 /** src/main/msp/msp_protocol.h:181 @ BETAFLIGHT_API147_COMMIT (Pass 7.6c,
  * the direct API-1.47 authority - release 2025.12.5):
  * `#define MSP_ANALOG 110  // out message: Vbat, powermetersum, rssi if
@@ -211,6 +220,9 @@ export const MSP_SET_MIXER_CONFIG = 43;
 export const MSP_SET_ADVANCED_CONFIG = 91;
 export const MSP_SET_MOTOR_3D_CONFIG = 217;
 export const MSP_SET_MOTOR_CONFIG = 222;
+
+/** Writes the complete six-byte MSP_GPS_CONFIG payload. */
+export const MSP_SET_GPS_CONFIG = 223;
 
 /**
  * Persists previously acknowledged MSP_SET_* values. Unlike accelerometer

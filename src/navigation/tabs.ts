@@ -6,7 +6,13 @@
  * inferred from a rendered tree.
  */
 
-export type MainTabKey = 'SETUP' | 'MOTORS' | 'PORTS' | 'RECEIVER' | 'PID';
+export type MainTabKey =
+  | 'SETUP'
+  | 'MOTORS'
+  | 'PORTS'
+  | 'GPS'
+  | 'RECEIVER'
+  | 'PID';
 
 export interface MainTabDefinition {
   readonly key: MainTabKey;
@@ -46,6 +52,11 @@ export const MAIN_TABS: readonly MainTabDefinition[] = Object.freeze([
   Object.freeze({
     key: 'PORTS' as const,
     labelKey: 'tabs.ports',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'GPS' as const,
+    labelKey: 'tabs.gps',
     implemented: true,
   }),
   Object.freeze({

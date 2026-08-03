@@ -6,6 +6,9 @@ export {
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
   MSP_RAW_GPS,
+  MSP_COMP_GPS,
+  MSP_GPS_CONFIG,
+  MSP_GPS_SV_INFO,
   MSP_ANALOG,
   MSP_STATUS_EX,
   MSP_BOXIDS,
@@ -27,12 +30,30 @@ export {
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_MOTOR_3D_CONFIG,
   MSP_SET_MOTOR_CONFIG,
+  MSP_SET_GPS_CONFIG,
   MSP_EEPROM_WRITE,
   MSP_RX_CONFIG,
   MSP_VTX_CONFIG,
   MSP2_COMMON_SERIAL_CONFIG,
   MSP2_COMMON_SET_SERIAL_CONFIG,
 } from './commands/mspCommands';
+
+export { decodeDetailedGps } from './decoding/decodeDetailedGps';
+export type { MspDetailedGps } from './decoding/decodeDetailedGps';
+export { decodeCompGps } from './decoding/decodeCompGps';
+export type { MspCompGps } from './decoding/decodeCompGps';
+export { decodeGpsConfiguration } from './decoding/decodeGpsConfiguration';
+export type { MspGpsConfiguration } from './decoding/decodeGpsConfiguration';
+export {
+  decodeGpsSatelliteInfo,
+  GPS_SATELLITE_MAX_COUNT,
+} from './decoding/decodeGpsSatelliteInfo';
+export type {
+  GpsConstellation,
+  MspGpsSatellite,
+  MspGpsSatelliteInfo,
+} from './decoding/decodeGpsSatelliteInfo';
+export { encodeGpsConfiguration } from './encoding/encodeGpsConfiguration';
 export {
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,

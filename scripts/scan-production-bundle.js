@@ -152,6 +152,15 @@ const REQUIRED_ENGINE_TOKENS = [
   'MSP2_COMMON_SET_SERIAL_CONFIG',
   'decodeSerialPorts',
   'encodeSerialPorts',
+  // GPS is a complete production subsystem: screen, screen-scoped live
+  // telemetry and the guarded persistent configuration transaction.
+  'gps-screen',
+  'GpsConfigurationController',
+  'acquireGpsDetailTelemetry',
+  'decodeDetailedGps',
+  'decodeGpsSatelliteInfo',
+  'encodeGpsConfiguration',
+  'MSP_SET_GPS_CONFIG',
   // Firmware Flasher and the new landing route are product surfaces, not
   // optional debug code. Their protocol owners must ship in Release.
   'firmware-flasher-screen',
@@ -202,6 +211,10 @@ const REQUIRED_ARABIC_STRINGS = [
   'تجاوز عدم تطابق Target',
   'إزالة DFU Read Protection',
   'Unified Config / Custom Defaults',
+  'نظام GPS / GNSS',
+  'لا يوجد منفذ GPS معيّن',
+  'تهيئة GPS',
+  'نتيجة إحدى الكتابات غير مؤكدة',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous.
@@ -251,6 +264,7 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
+      'src/platforms/react-native/protocol/GpsConfigurationController.ts',
     ],
   },
   {
@@ -259,6 +273,7 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
+      'src/platforms/react-native/protocol/GpsConfigurationController.ts',
     ],
   },
   {
@@ -266,6 +281,13 @@ const ENGINE_BOUNDARIES = [
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_GPS_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/GpsConfigurationController.ts',
     ],
   },
   {

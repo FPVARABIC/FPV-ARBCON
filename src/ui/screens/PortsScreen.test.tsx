@@ -59,11 +59,15 @@ function controllerFor(value = snapshot()): PortsControllerPort & {
   return { load, save };
 }
 
-async function render(controller: PortsControllerPort) {
+async function render(controller: PortsControllerPort, onOpenGps?: () => void) {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   await ReactTestRenderer.act(async () => {
     renderer = ReactTestRenderer.create(
-      <PortsScreen sessionKey={key} controller={controller} />,
+      <PortsScreen
+        sessionKey={key}
+        controller={controller}
+        onOpenGps={onOpenGps}
+      />,
     );
     await Promise.resolve();
     await Promise.resolve();
@@ -83,6 +87,22 @@ async function render(controller: PortsControllerPort) {
 }
 
 describe('PortsScreen', () => {
+  it('shows the assigned GPS port and opens the integrated GPS destination', async () => {
+    const onOpenGps = jest.fn();
+    const screen = await render(
+      controllerFor(
+        snapshot({
+          ports: Object.freeze([port(20, 1), port(0, 2 ** 1)]),
+        }),
+      ),
+      onOpenGps,
+    );
+    expect(screen.find('ports-gps-integration')).toBeDefined();
+    await screen.press('ports-open-gps');
+    expect(onOpenGps).toHaveBeenCalledTimes(1);
+    screen.unmount();
+  });
+
   it('renders records loaded from the controller rather than a static port illustration', async () => {
     const controller = controllerFor(
       snapshot({
@@ -111,9 +131,9 @@ describe('PortsScreen', () => {
       screen.find('ports-20-role-TELEMETRY_SMARTPORT').props.disabled,
     ).toBe(true);
     expect(screen.find('ports-20-role-BLACKBOX').props.disabled).toBe(false);
-    expect(
-      screen.find('ports-20-role-BLACKBOX').props.accessibilityRole,
-    ).toBe('radio');
+    expect(screen.find('ports-20-role-BLACKBOX').props.accessibilityRole).toBe(
+      'radio',
+    );
     expect(
       screen.find('ports-20-role-BLACKBOX').props.accessibilityLabel,
     ).toBeTruthy();
@@ -129,10 +149,7 @@ describe('PortsScreen', () => {
   });
 
   it('warns only when the connected firmware has a VTX table that is incomplete', async () => {
-    const vtxPorts = Object.freeze([
-      port(20, 1),
-      port(0, 1 + 2 ** 17),
-    ]);
+    const vtxPorts = Object.freeze([port(20, 1), port(0, 1 + 2 ** 17)]);
     const incomplete = await render(
       controllerFor(
         snapshot({
@@ -142,9 +159,9 @@ describe('PortsScreen', () => {
         }),
       ),
     );
-    expect(
-      incomplete.query('ports-vtx-table-warning').length,
-    ).toBeGreaterThan(0);
+    expect(incomplete.query('ports-vtx-table-warning').length).toBeGreaterThan(
+      0,
+    );
     incomplete.unmount();
 
     const unavailable = await render(

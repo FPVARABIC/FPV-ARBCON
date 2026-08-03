@@ -42,7 +42,10 @@ import type {
   SerialPortsValidationCode,
   SerialRoleKey,
 } from '../core/state/serialPortsModel';
-import type { PortsBlockReason } from '../platforms/react-native/protocol';
+import type {
+  GpsBlockReason,
+  PortsBlockReason,
+} from '../platforms/react-native/protocol';
 
 const REPO_ROOT = join(__dirname, '..', '..');
 const SCAN_ROOTS = [join(REPO_ROOT, 'src'), join(REPO_ROOT, 'App.tsx')];
@@ -199,6 +202,20 @@ const PORT_BLOCK_REASONS: Record<PortsBlockReason, true> = {
   INVALID_CONFIGURATION: true,
 };
 
+const GPS_BLOCK_REASONS: Record<GpsBlockReason, true> = {
+  DISCONNECTED: true,
+  IDENTIFYING: true,
+  UNSUPPORTED_FIRMWARE: true,
+  APP_BACKGROUNDED: true,
+  LINK_RECOVERING: true,
+  FC_ARMED: true,
+  ARMED_STATE_UNKNOWN: true,
+  MOTOR_TEST_ACTIVE: true,
+  CONFIGURATION_BUSY: true,
+  STALE_BASE: true,
+  INVALID_CONFIGURATION: true,
+};
+
 const PORT_VALIDATION: Record<SerialPortsValidationCode, true> = {
   NO_MSP_PORT: true,
   TOO_MANY_MSP_PORTS: true,
@@ -227,6 +244,10 @@ const ENUMERATED_FAMILIES: readonly {
   {
     prefix: 'portsConfiguration.blockReason',
     members: Object.keys(PORT_BLOCK_REASONS),
+  },
+  {
+    prefix: 'gpsSystem.blockReason',
+    members: Object.keys(GPS_BLOCK_REASONS),
   },
   {
     prefix: 'portsConfiguration.validation',

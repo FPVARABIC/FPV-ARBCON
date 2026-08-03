@@ -112,7 +112,9 @@ import type {
   OrientationViewOffset,
 } from '../../core';
 
-type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
+type Props = NativeStackScreenProps<RootStackParamList, 'Setup'> & {
+  readonly onOpenGps?: () => void;
+};
 
 export function shouldUseSingleColumnTelemetryCards(
   windowWidth: number,
@@ -124,6 +126,7 @@ export function shouldUseSingleColumnTelemetryCards(
 export default function SetupScreen({
   route,
   navigation,
+  onOpenGps,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const sessionKey = route.params?.sessionKey;
@@ -158,6 +161,7 @@ export default function SetupScreen({
     <SetupScreenContent
       sessionKey={sessionKey}
       onBack={() => navigation.goBack()}
+      onOpenGps={onOpenGps}
     />
   );
 }
@@ -165,9 +169,11 @@ export default function SetupScreen({
 function SetupScreenContent({
   sessionKey,
   onBack,
+  onOpenGps,
 }: {
   sessionKey: SetupUiSessionKey;
   onBack: () => void;
+  onOpenGps?: () => void;
 }): React.JSX.Element {
   const { t } = useTranslation();
   const { sessionId } = sessionKey;
@@ -414,12 +420,20 @@ function SetupScreenContent({
               useSingleColumnCards && styles.cardCellFull,
             ]}
           >
-            <GpsCard
-              connected={connected}
-              channelState={gpsChannelState}
-              telemetry={gps}
-              gpsPresent={gpsPresent}
-            />
+            <Pressable
+              disabled={onOpenGps === undefined}
+              onPress={onOpenGps}
+              accessibilityRole="button"
+              accessibilityLabel={t('gpsSystem.openFromSetup')}
+              testID="setup-open-gps"
+            >
+              <GpsCard
+                connected={connected}
+                channelState={gpsChannelState}
+                telemetry={gps}
+                gpsPresent={gpsPresent}
+              />
+            </Pressable>
           </View>
           <View
             style={[

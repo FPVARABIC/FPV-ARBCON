@@ -101,6 +101,9 @@ export {
   MSP_ATTITUDE,
   MSP_BATTERY_STATE,
   MSP_RAW_GPS,
+  MSP_COMP_GPS,
+  MSP_GPS_CONFIG,
+  MSP_GPS_SV_INFO,
   MSP_ANALOG,
   MSP_STATUS_EX,
   MSP_BOXIDS,
@@ -123,6 +126,7 @@ export {
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_MOTOR_3D_CONFIG,
   MSP_SET_MOTOR_CONFIG,
+  MSP_SET_GPS_CONFIG,
   MSP_EEPROM_WRITE,
   MSP_RX_CONFIG,
   MSP_VTX_CONFIG,
@@ -145,6 +149,12 @@ export {
   decodeBatteryState,
   decodeAnalog,
   decodeRawGps,
+  decodeDetailedGps,
+  decodeCompGps,
+  decodeGpsConfiguration,
+  decodeGpsSatelliteInfo,
+  GPS_SATELLITE_MAX_COUNT,
+  encodeGpsConfiguration,
   decodeStatusEx,
   decodeStatusExReadiness,
   decodeStatusExDiagnostics,
@@ -188,6 +198,14 @@ export {
   createMspOperationCoordinator,
   MspExclusiveOperationInProgressError,
 } from './protocol';
+export type {
+  MspDetailedGps,
+  MspCompGps,
+  MspGpsConfiguration,
+  GpsConstellation,
+  MspGpsSatellite,
+  MspGpsSatelliteInfo,
+} from './protocol';
 export {
   SERIAL_BAUD_RATES,
   SERIAL_ROLE_DEFINITIONS,
@@ -217,6 +235,23 @@ export type {
   SerialPortsValidationCode,
   SerialPortsValidationIssue,
   SerialBaudField,
+} from './state';
+export {
+  GPS_FEATURE_BIT,
+  GPS_PROVIDERS,
+  GPS_SBAS_MODES,
+  createGpsConfigurationDraft,
+  hasGpsFeature,
+  deriveGpsFeatureMask,
+  gpsDraftsEqual,
+  gpsConfigurationsEqual,
+  validateGpsDraft,
+  assignedGpsPorts,
+} from './state';
+export type {
+  GpsConfigurationSnapshot,
+  GpsConfigurationDraft,
+  GpsConfigurationValidationCode,
 } from './state';
 export {
   deriveOrientationViewState,
