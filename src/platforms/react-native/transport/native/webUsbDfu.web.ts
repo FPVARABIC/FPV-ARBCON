@@ -846,13 +846,45 @@ export async function flashDfuFirmware(
       }
     }
 
-    /* ---- Manifest ---- */
+    /* ---- Manifest: 99% ---- *
+     *
+     * THE ~98% STALL THE OPERATOR REPORTED LIVES HERE. Read-back
+     * verification occupies 75-99%, so a bar sitting near 98% has
+     * finished neither verification nor manifestation - and until this
+     * change NOTHING was emitted between the last verify block and
+     * `complete`, so the UI went silent for the whole of the phase in
+     * which the board actually resets. Each step below now announces
+     * itself, so a stall names the operation it is stuck in instead of
+     * looking like a frozen percentage.
+     *
+     * WebUSB LIMITATION, unchanged and deliberately not worked around:
+     * controlTransferIn/controlTransferOut take no AbortSignal and cannot
+     * be cancelled, so a pending transfer here can only be OBSERVED, never
+     * interrupted. Nothing below retries an erase or a write. */
+    onProgress({
+      phase: 'finalizing',
+      percent: 99,
+      bytesProcessed: total,
+      totalBytes: total,
+    });
     await connection.ensureIdle();
     // DfuSe manifestation selects the beginning of the programmed image,
     // matching Betaflight Configurator. Intel HEX type-05 may carry a
     // reset-handler PC (including a Thumb bit), not a DfuSe base address.
     await connection.setAddress(firmware.segments[0].address);
+    onProgress({
+      phase: 'manifesting',
+      percent: 99,
+      bytesProcessed: total,
+      totalBytes: total,
+    });
     await connection.download(0, new Uint8Array(0));
+    onProgress({
+      phase: 'resetting',
+      percent: 99,
+      bytesProcessed: total,
+      totalBytes: total,
+    });
     try {
       await connection.waitForManifestation();
     } catch (error) {

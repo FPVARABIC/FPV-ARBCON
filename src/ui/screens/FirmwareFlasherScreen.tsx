@@ -80,6 +80,18 @@ import {
   usbProductLabel,
 } from '../presentation/brandSafeText';
 import {colors, radii, spacing, typography} from '../theme';
+import {useTranslation} from 'react-i18next';
+import {copyPlainTextToClipboard} from '../../platforms/clipboard';
+import {
+  buildFlashReport,
+  evaluateFlashStall,
+  flashPhaseLabelKey,
+  toFlashPhase,
+} from '../../core/firmware-flasher/flashPhaseModel';
+import type {
+  FlashMethod,
+  FlashProgressSnapshot,
+} from '../../core/firmware-flasher/flashPhaseModel';
 
 type ScreenDependencies = {
   readonly client?: UsbSerialTransportClient;
@@ -266,6 +278,7 @@ export default function FirmwareFlasherScreen({
   client = usbSerialTransportClient,
   buildApi = betaflightBuildApi,
 }: Props): React.JSX.Element {
+  const {t} = useTranslation();
   const [step, setStep] = useState<Step>('board');
   const [sourceMode, setSourceMode] = useState<SourceMode>('online');
   const [targets, setTargets] = useState<readonly BetaflightTarget[]>([]);
@@ -367,6 +380,60 @@ export default function FirmwareFlasherScreen({
     setProgress(Math.max(0, Math.min(100, percent)));
     setStatus(sanitizeUserVisibleText(message));
   }, []);
+
+  /**
+   * THE ~98% STALL CORRECTION, UI half.
+   *
+   * The operator saw a bar freeze near 98% with no phase name. Every
+   * method now reports through here, so the visible line always NAMES the
+   * phase in Arabic (verification and manifestation are different
+   * situations at the same percentage), and `flashSnapshot` keeps the
+   * facts a stall report needs. Nothing here retries anything.
+   */
+  const [flashSnapshot, setFlashSnapshot] = useState<FlashProgressSnapshot | undefined>(
+    undefined,
+  );
+  const flashStartedAt = useRef(0);
+  const reportPhaseProgress = useCallback(
+    (
+      method: FlashMethod,
+      rawPhase: string,
+      percent: number,
+      bytesProcessed: number,
+      totalBytes: number,
+      detail?: {blockNumber?: number; targetIdentity?: string},
+    ) => {
+      const phase = toFlashPhase(rawPhase);
+      const now = Date.now();
+      if (flashStartedAt.current === 0) {
+        flashStartedAt.current = now;
+      }
+      setFlashSnapshot(previous => ({
+        method,
+        phase,
+        percent,
+        bytesProcessed,
+        totalBytes,
+        lastProgressAtMs: now,
+        startedAtMs: flashStartedAt.current,
+        blockNumber: detail?.blockNumber ?? previous?.blockNumber,
+        targetIdentity: detail?.targetIdentity ?? previous?.targetIdentity,
+        // The phase that just finished is the last one we can claim
+        // completed; the one now reported is still running.
+        lastCompletedOperation:
+          previous !== undefined && previous.phase !== phase
+            ? previous.phase
+            : previous?.lastCompletedOperation,
+        // Only the WebUSB path holds transfers that cannot be cancelled.
+        transferMayBePending: method === 'DFU_WEBUSB',
+      }));
+      reportProgress(
+        percent,
+        `${t(flashPhaseLabelKey(phase))} • ${bytesProcessed}/${totalBytes}`,
+      );
+    },
+    [reportProgress, t],
+  );
 
   const refreshDevices = useCallback(async () => {
     const [serial, dfu] = await Promise.all([client.listDevices(), client.listDfuDevices()]);
@@ -1048,18 +1115,24 @@ export default function FirmwareFlasherScreen({
     setOperation('flashing');
     const port = new ReactNativeSerialPort(client, device.deviceId, noReboot ? selectedPortIndex : 0, signal);
     const flasher = new Stm32SerialFlasher(port, signal, update => {
-      reportProgress(update.percent, `STM32: ${update.phase} • ${update.processedBytes}/${update.totalBytes}`);
+      reportPhaseProgress(
+        'STM32_SERIAL',
+        update.phase,
+        update.percent,
+        update.processedBytes,
+        update.totalBytes,
+      );
     });
     await flasher.flash(image.hex, {baudRate: manualBaud ? baudRate : 256000, fullErase});
     await restoreBackupAfterFlash(backup, signal);
   }, [
+    reportPhaseProgress,
     baudRate,
     bootloader,
     client,
     fullErase,
     manualBaud,
     noReboot,
-    reportProgress,
     requireOneSerial,
     restoreBackupAfterFlash,
     saveCliBackup,
@@ -1092,11 +1165,18 @@ export default function FirmwareFlasherScreen({
     setOperation('flashing');
     const port = new ReactNativeSerialPort(client, device.deviceId, selectedPortIndex, signal);
     const flasher = new EspFirmwareFlasher(port, signal, update => {
-      reportProgress(update.percent, `ESP: ${update.phase} • ${update.writtenBytes}/${update.totalBytes}`);
+      reportPhaseProgress(
+        'ESP_SERIAL',
+        update.phase,
+        update.percent,
+        update.writtenBytes,
+        update.totalBytes,
+      );
     }, appendLog);
     await flasher.flash(image.bytes, {flashBaudRate: manualBaud ? baudRate : 460800, eraseAll: fullErase});
     await restoreBackupAfterFlash(backup, signal);
   }, [
+    reportPhaseProgress,
     appendLog,
     baudRate,
     bootloader,
@@ -1104,7 +1184,6 @@ export default function FirmwareFlasherScreen({
     fullErase,
     manualBaud,
     noReboot,
-    reportProgress,
     requireOneSerial,
     restoreBackupAfterFlash,
     saveCliBackup,
@@ -1195,8 +1274,54 @@ export default function FirmwareFlasherScreen({
 
   useEffect(() => client.onDfuFlashProgress(update => {
     if (operation !== 'flashing') return;
-    reportProgress(update.percent, `DFU: ${update.phase} • ${update.bytesProcessed}/${update.totalBytes}`);
-  }), [client, operation, reportProgress]);
+    reportPhaseProgress(
+      'DFU_WEBUSB',
+      update.phase,
+      update.percent,
+      update.bytesProcessed,
+      update.totalBytes,
+    );
+  }), [client, operation, reportPhaseProgress]);
+
+  /**
+   * The stall watchdog. It ticks a clock so `evaluateFlashStall` can be
+   * re-evaluated; it NEVER sends anything. Re-erasing or re-writing on a
+   * stall could corrupt a half-written image and, on the WebUSB path,
+   * would race a transfer the browser will not let us cancel.
+   */
+  const [stallClock, setStallClock] = useState(0);
+  useEffect(() => {
+    if (operation !== 'flashing' || flashSnapshot === undefined) {
+      return;
+    }
+    const handle = setInterval(() => setStallClock(value => value + 1), 1000);
+    return () => clearInterval(handle);
+  }, [operation, flashSnapshot]);
+
+  const stallVerdict = useMemo(() => {
+    if (flashSnapshot === undefined) {
+      return undefined;
+    }
+    // stallClock is read so this recomputes each tick.
+    void stallClock;
+    return evaluateFlashStall(flashSnapshot, Date.now());
+  }, [flashSnapshot, stallClock]);
+
+  const [flashReportCopied, setFlashReportCopied] = useState<
+    'idle' | 'copied' | 'failed'
+  >('idle');
+  const lastFlashErrorCode = useRef<string | undefined>(undefined);
+  const copyFlashReport = useCallback(() => {
+    if (flashSnapshot === undefined) {
+      return;
+    }
+    const text = buildFlashReport(flashSnapshot, Date.now(), {
+      lastErrorCode: lastFlashErrorCode.current,
+    });
+    copyPlainTextToClipboard(text)
+      .then(copied => setFlashReportCopied(copied ? 'copied' : 'failed'))
+      .catch(() => setFlashReportCopied('failed'));
+  }, [flashSnapshot]);
 
   const cancelOperation = useCallback(() => {
     operationController.current?.abort();
@@ -2067,6 +2192,41 @@ export default function FirmwareFlasherScreen({
 
         <FirmwareSection title="حالة العملية" caption="آخر 60 رسالة فقط تُحفظ في الذاكرة لمنع نمو السجل وإبطاء الشاشة.">
           <FirmwareProgress percent={progress} label={status} />
+          {stallVerdict?.stalled === true && flashSnapshot !== undefined ? (
+            <View style={styles.stallNotice} testID="flasher-stalled">
+              <Text style={styles.stallTitle}>
+                {t('firmwareFlasher.stalledTitle')}
+              </Text>
+              <Text style={styles.stallBody}>
+                {t('firmwareFlasher.stalledBody', {
+                  seconds: Math.round(stallVerdict.silentForMs / 1000),
+                  phase: t(flashPhaseLabelKey(flashSnapshot.phase)),
+                })}
+              </Text>
+              <Text style={styles.stallBody}>
+                {t('firmwareFlasher.stalledWebUsbNote')}
+              </Text>
+            </View>
+          ) : null}
+          {flashSnapshot !== undefined ? (
+            <>
+              <FirmwareButton
+                title={t('firmwareFlasher.copyReport')}
+                onPress={copyFlashReport}
+                tone="secondary"
+                testID="copy-flash-report"
+              />
+              {flashReportCopied !== 'idle' ? (
+                <Text style={styles.stallBody} testID="copy-flash-report-result">
+                  {t(
+                    flashReportCopied === 'copied'
+                      ? 'firmwareFlasher.copyReportDone'
+                      : 'firmwareFlasher.copyReportFailed',
+                  )}
+                </Text>
+              ) : null}
+            </>
+          ) : null}
           {buildKey ? (
             <>
               <FirmwareButton
@@ -2108,6 +2268,25 @@ export default function FirmwareFlasherScreen({
 }
 
 const styles = StyleSheet.create({
+  stallNotice: {
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: '#2A2115',
+    gap: spacing.xs,
+  },
+  stallTitle: {
+    ...typography.sectionTitle,
+    color: colors.warning,
+    writingDirection: 'rtl',
+  },
+  stallBody: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+  },
   root: {flex: 1, backgroundColor: colors.background},
   modalRoot: {
     flex: 1,
