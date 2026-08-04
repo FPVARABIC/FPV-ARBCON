@@ -65,6 +65,8 @@ import type { MotorTestOperatorPort } from '../../platforms/react-native/protoco
 import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 import { createMotorTestLifecycleBridge } from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
+import { evaluateMotorDeparture } from '../../core/state/motorDepartureGate';
+import type { MotorDepartureVerdict } from '../../core/state/motorDepartureGate';
 import {
   readMotorTestCapability,
   subscribeMotorTestCapabilityOpened,
@@ -1693,9 +1695,32 @@ type MotorsHostNavigation = NativeStackScreenProps<
   'Setup'
 >['navigation'];
 
+/**
+ * How the shell asks whether leaving Motors is safe YET.
+ *
+ * The stop itself is already requested synchronously by the shell's blur
+ * emission before this is ever consulted - this only reports the bounded
+ * verdict so navigation can wait for it instead of committing blind.
+ */
+export interface MotorsDepartureGate {
+  /**
+   * The CURRENT verdict, given how long the caller has been waiting.
+   *
+   * Deliberately not a Promise, and deliberately owning no timer: this
+   * screen is guarded to create no timer beyond its declared heartbeat,
+   * and navigation timing belongs to the shell that owns navigation. The
+   * shell drives the bound; this only reports the controller's state.
+   */
+  evaluate(elapsedMs: number): MotorDepartureVerdict;
+  /** Fires whenever the controller publishes, so the shell can re-read. */
+  subscribe(listener: () => void): () => void;
+}
+
 export interface MotorsTabProps {
   readonly sessionKey: SetupUiSessionKey | undefined;
   readonly navigation: MotorsHostNavigation;
+  /** Registered on mount, cleared on unmount. */
+  readonly registerDepartureGate?: (gate: MotorsDepartureGate | undefined) => void;
   /**
    * Fires when the operator switches AWAY from the Motors tab.
    *
@@ -1716,6 +1741,7 @@ export default function MotorsTab({
   subscribeTabBlur,
   bottomInset,
   onConfigurationDirtyChange,
+  registerDepartureGate,
 }: MotorsTabProps): React.JSX.Element {
   if (!sessionKey) {
     // No live session: the screen renders inert and blocked. That is the
@@ -1736,6 +1762,7 @@ export default function MotorsTab({
       subscribeTabBlur={subscribeTabBlur}
       bottomInset={bottomInset}
       onConfigurationDirtyChange={onConfigurationDirtyChange}
+      registerDepartureGate={registerDepartureGate}
       key={sessionKey.sessionId}
     />
   );
@@ -1747,12 +1774,14 @@ function MotorsScreenBinding({
   subscribeTabBlur,
   bottomInset,
   onConfigurationDirtyChange,
+  registerDepartureGate,
 }: {
   sessionKey: SetupUiSessionKey;
   navigation: MotorsHostNavigation;
   subscribeTabBlur: (listener: () => void) => () => void;
   bottomInset?: number;
   onConfigurationDirtyChange?: (dirty: boolean) => void;
+  registerDepartureGate?: (gate: MotorsDepartureGate | undefined) => void;
 }): React.JSX.Element {
   /**
    * EXACTLY ONE binding owns the current official session. The capability
@@ -1997,6 +2026,22 @@ function MotorsScreenBinding({
       unsubscribeSettled = operator.subscribe(releaseIfStillHeld);
       releaseIfStillHeld();
     };
+    /**
+     * THE DEPARTURE GATE. The shell already fired the blur listeners
+     * above, so the stop request is out. This only reports the BOUNDED
+     * verdict, so the shell can wait for it instead of committing the tab
+     * switch in the same synchronous turn - which is what let an
+     * unconfirmed stop move the operator off this screen with no LiPo
+     * warning.
+     *
+     * It sends nothing, cancels nothing and cannot extend the stop.
+     */
+    registerDepartureGate?.({
+      evaluate: elapsedMs =>
+        evaluateMotorDeparture(operator.getSnapshot(), elapsedMs),
+      subscribe: listener => operator.subscribe(listener),
+    });
+
     const unsubscribeRelease = subscribeTabBlur(releaseOnLeave);
     const unsubscribeStackRelease = navigation.addListener(
       'blur',
@@ -2005,11 +2050,12 @@ function MotorsScreenBinding({
 
     return () => {
       stopWaiting();
+      registerDepartureGate?.(undefined);
       unsubscribeRelease();
       unsubscribeStackRelease();
       bridge.detach();
     };
-  }, [operator, navigation, subscribeTabBlur]);
+  }, [operator, navigation, subscribeTabBlur, registerDepartureGate]);
 
   /**
    * REAL STATE, PUSHED - not a render-time read.

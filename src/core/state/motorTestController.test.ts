@@ -82,6 +82,11 @@ import type {
 } from '../protocol/telemetry/telemetryTypes';
 import {MspClient} from '../protocol/mspClient';
 import {
+  MOTOR_DEPARTURE_BOUND_MILLIS,
+  evaluateMotorDeparture,
+} from './motorDepartureGate';
+import {isMotorTestSnapshotActive} from '../../platforms/react-native/protocol/motorTestCapability';
+import {
   acquireMotorTestLease,
   type MspSessionCompositeIdentity,
 } from '../protocol/motorTestLease';
@@ -4095,5 +4100,115 @@ describe('continuous safety monitoring is owned by the controller', () => {
 
     expect(harness.controller.getSnapshot().machine?.name).toBe('Fault');
     expect(harness.safetyMonitor.running).toBe(false);
+  });
+});
+
+/* ================================================================== *
+ * THE FIELD REGRESSION, END TO END ON THE REAL CONTROLLER
+ * ================================================================== */
+
+describe('a safe Motors departure releases everything the shell depends on', () => {
+  /**
+   * The operator reported that after testing a motor, Configurations
+   * demanded a return to Motors with nothing pending, Ports could not
+   * apply a UART change, and only a physical USB replug recovered.
+   *
+   * This drives the REAL controller through the exact departure sequence
+   * and asserts each link the shell reads: the stop is acknowledged, the
+   * teardown completes, the exclusive lease is released, the departure
+   * gate says SAFE, and the shared liveness predicate - the one four
+   * configuration controllers consult - reports the session inactive
+   * WITHOUT any physical reconnect.
+   */
+  it('pulse -> departure stop -> teardown -> lease released -> no longer MOTOR_TEST_ACTIVE', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+
+    // A real accepted pulse: the permanent latch is now set.
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await flush();
+    await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    const pulsing = harness.controller.getSnapshot();
+    expect(pulsing.pulse.mayHaveReachedFc).toBe(true);
+    expect(pulsing.pulse.acknowledged).toBe(true);
+    // Mid-flight, departure must NOT be permitted yet.
+    expect(evaluateMotorDeparture(pulsing, 0)).toBe('PENDING');
+    expect(isMotorTestSnapshotActive(pulsing)).toBe(true);
+
+    // The operator asks for another tab: the shell's blur fires this.
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await flush();
+    await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
+
+    const stopped = harness.controller.getSnapshot();
+    expect(stopped.stopExecution.outcome).toEqual({kind: 'ACKNOWLEDGED'});
+    // A confirmed stop permits departure immediately.
+    expect(evaluateMotorDeparture(stopped, 0)).toBe('SAFE');
+
+    // Teardown, driven the way the release path drives it.
+    const closed = await drive(harness, harness.controller.close());
+    expect(closed.phase).toBe('CLOSED');
+    expect(closed.teardown?.complete).toBe(true);
+    expect(harness.scheduler.activeMotorTestLeaseCount).toBe(0);
+
+    // The permanent latch is STILL set - that is the whole trap...
+    expect(closed.pulse.mayHaveReachedFc).toBe(true);
+    // ...and the shared predicate the configuration screens read now
+    // correctly reports the session inactive, with no USB reconnect.
+    expect(isMotorTestSnapshotActive(closed)).toBe(false);
+  });
+
+  it('an UNCONFIRMED stop keeps departure blocked AND keeps the screens locked', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await flush();
+    await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+
+    // A stop is requested but the flight controller never answers it.
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await flush();
+
+    const unsettled = harness.controller.getSnapshot();
+    expect(unsettled.stopExecution.outcome).not.toEqual({
+      kind: 'ACKNOWLEDGED',
+    });
+    // Departure is held while the bounded window runs, then refused.
+    expect(evaluateMotorDeparture(unsettled, 0)).toBe('PENDING');
+    expect(
+      evaluateMotorDeparture(unsettled, MOTOR_DEPARTURE_BOUND_MILLIS),
+    ).toBe('UNCONFIRMED');
+    // ...and every configuration screen stays locked meanwhile.
+    expect(isMotorTestSnapshotActive(unsettled)).toBe(true);
+  });
+
+  it('transient motor testing alone never produces a persistent configuration change', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    await flush();
+    await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    harness.controller.requestStop('TOUCH_RELEASED');
+    await flush();
+    await settlePulseWrite(harness);
+    await answer(harness, MSP_SET_MOTOR_FIXTURE);
+    await flush(20);
+
+    // A pulse and its stop are TRANSIENT. Nothing about them is a
+    // persistent motor-configuration edit, so nothing here may make a
+    // configuration screen believe a save is outstanding.
+    const snapshot = harness.controller.getSnapshot();
+    expect(snapshot.pulse.mayHaveReachedFc).toBe(true);
+    expect(snapshot.stopExecution.outcome).toEqual({kind: 'ACKNOWLEDGED'});
+    // The controller exposes no persistent-edit state at all - motor
+    // CONFIGURATION lives in MotorConfigurationController, a separate
+    // transaction with its own interlock.
+    expect(Object.keys(snapshot)).not.toContain('configurationDirty');
+    expect(Object.keys(snapshot)).not.toContain('pendingConfiguration');
   });
 });

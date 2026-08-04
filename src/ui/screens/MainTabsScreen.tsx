@@ -32,10 +32,11 @@
  * fires one event and the bridge decides everything else.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   StyleSheet,
+  Text,
   View,
   useWindowDimensions,
 } from 'react-native';
@@ -47,6 +48,9 @@ import SideNavigationRail from '../components/navigation/SideNavigationRail';
 import { isDesktopTier, resolveLayoutTier } from '../theme/layout';
 import SetupScreen from './SetupScreen';
 import MotorsTab from './MotorsScreen';
+import type { MotorsDepartureGate } from './MotorsScreen';
+import { MOTOR_DEPARTURE_BOUND_MILLIS } from '../../core/state/motorDepartureGate';
+import type { MotorDepartureVerdict } from '../../core/state/motorDepartureGate';
 import PortsScreen from './PortsScreen';
 import GpsScreen from './GpsScreen';
 import ConfigurationsScreen from './ConfigurationsScreen';
@@ -71,6 +75,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
   const { width, fontScale } = useWindowDimensions();
   const useSideRail = isDesktopTier(resolveLayoutTier(width, fontScale));
   const [activeTab, setActiveTab] = useState<MainTabKey>(INITIAL_MAIN_TAB);
+  /** True only while a departure is waiting on the bounded stop result. */
+  const [awaitingMotorStop, setAwaitingMotorStop] = useState(false);
   /** Tabs that have been opened at least once, and are therefore mounted
    * from here on. The initial tab counts as opened. */
   const [mountedTabs, setMountedTabs] = useState<readonly MainTabKey[]>([
@@ -121,6 +127,37 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     setActiveTab(next);
   }, []);
 
+  /**
+   * Registered by the Motors tab while it is mounted. Undefined means
+   * Motors has no live session, so there is nothing to wait for.
+   */
+  const motorsDepartureGate = useRef<MotorsDepartureGate | undefined>(undefined);
+  /**
+   * Everything a pending departure owns, so unmount can cancel it.
+   * Without this the bounded backstop fires into a torn-down tree - the
+   * shell's own test caught exactly that.
+   */
+  const pendingDeparture = useRef<{
+    unsubscribe?: () => void;
+    timer?: ReturnType<typeof setTimeout>;
+  }>({});
+  useEffect(
+    () => () => {
+      pendingDeparture.current.unsubscribe?.();
+      if (pendingDeparture.current.timer !== undefined) {
+        clearTimeout(pendingDeparture.current.timer);
+      }
+      pendingDeparture.current = {};
+    },
+    [],
+  );
+  const registerDepartureGate = useCallback(
+    (gate: MotorsDepartureGate | undefined) => {
+      motorsDepartureGate.current = gate;
+    },
+    [],
+  );
+
   const requestMotorStopForDeparture = useCallback((): boolean => {
     if (activeTab !== 'MOTORS') {
       return true;
@@ -146,14 +183,83 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     }
   }, [activeTab]);
 
+  /**
+   * THE BOUNDED-CONFIRMATION DEPARTURE CONTRACT.
+   *
+   * Before this, the blur listeners fired (raising the stop obligation)
+   * and the visual tab switch committed in the SAME synchronous turn -
+   * only a listener THROWING could hold it, which is not how an
+   * unconfirmed stop presents. An operator whose stop was never confirmed
+   * was therefore moved off the Motors screen with no LiPo warning while
+   * a command might still be live.
+   *
+   * The stop request is still issued FIRST and synchronously. Only the
+   * NAVIGATION now waits, and only for the already-established bounded
+   * result. Nothing here can delay, cancel or weaken the stop itself.
+   */
   const performTabSwitch = useCallback(
     (next: MainTabKey) => {
+      // Immediate, synchronous stop request - unchanged.
       if (!requestMotorStopForDeparture()) {
         return;
       }
-      commitTabSwitch(next);
+      const gate = activeTab === 'MOTORS' ? motorsDepartureGate.current : undefined;
+      if (gate === undefined) {
+        commitTabSwitch(next);
+        return;
+      }
+      // Already settled? Commit in the same turn, so the common safe case
+      // is not made slower by this gate.
+      const immediate = gate.evaluate(0);
+      if (immediate === 'SAFE') {
+        commitTabSwitch(next);
+        return;
+      }
+
+      // THE SHELL owns the bound, because the shell owns navigation. The
+      // Motors screen is guarded to create no timer beyond its heartbeat.
+      const startedAt = Date.now();
+      setAwaitingMotorStop(true);
+      const settle = (verdict: MotorDepartureVerdict) => {
+        const pending = pendingDeparture.current;
+        pending.unsubscribe?.();
+        if (pending.timer !== undefined) {
+          clearTimeout(pending.timer);
+        }
+        pendingDeparture.current = {};
+        setAwaitingMotorStop(false);
+        if (verdict === 'SAFE') {
+          commitTabSwitch(next);
+          return;
+        }
+        // Genuinely unconfirmed: stay on Motors and say why. Failing
+        // closed is the only acceptable default here.
+        Alert.alert(
+          'لم يتأكد إيقاف المحركات',
+          'لم يصل تأكيد إيقاف من متحكم الطيران خلال المهلة المحددة. افصل بطارية LiPo الآن قبل الاقتراب من الطائرة. تبقى شاشة المحركات ظاهرة حتى تتأكد بنفسك.',
+          [{ text: 'حسناً' }],
+        );
+      };
+      const check = () => {
+        const verdict = gate.evaluate(Date.now() - startedAt);
+        if (verdict !== 'PENDING') {
+          settle(verdict);
+        }
+      };
+      // Subscribe FIRST so a transition landing between here and the
+      // immediate re-check cannot be missed.
+      pendingDeparture.current = {
+        unsubscribe: gate.subscribe(check),
+        // A controller that publishes nothing further must still produce
+        // a verdict rather than holding navigation forever.
+        timer: setTimeout(
+          () => settle('UNCONFIRMED'),
+          MOTOR_DEPARTURE_BOUND_MILLIS,
+        ),
+      };
+      check();
     },
-    [commitTabSwitch, requestMotorStopForDeparture],
+    [activeTab, commitTabSwitch, requestMotorStopForDeparture],
   );
 
   const handleSelectTab = useCallback(
@@ -226,6 +332,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
               sessionKey={props.route.params?.sessionKey}
               navigation={props.navigation}
               subscribeTabBlur={subscribeTabBlur}
+              registerDepartureGate={registerDepartureGate}
               onConfigurationDirtyChange={reportMotorsDirty}
               // The tab bar below already consumes the bottom safe-area
               // inset; the screen must not add it a second time.
@@ -277,6 +384,13 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
           </View>
         ) : null}
       </View>
+      {awaitingMotorStop ? (
+        <View style={styles.awaitingStop} testID="main-tabs-awaiting-stop">
+          <Text style={styles.awaitingStopText}>
+            بانتظار تأكيد إيقاف المحركات قبل مغادرة الشاشة…
+          </Text>
+        </View>
+      ) : null}
       {useSideRail ? null : (
         <BottomTabBar activeTab={activeTab} onSelectTab={handleSelectTab} />
       )}
@@ -289,6 +403,19 @@ const styles = StyleSheet.create({
   /* The rail sits beside the workspace instead of below it. `row` under
      forceRTL puts the rail on the right, which is the reading start. */
   rootDesktop: { flexDirection: 'row' },
+  awaitingStop: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: colors.accentSoft,
+    borderTopWidth: 1,
+    borderTopColor: colors.accentStrong,
+  },
+  awaitingStopText: {
+    color: colors.accent,
+    fontWeight: '700',
+    textAlign: 'center',
+    writingDirection: 'rtl',
+  },
   content: { flex: 1 },
   visible: { flex: 1 },
   /* Hidden, NOT unmounted - see the Motors-bridge note in this file's
