@@ -53,6 +53,7 @@ import {
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography } from '../theme';
+import { StickyActionBar } from '../components/editing';
 
 const MIN_TOUCH_TARGET = 44;
 const TELEMETRY_ROLES = SERIAL_ROLE_DEFINITIONS.filter(
@@ -698,6 +699,35 @@ export default function PortsScreen({
     );
   }, [dirty, reloadNow, t]);
 
+  /**
+   * WHICH ports actually changed, named. "غير محفوظة" alone does not tell
+   * an operator whether the change they meant to make is the one that is
+   * pending, and a save bar that cannot say what it would write is not
+   * evidence of anything.
+   */
+  const pendingPortChanges = useMemo(() => {
+    if (original === undefined) {
+      return [];
+    }
+    const lines: string[] = [];
+    for (const port of draft) {
+      const before = original.ports.find(
+        candidate => candidate.identifier === port.identifier,
+      );
+      if (before === undefined || serialPortsEqual([before], [port])) {
+        continue;
+      }
+      const roles = enabledSerialRoles(port);
+      const name = serialPortDisplayName(port.identifier);
+      lines.push(
+        roles.length === 0
+          ? `${name}: ${t('portsConfiguration.none')}`
+          : `${name}: ${roles.map(role => t(roleLabelKey(role))).join('، ')}`,
+      );
+    }
+    return lines;
+  }, [draft, original, t]);
+
   const loadMessage =
     loadOutcome?.kind === 'REJECTED'
       ? t(blockReasonKey(loadOutcome.reason))
@@ -965,6 +995,34 @@ export default function PortsScreen({
           </>
         ) : null}
       </ScrollView>
+      {/* OUTSIDE the ScrollView on purpose: the in-scroll actions above
+          sit below six UART cards, which is why the operator reported
+          that no save action appeared at all. This bar is on screen
+          whenever something is genuinely pending. */}
+      <StickyActionBar
+        visible={dirty}
+        summary={
+          pendingPortChanges.length > 0
+            ? pendingPortChanges.join('   ')
+            : t('portsConfiguration.unsaved')
+        }
+        details={pendingPortChanges}
+        saveLabel={t('portsConfiguration.saveAndReboot')}
+        discardLabel={t('portsConfiguration.reset')}
+        onSave={handleSave}
+        onDiscard={() => {
+          setDraft(original?.ports ?? []);
+          setSaveOutcome(undefined);
+        }}
+        disabledReason={
+          issues.length > 0
+            ? t('portsConfiguration.validationTitle')
+            : undefined
+        }
+        busy={phase === 'SAVING'}
+        busyLabel={t('portsConfiguration.saving')}
+        testID="ports-sticky-actions"
+      />
     </View>
   );
 }

@@ -46,6 +46,7 @@ import {
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography } from '../theme';
+import { StickyActionBar } from '../components/editing';
 
 export interface GeneralConfigurationControllerPort {
   load(
@@ -912,6 +913,26 @@ export default function ConfigurationsScreen({
           </>
         )}
       </ScrollView>
+      {/* OUTSIDE the ScrollView, for the same reason Ports needs it: the
+          in-scroll actions sit below every settings card. */}
+      <StickyActionBar
+        visible={dirty}
+        summary={t('configurationsSystem.pendingCount', {
+          count: changedCount,
+        })}
+        saveLabel={t('configurationsSystem.save')}
+        discardLabel={t('configurationsSystem.reset')}
+        onSave={handleSave}
+        onDiscard={() => setDraft(originalDraft)}
+        disabledReason={
+          issues.length > 0
+            ? t('configurationsSystem.invalidPending')
+            : undefined
+        }
+        busy={phase === 'SAVING'}
+        busyLabel={t('configurationsSystem.saving')}
+        testID="configurations-sticky-actions"
+      />
     </View>
   );
 }
