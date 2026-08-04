@@ -88,6 +88,18 @@ import {
   flashPhaseLabelKey,
   toFlashPhase,
 } from '../../core/firmware-flasher/flashPhaseModel';
+import {
+  bootloaderStateLabelKey,
+  canResumePendingFlash,
+  dfuRejectionLabelKey,
+  verifySelectedDfuDevice,
+} from '../../core/firmware-flasher/bootloaderTransition';
+import type {
+  BootloaderTransitionState,
+  DfuIdentity,
+  PendingBootloaderFlash,
+} from '../../core/firmware-flasher/bootloaderTransition';
+import {DfuPermissionRequiredError} from '../../platforms/react-native/protocol/FirmwareBootloaderController';
 import type {
   FlashMethod,
   FlashProgressSnapshot,
@@ -1071,13 +1083,39 @@ export default function FirmwareFlasherScreen({
       }
       await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
       setStatus('انتظار ظهور STM32 DFU…');
-      dfu = await bootloader.waitForOneDfuDevice(20_000, signal);
+      try {
+        dfu = await bootloader.waitForOneDfuDevice(20_000, signal);
+      } catch (error) {
+        if (error instanceof DfuPermissionRequiredError) {
+          /**
+           * The reboot SUCCEEDED and the board is in DFU - the browser
+           * simply has not been told it may talk to this new identity.
+           * Stop here without flashing and hold the prepared operation.
+           * requestDevice() needs a user gesture, so the resume button
+           * below calls it directly from the operator's press.
+           */
+          setPendingBootloaderFlash({
+            operationId: `flash-${Date.now()}`,
+            expectedTarget: selectedTarget,
+            rebootAlreadySent: true,
+            writeAlreadyStarted: false,
+          });
+          setPendingFlashImage({bytes: image.bytes, fullErase});
+          setBootloaderState('WAITING_FOR_PERMISSION');
+          setOperation('idle');
+          setStatus(t(bootloaderStateLabelKey('WAITING_FOR_PERMISSION')));
+          return;
+        }
+        throw error;
+      }
+      setBootloaderState('COMPLETED');
     }
     setOperation('flashing');
     appendLog(`بدء DfuSe على deviceId ${dfu.deviceId}.`);
     await client.flashDfuFirmware(dfu.deviceId, bytesToBase64(image.bytes), fullErase);
     await restoreBackupAfterFlash(backup, signal);
   }, [
+    t,
     appendLog,
     bootloader,
     client,
@@ -1311,6 +1349,74 @@ export default function FirmwareFlasherScreen({
     'idle' | 'copied' | 'failed'
   >('idle');
   const lastFlashErrorCode = useRef<string | undefined>(undefined);
+
+  /**
+   * THE HELD OPERATION. Set only when the reboot already succeeded and
+   * the browser needs a gesture before it will expose the new DFU
+   * identity. Holding it is what lets the resume continue the SAME
+   * prepared flash instead of starting over.
+   */
+  const [pendingBootloaderFlash, setPendingBootloaderFlash] = useState<
+    PendingBootloaderFlash | undefined
+  >(undefined);
+  const [pendingFlashImage, setPendingFlashImage] = useState<
+    {bytes: Uint8Array; fullErase: boolean} | undefined
+  >(undefined);
+  const [bootloaderState, setBootloaderState] = useState<
+    BootloaderTransitionState | undefined
+  >(undefined);
+
+  /**
+   * Called DIRECTLY from the operator's press, because WebUSB
+   * requestDevice() requires a user gesture and browser security is never
+   * bypassed here. It re-sends nothing: no MSP reboot, no erase, no
+   * write. It verifies the chosen device and continues the held flash.
+   */
+  const chooseDfuAndContinue = useCallback(() => {
+    const pending = pendingBootloaderFlash;
+    const image = pendingFlashImage;
+    if (pending === undefined || image === undefined) {
+      return;
+    }
+    const resumable = canResumePendingFlash(pending);
+    if (!resumable.resumable) {
+      setBootloaderState('FAILED_SAFELY');
+      setFailure(
+        new Error('بدأت الكتابة بالفعل؛ لا يجوز استئنافها. افصل وأعد المحاولة من البداية.'),
+      );
+      return;
+    }
+    client
+      .requestDfuDevicePermission()
+      .then(async device => {
+        if (!mounted.current) return;
+        const verdict = verifySelectedDfuDevice(
+          device as DfuIdentity | null,
+          pending,
+          pending.operationId,
+        );
+        if (!verdict.ok) {
+          setBootloaderState('UNEXPECTED_DEVICE');
+          setFailure(new Error(t(dfuRejectionLabelKey(verdict.reason))));
+          return;
+        }
+        setBootloaderState('RESUMED_AFTER_PERMISSION');
+        setPendingBootloaderFlash(undefined);
+        setPendingFlashImage(undefined);
+        setOperation('flashing');
+        appendLog('استُؤنفت العملية المعلّقة بعد منح إذن المتصفح؛ لم يُعَد إرسال أمر إعادة التشغيل.');
+        await client.flashDfuFirmware(
+          (device as DfuIdentity & {deviceId: number}).deviceId,
+          bytesToBase64(image.bytes),
+          image.fullErase,
+        );
+      })
+      .catch(error => {
+        if (!mounted.current) return;
+        setBootloaderState('FAILED_SAFELY');
+        setFailure(error);
+      });
+  }, [appendLog, client, pendingBootloaderFlash, pendingFlashImage, setFailure, t]);
   const copyFlashReport = useCallback(() => {
     if (flashSnapshot === undefined) {
       return;
@@ -2192,6 +2298,27 @@ export default function FirmwareFlasherScreen({
 
         <FirmwareSection title="حالة العملية" caption="آخر 60 رسالة فقط تُحفظ في الذاكرة لمنع نمو السجل وإبطاء الشاشة.">
           <FirmwareProgress percent={progress} label={status} />
+          {bootloaderState !== undefined ? (
+            <Text style={styles.stallBody} testID="flasher-bootloader-state">
+              {t(bootloaderStateLabelKey(bootloaderState))}
+            </Text>
+          ) : null}
+          {pendingBootloaderFlash !== undefined ? (
+            <View style={styles.stallNotice} testID="flasher-awaiting-dfu-permission">
+              <Text style={styles.stallTitle}>
+                {t('firmwareFlasher.bootloader.WAITING_FOR_PERMISSION')}
+              </Text>
+              <Text style={styles.stallBody}>
+                {t('firmwareFlasher.permissionNeededBody')}
+              </Text>
+              <FirmwareButton
+                title={t('firmwareFlasher.chooseDfuAndContinue')}
+                onPress={chooseDfuAndContinue}
+                tone="primary"
+                testID="choose-dfu-and-continue"
+              />
+            </View>
+          ) : null}
           {stallVerdict?.stalled === true && flashSnapshot !== undefined ? (
             <View style={styles.stallNotice} testID="flasher-stalled">
               <Text style={styles.stallTitle}>
