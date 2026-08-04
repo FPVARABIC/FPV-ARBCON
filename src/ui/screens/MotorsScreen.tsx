@@ -90,6 +90,7 @@ import {
 } from '../../core/state/motorVerificationModel';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
 import { MotorAirframeDiagram } from './MotorAirframeDiagram';
+import type { MotorSlotActivity } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
 import { MotorConfigurationPanel } from './MotorConfigurationPanel';
 import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
@@ -748,8 +749,22 @@ export function MotorsScreenView({
   const liveSlot =
     presentation === 'SUBMITTED_AWAITING_RESPONSE' ||
     presentation === 'ACKNOWLEDGED' ||
-    presentation === 'STOPPING'
+    presentation === 'STOPPING' ||
+    presentation === 'FAULT'
       ? snapshot?.pulse.motorNumber
+      : undefined;
+  /** The diagram states the controller's OWN verdict for that output, in
+   * words. FAULT maps to UNSAFE because a fault is precisely the case
+   * where the app cannot describe the output truthfully. */
+  const liveActivity: MotorSlotActivity | undefined =
+    presentation === 'SUBMITTED_AWAITING_RESPONSE'
+      ? 'SUBMITTED'
+      : presentation === 'ACKNOWLEDGED'
+      ? 'ACKNOWLEDGED'
+      : presentation === 'STOPPING'
+      ? 'STOPPING'
+      : presentation === 'FAULT'
+      ? 'UNSAFE'
       : undefined;
   const airframeEntries = MOTOR_TEST_EXPECTED_CONFIGURATION.map(entry => ({
     slot: entry.motorNumber,
@@ -1101,6 +1116,7 @@ export function MotorsScreenView({
               entries={airframeEntries}
               selectedSlot={selectedSlot}
               liveSlot={liveSlot}
+              liveActivity={liveActivity}
               verifiedSlots={verifiedSlots}
               onSelectSlot={handleSelectSlot}
             />

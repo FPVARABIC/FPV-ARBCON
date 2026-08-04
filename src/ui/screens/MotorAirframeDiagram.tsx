@@ -1,14 +1,33 @@
 /**
  * Purpose-built Quad X airframe reference for the Motors workspace.
  *
- * It is intentionally a view-only geometry layer: the slot passed to
- * onSelectSlot is the same slot printed on the node, while direction and
- * position remain explicitly labelled as an expected reference. No value
- * from this component can reach a motor command or alter a safety gate.
+ * A view-only geometry layer: the slot handed to onSelectSlot is the same
+ * number printed on the node, and no value here can reach a motor command
+ * or relax a safety gate. Position and direction are an EXPECTED
+ * reference for a Quad X frame, never a measurement from the aircraft -
+ * an MSP acknowledgement proves reception, not rotation.
+ *
+ * SIZING. The stage used to be capped at 156px on every screen, which a
+ * real operator reported as unreadable: not recognisably a Quad X, front
+ * unclear, M1-M4 unclear, CW/CCW unclear. It now scales with the viewport
+ * through the shared layout tiers, and every internal dimension derives
+ * from the stage size rather than being hard-coded, so the frame, the
+ * rotors, the numbers and the rotation arrows grow together.
+ * MOTOR_AIRFRAME_STAGE_MIN_WIDTH keeps the narrowest phone case at the
+ * previously-audited touch-target size.
+ *
+ * MEANING NEVER DEPENDS ON COLOUR: every state also carries an Arabic
+ * text badge on the node itself and a matching legend entry.
  */
 
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import type {
@@ -17,6 +36,7 @@ import type {
 } from '../../core/state/motorVerificationModel';
 import { MOTOR_TEST_EXPECTED_CONFIGURATION } from '../../core/state/motorVerificationModel';
 import { colors, radii, spacing, typography } from '../theme';
+import { resolveLayoutTier } from '../theme/layout';
 
 export interface MotorAirframeEntry {
   readonly slot: number;
@@ -24,24 +44,66 @@ export interface MotorAirframeEntry {
   readonly direction: MotorRotationDirection;
 }
 
+/**
+ * What the diagram may say about one output right now. SUBMITTED /
+ * ACKNOWLEDGED / STOPPING mirror the controller's own published pulse
+ * record. UNSAFE means the app cannot describe the output truthfully (a
+ * fault, or a stop it could not confirm).
+ */
+export type MotorSlotActivity =
+  | 'SUBMITTED'
+  | 'ACKNOWLEDGED'
+  | 'STOPPING'
+  | 'UNSAFE';
+
 export interface MotorAirframeDiagramProps {
   readonly entries: readonly MotorAirframeEntry[];
   readonly selectedSlot: number;
   readonly liveSlot?: number;
+  /** The controller's current verdict for `liveSlot`. */
+  readonly liveActivity?: MotorSlotActivity;
   readonly verifiedSlots?: readonly number[];
   readonly onSelectSlot: (slot: number) => void;
 }
 
 /**
- * This is a teaching aid, not a control surface.  The previous 195 x 174
- * stage still dominated the real tablet workflow.  156 / 1.42 produces a
- * stage whose area is 50.5% of that version while every motor node keeps a
- * real 44dp touch target.  Shrinking the linear dimensions by 50% would
- * make the four selectors inaccessible, so the area is the correct safety-
- * preserving measure here.
+ * The smallest stage, kept from the previously-audited phone layout so a
+ * narrow device still gets real 44dp touch targets.
  */
-export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = 156;
-export const MOTOR_AIRFRAME_STAGE_ASPECT_RATIO = 1.42;
+export const MOTOR_AIRFRAME_STAGE_MIN_WIDTH = 156;
+/** Back-compatible alias for the historical constant name. */
+export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = MOTOR_AIRFRAME_STAGE_MIN_WIDTH;
+export const MOTOR_AIRFRAME_STAGE_ASPECT_RATIO = 1;
+
+/**
+ * How wide the stage may be for a given viewport. A Quad X only reads as
+ * a Quad X when the arms are long enough to separate the rotors, so the
+ * desktop tiers get a genuinely large diagram rather than a phone glyph
+ * centred in a monitor.
+ */
+export function computeAirframeStageWidth(
+  windowWidth: number,
+  fontScale = 1,
+): number {
+  const tier = resolveLayoutTier(windowWidth, fontScale);
+  const byTier =
+    tier === 'desktopWide'
+      ? 460
+      : tier === 'desktop'
+      ? 400
+      : tier === 'wide'
+      ? 330
+      : tier === 'tablet'
+      ? 280
+      : 210;
+  const available = Number.isFinite(windowWidth)
+    ? Math.max(0, windowWidth - 48)
+    : byTier;
+  return Math.max(
+    MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
+    Math.min(byTier, Math.max(MOTOR_AIRFRAME_STAGE_MIN_WIDTH, available)),
+  );
+}
 
 // Emission order is explicit and mirrors the accepted identity test: right
 // first, left second. The row itself has an explicit RTL direction, so right
@@ -141,27 +203,115 @@ function directionKey(direction: MotorRotationDirection): string {
   return direction === 'CW' ? 'directionCw' : 'directionCcw';
 }
 
+function activityLabelKey(activity: MotorSlotActivity): string {
+  switch (activity) {
+    case 'SUBMITTED':
+      return 'motorsScreen.slotStateSubmitted';
+    case 'ACKNOWLEDGED':
+      return 'motorsScreen.slotStateAcknowledged';
+    case 'STOPPING':
+      return 'motorsScreen.slotStateStopping';
+    case 'UNSAFE':
+      return 'motorsScreen.slotStateUnsafe';
+  }
+}
+
+function activityColor(activity: MotorSlotActivity): string {
+  switch (activity) {
+    case 'SUBMITTED':
+    case 'ACKNOWLEDGED':
+      return colors.warning;
+    case 'STOPPING':
+      return colors.info;
+    case 'UNSAFE':
+      return colors.error;
+  }
+}
+
 function cellTestId(position: MotorPhysicalPosition): string {
   return `motors-diagram-cell-${position.replace('_', '-')}`;
 }
 
+/**
+ * A hub, two blades and a LARGE curved rotation arrow whose direction is
+ * also written out (CW / CCW), so the arrow is never the only carrier of
+ * meaning.
+ */
 function RotorGlyph({
   direction,
-  live,
+  scale,
+  active,
 }: {
   direction: MotorRotationDirection;
-  live: boolean;
+  scale: number;
+  active: boolean;
 }): React.JSX.Element {
+  const { t } = useTranslation();
+  const size = Math.round(30 * scale);
+  const bladeLength = Math.round(size * 0.86);
+  const bladeThickness = Math.max(3, Math.round(size * 0.13));
+  const hub = Math.max(6, Math.round(size * 0.26));
+  const arrowFont = Math.max(14, Math.round(size * 0.62));
   return (
-    <View style={[styles.rotor, live && styles.rotorLive]}>
-      <View style={[styles.blade, styles.bladeA]} />
-      <View style={[styles.blade, styles.bladeB]} />
-      <View style={styles.hub} />
-      <View style={[styles.directionBadge, live && styles.directionBadgeLive]}>
-        <Text style={styles.directionSymbol}>
+    <View style={styles.rotorWrap}>
+      <View
+        style={[
+          styles.rotor,
+          {
+            width: size,
+            height: size,
+            borderRadius: size / 2,
+            borderWidth: Math.max(1, Math.round(size * 0.06)),
+          },
+          active && styles.rotorActive,
+        ]}
+      >
+        <View
+          style={[
+            styles.blade,
+            {
+              width: bladeLength,
+              height: bladeThickness,
+              transform: [{ rotate: '32deg' }],
+            },
+          ]}
+        />
+        <View
+          style={[
+            styles.blade,
+            {
+              width: bladeLength,
+              height: bladeThickness,
+              transform: [{ rotate: '-32deg' }],
+            },
+          ]}
+        />
+        <View
+          style={[styles.hub, { width: hub, height: hub, borderRadius: hub / 2 }]}
+        />
+        <Text
+          style={[
+            styles.rotationArrow,
+            { fontSize: arrowFont, lineHeight: Math.round(arrowFont * 1.1) },
+            active && styles.rotationArrowActive,
+          ]}
+        >
           {direction === 'CW' ? '↻' : '↺'}
         </Text>
       </View>
+      <Text
+        style={[
+          styles.directionText,
+          { fontSize: Math.max(9, Math.round(11 * scale)) },
+        ]}
+        testID={`motors-diagram-direction-${direction}`}
+      >
+        {t(
+          direction === 'CW'
+            ? 'motorsScreen.diagramCw'
+            : 'motorsScreen.diagramCcw',
+        )}
+      </Text>
     </View>
   );
 }
@@ -169,17 +319,30 @@ function RotorGlyph({
 function MotorNode({
   entry,
   selected,
-  live,
+  activity,
   verified,
+  scale,
   onSelect,
 }: {
   entry: MotorAirframeEntry;
   selected: boolean;
-  live: boolean;
+  activity: MotorSlotActivity | undefined;
   verified: boolean;
+  scale: number;
   onSelect: () => void;
 }): React.JSX.Element {
   const { t } = useTranslation();
+  const slotFont = Math.max(13, Math.round(18 * scale));
+  const positionFont = Math.max(9, Math.round(11 * scale));
+  const badge =
+    activity !== undefined
+      ? { text: t(activityLabelKey(activity)), color: activityColor(activity) }
+      : verified
+      ? { text: t('motorsScreen.slotStateObserved'), color: colors.success }
+      : selected
+      ? { text: t('motorsScreen.slotStateSelected'), color: colors.accent }
+      : undefined;
+
   return (
     <View style={styles.motorCell} testID={cellTestId(entry.position)}>
       <Pressable
@@ -188,30 +351,56 @@ function MotorNode({
         accessibilityState={{ selected }}
         accessibilityLabel={`${`M${entry.slot}`}، ${t(
           `motorsScreen.${positionKey(entry.position)}`,
-        )}، ${t(`motorsScreen.${directionKey(entry.direction)}`)}`}
+        )}، ${t(`motorsScreen.${directionKey(entry.direction)}`)}${
+          badge !== undefined ? `، ${badge.text}` : ''
+        }`}
         style={[
           styles.motorNode,
+          { padding: Math.round(6 * scale), gap: Math.round(3 * scale) },
           selected && styles.motorNodeSelected,
           verified && styles.motorNodeVerified,
-          live && styles.motorNodeLive,
+          activity !== undefined && {
+            borderColor: activityColor(activity),
+            borderWidth: 2,
+          },
         ]}
         testID={`motors-airframe-slot-${entry.slot}`}
       >
-        <RotorGlyph direction={entry.direction} live={live} />
-        <View style={styles.nodeCopy}>
-          <View style={styles.slotLine}>
+        <RotorGlyph
+          direction={entry.direction}
+          scale={scale}
+          active={activity !== undefined}
+        />
+        <Text
+          style={[styles.slot, { fontSize: slotFont, lineHeight: slotFont + 2 }]}
+          testID={`motors-diagram-slot-${entry.slot}`}
+        >
+          {`M${entry.slot}`}
+        </Text>
+        <Text
+          style={[
+            styles.position,
+            { fontSize: positionFont, lineHeight: positionFont + 3 },
+          ]}
+          numberOfLines={1}
+        >
+          {t(`motorsScreen.${positionKey(entry.position)}`)}
+        </Text>
+        {badge !== undefined ? (
+          <View
+            style={[styles.stateBadge, { borderColor: badge.color }]}
+            testID={`motors-diagram-state-${entry.slot}`}
+          >
             <Text
-              style={[styles.slot, live && styles.slotLive]}
-              testID={`motors-diagram-slot-${entry.slot}`}
+              style={[
+                styles.stateBadgeText,
+                { color: badge.color, fontSize: positionFont },
+              ]}
             >
-              {`M${entry.slot}`}
+              {badge.text}
             </Text>
-            {verified ? <Text style={styles.verifiedMark}>✓</Text> : null}
           </View>
-          <Text style={styles.position} numberOfLines={1}>
-            {t(`motorsScreen.${positionKey(entry.position)}`)}
-          </Text>
-        </View>
+        ) : null}
       </Pressable>
     </View>
   );
@@ -221,10 +410,17 @@ export function MotorAirframeDiagram({
   entries,
   selectedSlot,
   liveSlot,
+  liveActivity,
   verifiedSlots = [],
   onSelectSlot,
 }: MotorAirframeDiagramProps): React.JSX.Element {
   const { t } = useTranslation();
+  const { width: windowWidth, fontScale } = useWindowDimensions();
+  const stageWidth = computeAirframeStageWidth(windowWidth, fontScale);
+  // Every internal dimension is a multiple of this, so the whole diagram
+  // grows as one drawing instead of a big box around small glyphs.
+  const scale = stageWidth / 260;
+
   const ordered = orderAirframeEntries(entries);
   const front = ordered.slice(0, 2);
   const rear = ordered.slice(2, 4);
@@ -234,24 +430,71 @@ export function MotorAirframeDiagram({
       key={entry.slot}
       entry={entry}
       selected={entry.slot === selectedSlot}
-      live={entry.slot === liveSlot}
+      activity={entry.slot === liveSlot ? liveActivity : undefined}
       verified={verifiedSlots.includes(entry.slot)}
+      scale={scale}
       onSelect={() => onSelectSlot(entry.slot)}
     />
   );
 
+  const armThickness = Math.max(6, Math.round(stageWidth * 0.045));
+
   return (
     <View style={styles.root} testID="motors-airframe-diagram">
+      <Text style={styles.diagramTitle}>{t('motorsScreen.diagramTitle')}</Text>
+
       <View style={styles.frontMarker} testID="motors-diagram-front">
-        <Text style={styles.frontArrow}>▲</Text>
-        <Text style={styles.frontText}>{t('motorsScreen.diagramFront')}</Text>
+        <Text
+          style={[
+            styles.frontArrow,
+            {
+              fontSize: Math.round(22 * scale),
+              lineHeight: Math.round(24 * scale),
+            },
+          ]}
+        >
+          ▲
+        </Text>
+        <Text
+          style={[
+            styles.frontText,
+            { fontSize: Math.max(12, Math.round(15 * scale)) },
+          ]}
+        >
+          {t('motorsScreen.diagramFront')}
+        </Text>
       </View>
 
-      <View style={styles.stage} testID="motors-airframe-stage">
-        <View style={[styles.arm, styles.armForward]} />
-        <View style={[styles.arm, styles.armBackward]} />
+      <View
+        style={[styles.stage, { width: stageWidth, height: stageWidth }]}
+        testID="motors-airframe-stage"
+      >
+        <View
+          style={[
+            styles.arm,
+            { height: armThickness, marginTop: -armThickness / 2 },
+            styles.armForward,
+          ]}
+        />
+        <View
+          style={[
+            styles.arm,
+            { height: armThickness, marginTop: -armThickness / 2 },
+            styles.armBackward,
+          ]}
+        />
         <View style={styles.body}>
-          <View style={styles.bodyNose} />
+          <View
+            style={[
+              styles.bodyNose,
+              {
+                top: -Math.round(12 * scale),
+                borderLeftWidth: Math.round(10 * scale),
+                borderRightWidth: Math.round(10 * scale),
+                borderBottomWidth: Math.round(14 * scale),
+              },
+            ]}
+          />
           <View style={styles.bodyPlate} />
           <View style={styles.bodyCore} />
           <View style={styles.tailMark} />
@@ -265,70 +508,94 @@ export function MotorAirframeDiagram({
         </View>
       </View>
 
-      <View style={styles.legend}>
-        <View style={styles.legendItem}>
-          <View style={[styles.legendDot, styles.legendSelected]} />
-          <Text style={styles.legendText}>
-            {t('motorsScreen.legendSelected')}
-          </Text>
-        </View>
-        <View style={styles.legendItem}>
-          <View style={[styles.legendDot, styles.legendLive]} />
-          <Text style={styles.legendText}>{t('motorsScreen.legendLive')}</Text>
-        </View>
-        <View style={styles.legendItem}>
-          <View style={[styles.legendDot, styles.legendVerified]} />
-          <Text style={styles.legendText}>
-            {t('motorsScreen.legendObserved')}
-          </Text>
-        </View>
+      <Text style={styles.caption}>{t('motorsScreen.diagramCaption')}</Text>
+
+      <View style={styles.legend} testID="motors-diagram-legend">
+        <LegendItem
+          color={colors.accent}
+          label={t('motorsScreen.legendSelected')}
+        />
+        <LegendItem
+          color={colors.warning}
+          label={t('motorsScreen.legendSubmitted')}
+        />
+        <LegendItem
+          color={colors.warning}
+          label={t('motorsScreen.legendAcknowledged')}
+        />
+        <LegendItem
+          color={colors.info}
+          label={t('motorsScreen.legendStopping')}
+        />
+        <LegendItem
+          color={colors.success}
+          label={t('motorsScreen.legendObserved')}
+        />
+        <LegendItem
+          color={colors.error}
+          label={t('motorsScreen.legendUnsafe')}
+        />
       </View>
     </View>
   );
 }
 
+function LegendItem({
+  color,
+  label,
+}: {
+  color: string;
+  label: string;
+}): React.JSX.Element {
+  return (
+    <View style={styles.legendItem}>
+      <View style={[styles.legendDot, { backgroundColor: color }]} />
+      <Text style={styles.legendText}>{label}</Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  root: { gap: spacing.xs },
+  root: { gap: spacing.sm, alignItems: 'center' },
+  diagramTitle: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
   frontMarker: { alignItems: 'center', gap: 1 },
-  frontArrow: { fontSize: 12, lineHeight: 13, color: colors.accent },
+  frontArrow: { color: colors.accent, fontWeight: '900' },
   frontText: {
-    ...typography.caption,
     color: colors.accent,
-    fontWeight: '700',
+    fontWeight: '800',
     writingDirection: 'rtl',
   },
   stage: {
-    width: '100%',
-    maxWidth: MOTOR_AIRFRAME_STAGE_MAX_WIDTH,
-    aspectRatio: MOTOR_AIRFRAME_STAGE_ASPECT_RATIO,
     alignSelf: 'center',
     position: 'relative',
     overflow: 'hidden',
     backgroundColor: '#091D26',
     borderColor: colors.borderSoft,
     borderWidth: 1,
-    borderRadius: radii.md,
+    borderRadius: radii.lg,
   },
   arm: {
     position: 'absolute',
-    left: '13%',
-    top: '48%',
-    width: '74%',
-    height: 5,
-    marginTop: -2.5,
+    left: '12%',
+    top: '50%',
+    width: '76%',
     borderRadius: radii.pill,
     backgroundColor: '#2B5864',
     borderColor: colors.border,
     borderWidth: 1,
   },
-  armForward: { transform: [{ rotate: '38deg' }] },
-  armBackward: { transform: [{ rotate: '-38deg' }] },
+  armForward: { transform: [{ rotate: '45deg' }] },
+  armBackward: { transform: [{ rotate: '-45deg' }] },
   body: {
     position: 'absolute',
-    left: '35%',
-    top: '31%',
-    width: '30%',
-    height: '38%',
+    left: '36%',
+    top: '36%',
+    width: '28%',
+    height: '28%',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.sm,
@@ -338,30 +605,26 @@ const styles = StyleSheet.create({
   },
   bodyNose: {
     position: 'absolute',
-    top: -6,
     width: 0,
     height: 0,
-    borderLeftWidth: 7,
-    borderRightWidth: 7,
-    borderBottomWidth: 9,
     borderLeftColor: 'transparent',
     borderRightColor: 'transparent',
     borderBottomColor: colors.accent,
   },
   bodyPlate: {
     position: 'absolute',
-    left: '13%',
-    right: '13%',
-    top: '18%',
-    bottom: '16%',
+    left: '12%',
+    right: '12%',
+    top: '16%',
+    bottom: '14%',
     borderRadius: radii.sm,
     backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
     borderWidth: 1,
   },
   bodyCore: {
-    width: '38%',
-    height: '42%',
+    width: '40%',
+    height: '44%',
     borderRadius: radii.pill,
     backgroundColor: colors.accentSoft,
     borderColor: colors.accentStrong,
@@ -370,37 +633,31 @@ const styles = StyleSheet.create({
   tailMark: {
     position: 'absolute',
     bottom: 3,
-    width: '28%',
+    width: '30%',
     height: 3,
     borderRadius: radii.pill,
     backgroundColor: colors.textMuted,
   },
   motorRow: {
     position: 'absolute',
-    left: 4,
-    right: 4,
+    left: '2%',
+    right: '2%',
     flexDirection: 'row',
     direction: 'rtl',
     justifyContent: 'space-between',
   },
-  frontRow: { top: 3 },
-  rearRow: { bottom: 3 },
-  motorCell: {
-    width: '35%',
-    minWidth: 48,
-    maxWidth: 54,
-  },
+  frontRow: { top: '2%' },
+  rearRow: { bottom: '2%' },
+  motorCell: { alignItems: 'center' },
   motorNode: {
-    width: '100%',
+    minWidth: 44,
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 1,
     backgroundColor: '#0D2934',
     borderColor: colors.border,
     borderWidth: 1,
-    borderRadius: radii.sm,
-    padding: 1,
+    borderRadius: radii.md,
   },
   motorNodeSelected: {
     borderColor: colors.accent,
@@ -408,74 +665,60 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoft,
   },
   motorNodeVerified: { borderColor: colors.success },
-  motorNodeLive: {
-    borderColor: colors.warning,
-    borderWidth: 2,
-    backgroundColor: '#342A17',
-    elevation: 4,
-  },
+  rotorWrap: { alignItems: 'center', gap: 1 },
   rotor: {
-    width: 21,
-    height: 21,
-    borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
     borderColor: colors.textSecondary,
-    borderWidth: 1,
     backgroundColor: colors.backgroundRaised,
   },
-  rotorLive: { borderColor: colors.warning, backgroundColor: '#3B2C12' },
+  rotorActive: { borderColor: colors.warning, backgroundColor: '#3B2C12' },
   blade: {
     position: 'absolute',
-    width: 18,
-    height: 3,
     borderRadius: radii.pill,
     backgroundColor: colors.textMuted,
   },
-  bladeA: { transform: [{ rotate: '32deg' }] },
-  bladeB: { transform: [{ rotate: '-32deg' }] },
   hub: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
     backgroundColor: colors.textPrimary,
     borderColor: colors.background,
     borderWidth: 1,
   },
-  directionBadge: {
+  rotationArrow: {
     position: 'absolute',
-    right: -6,
-    bottom: -4,
-    width: 15,
-    height: 15,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 10,
-    backgroundColor: colors.surfaceRaised,
-    borderColor: colors.border,
-    borderWidth: 1,
+    color: colors.accent,
+    fontWeight: '900',
   },
-  directionBadgeLive: { borderColor: colors.warning },
-  directionSymbol: { fontSize: 10, lineHeight: 12, color: colors.accent },
-  nodeCopy: { alignItems: 'center', gap: 1 },
-  slotLine: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  slot: {
+  rotationArrowActive: { color: colors.warning },
+  directionText: {
     ...typography.mono,
-    fontSize: 9,
-    lineHeight: 10,
-    color: colors.textPrimary,
+    color: colors.accent,
     fontWeight: '800',
     writingDirection: 'ltr',
   },
-  slotLive: { color: colors.warning },
-  verifiedMark: { color: colors.success, fontWeight: '900' },
+  slot: {
+    ...typography.mono,
+    color: colors.textPrimary,
+    fontWeight: '900',
+    writingDirection: 'ltr',
+  },
   position: {
-    ...typography.caption,
-    fontSize: 7,
-    lineHeight: 8,
     color: colors.textSecondary,
     textAlign: 'center',
     writingDirection: 'rtl',
+  },
+  stateBadge: {
+    paddingHorizontal: spacing.xs,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    backgroundColor: colors.background,
+  },
+  stateBadgeText: { fontWeight: '800', writingDirection: 'rtl' },
+  caption: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    writingDirection: 'rtl',
+    maxWidth: 460,
   },
   legend: {
     flexDirection: 'row',
@@ -484,10 +727,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  legendDot: { width: 8, height: 8, borderRadius: 4 },
-  legendSelected: { backgroundColor: colors.accent },
-  legendLive: { backgroundColor: colors.warning },
-  legendVerified: { backgroundColor: colors.success },
+  legendDot: { width: 10, height: 10, borderRadius: 5 },
   legendText: {
     ...typography.caption,
     color: colors.textSecondary,
