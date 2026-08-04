@@ -36,6 +36,7 @@ import ReactTestRenderer from 'react-test-renderer';
 import { readFileSync } from 'node:fs';
 
 import '../../i18n';
+import i18n from '../../i18n';
 import type { GeneralConfigurationSnapshot } from '../../core';
 import ConfigurationsScreen from './ConfigurationsScreen';
 
@@ -253,6 +254,39 @@ describe('ConfigurationsScreen', () => {
       await buttons?.[1]?.onPress?.();
     });
     expect(screen.controller.save).toHaveBeenCalledTimes(1);
+    alert.mockRestore();
+    ReactTestRenderer.act(() => screen.renderer.unmount());
+  });
+
+  it('keeps a rejected save reason visible in the persistent action surface', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const screen = await renderScreen();
+    screen.controller.save.mockResolvedValue({
+      kind: 'REJECTED',
+      reason: 'LINK_RECOVERING',
+    } as never);
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findByProps({ testID: 'configurations-camera-angle-increment' })
+        .props.onPress();
+    });
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findAllByProps({ testID: 'configurations-sticky-actions-save' })[0]
+        .props.onPress();
+    });
+    const buttons = alert.mock.calls[alert.mock.calls.length - 1][2];
+    await ReactTestRenderer.act(async () => {
+      await buttons?.[1]?.onPress?.();
+    });
+
+    const status = screen.renderer.root.findByProps({
+      testID: 'configurations-sticky-actions-status',
+    });
+    expect(status.props.children).toBe(
+      i18n.t('configurationsSystem.blockReason.LINK_RECOVERING'),
+    );
+    alert.mockRestore();
     ReactTestRenderer.act(() => screen.renderer.unmount());
   });
 });

@@ -220,7 +220,7 @@ describe('The main tab shell owns no session', () => {
     const emit = executable.indexOf('listener();', guard);
     const departure = executable.indexOf('const performTabSwitch');
     const requestStop = executable.indexOf(
-      'if (!requestMotorStopForDeparture())',
+      '!requestMotorStopForDeparture()',
       departure,
     );
     const switchTab = executable.indexOf('commitTabSwitch(next)', requestStop);

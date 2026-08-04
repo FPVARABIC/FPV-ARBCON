@@ -196,7 +196,7 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     expect(fires).toEqual(['blur']);
     expect(alert).toHaveBeenCalledTimes(1);
     expect(alert.mock.calls[0][0]).toBe('تغييرات غير محفوظة');
-    expect(alert.mock.calls[0][1]).toContain('تم إيقاف جلسة المحركات فوراً');
+    expect(alert.mock.calls[0][1]).toContain('طُلِب إيقاف جلسة المحركات فوراً');
 
     const buttons = alert.mock.calls[0][2];
     ReactTestRenderer.act(() => buttons?.[1]?.onPress?.());
@@ -207,6 +207,30 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
       testID: 'main-tab-panel-PORTS',
     });
     expect(portsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
+    shell.unmount();
+  });
+
+  it('a dirty Motors departure still waits for the bounded stop result after discard is confirmed', () => {
+    installGate(() => 'PENDING');
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    ReactTestRenderer.act(() => mockReportMotorsDirty?.(true));
+
+    shell.press('main-tab-PORTS');
+    const buttons = alert.mock.calls[0][2];
+    ReactTestRenderer.act(() => buttons?.[1]?.onPress?.());
+
+    // One stop request, then the same fail-closed gate as every ordinary
+    // departure. The unsaved-draft prompt must never bypass it.
+    expect(fires).toEqual(['blur']);
+    const motorsPanel = shell.renderer.root.findByProps({
+      testID: 'main-tab-panel-MOTORS',
+    });
+    expect(motorsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
+    expect(
+      shell.renderer.root.findAllByProps({testID: 'main-tabs-awaiting-stop'}),
+    ).not.toHaveLength(0);
     shell.unmount();
   });
 
@@ -348,6 +372,47 @@ describe('Leaving Motors waits for the bounded stop result', () => {
     // SETUP -> PORTS never involves Motors.
     shell.press('main-tab-PORTS');
     expect(evaluations).toBe(0);
+    shell.unmount();
+  });
+
+  it('ignores another tab press while a motor departure is already pending', () => {
+    installGate(() => 'PENDING');
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    shell.press('main-tab-SETUP');
+    shell.press('main-tab-PORTS');
+
+    expect(fires).toEqual(['blur']);
+    expect(
+      shell.renderer.root.findAllByProps({testID: 'main-tab-panel-PORTS'}),
+    ).toHaveLength(0);
+    shell.unmount();
+  });
+
+  it('settles an unconfirmed departure only once when a late source publishes twice', () => {
+    let listener: (() => void) | undefined;
+    let verdict: 'PENDING' | 'UNCONFIRMED' = 'PENDING';
+    mockGate = {
+      evaluate: () => verdict,
+      subscribe: next => {
+        listener = next;
+        // Deliberately retain the callback to reproduce a late publication
+        // that was already queued when unsubscribe ran.
+        return () => undefined;
+      },
+    };
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const shell = renderShell();
+    shell.press('main-tab-MOTORS');
+    shell.press('main-tab-SETUP');
+
+    verdict = 'UNCONFIRMED';
+    ReactTestRenderer.act(() => {
+      listener?.();
+      listener?.();
+    });
+
+    expect(alert).toHaveBeenCalledTimes(1);
     shell.unmount();
   });
 });

@@ -47,6 +47,7 @@ import {
 } from '../../platforms/react-native/protocol';
 import { openMapLocation } from '../../platforms/mapLink';
 import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import { StickyActionBar } from '../components/editing';
 
 export interface GpsControllerPort {
   load(sessionKey: SetupUiSessionKey): Promise<GpsLoadOutcome>;
@@ -88,6 +89,10 @@ function outcomeKey(outcome: GpsSaveOutcome): string {
     case 'REJECTED':
       return blockReasonKey(outcome.reason);
   }
+}
+
+function isDangerOutcome(outcome: GpsSaveOutcome): boolean {
+  return outcome.kind !== 'NO_CHANGES' && outcome.kind !== 'SAVED_VERIFIED';
 }
 
 function valueOf<T>(telemetry: TelemetryValue<T>): T | undefined {
@@ -836,6 +841,35 @@ export default function GpsScreen({
           ) : null}
         </View>
       </ScrollView>
+      {/* Betaflight keeps the GPS save action in a fixed bottom toolbar.
+          This screen contains live telemetry before the configuration card,
+          so its in-page action can otherwise be several viewports away.
+          Keep the real transaction visible whenever a real draft exists. */}
+      <StickyActionBar
+        visible={dirty}
+        summary={t('gpsSystem.pendingChanges')}
+        saveLabel={t('gpsSystem.save')}
+        discardLabel={t('gpsSystem.reset')}
+        onSave={handleSave}
+        onDiscard={() => {
+          setDraft(originalDraft);
+          setSaveOutcome(undefined);
+        }}
+        disabledReason={
+          invalid.length > 0 ? t('gpsSystem.invalidPending') : undefined
+        }
+        statusMessage={
+          saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))
+        }
+        statusTone={
+          saveOutcome !== undefined && isDangerOutcome(saveOutcome)
+            ? 'warning'
+            : 'normal'
+        }
+        busy={phase === 'SAVING'}
+        busyLabel={t('gpsSystem.saving')}
+        testID="gps-sticky-actions"
+      />
     </View>
   );
 }

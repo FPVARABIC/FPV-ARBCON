@@ -6,6 +6,7 @@ import React, {
   useRef,
 } from 'react';
 import {
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -34,6 +35,7 @@ import {
   formatHex,
   shortenSessionId,
 } from '../components/connection';
+import { connectionCopyKeys } from '../components/connection/connectionCopy';
 import type {
   ConnectionState,
   ValidationLogEntry,
@@ -494,6 +496,7 @@ export default function UsbConnectionScreen({
   navigation,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
+  const copyKeys = connectionCopyKeys(Platform.OS);
   const [state, dispatch] = useReducer(reducer, initialState);
   const mountedRef = useRef(true);
   useEffect(
@@ -908,7 +911,7 @@ export default function UsbConnectionScreen({
               {t('connection.startHere')}
             </Text>
             <Text style={styles.instructionPrimary}>
-              {t('connection.instructionPrimary')}
+              {t(copyKeys.instructionPrimary)}
             </Text>
             <Text style={styles.instructionSecondary}>
               {t('connection.instructionSecondary')}

@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -12,6 +13,7 @@ import { colors, radii, spacing, typography } from '../../theme';
 import type { UsbSerialDeviceDescriptor } from '../../../platforms/react-native/transport';
 import { deviceKey } from './connectionTypes';
 import UsbDeviceRow from './UsbDeviceRow';
+import { connectionCopyKeys } from './connectionCopy';
 
 interface Props {
   devices: UsbSerialDeviceDescriptor[];
@@ -52,6 +54,7 @@ export default function UsbDeviceList({
   requestDeviceDisabled = false,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
+  const copyKeys = connectionCopyKeys(Platform.OS);
   const showEmptyState = !scanning && hasScannedOnce && devices.length === 0;
 
   return (
@@ -126,7 +129,7 @@ export default function UsbDeviceList({
         <View style={styles.emptyState}>
           <Text style={styles.emptyPrimary}>{t('devices.emptyPrimary')}</Text>
           <Text style={styles.emptySecondary}>
-            {t('devices.emptySecondary')}
+            {t(copyKeys.emptySecondary)}
           </Text>
         </View>
       ) : null}

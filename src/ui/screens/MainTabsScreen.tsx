@@ -198,9 +198,9 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
    * result. Nothing here can delay, cancel or weaken the stop itself.
    */
   const performTabSwitch = useCallback(
-    (next: MainTabKey) => {
+    (next: MainTabKey, stopAlreadyRequested = false) => {
       // Immediate, synchronous stop request - unchanged.
-      if (!requestMotorStopForDeparture()) {
+      if (!stopAlreadyRequested && !requestMotorStopForDeparture()) {
         return;
       }
       const gate = activeTab === 'MOTORS' ? motorsDepartureGate.current : undefined;
@@ -219,8 +219,16 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       // THE SHELL owns the bound, because the shell owns navigation. The
       // Motors screen is guarded to create no timer beyond its heartbeat.
       const startedAt = Date.now();
+      let settled = false;
       setAwaitingMotorStop(true);
       const settle = (verdict: MotorDepartureVerdict) => {
+        // A controller publication and the timeout can become runnable in
+        // the same event-loop turn. Only the first verdict owns navigation
+        // and the warning; a late duplicate must be inert.
+        if (settled) {
+          return;
+        }
+        settled = true;
         const pending = pendingDeparture.current;
         pending.unsubscribe?.();
         if (pending.timer !== undefined) {
@@ -264,7 +272,11 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
 
   const handleSelectTab = useCallback(
     (next: MainTabKey) => {
-      if (next === activeTab || !isTabSelectable(next)) {
+      if (
+        awaitingMotorStop ||
+        next === activeTab ||
+        !isTabSelectable(next)
+      ) {
         return;
       }
       if (dirtyTabs.current.has(activeTab)) {
@@ -277,13 +289,16 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
         Alert.alert(
           'تغييرات غير محفوظة',
           activeTab === 'MOTORS'
-            ? 'تم إيقاف جلسة المحركات فوراً. لديك تغييرات لم تُحفظ؛ عُد لحفظها أو انتقل إلى الشاشة المطلوبة دون حفظ.'
+            ? 'طُلِب إيقاف جلسة المحركات فوراً. لديك تغييرات لم تُحفظ؛ عُد لحفظها أو انتقل بعد تأكيد الإيقاف دون حفظ.'
             : 'لديك تغييرات لم تُحفظ. عُد لحفظها أو انتقل إلى الشاشة المطلوبة دون حفظ.',
           [
             { text: 'العودة للحفظ', style: 'cancel' },
             {
               text: 'الانتقال دون حفظ',
-              onPress: () => commitTabSwitch(next),
+              // The stop request was already sent before opening this
+              // prompt. Reuse the SAME bounded result path as an ordinary
+              // departure without emitting a second motor command.
+              onPress: () => performTabSwitch(next, activeTab === 'MOTORS'),
             },
           ],
         );
@@ -293,7 +308,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     },
     [
       activeTab,
-      commitTabSwitch,
+      awaitingMotorStop,
       performTabSwitch,
       requestMotorStopForDeparture,
     ],

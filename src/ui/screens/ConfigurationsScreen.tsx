@@ -95,6 +95,10 @@ function outcomeKey(outcome: GeneralConfigurationSaveOutcome): string {
   }
 }
 
+function isDangerOutcome(outcome: GeneralConfigurationSaveOutcome): boolean {
+  return outcome.kind !== 'NO_CHANGES' && outcome.kind !== 'SAVED_VERIFIED';
+}
+
 function telemetryValue<T>(value: TelemetryValue<T>): T | undefined {
   return value.status === 'FRESH' || value.status === 'STALE'
     ? value.value
@@ -931,6 +935,14 @@ export default function ConfigurationsScreen({
           issues.length > 0
             ? t('configurationsSystem.invalidPending')
             : undefined
+        }
+        statusMessage={
+          saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))
+        }
+        statusTone={
+          saveOutcome !== undefined && isDangerOutcome(saveOutcome)
+            ? 'warning'
+            : 'normal'
         }
         busy={phase === 'SAVING'}
         busyLabel={t('configurationsSystem.saving')}
