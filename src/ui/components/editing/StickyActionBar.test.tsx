@@ -138,9 +138,16 @@ describe('StickyActionBar', () => {
     expect(allText(renderer)).toContain('جارٍ الحفظ…');
   });
 
-  it('claims nothing about the outcome - no success or verification wording exists in the component', () => {
-    const text = allText(render({}));
-    expect(text).not.toContain('تم الحفظ');
-    expect(text).not.toContain('نجح');
+  it('shows the real transaction outcome inside the persistent surface', () => {
+    const renderer = render({
+      statusMessage: 'تعذّر الحفظ لأن الاتصال مشغول.',
+      statusTone: 'warning',
+    });
+    const status = renderer.root.findAll(
+      node => node.props.testID === 'sticky-action-bar-status',
+      {deep: false},
+    )[0];
+    expect(status.props.children).toBe('تعذّر الحفظ لأن الاتصال مشغول.');
+    expect(status.props.accessibilityLiveRegion).toBe('polite');
   });
 });

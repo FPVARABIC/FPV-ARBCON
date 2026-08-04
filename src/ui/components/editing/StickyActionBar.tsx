@@ -41,6 +41,12 @@ export interface StickyActionBarProps {
   onDiscard: () => void;
   /** When set, save is disabled and this Arabic sentence says why. */
   disabledReason?: string;
+  /** Latest transaction result. Kept in the persistent surface so an
+   * operator never has to scroll back through the whole form to discover
+   * why a visible Save press appeared to do nothing. */
+  statusMessage?: string;
+  /** Error/warning outcomes use the warning colour; success remains calm. */
+  statusTone?: 'normal' | 'warning';
   /** Save is in flight - blocks both actions and shows busyLabel. */
   busy?: boolean;
   busyLabel?: string;
@@ -58,6 +64,8 @@ export default function StickyActionBar({
   onSave,
   onDiscard,
   disabledReason,
+  statusMessage,
+  statusTone = 'normal',
   busy = false,
   busyLabel,
   bottomInset = 0,
@@ -98,6 +106,18 @@ export default function StickyActionBar({
         {disabledReason !== undefined ? (
           <Text style={styles.reason} testID={`${testID}-disabled-reason`}>
             {disabledReason}
+          </Text>
+        ) : null}
+        {statusMessage !== undefined ? (
+          <Text
+            style={[
+              styles.status,
+              statusTone === 'warning' && styles.statusWarning,
+            ]}
+            testID={`${testID}-status`}
+            accessibilityLiveRegion="polite"
+          >
+            {statusMessage}
           </Text>
         ) : null}
       </View>
@@ -156,6 +176,8 @@ const styles = StyleSheet.create({
   detailsContent: { gap: 2 },
   detailLine: { ...typography.caption, color: colors.textSecondary },
   reason: { ...typography.caption, color: colors.warning, marginTop: 2 },
+  status: { ...typography.caption, color: colors.success, marginTop: 2 },
+  statusWarning: { color: colors.warning },
   buttons: { flexDirection: 'row', gap: spacing.sm },
   secondary: {
     flex: 1,

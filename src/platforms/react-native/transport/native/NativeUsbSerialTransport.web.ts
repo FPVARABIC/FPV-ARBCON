@@ -156,6 +156,22 @@ const WEB_SERIAL_DRIVER_TYPE = 'WEB_SERIAL';
 const CONNECT_TIMEOUT_MILLIS = 15_000;
 
 /**
+ * Maximum size of one Web Serial writer call.
+ *
+ * This is deliberately a transport chunk size, not an MSP frame limit.
+ * Betaflight Configurator's own WebSerial implementation splits writes at
+ * 63 bytes for the AT32/macOS driver path. A normal six-port
+ * MSP2_COMMON_SET_SERIAL_CONFIG request is 64 bytes on the wire, so writing
+ * the whole frame in one call lands exactly on the first size beyond that
+ * compatibility bound: the UI changes and Save is pressed, but an affected
+ * driver may never deliver a complete command. Serial is a byte stream and
+ * the FC's MSP parser already accepts partial frames, therefore applying the
+ * same bound to every browser port is both portable and avoids user-agent/VID
+ * policy in the protocol layer. Android keeps its native write path unchanged.
+ */
+const WEB_SERIAL_WRITE_CHUNK_BYTES = 63;
+
+/**
  * Bounds port.open(). On timeout the eventual LATE settlement is not
  * abandoned: a late success is immediately closed (the port would
  * otherwise stay locked-open and un-openable until tab close), and a
@@ -522,11 +538,28 @@ class WebSerialSession {
       this.writer = writable.getWriter();
     }
     try {
-      // Resolves only once the write has actually been handed to the
-      // device, never merely queued - the client documents that
-      // guarantee and MspSessionCoordinator's write/response pairing
-      // depends on it.
-      await this.writer.write(bytes);
+      // Keep individual browser-driver writes bounded. This does NOT split
+      // or reinterpret an MSP frame semantically; serial is a byte stream
+      // and the shared parser on the FC reassembles the bytes. Await every
+      // chunk in order so the request Promise cannot settle before the
+      // complete frame has been handed to the browser driver.
+      for (
+        let offset = 0;
+        offset < bytes.length;
+        offset += WEB_SERIAL_WRITE_CHUNK_BYTES
+      ) {
+        await this.writer.write(
+          bytes.subarray(offset, offset + WEB_SERIAL_WRITE_CHUNK_BYTES),
+        );
+      }
+      if (bytes.length > WEB_SERIAL_WRITE_CHUNK_BYTES) {
+        recordDiagnostic('TX_CHUNKED', {
+          sessionId: this.sessionId,
+          bytes: bytes.length,
+          chunks: Math.ceil(bytes.length / WEB_SERIAL_WRITE_CHUNK_BYTES),
+          chunkBytes: WEB_SERIAL_WRITE_CHUNK_BYTES,
+        });
+      }
       recordBytesWritten(bytes.length);
     } catch (reason) {
       throw new WebTransportError('WRITE_FAILED', describeReason(reason));

@@ -294,6 +294,30 @@ describe('PortsScreen - the persistent save surface', () => {
     screen.unmount();
   });
 
+  it('keeps a rejected save reason visible in the persistent bar instead of below the off-screen port list', async () => {
+    const controller = controllerFor(
+      snapshot({ports: Object.freeze([port(20, 1), port(0, 0)])}),
+    );
+    controller.save.mockResolvedValue({
+      kind: 'REJECTED',
+      reason: 'LINK_RECOVERING',
+    });
+    const screen = await render(controller);
+    await screen.press('ports-card-toggle-0');
+    await screen.press('ports-0-role-GPS');
+    await screen.press('ports-sticky-actions-save');
+
+    const status = screen.find('ports-sticky-actions-status');
+    const text = Array.isArray(status.props.children)
+      ? status.props.children.join('')
+      : String(status.props.children);
+    expect(text).toBe(
+      i18n.t('portsConfiguration.blockReason.LINK_RECOVERING'),
+    );
+    expect(barVisible(screen)).toBe(true);
+    screen.unmount();
+  });
+
   it('discarding from the persistent bar clears the pending change and the bar with it', async () => {
     const screen = await render(
       controllerFor(

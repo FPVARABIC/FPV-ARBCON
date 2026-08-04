@@ -24,6 +24,7 @@ import transport, {
   __resetWebSerialTransportForTests,
 } from './NativeUsbSerialTransport.web';
 import type {SerialConfiguration} from './NativeUsbSerialTransport';
+import {bytesToBase64} from '../../protocol/base64';
 
 const CONFIG: SerialConfiguration = {
   baudRate: 115200,
@@ -587,6 +588,25 @@ describe('writing', () => {
     await transport.writeBytes(sessionId, 'JE080A==');
 
     expect(Array.from(port.written[0])).toEqual([0x24, 0x4d, 0x3c, 0xd0]);
+  });
+
+  it('splits the 64-byte serial-configuration frame at the browser-driver-safe 63-byte boundary without changing a byte', async () => {
+    const port = new FakePort({usbVendorId: 11836, usbProductId: 22336});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+    // Six ordinary 9-byte serial records plus the MSP v2 header/CRC produce
+    // a 64-byte wire frame. This is the exact first size across the
+    // compatibility boundary in the field path, not a synthetic payload.
+    const frame = Uint8Array.from({length: 64}, (_value, index) => index);
+
+    await transport.writeBytes(sessionId, bytesToBase64(frame));
+
+    expect(port.written.map(chunk => chunk.length)).toEqual([63, 1]);
+    const reconstructed = Uint8Array.from(
+      port.written.flatMap(chunk => Array.from(chunk)),
+    );
+    expect(reconstructed).toEqual(frame);
   });
 
   it('rejects a write to an unknown session', async () => {

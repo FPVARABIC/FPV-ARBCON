@@ -1022,6 +1022,14 @@ export default function PortsScreen({
             ? t('portsConfiguration.validationTitle')
             : undefined
         }
+        statusMessage={
+          saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))
+        }
+        statusTone={
+          saveOutcome !== undefined && isDangerOutcome(saveOutcome)
+            ? 'warning'
+            : 'normal'
+        }
         busy={phase === 'SAVING'}
         busyLabel={t('portsConfiguration.saving')}
         testID="ports-sticky-actions"
