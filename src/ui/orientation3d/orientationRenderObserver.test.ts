@@ -98,3 +98,38 @@ describe('orientationRenderObserver', () => {
     expect(observer.read().distinctPoseCount).toBe(1);
   });
 });
+
+describe('orientationRenderObserver - physical session boundary', () => {
+  it('resets automatically when the session token changes, so a new connection never inherits old counts', () => {
+    const observer = makeObserver();
+    observer.noteHeroSample('usb-1:1', 40, 'LIVE', {rollDeg: 5, pitchDeg: 5, yawDeg: 5});
+    observer.noteRendererPose({rollDeg: 5, pitchDeg: 5, yawDeg: 5});
+    observer.noteRendererPose({rollDeg: 6, pitchDeg: 5, yawDeg: 5});
+    expect(observer.read()).toMatchObject({heroSampleCount: 1, distinctPoseCount: 2});
+
+    // Same sessionId, NEW physical generation - a re-plugged cable.
+    observer.noteHeroSample('usb-1:2', 1, 'LIVE', {rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+    expect(observer.read()).toMatchObject({
+      sessionToken: 'usb-1:2',
+      lastSampleSeq: 1,
+      heroSampleCount: 1,
+      rendererSampleCount: 0,
+      distinctPoseCount: 0,
+    });
+  });
+
+  it('does not reset while the session token is unchanged', () => {
+    const observer = makeObserver();
+    observer.noteHeroSample('usb-1:1', 1, 'LIVE', {rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+    observer.noteHeroSample('usb-1:1', 2, 'LIVE', {rollDeg: 1, pitchDeg: 0, yawDeg: 0});
+    observer.noteHeroSample('usb-1:1', 3, 'LIVE', {rollDeg: 2, pitchDeg: 0, yawDeg: 0});
+    expect(observer.read().heroSampleCount).toBe(3);
+  });
+
+  it('an undefined token (no session yet) never triggers a reset', () => {
+    const observer = makeObserver();
+    observer.noteHeroSample('usb-1:1', 1, 'LIVE', {rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+    observer.noteHeroSample(undefined, undefined, 'WAITING', undefined);
+    expect(observer.read().heroSampleCount).toBe(1);
+  });
+});

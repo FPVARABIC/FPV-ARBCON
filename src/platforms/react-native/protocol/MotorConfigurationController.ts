@@ -70,7 +70,9 @@ import {
   resolveMotorFirmwareCompatibility,
   type MotorFirmwareCapability,
 } from '../../../core/firmware-adapters/motorFirmwareCompatibility';
-import { readMotorTestCapability } from './motorTestCapability';
+import {
+  isMotorTestSessionActive,
+} from './motorTestCapability';
 import { mspSessionCoordinator } from './MspSessionCoordinator';
 import type {
   MspIdentificationState,
@@ -304,23 +306,11 @@ function isDefiniteNotApplied(error: unknown): boolean {
   );
 }
 
-function defaultMotorTestActive(sessionId: string): boolean {
-  const snapshot = readMotorTestCapability(sessionId)
-    ?.lifecycleStopPort()
-    ?.getSnapshot();
-  if (snapshot === undefined) {
-    return false;
-  }
-  return (
-    snapshot.phase === 'PREPARING' ||
-    snapshot.phase === 'ACTIVE' ||
-    snapshot.phase === 'CLOSING' ||
-    snapshot.pulse.mayHaveReachedFc ||
-    snapshot.machine?.name === 'Starting' ||
-    snapshot.machine?.name === 'Pulsing' ||
-    snapshot.machine?.name === 'Stopping'
-  );
-}
+/** The ONE shared liveness predicate - see
+ * motorTestCapability.ts's own isMotorTestSessionActive() for why a
+ * per-controller copy that read `mayHaveReachedFc` as liveness blocked
+ * every configuration screen until the cable was replugged. */
+const defaultMotorTestActive = isMotorTestSessionActive;
 
 export class MotorConfigurationController {
   private readonly coordinator: MotorConfigurationSessionCoordinator;

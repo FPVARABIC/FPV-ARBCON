@@ -51,6 +51,7 @@ import {
 } from './motorTestSessionBinding';
 import {MotorTestTelemetryRegistry} from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
 import type {MspClient} from '../../../core/protocol/mspClient';
+import type {MotorTestControllerSnapshot} from '../../../core/state/motorTestController';
 
 /**
  * Builds the coordinator-wide motor-test telemetry registry.
@@ -181,4 +182,61 @@ export function readMotorTestCapability(
   sessionId: string,
 ): MotorTestSessionCapability | undefined {
   return CAPABILITIES.get(sessionId);
+}
+
+/**
+ * Whether a motor-test session is occupying this link RIGHT NOW.
+ *
+ * THE FIELD BUG THIS REPLACES. Four controllers (Ports, GPS, General and
+ * Motor configuration) each carried an identical private copy of this
+ * predicate, and every copy treated `pulse.mayHaveReachedFc` as a
+ * liveness signal. That flag is a PERMANENT per-session safety latch -
+ * the controller sets it at pulse submission and documents it as "never
+ * cleared" - so a single motor test made every one of those screens
+ * answer MOTOR_TEST_ACTIVE for the rest of the physical session. The
+ * operator saw "أوقف جلسة اختبار المحركات قبل تعديل التكوينات" with no
+ * motor session visibly running, could not save Ports or Configurations,
+ * and had to unplug and replug the USB cable to recover.
+ *
+ * The latch itself is correct and is kept: while a session is live it
+ * genuinely means "a motor command may already have reached the FC".
+ * What was wrong was reading history as liveness.
+ *
+ * A CLOSED controller whose own teardown reported `complete` has
+ * conclusively given up exclusivity (that is exactly what
+ * MotorTestTeardownReport.complete means: exclusivity gone AND every
+ * teardown step finished). That is not an active session. Every other
+ * shape - closing, closed with an unresolved lease release, or no
+ * teardown report at all - still blocks, so an UNCONFIRMED stop keeps
+ * every configuration screen locked exactly as before.
+ */
+export function isMotorTestSnapshotActive(
+  snapshot: MotorTestControllerSnapshot | undefined,
+): boolean {
+  if (snapshot === undefined) {
+    return false;
+  }
+  if (snapshot.phase === 'IDLE') {
+    // Nothing was ever acquired for this capability.
+    return false;
+  }
+  if (snapshot.phase === 'CLOSED' && snapshot.teardown?.complete === true) {
+    return false;
+  }
+  return (
+    snapshot.phase === 'PREPARING' ||
+    snapshot.phase === 'ACTIVE' ||
+    snapshot.phase === 'CLOSING' ||
+    snapshot.pulse.mayHaveReachedFc ||
+    snapshot.machine?.name === 'Starting' ||
+    snapshot.machine?.name === 'Pulsing' ||
+    snapshot.machine?.name === 'Stopping'
+  );
+}
+
+/** The session-id lookup over isMotorTestSnapshotActive(). */
+export function isMotorTestSessionActive(sessionId: string): boolean {
+  return isMotorTestSnapshotActive(
+    CAPABILITIES.get(sessionId)?.lifecycleStopPort()?.getSnapshot(),
+  );
 }

@@ -374,6 +374,27 @@ export function MotorsScreenView({
   const holdActivatedRef = useRef(false);
   /** True only while the primary Pressable still owns the original touch. */
   const holdOwnedRef = useRef(false);
+  /**
+   * The same fact as holdOwnedRef, but RENDERED.
+   *
+   * THE FIELD BUG THIS EXISTS FOR: submitting a pulse makes
+   * evaluateActivation() report PULSE_OR_STOP_IN_PROGRESS, so
+   * `activation.allowed` goes false the instant the motor starts. The
+   * hold control's `disabled` prop was derived from that, which meant
+   * `disabled` flipped to true WHILE THE FINGER WAS STILL DOWN.
+   * react-native-web terminates the active responder when a Pressable
+   * becomes disabled, which fires onResponderTerminate -> handlePressOut
+   * -> stopNow('TOUCH_RELEASED'). The motor moved briefly and stopped,
+   * exactly as the operator reported.
+   *
+   * Rendering ownership lets the control stay enabled for the duration of
+   * a gesture it already owns. This weakens nothing: pulseMotor()
+   * re-evaluates the real gate at CALL time (this file's controller
+   * documents that a button which rendered enabled is not evidence), and
+   * every release, cancel, blur and background still routes through
+   * stopNow.
+   */
+  const [holdOwned, setHoldOwned] = useState(false);
   /** Unique identity for that exact gesture. A later short touch must never
    * inherit an earlier gesture's pending session-preparation continuation. */
   const holdGestureRef = useRef<object | undefined>(undefined);
@@ -529,10 +550,18 @@ export function MotorsScreenView({
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
   const [beginning, setBeginning] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
-  const holdDisabled =
+  const holdGateBlocked =
     operator === undefined ||
     requiresNewConnection ||
     (!beginning && snapshot?.machine !== undefined && !canActivate);
+  // See holdOwned's own declaration: disabling mid-gesture is what
+  // terminated the responder and stopped a held motor in the field.
+  const holdDisabled = holdGateBlocked && !holdOwned;
+  /** Read at CALL time by handlePressIn, so ownership can only ever be
+   * taken for a press the gate actually admitted. Ownership PROTECTS a
+   * gesture the gate accepted; it must never CREATE one. */
+  const holdGateBlockedRef = useRef(holdGateBlocked);
+  holdGateBlockedRef.current = holdGateBlocked;
   /** Ends the exclusive test session before the optional output-reorder
    * transaction, which deliberately owns a separate interlock. */
   const handleEndSessionForConfiguration = useCallback(async () => {
@@ -567,7 +596,13 @@ export function MotorsScreenView({
   );
 
   const handlePressIn = useCallback(() => {
+    if (holdGateBlockedRef.current) {
+      // A press that the gate never admitted takes no ownership, so it
+      // cannot keep the control enabled for itself.
+      return;
+    }
     holdOwnedRef.current = true;
+    setHoldOwned(true);
     holdGestureRef.current = {};
     holdActivatedRef.current = false;
     clearHoldHeartbeat();
@@ -631,6 +666,7 @@ export function MotorsScreenView({
   /** Release AND responder termination land here. Both must stop. */
   const handlePressOut = useCallback(() => {
     holdOwnedRef.current = false;
+    setHoldOwned(false);
     holdGestureRef.current = undefined;
     clearHoldHeartbeat();
     const activated = holdActivatedRef.current;
@@ -645,6 +681,7 @@ export function MotorsScreenView({
 
   const handleStopPress = useCallback(() => {
     holdOwnedRef.current = false;
+    setHoldOwned(false);
     holdGestureRef.current = undefined;
     clearHoldHeartbeat();
     holdActivatedRef.current = false;
@@ -663,6 +700,7 @@ export function MotorsScreenView({
       if (machine === 'Starting' || machine === 'Pulsing') {
         holdActivatedRef.current = false;
         holdOwnedRef.current = false;
+        setHoldOwned(false);
         holdGestureRef.current = undefined;
         clearHoldHeartbeat();
         port.requestStop('MOTOR_SELECTION_CHANGED');

@@ -1477,3 +1477,85 @@ describe('MotorsScreen - direction handling', () => {
     rendered.unmount();
   });
 });
+
+/* ================================================================== *
+ * THE FIELD BUG: a held motor stopped on its own
+ * ================================================================== */
+
+describe('MotorsScreen - continuous hold survives the activation gate closing', () => {
+  /**
+   * Reported on real hardware in a browser: "the motor moved briefly and
+   * then stopped while the hold was still intended."
+   *
+   * The mechanism: submitting a pulse makes evaluateActivation() report
+   * PULSE_OR_STOP_IN_PROGRESS, so activation.allowed goes false the
+   * instant the motor starts. `disabled` was derived from that, and
+   * react-native-web terminates the active responder when a Pressable
+   * becomes disabled - firing onResponderTerminate -> handlePressOut ->
+   * stopNow while the finger was still down.
+   */
+  it('does not disable the hold control while the gesture it already owns is live', () => {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
+    const rendered = render(operator);
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([1]);
+
+    // The controller now reports exactly what it reports in production
+    // once a pulse is live: activation is no longer allowed.
+    act(() => {
+      operator.publish(
+        snapshotFor({
+          machine: 'Pulsing',
+          allowed: false,
+          reasons: ['PULSE_OR_STOP_IN_PROGRESS'],
+        }),
+      );
+    });
+
+    // THE ASSERTION: still enabled, so the responder is never terminated
+    // and no spurious release is delivered.
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+    expect(operator.stopCalls).toEqual([]);
+
+    // A real release still stops, through the one stop route.
+    pressOut(rendered);
+    expect(operator.stopCalls).toEqual(['TOUCH_RELEASED']);
+    rendered.unmount();
+  });
+
+  it('re-disables the control after the gesture ends while the gate is still closed', () => {
+    const operator = new FakeOperator(snapshotFor({ allowed: true }));
+    const rendered = render(operator);
+    longPress(rendered);
+    act(() => {
+      operator.publish(
+        snapshotFor({
+          machine: 'Stopping',
+          allowed: false,
+          reasons: ['PULSE_OR_STOP_IN_PROGRESS'],
+        }),
+      );
+    });
+    pressOut(rendered);
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    rendered.unmount();
+  });
+
+  it('still refuses to start a hold the controller bars, because ownership only protects a gesture already accepted', () => {
+    const operator = new FakeOperator(
+      snapshotFor({
+        machine: 'Ready',
+        allowed: false,
+        reasons: ['REQUIRES_NEW_CONNECTION'],
+      }),
+    );
+    const rendered = render(operator);
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([]);
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    rendered.unmount();
+  });
+});

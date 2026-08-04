@@ -117,6 +117,15 @@ class OrientationRenderObserverImpl implements OrientationRenderObserver {
     status: string,
     pose: {rollDeg: number; pitchDeg: number; yawDeg: number} | undefined,
   ): void {
+    // A NEW PHYSICAL SESSION resets everything. sessionToken is
+    // `${sessionId}:${generation}` and generation is the coordinator's
+    // own physical-session counter, so a changed token IS a new
+    // connection. Counts from a previous cable are not evidence about
+    // this one, and a sampleSeq restarts at 1 per session - carrying
+    // either across would make the telemetry report actively misleading.
+    if (sessionToken !== undefined && sessionToken !== this.state.sessionToken) {
+      this.reset();
+    }
     this.state = {
       ...this.state,
       sessionToken,

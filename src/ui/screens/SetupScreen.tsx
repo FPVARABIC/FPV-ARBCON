@@ -311,6 +311,14 @@ function SetupScreenContent({
     setupAppStateTelemetryOwner.track(sessionId);
   }, [sessionId]);
 
+  // A new PHYSICAL session (new coordinator generation) must never read
+  // the previous connection's render counts. The observer also self-heals
+  // on a changed sessionToken; this effect covers the window before the
+  // first sample of a new session has rendered at all.
+  useEffect(() => {
+    orientationRenderObserver.reset();
+  }, [sessionId, sessionKey.generation]);
+
   const [uiState, setUiState] = useState(() =>
     setupUiSessionStore.getState(sessionKey),
   );
