@@ -46,7 +46,7 @@ import {
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
 import { openMapLocation } from '../../platforms/mapLink';
-import { colors, radii, spacing, typography } from '../theme';
+import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
 
 export interface GpsControllerPort {
   load(sessionKey: SetupUiSessionKey): Promise<GpsLoadOutcome>;
@@ -194,6 +194,9 @@ export default function GpsScreen({
   controller = gpsConfigurationController,
 }: GpsScreenProps): React.JSX.Element {
   const { t } = useTranslation();
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const { width, fontScale } = useWindowDimensions();
   const wide = width / Math.max(1, fontScale) >= 620;
   const sessionId = sessionKey?.sessionId ?? '';
@@ -385,7 +388,7 @@ export default function GpsScreen({
   return (
     <View style={styles.root} testID="gps-screen">
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { maxWidth: contentMaxWidth }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>

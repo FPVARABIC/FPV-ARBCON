@@ -19,3 +19,6 @@ export {
   resolveLayoutTier,
 } from './layout';
 export type {LayoutTier} from './layout';
+
+export {useContentEnvelope} from './useContentEnvelope';
+export type {ContentEnvelope} from './useContentEnvelope';

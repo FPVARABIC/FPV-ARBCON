@@ -52,7 +52,7 @@ import {
   type SetupUiSessionKey,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
 import { StickyActionBar } from '../components/editing';
 
 const MIN_TOUCH_TARGET = 44;
@@ -508,6 +508,9 @@ export default function PortsScreen({
   onDirtyChange,
 }: PortsScreenProps): React.JSX.Element {
   const { t } = useTranslation();
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const ownership = useMspOwnershipState(sessionKey?.sessionId ?? '');
   const ownershipRef = useRef(ownership);
   ownershipRef.current = ownership;
@@ -740,7 +743,7 @@ export default function PortsScreen({
   return (
     <View style={styles.root} testID="ports-screen">
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { maxWidth: contentMaxWidth }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>

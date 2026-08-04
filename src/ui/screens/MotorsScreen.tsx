@@ -56,7 +56,7 @@ import {
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, radii, spacing, typography } from '../theme';
+import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
 import type {
   MotorTestActivationBlockReason,
   MotorTestControllerSnapshot,
@@ -333,6 +333,9 @@ export function MotorsScreenView({
   onConfigurationDirtyChange,
 }: MotorsScreenViewProps): React.JSX.Element {
   const { t } = useTranslation();
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const effectiveBottomInset = bottomInset ?? 0;
 
   // The snapshot is the ONLY source of controller truth. `useState` plus an
@@ -822,7 +825,7 @@ export function MotorsScreenView({
           and the body's bottom padding keeps it from being covered. */}
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}
       >
         <View style={styles.screenHeader}>
           <Text style={styles.eyebrow}>{t('motorsScreen.eyebrow')}</Text>

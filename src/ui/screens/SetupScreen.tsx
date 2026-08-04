@@ -60,7 +60,7 @@ import { useTranslation } from 'react-i18next';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import type { RootStackParamList } from '../../navigation/types';
-import { colors, spacing, typography } from '../theme';
+import { colors, spacing, typography, useContentEnvelope } from '../theme';
 import {
   TopSystemBar,
   OrientationHero,
@@ -195,6 +195,9 @@ function SetupScreenContent({
     windowWidth,
     fontScale,
   );
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
 
   const armed = useTelemetryValue<boolean>(
     sessionId,
@@ -400,7 +403,7 @@ function SetupScreenContent({
         onBack={onBack}
         armingReadiness={armingReadiness}
       />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}>
         <LiveOrientationHero
           sessionKey={sessionKey}
           active={active}

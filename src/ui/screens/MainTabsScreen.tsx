@@ -33,11 +33,18 @@
  */
 
 import React, { useCallback, useRef, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import {
+  Alert,
+  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { colors } from '../theme';
 import BottomTabBar from '../components/navigation/BottomTabBar';
+import SideNavigationRail from '../components/navigation/SideNavigationRail';
+import { isDesktopTier, resolveLayoutTier } from '../theme/layout';
 import SetupScreen from './SetupScreen';
 import MotorsTab from './MotorsScreen';
 import PortsScreen from './PortsScreen';
@@ -53,6 +60,16 @@ import type { RootStackParamList } from '../../navigation/types';
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
 export default function MainTabsScreen(props: Props): React.JSX.Element {
+  /**
+   * DESKTOP GETS A RAIL, NOT A PHONE BAR. Exactly one navigation surface
+   * is rendered for a given width, and switching between them changes
+   * NOTHING about the tab panels: every panel stays mounted and hidden
+   * with display:'none' exactly as before, so the motor-stop bridge is
+   * never torn down. See this file's header for why that invariant is
+   * load-bearing.
+   */
+  const { width, fontScale } = useWindowDimensions();
+  const useSideRail = isDesktopTier(resolveLayoutTier(width, fontScale));
   const [activeTab, setActiveTab] = useState<MainTabKey>(INITIAL_MAIN_TAB);
   /** Tabs that have been opened at least once, and are therefore mounted
    * from here on. The initial tab counts as opened. */
@@ -177,7 +194,16 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
   );
 
   return (
-    <View style={styles.root} testID="main-tabs">
+    <View
+      style={[styles.root, useSideRail && styles.rootDesktop]}
+      testID="main-tabs"
+    >
+      {useSideRail ? (
+        <SideNavigationRail
+          activeTab={activeTab}
+          onSelectTab={handleSelectTab}
+        />
+      ) : null}
       <View style={styles.content}>
         {mountedTabs.includes('SETUP') ? (
           <View
@@ -251,13 +277,18 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
           </View>
         ) : null}
       </View>
-      <BottomTabBar activeTab={activeTab} onSelectTab={handleSelectTab} />
+      {useSideRail ? null : (
+        <BottomTabBar activeTab={activeTab} onSelectTab={handleSelectTab} />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
+  /* The rail sits beside the workspace instead of below it. `row` under
+     forceRTL puts the rail on the right, which is the reading start. */
+  rootDesktop: { flexDirection: 'row' },
   content: { flex: 1 },
   visible: { flex: 1 },
   /* Hidden, NOT unmounted - see the Motors-bridge note in this file's

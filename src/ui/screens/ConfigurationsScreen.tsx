@@ -45,7 +45,7 @@ import {
   useMspOwnershipState,
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
 import { StickyActionBar } from '../components/editing';
 
 export interface GeneralConfigurationControllerPort {
@@ -240,6 +240,9 @@ export default function ConfigurationsScreen({
   controller = generalConfigurationController,
 }: ConfigurationsScreenProps): React.JSX.Element {
   const { t } = useTranslation();
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const { width, fontScale } = useWindowDimensions();
   const wide = width / Math.max(1, fontScale) >= 760;
   const sessionId = sessionKey?.sessionId ?? '';
@@ -430,7 +433,7 @@ export default function ConfigurationsScreen({
   return (
     <View style={styles.root} testID="configurations-screen">
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { maxWidth: contentMaxWidth }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
