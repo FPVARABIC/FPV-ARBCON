@@ -13,9 +13,10 @@
  *     payload. The only motor-shaped value it handles is an output slot
  *     number, 1..4, which it hands to the controller unchanged.
  *   - It never creates a second session, authority, controller or queue.
- *     Its only timer is a touch-owner heartbeat: it cannot start a motor
- *     and merely renews the controller's short fail-safe while the same
- *     Pressable still owns the gesture.
+ *     Its timers belong only to the owned gesture: on web one qualifies
+ *     the documented 800 ms continuous hold, and the other renews the
+ *     controller's short fail-safe while the same Pressable still owns
+ *     that gesture. Neither timer can bypass pulseMotor()'s call-time gate.
  *   - It re-derives NO safety condition. Armed state, lease, authority,
  *     scope and capability are evaluated once, in the controller, and read
  *     here as `snapshot.activation` - the SAME evaluation `pulseMotor()`
@@ -47,6 +48,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -491,6 +493,13 @@ export function MotorsScreenView({
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(
     undefined,
   );
+  /** React Native Web's synthetic long-press responder is not the safety
+   * authority and has varied across browser/input combinations. On web we
+   * qualify the SAME Pressable-owned gesture with our own timer. Android
+   * keeps the native onLongPress path unchanged. */
+  const webLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   /** Read at CALL time, so a stale closure still sees live state - the
    * same reasoning UsbSerialDebugPanel's own mspActiveRef guard uses. */
   const operatorRef = useRef(operator);
@@ -505,6 +514,10 @@ export function MotorsScreenView({
       if (heartbeatTimerRef.current !== undefined) {
         clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = undefined;
+      }
+      if (webLongPressTimerRef.current !== undefined) {
+        clearTimeout(webLongPressTimerRef.current);
+        webLongPressTimerRef.current = undefined;
       }
     };
   }, []);
@@ -521,6 +534,10 @@ export function MotorsScreenView({
     setHoldOwned(false);
     holdGestureRef.current = undefined;
     holdActivatedRef.current = false;
+    if (webLongPressTimerRef.current !== undefined) {
+      clearTimeout(webLongPressTimerRef.current);
+      webLongPressTimerRef.current = undefined;
+    }
     if (operator === undefined) {
       setSnapshot(undefined);
       return;
@@ -771,6 +788,13 @@ export function MotorsScreenView({
     }
   }, []);
 
+  const clearWebLongPressTimer = useCallback(() => {
+    if (webLongPressTimerRef.current !== undefined) {
+      clearTimeout(webLongPressTimerRef.current);
+      webLongPressTimerRef.current = undefined;
+    }
+  }, []);
+
   const startHoldHeartbeat = useCallback(
     (port: MotorTestOperatorPort) => {
       clearHoldHeartbeat();
@@ -787,20 +811,8 @@ export function MotorsScreenView({
     [clearHoldHeartbeat],
   );
 
-  const handlePressIn = useCallback(() => {
-    if (holdGateBlockedRef.current) {
-      // A press that the gate never admitted takes no ownership, so it
-      // cannot keep the control enabled for itself.
-      return;
-    }
-    holdOwnedRef.current = true;
-    setHoldOwned(true);
-    holdGestureRef.current = {};
-    holdActivatedRef.current = false;
-    clearHoldHeartbeat();
-  }, [clearHoldHeartbeat]);
-
-  const handleLongPress = useCallback(() => {
+  const activateOwnedHold = useCallback(() => {
+    clearWebLongPressTimer();
     if (holdActivatedRef.current) {
       return;
     }
@@ -824,13 +836,43 @@ export function MotorsScreenView({
       holdActivatedRef.current = false;
       setPulseRejected(true);
     }
-  }, [selectedSlot, startHoldHeartbeat]);
+  }, [clearWebLongPressTimer, selectedSlot, startHoldHeartbeat]);
+
+  const handlePressIn = useCallback(() => {
+    if (holdGateBlockedRef.current) {
+      // A press that the gate never admitted takes no ownership, so it
+      // cannot keep the control enabled for itself.
+      return;
+    }
+    holdOwnedRef.current = true;
+    setHoldOwned(true);
+    holdGestureRef.current = {};
+    holdActivatedRef.current = false;
+    clearHoldHeartbeat();
+    clearWebLongPressTimer();
+    if (Platform.OS === 'web') {
+      webLongPressTimerRef.current = setTimeout(
+        activateOwnedHold,
+        MOTOR_TEST_LONG_PRESS_DELAY_MILLIS,
+      );
+    }
+  }, [activateOwnedHold, clearHoldHeartbeat, clearWebLongPressTimer]);
+
+  const handleLongPress = useCallback(() => {
+    // Web uses the owned timer installed at press-in; keeping both paths
+    // active there could submit twice at the threshold. Native keeps the
+    // platform responder that already worked in the APK.
+    if (Platform.OS !== 'web') {
+      activateOwnedHold();
+    }
+  }, [activateOwnedHold]);
 
   /** Release AND responder termination land here. Both must stop. */
   const handlePressOut = useCallback(() => {
     holdOwnedRef.current = false;
     setHoldOwned(false);
     holdGestureRef.current = undefined;
+    clearWebLongPressTimer();
     clearHoldHeartbeat();
     const activated = holdActivatedRef.current;
     holdActivatedRef.current = false;
@@ -840,16 +882,17 @@ export function MotorsScreenView({
     if (activated || commandMayBeLive(operatorRef.current?.getSnapshot())) {
       stopNow('TOUCH_RELEASED');
     }
-  }, [clearHoldHeartbeat, stopNow]);
+  }, [clearHoldHeartbeat, clearWebLongPressTimer, stopNow]);
 
   const handleStopPress = useCallback(() => {
     holdOwnedRef.current = false;
     setHoldOwned(false);
     holdGestureRef.current = undefined;
+    clearWebLongPressTimer();
     clearHoldHeartbeat();
     holdActivatedRef.current = false;
     stopNow('STOP_BUTTON_PRESSED');
-  }, [clearHoldHeartbeat, stopNow]);
+  }, [clearHoldHeartbeat, clearWebLongPressTimer, stopNow]);
 
   /**
    * Selecting a different output while something may be live STOPS the
@@ -865,12 +908,13 @@ export function MotorsScreenView({
         holdOwnedRef.current = false;
         setHoldOwned(false);
         holdGestureRef.current = undefined;
+        clearWebLongPressTimer();
         clearHoldHeartbeat();
         port.requestStop('MOTOR_SELECTION_CHANGED');
       }
     }
     setSelectedSlot(slot);
-  }, [clearHoldHeartbeat]);
+  }, [clearHoldHeartbeat, clearWebLongPressTimer]);
 
   const statusText = useMemo(() => {
     switch (presentation) {
@@ -952,6 +996,8 @@ export function MotorsScreenView({
       style={[
         styles.holdButton,
         holdDisabled && styles.holdButtonOff,
+        holdOwned && styles.holdButtonPressed,
+        holdOwned && mayBeLive && styles.holdButtonLive,
       ]}
       testID="motors-hold-button"
     >
@@ -961,7 +1007,11 @@ export function MotorsScreenView({
         {t('motorsScreen.holdHeading')}
       </Text>
       <Text style={[styles.holdLabel, !canActivate && styles.holdLabelOff]}>
-        {t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
+        {holdOwned && mayBeLive
+          ? t('motorsScreen.holdActive', { slot: `M${selectedSlot}` })
+          : holdOwned
+            ? t('motorsScreen.holdCountdown', { slot: `M${selectedSlot}` })
+            : t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
       </Text>
       <Text
         style={[styles.caption, canActivate && styles.holdSupportingActive]}
@@ -1461,12 +1511,6 @@ export function MotorsScreenView({
             </View>
           ) : null}
 
-          {holdControl}
-          {pulseRejected ? (
-            <Text style={styles.inlineError} testID="motors-pulse-rejected">
-              {t('motorsScreen.pulseRejected')}
-            </Text>
-          ) : null}
           <EscDirectionPanel
             selectedMotor={selectedSlot}
             operator={operator}
@@ -1576,10 +1620,20 @@ export function MotorsScreenView({
         ) : null}
       </ScrollView>
 
-      {/* (8) The emergency Stop control. OUTSIDE the ScrollView, always
-          mounted, and NEVER disabled for a transient UI or Promise state -
-          the one moment it looks busy is exactly when it matters most. */}
-      <View style={[styles.sessionDock, { marginBottom: effectiveBottomInset + spacing.md }]}>
+      {/* (8) The motor action dock. OUTSIDE the ScrollView so the actual
+          hold control cannot be confused with the explanatory Step 3 card
+          or disappear below the airframe diagram. Stop stays mounted and
+          is NEVER disabled for a transient UI or Promise state. */}
+      <View
+        style={[styles.sessionDock, { marginBottom: effectiveBottomInset + spacing.md }]}
+        testID="motors-session-dock"
+      >
+        {holdControl}
+        {pulseRejected ? (
+          <Text style={styles.inlineError} testID="motors-pulse-rejected">
+            {t('motorsScreen.pulseRejected')}
+          </Text>
+        ) : null}
         <Pressable onPress={handleStopPress} accessibilityRole="button" accessibilityState={{ disabled: false }} style={styles.stopButton} testID="motors-stop-button">
           <Text style={styles.stopIcon}>⏹</Text>
           <Text style={styles.stopLabel}>{t('motorsScreen.stop')}</Text>
@@ -1996,6 +2050,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
     borderColor: colors.disabled,
     opacity: 0.6,
+  },
+  holdButtonPressed: { borderColor: colors.textPrimary, opacity: 0.88 },
+  holdButtonLive: {
+    backgroundColor: colors.warning,
+    borderColor: colors.warning,
+    opacity: 1,
   },
   holdLabel: {
     ...typography.sectionTitle,

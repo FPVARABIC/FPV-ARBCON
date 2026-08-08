@@ -774,6 +774,15 @@ describe('MotorsScreen - long-press contract', () => {
     rendered.unmount();
   });
 
+  it('keeps the real hold action in the persistent session dock', () => {
+    const { rendered } = readyRendered();
+    const dock = rendered.find('motors-session-dock');
+    expect(dock.findAll(node => node.props?.testID === 'motors-hold-button').length).toBeGreaterThan(0);
+    expect(dock.findAll(node => node.props?.testID === 'motors-stop-button').length).toBeGreaterThan(0);
+    expect(dock.findAll(node => node.props?.testID === 'motors-end-session-button').length).toBeGreaterThan(0);
+    rendered.unmount();
+  });
+
   it('never activates on press-in, on a tap, or on a plain press', () => {
     const { operator, rendered } = readyRendered();
     const hold = rendered.find('motors-hold-button');
@@ -1278,10 +1287,12 @@ describe('MotorsScreen - containment', () => {
     expect(executable).toContain('activation.allowed');
   });
 
-  it('creates no second session or controller and only the declared heartbeat timer', () => {
+  it('creates no second session or controller and only the two declared gesture timers', () => {
     expect(executable).not.toContain('createMotorTestController');
     expect(executable.match(/setInterval\(/g) ?? []).toHaveLength(1);
-    expect(executable).not.toContain('setTimeout');
+    expect(executable.match(/setTimeout\(/g) ?? []).toHaveLength(1);
+    expect(executable).toContain('MOTOR_TEST_LONG_PRESS_DELAY_MILLIS');
+    expect(executable).toContain('MOTOR_TEST_HOLD_HEARTBEAT_INTERVAL_MILLIS');
     // The one binding it does use resolves the EXISTING capability -
     // R2 moved that lookup into the build-time containment seam.
     expect(executable).toContain('readMotorTestCapability');

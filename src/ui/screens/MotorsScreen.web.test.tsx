@@ -48,6 +48,7 @@ describe('MotorsScreen real react-native-web hold responder', () => {
 
   it('fires after the real delay and keeps ownership when the gate closes', () => {
     const hold = host.querySelector('[data-testid="motors-hold-button"]')!;
+    expect(hold.closest('[data-testid="motors-session-dock"]')).not.toBeNull();
     act(() => { hold.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, buttons: 1})); jest.advanceTimersByTime(799); });
     expect(operator.pulseCalls).toBe(0);
     act(() => jest.advanceTimersByTime(101));
@@ -55,6 +56,18 @@ describe('MotorsScreen real react-native-web hold responder', () => {
     expect(operator.stopCalls).toEqual([]);
     act(() => { hold.dispatchEvent(new MouseEvent('mouseup', {bubbles: true})); });
     expect(operator.stopCalls).toEqual(['TOUCH_RELEASED']);
+  });
+
+  it('cancels the web-owned timer when the operator releases early', () => {
+    const hold = host.querySelector('[data-testid="motors-hold-button"]')!;
+    act(() => {
+      hold.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, buttons: 1}));
+      jest.advanceTimersByTime(600);
+      hold.dispatchEvent(new MouseEvent('mouseup', {bubbles: true}));
+      jest.advanceTimersByTime(1000);
+    });
+    expect(operator.pulseCalls).toBe(0);
+    expect(operator.stopCalls).toEqual([]);
   });
 
   it('routes browser blur through the release stop path', () => {
