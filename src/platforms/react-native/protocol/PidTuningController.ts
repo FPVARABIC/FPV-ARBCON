@@ -136,7 +136,25 @@ export class PidTuningController {
   private async readSnapshot(requester: MspRequester, gyroSampleRateHz?: number): Promise<MspPidTuningSnapshot> {
     const pid = await requester.request(MSP_PID, EMPTY, {wireFormat: 'v1'}); const advanced = await requester.request(MSP_PID_ADVANCED, EMPTY, {wireFormat: 'v1'}); const rates = await requester.request(MSP_RC_TUNING, EMPTY, {wireFormat: 'v1'}); const filters = await requester.request(MSP_FILTER_CONFIG, EMPTY, {wireFormat: 'v1'});
     const generalAdvanced = decodeAdvancedConfig((await requester.request(MSP_ADVANCED_CONFIG, EMPTY, {wireFormat: 'v1'})).payload);
-    return decodePidTuningSnapshot({pid: pid.payload, advanced: advanced.payload, rates: rates.payload, filters: filters.payload, gyroSampleRateHz, pidProcessDenom: generalAdvanced.pidProcessDenom});
+    const statusFrame = await requester.request(MSP_STATUS_EX, EMPTY, {wireFormat: 'v1'});
+    const status = decodeStatusExDiagnostics(statusFrame.payload);
+    const pidProfileIndex = statusFrame.payload[10];
+    const pidProfileCount = status.readiness.pidProfileCount;
+    const controlRateProfileIndex = status.readiness.controlRateProfileIndex;
+    if (pidProfileIndex === undefined || pidProfileCount === undefined || controlRateProfileIndex === undefined) {
+      throw new Error('MSP_STATUS_EX omitted PID/rates profile identity required by API 1.47.');
+    }
+    return decodePidTuningSnapshot({
+      pid: pid.payload,
+      advanced: advanced.payload,
+      rates: rates.payload,
+      filters: filters.payload,
+      gyroSampleRateHz,
+      pidProcessDenom: generalAdvanced.pidProcessDenom,
+      pidProfileIndex,
+      pidProfileCount,
+      controlRateProfileIndex,
+    });
   }
 }
 

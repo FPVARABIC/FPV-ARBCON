@@ -253,6 +253,92 @@ describe('MspTelemetryScheduler - reference-counted pause', () => {
   });
 });
 
+describe('MspTelemetryScheduler - per-poll suppression', () => {
+  it('yields a hidden fast poll until every suppression owner releases it', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester(command =>
+      makeFrame(command, Uint8Array.from([command])),
+    );
+    const scheduler = createMspTelemetryScheduler(requester, {
+      clock,
+      singleFlight: true,
+    });
+    scheduler.registerPoll(definition('hidden-attitude', 108, 50, 500, 0));
+    scheduler.registerPoll(definition('visible-receiver', 105, 50, 500, 2));
+
+    const first = scheduler.acquirePollSuppression('hidden-attitude');
+    const second = scheduler.acquirePollSuppression('hidden-attitude');
+    for (let sample = 0; sample < 3; sample += 1) {
+      scheduler.tick();
+      await scheduler.waitUntilIdle();
+      clock.advance(50);
+    }
+    expect(requester.calls.map(call => call.command)).toEqual([105, 105, 105]);
+
+    first();
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.at(-1)?.command).toBe(105);
+
+    second();
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.at(-1)?.command).toBe(108);
+
+    // Releasing a lease twice must not suppress or corrupt another owner.
+    second();
+    clock.advance(50);
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.at(-1)?.command).toBe(105);
+  });
+
+  it('does not stop unrelated polls or discard the suppressed cached sample', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester(command =>
+      makeFrame(command, Uint8Array.from([7])),
+    );
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 108, 50, 500));
+    scheduler.registerPoll(definition('b', 105, 50, 500, 2));
+
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    const cached = scheduler.getValue<number>('b');
+    const release = scheduler.acquirePollSuppression('b');
+    clock.advance(50);
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+
+    expect(requester.calls.at(-1)?.command).toBe(108);
+    expect(scheduler.getValue<number>('b')).toBe(cached);
+    release();
+  });
+
+  it('does not let a suppressed primary poll consume the alternation decision', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester(command =>
+      makeFrame(command, Uint8Array.from([command])),
+    );
+    const scheduler = createMspTelemetryScheduler(requester, {
+      clock,
+      singleFlight: true,
+    });
+    scheduler.registerPoll(definition('hidden-attitude', 108, 50, 500, 0));
+    scheduler.registerPoll(definition('visible-auxiliary', 105, 50, 500, -1));
+
+    const release = scheduler.acquirePollSuppression('hidden-attitude');
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    clock.advance(50);
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+
+    expect(requester.calls.map(call => call.command)).toEqual([105, 105]);
+    release();
+  });
+});
+
 describe('MspTelemetryScheduler - waitUntilIdle', () => {
   it('resolves immediately when nothing is in flight', async () => {
     const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock: new FakeClock()});

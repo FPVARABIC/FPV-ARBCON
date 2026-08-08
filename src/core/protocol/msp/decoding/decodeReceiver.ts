@@ -1,6 +1,7 @@
 import {MspPayloadReadError, MspPayloadReader} from './MspPayloadReader';
 
-export const RECEIVER_CHANNEL_MAX_COUNT = 32;
+/** Betaflight API 1.47 rx.h: MAX_SUPPORTED_RC_CHANNEL_COUNT. */
+export const RECEIVER_CHANNEL_MAX_COUNT = 18;
 
 export interface MspRcChannels {
   readonly channels: readonly number[];

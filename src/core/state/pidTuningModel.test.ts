@@ -1,6 +1,6 @@
 import {decodePidTuningSnapshot} from '../protocol/msp/decoding/decodePidTuning';
 import {encodeChangedPidTuning} from '../protocol/msp/encoding/encodePidTuning';
-import {createPidTuningDraft, pidTuningDraftsEqual, validatePidTuningDraft} from './pidTuningModel';
+import {createPidTuningDraft, pidTuningDraftsEqual, pidTuningSnapshotsEqual, validatePidTuningDraft} from './pidTuningModel';
 
 function snapshot() {
   const pid = Uint8Array.from([42, 85, 35, 46, 90, 38, 45, 80, 0, 50, 50, 75, 40, 0, 0]);
@@ -19,6 +19,9 @@ function snapshot() {
     filters: new Uint8Array(49),
     gyroSampleRateHz: 8000,
     pidProcessDenom: 2,
+    pidProfileIndex: 0,
+    pidProfileCount: 3,
+    controlRateProfileIndex: 0,
   });
 }
 
@@ -27,7 +30,7 @@ function dynamicFilterSnapshot() {
   view.setUint16(29, 180, true); view.setUint16(31, 420, true);
   view.setUint16(33, 90, true); view.setUint16(35, 180, true);
   view.setUint16(39, 300, true); view.setUint16(41, 100, true); view.setUint16(45, 600, true); filters[48] = 3;
-  return decodePidTuningSnapshot({pid: base.pidRaw, advanced: base.advancedRaw, rates: base.ratesRaw, filters, gyroSampleRateHz: 8000, pidProcessDenom: 2});
+  return decodePidTuningSnapshot({pid: base.pidRaw, advanced: base.advancedRaw, rates: base.ratesRaw, filters, gyroSampleRateHz: 8000, pidProcessDenom: 2, pidProfileIndex: 0, pidProfileCount: 3, controlRateProfileIndex: 0});
 }
 
 describe('PID tuning model and encoder', () => {
@@ -96,6 +99,13 @@ describe('PID tuning model and encoder', () => {
     expect(pidTuningDraftsEqual(draft, draft)).toBe(true); expect(encodeChangedPidTuning(original, draft)).toEqual([]);
     expect(validatePidTuningDraft({...draft, roll: {...draft.roll, p: 251}})).toContain('PID_GAIN_INVALID');
     expect(validatePidTuningDraft({...draft, yaw: {...draft.yaw, f: 1001}})).toContain('FEEDFORWARD_INVALID');
+  });
+
+  it('treats an active PID or Rates profile switch as a stale snapshot', () => {
+    const original = snapshot();
+    expect(pidTuningDraftsEqual(createPidTuningDraft(original), createPidTuningDraft({...original, pidProfileIndex: 1}))).toBe(true);
+    expect(pidTuningSnapshotsEqual(original, {...original, pidProfileIndex: 1})).toBe(false);
+    expect(pidTuningSnapshotsEqual(original, {...original, controlRateProfileIndex: 1})).toBe(false);
   });
 
   it('applies the selected Betaflight rate algorithm limits', () => {

@@ -38,6 +38,10 @@ export interface MspPidTuningSnapshot {
   readonly filterConfig: MspFilterConfiguration;
   readonly gyroSampleRateHz?: number;
   readonly pidProcessDenom?: number;
+  /** Zero-based active profiles from the same MSP_STATUS_EX snapshot. */
+  readonly pidProfileIndex: number;
+  readonly pidProfileCount: number;
+  readonly controlRateProfileIndex: number;
   readonly pidRaw: Uint8Array;
   readonly advancedRaw: Uint8Array;
   readonly ratesRaw: Uint8Array;
@@ -103,6 +107,9 @@ export function decodePidTuningSnapshot(input: {
   readonly filters: Uint8Array;
   readonly gyroSampleRateHz?: number;
   readonly pidProcessDenom?: number;
+  readonly pidProfileIndex: number;
+  readonly pidProfileCount: number;
+  readonly controlRateProfileIndex: number;
 }): MspPidTuningSnapshot {
   if (input.advanced.length < PID_ADVANCED_API147_MIN_BYTES) {
     throw new MspPayloadReadError(`MSP_PID_ADVANCED requires at least ${PID_ADVANCED_API147_MIN_BYTES} bytes for API 1.47; received ${input.advanced.length}.`);
@@ -113,6 +120,12 @@ export function decodePidTuningSnapshot(input: {
   if (input.filters.length !== FILTER_CONFIG_API147_BYTES) {
     throw new MspPayloadReadError(`MSP_FILTER_CONFIG requires ${FILTER_CONFIG_API147_BYTES} bytes for API 1.47; received ${input.filters.length}.`);
   }
+  if (!Number.isInteger(input.pidProfileIndex) || input.pidProfileIndex < 0 ||
+    !Number.isInteger(input.pidProfileCount) || input.pidProfileCount < 1 ||
+    input.pidProfileIndex >= input.pidProfileCount ||
+    !Number.isInteger(input.controlRateProfileIndex) || input.controlRateProfileIndex < 0) {
+    throw new MspPayloadReadError('MSP_STATUS_EX did not provide a valid PID/rates profile identity for API 1.47.');
+  }
   return Object.freeze({
     terms: decodePidTerms(input.pid),
     feedforward: Object.freeze([u16At(input.advanced, 32), u16At(input.advanced, 34), u16At(input.advanced, 36)]) as readonly [number, number, number],
@@ -120,6 +133,9 @@ export function decodePidTuningSnapshot(input: {
     filterConfig: decodeFilterConfiguration(input.filters),
     ...(input.gyroSampleRateHz !== undefined ? {gyroSampleRateHz: input.gyroSampleRateHz} : {}),
     ...(input.pidProcessDenom !== undefined ? {pidProcessDenom: input.pidProcessDenom} : {}),
+    pidProfileIndex: input.pidProfileIndex,
+    pidProfileCount: input.pidProfileCount,
+    controlRateProfileIndex: input.controlRateProfileIndex,
     pidRaw: input.pid.slice(),
     advancedRaw: input.advanced.slice(),
     ratesRaw: input.rates.slice(),

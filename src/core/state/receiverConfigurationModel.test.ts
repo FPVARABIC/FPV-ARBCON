@@ -21,6 +21,14 @@ describe('receiver configuration model', () => {
     expect(validateReceiverDraft({...draft, stickCenter: 1700})).toContain('STICK_CENTER_INVALID');
     expect(validateReceiverDraft({...draft, setpointAutoFactor: 251})).toContain('SMOOTHING_INVALID');
   });
+  it('accepts only disabled or Betaflight AUX channels for RSSI', () => {
+    const draft = createReceiverConfigurationDraft(snapshot());
+    expect(validateReceiverDraft({...draft, rssiChannel: 0})).not.toContain('RSSI_CHANNEL_INVALID');
+    expect(validateReceiverDraft({...draft, rssiChannel: 5})).not.toContain('RSSI_CHANNEL_INVALID');
+    expect(validateReceiverDraft({...draft, rssiChannel: 18})).not.toContain('RSSI_CHANNEL_INVALID');
+    expect(validateReceiverDraft({...draft, rssiChannel: 4})).toContain('RSSI_CHANNEL_INVALID');
+    expect(validateReceiverDraft({...draft, rssiChannel: 19})).toContain('RSSI_CHANNEL_INVALID');
+  });
   it('writes changed groups only and preserves unowned RX bytes', () => {
     const original = snapshot(); const draft = {...createReceiverConfigurationDraft(original), stickMin: 1090, deadband: 4};
     const writes = encodeChangedReceiverConfiguration(original, draft);

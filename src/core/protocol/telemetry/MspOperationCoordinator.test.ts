@@ -59,6 +59,10 @@ function createFakeScheduler(): MspTelemetryScheduler & {
       // Never called by MspOperationCoordinator.
       return () => undefined;
     },
+    acquirePollSuppression(): () => void {
+      // Never called by MspOperationCoordinator.
+      return () => undefined;
+    },
     acquirePauseLease(): TelemetryPauseLease {
       fake.acquirePauseLeaseCallCount += 1;
       fake.leaseReleased = false;

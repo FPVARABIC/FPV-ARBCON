@@ -104,6 +104,8 @@ export function filtersEqual(a: FiltersDraft, b: FiltersDraft): boolean {
 
 export function pidTuningSnapshotsEqual(a: MspPidTuningSnapshot, b: MspPidTuningSnapshot): boolean {
   return a.gyroSampleRateHz === b.gyroSampleRateHz && a.pidProcessDenom === b.pidProcessDenom &&
+    a.pidProfileIndex === b.pidProfileIndex && a.pidProfileCount === b.pidProfileCount &&
+    a.controlRateProfileIndex === b.controlRateProfileIndex &&
     a.pidRaw.length === b.pidRaw.length && a.pidRaw.every((value, index) => value === b.pidRaw[index]) &&
     a.advancedRaw.length === b.advancedRaw.length && a.advancedRaw.every((value, index) => value === b.advancedRaw[index]) &&
     a.ratesRaw.length === b.ratesRaw.length && a.ratesRaw.every((value, index) => value === b.ratesRaw[index]) &&

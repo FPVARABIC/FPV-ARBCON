@@ -235,6 +235,18 @@ export interface MspTelemetryScheduler {
    * dispatch for this id is NOT cancelled, it simply has nowhere
    * registered left to write its result once it settles. */
   registerPoll<T>(definition: MspPollDefinition<T>): () => void;
+  /**
+   * Temporarily suppresses one registered poll without discarding its
+   * cached value or disturbing any other telemetry channel. Leases are
+   * reference-counted per poll id: the poll becomes dispatchable again
+   * only after every owner releases its lease.
+   *
+   * This is intentionally narrower than acquirePauseLease(), which stops
+   * the entire scheduler for exclusive operations. A visible high-rate
+   * surface can use this to yield bandwidth from a hidden high-rate poll
+   * while the real MSP link remains globally single-flight.
+   */
+  acquirePollSuppression(id: string): () => void;
   getValue<T>(id: string): TelemetryValue<T>;
   /** See this file's own class-level doc comment: the caller-driven,
    * pull-based entry point. Calling tick() with nothing currently due
@@ -329,6 +341,7 @@ function describeErrorCode(error: unknown): string {
 
 class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private readonly polls = new Map<string, PollRuntimeState>();
+  private readonly suppressedPollReferences = new Map<string, number>();
   private readonly activeLeaseIds = new Set<string>();
   /** Checkpoint F: the REASON behind each active lease id, so a
    * diagnostics report can say WHICH owner is holding polling off
@@ -395,6 +408,26 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     };
   }
 
+  acquirePollSuppression(id: string): () => void {
+    this.suppressedPollReferences.set(
+      id,
+      (this.suppressedPollReferences.get(id) ?? 0) + 1,
+    );
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      const current = this.suppressedPollReferences.get(id) ?? 0;
+      if (current <= 1) {
+        this.suppressedPollReferences.delete(id);
+      } else {
+        this.suppressedPollReferences.set(id, current - 1);
+      }
+    };
+  }
+
   /** Pure cache lookup - see this file's own class-level doc comment
    * ("getValue() MUST BE A STABLE CACHE LOOKUP") for why this never
    * computes anything itself. */
@@ -455,7 +488,12 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       let restrictToPrimary = false;
       if (this.singleFlight && this.lastDispatchedPriority !== undefined && this.lastDispatchedPriority < 0) {
         for (const poll of this.polls.values()) {
-          if (!poll.inFlight && now >= poll.dueAtMs && poll.definition.priority >= 0) {
+          if (
+            !poll.inFlight &&
+            !this.suppressedPollReferences.has(poll.definition.id) &&
+            now >= poll.dueAtMs &&
+            poll.definition.priority >= 0
+          ) {
             restrictToPrimary = true;
             break;
           }
@@ -469,7 +507,12 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         this.consecutivePrimaryDispatches >= MAX_CONSECUTIVE_PRIMARY_DISPATCHES
       ) {
         for (const poll of this.polls.values()) {
-          if (!poll.inFlight && now >= poll.dueAtMs && poll.definition.priority < 0) {
+          if (
+            !poll.inFlight &&
+            !this.suppressedPollReferences.has(poll.definition.id) &&
+            now >= poll.dueAtMs &&
+            poll.definition.priority < 0
+          ) {
             restrictToAuxiliary = true;
             break;
           }
@@ -479,7 +522,11 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       let best: PollRuntimeState | undefined;
       let bestRatio = -Infinity;
       for (const poll of this.polls.values()) {
-        if (poll.inFlight || now < poll.dueAtMs) {
+        if (
+          poll.inFlight ||
+          this.suppressedPollReferences.has(poll.definition.id) ||
+          now < poll.dueAtMs
+        ) {
           continue;
         }
         if (restrictToPrimary && poll.definition.priority < 0) {

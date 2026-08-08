@@ -10,7 +10,7 @@ function snapshot(rollP = 42, rollRcRate = 100, gyroStaticHz = 0): MspPidTuningS
   const rates = new Uint8Array(24); rates[0] = rollRcRate; rates[12] = 100; rates[11] = 100; rates[2] = 70; rates[3] = 70; rates[4] = 70; rates[6] = 50; rates[15] = 100; rates[23] = 50;
   const ratesView = new DataView(rates.buffer); ratesView.setUint16(16, 1998, true); ratesView.setUint16(18, 1998, true); ratesView.setUint16(20, 1998, true);
   const filters = new Uint8Array(49); new DataView(filters.buffer).setUint16(20, gyroStaticHz, true);
-  return decodePidTuningSnapshot({pid, advanced, rates, filters, gyroSampleRateHz: 8000, pidProcessDenom: 2});
+  return decodePidTuningSnapshot({pid, advanced, rates, filters, gyroSampleRateHz: 8000, pidProcessDenom: 2, pidProfileIndex: 1, pidProfileCount: 3, controlRateProfileIndex: 2});
 }
 async function render(controller: PidControllerPort, onOpenMotors = jest.fn()) { let renderer!: ReactTestRenderer.ReactTestRenderer; await act(async () => { renderer = ReactTestRenderer.create(<PidTuningScreen sessionKey={{sessionId: 'pid-ui', generation: 1}} active onOpenMotors={onOpenMotors} controller={controller} />); }); return renderer; }
 
@@ -18,6 +18,14 @@ describe('PidTuningScreen', () => {
   it('renders real editable axis controls and no bitmap substitute', async () => {
     const original = snapshot(); const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: original}))});
     expect(renderer.root.findAllByProps({testID: 'pid-screen'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-axis-roll'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-roll-p'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-yaw-f'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-rate-roll-rc'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-gyro-static'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByType('Image' as never)).toHaveLength(0); act(() => renderer.unmount());
+  });
+  it('shows the exact active PID and Rates profiles read from STATUS_EX', async () => {
+    const original = snapshot(); const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn()});
+    const pidProfileText = renderer.root.findByProps({testID: 'pid-active-profile'}).findAllByType('Text' as never).map(node => node.props.children).join(' ');
+    const ratesProfileText = renderer.root.findByProps({testID: 'pid-active-rates-profile'}).findAllByType('Text' as never).map(node => node.props.children).join(' ');
+    expect(pidProfileText).toContain('2 / 3');
+    expect(ratesProfileText).toContain('3');
+    act(() => renderer.unmount());
   });
   it('sends the edited numeric draft through the verified save action', async () => {
     const original = snapshot();

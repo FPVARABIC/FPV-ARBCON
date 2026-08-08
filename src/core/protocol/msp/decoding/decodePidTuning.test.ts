@@ -8,14 +8,16 @@ import {
 function writeU16(bytes: Uint8Array, offset: number, value: number): void {
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint16(offset, value, true);
 }
+const PROFILES = {pidProfileIndex: 1, pidProfileCount: 3, controlRateProfileIndex: 2} as const;
 
 describe('PID tuning MSP decoding', () => {
   it('decodes the five official PID rows and API 1.47 feedforward offsets', () => {
     const pid = Uint8Array.from({length: 15}, (_, index) => index + 1);
     const advanced = new Uint8Array(61); writeU16(advanced, 32, 120); writeU16(advanced, 34, 130); writeU16(advanced, 36, 140);
-    const snapshot = decodePidTuningSnapshot({pid, advanced, rates: new Uint8Array(24), filters: new Uint8Array(49)});
+    const snapshot = decodePidTuningSnapshot({pid, advanced, rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES});
     expect(snapshot.terms).toEqual([{p: 1, i: 2, d: 3}, {p: 4, i: 5, d: 6}, {p: 7, i: 8, d: 9}, {p: 10, i: 11, d: 12}, {p: 13, i: 14, d: 15}]);
     expect(snapshot.feedforward).toEqual([120, 130, 140]);
+    expect(snapshot).toMatchObject(PROFILES);
   });
 
   it('decodes every API 1.47 rates field from its official offset', () => {
@@ -67,10 +69,16 @@ describe('PID tuning MSP decoding', () => {
 
   it('rejects layouts that are not the pinned API 1.47 contract', () => {
     expect(() => decodePidTerms(new Uint8Array(14))).toThrow('15 bytes');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(60), rates: new Uint8Array(24), filters: new Uint8Array(49)})).toThrow('at least 61');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(23), filters: new Uint8Array(49)})).toThrow('24 bytes');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(48)})).toThrow('49 bytes');
+    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(60), rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES})).toThrow('at least 61');
+    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(23), filters: new Uint8Array(49), ...PROFILES})).toThrow('24 bytes');
+    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(48), ...PROFILES})).toThrow('49 bytes');
     expect(() => decodeRcTuning(new Uint8Array(23))).toThrow('24 bytes');
     expect(() => decodeFilterConfiguration(new Uint8Array(48))).toThrow('49 bytes');
+  });
+  it('rejects missing or inconsistent profile identity', () => {
+    const base = {pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES};
+    expect(() => decodePidTuningSnapshot({...base, pidProfileIndex: 3})).toThrow('profile identity');
+    expect(() => decodePidTuningSnapshot({...base, pidProfileCount: 0})).toThrow('profile identity');
+    expect(() => decodePidTuningSnapshot({...base, controlRateProfileIndex: -1})).toThrow('profile identity');
   });
 });

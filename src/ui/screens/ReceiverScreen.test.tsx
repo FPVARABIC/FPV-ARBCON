@@ -38,6 +38,17 @@ describe('ReceiverScreen', () => {
     act(() => renderer.unmount());
   });
 
+  it('skips primary stick channels when stepping RSSI from disabled', async () => {
+    const original = snapshot();
+    const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: original}))});
+    act(() => renderer.root.findByProps({testID: 'receiver-rssi-channel-plus'}).props.onPress());
+    const input = renderer.root.findAllByProps({testID: 'receiver-rssi-channel'}).find(node => node.props.value !== undefined);
+    expect(input?.props.value).toBe('5');
+    act(() => renderer.root.findByProps({testID: 'receiver-rssi-channel-minus'}).props.onPress());
+    expect(renderer.root.findAllByProps({testID: 'receiver-rssi-channel'}).find(node => node.props.value !== undefined)?.props.value).toBe('0');
+    act(() => renderer.unmount());
+  });
+
   it('explains a motor-test interlock and opens Motors', async () => {
     const onOpenMotors = jest.fn(); let renderer!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => { renderer = ReactTestRenderer.create(<ReceiverScreen sessionKey={{sessionId: 'receiver-ui', generation: 1}} active onOpenPorts={jest.fn()} onOpenMotors={onOpenMotors} controller={{load: jest.fn(async () => ({kind: 'REJECTED' as const, reason: 'MOTOR_TEST_ACTIVE' as const})), save: jest.fn()}} />); });

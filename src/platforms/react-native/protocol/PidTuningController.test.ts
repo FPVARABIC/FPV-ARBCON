@@ -14,7 +14,16 @@ class FakeClient {
   enqueue(command: number, ...scripts: Script[]) { this.scripts.set(command, [...(this.scripts.get(command) ?? []), ...scripts]); }
   async request(command: number, payload: Uint8Array, options: MspRequestOptions): Promise<MspFrame> { this.calls.push({command, payload, options}); const script = this.scripts.get(command)?.shift(); if (script !== undefined && 'reject' in script) throw script.reject; return {protocolVersion: 'v1', wireFormat: options.wireFormat, direction: 'response', command, flags: 0, payload: script?.payload ?? EMPTY}; }
 }
-function statusPayload(armed: boolean): Uint8Array { return Uint8Array.from([0, 0, 0, 0, 0, 0, armed ? 1 : 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 29, 0, 0, 0, 0, 0]); }
+function statusPayload(armed: boolean, pidProfileIndex = 0, controlRateProfileIndex = 0, pidProfileCount = 3): Uint8Array {
+  const bytes = new Uint8Array(22);
+  bytes[6] = armed ? 1 : 0;
+  bytes[10] = pidProfileIndex;
+  bytes[13] = pidProfileCount;
+  bytes[14] = controlRateProfileIndex;
+  bytes[15] = 0; // no flight-mode extension bytes
+  bytes[16] = 29; // arming-disable flag count
+  return bytes;
+}
 function identification(identifier = 'BTFL', minor = 47): MspIdentificationState { return {status: 'SUCCEEDED', identity: {firmware: {identifier, knownFamily: identifier === 'BTFL' ? 'BETAFLIGHT' : 'INAV'}, apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: minor}, board: {gyroSampleRateHz: 8000}}} as MspIdentificationState; }
 function scheduler(): MspTelemetryScheduler { return {acquirePauseLease: jest.fn(() => ({release: jest.fn()})), discardPendingDemands: jest.fn(), waitUntilIdle: jest.fn(() => Promise.resolve()), requestRefresh: jest.fn()} as unknown as MspTelemetryScheduler; }
 function harness(options: {motorTest?: boolean} = {}) {
@@ -27,7 +36,7 @@ function advancedPayload(yawF = 140): Uint8Array { const bytes = new Uint8Array(
 function generalAdvancedPayload(pidProcessDenom = 2): Uint8Array { const bytes = new Uint8Array(20); bytes[0] = 1; bytes[1] = pidProcessDenom; return bytes; }
 function ratesPayload(rollRcRate = 100): Uint8Array { const bytes = new Uint8Array(24); bytes[0] = rollRcRate; bytes[12] = 100; bytes[11] = 100; bytes[14] = 0; bytes[15] = 100; const view = new DataView(bytes.buffer); view.setUint16(16, 1998, true); view.setUint16(18, 1998, true); view.setUint16(20, 1998, true); bytes[22] = 0; bytes[23] = 50; return bytes; }
 function filterPayload(gyroStaticHz = 0): Uint8Array { const bytes = new Uint8Array(49); new DataView(bytes.buffer).setUint16(20, gyroStaticHz, true); return bytes; }
-function enqueueSnapshot(client: FakeClient, rollP = 42, yawF = 140, rollRcRate = 100, gyroStaticHz = 0) { client.enqueue(MSP_PID, {payload: pidPayload(rollP)}); client.enqueue(MSP_PID_ADVANCED, {payload: advancedPayload(yawF)}); client.enqueue(MSP_RC_TUNING, {payload: ratesPayload(rollRcRate)}); client.enqueue(MSP_FILTER_CONFIG, {payload: filterPayload(gyroStaticHz)}); client.enqueue(MSP_ADVANCED_CONFIG, {payload: generalAdvancedPayload()}); }
+function enqueueSnapshot(client: FakeClient, rollP = 42, yawF = 140, rollRcRate = 100, gyroStaticHz = 0, pidProfileIndex = 0, controlRateProfileIndex = 0) { client.enqueue(MSP_PID, {payload: pidPayload(rollP)}); client.enqueue(MSP_PID_ADVANCED, {payload: advancedPayload(yawF)}); client.enqueue(MSP_RC_TUNING, {payload: ratesPayload(rollRcRate)}); client.enqueue(MSP_FILTER_CONFIG, {payload: filterPayload(gyroStaticHz)}); client.enqueue(MSP_ADVANCED_CONFIG, {payload: generalAdvancedPayload()}); client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false, pidProfileIndex, controlRateProfileIndex)}); }
 async function loadOriginal(h: ReturnType<typeof harness>): Promise<MspPidTuningSnapshot> { enqueueSnapshot(h.client); const outcome = await h.controller.load(key); if (outcome.kind !== 'LOADED') throw new Error(outcome.kind); return outcome.snapshot; }
 
 describe('PidTuningController', () => {
@@ -84,6 +93,18 @@ describe('PidTuningController', () => {
       kind: 'REJECTED',
       reason: 'STALE_BASE',
     });
+    expect(h.client.calls.map(call => call.command)).not.toContain(MSP_BOXIDS);
+    expect(h.client.calls.map(call => call.command)).not.toContain(MSP_SET_PID);
+  });
+
+  it('rejects a PID or Rates profile switch before armed-state acquisition or writes', async () => {
+    const h = harness();
+    const original = await loadOriginal(h);
+    enqueueSnapshot(h.client, 42, 140, 100, 0, 1, 2);
+    const base = createPidTuningDraft(original);
+    const draft = {...base, roll: {...base.roll, p: 50}};
+
+    await expect(h.controller.save(key, original, draft)).resolves.toEqual({kind: 'REJECTED', reason: 'STALE_BASE'});
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_BOXIDS);
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_SET_PID);
   });

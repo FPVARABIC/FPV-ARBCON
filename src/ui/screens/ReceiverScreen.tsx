@@ -2,7 +2,7 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions} from 'react-native';
 import {
   createReceiverConfigurationDraft, deriveReceiverRssi, receiverDraftsEqual,
-  validateReceiverDraft, type MspAnalog, type MspRcChannels,
+  validateReceiverDraft, RECEIVER_CHANNEL_MAX_COUNT, type MspAnalog, type MspRcChannels,
   type MspStatusExDiagnostics, type ReceiverConfigurationDraft,
   type ReceiverConfigurationSnapshot, type TelemetryValue,
 } from '../../core';
@@ -71,6 +71,18 @@ function NumericField({label, value, min, max, disabled, onChange, testID}: {lab
   </View>;
 }
 
+function RssiChannelField({value, disabled, onChange}: {value: number; disabled: boolean; onChange: (value: number) => void}) {
+  return <View style={styles.numericField}>
+    <Text style={styles.fieldLabel}>قناة RSSI (0 أو AUX 5–18)</Text>
+    <View style={styles.stepper}>
+      <Pressable disabled={disabled || value === 0} onPress={() => onChange(value <= 5 ? 0 : value - 1)} style={styles.stepButton} testID="receiver-rssi-channel-minus"><Text style={styles.stepText}>−</Text></Pressable>
+      <TextInput value={String(value)} editable={!disabled} keyboardType="number-pad" onChangeText={text => { const parsed = Number(text.replace(/[^0-9]/g, '')); if (Number.isFinite(parsed)) onChange(parsed); }} onBlur={() => onChange(value === 0 ? 0 : Math.min(RECEIVER_CHANNEL_MAX_COUNT, Math.max(5, value)))} style={styles.numberInput} accessibilityLabel="قناة RSSI" testID="receiver-rssi-channel" />
+      <Pressable disabled={disabled || value >= RECEIVER_CHANNEL_MAX_COUNT} onPress={() => onChange(value === 0 ? 5 : Math.min(RECEIVER_CHANNEL_MAX_COUNT, value + 1))} style={styles.stepButton} testID="receiver-rssi-channel-plus"><Text style={styles.stepText}>+</Text></Pressable>
+    </View>
+    <Text style={styles.rangeHint}>0 للتعطيل · 5–18 لقنوات AUX</Text>
+  </View>;
+}
+
 function StickPad({horizontal, vertical, horizontalLabel, verticalLabel, testID}: {horizontal?: number; vertical?: number; horizontalLabel: string; verticalLabel: string; testID: string}) {
   const hasSample = horizontal !== undefined && vertical !== undefined;
   const x = Math.max(0, Math.min(100, (((horizontal ?? 1000) - 1000) / 1000) * 100));
@@ -87,14 +99,36 @@ function ChannelBar({index, value}: {index: number; value: number}) {
   return <View style={styles.channelRow} testID={`receiver-channel-${index + 1}`}><Text style={styles.channelName}>{label}</Text><View style={styles.channelTrack}><View style={[styles.channelFill, {width: `${percent}%`}]} /><View style={styles.channelCenter} /></View><Text style={styles.channelValue}>{value}</Text></View>;
 }
 
-export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenMotors, onDirtyChange, controller = receiverConfigurationController}: ReceiverScreenProps): React.JSX.Element {
-  const {maxWidth} = useContentEnvelope(true);
-  const {width, fontScale} = useWindowDimensions();
-  const wide = width / Math.max(1, fontScale) >= 900;
+const ReceiverLiveMonitor = React.memo(function ReceiverLiveMonitorContent({sessionKey, active, wide}: {sessionKey?: SetupUiSessionKey; active: boolean; wide: boolean}) {
   const sessionId = sessionKey?.sessionId ?? '';
   const channelsState = useTelemetryValue<MspRcChannels>(sessionId, RECEIVER_CHANNELS_POLL_ID, active);
   const analogState = useTelemetryValue<MspAnalog>(sessionId, RECEIVER_TELEMETRY_POLL_ID, active);
   const statusState = useTelemetryValue<MspStatusExDiagnostics>(sessionId, FC_STATUS_TELEMETRY_POLL_ID, active);
+  useEffect(() => { if (active && sessionKey !== undefined) return acquireReceiverTelemetry(sessionKey); }, [active, sessionKey]);
+
+  const channels = valueOf(channelsState)?.channels ?? [];
+  const analog = valueOf(analogState);
+  const rssi = analog === undefined ? undefined : deriveReceiverRssi(analog);
+  const blockers = valueOf(statusState)?.readiness.armingDisableFlags;
+  const failsafe = blockers !== undefined && (Math.floor(blockers / 2) % 2 === 1 || Math.floor(blockers / 4) % 2 === 1);
+  const live = channelsState.status === 'FRESH' && channels.length > 0;
+  const stale = channelsState.status === 'STALE';
+
+  return <View style={styles.liveMonitor} testID="receiver-live-monitor">
+    <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.eyebrow}>RECEIVER · MSP_RC LIVE · TARGET 20 HZ</Text><Text style={styles.title}>المستقبل والقنوات</Text><Text style={styles.subtitle}>راقب استجابة جهاز الإرسال لحظيًا، واضبط الخريطة والنطاق والـdeadband واحفظ بتحقق إعادة قراءة.</Text></View><View style={[styles.liveBadge, live ? styles.liveBadgeGood : styles.liveBadgeMuted]}><View style={[styles.liveDot, live && styles.liveDotGood]} /><Text style={styles.liveText}>{live ? 'بيانات حية' : stale ? 'بيانات قديمة' : 'بانتظار القنوات'}</Text></View></View>
+    <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>REQUIRES HARDWARE TEST</Text><Text style={styles.hardwareText}>لا تولّد الشاشة قنوات تجريبية. حرّك العصي والمفاتيح وتأكد أن القيم تتحرك فعلًا. انزع المراوح قبل العمل.</Text></View>
+    {failsafe ? <View style={styles.danger}><Text style={styles.dangerTitle}>فقد إشارة / Failsafe نشط</Text><Text style={styles.dangerText}>القيم قد تكون مخارج failsafe وليست أوامر حية.</Text></View> : null}
+    <View style={[styles.primaryGrid, wide && styles.primaryGridWide]}>
+      <View style={[styles.card, styles.previewCard]}><Heading title="حركة العصي" hint="القيم الطبيعية تقارب 1000–2000 والمنتصف 1500" /><View style={styles.sticksRow}><StickPad horizontal={channels[2]} vertical={channels[3]} horizontalLabel="Yaw" verticalLabel="Throttle" testID="receiver-stick-left" /><StickPad horizontal={channels[0]} vertical={channels[1]} horizontalLabel="Roll" verticalLabel="Pitch" testID="receiver-stick-right" /></View><View style={styles.signalSummary}><Text style={styles.signalLabel}>RSSI</Text><Text style={styles.signalValue}>{rssi?.kind === 'PERCENT' ? `${rssi.percent}%` : 'غير متاح'}</Text><Text style={styles.signalLabel}>القنوات</Text><Text style={styles.signalValue}>{channels.length || '—'}</Text></View></View>
+      <View style={[styles.card, styles.channelsCard]}><Heading title="مراقبة القنوات" hint="كل صف يتحدث من رد MSP_RC الحقيقي" />{channels.length === 0 ? <Text style={styles.emptyText}>شغّل جهاز الإرسال وتأكد من توصيل المستقبل وضبط المنفذ والبروتوكول.</Text> : channels.map((v, i) => <ChannelBar key={i} index={i} value={v} />)}</View>
+    </View>
+  </View>;
+});
+
+export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenMotors, onDirtyChange, controller = receiverConfigurationController}: ReceiverScreenProps): React.JSX.Element {
+  const {maxWidth} = useContentEnvelope(true);
+  const {width, fontScale} = useWindowDimensions();
+  const wide = width / Math.max(1, fontScale) >= 900;
   const [phase, setPhase] = useState<Phase>('IDLE');
   const [snapshot, setSnapshot] = useState<ReceiverConfigurationSnapshot>();
   const [draft, setDraft] = useState<ReceiverConfigurationDraft>();
@@ -102,7 +136,6 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
   const [saveOutcome, setSaveOutcome] = useState<ReceiverSaveOutcome>();
   const [reloadToken, setReloadToken] = useState(0);
 
-  useEffect(() => { if (active && sessionKey !== undefined) return acquireReceiverTelemetry(sessionKey); }, [active, sessionKey]);
   useEffect(() => {
     if (!active || sessionKey === undefined) return;
     let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined);
@@ -114,12 +147,6 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined ? [] : validateReceiverDraft(draft), [draft]);
-  const channels = valueOf(channelsState)?.channels ?? [];
-  const analog = valueOf(analogState); const rssi = analog === undefined ? undefined : deriveReceiverRssi(analog);
-  const blockers = valueOf(statusState)?.readiness.armingDisableFlags;
-  const failsafe = blockers !== undefined && (Math.floor(blockers / 2) % 2 === 1 || Math.floor(blockers / 4) % 2 === 1);
-  const live = channelsState.status === 'FRESH' && channels.length > 0;
-  const stale = channelsState.status === 'STALE';
   const update = useCallback(<K extends keyof ReceiverConfigurationDraft>(key: K, value: ReceiverConfigurationDraft[K]) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [key]: value})); setSaveOutcome(undefined); }, []);
   const reload = useCallback(() => { const perform = () => setReloadToken(v => v + 1); if (!dirty) return perform(); Alert.alert('تجاهل التغييرات؟', 'ستُستبدل القيم الحالية بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]); }, [dirty]);
   const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); const outcome = await controller.save(sessionKey, snapshot, draft); setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { setSnapshot(outcome.snapshot); setDraft(createReceiverConfigurationDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, sessionKey, snapshot]);
@@ -129,20 +156,13 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
 
   return <View style={styles.root} testID="receiver-screen">
     <ScrollView contentContainerStyle={[styles.content, {maxWidth}]}>
-      <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.eyebrow}>RECEIVER · MSP_RC LIVE</Text><Text style={styles.title}>المستقبل والقنوات</Text><Text style={styles.subtitle}>راقب استجابة جهاز الإرسال لحظيًا، واضبط الخريطة والنطاق والـdeadband واحفظ بتحقق إعادة قراءة.</Text></View><View style={[styles.liveBadge, live ? styles.liveBadgeGood : styles.liveBadgeMuted]}><View style={[styles.liveDot, live && styles.liveDotGood]} /><Text style={styles.liveText}>{live ? 'بيانات حية' : stale ? 'بيانات قديمة' : 'بانتظار القنوات'}</Text></View></View>
-      <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>REQUIRES HARDWARE TEST</Text><Text style={styles.hardwareText}>لا تولّد الشاشة قنوات تجريبية. حرّك العصي والمفاتيح وتأكد أن القيم تتحرك فعلًا. انزع المراوح قبل العمل.</Text></View>
-      {failsafe ? <View style={styles.danger}><Text style={styles.dangerTitle}>فقد إشارة / Failsafe نشط</Text><Text style={styles.dangerText}>القيم قد تكون مخارج failsafe وليست أوامر حية.</Text></View> : null}
+      <ReceiverLiveMonitor sessionKey={sessionKey} active={active} wide={wide} />
       {loadingMessage !== undefined ? <View style={styles.warning} testID="receiver-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Pressable onPress={onOpenMotors} style={styles.inlineAction}><Text style={styles.inlineActionText}>فتح شاشة المحركات</Text></Pressable> : <Pressable onPress={reload} style={styles.inlineAction}><Text style={styles.inlineActionText}>إعادة القراءة</Text></Pressable>}</View> : null}
-
-      <View style={[styles.primaryGrid, wide && styles.primaryGridWide]}>
-        <View style={[styles.card, styles.previewCard]}><Heading title="حركة العصي" hint="القيم الطبيعية تقارب 1000–2000 والمنتصف 1500" /><View style={styles.sticksRow}><StickPad horizontal={channels[2]} vertical={channels[3]} horizontalLabel="Yaw" verticalLabel="Throttle" testID="receiver-stick-left" /><StickPad horizontal={channels[0]} vertical={channels[1]} horizontalLabel="Roll" verticalLabel="Pitch" testID="receiver-stick-right" /></View><View style={styles.signalSummary}><Text style={styles.signalLabel}>RSSI</Text><Text style={styles.signalValue}>{rssi?.kind === 'PERCENT' ? `${rssi.percent}%` : 'غير متاح'}</Text><Text style={styles.signalLabel}>القنوات</Text><Text style={styles.signalValue}>{channels.length || '—'}</Text></View></View>
-        <View style={[styles.card, styles.channelsCard]}><Heading title="مراقبة القنوات" hint="كل صف يتحدث من رد MSP_RC الحقيقي" />{channels.length === 0 ? <Text style={styles.emptyText}>شغّل جهاز الإرسال وتأكد من توصيل المستقبل وضبط المنفذ والبروتوكول.</Text> : channels.map((v, i) => <ChannelBar key={i} index={i} value={v} />)}</View>
-      </View>
 
       {draft !== undefined && snapshot !== undefined ? <>
         <View style={styles.card}><Heading title="مصدر المستقبل" hint="قراءة من MSP_RX_CONFIG. تعيين منفذ Serial RX يتم من شاشة المنافذ؛ لا يغيّر هذا الزر البروتوكول." /><View style={styles.providerRow}><View><Text style={styles.fieldLabel}>البروتوكول الحالي</Text><Text style={styles.providerValue}>{provider}</Text></View><Pressable onPress={onOpenPorts} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>فتح المنافذ</Text></Pressable></View></View>
         <View style={styles.card}><Heading title="خريطة القنوات" hint="كل حرف مرة واحدة: Aileron, Elevator, Rudder, Throttle ثم AUX." /><View style={styles.mapRow}><TextInput value={draft.channelMapText} editable={phase === 'READY'} autoCapitalize="characters" maxLength={8} onChangeText={v => update('channelMapText', v.toUpperCase())} style={[styles.mapInput, issues.includes('CHANNEL_MAP_INVALID') && styles.invalidInput]} testID="receiver-channel-map" /><Pressable onPress={() => update('channelMapText', 'AETR1234')} style={styles.preset}><Text style={styles.presetText}>AETR1234</Text></Pressable><Pressable onPress={() => update('channelMapText', 'TAER1234')} style={styles.preset}><Text style={styles.presetText}>TAER1234</Text></Pressable></View></View>
-        <View style={styles.card}><Heading title="نطاق العصا وRSSI" hint="حدود تعرف المتحكم على وضع العصا؛ ليست معايرة جهاز الإرسال." /><View style={styles.fieldsGrid}><NumericField label="الحد الأدنى" value={draft.stickMin} min={1000} max={1200} disabled={phase !== 'READY'} onChange={v => update('stickMin', v)} testID="receiver-stick-min" /><NumericField label="المنتصف" value={draft.stickCenter} min={1401} max={1599} disabled={phase !== 'READY'} onChange={v => update('stickCenter', v)} testID="receiver-stick-center" /><NumericField label="الحد الأعلى" value={draft.stickMax} min={1800} max={2000} disabled={phase !== 'READY'} onChange={v => update('stickMax', v)} testID="receiver-stick-max" /><NumericField label="قناة RSSI (0=تعطيل)" value={draft.rssiChannel} min={0} max={Math.max(8, channels.length)} disabled={phase !== 'READY'} onChange={v => update('rssiChannel', v)} testID="receiver-rssi-channel" /></View></View>
+        <View style={styles.card}><Heading title="نطاق العصا وRSSI" hint="حدود تعرف المتحكم على وضع العصا؛ ليست معايرة جهاز الإرسال. RSSI: صفر للتعطيل أو قناة AUX من 5 إلى 18." /><View style={styles.fieldsGrid}><NumericField label="الحد الأدنى" value={draft.stickMin} min={1000} max={1200} disabled={phase !== 'READY'} onChange={v => update('stickMin', v)} testID="receiver-stick-min" /><NumericField label="المنتصف" value={draft.stickCenter} min={1401} max={1599} disabled={phase !== 'READY'} onChange={v => update('stickCenter', v)} testID="receiver-stick-center" /><NumericField label="الحد الأعلى" value={draft.stickMax} min={1800} max={2000} disabled={phase !== 'READY'} onChange={v => update('stickMax', v)} testID="receiver-stick-max" /><RssiChannelField value={draft.rssiChannel} disabled={phase !== 'READY'} onChange={v => update('rssiChannel', v)} /></View></View>
         <View style={styles.card}><Heading title="Deadband" hint="ارفع القيم فقط إذا كانت القنوات تهتز حول المنتصف." /><View style={styles.fieldsGrid}><NumericField label="Roll / Pitch" value={draft.deadband} min={0} max={32} disabled={phase !== 'READY'} onChange={v => update('deadband', v)} testID="receiver-deadband" /><NumericField label="Yaw" value={draft.yawDeadband} min={0} max={100} disabled={phase !== 'READY'} onChange={v => update('yawDeadband', v)} testID="receiver-yaw-deadband" /><NumericField label="Throttle في وضع 3D" value={draft.throttle3dDeadband} min={0} max={100} disabled={phase !== 'READY'} onChange={v => update('throttle3dDeadband', v)} testID="receiver-3d-deadband" /></View></View>
         <View style={styles.card}><View style={styles.toggleRow}><View style={styles.toggleCopy}><Text style={styles.sectionTitle}>RC Smoothing</Text><Text style={styles.sectionHint}>تنعيم setpoint وthrottle من Betaflight API 1.47.</Text></View><Switch value={draft.smoothingEnabled} disabled={phase !== 'READY'} onValueChange={v => update('smoothingEnabled', v)} trackColor={{false: colors.disabled, true: colors.accentStrong}} testID="receiver-smoothing" /></View>{draft.smoothingEnabled ? <View style={styles.fieldsGrid}><NumericField label="Setpoint cutoff Hz (0=Auto)" value={draft.setpointCutoff} min={0} max={255} disabled={phase !== 'READY'} onChange={v => update('setpointCutoff', v)} testID="receiver-setpoint-cutoff" /><NumericField label="Throttle cutoff Hz (0=Auto)" value={draft.throttleCutoff} min={0} max={255} disabled={phase !== 'READY'} onChange={v => update('throttleCutoff', v)} testID="receiver-throttle-cutoff" /><NumericField label="Setpoint auto factor" value={draft.setpointAutoFactor} min={0} max={250} disabled={phase !== 'READY'} onChange={v => update('setpointAutoFactor', v)} testID="receiver-setpoint-factor" /><NumericField label="Throttle auto factor" value={draft.throttleAutoFactor} min={0} max={250} disabled={phase !== 'READY'} onChange={v => update('throttleAutoFactor', v)} testID="receiver-throttle-factor" /></View> : null}</View>
         {issues.length > 0 ? <View style={styles.danger}><Text style={styles.dangerTitle}>راجع القيم قبل الحفظ</Text><Text style={styles.dangerText}>{issues.join(' · ')}</Text></View> : null}
@@ -157,7 +177,7 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
 function Heading({title, hint}: {title: string; hint: string}) { return <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>{title}</Text><Text style={styles.sectionHint}>{hint}</Text></View>; }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: colors.background}, content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md},
+  root: {flex: 1, backgroundColor: colors.background}, content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md}, liveMonitor: {gap: spacing.md},
   hero: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.lg, flexWrap: 'wrap'}, heroCopy: {flex: 1, minWidth: 260, gap: 4}, eyebrow: {...typography.eyebrow, color: colors.accentStrong, letterSpacing: 1}, title: {...typography.title, color: colors.textPrimary, textAlign: 'right'}, subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl'},
   liveBadge: {flexDirection: 'row', alignItems: 'center', gap: 7, borderRadius: 999, paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1}, liveBadgeGood: {backgroundColor: '#E8F8F1', borderColor: colors.success}, liveBadgeMuted: {backgroundColor: colors.surfaceAlt, borderColor: colors.border}, liveDot: {width: 8, height: 8, borderRadius: 4, backgroundColor: colors.disabled}, liveDotGood: {backgroundColor: colors.success}, liveText: {...typography.caption, color: colors.textPrimary, fontWeight: '700'},
   hardwareNotice: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, padding: spacing.md, gap: 3}, hardwareTitle: {...typography.eyebrow, color: colors.accentStrong}, hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl'},

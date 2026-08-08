@@ -1,4 +1,4 @@
-import type {MspReceiverDeadband, MspRxConfig} from '../protocol/msp';
+import {RECEIVER_CHANNEL_MAX_COUNT, type MspReceiverDeadband, type MspRxConfig} from '../protocol/msp';
 
 export const RECEIVER_MAP_LETTERS = Object.freeze(['A', 'E', 'R', 'T', '1', '2', '3', '4'] as const);
 
@@ -88,7 +88,10 @@ export function validateReceiverDraft(draft: ReceiverConfigurationDraft): readon
   if (!Number.isInteger(draft.stickCenter) || draft.stickCenter < 1401 || draft.stickCenter > 1599) issues.push('STICK_CENTER_INVALID');
   if (!Number.isInteger(draft.stickMax) || draft.stickMax < 1800 || draft.stickMax > 2000) issues.push('STICK_MAX_INVALID');
   if (!(draft.stickMin < draft.stickCenter && draft.stickCenter < draft.stickMax)) issues.push('STICK_ORDER_INVALID');
-  if (!Number.isInteger(draft.rssiChannel) || draft.rssiChannel < 0 || draft.rssiChannel > 32) issues.push('RSSI_CHANNEL_INVALID');
+  // Betaflight exposes 0=disabled and AUX channels only (1-4 are the
+  // primary Roll/Pitch/Yaw/Throttle controls). The firmware's hard API
+  // 1.47 limit is MAX_SUPPORTED_RC_CHANNEL_COUNT=18.
+  if (!Number.isInteger(draft.rssiChannel) || (draft.rssiChannel !== 0 && (draft.rssiChannel < 5 || draft.rssiChannel > RECEIVER_CHANNEL_MAX_COUNT))) issues.push('RSSI_CHANNEL_INVALID');
   if (!Number.isInteger(draft.deadband) || draft.deadband < 0 || draft.deadband > 32) issues.push('DEADBAND_INVALID');
   if (!Number.isInteger(draft.yawDeadband) || draft.yawDeadband < 0 || draft.yawDeadband > 100) issues.push('YAW_DEADBAND_INVALID');
   if (!Number.isInteger(draft.throttle3dDeadband) || draft.throttle3dDeadband < 0 || draft.throttle3dDeadband > 100) issues.push('THROTTLE_3D_DEADBAND_INVALID');
