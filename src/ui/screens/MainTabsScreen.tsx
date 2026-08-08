@@ -54,6 +54,7 @@ import type { MotorDepartureVerdict } from '../../core/state/motorDepartureGate'
 import PortsScreen from './PortsScreen';
 import GpsScreen from './GpsScreen';
 import ConfigurationsScreen from './ConfigurationsScreen';
+import ReceiverScreen from './ReceiverScreen';
 import {
   INITIAL_MAIN_TAB,
   isTabSelectable,
@@ -117,6 +118,10 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
   );
   const reportConfigurationsDirty = useCallback(
     (dirty: boolean) => reportDirty('CONFIGURATIONS', dirty),
+    [reportDirty],
+  );
+  const reportReceiverDirty = useCallback(
+    (dirty: boolean) => reportDirty('RECEIVER', dirty),
     [reportDirty],
   );
 
@@ -395,6 +400,17 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
               onOpenPorts={() => handleSelectTab('PORTS')}
               onOpenGps={() => handleSelectTab('GPS')}
               onDirtyChange={reportConfigurationsDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('RECEIVER') ? (
+          <View style={activeTab === 'RECEIVER' ? styles.visible : styles.hidden} testID="main-tab-panel-RECEIVER">
+            <ReceiverScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'RECEIVER'}
+              onOpenPorts={() => handleSelectTab('PORTS')}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportReceiverDirty}
             />
           </View>
         ) : null}

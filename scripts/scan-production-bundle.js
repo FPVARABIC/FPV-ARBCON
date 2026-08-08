@@ -170,6 +170,14 @@ const REQUIRED_ENGINE_TOKENS = [
   'MSP_SET_BEEPER_CONFIG',
   'MSP_SET_RX_CONFIG',
   'MSP2_SET_TEXT',
+  'receiver-screen',
+  'ReceiverConfigurationController',
+  'acquireReceiverTelemetry',
+  'decodeRcChannels',
+  'encodeChangedReceiverConfiguration',
+  'MSP_SET_RX_MAP',
+  'MSP_SET_RSSI_CONFIG',
+  'MSP_SET_RC_DEADBAND',
   // Firmware Flasher and the new landing route are product surfaces, not
   // optional debug code. Their protocol owners must ship in Release.
   'firmware-flasher-screen',
@@ -278,6 +286,7 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
   },
   {
@@ -341,11 +350,32 @@ const ENGINE_BOUNDARIES = [
     ],
   },
   {
+    token: 'encodeChangedReceiverConfiguration',
+    from: 'src/core/protocol/msp/encoding/encodeReceiver.ts',
+    importers: ['src/platforms/react-native/protocol/ReceiverConfigurationController.ts'],
+  },
+  {
     token: 'MSP_SET_RX_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
+  },
+  {
+    token: 'MSP_SET_RX_MAP',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/ReceiverConfigurationController.ts'],
+  },
+  {
+    token: 'MSP_SET_RSSI_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/ReceiverConfigurationController.ts'],
+  },
+  {
+    token: 'MSP_SET_RC_DEADBAND',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/ReceiverConfigurationController.ts'],
   },
   {
     token: 'MSP2_SET_TEXT',

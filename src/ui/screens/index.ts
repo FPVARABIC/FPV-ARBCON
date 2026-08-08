@@ -3,6 +3,7 @@ export { default as StartScreen } from './StartScreen';
 export { default as SetupScreen } from './SetupScreen';
 export { default as PortsScreen } from './PortsScreen';
 export { default as ConfigurationsScreen } from './ConfigurationsScreen';
+export { default as ReceiverScreen } from './ReceiverScreen';
 /* SINGLE-APP MERGE: the shell the 'Setup' stack route renders - Setup and
  * Motors as tabs, with the not-yet-implemented tabs shown disabled. */
 export { default as MainTabsScreen } from './MainTabsScreen';

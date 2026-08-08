@@ -62,6 +62,9 @@ export {
   GpsConfigurationController,
   gpsConfigurationController,
 } from './GpsConfigurationController';
+export {ReceiverConfigurationController, receiverConfigurationController} from './ReceiverConfigurationController';
+export type {ReceiverBlockReason, ReceiverLoadOutcome, ReceiverSaveOutcome, ReceiverSessionCoordinator, ReceiverAppStateOwner, ReceiverConfigurationControllerOptions} from './ReceiverConfigurationController';
+export {acquireReceiverTelemetry, RECEIVER_CHANNELS_POLL_ID} from './receiverTelemetry';
 export {
   GeneralConfigurationController,
   generalConfigurationController,

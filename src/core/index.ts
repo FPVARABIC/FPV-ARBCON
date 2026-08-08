@@ -124,6 +124,10 @@ export {
   MSP_FEATURE_CONFIG,
   MSP_SET_FEATURE_CONFIG,
   MSP_SET_RX_CONFIG,
+  MSP_RSSI_CONFIG,
+  MSP_SET_RSSI_CONFIG,
+  MSP_RX_MAP,
+  MSP_SET_RX_MAP,
   MSP_ARMING_CONFIG,
   MSP_SET_ARMING_CONFIG,
   MSP_BEEPER_CONFIG,
@@ -133,7 +137,9 @@ export {
   MSP_MIXER_CONFIG,
   MSP_ADVANCED_CONFIG,
   MSP_MOTOR,
+  MSP_RC,
   MSP_MOTOR_3D_CONFIG,
+  MSP_RC_DEADBAND,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
   MSP2_MOTOR_OUTPUT_REORDERING,
@@ -142,6 +148,7 @@ export {
   MSP_SET_MIXER_CONFIG,
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_MOTOR_3D_CONFIG,
+  MSP_SET_RC_DEADBAND,
   MSP_SET_MOTOR_CONFIG,
   MSP_SET_GPS_CONFIG,
   MSP_EEPROM_WRITE,
@@ -204,6 +211,11 @@ export {
   decodeArmingConfig,
   decodeBeeperConfig,
   decodeRxConfig,
+  decodeRcChannels,
+  decodeReceiverMap,
+  decodeRssiConfig,
+  decodeReceiverDeadband,
+  RECEIVER_CHANNEL_MAX_COUNT,
   decodeMspText,
   MSP_TEXT_PILOT_NAME,
   MSP_TEXT_CRAFT_NAME,
@@ -215,6 +227,10 @@ export {
   encodeMspTextRequest,
   encodeMspText,
   encodeChangedGeneralConfiguration,
+  encodeReceiverMap,
+  encodeReceiverDeadband,
+  encodeReceiverConfig,
+  encodeChangedReceiverConfiguration,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
@@ -236,6 +252,12 @@ export type {
   GpsConstellation,
   MspGpsSatellite,
   MspGpsSatelliteInfo,
+} from './protocol';
+export type {
+  MspRcChannels,
+  MspReceiverDeadband,
+  ReceiverWriteGroup,
+  EncodedReceiverWrite,
 } from './protocol';
 export {
   SERIAL_BAUD_RATES,
@@ -306,6 +328,20 @@ export type {
   GeneralConfigurationSnapshot,
   GeneralConfigurationDraft,
   GeneralConfigurationValidationCode,
+} from './state';
+export {
+  RECEIVER_MAP_LETTERS,
+  receiverMapToText,
+  receiverMapFromText,
+  createReceiverConfigurationDraft,
+  receiverDraftsEqual,
+  receiverSnapshotsEqual,
+  validateReceiverDraft,
+} from './state';
+export type {
+  ReceiverConfigurationSnapshot,
+  ReceiverConfigurationDraft,
+  ReceiverConfigurationValidationCode,
 } from './state';
 export {
   deriveOrientationViewState,

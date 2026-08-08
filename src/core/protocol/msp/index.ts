@@ -20,6 +20,10 @@ export {
   MSP_FEATURE_CONFIG,
   MSP_RX_CONFIG,
   MSP_SET_RX_CONFIG,
+  MSP_RSSI_CONFIG,
+  MSP_SET_RSSI_CONFIG,
+  MSP_RX_MAP,
+  MSP_SET_RX_MAP,
   MSP_ARMING_CONFIG,
   MSP_SET_ARMING_CONFIG,
   MSP_BEEPER_CONFIG,
@@ -29,7 +33,9 @@ export {
   MSP_MIXER_CONFIG,
   MSP_ADVANCED_CONFIG,
   MSP_MOTOR,
+  MSP_RC,
   MSP_MOTOR_3D_CONFIG,
+  MSP_RC_DEADBAND,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
   MSP2_MOTOR_OUTPUT_REORDERING,
@@ -39,6 +45,7 @@ export {
   MSP_SET_MIXER_CONFIG,
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_MOTOR_3D_CONFIG,
+  MSP_SET_RC_DEADBAND,
   MSP_SET_MOTOR_CONFIG,
   MSP_SET_GPS_CONFIG,
   MSP_EEPROM_WRITE,
@@ -161,6 +168,14 @@ export type { MspBeeperConfig } from './decoding/decodeBeeperConfig';
 export { decodeRxConfig } from './decoding/decodeRxConfig';
 export type { MspRxConfig } from './decoding/decodeRxConfig';
 export {
+  decodeRcChannels,
+  decodeReceiverMap,
+  decodeRssiConfig,
+  decodeReceiverDeadband,
+  RECEIVER_CHANNEL_MAX_COUNT,
+} from './decoding/decodeReceiver';
+export type { MspRcChannels, MspReceiverDeadband } from './decoding/decodeReceiver';
+export {
   decodeMspText,
   MSP_TEXT_PILOT_NAME,
   MSP_TEXT_CRAFT_NAME,
@@ -204,6 +219,13 @@ export type {
   GeneralConfigurationWriteGroup,
   EncodedGeneralConfigurationWrite,
 } from './encoding/encodeGeneralConfiguration';
+export {
+  encodeReceiverMap,
+  encodeReceiverDeadband,
+  encodeReceiverConfig,
+  encodeChangedReceiverConfiguration,
+} from './encoding/encodeReceiver';
+export type { ReceiverWriteGroup, EncodedReceiverWrite } from './encoding/encodeReceiver';
 
 export {
   checkMspCompatibility,

@@ -168,6 +168,10 @@ export const MSP_NAME = 10;
 export const MSP_SET_NAME = 11;
 export const MSP_RX_CONFIG = 44;
 export const MSP_SET_RX_CONFIG = 45;
+export const MSP_RSSI_CONFIG = 50;
+export const MSP_SET_RSSI_CONFIG = 51;
+export const MSP_RX_MAP = 64;
+export const MSP_SET_RX_MAP = 65;
 export const MSP_ARMING_CONFIG = 61;
 export const MSP_SET_ARMING_CONFIG = 62;
 export const MSP_BEEPER_CONFIG = 184;
@@ -193,12 +197,14 @@ export const MSP_ADVANCED_CONFIG = 90;
  * DYNAMIC FC-side state - never configuration, never a motor count, and
  * never proof of physical motion or stop. */
 export const MSP_MOTOR = 104;
+export const MSP_RC = 105;
 
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
  * `#define MSP_MOTOR_3D_CONFIG 124` - msp.c, 6 bytes: three u16 3D
  * tuning values. Present whether or not 3D is enabled - they never
  * determine 3D state. */
 export const MSP_MOTOR_3D_CONFIG = 124;
+export const MSP_RC_DEADBAND = 125;
 
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
  * `#define MSP_MOTOR_CONFIG 131` - msp.c, 10 bytes. The ONLY authority
@@ -234,6 +240,7 @@ export const MSP_SET_FEATURE_CONFIG = 37;
 export const MSP_SET_MIXER_CONFIG = 43;
 export const MSP_SET_ADVANCED_CONFIG = 91;
 export const MSP_SET_MOTOR_3D_CONFIG = 217;
+export const MSP_SET_RC_DEADBAND = 218;
 export const MSP_SET_MOTOR_CONFIG = 222;
 
 /** Writes the complete six-byte MSP_GPS_CONFIG payload. */

@@ -113,6 +113,20 @@ export type {
   GeneralConfigurationValidationCode,
 } from './generalConfigurationModel';
 export {
+  RECEIVER_MAP_LETTERS,
+  receiverMapToText,
+  receiverMapFromText,
+  createReceiverConfigurationDraft,
+  receiverDraftsEqual,
+  receiverSnapshotsEqual,
+  validateReceiverDraft,
+} from './receiverConfigurationModel';
+export type {
+  ReceiverConfigurationSnapshot,
+  ReceiverConfigurationDraft,
+  ReceiverConfigurationValidationCode,
+} from './receiverConfigurationModel';
+export {
   FEATURE_MOTOR_STOP_BIT,
   FEATURE_ESC_SENSOR_BIT,
   MOTOR_PROTOCOL_RAW_MIN,
