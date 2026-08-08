@@ -814,7 +814,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     // the in-flight acquisition land anyway, after the operator has already
     // gone". Asserted rather than timed, so no microtask count is assumed.
     ReactTestRenderer.act(() => {
-      shell.longPress('motors-hold-button');
+      shell.press('motors-begin-session-button');
     });
     expect(controller.getSnapshot().phase).not.toBe('ACTIVE');
     expect(client.isMotorTestLeaseHeld()).toBe(false);
@@ -857,7 +857,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const controller = shellController();
 
     await ReactTestRenderer.act(async () => {
-      shell.longPress('motors-hold-button');
+      shell.press('motors-begin-session-button');
       for (
         let i = 0;
         i < 400 && !client.isMotorTestLeaseHeld();
@@ -893,8 +893,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const controller = shellController();
 
     await ReactTestRenderer.act(async () => {
-      shell.longPress('motors-hold-button');
-      shell.find('motors-hold-button').props.onPressOut();
+      shell.press('motors-begin-session-button');
       for (
         let i = 0;
         i < 400 && controller.getSnapshot().machine?.name !== 'Ready';

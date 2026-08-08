@@ -81,6 +81,7 @@ export type OrientationRendererProps = {
   /** Development-only diagnostics: which genuine sample this pose came
    * from. Never affects what is drawn - the pose alone decides that. */
   sampleIdentity?: OrientationLatencySampleIdentity;
+  presentationScale?: number;
 };
 
 /** One build per genuine pose, and the SkPaths built with it.
@@ -92,8 +93,8 @@ export type OrientationRendererProps = {
  * with the retired animation-frame loop - which re-rendered this
  * component at frame rate - that was ~2,280 SkPath allocations per
  * second for data arriving 4.5 times per second. */
-function buildDrawables(orientation: DroneOrientationDeg, width: number, height: number) {
-  const scene = computeDroneScene(orientation, {width, height});
+function buildDrawables(orientation: DroneOrientationDeg, width: number, height: number, presentationScale: number) {
+  const scene = computeDroneScene(orientation, {width, height}, presentationScale);
   return scene.primitives.map(primitive => ({
     path: toSkPath(primitive.points),
     ...appearanceFor(primitive.material),
@@ -106,6 +107,7 @@ export function OrientationRenderer({
   height,
   stale = false,
   sampleIdentity,
+  presentationScale = 1,
 }: OrientationRendererProps): React.JSX.Element {
   const {rollDeg, pitchDeg, yawDeg} = orientation;
   const sessionToken = sampleIdentity?.sessionToken;
@@ -117,8 +119,8 @@ export function OrientationRenderer({
   // stamp below is therefore taken on the render that first shows a
   // sample, whether or not that render had to build a new scene.
   const drawables = useMemo(
-    () => buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height),
-    [rollDeg, pitchDeg, yawDeg, width, height],
+    () => buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height, presentationScale),
+    [rollDeg, pitchDeg, yawDeg, width, height, presentationScale],
   );
 
   if (sessionToken !== undefined && sampleSeq !== undefined) {

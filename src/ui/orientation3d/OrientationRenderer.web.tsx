@@ -57,6 +57,7 @@ export type OrientationRendererProps = {
   /** Development-only diagnostics: which genuine sample this pose came
    * from. Never affects what is drawn - the pose alone decides that. */
   sampleIdentity?: OrientationLatencySampleIdentity;
+  presentationScale?: number;
 };
 
 /**
@@ -69,8 +70,9 @@ function buildDrawables(
   orientation: DroneOrientationDeg,
   width: number,
   height: number,
+  presentationScale: number,
 ) {
-  const scene = computeDroneScene(orientation, {width, height});
+  const scene = computeDroneScene(orientation, {width, height}, presentationScale);
   return scene.primitives.map(primitive => ({
     points: toPointsAttribute(primitive.points),
     ...appearanceFor(primitive.material),
@@ -83,6 +85,7 @@ export function OrientationRenderer({
   height,
   stale = false,
   sampleIdentity,
+  presentationScale = 1,
 }: OrientationRendererProps): React.JSX.Element {
   const {rollDeg, pitchDeg, yawDeg} = orientation;
   const sessionToken = sampleIdentity?.sessionToken;
@@ -92,8 +95,8 @@ export function OrientationRenderer({
   // samples reporting an identical attitude must reuse the built scene
   // rather than rebuild an identical one. Same rule as Android.
   const drawables = useMemo(
-    () => buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height),
-    [rollDeg, pitchDeg, yawDeg, width, height],
+    () => buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height, presentationScale),
+    [rollDeg, pitchDeg, yawDeg, width, height, presentationScale],
   );
 
   // Checkpoint F: the pose THIS renderer was handed, recorded before any

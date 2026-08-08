@@ -206,6 +206,23 @@ describe('GpsScreen', () => {
     ReactTestRenderer.act(() => screen.renderer.unmount());
     expect(screen.onDirtyChange).toHaveBeenLastCalledWith(false);
   });
+  it('does not discard a dirty GPS draft on reload without confirmation', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const screen = await renderScreen();
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findByProps({testID: 'gps-provider-nmea'})
+        .props.onPress();
+    });
+    ReactTestRenderer.act(() => {
+      screen.renderer.root.findByProps({testID: 'gps-reload'}).props.onPress();
+    });
+    expect(screen.controller.load).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => { await alert.mock.calls[0][2]?.[1]?.onPress?.(); await Promise.resolve(); });
+    expect(screen.controller.load).toHaveBeenCalledTimes(2);
+    alert.mockRestore();
+    ReactTestRenderer.act(() => screen.renderer.unmount());
+  });
 
   it('keeps the GPS save action visible outside the telemetry scroll, matching the fixed configurator toolbar', async () => {
     const screen = await renderScreen();

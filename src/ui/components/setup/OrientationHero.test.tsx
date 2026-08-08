@@ -21,6 +21,7 @@ import ReactTestRenderer, { act } from 'react-test-renderer';
 
 import OrientationHero, {
   computeOrientationHeroSize,
+  computeOrientationWorkspaceLayout,
   formatTiltDegrees,
   shouldUseOrientationSidebar,
 } from './OrientationHero';
@@ -133,6 +134,14 @@ describe('OrientationHero', () => {
     expect(shouldUseOrientationSidebar(800, 1)).toBe(true);
     expect(shouldUseOrientationSidebar(620, 1.2)).toBe(false);
     expect(computeOrientationHeroSize(800, true)).toBe(410);
+  });
+  it('uses the measured desktop remainder only for web desktop', () => {
+    expect(computeOrientationWorkspaceLayout(1600, 1, 1540, true)).toEqual({expanded: true, stageWidth: 1400, stageHeight: 512, presentationScale: 0.56 / 0.37});
+    expect(computeOrientationWorkspaceLayout(1024, 1, 964, true).stageWidth).toBe(824);
+    expect(computeOrientationWorkspaceLayout(800, 1, 740, true).expanded).toBe(false);
+    expect(computeOrientationWorkspaceLayout(1600, 1, 1540, false).expanded).toBe(false);
+    expect(computeOrientationWorkspaceLayout(1100, 1, 1540, true).stageWidth).toBe(900);
+    expect(computeOrientationWorkspaceLayout(1600, 1, 500, true).expanded).toBe(false);
   });
 
   it('WAITING: shows the waiting message, no 3D model, no readouts, no reset button', () => {

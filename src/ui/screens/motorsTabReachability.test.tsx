@@ -178,9 +178,8 @@ describe('Motors tab reachability with a session that arrives late', () => {
     expect(fired).toEqual(['VISIBLE']);
   });
 
-  /* LAYER 2 - the capability must make the one primary hold control usable.
-   * There is deliberately no separate Step-1 ceremony: the first intentional
-   * long press performs session preparation before it can pulse. */
+  /* LAYER 2 - the capability must expose the explicit preparation action.
+   * Hold remains disabled until preparation reaches genuine Ready. */
   it('PICKS UP a capability that appears AFTER the panel mounted', () => {
     // THE REGRESSION. The capability is created in the coordinator's
     // startTelemetry(), in the continuation of client.startReading().
@@ -199,12 +198,13 @@ describe('Motors tab reachability with a session that arrives late', () => {
 
     // The panel was NOT remounted and the tab was NOT switched - the only
     // thing that changed is that the store now has a capability. The screen
-    // must have noticed, and "noticed" means the primary action is now
-    // reachable. Merely rendering still takes no lease and sends no command.
+    // must have noticed, and "noticed" means preparation is now reachable.
+    // Merely rendering still takes no lease and sends no command.
     expect(readMotorTestCapability(SESSION_ID)).toBeDefined();
     expect(shell.query('motors-begin-session-card')).toHaveLength(0);
     expect(shell.query('motors-ack-propellers')).toHaveLength(0);
-    expect(shell.find('motors-hold-button').props.disabled).toBe(false);
+    expect(shell.find('motors-begin-session-button').props.disabled).toBe(false);
+    expect(shell.find('motors-hold-button').props.disabled).toBe(true);
     // Nothing starts merely because the capability appeared.
     expect(shell.query('motors-status-NO_SESSION').length).toBeGreaterThan(0);
     shell.unmount();
@@ -223,7 +223,8 @@ describe('Motors tab reachability with a session that arrives late', () => {
     });
 
     shell.press('main-tab-MOTORS');
-    expect(shell.find('motors-hold-button').props.disabled).toBe(false);
+    expect(shell.find('motors-begin-session-button').props.disabled).toBe(false);
+    expect(shell.find('motors-hold-button').props.disabled).toBe(true);
     shell.unmount();
   });
 
@@ -236,16 +237,18 @@ describe('Motors tab reachability with a session that arrives late', () => {
     shell.unmount();
   });
 
-  it('has one primary motor action rather than two competing actions', () => {
+  it('separates preparation from the protected hold action', () => {
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
     ReactTestRenderer.act(() => {
       openRealCapability();
     });
     const hold = shell.find('motors-hold-button');
-    expect(shell.query('motors-begin-session')).toHaveLength(0);
+    expect(
+      shell.query('motors-begin-session-button').length,
+    ).toBeGreaterThan(0);
     expect(hold.props.delayLongPress).toBe(800);
-    expect(hold.props.disabled).toBe(false);
+    expect(hold.props.disabled).toBe(true);
     shell.unmount();
   });
 });
@@ -286,7 +289,8 @@ describe('Leaving Motors after starting a session still releases everything', ()
     ReactTestRenderer.act(() => {
       openRealCapability();
     });
-    expect(shell.find('motors-hold-button').props.disabled).toBe(false);
+    expect(shell.find('motors-begin-session-button').props.disabled).toBe(false);
+    expect(shell.find('motors-hold-button').props.disabled).toBe(true);
     // Leaving must not throw and must not tear the panel out of the tree -
     // an unmount here would drop the bridge with no stop requested at all.
     expect(() => shell.press('main-tab-SETUP')).not.toThrow();
@@ -358,9 +362,8 @@ describe('begin -> leave BEFORE holding releases the lease and resumes telemetry
     ReactTestRenderer.act(() => {
       openRealCapability();
     });
-    // The first intentional long press starts preparation; there is no
-    // separate begin button or checkbox ritual.
-    expect(shell.longPress('motors-hold-button')).toBe('FIRED');
+    // Preparation is explicit and does not submit any motor pulse.
+    shell.press('motors-begin-session-button');
     await ReactTestRenderer.act(async () => {
       await Promise.resolve();
     });

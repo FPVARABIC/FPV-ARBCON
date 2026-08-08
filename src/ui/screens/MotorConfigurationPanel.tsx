@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   Pressable,
   StyleSheet,
   Switch,
@@ -311,12 +312,8 @@ export function MotorConfigurationPanel({
     [effectiveDraft],
   );
   const changed =
-    original !== undefined &&
-    effectiveDraft !== undefined &&
-    !motorConfigurationDraftsEqual(
-      createMotorConfigurationDraft(original),
-      effectiveDraft,
-    );
+    (original !== undefined && effectiveDraft !== undefined && !motorConfigurationDraftsEqual(createMotorConfigurationDraft(original), effectiveDraft)) ||
+    (draft !== undefined && numericText !== undefined && Object.keys(numericText).some(key => numericText[key as NumericField] !== numericTextFor(draft)[key as NumericField]));
   useEffect(() => {
     onDirtyChange?.(changed);
     return () => onDirtyChange?.(false);
@@ -357,6 +354,17 @@ export function MotorConfigurationPanel({
     }
     setSaveOutcome(undefined);
   }, [installSnapshot, original]);
+
+  const requestReload = useCallback(() => {
+    if (!changed) {
+      load().catch(() => undefined);
+      return;
+    }
+    Alert.alert(t('motorConfiguration.discardChangesTitle'), t('motorConfiguration.discardChangesBody'), [
+      { text: t('motorConfiguration.cancel'), style: 'cancel' },
+      { text: t('motorConfiguration.discardAndReload'), style: 'destructive', onPress: () => { load().catch(() => undefined); } },
+    ]);
+  }, [changed, load, t]);
 
   const save = useCallback(async () => {
     if (
@@ -415,9 +423,7 @@ export function MotorConfigurationPanel({
           <Text style={styles.caption}>{t('motorConfiguration.subtitle')}</Text>
         </View>
         <Pressable
-          onPress={() => {
-            load().catch(() => undefined);
-          }}
+          onPress={requestReload}
           disabled={phase !== 'IDLE'}
           style={[styles.smallButton, phase !== 'IDLE' && styles.disabled]}
           testID="motor-config-refresh"

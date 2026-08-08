@@ -218,6 +218,23 @@ describe('ConfigurationsScreen', () => {
     expect(screen.onDirtyChange).toHaveBeenLastCalledWith(false);
     ReactTestRenderer.act(() => screen.renderer.unmount());
   });
+  it('does not discard dirty configuration on reload without confirmation', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const screen = await renderScreen();
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findByProps({testID: 'configurations-camera-angle-increment'})
+        .props.onPress();
+    });
+    ReactTestRenderer.act(() => {
+      screen.renderer.root.findByProps({testID: 'configurations-reload'}).props.onPress();
+    });
+    expect(screen.controller.load).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => { await alert.mock.calls[0][2]?.[1]?.onPress?.(); await Promise.resolve(); });
+    expect(screen.controller.load).toHaveBeenCalledTimes(2);
+    alert.mockRestore();
+    ReactTestRenderer.act(() => screen.renderer.unmount());
+  });
 
   it('routes to every integrated owner without an external link', async () => {
     const screen = await renderScreen();

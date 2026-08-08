@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { Switch, TextInput } from 'react-native';
+import { Alert, Switch, TextInput } from 'react-native';
 
 import '../../i18n';
 import i18n from '../../i18n';
@@ -164,6 +164,18 @@ describe('MotorConfigurationPanel', () => {
     ).toBe(true);
     act(() => tree.unmount());
   });
+  it('protects even an invalid numeric edit before re-reading', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const controller = controllerDouble();
+    const tree = await render(controller);
+    await act(async () => { tree.root.findByProps({testID: 'motor-config-idle'}).findByType(TextInput).props.onChangeText(''); });
+    act(() => { tree.root.findByProps({testID: 'motor-config-refresh'}).props.onPress(); });
+    expect(controller.load).toHaveBeenCalledTimes(1);
+    await act(async () => { await alert.mock.calls[0][2]?.[1]?.onPress?.(); });
+    expect(controller.load).toHaveBeenCalledTimes(2);
+    alert.mockRestore();
+    act(() => tree.unmount());
+  });
 
   it('keeps serial ESC telemetry configurable for analog motor protocols', async () => {
     const tree = await render(controllerDouble());
@@ -190,7 +202,7 @@ describe('MotorConfigurationPanel', () => {
       controllerDouble({ kind: 'REJECTED', reason: 'MOTOR_TEST_ACTIVE' }),
     );
     expect(JSON.stringify(tree.toJSON())).toContain(
-      'أوقف جلسة اختبار دوران المحركات',
+      'إنهاء جلسة الاختبار وتحرير الإعدادات',
     );
     expect(
       tree.root.findAllByProps({ testID: 'motor-config-review-save' }),

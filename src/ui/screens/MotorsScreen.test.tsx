@@ -25,6 +25,7 @@ import {
   computeMotorGlyphLayout,
   commandMayBeLive,
   derivePresentation,
+  endMotorTestSessionSafely,
 } from './MotorsScreen';
 import '../../i18n';
 import i18n from '../../i18n';
@@ -162,8 +163,11 @@ function snapshotFor(options: {
 class FakeOperator implements MotorTestOperatorPort {
   snapshot: MotorTestControllerSnapshot;
   beginCalls = 0;
+  endCalls = 0;
   renewCalls = 0;
   beginResult: Promise<MotorTestControllerSnapshot> | undefined;
+  endResult: Promise<MotorTestControllerSnapshot> | undefined;
+  endError: Error | undefined;
   readonly pulseCalls: number[] = [];
   readonly stopCalls: MotorTestStopTriggerReason[] = [];
   pulseResult: MotorTestPulseRequestResult = 'ACCEPTED';
@@ -228,7 +232,9 @@ class FakeOperator implements MotorTestOperatorPort {
   }
 
   endSession(): Promise<MotorTestControllerSnapshot> {
-    return Promise.resolve(this.snapshot);
+    this.endCalls += 1;
+    if (this.endError !== undefined) throw this.endError;
+    return this.endResult ?? Promise.resolve(this.snapshot);
   }
 
   /** Publishes a new snapshot exactly as the real controller does. */
@@ -618,7 +624,7 @@ describe('MotorsScreen - activation gating', () => {
     rendered.unmount();
   });
 
-  it('removes the separate Step-1 ceremony and leaves a lazy hold control', () => {
+  it('keeps the workspace visible without legacy acknowledgement checkboxes', () => {
     const rendered = render(undefined);
     const ids = rendered.tree.root
       .findAll(node => typeof node.props?.testID === 'string')
@@ -723,7 +729,7 @@ describe('MotorsScreen - long-press contract', () => {
     rendered.unmount();
   });
 
-  it('never lets a new short touch inherit an older gesture pending setup', async () => {
+  it('prepares explicitly and never pulses during setup', async () => {
     const initial = {
       ...snapshotFor({allowed: false}),
       phase: 'IDLE' as const,
@@ -737,29 +743,19 @@ describe('MotorsScreen - long-press contract', () => {
       resolveBegin = resolve;
     });
     const rendered = render(operator);
-    const hold = rendered.find('motors-hold-button');
-
-    // Gesture A reaches long-press and starts protected preparation, then
-    // leaves before it resolves.
-    act(() => {
-      hold.props.onPressIn?.();
-      hold.props.onLongPress?.();
-      hold.props.onPressOut?.();
-    });
+    rendered.press('motors-begin-session-button');
     expect(operator.beginCalls).toBe(1);
-
-    // Gesture B is only a short touch; its long-press threshold has NOT
-    // fired when gesture A's async setup resolves.
-    act(() => hold.props.onPressIn?.());
-    operator.snapshot = snapshotFor({allowed: true});
+    expect(operator.pulseCalls).toEqual([]);
+    const ready = snapshotFor({allowed: true});
     await act(async () => {
-      resolveBegin(operator.snapshot);
+      operator.publish(ready);
+      resolveBegin(ready);
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(operator.pulseCalls).toEqual([]);
-
-    pressOut(rendered);
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([1]);
     rendered.unmount();
   });
 
@@ -907,6 +903,44 @@ describe('MotorsScreen - long-press contract', () => {
 /* ================================================================== *
  * Safety events, ambiguity and lifecycle
  * ================================================================== */
+
+describe('MotorsScreen - explicit session ending', () => {
+  const closedSnapshot = (complete: boolean) => ({
+    ...snapshotFor({allowed: false}),
+    phase: 'CLOSED' as const,
+    teardown: {complete} as MotorTestControllerSnapshot['teardown'],
+  }) as MotorTestControllerSnapshot;
+
+  it('stops, waits for PREPARING to settle, then ends once', async () => {
+    const operator = new FakeOperator({...snapshotFor({allowed: false, machine: 'Checking'}), phase: 'PREPARING'} as MotorTestControllerSnapshot);
+    const closed = closedSnapshot(true);
+    operator.endResult = Promise.resolve(closed);
+    const ending = endMotorTestSessionSafely(operator);
+    expect(operator.stopCalls).toEqual(['STOP_BUTTON_PRESSED']);
+    expect(operator.endCalls).toBe(0);
+    operator.publish(snapshotFor({allowed: true}));
+    await expect(ending).resolves.toBe(closed);
+    expect(operator.endCalls).toBe(1);
+    expect(operator.listenerCount).toBe(0);
+  });
+
+  it('rejects CLOSED with incomplete teardown', async () => {
+    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    operator.endResult = Promise.resolve(closedSnapshot(false));
+    await expect(endMotorTestSessionSafely(operator)).rejects.toThrow('teardown did not complete');
+    expect(operator.listenerCount).toBe(0);
+  });
+
+  it('rejects a synchronous close failure and releases its listener', async () => {
+    const operator = new FakeOperator(snapshotFor({allowed: true}));
+    operator.endError = new Error('synchronous close failure');
+    await expect(endMotorTestSessionSafely(operator)).rejects.toThrow(
+      'synchronous close failure',
+    );
+    expect(operator.endCalls).toBe(1);
+    expect(operator.listenerCount).toBe(0);
+  });
+});
 
 describe('MotorsScreen - safety dominance', () => {
   it('surfaces a command-214 attribution ambiguity as Fault, never as success', () => {

@@ -58,7 +58,8 @@
     "src/platforms/react-native/transport/native/NativeUsbSerialTransport.web.test.ts",
     "src/platforms/react-native/transport/native/webUsbDfu.web.test.ts",
     "src/platforms/web/connectionDiagnostics.test.ts",
-    "src/platforms/web/telemetryDiagnostics.test.ts"
+    "src/platforms/web/telemetryDiagnostics.test.ts",
+    "src/ui/screens/MotorsScreen.web.test.tsx"
   ],
   "exclude": [
     "**/node_modules",

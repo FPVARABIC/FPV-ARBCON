@@ -32,7 +32,7 @@ describe('MotorConfigurationSummary', () => {
   it('keeps unavailable values honest before the session reads them', () => {
     const tree = render(undefined);
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('ستظهر القيم بعد أول ضغط مطوّل وتهيئة الاختبار');
+    expect(text).toContain('ستظهر القيم بعد الضغط على زر تهيئة جلسة الاختبار');
     expect(text.match(/—/g)).toHaveLength(3);
     act(() => tree.unmount());
   });

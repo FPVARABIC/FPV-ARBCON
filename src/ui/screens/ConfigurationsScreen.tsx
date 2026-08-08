@@ -412,6 +412,18 @@ export default function ConfigurationsScreen({
     t,
   ]);
 
+  const reloadNow = useCallback(() => {
+    setSaveOutcome(undefined);
+    setReloadToken(value => value + 1);
+  }, []);
+  const requestReload = useCallback(() => {
+    if (!dirty) return reloadNow();
+    Alert.alert(t('configurationsSystem.discardChangesTitle'), t('configurationsSystem.discardChangesBody'), [
+      { text: t('configurationsSystem.cancel'), style: 'cancel' },
+      { text: t('configurationsSystem.discardAndReload'), style: 'destructive', onPress: reloadNow },
+    ]);
+  }, [dirty, reloadNow, t]);
+
   const loadMessage =
     loadOutcome?.kind === 'REJECTED'
       ? t(blockReasonKey(loadOutcome.reason))
@@ -517,8 +529,13 @@ export default function ConfigurationsScreen({
         {loadMessage === undefined ? null : (
           <View style={[styles.card, styles.errorCard]}>
             <Text style={styles.errorText}>{loadMessage}</Text>
+            {loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? (
+              <Pressable onPress={onOpenMotors} style={styles.secondaryButtonWide} testID="configurations-open-motors-blocked">
+                <Text style={styles.secondaryButtonText}>{t('configurationsSystem.openMotors')}</Text>
+              </Pressable>
+            ) : null}
             <Pressable
-              onPress={() => setReloadToken(value => value + 1)}
+              onPress={requestReload}
               style={styles.secondaryButtonWide}
               testID="configurations-retry"
             >
@@ -892,7 +909,7 @@ export default function ConfigurationsScreen({
                 </Pressable>
                 <Pressable
                   disabled={busy}
-                  onPress={() => setReloadToken(value => value + 1)}
+                  onPress={requestReload}
                   style={[styles.secondaryButton, busy && styles.disabled]}
                   testID="configurations-reload"
                 >

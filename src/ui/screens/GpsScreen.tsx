@@ -371,6 +371,18 @@ export default function GpsScreen({
     ]);
   }, [controller, dirty, draft, invalid.length, sessionKey, snapshot, t]);
 
+  const reloadNow = useCallback(() => {
+    setSaveOutcome(undefined);
+    setReloadToken(value => value + 1);
+  }, []);
+  const requestReload = useCallback(() => {
+    if (!dirty) return reloadNow();
+    Alert.alert(t('gpsSystem.discardChangesTitle'), t('gpsSystem.discardChangesBody'), [
+      { text: t('gpsSystem.cancel'), style: 'cancel' },
+      { text: t('gpsSystem.discardAndReload'), style: 'destructive', onPress: reloadNow },
+    ]);
+  }, [dirty, reloadNow, t]);
+
   const openMap = useCallback(() => {
     if (raw?.hasFix !== true) return;
     // Platform seam, not a behaviour change: Android still opens the same
@@ -675,7 +687,7 @@ export default function GpsScreen({
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{loadMessage}</Text>
               <Pressable
-                onPress={() => setReloadToken(value => value + 1)}
+                onPress={requestReload}
                 style={styles.secondaryButtonWide}
                 testID="gps-retry-load"
               >
@@ -813,7 +825,7 @@ export default function GpsScreen({
                 </Pressable>
                 <Pressable
                   disabled={busy}
-                  onPress={() => setReloadToken(value => value + 1)}
+                  onPress={requestReload}
                   style={[styles.secondaryButton, busy && styles.disabled]}
                   testID="gps-reload"
                 >
