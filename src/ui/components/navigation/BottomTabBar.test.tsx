@@ -57,7 +57,7 @@ describe('BottomTabBar - order and labels', () => {
     expect(firstIndex('PORTS')).toBeLessThan(firstIndex('GPS'));
     expect(firstIndex('GPS')).toBeLessThan(firstIndex('CONFIGURATIONS'));
     expect(firstIndex('CONFIGURATIONS')).toBeLessThan(firstIndex('RECEIVER'));
-    expect(firstIndex('PID')).toBe(-1);
+    expect(firstIndex('RECEIVER')).toBeLessThan(firstIndex('PID'));
     rendered.unmount();
   });
 
@@ -77,7 +77,7 @@ describe('BottomTabBar - order and labels', () => {
     expect(texts).toContain(i18n.t('tabs.gps'));
     expect(texts).toContain(i18n.t('tabs.configurations'));
     expect(texts).toContain(i18n.t('tabs.receiver'));
-    expect(texts).not.toContain(i18n.t('tabs.pid'));
+    expect(texts).toContain(i18n.t('tabs.pid'));
     // A raw key rendered on screen is the exact defect this whole pass
     // exists to remove.
     for (const tab of MAIN_TABS) {
@@ -116,7 +116,7 @@ describe('BottomTabBar - roadmap tabs', () => {
     expect(isTabSelectable('GPS')).toBe(true);
     expect(isTabSelectable('CONFIGURATIONS')).toBe(true);
     expect(isTabSelectable('RECEIVER')).toBe(true);
-    expect(isTabSelectable('PID')).toBe(false);
+    expect(isTabSelectable('PID')).toBe(true);
     expect(pressed).toEqual([]);
     rendered.unmount();
   });
@@ -210,6 +210,14 @@ describe('MainTabsScreen - the shell', () => {
     shell.press('main-tab-RECEIVER');
     expect(shell.find('main-tab-panel-RECEIVER')).toBeDefined();
     expect(shell.find('receiver-screen')).toBeDefined();
+    shell.unmount();
+  });
+
+  it('mounts the functional PID destination in the same application shell', () => {
+    const shell = renderShell();
+    shell.press('main-tab-PID');
+    expect(shell.find('main-tab-panel-PID')).toBeDefined();
+    expect(shell.find('pid-screen')).toBeDefined();
     shell.unmount();
   });
 

@@ -55,6 +55,7 @@ import PortsScreen from './PortsScreen';
 import GpsScreen from './GpsScreen';
 import ConfigurationsScreen from './ConfigurationsScreen';
 import ReceiverScreen from './ReceiverScreen';
+import PidTuningScreen from './PidTuningScreen';
 import {
   INITIAL_MAIN_TAB,
   isTabSelectable,
@@ -122,6 +123,10 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
   );
   const reportReceiverDirty = useCallback(
     (dirty: boolean) => reportDirty('RECEIVER', dirty),
+    [reportDirty],
+  );
+  const reportPidDirty = useCallback(
+    (dirty: boolean) => reportDirty('PID', dirty),
     [reportDirty],
   );
 
@@ -411,6 +416,16 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
               onOpenPorts={() => handleSelectTab('PORTS')}
               onOpenMotors={() => handleSelectTab('MOTORS')}
               onDirtyChange={reportReceiverDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('PID') ? (
+          <View style={activeTab === 'PID' ? styles.visible : styles.hidden} testID="main-tab-panel-PID">
+            <PidTuningScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'PID'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportPidDirty}
             />
           </View>
         ) : null}

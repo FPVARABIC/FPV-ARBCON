@@ -127,6 +127,13 @@ export type {
   ReceiverConfigurationValidationCode,
 } from './receiverConfigurationModel';
 export {
+  createPidTuningDraft,
+  pidTuningDraftsEqual,
+  pidTuningSnapshotsEqual,
+  validatePidTuningDraft,
+} from './pidTuningModel';
+export type {PidAxisKey, PidAxisDraft, PidTuningDraft, PidTuningValidationCode} from './pidTuningModel';
+export {
   FEATURE_MOTOR_STOP_BIT,
   FEATURE_ESC_SENSOR_BIT,
   MOTOR_PROTOCOL_RAW_MIN,

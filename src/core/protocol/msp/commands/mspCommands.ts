@@ -199,6 +199,16 @@ export const MSP_ADVANCED_CONFIG = 90;
 export const MSP_MOTOR = 104;
 export const MSP_RC = 105;
 
+/** Betaflight 2025.12.2 / MSP API 1.47 PID tuning groups. */
+export const MSP_RC_TUNING = 111;
+export const MSP_PID = 112;
+export const MSP_FILTER_CONFIG = 92;
+export const MSP_PID_ADVANCED = 94;
+export const MSP_SET_FILTER_CONFIG = 93;
+export const MSP_SET_PID_ADVANCED = 95;
+export const MSP_SET_PID = 202;
+export const MSP_SET_RC_TUNING = 204;
+
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
  * `#define MSP_MOTOR_3D_CONFIG 124` - msp.c, 6 bytes: three u16 3D
  * tuning values. Present whether or not 3D is enabled - they never

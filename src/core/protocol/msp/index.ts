@@ -34,6 +34,14 @@ export {
   MSP_ADVANCED_CONFIG,
   MSP_MOTOR,
   MSP_RC,
+  MSP_RC_TUNING,
+  MSP_PID,
+  MSP_FILTER_CONFIG,
+  MSP_PID_ADVANCED,
+  MSP_SET_FILTER_CONFIG,
+  MSP_SET_PID_ADVANCED,
+  MSP_SET_PID,
+  MSP_SET_RC_TUNING,
   MSP_MOTOR_3D_CONFIG,
   MSP_RC_DEADBAND,
   MSP_MOTOR_CONFIG,
@@ -175,6 +183,18 @@ export {
   RECEIVER_CHANNEL_MAX_COUNT,
 } from './decoding/decodeReceiver';
 export type { MspRcChannels, MspReceiverDeadband } from './decoding/decodeReceiver';
+export {
+  decodePidTerms,
+  decodePidTuningSnapshot,
+  PID_ITEM_COUNT,
+  PID_AXIS_COUNT,
+  PID_ADVANCED_API147_MIN_BYTES,
+  RC_TUNING_API147_BYTES,
+  FILTER_CONFIG_API147_BYTES,
+} from './decoding/decodePidTuning';
+export type {MspPidTerm, MspPidTuningSnapshot} from './decoding/decodePidTuning';
+export {encodeChangedPidTuning} from './encoding/encodePidTuning';
+export type {PidTuningWriteGroup, EncodedPidTuningWrite} from './encoding/encodePidTuning';
 export {
   decodeMspText,
   MSP_TEXT_PILOT_NAME,

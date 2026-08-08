@@ -287,7 +287,33 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+      'src/platforms/react-native/protocol/PidTuningController.ts',
     ],
+  },
+  {
+    token: 'encodeChangedPidTuning',
+    from: 'src/core/protocol/msp/encoding/encodePidTuning.ts',
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+  },
+  {
+    token: 'MSP_SET_PID',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+  },
+  {
+    token: 'MSP_SET_PID_ADVANCED',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+  },
+  {
+    token: 'MSP_SET_FILTER_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [],
+  },
+  {
+    token: 'MSP_SET_RC_TUNING',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [],
   },
   {
     token: 'MSP_SET_FEATURE_CONFIG',
@@ -720,7 +746,7 @@ function main() {
   console.log('D. Engine boundary (source)');
   for (const entry of boundaries.violations) {
     console.error(
-      `   BOUNDARY CROSSED: ${entry.importer} imports ${entry.token}. Only MotorTestController may.`,
+      `   BOUNDARY CROSSED: ${entry.importer} imports ${entry.token} outside its reviewed allowlist.`,
     );
   }
   for (const entry of boundaries.stale) {

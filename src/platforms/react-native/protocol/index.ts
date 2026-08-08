@@ -65,6 +65,8 @@ export {
 export {ReceiverConfigurationController, receiverConfigurationController} from './ReceiverConfigurationController';
 export type {ReceiverBlockReason, ReceiverLoadOutcome, ReceiverSaveOutcome, ReceiverSessionCoordinator, ReceiverAppStateOwner, ReceiverConfigurationControllerOptions} from './ReceiverConfigurationController';
 export {acquireReceiverTelemetry, RECEIVER_CHANNELS_POLL_ID} from './receiverTelemetry';
+export {PidTuningController, pidTuningController} from './PidTuningController';
+export type {PidBlockReason, PidLoadOutcome, PidSaveOutcome, PidSessionCoordinator, PidAppStateOwner, PidTuningControllerOptions} from './PidTuningController';
 export {
   GeneralConfigurationController,
   generalConfigurationController,

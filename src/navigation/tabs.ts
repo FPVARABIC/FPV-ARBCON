@@ -73,7 +73,7 @@ export const MAIN_TABS: readonly MainTabDefinition[] = Object.freeze([
   Object.freeze({
     key: 'PID' as const,
     labelKey: 'tabs.pid',
-    implemented: false,
+    implemented: true,
   }),
 ]);
 
