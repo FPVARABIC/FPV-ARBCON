@@ -133,6 +133,16 @@ const REQUIRED_ENGINE_TOKENS = [
   // seam while leaving a read-only shell on device.
   'MotorConfigurationController',
   'motor-configuration-panel',
+  // PID phase two must ship as an operational screen, not as navigation
+  // chrome around a read-only or mocked panel.
+  'pid-screen',
+  'PidTuningController',
+  'decodePidTuningSnapshot',
+  'encodeChangedPidTuning',
+  'MSP_SET_PID',
+  'MSP_SET_PID_ADVANCED',
+  'MSP_SET_RC_TUNING',
+  'MSP_SET_FILTER_CONFIG',
   'encodeChangedMotorConfiguration',
   'acquireMotorConfigurationInterlock',
   'MSP_EEPROM_WRITE',
@@ -308,12 +318,12 @@ const ENGINE_BOUNDARIES = [
   {
     token: 'MSP_SET_FILTER_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: [],
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
   },
   {
     token: 'MSP_SET_RC_TUNING',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: [],
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
   },
   {
     token: 'MSP_SET_FEATURE_CONFIG',

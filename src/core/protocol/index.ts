@@ -127,6 +127,8 @@ export {
 } from './msp';
 export {
   decodePidTerms,
+  decodeRcTuning,
+  decodeFilterConfiguration,
   decodePidTuningSnapshot,
   PID_ITEM_COUNT,
   PID_AXIS_COUNT,
@@ -135,7 +137,14 @@ export {
   FILTER_CONFIG_API147_BYTES,
   encodeChangedPidTuning,
 } from './msp';
-export type {MspPidTerm, MspPidTuningSnapshot, PidTuningWriteGroup, EncodedPidTuningWrite} from './msp';
+export type {
+  MspPidTerm,
+  MspRcTuning,
+  MspFilterConfiguration,
+  MspPidTuningSnapshot,
+  PidTuningWriteGroup,
+  EncodedPidTuningWrite,
+} from './msp';
 
 export {
   decodeDetailedGps,

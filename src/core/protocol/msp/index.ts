@@ -185,6 +185,8 @@ export {
 export type { MspRcChannels, MspReceiverDeadband } from './decoding/decodeReceiver';
 export {
   decodePidTerms,
+  decodeRcTuning,
+  decodeFilterConfiguration,
   decodePidTuningSnapshot,
   PID_ITEM_COUNT,
   PID_AXIS_COUNT,
@@ -192,7 +194,12 @@ export {
   RC_TUNING_API147_BYTES,
   FILTER_CONFIG_API147_BYTES,
 } from './decoding/decodePidTuning';
-export type {MspPidTerm, MspPidTuningSnapshot} from './decoding/decodePidTuning';
+export type {
+  MspPidTerm,
+  MspRcTuning,
+  MspFilterConfiguration,
+  MspPidTuningSnapshot,
+} from './decoding/decodePidTuning';
 export {encodeChangedPidTuning} from './encoding/encodePidTuning';
 export type {PidTuningWriteGroup, EncodedPidTuningWrite} from './encoding/encodePidTuning';
 export {

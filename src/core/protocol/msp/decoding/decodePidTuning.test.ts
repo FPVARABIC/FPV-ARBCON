@@ -1,4 +1,9 @@
-import {decodePidTerms, decodePidTuningSnapshot} from './decodePidTuning';
+import {
+  decodeFilterConfiguration,
+  decodePidTerms,
+  decodePidTuningSnapshot,
+  decodeRcTuning,
+} from './decodePidTuning';
 
 function writeU16(bytes: Uint8Array, offset: number, value: number): void {
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint16(offset, value, true);
@@ -13,10 +18,59 @@ describe('PID tuning MSP decoding', () => {
     expect(snapshot.feedforward).toEqual([120, 130, 140]);
   });
 
+  it('decodes every API 1.47 rates field from its official offset', () => {
+    const rates = Uint8Array.from({length: 24}, (_, index) => index + 1);
+    writeU16(rates, 16, 500);
+    writeU16(rates, 18, 600);
+    writeU16(rates, 20, 700);
+
+    expect(decodeRcTuning(rates)).toEqual({
+      ratesType: 23,
+      rcRate: [1, 13, 12],
+      expo: [2, 14, 11],
+      superRate: [3, 4, 5],
+      throttleMid: 7,
+      throttleExpo: 8,
+      throttleHover: 24,
+      throttleLimitType: 15,
+      throttleLimitPercent: 16,
+      rateLimit: [500, 600, 700],
+    });
+  });
+
+  it('decodes only the reviewed API 1.47 filter fields', () => {
+    const filters = new Uint8Array(49);
+    writeU16(filters, 1, 120);
+    writeU16(filters, 20, 250);
+    writeU16(filters, 29, 180);
+    writeU16(filters, 31, 420);
+    writeU16(filters, 33, 90);
+    writeU16(filters, 35, 180);
+    writeU16(filters, 39, 350);
+    writeU16(filters, 41, 150);
+    writeU16(filters, 45, 600);
+    filters[48] = 3;
+
+    expect(decodeFilterConfiguration(filters)).toEqual({
+      gyroLpf1StaticHz: 250,
+      gyroLpf1DynamicMinHz: 180,
+      gyroLpf1DynamicMaxHz: 420,
+      dtermLpf1StaticHz: 120,
+      dtermLpf1DynamicMinHz: 90,
+      dtermLpf1DynamicMaxHz: 180,
+      dynamicNotchQ: 350,
+      dynamicNotchMinHz: 150,
+      dynamicNotchMaxHz: 600,
+      dynamicNotchCount: 3,
+    });
+  });
+
   it('rejects layouts that are not the pinned API 1.47 contract', () => {
     expect(() => decodePidTerms(new Uint8Array(14))).toThrow('15 bytes');
     expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(60), rates: new Uint8Array(24), filters: new Uint8Array(49)})).toThrow('at least 61');
     expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(23), filters: new Uint8Array(49)})).toThrow('24 bytes');
     expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(48)})).toThrow('49 bytes');
+    expect(() => decodeRcTuning(new Uint8Array(23))).toThrow('24 bytes');
+    expect(() => decodeFilterConfiguration(new Uint8Array(48))).toThrow('49 bytes');
   });
 });

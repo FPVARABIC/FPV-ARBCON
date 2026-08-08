@@ -60,6 +60,8 @@ export type {
   MspRxConfig,
   MspTextValue,
   MspPidTerm,
+  MspRcTuning,
+  MspFilterConfiguration,
   MspPidTuningSnapshot,
   PidTuningWriteGroup,
   EncodedPidTuningWrite,
@@ -229,6 +231,8 @@ export {
   decodeReceiverDeadband,
   RECEIVER_CHANNEL_MAX_COUNT,
   decodePidTerms,
+  decodeRcTuning,
+  decodeFilterConfiguration,
   decodePidTuningSnapshot,
   PID_ITEM_COUNT,
   PID_AXIS_COUNT,
@@ -268,11 +272,21 @@ export {
 
 export {
   createPidTuningDraft,
+  ratesEqual,
+  filtersEqual,
   pidTuningDraftsEqual,
   pidTuningSnapshotsEqual,
   validatePidTuningDraft,
 } from './state/pidTuningModel';
-export type {PidAxisKey, PidAxisDraft, PidTuningDraft, PidTuningValidationCode} from './state/pidTuningModel';
+export type {
+  PidAxisKey,
+  PidAxisDraft,
+  RateAxisDraft,
+  RatesDraft,
+  FiltersDraft,
+  PidTuningDraft,
+  PidTuningValidationCode,
+} from './state/pidTuningModel';
 export type {
   MspDetailedGps,
   MspCompGps,
