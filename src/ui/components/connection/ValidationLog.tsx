@@ -122,7 +122,7 @@ const styles = StyleSheet.create({
   },
   clearButtonText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
   },
   emptyText: {
     ...typography.caption,

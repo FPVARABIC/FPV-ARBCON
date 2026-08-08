@@ -1116,7 +1116,7 @@ const styles = StyleSheet.create({
   },
   reportButton: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '600',
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
@@ -1169,7 +1169,7 @@ const styles = StyleSheet.create({
   },
   instructionIconText: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'ltr',
   },
   instructionCopy: {
@@ -1177,7 +1177,7 @@ const styles = StyleSheet.create({
   },
   instructionEyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     marginBottom: spacing.xs,
   },
   instructionPrimary: {

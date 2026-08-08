@@ -435,10 +435,13 @@ export function MotorsScreenView({
   );
   const [advancedVerificationOpen, setAdvancedVerificationOpen] =
     useState(false);
+  const [motorSettingsOpen, setMotorSettingsOpen] = useState(false);
   const [motorConfigurationDirty, setMotorConfigurationDirty] = useState(false);
+  const [motorConfigurationBusy, setMotorConfigurationBusy] = useState(false);
   const [outputOrderDirty, setOutputOrderDirty] = useState(false);
   const [escDirectionDirty, setEscDirectionDirty] = useState(false);
   const [beginning, setBeginning] = useState(false);
+  const [beginQueued, setBeginQueued] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
   const [pulseRejected, setPulseRejected] = useState(false);
   const [endingSession, setEndingSession] = useState(false);
@@ -508,7 +511,9 @@ export function MotorsScreenView({
 
   useEffect(() => {
     setBeginning(false);
+    setBeginQueued(false);
     setBeginFailed(false);
+    setMotorSettingsOpen(false);
     setPulseRejected(false);
     setEndingSession(false);
     setEndSessionFailed(false);
@@ -670,18 +675,70 @@ export function MotorsScreenView({
     await endMotorTestSessionSafely(port);
   }, []);
 
-  const handleBeginSessionPress = useCallback(() => {
-    const port = operatorRef.current;
-    if (port === undefined || beginning || port.getSnapshot().phase !== 'IDLE') return;
+  const runBeginSession = useCallback((port: MotorTestOperatorPort) => {
+    setBeginQueued(false);
     setBeginning(true);
     setBeginFailed(false);
     setPulseRejected(false);
-    port.beginSession().catch(() => {
-      if (mountedRef.current && operatorRef.current === port) setBeginFailed(true);
-    }).finally(() => {
-      if (mountedRef.current && operatorRef.current === port) setBeginning(false);
-    });
-  }, [beginning]);
+    port
+      .beginSession()
+      .then(result => {
+        if (!mountedRef.current || operatorRef.current !== port) {
+          return;
+        }
+        // A fail-closed setup is often a resolved controller result, not a
+        // rejected Promise. Mirror that official result explicitly: a Ready
+        // result enables the hold control immediately, while a blocked result
+        // receives an operator-facing explanation instead of a dim mystery.
+        setSnapshot(result);
+        setBeginFailed(result.activation.allowed !== true);
+      })
+      .catch(() => {
+        if (mountedRef.current && operatorRef.current === port) {
+          setBeginFailed(true);
+        }
+      })
+      .finally(() => {
+        if (mountedRef.current && operatorRef.current === port) {
+          setBeginning(false);
+        }
+      });
+  }, []);
+
+  const handleBeginSessionPress = useCallback(() => {
+    const port = operatorRef.current;
+    if (
+      port === undefined ||
+      beginning ||
+      port.getSnapshot().phase !== 'IDLE'
+    ) {
+      return;
+    }
+    // The configuration panel and the motor-test controller intentionally
+    // share one exclusive MSP interlock. A tap during the automatic settings
+    // read is remembered and begins as soon as that read releases ownership;
+    // it is never converted into a rejected, apparently inert button press.
+    if (motorConfigurationBusy) {
+      setBeginning(true);
+      setBeginQueued(true);
+      setBeginFailed(false);
+      return;
+    }
+    runBeginSession(port);
+  }, [beginning, motorConfigurationBusy, runBeginSession]);
+
+  useEffect(() => {
+    if (!beginQueued || motorConfigurationBusy) {
+      return;
+    }
+    const port = operatorRef.current;
+    if (port === undefined || port.getSnapshot().phase !== 'IDLE') {
+      setBeginQueued(false);
+      setBeginning(false);
+      return;
+    }
+    runBeginSession(port);
+  }, [beginQueued, motorConfigurationBusy, runBeginSession]);
 
   const handleEndSessionPress = useCallback(() => {
     const port = operatorRef.current;
@@ -1155,6 +1212,68 @@ export function MotorsScreenView({
             </View>
           </View>
 
+          <View style={styles.workflowSteps} testID="motors-workflow-steps">
+            <View style={styles.workflowStep}>
+              <View style={styles.workflowNumber}>
+                <Text style={styles.workflowNumberText}>1</Text>
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.workflowTitle}>
+                  {t('motorsScreen.flowSafety')}
+                </Text>
+                <Text style={styles.workflowDetail}>
+                  {t('motorsScreen.flowSafetyDetail')}
+                </Text>
+              </View>
+            </View>
+            <View
+              style={[
+                styles.workflowStep,
+                (beginning || presentation === 'CHECKING') &&
+                  styles.workflowStepActive,
+                canActivate && styles.workflowStepDone,
+              ]}>
+              <View
+                style={[
+                  styles.workflowNumber,
+                  canActivate && styles.workflowNumberDone,
+                ]}>
+                <Text
+                  style={[
+                    styles.workflowNumberText,
+                    canActivate && styles.workflowNumberTextDone,
+                  ]}>
+                  {canActivate ? '✓' : '2'}
+                </Text>
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.workflowTitle}>
+                  {t('motorsScreen.flowSession')}
+                </Text>
+                <Text style={styles.workflowDetail}>{statusText}</Text>
+              </View>
+            </View>
+            <View
+              style={[
+                styles.workflowStep,
+                canActivate && styles.workflowStepActive,
+              ]}>
+              <View style={styles.workflowNumber}>
+                <Text style={styles.workflowNumberText}>3</Text>
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.workflowTitle}>
+                  {t('motorsScreen.flowHold')}
+                </Text>
+                <Text style={styles.workflowDetail}>
+                  {canActivate
+                    ? t('motorsScreen.flowHoldReady')
+                    : t('motorsScreen.flowHoldWaiting')}
+                </Text>
+              </View>
+            </View>
+          </View>
+
           <MotorConfigurationSummary scope={snapshot?.motorScope} />
 
           {snapshot?.phase === 'IDLE' ? (
@@ -1162,15 +1281,45 @@ export function MotorsScreenView({
               onPress={handleBeginSessionPress}
               disabled={operator === undefined || beginning}
               accessibilityRole="button"
-              accessibilityState={{ disabled: operator === undefined || beginning, busy: beginning }}
-              style={[styles.prepareButton, (operator === undefined || beginning) && styles.holdButtonOff]}
+              accessibilityState={{
+                disabled:
+                  operator === undefined || beginning,
+                busy: beginning || motorConfigurationBusy,
+              }}
+              style={[
+                styles.prepareButton,
+                (operator === undefined || beginning) &&
+                  styles.holdButtonOff,
+              ]}
               testID="motors-begin-session-button"
             >
               <Text style={styles.prepareLabel}>
-                {beginning ? t('motorsScreen.beginSessionBusy') : t('motorsScreen.beginSession')}
+                {beginQueued
+                  ? t('motorsScreen.configurationReadBusy')
+                  : beginning
+                  ? t('motorsScreen.beginSessionBusy')
+                  : motorConfigurationBusy
+                    ? t('motorsScreen.beginAfterConfigurationRead')
+                    : t('motorsScreen.beginSession')}
               </Text>
               <Text style={styles.caption}>{t('motorsScreen.beginSessionHint')}</Text>
             </Pressable>
+          ) : null}
+
+          {canActivate ? (
+            <View style={styles.readyBanner} testID="motors-session-ready">
+              <View style={styles.readyBadge}>
+                <Text style={styles.readyBadgeText}>✓</Text>
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.readyTitle}>
+                  {t('motorsScreen.readyHeading')}
+                </Text>
+                <Text style={styles.readyBody}>
+                  {t('motorsScreen.readyDetail', {slot: `M${selectedSlot}`})}
+                </Text>
+              </View>
+            </View>
           ) : null}
 
           <View style={styles.outputSection} testID="motors-outputs">
@@ -1302,10 +1451,27 @@ export function MotorsScreenView({
         {/* Persistent configuration is a separate transaction from bench
             testing. It owns no motor pulse path and is deliberately bound to
             the canonical session id rather than to the MotorTest operator. */}
-        {sessionId !== undefined ? (
+        {sessionId !== undefined && !motorSettingsOpen ? (
+          <Pressable
+            onPress={() => setMotorSettingsOpen(true)}
+            accessibilityRole="button"
+            style={styles.card}
+            testID="motors-open-settings"
+          >
+            <Text style={styles.sectionTitle}>
+              {t('motorsScreen.openMotorSettings')}
+            </Text>
+            <Text style={styles.caption}>
+              {t('motorsScreen.openMotorSettingsHint')}
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {sessionId !== undefined && motorSettingsOpen ? (
           <MotorConfigurationPanel
             sessionId={sessionId}
             onDirtyChange={setMotorConfigurationDirty}
+            onBusyChange={setMotorConfigurationBusy}
           />
         ) : null}
 
@@ -1412,7 +1578,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   title: {
@@ -1428,7 +1594,7 @@ const styles = StyleSheet.create({
   dangerBanner: {
     flexDirection: 'row',
     gap: spacing.sm,
-    backgroundColor: '#2C1D22',
+    backgroundColor: '#FFF0F1',
     borderColor: colors.error,
     borderWidth: 1,
     borderRadius: radii.lg,
@@ -1451,7 +1617,7 @@ const styles = StyleSheet.create({
   faultBanner: {
     flexDirection: 'row',
     gap: spacing.sm,
-    backgroundColor: '#2C1D22',
+    backgroundColor: '#FFF0F1',
     borderColor: colors.error,
     borderWidth: 2,
     borderRadius: radii.lg,
@@ -1498,7 +1664,7 @@ const styles = StyleSheet.create({
   },
   sessionStepNumber: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
   },
   sessionContent: { flex: 1, gap: spacing.sm },
   statusCard: {
@@ -1533,6 +1699,61 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
+  },
+  workflowSteps: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  workflowStep: {
+    flexGrow: 1,
+    flexBasis: 220,
+    minHeight: 74,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.backgroundRaised,
+  },
+  workflowStepActive: {
+    borderColor: colors.accentStrong,
+    backgroundColor: colors.accentSoft,
+  },
+  workflowStepDone: {
+    borderColor: '#A9D8CB',
+    backgroundColor: '#EAF7F2',
+  },
+  workflowNumber: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  workflowNumberDone: {
+    backgroundColor: colors.success,
+    borderColor: colors.success,
+  },
+  workflowNumberText: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+  },
+  workflowNumberTextDone: { color: colors.white },
+  workflowTitle: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  workflowDetail: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
   },
   progressBadge: {
     maxWidth: 126,
@@ -1619,7 +1840,7 @@ const styles = StyleSheet.create({
   },
   slotCardLive: {
     borderColor: colors.warning,
-    backgroundColor: '#342A17',
+    backgroundColor: '#FFF4D8',
   },
   slotLabel: {
     ...typography.mono,
@@ -1629,7 +1850,7 @@ const styles = StyleSheet.create({
     writingDirection: 'ltr',
   },
   slotLabelLive: { color: colors.warning },
-  slotSelected: { ...typography.caption, color: colors.accent },
+  slotSelected: { ...typography.caption, color: colors.accentStrong },
   airframeSection: {
     gap: spacing.sm,
     borderTopColor: colors.borderSoft,
@@ -1664,7 +1885,7 @@ const styles = StyleSheet.create({
   },
   selectedMotorSlot: {
     ...typography.title,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'ltr',
   },
   batteryWarning: {
@@ -1691,7 +1912,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: colors.surfaceAlt,
   },
-  directionIconText: { fontSize: 22, color: colors.accent },
+  directionIconText: { fontSize: 22, color: colors.accentStrong },
   beginButton: {
     minHeight: MIN_TOUCH_TARGET,
     alignItems: 'center',
@@ -1710,7 +1931,7 @@ const styles = StyleSheet.create({
   beginButtonPressed: { borderColor: colors.textPrimary, opacity: 0.7 },
   beginLabel: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   holdStep: {
@@ -1747,7 +1968,39 @@ const styles = StyleSheet.create({
     color: colors.accentText,
   },
   prepareButton: { minHeight: MIN_TOUCH_TARGET + spacing.md, alignItems: 'center', justifyContent: 'center', borderColor: colors.accent, borderWidth: 2, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
-  prepareLabel: { ...typography.sectionTitle, color: colors.accent, writingDirection: 'rtl' },
+  prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'rtl' },
+  readyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#A9D8CB',
+    backgroundColor: '#EAF7F2',
+  },
+  readyBadge: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: colors.success,
+  },
+  readyBadgeText: {
+    ...typography.sectionTitle,
+    color: colors.white,
+  },
+  readyTitle: {
+    ...typography.sectionTitle,
+    color: colors.success,
+    writingDirection: 'rtl',
+  },
+  readyBody: {
+    ...typography.body,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
   inlineError: { ...typography.caption, color: colors.error, writingDirection: 'rtl', textAlign: 'center' },
   leaveButton: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center' },
   leaveLabel: {
@@ -1772,10 +2025,10 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 4,
   },
-  stopIcon: { fontSize: 22, color: colors.textPrimary },
+  stopIcon: { fontSize: 22, color: colors.white },
   stopLabel: {
     ...typography.title,
-    color: colors.textPrimary,
+    color: colors.white,
     writingDirection: 'rtl',
   },
   endSessionButton: { minHeight: MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderColor: colors.warning, borderWidth: 2, borderRadius: radii.md, padding: spacing.sm },

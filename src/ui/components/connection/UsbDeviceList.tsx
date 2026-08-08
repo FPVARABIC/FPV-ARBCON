@@ -191,7 +191,7 @@ const styles = StyleSheet.create({
   },
   refreshButtonText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '600',
   },
   refreshButtonTextDisabled: {
@@ -218,7 +218,7 @@ const styles = StyleSheet.create({
   },
   pickerButtonText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   pickerHint: {

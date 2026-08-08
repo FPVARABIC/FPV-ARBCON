@@ -90,9 +90,9 @@ export default function BottomTabBar({
 
 const styles = StyleSheet.create({
   bar: {
-    backgroundColor: colors.backgroundRaised,
+    backgroundColor: colors.accent,
     borderTopWidth: 1,
-    borderTopColor: colors.borderSoft,
+    borderTopColor: colors.accentStrong,
     paddingTop: spacing.sm,
   },
   strip: {
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
   },
   tabActive: {
-    backgroundColor: colors.accentSoft,
+    backgroundColor: colors.white,
   },
   iconBubble: {
     width: 30,
@@ -131,7 +131,7 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 15,
-    color: colors.textMuted,
+    color: colors.textPrimary,
     writingDirection: 'ltr',
   },
   iconActive: {
@@ -140,10 +140,10 @@ const styles = StyleSheet.create({
   label: {
     ...typography.caption,
     fontWeight: '700',
-    color: colors.textSecondary,
+    color: colors.textPrimary,
     writingDirection: 'rtl',
   },
   labelActive: {
-    color: colors.accent,
+    color: colors.accentStrong,
   },
 });

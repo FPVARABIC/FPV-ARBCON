@@ -473,7 +473,7 @@ const styles = StyleSheet.create({
   headerCopy: { flex: 1, gap: spacing.xs },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   title: {
@@ -518,7 +518,7 @@ const styles = StyleSheet.create({
   },
   channelState: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
     writingDirection: 'rtl',
   },
@@ -551,7 +551,7 @@ const styles = StyleSheet.create({
   },
   numericValue: {
     ...typography.mono,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'ltr',
   },
   meterTrack: {

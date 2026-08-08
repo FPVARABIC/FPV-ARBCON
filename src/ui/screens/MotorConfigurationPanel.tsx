@@ -57,6 +57,9 @@ export interface MotorConfigurationPanelProps {
   readonly sessionId: string;
   readonly controller?: MotorConfigurationControllerPort;
   readonly onDirtyChange?: (dirty: boolean) => void;
+  /** Reports the panel's exclusive MSP transaction so the motor-test
+   * session action cannot race its automatic read or a save. */
+  readonly onBusyChange?: (busy: boolean) => void;
 }
 
 function numericTextFor(draft: MotorConfigurationDraft): NumericText {
@@ -249,6 +252,7 @@ export function MotorConfigurationPanel({
   sessionId,
   controller = motorConfigurationController,
   onDirtyChange,
+  onBusyChange,
 }: MotorConfigurationPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<'LOADING' | 'IDLE' | 'SAVING'>('LOADING');
@@ -259,6 +263,16 @@ export function MotorConfigurationPanel({
   const [saveOutcome, setSaveOutcome] =
     useState<MotorConfigurationSaveOutcome>();
   const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    onBusyChange?.(phase !== 'IDLE');
+  }, [onBusyChange, phase]);
+  useEffect(
+    () => () => {
+      onBusyChange?.(false);
+    },
+    [onBusyChange],
+  );
 
   const installSnapshot = useCallback(
     (snapshot: MotorConfigurationSnapshot) => {
@@ -742,7 +756,7 @@ const styles = StyleSheet.create({
   flexOne: { flex: 1 },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   title: {
@@ -757,7 +771,7 @@ const styles = StyleSheet.create({
   },
   infoText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   section: {
@@ -810,7 +824,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     writingDirection: 'ltr',
   },
-  protocolTextSelected: { color: colors.accent, fontWeight: '800' },
+  protocolTextSelected: { color: colors.accentStrong, fontWeight: '800' },
   numberGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   numberField: {
     flexGrow: 1,
@@ -843,7 +857,7 @@ const styles = StyleSheet.create({
   },
   smallButtonText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '800',
   },
   actionRow: { flexDirection: 'row', gap: spacing.sm },
@@ -883,7 +897,7 @@ const styles = StyleSheet.create({
     borderColor: colors.warning,
     borderWidth: 1,
     borderRadius: radii.md,
-    backgroundColor: '#342A17',
+    backgroundColor: '#FFF4D8',
     padding: spacing.md,
   },
   confirmationTitle: {
@@ -893,7 +907,7 @@ const styles = StyleSheet.create({
   },
   errorNotice: {
     borderRadius: radii.sm,
-    backgroundColor: '#2C1D22',
+    backgroundColor: '#FFF0F1',
     padding: spacing.md,
   },
   errorText: {
@@ -903,7 +917,7 @@ const styles = StyleSheet.create({
   },
   successNotice: {
     borderRadius: radii.sm,
-    backgroundColor: '#172D27',
+    backgroundColor: '#EAF7F2',
     padding: spacing.md,
   },
   successText: {

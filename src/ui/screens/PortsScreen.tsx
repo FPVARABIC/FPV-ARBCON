@@ -1051,7 +1051,7 @@ const styles = StyleSheet.create({
   hero: { alignItems: 'flex-end', gap: spacing.xs },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     textAlign: 'right',
     writingDirection: 'rtl',
   },
@@ -1068,7 +1068,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   warningCard: {
-    backgroundColor: '#2A2115',
+    backgroundColor: '#FFF4D8',
     borderColor: colors.warning,
     borderWidth: 1,
     borderRadius: radii.lg,
@@ -1095,7 +1095,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   errorCard: {
-    backgroundColor: '#301B21',
+    backgroundColor: '#FFF0F1',
     borderWidth: 1,
     borderColor: colors.error,
     borderRadius: radii.md,
@@ -1168,7 +1168,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   validationCard: {
-    backgroundColor: '#2A2115',
+    backgroundColor: '#FFF4D8',
     borderWidth: 1,
     borderColor: colors.warning,
     borderRadius: radii.md,
@@ -1221,12 +1221,12 @@ const styles = StyleSheet.create({
   },
   roleCountText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   expandText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   roleSummary: {
@@ -1237,7 +1237,7 @@ const styles = StyleSheet.create({
   },
   baudSummary: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     textAlign: 'left',
   },
   preservedNotice: {
@@ -1305,7 +1305,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     writingDirection: 'rtl',
   },
-  chipTextSelected: { color: colors.accent, fontWeight: '800' },
+  chipTextSelected: { color: colors.accentStrong, fontWeight: '800' },
   unavailableText: {
     fontSize: 9,
     lineHeight: 12,
@@ -1337,7 +1337,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: spacing.md,
   },
-  outcomeDanger: { backgroundColor: '#301B21', borderColor: colors.error },
+  outcomeDanger: { backgroundColor: '#FFF0F1', borderColor: colors.error },
   outcomeText: {
     ...typography.body,
     color: colors.success,
@@ -1362,7 +1362,7 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   saveButton: {

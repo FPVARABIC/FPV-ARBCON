@@ -980,7 +980,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   hero: { paddingHorizontal: spacing.sm, paddingVertical: spacing.lg },
-  eyebrow: { ...typography.eyebrow, color: colors.accent },
+  eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   title: { ...typography.display, color: colors.textPrimary, marginTop: 2 },
   subtitle: {
     ...typography.body,
@@ -1014,7 +1014,7 @@ const styles = StyleSheet.create({
   },
   errorCard: { borderColor: colors.error },
   reviewCard: { borderColor: colors.warning },
-  cardEyebrow: { ...typography.eyebrow, color: colors.accent },
+  cardEyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   cardTitle: { ...typography.title, color: colors.textPrimary, marginTop: 2 },
   cardBody: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs },
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
@@ -1063,7 +1063,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   stepButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  stepButtonText: { fontSize: 22, color: colors.accent, writingDirection: 'ltr' },
+  stepButtonText: { fontSize: 22, color: colors.accentStrong, writingDirection: 'ltr' },
   stepValue: {
     ...typography.body,
     color: colors.textPrimary,
@@ -1110,7 +1110,7 @@ const styles = StyleSheet.create({
   },
   choiceActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   choiceText: { ...typography.caption, color: colors.textSecondary, fontWeight: '700' },
-  choiceTextActive: { color: colors.accent },
+  choiceTextActive: { color: colors.accentStrong },
   destinationGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
   destination: {
     flexGrow: 1,
@@ -1126,9 +1126,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   destinationCopy: { flex: 1 },
-  destinationTitle: { ...typography.body, color: colors.accent, fontWeight: '800' },
+  destinationTitle: { ...typography.body, color: colors.accentStrong, fontWeight: '800' },
   destinationDetail: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  destinationArrow: { fontSize: 26, color: colors.accent },
+  destinationArrow: { fontSize: 26, color: colors.accentStrong },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.lg },
   secondaryButton: {
     minHeight: 44,
@@ -1149,7 +1149,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     marginTop: spacing.md,
   },
-  secondaryButtonText: { ...typography.body, color: colors.accent, fontWeight: '700' },
+  secondaryButtonText: { ...typography.body, color: colors.accentStrong, fontWeight: '700' },
   primaryButton: {
     minHeight: 44,
     flexGrow: 1,

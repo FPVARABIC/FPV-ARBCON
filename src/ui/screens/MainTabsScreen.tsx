@@ -426,7 +426,7 @@ const styles = StyleSheet.create({
     borderTopColor: colors.accentStrong,
   },
   awaitingStopText: {
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
     textAlign: 'center',
     writingDirection: 'rtl',

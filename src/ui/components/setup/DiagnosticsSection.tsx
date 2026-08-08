@@ -321,12 +321,12 @@ const styles = StyleSheet.create({
   },
   toggleText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
     writingDirection: 'rtl',
   },
   toggleIcon: {
-    color: colors.accent,
+    color: colors.accentStrong,
     fontSize: 14,
   },
   detailsCollapsed: {

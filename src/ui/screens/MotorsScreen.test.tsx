@@ -759,6 +759,38 @@ describe('MotorsScreen - long-press contract', () => {
     rendered.unmount();
   });
 
+  it('uses the resolved official begin result even when no final publish follows', async () => {
+    const initial = {
+      ...snapshotFor({allowed: false}),
+      phase: 'IDLE' as const,
+      setupStep: 'NOT_STARTED' as const,
+      machine: undefined,
+      telemetryHeld: false,
+    } as MotorTestControllerSnapshot;
+    const operator = new FakeOperator(initial);
+    const ready = snapshotFor({allowed: true});
+    operator.beginResult = Promise.resolve().then(() => {
+      // The controller's getter is authoritative immediately, but it does not
+      // emit one extra publication after resolving setup in this regression
+      // fixture.
+      operator.snapshot = ready;
+      return ready;
+    });
+    const rendered = render(operator);
+
+    rendered.press('motors-begin-session-button');
+    await act(async () => {
+      await operator.beginResult;
+      await Promise.resolve();
+    });
+
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(false);
+    expect(rendered.query('motors-session-ready')).toBeDefined();
+    longPress(rendered);
+    expect(operator.pulseCalls).toEqual([1]);
+    rendered.unmount();
+  });
+
   it('activates exactly the selected output, exactly once per hold', () => {
     const { operator, rendered } = readyRendered();
     rendered.press('motors-slot-3');

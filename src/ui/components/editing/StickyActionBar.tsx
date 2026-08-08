@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   copy: { gap: 2 },
-  eyebrow: { ...typography.eyebrow, color: colors.accent },
+  eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   summary: { ...typography.body, color: colors.textPrimary, fontWeight: '700' },
   details: { maxHeight: 84 },
   detailsContent: { gap: 2 },

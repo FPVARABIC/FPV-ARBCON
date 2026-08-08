@@ -64,6 +64,15 @@ export default function SideNavigationRail({
       accessibilityLabel={t('tabs.barAccessibilityLabel')}
       testID="main-side-rail"
     >
+      <View style={styles.brand} testID="main-side-rail-brand">
+        <View style={styles.brandMark}>
+          <Text style={styles.brandGlyph}>F</Text>
+        </View>
+        <View style={styles.brandCopy}>
+          <Text style={styles.brandName}>FPV-ARBCON</Text>
+          <Text style={styles.brandTagline}>مركز الضبط العربي</Text>
+        </View>
+      </View>
       {header !== undefined ? (
         <View style={styles.header} testID="main-side-rail-header">
           {header}
@@ -105,12 +114,45 @@ export default function SideNavigationRail({
 const styles = StyleSheet.create({
   rail: {
     width: SIDE_RAIL_WIDTH,
-    backgroundColor: colors.backgroundRaised,
+    backgroundColor: colors.surface,
     borderStartWidth: 1,
     borderStartColor: colors.borderSoft,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.sm,
     gap: spacing.md,
+  },
+  brand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radii.md,
+    backgroundColor: colors.accent,
+  },
+  brandMark: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    backgroundColor: colors.accentStrong,
+  },
+  brandGlyph: {
+    ...typography.sectionTitle,
+    color: colors.white,
+    writingDirection: 'ltr',
+  },
+  brandCopy: { flex: 1 },
+  brandName: {
+    ...typography.caption,
+    color: colors.textPrimary,
+    fontWeight: '900',
+    writingDirection: 'ltr',
+  },
+  brandTagline: {
+    ...typography.caption,
+    color: colors.accentText,
+    writingDirection: 'rtl',
   },
   header: {
     paddingHorizontal: spacing.xs,
@@ -146,5 +188,5 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     writingDirection: 'rtl',
   },
-  labelActive: { color: colors.accent },
+  labelActive: { color: colors.accentStrong },
 });

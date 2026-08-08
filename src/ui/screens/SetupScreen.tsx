@@ -713,7 +713,7 @@ const styles = StyleSheet.create({
   },
   telemetryReportButtonText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   telemetryReportHint: {
@@ -735,7 +735,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   sectionHeadingCopy: { flex: 1 },
-  sectionEyebrow: { ...typography.eyebrow, color: colors.accent },
+  sectionEyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   sectionTitle: {
     ...typography.title,
     color: colors.textPrimary,

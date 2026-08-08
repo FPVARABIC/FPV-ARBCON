@@ -215,7 +215,7 @@ const styles = StyleSheet.create({
   },
   showAllText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '600',
   },
 });

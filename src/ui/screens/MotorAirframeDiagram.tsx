@@ -340,7 +340,7 @@ function MotorNode({
       : verified
       ? { text: t('motorsScreen.slotStateObserved'), color: colors.success }
       : selected
-      ? { text: t('motorsScreen.slotStateSelected'), color: colors.accent }
+      ? { text: t('motorsScreen.slotStateSelected'), color: colors.accentStrong }
       : undefined;
 
   return (
@@ -563,9 +563,9 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   frontMarker: { alignItems: 'center', gap: 1 },
-  frontArrow: { color: colors.accent, fontWeight: '900' },
+  frontArrow: { color: colors.accentStrong, fontWeight: '900' },
   frontText: {
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '800',
     writingDirection: 'rtl',
   },
@@ -573,8 +573,8 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     position: 'relative',
     overflow: 'hidden',
-    backgroundColor: '#091D26',
-    borderColor: colors.borderSoft,
+    backgroundColor: '#F7FAF9',
+    borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radii.lg,
   },
@@ -584,7 +584,7 @@ const styles = StyleSheet.create({
     top: '50%',
     width: '76%',
     borderRadius: radii.pill,
-    backgroundColor: '#2B5864',
+    backgroundColor: '#BBD8D4',
     borderColor: colors.border,
     borderWidth: 1,
   },
@@ -601,7 +601,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     borderColor: colors.accent,
     borderWidth: 1,
-    backgroundColor: '#123642',
+    backgroundColor: '#D9EFEB',
   },
   bodyNose: {
     position: 'absolute',
@@ -653,7 +653,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#0D2934',
+    backgroundColor: colors.white,
     borderColor: colors.border,
     borderWidth: 1,
     borderRadius: radii.md,
@@ -671,7 +671,7 @@ const styles = StyleSheet.create({
     borderColor: colors.textSecondary,
     backgroundColor: colors.backgroundRaised,
   },
-  rotorActive: { borderColor: colors.warning, backgroundColor: '#3B2C12' },
+  rotorActive: { borderColor: colors.warning, backgroundColor: '#FFF4D8' },
   blade: {
     position: 'absolute',
     borderRadius: radii.pill,
@@ -684,13 +684,13 @@ const styles = StyleSheet.create({
   },
   rotationArrow: {
     position: 'absolute',
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '900',
   },
   rotationArrowActive: { color: colors.warning },
   directionText: {
     ...typography.mono,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '800',
     writingDirection: 'ltr',
   },

@@ -143,7 +143,7 @@ const styles = StyleSheet.create({
   },
   readOnlyText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
     writingDirection: 'rtl',
   },

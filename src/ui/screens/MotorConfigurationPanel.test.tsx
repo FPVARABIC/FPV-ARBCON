@@ -91,6 +91,40 @@ async function render(controller: MotorConfigurationControllerPort) {
 }
 
 describe('MotorConfigurationPanel', () => {
+  it('reports its automatic configuration transaction as busy until the read settles', async () => {
+    let resolveLoad!: (
+      value: Awaited<ReturnType<MotorConfigurationControllerPort['load']>>,
+    ) => void;
+    const controller: MotorConfigurationControllerPort = {
+      load: jest.fn(
+        () =>
+          new Promise(resolve => {
+            resolveLoad = resolve;
+          }),
+      ),
+      save: jest.fn(),
+    };
+    const onBusyChange = jest.fn();
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <MotorConfigurationPanel
+          sessionId="fc-1"
+          controller={controller}
+          onBusyChange={onBusyChange}
+        />,
+      );
+    });
+    expect(onBusyChange).toHaveBeenLastCalledWith(true);
+
+    await act(async () => {
+      resolveLoad({kind: 'LOADED', snapshot: snapshot()});
+      await Promise.resolve();
+    });
+    expect(onBusyChange).toHaveBeenLastCalledWith(false);
+    act(() => tree.unmount());
+  });
+
   it('loads the real FC snapshot and presents the full independent settings groups', async () => {
     const controller = controllerDouble();
     const tree = await render(controller);

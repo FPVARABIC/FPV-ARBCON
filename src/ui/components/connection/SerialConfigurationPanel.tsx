@@ -197,7 +197,7 @@ const styles = StyleSheet.create({
   },
   detailsButtonText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   technicalHidden: {
@@ -262,7 +262,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
   },
   portChipTextSelected: {
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '600',
   },
 });

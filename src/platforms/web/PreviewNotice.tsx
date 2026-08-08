@@ -40,16 +40,16 @@ export function PreviewNotice(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   root: {
-    backgroundColor: colors.accentSoft,
-    borderBottomWidth: 2,
-    borderBottomColor: colors.accent,
+    backgroundColor: '#F8F1DF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#D7B66A',
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     gap: spacing.xs,
   },
   headline: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.warning,
     textAlign: 'center',
     writingDirection: 'rtl',
   },

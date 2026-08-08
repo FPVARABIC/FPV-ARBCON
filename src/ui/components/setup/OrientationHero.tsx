@@ -536,7 +536,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
   },
   title: {
     ...typography.sectionTitle,
@@ -582,7 +582,7 @@ const styles = StyleSheet.create({
   },
   liveText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   staleText: {
@@ -622,7 +622,7 @@ const styles = StyleSheet.create({
   },
   readoutValue: {
     ...typography.title,
-    color: colors.accent,
+    color: colors.accentStrong,
     marginTop: spacing.xs / 2,
   },
   resetButton: {
@@ -657,7 +657,7 @@ const styles = StyleSheet.create({
   },
   resetButtonText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   hintBanner: {
@@ -681,7 +681,7 @@ const styles = StyleSheet.create({
   },
   hintDismissText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '600',
   },
 });

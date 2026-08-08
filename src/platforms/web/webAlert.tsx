@@ -275,7 +275,7 @@ const styles = StyleSheet.create({
   },
   buttonLabel: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
     textAlign: 'center',
     writingDirection: 'rtl',
   },

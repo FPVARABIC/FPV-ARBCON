@@ -67,7 +67,13 @@ function RouteCard({
           accent === 'blue' && styles.routeButtonBlue,
           pressed && styles.pressed,
         ]}>
-        <Text style={styles.routeButtonText}>{button}</Text>
+        <Text
+          style={[
+            styles.routeButtonText,
+            accent === 'blue' && styles.routeButtonTextBlue,
+          ]}>
+          {button}
+        </Text>
         <Text style={styles.arrow}>‹</Text>
       </Pressable>
     </View>
@@ -198,7 +204,7 @@ const styles = StyleSheet.create({
      call-to-action buttons sit on one line. */
   routeRow: {flexDirection: 'row-reverse', alignItems: 'stretch', gap: spacing.lg},
   routeColumn: {gap: spacing.lg},
-  heroEyebrow: {...typography.eyebrow, color: colors.accent},
+  heroEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   heroTitle: {...typography.display, color: colors.textPrimary},
   heroBody: {...typography.body, color: colors.textSecondary},
   routeCard: {
@@ -216,7 +222,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     gap: spacing.sm,
   },
-  routeCardBlue: {borderColor: '#275477'},
+  routeCardBlue: {borderColor: '#B8D7E3'},
   routeMark: {position: 'absolute', right: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.accent},
   routeMarkBlue: {backgroundColor: colors.info},
   eyebrow: {...typography.eyebrow, color: colors.textMuted},
@@ -238,14 +244,15 @@ const styles = StyleSheet.create({
   },
   routeButtonBlue: {backgroundColor: colors.info},
   routeButtonText: {...typography.sectionTitle, color: colors.accentText},
+  routeButtonTextBlue: {color: colors.white},
   arrow: {fontSize: 28, color: colors.accentText, lineHeight: 30},
   pressed: {opacity: 0.75},
   safetyNote: {
     padding: spacing.md,
     borderRadius: radii.md,
-    backgroundColor: '#122D2E',
+    backgroundColor: '#E8F7F2',
     borderWidth: 1,
-    borderColor: '#315454',
+    borderColor: '#B8DED5',
     gap: 3,
   },
   safetyTitle: {...typography.sectionTitle, color: colors.success},

@@ -897,7 +897,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   hero: { paddingHorizontal: spacing.sm, paddingVertical: spacing.lg },
-  eyebrow: { ...typography.eyebrow, color: colors.accent },
+  eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   title: {
     ...typography.display,
     color: colors.textPrimary,
@@ -947,7 +947,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   cardHeaderCopy: { flex: 1, minWidth: 220 },
-  cardEyebrow: { ...typography.eyebrow, color: colors.accent },
+  cardEyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   cardTitle: { ...typography.title, color: colors.textPrimary, marginTop: 2 },
   cardBody: {
     ...typography.body,
@@ -989,7 +989,7 @@ const styles = StyleSheet.create({
   },
   homeArrowText: {
     fontSize: 32,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'ltr',
   },
   positionHint: {
@@ -1096,7 +1096,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     writingDirection: 'ltr',
   },
-  choiceTextSelected: { color: colors.accent },
+  choiceTextSelected: { color: colors.accentStrong },
   infoBox: {
     borderRadius: radii.md,
     backgroundColor: colors.backgroundRaised,
@@ -1156,7 +1156,7 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   primaryButton: {
