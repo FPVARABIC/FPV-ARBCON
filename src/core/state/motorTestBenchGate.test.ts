@@ -30,6 +30,7 @@ import {
   type MotorTestControllerSnapshot,
   type MotorTestSessionInvalidationReason,
 } from './motorTestController';
+import {MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS} from './motorTestSafetyMonitor';
 import {
   MotorTestTelemetryRegistry,
   type MotorTestBarrierScheduler,
@@ -1005,11 +1006,14 @@ describe('one serialized MSP request path', () => {
  * Every test below drives the REAL monitor and the REAL client.
  * ================================================================== */
 
-/** Lets the monitor's scheduled next observation reach the transport, so
- * a release genuinely races an in-flight MSP_STATUS_EX exactly as it does
- * on a device. A macrotask turn, never a delay. */
+/** Lets the monitor's paced next observation reach the transport, so a
+ * release genuinely races an in-flight MSP_STATUS_EX exactly as it does on
+ * a device. Uses the production interval rather than assuming a zero-delay
+ * loop. */
 const nextMonitorTurn = (): Promise<void> =>
-  new Promise<void>(resolve => setTimeout(resolve, 0));
+  new Promise<void>(resolve =>
+    setTimeout(resolve, MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS + 10),
+  );
 
 /** Serves pending writes until `until()` holds or the bound is reached. */
 async function pump(harness: Harness, until: () => boolean): Promise<void> {

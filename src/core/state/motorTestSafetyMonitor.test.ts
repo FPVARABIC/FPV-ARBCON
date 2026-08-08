@@ -23,6 +23,7 @@
 
 import {
   MOTOR_TEST_SAFETY_MAX_AGE_MILLIS,
+  MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS,
   MOTOR_TEST_SAFETY_OBSERVATION_TIMEOUT_MILLIS,
   MotorTestSafetyMonitor,
   type MotorTestSafetyUnsafeReason,
@@ -170,6 +171,11 @@ describe('the dedicated safety monitor', () => {
     // A hung read must be detectable well inside the 3s pulse window.
     expect(MOTOR_TEST_SAFETY_OBSERVATION_TIMEOUT_MILLIS).toBeLessThanOrEqual(500);
     expect(MOTOR_TEST_SAFETY_MAX_AGE_MILLIS).toBeLessThan(3000);
+    expect(MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS).toBeGreaterThan(0);
+    expect(
+      MOTOR_TEST_SAFETY_OBSERVATION_TIMEOUT_MILLIS +
+        MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS,
+    ).toBeLessThan(MOTOR_TEST_SAFETY_MAX_AGE_MILLIS);
   });
 
   it('applies the short response bound to every read it issues', async () => {

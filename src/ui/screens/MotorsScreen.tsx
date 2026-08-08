@@ -565,10 +565,22 @@ export function MotorsScreenView({
   );
   const requiresNewConnection =
     snapshot?.phase === 'CLOSED' ||
+    blockReasons.includes('REQUIRES_NEW_CONNECTION') ||
     (snapshot?.outcome.kind === 'FAILED_CLOSED' &&
       snapshot.outcome.requiresNewSession) ||
     (snapshot?.outcome.kind === 'BLOCKED' &&
       snapshot.outcome.requiresNewSession);
+  const terminalSetupReason =
+    snapshot?.outcome.kind === 'BLOCKED' ||
+    snapshot?.outcome.kind === 'FAILED_CLOSED'
+      ? snapshot.outcome.reason
+      : undefined;
+  const readinessDiagnosticReason =
+    terminalSetupReason ?? primaryBlockReason;
+  const showReadinessDiagnostic =
+    !controllerAllows &&
+    readinessDiagnosticReason !== undefined &&
+    (terminalSetupReason !== undefined || snapshot?.setupStep === 'READY');
 
   /**
    * Binds verification to the CURRENT official session, and clears it for
@@ -1419,6 +1431,36 @@ export function MotorsScreenView({
             </View>
           </View>
 
+          {showReadinessDiagnostic ? (
+            <View
+              style={styles.readinessBlock}
+              testID="motors-readiness-blocked-detail"
+            >
+              <Text style={styles.blockHeading}>
+                {t('motorsScreen.readinessBlockedHeading')}
+              </Text>
+              {primaryBlockReason !== undefined ? (
+                <Text style={styles.blockReason}>
+                  {t(`motorsScreen.blockReason.${primaryBlockReason}`)}
+                </Text>
+              ) : null}
+              <Text
+                style={styles.caption}
+                testID="motors-readiness-blocked-code"
+              >
+                {t('motorsScreen.readinessBlockedDetail', {
+                  reason: readinessDiagnosticReason,
+                  step: snapshot?.setupStep ?? 'NONE',
+                })}
+              </Text>
+              <Text style={styles.caption}>
+                {requiresNewConnection
+                  ? t('motorsScreen.readinessReconnectAction')
+                  : t('motorsScreen.readinessWaitAction')}
+              </Text>
+            </View>
+          ) : null}
+
           {holdControl}
           {pulseRejected ? (
             <Text style={styles.inlineError} testID="motors-pulse-rejected">
@@ -1966,6 +2008,14 @@ const styles = StyleSheet.create({
   },
   holdSupportingActive: {
     color: colors.accentText,
+  },
+  readinessBlock: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: '#FFF8E6',
   },
   prepareButton: { minHeight: MIN_TOUCH_TARGET + spacing.md, alignItems: 'center', justifyContent: 'center', borderColor: colors.accent, borderWidth: 2, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
   prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'rtl' },

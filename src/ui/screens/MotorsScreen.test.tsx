@@ -580,6 +580,67 @@ describe('MotorsScreen - state presentation', () => {
     rendered.unmount();
   });
 
+  it('places the exact terminal readiness failure beside the dim hold control', () => {
+    const blocked = {
+      ...snapshotFor({
+        machine: 'Locked',
+        allowed: false,
+        reasons: ['REQUIRES_NEW_CONNECTION', 'ARMED_STATE_UNKNOWN_OR_STALE'],
+      }),
+      phase: 'CLOSED' as const,
+      setupStep: 'FIRST_OBSERVATION' as const,
+      outcome: {
+        kind: 'FAILED_CLOSED' as const,
+        reason: 'FIRST_OBSERVATION_UNAVAILABLE' as const,
+        faultReason: 'MSP_RESPONSE_TIMEOUT' as const,
+        requiresNewSession: true as const,
+      },
+      teardown: {
+        steps: [],
+        safetyMonitorStopped: true,
+        leaseRelease: 'RELEASED' as const,
+        telemetryTokensReleased: true,
+        complete: true,
+      },
+    } satisfies MotorTestControllerSnapshot;
+    const rendered = render(new FakeOperator(blocked));
+
+    expect(rendered.query('motors-readiness-blocked-detail')).toBeDefined();
+    expect(texts(rendered)).toContain(
+      'توقف فحص الجاهزية عند FIRST_OBSERVATION (رمز التشخيص: FIRST_OBSERVATION_UNAVAILABLE). لم يُرسل التطبيق أمر تشغيل للمحرك.',
+    );
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    rendered.unmount();
+  });
+
+  it('explains the READY-but-barred state captured by browser diagnostics', () => {
+    const barredReady = {
+      ...snapshotFor({
+        machine: 'Ready',
+        allowed: false,
+        reasons: [
+          'REQUIRES_NEW_CONNECTION',
+          'ARMED_STATE_UNKNOWN_OR_STALE',
+        ],
+      }),
+      phase: 'ACTIVE' as const,
+      setupStep: 'READY' as const,
+      outcome: {kind: 'READY' as const},
+      armedStateEvidence: 'UNKNOWN_OR_STALE' as const,
+    } satisfies MotorTestControllerSnapshot;
+    const rendered = render(new FakeOperator(barredReady));
+
+    expect(rendered.query('motors-readiness-blocked-detail')).toBeDefined();
+    expect(texts(rendered)).toContain(
+      'توقف فحص الجاهزية عند READY (رمز التشخيص: ARMED_STATE_UNKNOWN_OR_STALE). لم يُرسل التطبيق أمر تشغيل للمحرك.',
+    );
+    expect(texts(rendered)).toContain(
+      'أغلق جلسة الاختبار، افصل USB وأعد توصيله، ثم ابدأ جلسة جديدة بعد معالجة السبب أعلاه.',
+    );
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    rendered.unmount();
+  });
+
   it('names 3D specifically rather than as a generic scope refusal', () => {
     const rendered = render(
       new FakeOperator(
