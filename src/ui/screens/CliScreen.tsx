@@ -21,6 +21,9 @@ import {
   typography,
   useContentEnvelope,
 } from '../theme';
+import {Icon} from '../icons';
+import {readInteraction} from '../components/controls/interaction';
+import {MIN_TOUCH_TARGET} from '../components/controls';
 
 export type CliScreenPort = Pick<
   typeof rawCliSessionController,
@@ -326,14 +329,40 @@ export default function CliScreen({
                 <View style={styles.terminalTools}>
                   <Pressable
                     testID="cli-download-output"
+                    accessibilityRole="button"
+                    accessibilityLabel="تنزيل السجل"
+                    accessibilityState={{
+                      disabled: !output.trim() || phase !== 'ACTIVE',
+                    }}
                     disabled={!output.trim() || phase !== 'ACTIVE'}
                     onPress={() => downloadOutput().catch(() => undefined)}
+                    style={state => {
+                      const {pressed, hovered} = readInteraction(state);
+                      return [
+                        styles.tool,
+                        (hovered || pressed) && styles.toolActive,
+                        (!output.trim() || phase !== 'ACTIVE') &&
+                          styles.toolDisabled,
+                      ];
+                    }}
                   >
+                    <Icon name="download" size={18} color={colors.accent} />
                     <Text style={styles.toolText}>تنزيل السجل</Text>
                   </Pressable>
                   <Pressable
                     testID="cli-clear-output"
+                    accessibilityRole="button"
+                    accessibilityLabel="مسح العرض"
+                    accessibilityState={{disabled: phase !== 'ACTIVE'}}
                     disabled={phase !== 'ACTIVE'}
+                    style={state => {
+                      const {pressed, hovered} = readInteraction(state);
+                      return [
+                        styles.tool,
+                        (hovered || pressed) && styles.toolActive,
+                        phase !== 'ACTIVE' && styles.toolDisabled,
+                      ];
+                    }}
                     onPress={() => {
                       try {
                         cli.clearOutput();
@@ -343,6 +372,7 @@ export default function CliScreen({
                       }
                     }}
                   >
+                    <Icon name="trash-2" size={18} color={colors.accent} />
                     <Text style={styles.toolText}>مسح العرض</Text>
                   </Pressable>
                 </View>
@@ -381,11 +411,31 @@ export default function CliScreen({
                 </Pressable>
               </View>
               <View style={styles.historyRow}>
-                <Pressable onPress={() => browseHistory(1)}>
-                  <Text style={styles.toolText}>السابق ↑</Text>
+                <Pressable
+                  onPress={() => browseHistory(1)}
+                  accessibilityRole="button"
+                  accessibilityLabel="الأمر السابق"
+                  style={state => {
+                    const {pressed, hovered} = readInteraction(state);
+                    return [styles.tool, (hovered || pressed) && styles.toolActive];
+                  }}
+                >
+                  {/* Vertical: 'earlier in the list', not a reading
+                      direction, so raw geometry and never an alias. */}
+                  <Icon name="arrow-up" size={18} color={colors.accent} />
+                  <Text style={styles.toolText}>السابق</Text>
                 </Pressable>
-                <Pressable onPress={() => browseHistory(-1)}>
-                  <Text style={styles.toolText}>الأحدث ↓</Text>
+                <Pressable
+                  onPress={() => browseHistory(-1)}
+                  accessibilityRole="button"
+                  accessibilityLabel="الأمر الأحدث"
+                  style={state => {
+                    const {pressed, hovered} = readInteraction(state);
+                    return [styles.tool, (hovered || pressed) && styles.toolActive];
+                  }}
+                >
+                  <Icon name="arrow-down" size={18} color={colors.accent} />
+                  <Text style={styles.toolText}>الأحدث</Text>
                 </Pressable>
                 <Text style={styles.historyCount}>
                   سجل هذه الجلسة: {history.length}
@@ -486,9 +536,9 @@ const styles = StyleSheet.create({
   },
   phaseOpen: { color: colors.success, backgroundColor: colors.accentSoft },
   warning: {
-    backgroundColor: '#FFF7E6',
+    backgroundColor: colors.warningSoft,
     borderWidth: 1,
-    borderColor: '#E6B75D',
+    borderColor: colors.warning,
     borderRadius: radii.md,
     padding: spacing.lg,
     gap: spacing.xs,
@@ -500,7 +550,7 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   error: {
-    backgroundColor: '#FFF0F2',
+    backgroundColor: colors.errorSoft,
     borderWidth: 1,
     borderColor: colors.error,
     borderRadius: radii.md,
@@ -543,9 +593,8 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   quickText: {
-    ...typography.body,
+    ...typography.bodyStrong,
     color: colors.textPrimary,
-    fontWeight: '700',
   },
   quickCode: {
     ...typography.mono,
@@ -570,7 +619,20 @@ const styles = StyleSheet.create({
   },
   terminalTitle: { ...typography.sectionTitle, color: '#E7F5F3' },
   terminalTools: { flexDirection: 'row', gap: spacing.lg },
-  toolText: { ...typography.caption, color: colors.accent, fontWeight: '700' },
+  /* Terminal chrome sits on the dark terminal surface, so it keeps local
+     colours rather than the light shared Button - but it now obeys the
+     same target floor and state rules. */
+  tool: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minHeight: MIN_TOUCH_TARGET,
+    paddingHorizontal: spacing.sm,
+    borderRadius: radii.sm,
+  },
+  toolActive: { backgroundColor: 'rgba(94, 234, 212, 0.16)' },
+  toolDisabled: { opacity: 0.45 },
+  toolText: { ...typography.label, color: colors.accent },
   terminal: { height: 360, padding: spacing.md },
   terminalText: {
     ...typography.mono,

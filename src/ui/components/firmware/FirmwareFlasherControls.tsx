@@ -2,12 +2,12 @@ import React from 'react';
 import {
   Pressable,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from 'react-native';
 
 import {colors, radii, spacing, typography} from '../../theme';
+import {ToggleSwitch} from '../controls';
 
 export function FirmwareSection({
   title,
@@ -91,13 +91,12 @@ export function FirmwareToggle({
         <Text style={styles.toggleLabel}>{label}</Text>
         {detail ? <Text style={styles.toggleDetail}>{detail}</Text> : null}
       </View>
-      <Switch
+      <ToggleSwitch
         testID={testID}
         value={value}
         disabled={disabled}
         onValueChange={onValueChange}
-        trackColor={{false: colors.disabled, true: warning ? colors.warning : colors.accentStrong}}
-        thumbColor={value ? colors.white : colors.textSecondary}
+        accessibilityLabel={label}
       />
     </View>
   );
@@ -227,7 +226,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.surfaceAlt,
   },
-  toggleWarning: {borderWidth: 1, borderColor: '#D8B86F'},
+  toggleWarning: {borderWidth: 1, borderColor: colors.warning},
   toggleCopy: {flex: 1, gap: 2},
   toggleLabel: {...typography.sectionTitle, color: colors.textPrimary},
   toggleDetail: {...typography.caption, color: colors.textSecondary},
@@ -250,10 +249,10 @@ const styles = StyleSheet.create({
   progressPercent: {...typography.caption, color: colors.accentStrong, fontWeight: '700'},
   progressTrack: {height: 8, borderRadius: 4, backgroundColor: colors.surfaceRaised, overflow: 'hidden'},
   progressFill: {height: 8, borderRadius: 4, backgroundColor: colors.accent},
-  notice: {padding: spacing.md, borderRadius: radii.md, backgroundColor: '#EAF5F8', gap: 3},
-  noticeWarning: {backgroundColor: '#FFF4D8'},
-  noticeSuccess: {backgroundColor: '#EAF7F2'},
-  noticeError: {backgroundColor: '#FFF0F1'},
+  notice: {padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.infoSoft, gap: 3},
+  noticeWarning: {backgroundColor: colors.warningSoft},
+  noticeSuccess: {backgroundColor: colors.successSoft},
+  noticeError: {backgroundColor: colors.errorSoft},
   noticeTitle: {...typography.sectionTitle, color: colors.info},
   noticeTitleWarning: {color: colors.warning},
   noticeTitleSuccess: {color: colors.success},

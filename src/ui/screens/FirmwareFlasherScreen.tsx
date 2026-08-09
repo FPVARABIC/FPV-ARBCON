@@ -80,6 +80,7 @@ import {
   usbProductLabel,
 } from '../presentation/brandSafeText';
 import {colors, radii, spacing, typography} from '../theme';
+import {Icon} from '../icons';
 import {useTranslation} from 'react-i18next';
 import {copyPlainTextToClipboard} from '../../platforms/clipboard';
 import {
@@ -252,9 +253,17 @@ function OptionGroup({
         disabled={disabled}
         testID={`${testIDPrefix}-selector`}
         onPress={() => setOpen(value => !value)}
+        accessibilityState={{disabled, expanded: open}}
         style={[styles.selectorButton, disabled && styles.dimmed]}>
-        <Text style={styles.selectorValue}>{selectedLabel}</Text>
-        <Text style={styles.selectorHint}>{open ? 'إخفاء الخيارات' : 'اختيار أو تغيير'}</Text>
+        <View style={styles.selectorCopy}>
+          <Text style={styles.selectorValue}>{selectedLabel}</Text>
+          <Text style={styles.selectorHint}>{open ? 'إخفاء الخيارات' : 'اختيار أو تغيير'}</Text>
+        </View>
+        <Icon
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={20}
+          color={colors.textSecondary}
+        />
       </Pressable>
       {open ? (
         <FirmwareChoice
@@ -1609,7 +1618,7 @@ export default function FirmwareFlasherScreen({
           disabled={isBusy}
           onPress={() => navigation?.goBack()}
           style={[styles.backButton, isBusy && styles.dimmed]}>
-          <Text style={styles.backText}>‹</Text>
+          <Icon name="chevron-back" size={24} color={colors.textPrimary} />
         </Pressable>
         <View style={styles.headerCopy}>
           <Text style={styles.headerEyebrow}>أداة مستقلة وآمنة</Text>
@@ -2401,7 +2410,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.warning,
-    backgroundColor: '#FFF4D8',
+    backgroundColor: colors.warningSoft,
     gap: spacing.xs,
   },
   stallTitle: {
@@ -2448,7 +2457,6 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.borderSoft,
   },
   backButton: {width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center'},
-  backText: {fontSize: 30, lineHeight: 32, color: colors.textPrimary},
   headerCopy: {flex: 1},
   headerEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   headerTitle: {...typography.title, color: colors.textPrimary},
@@ -2480,7 +2488,7 @@ const styles = StyleSheet.create({
     ...typography.body,
   },
   monoInput: {...typography.mono, textAlign: 'left', writingDirection: 'ltr'},
-  selectorButton: {padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border},
+  selectorButton: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, minHeight: 48, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.borderStrong}, selectorCopy: {flex: 1, gap: 2},
   selectorValue: {...typography.sectionTitle, color: colors.textPrimary},
   selectorHint: {...typography.caption, color: colors.textMuted},
   targetList: {flex: 1, borderRadius: radii.md, backgroundColor: colors.backgroundRaised},
@@ -2509,7 +2517,7 @@ const styles = StyleSheet.create({
   commitRow: {padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, gap: 2},
   commitMessage: {...typography.caption, color: colors.textPrimary, fontWeight: '700'},
   commitSha: {...typography.mono, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr'},
-  logBox: {maxHeight: 280, padding: spacing.md, borderRadius: radii.md, backgroundColor: '#EEF3F4', gap: 4},
+  logBox: {maxHeight: 280, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surfaceAlt, gap: 4},
   logLine: {...typography.mono, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr'},
   dimmed: {opacity: 0.4},
 });
