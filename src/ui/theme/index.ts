@@ -9,6 +9,9 @@ export type {ThemeRadii} from './radii';
 
 export {typography} from './typography';
 
+export {cairo, fonts} from './font';
+export type {CairoWeight} from './font';
+
 export {
   CONTENT_MAX_WIDTH,
   LAYOUT_BREAKPOINTS,

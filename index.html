@@ -62,8 +62,12 @@
       body {
         background-color: #faf8f3;
         color: #152232;
-        font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Naskh Arabic',
-          'Noto Sans Arabic', Tahoma, Arial, sans-serif;
+        /* Cairo is declared in src/web/cairo.css (bundled, fingerprinted);
+           this stack names it first so everything that inherits from body
+           — including the pre-JS #boot line once the CSS arrives — picks
+           it up, with honest Arabic fallbacks for the instant before. */
+        font-family: 'Cairo', system-ui, -apple-system, 'Segoe UI',
+          'Noto Naskh Arabic', 'Noto Sans Arabic', Tahoma, Arial, sans-serif;
         overscroll-behavior: none;
       }
       /* Shown until the entry chunk executes and replaces it. Plain CSS
