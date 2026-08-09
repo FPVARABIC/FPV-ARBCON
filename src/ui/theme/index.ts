@@ -8,6 +8,7 @@ export {radii} from './radii';
 export type {ThemeRadii} from './radii';
 
 export {typography} from './typography';
+export type {TypographyToken} from './typography';
 
 export {cairo, fonts} from './font';
 export type {CairoWeight} from './font';

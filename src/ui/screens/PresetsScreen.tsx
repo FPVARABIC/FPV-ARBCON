@@ -570,7 +570,7 @@ const styles = StyleSheet.create({
     writingDirection: 'ltr',
   },
   title: {
-    ...typography.screenTitle,
+    ...typography.title,
     color: colors.textPrimary,
     writingDirection: 'rtl',
   },

@@ -11,6 +11,7 @@ import {fonts} from './font';
  *   display      page hero (Start screen brand line)
  *   title        page heading
  *   sectionTitle section heading inside a page or card
+ *   heading      compact strong heading INSIDE a card/panel body
  *   bodyStrong   a setting's NAME — reads a step above its description
  *   body         explanatory/reading text
  *   label        text on controls: buttons, tabs, chips, field labels
@@ -29,8 +30,16 @@ import {fonts} from './font';
  * letterSpacing stays 0 everywhere: Arabic is a connected script, and
  * tracking visually tears the ligature joins apart (the old 0.8 eyebrow
  * tracking did exactly that).
+ *
+ * THE TYPE IS DELIBERATELY EXACT, not Record<string, TextStyle>. Under
+ * the old open Record, 28 call sites spread `typography.heading` and
+ * `typography.screenTitle` — keys that DID NOT EXIST — and TypeScript
+ * accepted the resulting `undefined` silently, so those "headings"
+ * rendered as bare default text. That is precisely how a hierarchy
+ * flattens without anyone noticing. With the exact type, a phantom
+ * token is now a compile error.
  */
-export const typography: Record<string, TextStyle> = {
+export const typography = {
   display: {
     fontFamily: fonts.family,
     fontSize: 26,
@@ -48,6 +57,12 @@ export const typography: Record<string, TextStyle> = {
     fontSize: 17,
     lineHeight: 29,
     fontWeight: '600',
+  },
+  heading: {
+    fontFamily: fonts.family,
+    fontSize: 16,
+    lineHeight: 27,
+    fontWeight: '700',
   },
   bodyStrong: {
     fontFamily: fonts.family,
@@ -93,4 +108,6 @@ export const typography: Record<string, TextStyle> = {
     letterSpacing: 0,
   },
   mono: {fontFamily: fonts.mono, fontSize: 14, lineHeight: 22},
-};
+} as const satisfies Record<string, TextStyle>;
+
+export type TypographyToken = keyof typeof typography;
