@@ -91,6 +91,51 @@ export const MSP_STATUS_EX = 150;
  * readiness identity; never polled (BoxIdsAcquisition.ts). */
 export const MSP_BOXIDS = 119;
 
+/** Betaflight 2025.12.2 / MSP API 1.47 AUX mode configuration.
+ * MSP_MODE_RANGES returns the complete fixed-size activation-condition table,
+ * MSP_MODE_RANGES_EXTRA supplies OR/AND plus linked-mode metadata, and
+ * MSP_SET_MODE_RANGE writes one indexed table row. A save transaction must
+ * rewrite every row so deleted conditions are cleared on the FC. */
+export const MSP_MODE_RANGES = 34;
+export const MSP_SET_MODE_RANGE = 35;
+export const MSP_BOXNAMES = 116;
+export const MSP_MODE_RANGES_EXTRA = 238;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 failsafe configuration. */
+export const MSP_FAILSAFE_CONFIG = 75;
+export const MSP_SET_FAILSAFE_CONFIG = 76;
+export const MSP_RXFAIL_CONFIG = 77;
+export const MSP_SET_RXFAIL_CONFIG = 78;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 power configuration and meters. */
+export const MSP_BATTERY_CONFIG = 32;
+export const MSP_SET_BATTERY_CONFIG = 33;
+export const MSP_CURRENT_METER_CONFIG = 40;
+export const MSP_SET_CURRENT_METER_CONFIG = 41;
+export const MSP_VOLTAGE_METER_CONFIG = 56;
+export const MSP_SET_VOLTAGE_METER_CONFIG = 57;
+export const MSP_VOLTAGE_METERS = 128;
+export const MSP_CURRENT_METERS = 129;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 on-screen-display configuration.
+ * MSP_OSD_CONFIG returns the complete layout/settings snapshot,
+ * MSP_SET_OSD_CONFIG writes one changed group, and MSP_OSD_CANVAS reports
+ * the display's character grid. */
+export const MSP_OSD_CONFIG = 84;
+export const MSP_SET_OSD_CONFIG = 85;
+export const MSP_OSD_CANVAS = 189;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 video-transmitter configuration. */
+export const MSP_SET_VTX_CONFIG = 89;
+export const MSP_VTXTABLE_BAND = 137;
+export const MSP_VTXTABLE_POWERLEVEL = 138;
+export const MSP_SET_VTXTABLE_BAND = 227;
+export const MSP_SET_VTXTABLE_POWERLEVEL = 228;
+
+/** Live sensor samples used by the Sensors workspace. */
+export const MSP_RAW_IMU = 102;
+export const MSP_ALTITUDE = 109;
+
 /**
  * Pass 7.7, Region 5 - the three FC-tool WRITE commands, each verified
  * DIRECTLY at BETAFLIGHT_API147_COMMIT (release 2025.12.5). See
@@ -168,6 +213,10 @@ export const MSP_NAME = 10;
 export const MSP_SET_NAME = 11;
 export const MSP_RX_CONFIG = 44;
 export const MSP_SET_RX_CONFIG = 45;
+export const MSP_RSSI_CONFIG = 50;
+export const MSP_SET_RSSI_CONFIG = 51;
+export const MSP_RX_MAP = 64;
+export const MSP_SET_RX_MAP = 65;
 export const MSP_ARMING_CONFIG = 61;
 export const MSP_SET_ARMING_CONFIG = 62;
 export const MSP_BEEPER_CONFIG = 184;
@@ -193,12 +242,24 @@ export const MSP_ADVANCED_CONFIG = 90;
  * DYNAMIC FC-side state - never configuration, never a motor count, and
  * never proof of physical motion or stop. */
 export const MSP_MOTOR = 104;
+export const MSP_RC = 105;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 PID tuning groups. */
+export const MSP_RC_TUNING = 111;
+export const MSP_PID = 112;
+export const MSP_FILTER_CONFIG = 92;
+export const MSP_PID_ADVANCED = 94;
+export const MSP_SET_FILTER_CONFIG = 93;
+export const MSP_SET_PID_ADVANCED = 95;
+export const MSP_SET_PID = 202;
+export const MSP_SET_RC_TUNING = 204;
 
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
  * `#define MSP_MOTOR_3D_CONFIG 124` - msp.c, 6 bytes: three u16 3D
  * tuning values. Present whether or not 3D is enabled - they never
  * determine 3D state. */
 export const MSP_MOTOR_3D_CONFIG = 124;
+export const MSP_RC_DEADBAND = 125;
 
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
  * `#define MSP_MOTOR_CONFIG 131` - msp.c, 10 bytes. The ONLY authority
@@ -234,6 +295,7 @@ export const MSP_SET_FEATURE_CONFIG = 37;
 export const MSP_SET_MIXER_CONFIG = 43;
 export const MSP_SET_ADVANCED_CONFIG = 91;
 export const MSP_SET_MOTOR_3D_CONFIG = 217;
+export const MSP_SET_RC_DEADBAND = 218;
 export const MSP_SET_MOTOR_CONFIG = 222;
 
 /** Writes the complete six-byte MSP_GPS_CONFIG payload. */

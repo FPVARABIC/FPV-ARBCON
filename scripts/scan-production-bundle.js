@@ -133,6 +133,16 @@ const REQUIRED_ENGINE_TOKENS = [
   // seam while leaving a read-only shell on device.
   'MotorConfigurationController',
   'motor-configuration-panel',
+  // PID phase two must ship as an operational screen, not as navigation
+  // chrome around a read-only or mocked panel.
+  'pid-screen',
+  'PidTuningController',
+  'decodePidTuningSnapshot',
+  'encodeChangedPidTuning',
+  'MSP_SET_PID',
+  'MSP_SET_PID_ADVANCED',
+  'MSP_SET_RC_TUNING',
+  'MSP_SET_FILTER_CONFIG',
   'encodeChangedMotorConfiguration',
   'acquireMotorConfigurationInterlock',
   'MSP_EEPROM_WRITE',
@@ -170,6 +180,14 @@ const REQUIRED_ENGINE_TOKENS = [
   'MSP_SET_BEEPER_CONFIG',
   'MSP_SET_RX_CONFIG',
   'MSP2_SET_TEXT',
+  'receiver-screen',
+  'ReceiverConfigurationController',
+  'acquireReceiverTelemetry',
+  'decodeRcChannels',
+  'encodeChangedReceiverConfiguration',
+  'MSP_SET_RX_MAP',
+  'MSP_SET_RSSI_CONFIG',
+  'MSP_SET_RC_DEADBAND',
   // Firmware Flasher and the new landing route are product surfaces, not
   // optional debug code. Their protocol owners must ship in Release.
   'firmware-flasher-screen',
@@ -278,7 +296,39 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+      'src/platforms/react-native/protocol/PidTuningController.ts',
+      'src/platforms/react-native/protocol/ModesConfigurationController.ts',
+      'src/platforms/react-native/protocol/FailsafeConfigurationController.ts',
+      'src/platforms/react-native/protocol/PowerConfigurationController.ts',
+      'src/platforms/react-native/protocol/OsdConfigurationController.ts',
+      'src/platforms/react-native/protocol/VtxConfigurationController.ts',
     ],
+  },
+  {
+    token: 'encodeChangedPidTuning',
+    from: 'src/core/protocol/msp/encoding/encodePidTuning.ts',
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+  },
+  {
+    token: 'MSP_SET_PID',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+  },
+  {
+    token: 'MSP_SET_PID_ADVANCED',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+  },
+  {
+    token: 'MSP_SET_FILTER_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+  },
+  {
+    token: 'MSP_SET_RC_TUNING',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
   },
   {
     token: 'MSP_SET_FEATURE_CONFIG',
@@ -341,10 +391,39 @@ const ENGINE_BOUNDARIES = [
     ],
   },
   {
+    token: 'encodeChangedReceiverConfiguration',
+    from: 'src/core/protocol/msp/encoding/encodeReceiver.ts',
+    importers: [
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+  },
+  {
     token: 'MSP_SET_RX_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_RX_MAP',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_RSSI_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_RC_DEADBAND',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
   },
   {
@@ -690,7 +769,7 @@ function main() {
   console.log('D. Engine boundary (source)');
   for (const entry of boundaries.violations) {
     console.error(
-      `   BOUNDARY CROSSED: ${entry.importer} imports ${entry.token}. Only MotorTestController may.`,
+      `   BOUNDARY CROSSED: ${entry.importer} imports ${entry.token} outside its reviewed allowlist.`,
     );
   }
   for (const entry of boundaries.stale) {

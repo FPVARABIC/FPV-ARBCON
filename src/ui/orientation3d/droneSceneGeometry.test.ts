@@ -698,3 +698,30 @@ describe('computeDroneScene - half-scale clipping matrix and pivot stability', (
     expect(second).toEqual(first);
   });
 });
+
+describe('computeDroneScene - desktop presentation scale', () => {
+  const canvas = {width: 1400, height: 512};
+  const scale = 0.56 / 0.37;
+  function bounds(pose: DroneOrientationDeg) {
+    const model = computeDroneScene(pose, canvas, scale).primitives.filter(p => p.material !== 'LEVEL_GRID');
+    const xs = model.flatMap(p => p.points.map(point => point.x));
+    const ys = model.flatMap(p => p.points.map(point => point.y));
+    return {minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys)};
+  }
+  it('fills 60-65% of stage height and does not clip across 972 dense poses', () => {
+    const neutral = bounds({rollDeg: 0, pitchDeg: 0, yawDeg: 0});
+    expect((neutral.maxX - neutral.minX) / canvas.height).toBeGreaterThanOrEqual(0.6);
+    expect((neutral.maxX - neutral.minX) / canvas.height).toBeLessThanOrEqual(0.65);
+    let worst = Number.POSITIVE_INFINITY;
+    for (let rollDeg = -60; rollDeg <= 60; rollDeg += 15) for (let pitchDeg = -60; pitchDeg <= 60; pitchDeg += 15) for (let yawDeg = 0; yawDeg < 360; yawDeg += 30) {
+      const b = bounds({rollDeg, pitchDeg, yawDeg});
+      worst = Math.min(worst, b.minX, b.minY, canvas.width - b.maxX, canvas.height - b.maxY);
+    }
+    expect(worst).toBeGreaterThan(70);
+  });
+  it('uses original geometry for invalid scales', () => {
+    const pose = {rollDeg: 12, pitchDeg: -7, yawDeg: 33};
+    expect(computeDroneScene(pose, canvas, Number.NaN)).toEqual(computeDroneScene(pose, canvas));
+    expect(computeDroneScene(pose, canvas, 0)).toEqual(computeDroneScene(pose, canvas));
+  });
+});

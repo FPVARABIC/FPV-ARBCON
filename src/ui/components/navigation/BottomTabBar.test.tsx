@@ -56,8 +56,11 @@ describe('BottomTabBar - order and labels', () => {
     expect(firstIndex('MOTORS')).toBeLessThan(firstIndex('PORTS'));
     expect(firstIndex('PORTS')).toBeLessThan(firstIndex('GPS'));
     expect(firstIndex('GPS')).toBeLessThan(firstIndex('CONFIGURATIONS'));
-    expect(firstIndex('RECEIVER')).toBe(-1);
-    expect(firstIndex('PID')).toBe(-1);
+    expect(firstIndex('CONFIGURATIONS')).toBeLessThan(firstIndex('RECEIVER'));
+    expect(firstIndex('RECEIVER')).toBeLessThan(firstIndex('PID'));
+    expect(firstIndex('PID')).toBeLessThan(firstIndex('MODES'));
+    expect(firstIndex('MODES')).toBeLessThan(firstIndex('FAILSAFE'));
+    expect(firstIndex('FAILSAFE')).toBeLessThan(firstIndex('POWER'));
     rendered.unmount();
   });
 
@@ -76,8 +79,11 @@ describe('BottomTabBar - order and labels', () => {
     expect(texts).toContain(i18n.t('tabs.ports'));
     expect(texts).toContain(i18n.t('tabs.gps'));
     expect(texts).toContain(i18n.t('tabs.configurations'));
-    expect(texts).not.toContain(i18n.t('tabs.receiver'));
-    expect(texts).not.toContain(i18n.t('tabs.pid'));
+    expect(texts).toContain(i18n.t('tabs.receiver'));
+    expect(texts).toContain(i18n.t('tabs.pid'));
+    expect(texts).toContain(i18n.t('tabs.modes'));
+    expect(texts).toContain(i18n.t('tabs.failsafe'));
+    expect(texts).toContain(i18n.t('tabs.power'));
     // A raw key rendered on screen is the exact defect this whole pass
     // exists to remove.
     for (const tab of MAIN_TABS) {
@@ -115,9 +121,20 @@ describe('BottomTabBar - roadmap tabs', () => {
     expect(isTabSelectable('PORTS')).toBe(true);
     expect(isTabSelectable('GPS')).toBe(true);
     expect(isTabSelectable('CONFIGURATIONS')).toBe(true);
-    expect(isTabSelectable('RECEIVER')).toBe(false);
-    expect(isTabSelectable('PID')).toBe(false);
+    expect(isTabSelectable('RECEIVER')).toBe(true);
+    expect(isTabSelectable('PID')).toBe(true);
+    expect(isTabSelectable('MODES')).toBe(true);
+    expect(isTabSelectable('FAILSAFE')).toBe(true);
+    expect(isTabSelectable('POWER')).toBe(true);
     expect(pressed).toEqual([]);
+    rendered.unmount();
+  });
+
+  it('keeps the growing destination set horizontally scrollable instead of compressing controls', () => {
+    const rendered = renderBar();
+    const strip = rendered.find('main-tab-bar-scroll');
+    expect(strip.props.horizontal).toBe(true);
+    expect(strip.props.showsHorizontalScrollIndicator).toBe(false);
     rendered.unmount();
   });
 
@@ -202,6 +219,46 @@ describe('MainTabsScreen - the shell', () => {
     shell.press('main-tab-CONFIGURATIONS');
     expect(shell.find('main-tab-panel-CONFIGURATIONS')).toBeDefined();
     expect(shell.find('configurations-screen')).toBeDefined();
+    shell.unmount();
+  });
+
+  it('mounts the functional Receiver destination in the same application shell', () => {
+    const shell = renderShell();
+    shell.press('main-tab-RECEIVER');
+    expect(shell.find('main-tab-panel-RECEIVER')).toBeDefined();
+    expect(shell.find('receiver-screen')).toBeDefined();
+    shell.unmount();
+  });
+
+  it('mounts the functional PID destination in the same application shell', () => {
+    const shell = renderShell();
+    shell.press('main-tab-PID');
+    expect(shell.find('main-tab-panel-PID')).toBeDefined();
+    expect(shell.find('pid-screen')).toBeDefined();
+    shell.unmount();
+  });
+
+  it('mounts the functional Modes destination in the same application shell', () => {
+    const shell = renderShell();
+    shell.press('main-tab-MODES');
+    expect(shell.find('main-tab-panel-MODES')).toBeDefined();
+    expect(shell.find('modes-screen')).toBeDefined();
+    shell.unmount();
+  });
+
+  it('mounts the functional Failsafe destination in the same application shell', () => {
+    const shell = renderShell();
+    shell.press('main-tab-FAILSAFE');
+    expect(shell.find('main-tab-panel-FAILSAFE')).toBeDefined();
+    expect(shell.find('failsafe-screen')).toBeDefined();
+    shell.unmount();
+  });
+
+  it('mounts the functional Power destination in the same application shell', () => {
+    const shell = renderShell();
+    shell.press('main-tab-POWER');
+    expect(shell.find('main-tab-panel-POWER')).toBeDefined();
+    expect(shell.find('power-screen')).toBeDefined();
     shell.unmount();
   });
 

@@ -141,7 +141,122 @@ function isValidDfuProgress(value: unknown): value is DfuFlashProgressEvent {
  * boundary exactly as the caller/native side encoded it, opaque to this
  * client either direction.
  */
+/**
+ * THE ONE CAPABILITY ANDROID DOES NOT HAVE, reached without touching the
+ * TurboModule spec.
+ *
+ * A browser will not list a serial port until the user has picked it from
+ * the browser's own chooser, and that chooser may only be opened from a
+ * real user gesture. Android has no equivalent: its permission dialog is
+ * raised by the system during open(), so the Kotlin module needs no such
+ * method.
+ *
+ * This is deliberately NOT an optional member on `Spec`. That file is the
+ * codegen source for the Android native interface (see package.json's
+ * codegenConfig), so adding a method there would change the generated
+ * Kotlin contract and demand a native implementation for a capability
+ * Android does not need. Instead the web module exports the extra
+ * function, and the client looks for it defensively - present in the
+ * browser, absent on Android, and typechecked against both.
+ */
+type OptionalDevicePicker = {
+  requestSerialDevice?: () => Promise<UsbSerialDeviceDescriptor | null>;
+  requestDfuDevice?: () => Promise<DfuDeviceDescriptor | null>;
+};
+
+function devicePicker(): OptionalDevicePicker['requestSerialDevice'] {
+  return (NativeUsbSerialTransport as unknown as OptionalDevicePicker)
+    .requestSerialDevice;
+}
+
+function dfuPicker(): OptionalDevicePicker['requestDfuDevice'] {
+  return (NativeUsbSerialTransport as unknown as OptionalDevicePicker)
+    .requestDfuDevice;
+}
+
 export class UsbSerialTransportClient {
+  /**
+   * Whether this platform has an explicit "choose a device" step. False on
+   * Android. The UI uses this to decide whether to OFFER the button at
+   * all - never to decide whether a device exists.
+   */
+  supportsDevicePicker(): boolean {
+    return typeof devicePicker() === 'function';
+  }
+
+  /**
+   * Opens the platform's device chooser. MUST be called from a user
+   * gesture; browsers reject it otherwise.
+   *
+   * Resolves with `null` when the operator dismissed the chooser without
+   * choosing - a cancellation, not a failure, and the UI must not show an
+   * error for it.
+   */
+  async requestDevicePermission(): Promise<UsbSerialDeviceDescriptor | null> {
+    const request = devicePicker();
+    if (!request) {
+      throw normalizeNativeError(
+        Object.assign(
+          new Error('This platform has no explicit device picker.'),
+          {code: 'NOT_IMPLEMENTED'},
+        ),
+      );
+    }
+    let result: unknown;
+    try {
+      result = await request();
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+    if (result === null || result === undefined) {
+      return null;
+    }
+    if (!isValidDescriptor(result)) {
+      throw normalizeNativeError(
+        new Error('requestDevicePermission resolved with an invalid descriptor.'),
+      );
+    }
+    return result;
+  }
+
+  /** Whether this platform has an explicit "choose a DFU device" step. */
+  supportsDfuDevicePicker(): boolean {
+    return typeof dfuPicker() === 'function';
+  }
+
+  /**
+   * Opens the platform's WebUSB chooser, filtered to the bootloader
+   * identities this app supports. MUST be called from a user gesture.
+   * Resolves `null` when the operator dismissed it - a cancellation, not a
+   * failure.
+   */
+  async requestDfuDevicePermission(): Promise<DfuDeviceDescriptor | null> {
+    const request = dfuPicker();
+    if (!request) {
+      throw normalizeNativeError(
+        Object.assign(
+          new Error('This platform has no explicit DFU device picker.'),
+          {code: 'NOT_IMPLEMENTED'},
+        ),
+      );
+    }
+    let result: unknown;
+    try {
+      result = await request();
+    } catch (reason) {
+      throw normalizeNativeError(reason);
+    }
+    if (result === null || result === undefined) {
+      return null;
+    }
+    if (!isValidDfuDescriptor(result)) {
+      throw normalizeNativeError(
+        new Error('requestDfuDevicePermission resolved with an invalid descriptor.'),
+      );
+    }
+    return result;
+  }
+
   async listDevices(): Promise<UsbSerialDeviceDescriptor[]> {
     let result: unknown;
     try {

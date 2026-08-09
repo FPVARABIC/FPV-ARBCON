@@ -343,7 +343,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   sectionHeaderCopy: { flex: 1 },
-  eyebrow: { ...typography.eyebrow, color: colors.accent },
+  eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   sectionTitle: {
     ...typography.title,
     color: colors.textPrimary,
@@ -357,7 +357,7 @@ const styles = StyleSheet.create({
   },
   protectedPillText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   sectionDescription: {
@@ -389,7 +389,7 @@ const styles = StyleSheet.create({
   },
   workflowNumberText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '800',
   },
   workflowCopy: { flex: 1 },
@@ -422,8 +422,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
   },
   toolMarkPrimary: { backgroundColor: colors.accentSoft },
-  toolMarkInfo: { backgroundColor: '#153A52' },
-  toolMarkMaintenance: { backgroundColor: '#343341' },
+  toolMarkInfo: { backgroundColor: '#DCEEF5' },
+  toolMarkMaintenance: { backgroundColor: '#EEEAF5' },
   toolMarkText: {
     ...typography.caption,
     color: colors.textPrimary,
@@ -437,8 +437,8 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: radii.pill,
   },
-  availabilityPillReady: { backgroundColor: '#153D31' },
-  availabilityPillBlocked: { backgroundColor: '#3A3020' },
+  availabilityPillReady: { backgroundColor: '#EAF7F2' },
+  availabilityPillBlocked: { backgroundColor: '#FFF4D8' },
   availabilityReadyText: {
     ...typography.caption,
     color: colors.success,
@@ -532,7 +532,7 @@ const styles = StyleSheet.create({
   },
   nextStepText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
     marginTop: spacing.sm,
   },

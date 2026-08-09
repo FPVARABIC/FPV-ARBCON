@@ -52,7 +52,8 @@ import {
   type SetupUiSessionKey,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import { StickyActionBar } from '../components/editing';
 
 const MIN_TOUCH_TARGET = 44;
 const TELEMETRY_ROLES = SERIAL_ROLE_DEFINITIONS.filter(
@@ -507,6 +508,9 @@ export default function PortsScreen({
   onDirtyChange,
 }: PortsScreenProps): React.JSX.Element {
   const { t } = useTranslation();
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const ownership = useMspOwnershipState(sessionKey?.sessionId ?? '');
   const ownershipRef = useRef(ownership);
   ownershipRef.current = ownership;
@@ -698,6 +702,35 @@ export default function PortsScreen({
     );
   }, [dirty, reloadNow, t]);
 
+  /**
+   * WHICH ports actually changed, named. "غير محفوظة" alone does not tell
+   * an operator whether the change they meant to make is the one that is
+   * pending, and a save bar that cannot say what it would write is not
+   * evidence of anything.
+   */
+  const pendingPortChanges = useMemo(() => {
+    if (original === undefined) {
+      return [];
+    }
+    const lines: string[] = [];
+    for (const port of draft) {
+      const before = original.ports.find(
+        candidate => candidate.identifier === port.identifier,
+      );
+      if (before === undefined || serialPortsEqual([before], [port])) {
+        continue;
+      }
+      const roles = enabledSerialRoles(port);
+      const name = serialPortDisplayName(port.identifier);
+      lines.push(
+        roles.length === 0
+          ? `${name}: ${t('portsConfiguration.none')}`
+          : `${name}: ${roles.map(role => t(roleLabelKey(role))).join('، ')}`,
+      );
+    }
+    return lines;
+  }, [draft, original, t]);
+
   const loadMessage =
     loadOutcome?.kind === 'REJECTED'
       ? t(blockReasonKey(loadOutcome.reason))
@@ -710,7 +743,7 @@ export default function PortsScreen({
   return (
     <View style={styles.root} testID="ports-screen">
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { maxWidth: contentMaxWidth }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
@@ -965,6 +998,42 @@ export default function PortsScreen({
           </>
         ) : null}
       </ScrollView>
+      {/* OUTSIDE the ScrollView on purpose: the in-scroll actions above
+          sit below six UART cards, which is why the operator reported
+          that no save action appeared at all. This bar is on screen
+          whenever something is genuinely pending. */}
+      <StickyActionBar
+        visible={dirty}
+        summary={
+          pendingPortChanges.length > 0
+            ? pendingPortChanges.join('   ')
+            : t('portsConfiguration.unsaved')
+        }
+        details={pendingPortChanges}
+        saveLabel={t('portsConfiguration.saveAndReboot')}
+        discardLabel={t('portsConfiguration.reset')}
+        onSave={handleSave}
+        onDiscard={() => {
+          setDraft(original?.ports ?? []);
+          setSaveOutcome(undefined);
+        }}
+        disabledReason={
+          issues.length > 0
+            ? t('portsConfiguration.validationTitle')
+            : undefined
+        }
+        statusMessage={
+          saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))
+        }
+        statusTone={
+          saveOutcome !== undefined && isDangerOutcome(saveOutcome)
+            ? 'warning'
+            : 'normal'
+        }
+        busy={phase === 'SAVING'}
+        busyLabel={t('portsConfiguration.saving')}
+        testID="ports-sticky-actions"
+      />
     </View>
   );
 }
@@ -982,7 +1051,7 @@ const styles = StyleSheet.create({
   hero: { alignItems: 'flex-end', gap: spacing.xs },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     textAlign: 'right',
     writingDirection: 'rtl',
   },
@@ -999,7 +1068,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   warningCard: {
-    backgroundColor: '#2A2115',
+    backgroundColor: '#FFF4D8',
     borderColor: colors.warning,
     borderWidth: 1,
     borderRadius: radii.lg,
@@ -1026,7 +1095,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   errorCard: {
-    backgroundColor: '#301B21',
+    backgroundColor: '#FFF0F1',
     borderWidth: 1,
     borderColor: colors.error,
     borderRadius: radii.md,
@@ -1099,7 +1168,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   validationCard: {
-    backgroundColor: '#2A2115',
+    backgroundColor: '#FFF4D8',
     borderWidth: 1,
     borderColor: colors.warning,
     borderRadius: radii.md,
@@ -1152,12 +1221,12 @@ const styles = StyleSheet.create({
   },
   roleCountText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   expandText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   roleSummary: {
@@ -1168,7 +1237,7 @@ const styles = StyleSheet.create({
   },
   baudSummary: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     textAlign: 'left',
   },
   preservedNotice: {
@@ -1236,7 +1305,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     writingDirection: 'rtl',
   },
-  chipTextSelected: { color: colors.accent, fontWeight: '800' },
+  chipTextSelected: { color: colors.accentStrong, fontWeight: '800' },
   unavailableText: {
     fontSize: 9,
     lineHeight: 12,
@@ -1268,7 +1337,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: spacing.md,
   },
-  outcomeDanger: { backgroundColor: '#301B21', borderColor: colors.error },
+  outcomeDanger: { backgroundColor: '#FFF0F1', borderColor: colors.error },
   outcomeText: {
     ...typography.body,
     color: colors.success,
@@ -1293,7 +1362,7 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   saveButton: {

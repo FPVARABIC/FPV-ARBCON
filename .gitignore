@@ -66,6 +66,11 @@ yarn-error.log
 # testing
 /coverage
 
+# Web build output (Vite) and its dependency cache
+dist-web/
+.vite/
+node_modules/.vite/
+
 # Yarn
 .yarn/*
 !.yarn/patches

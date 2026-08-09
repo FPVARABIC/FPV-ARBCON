@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
   },
   title: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
   },
   messageText: {
     ...typography.body,

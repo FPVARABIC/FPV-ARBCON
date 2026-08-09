@@ -24,6 +24,21 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * No AUTHORIZED DFU device appeared inside the bounded wait.
+ *
+ * Deliberately distinct from a detection failure: the board may well be
+ * in DFU and simply not yet authorized for this browser origin. The
+ * caller is expected to offer a user-gesture chooser and RESUME the same
+ * prepared operation - never to re-send the reboot or restart a write.
+ */
+export class DfuPermissionRequiredError extends Error {
+  constructor() {
+    super('DFU device permission is required before the pending flash can continue.');
+    this.name = 'DfuPermissionRequiredError';
+  }
+}
+
 export class FirmwareDetectionError extends Error {
   constructor(message: string) {
     super(message);
@@ -143,6 +158,18 @@ export class FirmwareBootloaderController {
     }
   }
 
+  /**
+   * Waits for exactly one AUTHORIZED DFU device.
+   *
+   * `listDfuDevices()` is `navigator.usb.getDevices()` on the web, which
+   * lists only devices the operator has already authorized IN THIS
+   * BROWSER. On a first flash the board really is in DFU and really has
+   * re-enumerated, but its new identity is invisible here - so running
+   * this wait out and reporting a timeout would be a lie about the
+   * hardware. Callers that can ask for permission should catch
+   * DfuPermissionRequiredError and offer the operator a chooser instead
+   * of failing.
+   */
   async waitForOneDfuDevice(timeoutMs = 20_000, signal?: AbortSignal): Promise<DfuDeviceDescriptor> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -153,7 +180,10 @@ export class FirmwareBootloaderController {
       }
       await delay(250, signal);
     }
-    throw new FirmwareDetectionError('انتهت مهلة انتظار متحكم واحد في وضع DFU.');
+    // Nothing AUTHORIZED appeared. On a platform whose device list is
+    // permission-scoped this is the expected first-use outcome, not a
+    // hardware failure - so it is reported as its own condition.
+    throw new DfuPermissionRequiredError();
   }
 
   async waitForOneSerialDevice(timeoutMs = 30_000, signal?: AbortSignal): Promise<UsbSerialDeviceDescriptor> {

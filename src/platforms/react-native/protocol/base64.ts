@@ -19,6 +19,35 @@
 
 const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
+/**
+ * charCode -> 6-bit value, or -1 for any character that is not part of the
+ * alphabet (whitespace, newlines, padding already stripped by the caller).
+ *
+ * WHY A TABLE RATHER THAN indexOf(). Both decoders below used
+ * `BASE64_CHARS.indexOf(char)`, which is a linear scan of up to 64
+ * characters FOR EVERY CHARACTER DECODED. On Android this runs on the MSP
+ * receive path for every chunk the transport delivers, and it is also what
+ * made the 256 KiB document-decode test the slowest test in the suite
+ * (~3.5s idle, >20s on a loaded machine). A 128-entry lookup makes the
+ * inner loop a single indexed read.
+ *
+ * Behaviour is unchanged, deliberately: an out-of-alphabet character still
+ * resolves to -1 and is still skipped, so malformed input is treated
+ * exactly as before.
+ */
+const BASE64_VALUES: Int8Array = (() => {
+  const table = new Int8Array(128).fill(-1);
+  for (let index = 0; index < BASE64_CHARS.length; index += 1) {
+    table[BASE64_CHARS.charCodeAt(index)] = index;
+  }
+  return table;
+})();
+
+/** -1 for anything outside the alphabet, including any code point >= 128. */
+function base64Value(charCode: number): number {
+  return charCode < 128 ? BASE64_VALUES[charCode] : -1;
+}
+
 export function bytesToBase64(bytes: Uint8Array): string {
   let result = '';
   for (let i = 0; i < bytes.length; i += 3) {
@@ -41,8 +70,8 @@ export function base64ToBytes(base64: string): Uint8Array {
   let outputOffset = 0;
   let buffer = 0;
   let bitsCollected = 0;
-  for (const char of clean) {
-    const value = BASE64_CHARS.indexOf(char);
+  for (let index = 0; index < clean.length; index += 1) {
+    const value = base64Value(clean.charCodeAt(index));
     if (value === -1) {
       continue;
     }
@@ -77,7 +106,7 @@ export async function base64ToBytesAsync(
   let buffer = 0;
   let bitsCollected = 0;
   for (let index = 0; index < clean.length; index += 1) {
-    const value = BASE64_CHARS.indexOf(clean[index]);
+    const value = base64Value(clean.charCodeAt(index));
     if (value !== -1) {
       buffer = (buffer << 6) | value;
       bitsCollected += 6;

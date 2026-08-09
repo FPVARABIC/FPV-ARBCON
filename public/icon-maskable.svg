@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="FPV-ARBCON">
+  <title>FPV-ARBCON</title>
+  <!-- Maskable: artwork stays inside the 80% safe zone so a circular or
+       squircle mask never clips the airframe. -->
+  <rect width="512" height="512" fill="#0A202A"/>
+  <g transform="translate(256 256) scale(0.72) translate(-256 -256)">
+    <g stroke="#38D6C8" stroke-width="18" stroke-linecap="round" fill="none">
+      <path d="M150 150 L362 362"/>
+      <path d="M362 150 L150 362"/>
+    </g>
+    <circle cx="150" cy="150" r="52" fill="none" stroke="#38D6C8" stroke-width="14"/>
+    <circle cx="362" cy="150" r="52" fill="none" stroke="#38D6C8" stroke-width="14"/>
+    <circle cx="150" cy="362" r="52" fill="none" stroke="#FF6868" stroke-width="14"/>
+    <circle cx="362" cy="362" r="52" fill="none" stroke="#FF6868" stroke-width="14"/>
+    <rect x="212" y="212" width="88" height="88" rx="22" fill="#28505C" stroke="#F3F8F9" stroke-width="12"/>
+  </g>
+</svg>

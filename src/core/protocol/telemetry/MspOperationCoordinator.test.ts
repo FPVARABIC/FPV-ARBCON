@@ -59,6 +59,10 @@ function createFakeScheduler(): MspTelemetryScheduler & {
       // Never called by MspOperationCoordinator.
       return () => undefined;
     },
+    acquirePollSuppression(): () => void {
+      // Never called by MspOperationCoordinator.
+      return () => undefined;
+    },
     acquirePauseLease(): TelemetryPauseLease {
       fake.acquirePauseLeaseCallCount += 1;
       fake.leaseReleased = false;
@@ -82,6 +86,12 @@ function createFakeScheduler(): MspTelemetryScheduler & {
     requestRefresh(ids: readonly string[]): void {
       fake.requestRefreshCalls.push(ids);
       fake.callOrder.push('requestRefresh');
+    },
+    describeDiagnostics() {
+      // Never called by MspOperationCoordinator - the Checkpoint F
+      // read-only surface exists on the interface, so the fake must
+      // satisfy it, but nothing under test reads it.
+      return {tickCount: 0, inFlightCount: 0, pauseReasons: [], polls: []};
     },
     resolveIdle(): void {
       idleResolve?.();

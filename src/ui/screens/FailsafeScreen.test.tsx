@@ -1,0 +1,12 @@
+import React from 'react';
+import ReactTestRenderer from 'react-test-renderer';
+import '../../i18n';
+import type {MspFailsafeSnapshot} from '../../core';
+import FailsafeScreen, {type FailsafeControllerPort} from './FailsafeScreen';
+
+const snapshot: MspFailsafeSnapshot = {config: {delayDeciseconds: 15, landingTimeSeconds: 60, throttle: 1000, switchMode: 0, throttleLowDelayDeciseconds: 100, procedure: 1}, channels: [{mode: 0, value: 1500}, {mode: 0, value: 1500}, {mode: 0, value: 1500}, {mode: 0, value: 1000}, {mode: 1, value: 1500}], supportsGpsRescue: true};
+async function render(controller: FailsafeControllerPort) {let renderer!: ReactTestRenderer.ReactTestRenderer; await ReactTestRenderer.act(async () => {renderer = ReactTestRenderer.create(<FailsafeScreen sessionKey={{sessionId: 'fc', generation: 1}} active onOpenReceiver={() => {}} onOpenMotors={() => {}} controller={controller} />); await Promise.resolve();}); return {renderer, find: (testID: string) => renderer.root.findAllByProps({testID})[0], press: async (testID: string) => ReactTestRenderer.act(async () => {renderer.root.findAllByProps({testID})[0].props.onPress(); await Promise.resolve();}), unmount: () => ReactTestRenderer.act(() => renderer.unmount())};}
+describe('FailsafeScreen', () => {
+  it('renders every real channel and exposes GPS Rescue only with build evidence', async () => {const controller: FailsafeControllerPort = {load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot})), save: jest.fn()}; const screen = await render(controller); expect(screen.find('failsafe-channel-5')).toBeDefined(); expect(screen.find('failsafe-procedure-2')).toBeDefined(); screen.unmount();});
+  it('edits a channel and sends a verified draft', async () => {const saved: MspFailsafeSnapshot = {...snapshot, channels: [...snapshot.channels.slice(0, 4), {mode: 2, value: 1500}]}; const controller: FailsafeControllerPort = {load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot})), save: jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: saved}))}; const screen = await render(controller); await screen.press('failsafe-channel-5-mode-2'); const bar = screen.find('failsafe-save-bar'); await ReactTestRenderer.act(async () => {await bar.props.onSave();}); expect(controller.save).toHaveBeenCalledWith(expect.anything(), snapshot, expect.objectContaining({channels: expect.arrayContaining([expect.objectContaining({mode: 2})])})); screen.unmount();});
+});

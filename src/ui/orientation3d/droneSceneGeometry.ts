@@ -329,13 +329,16 @@ function ringAroundOrigin(radius: number, y: number): Vec3[] {
 export function computeDroneScene(
   orientation: DroneOrientationDeg,
   viewportSize: {width: number; height: number},
+  presentationScale = 1,
 ): DroneScene {
   const camera = buildCamera();
   const viewportMinDimension = Math.min(viewportSize.width, viewportSize.height);
 
+  const safePresentationScale = Number.isFinite(presentationScale) && presentationScale > 0 ? presentationScale : 1;
   const projectLocal = (local: Vec3): ProjectedPoint => {
     const world = rotateBodyPoint(local, orientation);
-    return project(world, camera, viewportMinDimension);
+    const projected = project(world, camera, viewportMinDimension);
+    return { ...projected, screen: { x: projected.screen.x * safePresentationScale, y: projected.screen.y * safePresentationScale } };
   };
 
   const projectPolygon = (localPoints: Vec3[]): {points: Vec2[]; depth: number} => {

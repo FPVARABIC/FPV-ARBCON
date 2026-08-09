@@ -42,6 +42,59 @@ describe('BetaflightBuildApi', () => {
     await expect(malformed.loadTargets()).rejects.toThrow(/JSON/);
   });
 
+  it('never invokes the DEFAULT fetch with a receiver a browser would reject', async () => {
+    // Regression for the web-only production failure "Failed to execute
+    // 'fetch' on 'Window': Illegal invocation": the constructor default
+    // used to capture `fetch` UNBOUND, and `this.fetchImpl(...)` then
+    // called it with the API instance as receiver. Hermes accepts that,
+    // Chromium's native fetch does not - so the target list died on every
+    // web build while every Android build and every test (which all pass
+    // an explicit fetchImpl) stayed green. This stub enforces the
+    // browser's contract: any receiver other than undefined/globalThis
+    // throws exactly as Chromium does.
+    const original = (globalThis as {fetch?: unknown}).fetch;
+    const receiverSensitiveFetch = jest.fn(async function (this: unknown) {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+      }
+      return response({text: JSON.stringify([{target: 'S405'}])});
+    });
+    (globalThis as {fetch?: unknown}).fetch = receiverSensitiveFetch;
+    try {
+      const api = new BetaflightBuildApi();
+      await expect(api.loadTargets()).resolves.toEqual([{target: 'S405'}]);
+      expect(receiverSensitiveFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      (globalThis as {fetch?: unknown}).fetch = original;
+    }
+  });
+
+  it('names the build server and CORS in Arabic when the network layer itself rejects', async () => {
+    // A raw TypeError("Failed to fetch") is browser-internal English; the
+    // operator must instead read what actually happened and keep the
+    // technical text as a suffix for bug reports.
+    const fetcher = jest.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const api = new BetaflightBuildApi(fetcher as unknown as typeof fetch);
+
+    await expect(api.loadTargets()).rejects.toThrow(/تعذّر الوصول إلى خادم البناء/);
+    await expect(api.loadTargets()).rejects.toThrow(/Failed to fetch/);
+  });
+
+  it('rethrows the caller\'s own abort untouched', async () => {
+    // The flasher's unmount path aborts in-flight loads and checks
+    // signal.aborted; wrapping an AbortError into a BuildApiError would
+    // make cancellation read as a network failure.
+    const abortError = Object.assign(new Error('Aborted'), {name: 'AbortError'});
+    const fetcher = jest.fn(async () => {
+      throw abortError;
+    });
+    const api = new BetaflightBuildApi(fetcher as unknown as typeof fetch);
+
+    await expect(api.loadTargets()).rejects.toBe(abortError);
+  });
+
   it('loads a bounded build log from the official origin for in-app display', async () => {
     const fetcher = jest.fn(async () => response({text: 'compile ok\nlink ok\n', length: '19'}));
     const api = new BetaflightBuildApi(fetcher as unknown as typeof fetch);

@@ -1,10 +1,10 @@
 /**
  * Real coordinator-to-Motors-screen reachability.
  *
- * The current interaction has ONE primary action. Merely opening the tab
- * never acquires the motor-test lease; the first intentional long press
- * lazily prepares the protected session and can pulse only after all
- * controller gates pass. The only native dependency replaced here is USB.
+ * Merely opening the tab never acquires the motor-test lease. The explicit
+ * preparation action acquires the protected session, and the hold control
+ * can pulse only after every controller gate passes. The only native
+ * dependency replaced here is USB.
  */
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -74,7 +74,7 @@ describe('the real coordinator makes the simplified motor action reachable', () 
     ).toBeDefined();
   });
 
-  it('renders one enabled hold control with no begin button or checkbox ritual', async () => {
+  it('renders an explicit preparation action and keeps hold blocked until Ready', async () => {
     mspSessionCoordinator.openSession(makeNativeClient(), SESSION_ID);
     await flush();
     const renderer = renderMotors(
@@ -85,11 +85,11 @@ describe('the real coordinator makes the simplified motor action reachable', () 
       testID: 'motors-hold-button',
     })[0];
     expect(hold).toBeDefined();
-    expect(hold.props.disabled).toBe(false);
+    expect(hold.props.disabled).toBe(true);
     expect(hold.props.delayLongPress).toBe(800);
     expect(
-      renderer.root.findAllByProps({testID: 'motors-begin-session'}),
-    ).toHaveLength(0);
+      renderer.root.findAllByProps({testID: 'motors-begin-session-button'}).length,
+    ).toBeGreaterThan(0);
     expect(
       renderer.root.findAllByProps({testID: 'motors-ack-propellers'}),
     ).toHaveLength(0);
@@ -113,9 +113,12 @@ describe('the real coordinator makes the simplified motor action reachable', () 
     });
     expect(readMotorTestCapability(SESSION_ID)).toBeDefined();
     expect(
+      renderer.root.findAllByProps({testID: 'motors-begin-session-button'}).length,
+    ).toBeGreaterThan(0);
+    expect(
       renderer.root.findAllByProps({testID: 'motors-hold-button'})[0].props
         .disabled,
-    ).toBe(false);
+    ).toBe(true);
 
     ReactTestRenderer.act(() => renderer.unmount());
   });
@@ -132,19 +135,18 @@ describe('the real coordinator makes the simplified motor action reachable', () 
     ReactTestRenderer.act(() => renderer.unmount());
   });
 
-  it('uses the first long press to begin preparation without a second action', async () => {
+  it('uses the explicit preparation action without submitting a motor pulse', async () => {
     mspSessionCoordinator.openSession(makeNativeClient(), SESSION_ID);
     await flush();
     const renderer = renderMotors(
       mspSessionCoordinator.getSessionKey(SESSION_ID),
     );
-    const hold = renderer.root.findAllByProps({
-      testID: 'motors-hold-button',
+    const prepare = renderer.root.findAllByProps({
+      testID: 'motors-begin-session-button',
     })[0];
 
     ReactTestRenderer.act(() => {
-      hold.props.onPressIn();
-      hold.props.onLongPress();
+      prepare.props.onPress();
     });
     await ReactTestRenderer.act(async () => {
       await flush();
@@ -161,7 +163,7 @@ describe('the real coordinator makes the simplified motor action reachable', () 
     );
     // This no-reply harness may either still be preparing or already have
     // failed closed because another coordinator request owns the link. Both
-    // prove the lazy begin path ran; IDLE would prove it did not.
+    // prove the explicit preparation path ran; IDLE would prove it did not.
     expect(operator?.getSnapshot().phase).not.toBe('IDLE');
     // No pulse can be sent while setup is still waiting for real evidence.
     expect(operator?.getSnapshot().pulse.submitted).toBe(false);

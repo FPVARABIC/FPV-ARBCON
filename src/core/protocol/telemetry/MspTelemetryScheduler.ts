@@ -173,7 +173,14 @@ import type {MspRequester} from '../msp/identification/MspIdentificationService'
 import type {MspRequestOptions} from '../mspClient';
 import type {MonotonicClock} from './clock';
 import {RealClock} from './clock';
-import type {MspPollDefinition, TelemetryPauseLease, TelemetryPauseReason, TelemetryValue} from './telemetryTypes';
+import type {
+  MspPollDefinition,
+  TelemetryPauseLease,
+  TelemetryPauseReason,
+  TelemetryPollDiagnostics,
+  TelemetrySchedulerDiagnostics,
+  TelemetryValue,
+} from './telemetryTypes';
 
 const EMPTY_PAYLOAD = new Uint8Array(0);
 
@@ -212,6 +219,13 @@ interface PollRuntimeState<T = unknown> {
    * getValue() itself. See this file's own class-level doc comment
    * ("getValue() MUST BE A STABLE CACHE LOOKUP") for why this exists. */
   cachedValue: TelemetryValue<T>;
+  /** Checkpoint F observability - see telemetryTypes.ts's own
+   * TelemetryPollDiagnostics doc comment. Written only; never read by
+   * any scheduling decision. */
+  requestCount: number;
+  responseCount: number;
+  errorCount: number;
+  lastErrorCode: string | undefined;
 }
 
 export interface MspTelemetryScheduler {
@@ -221,6 +235,18 @@ export interface MspTelemetryScheduler {
    * dispatch for this id is NOT cancelled, it simply has nowhere
    * registered left to write its result once it settles. */
   registerPoll<T>(definition: MspPollDefinition<T>): () => void;
+  /**
+   * Temporarily suppresses one registered poll without discarding its
+   * cached value or disturbing any other telemetry channel. Leases are
+   * reference-counted per poll id: the poll becomes dispatchable again
+   * only after every owner releases its lease.
+   *
+   * This is intentionally narrower than acquirePauseLease(), which stops
+   * the entire scheduler for exclusive operations. A visible high-rate
+   * surface can use this to yield bandwidth from a hidden high-rate poll
+   * while the real MSP link remains globally single-flight.
+   */
+  acquirePollSuppression(id: string): () => void;
   getValue<T>(id: string): TelemetryValue<T>;
   /** See this file's own class-level doc comment: the caller-driven,
    * pull-based entry point. Calling tick() with nothing currently due
@@ -250,6 +276,11 @@ export interface MspTelemetryScheduler {
    * convention already established by subscribeOwnershipState()/
    * subscribeIdentificationState(). */
   subscribe(listener: () => void): () => void;
+  /** Checkpoint F: a read-only snapshot for a diagnostics report.
+   * Allocates a fresh object every call and is therefore NOT a
+   * useSyncExternalStore snapshot source - it is read on demand, at the
+   * moment a user asks for evidence. */
+  describeDiagnostics(): TelemetrySchedulerDiagnostics;
 }
 
 export interface MspTelemetrySchedulerOptions {
@@ -282,10 +313,47 @@ const WAITING_VALUE: TelemetryValue<never> = {status: 'WAITING'};
 const UNAVAILABLE_VALUE: TelemetryValue<never> = {status: 'UNAVAILABLE'};
 const MAX_CONSECUTIVE_PRIMARY_DISPATCHES = 5;
 
+/**
+ * Checkpoint F: reduces any thrown value to a SHORT, ENUMERATED tag for
+ * the diagnostics report.
+ *
+ * Deliberately never the error MESSAGE. A message is free text that a
+ * decoder can (and MspPayloadReader does) build out of byte offsets and
+ * lengths; a report a user pastes into a public issue must carry a code
+ * class, not something derived from the wire. `code` is MspClientError's
+ * own enumerated taxonomy ('MSP_TIMEOUT', 'MSP_RECOVERING', ...);
+ * everything else degrades to the constructor name, then to a bare
+ * 'UNKNOWN'.
+ */
+function describeErrorCode(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const code = (error as {code?: unknown}).code;
+    if (typeof code === 'string' && code.length > 0) {
+      return code;
+    }
+    const name = (error as {name?: unknown}).name;
+    if (typeof name === 'string' && name.length > 0) {
+      return name;
+    }
+  }
+  return 'UNKNOWN';
+}
+
 class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private readonly polls = new Map<string, PollRuntimeState>();
+  private readonly suppressedPollReferences = new Map<string, number>();
   private readonly activeLeaseIds = new Set<string>();
+  /** Checkpoint F: the REASON behind each active lease id, so a
+   * diagnostics report can say WHICH owner is holding polling off
+   * ('MOTOR_TEST' vs 'APP_BACKGROUND' vs 'EXCLUSIVE_OPERATION') rather
+   * than only that something is. Kept strictly in step with
+   * activeLeaseIds; consulted by nothing else. */
+  private readonly activeLeaseReasons = new Map<string, TelemetryPauseReason>();
   private readonly listeners = new Set<() => void>();
+  /** Checkpoint F: how many times tick() has run. A report showing zero
+   * ticks proves the driving interval never fired - a completely
+   * different failure from "ticks fired but nothing was due". */
+  private tickCount = 0;
   private nextLeaseSeq = 0;
   /** Monotonic genuine-sample counter, scheduler-wide (therefore
    * session-wide - one scheduler per physical session). Incremented
@@ -322,6 +390,10 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       lastOutcome: undefined,
       lastSuccessAtMs: undefined,
       cachedValue: WAITING_VALUE,
+      requestCount: 0,
+      responseCount: 0,
+      errorCount: 0,
+      lastErrorCode: undefined,
     };
     this.polls.set(definition.id, state as PollRuntimeState);
 
@@ -332,6 +404,26 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       // older unregister function called late.
       if (this.polls.get(definition.id) === (state as PollRuntimeState)) {
         this.polls.delete(definition.id);
+      }
+    };
+  }
+
+  acquirePollSuppression(id: string): () => void {
+    this.suppressedPollReferences.set(
+      id,
+      (this.suppressedPollReferences.get(id) ?? 0) + 1,
+    );
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      const current = this.suppressedPollReferences.get(id) ?? 0;
+      if (current <= 1) {
+        this.suppressedPollReferences.delete(id);
+      } else {
+        this.suppressedPollReferences.set(id, current - 1);
       }
     };
   }
@@ -371,6 +463,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   }
 
   tick(): void {
+    this.tickCount += 1;
     const now = this.clock.now();
 
     // Staleness is a property of "time since last update," genuinely
@@ -395,7 +488,12 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       let restrictToPrimary = false;
       if (this.singleFlight && this.lastDispatchedPriority !== undefined && this.lastDispatchedPriority < 0) {
         for (const poll of this.polls.values()) {
-          if (!poll.inFlight && now >= poll.dueAtMs && poll.definition.priority >= 0) {
+          if (
+            !poll.inFlight &&
+            !this.suppressedPollReferences.has(poll.definition.id) &&
+            now >= poll.dueAtMs &&
+            poll.definition.priority >= 0
+          ) {
             restrictToPrimary = true;
             break;
           }
@@ -409,7 +507,12 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         this.consecutivePrimaryDispatches >= MAX_CONSECUTIVE_PRIMARY_DISPATCHES
       ) {
         for (const poll of this.polls.values()) {
-          if (!poll.inFlight && now >= poll.dueAtMs && poll.definition.priority < 0) {
+          if (
+            !poll.inFlight &&
+            !this.suppressedPollReferences.has(poll.definition.id) &&
+            now >= poll.dueAtMs &&
+            poll.definition.priority < 0
+          ) {
             restrictToAuxiliary = true;
             break;
           }
@@ -419,7 +522,11 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       let best: PollRuntimeState | undefined;
       let bestRatio = -Infinity;
       for (const poll of this.polls.values()) {
-        if (poll.inFlight || now < poll.dueAtMs) {
+        if (
+          poll.inFlight ||
+          this.suppressedPollReferences.has(poll.definition.id) ||
+          now < poll.dueAtMs
+        ) {
           continue;
         }
         if (restrictToPrimary && poll.definition.priority < 0) {
@@ -469,6 +576,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   acquirePauseLease(reason: TelemetryPauseReason): TelemetryPauseLease {
     const id = `${reason}-${this.nextLeaseSeq++}`;
     this.activeLeaseIds.add(id);
+    this.activeLeaseReasons.set(id, reason);
     let released = false;
     return {
       id,
@@ -478,7 +586,43 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         }
         released = true;
         this.activeLeaseIds.delete(id);
+        this.activeLeaseReasons.delete(id);
       },
+    };
+  }
+
+  /** Checkpoint F. Pure read: allocates a snapshot, mutates nothing,
+   * touches neither the clock's scheduling role nor any poll's state. */
+  describeDiagnostics(): TelemetrySchedulerDiagnostics {
+    const polls: TelemetryPollDiagnostics[] = [];
+    for (const poll of this.polls.values()) {
+      const cached = poll.cachedValue;
+      polls.push({
+        id: poll.definition.id,
+        command: poll.definition.command,
+        intervalMs: poll.definition.intervalMs,
+        staleAfterMs: poll.definition.staleAfterMs,
+        priority: poll.definition.priority,
+        requestCount: poll.requestCount,
+        responseCount: poll.responseCount,
+        errorCount: poll.errorCount,
+        lastErrorCode: poll.lastErrorCode,
+        inFlight: poll.inFlight,
+        status: cached.status,
+        sampleSeq: cached.status === 'FRESH' || cached.status === 'STALE' ? cached.sampleSeq : undefined,
+        updatedAtMs:
+          cached.status === 'FRESH' || cached.status === 'STALE' || cached.status === 'ERROR'
+            ? cached.updatedAtMs
+            : undefined,
+      });
+    }
+    return {
+      tickCount: this.tickCount,
+      inFlightCount: this.inFlightCount,
+      // Insertion-ordered, so the report reads as the order the holds
+      // were actually taken.
+      pauseReasons: Array.from(this.activeLeaseReasons.values()),
+      polls,
     };
   }
 
@@ -514,6 +658,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     poll.inFlight = true;
     poll.dueAtMs = dispatchedAtMs + poll.definition.intervalMs;
     this.inFlightCount += 1;
+    poll.requestCount += 1;
 
     const payload = poll.definition.requestPayload ?? EMPTY_PAYLOAD;
     Promise.resolve(this.requester.request(poll.definition.command, payload, REQUEST_OPTIONS))
@@ -524,10 +669,13 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         poll.lastSuccessAtMs = updatedAtMs;
         // THE canonical publication boundary for a genuine sample.
         poll.cachedValue = {status: 'FRESH', value, updatedAtMs, sampleSeq: this.nextSampleSeq++};
+        poll.responseCount += 1;
       })
       .catch((error: unknown) => {
         poll.lastOutcome = {type: 'error', error};
         poll.cachedValue = {status: 'ERROR', error, updatedAtMs: poll.lastSuccessAtMs};
+        poll.errorCount += 1;
+        poll.lastErrorCode = describeErrorCode(error);
       })
       .finally(() => {
         poll.inFlight = false;

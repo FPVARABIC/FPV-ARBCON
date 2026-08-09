@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { Switch, TextInput } from 'react-native';
+import { Alert, Switch, TextInput } from 'react-native';
 
 import '../../i18n';
 import i18n from '../../i18n';
@@ -91,6 +91,40 @@ async function render(controller: MotorConfigurationControllerPort) {
 }
 
 describe('MotorConfigurationPanel', () => {
+  it('reports its automatic configuration transaction as busy until the read settles', async () => {
+    let resolveLoad!: (
+      value: Awaited<ReturnType<MotorConfigurationControllerPort['load']>>,
+    ) => void;
+    const controller: MotorConfigurationControllerPort = {
+      load: jest.fn(
+        () =>
+          new Promise(resolve => {
+            resolveLoad = resolve;
+          }),
+      ),
+      save: jest.fn(),
+    };
+    const onBusyChange = jest.fn();
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <MotorConfigurationPanel
+          sessionId="fc-1"
+          controller={controller}
+          onBusyChange={onBusyChange}
+        />,
+      );
+    });
+    expect(onBusyChange).toHaveBeenLastCalledWith(true);
+
+    await act(async () => {
+      resolveLoad({kind: 'LOADED', snapshot: snapshot()});
+      await Promise.resolve();
+    });
+    expect(onBusyChange).toHaveBeenLastCalledWith(false);
+    act(() => tree.unmount());
+  });
+
   it('loads the real FC snapshot and presents the full independent settings groups', async () => {
     const controller = controllerDouble();
     const tree = await render(controller);
@@ -164,6 +198,18 @@ describe('MotorConfigurationPanel', () => {
     ).toBe(true);
     act(() => tree.unmount());
   });
+  it('protects even an invalid numeric edit before re-reading', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const controller = controllerDouble();
+    const tree = await render(controller);
+    await act(async () => { tree.root.findByProps({testID: 'motor-config-idle'}).findByType(TextInput).props.onChangeText(''); });
+    act(() => { tree.root.findByProps({testID: 'motor-config-refresh'}).props.onPress(); });
+    expect(controller.load).toHaveBeenCalledTimes(1);
+    await act(async () => { await alert.mock.calls[0][2]?.[1]?.onPress?.(); });
+    expect(controller.load).toHaveBeenCalledTimes(2);
+    alert.mockRestore();
+    act(() => tree.unmount());
+  });
 
   it('keeps serial ESC telemetry configurable for analog motor protocols', async () => {
     const tree = await render(controllerDouble());
@@ -190,7 +236,7 @@ describe('MotorConfigurationPanel', () => {
       controllerDouble({ kind: 'REJECTED', reason: 'MOTOR_TEST_ACTIVE' }),
     );
     expect(JSON.stringify(tree.toJSON())).toContain(
-      'أوقف جلسة اختبار دوران المحركات',
+      'إنهاء جلسة الاختبار وتحرير الإعدادات',
     );
     expect(
       tree.root.findAllByProps({ testID: 'motor-config-review-save' }),

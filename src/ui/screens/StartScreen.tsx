@@ -6,10 +6,19 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 
 import type {RootStackParamList} from '../../navigation/types';
-import {colors, radii, spacing, typography} from '../theme';
+import {
+  colors,
+  contentEnvelope,
+  isDesktopTier,
+  radii,
+  resolveLayoutTier,
+  spacing,
+  typography,
+} from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Start'>;
 
@@ -58,7 +67,13 @@ function RouteCard({
           accent === 'blue' && styles.routeButtonBlue,
           pressed && styles.pressed,
         ]}>
-        <Text style={styles.routeButtonText}>{button}</Text>
+        <Text
+          style={[
+            styles.routeButtonText,
+            accent === 'blue' && styles.routeButtonTextBlue,
+          ]}>
+          {button}
+        </Text>
         <Text style={styles.arrow}>‹</Text>
       </Pressable>
     </View>
@@ -66,11 +81,23 @@ function RouteCard({
 }
 
 export default function StartScreen({navigation}: Props): React.JSX.Element {
+  const {width, fontScale} = useWindowDimensions();
+  const tier = resolveLayoutTier(width, fontScale);
+  // The two route cards are peers - one connects, one flashes - and they
+  // are the whole point of this screen. Stacked vertically they made a
+  // 1920px desktop show two ~1100px letterboxes with 786px of dead space
+  // beside them (AUD-003). Side by side they read as the choice they are,
+  // and the wider envelope is earned because the screen genuinely splits.
+  const desktop = isDesktopTier(tier);
+
   return (
     <ScrollView
       testID="start-screen"
       style={styles.root}
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[
+        styles.content,
+        {maxWidth: contentEnvelope(tier, desktop)},
+      ]}
       keyboardShouldPersistTaps="handled">
       <View style={styles.brandRow}>
         <View style={styles.brandBadge}>
@@ -96,6 +123,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
         </Text>
       </View>
 
+      <View style={desktop ? styles.routeRow : styles.routeColumn} testID="start-route-group">
       <RouteCard
         eyebrow="المسار الأول"
         title="الاتصال بوحدة التحكم"
@@ -117,6 +145,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
         accent="blue"
         onPress={() => navigation.navigate('FirmwareFlasher')}
       />
+      </View>
 
       <View style={styles.safetyNote}>
         <Text style={styles.safetyTitle}>سياسة أمان ثابتة</Text>
@@ -169,10 +198,21 @@ const styles = StyleSheet.create({
   offlineDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success},
   offlineText: {...typography.caption, color: colors.textSecondary, fontWeight: '700'},
   hero: {paddingVertical: spacing.lg, gap: spacing.sm},
-  heroEyebrow: {...typography.eyebrow, color: colors.accent},
+  /* Peers, laid out in the product's RTL reading order: index 0 (connect)
+     is the RIGHTMOST card, matching src/navigation/tabs.ts's convention.
+     `alignItems: 'stretch'` keeps both cards the same height so the two
+     call-to-action buttons sit on one line. */
+  routeRow: {flexDirection: 'row-reverse', alignItems: 'stretch', gap: spacing.lg},
+  routeColumn: {gap: spacing.lg},
+  heroEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   heroTitle: {...typography.display, color: colors.textPrimary},
   heroBody: {...typography.body, color: colors.textSecondary},
   routeCard: {
+    /* flexBasis 0 + flexGrow 1: equal halves inside routeRow, and inert
+       inside routeColumn where the parent is not a row. */
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
     position: 'relative',
     overflow: 'hidden',
     padding: spacing.lg,
@@ -182,7 +222,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     gap: spacing.sm,
   },
-  routeCardBlue: {borderColor: '#275477'},
+  routeCardBlue: {borderColor: '#B8D7E3'},
   routeMark: {position: 'absolute', right: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.accent},
   routeMarkBlue: {backgroundColor: colors.info},
   eyebrow: {...typography.eyebrow, color: colors.textMuted},
@@ -204,14 +244,15 @@ const styles = StyleSheet.create({
   },
   routeButtonBlue: {backgroundColor: colors.info},
   routeButtonText: {...typography.sectionTitle, color: colors.accentText},
+  routeButtonTextBlue: {color: colors.white},
   arrow: {fontSize: 28, color: colors.accentText, lineHeight: 30},
   pressed: {opacity: 0.75},
   safetyNote: {
     padding: spacing.md,
     borderRadius: radii.md,
-    backgroundColor: '#122D2E',
+    backgroundColor: '#E8F7F2',
     borderWidth: 1,
-    borderColor: '#315454',
+    borderColor: '#B8DED5',
     gap: 3,
   },
   safetyTitle: {...typography.sectionTitle, color: colors.success},

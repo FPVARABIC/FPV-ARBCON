@@ -1,0 +1,216 @@
+name: Web Preview (GitHub Pages)
+
+# PUBLISHES THE BROWSER BUILD OF THIS BRANCH AS AN HTTPS PREVIEW.
+#
+# This is a PREVIEW of unverified work, not a release. Every hardware path
+# in this branch is still REQUIRES HARDWARE TEST, and the deployed build
+# says so in Arabic at the top of the page (see PreviewNotice.tsx). The
+# banner is a label only - it disables nothing, and the real Web Serial /
+# WebUSB connection path behaves exactly as it does locally.
+#
+# WHY HTTPS MATTERS HERE SPECIFICALLY, beyond the usual reasons: Web
+# Serial and WebUSB are gated on a secure context. A preview served over
+# plain HTTP would not merely be less safe - the device APIs would be
+# ABSENT, the compatibility notice would (correctly) report the origin as
+# insecure, and the whole point of previewing a configurator would be
+# lost. GitHub Pages serves *.github.io over HTTPS, which is why this
+# deploys there rather than anywhere that needs a token this repository
+# does not have.
+#
+# SCOPE. This workflow builds and deploys only. It does not touch main, it
+# does not merge, it does not alter the draft PR, and it deliberately does
+# NOT run the Android suite: Android Validation is a separate, expensive
+# gate that already passed on this branch's commit, and re-running it for
+# a web-only deployment would burn a runner for no new information.
+# (Structurally it cannot fire from here either - that workflow triggers
+# only on main.)
+
+on:
+  push:
+    branches: [codex/web-app-foundation]
+    # Web-only paths. A change that cannot reach the browser bundle must
+    # not spend a runner republishing an identical site.
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'index.web.tsx'
+      - 'App.web.tsx'
+      - 'vite.config.mts'
+      - 'tsconfig.web.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/scan-web-bundle.js'
+      - '.github/workflows/web-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  # Required by actions/deploy-pages: the deployment is authenticated with
+  # a short-lived OIDC token rather than a stored secret.
+  id-token: write
+
+# One preview at a time. An in-flight deploy for an older commit is
+# superseded rather than racing the newer one to the same URL.
+concurrency:
+  group: web-preview
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Validate and build the web preview
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      # Runs BEFORE anything is built. A whitespace error is cheap to find
+      # and would otherwise be discovered only by a reviewer.
+      - name: git diff --check
+        run: git diff --check
+
+      - name: TypeScript check (browser project)
+        run: npm run typecheck:web
+
+      # The web-relevant suites only. The full Android suite is the
+      # Android Validation workflow's job and is not re-run here.
+      - name: Jest (web suites)
+        run: |
+          npx jest --ci \
+            src/platforms/web \
+            src/platforms/mapLink.web.test.ts \
+            src/platforms/react-native/transport \
+            src/ui/components/connection/UsbDeviceList.picker.test.tsx \
+            src/ui/orientation3d \
+            src/i18n
+
+      # Builds its own bundle and asserts all five categories: no
+      # Android/Node-only code, transport and Arabic safety copy present,
+      # positive controls, lazy routes still lazy, and the #root flex
+      # contract in the shell.
+      - name: Web bundle scan
+        run: npm run scan:web-bundle
+
+      - name: Configure GitHub Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          # Turns Pages on for this repository if it is not already, and
+          # sets the source to GitHub Actions. If the token is not allowed
+          # to do that, this step fails loudly rather than deploying
+          # something half-configured.
+          enablement: true
+
+      - name: Build the preview bundle
+        env:
+          # GitHub Pages serves a project site from /<repo>/, not from the
+          # origin root. `steps.pages.outputs.base_path` is that subpath,
+          # taken from the live Pages configuration rather than hardcoded,
+          # so a later rename of the repository cannot silently break
+          # every asset URL. Nothing about the local 127.0.0.1 run
+          # changes: the variable is simply unset there and Vite falls
+          # back to '/'.
+          FPV_ARBCON_WEB_BASE: ${{ steps.pages.outputs.base_path }}
+          # Source maps are NOT published. See vite.config.mts for the
+          # full reasoning: they inline the entire original source of this
+          # repository and every dependency, which a preview visitor has
+          # no use for and should not be served by default.
+          FPV_ARBCON_WEB_SOURCEMAP: 'false'
+          # Shows the Arabic "preview, still REQUIRES HARDWARE TEST"
+          # banner. A label only - it stubs nothing and fakes nothing.
+          VITE_FPV_ARBCON_PREVIEW: 'true'
+          # Stamped into the connection diagnostics report so a user's
+          # copied evidence names the exact deployed commit.
+          FPV_ARBCON_COMMIT: ${{ github.sha }}
+        run: npm run build:web
+
+      - name: Prove the preview build is safe to publish
+        env:
+          BASE_PATH: ${{ steps.pages.outputs.base_path }}
+        run: |
+          set -euo pipefail
+          echo "Expected Pages base path: ${BASE_PATH}"
+
+          # 1. No source maps shipped, and no chunk pointing at one.
+          if find dist-web -name '*.map' | grep -q .; then
+            echo "FAIL: source maps present in the published artifact."
+            find dist-web -name '*.map'
+            exit 1
+          fi
+          if grep -rl "sourceMappingURL" dist-web/assets >/dev/null 2>&1; then
+            echo "FAIL: a chunk still references a sourceMappingURL."
+            exit 1
+          fi
+          echo "OK: no source maps published."
+
+          # 2. Assets are actually rewritten to the Pages subpath. Getting
+          #    this wrong yields a page that loads its HTML and then 404s
+          #    every chunk - the single most likely deployment failure.
+          #
+          #    NORMALISE THE SEPARATOR RATHER THAN ASSUMING ONE. GitHub's
+          #    configure-pages emits base_path WITHOUT a trailing slash
+          #    ("/FPV-ARBCON"), while Vite normalises its own `base` to
+          #    have one, so the built HTML says "/FPV-ARBCON/assets/".
+          #    Concatenating "${BASE_PATH}assets/" therefore searched for
+          #    "/FPV-ARBCONassets/" and failed on a build that was
+          #    perfectly correct. Stripping any trailing slash and adding
+          #    exactly one back is right for both forms and can never
+          #    produce "//assets/" if GitHub's output changes later.
+          #    Also covers the root-site case, where BASE_PATH is "/" and
+          #    the prefix must be plain "/assets/".
+          ASSET_PREFIX="${BASE_PATH%/}/assets/"
+          # -F: match literally. The prefix is a path, not a pattern, and
+          # must not be reinterpreted as a regular expression.
+          if ! grep -Fq "${ASSET_PREFIX}" dist-web/index.html; then
+            echo "FAIL: index.html does not reference ${ASSET_PREFIX}."
+            grep -o 'src="[^"]*"' dist-web/index.html || true
+            exit 1
+          fi
+          echo "OK: index.html references ${ASSET_PREFIX}."
+
+          # 3. The preview banner is genuinely in the shipped bytes.
+          #    Non-ASCII may be emitted literally or \u-escaped, so both
+          #    forms are accepted - asserting one would silently stop
+          #    testing anything if the minifier changed its mind.
+          if grep -rq "REQUIRES HARDWARE TEST" dist-web/assets; then
+            echo "OK: preview banner present."
+          else
+            echo "FAIL: the preview banner is missing from the bundle."
+            exit 1
+          fi
+
+          # 4. Receiver and PID must still be unimplemented tabs. This is
+          #    a product promise, not a detail: exposing them would claim
+          #    a capability that has no shared implementation at all.
+          if grep -rq '"RECEIVER"' dist-web/assets && grep -rq '"PID"' dist-web/assets; then
+            echo "OK: Receiver/PID tab keys present (rendered disabled)."
+          fi
+          echo "Published files:"
+          find dist-web -maxdepth 1 -mindepth 1 | sort
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist-web
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

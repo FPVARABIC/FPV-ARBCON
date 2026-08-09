@@ -1,0 +1,5 @@
+# Build output. `vite build` writes minified, source-mapped bundles here;
+# linting them produces tens of thousands of meaningless findings and hides
+# the real ones in the source tree. Kept in step with .gitignore.
+dist-web/
+node_modules/

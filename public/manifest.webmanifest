@@ -1,0 +1,27 @@
+{
+  "name": "FPV-ARBCON — معايرة متحكم الطيران",
+  "short_name": "FPV-ARBCON",
+  "description": "أداة عربية لضبط ومعايرة متحكمات الطيران FPV عبر بروتوكول MSP.",
+  "lang": "ar",
+  "dir": "rtl",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#FAF8F3",
+  "theme_color": "#5EEAD4",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -116,7 +116,15 @@ describe('BatteryCard', () => {
     }
   });
 
-  it('cellCount 0 renders the approved "battery not detected" text while STILL showing the real measured voltage (a genuine reading is never hidden)', () => {
+  /**
+   * Checkpoint F (HW-002) STRENGTHENED THIS TEST. It previously asserted
+   * that the residual voltage appeared as the card's own primary value -
+   * which is exactly the defect a real board surfaced: "0.17 V" printed
+   * in the voltage slot while a LiPo appeared connected. The rule it was
+   * really guarding ("a genuine reading is never hidden") is unchanged
+   * and still asserted; what changed is WHERE that reading may appear.
+   */
+  it('cellCount 0 leads with "no battery measurement" and demotes the real reading to a labelled diagnostic line - never to the primary voltage slot', () => {
     const renderer = render({
       status: 'FRESH',
       value: {
@@ -128,10 +136,101 @@ describe('BatteryCard', () => {
       updatedAtMs: 0,
     });
     const text = allText(renderer);
+    expect(text).toContain('لا يوجد قياس جهد بطارية');
     expect(text).toContain('لم تُكتشف بطارية');
-    expect(text).toContain('0.11 V'); // real decoded USB-power residual, not a fabricated zero
+    // The genuine reading is still visible - and explicitly labelled as
+    // a voltage-meter reading rather than a pack voltage.
+    expect(text.join(' ')).toContain('0.11 V');
+    expect(text.join(' ')).toContain('ليست جهد حزمة بطارية');
+    // ...and it is NOT the card's primary value any more.
+    expect(
+      renderer.root.findAllByProps({ testID: 'battery-card-voltage' }),
+    ).toHaveLength(0);
+    expect(
+      renderer.root.findAllByProps({ testID: 'battery-card-no-measurement' })
+        .length,
+    ).toBeGreaterThan(0);
     expect(text.join(' ')).not.toContain('التيار المُبلّغ');
     expect(text.join(' ')).not.toContain('الاستهلاك المُبلّغ');
+    unmount(renderer);
+  });
+
+  /** The exact field case: a plausible-looking small number next to an
+   * apparently-connected LiPo. 17 centivolts is the raw wire value; the
+   * app may not invent a threshold to judge it, so the FIRMWARE'S OWN
+   * verdict (cellCount 0 / BATTERY_NOT_PRESENT) is what decides how it
+   * is presented. */
+  it('the reported ~0.17 V field case is never presented as a live pack voltage', () => {
+    const renderer = render({
+      status: 'FRESH',
+      value: {
+        cellCount: 0,
+        configuredCapacityMah: 0,
+        legacyVoltageDecivolts: 0,
+        consumedMah: 0,
+        amperageCentiamps: 0,
+        batteryStateRaw: 3,
+        voltageCentivolts: 17,
+      },
+      updatedAtMs: 0,
+    });
+    const text = allText(renderer).join(' ');
+    expect(text).toContain('لا يوجد قياس جهد بطارية');
+    expect(text).toContain('0.17 V');
+    expect(text).toContain('ليست جهد حزمة بطارية');
+    // No guessed replacement voltage, and nothing zeroed away.
+    expect(text).not.toContain('0.00 V');
+    unmount(renderer);
+  });
+
+  /** A detected pack whose firmware state is NOT_PRESENT is contradictory
+   * wire data; the safe reading is the one that does not claim a
+   * measurement. */
+  it('a NOT_PRESENT firmware state suppresses the primary voltage even when cellCount is non-zero', () => {
+    const renderer = render({
+      status: 'FRESH',
+      value: { ...GOLDEN, cellCount: 4, batteryStateRaw: 3 },
+      updatedAtMs: 0,
+    });
+    expect(
+      renderer.root.findAllByProps({ testID: 'battery-card-voltage' }),
+    ).toHaveLength(0);
+    expect(allText(renderer).join(' ')).toContain('لا يوجد قياس جهد بطارية');
+    unmount(renderer);
+  });
+
+  it('a detected pack still leads with its proven voltage in the primary slot', () => {
+    const renderer = render({
+      status: 'FRESH',
+      value: { ...GOLDEN, cellCount: 4, batteryStateRaw: 0 },
+      updatedAtMs: 0,
+    });
+    expect(
+      renderer.root.findAllByProps({ testID: 'battery-card-voltage' }).length,
+    ).toBeGreaterThan(0);
+    expect(allText(renderer)).toContain('16.85 V');
+    expect(allText(renderer).join(' ')).not.toContain('لا يوجد قياس جهد بطارية');
+    unmount(renderer);
+  });
+
+  it('a NOT_DETECTED reading that is also STALE is marked stale AND still refuses the primary voltage slot', () => {
+    const renderer = render({
+      status: 'STALE',
+      value: {
+        ...GOLDEN,
+        cellCount: 0,
+        batteryStateRaw: 3,
+        voltageCentivolts: 17,
+      },
+      updatedAtMs: 0,
+      ageMs: 12_000,
+    });
+    const text = allText(renderer).join(' ');
+    expect(text).toContain('بيانات البطارية غير محدثة');
+    expect(text).toContain('لا يوجد قياس جهد بطارية');
+    expect(
+      renderer.root.findAllByProps({ testID: 'battery-card-voltage' }),
+    ).toHaveLength(0);
     unmount(renderer);
   });
 

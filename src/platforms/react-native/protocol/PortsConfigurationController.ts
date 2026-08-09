@@ -34,7 +34,9 @@ import {
   type SerialPortsValidationIssue,
 } from '../../../core/state/serialPortsModel';
 import type { MspClientState } from '../../../core/protocol/mspClient';
-import { readMotorTestCapability } from './motorTestCapability';
+import {
+  isMotorTestSessionActive,
+} from './motorTestCapability';
 import {
   mspSessionCoordinator,
   type MspIdentificationState,
@@ -167,21 +169,11 @@ function ambiguousCause(value: unknown): value is AmbiguousPortsWriteCause {
   );
 }
 
-function defaultMotorTestActive(sessionId: string): boolean {
-  const snapshot = readMotorTestCapability(sessionId)
-    ?.lifecycleStopPort()
-    ?.getSnapshot();
-  return (
-    snapshot !== undefined &&
-    (snapshot.phase === 'PREPARING' ||
-      snapshot.phase === 'ACTIVE' ||
-      snapshot.phase === 'CLOSING' ||
-      snapshot.pulse.mayHaveReachedFc ||
-      snapshot.machine?.name === 'Starting' ||
-      snapshot.machine?.name === 'Pulsing' ||
-      snapshot.machine?.name === 'Stopping')
-  );
-}
+/** The ONE shared liveness predicate - see
+ * motorTestCapability.ts's own isMotorTestSessionActive() for why a
+ * per-controller copy that read `mayHaveReachedFc` as liveness blocked
+ * every configuration screen until the cable was replugged. */
+const defaultMotorTestActive = isMotorTestSessionActive;
 
 export class PortsConfigurationController {
   private readonly coordinator: PortsSessionCoordinator;

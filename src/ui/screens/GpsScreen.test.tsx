@@ -74,9 +74,11 @@ jest.mock('../../platforms/react-native/protocol', () => {
 });
 
 import React from 'react';
+import { Alert, ScrollView } from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
+import i18n from '../../i18n';
 import type { GpsConfigurationSnapshot } from '../../core';
 import GpsScreen from './GpsScreen';
 
@@ -203,6 +205,78 @@ describe('GpsScreen', () => {
     expect(screen.onDirtyChange).toHaveBeenLastCalledWith(true);
     ReactTestRenderer.act(() => screen.renderer.unmount());
     expect(screen.onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+  it('does not discard a dirty GPS draft on reload without confirmation', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const screen = await renderScreen();
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findByProps({testID: 'gps-provider-nmea'})
+        .props.onPress();
+    });
+    ReactTestRenderer.act(() => {
+      screen.renderer.root.findByProps({testID: 'gps-reload'}).props.onPress();
+    });
+    expect(screen.controller.load).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => { await alert.mock.calls[0][2]?.[1]?.onPress?.(); await Promise.resolve(); });
+    expect(screen.controller.load).toHaveBeenCalledTimes(2);
+    alert.mockRestore();
+    ReactTestRenderer.act(() => screen.renderer.unmount());
+  });
+
+  it('keeps the GPS save action visible outside the telemetry scroll, matching the fixed configurator toolbar', async () => {
+    const screen = await renderScreen();
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findByProps({ testID: 'gps-provider-nmea' })
+        .props.onPress();
+    });
+
+    expect(
+      screen.renderer.root.findAllByProps({
+        testID: 'gps-sticky-actions-save',
+      }),
+    ).not.toHaveLength(0);
+    for (const scroll of screen.renderer.root.findAllByType(ScrollView)) {
+      expect(
+        scroll.findAll(
+          node => node.props.testID === 'gps-sticky-actions-save',
+        ),
+      ).toHaveLength(0);
+    }
+    ReactTestRenderer.act(() => screen.renderer.unmount());
+  });
+
+  it('keeps a rejected GPS save reason in the persistent action surface', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const screen = await renderScreen();
+    screen.controller.save.mockResolvedValue({
+      kind: 'REJECTED',
+      reason: 'LINK_RECOVERING',
+    });
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findByProps({ testID: 'gps-provider-nmea' })
+        .props.onPress();
+    });
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findAllByProps({ testID: 'gps-sticky-actions-save' })[0]
+        .props.onPress();
+    });
+    const buttons = alert.mock.calls[0][2];
+    await ReactTestRenderer.act(async () => {
+      await buttons?.[1]?.onPress?.();
+    });
+
+    const status = screen.renderer.root.findByProps({
+      testID: 'gps-sticky-actions-status',
+    });
+    expect(status.props.children).toBe(
+      i18n.t('gpsSystem.blockReason.LINK_RECOVERING'),
+    );
+    alert.mockRestore();
+    ReactTestRenderer.act(() => screen.renderer.unmount());
   });
 
   it('stops detail telemetry while hidden and preserves an unsaved draft when returning', async () => {

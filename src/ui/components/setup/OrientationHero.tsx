@@ -39,6 +39,7 @@ import {
   Text,
   View,
   useWindowDimensions,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -48,15 +49,26 @@ import { OrientationRenderer } from '../../orientation3d';
 // alone (the Skia component cannot mount under Jest), and the
 // diagnostics tracker must keep working in exactly those tests.
 import { orientationLatencyTracker } from '../../orientation3d/orientationLatencyDebugLog';
+// Checkpoint F: the ALWAYS-ON counterpart to the tracker above, which is
+// __DEV__-gated and therefore silent in the build a user runs. Imported
+// from its own module for the same reason the tracker is - screen suites
+// jest.mock() the orientation3d barrel down to OrientationRenderer alone.
+import { orientationRenderObserver } from '../../orientation3d/orientationRenderObserver';
 import type { OrientationViewState } from '../../../core';
 import { describeOrientationForAccessibility } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
 import FlightInstruments, { roundHeadingDegrees } from './FlightInstruments';
+import { ORIENTATION_DESKTOP_WORKSPACE_ENABLED } from './orientationHeroDesktopWorkspace';
 
 const HERO_MAX_SIZE = 340;
 const HERO_TABLET_MAX_SIZE = 410;
 const HERO_MIN_SIZE = 180;
 const SIDEBAR_LAYOUT_MIN_WIDTH = 620;
+const DESKTOP_WORKSPACE_MIN_WIDTH = 1024;
+const DESKTOP_STAGE_MAX_HEIGHT = 512;
+const DESKTOP_INSTRUMENT_RAIL_WIDTH = 128;
+const DESKTOP_WORKSPACE_GAP = 12;
+const DESKTOP_MODEL_SCALE = 0.56 / 0.37;
 
 /**
  * Keeps the model inside a narrow phone while letting it breathe on the
@@ -84,6 +96,35 @@ export function computeOrientationHeroSize(
     sidebar ? HERO_TABLET_MAX_SIZE : HERO_MAX_SIZE,
     Math.max(HERO_MIN_SIZE, usableWidth),
   );
+}
+
+export interface OrientationWorkspaceLayout {
+  readonly expanded: boolean;
+  readonly stageWidth: number;
+  readonly stageHeight: number;
+  readonly presentationScale: number | undefined;
+}
+
+export function computeOrientationWorkspaceLayout(
+  windowWidth: number,
+  fontScale: number,
+  measuredVisualsWidth: number | undefined,
+  desktopEnabled = ORIENTATION_DESKTOP_WORKSPACE_ENABLED,
+): OrientationWorkspaceLayout {
+  const safeScale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  const effective = Number.isFinite(windowWidth) ? windowWidth / safeScale : 0;
+  const sidebar = shouldUseOrientationSidebar(windowWidth, fontScale);
+  const compactSize = computeOrientationHeroSize(windowWidth, sidebar);
+  const estimatedWidth = Math.min(1540, Math.max(0, Number.isFinite(windowWidth) ? windowWidth - 60 : 0));
+  const measured = measuredVisualsWidth !== undefined && Number.isFinite(measuredVisualsWidth) && measuredVisualsWidth > 0
+    ? Math.min(measuredVisualsWidth, estimatedWidth)
+    : estimatedWidth;
+  const minimumRowWidth = HERO_TABLET_MAX_SIZE + DESKTOP_INSTRUMENT_RAIL_WIDTH + DESKTOP_WORKSPACE_GAP;
+  if (!desktopEnabled || effective < DESKTOP_WORKSPACE_MIN_WIDTH || measured < minimumRowWidth) {
+    return { expanded: false, stageWidth: compactSize, stageHeight: compactSize, presentationScale: undefined };
+  }
+  const stageWidth = Math.floor(measured - DESKTOP_INSTRUMENT_RAIL_WIDTH - DESKTOP_WORKSPACE_GAP);
+  return { expanded: true, stageWidth, stageHeight: Math.min(stageWidth, DESKTOP_STAGE_MAX_HEIGHT), presentationScale: DESKTOP_MODEL_SCALE };
 }
 
 /** Roll/pitch arrive in 0.1 degree units. Keeping that one decimal makes
@@ -133,9 +174,17 @@ export default function OrientationHero({
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const sidebar = shouldUseOrientationSidebar(windowWidth, fontScale);
-  const heroSize = computeOrientationHeroSize(windowWidth, sidebar);
+  const [measuredVisualsWidth, setMeasuredVisualsWidth] = useState<number>();
+  const workspace = computeOrientationWorkspaceLayout(windowWidth, fontScale, measuredVisualsWidth);
+  const heroSize = workspace.stageWidth;
+  const heroHeight = workspace.stageHeight;
   const instrumentStageWidth = sidebar ? 156 : heroSize;
   const [hintVisible, setHintVisible] = useState(false);
+  const handleVisualsLayout = (event: LayoutChangeEvent) => {
+    const measured = event.nativeEvent.layout.width;
+    setMeasuredVisualsWidth(current => current === measured ? current : measured);
+  };
+  const visualsStyle = [styles.visuals, sidebar && styles.visualsSidebar, workspace.expanded && styles.visualsDesktop];
 
   const handleReset = () => {
     // Rejected, not merely visually disabled: a press delivered while the
@@ -200,15 +249,33 @@ export default function OrientationHero({
     );
   };
 
+  // Checkpoint F: recorded BEFORE the two pose-less early returns below,
+  // so a report can never say "STALE" while this component is actually
+  // rendering the error state (see orientationRenderObserver.ts's own
+  // noteHeroSample doc comment - that exact contradiction was observed
+  // and is what this placement fixes).
+  orientationRenderObserver.noteHeroSample(
+    sessionToken,
+    sampleSeq,
+    orientationView.status,
+    orientationView.status === 'LIVE' || orientationView.status === 'STALE'
+      ? {
+          rollDeg: orientationView.rollDeg,
+          pitchDeg: orientationView.pitchDeg,
+          yawDeg: orientationView.yawDeg,
+        }
+      : undefined,
+  );
+
   if (orientationView.status === 'WAITING') {
     return (
       <View style={styles.container} testID="orientation-hero-waiting">
         {renderHeader('WAITING')}
-        <View style={[styles.visuals, sidebar && styles.visualsSidebar]}>
+        <View style={visualsStyle} onLayout={handleVisualsLayout}>
           <View
             style={[
               styles.rendererWrapper,
-              { width: heroSize, height: heroSize },
+              { width: heroSize, height: heroHeight },
             ]}
           >
             <Text style={styles.messageText}>{t('orientationHero.waiting')}</Text>
@@ -229,11 +296,11 @@ export default function OrientationHero({
     return (
       <View style={styles.container} testID="orientation-hero-error">
         {renderHeader('ERROR')}
-        <View style={[styles.visuals, sidebar && styles.visualsSidebar]}>
+        <View style={visualsStyle} onLayout={handleVisualsLayout}>
           <View
             style={[
               styles.rendererWrapper,
-              { width: heroSize, height: heroSize },
+              { width: heroSize, height: heroHeight },
             ]}
           >
             <Text style={[styles.messageText, { color: colors.error }]}>
@@ -286,9 +353,9 @@ export default function OrientationHero({
   return (
     <View style={styles.container} testID="orientation-hero">
       {renderHeader(isStale ? 'STALE' : 'LIVE')}
-      <View style={[styles.visuals, sidebar && styles.visualsSidebar]}>
+      <View style={visualsStyle} onLayout={handleVisualsLayout}>
         <View
-          style={[styles.rendererWrapper, { width: heroSize, height: heroSize }]}
+          style={[styles.rendererWrapper, { width: heroSize, height: heroHeight }]}
           accessible
           accessibilityLabel={accessibilityText}
           testID="orientation-hero-renderer-wrapper"
@@ -299,7 +366,8 @@ export default function OrientationHero({
             // so an older pose can never be drawn after a newer one.
             orientation={displayed}
             width={heroSize}
-            height={heroSize}
+            height={heroHeight}
+            presentationScale={workspace.presentationScale}
             stale={isStale}
             sampleIdentity={sampleIdentity}
           />
@@ -454,6 +522,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
   },
+  visualsDesktop: { justifyContent: 'flex-start' },
   headerRow: {
     width: '100%',
     flexDirection: 'row',
@@ -467,7 +536,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
   },
   title: {
     ...typography.sectionTitle,
@@ -513,7 +582,7 @@ const styles = StyleSheet.create({
   },
   liveText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   staleText: {
@@ -553,7 +622,7 @@ const styles = StyleSheet.create({
   },
   readoutValue: {
     ...typography.title,
-    color: colors.accent,
+    color: colors.accentStrong,
     marginTop: spacing.xs / 2,
   },
   resetButton: {
@@ -588,7 +657,7 @@ const styles = StyleSheet.create({
   },
   resetButtonText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   hintBanner: {
@@ -612,7 +681,7 @@ const styles = StyleSheet.create({
   },
   hintDismissText: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '600',
   },
 });

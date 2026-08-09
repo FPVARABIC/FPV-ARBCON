@@ -217,8 +217,8 @@ export default function TopSystemBar({
 const styles = StyleSheet.create({
   container: {
     borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft,
-    backgroundColor: colors.backgroundRaised,
+    borderBottomColor: colors.accentStrong,
+    backgroundColor: colors.accent,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.lg,
     paddingBottom: spacing.md,
@@ -249,7 +249,7 @@ const styles = StyleSheet.create({
   backButtonText: {
     fontSize: 28,
     lineHeight: 30,
-    color: colors.accent,
+    color: colors.accentStrong,
   },
   titleGroup: {
     flex: 1,
@@ -258,7 +258,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'ltr',
   },
   title: {

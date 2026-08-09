@@ -36,6 +36,7 @@ import ReactTestRenderer from 'react-test-renderer';
 import { readFileSync } from 'node:fs';
 
 import '../../i18n';
+import i18n from '../../i18n';
 import type { GeneralConfigurationSnapshot } from '../../core';
 import ConfigurationsScreen from './ConfigurationsScreen';
 
@@ -73,7 +74,21 @@ function snapshot(): GeneralConfigurationSnapshot {
       debugMode: 0,
       debugModeCount: 70,
     },
-    rx: { serialRxProvider: 9, fpvCameraAngleDegrees: 20, raw: rx },
+    rx: {
+      serialRxProvider: 9,
+      stickMax: 1900,
+      stickCenter: 1500,
+      stickMin: 1100,
+      receiverMinUsec: 885,
+      receiverMaxUsec: 2115,
+      fpvCameraAngleDegrees: 20,
+      rcSmoothingSetpointCutoff: 0,
+      rcSmoothingThrottleCutoff: 0,
+      rcSmoothingAutoFactorThrottle: 30,
+      rcSmoothingAutoFactor: 30,
+      rcSmoothing: 1,
+      raw: rx,
+    },
     craftName: 'FPV-QUAD',
     pilotName: 'PILOT',
     buildOptionIds: new Set([16413, 16416, 16423]),
@@ -217,6 +232,23 @@ describe('ConfigurationsScreen', () => {
     expect(screen.onDirtyChange).toHaveBeenLastCalledWith(false);
     ReactTestRenderer.act(() => screen.renderer.unmount());
   });
+  it('does not discard dirty configuration on reload without confirmation', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const screen = await renderScreen();
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findByProps({testID: 'configurations-camera-angle-increment'})
+        .props.onPress();
+    });
+    ReactTestRenderer.act(() => {
+      screen.renderer.root.findByProps({testID: 'configurations-reload'}).props.onPress();
+    });
+    expect(screen.controller.load).toHaveBeenCalledTimes(1);
+    await ReactTestRenderer.act(async () => { await alert.mock.calls[0][2]?.[1]?.onPress?.(); await Promise.resolve(); });
+    expect(screen.controller.load).toHaveBeenCalledTimes(2);
+    alert.mockRestore();
+    ReactTestRenderer.act(() => screen.renderer.unmount());
+  });
 
   it('routes to every integrated owner without an external link', async () => {
     const screen = await renderScreen();
@@ -253,6 +285,39 @@ describe('ConfigurationsScreen', () => {
       await buttons?.[1]?.onPress?.();
     });
     expect(screen.controller.save).toHaveBeenCalledTimes(1);
+    alert.mockRestore();
+    ReactTestRenderer.act(() => screen.renderer.unmount());
+  });
+
+  it('keeps a rejected save reason visible in the persistent action surface', async () => {
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    const screen = await renderScreen();
+    screen.controller.save.mockResolvedValue({
+      kind: 'REJECTED',
+      reason: 'LINK_RECOVERING',
+    } as never);
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findByProps({ testID: 'configurations-camera-angle-increment' })
+        .props.onPress();
+    });
+    ReactTestRenderer.act(() => {
+      screen.renderer.root
+        .findAllByProps({ testID: 'configurations-sticky-actions-save' })[0]
+        .props.onPress();
+    });
+    const buttons = alert.mock.calls[alert.mock.calls.length - 1][2];
+    await ReactTestRenderer.act(async () => {
+      await buttons?.[1]?.onPress?.();
+    });
+
+    const status = screen.renderer.root.findByProps({
+      testID: 'configurations-sticky-actions-status',
+    });
+    expect(status.props.children).toBe(
+      i18n.t('configurationsSystem.blockReason.LINK_RECOVERING'),
+    );
+    alert.mockRestore();
     ReactTestRenderer.act(() => screen.renderer.unmount());
   });
 });

@@ -1,8 +1,10 @@
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import { Alert } from 'react-native';
+import { Alert, ScrollView } from 'react-native';
 
 import '../../i18n';
+import i18n from '../../i18n';
+import { serialPortDisplayName } from '../../core/state/serialPortsModel';
 import type { MspSerialPortRecord } from '../../core/protocol/msp';
 import type { SerialPortsSnapshot } from '../../core/state/serialPortsModel';
 
@@ -237,6 +239,115 @@ describe('PortsScreen', () => {
     expect(screen.find('ports-0-role-TBS_SMARTAUDIO').props.disabled).toBe(
       true,
     );
+    screen.unmount();
+  });
+});
+
+/* ================================================================== *
+ * THE FIELD BUG: "no visible save action appeared"
+ * ================================================================== */
+
+describe('PortsScreen - the persistent save surface', () => {
+  /** The bar renders null when nothing is pending, so presence is tested
+   * by a control that only exists once it has actually rendered. */
+  const barVisible = (screen: {query: (id: string) => unknown[]}) =>
+    screen.query('ports-sticky-actions-save').length > 0;
+
+  it('shows nothing to act on until something is genuinely pending', async () => {
+    const screen = await render(controllerFor());
+    expect(barVisible(screen)).toBe(false);
+    screen.unmount();
+  });
+
+  it('THE FIELD CASE: assigning GPS to a UART raises a persistent save bar that NAMES the pending change', async () => {
+    const screen = await render(
+      controllerFor(
+        snapshot({ ports: Object.freeze([port(20, 1), port(0, 0)]) }),
+      ),
+    );
+    expect(barVisible(screen)).toBe(false);
+
+    await screen.press('ports-card-toggle-0');
+    await screen.press('ports-0-role-GPS');
+
+    expect(barVisible(screen)).toBe(true);
+    const summary = screen.find('ports-sticky-actions-summary');
+    const summaryText = Array.isArray(summary.props.children)
+      ? summary.props.children.join('')
+      : String(summary.props.children);
+    // It names the port and the role, not a bare "unsaved".
+    expect(summaryText).toContain(serialPortDisplayName(0));
+    expect(summaryText).toContain(i18n.t('portsConfiguration.roles.GPS'));
+    screen.unmount();
+  });
+
+  it('the persistent save action reaches the real transaction, exactly like the in-page one', async () => {
+    const controller = controllerFor(
+      snapshot({ ports: Object.freeze([port(20, 1), port(0, 0)]) }),
+    );
+    const screen = await render(controller);
+    await screen.press('ports-card-toggle-0');
+    await screen.press('ports-0-role-GPS');
+    await screen.press('ports-sticky-actions-save');
+    expect(controller.save).toHaveBeenCalledTimes(1);
+    expect(controller.save.mock.calls[0][0]).toEqual(key);
+    screen.unmount();
+  });
+
+  it('keeps a rejected save reason visible in the persistent bar instead of below the off-screen port list', async () => {
+    const controller = controllerFor(
+      snapshot({ports: Object.freeze([port(20, 1), port(0, 0)])}),
+    );
+    controller.save.mockResolvedValue({
+      kind: 'REJECTED',
+      reason: 'LINK_RECOVERING',
+    });
+    const screen = await render(controller);
+    await screen.press('ports-card-toggle-0');
+    await screen.press('ports-0-role-GPS');
+    await screen.press('ports-sticky-actions-save');
+
+    const status = screen.find('ports-sticky-actions-status');
+    const text = Array.isArray(status.props.children)
+      ? status.props.children.join('')
+      : String(status.props.children);
+    expect(text).toBe(
+      i18n.t('portsConfiguration.blockReason.LINK_RECOVERING'),
+    );
+    expect(barVisible(screen)).toBe(true);
+    screen.unmount();
+  });
+
+  it('discarding from the persistent bar clears the pending change and the bar with it', async () => {
+    const screen = await render(
+      controllerFor(
+        snapshot({ ports: Object.freeze([port(20, 1), port(0, 0)]) }),
+      ),
+    );
+    await screen.press('ports-card-toggle-0');
+    await screen.press('ports-0-role-GPS');
+    expect(barVisible(screen)).toBe(true);
+    await screen.press('ports-sticky-actions-discard');
+    expect(barVisible(screen)).toBe(false);
+    screen.unmount();
+  });
+
+  it('the bar lives OUTSIDE the scroll view, so no amount of content can push it off screen', async () => {
+    const screen = await render(
+      controllerFor(
+        snapshot({ ports: Object.freeze([port(20, 1), port(0, 0)]) }),
+      ),
+    );
+    await screen.press('ports-card-toggle-0');
+    await screen.press('ports-0-role-GPS');
+    expect(barVisible(screen)).toBe(true);
+    for (const scroll of screen.renderer.root.findAllByType(ScrollView)) {
+      expect(
+        scroll.findAll(
+          node => node.props.testID === 'ports-sticky-actions-save',
+        ),
+      ).toHaveLength(0);
+    }
     screen.unmount();
   });
 });

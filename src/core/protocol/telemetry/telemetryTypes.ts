@@ -122,3 +122,58 @@ export type TelemetryPauseLease = {
   id: string;
   release(): void;
 };
+
+/**
+ * Checkpoint F: READ-ONLY observability for one registered poll.
+ *
+ * WHY THIS EXISTS. A real flight controller reported a frozen Setup
+ * orientation through the published preview, and every boundary in the
+ * pipeline was invisible from the field: whether the poll was even
+ * registered, whether requests reached the wire, whether responses came
+ * back, and whether the scheduler was simply paused all looked
+ * identical from the UI (a motionless model). The only pipeline
+ * instrumentation that existed - orientationLatencyDebugLog.ts - is
+ * `__DEV__`-gated and is therefore a no-op in exactly the build the
+ * user runs.
+ *
+ * THIS CHANGES NO BEHAVIOR. These are counters the scheduler already
+ * had the information to produce; nothing here is consulted by tick(),
+ * dispatch selection, pausing, staleness or publication.
+ *
+ * NO PAYLOAD, EVER. `lastErrorCode` is an enumerated code/class NAME
+ * (e.g. `MSP_TIMEOUT`), never an error message and never wire bytes -
+ * see MspTelemetryScheduler.ts's own describeErrorCode().
+ */
+export type TelemetryPollDiagnostics = {
+  readonly id: string;
+  readonly command: number;
+  readonly intervalMs: number;
+  readonly staleAfterMs: number;
+  readonly priority: number;
+  /** Dispatches STARTED (i.e. requests handed to the requester). */
+  readonly requestCount: number;
+  /** Dispatches that settled with a successfully decoded value. */
+  readonly responseCount: number;
+  /** Dispatches that settled as a rejection or a decode failure. */
+  readonly errorCount: number;
+  /** The most recent failure's code, retained even after a later
+   * success - "it recovered, but it had been failing" is exactly the
+   * fact a one-shot snapshot of getValue() destroys. */
+  readonly lastErrorCode?: string;
+  readonly inFlight: boolean;
+  readonly status: TelemetryValue<unknown>['status'];
+  readonly sampleSeq?: number;
+  readonly updatedAtMs?: number;
+};
+
+/** Checkpoint F: read-only whole-scheduler observability. `pauseReasons`
+ * is what distinguishes "the link is silent" from "polling is held off"
+ * - a stale MOTOR_TEST or APP_BACKGROUND lease looks exactly like a
+ * dead flight controller from the UI, and that ambiguity is what this
+ * exists to remove. */
+export type TelemetrySchedulerDiagnostics = {
+  readonly tickCount: number;
+  readonly inFlightCount: number;
+  readonly pauseReasons: readonly TelemetryPauseReason[];
+  readonly polls: readonly TelemetryPollDiagnostics[];
+};

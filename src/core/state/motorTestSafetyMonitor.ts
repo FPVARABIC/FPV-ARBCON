@@ -86,6 +86,20 @@ import type {MspRequestOptions} from '../protocol/mspClient';
 export const MOTOR_TEST_SAFETY_OBSERVATION_TIMEOUT_MILLIS = 400;
 
 /**
+ * Breathing room between two completed safety observations.
+ *
+ * A zero-delay loop immediately sent another MSP_STATUS_EX after the first
+ * READY-producing reply. Real browser serial links can still be settling at
+ * that boundary, so the next read could time out, poison the exclusive lease
+ * and leave a READY session whose activation gate required a reconnect. The
+ * interval is deliberately smaller than the remaining freshness budget:
+ * 400 ms response bound + 250 ms pause = 650 ms, still below the 750 ms
+ * maximum age. Nothing is retried after a failure and an ARMED reading remains
+ * terminal.
+ */
+export const MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS = 250;
+
+/**
  * The maximum age a completed observation may have and still authorise
  * activation. Chosen as a small multiple of one real round trip
  * (~224 ms measured) so a single lost cycle is tolerated and a second one

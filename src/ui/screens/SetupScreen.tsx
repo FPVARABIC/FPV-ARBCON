@@ -60,7 +60,7 @@ import { useTranslation } from 'react-i18next';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import type { RootStackParamList } from '../../navigation/types';
-import { colors, spacing, typography } from '../theme';
+import { colors, spacing, typography, useContentEnvelope } from '../theme';
 import {
   TopSystemBar,
   OrientationHero,
@@ -96,6 +96,14 @@ import {
   FC_STATUS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
+// Checkpoint F - "نسخ تقرير التليمترية". Web-only by the same file
+// extension seam the connection report uses; on Android
+// isTelemetryReportSupported() is false and no button is rendered.
+import {
+  copyTelemetryReportToClipboard,
+  isTelemetryReportSupported,
+} from '../../platforms/telemetryReport';
+import { orientationRenderObserver } from '../orientation3d/orientationRenderObserver';
 import {
   deriveOrientationViewState,
   deriveArmingReadiness,
@@ -187,6 +195,9 @@ function SetupScreenContent({
     windowWidth,
     fontScale,
   );
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
 
   const armed = useTelemetryValue<boolean>(
     sessionId,
@@ -303,6 +314,14 @@ function SetupScreenContent({
     setupAppStateTelemetryOwner.track(sessionId);
   }, [sessionId]);
 
+  // A new PHYSICAL session (new coordinator generation) must never read
+  // the previous connection's render counts. The observer also self-heals
+  // on a changed sessionToken; this effect covers the window before the
+  // first sample of a new session has rendered at all.
+  useEffect(() => {
+    orientationRenderObserver.reset();
+  }, [sessionId, sessionKey.generation]);
+
   const [uiState, setUiState] = useState(() =>
     setupUiSessionStore.getState(sessionKey),
   );
@@ -336,6 +355,40 @@ function SetupScreenContent({
     setUiState(setupUiSessionStore.getState(sessionKey));
   }, [sessionKey, sessionId]);
 
+  /**
+   * Checkpoint F - "نسخ تقرير التليمترية".
+   *
+   * Everything is read AT PRESS TIME from the authoritative sources
+   * (the coordinator, that session's real scheduler, the render
+   * observer), never from this closure's render snapshot: a report is
+   * evidence about the moment the user asked for it. A session with no
+   * scheduler yields `scheduler: undefined`, which the report prints as
+   * a stated fact rather than as zeros - "telemetry never started" and
+   * "telemetry started and sent nothing" are different findings and must
+   * not be collapsed.
+   */
+  const [telemetryReportCopied, setTelemetryReportCopied] = useState<
+    'idle' | 'copied' | 'failed'
+  >('idle');
+  const handleCopyTelemetryReport = useCallback(() => {
+    copyTelemetryReportToClipboard({
+      sessionId,
+      generation: sessionKey.generation,
+      ownershipState: mspSessionCoordinator.getOwnershipState(sessionId),
+      identificationStatus:
+        mspSessionCoordinator.getIdentificationState(sessionId).status,
+      appStatePhase: setupAppStateTelemetryOwner.getPhase(),
+      setupActive: active,
+      scheduler: mspSessionCoordinator
+        .getTelemetryScheduler(sessionId)
+        ?.describeDiagnostics(),
+      render: orientationRenderObserver.read(),
+      wallClockMs: Date.now(),
+    })
+      .then(copied => setTelemetryReportCopied(copied ? 'copied' : 'failed'))
+      .catch(() => setTelemetryReportCopied('failed'));
+  }, [active, sessionId, sessionKey.generation]);
+
   const handleResetHintShown = useCallback(() => {
     setupUiSessionStore.update(sessionKey, {
       hasSeenOrientationResetHint: true,
@@ -350,7 +403,7 @@ function SetupScreenContent({
         onBack={onBack}
         armingReadiness={armingReadiness}
       />
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}>
         <LiveOrientationHero
           sessionKey={sessionKey}
           active={active}
@@ -471,6 +524,36 @@ function SetupScreenContent({
             pass moved that one section up to sit directly under the
             Orientation hero. Nothing else in this order changed. */}
         <DiagnosticsSection view={diagnosticsView} />
+        {isTelemetryReportSupported() ? (
+          <View style={styles.telemetryReportRow}>
+            <Pressable
+              onPress={handleCopyTelemetryReport}
+              accessibilityRole="button"
+              accessibilityLabel={t('diagnostics.copyTelemetryReport')}
+              style={styles.telemetryReportButton}
+              testID="copy-telemetry-report"
+            >
+              <Text style={styles.telemetryReportButtonText}>
+                {t('diagnostics.copyTelemetryReport')}
+              </Text>
+            </Pressable>
+            <Text style={styles.telemetryReportHint}>
+              {t('diagnostics.copyTelemetryReportHint')}
+            </Text>
+            {telemetryReportCopied !== 'idle' ? (
+              <Text
+                style={styles.telemetryReportHint}
+                testID="copy-telemetry-report-result"
+              >
+                {t(
+                  telemetryReportCopied === 'copied'
+                    ? 'diagnostics.copyTelemetryReportDone'
+                    : 'diagnostics.copyTelemetryReportFailed',
+                )}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
       </ScrollView>
     </View>
   );
@@ -613,6 +696,31 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     paddingHorizontal: spacing.sm,
   },
+  telemetryReportRow: {
+    marginTop: spacing.md,
+    marginHorizontal: spacing.md,
+    gap: spacing.xs,
+  },
+  telemetryReportButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+  },
+  telemetryReportButtonText: {
+    ...typography.body,
+    color: colors.accentStrong,
+    fontWeight: '700',
+  },
+  telemetryReportHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
   sectionHeading: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -627,7 +735,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accent,
   },
   sectionHeadingCopy: { flex: 1 },
-  sectionEyebrow: { ...typography.eyebrow, color: colors.accent },
+  sectionEyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   sectionTitle: {
     ...typography.title,
     color: colors.textPrimary,

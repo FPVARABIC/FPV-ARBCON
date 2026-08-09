@@ -59,6 +59,12 @@ export type {
   MspBeeperConfig,
   MspRxConfig,
   MspTextValue,
+  MspPidTerm,
+  MspRcTuning,
+  MspFilterConfiguration,
+  MspPidTuningSnapshot,
+  PidTuningWriteGroup,
+  EncodedPidTuningWrite,
   GeneralConfigurationWriteGroup,
   EncodedGeneralConfigurationWrite,
   MspCompatibilityResult,
@@ -71,6 +77,8 @@ export type {
   TelemetryValue,
   TelemetryPauseReason,
   TelemetryPauseLease,
+  TelemetryPollDiagnostics,
+  TelemetrySchedulerDiagnostics,
   MspTelemetryScheduler,
   MspTelemetrySchedulerOptions,
   ExclusiveOperationState,
@@ -122,6 +130,10 @@ export {
   MSP_FEATURE_CONFIG,
   MSP_SET_FEATURE_CONFIG,
   MSP_SET_RX_CONFIG,
+  MSP_RSSI_CONFIG,
+  MSP_SET_RSSI_CONFIG,
+  MSP_RX_MAP,
+  MSP_SET_RX_MAP,
   MSP_ARMING_CONFIG,
   MSP_SET_ARMING_CONFIG,
   MSP_BEEPER_CONFIG,
@@ -131,7 +143,17 @@ export {
   MSP_MIXER_CONFIG,
   MSP_ADVANCED_CONFIG,
   MSP_MOTOR,
+  MSP_RC,
+  MSP_RC_TUNING,
+  MSP_PID,
+  MSP_FILTER_CONFIG,
+  MSP_PID_ADVANCED,
+  MSP_SET_FILTER_CONFIG,
+  MSP_SET_PID_ADVANCED,
+  MSP_SET_PID,
+  MSP_SET_RC_TUNING,
   MSP_MOTOR_3D_CONFIG,
+  MSP_RC_DEADBAND,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
   MSP2_MOTOR_OUTPUT_REORDERING,
@@ -140,6 +162,7 @@ export {
   MSP_SET_MIXER_CONFIG,
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_MOTOR_3D_CONFIG,
+  MSP_SET_RC_DEADBAND,
   MSP_SET_MOTOR_CONFIG,
   MSP_SET_GPS_CONFIG,
   MSP_EEPROM_WRITE,
@@ -202,6 +225,21 @@ export {
   decodeArmingConfig,
   decodeBeeperConfig,
   decodeRxConfig,
+  decodeRcChannels,
+  decodeReceiverMap,
+  decodeRssiConfig,
+  decodeReceiverDeadband,
+  RECEIVER_CHANNEL_MAX_COUNT,
+  decodePidTerms,
+  decodeRcTuning,
+  decodeFilterConfiguration,
+  decodePidTuningSnapshot,
+  PID_ITEM_COUNT,
+  PID_AXIS_COUNT,
+  PID_ADVANCED_API147_MIN_BYTES,
+  RC_TUNING_API147_BYTES,
+  FILTER_CONFIG_API147_BYTES,
+  encodeChangedPidTuning,
   decodeMspText,
   MSP_TEXT_PILOT_NAME,
   MSP_TEXT_CRAFT_NAME,
@@ -213,6 +251,10 @@ export {
   encodeMspTextRequest,
   encodeMspText,
   encodeChangedGeneralConfiguration,
+  encodeReceiverMap,
+  encodeReceiverDeadband,
+  encodeReceiverConfig,
+  encodeChangedReceiverConfiguration,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
@@ -227,6 +269,198 @@ export {
   createMspOperationCoordinator,
   MspExclusiveOperationInProgressError,
 } from './protocol';
+
+export {
+  createPidTuningDraft,
+  ratesEqual,
+  filtersEqual,
+  pidTuningDraftsEqual,
+  pidTuningSnapshotsEqual,
+  validatePidTuningDraft,
+} from './state/pidTuningModel';
+export type {
+  PidAxisKey,
+  PidAxisDraft,
+  RateAxisDraft,
+  RatesDraft,
+  FiltersDraft,
+  PidTuningDraft,
+  PidTuningValidationCode,
+} from './state/pidTuningModel';
+export {
+  MODES_AUX_CHANNEL_COUNT,
+  createModesConfigurationDraft,
+  modesDraftsEqual,
+  modesSnapshotsEqual,
+  validateModesDraft,
+  conditionsForMode,
+  modeIsActive,
+  modeArabicName,
+} from './state/modesConfigurationModel';
+export type {
+  ModeConditionDraft,
+  ModesConfigurationDraft,
+  ModesValidationCode,
+} from './state/modesConfigurationModel';
+export {
+  MSP_MODE_RANGES,
+  MSP_SET_MODE_RANGE,
+  MSP_BOXNAMES,
+  MSP_MODE_RANGES_EXTRA,
+  decodeModesConfiguration,
+  encodeModeRangeWrites,
+  MODE_RANGE_MIN,
+  MODE_RANGE_MAX,
+  MODE_RANGE_STEP,
+  MODE_RANGE_SLOT_BYTES,
+  MODE_RANGE_EXTRA_SLOT_BYTES,
+} from './protocol';
+export type {
+  MspModeDefinition,
+  MspModeRangeSlot,
+  MspModesConfiguration,
+  EncodedModeRangeWrite,
+} from './protocol';
+export {
+  MSP_FAILSAFE_CONFIG,
+  MSP_SET_FAILSAFE_CONFIG,
+  MSP_RXFAIL_CONFIG,
+  MSP_SET_RXFAIL_CONFIG,
+  decodeFailsafeConfiguration,
+  decodeRxFailsafeConfiguration,
+  encodeChangedFailsafeConfiguration,
+  RX_FAILSAFE_MIN,
+  RX_FAILSAFE_MAX,
+  RX_FAILSAFE_STEP,
+  BUILD_OPTION_GPS,
+} from './protocol';
+export type {
+  FailsafeProcedure,
+  FailsafeSwitchMode,
+  RxFailsafeMode,
+  MspFailsafeConfiguration,
+  MspRxFailsafeChannel,
+  MspFailsafeSnapshot,
+  FailsafeWriteGroup,
+  EncodedFailsafeWrite,
+} from './protocol';
+export {
+  createFailsafeConfigurationDraft,
+  failsafeDraftsEqual,
+  failsafeSnapshotsEqual,
+  validateFailsafeDraft,
+} from './state/failsafeConfigurationModel';
+export type {
+  FailsafeChannelDraft,
+  FailsafeConfigurationDraft,
+  FailsafeValidationCode,
+} from './state/failsafeConfigurationModel';
+export {
+  MSP_BATTERY_CONFIG,
+  MSP_SET_BATTERY_CONFIG,
+  MSP_CURRENT_METER_CONFIG,
+  MSP_SET_CURRENT_METER_CONFIG,
+  MSP_VOLTAGE_METER_CONFIG,
+  MSP_SET_VOLTAGE_METER_CONFIG,
+  MSP_VOLTAGE_METERS,
+  MSP_CURRENT_METERS,
+  decodeBatteryConfiguration,
+  decodeVoltageMeterConfiguration,
+  decodeCurrentMeterConfiguration,
+  encodeChangedPowerConfiguration,
+} from './protocol';
+export type {
+  MspBatteryConfiguration,
+  MspVoltageMeterConfiguration,
+  MspCurrentMeterConfiguration,
+  MspPowerConfigurationSnapshot,
+  PowerWriteGroup,
+  EncodedPowerWrite,
+} from './protocol';
+export {
+  createPowerConfigurationDraft,
+  powerDraftsEqual,
+  powerSnapshotsEqual,
+  validatePowerDraft,
+} from './state/powerConfigurationModel';
+export type {
+  PowerConfigurationDraft,
+  PowerValidationCode,
+} from './state/powerConfigurationModel';
+export {
+  MSP_OSD_CONFIG,
+  MSP_SET_OSD_CONFIG,
+  MSP_OSD_CANVAS,
+  decodeOsdConfiguration,
+  decodeOsdCanvas,
+  encodeChangedOsdConfiguration,
+} from './protocol';
+export type {
+  MspOsdConfiguration,
+  MspOsdCanvas,
+  MspOsdSnapshot,
+  OsdWriteGroup,
+  EncodedOsdWrite,
+} from './protocol';
+export {
+  OSD_PROFILE_BITS_POSITION,
+  OSD_PROFILE_MASK,
+  OSD_TYPE_MASK,
+  OSD_POSITION_MASK,
+  createOsdConfigurationDraft,
+  osdDraftsEqual,
+  osdSnapshotsEqual,
+  osdPositionX,
+  osdPositionY,
+  osdElementType,
+  osdVisibleInProfile,
+  setOsdPosition,
+  setOsdProfileVisibility,
+  validateOsdDraft,
+  OSD_ELEMENT_NAMES_AR,
+  osdElementName,
+} from './state/osdConfigurationModel';
+export type {
+  OsdConfigurationDraft,
+  OsdValidationCode,
+} from './state/osdConfigurationModel';
+export {
+  MSP_SET_VTX_CONFIG,
+  MSP_VTXTABLE_BAND,
+  MSP_VTXTABLE_POWERLEVEL,
+  MSP_SET_VTXTABLE_BAND,
+  MSP_SET_VTXTABLE_POWERLEVEL,
+  decodeVtxConfiguration,
+  decodeVtxBand,
+  decodeVtxPowerLevel,
+  encodeChangedVtxConfiguration,
+} from './protocol';
+export type {
+  MspVtxConfiguration,
+  MspVtxBand,
+  MspVtxPowerLevel,
+  MspVtxSnapshot,
+  VtxWriteGroup,
+  EncodedVtxWrite,
+} from './protocol';
+export {
+  createVtxConfigurationDraft,
+  vtxDraftsEqual,
+  vtxSnapshotsEqual,
+  validateVtxDraft,
+  vtxDeviceName,
+} from './state/vtxConfigurationModel';
+export type {
+  VtxConfigurationDraft,
+  VtxValidationCode,
+} from './state/vtxConfigurationModel';
+export {
+  MSP_RAW_IMU,
+  MSP_ALTITUDE,
+  decodeRawImu,
+  decodeAltitude,
+} from './protocol';
+export type { SensorVector3, MspRawImu, MspAltitude } from './protocol';
 export type {
   MspDetailedGps,
   MspCompGps,
@@ -234,6 +468,12 @@ export type {
   GpsConstellation,
   MspGpsSatellite,
   MspGpsSatelliteInfo,
+} from './protocol';
+export type {
+  MspRcChannels,
+  MspReceiverDeadband,
+  ReceiverWriteGroup,
+  EncodedReceiverWrite,
 } from './protocol';
 export {
   SERIAL_BAUD_RATES,
@@ -304,6 +544,20 @@ export type {
   GeneralConfigurationSnapshot,
   GeneralConfigurationDraft,
   GeneralConfigurationValidationCode,
+} from './state';
+export {
+  RECEIVER_MAP_LETTERS,
+  receiverMapToText,
+  receiverMapFromText,
+  createReceiverConfigurationDraft,
+  receiverDraftsEqual,
+  receiverSnapshotsEqual,
+  validateReceiverDraft,
+} from './state';
+export type {
+  ReceiverConfigurationSnapshot,
+  ReceiverConfigurationDraft,
+  ReceiverConfigurationValidationCode,
 } from './state';
 export {
   deriveOrientationViewState,
@@ -420,3 +674,21 @@ export type {
   ReceiverRssiSemantics,
   GpsCardSemantics,
 } from './state/auxTelemetrySemantics';
+export {
+  parseFirmwarePresetIndex,
+  parseFirmwarePresetDocument,
+  expandFirmwarePresetIncludes,
+  commandsForPreset,
+  filterCompatiblePresets,
+  presetFirmwareFamily,
+  isSafePresetPath,
+  sha256Hex,
+} from './state/presetCatalog';
+export type {
+  FirmwarePresetStatus,
+  FirmwarePresetCategory,
+  FirmwarePresetSummary,
+  FirmwarePresetIndex,
+  FirmwarePresetOption,
+  FirmwarePresetDocument,
+} from './state/presetCatalog';

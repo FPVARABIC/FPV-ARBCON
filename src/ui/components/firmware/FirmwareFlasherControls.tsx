@@ -56,7 +56,14 @@ export function FirmwareButton({
         disabled && styles.disabled,
         pressed && !disabled && styles.pressed,
       ]}>
-      <Text style={[styles.buttonText, tone === 'secondary' && styles.buttonTextSecondary]}>{title}</Text>
+      <Text
+        style={[
+          styles.buttonText,
+          tone === 'secondary' && styles.buttonTextSecondary,
+          tone === 'danger' && styles.buttonTextDanger,
+        ]}>
+        {title}
+      </Text>
     </Pressable>
   );
 }
@@ -207,6 +214,7 @@ const styles = StyleSheet.create({
   buttonDanger: {backgroundColor: colors.error},
   buttonText: {...typography.sectionTitle, color: colors.accentText, textAlign: 'center'},
   buttonTextSecondary: {color: colors.textPrimary},
+  buttonTextDanger: {color: colors.white},
   disabled: {opacity: 0.45},
   pressed: {opacity: 0.72},
   toggleRow: {
@@ -219,7 +227,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.surfaceAlt,
   },
-  toggleWarning: {borderWidth: 1, borderColor: '#6E5524'},
+  toggleWarning: {borderWidth: 1, borderColor: '#D8B86F'},
   toggleCopy: {flex: 1, gap: 2},
   toggleLabel: {...typography.sectionTitle, color: colors.textPrimary},
   toggleDetail: {...typography.caption, color: colors.textSecondary},
@@ -235,17 +243,17 @@ const styles = StyleSheet.create({
   },
   choiceSelected: {backgroundColor: colors.accentSoft, borderColor: colors.accent},
   choiceText: {...typography.caption, color: colors.textSecondary, fontWeight: '700'},
-  choiceTextSelected: {color: colors.accent},
+  choiceTextSelected: {color: colors.accentStrong},
   progressBlock: {gap: 7},
   progressLabels: {flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md},
   progressLabel: {...typography.caption, color: colors.textSecondary, flex: 1},
-  progressPercent: {...typography.caption, color: colors.accent, fontWeight: '800'},
+  progressPercent: {...typography.caption, color: colors.accentStrong, fontWeight: '800'},
   progressTrack: {height: 8, borderRadius: 4, backgroundColor: colors.surfaceRaised, overflow: 'hidden'},
   progressFill: {height: 8, borderRadius: 4, backgroundColor: colors.accent},
-  notice: {padding: spacing.md, borderRadius: radii.md, backgroundColor: '#102B3C', gap: 3},
-  noticeWarning: {backgroundColor: '#382C17'},
-  noticeSuccess: {backgroundColor: '#123326'},
-  noticeError: {backgroundColor: '#3B2023'},
+  notice: {padding: spacing.md, borderRadius: radii.md, backgroundColor: '#EAF5F8', gap: 3},
+  noticeWarning: {backgroundColor: '#FFF4D8'},
+  noticeSuccess: {backgroundColor: '#EAF7F2'},
+  noticeError: {backgroundColor: '#FFF0F1'},
   noticeTitle: {...typography.sectionTitle, color: colors.info},
   noticeTitleWarning: {color: colors.warning},
   noticeTitleSuccess: {color: colors.success},

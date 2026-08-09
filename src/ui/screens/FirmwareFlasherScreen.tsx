@@ -80,6 +80,30 @@ import {
   usbProductLabel,
 } from '../presentation/brandSafeText';
 import {colors, radii, spacing, typography} from '../theme';
+import {useTranslation} from 'react-i18next';
+import {copyPlainTextToClipboard} from '../../platforms/clipboard';
+import {
+  buildFlashReport,
+  evaluateFlashStall,
+  flashPhaseLabelKey,
+  toFlashPhase,
+} from '../../core/firmware-flasher/flashPhaseModel';
+import {
+  bootloaderStateLabelKey,
+  canResumePendingFlash,
+  dfuRejectionLabelKey,
+  verifySelectedDfuDevice,
+} from '../../core/firmware-flasher/bootloaderTransition';
+import type {
+  BootloaderTransitionState,
+  DfuIdentity,
+  PendingBootloaderFlash,
+} from '../../core/firmware-flasher/bootloaderTransition';
+import {DfuPermissionRequiredError} from '../../platforms/react-native/protocol/FirmwareBootloaderController';
+import type {
+  FlashMethod,
+  FlashProgressSnapshot,
+} from '../../core/firmware-flasher/flashPhaseModel';
 
 type ScreenDependencies = {
   readonly client?: UsbSerialTransportClient;
@@ -266,6 +290,7 @@ export default function FirmwareFlasherScreen({
   client = usbSerialTransportClient,
   buildApi = betaflightBuildApi,
 }: Props): React.JSX.Element {
+  const {t} = useTranslation();
   const [step, setStep] = useState<Step>('board');
   const [sourceMode, setSourceMode] = useState<SourceMode>('online');
   const [targets, setTargets] = useState<readonly BetaflightTarget[]>([]);
@@ -368,6 +393,60 @@ export default function FirmwareFlasherScreen({
     setStatus(sanitizeUserVisibleText(message));
   }, []);
 
+  /**
+   * THE ~98% STALL CORRECTION, UI half.
+   *
+   * The operator saw a bar freeze near 98% with no phase name. Every
+   * method now reports through here, so the visible line always NAMES the
+   * phase in Arabic (verification and manifestation are different
+   * situations at the same percentage), and `flashSnapshot` keeps the
+   * facts a stall report needs. Nothing here retries anything.
+   */
+  const [flashSnapshot, setFlashSnapshot] = useState<FlashProgressSnapshot | undefined>(
+    undefined,
+  );
+  const flashStartedAt = useRef(0);
+  const reportPhaseProgress = useCallback(
+    (
+      method: FlashMethod,
+      rawPhase: string,
+      percent: number,
+      bytesProcessed: number,
+      totalBytes: number,
+      detail?: {blockNumber?: number; targetIdentity?: string},
+    ) => {
+      const phase = toFlashPhase(rawPhase);
+      const now = Date.now();
+      if (flashStartedAt.current === 0) {
+        flashStartedAt.current = now;
+      }
+      setFlashSnapshot(previous => ({
+        method,
+        phase,
+        percent,
+        bytesProcessed,
+        totalBytes,
+        lastProgressAtMs: now,
+        startedAtMs: flashStartedAt.current,
+        blockNumber: detail?.blockNumber ?? previous?.blockNumber,
+        targetIdentity: detail?.targetIdentity ?? previous?.targetIdentity,
+        // The phase that just finished is the last one we can claim
+        // completed; the one now reported is still running.
+        lastCompletedOperation:
+          previous !== undefined && previous.phase !== phase
+            ? previous.phase
+            : previous?.lastCompletedOperation,
+        // Only the WebUSB path holds transfers that cannot be cancelled.
+        transferMayBePending: method === 'DFU_WEBUSB',
+      }));
+      reportProgress(
+        percent,
+        `${t(flashPhaseLabelKey(phase))} • ${bytesProcessed}/${totalBytes}`,
+      );
+    },
+    [reportProgress, t],
+  );
+
   const refreshDevices = useCallback(async () => {
     const [serial, dfu] = await Promise.all([client.listDevices(), client.listDfuDevices()]);
     const supported = serial.filter(isSupportedDevice);
@@ -382,6 +461,53 @@ export default function FirmwareFlasherScreen({
       : dfu.length === 1 ? dfu[0].deviceId : null);
     appendLog(`اكتشاف USB: ${supported.length} serial و${dfu.length} DFU.`);
   }, [appendLog, client]);
+
+  /**
+   * THE BROWSER'S EXPLICIT DEVICE CHOOSERS - not offered on Android.
+   *
+   * A browser lists only ports and USB devices the operator has already
+   * authorized, and the chooser that grants that authorization may only be
+   * opened from a real user gesture. Without these two buttons the
+   * flasher's own "تحديث أجهزة USB" scan legitimately finds nothing on a
+   * first visit, and no board can ever be flashed from a browser.
+   *
+   * Both call the picker STRAIGHT from the press handler - any await
+   * before it would end the user gesture and the browser would refuse.
+   * A dismissed chooser resolves null, which is a cancellation and not an
+   * error, so nothing is logged and no failure is raised.
+   */
+  // Probed defensively: `client` is an injected dependency and this
+  // screen's tests supply minimal stand-ins. "Does this client offer a
+  // picker?" is answered by whether the method exists at all.
+  const supportsSerialPicker = useMemo(
+    () => typeof client.supportsDevicePicker === 'function' && client.supportsDevicePicker(),
+    [client],
+  );
+  const supportsDfuPicker = useMemo(
+    () => typeof client.supportsDfuDevicePicker === 'function' && client.supportsDfuDevicePicker(),
+    [client],
+  );
+
+  const chooseSerialDevice = useCallback(() => {
+    client.requestDevicePermission()
+      .then(device => {
+        if (!mounted.current || device === null) return;
+        // Re-enumerate rather than trusting the returned descriptor:
+        // listDevices() stays the single source of truth for what is
+        // authorized and connectable.
+        return refreshDevices();
+      })
+      .catch(setFailure);
+  }, [client, refreshDevices, setFailure]);
+
+  const chooseDfuDevice = useCallback(() => {
+    client.requestDfuDevicePermission()
+      .then(device => {
+        if (!mounted.current || device === null) return;
+        return refreshDevices();
+      })
+      .catch(setFailure);
+  }, [client, refreshDevices, setFailure]);
 
   useEffect(() => {
     mounted.current = true;
@@ -957,13 +1083,39 @@ export default function FirmwareFlasherScreen({
       }
       await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
       setStatus('انتظار ظهور STM32 DFU…');
-      dfu = await bootloader.waitForOneDfuDevice(20_000, signal);
+      try {
+        dfu = await bootloader.waitForOneDfuDevice(20_000, signal);
+      } catch (error) {
+        if (error instanceof DfuPermissionRequiredError) {
+          /**
+           * The reboot SUCCEEDED and the board is in DFU - the browser
+           * simply has not been told it may talk to this new identity.
+           * Stop here without flashing and hold the prepared operation.
+           * requestDevice() needs a user gesture, so the resume button
+           * below calls it directly from the operator's press.
+           */
+          setPendingBootloaderFlash({
+            operationId: `flash-${Date.now()}`,
+            expectedTarget: selectedTarget,
+            rebootAlreadySent: true,
+            writeAlreadyStarted: false,
+          });
+          setPendingFlashImage({bytes: image.bytes, fullErase});
+          setBootloaderState('WAITING_FOR_PERMISSION');
+          setOperation('idle');
+          setStatus(t(bootloaderStateLabelKey('WAITING_FOR_PERMISSION')));
+          return;
+        }
+        throw error;
+      }
+      setBootloaderState('COMPLETED');
     }
     setOperation('flashing');
     appendLog(`بدء DfuSe على deviceId ${dfu.deviceId}.`);
     await client.flashDfuFirmware(dfu.deviceId, bytesToBase64(image.bytes), fullErase);
     await restoreBackupAfterFlash(backup, signal);
   }, [
+    t,
     appendLog,
     bootloader,
     client,
@@ -1001,18 +1153,24 @@ export default function FirmwareFlasherScreen({
     setOperation('flashing');
     const port = new ReactNativeSerialPort(client, device.deviceId, noReboot ? selectedPortIndex : 0, signal);
     const flasher = new Stm32SerialFlasher(port, signal, update => {
-      reportProgress(update.percent, `STM32: ${update.phase} • ${update.processedBytes}/${update.totalBytes}`);
+      reportPhaseProgress(
+        'STM32_SERIAL',
+        update.phase,
+        update.percent,
+        update.processedBytes,
+        update.totalBytes,
+      );
     });
     await flasher.flash(image.hex, {baudRate: manualBaud ? baudRate : 256000, fullErase});
     await restoreBackupAfterFlash(backup, signal);
   }, [
+    reportPhaseProgress,
     baudRate,
     bootloader,
     client,
     fullErase,
     manualBaud,
     noReboot,
-    reportProgress,
     requireOneSerial,
     restoreBackupAfterFlash,
     saveCliBackup,
@@ -1045,11 +1203,18 @@ export default function FirmwareFlasherScreen({
     setOperation('flashing');
     const port = new ReactNativeSerialPort(client, device.deviceId, selectedPortIndex, signal);
     const flasher = new EspFirmwareFlasher(port, signal, update => {
-      reportProgress(update.percent, `ESP: ${update.phase} • ${update.writtenBytes}/${update.totalBytes}`);
+      reportPhaseProgress(
+        'ESP_SERIAL',
+        update.phase,
+        update.percent,
+        update.writtenBytes,
+        update.totalBytes,
+      );
     }, appendLog);
     await flasher.flash(image.bytes, {flashBaudRate: manualBaud ? baudRate : 460800, eraseAll: fullErase});
     await restoreBackupAfterFlash(backup, signal);
   }, [
+    reportPhaseProgress,
     appendLog,
     baudRate,
     bootloader,
@@ -1057,7 +1222,6 @@ export default function FirmwareFlasherScreen({
     fullErase,
     manualBaud,
     noReboot,
-    reportProgress,
     requireOneSerial,
     restoreBackupAfterFlash,
     saveCliBackup,
@@ -1148,8 +1312,122 @@ export default function FirmwareFlasherScreen({
 
   useEffect(() => client.onDfuFlashProgress(update => {
     if (operation !== 'flashing') return;
-    reportProgress(update.percent, `DFU: ${update.phase} • ${update.bytesProcessed}/${update.totalBytes}`);
-  }), [client, operation, reportProgress]);
+    reportPhaseProgress(
+      'DFU_WEBUSB',
+      update.phase,
+      update.percent,
+      update.bytesProcessed,
+      update.totalBytes,
+    );
+  }), [client, operation, reportPhaseProgress]);
+
+  /**
+   * The stall watchdog. It ticks a clock so `evaluateFlashStall` can be
+   * re-evaluated; it NEVER sends anything. Re-erasing or re-writing on a
+   * stall could corrupt a half-written image and, on the WebUSB path,
+   * would race a transfer the browser will not let us cancel.
+   */
+  const [stallClock, setStallClock] = useState(0);
+  useEffect(() => {
+    if (operation !== 'flashing' || flashSnapshot === undefined) {
+      return;
+    }
+    const handle = setInterval(() => setStallClock(value => value + 1), 1000);
+    return () => clearInterval(handle);
+  }, [operation, flashSnapshot]);
+
+  const stallVerdict = useMemo(() => {
+    if (flashSnapshot === undefined) {
+      return undefined;
+    }
+    // stallClock is read so this recomputes each tick.
+    void stallClock;
+    return evaluateFlashStall(flashSnapshot, Date.now());
+  }, [flashSnapshot, stallClock]);
+
+  const [flashReportCopied, setFlashReportCopied] = useState<
+    'idle' | 'copied' | 'failed'
+  >('idle');
+  const lastFlashErrorCode = useRef<string | undefined>(undefined);
+
+  /**
+   * THE HELD OPERATION. Set only when the reboot already succeeded and
+   * the browser needs a gesture before it will expose the new DFU
+   * identity. Holding it is what lets the resume continue the SAME
+   * prepared flash instead of starting over.
+   */
+  const [pendingBootloaderFlash, setPendingBootloaderFlash] = useState<
+    PendingBootloaderFlash | undefined
+  >(undefined);
+  const [pendingFlashImage, setPendingFlashImage] = useState<
+    {bytes: Uint8Array; fullErase: boolean} | undefined
+  >(undefined);
+  const [bootloaderState, setBootloaderState] = useState<
+    BootloaderTransitionState | undefined
+  >(undefined);
+
+  /**
+   * Called DIRECTLY from the operator's press, because WebUSB
+   * requestDevice() requires a user gesture and browser security is never
+   * bypassed here. It re-sends nothing: no MSP reboot, no erase, no
+   * write. It verifies the chosen device and continues the held flash.
+   */
+  const chooseDfuAndContinue = useCallback(() => {
+    const pending = pendingBootloaderFlash;
+    const image = pendingFlashImage;
+    if (pending === undefined || image === undefined) {
+      return;
+    }
+    const resumable = canResumePendingFlash(pending);
+    if (!resumable.resumable) {
+      setBootloaderState('FAILED_SAFELY');
+      setFailure(
+        new Error('بدأت الكتابة بالفعل؛ لا يجوز استئنافها. افصل وأعد المحاولة من البداية.'),
+      );
+      return;
+    }
+    client
+      .requestDfuDevicePermission()
+      .then(async device => {
+        if (!mounted.current) return;
+        const verdict = verifySelectedDfuDevice(
+          device as DfuIdentity | null,
+          pending,
+          pending.operationId,
+        );
+        if (!verdict.ok) {
+          setBootloaderState('UNEXPECTED_DEVICE');
+          setFailure(new Error(t(dfuRejectionLabelKey(verdict.reason))));
+          return;
+        }
+        setBootloaderState('RESUMED_AFTER_PERMISSION');
+        setPendingBootloaderFlash(undefined);
+        setPendingFlashImage(undefined);
+        setOperation('flashing');
+        appendLog('استُؤنفت العملية المعلّقة بعد منح إذن المتصفح؛ لم يُعَد إرسال أمر إعادة التشغيل.');
+        await client.flashDfuFirmware(
+          (device as DfuIdentity & {deviceId: number}).deviceId,
+          bytesToBase64(image.bytes),
+          image.fullErase,
+        );
+      })
+      .catch(error => {
+        if (!mounted.current) return;
+        setBootloaderState('FAILED_SAFELY');
+        setFailure(error);
+      });
+  }, [appendLog, client, pendingBootloaderFlash, pendingFlashImage, setFailure, t]);
+  const copyFlashReport = useCallback(() => {
+    if (flashSnapshot === undefined) {
+      return;
+    }
+    const text = buildFlashReport(flashSnapshot, Date.now(), {
+      lastErrorCode: lastFlashErrorCode.current,
+    });
+    copyPlainTextToClipboard(text)
+      .then(copied => setFlashReportCopied(copied ? 'copied' : 'failed'))
+      .catch(() => setFlashReportCopied('failed'));
+  }, [flashSnapshot]);
 
   const cancelOperation = useCallback(() => {
     operationController.current?.abort();
@@ -1730,6 +2008,35 @@ export default function FirmwareFlasherScreen({
                 <View style={styles.flexOne}><FirmwareButton title="تحديث أجهزة USB" onPress={() => refreshDevices().catch(setFailure)} disabled={isBusy} tone="secondary" /></View>
                 <View style={styles.flexOne}><FirmwareButton title="Auto detect" onPress={autoDetect} disabled={isBusy} tone="secondary" /></View>
               </View>
+              {/* Browser only - see chooseSerialDevice()/chooseDfuDevice().
+                  Android raises its own system permission dialog during
+                  open() and renders neither button. */}
+              {supportsSerialPicker || supportsDfuPicker ? (
+                <View style={styles.twoButtons}>
+                  {supportsSerialPicker ? (
+                    <View style={styles.flexOne}>
+                      <FirmwareButton
+                        title="اختيار جهاز USB"
+                        onPress={chooseSerialDevice}
+                        disabled={isBusy}
+                        tone="secondary"
+                        testID="firmware-choose-serial-device"
+                      />
+                    </View>
+                  ) : null}
+                  {supportsDfuPicker ? (
+                    <View style={styles.flexOne}>
+                      <FirmwareButton
+                        title="اختيار STM32 DFU"
+                        onPress={chooseDfuDevice}
+                        disabled={isBusy}
+                        tone="secondary"
+                        testID="firmware-choose-dfu-device"
+                      />
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
               {firmware?.kind === 'HEX' && hexMethod === 'dfu' ? (
                 noReboot ? (
                   dfuDevices.length > 0 ? (
@@ -1991,6 +2298,62 @@ export default function FirmwareFlasherScreen({
 
         <FirmwareSection title="حالة العملية" caption="آخر 60 رسالة فقط تُحفظ في الذاكرة لمنع نمو السجل وإبطاء الشاشة.">
           <FirmwareProgress percent={progress} label={status} />
+          {bootloaderState !== undefined ? (
+            <Text style={styles.stallBody} testID="flasher-bootloader-state">
+              {t(bootloaderStateLabelKey(bootloaderState))}
+            </Text>
+          ) : null}
+          {pendingBootloaderFlash !== undefined ? (
+            <View style={styles.stallNotice} testID="flasher-awaiting-dfu-permission">
+              <Text style={styles.stallTitle}>
+                {t('firmwareFlasher.bootloader.WAITING_FOR_PERMISSION')}
+              </Text>
+              <Text style={styles.stallBody}>
+                {t('firmwareFlasher.permissionNeededBody')}
+              </Text>
+              <FirmwareButton
+                title={t('firmwareFlasher.chooseDfuAndContinue')}
+                onPress={chooseDfuAndContinue}
+                tone="primary"
+                testID="choose-dfu-and-continue"
+              />
+            </View>
+          ) : null}
+          {stallVerdict?.stalled === true && flashSnapshot !== undefined ? (
+            <View style={styles.stallNotice} testID="flasher-stalled">
+              <Text style={styles.stallTitle}>
+                {t('firmwareFlasher.stalledTitle')}
+              </Text>
+              <Text style={styles.stallBody}>
+                {t('firmwareFlasher.stalledBody', {
+                  seconds: Math.round(stallVerdict.silentForMs / 1000),
+                  phase: t(flashPhaseLabelKey(flashSnapshot.phase)),
+                })}
+              </Text>
+              <Text style={styles.stallBody}>
+                {t('firmwareFlasher.stalledWebUsbNote')}
+              </Text>
+            </View>
+          ) : null}
+          {flashSnapshot !== undefined ? (
+            <>
+              <FirmwareButton
+                title={t('firmwareFlasher.copyReport')}
+                onPress={copyFlashReport}
+                tone="secondary"
+                testID="copy-flash-report"
+              />
+              {flashReportCopied !== 'idle' ? (
+                <Text style={styles.stallBody} testID="copy-flash-report-result">
+                  {t(
+                    flashReportCopied === 'copied'
+                      ? 'firmwareFlasher.copyReportDone'
+                      : 'firmwareFlasher.copyReportFailed',
+                  )}
+                </Text>
+              ) : null}
+            </>
+          ) : null}
           {buildKey ? (
             <>
               <FirmwareButton
@@ -2032,6 +2395,25 @@ export default function FirmwareFlasherScreen({
 }
 
 const styles = StyleSheet.create({
+  stallNotice: {
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: '#FFF4D8',
+    gap: spacing.xs,
+  },
+  stallTitle: {
+    ...typography.sectionTitle,
+    color: colors.warning,
+    writingDirection: 'rtl',
+  },
+  stallBody: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+  },
   root: {flex: 1, backgroundColor: colors.background},
   modalRoot: {
     flex: 1,
@@ -2068,7 +2450,7 @@ const styles = StyleSheet.create({
   backButton: {width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center'},
   backText: {fontSize: 30, lineHeight: 32, color: colors.textPrimary},
   headerCopy: {flex: 1},
-  headerEyebrow: {...typography.eyebrow, color: colors.accent},
+  headerEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   headerTitle: {...typography.title, color: colors.textPrimary},
   formatPill: {paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: colors.surfaceAlt},
   formatPillText: {...typography.caption, color: colors.info, fontWeight: '800'},
@@ -2076,7 +2458,7 @@ const styles = StyleSheet.create({
   step: {flex: 1, minHeight: 40, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center'},
   stepActive: {backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent},
   stepText: {...typography.caption, color: colors.textMuted, fontWeight: '800'},
-  stepTextActive: {color: colors.accent},
+  stepTextActive: {color: colors.accentStrong},
   scroll: {flex: 1},
   content: {
     width: '100%',
@@ -2114,7 +2496,7 @@ const styles = StyleSheet.create({
   releaseRow: {padding: spacing.md, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceAlt},
   releaseRowSelected: {borderColor: colors.accent, backgroundColor: colors.accentSoft},
   releaseText: {...typography.sectionTitle, color: colors.textPrimary},
-  releaseTextSelected: {color: colors.accent},
+  releaseTextSelected: {color: colors.accentStrong},
   releaseMeta: {...typography.caption, color: colors.textMuted},
   optionGroup: {gap: spacing.sm},
   fieldLabel: {...typography.sectionTitle, color: colors.textSecondary},
@@ -2127,7 +2509,7 @@ const styles = StyleSheet.create({
   commitRow: {padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, gap: 2},
   commitMessage: {...typography.caption, color: colors.textPrimary, fontWeight: '700'},
   commitSha: {...typography.mono, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr'},
-  logBox: {maxHeight: 280, padding: spacing.md, borderRadius: radii.md, backgroundColor: '#041116', gap: 4},
+  logBox: {maxHeight: 280, padding: spacing.md, borderRadius: radii.md, backgroundColor: '#EEF3F4', gap: 4},
   logLine: {...typography.mono, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr'},
   dimmed: {opacity: 0.4},
 });

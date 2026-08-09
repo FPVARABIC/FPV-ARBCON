@@ -2,15 +2,15 @@ import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 
 import '../../i18n';
 import i18n from '../../i18n';
 import { MOTOR_TEST_EXPECTED_CONFIGURATION } from '../../core/state/motorVerificationModel';
 import {
-  MOTOR_AIRFRAME_STAGE_MAX_WIDTH,
-  MOTOR_AIRFRAME_STAGE_ASPECT_RATIO,
+  MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
   MotorAirframeDiagram,
+  computeAirframeStageWidth,
   orderAirframeEntries,
 } from './MotorAirframeDiagram';
 
@@ -76,7 +76,56 @@ describe('MotorAirframeDiagram', () => {
     );
   });
 
-  it('uses about half the previous stage area while preserving touch targets', () => {
+  /**
+   * REPLACES the previous "about half the previous stage area" pin.
+   *
+   * That pin encoded a 2024 decision to shrink the diagram. A real
+   * operator then reported the result as unusable: "not recognisably a
+   * Quad X", front unclear, M1-M4 unclear, CW/CCW unclear. The decision
+   * is therefore reversed deliberately here rather than the test being
+   * quietly loosened - what is pinned now is that the diagram SCALES with
+   * the viewport and never drops below the audited touch-target floor.
+   */
+  it('scales the stage with the viewport instead of capping every screen at a phone glyph', () => {
+    const phone = computeAirframeStageWidth(390, 1);
+    const tablet = computeAirframeStageWidth(820, 1);
+    const desktop = computeAirframeStageWidth(1366, 1);
+    const desktopWide = computeAirframeStageWidth(1920, 1);
+
+    expect(phone).toBeGreaterThanOrEqual(MOTOR_AIRFRAME_STAGE_MIN_WIDTH);
+    expect(tablet).toBeGreaterThan(phone);
+    expect(desktop).toBeGreaterThan(tablet);
+    expect(desktopWide).toBeGreaterThan(desktop);
+    // A desktop operator gets a genuinely large drawing, not 156px.
+    expect(desktop).toBeGreaterThanOrEqual(400);
+  });
+
+  it('never goes below the audited touch-target floor, however little room there is', () => {
+    // A 240px window has 192px of usable room: above the floor, and the
+    // diagram takes exactly that rather than overflowing to its tier size.
+    expect(computeAirframeStageWidth(240, 1)).toBe(192);
+    // With no room at all it still refuses to shrink past the floor.
+    expect(computeAirframeStageWidth(0, 1)).toBe(MOTOR_AIRFRAME_STAGE_MIN_WIDTH);
+    expect(computeAirframeStageWidth(100, 1)).toBe(MOTOR_AIRFRAME_STAGE_MIN_WIDTH);
+    expect(computeAirframeStageWidth(Number.NaN, 1)).toBeGreaterThanOrEqual(
+      MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
+    );
+    // A large text scale reduces the effective width, so the diagram
+    // steps back down a tier rather than crowding the labels out.
+    expect(computeAirframeStageWidth(1366, 2)).toBeLessThan(
+      computeAirframeStageWidth(1366, 1),
+    );
+  });
+
+  it('never overflows the window it is drawn in', () => {
+    for (const width of [320, 375, 600, 900, 1280, 1920]) {
+      expect(computeAirframeStageWidth(width, 1)).toBeLessThanOrEqual(
+        Math.max(MOTOR_AIRFRAME_STAGE_MIN_WIDTH, width),
+      );
+    }
+  });
+
+  it('renders a square stage whose width matches the computed size', () => {
     let tree!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
       tree = ReactTestRenderer.create(
@@ -88,18 +137,73 @@ describe('MotorAirframeDiagram', () => {
         />,
       );
     });
-
-    expect(MOTOR_AIRFRAME_STAGE_MAX_WIDTH).toBe(156);
-    const oldArea = (195 * 195) / 1.12;
-    const newArea =
-      (MOTOR_AIRFRAME_STAGE_MAX_WIDTH * MOTOR_AIRFRAME_STAGE_MAX_WIDTH) /
-      MOTOR_AIRFRAME_STAGE_ASPECT_RATIO;
-    expect(newArea / oldArea).toBeGreaterThanOrEqual(0.49);
-    expect(newArea / oldArea).toBeLessThanOrEqual(0.51);
     const stage = tree.root.find(
       node => node.props?.testID === 'motors-airframe-stage',
     );
-    expect(StyleSheet.flatten(stage.props.style).maxWidth).toBe(156);
+    const style = StyleSheet.flatten(stage.props.style);
+    expect(style.width).toBe(style.height);
+    expect(style.width).toBeGreaterThanOrEqual(MOTOR_AIRFRAME_STAGE_MIN_WIDTH);
+    act(() => tree.unmount());
+  });
+
+  it('states the aircraft front, every motor number and both rotation directions in TEXT, not colour', () => {
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      tree = ReactTestRenderer.create(
+        <MotorAirframeDiagram
+          entries={ENTRIES}
+          selectedSlot={1}
+          verifiedSlots={[]}
+          onSelectSlot={() => undefined}
+        />,
+      );
+    });
+    const json = JSON.stringify(tree.toJSON());
+    expect(json).toContain(i18n.t('motorsScreen.diagramFront'));
+    for (const slot of [1, 2, 3, 4]) {
+      expect(json).toContain(`M${slot}`);
+    }
+    expect(json).toContain('CW');
+    expect(json).toContain('CCW');
+    // The legend names every state it can show.
+    expect(json).toContain(i18n.t('motorsScreen.legendSubmitted'));
+    expect(json).toContain(i18n.t('motorsScreen.legendAcknowledged'));
+    expect(json).toContain(i18n.t('motorsScreen.legendStopping'));
+    expect(json).toContain(i18n.t('motorsScreen.legendUnsafe'));
+    act(() => tree.unmount());
+  });
+
+  it.each([
+    ['SUBMITTED', 'motorsScreen.slotStateSubmitted'],
+    ['ACKNOWLEDGED', 'motorsScreen.slotStateAcknowledged'],
+    ['STOPPING', 'motorsScreen.slotStateStopping'],
+    ['UNSAFE', 'motorsScreen.slotStateUnsafe'],
+  ] as const)('labels the live slot %s in words on the node itself', (activity, key) => {
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      tree = ReactTestRenderer.create(
+        <MotorAirframeDiagram
+          entries={ENTRIES}
+          selectedSlot={1}
+          liveSlot={3}
+          liveActivity={activity}
+          verifiedSlots={[]}
+          onSelectSlot={() => undefined}
+        />,
+      );
+    });
+    const badge = tree.root.find(
+      node => node.props?.testID === 'motors-diagram-state-3',
+    );
+    const badgeText = badge
+      .findAllByType(Text)
+      .map(node => String(node.props.children))
+      .join(' ');
+    expect(badgeText).toContain(i18n.t(key));
+    // Only the live slot is labelled.
+    expect(
+      tree.root.findAll(node => node.props?.testID === 'motors-diagram-state-4'),
+    ).toHaveLength(0);
     act(() => tree.unmount());
   });
 

@@ -32,17 +32,38 @@
  * fires one event and the bridge decides everything else.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { colors } from '../theme';
 import BottomTabBar from '../components/navigation/BottomTabBar';
+import SideNavigationRail from '../components/navigation/SideNavigationRail';
+import { isDesktopTier, resolveLayoutTier } from '../theme/layout';
 import SetupScreen from './SetupScreen';
 import MotorsTab from './MotorsScreen';
+import type { MotorsDepartureGate } from './MotorsScreen';
+import { MOTOR_DEPARTURE_BOUND_MILLIS } from '../../core/state/motorDepartureGate';
+import type { MotorDepartureVerdict } from '../../core/state/motorDepartureGate';
 import PortsScreen from './PortsScreen';
 import GpsScreen from './GpsScreen';
 import ConfigurationsScreen from './ConfigurationsScreen';
+import ReceiverScreen from './ReceiverScreen';
+import PidTuningScreen from './PidTuningScreen';
+import ModesScreen from './ModesScreen';
+import FailsafeScreen from './FailsafeScreen';
+import PowerBatteryScreen from './PowerBatteryScreen';
+import OsdScreen from './OsdScreen';
+import VideoTransmitterScreen from './VideoTransmitterScreen';
+import SensorsScreen from './SensorsScreen';
+import PresetsScreen from './PresetsScreen';
+import CliScreen from './CliScreen';
 import {
   INITIAL_MAIN_TAB,
   isTabSelectable,
@@ -53,7 +74,20 @@ import type { RootStackParamList } from '../../navigation/types';
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
 export default function MainTabsScreen(props: Props): React.JSX.Element {
+  /**
+   * DESKTOP GETS A RAIL, NOT A PHONE BAR. Exactly one navigation surface
+   * is rendered for a given width, and switching between them changes
+   * NOTHING about the tab panels: every panel stays mounted and hidden
+   * with display:'none' exactly as before, so the motor-stop bridge is
+   * never torn down. See this file's header for why that invariant is
+   * load-bearing.
+   */
+  const { width, fontScale } = useWindowDimensions();
+  const useSideRail = isDesktopTier(resolveLayoutTier(width, fontScale));
   const [activeTab, setActiveTab] = useState<MainTabKey>(INITIAL_MAIN_TAB);
+  /** True only while a departure is waiting on the bounded stop result. */
+  const [awaitingMotorStop, setAwaitingMotorStop] = useState(false);
+  const [rawCliBusy, setRawCliBusy] = useState(false);
   /** Tabs that have been opened at least once, and are therefore mounted
    * from here on. The initial tab counts as opened. */
   const [mountedTabs, setMountedTabs] = useState<readonly MainTabKey[]>([
@@ -96,6 +130,34 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     (dirty: boolean) => reportDirty('CONFIGURATIONS', dirty),
     [reportDirty],
   );
+  const reportReceiverDirty = useCallback(
+    (dirty: boolean) => reportDirty('RECEIVER', dirty),
+    [reportDirty],
+  );
+  const reportPidDirty = useCallback(
+    (dirty: boolean) => reportDirty('PID', dirty),
+    [reportDirty],
+  );
+  const reportModesDirty = useCallback(
+    (dirty: boolean) => reportDirty('MODES', dirty),
+    [reportDirty],
+  );
+  const reportFailsafeDirty = useCallback(
+    (dirty: boolean) => reportDirty('FAILSAFE', dirty),
+    [reportDirty],
+  );
+  const reportPowerDirty = useCallback(
+    (dirty: boolean) => reportDirty('POWER', dirty),
+    [reportDirty],
+  );
+  const reportOsdDirty = useCallback(
+    (dirty: boolean) => reportDirty('OSD', dirty),
+    [reportDirty],
+  );
+  const reportVtxDirty = useCallback(
+    (dirty: boolean) => reportDirty('VTX', dirty),
+    [reportDirty],
+  );
 
   const commitTabSwitch = useCallback((next: MainTabKey) => {
     setMountedTabs(current =>
@@ -103,6 +165,39 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     );
     setActiveTab(next);
   }, []);
+
+  /**
+   * Registered by the Motors tab while it is mounted. Undefined means
+   * Motors has no live session, so there is nothing to wait for.
+   */
+  const motorsDepartureGate = useRef<MotorsDepartureGate | undefined>(
+    undefined,
+  );
+  /**
+   * Everything a pending departure owns, so unmount can cancel it.
+   * Without this the bounded backstop fires into a torn-down tree - the
+   * shell's own test caught exactly that.
+   */
+  const pendingDeparture = useRef<{
+    unsubscribe?: () => void;
+    timer?: ReturnType<typeof setTimeout>;
+  }>({});
+  useEffect(
+    () => () => {
+      pendingDeparture.current.unsubscribe?.();
+      if (pendingDeparture.current.timer !== undefined) {
+        clearTimeout(pendingDeparture.current.timer);
+      }
+      pendingDeparture.current = {};
+    },
+    [],
+  );
+  const registerDepartureGate = useCallback(
+    (gate: MotorsDepartureGate | undefined) => {
+      motorsDepartureGate.current = gate;
+    },
+    [],
+  );
 
   const requestMotorStopForDeparture = useCallback((): boolean => {
     if (activeTab !== 'MOTORS') {
@@ -129,19 +224,108 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     }
   }, [activeTab]);
 
+  /**
+   * THE BOUNDED-CONFIRMATION DEPARTURE CONTRACT.
+   *
+   * Before this, the blur listeners fired (raising the stop obligation)
+   * and the visual tab switch committed in the SAME synchronous turn -
+   * only a listener THROWING could hold it, which is not how an
+   * unconfirmed stop presents. An operator whose stop was never confirmed
+   * was therefore moved off the Motors screen with no LiPo warning while
+   * a command might still be live.
+   *
+   * The stop request is still issued FIRST and synchronously. Only the
+   * NAVIGATION now waits, and only for the already-established bounded
+   * result. Nothing here can delay, cancel or weaken the stop itself.
+   */
   const performTabSwitch = useCallback(
-    (next: MainTabKey) => {
-      if (!requestMotorStopForDeparture()) {
+    (next: MainTabKey, stopAlreadyRequested = false) => {
+      // Immediate, synchronous stop request - unchanged.
+      if (!stopAlreadyRequested && !requestMotorStopForDeparture()) {
         return;
       }
-      commitTabSwitch(next);
+      const gate =
+        activeTab === 'MOTORS' ? motorsDepartureGate.current : undefined;
+      if (gate === undefined) {
+        commitTabSwitch(next);
+        return;
+      }
+      // Already settled? Commit in the same turn, so the common safe case
+      // is not made slower by this gate.
+      const immediate = gate.evaluate(0);
+      if (immediate === 'SAFE') {
+        commitTabSwitch(next);
+        return;
+      }
+
+      // THE SHELL owns the bound, because the shell owns navigation. The
+      // Motors screen is guarded to create no timer beyond its heartbeat.
+      const startedAt = Date.now();
+      let settled = false;
+      setAwaitingMotorStop(true);
+      const settle = (verdict: MotorDepartureVerdict) => {
+        // A controller publication and the timeout can become runnable in
+        // the same event-loop turn. Only the first verdict owns navigation
+        // and the warning; a late duplicate must be inert.
+        if (settled) {
+          return;
+        }
+        settled = true;
+        const pending = pendingDeparture.current;
+        pending.unsubscribe?.();
+        if (pending.timer !== undefined) {
+          clearTimeout(pending.timer);
+        }
+        pendingDeparture.current = {};
+        setAwaitingMotorStop(false);
+        if (verdict === 'SAFE') {
+          commitTabSwitch(next);
+          return;
+        }
+        // Genuinely unconfirmed: stay on Motors and say why. Failing
+        // closed is the only acceptable default here.
+        Alert.alert(
+          'لم يتأكد إيقاف المحركات',
+          'لم يصل تأكيد إيقاف من متحكم الطيران خلال المهلة المحددة. افصل بطارية LiPo الآن قبل الاقتراب من الطائرة. تبقى شاشة المحركات ظاهرة حتى تتأكد بنفسك.',
+          [{ text: 'حسناً' }],
+        );
+      };
+      const check = () => {
+        const verdict = gate.evaluate(Date.now() - startedAt);
+        if (verdict !== 'PENDING') {
+          settle(verdict);
+        }
+      };
+      // Subscribe FIRST so a transition landing between here and the
+      // immediate re-check cannot be missed.
+      pendingDeparture.current = {
+        unsubscribe: gate.subscribe(check),
+        // A controller that publishes nothing further must still produce
+        // a verdict rather than holding navigation forever.
+        timer: setTimeout(
+          () => settle('UNCONFIRMED'),
+          MOTOR_DEPARTURE_BOUND_MILLIS,
+        ),
+      };
+      check();
     },
-    [commitTabSwitch, requestMotorStopForDeparture],
+    [activeTab, commitTabSwitch, requestMotorStopForDeparture],
   );
 
   const handleSelectTab = useCallback(
     (next: MainTabKey) => {
-      if (next === activeTab || !isTabSelectable(next)) {
+      if (
+        awaitingMotorStop ||
+        rawCliBusy ||
+        next === activeTab ||
+        !isTabSelectable(next)
+      ) {
+        if (rawCliBusy) {
+          Alert.alert(
+            'جلسة CLI نشطة',
+            'احفظ أو ألغِ الجلسة من الشاشة الحالية قبل الانتقال.',
+          );
+        }
         return;
       }
       if (dirtyTabs.current.has(activeTab)) {
@@ -154,13 +338,16 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
         Alert.alert(
           'تغييرات غير محفوظة',
           activeTab === 'MOTORS'
-            ? 'تم إيقاف جلسة المحركات فوراً. لديك تغييرات لم تُحفظ؛ عُد لحفظها أو انتقل إلى الشاشة المطلوبة دون حفظ.'
+            ? 'طُلِب إيقاف جلسة المحركات فوراً. لديك تغييرات لم تُحفظ؛ عُد لحفظها أو انتقل بعد تأكيد الإيقاف دون حفظ.'
             : 'لديك تغييرات لم تُحفظ. عُد لحفظها أو انتقل إلى الشاشة المطلوبة دون حفظ.',
           [
             { text: 'العودة للحفظ', style: 'cancel' },
             {
               text: 'الانتقال دون حفظ',
-              onPress: () => commitTabSwitch(next),
+              // The stop request was already sent before opening this
+              // prompt. Reuse the SAME bounded result path as an ordinary
+              // departure without emitting a second motor command.
+              onPress: () => performTabSwitch(next, activeTab === 'MOTORS'),
             },
           ],
         );
@@ -170,14 +357,24 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     },
     [
       activeTab,
-      commitTabSwitch,
+      awaitingMotorStop,
       performTabSwitch,
+      rawCliBusy,
       requestMotorStopForDeparture,
     ],
   );
 
   return (
-    <View style={styles.root} testID="main-tabs">
+    <View
+      style={[styles.root, useSideRail && styles.rootDesktop]}
+      testID="main-tabs"
+    >
+      {useSideRail ? (
+        <SideNavigationRail
+          activeTab={activeTab}
+          onSelectTab={handleSelectTab}
+        />
+      ) : null}
       <View style={styles.content}>
         {mountedTabs.includes('SETUP') ? (
           <View
@@ -200,6 +397,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
               sessionKey={props.route.params?.sessionKey}
               navigation={props.navigation}
               subscribeTabBlur={subscribeTabBlur}
+              registerDepartureGate={registerDepartureGate}
               onConfigurationDirtyChange={reportMotorsDirty}
               // The tab bar below already consumes the bottom safe-area
               // inset; the screen must not add it a second time.
@@ -250,14 +448,168 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             />
           </View>
         ) : null}
+        {mountedTabs.includes('RECEIVER') ? (
+          <View
+            style={activeTab === 'RECEIVER' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-RECEIVER"
+          >
+            <ReceiverScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'RECEIVER'}
+              onOpenPorts={() => handleSelectTab('PORTS')}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportReceiverDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('PID') ? (
+          <View
+            style={activeTab === 'PID' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-PID"
+          >
+            <PidTuningScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'PID'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportPidDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('MODES') ? (
+          <View
+            style={activeTab === 'MODES' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-MODES"
+          >
+            <ModesScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'MODES'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportModesDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('FAILSAFE') ? (
+          <View
+            style={activeTab === 'FAILSAFE' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-FAILSAFE"
+          >
+            <FailsafeScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'FAILSAFE'}
+              onOpenReceiver={() => handleSelectTab('RECEIVER')}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportFailsafeDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('POWER') ? (
+          <View
+            style={activeTab === 'POWER' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-POWER"
+          >
+            <PowerBatteryScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'POWER'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportPowerDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('OSD') ? (
+          <View
+            style={activeTab === 'OSD' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-OSD"
+          >
+            <OsdScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'OSD'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportOsdDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('VTX') ? (
+          <View
+            style={activeTab === 'VTX' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-VTX"
+          >
+            <VideoTransmitterScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'VTX'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportVtxDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('SENSORS') ? (
+          <View
+            style={activeTab === 'SENSORS' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-SENSORS"
+          >
+            <SensorsScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'SENSORS'}
+              onOpenSetup={() => handleSelectTab('SETUP')}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('PRESETS') ? (
+          <View
+            style={activeTab === 'PRESETS' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-PRESETS"
+          >
+            <PresetsScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'PRESETS'}
+              onCliBusyChange={setRawCliBusy}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('CLI') ? (
+          <View
+            style={activeTab === 'CLI' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-CLI"
+          >
+            <CliScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'CLI'}
+              onCliBusyChange={setRawCliBusy}
+            />
+          </View>
+        ) : null}
       </View>
-      <BottomTabBar activeTab={activeTab} onSelectTab={handleSelectTab} />
+      {awaitingMotorStop ? (
+        <View style={styles.awaitingStop} testID="main-tabs-awaiting-stop">
+          <Text style={styles.awaitingStopText}>
+            بانتظار تأكيد إيقاف المحركات قبل مغادرة الشاشة…
+          </Text>
+        </View>
+      ) : null}
+      {useSideRail ? null : (
+        <BottomTabBar activeTab={activeTab} onSelectTab={handleSelectTab} />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
+  /* The rail sits beside the workspace instead of below it. `row` under
+     forceRTL puts the rail on the right, which is the reading start. */
+  rootDesktop: { flexDirection: 'row' },
+  awaitingStop: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    backgroundColor: colors.accentSoft,
+    borderTopWidth: 1,
+    borderTopColor: colors.accentStrong,
+  },
+  awaitingStopText: {
+    color: colors.accentStrong,
+    fontWeight: '700',
+    textAlign: 'center',
+    writingDirection: 'rtl',
+  },
   content: { flex: 1 },
   visible: { flex: 1 },
   /* Hidden, NOT unmounted - see the Motors-bridge note in this file's

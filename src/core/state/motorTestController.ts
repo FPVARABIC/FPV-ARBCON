@@ -265,6 +265,7 @@ import {
   type MotorTestArmedStateEvidence,
 } from './motorTestContinuousSafetyMonitor';
 import {
+  MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS,
   MotorTestSafetyMonitor,
   type MotorTestSafetyMonitorFactory,
   type MotorTestSafetyMonitorLike,
@@ -3161,6 +3162,7 @@ class MotorTestControllerImpl {
       setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
       clearTimer: handle =>
         clearTimeout(handle as ReturnType<typeof setTimeout>),
+      intervalMillis: MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS,
     });
     this.safetyMonitor = monitor;
     monitor.start();

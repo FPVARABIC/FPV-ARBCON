@@ -416,7 +416,7 @@ const styles = StyleSheet.create({
   },
   evidenceHeading: {
     ...typography.caption,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   row: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},

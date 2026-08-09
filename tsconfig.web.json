@@ -1,0 +1,79 @@
+{
+  /*
+   * THE BROWSER TYPECHECK.
+   *
+   * Separate from tsconfig.json rather than merged into it, for one
+   * reason: the two targets have INCOMPATIBLE ambient types and must not
+   * see each other's. Android must never typecheck against `lib.dom`,
+   * because a screen that compiles only because `document` happens to be
+   * declared is a screen that crashes on a phone. The browser build must
+   * never typecheck the TurboModule spec, whose `TurboModuleRegistry`
+   * does not exist in react-native-web at all.
+   *
+   * `moduleSuffixes` is what makes this file see the same modules Vite
+   * will: an unextended import of './native/NativeUsbSerialTransport'
+   * resolves to the `.web.ts` file first here, exactly as
+   * resolve.extensions makes it in vite.config.ts. Without it, this
+   * config would typecheck the Android transport against DOM types - the
+   * precise mix-up the split exists to prevent.
+   */
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [
+      "react",
+      "react-dom",
+      "w3c-web-serial",
+      "w3c-web-usb",
+      "vite/client",
+      /* For the web tests listed under `files` below. */
+      "jest"
+    ],
+    "moduleSuffixes": [".web", ""],
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "skipLibCheck": true
+  },
+  "include": [
+    "index.web.tsx",
+    "App.web.tsx",
+    "vite.config.mts",
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ],
+  /*
+   * The browser's OWN tests, listed explicitly.
+   *
+   * `exclude` below drops every `*.test.ts(x)` because the Android suites
+   * must not be typechecked here - `moduleSuffixes` would resolve their
+   * imports to `.web` files they were never written against. But
+   * `exclude` only filters `include`, never `files`, so naming the web
+   * tests here is what puts them back under the typechecker. Without this
+   * they would be checked by neither project and could drift silently.
+   */
+  "files": [
+    "src/platforms/web/webAlert.test.tsx",
+    "src/platforms/web/webEnvironment.test.ts",
+    "src/platforms/mapLink.web.test.ts",
+    "src/platforms/react-native/transport/native/NativeUsbSerialTransport.web.test.ts",
+    "src/platforms/react-native/transport/native/webUsbDfu.web.test.ts",
+    "src/platforms/web/connectionDiagnostics.test.ts",
+    "src/platforms/web/telemetryDiagnostics.test.ts",
+    "src/ui/screens/MotorsScreen.web.test.tsx"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/Pods",
+    /* The TurboModule spec is Android-only by construction: it imports
+     * TurboModuleRegistry, which react-native-web does not export. Its
+     * .web.ts sibling is what the browser build actually resolves. */
+    "src/platforms/react-native/transport/native/NativeUsbSerialTransport.ts",
+    "src/platforms/react-native/transport/native/__mocks__/**",
+    /* Tests run under Jest against the Android resolution, and are
+     * typechecked by tsconfig.json. */
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/__tests__/**",
+    "**/__testUtils__/**"
+  ]
+}

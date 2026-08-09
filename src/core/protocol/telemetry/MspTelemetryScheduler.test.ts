@@ -253,6 +253,92 @@ describe('MspTelemetryScheduler - reference-counted pause', () => {
   });
 });
 
+describe('MspTelemetryScheduler - per-poll suppression', () => {
+  it('yields a hidden fast poll until every suppression owner releases it', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester(command =>
+      makeFrame(command, Uint8Array.from([command])),
+    );
+    const scheduler = createMspTelemetryScheduler(requester, {
+      clock,
+      singleFlight: true,
+    });
+    scheduler.registerPoll(definition('hidden-attitude', 108, 50, 500, 0));
+    scheduler.registerPoll(definition('visible-receiver', 105, 50, 500, 2));
+
+    const first = scheduler.acquirePollSuppression('hidden-attitude');
+    const second = scheduler.acquirePollSuppression('hidden-attitude');
+    for (let sample = 0; sample < 3; sample += 1) {
+      scheduler.tick();
+      await scheduler.waitUntilIdle();
+      clock.advance(50);
+    }
+    expect(requester.calls.map(call => call.command)).toEqual([105, 105, 105]);
+
+    first();
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.at(-1)?.command).toBe(105);
+
+    second();
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.at(-1)?.command).toBe(108);
+
+    // Releasing a lease twice must not suppress or corrupt another owner.
+    second();
+    clock.advance(50);
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(requester.calls.at(-1)?.command).toBe(105);
+  });
+
+  it('does not stop unrelated polls or discard the suppressed cached sample', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester(command =>
+      makeFrame(command, Uint8Array.from([7])),
+    );
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 108, 50, 500));
+    scheduler.registerPoll(definition('b', 105, 50, 500, 2));
+
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    const cached = scheduler.getValue<number>('b');
+    const release = scheduler.acquirePollSuppression('b');
+    clock.advance(50);
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+
+    expect(requester.calls.at(-1)?.command).toBe(108);
+    expect(scheduler.getValue<number>('b')).toBe(cached);
+    release();
+  });
+
+  it('does not let a suppressed primary poll consume the alternation decision', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester(command =>
+      makeFrame(command, Uint8Array.from([command])),
+    );
+    const scheduler = createMspTelemetryScheduler(requester, {
+      clock,
+      singleFlight: true,
+    });
+    scheduler.registerPoll(definition('hidden-attitude', 108, 50, 500, 0));
+    scheduler.registerPoll(definition('visible-auxiliary', 105, 50, 500, -1));
+
+    const release = scheduler.acquirePollSuppression('hidden-attitude');
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    clock.advance(50);
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+
+    expect(requester.calls.map(call => call.command)).toEqual([105, 105]);
+    release();
+  });
+});
+
 describe('MspTelemetryScheduler - waitUntilIdle', () => {
   it('resolves immediately when nothing is in flight', async () => {
     const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock: new FakeClock()});
@@ -940,5 +1026,193 @@ describe('MspTelemetryScheduler - genuine-sample identity', () => {
 
     const value = schedulerB.getValue<number>('a');
     expect(value.status === 'FRESH' && value.sampleSeq).toBe(1);
+  });
+});
+
+/**
+ * CHECKPOINT F - describeDiagnostics(), the read-only observability
+ * surface added because a real flight controller reported a frozen Setup
+ * orientation and NO boundary in this pipeline was observable from the
+ * field. Every assertion below is about REPORTING ONLY: none of them can
+ * pass because scheduling behaviour changed, and the last test exists
+ * specifically to prove it did not.
+ */
+describe('MspTelemetryScheduler - Checkpoint F diagnostics', () => {
+  it('reports an empty scheduler honestly rather than inventing polls', () => {
+    const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock: new FakeClock(0)});
+    expect(scheduler.describeDiagnostics()).toEqual({
+      tickCount: 0,
+      inFlightCount: 0,
+      pauseReasons: [],
+      polls: [],
+    });
+  });
+
+  it('counts ticks, requests and responses against the real dispatch path', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester((command, payload) => makeFrame(command, payload.length ? payload : Uint8Array.from([7])));
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('attitude', 108, 50, 500));
+
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    clock.advance(60);
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+
+    const diagnostics = scheduler.describeDiagnostics();
+    expect(diagnostics.tickCount).toBe(2);
+    expect(diagnostics.inFlightCount).toBe(0);
+    expect(diagnostics.polls).toHaveLength(1);
+    expect(diagnostics.polls[0]).toMatchObject({
+      id: 'attitude',
+      command: 108,
+      intervalMs: 50,
+      staleAfterMs: 500,
+      priority: 0,
+      requestCount: 2,
+      responseCount: 2,
+      errorCount: 0,
+      status: 'FRESH',
+      inFlight: false,
+    });
+    expect(diagnostics.polls[0].sampleSeq).toBe(2);
+    expect(diagnostics.polls[0].updatedAtMs).toBe(60);
+  });
+
+  it('reports a dispatch that is still in flight, rather than looking idle', () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('attitude', 108, 50, 500));
+
+    scheduler.tick();
+    const diagnostics = scheduler.describeDiagnostics();
+    expect(diagnostics.inFlightCount).toBe(1);
+    expect(diagnostics.polls[0]).toMatchObject({requestCount: 1, responseCount: 0, inFlight: true, status: 'WAITING'});
+  });
+
+  it('records the failure CODE - never the message - and keeps it after a later success', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('attitude', 108, 50, 500));
+
+    scheduler.tick();
+    requester.rejectNext(
+      Object.assign(new Error('attempted to read 1 byte(s) with only 0 remaining'), {
+        name: 'MspClientError',
+        code: 'MSP_TIMEOUT',
+      }),
+    );
+    await scheduler.waitUntilIdle();
+
+    expect(scheduler.describeDiagnostics().polls[0]).toMatchObject({
+      errorCount: 1,
+      lastErrorCode: 'MSP_TIMEOUT',
+      status: 'ERROR',
+    });
+
+    clock.advance(60);
+    scheduler.tick();
+    requester.resolveNext(makeFrame(108, Uint8Array.from([3])));
+    await scheduler.waitUntilIdle();
+
+    const after = scheduler.describeDiagnostics().polls[0];
+    expect(after.status).toBe('FRESH');
+    expect(after.responseCount).toBe(1);
+    // "it recovered, but it had been failing" survives the recovery.
+    expect(after.lastErrorCode).toBe('MSP_TIMEOUT');
+    // The message - which MspPayloadReadError builds out of byte offsets
+    // - never reaches the report.
+    expect(JSON.stringify(after)).not.toContain('attempted to read');
+  });
+
+  it('falls back to the error CLASS name when a thrown value carries no code', async () => {
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock: new FakeClock(0)});
+    scheduler.registerPoll(definition('attitude', 108, 50, 500));
+    scheduler.tick();
+    requester.rejectNext(new RangeError('anything at all'));
+    await scheduler.waitUntilIdle();
+    expect(scheduler.describeDiagnostics().polls[0].lastErrorCode).toBe('RangeError');
+  });
+
+  it('counts a DECODE failure as an error too, not as a response', async () => {
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock: new FakeClock(0)});
+    scheduler.registerPoll({
+      id: 'attitude',
+      command: 108,
+      intervalMs: 50,
+      staleAfterMs: 500,
+      priority: 0,
+      decode: () => {
+        throw Object.assign(new Error('short payload'), {name: 'MspPayloadReadError'});
+      },
+    });
+    scheduler.tick();
+    requester.resolveNext(makeFrame(108, new Uint8Array(0)));
+    await scheduler.waitUntilIdle();
+
+    expect(scheduler.describeDiagnostics().polls[0]).toMatchObject({
+      requestCount: 1,
+      responseCount: 0,
+      errorCount: 1,
+      lastErrorCode: 'MspPayloadReadError',
+      status: 'ERROR',
+    });
+  });
+
+  it('names every active pause lease and drops each name as it is released', () => {
+    const scheduler = createMspTelemetryScheduler(createFakeRequester(), {clock: new FakeClock(0)});
+    scheduler.registerPoll(definition('attitude', 108, 50, 500));
+    const motorTest = scheduler.acquirePauseLease('MOTOR_TEST');
+    const background = scheduler.acquirePauseLease('APP_BACKGROUND');
+
+    expect(scheduler.describeDiagnostics().pauseReasons).toEqual(['MOTOR_TEST', 'APP_BACKGROUND']);
+
+    motorTest.release();
+    expect(scheduler.describeDiagnostics().pauseReasons).toEqual(['APP_BACKGROUND']);
+    // Releasing twice is a documented no-op and must not corrupt the list.
+    motorTest.release();
+    expect(scheduler.describeDiagnostics().pauseReasons).toEqual(['APP_BACKGROUND']);
+
+    background.release();
+    expect(scheduler.describeDiagnostics().pauseReasons).toEqual([]);
+  });
+
+  it('an unregistered poll disappears from the report instead of lingering with stale counts', async () => {
+    const requester = createFakeRequester(command => makeFrame(command, Uint8Array.from([1])));
+    const scheduler = createMspTelemetryScheduler(requester, {clock: new FakeClock(0)});
+    const unregister = scheduler.registerPoll(definition('attitude', 108, 50, 500));
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+    expect(scheduler.describeDiagnostics().polls).toHaveLength(1);
+
+    unregister();
+    expect(scheduler.describeDiagnostics().polls).toHaveLength(0);
+  });
+
+  it('CHANGES NOTHING: reading diagnostics repeatedly never dispatches, never advances a deadline and never replaces a cached value', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester(command => makeFrame(command, Uint8Array.from([1])));
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('attitude', 108, 50, 500));
+    scheduler.tick();
+    await scheduler.waitUntilIdle();
+
+    const valueBefore = scheduler.getValue('attitude');
+    const callsBefore = requester.callCount;
+    for (let i = 0; i < 25; i++) {
+      scheduler.describeDiagnostics();
+    }
+    await Promise.resolve();
+
+    expect(requester.callCount).toBe(callsBefore);
+    // Referential identity: getValue()'s useSyncExternalStore contract is
+    // untouched by anything on this surface.
+    expect(scheduler.getValue('attitude')).toBe(valueBefore);
+    expect(scheduler.describeDiagnostics().tickCount).toBe(1);
   });
 });

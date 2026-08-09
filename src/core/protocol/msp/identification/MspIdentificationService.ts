@@ -40,10 +40,24 @@ export interface MspRequester {
 
 const EMPTY_PAYLOAD = new Uint8Array(0);
 
-/** MSP_API_VERSION/MSP_FC_VARIANT/MSP_BOARD_INFO are all classic,
+/**
+ * MSP_API_VERSION/MSP_FC_VARIANT/MSP_BOARD_INFO are all classic,
  * single-byte-command MSP v1 requests - mirrors mspClient.ts's own Pass
  * 6.2b recovery-probe precedent (MSP_PROBE_WIRE_FORMAT = 'v1', also used
- * for MSP_API_VERSION specifically). */
+ * for MSP_API_VERSION specifically).
+ *
+ * NO responseTimeoutMs OVERRIDE, and no retry policy. Both were briefly
+ * added here and are deliberately restored - see
+ * docs/IDENTIFICATION_RETRY_DECISION.md for the evidence. In short: a
+ * probe against the REAL MspClient showed the retry loop never reached
+ * the wire at all (2 transport writes, the second being the client's own
+ * recovery probe), because a first-contact timeout synchronously latches
+ * desync and every later attempt is refused with MSP_RECOVERING. It also
+ * changed the user-visible failure code and, being shared core, changed
+ * Android with no Android evidence asking for it. First contact is ONE
+ * attempt at the client's own default timeout, and its rejection is
+ * final and unmodified.
+ */
 const IDENTIFICATION_REQUEST_OPTIONS: MspRequestOptions = {wireFormat: 'v1'};
 
 /** Thrown by identify() when the connected firmware's MSP_API_VERSION is

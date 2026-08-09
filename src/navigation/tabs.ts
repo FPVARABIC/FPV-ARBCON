@@ -13,7 +13,15 @@ export type MainTabKey =
   | 'GPS'
   | 'CONFIGURATIONS'
   | 'RECEIVER'
-  | 'PID';
+  | 'PID'
+  | 'MODES'
+  | 'FAILSAFE'
+  | 'POWER'
+  | 'OSD'
+  | 'VTX'
+  | 'SENSORS'
+  | 'PRESETS'
+  | 'CLI';
 
 export interface MainTabDefinition {
   readonly key: MainTabKey;
@@ -22,10 +30,8 @@ export interface MainTabDefinition {
   /**
    * Whether a real screen exists behind this tab.
    *
-   * Unimplemented tabs are RENDERED, visibly disabled, rather than hidden:
-   * the roadmap is part of what the operator is entitled to see, and a tab
-   * that silently appears later is a worse surprise than one that was
-   * always visible and greyed out.
+   * Future entries may remain unimplemented in this source of truth, but
+   * navigation surfaces expose only completed destinations.
    */
   readonly implemented: boolean;
 }
@@ -68,12 +74,52 @@ export const MAIN_TABS: readonly MainTabDefinition[] = Object.freeze([
   Object.freeze({
     key: 'RECEIVER' as const,
     labelKey: 'tabs.receiver',
-    implemented: false,
+    implemented: true,
   }),
   Object.freeze({
     key: 'PID' as const,
     labelKey: 'tabs.pid',
-    implemented: false,
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'MODES' as const,
+    labelKey: 'tabs.modes',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'FAILSAFE' as const,
+    labelKey: 'tabs.failsafe',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'POWER' as const,
+    labelKey: 'tabs.power',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'OSD' as const,
+    labelKey: 'tabs.osd',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'VTX' as const,
+    labelKey: 'tabs.vtx',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'SENSORS' as const,
+    labelKey: 'tabs.sensors',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'PRESETS' as const,
+    labelKey: 'tabs.presets',
+    implemented: true,
+  }),
+  Object.freeze({
+    key: 'CLI' as const,
+    labelKey: 'tabs.cli',
+    implemented: true,
   }),
 ]);
 

@@ -85,6 +85,10 @@ export {
   MSP_SET_FEATURE_CONFIG,
   MSP_RX_CONFIG,
   MSP_SET_RX_CONFIG,
+  MSP_RSSI_CONFIG,
+  MSP_SET_RSSI_CONFIG,
+  MSP_RX_MAP,
+  MSP_SET_RX_MAP,
   MSP_ARMING_CONFIG,
   MSP_SET_ARMING_CONFIG,
   MSP_BEEPER_CONFIG,
@@ -94,7 +98,17 @@ export {
   MSP_MIXER_CONFIG,
   MSP_ADVANCED_CONFIG,
   MSP_MOTOR,
+  MSP_RC,
+  MSP_RC_TUNING,
+  MSP_PID,
+  MSP_FILTER_CONFIG,
+  MSP_PID_ADVANCED,
+  MSP_SET_FILTER_CONFIG,
+  MSP_SET_PID_ADVANCED,
+  MSP_SET_PID,
+  MSP_SET_RC_TUNING,
   MSP_MOTOR_3D_CONFIG,
+  MSP_RC_DEADBAND,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
   MSP2_MOTOR_OUTPUT_REORDERING,
@@ -103,6 +117,7 @@ export {
   MSP_SET_MIXER_CONFIG,
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_MOTOR_3D_CONFIG,
+  MSP_SET_RC_DEADBAND,
   MSP_SET_MOTOR_CONFIG,
   MSP_SET_GPS_CONFIG,
   MSP_EEPROM_WRITE,
@@ -110,6 +125,76 @@ export {
   MSP2_COMMON_SERIAL_CONFIG,
   MSP2_COMMON_SET_SERIAL_CONFIG,
 } from './msp';
+export {
+  decodePidTerms,
+  decodeRcTuning,
+  decodeFilterConfiguration,
+  decodePidTuningSnapshot,
+  PID_ITEM_COUNT,
+  PID_AXIS_COUNT,
+  PID_ADVANCED_API147_MIN_BYTES,
+  RC_TUNING_API147_BYTES,
+  FILTER_CONFIG_API147_BYTES,
+  encodeChangedPidTuning,
+} from './msp';
+export type {
+  MspPidTerm,
+  MspRcTuning,
+  MspFilterConfiguration,
+  MspPidTuningSnapshot,
+  PidTuningWriteGroup,
+  EncodedPidTuningWrite,
+} from './msp';
+export {
+  MSP_MODE_RANGES,
+  MSP_SET_MODE_RANGE,
+  MSP_BOXNAMES,
+  MSP_MODE_RANGES_EXTRA,
+  decodeModesConfiguration,
+  encodeModeRangeWrites,
+  MODE_RANGE_MIN,
+  MODE_RANGE_MAX,
+  MODE_RANGE_STEP,
+  MODE_RANGE_SLOT_BYTES,
+  MODE_RANGE_EXTRA_SLOT_BYTES,
+} from './msp';
+export type {
+  MspModeDefinition,
+  MspModeRangeSlot,
+  MspModesConfiguration,
+  EncodedModeRangeWrite,
+} from './msp';
+export {
+  MSP_FAILSAFE_CONFIG,
+  MSP_SET_FAILSAFE_CONFIG,
+  MSP_RXFAIL_CONFIG,
+  MSP_SET_RXFAIL_CONFIG,
+  decodeFailsafeConfiguration,
+  decodeRxFailsafeConfiguration,
+  encodeChangedFailsafeConfiguration,
+  RX_FAILSAFE_MIN,
+  RX_FAILSAFE_MAX,
+  RX_FAILSAFE_STEP,
+  BUILD_OPTION_GPS,
+} from './msp';
+export type {
+  FailsafeProcedure,
+  FailsafeSwitchMode,
+  RxFailsafeMode,
+  MspFailsafeConfiguration,
+  MspRxFailsafeChannel,
+  MspFailsafeSnapshot,
+  FailsafeWriteGroup,
+  EncodedFailsafeWrite,
+} from './msp';
+export {MSP_BATTERY_CONFIG, MSP_SET_BATTERY_CONFIG, MSP_CURRENT_METER_CONFIG, MSP_SET_CURRENT_METER_CONFIG, MSP_VOLTAGE_METER_CONFIG, MSP_SET_VOLTAGE_METER_CONFIG, MSP_VOLTAGE_METERS, MSP_CURRENT_METERS, decodeBatteryConfiguration, decodeVoltageMeterConfiguration, decodeCurrentMeterConfiguration, encodeChangedPowerConfiguration} from './msp';
+export type {MspBatteryConfiguration, MspVoltageMeterConfiguration, MspCurrentMeterConfiguration, MspPowerConfigurationSnapshot, PowerWriteGroup, EncodedPowerWrite} from './msp';
+export {MSP_OSD_CONFIG, MSP_SET_OSD_CONFIG, MSP_OSD_CANVAS, decodeOsdConfiguration, decodeOsdCanvas, encodeChangedOsdConfiguration} from './msp';
+export type {MspOsdConfiguration, MspOsdCanvas, MspOsdSnapshot, OsdWriteGroup, EncodedOsdWrite} from './msp';
+export {MSP_SET_VTX_CONFIG, MSP_VTXTABLE_BAND, MSP_VTXTABLE_POWERLEVEL, MSP_SET_VTXTABLE_BAND, MSP_SET_VTXTABLE_POWERLEVEL, decodeVtxConfiguration, decodeVtxBand, decodeVtxPowerLevel, encodeChangedVtxConfiguration} from './msp';
+export type {MspVtxConfiguration, MspVtxBand, MspVtxPowerLevel, MspVtxSnapshot, VtxWriteGroup, EncodedVtxWrite} from './msp';
+export {MSP_RAW_IMU, MSP_ALTITUDE, decodeRawImu, decodeAltitude} from './msp';
+export type {SensorVector3, MspRawImu, MspAltitude} from './msp';
 
 export {
   decodeDetailedGps,
@@ -193,6 +278,11 @@ export {
   decodeArmingConfig,
   decodeBeeperConfig,
   decodeRxConfig,
+  decodeRcChannels,
+  decodeReceiverMap,
+  decodeRssiConfig,
+  decodeReceiverDeadband,
+  RECEIVER_CHANNEL_MAX_COUNT,
   decodeMspText,
   MSP_TEXT_PILOT_NAME,
   MSP_TEXT_CRAFT_NAME,
@@ -204,6 +294,10 @@ export {
   encodeMspTextRequest,
   encodeMspText,
   encodeChangedGeneralConfiguration,
+  encodeReceiverMap,
+  encodeReceiverDeadband,
+  encodeReceiverConfig,
+  encodeChangedReceiverConfiguration,
 } from './msp';
 export type {
   MspFeatureConfig,
@@ -222,9 +316,13 @@ export type {
   MspArmingConfig,
   MspBeeperConfig,
   MspRxConfig,
+  MspRcChannels,
+  MspReceiverDeadband,
   MspTextValue,
   GeneralConfigurationWriteGroup,
   EncodedGeneralConfigurationWrite,
+  ReceiverWriteGroup,
+  EncodedReceiverWrite,
 } from './msp';
 export {
   checkMspCompatibility,
@@ -253,6 +351,8 @@ export type {
   TelemetryValue,
   TelemetryPauseReason,
   TelemetryPauseLease,
+  TelemetryPollDiagnostics,
+  TelemetrySchedulerDiagnostics,
   MspTelemetryScheduler,
   MspTelemetrySchedulerOptions,
 } from './telemetry';

@@ -7,7 +7,6 @@ import React, {
 } from 'react';
 import {
   Alert,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -46,7 +45,9 @@ import {
   useMspOwnershipState,
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import { openMapLocation } from '../../platforms/mapLink';
+import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import { StickyActionBar } from '../components/editing';
 
 export interface GpsControllerPort {
   load(sessionKey: SetupUiSessionKey): Promise<GpsLoadOutcome>;
@@ -88,6 +89,10 @@ function outcomeKey(outcome: GpsSaveOutcome): string {
     case 'REJECTED':
       return blockReasonKey(outcome.reason);
   }
+}
+
+function isDangerOutcome(outcome: GpsSaveOutcome): boolean {
+  return outcome.kind !== 'NO_CHANGES' && outcome.kind !== 'SAVED_VERIFIED';
 }
 
 function valueOf<T>(telemetry: TelemetryValue<T>): T | undefined {
@@ -194,6 +199,9 @@ export default function GpsScreen({
   controller = gpsConfigurationController,
 }: GpsScreenProps): React.JSX.Element {
   const { t } = useTranslation();
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const { width, fontScale } = useWindowDimensions();
   const wide = width / Math.max(1, fontScale) >= 620;
   const sessionId = sessionKey?.sessionId ?? '';
@@ -363,10 +371,28 @@ export default function GpsScreen({
     ]);
   }, [controller, dirty, draft, invalid.length, sessionKey, snapshot, t]);
 
+  const reloadNow = useCallback(() => {
+    setSaveOutcome(undefined);
+    setReloadToken(value => value + 1);
+  }, []);
+  const requestReload = useCallback(() => {
+    if (!dirty) return reloadNow();
+    Alert.alert(t('gpsSystem.discardChangesTitle'), t('gpsSystem.discardChangesBody'), [
+      { text: t('gpsSystem.cancel'), style: 'cancel' },
+      { text: t('gpsSystem.discardAndReload'), style: 'destructive', onPress: reloadNow },
+    ]);
+  }, [dirty, reloadNow, t]);
+
   const openMap = useCallback(() => {
     if (raw?.hasFix !== true) return;
-    const url = `geo:${raw.latitudeDegrees},${raw.longitudeDegrees}?q=${raw.latitudeDegrees},${raw.longitudeDegrees}`;
-    Linking.openURL(url).catch(() => {});
+    // Platform seam, not a behaviour change: Android still opens the same
+    // `geo:` intent URI it always did, while the browser build resolves
+    // mapLink.web.ts and opens OpenStreetMap over HTTPS - nothing in a
+    // browser handles `geo:`. See src/platforms/mapLink.ts.
+    openMapLocation({
+      latitudeDegrees: raw.latitudeDegrees,
+      longitudeDegrees: raw.longitudeDegrees,
+    });
   }, [raw]);
 
   const loadMessage =
@@ -379,7 +405,7 @@ export default function GpsScreen({
   return (
     <View style={styles.root} testID="gps-screen">
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { maxWidth: contentMaxWidth }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
@@ -661,7 +687,7 @@ export default function GpsScreen({
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{loadMessage}</Text>
               <Pressable
-                onPress={() => setReloadToken(value => value + 1)}
+                onPress={requestReload}
                 style={styles.secondaryButtonWide}
                 testID="gps-retry-load"
               >
@@ -799,7 +825,7 @@ export default function GpsScreen({
                 </Pressable>
                 <Pressable
                   disabled={busy}
-                  onPress={() => setReloadToken(value => value + 1)}
+                  onPress={requestReload}
                   style={[styles.secondaryButton, busy && styles.disabled]}
                   testID="gps-reload"
                 >
@@ -827,6 +853,35 @@ export default function GpsScreen({
           ) : null}
         </View>
       </ScrollView>
+      {/* Betaflight keeps the GPS save action in a fixed bottom toolbar.
+          This screen contains live telemetry before the configuration card,
+          so its in-page action can otherwise be several viewports away.
+          Keep the real transaction visible whenever a real draft exists. */}
+      <StickyActionBar
+        visible={dirty}
+        summary={t('gpsSystem.pendingChanges')}
+        saveLabel={t('gpsSystem.save')}
+        discardLabel={t('gpsSystem.reset')}
+        onSave={handleSave}
+        onDiscard={() => {
+          setDraft(originalDraft);
+          setSaveOutcome(undefined);
+        }}
+        disabledReason={
+          invalid.length > 0 ? t('gpsSystem.invalidPending') : undefined
+        }
+        statusMessage={
+          saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))
+        }
+        statusTone={
+          saveOutcome !== undefined && isDangerOutcome(saveOutcome)
+            ? 'warning'
+            : 'normal'
+        }
+        busy={phase === 'SAVING'}
+        busyLabel={t('gpsSystem.saving')}
+        testID="gps-sticky-actions"
+      />
     </View>
   );
 }
@@ -842,7 +897,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   hero: { paddingHorizontal: spacing.sm, paddingVertical: spacing.lg },
-  eyebrow: { ...typography.eyebrow, color: colors.accent },
+  eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   title: {
     ...typography.display,
     color: colors.textPrimary,
@@ -892,7 +947,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   cardHeaderCopy: { flex: 1, minWidth: 220 },
-  cardEyebrow: { ...typography.eyebrow, color: colors.accent },
+  cardEyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   cardTitle: { ...typography.title, color: colors.textPrimary, marginTop: 2 },
   cardBody: {
     ...typography.body,
@@ -934,7 +989,7 @@ const styles = StyleSheet.create({
   },
   homeArrowText: {
     fontSize: 32,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'ltr',
   },
   positionHint: {
@@ -1041,7 +1096,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     writingDirection: 'ltr',
   },
-  choiceTextSelected: { color: colors.accent },
+  choiceTextSelected: { color: colors.accentStrong },
   infoBox: {
     borderRadius: radii.md,
     backgroundColor: colors.backgroundRaised,
@@ -1101,7 +1156,7 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '700',
   },
   primaryButton: {

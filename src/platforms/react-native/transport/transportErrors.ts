@@ -35,6 +35,16 @@ export const KNOWN_ERROR_CODES = [
   'WRITE_FAILED',
   'CONNECT_TIMEOUT',
   'MSP_ACTIVATION_FAILED',
+  // Browser-only codes, minted by NativeUsbSerialTransport.web.ts. They
+  // are listed here for the same reason every other code is: a code with
+  // no entry falls through localizeTransportError() to the generic
+  // "unexpected error", which is precisely the wrong thing to tell an
+  // operator whose real problem is a browser that has no Web Serial at
+  // all, or a page served over plain HTTP. Both are actionable, and only
+  // a dedicated message can say what the action is.
+  'WEB_SERIAL_UNSUPPORTED',
+  'WEB_USB_UNSUPPORTED',
+  'INSECURE_CONTEXT',
 ] as const;
 
 export type KnownTransportErrorCode = (typeof KNOWN_ERROR_CODES)[number];

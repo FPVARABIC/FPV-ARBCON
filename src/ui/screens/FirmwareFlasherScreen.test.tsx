@@ -3,6 +3,7 @@ jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTranspor
 import React from 'react';
 import {Text} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
+import '../../i18n';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
 

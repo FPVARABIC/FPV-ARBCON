@@ -45,13 +45,54 @@ async function ensureResponse(response: Response): Promise<void> {
 }
 
 export class BetaflightBuildApi {
-  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
+  /**
+   * The default is a WRAPPER around the global fetch, not the bare `fetch`
+   * reference it used to be, and the difference is a production outage:
+   * a bare default captures the function unbound, every use site calls it
+   * as `this.fetchImpl(...)`, and a browser's native fetch REQUIRES its
+   * receiver to be the global object - Chromium rejects any other `this`
+   * with "Failed to execute 'fetch' on 'Window': Illegal invocation".
+   * Hermes on Android does not care, which is exactly why this shipped:
+   * the same line worked on every Android build and killed the target
+   * list on every web build (the flasher caught the error and rendered
+   * it as "القائمة غير متاحة"). The arrow re-reads the global at call
+   * time with an undefined receiver, which both runtimes accept.
+   */
+  constructor(
+    private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
+  ) {}
+
+  /**
+   * The single transport hop every method goes through. Exists so a
+   * network-level rejection is translated ONCE: browsers reject with a
+   * bare TypeError whose text is internal English ("Failed to fetch"),
+   * and shown raw that is exactly what the operator reads. Name the real
+   * situation - the build server was unreachable from this page
+   * (offline, DNS, or the server not permitting cross-origin access) -
+   * and keep the technical detail as a suffix for bug reports. An abort
+   * is the caller's own cancellation and is rethrown untouched so
+   * AbortController semantics (and the screen's aborted-check) hold.
+   */
+  private async request(path: string, init?: RequestInit): Promise<Response> {
+    try {
+      return await this.fetchImpl(sameOriginUrl(path), {
+        ...init,
+        headers: {'X-CFG-VER': 'FPV-ARBCON/1.0', ...(init?.headers ?? {})},
+      });
+    } catch (reason) {
+      if (reason instanceof Error && reason.name === 'AbortError') {
+        throw reason;
+      }
+      throw new BuildApiError(
+        `تعذّر الوصول إلى خادم البناء من هذه الصفحة (انقطاع شبكة أو حجب CORS). التفاصيل التقنية: ${
+          reason instanceof Error ? reason.message : String(reason)
+        }`,
+      );
+    }
+  }
 
   private async json<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await this.fetchImpl(sameOriginUrl(path), {
-      ...init,
-      headers: {'X-CFG-VER': 'FPV-ARBCON/1.0', ...(init?.headers ?? {})},
-    });
+    const response = await this.request(path, init);
     await ensureResponse(response);
     const declared = contentLength(response);
     if (declared !== undefined && declared > MAX_JSON_BYTES) {
@@ -117,9 +158,9 @@ export class BetaflightBuildApi {
   }
 
   async loadBuildLog(key: string, signal?: AbortSignal): Promise<string> {
-    const response = await this.fetchImpl(
-      sameOriginUrl(`/api/builds/${encodeURIComponent(key)}/log`),
-      {signal, headers: {'X-CFG-VER': 'FPV-ARBCON/1.0'}},
+    const response = await this.request(
+      `/api/builds/${encodeURIComponent(key)}/log`,
+      {signal},
     );
     await ensureResponse(response);
     const declared = contentLength(response);
@@ -134,10 +175,7 @@ export class BetaflightBuildApi {
   }
 
   async loadFirmware(path: string, signal?: AbortSignal): Promise<Uint8Array> {
-    const response = await this.fetchImpl(sameOriginUrl(path), {
-      signal,
-      headers: {'X-CFG-VER': 'FPV-ARBCON/1.0'},
-    });
+    const response = await this.request(path, {signal});
     await ensureResponse(response);
     const declared = contentLength(response);
     if (declared !== undefined && declared > MAX_BINARY_BYTES) {

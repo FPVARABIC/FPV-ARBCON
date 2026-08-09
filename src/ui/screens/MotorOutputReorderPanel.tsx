@@ -241,7 +241,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   title: {
@@ -282,7 +282,7 @@ const styles = StyleSheet.create({
   },
   mapMotor: {
     ...typography.mono,
-    color: colors.accent,
+    color: colors.accentStrong,
     fontWeight: '900',
   },
   mapArrow: { ...typography.body, color: colors.textMuted },
@@ -321,7 +321,7 @@ const styles = StyleSheet.create({
   },
   progress: {
     ...typography.body,
-    color: colors.accent,
+    color: colors.accentStrong,
     textAlign: 'center',
     writingDirection: 'rtl',
   },

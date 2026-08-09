@@ -85,13 +85,34 @@ export default function BatteryCard({
       : stateKey !== undefined
       ? t(stateKey)
       : t('batteryCard.stateUnknown');
+  /**
+   * Checkpoint F (HW-002). A real board reported ~0.17 V while a LiPo
+   * appeared connected, and this card printed "0.17 V" in its primary
+   * value slot - a number that reads as a live pack voltage and is not
+   * one.
+   *
+   * The discriminator is the FIRMWARE'S OWN, not an app-invented
+   * threshold: `cellCount === 0` is Betaflight's verified "battery not
+   * detected" (msp.c's own encoder comment, see decodeBatteryState.ts)
+   * and `BATTERY_NOT_PRESENT` is its own enum member. NO minimum-valid-
+   * voltage constant is introduced anywhere - this card still cannot,
+   * and does not, judge a voltage.
+   *
+   * When the firmware says there is no pack, the measured value is a
+   * residual voltage-divider reading. It is still shown - hiding a real
+   * reading was never acceptable and is not now - but it moves OUT of
+   * the primary slot into an explicitly labelled diagnostic line, and
+   * the headline states that no battery measurement is available. No
+   * replacement voltage is guessed, and nothing is zeroed.
+   */
+  const measurementProven =
+    semantics.detection === 'DETECTED' &&
+    semantics.firmwareState !== 'NOT_PRESENT';
   // A NOT_DETECTED pack can leave non-zero measurement registers behind.
   // Keep the real voltage visible for diagnosis, but do not present those
   // residual registers as current/consumption for a battery the FC itself
   // says it has not detected.
-  const canShowReportedDetails =
-    semantics.detection === 'DETECTED' &&
-    semantics.firmwareState !== 'NOT_PRESENT';
+  const canShowReportedDetails = measurementProven;
   const currentText =
     canShowReportedDetails &&
     semantics.current.sensorValidity === 'REPORTED_NONZERO'
@@ -110,11 +131,20 @@ export default function BatteryCard({
     (value): value is string => value !== undefined,
   );
 
-  const accessibilityLabel = `${t('batteryCard.title')}، ${t(
-    'batteryCard.voltageLabel',
-  )} ${voltageText}، ${stateText}${
-    isStale ? `، ${t('batteryCard.stale')}` : ''
-  }${reportedDetails.length > 0 ? `، ${reportedDetails.join('، ')}` : ''}`;
+  const rawVoltageText = t('batteryCard.reportedRawVoltage', {
+    value: semantics.voltageVolts.toFixed(2),
+  });
+  const accessibilityLabel = measurementProven
+    ? `${t('batteryCard.title')}، ${t(
+        'batteryCard.voltageLabel',
+      )} ${voltageText}، ${stateText}${
+        isStale ? `، ${t('batteryCard.stale')}` : ''
+      }${reportedDetails.length > 0 ? `، ${reportedDetails.join('، ')}` : ''}`
+    : `${t('batteryCard.title')}، ${t(
+        'batteryCard.noMeasurement',
+      )}، ${stateText}، ${rawVoltageText}${
+        isStale ? `، ${t('batteryCard.stale')}` : ''
+      }`;
 
   return (
     <View
@@ -125,15 +155,34 @@ export default function BatteryCard({
     >
       <View style={isStale ? styles.staleContent : undefined}>
         <Text style={styles.title}>{t('batteryCard.title')}</Text>
-        <View style={styles.valueRow}>
-          <Text style={styles.valueLabel}>{t('batteryCard.voltageLabel')}</Text>
-          <Text style={styles.valueText} testID="battery-card-voltage">
-            {voltageText}
+        {measurementProven ? (
+          <View style={styles.valueRow}>
+            <Text style={styles.valueLabel}>
+              {t('batteryCard.voltageLabel')}
+            </Text>
+            <Text style={styles.valueText} testID="battery-card-voltage">
+              {voltageText}
+            </Text>
+          </View>
+        ) : (
+          <Text
+            style={styles.noMeasurementText}
+            testID="battery-card-no-measurement"
+          >
+            {t('batteryCard.noMeasurement')}
           </Text>
-        </View>
+        )}
         <Text style={styles.stateText} testID="battery-card-state">
           {stateText}
         </Text>
+        {measurementProven ? null : (
+          <Text
+            style={styles.captionText}
+            testID="battery-card-raw-voltage"
+          >
+            {rawVoltageText}
+          </Text>
+        )}
         {reportedDetails.map((detail, index) => (
           <Text
             key={detail}
@@ -193,7 +242,7 @@ const styles = StyleSheet.create({
   },
   title: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
   },
   valueRow: {
     flexDirection: 'row',
@@ -215,6 +264,14 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     marginTop: spacing.xs,
+  },
+  /* The headline when the FC itself reports no pack. Deliberately the
+     same weight the voltage used to occupy, so nothing else on the card
+     can out-shout it. */
+  noMeasurementText: {
+    ...typography.sectionTitle,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
   },
   captionText: {
     ...typography.caption,

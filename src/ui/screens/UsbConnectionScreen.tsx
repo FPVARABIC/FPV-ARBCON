@@ -1,10 +1,30 @@
-import React, { useCallback, useEffect, useReducer, useRef } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+} from 'react';
+import {
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 import { useTranslation } from 'react-i18next';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import type { RootStackParamList } from '../../navigation/types';
-import { colors, spacing, typography } from '../theme';
+import {
+  colors,
+  contentEnvelope,
+  isDesktopTier,
+  resolveLayoutTier,
+  spacing,
+  typography,
+} from '../theme';
 import {
   ConnectionActions,
   ConnectionHeader,
@@ -15,6 +35,7 @@ import {
   formatHex,
   shortenSessionId,
 } from '../components/connection';
+import { connectionCopyKeys } from '../components/connection/connectionCopy';
 import type {
   ConnectionState,
   ValidationLogEntry,
@@ -36,6 +57,14 @@ import {
   mspSessionCoordinator,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
+// Platform seam (same pattern as the USB picker and the map link): real
+// on web, inert on Android. The web build records staged connection
+// evidence and can copy a technical report; Android renders nothing.
+import {
+  copyConnectionReportToClipboard,
+  isConnectionReportSupported,
+  recordConnectionStage,
+} from '../../platforms/connectionReport';
 // DEBUG-ONLY SCAFFOLDING (Pass 5.3/5.4, isolated in Pass 7.7) - both
 // panels are reached only through debugPanels.ts, which resolves them
 // behind __DEV__ so a production bundle never retains them. Each render
@@ -467,6 +496,7 @@ export default function UsbConnectionScreen({
   navigation,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
+  const copyKeys = connectionCopyKeys(Platform.OS);
   const [state, dispatch] = useReducer(reducer, initialState);
   const mountedRef = useRef(true);
   useEffect(
@@ -564,6 +594,65 @@ export default function UsbConnectionScreen({
     }
   }, [client, t, isBusy, isConnected]);
 
+  /**
+   * THE EXPLICIT DEVICE CHOOSER - browser only, and load-bearing there.
+   *
+   * `supportsDevicePicker()` is false on Android, where the system raises
+   * its own permission dialog during open(); the button below is simply
+   * not rendered and nothing about this screen changes. In a browser it is
+   * the ONLY way a port can ever become visible: navigator.serial.getPorts()
+   * returns only ports the user has already authorized, so a first visit
+   * scans and legitimately finds nothing until the operator picks a device
+   * here.
+   *
+   * The picker is called STRAIGHT from the press handler, with no await
+   * before it, because browsers require requestPort() to happen inside a
+   * user gesture and any prior await ends that gesture.
+   *
+   * A dismissed chooser resolves null and is NOT an error - the operator
+   * changed their mind. Only a genuine failure is reported, through the
+   * same SCAN_FAILURE path and the same Arabic localization every other
+   * transport error uses.
+   */
+  const supportsDevicePicker = useMemo(
+    // Probed defensively rather than called outright. `client` is an
+    // injected dependency - every test in this file and in
+    // App.test.tsx supplies its own minimal stand-in - and the question
+    // being asked here is exactly "does this client offer a picker?". A
+    // client that does not have the method does not offer one; that is an
+    // answer, not a crash.
+    () =>
+      typeof client.supportsDevicePicker === 'function' &&
+      client.supportsDevicePicker(),
+    [client],
+  );
+
+  const handleRequestDevice = useCallback(() => {
+    client
+      .requestDevicePermission()
+      .then(device => {
+        if (!mountedRef.current || device === null) {
+          return;
+        }
+        // Re-enumerate rather than injecting the returned descriptor into
+        // state: getPorts() is the single source of truth for what is
+        // authorized, and a device that appeared only because this call
+        // returned it would be a device the ordinary scan cannot confirm.
+        handleRefreshRef.current();
+      })
+      .catch(error => {
+        if (!mountedRef.current) {
+          return;
+        }
+        const transportError = error as TransportError;
+        dispatch({
+          type: 'SCAN_FAILURE',
+          error: transportError,
+          message: localizeTransportError(t, transportError),
+        });
+      });
+  }, [client, t]);
+
   // One automatic enumeration per mounted screen instance - same scan path
   // and reducer actions as manual تحديث (handleRefresh), never openDevice()/
   // closeSession(). The ref (not the effect dep array) is what makes this
@@ -646,6 +735,43 @@ export default function UsbConnectionScreen({
     dispatch({ type: 'SELECT_PORT', portIndex });
   }, []);
 
+  /**
+   * "نسخ تقرير الاتصال" - web only (isConnectionReportSupported() is
+   * false on Android and the button below is not rendered there). The
+   * snapshot hands the report builder what only this screen knows: its
+   * state-machine phase, the last surfaced error, and the selection. The
+   * staged transport evidence and byte counters live in the web platform
+   * layer already. `copied` drives a transient Arabic confirmation.
+   */
+  const [reportCopied, setReportCopied] = React.useState<'idle' | 'copied' | 'failed'>('idle');
+  const handleCopyReport = useCallback(() => {
+    copyConnectionReportToClipboard({
+      connectionState: state.connectionState,
+      errorMessage: state.errorMessage ?? '',
+      selectedDevice: state.selectedDeviceKey ?? '',
+      requiresCableReset: state.requiresCableReset,
+      hasScannedOnce: state.hasScannedOnce,
+      deviceCount: state.devices.length,
+    })
+      .then(copied => {
+        if (mountedRef.current) {
+          setReportCopied(copied ? 'copied' : 'failed');
+        }
+      })
+      .catch(() => {
+        if (mountedRef.current) {
+          setReportCopied('failed');
+        }
+      });
+  }, [
+    state.connectionState,
+    state.devices.length,
+    state.errorMessage,
+    state.hasScannedOnce,
+    state.requiresCableReset,
+    state.selectedDeviceKey,
+  ]);
+
   const handleConnect = useCallback(async () => {
     if (
       !selectedDevice ||
@@ -657,6 +783,11 @@ export default function UsbConnectionScreen({
       return;
     }
     dispatch({ type: 'CONNECT_START' });
+    recordConnectionStage('CONNECT_PRESSED', {
+      vendorId: selectedDevice.vendorId,
+      productId: selectedDevice.productId,
+      portIndex: state.selectedPortIndex,
+    });
     try {
       const sessionId = await client.openDevice(
         selectedDevice.deviceId,
@@ -680,6 +811,7 @@ export default function UsbConnectionScreen({
       // connected state. navigation is only absent in tests that render
       // this screen standalone (see the Props doc comment above).
       const sessionKey = mspSessionCoordinator.getSessionKey(sessionId);
+      recordConnectionStage('MSP_SESSION_ACTIVATED', {sessionId});
       if (sessionKey) {
         navigation?.navigate('Setup', { sessionKey });
       }
@@ -700,6 +832,7 @@ export default function UsbConnectionScreen({
         error instanceof MspOwnershipActivationError
           ? { code: 'MSP_ACTIVATION_FAILED', nativeMessage: error.message }
           : (error as TransportError);
+      recordConnectionStage('CONNECT_FAILED', {code: transportError.code});
       dispatch({
         type: 'CONNECT_FAILURE',
         error: transportError,
@@ -754,15 +887,22 @@ export default function UsbConnectionScreen({
 
   const logExpanded = state.logExpanded || state.connectionState === 'error';
 
-  return (
-    <View style={styles.root}>
-      <ConnectionHeader connectionState={state.connectionState} />
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.instructionBlock}>
+  /**
+   * DESKTOP SPLIT (AUD-004). On a 1920px window this screen was a single
+   * ~1140px column of stacked cards with the whole lower half empty.
+   * The split is by ROLE, not by pixel count: the right-hand (primary,
+   * RTL-first) column carries everything the operator ACTS on - devices,
+   * serial configuration, connect/disconnect - and the left carries what
+   * they READ - guidance, banners, the validation log, the report action.
+   * Both stay in one scroll container so nothing can scroll out of sync.
+   */
+  const {width, fontScale} = useWindowDimensions();
+  const tier = resolveLayoutTier(width, fontScale);
+  const twoColumn = isDesktopTier(tier);
+
+  const guidance = (
+    <>
+      <View style={styles.instructionBlock}>
           <View style={styles.instructionIcon} accessibilityElementsHidden>
             <Text style={styles.instructionIconText}>USB</Text>
           </View>
@@ -771,17 +911,17 @@ export default function UsbConnectionScreen({
               {t('connection.startHere')}
             </Text>
             <Text style={styles.instructionPrimary}>
-              {t('connection.instructionPrimary')}
+              {t(copyKeys.instructionPrimary)}
             </Text>
             <Text style={styles.instructionSecondary}>
               {t('connection.instructionSecondary')}
             </Text>
           </View>
-        </View>
+      </View>
 
-        {/* DEBUG-ONLY (Pass 5.4, isolated in Pass 7.7): absent from every
-            production bundle - DevAppLogPanel is undefined there. */}
-        {DevAppLogPanel ? <DevAppLogPanel /> : null}
+      {/* DEBUG-ONLY (Pass 5.4, isolated in Pass 7.7): absent from every
+          production bundle - DevAppLogPanel is undefined there. */}
+      {DevAppLogPanel ? <DevAppLogPanel /> : null}
 
         {state.errorMessage ? (
           <View style={styles.errorBanner} accessibilityRole="alert">
@@ -807,19 +947,23 @@ export default function UsbConnectionScreen({
           </View>
         ) : null}
 
-        {state.hotplugMessageKey ? (
-          <View style={styles.hotplugBanner} accessibilityRole="text">
-            <Text style={styles.hotplugBannerText}>
-              {t(
-                state.hotplugMessageKey === 'deviceDetached'
-                  ? 'devices.deviceDetached'
-                  : 'devices.sessionDetachedDuringConnection',
-              )}
-            </Text>
-          </View>
-        ) : null}
+      {state.hotplugMessageKey ? (
+        <View style={styles.hotplugBanner} accessibilityRole="text">
+          <Text style={styles.hotplugBannerText}>
+            {t(
+              state.hotplugMessageKey === 'deviceDetached'
+                ? 'devices.deviceDetached'
+                : 'devices.sessionDetachedDuringConnection',
+            )}
+          </Text>
+        </View>
+      ) : null}
+    </>
+  );
 
-        <UsbDeviceList
+  const actions = (
+    <>
+      <UsbDeviceList
           devices={state.devices}
           scanning={state.connectionState === 'scanning'}
           hasScannedOnce={state.hasScannedOnce}
@@ -828,6 +972,9 @@ export default function UsbConnectionScreen({
           selectionDisabled={isBusy || isConnected}
           onRefresh={handleRefresh}
           onSelectDevice={handleSelectDevice}
+          // Undefined on Android, so the button is not rendered there.
+          onRequestDevice={supportsDevicePicker ? handleRequestDevice : undefined}
+          requestDeviceDisabled={isBusy || isConnected}
         />
 
         {selectedDevice ? (
@@ -875,12 +1022,71 @@ export default function UsbConnectionScreen({
             lifecycle bridge's blur source when the operator leaves Motors.
             This screen's job ends at handing the session key to 'Setup'. */}
 
-        <ValidationLog
-          entries={state.log}
-          expanded={logExpanded}
-          onToggle={handleToggleLog}
-          onClear={handleClearLog}
-        />
+    </>
+  );
+
+  const evidence = (
+    <>
+      {isConnectionReportSupported() ? (
+        <View style={styles.reportRow}>
+            <Text
+              testID="copy-connection-report"
+              accessibilityRole="button"
+              onPress={handleCopyReport}
+              style={styles.reportButton}>
+              {t('connection.copyReport')}
+            </Text>
+            {reportCopied !== 'idle' ? (
+              <Text style={styles.reportFeedback} testID="copy-connection-report-result">
+                {t(
+                  reportCopied === 'copied'
+                    ? 'connection.copyReportDone'
+                    : 'connection.copyReportFailed',
+                )}
+              </Text>
+            ) : null}
+          </View>
+        ) : null}
+
+      <ValidationLog
+        entries={state.log}
+        expanded={logExpanded}
+        onToggle={handleToggleLog}
+        onClear={handleClearLog}
+      />
+    </>
+  );
+
+  return (
+    <View style={styles.root}>
+      <ConnectionHeader connectionState={state.connectionState} />
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={[
+          styles.scrollContent,
+          {maxWidth: contentEnvelope(tier, twoColumn)},
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
+        {twoColumn ? (
+          // RTL: the FIRST child of a row-reverse container is the
+          // RIGHTMOST, so `actions` - what the operator came here to do -
+          // sits under their reading start, exactly as index 0 of the tab
+          // strip does (src/navigation/tabs.ts).
+          <View style={styles.columns} testID="connection-columns">
+            <View style={styles.columnPrimary}>{actions}</View>
+            <View style={styles.columnSecondary}>
+              {guidance}
+              {evidence}
+            </View>
+          </View>
+        ) : (
+          <>
+            {guidance}
+            {actions}
+            {evidence}
+          </>
+        )}
       </ScrollView>
     </View>
   );
@@ -890,6 +1096,41 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  columns: {
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-start',
+    gap: spacing.lg,
+  },
+  /* 3:2. The primary column holds the device list and the connect action
+     and needs the room; the secondary is guidance and a log, which read
+     better narrow than stretched. */
+  columnPrimary: {flexGrow: 3, flexShrink: 1, flexBasis: 0, gap: spacing.lg},
+  columnSecondary: {flexGrow: 2, flexShrink: 1, flexBasis: 0, gap: spacing.lg},
+  reportRow: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  reportButton: {
+    ...typography.body,
+    color: colors.accentStrong,
+    fontWeight: '600',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    overflow: 'hidden',
+    textAlign: 'center',
+    writingDirection: 'rtl',
+  },
+  reportFeedback: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
   },
   scroll: {
     flex: 1,
@@ -928,7 +1169,7 @@ const styles = StyleSheet.create({
   },
   instructionIconText: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'ltr',
   },
   instructionCopy: {
@@ -936,7 +1177,7 @@ const styles = StyleSheet.create({
   },
   instructionEyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     marginBottom: spacing.xs,
   },
   instructionPrimary: {

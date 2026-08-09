@@ -5,3 +5,5 @@ export * from './customDefaults';
 export * from './firmwareFile';
 export * from './intelHex';
 export * from './md5';
+export * from './flashPhaseModel';
+export * from './bootloaderTransition';

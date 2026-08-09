@@ -13,9 +13,10 @@
  *     payload. The only motor-shaped value it handles is an output slot
  *     number, 1..4, which it hands to the controller unchanged.
  *   - It never creates a second session, authority, controller or queue.
- *     Its only timer is a touch-owner heartbeat: it cannot start a motor
- *     and merely renews the controller's short fail-safe while the same
- *     Pressable still owns the gesture.
+ *     Its timers belong only to the owned gesture: on web one qualifies
+ *     the documented 800 ms continuous hold, and the other renews the
+ *     controller's short fail-safe while the same Pressable still owns
+ *     that gesture. Neither timer can bypass pulseMotor()'s call-time gate.
  *   - It re-derives NO safety condition. Armed state, lease, authority,
  *     scope and capability are evaluated once, in the controller, and read
  *     here as `snapshot.activation` - the SAME evaluation `pulseMotor()`
@@ -33,10 +34,10 @@
  * turned, at what speed, in which direction, or that any motor stopped.
  * No string in this file claims otherwise, and a test asserts it.
  *
- * Bench warnings are always visible, but there is no checkbox ritual and
- * no separate "start session" ceremony. The first intentional long press
- * lazily prepares the protected session; a release during that preparation
- * starts nothing.
+ * Bench warnings are always visible, but there is no checkbox ritual.
+ * Session preparation is an explicit action, separate from the motor hold:
+ * an asynchronous MSP bring-up must never consume the gesture that the
+ * operator reasonably expects to move one motor.
  */
 
 import React, {
@@ -47,6 +48,7 @@ import React, {
   useState,
 } from 'react';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -56,7 +58,7 @@ import {
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, radii, spacing, typography } from '../theme';
+import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
 import type {
   MotorTestActivationBlockReason,
   MotorTestControllerSnapshot,
@@ -65,6 +67,8 @@ import type { MotorTestOperatorPort } from '../../platforms/react-native/protoco
 import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 import { createMotorTestLifecycleBridge } from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
+import { evaluateMotorDeparture } from '../../core/state/motorDepartureGate';
+import type { MotorDepartureVerdict } from '../../core/state/motorDepartureGate';
 import {
   readMotorTestCapability,
   subscribeMotorTestCapabilityOpened,
@@ -90,6 +94,7 @@ import {
 } from '../../core/state/motorVerificationModel';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
 import { MotorAirframeDiagram } from './MotorAirframeDiagram';
+import type { MotorSlotActivity } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
 import { MotorConfigurationPanel } from './MotorConfigurationPanel';
 import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
@@ -293,6 +298,82 @@ export function stopIsGenuinelyUnconfirmed(
   return !confirmed;
 }
 
+export function isMotorTestSettledForRelease(
+  snapshot: MotorTestControllerSnapshot,
+): boolean {
+  const name = snapshot.machine?.name;
+  return name === 'Ready' || name === 'Locked' || name === 'Fault';
+}
+
+const endingMotorTestSessions = new WeakMap<
+  MotorTestOperatorPort,
+  Promise<MotorTestControllerSnapshot>
+>();
+
+/** Stop first, wait for lease work to settle, then require complete teardown. */
+export function endMotorTestSessionSafely(
+  operator: MotorTestOperatorPort,
+): Promise<MotorTestControllerSnapshot> {
+  const existing = endingMotorTestSessions.get(operator);
+  if (existing !== undefined) return existing;
+
+  let operation!: Promise<MotorTestControllerSnapshot>;
+  operation = new Promise<MotorTestControllerSnapshot>((resolve, reject) => {
+    let unsubscribe: (() => void) | undefined;
+    let closeStarted = false;
+    let finished = false;
+    const cleanup = () => {
+      unsubscribe?.();
+      unsubscribe = undefined;
+    };
+    const fail = (reason: unknown) => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(reason);
+    };
+    const acceptClosed = (closed: MotorTestControllerSnapshot) => {
+      if (finished || closed.phase !== 'CLOSED') return;
+      if (closed.teardown?.complete !== true) {
+        fail(new Error('Motor-test teardown did not complete.'));
+        return;
+      }
+      finished = true;
+      cleanup();
+      resolve(closed);
+    };
+    const inspect = () => {
+      if (finished) return;
+      const current = operator.getSnapshot();
+      if (current.phase === 'CLOSED') {
+        acceptClosed(current);
+        return;
+      }
+      if (current.phase === 'CLOSING' || closeStarted) return;
+      if (!isMotorTestSettledForRelease(current) && current.phase !== 'IDLE') return;
+      closeStarted = true;
+      let closing: Promise<MotorTestControllerSnapshot>;
+      try {
+        closing = Promise.resolve(operator.endSession());
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      closing.then(acceptClosed, fail);
+    };
+    unsubscribe = operator.subscribe(inspect);
+    operator.requestStop('STOP_BUTTON_PRESSED');
+    inspect();
+  });
+  endingMotorTestSessions.set(operator, operation);
+  operation.finally(() => {
+    if (endingMotorTestSessions.get(operator) === operation) {
+      endingMotorTestSessions.delete(operator);
+    }
+  }).catch(() => undefined);
+  return operation;
+}
+
 export interface MotorsScreenViewProps {
   /** The operator facade from the ONE official binding. Undefined when no
    * official session is active - the screen then renders inert. */
@@ -332,6 +413,9 @@ export function MotorsScreenView({
   onConfigurationDirtyChange,
 }: MotorsScreenViewProps): React.JSX.Element {
   const { t } = useTranslation();
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const effectiveBottomInset = bottomInset ?? 0;
 
   // The snapshot is the ONLY source of controller truth. `useState` plus an
@@ -353,9 +437,17 @@ export function MotorsScreenView({
   );
   const [advancedVerificationOpen, setAdvancedVerificationOpen] =
     useState(false);
+  const [motorSettingsOpen, setMotorSettingsOpen] = useState(false);
   const [motorConfigurationDirty, setMotorConfigurationDirty] = useState(false);
+  const [motorConfigurationBusy, setMotorConfigurationBusy] = useState(false);
   const [outputOrderDirty, setOutputOrderDirty] = useState(false);
   const [escDirectionDirty, setEscDirectionDirty] = useState(false);
+  const [beginning, setBeginning] = useState(false);
+  const [beginQueued, setBeginQueued] = useState(false);
+  const [beginFailed, setBeginFailed] = useState(false);
+  const [pulseRejected, setPulseRejected] = useState(false);
+  const [endingSession, setEndingSession] = useState(false);
+  const [endSessionFailed, setEndSessionFailed] = useState(false);
   useEffect(() => {
     onConfigurationDirtyChange?.(
       motorConfigurationDirty || outputOrderDirty || escDirectionDirty,
@@ -374,10 +466,38 @@ export function MotorsScreenView({
   const holdActivatedRef = useRef(false);
   /** True only while the primary Pressable still owns the original touch. */
   const holdOwnedRef = useRef(false);
+  /**
+   * The same fact as holdOwnedRef, but RENDERED.
+   *
+   * THE FIELD BUG THIS EXISTS FOR: submitting a pulse makes
+   * evaluateActivation() report PULSE_OR_STOP_IN_PROGRESS, so
+   * `activation.allowed` goes false the instant the motor starts. The
+   * hold control's `disabled` prop was derived from that, which meant
+   * `disabled` flipped to true WHILE THE FINGER WAS STILL DOWN.
+   * react-native-web terminates the active responder when a Pressable
+   * becomes disabled, which fires onResponderTerminate -> handlePressOut
+   * -> stopNow('TOUCH_RELEASED'). The motor moved briefly and stopped,
+   * exactly as the operator reported.
+   *
+   * Rendering ownership lets the control stay enabled for the duration of
+   * a gesture it already owns. This weakens nothing: pulseMotor()
+   * re-evaluates the real gate at CALL time (this file's controller
+   * documents that a button which rendered enabled is not evidence), and
+   * every release, cancel, blur and background still routes through
+   * stopNow.
+   */
+  const [holdOwned, setHoldOwned] = useState(false);
   /** Unique identity for that exact gesture. A later short touch must never
    * inherit an earlier gesture's pending session-preparation continuation. */
   const holdGestureRef = useRef<object | undefined>(undefined);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | undefined>(
+    undefined,
+  );
+  /** React Native Web's synthetic long-press responder is not the safety
+   * authority and has varied across browser/input combinations. On web we
+   * qualify the SAME Pressable-owned gesture with our own timer. Android
+   * keeps the native onLongPress path unchanged. */
+  const webLongPressTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
   /** Read at CALL time, so a stale closure still sees live state - the
@@ -395,10 +515,29 @@ export function MotorsScreenView({
         clearInterval(heartbeatTimerRef.current);
         heartbeatTimerRef.current = undefined;
       }
+      if (webLongPressTimerRef.current !== undefined) {
+        clearTimeout(webLongPressTimerRef.current);
+        webLongPressTimerRef.current = undefined;
+      }
     };
   }, []);
 
   useEffect(() => {
+    setBeginning(false);
+    setBeginQueued(false);
+    setBeginFailed(false);
+    setMotorSettingsOpen(false);
+    setPulseRejected(false);
+    setEndingSession(false);
+    setEndSessionFailed(false);
+    holdOwnedRef.current = false;
+    setHoldOwned(false);
+    holdGestureRef.current = undefined;
+    holdActivatedRef.current = false;
+    if (webLongPressTimerRef.current !== undefined) {
+      clearTimeout(webLongPressTimerRef.current);
+      webLongPressTimerRef.current = undefined;
+    }
     if (operator === undefined) {
       setSnapshot(undefined);
       return;
@@ -420,6 +559,13 @@ export function MotorsScreenView({
   const receipt = snapshot?.verificationReceipt;
   const mayBeLive = commandMayBeLive(snapshot);
   const stopUnconfirmed = stopIsGenuinelyUnconfirmed(snapshot);
+  const sessionHasEnded =
+    snapshot?.phase === 'CLOSED' && snapshot.teardown?.complete === true;
+  const endActionDisabled =
+    operator === undefined ||
+    snapshot?.phase === 'IDLE' ||
+    sessionHasEnded ||
+    endingSession;
   const controllerAllows = snapshot?.activation.allowed === true;
   const blockReasons = snapshot?.activation.reasons ?? [];
 
@@ -436,10 +582,22 @@ export function MotorsScreenView({
   );
   const requiresNewConnection =
     snapshot?.phase === 'CLOSED' ||
+    blockReasons.includes('REQUIRES_NEW_CONNECTION') ||
     (snapshot?.outcome.kind === 'FAILED_CLOSED' &&
       snapshot.outcome.requiresNewSession) ||
     (snapshot?.outcome.kind === 'BLOCKED' &&
       snapshot.outcome.requiresNewSession);
+  const terminalSetupReason =
+    snapshot?.outcome.kind === 'BLOCKED' ||
+    snapshot?.outcome.kind === 'FAILED_CLOSED'
+      ? snapshot.outcome.reason
+      : undefined;
+  const readinessDiagnosticReason =
+    terminalSetupReason ?? primaryBlockReason;
+  const showReadinessDiagnostic =
+    !controllerAllows &&
+    readinessDiagnosticReason !== undefined &&
+    (terminalSetupReason !== undefined || snapshot?.setupStep === 'READY');
 
   /**
    * Binds verification to the CURRENT official session, and clears it for
@@ -521,18 +679,21 @@ export function MotorsScreenView({
   );
 
   /**
-   * Session preparation is LAZY: navigation and settings remain read-only,
-   * and the first intentional long press is the explicit operator action
-   * that starts setup. If the finger leaves before setup resolves, no pulse
-   * is submitted.
+   * Session preparation is explicit and separate from motor commands:
+   * navigation and settings remain read-only until the operator prepares
+   * the FC session, then each intentional long press submits a pulse.
    */
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
-  const [beginning, setBeginning] = useState(false);
-  const [beginFailed, setBeginFailed] = useState(false);
-  const holdDisabled =
-    operator === undefined ||
-    requiresNewConnection ||
-    (!beginning && snapshot?.machine !== undefined && !canActivate);
+  const holdGateBlocked =
+    operator === undefined || requiresNewConnection || !canActivate;
+  // See holdOwned's own declaration: disabling mid-gesture is what
+  // terminated the responder and stopped a held motor in the field.
+  const holdDisabled = holdGateBlocked && !holdOwned;
+  /** Read at CALL time by handlePressIn, so ownership can only ever be
+   * taken for a press the gate actually admitted. Ownership PROTECTS a
+   * gesture the gate accepted; it must never CREATE one. */
+  const holdGateBlockedRef = useRef(holdGateBlocked);
+  holdGateBlockedRef.current = holdGateBlocked;
   /** Ends the exclusive test session before the optional output-reorder
    * transaction, which deliberately owns a separate interlock. */
   const handleEndSessionForConfiguration = useCallback(async () => {
@@ -540,13 +701,97 @@ export function MotorsScreenView({
     if (port === undefined) {
       throw new Error('Motor-test operator is unavailable.');
     }
-    await port.endSession();
+    await endMotorTestSessionSafely(port);
   }, []);
+
+  const runBeginSession = useCallback((port: MotorTestOperatorPort) => {
+    setBeginQueued(false);
+    setBeginning(true);
+    setBeginFailed(false);
+    setPulseRejected(false);
+    port
+      .beginSession()
+      .then(result => {
+        if (!mountedRef.current || operatorRef.current !== port) {
+          return;
+        }
+        // A fail-closed setup is often a resolved controller result, not a
+        // rejected Promise. Mirror that official result explicitly: a Ready
+        // result enables the hold control immediately, while a blocked result
+        // receives an operator-facing explanation instead of a dim mystery.
+        setSnapshot(result);
+        setBeginFailed(result.activation.allowed !== true);
+      })
+      .catch(() => {
+        if (mountedRef.current && operatorRef.current === port) {
+          setBeginFailed(true);
+        }
+      })
+      .finally(() => {
+        if (mountedRef.current && operatorRef.current === port) {
+          setBeginning(false);
+        }
+      });
+  }, []);
+
+  const handleBeginSessionPress = useCallback(() => {
+    const port = operatorRef.current;
+    if (
+      port === undefined ||
+      beginning ||
+      port.getSnapshot().phase !== 'IDLE'
+    ) {
+      return;
+    }
+    // The configuration panel and the motor-test controller intentionally
+    // share one exclusive MSP interlock. A tap during the automatic settings
+    // read is remembered and begins as soon as that read releases ownership;
+    // it is never converted into a rejected, apparently inert button press.
+    if (motorConfigurationBusy) {
+      setBeginning(true);
+      setBeginQueued(true);
+      setBeginFailed(false);
+      return;
+    }
+    runBeginSession(port);
+  }, [beginning, motorConfigurationBusy, runBeginSession]);
+
+  useEffect(() => {
+    if (!beginQueued || motorConfigurationBusy) {
+      return;
+    }
+    const port = operatorRef.current;
+    if (port === undefined || port.getSnapshot().phase !== 'IDLE') {
+      setBeginQueued(false);
+      setBeginning(false);
+      return;
+    }
+    runBeginSession(port);
+  }, [beginQueued, motorConfigurationBusy, runBeginSession]);
+
+  const handleEndSessionPress = useCallback(() => {
+    const port = operatorRef.current;
+    if (port === undefined || endingSession || port.getSnapshot().phase === 'IDLE') return;
+    setEndingSession(true);
+    setEndSessionFailed(false);
+    endMotorTestSessionSafely(port).catch(() => {
+      if (mountedRef.current && operatorRef.current === port) setEndSessionFailed(true);
+    }).finally(() => {
+      if (mountedRef.current && operatorRef.current === port) setEndingSession(false);
+    });
+  }, [endingSession]);
 
   const clearHoldHeartbeat = useCallback(() => {
     if (heartbeatTimerRef.current !== undefined) {
       clearInterval(heartbeatTimerRef.current);
       heartbeatTimerRef.current = undefined;
+    }
+  }, []);
+
+  const clearWebLongPressTimer = useCallback(() => {
+    if (webLongPressTimerRef.current !== undefined) {
+      clearTimeout(webLongPressTimerRef.current);
+      webLongPressTimerRef.current = undefined;
     }
   }, []);
 
@@ -566,14 +811,8 @@ export function MotorsScreenView({
     [clearHoldHeartbeat],
   );
 
-  const handlePressIn = useCallback(() => {
-    holdOwnedRef.current = true;
-    holdGestureRef.current = {};
-    holdActivatedRef.current = false;
-    clearHoldHeartbeat();
-  }, [clearHoldHeartbeat]);
-
-  const handleLongPress = useCallback(() => {
+  const activateOwnedHold = useCallback(() => {
+    clearWebLongPressTimer();
     if (holdActivatedRef.current) {
       return;
     }
@@ -585,53 +824,55 @@ export function MotorsScreenView({
     if (port === undefined) {
       return;
     }
-    const activateIfStillOwned = () => {
-      const current = port.getSnapshot();
-      if (!mountedRef.current) {
-        return;
-      }
-      if (
-        !holdOwnedRef.current ||
-        holdGestureRef.current !== gesture ||
-        !current.activation.allowed
-      ) {
-        setBeginFailed(current.machine === undefined);
-        return;
-      }
-      holdActivatedRef.current = true;
-      if (port.pulseMotor(selectedSlot) === 'ACCEPTED') {
-        startHoldHeartbeat(port);
-      } else {
-        holdActivatedRef.current = false;
-      }
-    };
-
     const current = port.getSnapshot();
-    if (current.machine === undefined) {
-      setBeginning(true);
-      setBeginFailed(false);
-      port
-        .beginSession()
-        .then(() => activateIfStillOwned())
-        .catch(() => {
-          if (mountedRef.current) {
-            setBeginFailed(true);
-          }
-        })
-        .finally(() => {
-          if (mountedRef.current) {
-            setBeginning(false);
-          }
-        });
+    if (!holdOwnedRef.current || holdGestureRef.current !== gesture || !current.activation.allowed) {
+      setPulseRejected(true);
       return;
     }
-    activateIfStillOwned();
-  }, [selectedSlot, startHoldHeartbeat]);
+    holdActivatedRef.current = true;
+    setPulseRejected(false);
+    if (port.pulseMotor(selectedSlot) === 'ACCEPTED') startHoldHeartbeat(port);
+    else {
+      holdActivatedRef.current = false;
+      setPulseRejected(true);
+    }
+  }, [clearWebLongPressTimer, selectedSlot, startHoldHeartbeat]);
+
+  const handlePressIn = useCallback(() => {
+    if (holdGateBlockedRef.current) {
+      // A press that the gate never admitted takes no ownership, so it
+      // cannot keep the control enabled for itself.
+      return;
+    }
+    holdOwnedRef.current = true;
+    setHoldOwned(true);
+    holdGestureRef.current = {};
+    holdActivatedRef.current = false;
+    clearHoldHeartbeat();
+    clearWebLongPressTimer();
+    if (Platform.OS === 'web') {
+      webLongPressTimerRef.current = setTimeout(
+        activateOwnedHold,
+        MOTOR_TEST_LONG_PRESS_DELAY_MILLIS,
+      );
+    }
+  }, [activateOwnedHold, clearHoldHeartbeat, clearWebLongPressTimer]);
+
+  const handleLongPress = useCallback(() => {
+    // Web uses the owned timer installed at press-in; keeping both paths
+    // active there could submit twice at the threshold. Native keeps the
+    // platform responder that already worked in the APK.
+    if (Platform.OS !== 'web') {
+      activateOwnedHold();
+    }
+  }, [activateOwnedHold]);
 
   /** Release AND responder termination land here. Both must stop. */
   const handlePressOut = useCallback(() => {
     holdOwnedRef.current = false;
+    setHoldOwned(false);
     holdGestureRef.current = undefined;
+    clearWebLongPressTimer();
     clearHoldHeartbeat();
     const activated = holdActivatedRef.current;
     holdActivatedRef.current = false;
@@ -641,15 +882,17 @@ export function MotorsScreenView({
     if (activated || commandMayBeLive(operatorRef.current?.getSnapshot())) {
       stopNow('TOUCH_RELEASED');
     }
-  }, [clearHoldHeartbeat, stopNow]);
+  }, [clearHoldHeartbeat, clearWebLongPressTimer, stopNow]);
 
   const handleStopPress = useCallback(() => {
     holdOwnedRef.current = false;
+    setHoldOwned(false);
     holdGestureRef.current = undefined;
+    clearWebLongPressTimer();
     clearHoldHeartbeat();
     holdActivatedRef.current = false;
     stopNow('STOP_BUTTON_PRESSED');
-  }, [clearHoldHeartbeat, stopNow]);
+  }, [clearHoldHeartbeat, clearWebLongPressTimer, stopNow]);
 
   /**
    * Selecting a different output while something may be live STOPS the
@@ -663,13 +906,15 @@ export function MotorsScreenView({
       if (machine === 'Starting' || machine === 'Pulsing') {
         holdActivatedRef.current = false;
         holdOwnedRef.current = false;
+        setHoldOwned(false);
         holdGestureRef.current = undefined;
+        clearWebLongPressTimer();
         clearHoldHeartbeat();
         port.requestStop('MOTOR_SELECTION_CHANGED');
       }
     }
     setSelectedSlot(slot);
-  }, [clearHoldHeartbeat]);
+  }, [clearHoldHeartbeat, clearWebLongPressTimer]);
 
   const statusText = useMemo(() => {
     switch (presentation) {
@@ -710,8 +955,22 @@ export function MotorsScreenView({
   const liveSlot =
     presentation === 'SUBMITTED_AWAITING_RESPONSE' ||
     presentation === 'ACKNOWLEDGED' ||
-    presentation === 'STOPPING'
+    presentation === 'STOPPING' ||
+    presentation === 'FAULT'
       ? snapshot?.pulse.motorNumber
+      : undefined;
+  /** The diagram states the controller's OWN verdict for that output, in
+   * words. FAULT maps to UNSAFE because a fault is precisely the case
+   * where the app cannot describe the output truthfully. */
+  const liveActivity: MotorSlotActivity | undefined =
+    presentation === 'SUBMITTED_AWAITING_RESPONSE'
+      ? 'SUBMITTED'
+      : presentation === 'ACKNOWLEDGED'
+      ? 'ACKNOWLEDGED'
+      : presentation === 'STOPPING'
+      ? 'STOPPING'
+      : presentation === 'FAULT'
+      ? 'UNSAFE'
       : undefined;
   const airframeEntries = MOTOR_TEST_EXPECTED_CONFIGURATION.map(entry => ({
     slot: entry.motorNumber,
@@ -719,9 +978,8 @@ export function MotorsScreenView({
     direction: entry.direction,
   }));
 
-  /** One primary control beside the selected output. Its first long press
-   * prepares the protected session lazily, so no second action competes
-   * with it. */
+  /** The protected hold control only submits a motor pulse after the
+   * separate preparation action has reached an activation-ready state. */
   const holdControl = (
     <Pressable
       onPressIn={handlePressIn}
@@ -738,18 +996,22 @@ export function MotorsScreenView({
       style={[
         styles.holdButton,
         holdDisabled && styles.holdButtonOff,
+        holdOwned && styles.holdButtonPressed,
+        holdOwned && mayBeLive && styles.holdButtonLive,
       ]}
       testID="motors-hold-button"
     >
       <Text
         style={[styles.holdStep, canActivate && styles.holdSupportingActive]}
       >
-        {beginning
-          ? t('motorsScreen.beginSessionBusy')
-          : t('motorsScreen.holdHeading')}
+        {t('motorsScreen.holdHeading')}
       </Text>
       <Text style={[styles.holdLabel, !canActivate && styles.holdLabelOff]}>
-        {t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
+        {holdOwned && mayBeLive
+          ? t('motorsScreen.holdActive', { slot: `M${selectedSlot}` })
+          : holdOwned
+            ? t('motorsScreen.holdCountdown', { slot: `M${selectedSlot}` })
+            : t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
       </Text>
       <Text
         style={[styles.caption, canActivate && styles.holdSupportingActive]}
@@ -769,7 +1031,7 @@ export function MotorsScreenView({
           and the body's bottom padding keeps it from being covered. */}
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}
       >
         <View style={styles.screenHeader}>
           <Text style={styles.eyebrow}>{t('motorsScreen.eyebrow')}</Text>
@@ -1012,7 +1274,115 @@ export function MotorsScreenView({
             </View>
           </View>
 
+          <View style={styles.workflowSteps} testID="motors-workflow-steps">
+            <View style={styles.workflowStep}>
+              <View style={styles.workflowNumber}>
+                <Text style={styles.workflowNumberText}>1</Text>
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.workflowTitle}>
+                  {t('motorsScreen.flowSafety')}
+                </Text>
+                <Text style={styles.workflowDetail}>
+                  {t('motorsScreen.flowSafetyDetail')}
+                </Text>
+              </View>
+            </View>
+            <View
+              style={[
+                styles.workflowStep,
+                (beginning || presentation === 'CHECKING') &&
+                  styles.workflowStepActive,
+                canActivate && styles.workflowStepDone,
+              ]}>
+              <View
+                style={[
+                  styles.workflowNumber,
+                  canActivate && styles.workflowNumberDone,
+                ]}>
+                <Text
+                  style={[
+                    styles.workflowNumberText,
+                    canActivate && styles.workflowNumberTextDone,
+                  ]}>
+                  {canActivate ? '✓' : '2'}
+                </Text>
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.workflowTitle}>
+                  {t('motorsScreen.flowSession')}
+                </Text>
+                <Text style={styles.workflowDetail}>{statusText}</Text>
+              </View>
+            </View>
+            <View
+              style={[
+                styles.workflowStep,
+                canActivate && styles.workflowStepActive,
+              ]}>
+              <View style={styles.workflowNumber}>
+                <Text style={styles.workflowNumberText}>3</Text>
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.workflowTitle}>
+                  {t('motorsScreen.flowHold')}
+                </Text>
+                <Text style={styles.workflowDetail}>
+                  {canActivate
+                    ? t('motorsScreen.flowHoldReady')
+                    : t('motorsScreen.flowHoldWaiting')}
+                </Text>
+              </View>
+            </View>
+          </View>
+
           <MotorConfigurationSummary scope={snapshot?.motorScope} />
+
+          {snapshot?.phase === 'IDLE' ? (
+            <Pressable
+              onPress={handleBeginSessionPress}
+              disabled={operator === undefined || beginning}
+              accessibilityRole="button"
+              accessibilityState={{
+                disabled:
+                  operator === undefined || beginning,
+                busy: beginning || motorConfigurationBusy,
+              }}
+              style={[
+                styles.prepareButton,
+                (operator === undefined || beginning) &&
+                  styles.holdButtonOff,
+              ]}
+              testID="motors-begin-session-button"
+            >
+              <Text style={styles.prepareLabel}>
+                {beginQueued
+                  ? t('motorsScreen.configurationReadBusy')
+                  : beginning
+                  ? t('motorsScreen.beginSessionBusy')
+                  : motorConfigurationBusy
+                    ? t('motorsScreen.beginAfterConfigurationRead')
+                    : t('motorsScreen.beginSession')}
+              </Text>
+              <Text style={styles.caption}>{t('motorsScreen.beginSessionHint')}</Text>
+            </Pressable>
+          ) : null}
+
+          {canActivate ? (
+            <View style={styles.readyBanner} testID="motors-session-ready">
+              <View style={styles.readyBadge}>
+                <Text style={styles.readyBadgeText}>✓</Text>
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.readyTitle}>
+                  {t('motorsScreen.readyHeading')}
+                </Text>
+                <Text style={styles.readyBody}>
+                  {t('motorsScreen.readyDetail', {slot: `M${selectedSlot}`})}
+                </Text>
+              </View>
+            </View>
+          ) : null}
 
           <View style={styles.outputSection} testID="motors-outputs">
             <Text style={styles.miniHeading}>
@@ -1063,6 +1433,7 @@ export function MotorsScreenView({
               entries={airframeEntries}
               selectedSlot={selectedSlot}
               liveSlot={liveSlot}
+              liveActivity={liveActivity}
               verifiedSlots={verifiedSlots}
               onSelectSlot={handleSelectSlot}
             />
@@ -1110,7 +1481,36 @@ export function MotorsScreenView({
             </View>
           </View>
 
-          {holdControl}
+          {showReadinessDiagnostic ? (
+            <View
+              style={styles.readinessBlock}
+              testID="motors-readiness-blocked-detail"
+            >
+              <Text style={styles.blockHeading}>
+                {t('motorsScreen.readinessBlockedHeading')}
+              </Text>
+              {primaryBlockReason !== undefined ? (
+                <Text style={styles.blockReason}>
+                  {t(`motorsScreen.blockReason.${primaryBlockReason}`)}
+                </Text>
+              ) : null}
+              <Text
+                style={styles.caption}
+                testID="motors-readiness-blocked-code"
+              >
+                {t('motorsScreen.readinessBlockedDetail', {
+                  reason: readinessDiagnosticReason,
+                  step: snapshot?.setupStep ?? 'NONE',
+                })}
+              </Text>
+              <Text style={styles.caption}>
+                {requiresNewConnection
+                  ? t('motorsScreen.readinessReconnectAction')
+                  : t('motorsScreen.readinessWaitAction')}
+              </Text>
+            </View>
+          ) : null}
+
           <EscDirectionPanel
             selectedMotor={selectedSlot}
             operator={operator}
@@ -1137,10 +1537,27 @@ export function MotorsScreenView({
         {/* Persistent configuration is a separate transaction from bench
             testing. It owns no motor pulse path and is deliberately bound to
             the canonical session id rather than to the MotorTest operator. */}
-        {sessionId !== undefined ? (
+        {sessionId !== undefined && !motorSettingsOpen ? (
+          <Pressable
+            onPress={() => setMotorSettingsOpen(true)}
+            accessibilityRole="button"
+            style={styles.card}
+            testID="motors-open-settings"
+          >
+            <Text style={styles.sectionTitle}>
+              {t('motorsScreen.openMotorSettings')}
+            </Text>
+            <Text style={styles.caption}>
+              {t('motorsScreen.openMotorSettingsHint')}
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {sessionId !== undefined && motorSettingsOpen ? (
           <MotorConfigurationPanel
             sessionId={sessionId}
             onDirtyChange={setMotorConfigurationDirty}
+            onBusyChange={setMotorConfigurationBusy}
           />
         ) : null}
 
@@ -1203,22 +1620,30 @@ export function MotorsScreenView({
         ) : null}
       </ScrollView>
 
-      {/* (8) The emergency Stop control. OUTSIDE the ScrollView, always
-          mounted, and NEVER disabled for a transient UI or Promise state -
-          the one moment it looks busy is exactly when it matters most. */}
-      <Pressable
-        onPress={handleStopPress}
-        accessibilityRole="button"
-        accessibilityState={{ disabled: false }}
-        style={[
-          styles.stopButton,
-          { marginBottom: effectiveBottomInset + spacing.md },
-        ]}
-        testID="motors-stop-button"
+      {/* (8) The motor action dock. OUTSIDE the ScrollView so the actual
+          hold control cannot be confused with the explanatory Step 3 card
+          or disappear below the airframe diagram. Stop stays mounted and
+          is NEVER disabled for a transient UI or Promise state. */}
+      <View
+        style={[styles.sessionDock, { marginBottom: effectiveBottomInset + spacing.md }]}
+        testID="motors-session-dock"
       >
-        <Text style={styles.stopIcon}>⏹</Text>
-        <Text style={styles.stopLabel}>{t('motorsScreen.stop')}</Text>
-      </Pressable>
+        {holdControl}
+        {pulseRejected ? (
+          <Text style={styles.inlineError} testID="motors-pulse-rejected">
+            {t('motorsScreen.pulseRejected')}
+          </Text>
+        ) : null}
+        <Pressable onPress={handleStopPress} accessibilityRole="button" accessibilityState={{ disabled: false }} style={styles.stopButton} testID="motors-stop-button">
+          <Text style={styles.stopIcon}>⏹</Text>
+          <Text style={styles.stopLabel}>{t('motorsScreen.stop')}</Text>
+        </Pressable>
+        <Pressable onPress={handleEndSessionPress} disabled={endActionDisabled} accessibilityRole="button" accessibilityState={{ disabled: endActionDisabled, busy: endingSession }} style={[styles.endSessionButton, endActionDisabled && styles.holdButtonOff]} testID="motors-end-session-button">
+          <Text style={styles.endSessionLabel}>{endingSession ? t('motorsScreen.endSessionBusy') : t('motorsScreen.endSession')}</Text>
+        </Pressable>
+        {endSessionFailed ? <Text style={styles.inlineError} testID="motors-end-session-failed">{t('motorsScreen.endSessionFailed')}</Text> : null}
+        {sessionHasEnded ? <Text style={styles.sessionEndedText} testID="motors-end-session-done">{t('motorsScreen.endSessionDone')}</Text> : null}
+      </View>
 
       {mayBeLive ? (
         <View style={styles.liveStrip} testID="motors-command-may-be-live" />
@@ -1235,7 +1660,7 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: {
     padding: spacing.lg,
-    paddingBottom: spacing.xxl,
+    paddingBottom: spacing.xxl * 4,
     gap: spacing.md,
     width: '100%',
     maxWidth: 1180,
@@ -1249,7 +1674,7 @@ const styles = StyleSheet.create({
   },
   eyebrow: {
     ...typography.eyebrow,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   title: {
@@ -1265,7 +1690,7 @@ const styles = StyleSheet.create({
   dangerBanner: {
     flexDirection: 'row',
     gap: spacing.sm,
-    backgroundColor: '#2C1D22',
+    backgroundColor: '#FFF0F1',
     borderColor: colors.error,
     borderWidth: 1,
     borderRadius: radii.lg,
@@ -1288,7 +1713,7 @@ const styles = StyleSheet.create({
   faultBanner: {
     flexDirection: 'row',
     gap: spacing.sm,
-    backgroundColor: '#2C1D22',
+    backgroundColor: '#FFF0F1',
     borderColor: colors.error,
     borderWidth: 2,
     borderRadius: radii.lg,
@@ -1335,7 +1760,7 @@ const styles = StyleSheet.create({
   },
   sessionStepNumber: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
   },
   sessionContent: { flex: 1, gap: spacing.sm },
   statusCard: {
@@ -1370,6 +1795,61 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
+  },
+  workflowSteps: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  workflowStep: {
+    flexGrow: 1,
+    flexBasis: 220,
+    minHeight: 74,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    padding: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    backgroundColor: colors.backgroundRaised,
+  },
+  workflowStepActive: {
+    borderColor: colors.accentStrong,
+    backgroundColor: colors.accentSoft,
+  },
+  workflowStepDone: {
+    borderColor: '#A9D8CB',
+    backgroundColor: '#EAF7F2',
+  },
+  workflowNumber: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  workflowNumberDone: {
+    backgroundColor: colors.success,
+    borderColor: colors.success,
+  },
+  workflowNumberText: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+  },
+  workflowNumberTextDone: { color: colors.white },
+  workflowTitle: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  workflowDetail: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
   },
   progressBadge: {
     maxWidth: 126,
@@ -1456,7 +1936,7 @@ const styles = StyleSheet.create({
   },
   slotCardLive: {
     borderColor: colors.warning,
-    backgroundColor: '#342A17',
+    backgroundColor: '#FFF4D8',
   },
   slotLabel: {
     ...typography.mono,
@@ -1466,7 +1946,7 @@ const styles = StyleSheet.create({
     writingDirection: 'ltr',
   },
   slotLabelLive: { color: colors.warning },
-  slotSelected: { ...typography.caption, color: colors.accent },
+  slotSelected: { ...typography.caption, color: colors.accentStrong },
   airframeSection: {
     gap: spacing.sm,
     borderTopColor: colors.borderSoft,
@@ -1501,7 +1981,7 @@ const styles = StyleSheet.create({
   },
   selectedMotorSlot: {
     ...typography.title,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'ltr',
   },
   batteryWarning: {
@@ -1528,7 +2008,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     backgroundColor: colors.surfaceAlt,
   },
-  directionIconText: { fontSize: 22, color: colors.accent },
+  directionIconText: { fontSize: 22, color: colors.accentStrong },
   beginButton: {
     minHeight: MIN_TOUCH_TARGET,
     alignItems: 'center',
@@ -1547,7 +2027,7 @@ const styles = StyleSheet.create({
   beginButtonPressed: { borderColor: colors.textPrimary, opacity: 0.7 },
   beginLabel: {
     ...typography.sectionTitle,
-    color: colors.accent,
+    color: colors.accentStrong,
     writingDirection: 'rtl',
   },
   holdStep: {
@@ -1571,6 +2051,12 @@ const styles = StyleSheet.create({
     borderColor: colors.disabled,
     opacity: 0.6,
   },
+  holdButtonPressed: { borderColor: colors.textPrimary, opacity: 0.88 },
+  holdButtonLive: {
+    backgroundColor: colors.warning,
+    borderColor: colors.warning,
+    opacity: 1,
+  },
   holdLabel: {
     ...typography.sectionTitle,
     color: colors.accentText,
@@ -1583,20 +2069,62 @@ const styles = StyleSheet.create({
   holdSupportingActive: {
     color: colors.accentText,
   },
+  readinessBlock: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: '#FFF8E6',
+  },
+  prepareButton: { minHeight: MIN_TOUCH_TARGET + spacing.md, alignItems: 'center', justifyContent: 'center', borderColor: colors.accent, borderWidth: 2, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
+  prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'rtl' },
+  readyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: '#A9D8CB',
+    backgroundColor: '#EAF7F2',
+  },
+  readyBadge: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.pill,
+    backgroundColor: colors.success,
+  },
+  readyBadgeText: {
+    ...typography.sectionTitle,
+    color: colors.white,
+  },
+  readyTitle: {
+    ...typography.sectionTitle,
+    color: colors.success,
+    writingDirection: 'rtl',
+  },
+  readyBody: {
+    ...typography.body,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  inlineError: { ...typography.caption, color: colors.error, writingDirection: 'rtl', textAlign: 'center' },
   leaveButton: { minHeight: MIN_TOUCH_TARGET, justifyContent: 'center' },
   leaveLabel: {
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'rtl',
   },
+  sessionDock: { width: '90%', maxWidth: 724, alignSelf: 'center', gap: spacing.sm, backgroundColor: colors.background },
   stopButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    width: '90%',
-    maxWidth: 724,
-    alignSelf: 'center',
+    width: '100%',
     minHeight: MIN_TOUCH_TARGET + spacing.lg,
     backgroundColor: colors.error,
     borderRadius: radii.lg,
@@ -1607,12 +2135,15 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 4,
   },
-  stopIcon: { fontSize: 22, color: colors.textPrimary },
+  stopIcon: { fontSize: 22, color: colors.white },
   stopLabel: {
     ...typography.title,
-    color: colors.textPrimary,
+    color: colors.white,
     writingDirection: 'rtl',
   },
+  endSessionButton: { minHeight: MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderColor: colors.warning, borderWidth: 2, borderRadius: radii.md, padding: spacing.sm },
+  endSessionLabel: { ...typography.body, color: colors.warning, fontWeight: '800', writingDirection: 'rtl' },
+  sessionEndedText: { ...typography.caption, color: colors.success, textAlign: 'center', writingDirection: 'rtl' },
   liveStrip: { height: 3, backgroundColor: colors.warning },
 });
 
@@ -1636,9 +2167,32 @@ type MotorsHostNavigation = NativeStackScreenProps<
   'Setup'
 >['navigation'];
 
+/**
+ * How the shell asks whether leaving Motors is safe YET.
+ *
+ * The stop itself is already requested synchronously by the shell's blur
+ * emission before this is ever consulted - this only reports the bounded
+ * verdict so navigation can wait for it instead of committing blind.
+ */
+export interface MotorsDepartureGate {
+  /**
+   * The CURRENT verdict, given how long the caller has been waiting.
+   *
+   * Deliberately not a Promise, and deliberately owning no timer: this
+   * screen is guarded to create no timer beyond its declared heartbeat,
+   * and navigation timing belongs to the shell that owns navigation. The
+   * shell drives the bound; this only reports the controller's state.
+   */
+  evaluate(elapsedMs: number): MotorDepartureVerdict;
+  /** Fires whenever the controller publishes, so the shell can re-read. */
+  subscribe(listener: () => void): () => void;
+}
+
 export interface MotorsTabProps {
   readonly sessionKey: SetupUiSessionKey | undefined;
   readonly navigation: MotorsHostNavigation;
+  /** Registered on mount, cleared on unmount. */
+  readonly registerDepartureGate?: (gate: MotorsDepartureGate | undefined) => void;
   /**
    * Fires when the operator switches AWAY from the Motors tab.
    *
@@ -1659,6 +2213,7 @@ export default function MotorsTab({
   subscribeTabBlur,
   bottomInset,
   onConfigurationDirtyChange,
+  registerDepartureGate,
 }: MotorsTabProps): React.JSX.Element {
   if (!sessionKey) {
     // No live session: the screen renders inert and blocked. That is the
@@ -1679,6 +2234,7 @@ export default function MotorsTab({
       subscribeTabBlur={subscribeTabBlur}
       bottomInset={bottomInset}
       onConfigurationDirtyChange={onConfigurationDirtyChange}
+      registerDepartureGate={registerDepartureGate}
       key={sessionKey.sessionId}
     />
   );
@@ -1690,12 +2246,14 @@ function MotorsScreenBinding({
   subscribeTabBlur,
   bottomInset,
   onConfigurationDirtyChange,
+  registerDepartureGate,
 }: {
   sessionKey: SetupUiSessionKey;
   navigation: MotorsHostNavigation;
   subscribeTabBlur: (listener: () => void) => () => void;
   bottomInset?: number;
   onConfigurationDirtyChange?: (dirty: boolean) => void;
+  registerDepartureGate?: (gate: MotorsDepartureGate | undefined) => void;
 }): React.JSX.Element {
   /**
    * EXACTLY ONE binding owns the current official session. The capability
@@ -1940,6 +2498,22 @@ function MotorsScreenBinding({
       unsubscribeSettled = operator.subscribe(releaseIfStillHeld);
       releaseIfStillHeld();
     };
+    /**
+     * THE DEPARTURE GATE. The shell already fired the blur listeners
+     * above, so the stop request is out. This only reports the BOUNDED
+     * verdict, so the shell can wait for it instead of committing the tab
+     * switch in the same synchronous turn - which is what let an
+     * unconfirmed stop move the operator off this screen with no LiPo
+     * warning.
+     *
+     * It sends nothing, cancels nothing and cannot extend the stop.
+     */
+    registerDepartureGate?.({
+      evaluate: elapsedMs =>
+        evaluateMotorDeparture(operator.getSnapshot(), elapsedMs),
+      subscribe: listener => operator.subscribe(listener),
+    });
+
     const unsubscribeRelease = subscribeTabBlur(releaseOnLeave);
     const unsubscribeStackRelease = navigation.addListener(
       'blur',
@@ -1948,11 +2522,12 @@ function MotorsScreenBinding({
 
     return () => {
       stopWaiting();
+      registerDepartureGate?.(undefined);
       unsubscribeRelease();
       unsubscribeStackRelease();
       bridge.detach();
     };
-  }, [operator, navigation, subscribeTabBlur]);
+  }, [operator, navigation, subscribeTabBlur, registerDepartureGate]);
 
   /**
    * REAL STATE, PUSHED - not a render-time read.

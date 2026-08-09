@@ -45,7 +45,8 @@ import {
   useMspOwnershipState,
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import { StickyActionBar } from '../components/editing';
 
 export interface GeneralConfigurationControllerPort {
   load(
@@ -92,6 +93,10 @@ function outcomeKey(outcome: GeneralConfigurationSaveOutcome): string {
     case 'REJECTED':
       return blockReasonKey(outcome.reason);
   }
+}
+
+function isDangerOutcome(outcome: GeneralConfigurationSaveOutcome): boolean {
+  return outcome.kind !== 'NO_CHANGES' && outcome.kind !== 'SAVED_VERIFIED';
 }
 
 function telemetryValue<T>(value: TelemetryValue<T>): T | undefined {
@@ -239,6 +244,9 @@ export default function ConfigurationsScreen({
   controller = generalConfigurationController,
 }: ConfigurationsScreenProps): React.JSX.Element {
   const { t } = useTranslation();
+  // Desktop tiers get the wider workspace envelope; narrower tiers keep
+  // the 1180px reading cap. See useContentEnvelope.ts.
+  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const { width, fontScale } = useWindowDimensions();
   const wide = width / Math.max(1, fontScale) >= 760;
   const sessionId = sessionKey?.sessionId ?? '';
@@ -404,6 +412,18 @@ export default function ConfigurationsScreen({
     t,
   ]);
 
+  const reloadNow = useCallback(() => {
+    setSaveOutcome(undefined);
+    setReloadToken(value => value + 1);
+  }, []);
+  const requestReload = useCallback(() => {
+    if (!dirty) return reloadNow();
+    Alert.alert(t('configurationsSystem.discardChangesTitle'), t('configurationsSystem.discardChangesBody'), [
+      { text: t('configurationsSystem.cancel'), style: 'cancel' },
+      { text: t('configurationsSystem.discardAndReload'), style: 'destructive', onPress: reloadNow },
+    ]);
+  }, [dirty, reloadNow, t]);
+
   const loadMessage =
     loadOutcome?.kind === 'REJECTED'
       ? t(blockReasonKey(loadOutcome.reason))
@@ -429,7 +449,7 @@ export default function ConfigurationsScreen({
   return (
     <View style={styles.root} testID="configurations-screen">
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { maxWidth: contentMaxWidth }]}
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.hero}>
@@ -509,8 +529,13 @@ export default function ConfigurationsScreen({
         {loadMessage === undefined ? null : (
           <View style={[styles.card, styles.errorCard]}>
             <Text style={styles.errorText}>{loadMessage}</Text>
+            {loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? (
+              <Pressable onPress={onOpenMotors} style={styles.secondaryButtonWide} testID="configurations-open-motors-blocked">
+                <Text style={styles.secondaryButtonText}>{t('configurationsSystem.openMotors')}</Text>
+              </Pressable>
+            ) : null}
             <Pressable
-              onPress={() => setReloadToken(value => value + 1)}
+              onPress={requestReload}
               style={styles.secondaryButtonWide}
               testID="configurations-retry"
             >
@@ -884,7 +909,7 @@ export default function ConfigurationsScreen({
                 </Pressable>
                 <Pressable
                   disabled={busy}
-                  onPress={() => setReloadToken(value => value + 1)}
+                  onPress={requestReload}
                   style={[styles.secondaryButton, busy && styles.disabled]}
                   testID="configurations-reload"
                 >
@@ -912,6 +937,34 @@ export default function ConfigurationsScreen({
           </>
         )}
       </ScrollView>
+      {/* OUTSIDE the ScrollView, for the same reason Ports needs it: the
+          in-scroll actions sit below every settings card. */}
+      <StickyActionBar
+        visible={dirty}
+        summary={t('configurationsSystem.pendingCount', {
+          count: changedCount,
+        })}
+        saveLabel={t('configurationsSystem.save')}
+        discardLabel={t('configurationsSystem.reset')}
+        onSave={handleSave}
+        onDiscard={() => setDraft(originalDraft)}
+        disabledReason={
+          issues.length > 0
+            ? t('configurationsSystem.invalidPending')
+            : undefined
+        }
+        statusMessage={
+          saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))
+        }
+        statusTone={
+          saveOutcome !== undefined && isDangerOutcome(saveOutcome)
+            ? 'warning'
+            : 'normal'
+        }
+        busy={phase === 'SAVING'}
+        busyLabel={t('configurationsSystem.saving')}
+        testID="configurations-sticky-actions"
+      />
     </View>
   );
 }
@@ -927,7 +980,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   hero: { paddingHorizontal: spacing.sm, paddingVertical: spacing.lg },
-  eyebrow: { ...typography.eyebrow, color: colors.accent },
+  eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   title: { ...typography.display, color: colors.textPrimary, marginTop: 2 },
   subtitle: {
     ...typography.body,
@@ -961,7 +1014,7 @@ const styles = StyleSheet.create({
   },
   errorCard: { borderColor: colors.error },
   reviewCard: { borderColor: colors.warning },
-  cardEyebrow: { ...typography.eyebrow, color: colors.accent },
+  cardEyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   cardTitle: { ...typography.title, color: colors.textPrimary, marginTop: 2 },
   cardBody: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs },
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
@@ -1010,7 +1063,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   stepButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  stepButtonText: { fontSize: 22, color: colors.accent, writingDirection: 'ltr' },
+  stepButtonText: { fontSize: 22, color: colors.accentStrong, writingDirection: 'ltr' },
   stepValue: {
     ...typography.body,
     color: colors.textPrimary,
@@ -1057,7 +1110,7 @@ const styles = StyleSheet.create({
   },
   choiceActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   choiceText: { ...typography.caption, color: colors.textSecondary, fontWeight: '700' },
-  choiceTextActive: { color: colors.accent },
+  choiceTextActive: { color: colors.accentStrong },
   destinationGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
   destination: {
     flexGrow: 1,
@@ -1073,9 +1126,9 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   destinationCopy: { flex: 1 },
-  destinationTitle: { ...typography.body, color: colors.accent, fontWeight: '800' },
+  destinationTitle: { ...typography.body, color: colors.accentStrong, fontWeight: '800' },
   destinationDetail: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  destinationArrow: { fontSize: 26, color: colors.accent },
+  destinationArrow: { fontSize: 26, color: colors.accentStrong },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.lg },
   secondaryButton: {
     minHeight: 44,
@@ -1096,7 +1149,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     marginTop: spacing.md,
   },
-  secondaryButtonText: { ...typography.body, color: colors.accent, fontWeight: '700' },
+  secondaryButtonText: { ...typography.body, color: colors.accentStrong, fontWeight: '700' },
   primaryButton: {
     minHeight: 44,
     flexGrow: 1,

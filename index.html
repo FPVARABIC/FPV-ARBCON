@@ -1,0 +1,88 @@
+<!doctype html>
+<!--
+  FPV-ARBCON web shell.
+
+  dir="rtl" and lang="ar" are set on the DOCUMENT, not applied later by
+  JavaScript. The app is Arabic-first; deciding direction after hydration
+  produces a visible left-to-right flash on first paint and briefly lays
+  the tab strip out in the wrong order.
+-->
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>FPV-ARBCON — معايرة متحكم الطيران</title>
+    <meta name="description" content="أداة عربية لضبط ومعايرة متحكمات الطيران FPV عبر MSP." />
+    <meta name="theme-color" content="#5EEAD4" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      /*
+        #root MUST be a flex container, not just a full-height block.
+        Found by loading the real production build in Chromium: React
+        Native Web mounts an AppContainer styled `flex: 1 1 0%`, and
+        flex-grow does NOTHING inside a `display: block` parent. Every
+        descendant - the navigator, the screen, the ScrollView - is also
+        `flex: 1`, so the entire chain resolved to height 0 while the
+        content still PAINTED through overflow. The page therefore looked
+        completely correct and was quietly broken: nothing could scroll,
+        and clicks on the Start screen's buttons landed on #root instead
+        of the button, because the button's layout box had no ancestor
+        with height. A screenshot would never have caught this.
+      */
+      #root {
+        display: flex;
+        flex-direction: column;
+      }
+      /*
+        AUD-005: keyboard focus used to be the browser default - a 1px ring
+        that disappeared into the former dark surface. Tab traversal worked
+        and Enter activated, so this was purely a visibility defect, and an
+        operator who cannot see where focus is cannot use the keyboard at all.
+
+        :focus-visible, not :focus - a mouse click must not paint a ring
+        the pointer user did not ask for. The accent colour is the theme's
+        own turquoise family; the deep inner ring and soft outer halo remain
+        visible on both the warm paper background and accent-tinted controls.
+      */
+      :focus-visible {
+        outline: 3px solid #0b6e7d;
+        outline-offset: 2px;
+        border-radius: 6px;
+        box-shadow: 0 0 0 5px rgba(94, 234, 212, 0.48);
+      }
+      body {
+        background-color: #faf8f3;
+        color: #152232;
+        font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Naskh Arabic',
+          'Noto Sans Arabic', Tahoma, Arial, sans-serif;
+        overscroll-behavior: none;
+      }
+      /* Shown until the entry chunk executes and replaces it. Plain CSS
+         and plain markup on purpose - it must be visible before any
+         JavaScript has run. */
+      #boot {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        font-size: 15px;
+        color: #526171;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div id="boot">جارٍ تشغيل FPV-ARBCON…</div>
+    </div>
+    <script type="module" src="/index.web.tsx"></script>
+  </body>
+</html>
