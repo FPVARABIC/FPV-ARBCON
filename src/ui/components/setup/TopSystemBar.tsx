@@ -33,6 +33,7 @@ import {
 } from '../../../platforms/react-native/protocol';
 import type { ArmingReadiness } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
+import { Icon } from '../../icons';
 
 const INDICATOR_COLOR: Record<SetupConnectionIndicatorState, string> = {
   CONNECTED: colors.success,
@@ -112,7 +113,7 @@ export default function TopSystemBar({
           style={styles.backButton}
           testID="setup-top-bar-back"
         >
-          <Text style={styles.backButtonText}>{'›'}</Text>
+          <Icon name="chevron-back" size={22} color={colors.textPrimary} />
         </Pressable>
         <View style={styles.titleGroup}>
           <Text style={styles.eyebrow} numberOfLines={1}>
@@ -245,11 +246,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.borderSoft,
-  },
-  backButtonText: {
-    fontSize: 28,
-    lineHeight: 30,
-    color: colors.accentStrong,
   },
   titleGroup: {
     flex: 1,

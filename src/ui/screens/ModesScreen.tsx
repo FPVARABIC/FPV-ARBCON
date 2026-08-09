@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
   content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md},
   hero: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.lg, flexWrap: 'wrap'},
   heroCopy: {flex: 1, minWidth: 280, gap: 4},
-  eyebrow: {...typography.eyebrow, color: colors.accentStrong, letterSpacing: 1},
+  eyebrow: {...typography.eyebrow, color: colors.accentStrong},
   title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
   subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl'},
   capacityBadge: {borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, borderRadius: radii.lg, padding: spacing.md, minWidth: 150},
