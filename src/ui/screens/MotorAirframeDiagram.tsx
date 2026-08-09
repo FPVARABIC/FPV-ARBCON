@@ -35,8 +35,9 @@ import type {
   MotorRotationDirection,
 } from '../../core/state/motorVerificationModel';
 import { MOTOR_TEST_EXPECTED_CONFIGURATION } from '../../core/state/motorVerificationModel';
-import { colors, radii, spacing, typography } from '../theme';
+import { colors, radii, spacing, typography, fonts} from '../theme';
 import { Icon } from '../icons';
+import { isRtlLayout } from '../icons/layoutDirection';
 import { resolveLayoutTier } from '../theme/layout';
 
 export interface MotorAirframeEntry {
@@ -419,8 +420,29 @@ export function MotorAirframeDiagram({
   const scale = stageWidth / 260;
 
   const ordered = orderAirframeEntries(entries);
-  const front = ordered.slice(0, 2);
-  const rear = ordered.slice(2, 4);
+  /**
+   * PHYSICAL PLACEMENT, COMPUTED - not delegated to a style property.
+   *
+   * orderAirframeEntries emits RIGHT-then-LEFT (its own contract, tested,
+   * untouched). A plain flex row paints index 0 at the reading-start
+   * edge: the RIGHT edge under RTL, the LEFT edge under LTR. So the
+   * paint order is simply reversed for LTR, and FRONT_RIGHT lands on the
+   * operator's right either way.
+   *
+   * WHY NOT `direction: 'ltr'` + row-reverse, which this file tried
+   * first: react-native-web SILENTLY DROPS the React Native `direction`
+   * style. Measured in a real browser - the rendered row still computed
+   * `direction: rtl`, row-reverse inverted it, and the aircraft was drawn
+   * MIRRORED (M2 "أمامي يمين" appeared on the left). A style the platform
+   * ignores cannot carry a safety guarantee, and a unit test that asserts
+   * the style OBJECT rather than the rendered box will not catch it.
+   *
+   * This changes no motor data: same entries, same slots, same mapping.
+   */
+  const paintOrder = (pair: readonly MotorAirframeEntry[]) =>
+    isRtlLayout() ? pair : [...pair].reverse();
+  const front = paintOrder(ordered.slice(0, 2));
+  const rear = paintOrder(ordered.slice(2, 4));
 
   const renderNode = (entry: MotorAirframeEntry) => (
     <MotorNode
@@ -556,6 +578,10 @@ const styles = StyleSheet.create({
   },
   frontMarker: { alignItems: 'center', gap: 1 },
   frontText: {
+    // fontFamily is explicit because the SIZE is applied inline at render
+    // time; spreading a token would be overridden, and omitting the family
+    // dropped this label to the system font (measured in a browser).
+    fontFamily: fonts.family,
     color: colors.accentStrong,
     fontWeight: '700',
     writingDirection: 'rtl',
@@ -634,32 +660,12 @@ const styles = StyleSheet.create({
     left: '2%',
     right: '2%',
     /**
-     * PHYSICAL GEOMETRY, PINNED. `direction: 'ltr'` is the load-bearing
-     * property here, not decoration.
-     *
-     * This row places real motors on a real aircraft: index 0 of
-     * VISUAL_POSITION_ORDER is FRONT_RIGHT and must appear on the
-     * operator's right, always. The comment on that constant claimed the
-     * row "has an explicit RTL direction" - it did not. Nothing set
-     * `direction` at all, so the row INHERITED it, and in the browser the
-     * document carries dir="rtl": a plain row already runs right-to-left,
-     * so 'row-reverse' flipped it back and drew FRONT_RIGHT on the LEFT.
-     * Measured, not theorised - the same inversion was confirmed on the
-     * Start screen and in webAlert.
-     *
-     * A mirrored motor diagram is not a cosmetic bug: an operator reading
-     * it would conclude the outputs are mapped wrong and "fix" a
-     * correctly-wired aircraft. So the direction is now stated rather
-     * than inherited, and with it fixed, 'row-reverse' means what the
-     * code always intended - emission order right-then-left, painted
-     * right-then-left - identically under Arabic RTL, English LTR, web
-     * and Android.
-     *
-     * This changes ZERO motor data: the entries array, its order, the
-     * slot numbers and the controller mapping are untouched.
+     * A plain row. The PHYSICAL placement is decided in the component
+     * (see paintOrder), not by this style: react-native-web drops the
+     * React Native `direction` property, so no style here can pin the
+     * aircraft's left and right.
      */
-    direction: 'ltr',
-    flexDirection: 'row-reverse',
+    flexDirection: 'row',
     justifyContent: 'space-between',
   },
   frontRow: { top: '2%' },
@@ -700,6 +706,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   directionText: {
+    /* MONO on purpose: CW/CCW is a technical identifier, not prose. */
     ...typography.mono,
     color: colors.accentStrong,
     fontWeight: '700',
@@ -712,6 +719,9 @@ const styles = StyleSheet.create({
     writingDirection: 'ltr',
   },
   position: {
+    // Arabic prose ("أمامي يمين"), sized inline - so the family must be
+    // named here or it falls back to the system font.
+    fontFamily: fonts.family,
     color: colors.textSecondary,
     textAlign: 'center',
     writingDirection: 'rtl',
@@ -722,7 +732,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     backgroundColor: colors.background,
   },
-  stateBadgeText: { fontWeight: '700', writingDirection: 'rtl' },
+  stateBadgeText: {
+    fontFamily: fonts.family,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
   caption: {
     ...typography.caption,
     color: colors.textSecondary,

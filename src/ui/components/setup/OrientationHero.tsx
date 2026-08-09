@@ -516,7 +516,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   visualsSidebar: {
-    direction: 'ltr',
+    /* `direction` was here too. react-native-web rejects it outright
+       ("Invalid style property of 'direction'"), so it only ever applied
+       on Android and the two platforms disagreed. A plain row follows the
+       surrounding layout consistently on both. */
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',

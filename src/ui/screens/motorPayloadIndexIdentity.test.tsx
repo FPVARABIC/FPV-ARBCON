@@ -660,10 +660,15 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
     expect(first('motors-diagram-cell-FRONT-LEFT')).toBeLessThan(
       first('motors-diagram-cell-REAR-LEFT'),
     );
-    // And within a row the RIGHT cell is emitted first, which under the
-    // app's forceRTL puts it at the right edge.
-    expect(first('motors-diagram-cell-FRONT-RIGHT')).toBeLessThan(
-      first('motors-diagram-cell-FRONT-LEFT'),
+    // Within a row, the cell emitted FIRST is the one at the reading-start
+    // edge. This suite runs under the Jest preset, where I18nManager
+    // reports LTR, so the LEFT cell comes first here. The direction-aware
+    // guarantee - the same motor always lands on the same PHYSICAL side -
+    // is proved in motorAirframeGeometry.test.tsx, which injects both
+    // directions instead of trusting a global that two platform stubs
+    // refuse to move.
+    expect(first('motors-diagram-cell-FRONT-LEFT')).toBeLessThan(
+      first('motors-diagram-cell-FRONT-RIGHT'),
     );
     rendered.unmount();
   });

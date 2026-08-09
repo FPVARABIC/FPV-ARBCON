@@ -621,8 +621,10 @@ const styles = StyleSheet.create({
     borderColor: colors.error,
   },
   errorText: {
+    // Was weight+colour with no token, so the blocked-session message
+    // rendered in the system fallback font. Measured in a browser.
+    ...typography.bodyStrong,
     color: colors.error,
-    fontWeight: '700',
     writingDirection: 'rtl',
   },
   toolbar: { flexDirection: 'row', gap: spacing.sm },
@@ -644,7 +646,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.accentSoft,
   },
-  reloadText: { color: colors.accentStrong, fontWeight: '700' },
+  reloadText: {...typography.label, color: colors.accentStrong},
   categories: { gap: spacing.xs, paddingVertical: spacing.xs },
   chip: {
     paddingHorizontal: spacing.md,
@@ -655,7 +657,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
   },
   chipOn: { backgroundColor: colors.accent, borderColor: colors.accentStrong },
-  chipText: { color: colors.textPrimary, fontWeight: '700' },
+  chipText: {...typography.label, color: colors.textPrimary},
   workspace: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -759,7 +761,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.sm,
   },
-  commandCount: { fontSize: 28, fontWeight: '700', color: colors.accentStrong },
+  commandCount: {...typography.display, color: colors.accentStrong},
   primary: {
     minHeight: 48,
     alignItems: 'center',
@@ -769,7 +771,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.accentStrong,
   },
-  primaryText: { color: colors.accentStrong, fontWeight: '700' },
+  primaryText: {...typography.label, color: colors.accentStrong},
   apply: {
     minHeight: 50,
     alignItems: 'center',
@@ -777,7 +779,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.accent,
   },
-  applyText: { color: colors.textPrimary, fontWeight: '700' },
+  applyText: {...typography.label, color: colors.textPrimary},
   disabled: { opacity: 0.4 },
   progress: {
     height: 28,
@@ -842,8 +844,8 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoft,
   },
   statusText: {
+    ...typography.label,
     color: colors.accentText,
-    fontWeight: '700',
     textAlign: 'center',
     writingDirection: 'rtl',
   },

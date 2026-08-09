@@ -6,10 +6,14 @@
  * on the buttons. This one uses real minus/plus glyphs, 44px targets,
  * and an optional editable centre.
  *
- * THE WHOLE CONTROL IS AN LTR ISLAND (direction:'ltr'): it is numeric —
- * decrement sits visually left of the value and increment right, exactly
- * as the digits themselves read, regardless of the Arabic layout around
- * it. tabular-nums keeps the value from wobbling as digits change.
+ * DIRECTION FOLLOWS THE SURROUNDING LAYOUT. An earlier version set
+ * `direction: 'ltr'` to force decrement-left/increment-right, but
+ * react-native-web rejects that property outright ("Invalid style
+ * property of 'direction'"), so it applied on Android and did nothing in
+ * the browser — the two platforms disagreed. Following the ambient
+ * direction is consistent on both: in this Arabic UI decrement sits at
+ * the reading start. tabular-nums keeps the value from wobbling as the
+ * digits change.
  */
 import React from 'react';
 import {Pressable, StyleSheet, Text, TextInput, View} from 'react-native';
@@ -128,7 +132,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'stretch',
     minHeight: MIN_TOUCH_TARGET + 2,
-    direction: 'ltr',
+    /**
+     * INTRINSIC MINIMUM: two 44dp targets plus the value's own 64dp
+     * floor. Without it the row silently overflowed a narrower parent and
+     * its buttons landed ON TOP of the neighbouring field's buttons -
+     * measured on PID, where the '+' of Roll P and the '-' of Roll I
+     * overlapped by 17px, so a press near the seam hit the wrong value.
+     * Declaring the minimum makes a wrapping parent wrap instead.
+     */
+    minWidth: MIN_TOUCH_TARGET * 2 + 64,
     borderRadius: radii.sm,
     borderWidth: 1.5,
     borderColor: colors.borderStrong,
