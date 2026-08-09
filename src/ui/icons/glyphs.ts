@@ -64,6 +64,7 @@ export const glyphs = {
   'chevron-right': [{t: 'p', d: "m9 18 6-6-6-6"}],
   'chevron-up': [{t: 'p', d: "m18 15-6-6-6 6"}],
   'chevrons-up-down': [{t: 'p', d: "m7 15 5 5 5-5"}, {t: 'p', d: "m7 9 5-5 5 5"}],
+  'circle': [{t: 'c', cx: 12, cy: 12, r: 10}],
   'circle-alert': [{t: 'c', cx: 12, cy: 12, r: 10}, {t: 'l', x1: 12, y1: 8, x2: 12, y2: 12}, {t: 'l', x1: 12, y1: 16, x2: 12.01, y2: 16}],
   'circle-check': [{t: 'c', cx: 12, cy: 12, r: 10}, {t: 'p', d: "m9 12 2 2 4-4"}],
   'circle-gauge': [{t: 'p', d: "M15.6 2.7a10 10 0 1 0 5.7 5.7"}, {t: 'c', cx: 12, cy: 12, r: 2}, {t: 'p', d: "M13.4 10.6 19 5"}],

@@ -27,6 +27,7 @@ import {
   typography,
   useContentEnvelope,
 } from '../theme';
+import {Icon} from '../icons';
 
 export type PresetsRepositoryPort = Pick<
   typeof firmwarePresetRepository,
@@ -428,14 +429,33 @@ export default function PresetsScreen({
                         key={option.name}
                         testID={`preset-option-${option.name}`}
                         onPress={() => toggleOption(option.name)}
+                        accessibilityRole={
+                          option.exclusive ? 'radio' : 'checkbox'
+                        }
+                        accessibilityLabel={option.name}
+                        accessibilityState={{
+                          checked: selectedOptions.has(option.name),
+                          selected: selectedOptions.has(option.name),
+                        }}
+                        aria-checked={selectedOptions.has(option.name)}
                         style={[
                           styles.option,
                           selectedOptions.has(option.name) && styles.optionOn,
                         ]}
                       >
-                        <Text style={styles.optionMark}>
-                          {selectedOptions.has(option.name) ? '✓' : '○'}
-                        </Text>
+                        <Icon
+                          name={
+                            selectedOptions.has(option.name)
+                              ? 'circle-check'
+                              : 'circle'
+                          }
+                          size={20}
+                          color={
+                            selectedOptions.has(option.name)
+                              ? colors.accentStrong
+                              : colors.textMuted
+                          }
+                        />
                         <View style={styles.optionCopy}>
                           <Text style={styles.optionName}>{option.name}</Text>
                           {option.group ? (
@@ -463,7 +483,7 @@ export default function PresetsScreen({
                 >
                   <Text style={styles.primaryText}>
                     {backupReady
-                      ? '✓ نسخة diff all محفوظة'
+                      ? 'نسخة diff all محفوظة'
                       : '1 · أنشئ واحفظ نسخة diff all'}
                   </Text>
                 </Pressable>
@@ -728,7 +748,6 @@ const styles = StyleSheet.create({
     borderColor: colors.accentStrong,
     backgroundColor: colors.accentSoft,
   },
-  optionMark: { fontSize: 22, color: colors.accentStrong },
   optionCopy: { flex: 1 },
   optionName: {
     ...typography.body,

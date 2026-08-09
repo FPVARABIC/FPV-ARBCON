@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions} from 'react-native';
+import {Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions} from 'react-native';
 import {
   MODE_RANGE_MAX,
   MODE_RANGE_MIN,
@@ -32,6 +32,7 @@ import {
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
 import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {Button, IconButton, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
 
 export interface ModesControllerPort {
   load(key: SetupUiSessionKey): Promise<ModesLoadOutcome>;
@@ -105,14 +106,12 @@ const RangeLiveValue = React.memo(function RangeLiveValue({sessionKey, active, c
 });
 
 function Stepper({label, value, min, max, step, disabled, onChange, testID}: {label: string; value: number; min: number; max: number; step: number; disabled: boolean; onChange: (value: number) => void; testID: string}) {
-  return <View style={styles.stepperField}>
-    <Text style={styles.fieldLabel}>{label}</Text>
-    <View style={styles.stepper}>
-      <Pressable disabled={disabled || value <= min} onPress={() => onChange(Math.max(min, value - step))} style={styles.stepButton} testID={`${testID}-minus`}><Text style={styles.stepButtonText}>−</Text></Pressable>
-      <Text style={styles.stepValue} testID={testID}>{value}</Text>
-      <Pressable disabled={disabled || value >= max} onPress={() => onChange(Math.min(max, value + step))} style={styles.stepButton} testID={`${testID}-plus`}><Text style={styles.stepButtonText}>+</Text></Pressable>
+  return (
+    <View style={styles.stepperField}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <SharedStepper value={String(value)} onDecrement={() => onChange(Math.max(min, value - step))} onIncrement={() => onChange(Math.min(max, value + step))} decrementDisabled={value <= min} incrementDisabled={value >= max} disabled={disabled} accessibilityLabel={label} testID={testID} />
     </View>
-  </View>;
+  );
 }
 
 function LogicToggle({value, disabled, onChange}: {value: 0 | 1; disabled: boolean; onChange: (value: 0 | 1) => void}) {
@@ -149,7 +148,7 @@ function LinkConditionRow({index, condition, definitions, disabled, onChange, on
   return <View style={styles.condition} testID={`modes-condition-${index}`}>
     <View style={styles.conditionHeader}><View><Text style={styles.conditionType}>ربط بوضع آخر</Text><Text style={styles.conditionHint}>يتبع حالة وضع موجود بدل قراءة قناة AUX مباشرة.</Text></View><Pressable disabled={disabled} onPress={onRemove} style={styles.removeButton}><Text style={styles.removeText}>حذف</Text></Pressable></View>
     <View style={styles.fieldsRow}>
-      <View style={styles.linkField}><Text style={styles.fieldLabel}>الوضع المرتبط</Text><View style={styles.stepper}><Pressable disabled={disabled || targets.length < 2} onPress={() => cycle(-1)} style={styles.stepButton}><Text style={styles.stepButtonText}>‹</Text></Pressable><Text style={styles.linkValue}>{target === undefined ? 'لا يوجد هدف صالح' : modeArabicName(target.name)}</Text><Pressable disabled={disabled || targets.length < 2} onPress={() => cycle(1)} style={styles.stepButton}><Text style={styles.stepButtonText}>›</Text></Pressable></View></View>
+      <View style={styles.linkField}><Text style={styles.fieldLabel}>الوضع المرتبط</Text><View style={styles.linkCycler}><IconButton icon="chevron-back" accessibilityLabel="الوضع السابق" onPress={() => cycle(-1)} disabled={disabled || targets.length < 2} appearance="outlined" /><Text style={styles.linkValue}>{target === undefined ? 'لا يوجد هدف صالح' : modeArabicName(target.name)}</Text><IconButton icon="chevron-forward" accessibilityLabel="الوضع التالي" onPress={() => cycle(1)} disabled={disabled || targets.length < 2} appearance="outlined" /></View></View>
       <LogicToggle value={condition.logic} disabled={disabled} onChange={logic => onChange({...condition, logic})} />
     </View>
   </View>;
@@ -166,7 +165,7 @@ function ModeCard({definition, snapshot, draft, sessionKey, active, disabled, on
       : <LinkConditionRow key={index} index={index} condition={condition} definitions={snapshot.definitions} disabled={disabled} onChange={next => onUpdate(index, next)} onRemove={() => onRemove(index)} />)}
     <View style={styles.addRow}>
       <Pressable disabled={disabled || !canAdd} onPress={() => onAdd({kind: 'RANGE', permanentId: definition.permanentId, auxChannelIndex: 0, start: 1300, end: 1700, logic: 0})} style={[styles.addButton, (disabled || !canAdd) && styles.buttonDisabled]} testID={`modes-add-range-${definition.permanentId}`}><Text style={styles.addButtonText}>+ إضافة نطاق AUX</Text></Pressable>
-      {definition.permanentId !== 0 && linkTargets.length > 0 ? <Pressable disabled={disabled || !canAdd} onPress={() => onAdd({kind: 'LINK', permanentId: definition.permanentId, linkedTo: linkTargets[0].permanentId, logic: 0})} style={[styles.secondaryButton, (disabled || !canAdd) && styles.buttonDisabled]} testID={`modes-add-link-${definition.permanentId}`}><Text style={styles.secondaryButtonText}>+ ربط بوضع</Text></Pressable> : null}
+      {definition.permanentId !== 0 && linkTargets.length > 0 ? <Button label="ربط بوضع" onPress={() => onAdd({kind: 'LINK', permanentId: definition.permanentId, linkedTo: linkTargets[0].permanentId, logic: 0})} variant="secondary" icon="plus" disabled={disabled || !canAdd} testID={`modes-add-link-${definition.permanentId}`} /> : null}
     </View>
   </View>;
 }
@@ -268,9 +267,9 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
       <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.eyebrow}>MODES · AUXILIARY · BETAFLIGHT API 1.47</Text><Text style={styles.title}>الأوضاع ومفاتيح AUX</Text><Text style={styles.subtitle}>أنشئ نطاقات القنوات واربط الأوضاع ببعضها، مع حالة حية من متحكم الطيران وحفظ كامل لجدول الشروط ثم قراءة تحقق.</Text></View>{snapshot !== undefined && draft !== undefined ? <View style={styles.capacityBadge}><Text style={styles.capacityLabel}>خانات مستخدمة</Text><Text style={styles.capacityValue}>{draft.conditions.length} / {snapshot.capacity}</Text></View> : null}</View>
       <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>REQUIRES HARDWARE TEST</Text><Text style={styles.hardwareText}>القراءة والـpayload والتحقق مختبرة آليًا، لكن يجب تحريك مفاتيح جهاز الإرسال ومشاهدة القيمة والحالة الحية على FC حقيقي بعد نزع المراوح.</Text></View>
       <View style={styles.warning}><Text style={styles.warningTitle}>لا تختبر ARM والمراوح مركبة</Text><Text style={styles.warningText}>المؤشر الحي يصف علم الوضع الذي يرسله Betaflight؛ لا يعني أن الاقتراب من الطائرة آمن.</Text></View>
-      {loadingMessage !== undefined ? <View style={styles.loadError} testID="modes-load-message"><Text style={styles.loadErrorText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Pressable onPress={onOpenMotors} style={styles.inlineAction} testID="modes-open-motors"><Text style={styles.inlineActionText}>فتح شاشة المحركات</Text></Pressable> : <Pressable onPress={reload} style={styles.inlineAction} testID="modes-reload"><Text style={styles.inlineActionText}>إعادة القراءة</Text></Pressable>}</View> : null}
+      {loadingMessage !== undefined ? <View style={styles.loadError} testID="modes-load-message"><Text style={styles.loadErrorText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} testID="modes-open-motors" /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="modes-reload" />}</View> : null}
       {snapshot !== undefined && draft !== undefined ? <>
-        <View style={[styles.toolbar, wide && styles.toolbarWide]}><TextInput value={search} onChangeText={setSearch} placeholder="ابحث باسم الوضع…" placeholderTextColor={colors.textMuted} style={styles.search} testID="modes-search" /><View style={styles.showUnused}><Text style={styles.showUnusedText}>إظهار الأوضاع بلا شروط</Text><Switch value={showUnused} onValueChange={setShowUnused} /></View><Pressable onPress={reload} style={styles.reloadButton}><Text style={styles.reloadText}>إعادة القراءة</Text></Pressable></View>
+        <View style={[styles.toolbar, wide && styles.toolbarWide]}><TextInput value={search} onChangeText={setSearch} placeholder="ابحث باسم الوضع…" placeholderTextColor={colors.textMuted} style={styles.search} testID="modes-search" /><View style={styles.showUnused}><Text style={styles.showUnusedText}>إظهار الأوضاع بلا شروط</Text><ToggleSwitch value={showUnused} onValueChange={setShowUnused} accessibilityLabel="إظهار الأوضاع بلا شروط" /></View><Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" /></View>
         {visibleDefinitions.length === 0 ? <View style={styles.emptySearch}><Text style={styles.emptySearchText}>لا توجد أوضاع تطابق البحث أو المرشح.</Text></View> : visibleDefinitions.map(definition => <ModeCard key={definition.permanentId} definition={definition} snapshot={snapshot} draft={draft} sessionKey={sessionKey} active={active} disabled={phase !== 'READY'} onAdd={addCondition} onUpdate={updateCondition} onRemove={removeCondition} />)}
         {issues.length > 0 ? <View style={styles.loadError}><Text style={styles.loadErrorText}>راجع الشروط: {issues.join(' · ')}</Text></View> : null}
         {statusCopy !== undefined ? <View style={statusCopy.warning ? styles.loadError : styles.success}><Text style={statusCopy.warning ? styles.loadErrorText : styles.successText}>{statusCopy.text}</Text></View> : null}
@@ -295,29 +294,26 @@ const styles = StyleSheet.create({
   hardwareNotice: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, padding: spacing.md, gap: 3},
   hardwareTitle: {...typography.eyebrow, color: colors.accentStrong},
   hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl'},
-  warning: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.error, backgroundColor: '#FFF0F2', padding: spacing.md, gap: 3},
+  warning: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.errorSoft, padding: spacing.md, gap: 3},
   warningTitle: {...typography.heading, color: colors.error, textAlign: 'right'},
   warningText: {...typography.body, color: colors.error, textAlign: 'right', writingDirection: 'rtl'},
-  loadError: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: '#FFF7E7', padding: spacing.md, gap: spacing.sm},
+  loadError: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, padding: spacing.md, gap: spacing.sm},
   loadErrorText: {...typography.body, color: colors.warning, textAlign: 'right', writingDirection: 'rtl'},
-  success: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: '#E8F8F1', padding: spacing.md},
+  success: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, padding: spacing.md},
   successText: {...typography.body, color: colors.success, textAlign: 'right'},
-  inlineAction: {alignSelf: 'flex-start', minHeight: 40, justifyContent: 'center', paddingHorizontal: spacing.md, borderRadius: radii.md, backgroundColor: colors.warning},
-  inlineActionText: {...typography.body, color: colors.white, fontWeight: '700'},
+  inlineAction: {alignSelf: 'flex-start'},
   toolbar: {gap: spacing.sm, padding: spacing.md, borderRadius: radii.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft},
   toolbarWide: {flexDirection: 'row', alignItems: 'center'},
   search: {flex: 1, minHeight: 44, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md, color: colors.textPrimary, textAlign: 'right', writingDirection: 'rtl'},
   showUnused: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   showUnusedText: {...typography.body, color: colors.textSecondary},
-  reloadButton: {minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.md, borderRadius: radii.md, borderWidth: 1, borderColor: colors.accentStrong},
-  reloadText: {...typography.body, color: colors.accentStrong, fontWeight: '700'},
   modeCard: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md},
   modeHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap'},
   modeTitleGroup: {gap: 2},
   modeTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
   modeRaw: {...typography.caption, color: colors.textMuted, writingDirection: 'ltr'},
   activeBadge: {flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: radii.pill, borderWidth: 1, borderColor: colors.border, paddingHorizontal: spacing.sm, paddingVertical: 5},
-  activeBadgeOn: {borderColor: colors.success, backgroundColor: '#E8F8F1'},
+  activeBadgeOn: {borderColor: colors.success, backgroundColor: colors.successSoft},
   activeDot: {width: 8, height: 8, borderRadius: 4, backgroundColor: colors.textMuted},
   activeDotOn: {backgroundColor: colors.success},
   activeText: {...typography.caption, color: colors.textMuted, fontWeight: '700'},
@@ -333,10 +329,11 @@ const styles = StyleSheet.create({
   stepperField: {flexGrow: 1, flexBasis: 150, gap: 5},
   linkField: {flexGrow: 1, flexBasis: 250, gap: 5},
   fieldLabel: {...typography.caption, color: colors.textSecondary, textAlign: 'right', fontWeight: '700'},
-  stepper: {flexDirection: 'row', minHeight: 44, alignItems: 'stretch'},
-  stepButton: {width: 42, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface},
-  stepButtonText: {fontSize: 20, color: colors.accentStrong, fontWeight: '700'},
-  stepValue: {flex: 1, minWidth: 70, textAlign: 'center', textAlignVertical: 'center', borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, color: colors.textPrimary, fontWeight: '700', fontVariant: ['tabular-nums'], paddingTop: 11},
+  /* The link cycler keeps a bespoke row because its centre is a WORD
+     (the linked mode's Arabic name), not a number, so the numeric
+     Stepper would be the wrong control. Targets and states come from the
+     shared IconButton. */
+  linkCycler: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   linkValue: {flex: 1, minWidth: 150, textAlign: 'center', textAlignVertical: 'center', borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, color: colors.textPrimary, fontWeight: '700', paddingTop: 11},
   logicRow: {gap: 5},
   segmented: {flexDirection: 'row', minHeight: 44},
