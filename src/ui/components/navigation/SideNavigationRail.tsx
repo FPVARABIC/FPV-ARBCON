@@ -28,6 +28,7 @@ import { Icon } from '../../icons';
 import { MIN_TOUCH_TARGET, readInteraction } from '../controls/interaction';
 import { MAIN_TABS, type MainTabKey } from '../../../navigation/tabs';
 import { TAB_ICONS } from './tabIcons';
+import { useActiveItemReveal } from './activeItemReveal';
 
 const VISIBLE_TABS = MAIN_TABS.filter(tab => tab.implemented);
 
@@ -49,6 +50,7 @@ export default function SideNavigationRail({
   header,
 }: SideNavigationRailProps): React.JSX.Element {
   const { t } = useTranslation();
+  const reveal = useActiveItemReveal<MainTabKey>(activeTab, 'y');
 
   return (
     <View
@@ -72,8 +74,13 @@ export default function SideNavigationRail({
         </View>
       ) : null}
       <ScrollView
+        ref={reveal.scrollRef}
+        style={styles.scroll}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
+        onLayout={reveal.onScrollViewLayout}
+        onContentSizeChange={reveal.onContentSizeChange}
+        testID="main-side-rail-scroll"
       >
         {VISIBLE_TABS.map(tab => {
           const isActive = tab.key === activeTab;
@@ -91,6 +98,7 @@ export default function SideNavigationRail({
                   isActive && styles.itemActive,
                 ];
               }}
+              onLayout={reveal.registerItem(tab.key)}
               testID={`main-rail-${tab.key}`}
             >
               <View
@@ -165,6 +173,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
   },
+  /**
+   * THE SCROLLER MUST BE ALLOWED TO SHRINK. React Native's Yoga default is
+   * `flexShrink: 0` (yoga Style.h: `DefaultFlexShrink = 0.0f`, and the
+   * Android config does not enable web defaults), so an unstyled
+   * ScrollView in this column took its FULL content height, overflowed the
+   * rail and reported a scroll range of zero - the destinations past the
+   * bottom edge were clipped and permanently unreachable on Android. The
+   * browser masked it because CSS defaults to `flex-shrink: 1`: measured
+   * here, react-native-web gave the same ScrollView shrink=1, a 672px
+   * viewport over 716px of content, and it scrolled correctly.
+   */
+  scroll: { flex: 1 },
   list: { gap: spacing.xs },
   item: {
     minHeight: MIN_TOUCH_TARGET,
