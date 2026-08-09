@@ -10,7 +10,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -47,6 +46,14 @@ import {
 } from '../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
 import { StickyActionBar } from '../components/editing';
+import {
+  Button,
+  MIN_TOUCH_TARGET,
+  Stepper,
+  ToggleSwitch,
+} from '../components/controls';
+import { readInteraction } from '../components/controls/interaction';
+import { Icon } from '../icons';
 
 export interface GeneralConfigurationControllerPort {
   load(
@@ -128,15 +135,11 @@ function ToggleRow({
           <Text style={styles.controlDetail}>{detail}</Text>
         )}
       </View>
-      <Switch
+      <ToggleSwitch
         value={value}
         disabled={disabled}
         onValueChange={onChange}
         accessibilityLabel={title}
-        accessibilityRole="switch"
-        accessibilityState={{ checked: value, disabled }}
-        trackColor={{ false: colors.disabled, true: colors.accentStrong }}
-        thumbColor={value ? colors.accent : colors.textSecondary}
         testID={testID}
       />
     </View>
@@ -170,29 +173,18 @@ function NumberControl({
         <Text style={styles.controlTitle}>{title}</Text>
         <Text style={styles.controlDetail}>{detail}</Text>
       </View>
-      <View style={styles.stepper}>
-        <Pressable
-          disabled={disabled || value <= minimum}
-          onPress={() => onChange(Math.max(minimum, value - 1))}
-          style={styles.stepButton}
-          accessibilityRole="button"
-          testID={`${testID}-decrement`}
-        >
-          <Text style={styles.stepButtonText}>−</Text>
-        </Pressable>
-        <Text style={styles.stepValue} testID={`${testID}-value`}>
-          {value} {unit}
-        </Text>
-        <Pressable
-          disabled={disabled || value >= maximum}
-          onPress={() => onChange(Math.min(maximum, value + 1))}
-          style={styles.stepButton}
-          accessibilityRole="button"
-          testID={`${testID}-increment`}
-        >
-          <Text style={styles.stepButtonText}>+</Text>
-        </Pressable>
-      </View>
+      <Stepper
+        value={`${value} ${unit}`}
+        onDecrement={() => onChange(Math.max(minimum, value - 1))}
+        onIncrement={() => onChange(Math.min(maximum, value + 1))}
+        decrementDisabled={value <= minimum}
+        incrementDisabled={value >= maximum}
+        disabled={disabled}
+        accessibilityLabel={title}
+        testID={`${testID}-value`}
+        decrementTestID={`${testID}-decrement`}
+        incrementTestID={`${testID}-increment`}
+      />
     </View>
   );
 }
@@ -219,16 +211,25 @@ function DestinationCard({
 }) {
   return (
     <Pressable
-      style={styles.destination}
+      style={state => {
+        const { pressed, hovered } = readInteraction(state);
+        return [
+          styles.destination,
+          (hovered || pressed) && styles.destinationActive,
+        ];
+      }}
       onPress={onPress}
       accessibilityRole="button"
+      accessibilityLabel={`${title}: ${detail}`}
       testID={testID}
     >
       <View style={styles.destinationCopy}>
         <Text style={styles.destinationTitle}>{title}</Text>
         <Text style={styles.destinationDetail}>{detail}</Text>
       </View>
-      <Text style={styles.destinationArrow}>‹</Text>
+      {/* Navigation semantics, so the RTL-aware alias: "forward" points
+          left in this Arabic layout and would flip in an LTR one. */}
+      <Icon name="chevron-forward" size={22} color={colors.accentStrong} />
     </Pressable>
   );
 }
@@ -530,19 +531,23 @@ export default function ConfigurationsScreen({
           <View style={[styles.card, styles.errorCard]}>
             <Text style={styles.errorText}>{loadMessage}</Text>
             {loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? (
-              <Pressable onPress={onOpenMotors} style={styles.secondaryButtonWide} testID="configurations-open-motors-blocked">
-                <Text style={styles.secondaryButtonText}>{t('configurationsSystem.openMotors')}</Text>
-              </Pressable>
+              <Button
+                label={t('configurationsSystem.openMotors')}
+                onPress={onOpenMotors}
+                variant="secondary"
+                icon="fan"
+                style={styles.blockActionSpacing}
+                testID="configurations-open-motors-blocked"
+              />
             ) : null}
-            <Pressable
+            <Button
+              label={t('configurationsSystem.reload')}
               onPress={requestReload}
-              style={styles.secondaryButtonWide}
+              variant="secondary"
+              icon="refresh-cw"
+              style={styles.blockActionSpacing}
               testID="configurations-retry"
-            >
-              <Text style={styles.secondaryButtonText}>
-                {t('configurationsSystem.reload')}
-              </Text>
-            </Pressable>
+            />
           </View>
         )}
 
@@ -894,44 +899,36 @@ export default function ConfigurationsScreen({
                 </Text>
               )}
               <View style={styles.actionRow}>
-                <Pressable
-                  disabled={busy || !dirty}
+                <Button
+                  label={t('configurationsSystem.reset')}
                   onPress={() => setDraft(originalDraft)}
-                  style={[
-                    styles.secondaryButton,
-                    (busy || !dirty) && styles.disabled,
-                  ]}
+                  variant="secondary"
+                  icon="rotate-ccw"
+                  disabled={busy || !dirty}
                   testID="configurations-reset"
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {t('configurationsSystem.reset')}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  disabled={busy}
+                />
+                <Button
+                  label={t('configurationsSystem.reload')}
                   onPress={requestReload}
-                  style={[styles.secondaryButton, busy && styles.disabled]}
+                  variant="secondary"
+                  icon="refresh-cw"
+                  disabled={busy}
                   testID="configurations-reload"
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {t('configurationsSystem.reload')}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  disabled={busy || !dirty || issues.length > 0}
-                  onPress={handleSave}
-                  style={[
-                    styles.primaryButton,
-                    (busy || !dirty || issues.length > 0) && styles.disabled,
-                  ]}
-                  testID="configurations-save"
-                >
-                  <Text style={styles.primaryButtonText}>
-                    {phase === 'SAVING'
+                />
+                <Button
+                  label={
+                    phase === 'SAVING'
                       ? t('configurationsSystem.saving')
-                      : t('configurationsSystem.save')}
-                  </Text>
-                </Pressable>
+                      : t('configurationsSystem.save')
+                  }
+                  onPress={handleSave}
+                  variant="primary"
+                  icon="save"
+                  disabled={busy || !dirty || issues.length > 0}
+                  accessibilityLabel={t('configurationsSystem.save')}
+                  style={styles.saveGrow}
+                  testID="configurations-save"
+                />
               </View>
             </View>
           </>
@@ -973,15 +970,15 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   content: {
     width: '100%',
-    maxWidth: 1180,
+    // Cap comes solely from useContentEnvelope (applied inline).
     alignSelf: 'center',
-    padding: spacing.md,
+    padding: spacing.lg,
     paddingBottom: spacing.xxl,
     gap: spacing.md,
   },
   hero: { paddingHorizontal: spacing.sm, paddingVertical: spacing.lg },
   eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
-  title: { ...typography.display, color: colors.textPrimary, marginTop: 2 },
+  title: { ...typography.display, color: colors.textPrimary, marginTop: spacing.xs },
   subtitle: {
     ...typography.body,
     color: colors.textSecondary,
@@ -1004,18 +1001,18 @@ const styles = StyleSheet.create({
   },
   badgeGood: { borderColor: colors.success, backgroundColor: colors.accentSoft },
   badgeWarning: { borderColor: colors.warning },
-  badgeText: { ...typography.caption, color: colors.textPrimary, fontWeight: '700' },
+  badgeText: { ...typography.label, color: colors.textPrimary },
   card: {
     backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: colors.borderSoft,
+    borderColor: colors.border,
     borderRadius: radii.lg,
     padding: spacing.lg,
   },
   errorCard: { borderColor: colors.error },
   reviewCard: { borderColor: colors.warning },
   cardEyebrow: { ...typography.eyebrow, color: colors.accentStrong },
-  cardTitle: { ...typography.title, color: colors.textPrimary, marginTop: 2 },
+  cardTitle: { ...typography.sectionTitle, color: colors.textPrimary, marginTop: spacing.xs },
   cardBody: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs },
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   singleColumn: { flexDirection: 'column' },
@@ -1024,12 +1021,13 @@ const styles = StyleSheet.create({
   metric: { width: '25%', minWidth: 135, padding: spacing.sm },
   metricLabel: { ...typography.caption, color: colors.textSecondary },
   metricValue: {
-    ...typography.title,
+    ...typography.value,
     color: colors.textPrimary,
     writingDirection: 'ltr',
-    marginTop: 2,
+    fontVariant: ['tabular-nums'],
+    marginTop: spacing.xs,
   },
-  readOnlyNote: { ...typography.caption, color: colors.textMuted, marginTop: spacing.sm },
+  readOnlyNote: { ...typography.helper, color: colors.textMuted, marginTop: spacing.sm },
   stateText: { ...typography.body, color: colors.textSecondary },
   controlRow: {
     minHeight: 66,
@@ -1051,115 +1049,72 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   controlCopy: { flex: 1, minWidth: 190 },
-  controlTitle: { ...typography.body, color: colors.textPrimary, fontWeight: '700' },
-  controlDetail: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  stepper: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    overflow: 'hidden',
-  },
-  stepButton: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  stepButtonText: { fontSize: 22, color: colors.accentStrong, writingDirection: 'ltr' },
-  stepValue: {
-    ...typography.body,
-    color: colors.textPrimary,
-    minWidth: 76,
-    textAlign: 'center',
-    writingDirection: 'ltr',
-  },
+  controlTitle: { ...typography.bodyStrong, color: colors.textPrimary },
+  controlDetail: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
   inputLabel: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    fontWeight: '700',
+    ...typography.label,
+    color: colors.textPrimary,
     marginTop: spacing.md,
     marginBottom: spacing.xs,
   },
   input: {
-    minHeight: 46,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.md,
-    backgroundColor: colors.backgroundRaised,
+    minHeight: 48,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
+    borderRadius: radii.sm,
+    backgroundColor: colors.surface,
     color: colors.textPrimary,
     paddingHorizontal: spacing.md,
-    ...typography.body,
+    ...typography.value,
+    // Craft/pilot names are ASCII identifiers written into the FC; the
+    // field is an LTR island inside the Arabic card by construction.
     writingDirection: 'ltr',
     textAlign: 'left',
   },
   limitNote: { ...typography.caption, color: colors.warning, marginTop: spacing.sm },
   groupTitle: {
-    ...typography.body,
+    ...typography.label,
     color: colors.textPrimary,
-    fontWeight: '700',
     marginTop: spacing.lg,
   },
   choiceRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
   choice: {
-    minWidth: 54,
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: colors.border,
+    minWidth: 64,
+    minHeight: MIN_TOUCH_TARGET,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
     borderRadius: radii.pill,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
   },
-  choiceActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
-  choiceText: { ...typography.caption, color: colors.textSecondary, fontWeight: '700' },
+  choiceActive: { borderColor: colors.accentStrong, backgroundColor: colors.accentSoft },
+  choiceText: { ...typography.label, color: colors.textSecondary },
   choiceTextActive: { color: colors.accentStrong },
   destinationGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
   destination: {
     flexGrow: 1,
-    flexBasis: '45%',
+    // 260 rather than a 45% basis: inside the single-column layout a
+    // percentage basis resolves against the CROSS axis and collapsed the
+    // card. A pixel floor wraps correctly in both directions.
+    flexBasis: 260,
     minHeight: 74,
     flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
     borderRadius: radii.md,
     backgroundColor: colors.backgroundRaised,
     padding: spacing.md,
     gap: spacing.sm,
   },
+  destinationActive: { backgroundColor: colors.surfaceHover },
   destinationCopy: { flex: 1 },
-  destinationTitle: { ...typography.body, color: colors.accentStrong, fontWeight: '700' },
-  destinationDetail: { ...typography.caption, color: colors.textSecondary, marginTop: 2 },
-  destinationArrow: { fontSize: 26, color: colors.accentStrong },
+  destinationTitle: { ...typography.bodyStrong, color: colors.accentStrong },
+  destinationDetail: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.lg },
-  secondaryButton: {
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-  },
-  secondaryButtonWide: {
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    marginTop: spacing.md,
-  },
-  secondaryButtonText: { ...typography.body, color: colors.accentStrong, fontWeight: '700' },
-  primaryButton: {
-    minHeight: 44,
-    flexGrow: 1,
-    borderRadius: radii.md,
-    backgroundColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-  },
-  primaryButtonText: { ...typography.body, color: colors.accentText, fontWeight: '700' },
+  blockActionSpacing: { marginTop: spacing.md },
+  saveGrow: { flexGrow: 1 },
   outcomeText: { ...typography.body, color: colors.success, marginTop: spacing.md },
   errorText: { ...typography.body, color: colors.error, marginTop: spacing.md },
   disabled: { opacity: 0.45 },

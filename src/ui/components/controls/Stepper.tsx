@@ -34,7 +34,12 @@ export interface StepperProps {
   keyboardType?: KeyboardTypeOptions;
   /** Labels the value for screen readers, e.g. the setting name. */
   accessibilityLabel: string;
+  /** Identifies the VALUE; the buttons derive `${testID}-minus`/`-plus`. */
   testID?: string;
+  /** Override the derived button ids where a screen already published a
+   * different naming to its tests (e.g. `-decrement`/`-increment`). */
+  decrementTestID?: string;
+  incrementTestID?: string;
 }
 
 export function Stepper({
@@ -48,9 +53,18 @@ export function Stepper({
   keyboardType = 'number-pad',
   accessibilityLabel,
   testID,
+  decrementTestID,
+  incrementTestID,
 }: StepperProps): React.JSX.Element {
   const minusDisabled = disabled || decrementDisabled;
   const plusDisabled = disabled || incrementDisabled;
+  const buttonTestID = (kind: 'minus' | 'plus'): string | undefined => {
+    const override = kind === 'minus' ? decrementTestID : incrementTestID;
+    if (override !== undefined) {
+      return override;
+    }
+    return testID ? `${testID}-${kind}` : undefined;
+  };
 
   const renderStepButton = (
     kind: 'minus' | 'plus',
@@ -63,7 +77,7 @@ export function Stepper({
       accessibilityRole="button"
       accessibilityLabel={`${accessibilityLabel}: ${kind === 'minus' ? 'إنقاص' : 'زيادة'}`}
       accessibilityState={{disabled: isDisabled}}
-      testID={testID ? `${testID}-${kind}` : undefined}
+      testID={buttonTestID(kind)}
       style={state => {
         const {pressed, hovered} = readInteraction(state);
         return [

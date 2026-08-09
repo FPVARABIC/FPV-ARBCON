@@ -17,6 +17,12 @@ export interface ChoiceOption<K extends string = string> {
   key: K;
   label: string;
   disabled?: boolean;
+  /** Small second line inside the chip — e.g. "not compiled in this
+   * firmware". Rendered at the helper size, never below 12px. */
+  note?: string;
+  /** Override the derived `${testID}-${key}` id where a screen already
+   * published a different one to its tests. */
+  testID?: string;
 }
 
 export interface ChoiceChipsProps<K extends string = string> {
@@ -54,7 +60,16 @@ export function ChoiceChips<K extends string = string>({
             accessibilityRole="radio"
             accessibilityLabel={option.label}
             accessibilityState={{selected, disabled: optionDisabled}}
-            testID={testID ? `${testID}-${option.key}` : undefined}
+            // A radio's state is aria-checked, and react-native-web emits
+            // neither that nor aria-selected from accessibilityState —
+            // verified in a browser. Core RN aria props, so native keeps
+            // working unchanged.
+            aria-checked={selected}
+            aria-disabled={optionDisabled}
+            testID={
+              option.testID ??
+              (testID ? `${testID}-${option.key}` : undefined)
+            }
             style={state => {
               const {pressed, hovered} = readInteraction(state);
               return [
@@ -68,14 +83,19 @@ export function ChoiceChips<K extends string = string>({
             {selected ? (
               <Icon name="check" size={18} color={colors.accentStrong} />
             ) : null}
-            <Text
-              style={[
-                typography.label,
-                selected ? styles.textSelected : styles.textIdle,
-                optionDisabled && styles.textDisabled,
-              ]}>
-              {option.label}
-            </Text>
+            <View style={styles.chipTextColumn}>
+              <Text
+                style={[
+                  typography.label,
+                  selected ? styles.textSelected : styles.textIdle,
+                  optionDisabled && styles.textDisabled,
+                ]}>
+                {option.label}
+              </Text>
+              {option.note ? (
+                <Text style={styles.note}>{option.note}</Text>
+              ) : null}
+            </View>
           </Pressable>
         );
       })}
@@ -113,6 +133,12 @@ const styles = StyleSheet.create({
   chipDisabled: {
     backgroundColor: colors.surfaceAlt,
     borderColor: colors.borderSoft,
+  },
+  chipTextColumn: {alignItems: 'center'},
+  note: {
+    ...typography.helper,
+    color: colors.textMuted,
+    textAlign: 'center',
   },
   textIdle: {color: colors.textSecondary},
   textSelected: {color: colors.accentStrong},

@@ -10,7 +10,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   View,
   useWindowDimensions,
@@ -47,6 +46,13 @@ import {
 } from '../../platforms/react-native/protocol';
 import { openMapLocation } from '../../platforms/mapLink';
 import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import {
+  Button,
+  MIN_TOUCH_TARGET,
+  ToggleSwitch,
+} from '../components/controls';
+import { readInteraction } from '../components/controls/interaction';
+import { Icon } from '../icons';
 import { StickyActionBar } from '../components/editing';
 
 export interface GpsControllerPort {
@@ -143,13 +149,20 @@ function Choice({
       accessibilityState={{ selected, disabled }}
       disabled={disabled}
       onPress={onPress}
-      style={[
-        styles.choice,
-        selected && styles.choiceSelected,
-        disabled && styles.disabled,
-      ]}
+      style={state => {
+        const { pressed, hovered } = readInteraction(state);
+        return [
+          styles.choice,
+          selected && styles.choiceSelected,
+          (hovered || pressed) && !disabled && styles.choiceActive,
+          disabled && styles.disabled,
+        ];
+      }}
       testID={testID}
     >
+      {selected ? (
+        <Icon name="check" size={16} color={colors.accentStrong} />
+      ) : null}
       <Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>
         {label}
       </Text>
@@ -178,13 +191,11 @@ function ToggleRow({
         <Text style={styles.controlTitle}>{title}</Text>
         <Text style={styles.controlDetail}>{detail}</Text>
       </View>
-      <Switch
+      <ToggleSwitch
         value={value}
         disabled={disabled}
         onValueChange={onChange}
         accessibilityLabel={title}
-        trackColor={{ false: colors.disabled, true: colors.accentStrong }}
-        thumbColor={value ? colors.accent : colors.textSecondary}
         testID={testID}
       />
     </View>
@@ -479,16 +490,13 @@ export default function GpsScreen({
                       .join('، ')}
               </Text>
             </View>
-            <Pressable
-              style={styles.secondaryButton}
+            <Button
+              label={t('gpsSystem.openPorts')}
               onPress={onOpenPorts}
-              accessibilityRole="button"
+              variant="secondary"
+              icon="cable"
               testID="gps-open-ports"
-            >
-              <Text style={styles.secondaryButtonText}>
-                {t('gpsSystem.openPorts')}
-              </Text>
-            </Pressable>
+            />
           </View>
         </View>
 
@@ -576,7 +584,9 @@ export default function GpsScreen({
                   },
                 ]}
               >
-                <Text style={styles.homeArrowText}>↑</Text>
+                {/* A physical compass bearing: raw geometry, never an
+                    RTL-mirrored alias. */}
+                <Icon name="navigation" size={30} color={colors.accentStrong} />
               </View>
               <Text style={styles.positionHint}>
                 {raw?.hasFix === true
@@ -598,19 +608,16 @@ export default function GpsScreen({
                 }
               />
             </View>
-            <Pressable
-              disabled={raw?.hasFix !== true}
+            <Button
+              label={t('gpsSystem.openMap')}
               onPress={openMap}
-              style={[
-                styles.secondaryButtonWide,
-                raw?.hasFix !== true && styles.disabled,
-              ]}
+              variant="secondary"
+              icon="map-pin"
+              disabled={raw?.hasFix !== true}
+              block
+              style={styles.blockActionSpacing}
               testID="gps-open-map"
-            >
-              <Text style={styles.secondaryButtonText}>
-                {t('gpsSystem.openMap')}
-              </Text>
-            </Pressable>
+            />
             <Text style={styles.privacyNote}>
               {t('gpsSystem.positionPrivacy')}
             </Text>
@@ -686,15 +693,15 @@ export default function GpsScreen({
           {loadMessage !== undefined ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorText}>{loadMessage}</Text>
-              <Pressable
+              <Button
+                label={t('gpsSystem.reload')}
                 onPress={requestReload}
-                style={styles.secondaryButtonWide}
+                variant="secondary"
+                icon="refresh-cw"
+                block
+                style={styles.blockActionSpacing}
                 testID="gps-retry-load"
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {t('gpsSystem.reload')}
-                </Text>
-              </Pressable>
+              />
             </View>
           ) : null}
 
@@ -810,44 +817,36 @@ export default function GpsScreen({
                 </Text>
               ) : null}
               <View style={styles.actionRow}>
-                <Pressable
-                  disabled={busy || !dirty}
+                <Button
+                  label={t('gpsSystem.reset')}
                   onPress={() => setDraft(originalDraft)}
-                  style={[
-                    styles.secondaryButton,
-                    (busy || !dirty) && styles.disabled,
-                  ]}
+                  variant="secondary"
+                  icon="rotate-ccw"
+                  disabled={busy || !dirty}
                   testID="gps-reset"
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {t('gpsSystem.reset')}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  disabled={busy}
+                />
+                <Button
+                  label={t('gpsSystem.reload')}
                   onPress={requestReload}
-                  style={[styles.secondaryButton, busy && styles.disabled]}
+                  variant="secondary"
+                  icon="refresh-cw"
+                  disabled={busy}
                   testID="gps-reload"
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {t('gpsSystem.reload')}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  disabled={busy || !dirty || invalid.length > 0}
-                  onPress={handleSave}
-                  style={[
-                    styles.primaryButton,
-                    (busy || !dirty || invalid.length > 0) && styles.disabled,
-                  ]}
-                  testID="gps-save"
-                >
-                  <Text style={styles.primaryButtonText}>
-                    {phase === 'SAVING'
+                />
+                <Button
+                  label={
+                    phase === 'SAVING'
                       ? t('gpsSystem.saving')
-                      : t('gpsSystem.save')}
-                  </Text>
-                </Pressable>
+                      : t('gpsSystem.save')
+                  }
+                  onPress={handleSave}
+                  variant="primary"
+                  icon="save"
+                  disabled={busy || !dirty || invalid.length > 0}
+                  accessibilityLabel={t('gpsSystem.save')}
+                  style={styles.saveGrow}
+                  testID="gps-save"
+                />
               </View>
             </>
           ) : null}
@@ -982,15 +981,10 @@ const styles = StyleSheet.create({
     height: 58,
     borderRadius: 29,
     backgroundColor: colors.accentSoft,
-    borderWidth: 1,
-    borderColor: colors.accent,
+    borderWidth: 1.5,
+    borderColor: colors.accentStrong,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  homeArrowText: {
-    fontSize: 32,
-    color: colors.accentStrong,
-    writingDirection: 'ltr',
   },
   positionHint: {
     ...typography.caption,
@@ -1077,35 +1071,37 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   choice: {
-    minHeight: 44,
+    minHeight: MIN_TOUCH_TARGET,
     minWidth: 78,
     borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
+    flexDirection: 'row',
+    gap: 6,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
   },
   choiceSelected: {
-    borderColor: colors.accent,
+    borderColor: colors.accentStrong,
     backgroundColor: colors.accentSoft,
   },
+  choiceActive: { backgroundColor: colors.surfaceHover },
   choiceText: {
-    ...typography.caption,
+    ...typography.label,
     color: colors.textSecondary,
-    fontWeight: '700',
     writingDirection: 'ltr',
   },
   choiceTextSelected: { color: colors.accentStrong },
   infoBox: {
     borderRadius: radii.md,
-    backgroundColor: colors.backgroundRaised,
+    backgroundColor: colors.infoSoft,
     borderWidth: 1,
     borderColor: colors.info,
     padding: spacing.md,
     marginTop: spacing.md,
   },
-  infoTitle: { ...typography.body, color: colors.info, fontWeight: '700' },
+  infoTitle: { ...typography.bodyStrong, color: colors.info },
   infoText: {
     ...typography.caption,
     color: colors.textSecondary,
@@ -1114,6 +1110,7 @@ const styles = StyleSheet.create({
   errorBox: {
     borderWidth: 1,
     borderColor: colors.error,
+    backgroundColor: colors.errorSoft,
     borderRadius: radii.md,
     padding: spacing.md,
     marginTop: spacing.md,
@@ -1135,43 +1132,7 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginTop: spacing.lg,
   },
-  secondaryButton: {
-    minHeight: 44,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    paddingHorizontal: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  secondaryButtonWide: {
-    minHeight: 44,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    paddingHorizontal: spacing.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: spacing.md,
-  },
-  secondaryButtonText: {
-    ...typography.body,
-    color: colors.accentStrong,
-    fontWeight: '700',
-  },
-  primaryButton: {
-    minHeight: 44,
-    flexGrow: 1,
-    borderRadius: radii.md,
-    backgroundColor: colors.accent,
-    paddingHorizontal: spacing.lg,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryButtonText: {
-    ...typography.body,
-    color: colors.accentText,
-    fontWeight: '700',
-  },
+  blockActionSpacing: { marginTop: spacing.md },
+  saveGrow: { flexGrow: 1 },
   disabled: { opacity: 0.45 },
 });

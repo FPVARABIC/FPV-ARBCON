@@ -94,8 +94,14 @@ export function Icon({
       strokeLinejoin="round"
       style={svgStyle}
       testID={testID}
+      // Decorative by contract (the icon always sits beside a text label
+      // or inside a labelled control). The two RN props below are
+      // Android-only; without aria-hidden every icon also reached the
+      // BROWSER accessibility tree as an unnamed graphic — measured, not
+      // assumed: 12 of 12 SVGs were exposed on the Ports screen.
       accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants">
+      importantForAccessibility="no-hide-descendants"
+      aria-hidden>
       {elements.map((el, i) => {
         switch (el.t) {
           case 'p':

@@ -145,6 +145,8 @@ export function SelectField<K extends string = string>({
                       selected: isSelected,
                       disabled: optionDisabled,
                     }}
+                    aria-checked={isSelected}
+                    aria-disabled={optionDisabled}
                     testID={
                       testID ? `${testID}-option-${option.key}` : undefined
                     }

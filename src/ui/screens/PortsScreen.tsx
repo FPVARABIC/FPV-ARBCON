@@ -55,6 +55,7 @@ import { colors, radii, spacing, typography, useContentEnvelope } from '../theme
 import { StickyActionBar } from '../components/editing';
 import {
   Button,
+  ChoiceChips,
   MIN_TOUCH_TARGET,
   NoticeBox,
   ToggleSwitch,
@@ -62,6 +63,9 @@ import {
 import { readInteraction } from '../components/controls/interaction';
 import { Icon } from '../icons';
 
+/** The synthetic key for "no role in this category" inside ChoiceChips,
+ * which selects by string key. Never leaves this module. */
+const NONE_ROLE_KEY = '__NONE__';
 const TELEMETRY_ROLES = SERIAL_ROLE_DEFINITIONS.filter(
   role => role.category === 'TELEMETRY',
 );
@@ -185,83 +189,34 @@ function ChoiceGroup({
   return (
     <View style={styles.controlGroup}>
       <Text style={styles.groupLabel}>{title}</Text>
-      <View style={styles.chipWrap}>
-        <Pressable
-          disabled={disabled}
-          onPress={() => onSelect(undefined)}
-          accessibilityLabel={`${title}: ${t('portsConfiguration.none')}`}
-          accessibilityRole="radio"
-          accessibilityState={{
-            selected: selected === undefined,
-            disabled,
-          }}
-          style={state => {
-            const { pressed, hovered } = readInteraction(state);
-            return [
-              styles.chip,
-              selected === undefined && styles.chipSelected,
-              (hovered || pressed) && !disabled && styles.chipActive,
-              disabled && styles.disabled,
-            ];
-          }}
-          testID={`ports-${portIdentifier}-${categoryKey}-none`}
-        >
-          {selected === undefined ? (
-            <Icon name="check" size={16} color={colors.accentStrong} />
-          ) : null}
-          <Text
-            style={[
-              styles.chipText,
-              selected === undefined && styles.chipTextSelected,
-            ]}
-          >
-            {t('portsConfiguration.none')}
-          </Text>
-        </Pressable>
-        {roles.map(role => {
-          const available = serialRoleIsAvailable(snapshot, role.key);
-          const active = selected === role.key;
-          const roleDisabled = isRoleDisabled?.(role.key) === true;
-          return (
-            <Pressable
-              key={role.key}
-              disabled={disabled || !available || roleDisabled}
-              onPress={() => onSelect(role.key)}
-              accessibilityLabel={`${title}: ${t(roleLabelKey(role.key))}`}
-              accessibilityRole="radio"
-              accessibilityState={{
-                selected: active,
-                disabled: disabled || !available || roleDisabled,
-              }}
-              style={state => {
-                const { pressed, hovered } = readInteraction(state);
-                const inert = disabled || !available || roleDisabled;
-                return [
-                  styles.chip,
-                  active && styles.chipSelected,
-                  (hovered || pressed) && !inert && styles.chipActive,
-                  inert && styles.disabled,
-                ];
-              }}
-              testID={`ports-${portIdentifier}-role-${role.key}`}
-            >
-              {active ? (
-                <Icon name="check" size={16} color={colors.accentStrong} />
-              ) : null}
-              <Text
-                style={[styles.chipText, active && styles.chipTextSelected]}
-              >
-                {t(roleLabelKey(role.key))}
-              </Text>
-              {!available ? (
-                <Text style={styles.unavailableText}>
-                  {t('portsConfiguration.notCompiled')}
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
-      </View>
+      {/* The shared chip group: one selection look, one set of a11y
+          semantics. NONE is a synthetic key mapped back to `undefined`
+          at the boundary so the screen's own contract is unchanged. */}
+      <ChoiceChips
+        accessibilityLabel={title}
+        selectedKey={selected ?? NONE_ROLE_KEY}
+        onSelect={key =>
+          onSelect(key === NONE_ROLE_KEY ? undefined : (key as SerialRoleKey))
+        }
+        disabled={disabled}
+        options={[
+          {
+            key: NONE_ROLE_KEY,
+            label: t('portsConfiguration.none'),
+            testID: `ports-${portIdentifier}-${categoryKey}-none`,
+          },
+          ...roles.map(role => {
+            const available = serialRoleIsAvailable(snapshot, role.key);
+            return {
+              key: role.key as string,
+              label: t(roleLabelKey(role.key)),
+              disabled: !available || isRoleDisabled?.(role.key) === true,
+              note: available ? undefined : t('portsConfiguration.notCompiled'),
+              testID: `ports-${portIdentifier}-role-${role.key}`,
+            };
+          }),
+        ]}
+      />
     </View>
   );
 }
@@ -285,43 +240,17 @@ function BaudSelector({
       <Text style={styles.baudLabel}>
         {t(`portsConfiguration.baud.${field}`)}
       </Text>
-      <View style={styles.chipWrap}>
-        {availableBaudIndexes(field, apiMinor).map(index => {
-          const selected = port[field] === index;
-          return (
-            <Pressable
-              key={index}
-              disabled={disabled}
-              onPress={() => onChange(index)}
-              accessibilityLabel={`${t(`portsConfiguration.baud.${field}`)}: ${
-                SERIAL_BAUD_RATES[index]
-              }`}
-              accessibilityRole="radio"
-              accessibilityState={{ selected, disabled }}
-              style={state => {
-                const { pressed, hovered } = readInteraction(state);
-                return [
-                  styles.baudChip,
-                  selected && styles.chipSelected,
-                  (hovered || pressed) && !disabled && styles.chipActive,
-                  disabled && styles.disabled,
-                ];
-              }}
-              testID={`ports-${port.identifier}-${field}-${index}`}
-            >
-              <Text
-                style={[
-                  styles.chipText,
-                  styles.ltr,
-                  selected && styles.chipTextSelected,
-                ]}
-              >
-                {SERIAL_BAUD_RATES[index]}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <ChoiceChips
+        accessibilityLabel={t(`portsConfiguration.baud.${field}`)}
+        selectedKey={String(port[field])}
+        onSelect={key => onChange(Number(key))}
+        disabled={disabled}
+        options={availableBaudIndexes(field, apiMinor).map(index => ({
+          key: String(index),
+          label: String(SERIAL_BAUD_RATES[index]),
+          testID: `ports-${port.identifier}-${field}-${index}`,
+        }))}
+      />
     </View>
   );
 }
@@ -1259,52 +1188,12 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     writingDirection: 'rtl',
   },
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  chip: {
-    minHeight: MIN_TOUCH_TARGET,
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1.5,
-    borderColor: colors.borderStrong,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.surfaceAlt,
-  },
-  chipSelected: {
-    borderColor: colors.accentStrong,
-    backgroundColor: colors.accentSoft,
-  },
-  chipActive: { backgroundColor: colors.surfaceHover },
-  chipText: {
-    ...typography.label,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    writingDirection: 'rtl',
-  },
-  chipTextSelected: { color: colors.accentStrong },
-  unavailableText: {
-    ...typography.helper,
-    color: colors.textMuted,
-    writingDirection: 'rtl',
-  },
   baudSection: { gap: spacing.xs, paddingTop: spacing.xs },
   baudLabel: {
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'right',
     writingDirection: 'rtl',
-  },
-  baudChip: {
-    minHeight: MIN_TOUCH_TARGET,
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: colors.borderStrong,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
   },
   ltr: { writingDirection: 'ltr' },
   disabled: { opacity: 0.42 },

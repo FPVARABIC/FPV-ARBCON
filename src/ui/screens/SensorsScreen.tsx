@@ -1,6 +1,6 @@
 /* eslint-disable no-bitwise -- MSP_STATUS_EX sensor presence is a firmware bit mask. */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import type {
   MspAltitude,
   MspRawImu,
@@ -23,6 +23,7 @@ import {
   typography,
   useContentEnvelope,
 } from '../theme';
+import { Button } from '../components/controls';
 interface Props {
   readonly sessionKey?: SetupUiSessionKey;
   readonly active: boolean;
@@ -291,13 +292,13 @@ export default function SensorsScreen({
               DISARMED، تأكيد، وإيقاف telemetry أثناء الأمر.
             </Text>
           </View>
-          <Pressable
+          <Button
+            label="فتح أدوات المعايرة"
             onPress={onOpenSetup}
-            style={styles.action}
+            variant="primary"
+            icon="compass"
             testID="sensors-open-setup"
-          >
-            <Text style={styles.actionText}>فتح أدوات المعايرة</Text>
-          </Pressable>
+          />
         </View>
         <View style={styles.bottom} />
       </ScrollView>
@@ -334,11 +335,10 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.surface,
   },
-  presenceOn: { borderColor: colors.success, backgroundColor: '#E8F8F1' },
+  presenceOn: { borderColor: colors.success, backgroundColor: colors.successSoft },
   presenceText: {
-    ...typography.body,
+    ...typography.bodyStrong,
     color: colors.textPrimary,
-    fontWeight: '700',
   },
   presenceState: {
     ...typography.caption,
@@ -424,18 +424,10 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     padding: spacing.lg,
   },
-  action: {
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    borderRadius: radii.md,
-    backgroundColor: colors.accentStrong,
-  },
-  actionText: { ...typography.body, color: colors.white, fontWeight: '700' },
   warning: {
     borderWidth: 1,
     borderColor: colors.warning,
-    backgroundColor: '#FFF7E7',
+    backgroundColor: colors.warningSoft,
     borderRadius: radii.md,
     padding: spacing.md,
   },

@@ -49,6 +49,14 @@ export function ToggleSwitch({
       accessibilityRole="switch"
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{checked: value, disabled}}
+      // BOTH state channels on purpose. Measured in a real browser:
+      // react-native-web renders accessibilityState.checked as NOTHING,
+      // so the switch reached the accessibility tree with a role and no
+      // state — a screen reader announced "switch" and never "on"/"off".
+      // The aria-* props are core React Native props (0.71+) and map
+      // natively too, so this stays one component, not a web branch.
+      aria-checked={value}
+      aria-disabled={disabled}
       testID={testID}
       style={styles.target}>
       {state => {
@@ -90,7 +98,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   trackOff: {
-    backgroundColor: colors.surfaceAlt,
+    backgroundColor: colors.switchTrackOff,
     borderWidth: 1.5,
     borderColor: colors.borderStrong,
   },

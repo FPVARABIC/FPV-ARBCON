@@ -54,6 +54,15 @@ export const colors = {
    */
   borderStrong: '#B8B29F',
 
+  /**
+   * The OFF track of a switch. Deliberately NOT surfaceAlt: settings rows
+   * are themselves surfaceAlt on several screens, so an OFF switch drawn
+   * in surfaceAlt vanished into its own row (seen in a browser on the
+   * Ports screen). This reads against white cards AND tinted rows while
+   * staying quiet next to the deep-teal ON state.
+   */
+  switchTrackOff: '#E0DBCD',
+
   /** Interaction states for the shared controls. Hover is one shade off
    * the resting surface, pressed is two — perceptible on the warm
    * palette without inventing a new hue. */
