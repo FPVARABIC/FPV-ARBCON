@@ -10,6 +10,7 @@ import {
   type MotorOutputOrderSaveOutcome,
 } from '../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography } from '../theme';
+import { Icon } from '../icons';
 
 export interface MotorOutputOrderControllerPort {
   loadOutputOrder(sessionId: string): Promise<MotorOutputOrderLoadOutcome>;
@@ -175,7 +176,10 @@ export function MotorOutputReorderPanel({
             {desired.map((resource, index) => (
               <View key={index} style={styles.mapCell}>
                 <Text style={styles.mapMotor}>{`M${index + 1}`}</Text>
-                <Text style={styles.mapArrow}>←</Text>
+                {/* "M1 is fed BY resource": the arrow points at the
+                    motor, so it must follow reading order - arrow-back
+                    resolves to right under RTL and left under LTR. */}
+                <Icon name="arrow-back" size={18} color={colors.textSecondary} />
                 <Text style={styles.mapResource}>
                   {t('motorOutputReorder.resource', { value: resource + 1 })}
                 </Text>
@@ -285,7 +289,6 @@ const styles = StyleSheet.create({
     color: colors.accentStrong,
     fontWeight: '700',
   },
-  mapArrow: { ...typography.body, color: colors.textMuted },
   mapResource: {
     ...typography.caption,
     color: colors.textPrimary,
@@ -300,11 +303,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  buttonDisabled: { backgroundColor: colors.disabled },
+  buttonDisabled: { backgroundColor: colors.surfaceAlt },
   primaryButtonText: {
-    ...typography.body,
-    color: colors.background,
-    fontWeight: '700',
+    ...typography.label,
+    /* accentText, NOT background: near-white on the light accent fill
+       measured about 1.5:1 - the label on this panel's primary action was
+       effectively invisible. accentText is the theme's designated
+       text-on-accent colour and clears AA. */
+    color: colors.accentText,
     writingDirection: 'rtl',
   },
   resultDanger: {

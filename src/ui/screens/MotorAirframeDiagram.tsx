@@ -36,6 +36,7 @@ import type {
 } from '../../core/state/motorVerificationModel';
 import { MOTOR_TEST_EXPECTED_CONFIGURATION } from '../../core/state/motorVerificationModel';
 import { colors, radii, spacing, typography } from '../theme';
+import { Icon } from '../icons';
 import { resolveLayoutTier } from '../theme/layout';
 
 export interface MotorAirframeEntry {
@@ -289,20 +290,16 @@ function RotorGlyph({
         <View
           style={[styles.hub, { width: hub, height: hub, borderRadius: hub / 2 }]}
         />
-        <Text
-          style={[
-            styles.rotationArrow,
-            { fontSize: arrowFont, lineHeight: Math.round(arrowFont * 1.1) },
-            active && styles.rotationArrowActive,
-          ]}
-        >
-          {direction === 'CW' ? '↻' : '↺'}
-        </Text>
+        <Icon
+          name={direction === 'CW' ? 'rotate-cw' : 'rotate-ccw'}
+          size={Math.round(arrowFont * 1.05)}
+          color={active ? colors.accentText : colors.textSecondary}
+        />
       </View>
       <Text
         style={[
           styles.directionText,
-          { fontSize: Math.max(9, Math.round(11 * scale)) },
+          { fontSize: Math.max(12, Math.round(12 * scale)) },
         ]}
         testID={`motors-diagram-direction-${direction}`}
       >
@@ -333,7 +330,7 @@ function MotorNode({
 }): React.JSX.Element {
   const { t } = useTranslation();
   const slotFont = Math.max(13, Math.round(18 * scale));
-  const positionFont = Math.max(9, Math.round(11 * scale));
+  const positionFont = Math.max(12, Math.round(12 * scale));
   const badge =
     activity !== undefined
       ? { text: t(activityLabelKey(activity)), color: activityColor(activity) }
@@ -444,17 +441,12 @@ export function MotorAirframeDiagram({
       <Text style={styles.diagramTitle}>{t('motorsScreen.diagramTitle')}</Text>
 
       <View style={styles.frontMarker} testID="motors-diagram-front">
-        <Text
-          style={[
-            styles.frontArrow,
-            {
-              fontSize: Math.round(22 * scale),
-              lineHeight: Math.round(24 * scale),
-            },
-          ]}
-        >
-          ▲
-        </Text>
+        <Icon
+          name="chevron-up"
+          size={Math.round(22 * scale)}
+          color={colors.accentStrong}
+          strokeWidth={2.5}
+        />
         <Text
           style={[
             styles.frontText,
@@ -563,7 +555,6 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   frontMarker: { alignItems: 'center', gap: 1 },
-  frontArrow: { color: colors.accentStrong, fontWeight: '700' },
   frontText: {
     color: colors.accentStrong,
     fontWeight: '700',
@@ -642,6 +633,32 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: '2%',
     right: '2%',
+    /**
+     * PHYSICAL GEOMETRY, PINNED. `direction: 'ltr'` is the load-bearing
+     * property here, not decoration.
+     *
+     * This row places real motors on a real aircraft: index 0 of
+     * VISUAL_POSITION_ORDER is FRONT_RIGHT and must appear on the
+     * operator's right, always. The comment on that constant claimed the
+     * row "has an explicit RTL direction" - it did not. Nothing set
+     * `direction` at all, so the row INHERITED it, and in the browser the
+     * document carries dir="rtl": a plain row already runs right-to-left,
+     * so 'row-reverse' flipped it back and drew FRONT_RIGHT on the LEFT.
+     * Measured, not theorised - the same inversion was confirmed on the
+     * Start screen and in webAlert.
+     *
+     * A mirrored motor diagram is not a cosmetic bug: an operator reading
+     * it would conclude the outputs are mapped wrong and "fix" a
+     * correctly-wired aircraft. So the direction is now stated rather
+     * than inherited, and with it fixed, 'row-reverse' means what the
+     * code always intended - emission order right-then-left, painted
+     * right-then-left - identically under Arabic RTL, English LTR, web
+     * and Android.
+     *
+     * This changes ZERO motor data: the entries array, its order, the
+     * slot numbers and the controller mapping are untouched.
+     */
+    direction: 'ltr',
     flexDirection: 'row-reverse',
     justifyContent: 'space-between',
   },
@@ -682,12 +699,6 @@ const styles = StyleSheet.create({
     borderColor: colors.background,
     borderWidth: 1,
   },
-  rotationArrow: {
-    position: 'absolute',
-    color: colors.accentStrong,
-    fontWeight: '700',
-  },
-  rotationArrowActive: { color: colors.warning },
   directionText: {
     ...typography.mono,
     color: colors.accentStrong,

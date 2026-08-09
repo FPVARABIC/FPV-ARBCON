@@ -1,6 +1,22 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { Alert, Switch, TextInput } from 'react-native';
+import { Alert, TextInput } from 'react-native';
+
+/**
+ * The row's switch, asked through its ACCESSIBILITY contract rather than
+ * by component type: the panel now uses the shared ToggleSwitch, and what
+ * matters to this test - and to an operator - is that the control reports
+ * itself disabled, not which class drew it.
+ */
+function switchDisabled(
+  tree: {root: {findByProps: (p: {testID: string}) => {findAllByProps: (p: {accessibilityRole: string}) => Array<{props: {accessibilityState?: {disabled?: boolean}}}>}}},
+  testID: string,
+): boolean | undefined {
+  const matches = tree.root
+    .findByProps({testID})
+    .findAllByProps({accessibilityRole: 'switch'});
+  return matches[matches.length - 1]?.props.accessibilityState?.disabled;
+}
 
 import '../../i18n';
 import i18n from '../../i18n';
@@ -218,16 +234,10 @@ describe('MotorConfigurationPanel', () => {
         .findByProps({testID: 'motor-config-protocol-0'})
         .props.onPress();
     });
-    expect(
-      tree.root
-        .findByProps({testID: 'motor-config-bidirectional-dshot'})
-        .findByType(Switch).props.disabled,
-    ).toBe(true);
-    expect(
-      tree.root
-        .findByProps({testID: 'motor-config-esc-sensor'})
-        .findByType(Switch).props.disabled,
-    ).toBe(false);
+    expect(switchDisabled(tree, 'motor-config-bidirectional-dshot')).toBe(
+      true,
+    );
+    expect(switchDisabled(tree, 'motor-config-esc-sensor')).toBe(false);
     act(() => tree.unmount());
   });
 

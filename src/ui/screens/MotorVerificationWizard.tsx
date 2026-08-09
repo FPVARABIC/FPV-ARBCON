@@ -27,6 +27,7 @@ import {Pressable, StyleSheet, Text, View} from 'react-native';
 import {useTranslation} from 'react-i18next';
 
 import {colors, radii, spacing, typography} from '../theme';
+import {Icon} from '../icons';
 import type {MotorTestVerificationReceipt} from '../../core/state/motorTestController';
 import {
   confirmedCount,
@@ -208,10 +209,17 @@ export function MotorVerificationWizard({
                 onPress={() => setPosition(value)}
                 accessibilityRole="radio"
                 accessibilityState={{selected: position === value}}
+                aria-checked={position === value}
                 style={[styles.option, position === value && styles.optionOn]}
                 testID={`verification-position-${value}`}>
+                <Icon
+                  name={position === value ? 'circle-check' : 'circle'}
+                  size={18}
+                  color={
+                    position === value ? colors.accentStrong : colors.textMuted
+                  }
+                />
                 <Text style={styles.optionLabel}>
-                  {position === value ? '◉ ' : '○ '}
                   {t(`motorVerification.position.${value}`)}
                 </Text>
               </Pressable>
@@ -228,10 +236,17 @@ export function MotorVerificationWizard({
                 onPress={() => setDirection(value)}
                 accessibilityRole="radio"
                 accessibilityState={{selected: direction === value}}
+                aria-checked={direction === value}
                 style={[styles.option, direction === value && styles.optionOn]}
                 testID={`verification-direction-${value}`}>
+                <Icon
+                  name={direction === value ? 'circle-check' : 'circle'}
+                  size={18}
+                  color={
+                    direction === value ? colors.accentStrong : colors.textMuted
+                  }
+                />
                 <Text style={styles.optionLabel}>
-                  {direction === value ? '◉ ' : '○ '}
                   {t(`motorVerification.direction.${value}`)}
                 </Text>
               </Pressable>

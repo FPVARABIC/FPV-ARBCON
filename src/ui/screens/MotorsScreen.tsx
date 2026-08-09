@@ -59,6 +59,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import {Icon} from '../icons';
 import type {
   MotorTestActivationBlockReason,
   MotorTestControllerSnapshot,
@@ -1046,7 +1047,7 @@ export function MotorsScreenView({
         {/* One compact bench notice, not a confirmation ritual. Propeller
             removal stays first, with text AND icon rather than colour alone. */}
         <View style={styles.dangerBanner} testID="motors-propeller-warning">
-          <Text style={styles.dangerIcon}>⚠</Text>
+          <Icon name="triangle-alert" size={24} color={colors.error} />
           <View
             style={[styles.flexOne, styles.safetyNoticeCopy]}
             testID="motors-acknowledgements"
@@ -1223,7 +1224,7 @@ export function MotorsScreenView({
         {presentation === 'FAULT' ? (
           stopUnconfirmed ? (
             <View style={styles.faultBanner} testID="motors-fault-banner">
-              <Text style={styles.dangerIcon}>⛔</Text>
+              <Icon name="octagon-alert" size={24} color={colors.error} />
               <View style={styles.flexOne}>
                 <Text style={styles.faultText} testID="motors-emergency-text">
                   {t('motorsScreen.emergencyDisconnect')}
@@ -1300,13 +1301,11 @@ export function MotorsScreenView({
                   styles.workflowNumber,
                   canActivate && styles.workflowNumberDone,
                 ]}>
-                <Text
-                  style={[
-                    styles.workflowNumberText,
-                    canActivate && styles.workflowNumberTextDone,
-                  ]}>
-                  {canActivate ? '✓' : '2'}
-                </Text>
+                {canActivate ? (
+                  <Icon name="check" size={18} color={colors.white} />
+                ) : (
+                  <Text style={styles.workflowNumberText}>2</Text>
+                )}
               </View>
               <View style={styles.flexOne}>
                 <Text style={styles.workflowTitle}>
@@ -1371,7 +1370,7 @@ export function MotorsScreenView({
           {canActivate ? (
             <View style={styles.readyBanner} testID="motors-session-ready">
               <View style={styles.readyBadge}>
-                <Text style={styles.readyBadgeText}>✓</Text>
+                <Icon name="check" size={18} color={colors.white} />
               </View>
               <View style={styles.flexOne}>
                 <Text style={styles.readyTitle}>
@@ -1412,7 +1411,7 @@ export function MotorsScreenView({
                   </Text>
                   {selectedSlot === slot ? (
                     <Text style={styles.slotSelected}>
-                      ✓ {t('motorsScreen.selected')}
+                      {t('motorsScreen.selected')}
                     </Text>
                   ) : null}
                 </Pressable>
@@ -1635,7 +1634,7 @@ export function MotorsScreenView({
           </Text>
         ) : null}
         <Pressable onPress={handleStopPress} accessibilityRole="button" accessibilityState={{ disabled: false }} style={styles.stopButton} testID="motors-stop-button">
-          <Text style={styles.stopIcon}>⏹</Text>
+          <Icon name="square" size={26} color={colors.white} />
           <Text style={styles.stopLabel}>{t('motorsScreen.stop')}</Text>
         </Pressable>
         <Pressable onPress={handleEndSessionPress} disabled={endActionDisabled} accessibilityRole="button" accessibilityState={{ disabled: endActionDisabled, busy: endingSession }} style={[styles.endSessionButton, endActionDisabled && styles.holdButtonOff]} testID="motors-end-session-button">
