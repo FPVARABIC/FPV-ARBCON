@@ -26,7 +26,7 @@ import React from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, spacing, typography } from '../../theme';
+import { CONTENT_MAX_WIDTH, colors, spacing, typography } from '../../theme';
 import { Button } from '../controls';
 
 export interface StickyActionBarProps {
@@ -84,6 +84,7 @@ export default function StickyActionBar({
       testID={testID}
       accessibilityRole="toolbar"
     >
+     <View style={styles.envelope}>
       <View style={styles.copy}>
         <Text style={styles.eyebrow} testID={`${testID}-eyebrow`}>
           {t('editing.pendingChanges')}
@@ -143,6 +144,7 @@ export default function StickyActionBar({
           testID={`${testID}-save`}
         />
       </View>
+     </View>
     </View>
   );
 }
@@ -163,6 +165,16 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     shadowOffset: { width: 0, height: -4 },
     elevation: 12,
+  },
+  // The comment above promises the content envelope; this is what
+  // actually delivers it — before this container existed, the Save
+  // button stretched to ~1200px on a desktop window while the fields it
+  // acts on were capped at CONTENT_MAX_WIDTH.
+  envelope: {
+    width: '100%',
+    maxWidth: CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
+    gap: spacing.sm,
   },
   copy: { gap: 2 },
   eyebrow: { ...typography.eyebrow, color: colors.accentStrong },

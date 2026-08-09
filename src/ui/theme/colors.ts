@@ -15,12 +15,19 @@ export const colors = {
   borderSoft: '#E6E1D7',
   textPrimary: '#152232',
   textSecondary: '#526171',
-  textMuted: '#71808D',
+  // Darkened from #71808D (4.06:1 on white — below AA for the 13px
+  // captions it labels). 5.3:1 on white, 5.0:1 on the paper background,
+  // 4.7:1 on backgroundRaised, while staying a step lighter than
+  // textSecondary so the muted rank survives.
+  textMuted: '#5E6D7A',
   accent: '#5EEAD4',
   accentStrong: '#0B6E7D',
   accentSoft: '#DDF8F3',
   accentText: '#082D35',
-  info: '#147DA3',
+  // Darkened from #147DA3, which sat at 4.67:1 on white and failed AA on
+  // the infoSoft tint. 5.99:1 on white, 5.2:1 on infoSoft, and white text
+  // on an info fill clears AA too.
+  info: '#106B8C',
   success: '#16765A',
   warning: '#95610A',
   error: '#BF3D4B',

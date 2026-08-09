@@ -26,11 +26,18 @@ describe('FPV-ARBCON light visual identity', () => {
   it.each([
     ['primary copy', colors.textPrimary, colors.background],
     ['secondary copy', colors.textSecondary, colors.background],
+    ['muted copy on white', colors.textMuted, colors.white],
+    ['muted copy on paper', colors.textMuted, colors.background],
+    ['muted copy on raised paper', colors.textMuted, colors.backgroundRaised],
     ['teal links', colors.accentStrong, colors.white],
     ['teal actions', colors.accentText, colors.accent],
     ['danger actions', colors.white, colors.error],
     ['warning copy', colors.warning, colors.white],
     ['error copy', colors.error, colors.white],
+    ['status copy on its tint', colors.error, colors.errorSoft],
+    ['warning copy on its tint', colors.warning, colors.warningSoft],
+    ['success copy on its tint', colors.success, colors.successSoft],
+    ['info copy on its tint', colors.info, colors.infoSoft],
   ])('keeps %s at WCAG AA contrast', (_name, foreground, background) => {
     expect(contrast(foreground, background)).toBeGreaterThanOrEqual(4.5);
   });
