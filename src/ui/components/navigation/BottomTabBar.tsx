@@ -7,10 +7,9 @@
  * ScrollView. No absolute positioning, no z-index, and nothing a screen
  * can scroll it behind or under.
  *
- * ONLY WORKING DESTINATIONS ARE VISIBLE. Roadmap tabs used to occupy most
- * of this primary navigation while doing nothing. The implemented
- * destinations now share the width and read like an intentional product,
- * while MAIN_TABS still retains the future route definitions.
+ * ONLY WORKING DESTINATIONS ARE VISIBLE. Every current product destination
+ * is implemented; the filter remains fail-closed if a future roadmap entry
+ * is added before its screen exists.
  *
  * RTL. Tabs retain MAIN_TABS product order and land right-to-left under
  * the app's `forceRTL`.
@@ -21,7 +20,7 @@
  */
 
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { colors, radii, spacing, typography } from '../../theme';
@@ -38,6 +37,14 @@ const TAB_ICON: Record<MainTabKey, string> = {
   CONFIGURATIONS: '⚙',
   RECEIVER: '⌁',
   PID: '∿',
+  MODES: '⌘',
+  FAILSAFE: '⚠',
+  POWER: 'ϟ',
+  OSD: '▣',
+  VTX: '⌁',
+  SENSORS: '⌁',
+  PRESETS: '✦',
+  CLI: '>_',
 };
 
 export interface BottomTabBarProps {
@@ -58,7 +65,12 @@ export default function BottomTabBar({
       accessibilityLabel={t('tabs.barAccessibilityLabel')}
       testID="main-tab-bar"
     >
-      <View style={styles.strip} testID="main-tab-bar-scroll">
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.strip}
+        testID="main-tab-bar-scroll"
+      >
         {VISIBLE_TABS.map(tab => {
           const isActive = tab.key === activeTab;
           return (
@@ -83,7 +95,7 @@ export default function BottomTabBar({
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
     </View>
   );
 }
@@ -96,18 +108,20 @@ const styles = StyleSheet.create({
     paddingTop: spacing.sm,
   },
   strip: {
+    width: '100%',
+    maxWidth: 1180,
+    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-around',
     gap: spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingBottom: spacing.sm,
-    width: '100%',
-    maxWidth: 1180,
-    alignSelf: 'center',
+    minWidth: '100%',
   },
   tab: {
-    flex: 1,
+    flexGrow: 1,
+    minWidth: 104,
     minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     alignItems: 'center',

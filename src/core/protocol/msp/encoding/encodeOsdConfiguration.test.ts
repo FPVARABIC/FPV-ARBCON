@@ -1,0 +1,10 @@
+/* eslint-disable no-bitwise */
+import type {MspOsdSnapshot} from '../decoding/decodeOsdConfiguration';
+import {createOsdConfigurationDraft, osdElementType, osdPositionX, osdPositionY, osdVisibleInProfile, setOsdPosition, setOsdProfileVisibility} from '../../../state/osdConfigurationModel';
+import {encodeChangedOsdConfiguration} from './encodeOsdConfiguration';
+
+const snapshot: MspOsdSnapshot = {canvas: {columns: 53, rows: 20}, config: {flags: 1, videoSystem: 3, units: 1, rssiAlarmPercent: 30, capacityAlarmMah: 1400, altitudeAlarm: 120, elementPositions: [0xc805], statistics: [false], timers: [0x0a21], warningCount: 4, enabledWarnings: 1, profileCount: 3, selectedProfile: 1, overlayRadioMode: 0, cameraFrameWidth: 24, cameraFrameHeight: 11, linkQualityAlarmPercent: 70, rssiDbmAlarm: -95}};
+describe('OSD encoding and position helpers', () => {
+  it('changes x/y and one profile without corrupting type or other profile bits', () => {const before = snapshot.config.elementPositions[0]; const moved = setOsdProfileVisibility(setOsdPosition(before, 40, 17), 2, true); expect(osdPositionX(moved)).toBe(40); expect(osdPositionY(moved)).toBe(17); expect(osdElementType(moved)).toBe(3); expect(osdVisibleInProfile(moved, 1)).toBe(true); expect(osdVisibleInProfile(moved, 2)).toBe(true);});
+  it('emits only changed groups with the official addresses and screen byte', () => {const base = createOsdConfigurationDraft(snapshot); const draft = {...base, rssiAlarmPercent: 35, elementPositions: [setOsdPosition(base.elementPositions[0], 12, 7)], statistics: [true], timers: [0x1421]}; const writes = encodeChangedOsdConfiguration(snapshot, draft); expect(writes.map(write => write.group)).toEqual(['GENERAL', 'ELEMENT', 'STATISTIC', 'TIMER']); expect(writes[0].payload[0]).toBe(0xff); expect([...writes[1].payload]).toEqual([0, draft.elementPositions[0] & 0xff, draft.elementPositions[0] >>> 8, 1]); expect([...writes[2].payload]).toEqual([0, 1, 0, 0]); expect([...writes[3].payload]).toEqual([0xfe, 0, 0x21, 0x14]);});
+});

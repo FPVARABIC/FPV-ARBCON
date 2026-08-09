@@ -145,6 +145,56 @@ export type {
   PidTuningWriteGroup,
   EncodedPidTuningWrite,
 } from './msp';
+export {
+  MSP_MODE_RANGES,
+  MSP_SET_MODE_RANGE,
+  MSP_BOXNAMES,
+  MSP_MODE_RANGES_EXTRA,
+  decodeModesConfiguration,
+  encodeModeRangeWrites,
+  MODE_RANGE_MIN,
+  MODE_RANGE_MAX,
+  MODE_RANGE_STEP,
+  MODE_RANGE_SLOT_BYTES,
+  MODE_RANGE_EXTRA_SLOT_BYTES,
+} from './msp';
+export type {
+  MspModeDefinition,
+  MspModeRangeSlot,
+  MspModesConfiguration,
+  EncodedModeRangeWrite,
+} from './msp';
+export {
+  MSP_FAILSAFE_CONFIG,
+  MSP_SET_FAILSAFE_CONFIG,
+  MSP_RXFAIL_CONFIG,
+  MSP_SET_RXFAIL_CONFIG,
+  decodeFailsafeConfiguration,
+  decodeRxFailsafeConfiguration,
+  encodeChangedFailsafeConfiguration,
+  RX_FAILSAFE_MIN,
+  RX_FAILSAFE_MAX,
+  RX_FAILSAFE_STEP,
+  BUILD_OPTION_GPS,
+} from './msp';
+export type {
+  FailsafeProcedure,
+  FailsafeSwitchMode,
+  RxFailsafeMode,
+  MspFailsafeConfiguration,
+  MspRxFailsafeChannel,
+  MspFailsafeSnapshot,
+  FailsafeWriteGroup,
+  EncodedFailsafeWrite,
+} from './msp';
+export {MSP_BATTERY_CONFIG, MSP_SET_BATTERY_CONFIG, MSP_CURRENT_METER_CONFIG, MSP_SET_CURRENT_METER_CONFIG, MSP_VOLTAGE_METER_CONFIG, MSP_SET_VOLTAGE_METER_CONFIG, MSP_VOLTAGE_METERS, MSP_CURRENT_METERS, decodeBatteryConfiguration, decodeVoltageMeterConfiguration, decodeCurrentMeterConfiguration, encodeChangedPowerConfiguration} from './msp';
+export type {MspBatteryConfiguration, MspVoltageMeterConfiguration, MspCurrentMeterConfiguration, MspPowerConfigurationSnapshot, PowerWriteGroup, EncodedPowerWrite} from './msp';
+export {MSP_OSD_CONFIG, MSP_SET_OSD_CONFIG, MSP_OSD_CANVAS, decodeOsdConfiguration, decodeOsdCanvas, encodeChangedOsdConfiguration} from './msp';
+export type {MspOsdConfiguration, MspOsdCanvas, MspOsdSnapshot, OsdWriteGroup, EncodedOsdWrite} from './msp';
+export {MSP_SET_VTX_CONFIG, MSP_VTXTABLE_BAND, MSP_VTXTABLE_POWERLEVEL, MSP_SET_VTXTABLE_BAND, MSP_SET_VTXTABLE_POWERLEVEL, decodeVtxConfiguration, decodeVtxBand, decodeVtxPowerLevel, encodeChangedVtxConfiguration} from './msp';
+export type {MspVtxConfiguration, MspVtxBand, MspVtxPowerLevel, MspVtxSnapshot, VtxWriteGroup, EncodedVtxWrite} from './msp';
+export {MSP_RAW_IMU, MSP_ALTITUDE, decodeRawImu, decodeAltitude} from './msp';
+export type {SensorVector3, MspRawImu, MspAltitude} from './msp';
 
 export {
   decodeDetailedGps,

@@ -20,7 +20,7 @@
  */
 
 import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { colors, radii, spacing, typography } from '../../theme';
@@ -36,6 +36,14 @@ const TAB_ICON: Record<MainTabKey, string> = {
   CONFIGURATIONS: '⚙',
   RECEIVER: '⌁',
   PID: '∿',
+  MODES: '⌘',
+  FAILSAFE: '⚠',
+  POWER: 'ϟ',
+  OSD: '▣',
+  VTX: '⌁',
+  SENSORS: '⌁',
+  PRESETS: '✦',
+  CLI: '>_',
 };
 
 /** Wide enough for the longest Arabic destination label at 100% text
@@ -78,7 +86,10 @@ export default function SideNavigationRail({
           {header}
         </View>
       ) : null}
-      <View style={styles.list}>
+      <ScrollView
+        contentContainerStyle={styles.list}
+        showsVerticalScrollIndicator={false}
+      >
         {VISIBLE_TABS.map(tab => {
           const isActive = tab.key === activeTab;
           return (
@@ -106,7 +117,7 @@ export default function SideNavigationRail({
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
     </View>
   );
 }

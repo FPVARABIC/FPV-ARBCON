@@ -298,6 +298,11 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
       'src/platforms/react-native/protocol/PidTuningController.ts',
+      'src/platforms/react-native/protocol/ModesConfigurationController.ts',
+      'src/platforms/react-native/protocol/FailsafeConfigurationController.ts',
+      'src/platforms/react-native/protocol/PowerConfigurationController.ts',
+      'src/platforms/react-native/protocol/OsdConfigurationController.ts',
+      'src/platforms/react-native/protocol/VtxConfigurationController.ts',
     ],
   },
   {
@@ -388,7 +393,9 @@ const ENGINE_BOUNDARIES = [
   {
     token: 'encodeChangedReceiverConfiguration',
     from: 'src/core/protocol/msp/encoding/encodeReceiver.ts',
-    importers: ['src/platforms/react-native/protocol/ReceiverConfigurationController.ts'],
+    importers: [
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
   },
   {
     token: 'MSP_SET_RX_CONFIG',
@@ -401,17 +408,23 @@ const ENGINE_BOUNDARIES = [
   {
     token: 'MSP_SET_RX_MAP',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: ['src/platforms/react-native/protocol/ReceiverConfigurationController.ts'],
+    importers: [
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
   },
   {
     token: 'MSP_SET_RSSI_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: ['src/platforms/react-native/protocol/ReceiverConfigurationController.ts'],
+    importers: [
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
   },
   {
     token: 'MSP_SET_RC_DEADBAND',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: ['src/platforms/react-native/protocol/ReceiverConfigurationController.ts'],
+    importers: [
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
   },
   {
     token: 'MSP2_SET_TEXT',

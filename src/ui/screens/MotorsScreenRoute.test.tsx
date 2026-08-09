@@ -18,15 +18,19 @@
  */
 
 jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({top: 44, bottom: 34, left: 0, right: 0}),
+  useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
-import {existsSync, readFileSync} from 'fs';
-import {join} from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 
 import '../../i18n';
-import type {RootStackParamList} from '../../navigation/types';
-import {MAIN_TABS, INITIAL_MAIN_TAB, isTabSelectable} from '../../navigation/tabs';
+import type { RootStackParamList } from '../../navigation/types';
+import {
+  MAIN_TABS,
+  INITIAL_MAIN_TAB,
+  isTabSelectable,
+} from '../../navigation/tabs';
 
 const REPO_ROOT = join(__dirname, '..', '..', '..');
 
@@ -34,14 +38,19 @@ describe('Motors reachability after the single-app merge', () => {
   it('is no longer a stack route - it stays inside Setup while Start and Firmware Flasher are independent routes', () => {
     // Compile-time proof: Motors is absent while the four real stack routes remain.
     const params: RootStackParamList['Setup'] = {
-      sessionKey: {sessionId: 's-1', generation: 3},
+      sessionKey: { sessionId: 's-1', generation: 3 },
     };
     expect(params.sessionKey.sessionId).toBe('s-1');
-    const names: (keyof RootStackParamList)[] = ['Start', 'Connection', 'Setup', 'FirmwareFlasher'];
+    const names: (keyof RootStackParamList)[] = [
+      'Start',
+      'Connection',
+      'Setup',
+      'FirmwareFlasher',
+    ];
     expect(names).toHaveLength(4);
   });
 
-  it('is a selectable tab in the main shell, alongside the disabled roadmap tabs', () => {
+  it('is a selectable tab in the complete main shell', () => {
     expect(MAIN_TABS.map(tab => tab.key)).toEqual([
       'SETUP',
       'MOTORS',
@@ -50,6 +59,14 @@ describe('Motors reachability after the single-app merge', () => {
       'CONFIGURATIONS',
       'RECEIVER',
       'PID',
+      'MODES',
+      'FAILSAFE',
+      'POWER',
+      'OSD',
+      'VTX',
+      'SENSORS',
+      'PRESETS',
+      'CLI',
     ]);
     expect(isTabSelectable('MOTORS')).toBe(true);
     expect(INITIAL_MAIN_TAB).toBe('SETUP');
@@ -57,7 +74,9 @@ describe('Motors reachability after the single-app merge', () => {
 
   it('registers the tab shell statically, with no build conditional left in App.tsx', () => {
     const app = readFileSync(join(REPO_ROOT, 'App.tsx'), 'utf8');
-    expect(app).toContain('<Stack.Screen name="Setup" component={MainTabsScreen} />');
+    expect(app).toContain(
+      '<Stack.Screen name="Setup" component={MainTabsScreen} />',
+    );
     // Every trace of the removed seam. A conditional registration is
     // exactly what made the bench variant unable to reach a testable
     // state: the screen was registered only when the build-variant seam
@@ -85,8 +104,22 @@ describe('Motors reachability after the single-app merge', () => {
   it('leaves no build-variant seam and no hardwareTest source set behind', () => {
     for (const gone of [
       join(REPO_ROOT, 'android', 'app', 'src', 'hardwareTest'),
-      join(REPO_ROOT, 'src', 'platforms', 'react-native', 'protocol', 'motorTestEngineVariant.ts'),
-      join(REPO_ROOT, 'src', 'platforms', 'react-native', 'protocol', 'motorTestDebugSeam.ts'),
+      join(
+        REPO_ROOT,
+        'src',
+        'platforms',
+        'react-native',
+        'protocol',
+        'motorTestEngineVariant.ts',
+      ),
+      join(
+        REPO_ROOT,
+        'src',
+        'platforms',
+        'react-native',
+        'protocol',
+        'motorTestDebugSeam.ts',
+      ),
       join(__dirname, 'MotorsDevEntry.tsx'),
     ]) {
       expect(existsSync(gone)).toBe(false);
@@ -136,12 +169,14 @@ describe('Motors lifecycle ownership', () => {
       expect(executable).toContain(source_);
     }
     // Exactly one bridge, attached once and detached once.
-    expect(executable.match(/createMotorTestLifecycleBridge\(/g) ?? []).toHaveLength(1);
+    expect(
+      executable.match(/createMotorTestLifecycleBridge\(/g) ?? [],
+    ).toHaveLength(1);
     expect(executable.match(/bridge\.attach\(\)/g) ?? []).toHaveLength(1);
     expect(executable.match(/bridge\.detach\(\)/g) ?? []).toHaveLength(1);
   });
 
-  it('routes a TAB change into the bridge\'s existing blur source, not a parallel stop path', () => {
+  it("routes a TAB change into the bridge's existing blur source, not a parallel stop path", () => {
     // The tab source is subscribed inside addBlurListener, so it lands on
     // the same handling stack blur already had.
     expect(executable).toMatch(
@@ -156,7 +191,9 @@ describe('Motors lifecycle ownership', () => {
   it('uses React Navigation 7 beforeRemove as the supported hold mechanism', () => {
     expect(executable).toContain("navigation.addListener('beforeRemove'");
     expect(executable).toContain("navigation.addListener('blur'");
-    expect(executable).toContain("BackHandler.addEventListener('hardwareBackPress'");
+    expect(executable).toContain(
+      "BackHandler.addEventListener('hardwareBackPress'",
+    );
     expect(executable).toContain("AppState.addEventListener('change'");
   });
 
@@ -172,9 +209,13 @@ describe('Motors lifecycle ownership', () => {
 
   it('resolves the operator from the ONE official capability, never constructing a second', () => {
     expect(executable).toContain('readMotorTestCapability(');
-    expect(executable.match(/readMotorTestCapability\(/g) ?? []).toHaveLength(1);
+    expect(executable.match(/readMotorTestCapability\(/g) ?? []).toHaveLength(
+      1,
+    );
     expect(executable).toContain('capability.operatorPort(');
-    expect(executable.match(/capability\.operatorPort\(/g) ?? []).toHaveLength(1);
+    expect(executable.match(/capability\.operatorPort\(/g) ?? []).toHaveLength(
+      1,
+    );
     for (const forbidden of [
       'new MspClient',
       'createMotorTestSessionBinding',

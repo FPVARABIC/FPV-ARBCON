@@ -20,7 +20,7 @@
  */
 
 jest.mock('react-native-safe-area-context', () => ({
-  useSafeAreaInsets: () => ({top: 44, bottom: 34, left: 0, right: 0}),
+  useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
 
 const fires: string[] = [];
@@ -38,7 +38,7 @@ let mockGateListeners: Array<() => void> = [];
 
 jest.mock('./MotorsScreen', () => {
   const ReactModule = require('react');
-  const {Text} = require('react-native');
+  const { Text } = require('react-native');
   return {
     __esModule: true,
     default: function MotorsTabProbe({
@@ -68,24 +68,29 @@ jest.mock('./MotorsScreen', () => {
           mockReportMotorsDirty = undefined;
         };
       }, [subscribeTabBlur, registerDepartureGate]);
-      return ReactModule.createElement(Text, {testID: 'motors-probe'}, 'probe');
+      return ReactModule.createElement(
+        Text,
+        { testID: 'motors-probe' },
+        'probe',
+      );
     },
   };
 });
 
 import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
-import {Alert} from 'react-native';
+import { Alert } from 'react-native';
 
 import '../../i18n';
 import MainTabsScreen from './MainTabsScreen';
+import CliScreen from './CliScreen';
 
 function renderShell() {
-  const navigation = {addListener: () => () => {}, goBack: () => {}} as never;
+  const navigation = { addListener: () => () => {}, goBack: () => {} } as never;
   const route = {
     key: 'Setup-1',
     name: 'Setup' as const,
-    params: {sessionKey: {sessionId: 'session-1', generation: 1}},
+    params: { sessionKey: { sessionId: 'session-1', generation: 1 } },
   } as never;
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   ReactTestRenderer.act(() => {
@@ -97,7 +102,7 @@ function renderShell() {
     renderer,
     press: (testID: string) =>
       ReactTestRenderer.act(() => {
-        renderer.root.findAllByProps({testID})[0].props.onPress();
+        renderer.root.findAllByProps({ testID })[0].props.onPress();
       }),
     unmount: () =>
       ReactTestRenderer.act(() => {
@@ -117,9 +122,9 @@ beforeEach(() => {
 });
 
 /** Installs a gate whose verdict the test controls. */
-function installGate(
-  verdict: () => 'SAFE' | 'PENDING' | 'UNCONFIRMED',
-): {publish: () => void} {
+function installGate(verdict: () => 'SAFE' | 'PENDING' | 'UNCONFIRMED'): {
+  publish: () => void;
+} {
   mockGate = {
     evaluate: () => verdict(),
     subscribe: listener => {
@@ -206,7 +211,9 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     const portsPanel = shell.renderer.root.findByProps({
       testID: 'main-tab-panel-PORTS',
     });
-    expect(portsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
+    expect(portsPanel.props.style).toEqual(
+      expect.objectContaining({ flex: 1 }),
+    );
     shell.unmount();
   });
 
@@ -227,9 +234,11 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     const motorsPanel = shell.renderer.root.findByProps({
       testID: 'main-tab-panel-MOTORS',
     });
-    expect(motorsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
+    expect(motorsPanel.props.style).toEqual(
+      expect.objectContaining({ flex: 1 }),
+    );
     expect(
-      shell.renderer.root.findAllByProps({testID: 'main-tabs-awaiting-stop'}),
+      shell.renderer.root.findAllByProps({ testID: 'main-tabs-awaiting-stop' }),
     ).not.toHaveLength(0);
     shell.unmount();
   });
@@ -248,7 +257,9 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     const motorsPanel = shell.renderer.root.findByProps({
       testID: 'main-tab-panel-MOTORS',
     });
-    expect(motorsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
+    expect(motorsPanel.props.style).toEqual(
+      expect.objectContaining({ flex: 1 }),
+    );
     shell.unmount();
   });
 
@@ -269,7 +280,39 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
     const motorsPanel = shell.renderer.root.findByProps({
       testID: 'main-tab-panel-MOTORS',
     });
-    expect(motorsPanel.props.style).toEqual(expect.objectContaining({flex: 1}));
+    expect(motorsPanel.props.style).toEqual(
+      expect.objectContaining({ flex: 1 }),
+    );
+    shell.unmount();
+  });
+});
+
+describe('Raw CLI navigation guard', () => {
+  it('keeps the owning screen visible until CLI reports the link released', () => {
+    const shell = renderShell();
+    shell.press('main-tab-CLI');
+    const cli = shell.renderer.root.findByType(CliScreen);
+    ReactTestRenderer.act(() => cli.props.onCliBusyChange(true));
+    const alert = jest
+      .spyOn(Alert, 'alert')
+      .mockImplementation(() => undefined);
+
+    shell.press('main-tab-SETUP');
+    expect(alert).toHaveBeenCalledWith(
+      'جلسة CLI نشطة',
+      expect.stringContaining('احفظ أو ألغِ'),
+    );
+    expect(
+      shell.renderer.root.findByProps({ testID: 'main-tab-panel-CLI' }).props
+        .style,
+    ).toMatchObject({ flex: 1 });
+
+    ReactTestRenderer.act(() => cli.props.onCliBusyChange(false));
+    shell.press('main-tab-SETUP');
+    expect(
+      shell.renderer.root.findByProps({ testID: 'main-tab-panel-CLI' }).props
+        .style,
+    ).toMatchObject({ display: 'none' });
     shell.unmount();
   });
 });
@@ -280,7 +323,7 @@ describe('Leaving the Motors tab triggers the existing stop/release path', () =>
 
 describe('Leaving Motors waits for the bounded stop result', () => {
   const motorsVisible = (shell: ReturnType<typeof renderShell>) =>
-    shell.renderer.root.findAllByProps({testID: 'main-tab-panel-MOTORS'})[0]
+    shell.renderer.root.findAllByProps({ testID: 'main-tab-panel-MOTORS' })[0]
       .props.style?.display !== 'none';
 
   it('a stop that is already confirmed SAFE commits the switch in the same turn', () => {
@@ -295,7 +338,7 @@ describe('Leaving Motors waits for the bounded stop result', () => {
     expect(fires).toEqual(['blur']);
     expect(motorsVisible(shell)).toBe(false);
     expect(
-      shell.renderer.root.findAllByProps({testID: 'main-tabs-awaiting-stop'}),
+      shell.renderer.root.findAllByProps({ testID: 'main-tabs-awaiting-stop' }),
     ).toHaveLength(0);
     shell.unmount();
   });
@@ -313,7 +356,7 @@ describe('Leaving Motors waits for the bounded stop result', () => {
     expect(motorsVisible(shell)).toBe(true);
     // ...and is told the shell is waiting.
     expect(
-      shell.renderer.root.findAllByProps({testID: 'main-tabs-awaiting-stop'})
+      shell.renderer.root.findAllByProps({ testID: 'main-tabs-awaiting-stop' })
         .length,
     ).toBeGreaterThan(0);
     shell.unmount();
@@ -333,7 +376,7 @@ describe('Leaving Motors waits for the bounded stop result', () => {
 
     expect(motorsVisible(shell)).toBe(false);
     expect(
-      shell.renderer.root.findAllByProps({testID: 'main-tabs-awaiting-stop'}),
+      shell.renderer.root.findAllByProps({ testID: 'main-tabs-awaiting-stop' }),
     ).toHaveLength(0);
     shell.unmount();
   });
@@ -341,7 +384,9 @@ describe('Leaving Motors waits for the bounded stop result', () => {
   it('an UNCONFIRMED stop keeps Motors visible AND raises the LiPo warning', () => {
     let verdict: 'SAFE' | 'PENDING' | 'UNCONFIRMED' = 'PENDING';
     const gate = installGate(() => verdict);
-    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const alert = jest
+      .spyOn(Alert, 'alert')
+      .mockImplementation(() => undefined);
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
     shell.press('main-tab-SETUP');
@@ -384,7 +429,7 @@ describe('Leaving Motors waits for the bounded stop result', () => {
 
     expect(fires).toEqual(['blur']);
     expect(
-      shell.renderer.root.findAllByProps({testID: 'main-tab-panel-PORTS'}),
+      shell.renderer.root.findAllByProps({ testID: 'main-tab-panel-PORTS' }),
     ).toHaveLength(0);
     shell.unmount();
   });
@@ -401,7 +446,9 @@ describe('Leaving Motors waits for the bounded stop result', () => {
         return () => undefined;
       },
     };
-    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    const alert = jest
+      .spyOn(Alert, 'alert')
+      .mockImplementation(() => undefined);
     const shell = renderShell();
     shell.press('main-tab-MOTORS');
     shell.press('main-tab-SETUP');

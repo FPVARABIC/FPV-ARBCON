@@ -203,6 +203,85 @@ export type {
 export {encodeChangedPidTuning} from './encoding/encodePidTuning';
 export type {PidTuningWriteGroup, EncodedPidTuningWrite} from './encoding/encodePidTuning';
 export {
+  MSP_MODE_RANGES,
+  MSP_SET_MODE_RANGE,
+  MSP_BOXNAMES,
+  MSP_MODE_RANGES_EXTRA,
+} from './commands/mspCommands';
+export {
+  decodeModesConfiguration,
+  MODE_RANGE_MIN,
+  MODE_RANGE_MAX,
+  MODE_RANGE_STEP,
+  MODE_RANGE_SLOT_BYTES,
+  MODE_RANGE_EXTRA_SLOT_BYTES,
+} from './decoding/decodeModes';
+export type {
+  MspModeDefinition,
+  MspModeRangeSlot,
+  MspModesConfiguration,
+} from './decoding/decodeModes';
+export {encodeModeRangeWrites} from './encoding/encodeModes';
+export type {EncodedModeRangeWrite} from './encoding/encodeModes';
+export {
+  MSP_FAILSAFE_CONFIG,
+  MSP_SET_FAILSAFE_CONFIG,
+  MSP_RXFAIL_CONFIG,
+  MSP_SET_RXFAIL_CONFIG,
+} from './commands/mspCommands';
+export {
+  decodeFailsafeConfiguration,
+  decodeRxFailsafeConfiguration,
+  RX_FAILSAFE_MIN,
+  RX_FAILSAFE_MAX,
+  RX_FAILSAFE_STEP,
+  BUILD_OPTION_GPS,
+} from './decoding/decodeFailsafe';
+export type {
+  FailsafeProcedure,
+  FailsafeSwitchMode,
+  RxFailsafeMode,
+  MspFailsafeConfiguration,
+  MspRxFailsafeChannel,
+  MspFailsafeSnapshot,
+} from './decoding/decodeFailsafe';
+export {encodeChangedFailsafeConfiguration} from './encoding/encodeFailsafe';
+export type {FailsafeWriteGroup, EncodedFailsafeWrite} from './encoding/encodeFailsafe';
+export {
+  MSP_BATTERY_CONFIG,
+  MSP_SET_BATTERY_CONFIG,
+  MSP_CURRENT_METER_CONFIG,
+  MSP_SET_CURRENT_METER_CONFIG,
+  MSP_VOLTAGE_METER_CONFIG,
+  MSP_SET_VOLTAGE_METER_CONFIG,
+  MSP_VOLTAGE_METERS,
+  MSP_CURRENT_METERS,
+  MSP_OSD_CONFIG,
+  MSP_SET_OSD_CONFIG,
+  MSP_OSD_CANVAS,
+  MSP_SET_VTX_CONFIG,
+  MSP_VTXTABLE_BAND,
+  MSP_VTXTABLE_POWERLEVEL,
+  MSP_SET_VTXTABLE_BAND,
+  MSP_SET_VTXTABLE_POWERLEVEL,
+  MSP_RAW_IMU,
+  MSP_ALTITUDE,
+} from './commands/mspCommands';
+export {decodeBatteryConfiguration, decodeVoltageMeterConfiguration, decodeCurrentMeterConfiguration} from './decoding/decodePowerConfiguration';
+export type {MspBatteryConfiguration, MspVoltageMeterConfiguration, MspCurrentMeterConfiguration, MspPowerConfigurationSnapshot} from './decoding/decodePowerConfiguration';
+export {encodeChangedPowerConfiguration} from './encoding/encodePowerConfiguration';
+export type {PowerWriteGroup, EncodedPowerWrite} from './encoding/encodePowerConfiguration';
+export {decodeOsdConfiguration, decodeOsdCanvas} from './decoding/decodeOsdConfiguration';
+export type {MspOsdConfiguration, MspOsdCanvas, MspOsdSnapshot} from './decoding/decodeOsdConfiguration';
+export {encodeChangedOsdConfiguration} from './encoding/encodeOsdConfiguration';
+export type {OsdWriteGroup, EncodedOsdWrite} from './encoding/encodeOsdConfiguration';
+export {decodeVtxConfiguration, decodeVtxBand, decodeVtxPowerLevel} from './decoding/decodeVtxConfiguration';
+export type {MspVtxConfiguration, MspVtxBand, MspVtxPowerLevel, MspVtxSnapshot} from './decoding/decodeVtxConfiguration';
+export {encodeChangedVtxConfiguration} from './encoding/encodeVtxConfiguration';
+export type {VtxWriteGroup, EncodedVtxWrite} from './encoding/encodeVtxConfiguration';
+export {decodeRawImu, decodeAltitude} from './decoding/decodeSensorTelemetry';
+export type {SensorVector3, MspRawImu, MspAltitude} from './decoding/decodeSensorTelemetry';
+export {
   decodeMspText,
   MSP_TEXT_PILOT_NAME,
   MSP_TEXT_CRAFT_NAME,

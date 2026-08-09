@@ -1,5 +1,27 @@
 export { RNMspTransport } from './RNMspTransport';
 export {
+  RawCliSessionController,
+  rawCliSessionController,
+  normalizeCliCommand,
+  sanitizeCliOutput,
+} from './RawCliSessionController';
+export type {
+  CliCommandResult,
+  CliBatchResult,
+  RawCliPhase,
+  RawCliCoordinator,
+  RawCliSessionControllerOptions,
+} from './RawCliSessionController';
+export {
+  FirmwarePresetRepository,
+  firmwarePresetRepository,
+  OFFICIAL_PRESETS_BASE_URL,
+} from './FirmwarePresetRepository';
+export type {
+  LoadedFirmwarePreset,
+  FirmwarePresetRepositoryOptions,
+} from './FirmwarePresetRepository';
+export {
   MspSessionCoordinator,
   mspSessionCoordinator,
   MspOwnershipActivationError,
@@ -62,11 +84,110 @@ export {
   GpsConfigurationController,
   gpsConfigurationController,
 } from './GpsConfigurationController';
-export {ReceiverConfigurationController, receiverConfigurationController} from './ReceiverConfigurationController';
-export type {ReceiverBlockReason, ReceiverLoadOutcome, ReceiverSaveOutcome, ReceiverSessionCoordinator, ReceiverAppStateOwner, ReceiverConfigurationControllerOptions} from './ReceiverConfigurationController';
-export {acquireReceiverTelemetry, RECEIVER_CHANNELS_POLL_ID} from './receiverTelemetry';
-export {PidTuningController, pidTuningController} from './PidTuningController';
-export type {PidBlockReason, PidLoadOutcome, PidSaveOutcome, PidSessionCoordinator, PidAppStateOwner, PidTuningControllerOptions} from './PidTuningController';
+export {
+  ReceiverConfigurationController,
+  receiverConfigurationController,
+} from './ReceiverConfigurationController';
+export type {
+  ReceiverBlockReason,
+  ReceiverLoadOutcome,
+  ReceiverSaveOutcome,
+  ReceiverSessionCoordinator,
+  ReceiverAppStateOwner,
+  ReceiverConfigurationControllerOptions,
+} from './ReceiverConfigurationController';
+export {
+  acquireReceiverTelemetry,
+  RECEIVER_CHANNELS_POLL_ID,
+} from './receiverTelemetry';
+export {
+  PidTuningController,
+  pidTuningController,
+} from './PidTuningController';
+export type {
+  PidBlockReason,
+  PidLoadOutcome,
+  PidSaveOutcome,
+  PidSessionCoordinator,
+  PidAppStateOwner,
+  PidTuningControllerOptions,
+} from './PidTuningController';
+export {
+  ModesConfigurationController,
+  modesConfigurationController,
+} from './ModesConfigurationController';
+export type {
+  ModesBlockReason,
+  ModesWriteStage,
+  ModesLoadOutcome,
+  ModesSaveOutcome,
+  ModesSessionCoordinator,
+  ModesAppStateOwner,
+  ModesConfigurationControllerOptions,
+} from './ModesConfigurationController';
+export {
+  FailsafeConfigurationController,
+  failsafeConfigurationController,
+} from './FailsafeConfigurationController';
+export type {
+  FailsafeBlockReason,
+  FailsafeSaveStage,
+  FailsafeLoadOutcome,
+  FailsafeSaveOutcome,
+  FailsafeSessionCoordinator,
+  FailsafeAppStateOwner,
+  FailsafeConfigurationControllerOptions,
+} from './FailsafeConfigurationController';
+export {
+  PowerConfigurationController,
+  powerConfigurationController,
+} from './PowerConfigurationController';
+export type {
+  PowerBlockReason,
+  PowerSaveStage,
+  PowerLoadOutcome,
+  PowerSaveOutcome,
+  PowerSessionCoordinator,
+  PowerAppStateOwner,
+  PowerConfigurationControllerOptions,
+} from './PowerConfigurationController';
+export {
+  acquirePowerTelemetry,
+  POWER_BATTERY_POLL_ID,
+  POWER_BATTERY_POLL_INTERVAL_MS,
+} from './powerTelemetry';
+export {
+  OsdConfigurationController,
+  osdConfigurationController,
+} from './OsdConfigurationController';
+export type {
+  OsdBlockReason,
+  OsdSaveStage,
+  OsdLoadOutcome,
+  OsdSaveOutcome,
+  OsdSessionCoordinator,
+  OsdAppStateOwner,
+  OsdConfigurationControllerOptions,
+} from './OsdConfigurationController';
+export {
+  VtxConfigurationController,
+  vtxConfigurationController,
+} from './VtxConfigurationController';
+export type {
+  VtxBlockReason,
+  VtxSaveStage,
+  VtxLoadOutcome,
+  VtxSaveOutcome,
+  VtxSessionCoordinator,
+  VtxAppStateOwner,
+  VtxConfigurationControllerOptions,
+} from './VtxConfigurationController';
+export {
+  acquireSensorsTelemetry,
+  SENSOR_IMU_POLL_ID,
+  SENSOR_ALTITUDE_POLL_ID,
+  SENSOR_IMU_INTERVAL_MS,
+} from './sensorsTelemetry';
 export {
   GeneralConfigurationController,
   generalConfigurationController,

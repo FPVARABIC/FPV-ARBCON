@@ -91,6 +91,51 @@ export const MSP_STATUS_EX = 150;
  * readiness identity; never polled (BoxIdsAcquisition.ts). */
 export const MSP_BOXIDS = 119;
 
+/** Betaflight 2025.12.2 / MSP API 1.47 AUX mode configuration.
+ * MSP_MODE_RANGES returns the complete fixed-size activation-condition table,
+ * MSP_MODE_RANGES_EXTRA supplies OR/AND plus linked-mode metadata, and
+ * MSP_SET_MODE_RANGE writes one indexed table row. A save transaction must
+ * rewrite every row so deleted conditions are cleared on the FC. */
+export const MSP_MODE_RANGES = 34;
+export const MSP_SET_MODE_RANGE = 35;
+export const MSP_BOXNAMES = 116;
+export const MSP_MODE_RANGES_EXTRA = 238;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 failsafe configuration. */
+export const MSP_FAILSAFE_CONFIG = 75;
+export const MSP_SET_FAILSAFE_CONFIG = 76;
+export const MSP_RXFAIL_CONFIG = 77;
+export const MSP_SET_RXFAIL_CONFIG = 78;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 power configuration and meters. */
+export const MSP_BATTERY_CONFIG = 32;
+export const MSP_SET_BATTERY_CONFIG = 33;
+export const MSP_CURRENT_METER_CONFIG = 40;
+export const MSP_SET_CURRENT_METER_CONFIG = 41;
+export const MSP_VOLTAGE_METER_CONFIG = 56;
+export const MSP_SET_VOLTAGE_METER_CONFIG = 57;
+export const MSP_VOLTAGE_METERS = 128;
+export const MSP_CURRENT_METERS = 129;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 on-screen-display configuration.
+ * MSP_OSD_CONFIG returns the complete layout/settings snapshot,
+ * MSP_SET_OSD_CONFIG writes one changed group, and MSP_OSD_CANVAS reports
+ * the display's character grid. */
+export const MSP_OSD_CONFIG = 84;
+export const MSP_SET_OSD_CONFIG = 85;
+export const MSP_OSD_CANVAS = 189;
+
+/** Betaflight 2025.12.2 / MSP API 1.47 video-transmitter configuration. */
+export const MSP_SET_VTX_CONFIG = 89;
+export const MSP_VTXTABLE_BAND = 137;
+export const MSP_VTXTABLE_POWERLEVEL = 138;
+export const MSP_SET_VTXTABLE_BAND = 227;
+export const MSP_SET_VTXTABLE_POWERLEVEL = 228;
+
+/** Live sensor samples used by the Sensors workspace. */
+export const MSP_RAW_IMU = 102;
+export const MSP_ALTITUDE = 109;
+
 /**
  * Pass 7.7, Region 5 - the three FC-tool WRITE commands, each verified
  * DIRECTLY at BETAFLIGHT_API147_COMMIT (release 2025.12.5). See

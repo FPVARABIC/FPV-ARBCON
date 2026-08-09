@@ -56,6 +56,14 @@ import GpsScreen from './GpsScreen';
 import ConfigurationsScreen from './ConfigurationsScreen';
 import ReceiverScreen from './ReceiverScreen';
 import PidTuningScreen from './PidTuningScreen';
+import ModesScreen from './ModesScreen';
+import FailsafeScreen from './FailsafeScreen';
+import PowerBatteryScreen from './PowerBatteryScreen';
+import OsdScreen from './OsdScreen';
+import VideoTransmitterScreen from './VideoTransmitterScreen';
+import SensorsScreen from './SensorsScreen';
+import PresetsScreen from './PresetsScreen';
+import CliScreen from './CliScreen';
 import {
   INITIAL_MAIN_TAB,
   isTabSelectable,
@@ -79,6 +87,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
   const [activeTab, setActiveTab] = useState<MainTabKey>(INITIAL_MAIN_TAB);
   /** True only while a departure is waiting on the bounded stop result. */
   const [awaitingMotorStop, setAwaitingMotorStop] = useState(false);
+  const [rawCliBusy, setRawCliBusy] = useState(false);
   /** Tabs that have been opened at least once, and are therefore mounted
    * from here on. The initial tab counts as opened. */
   const [mountedTabs, setMountedTabs] = useState<readonly MainTabKey[]>([
@@ -129,6 +138,26 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     (dirty: boolean) => reportDirty('PID', dirty),
     [reportDirty],
   );
+  const reportModesDirty = useCallback(
+    (dirty: boolean) => reportDirty('MODES', dirty),
+    [reportDirty],
+  );
+  const reportFailsafeDirty = useCallback(
+    (dirty: boolean) => reportDirty('FAILSAFE', dirty),
+    [reportDirty],
+  );
+  const reportPowerDirty = useCallback(
+    (dirty: boolean) => reportDirty('POWER', dirty),
+    [reportDirty],
+  );
+  const reportOsdDirty = useCallback(
+    (dirty: boolean) => reportDirty('OSD', dirty),
+    [reportDirty],
+  );
+  const reportVtxDirty = useCallback(
+    (dirty: boolean) => reportDirty('VTX', dirty),
+    [reportDirty],
+  );
 
   const commitTabSwitch = useCallback((next: MainTabKey) => {
     setMountedTabs(current =>
@@ -141,7 +170,9 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
    * Registered by the Motors tab while it is mounted. Undefined means
    * Motors has no live session, so there is nothing to wait for.
    */
-  const motorsDepartureGate = useRef<MotorsDepartureGate | undefined>(undefined);
+  const motorsDepartureGate = useRef<MotorsDepartureGate | undefined>(
+    undefined,
+  );
   /**
    * Everything a pending departure owns, so unmount can cancel it.
    * Without this the bounded backstop fires into a torn-down tree - the
@@ -213,7 +244,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       if (!stopAlreadyRequested && !requestMotorStopForDeparture()) {
         return;
       }
-      const gate = activeTab === 'MOTORS' ? motorsDepartureGate.current : undefined;
+      const gate =
+        activeTab === 'MOTORS' ? motorsDepartureGate.current : undefined;
       if (gate === undefined) {
         commitTabSwitch(next);
         return;
@@ -284,9 +316,16 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     (next: MainTabKey) => {
       if (
         awaitingMotorStop ||
+        rawCliBusy ||
         next === activeTab ||
         !isTabSelectable(next)
       ) {
+        if (rawCliBusy) {
+          Alert.alert(
+            'جلسة CLI نشطة',
+            'احفظ أو ألغِ الجلسة من الشاشة الحالية قبل الانتقال.',
+          );
+        }
         return;
       }
       if (dirtyTabs.current.has(activeTab)) {
@@ -320,6 +359,7 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       activeTab,
       awaitingMotorStop,
       performTabSwitch,
+      rawCliBusy,
       requestMotorStopForDeparture,
     ],
   );
@@ -409,7 +449,10 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
           </View>
         ) : null}
         {mountedTabs.includes('RECEIVER') ? (
-          <View style={activeTab === 'RECEIVER' ? styles.visible : styles.hidden} testID="main-tab-panel-RECEIVER">
+          <View
+            style={activeTab === 'RECEIVER' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-RECEIVER"
+          >
             <ReceiverScreen
               sessionKey={props.route.params?.sessionKey}
               active={activeTab === 'RECEIVER'}
@@ -420,12 +463,117 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
           </View>
         ) : null}
         {mountedTabs.includes('PID') ? (
-          <View style={activeTab === 'PID' ? styles.visible : styles.hidden} testID="main-tab-panel-PID">
+          <View
+            style={activeTab === 'PID' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-PID"
+          >
             <PidTuningScreen
               sessionKey={props.route.params?.sessionKey}
               active={activeTab === 'PID'}
               onOpenMotors={() => handleSelectTab('MOTORS')}
               onDirtyChange={reportPidDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('MODES') ? (
+          <View
+            style={activeTab === 'MODES' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-MODES"
+          >
+            <ModesScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'MODES'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportModesDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('FAILSAFE') ? (
+          <View
+            style={activeTab === 'FAILSAFE' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-FAILSAFE"
+          >
+            <FailsafeScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'FAILSAFE'}
+              onOpenReceiver={() => handleSelectTab('RECEIVER')}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportFailsafeDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('POWER') ? (
+          <View
+            style={activeTab === 'POWER' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-POWER"
+          >
+            <PowerBatteryScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'POWER'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportPowerDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('OSD') ? (
+          <View
+            style={activeTab === 'OSD' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-OSD"
+          >
+            <OsdScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'OSD'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportOsdDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('VTX') ? (
+          <View
+            style={activeTab === 'VTX' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-VTX"
+          >
+            <VideoTransmitterScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'VTX'}
+              onOpenMotors={() => handleSelectTab('MOTORS')}
+              onDirtyChange={reportVtxDirty}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('SENSORS') ? (
+          <View
+            style={activeTab === 'SENSORS' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-SENSORS"
+          >
+            <SensorsScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'SENSORS'}
+              onOpenSetup={() => handleSelectTab('SETUP')}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('PRESETS') ? (
+          <View
+            style={activeTab === 'PRESETS' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-PRESETS"
+          >
+            <PresetsScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'PRESETS'}
+              onCliBusyChange={setRawCliBusy}
+            />
+          </View>
+        ) : null}
+        {mountedTabs.includes('CLI') ? (
+          <View
+            style={activeTab === 'CLI' ? styles.visible : styles.hidden}
+            testID="main-tab-panel-CLI"
+          >
+            <CliScreen
+              sessionKey={props.route.params?.sessionKey}
+              active={activeTab === 'CLI'}
+              onCliBusyChange={setRawCliBusy}
             />
           </View>
         ) : null}

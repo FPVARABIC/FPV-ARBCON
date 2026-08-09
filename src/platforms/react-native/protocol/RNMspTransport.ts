@@ -44,7 +44,7 @@ import type {
   UsbSerialSessionDetachedEvent,
   UsbSerialTransportClient,
 } from '../transport';
-import {base64ToBytes, bytesToBase64} from './base64';
+import { base64ToBytes, bytesToBase64 } from './base64';
 
 /**
  * Re-wraps UsbSerialTransportClient's TransportError ({code,
@@ -76,15 +76,29 @@ function toMspTransportError(reason: unknown): MspTransportError {
  * checkAcceptance() rejects new work before ever reaching this transport
  * again - this exists purely as the defensive guard Step 1.6 requires. */
 function disposedError(): MspTransportError {
-  return {code: 'SESSION_CLOSED', message: 'This RNMspTransport instance has been disposed.'};
+  return {
+    code: 'SESSION_CLOSED',
+    message: 'This RNMspTransport instance has been disposed.',
+  };
 }
 
 export class RNMspTransport implements MspTransport {
   private readonly dataListeners = new Set<(bytes: Uint8Array) => void>();
-  private readonly sessionDetachedListeners = new Set<(event: MspTransportSessionDetachedEvent) => void>();
+  private readonly sessionDetachedListeners = new Set<
+    (event: MspTransportSessionDetachedEvent) => void
+  >();
   private readonly unsubscribeRealData: () => void;
   private readonly unsubscribeRealSessionDetached: () => void;
   private disposed = false;
+  /**
+   * A CLI exchange uses the same already-open serial session, but its
+   * printable response is not MSP and must never reach MspClient's stream
+   * parser.  This single listener is installed only after the coordinator
+   * has paused telemetry and reserved the idle client.  While present it
+   * receives every byte for this session and the ordinary MSP listeners
+   * receive none.
+   */
+  private rawModeListener: ((bytes: Uint8Array) => void) | undefined;
 
   constructor(
     private readonly client: UsbSerialTransportClient,
@@ -129,6 +143,14 @@ export class RNMspTransport implements MspTransport {
     // still mid-decode. Fan-out below preserves the exact delivery order
     // the underlying client used, since it is itself synchronous.
     const bytes = base64ToBytes(event.dataBase64);
+    if (this.rawModeListener !== undefined) {
+      try {
+        this.rawModeListener(bytes);
+      } catch {
+        // The native receive callback must never be broken by UI code.
+      }
+      return;
+    }
     // Snapshot into a plain array BEFORE iterating: a listener that
     // synchronously mutates dataListeners mid-dispatch (e.g. one that
     // calls dispose(), which clears this Set - exactly
@@ -155,11 +177,15 @@ export class RNMspTransport implements MspTransport {
     }
   }
 
-  private handleRealSessionDetached(event: UsbSerialSessionDetachedEvent): void {
+  private handleRealSessionDetached(
+    event: UsbSerialSessionDetachedEvent,
+  ): void {
     if (event.sessionId !== this.sessionId) {
       return;
     }
-    const mspEvent: MspTransportSessionDetachedEvent = {sessionId: this.sessionId};
+    const mspEvent: MspTransportSessionDetachedEvent = {
+      sessionId: this.sessionId,
+    };
     // Snapshot BEFORE iterating - same reasoning as handleRealData() above.
     // Concretely real, not theoretical: MspSessionCoordinator.openSession()
     // registers an onSessionDetached listener that synchronously calls
@@ -188,7 +214,48 @@ export class RNMspTransport implements MspTransport {
     }
   }
 
-  onDataReceived(listener: (bytes: Uint8Array) => void): MspTransportUnsubscribe {
+  /**
+   * Diverts this transport's receive stream to one exclusive raw consumer.
+   * Ownership and quiescence are deliberately NOT inferred here; the CLI
+   * controller must establish them before calling this low-level seam.
+   */
+  enterRawMode(listener: (bytes: Uint8Array) => void): () => void {
+    if (this.disposed) {
+      throw disposedError();
+    }
+    if (this.rawModeListener !== undefined) {
+      throw new Error('RNMspTransport raw mode is already active.');
+    }
+    this.rawModeListener = listener;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (this.rawModeListener === listener) {
+        this.rawModeListener = undefined;
+      }
+    };
+  }
+
+  /** Raw writes share the exact native session and ordering as MSP writes. */
+  async writeRawBytes(payload: Uint8Array): Promise<void> {
+    await this.writeBytes(payload);
+  }
+
+  async saveTextFile(filename: string, text: string): Promise<boolean> {
+    if (this.disposed) throw disposedError();
+    return this.client.saveFirmwareFile(
+      filename,
+      'text/plain',
+      bytesToBase64(
+        Uint8Array.from(text, character => character.charCodeAt(0) % 256),
+      ),
+    );
+  }
+
+  onDataReceived(
+    listener: (bytes: Uint8Array) => void,
+  ): MspTransportUnsubscribe {
     this.dataListeners.add(listener);
     return () => {
       this.dataListeners.delete(listener);
@@ -257,5 +324,6 @@ export class RNMspTransport implements MspTransport {
 
     this.dataListeners.clear();
     this.sessionDetachedListeners.clear();
+    this.rawModeListener = undefined;
   }
 }

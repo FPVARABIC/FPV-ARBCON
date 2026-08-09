@@ -144,6 +144,34 @@ export type {
   PidTuningValidationCode,
 } from './pidTuningModel';
 export {
+  MODES_AUX_CHANNEL_COUNT,
+  createModesConfigurationDraft,
+  modesDraftsEqual,
+  modesSnapshotsEqual,
+  validateModesDraft,
+  conditionsForMode,
+  modeIsActive,
+  modeArabicName,
+} from './modesConfigurationModel';
+export type {
+  ModeConditionDraft,
+  ModesConfigurationDraft,
+  ModesValidationCode,
+} from './modesConfigurationModel';
+export {
+  createFailsafeConfigurationDraft,
+  failsafeDraftsEqual,
+  failsafeSnapshotsEqual,
+  validateFailsafeDraft,
+} from './failsafeConfigurationModel';
+export type {
+  FailsafeChannelDraft,
+  FailsafeConfigurationDraft,
+  FailsafeValidationCode,
+} from './failsafeConfigurationModel';
+export {createPowerConfigurationDraft, powerDraftsEqual, powerSnapshotsEqual, validatePowerDraft} from './powerConfigurationModel';
+export type {PowerConfigurationDraft, PowerValidationCode} from './powerConfigurationModel';
+export {
   FEATURE_MOTOR_STOP_BIT,
   FEATURE_ESC_SENSOR_BIT,
   MOTOR_PROTOCOL_RAW_MIN,

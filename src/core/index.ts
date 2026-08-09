@@ -287,6 +287,180 @@ export type {
   PidTuningDraft,
   PidTuningValidationCode,
 } from './state/pidTuningModel';
+export {
+  MODES_AUX_CHANNEL_COUNT,
+  createModesConfigurationDraft,
+  modesDraftsEqual,
+  modesSnapshotsEqual,
+  validateModesDraft,
+  conditionsForMode,
+  modeIsActive,
+  modeArabicName,
+} from './state/modesConfigurationModel';
+export type {
+  ModeConditionDraft,
+  ModesConfigurationDraft,
+  ModesValidationCode,
+} from './state/modesConfigurationModel';
+export {
+  MSP_MODE_RANGES,
+  MSP_SET_MODE_RANGE,
+  MSP_BOXNAMES,
+  MSP_MODE_RANGES_EXTRA,
+  decodeModesConfiguration,
+  encodeModeRangeWrites,
+  MODE_RANGE_MIN,
+  MODE_RANGE_MAX,
+  MODE_RANGE_STEP,
+  MODE_RANGE_SLOT_BYTES,
+  MODE_RANGE_EXTRA_SLOT_BYTES,
+} from './protocol';
+export type {
+  MspModeDefinition,
+  MspModeRangeSlot,
+  MspModesConfiguration,
+  EncodedModeRangeWrite,
+} from './protocol';
+export {
+  MSP_FAILSAFE_CONFIG,
+  MSP_SET_FAILSAFE_CONFIG,
+  MSP_RXFAIL_CONFIG,
+  MSP_SET_RXFAIL_CONFIG,
+  decodeFailsafeConfiguration,
+  decodeRxFailsafeConfiguration,
+  encodeChangedFailsafeConfiguration,
+  RX_FAILSAFE_MIN,
+  RX_FAILSAFE_MAX,
+  RX_FAILSAFE_STEP,
+  BUILD_OPTION_GPS,
+} from './protocol';
+export type {
+  FailsafeProcedure,
+  FailsafeSwitchMode,
+  RxFailsafeMode,
+  MspFailsafeConfiguration,
+  MspRxFailsafeChannel,
+  MspFailsafeSnapshot,
+  FailsafeWriteGroup,
+  EncodedFailsafeWrite,
+} from './protocol';
+export {
+  createFailsafeConfigurationDraft,
+  failsafeDraftsEqual,
+  failsafeSnapshotsEqual,
+  validateFailsafeDraft,
+} from './state/failsafeConfigurationModel';
+export type {
+  FailsafeChannelDraft,
+  FailsafeConfigurationDraft,
+  FailsafeValidationCode,
+} from './state/failsafeConfigurationModel';
+export {
+  MSP_BATTERY_CONFIG,
+  MSP_SET_BATTERY_CONFIG,
+  MSP_CURRENT_METER_CONFIG,
+  MSP_SET_CURRENT_METER_CONFIG,
+  MSP_VOLTAGE_METER_CONFIG,
+  MSP_SET_VOLTAGE_METER_CONFIG,
+  MSP_VOLTAGE_METERS,
+  MSP_CURRENT_METERS,
+  decodeBatteryConfiguration,
+  decodeVoltageMeterConfiguration,
+  decodeCurrentMeterConfiguration,
+  encodeChangedPowerConfiguration,
+} from './protocol';
+export type {
+  MspBatteryConfiguration,
+  MspVoltageMeterConfiguration,
+  MspCurrentMeterConfiguration,
+  MspPowerConfigurationSnapshot,
+  PowerWriteGroup,
+  EncodedPowerWrite,
+} from './protocol';
+export {
+  createPowerConfigurationDraft,
+  powerDraftsEqual,
+  powerSnapshotsEqual,
+  validatePowerDraft,
+} from './state/powerConfigurationModel';
+export type {
+  PowerConfigurationDraft,
+  PowerValidationCode,
+} from './state/powerConfigurationModel';
+export {
+  MSP_OSD_CONFIG,
+  MSP_SET_OSD_CONFIG,
+  MSP_OSD_CANVAS,
+  decodeOsdConfiguration,
+  decodeOsdCanvas,
+  encodeChangedOsdConfiguration,
+} from './protocol';
+export type {
+  MspOsdConfiguration,
+  MspOsdCanvas,
+  MspOsdSnapshot,
+  OsdWriteGroup,
+  EncodedOsdWrite,
+} from './protocol';
+export {
+  OSD_PROFILE_BITS_POSITION,
+  OSD_PROFILE_MASK,
+  OSD_TYPE_MASK,
+  OSD_POSITION_MASK,
+  createOsdConfigurationDraft,
+  osdDraftsEqual,
+  osdSnapshotsEqual,
+  osdPositionX,
+  osdPositionY,
+  osdElementType,
+  osdVisibleInProfile,
+  setOsdPosition,
+  setOsdProfileVisibility,
+  validateOsdDraft,
+  OSD_ELEMENT_NAMES_AR,
+  osdElementName,
+} from './state/osdConfigurationModel';
+export type {
+  OsdConfigurationDraft,
+  OsdValidationCode,
+} from './state/osdConfigurationModel';
+export {
+  MSP_SET_VTX_CONFIG,
+  MSP_VTXTABLE_BAND,
+  MSP_VTXTABLE_POWERLEVEL,
+  MSP_SET_VTXTABLE_BAND,
+  MSP_SET_VTXTABLE_POWERLEVEL,
+  decodeVtxConfiguration,
+  decodeVtxBand,
+  decodeVtxPowerLevel,
+  encodeChangedVtxConfiguration,
+} from './protocol';
+export type {
+  MspVtxConfiguration,
+  MspVtxBand,
+  MspVtxPowerLevel,
+  MspVtxSnapshot,
+  VtxWriteGroup,
+  EncodedVtxWrite,
+} from './protocol';
+export {
+  createVtxConfigurationDraft,
+  vtxDraftsEqual,
+  vtxSnapshotsEqual,
+  validateVtxDraft,
+  vtxDeviceName,
+} from './state/vtxConfigurationModel';
+export type {
+  VtxConfigurationDraft,
+  VtxValidationCode,
+} from './state/vtxConfigurationModel';
+export {
+  MSP_RAW_IMU,
+  MSP_ALTITUDE,
+  decodeRawImu,
+  decodeAltitude,
+} from './protocol';
+export type { SensorVector3, MspRawImu, MspAltitude } from './protocol';
 export type {
   MspDetailedGps,
   MspCompGps,
@@ -500,3 +674,21 @@ export type {
   ReceiverRssiSemantics,
   GpsCardSemantics,
 } from './state/auxTelemetrySemantics';
+export {
+  parseFirmwarePresetIndex,
+  parseFirmwarePresetDocument,
+  expandFirmwarePresetIncludes,
+  commandsForPreset,
+  filterCompatiblePresets,
+  presetFirmwareFamily,
+  isSafePresetPath,
+  sha256Hex,
+} from './state/presetCatalog';
+export type {
+  FirmwarePresetStatus,
+  FirmwarePresetCategory,
+  FirmwarePresetSummary,
+  FirmwarePresetIndex,
+  FirmwarePresetOption,
+  FirmwarePresetDocument,
+} from './state/presetCatalog';
