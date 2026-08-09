@@ -18,7 +18,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from 'react-native';
@@ -54,8 +53,15 @@ import {
 } from '../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
 import { StickyActionBar } from '../components/editing';
+import {
+  Button,
+  MIN_TOUCH_TARGET,
+  NoticeBox,
+  ToggleSwitch,
+} from '../components/controls';
+import { readInteraction } from '../components/controls/interaction';
+import { Icon } from '../icons';
 
-const MIN_TOUCH_TARGET = 44;
 const TELEMETRY_ROLES = SERIAL_ROLE_DEFINITIONS.filter(
   role => role.category === 'TELEMETRY',
 );
@@ -143,15 +149,11 @@ function RoleSwitch({
   return (
     <View style={[styles.switchRow, disabled && styles.disabled]}>
       <Text style={styles.controlLabel}>{label}</Text>
-      <Switch
+      <ToggleSwitch
         value={value}
         disabled={disabled}
         onValueChange={onChange}
         accessibilityLabel={label}
-        accessibilityRole="switch"
-        accessibilityState={{ checked: value, disabled }}
-        trackColor={{ false: colors.disabled, true: colors.accentStrong }}
-        thumbColor={value ? colors.accent : colors.textSecondary}
         testID={testID}
       />
     </View>
@@ -193,13 +195,20 @@ function ChoiceGroup({
             selected: selected === undefined,
             disabled,
           }}
-          style={[
-            styles.chip,
-            selected === undefined && styles.chipSelected,
-            disabled && styles.disabled,
-          ]}
+          style={state => {
+            const { pressed, hovered } = readInteraction(state);
+            return [
+              styles.chip,
+              selected === undefined && styles.chipSelected,
+              (hovered || pressed) && !disabled && styles.chipActive,
+              disabled && styles.disabled,
+            ];
+          }}
           testID={`ports-${portIdentifier}-${categoryKey}-none`}
         >
+          {selected === undefined ? (
+            <Icon name="check" size={16} color={colors.accentStrong} />
+          ) : null}
           <Text
             style={[
               styles.chipText,
@@ -224,13 +233,21 @@ function ChoiceGroup({
                 selected: active,
                 disabled: disabled || !available || roleDisabled,
               }}
-              style={[
-                styles.chip,
-                active && styles.chipSelected,
-                (!available || disabled || roleDisabled) && styles.disabled,
-              ]}
+              style={state => {
+                const { pressed, hovered } = readInteraction(state);
+                const inert = disabled || !available || roleDisabled;
+                return [
+                  styles.chip,
+                  active && styles.chipSelected,
+                  (hovered || pressed) && !inert && styles.chipActive,
+                  inert && styles.disabled,
+                ];
+              }}
               testID={`ports-${portIdentifier}-role-${role.key}`}
             >
+              {active ? (
+                <Icon name="check" size={16} color={colors.accentStrong} />
+              ) : null}
               <Text
                 style={[styles.chipText, active && styles.chipTextSelected]}
               >
@@ -281,11 +298,15 @@ function BaudSelector({
               }`}
               accessibilityRole="radio"
               accessibilityState={{ selected, disabled }}
-              style={[
-                styles.baudChip,
-                selected && styles.chipSelected,
-                disabled && styles.disabled,
-              ]}
+              style={state => {
+                const { pressed, hovered } = readInteraction(state);
+                return [
+                  styles.baudChip,
+                  selected && styles.chipSelected,
+                  (hovered || pressed) && !disabled && styles.chipActive,
+                  disabled && styles.disabled,
+                ];
+              }}
               testID={`ports-${port.identifier}-${field}-${index}`}
             >
               <Text
@@ -361,7 +382,13 @@ function PortCard({
         }`}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        style={styles.portHeader}
+        style={state => {
+          const { pressed, hovered } = readInteraction(state);
+          return [
+            styles.portHeader,
+            (hovered || pressed) && styles.portHeaderActive,
+          ];
+        }}
         testID={`ports-card-toggle-${port.identifier}`}
       >
         <View>
@@ -378,11 +405,18 @@ function PortCard({
               {t('portsConfiguration.activeRoleCount', { count: roles.length })}
             </Text>
           </View>
-          <Text style={styles.expandText}>
-            {expanded
-              ? t('portsConfiguration.collapsePort')
-              : t('portsConfiguration.editPort')}
-          </Text>
+          <View style={styles.expandRow}>
+            <Icon
+              name={expanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={colors.accentStrong}
+            />
+            <Text style={styles.expandText}>
+              {expanded
+                ? t('portsConfiguration.collapsePort')
+                : t('portsConfiguration.editPort')}
+            </Text>
+          </View>
         </View>
       </Pressable>
       {roles.length > 0 ? (
@@ -754,14 +788,12 @@ export default function PortsScreen({
           </Text>
         </View>
 
-        <View style={styles.warningCard}>
-          <Text style={styles.warningTitle}>
-            {t('portsConfiguration.warningTitle')}
-          </Text>
-          <Text style={styles.warningText}>
-            {t('portsConfiguration.warningBody')}
-          </Text>
-        </View>
+        <NoticeBox
+          variant="warning"
+          title={t('portsConfiguration.warningTitle')}
+        >
+          {t('portsConfiguration.warningBody')}
+        </NoticeBox>
 
         {phase === 'IDLE' ? (
           <Text style={styles.stateText}>
@@ -776,17 +808,13 @@ export default function PortsScreen({
         {loadMessage !== undefined ? (
           <View style={styles.errorCard}>
             <Text style={styles.errorText}>{loadMessage}</Text>
-            <Pressable
-              style={styles.secondaryButton}
-              accessibilityRole="button"
-              accessibilityLabel={t('portsConfiguration.reload')}
+            <Button
+              label={t('portsConfiguration.reload')}
               onPress={reloadNow}
+              variant="secondary"
+              icon="refresh-cw"
               testID="ports-retry-load"
-            >
-              <Text style={styles.secondaryButtonText}>
-                {t('portsConfiguration.reload')}
-              </Text>
-            </Pressable>
+            />
           </View>
         ) : null}
 
@@ -844,27 +872,22 @@ export default function PortsScreen({
                 </Text>
               </View>
               {onOpenGps !== undefined ? (
-                <Pressable
+                <Button
+                  label={t('portsConfiguration.openGps')}
                   onPress={onOpenGps}
-                  style={styles.secondaryButton}
-                  accessibilityRole="button"
+                  variant="secondary"
+                  icon="satellite"
                   testID="ports-open-gps"
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {t('portsConfiguration.openGps')}
-                  </Text>
-                </Pressable>
+                />
               ) : null}
             </View>
 
             {snapshot.vtxTableAvailable === true &&
             snapshot.vtxTableConfigured === false &&
             draft.some(port => hasSerialRole(port, 'VTX_MSP')) ? (
-              <View style={styles.noticeCard} testID="ports-vtx-table-warning">
-                <Text style={styles.noticeText}>
-                  {t('portsConfiguration.vtxTableMissing')}
-                </Text>
-              </View>
+              <NoticeBox variant="info" testID="ports-vtx-table-warning">
+                {t('portsConfiguration.vtxTableMissing')}
+              </NoticeBox>
             ) : null}
 
             {issues.length > 0 ? (
@@ -936,64 +959,40 @@ export default function PortsScreen({
             ) : null}
 
             <View style={styles.actions}>
-              <Pressable
-                disabled={controlsDisabled || !dirty}
-                accessibilityRole="button"
-                accessibilityLabel={t('portsConfiguration.reset')}
-                accessibilityState={{
-                  disabled: controlsDisabled || !dirty,
-                }}
+              <Button
+                label={t('portsConfiguration.reset')}
                 onPress={() => {
                   setDraft(original?.ports ?? []);
                   setSaveOutcome(undefined);
                 }}
-                style={[
-                  styles.secondaryButton,
-                  (controlsDisabled || !dirty) && styles.disabled,
-                ]}
+                variant="secondary"
+                icon="rotate-ccw"
+                disabled={controlsDisabled || !dirty}
                 testID="ports-reset"
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {t('portsConfiguration.reset')}
-                </Text>
-              </Pressable>
-              <Pressable
-                disabled={controlsDisabled}
-                accessibilityRole="button"
-                accessibilityLabel={t('portsConfiguration.reload')}
-                accessibilityState={{ disabled: controlsDisabled }}
+              />
+              <Button
+                label={t('portsConfiguration.reload')}
                 onPress={requestReload}
-                style={[
-                  styles.secondaryButton,
-                  controlsDisabled && styles.disabled,
-                ]}
+                variant="secondary"
+                icon="refresh-cw"
+                disabled={controlsDisabled}
                 testID="ports-reload"
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {t('portsConfiguration.reload')}
-                </Text>
-              </Pressable>
-              <Pressable
-                disabled={controlsDisabled || !dirty || issues.length > 0}
-                accessibilityRole="button"
-                accessibilityLabel={t('portsConfiguration.saveAndReboot')}
-                accessibilityState={{
-                  disabled: controlsDisabled || !dirty || issues.length > 0,
-                }}
-                onPress={handleSave}
-                style={[
-                  styles.saveButton,
-                  (controlsDisabled || !dirty || issues.length > 0) &&
-                    styles.disabled,
-                ]}
-                testID="ports-save"
-              >
-                <Text style={styles.saveButtonText}>
-                  {phase === 'SAVING'
+              />
+              <Button
+                label={
+                  phase === 'SAVING'
                     ? t('portsConfiguration.saving')
-                    : t('portsConfiguration.saveAndReboot')}
-                </Text>
-              </Pressable>
+                    : t('portsConfiguration.saveAndReboot')
+                }
+                onPress={handleSave}
+                variant="primary"
+                size="lg"
+                icon="save"
+                disabled={controlsDisabled || !dirty || issues.length > 0}
+                accessibilityLabel={t('portsConfiguration.saveAndReboot')}
+                style={styles.saveGrow}
+                testID="ports-save"
+              />
             </View>
           </>
         ) : null}
@@ -1045,7 +1044,8 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
     gap: spacing.lg,
     width: '100%',
-    maxWidth: 1180,
+    // The real cap is applied inline from useContentEnvelope; no static
+    // fallback so the envelope logic is the only authority.
     alignSelf: 'center',
   },
   hero: { alignItems: 'flex-end', gap: spacing.xs },
@@ -1067,26 +1067,6 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     writingDirection: 'rtl',
   },
-  warningCard: {
-    backgroundColor: '#FFF4D8',
-    borderColor: colors.warning,
-    borderWidth: 1,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    gap: spacing.xs,
-  },
-  warningTitle: {
-    ...typography.sectionTitle,
-    color: colors.warning,
-    textAlign: 'right',
-    writingDirection: 'rtl',
-  },
-  warningText: {
-    ...typography.body,
-    color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl',
-  },
   stateText: {
     ...typography.body,
     color: colors.textSecondary,
@@ -1095,7 +1075,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   errorCard: {
-    backgroundColor: '#FFF0F1',
+    backgroundColor: colors.errorSoft,
     borderWidth: 1,
     borderColor: colors.error,
     borderRadius: radii.md,
@@ -1156,19 +1136,8 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     writingDirection: 'rtl',
   },
-  noticeCard: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: radii.md,
-    padding: spacing.md,
-  },
-  noticeText: {
-    ...typography.body,
-    color: colors.info,
-    textAlign: 'right',
-    writingDirection: 'rtl',
-  },
   validationCard: {
-    backgroundColor: '#FFF4D8',
+    backgroundColor: colors.warningSoft,
     borderWidth: 1,
     borderColor: colors.warning,
     borderRadius: radii.md,
@@ -1200,7 +1169,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: spacing.md,
+    borderRadius: radii.sm,
   },
+  portHeaderActive: { backgroundColor: colors.surfaceHover },
   portHeaderStatus: { alignItems: 'flex-start', gap: spacing.xs },
   portName: {
     ...typography.title,
@@ -1224,8 +1195,13 @@ const styles = StyleSheet.create({
     color: colors.accentStrong,
     writingDirection: 'rtl',
   },
+  expandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
   expandText: {
-    ...typography.caption,
+    ...typography.label,
     color: colors.accentStrong,
     writingDirection: 'rtl',
   },
@@ -1286,29 +1262,31 @@ const styles = StyleSheet.create({
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   chip: {
     minHeight: MIN_TOUCH_TARGET,
+    flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    gap: 6,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
     borderRadius: radii.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     backgroundColor: colors.surfaceAlt,
   },
   chipSelected: {
-    borderColor: colors.accent,
+    borderColor: colors.accentStrong,
     backgroundColor: colors.accentSoft,
   },
+  chipActive: { backgroundColor: colors.surfaceHover },
   chipText: {
-    ...typography.caption,
+    ...typography.label,
     color: colors.textSecondary,
     textAlign: 'center',
     writingDirection: 'rtl',
   },
-  chipTextSelected: { color: colors.accentStrong, fontWeight: '700' },
+  chipTextSelected: { color: colors.accentStrong },
   unavailableText: {
-    fontSize: 9,
-    lineHeight: 12,
+    ...typography.helper,
     color: colors.textMuted,
     writingDirection: 'rtl',
   },
@@ -1320,10 +1298,10 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   baudChip: {
-    minHeight: 36,
+    minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
     borderRadius: radii.pill,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
@@ -1337,7 +1315,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: spacing.md,
   },
-  outcomeDanger: { backgroundColor: '#FFF0F1', borderColor: colors.error },
+  outcomeDanger: { backgroundColor: colors.errorSoft, borderColor: colors.error },
   outcomeText: {
     ...typography.body,
     color: colors.success,
@@ -1350,34 +1328,5 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     paddingTop: spacing.sm,
   },
-  secondaryButton: {
-    minHeight: MIN_TOUCH_TARGET,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    ...typography.sectionTitle,
-    color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
-  saveButton: {
-    flexGrow: 1,
-    minHeight: 52,
-    backgroundColor: colors.accent,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  saveButtonText: {
-    ...typography.sectionTitle,
-    color: colors.accentText,
-    writingDirection: 'rtl',
-  },
+  saveGrow: { flexGrow: 1 },
 });
