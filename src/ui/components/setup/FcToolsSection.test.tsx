@@ -278,9 +278,24 @@ describe('FcToolsSection - what is offered', () => {
     for (const tool of ['ACC_CALIBRATION', 'MAG_CALIBRATION', 'REBOOT']) {
       const control = button(renderer, `fc-tool-${tool}-button`);
       expect(control.props.accessibilityRole).toBe('button');
-      const styles = control.props.style as Array<
-        { minHeight?: number } | undefined
-      >;
+      // Pressable styles may be a plain array OR the ({pressed, hovered})
+      // callback form the design system uses to paint interaction states.
+      // Resolve the callback at rest and assert on what it returns - the
+      // touch-target guarantee is unchanged either way.
+      const rawStyle = control.props.style as
+        | Array<{ minHeight?: number } | undefined>
+        | ((state: {
+            pressed: boolean;
+            hovered: boolean;
+            focused: boolean;
+          }) => Array<{ minHeight?: number } | undefined>);
+      const resolved =
+        typeof rawStyle === 'function'
+          ? rawStyle({ pressed: false, hovered: false, focused: false })
+          : rawStyle;
+      const styles = (
+        Array.isArray(resolved) ? resolved.flat(Infinity) : [resolved]
+      ) as Array<{ minHeight?: number } | undefined>;
       expect(
         styles.find(style => style?.minHeight !== undefined)?.minHeight,
       ).toBeGreaterThanOrEqual(44);

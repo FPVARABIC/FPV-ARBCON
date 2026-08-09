@@ -27,6 +27,9 @@ import React, { useCallback } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { Button } from '../controls';
+import { readInteraction } from '../controls/interaction';
+
 import { FC_TOOL_IDS, resolveFcToolAvailability } from '../../../core';
 import type { FcToolGateInput, FcToolId } from '../../../core';
 import {
@@ -197,12 +200,18 @@ export default function FcToolsSection({
               accessibilityHint={
                 availability.enabled ? t('fcTools.hint') : undefined
               }
-              style={[
-                styles.toolButton,
-                availability.enabled
-                  ? styles.toolButtonEnabled
-                  : styles.toolButtonDisabled,
-              ]}
+              style={state => {
+                const {pressed, hovered} = readInteraction(state);
+                return [
+                  styles.toolButton,
+                  availability.enabled
+                    ? styles.toolButtonEnabled
+                    : styles.toolButtonDisabled,
+                  (hovered || pressed) &&
+                    availability.enabled &&
+                    styles.toolButtonActive,
+                ];
+              }}
               testID={`fc-tool-${tool}-button`}
             >
               <Text
@@ -246,28 +255,22 @@ export default function FcToolsSection({
           <Text style={styles.confirmBody} testID="fc-tools-confirmation-body">
             {t(`fcTools.confirmBodies.${phase.tool}`)}
           </Text>
-          <Pressable
+          <Button
+            label={t('fcTools.confirmAction')}
             onPress={onConfirm}
-            accessibilityRole="button"
-            accessibilityLabel={t('fcTools.confirmAction')}
-            style={[styles.toolButton, styles.confirmButton]}
+            variant="primary"
+            icon="circle-check"
+            block
             testID="fc-tools-confirm"
-          >
-            <Text style={styles.confirmActionText}>
-              {t('fcTools.confirmAction')}
-            </Text>
-          </Pressable>
-          <Pressable
+          />
+          <Button
+            label={t('fcTools.cancelAction')}
             onPress={onCancel}
-            accessibilityRole="button"
-            accessibilityLabel={t('fcTools.cancelAction')}
-            style={[styles.toolButton, styles.cancelButton]}
+            variant="secondary"
+            icon="x"
+            block
             testID="fc-tools-cancel"
-          >
-            <Text style={styles.cancelActionText}>
-              {t('fcTools.cancelAction')}
-            </Text>
-          </Pressable>
+          />
         </View>
       )}
 
@@ -422,8 +425,8 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
   },
   toolMarkPrimary: { backgroundColor: colors.accentSoft },
-  toolMarkInfo: { backgroundColor: '#DCEEF5' },
-  toolMarkMaintenance: { backgroundColor: '#EEEAF5' },
+  toolMarkInfo: { backgroundColor: colors.infoSoft },
+  toolMarkMaintenance: { backgroundColor: colors.surfaceAlt },
   toolMarkText: {
     ...typography.caption,
     color: colors.textPrimary,
@@ -437,8 +440,8 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: radii.pill,
   },
-  availabilityPillReady: { backgroundColor: '#EAF7F2' },
-  availabilityPillBlocked: { backgroundColor: '#FFF4D8' },
+  availabilityPillReady: { backgroundColor: colors.successSoft },
+  availabilityPillBlocked: { backgroundColor: colors.warningSoft },
   availabilityReadyText: {
     ...typography.caption,
     color: colors.success,
@@ -501,23 +504,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     marginTop: spacing.sm,
   },
-  confirmButton: {
-    marginTop: spacing.md,
-    borderColor: colors.warning,
-  },
-  cancelButton: {
-    marginTop: spacing.sm,
-    borderColor: colors.border,
-  },
-  confirmActionText: {
-    ...typography.body,
-    color: colors.warning,
-    fontWeight: '700',
-  },
-  cancelActionText: {
-    ...typography.body,
-    color: colors.textSecondary,
-  },
+  toolButtonActive: { backgroundColor: colors.surfaceHover },
   outcome: {
     ...typography.body,
     color: colors.textPrimary,

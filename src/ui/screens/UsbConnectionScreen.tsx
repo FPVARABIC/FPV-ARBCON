@@ -35,6 +35,7 @@ import {
   formatHex,
   shortenSessionId,
 } from '../components/connection';
+import {Button} from '../components/controls';
 import { connectionCopyKeys } from '../components/connection/connectionCopy';
 import type {
   ConnectionState,
@@ -1029,13 +1030,13 @@ export default function UsbConnectionScreen({
     <>
       {isConnectionReportSupported() ? (
         <View style={styles.reportRow}>
-            <Text
-              testID="copy-connection-report"
-              accessibilityRole="button"
+            <Button
+              label={t('connection.copyReport')}
               onPress={handleCopyReport}
-              style={styles.reportButton}>
-              {t('connection.copyReport')}
-            </Text>
+              variant="secondary"
+              icon="copy"
+              testID="copy-connection-report"
+            />
             {reportCopied !== 'idle' ? (
               <Text style={styles.reportFeedback} testID="copy-connection-report-result">
                 {t(
@@ -1098,7 +1099,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   columns: {
-    flexDirection: 'row-reverse',
+    /* Plain 'row', not 'row-reverse'. The document carries dir="rtl", so a
+       row already runs right-to-left and puts the PRIMARY column (device
+       list + connect action) on the reading-start edge. 'row-reverse'
+       pushed it to the far left, behind the guidance column. */
+    flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.lg,
   },
@@ -1110,22 +1115,9 @@ const styles = StyleSheet.create({
   reportRow: {
     marginHorizontal: spacing.lg,
     marginTop: spacing.md,
-    flexDirection: 'row-reverse',
+    flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-  },
-  reportButton: {
-    ...typography.body,
-    color: colors.accentStrong,
-    fontWeight: '600',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: 999,
-    overflow: 'hidden',
-    textAlign: 'center',
-    writingDirection: 'rtl',
   },
   reportFeedback: {
     ...typography.caption,

@@ -27,6 +27,9 @@
 
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+import { Icon } from '../../icons';
+import { readInteraction } from '../controls/interaction';
 import { useTranslation } from 'react-i18next';
 
 import { BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION } from '../../../core';
@@ -120,7 +123,13 @@ export default function DiagnosticsSection({
         onPress={() => setDetailsOpen(current => !current)}
         accessibilityRole="button"
         accessibilityState={{ expanded: detailsOpen }}
-        style={styles.sectionHeader}
+        style={state => {
+          const {pressed, hovered} = readInteraction(state);
+          return [
+            styles.sectionHeader,
+            (hovered || pressed) && styles.sectionHeaderActive,
+          ];
+        }}
         testID="diagnostics-toggle"
       >
         <View style={styles.sectionHeading}>
@@ -141,7 +150,11 @@ export default function DiagnosticsSection({
                 : 'diagnostics.showDetails',
             )}
           </Text>
-          <Text style={styles.toggleIcon}>{detailsOpen ? '⌃' : '⌄'}</Text>
+          <Icon
+            name={detailsOpen ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={colors.accentStrong}
+          />
         </View>
       </Pressable>
 
@@ -295,7 +308,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
+    borderRadius: radii.sm,
   },
+  sectionHeaderActive: { backgroundColor: colors.surfaceHover },
   sectionHeading: {
     flex: 1,
     gap: spacing.xs,
@@ -320,14 +335,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   toggleText: {
-    ...typography.caption,
+    ...typography.label,
     color: colors.accentStrong,
-    fontWeight: '700',
     writingDirection: 'rtl',
-  },
-  toggleIcon: {
-    color: colors.accentStrong,
-    fontSize: 14,
   },
   detailsCollapsed: {
     display: 'none',

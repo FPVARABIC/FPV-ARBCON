@@ -60,7 +60,16 @@ import { useTranslation } from 'react-i18next';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import type { RootStackParamList } from '../../navigation/types';
-import { colors, spacing, typography, useContentEnvelope } from '../theme';
+import {
+  CONTENT_MAX_WIDTH,
+  colors,
+  radii,
+  spacing,
+  typography,
+  useContentEnvelope,
+} from '../theme';
+import { Button } from '../components/controls';
+import { readInteraction } from '../components/controls/interaction';
 import {
   TopSystemBar,
   OrientationHero,
@@ -153,16 +162,13 @@ export default function SetupScreen({
         <Text style={styles.placeholderText}>
           {t('setupMissingSession.message')}
         </Text>
-        <Pressable
+        <Button
+          label={t('setupMissingSession.back')}
           onPress={() => navigation.goBack()}
-          accessibilityRole="button"
-          style={styles.missingSessionButton}
+          variant="primary"
+          icon="chevron-back"
           testID="setup-screen-missing-session-back"
-        >
-          <Text style={styles.missingSessionButtonText}>
-            {t('setupMissingSession.back')}
-          </Text>
-        </Pressable>
+        />
       </View>
     );
   }
@@ -496,6 +502,13 @@ function SetupScreenContent({
               onPress={onOpenGps}
               accessibilityRole="button"
               accessibilityLabel={t('gpsSystem.openFromSetup')}
+              style={state => {
+                const {pressed, hovered} = readInteraction(state);
+                return [
+                  styles.cardPress,
+                  (hovered || pressed) && styles.cardPressActive,
+                ];
+              }}
               testID="setup-open-gps"
             >
               <GpsCard
@@ -526,17 +539,13 @@ function SetupScreenContent({
         <DiagnosticsSection view={diagnosticsView} />
         {isTelemetryReportSupported() ? (
           <View style={styles.telemetryReportRow}>
-            <Pressable
+            <Button
+              label={t('diagnostics.copyTelemetryReport')}
               onPress={handleCopyTelemetryReport}
-              accessibilityRole="button"
-              accessibilityLabel={t('diagnostics.copyTelemetryReport')}
-              style={styles.telemetryReportButton}
+              variant="secondary"
+              icon="copy"
               testID="copy-telemetry-report"
-            >
-              <Text style={styles.telemetryReportButtonText}>
-                {t('diagnostics.copyTelemetryReport')}
-              </Text>
-            </Pressable>
+            />
             <Text style={styles.telemetryReportHint}>
               {t('diagnostics.copyTelemetryReportHint')}
             </Text>
@@ -687,7 +696,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: spacing.xxl,
     width: '100%',
-    maxWidth: 1180,
+    maxWidth: CONTENT_MAX_WIDTH,
     alignSelf: 'center',
   },
   cardGrid: {
@@ -711,16 +720,16 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     backgroundColor: colors.surface,
   },
-  telemetryReportButtonText: {
-    ...typography.body,
-    color: colors.accentStrong,
-    fontWeight: '700',
-  },
   telemetryReportHint: {
     ...typography.caption,
     color: colors.textSecondary,
     textAlign: 'center',
   },
+  /* The GPS card doubles as a navigation target; a whole-card button with
+     no acknowledgement reads as decoration. Radius matches the card it
+     wraps so the wash cannot bleed past the corners. */
+  cardPress: {borderRadius: radii.lg},
+  cardPressActive: {backgroundColor: colors.surfaceHover},
   sectionHeading: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -772,10 +781,5 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderRadius: 16,
     backgroundColor: colors.accent,
-  },
-  missingSessionButtonText: {
-    ...typography.body,
-    color: colors.accentText,
-    fontWeight: '700',
   },
 });

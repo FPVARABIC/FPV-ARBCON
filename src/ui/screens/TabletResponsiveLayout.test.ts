@@ -16,8 +16,23 @@ import {
 const READING_COLUMN_SCREENS = [
   'UsbConnectionScreen.tsx',
   'FirmwareFlasherScreen.tsx',
-  'StartScreen.tsx',
 ] as const;
+
+/**
+ * Screens that call the envelope helper DIRECTLY (not through the
+ * useContentEnvelope hook) because they already know, from their own
+ * layout state, whether they have split into columns.
+ *
+ * StartScreen moved here when its dead `maxWidth: 1180` literal was
+ * deleted. That literal had stopped being the truth some time ago: the
+ * screen passes `contentEnvelope(tier, desktop)` inline, and an inline
+ * style wins over the StyleSheet entry, so at desktop tiers the real cap
+ * was already WORKSPACE_MAX_WIDTH. The old assertion therefore pinned a
+ * string that no longer described the rendered layout. What is pinned now
+ * is the actual contract: consult the shared helper, and own no private
+ * cap of any kind.
+ */
+const ENVELOPE_HELPER_SCREENS = ['StartScreen.tsx'] as const;
 
 /**
  * Post-connection screens that genuinely arrange content side by side at
@@ -50,6 +65,16 @@ describe('responsive shell', () => {
     filename => {
       const source = sourceOf(filename);
       expect(source).toContain('maxWidth: 1180');
+      expect(source).not.toContain('maxWidth: 760');
+    },
+  );
+
+  it.each(ENVELOPE_HELPER_SCREENS)(
+    '%s asks the shared envelope helper and owns no private cap',
+    filename => {
+      const source = sourceOf(filename);
+      expect(source).toContain('contentEnvelope(');
+      expect(source).not.toContain('maxWidth: 1180');
       expect(source).not.toContain('maxWidth: 760');
     },
   );

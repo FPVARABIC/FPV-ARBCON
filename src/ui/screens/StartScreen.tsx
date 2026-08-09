@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 
 import type {RootStackParamList} from '../../navigation/types';
+import {Icon} from '../icons';
+import {readInteraction} from '../components/controls/interaction';
 import {
   colors,
   contentEnvelope,
@@ -57,16 +59,27 @@ function RouteCard({
           </View>
         ))}
       </View>
+      {/* NOT the shared <Button>: this is the screen's hero call to
+          action, where the directional affordance must sit at the FAR
+          END of a full-width bar (space-between). Button centres a
+          LEADING icon, which would put the chevron at the start and
+          point it away from the direction of travel. Everything else -
+          fill, radius, height, label weight, states - comes from the
+          same tokens Button uses, so nothing here is a new style. */}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={button}
         testID={testID}
         onPress={onPress}
-        style={({pressed}) => [
-          styles.routeButton,
-          accent === 'blue' && styles.routeButtonBlue,
-          pressed && styles.pressed,
-        ]}>
+        style={state => {
+          const {pressed, hovered} = readInteraction(state);
+          return [
+            styles.routeButton,
+            accent === 'blue' && styles.routeButtonBlue,
+            hovered && styles.routeButtonHovered,
+            pressed && styles.pressed,
+          ];
+        }}>
         <Text
           style={[
             styles.routeButtonText,
@@ -74,7 +87,11 @@ function RouteCard({
           ]}>
           {button}
         </Text>
-        <Text style={styles.arrow}>‹</Text>
+        <Icon
+          name="chevron-forward"
+          size={22}
+          color={accent === 'blue' ? colors.white : colors.accentText}
+        />
       </Pressable>
     </View>
   );
@@ -161,7 +178,7 @@ const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
   content: {
     width: '100%',
-    maxWidth: 1180,
+    // Cap comes from contentEnvelope(), applied inline.
     alignSelf: 'center',
     padding: spacing.lg,
     paddingBottom: spacing.xxl,
@@ -196,17 +213,25 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   offlineDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success},
-  offlineText: {...typography.caption, color: colors.textSecondary, fontWeight: '700'},
+  offlineText: {...typography.label, color: colors.textSecondary},
   hero: {paddingVertical: spacing.lg, gap: spacing.sm},
   /* Peers, laid out in the product's RTL reading order: index 0 (connect)
      is the RIGHTMOST card, matching src/navigation/tabs.ts's convention.
      `alignItems: 'stretch'` keeps both cards the same height so the two
-     call-to-action buttons sit on one line. */
-  routeRow: {flexDirection: 'row-reverse', alignItems: 'stretch', gap: spacing.lg},
+     call-to-action buttons sit on one line.
+
+     PLAIN 'row', NOT 'row-reverse'. Measured in a browser: the document
+     carries dir="rtl", so a plain row ALREADY runs right-to-left and puts
+     index 0 on the right. 'row-reverse' flipped it back to left-to-right
+     and put "المسار الأول" on the LEFT — the exact opposite of what the
+     comment above promised. (This was invisible for as long as it went
+     unmeasured, because react-native-web's I18nManager reports LTR while
+     the document lays out RTL.) */
+  routeRow: {flexDirection: 'row', alignItems: 'stretch', gap: spacing.lg},
   routeColumn: {gap: spacing.lg},
   heroEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   heroTitle: {...typography.display, color: colors.textPrimary},
-  heroBody: {...typography.body, color: colors.textSecondary},
+  heroBody: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
   routeCard: {
     /* flexBasis 0 + flexGrow 1: equal halves inside routeRow, and inert
        inside routeColumn where the parent is not a row. */
@@ -222,17 +247,28 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     gap: spacing.sm,
   },
-  routeCardBlue: {borderColor: '#B8D7E3'},
-  routeMark: {position: 'absolute', right: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.accent},
+  routeCardBlue: {borderColor: colors.info},
+  routeMark: {position: 'absolute', start: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.accent},
   routeMarkBlue: {backgroundColor: colors.info},
   eyebrow: {...typography.eyebrow, color: colors.textMuted},
   routeTitle: {...typography.title, color: colors.textPrimary},
-  routeDescription: {...typography.body, color: colors.textSecondary},
+  routeDescription: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
   bullets: {gap: 7, paddingVertical: spacing.sm},
   bulletRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   bulletDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent},
   bulletDotBlue: {backgroundColor: colors.info},
-  bulletText: {...typography.caption, color: colors.textSecondary, flex: 1},
+  bulletText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    flex: 1,
+    /* LOAD-BEARING. Every bullet starts with a Latin technical token
+       ("Ports", "HEX", "BIN", "UF2"), and without an explicit direction
+       the paragraph inherits ITS direction - so an Arabic sentence was
+       laid out left-to-right and the words came out in the wrong order.
+       Measured in a real browser, not theorised. */
+    writingDirection: 'rtl',
+    textAlign: 'right',
+  },
   routeButton: {
     minHeight: 48,
     borderRadius: radii.md,
@@ -243,18 +279,18 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   routeButtonBlue: {backgroundColor: colors.info},
-  routeButtonText: {...typography.sectionTitle, color: colors.accentText},
+  routeButtonHovered: {opacity: 0.9},
+  routeButtonText: {...typography.sectionTitle, color: colors.accentText, flex: 1},
   routeButtonTextBlue: {color: colors.white},
-  arrow: {fontSize: 28, color: colors.accentText, lineHeight: 30},
   pressed: {opacity: 0.75},
   safetyNote: {
     padding: spacing.md,
     borderRadius: radii.md,
-    backgroundColor: '#E8F7F2',
+    backgroundColor: colors.successSoft,
     borderWidth: 1,
-    borderColor: '#B8DED5',
+    borderColor: colors.success,
     gap: 3,
   },
   safetyTitle: {...typography.sectionTitle, color: colors.success},
-  safetyText: {...typography.caption, color: colors.textSecondary},
+  safetyText: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
 });

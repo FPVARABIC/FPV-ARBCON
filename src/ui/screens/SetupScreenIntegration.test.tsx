@@ -1377,9 +1377,23 @@ describe('Setup screen - layout and accessibility', () => {
         expect(String(control.props.accessibilityLabel).length).toBeGreaterThan(
           0,
         );
-        const styles = control.props.style as Array<
-          { minHeight?: number } | undefined
-        >;
+        // Pressable styles may be a plain array OR the design system's
+        // ({pressed, hovered}) callback form. Resolve the callback at rest;
+        // the >=44dp guarantee is asserted identically either way.
+        const rawStyle = control.props.style as
+          | Array<{ minHeight?: number } | undefined>
+          | ((state: {
+              pressed: boolean;
+              hovered: boolean;
+              focused: boolean;
+            }) => Array<{ minHeight?: number } | undefined>);
+        const resolved =
+          typeof rawStyle === 'function'
+            ? rawStyle({ pressed: false, hovered: false, focused: false })
+            : rawStyle;
+        const styles = (
+          Array.isArray(resolved) ? resolved.flat(Infinity) : [resolved]
+        ) as Array<{ minHeight?: number } | undefined>;
         expect(
           styles.find(style => style?.minHeight !== undefined)?.minHeight,
         ).toBeGreaterThanOrEqual(44);

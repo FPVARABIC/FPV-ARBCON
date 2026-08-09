@@ -17,7 +17,9 @@
  * as registered and NEVER auto-mirror — a GPS bearing arrow must not flip
  * because the UI is Arabic. Navigation semantics use the alias names
  * instead: 'chevron-forward' / 'chevron-back' / 'arrow-forward' /
- * 'arrow-back' resolve against I18nManager.isRTL at render time, so
+ * 'arrow-back' resolve against the LIVE layout direction at render time
+ * (see layoutDirection.ts / .web.ts — react-native-web's I18nManager is a
+ * no-op stub and cannot answer this), so
  * "forward" points left in this RTL-first app and would point right if
  * the app ever hosted an LTR locale. Choose by MEANING: geometry names
  * for geometry, alias names for navigation.
@@ -28,11 +30,11 @@
  * Pressable — never from the drawing.
  */
 import React from 'react';
-import {I18nManager} from 'react-native';
 import type {ViewStyle} from 'react-native';
 import Svg, {Circle, Line, Path, Polygon, Polyline, Rect} from 'react-native-svg';
 
 import {colors} from '../theme';
+import {isRtlLayout} from './layoutDirection';
 import {glyphs} from './glyphs';
 import type {GlyphName, IconElement} from './glyphs';
 
@@ -64,7 +66,7 @@ export interface IconProps {
 function resolveGlyph(name: IconName): readonly IconElement[] {
   if (name in DIRECTIONAL_ALIASES) {
     const alias = DIRECTIONAL_ALIASES[name as keyof typeof DIRECTIONAL_ALIASES];
-    return glyphs[I18nManager.isRTL ? alias.rtl : alias.ltr];
+    return glyphs[isRtlLayout() ? alias.rtl : alias.ltr];
   }
   return glyphs[name as GlyphName];
 }
