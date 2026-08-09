@@ -1171,7 +1171,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.body,
     color: colors.accentText,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   disabled: { opacity: 0.45 },
 });

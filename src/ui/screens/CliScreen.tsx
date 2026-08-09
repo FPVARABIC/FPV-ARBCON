@@ -606,7 +606,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
     paddingHorizontal: spacing.lg,
   },
-  sendText: { ...typography.body, color: colors.accentText, fontWeight: '800' },
+  sendText: { ...typography.body, color: colors.accentText, fontWeight: '700' },
   historyRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -653,7 +653,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.error,
     borderRadius: radii.md,
   },
-  saveText: { ...typography.body, color: colors.white, fontWeight: '800' },
+  saveText: { ...typography.body, color: colors.white, fontWeight: '700' },
   status: {
     backgroundColor: colors.accentSoft,
     borderRadius: radii.md,

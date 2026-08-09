@@ -247,7 +247,7 @@ const styles = StyleSheet.create({
   progressBlock: {gap: 7},
   progressLabels: {flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md},
   progressLabel: {...typography.caption, color: colors.textSecondary, flex: 1},
-  progressPercent: {...typography.caption, color: colors.accentStrong, fontWeight: '800'},
+  progressPercent: {...typography.caption, color: colors.accentStrong, fontWeight: '700'},
   progressTrack: {height: 8, borderRadius: 4, backgroundColor: colors.surfaceRaised, overflow: 'hidden'},
   progressFill: {height: 8, borderRadius: 4, backgroundColor: colors.accent},
   notice: {padding: spacing.md, borderRadius: radii.md, backgroundColor: '#EAF5F8', gap: 3},

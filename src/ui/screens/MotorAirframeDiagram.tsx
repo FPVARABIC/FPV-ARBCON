@@ -563,10 +563,10 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   frontMarker: { alignItems: 'center', gap: 1 },
-  frontArrow: { color: colors.accentStrong, fontWeight: '900' },
+  frontArrow: { color: colors.accentStrong, fontWeight: '700' },
   frontText: {
     color: colors.accentStrong,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   stage: {
@@ -685,19 +685,19 @@ const styles = StyleSheet.create({
   rotationArrow: {
     position: 'absolute',
     color: colors.accentStrong,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   rotationArrowActive: { color: colors.warning },
   directionText: {
     ...typography.mono,
     color: colors.accentStrong,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   slot: {
     ...typography.mono,
     color: colors.textPrimary,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   position: {
@@ -711,7 +711,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     backgroundColor: colors.background,
   },
-  stateBadgeText: { fontWeight: '800', writingDirection: 'rtl' },
+  stateBadgeText: { fontWeight: '700', writingDirection: 'rtl' },
   caption: {
     ...typography.caption,
     color: colors.textSecondary,

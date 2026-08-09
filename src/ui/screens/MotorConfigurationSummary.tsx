@@ -172,14 +172,14 @@ const styles = StyleSheet.create({
   factValueGood: {
     ...typography.body,
     color: colors.success,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
     writingDirection: 'rtl',
   },
   factValueDanger: {
     ...typography.body,
     color: colors.error,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
     writingDirection: 'rtl',
   },

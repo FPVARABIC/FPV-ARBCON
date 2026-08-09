@@ -513,7 +513,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   channelState: {
@@ -546,7 +546,7 @@ const styles = StyleSheet.create({
   slotName: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   numericValue: {

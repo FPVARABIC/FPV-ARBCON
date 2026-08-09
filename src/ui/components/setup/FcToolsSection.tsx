@@ -390,7 +390,7 @@ const styles = StyleSheet.create({
   workflowNumberText: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   workflowCopy: { flex: 1 },
   workflowTitle: {
@@ -427,7 +427,7 @@ const styles = StyleSheet.create({
   toolMarkText: {
     ...typography.caption,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   toolHeadingCopy: { flex: 1 },

@@ -824,7 +824,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     writingDirection: 'ltr',
   },
-  protocolTextSelected: { color: colors.accentStrong, fontWeight: '800' },
+  protocolTextSelected: { color: colors.accentStrong, fontWeight: '700' },
   numberGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   numberField: {
     flexGrow: 1,
@@ -858,7 +858,7 @@ const styles = StyleSheet.create({
   smallButtonText: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   actionRow: { flexDirection: 'row', gap: spacing.sm },
   primaryButton: {
@@ -873,7 +873,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.body,
     color: colors.accentText,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   secondaryButton: {

@@ -23,10 +23,11 @@
  */
 
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, radii, spacing, typography } from '../../theme';
+import { colors, spacing, typography } from '../../theme';
+import { Button } from '../controls';
 
 export interface StickyActionBarProps {
   /** Nothing renders at all when false. */
@@ -123,30 +124,24 @@ export default function StickyActionBar({
       </View>
 
       <View style={styles.buttons}>
-        <Pressable
-          disabled={busy}
+        <Button
+          label={discardLabel}
           onPress={onDiscard}
-          accessibilityRole="button"
-          accessibilityLabel={discardLabel}
-          accessibilityState={{ disabled: busy }}
-          style={[styles.secondary, busy && styles.dim]}
+          variant="secondary"
+          icon="rotate-ccw"
+          disabled={busy}
+          style={styles.discardButton}
           testID={`${testID}-discard`}
-        >
-          <Text style={styles.secondaryText}>{discardLabel}</Text>
-        </Pressable>
-        <Pressable
-          disabled={saveBlocked}
+        />
+        <Button
+          label={busy && busyLabel !== undefined ? busyLabel : saveLabel}
           onPress={onSave}
-          accessibilityRole="button"
-          accessibilityLabel={saveLabel}
-          accessibilityState={{ disabled: saveBlocked }}
-          style={[styles.primary, saveBlocked && styles.dim]}
+          variant="primary"
+          icon="save"
+          disabled={saveBlocked}
+          style={styles.saveButton}
           testID={`${testID}-save`}
-        >
-          <Text style={styles.primaryText}>
-            {busy && busyLabel !== undefined ? busyLabel : saveLabel}
-          </Text>
-        </Pressable>
+        />
       </View>
     </View>
   );
@@ -171,7 +166,7 @@ const styles = StyleSheet.create({
   },
   copy: { gap: 2 },
   eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
-  summary: { ...typography.body, color: colors.textPrimary, fontWeight: '700' },
+  summary: { ...typography.bodyStrong, color: colors.textPrimary },
   details: { maxHeight: 84 },
   detailsContent: { gap: 2 },
   detailLine: { ...typography.caption, color: colors.textSecondary },
@@ -179,27 +174,9 @@ const styles = StyleSheet.create({
   status: { ...typography.caption, color: colors.success, marginTop: 2 },
   statusWarning: { color: colors.warning },
   buttons: { flexDirection: 'row', gap: spacing.sm },
-  secondary: {
-    flex: 1,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.backgroundRaised,
-  },
-  secondaryText: { ...typography.body, color: colors.textSecondary, fontWeight: '600' },
-  primary: {
-    flex: 2,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.md,
-    backgroundColor: colors.accent,
-  },
-  primaryText: { ...typography.body, color: colors.background, fontWeight: '800' },
-  dim: { opacity: 0.45 },
+  // Save keeps twice the discard width — the affirmative action is the
+  // reason this bar exists. (The old local Pressables carried a real
+  // contrast defect: near-white text on the light accent fill.)
+  discardButton: { flex: 1 },
+  saveButton: { flex: 2 },
 });

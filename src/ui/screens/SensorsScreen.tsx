@@ -338,7 +338,7 @@ const styles = StyleSheet.create({
   presenceText: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   presenceState: {
     ...typography.caption,
@@ -431,7 +431,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.accentStrong,
   },
-  actionText: { ...typography.body, color: colors.white, fontWeight: '800' },
+  actionText: { ...typography.body, color: colors.white, fontWeight: '700' },
   warning: {
     borderWidth: 1,
     borderColor: colors.warning,

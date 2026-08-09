@@ -515,7 +515,7 @@ const styles = StyleSheet.create({
   actionText: {
     ...typography.body,
     color: colors.accentText,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   actionTextDisabled: { color: colors.disabled },
   unavailableText: {

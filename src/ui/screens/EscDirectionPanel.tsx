@@ -241,7 +241,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   optionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
@@ -275,7 +275,7 @@ const styles = StyleSheet.create({
   optionText: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   confirmation: {
@@ -297,7 +297,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.body,
     color: colors.background,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   dangerButton: {
@@ -311,7 +311,7 @@ const styles = StyleSheet.create({
   dangerButtonText: {
     ...typography.body,
     color: colors.background,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   resultDanger: {

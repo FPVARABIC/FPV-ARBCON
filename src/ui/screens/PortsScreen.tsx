@@ -1305,7 +1305,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     writingDirection: 'rtl',
   },
-  chipTextSelected: { color: colors.accentStrong, fontWeight: '800' },
+  chipTextSelected: { color: colors.accentStrong, fontWeight: '700' },
   unavailableText: {
     fontSize: 9,
     lineHeight: 12,

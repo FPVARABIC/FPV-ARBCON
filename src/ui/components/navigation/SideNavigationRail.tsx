@@ -24,27 +24,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { colors, radii, spacing, typography } from '../../theme';
+import { Icon } from '../../icons';
+import { MIN_TOUCH_TARGET, readInteraction } from '../controls/interaction';
 import { MAIN_TABS, type MainTabKey } from '../../../navigation/tabs';
+import { TAB_ICONS } from './tabIcons';
 
-const MIN_TOUCH_TARGET = 44;
 const VISIBLE_TABS = MAIN_TABS.filter(tab => tab.implemented);
-const TAB_ICON: Record<MainTabKey, string> = {
-  SETUP: '⌁',
-  MOTORS: '◉',
-  PORTS: '↔',
-  GPS: '⌖',
-  CONFIGURATIONS: '⚙',
-  RECEIVER: '⌁',
-  PID: '∿',
-  MODES: '⌘',
-  FAILSAFE: '⚠',
-  POWER: 'ϟ',
-  OSD: '▣',
-  VTX: '⌁',
-  SENSORS: '⌁',
-  PRESETS: '✦',
-  CLI: '>_',
-};
 
 /** Wide enough for the longest Arabic destination label at 100% text
  * scale without wrapping, and narrow enough to leave the workspace the
@@ -98,15 +83,24 @@ export default function SideNavigationRail({
               onPress={() => onSelectTab(tab.key)}
               accessibilityRole="tab"
               accessibilityState={{ selected: isActive, disabled: false }}
-              style={[styles.item, isActive && styles.itemActive]}
+              style={state => {
+                const { pressed, hovered } = readInteraction(state);
+                return [
+                  styles.item,
+                  (hovered || pressed) && !isActive && styles.itemHovered,
+                  isActive && styles.itemActive,
+                ];
+              }}
               testID={`main-rail-${tab.key}`}
             >
               <View
                 style={[styles.iconBubble, isActive && styles.iconBubbleActive]}
               >
-                <Text style={[styles.icon, isActive && styles.iconActive]}>
-                  {TAB_ICON[tab.key]}
-                </Text>
+                <Icon
+                  name={TAB_ICONS[tab.key]}
+                  size={20}
+                  color={isActive ? colors.accentText : colors.textSecondary}
+                />
               </View>
               <Text
                 style={[styles.label, isActive && styles.labelActive]}
@@ -157,7 +151,7 @@ const styles = StyleSheet.create({
   brandName: {
     ...typography.caption,
     color: colors.textPrimary,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   brandTagline: {
@@ -181,17 +175,16 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radii.md,
   },
+  itemHovered: { backgroundColor: colors.surfaceHover },
   itemActive: { backgroundColor: colors.accentSoft },
   iconBubble: {
-    width: 30,
-    height: 26,
+    width: 34,
+    height: 28,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.pill,
   },
   iconBubbleActive: { backgroundColor: colors.accent },
-  icon: { fontSize: 15, color: colors.textMuted, writingDirection: 'ltr' },
-  iconActive: { color: colors.accentText },
   label: {
     ...typography.body,
     flex: 1,

@@ -566,7 +566,7 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   title: {
@@ -602,7 +602,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     color: colors.error,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   toolbar: { flexDirection: 'row', gap: spacing.sm },
@@ -624,7 +624,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.accentSoft,
   },
-  reloadText: { color: colors.accentStrong, fontWeight: '800' },
+  reloadText: { color: colors.accentStrong, fontWeight: '700' },
   categories: { gap: spacing.xs, paddingVertical: spacing.xs },
   chip: {
     paddingHorizontal: spacing.md,
@@ -635,7 +635,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
   },
   chipOn: { backgroundColor: colors.accent, borderColor: colors.accentStrong },
-  chipText: { color: colors.textPrimary, fontWeight: '800' },
+  chipText: { color: colors.textPrimary, fontWeight: '700' },
   workspace: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -681,7 +681,7 @@ const styles = StyleSheet.create({
   presetTitle: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   meta: { ...typography.caption, color: colors.textMuted },
   hint: {
@@ -711,7 +711,7 @@ const styles = StyleSheet.create({
   subhead: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   option: {
@@ -733,14 +733,14 @@ const styles = StyleSheet.create({
   optionName: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   commandSummary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
   },
-  commandCount: { fontSize: 28, fontWeight: '900', color: colors.accentStrong },
+  commandCount: { fontSize: 28, fontWeight: '700', color: colors.accentStrong },
   primary: {
     minHeight: 48,
     alignItems: 'center',
@@ -750,7 +750,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.accentStrong,
   },
-  primaryText: { color: colors.accentStrong, fontWeight: '900' },
+  primaryText: { color: colors.accentStrong, fontWeight: '700' },
   apply: {
     minHeight: 50,
     alignItems: 'center',
@@ -758,7 +758,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.accent,
   },
-  applyText: { color: colors.textPrimary, fontWeight: '900' },
+  applyText: { color: colors.textPrimary, fontWeight: '700' },
   disabled: { opacity: 0.4 },
   progress: {
     height: 28,
@@ -777,7 +777,7 @@ const styles = StyleSheet.create({
   progressText: {
     textAlign: 'center',
     color: colors.textPrimary,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   decision: {
     padding: spacing.lg,
@@ -807,7 +807,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.error,
   },
-  cancelText: { color: colors.error, fontWeight: '900' },
+  cancelText: { color: colors.error, fontWeight: '700' },
   save: {
     flex: 1,
     minHeight: 48,
@@ -816,7 +816,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.accent,
   },
-  saveText: { color: colors.textPrimary, fontWeight: '900' },
+  saveText: { color: colors.textPrimary, fontWeight: '700' },
   status: {
     padding: spacing.md,
     borderRadius: radii.md,
@@ -824,7 +824,7 @@ const styles = StyleSheet.create({
   },
   statusText: {
     color: colors.accentText,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
     writingDirection: 'rtl',
   },

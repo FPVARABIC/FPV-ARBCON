@@ -2453,11 +2453,11 @@ const styles = StyleSheet.create({
   headerEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   headerTitle: {...typography.title, color: colors.textPrimary},
   formatPill: {paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: colors.surfaceAlt},
-  formatPillText: {...typography.caption, color: colors.info, fontWeight: '800'},
+  formatPillText: {...typography.caption, color: colors.info, fontWeight: '700'},
   steps: {flexDirection: 'row', padding: spacing.sm, gap: spacing.sm, backgroundColor: colors.backgroundRaised},
   step: {flex: 1, minHeight: 40, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center'},
   stepActive: {backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent},
-  stepText: {...typography.caption, color: colors.textMuted, fontWeight: '800'},
+  stepText: {...typography.caption, color: colors.textMuted, fontWeight: '700'},
   stepTextActive: {color: colors.accentStrong},
   scroll: {flex: 1},
   content: {

@@ -680,7 +680,7 @@ const styles = StyleSheet.create({
   pitchOffScaleText: {
     ...typography.caption,
     color: colors.warning,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
   },
   compassFace: { backgroundColor: '#091921' },
@@ -707,7 +707,7 @@ const styles = StyleSheet.create({
     color: colors.white,
     fontSize: 12,
     lineHeight: 18,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   cardinalNorth: { color: colors.error },
@@ -796,7 +796,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     textAlign: 'center',
     color: colors.white,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   unavailableOverlay: {

@@ -263,7 +263,7 @@ const styles = StyleSheet.create({
   noticeTitle: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   review: { gap: spacing.md },
@@ -283,7 +283,7 @@ const styles = StyleSheet.create({
   mapMotor: {
     ...typography.mono,
     color: colors.accentStrong,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   mapArrow: { ...typography.body, color: colors.textMuted },
   mapResource: {
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.body,
     color: colors.background,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   resultDanger: {

@@ -24,28 +24,12 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { colors, radii, spacing, typography } from '../../theme';
+import { Icon } from '../../icons';
+import { MIN_TOUCH_TARGET, readInteraction } from '../controls/interaction';
 import { MAIN_TABS, type MainTabKey } from '../../../navigation/tabs';
+import { TAB_ICONS } from './tabIcons';
 
-/** Minimum touch target, matching the rest of the app's controls. */
-const MIN_TOUCH_TARGET = 44;
 const VISIBLE_TABS = MAIN_TABS.filter(tab => tab.implemented);
-const TAB_ICON: Record<MainTabKey, string> = {
-  SETUP: '⌁',
-  MOTORS: '◉',
-  PORTS: '↔',
-  GPS: '⌖',
-  CONFIGURATIONS: '⚙',
-  RECEIVER: '⌁',
-  PID: '∿',
-  MODES: '⌘',
-  FAILSAFE: '⚠',
-  POWER: 'ϟ',
-  OSD: '▣',
-  VTX: '⌁',
-  SENSORS: '⌁',
-  PRESETS: '✦',
-  CLI: '>_',
-};
 
 export interface BottomTabBarProps {
   readonly activeTab: MainTabKey;
@@ -79,15 +63,24 @@ export default function BottomTabBar({
               onPress={() => onSelectTab(tab.key)}
               accessibilityRole="tab"
               accessibilityState={{ selected: isActive, disabled: false }}
-              style={[styles.tab, isActive && styles.tabActive]}
+              style={state => {
+                const { pressed, hovered } = readInteraction(state);
+                return [
+                  styles.tab,
+                  (hovered || pressed) && !isActive && styles.tabPressed,
+                  isActive && styles.tabActive,
+                ];
+              }}
               testID={`main-tab-${tab.key}`}
             >
               <View
                 style={[styles.iconBubble, isActive && styles.iconBubbleActive]}
               >
-                <Text style={[styles.icon, isActive && styles.iconActive]}>
-                  {TAB_ICON[tab.key]}
-                </Text>
+                <Icon
+                  name={TAB_ICONS[tab.key]}
+                  size={18}
+                  color={isActive ? colors.accentText : colors.textPrimary}
+                />
               </View>
               <Text style={[styles.label, isActive && styles.labelActive]}>
                 {t(tab.labelKey)}
@@ -130,26 +123,21 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     borderRadius: radii.md,
   },
+  tabPressed: {
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
+  },
   tabActive: {
     backgroundColor: colors.white,
   },
   iconBubble: {
-    width: 30,
-    height: 24,
+    width: 34,
+    height: 26,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.pill,
   },
   iconBubbleActive: {
     backgroundColor: colors.accent,
-  },
-  icon: {
-    fontSize: 15,
-    color: colors.textPrimary,
-    writingDirection: 'ltr',
-  },
-  iconActive: {
-    color: colors.accentText,
   },
   label: {
     ...typography.caption,

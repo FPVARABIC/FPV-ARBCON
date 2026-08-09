@@ -1869,7 +1869,7 @@ const styles = StyleSheet.create({
   miniHeading: {
     ...typography.caption,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   sectionTitle: {
@@ -2142,7 +2142,7 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   endSessionButton: { minHeight: MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderColor: colors.warning, borderWidth: 2, borderRadius: radii.md, padding: spacing.sm },
-  endSessionLabel: { ...typography.body, color: colors.warning, fontWeight: '800', writingDirection: 'rtl' },
+  endSessionLabel: { ...typography.body, color: colors.warning, fontWeight: '700', writingDirection: 'rtl' },
   sessionEndedText: { ...typography.caption, color: colors.success, textAlign: 'center', writingDirection: 'rtl' },
   liveStrip: { height: 3, backgroundColor: colors.warning },
 });
