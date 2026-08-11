@@ -17,7 +17,9 @@
 import {
   ARMING_DISABLE_COMMAND_BYTE,
   ARMING_DISABLED_MSP_BIT_INDEX,
+  ARMING_ENABLE_COMMAND_BYTE,
   buildArmingDisablePayload,
+  buildArmingReleasePayload,
   establishMotorArmingRestriction,
   MotorArmingRestrictionReceipt,
   MSP_SET_ARMING_DISABLED,
@@ -284,13 +286,41 @@ describe('tagged protocol contract (betaflight 2025.12.2 @ 79065c96)', () => {
     expect(ARMING_DISABLED_MSP_BIT_INDEX).toBe(16);
   });
 
-  it('exposes NO inverse / re-enable payload or operation in the public API', () => {
+  /**
+   * REWRITTEN IN P2-i, NOT DELETED.
+   *
+   * This assertion used to be "the module exposes NO inverse / re-enable
+   * payload or operation", and it was correct for a pass that had no
+   * teardown. It is wrong for a pass that owns one: leaving a flight
+   * controller arming-disabled after a clean motor-control session is
+   * itself a defect, so the release payload now exists.
+   *
+   * The SAFETY INTENT of the old assertion is preserved and made
+   * narrower rather than dropped: the module must still expose exactly
+   * two payload builders and NO operation that establishes or releases
+   * anything by itself. Ordering - release only after an all-stop - is
+   * the driver's obligation, enforced in the controller and its tests,
+   * not by hiding the payload here.
+   */
+  it('exposes payload builders only - no self-issuing release operation', () => {
     const exported = Object.keys(armingRestrictionModule);
-    for (const name of exported) {
-      expect(name).not.toMatch(/enable|clear|restore|reenable|allowArming|undo/i);
-    }
-    // The only payload builder produces the DISABLE byte, never 0.
+    const releaseLike = exported.filter(name =>
+      /enable|clear|restore|reenable|allowArming|undo|release/i.test(name),
+    );
+    // Exactly the two intentional release-side symbols, nothing else.
+    expect(releaseLike.sort()).toEqual([
+      'ARMING_ENABLE_COMMAND_BYTE',
+      'buildArmingReleasePayload',
+    ]);
+    // Neither is an operation: both are inert value producers.
+    expect(typeof armingRestrictionModule.buildArmingReleasePayload).toBe(
+      'function',
+    );
+    expect(buildArmingReleasePayload()).toBeInstanceOf(Uint8Array);
+    // The establish builder still produces the DISABLE byte, never 0.
     expect(buildArmingDisablePayload()[0]).not.toBe(0);
+    // And the release builder produces exactly the inverse.
+    expect(buildArmingReleasePayload()[0]).toBe(0);
   });
 
   it('never references command 214 in any fixture', () => {
@@ -1883,5 +1913,39 @@ describe('post-submission boundary: a dead lease cannot re-open the session', ()
     transport.emitData(responseFrame(MSP_SET_ARMING_DISABLED));
     expectNotEstablished(await first, 'MOTOR_TEST_LEASE_INACTIVE');
     expect(calls).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/* ===================================================================== *
+ * P2-i - the RELEASE payload.
+ *
+ * Polarity is inverted from the command name, so it is asserted against
+ * the pinned firmware branch rather than against the identifier:
+ * MSP_SET_ARMING_DISABLED command==1 DISABLES arming, command==0 ENABLES
+ * it (msp.c @ 79065c96). Building bytes is inert; nothing here sends
+ * anything or claims a physical state.
+ * ===================================================================== */
+describe('P2-i arming restriction release payload', () => {
+  it('encodes exactly one byte, zero, which is the ENABLE-arming command', () => {
+    expect(ARMING_ENABLE_COMMAND_BYTE).toBe(0);
+    expect(Array.from(buildArmingReleasePayload())).toEqual([0]);
+  });
+
+  it('is the exact inverse of the establish payload', () => {
+    expect(Array.from(buildArmingDisablePayload())).toEqual([1]);
+    expect(ARMING_DISABLE_COMMAND_BYTE).not.toBe(ARMING_ENABLE_COMMAND_BYTE);
+  });
+
+  it('returns a fresh buffer every call, so no caller can mutate a shared one', () => {
+    const first = buildArmingReleasePayload();
+    const second = buildArmingReleasePayload();
+    expect(first).not.toBe(second);
+    first[0] = 99;
+    expect(Array.from(buildArmingReleasePayload())).toEqual([0]);
+  });
+
+  it('emits the one-byte form, leaving runaway-takeoff handling to the firmware default', () => {
+    // msp.c reads the optional second byte only when bytes remain.
+    expect(buildArmingReleasePayload()).toHaveLength(1);
   });
 });

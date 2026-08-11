@@ -50,10 +50,42 @@
  * command was received and processed - and nothing more. It is never, on
  * its own, promoted into a positive result here.
  *
- * NO CLEARING, NO RE-ENABLE. The inverse payload (byte 0) exists in the
- * firmware, and this module deliberately does not implement, expose or
- * encode it. Teardown - which must also have confirmed motor stop and
- * lifecycle safety - belongs to a later pass.
+ * RELEASE, ADDED IN P2-i. This module previously refused to encode the
+ * inverse payload at all, on the grounds that teardown - which must also
+ * have confirmed motor stop and lifecycle safety - belonged to a later
+ * pass. That pass is now here, and leaving a flight controller
+ * arming-disabled after a CLEAN motor-control session is itself a defect:
+ * the operator disconnects, and the aircraft silently refuses to arm with
+ * no indication why. The release payload is therefore encoded below, and
+ * it is encoded ONLY as a builder - this module still issues nothing on
+ * its own, and the driver must not call it until an all-stop has been
+ * established. See `buildArmingReleasePayload`.
+ *
+ * WHY RELEASING IS SAFE FOR OTHER LINKS, traced at
+ * 79065c96ba0bb5cdc675e67d7093e05dab8b330e (msp.c):
+ *
+ *     static void mspArmingDisableByDescriptor(mspDescriptor_t desc)
+ *     { mspArmingDisableFlags |=  (1 << desc); }
+ *     static void mspArmingEnableByDescriptor(mspDescriptor_t desc)
+ *     { mspArmingDisableFlags &= ~(1 << desc); }
+ *     static bool mspIsMspArmingEnabled(void)
+ *     { return mspArmingDisableFlags == 0; }
+ *
+ * and in the handler's `command == 0` arm:
+ *
+ *     mspArmingEnableByDescriptor(srcDesc);
+ *     if (mspIsMspArmingEnabled()) { unsetArmingDisabled(ARMING_DISABLED_MSP); }
+ *
+ * The release is therefore PER DESCRIPTOR: it clears only this link's bit,
+ * and the global ARMING_DISABLED_MSP clears only once EVERY descriptor has
+ * released. A release issued by this application cannot cancel a
+ * restriction another MSP link is holding.
+ *
+ * POLARITY IS INVERTED FROM THE COMMAND NAME, which is exactly why it is
+ * spelled out here rather than inferred: MSP_SET_ARMING_DISABLED with
+ * `command == 1` DISABLES arming (establishes the restriction) and
+ * `command == 0` ENABLES arming (releases it). The official Configurator's
+ * own helper is named `setArmingEnabled(false)` for the establish case.
  *
  * WHAT WAS ACTUALLY TRACED about persistence, and nothing beyond it:
  *   - an explicit `command == 0` from a descriptor clears that
@@ -158,6 +190,23 @@ export {MSP_STATUS_EX};
 /** The single mandatory payload byte, non-zero = disable arming. */
 export const ARMING_DISABLE_COMMAND_BYTE = 1;
 
+/**
+ * The inverse command byte: zero = ENABLE arming, i.e. release this
+ * descriptor's hold on ARMING_DISABLED_MSP.
+ *
+ * msp.c @ 79065c96, `case MSP_SET_ARMING_DISABLED`, the `else` arm:
+ *
+ *     mspArmingEnableByDescriptor(srcDesc);
+ *     if (mspIsMspArmingEnabled()) { unsetArmingDisabled(ARMING_DISABLED_MSP); ... }
+ *
+ * Note the second, OPTIONAL payload byte on this path
+ * (`disableRunawayTakeoff`) is read only when bytes remain. This module
+ * emits the one-byte form, so runaway-takeoff handling is left exactly as
+ * the firmware's own default for a one-byte request - it is not a setting
+ * this application has any basis to change.
+ */
+export const ARMING_ENABLE_COMMAND_BYTE = 0;
+
 /** Bit index of ARMING_DISABLED_MSP, resolved from the canonical token
  * table rather than written as a literal so it cannot drift from the
  * pinned enum order. runtime_config.h:59 gives (1 << 16). */
@@ -171,13 +220,26 @@ const EMPTY_PAYLOAD = new Uint8Array(0);
 /**
  * Builds the one-byte arming-DISABLE payload. A fresh array every call,
  * so no caller can mutate a shared buffer.
- *
- * There is deliberately NO inverse builder anywhere in this module: the
- * re-enable payload (byte 0) is not encoded, not exposed and not
- * reachable from any exported symbol.
  */
 export function buildArmingDisablePayload(): Uint8Array {
   return Uint8Array.from([ARMING_DISABLE_COMMAND_BYTE]);
+}
+
+/**
+ * Builds the one-byte arming-RELEASE payload (P2-i).
+ *
+ * ORDERING IS THE CALLER'S OBLIGATION, and it is not negotiable: this
+ * payload must not be sent until an all-stop has been established for the
+ * session. Releasing the restriction first would re-permit arming while an
+ * output could still be commanded, which inverts the entire point of
+ * establishing it.
+ *
+ * BUILDING BYTES IS INERT. This function has no transport and no caller
+ * authority; producing the payload is not sending it, and sending it is
+ * not a claim about any physical state.
+ */
+export function buildArmingReleasePayload(): Uint8Array {
+  return Uint8Array.from([ARMING_ENABLE_COMMAND_BYTE]);
 }
 
 /* ------------------------------------------------------------------ *
