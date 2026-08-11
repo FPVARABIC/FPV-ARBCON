@@ -139,7 +139,9 @@ const REQUIRED_TOKENS = [
  */
 const REQUIRED_ARABIC_STRINGS = [
   // The propeller warning - the single most important string in the app.
-  'أزل جميع المراوح قبل المتابعة',
+  // P3: the propeller warning became one concise sentence - the same
+  // safety intent, stated once instead of as a checklist ritual.
+  'أزل المراوح قبل اختبار المحركات.',
   // The emergency instruction after an unconfirmed stop.
   'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
   // Configuration transaction truthfulness.

@@ -34,6 +34,10 @@ function operator(allowed: boolean): MotorTestOperatorPort {
       escTelemetry: {state: 'WAITING', value: undefined, observedAtMillis: undefined},
     }),
     requestStop: () => 'ACCEPTED',
+  setMotorValues: () => ({kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const}),
+  setMotorValue: () => ({kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const}),
+  setMaster: () => ({kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const}),
+  stopAll: () => 'ACCEPTED' as const,
     endSession: async () => snapshot,
   };
 }

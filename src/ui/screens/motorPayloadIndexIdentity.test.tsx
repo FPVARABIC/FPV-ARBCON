@@ -456,6 +456,20 @@ class FakeOperator implements MotorTestOperatorPort {
   beginSession(): Promise<MotorTestControllerSnapshot> {
     throw new Error('beginSession must not be reached from a render');
   }
+  // P3: facade stubs - this suite drives the legacy pulse path only.
+  setMotorValues() {
+    return {kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const};
+  }
+  setMotorValue() {
+    return {kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const};
+  }
+  setMaster() {
+    return {kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const};
+  }
+  stopAll() {
+    return 'ACCEPTED' as const;
+  }
+
   endSession(): Promise<MotorTestControllerSnapshot> {
     throw new Error('endSession must not be reached from a render');
   }

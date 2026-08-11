@@ -408,6 +408,13 @@ describe('B-2E-1 - single authoritative controller', () => {
       'renewPulseHold',
       'requestStop',
       'setEscDirection',
+      // P3: the professional facade forwards. Same rule holds - none of
+      // them can INITIATE. Each is a thin controller passthrough that the
+      // engine refuses until beginSession's bring-up has completed.
+      'setMaster',
+      'setMotorValue',
+      'setMotorValues',
+      'stopAll',
       'subscribe',
     ]);
     expect(Object.isFrozen(operator)).toBe(true);

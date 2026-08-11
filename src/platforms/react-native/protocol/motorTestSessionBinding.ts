@@ -131,6 +131,23 @@ export interface MotorTestOperatorPort {
   requestStop(trigger: MotorTestStopTriggerReason): MotorTestStopRequestResult;
   /** Idempotent teardown of the same controller. */
   endSession(): Promise<MotorTestControllerSnapshot>;
+
+  /* ---- P3: the professional facade, forwarded unchanged. ------------
+   * Thin passthroughs to the controller's own frozen surface - the port
+   * adds nothing and hides nothing. No long press, no heartbeat, no
+   * fixed magnitude and no one-motor restriction exist on this path. */
+  setMotorValues(
+    values: readonly number[],
+  ): import('../../../core/state/motorControlCommandEngine').MotorControlCommandResult;
+  setMotorValue(
+    motorIndex: number,
+    value: number,
+  ): import('../../../core/state/motorControlCommandEngine').MotorControlCommandResult;
+  setMaster(
+    value: number,
+  ): import('../../../core/state/motorControlCommandEngine').MotorControlCommandResult;
+  /** The canonical professional stop, same funnel as every stop source. */
+  stopAll(): MotorTestStopRequestResult;
 }
 
 /**
@@ -301,6 +318,13 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
       requestStop: (trigger: MotorTestStopTriggerReason) =>
         controller.requestStop(trigger),
       endSession: () => controller.close(),
+      // P3: professional facade forwards.
+      setMotorValues: (values: readonly number[]) =>
+        controller.setMotorValues(values),
+      setMotorValue: (motorIndex: number, value: number) =>
+        controller.setMotorValue(motorIndex, value),
+      setMaster: (value: number) => controller.setMaster(value),
+      stopAll: () => controller.stopAll(),
     });
   }
 

@@ -37,6 +37,13 @@ class WebOperator implements MotorTestOperatorPort {
   refreshDiagnostics = async () => this.current.diagnostics!;
   requestStop = (trigger: string) => { this.stopCalls.push(trigger); return 'ACCEPTED' as const; };
   endSession = async () => this.current;
+  // P3 facade stubs.
+  setMotorValues = () =>
+    ({kind: 'REFUSED', reason: 'NOT_COMMANDABLE'}) as const;
+  setMotorValue = () =>
+    ({kind: 'REFUSED', reason: 'NOT_COMMANDABLE'}) as const;
+  setMaster = () => ({kind: 'REFUSED', reason: 'NOT_COMMANDABLE'}) as const;
+  stopAll = () => 'ACCEPTED' as const;
 }
 
 describe('MotorsScreen real react-native-web hold responder', () => {
@@ -50,7 +57,9 @@ describe('MotorsScreen real react-native-web hold responder', () => {
 
   it('fires after the real delay and keeps ownership when the gate closes', () => {
     const hold = host.querySelector('[data-testid="motors-hold-button"]')!;
-    expect(hold.closest('[data-testid="motors-session-dock"]')).not.toBeNull();
+    // P3: the hold control moved out of the pinned dock into the tools
+    // bench - the responder contract below is unchanged.
+    expect(hold.closest('[data-testid="motors-session-dock"]')).toBeNull();
     act(() => { hold.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, buttons: 1})); jest.advanceTimersByTime(799); });
     expect(operator.pulseCalls).toBe(0);
     act(() => jest.advanceTimersByTime(101));

@@ -215,7 +215,9 @@ const REQUIRED_ENGINE_TOKENS = [
  */
 const REQUIRED_ARABIC_STRINGS = [
   // The propeller warning - the single most important string in the app.
-  'أزل جميع المراوح قبل المتابعة',
+  // P3: the propeller warning became one concise sentence - the same
+  // safety intent, stated once instead of as a checklist ritual.
+  'أزل المراوح قبل اختبار المحركات.',
   // The honest manual battery-suitability boundary. This build does not
   // read cell count inside the motor-test controller.
   'لا يقرأ هذا الإصدار عدد خلايا البطارية آليًا',

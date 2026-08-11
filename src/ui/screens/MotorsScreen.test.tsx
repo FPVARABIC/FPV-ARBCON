@@ -233,6 +233,25 @@ class FakeOperator implements MotorTestOperatorPort {
     return 'ACCEPTED';
   }
 
+  // P3: professional facade. The fakes record calls; refusal by default
+  // mirrors a session with no engine.
+  professionalCalls: Array<{op: string; args: unknown[]}> = [];
+  setMotorValues(values: readonly number[]) {
+    this.professionalCalls.push({op: 'setMotorValues', args: [values]});
+    return {kind: 'ACCEPTED' as const, coalesced: false};
+  }
+  setMotorValue(motorIndex: number, value: number) {
+    this.professionalCalls.push({op: 'setMotorValue', args: [motorIndex, value]});
+    return {kind: 'ACCEPTED' as const, coalesced: false};
+  }
+  setMaster(value: number) {
+    this.professionalCalls.push({op: 'setMaster', args: [value]});
+    return {kind: 'ACCEPTED' as const, coalesced: false};
+  }
+  stopAll() {
+    this.professionalCalls.push({op: 'stopAll', args: []});
+    return this.requestStop('STOP_BUTTON_PRESSED');
+  }
   endSession(): Promise<MotorTestControllerSnapshot> {
     this.endCalls += 1;
     if (this.endError !== undefined) throw this.endError;
@@ -779,12 +798,22 @@ describe('MotorsScreen - long-press contract', () => {
     rendered.unmount();
   });
 
-  it('keeps the real hold action in the persistent session dock', () => {
+  /**
+   * REWRITTEN IN P3. The hold action used to live in the always-pinned
+   * dock, which made press-and-hold read as THE way to drive motors. The
+   * professional workspace is the primary path now, so the hold control
+   * moved into the التحقق والأدوات bench area - still fully functional,
+   * no longer pinned teaching. The dock keeps what every workflow needs:
+   * stop-all and end-session.
+   */
+  it('keeps stop and end-session pinned; the hold action lives in the tools bench', () => {
     const { rendered } = readyRendered();
     const dock = rendered.find('motors-session-dock');
-    expect(dock.findAll(node => node.props?.testID === 'motors-hold-button').length).toBeGreaterThan(0);
+    expect(dock.findAll(node => node.props?.testID === 'motors-hold-button')).toHaveLength(0);
     expect(dock.findAll(node => node.props?.testID === 'motors-stop-button').length).toBeGreaterThan(0);
     expect(dock.findAll(node => node.props?.testID === 'motors-end-session-button').length).toBeGreaterThan(0);
+    // The hold action itself remains reachable, after the diagram.
+    expect(rendered.find('motors-hold-button')).toBeDefined();
     rendered.unmount();
   });
 
@@ -1699,6 +1728,95 @@ describe('MotorsScreen - continuous hold survives the activation gate closing', 
     longPress(rendered);
     expect(operator.pulseCalls).toEqual([]);
     expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    rendered.unmount();
+  });
+});
+
+describe('P3 - sticky professional STOP', () => {
+  it('is pinned outside the scroll area while the professional session is READY', async () => {
+    const operator = new FakeOperator(snapshotFor({ machine: 'Ready' }));
+    const {tree: renderer} = render(operator);
+    // Enable through the workspace toggle.
+    const toggle = renderer.root.findAll(
+      node =>
+        (node.props as {testID?: string}).testID === 'motor-workspace-enable' &&
+        typeof (node.props as {onValueChange?: unknown}).onValueChange ===
+          'function',
+    )[0];
+    await act(async () => {
+      (toggle.props as {onValueChange: (v: boolean) => void}).onValueChange(
+        true,
+      );
+    });
+    const sticky = renderer.root.findAll(
+      node =>
+        typeof node.type === 'string' &&
+        (node.props as {testID?: string}).testID === 'motors-sticky-stop',
+    );
+    expect(sticky).toHaveLength(1);
+    expect(JSON.stringify(renderer.toJSON())).toContain('إيقاف المحركات');
+  });
+
+  it('does NOT appear while motor control is inactive', () => {
+    const operator = new FakeOperator(snapshotFor({ machine: 'Ready' }));
+    const {tree: renderer} = render(operator);
+    expect(
+      renderer.root.findAll(
+        node =>
+          typeof node.type === 'string' &&
+          (node.props as {testID?: string}).testID === 'motors-sticky-stop',
+      ),
+    ).toHaveLength(0);
+  });
+});
+
+describe('P3 - final page organization', () => {
+  it('renders the professional workspace BEFORE the legacy tools bench', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const ids = rendered.tree.root
+      .findAll(node => typeof node.props?.testID === 'string')
+      .map(node => node.props.testID as string);
+    expect(ids.indexOf('motor-workspace')).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf('motor-workspace')).toBeLessThan(
+      ids.indexOf('motors-tools-heading'),
+    );
+    expect(ids.indexOf('motors-tools-heading')).toBeLessThan(
+      ids.indexOf('motors-workspace'),
+    );
+    rendered.unmount();
+  });
+
+  it('labels configuration under إعدادات المحركات and tools under التحقق والأدوات', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const body = JSON.stringify(rendered.tree.toJSON());
+    expect(body).toContain('إعدادات المحركات');
+    expect(body).toContain('التحقق والأدوات');
+    rendered.unmount();
+  });
+
+  it('shows the propeller warning exactly ONCE, with no acknowledgement ritual', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const body = JSON.stringify(rendered.tree.toJSON());
+    // Exact banner sentence once; the tools bench step may mention props
+    // in its own instructions without being a second page warning.
+    expect(body.split('أزل المراوح قبل اختبار المحركات.').length - 1).toBe(1);
+    // The old checklist/acknowledgement block is gone from the page.
+    expect(
+      rendered.tree.root.findAll(
+        node => node.props?.testID === 'motors-acknowledgements',
+      ),
+    ).toHaveLength(0);
+    rendered.unmount();
+  });
+
+  it('the pinned dock no longer teaches press-and-hold while idle', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const dock = rendered.find('motors-session-dock');
+    expect(
+      JSON.stringify(
+        dock.findAll(node => node.props?.testID === 'motors-hold-button'),
+      ),
+    ).toBe('[]');
     rendered.unmount();
   });
 });

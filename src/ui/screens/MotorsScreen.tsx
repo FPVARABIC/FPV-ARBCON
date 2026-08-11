@@ -97,6 +97,8 @@ import type { MotorTestVerificationReceipt } from '../../core/state/motorTestCon
 import { MotorAirframeDiagram } from './MotorAirframeDiagram';
 import type { MotorSlotActivity } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
+// P3: the professional workspace - the PRIMARY motor experience.
+import { MotorWorkspace } from './MotorWorkspace';
 import { MotorConfigurationPanel } from './MotorConfigurationPanel';
 import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
 import { MotorOutputReorderPanel } from './MotorOutputReorderPanel';
@@ -428,6 +430,10 @@ export function MotorsScreenView({
     MotorTestControllerSnapshot | undefined
   >(() => operator?.getSnapshot());
   const [selectedSlot, setSelectedSlot] = useState(1);
+  /** P3: the operator's professional enable intent. Enabling runs the
+   * SAME canonical session bring-up the legacy flow used; disabling runs
+   * the same safe teardown. No second session path exists. */
+  const [professionalEnabled, setProfessionalEnabled] = useState(false);
   /**
    * Phase 2I - VOLATILE, MEMORY-ONLY verification data, bound to one exact
    * session by reference. Never persisted, exported, uploaded or shared,
@@ -734,6 +740,24 @@ export function MotorsScreenView({
         }
       });
   }, []);
+
+  /** P3: one toggle, both directions, over the canonical session paths. */
+  const handleProfessionalEnableChange = useCallback(
+    (next: boolean) => {
+      setProfessionalEnabled(next);
+      const port = operator;
+      if (port === undefined) {
+        return;
+      }
+      if (next) {
+        runBeginSession(port);
+      } else {
+        endMotorTestSessionSafely(port).catch(() => {});
+      }
+    },
+    [operator, runBeginSession],
+  );
+
 
   const handleBeginSessionPress = useCallback(() => {
     const port = operatorRef.current;
@@ -1046,28 +1070,15 @@ export function MotorsScreenView({
 
         {/* One compact bench notice, not a confirmation ritual. Propeller
             removal stays first, with text AND icon rather than colour alone. */}
+        {/* P3: ONE concise persistent warning. The paragraphs, bullet
+            checklist and battery scope prose moved out of the primary
+            path - P2's automatic protections made the ritual redundant,
+            and SAFETY stays in the background while CAPABILITY leads. */}
         <View style={styles.dangerBanner} testID="motors-propeller-warning">
-          <Icon name="triangle-alert" size={24} color={colors.error} />
-          <View
-            style={[styles.flexOne, styles.safetyNoticeCopy]}
-            testID="motors-acknowledgements"
-          >
-            <Text style={styles.dangerTitle}>
-              {t('motorsScreen.propellerWarning')}
-            </Text>
-            <Text style={styles.dangerBody}>
-              {t('motorsScreen.propellerWarningDetail')}
-            </Text>
-            <Text style={styles.checkLabel}>• {t('motorsScreen.ackSecured')}</Text>
-            <Text style={styles.checkLabel}>• {t('motorsScreen.ackBattery')}</Text>
-            <Text
-              style={styles.batteryWarning}
-              testID="motors-battery-scope-warning"
-            >
-              {t('motorsScreen.batteryScopeWarning')}
-            </Text>
-            <Text style={styles.caption}>{t('motorsScreen.ackNotice')}</Text>
-          </View>
+          <Icon name="triangle-alert" size={20} color={colors.error} />
+          <Text style={[styles.flexOne, styles.dangerTitle]}>
+            {t('motorsScreen.propellerWarning')}
+          </Text>
         </View>
 
         {beginFailed || (operator === undefined && bringUpFailure !== undefined) ? (
@@ -1213,6 +1224,20 @@ export function MotorsScreenView({
           ) : null}
         </View>
 
+          {/* ---- P3: THE PRIMARY EXPERIENCE. -------------------------
+            * Professional Motor 1..N workspace over the P2 facade. No
+            * long press, no heartbeat, no fixed magnitude. The legacy
+            * pulse/verification workflow below is retained as an
+            * OPTIONAL tool until it is separately retired - it is no
+            * longer the way motors are driven. */}
+          <MotorWorkspace
+            snapshot={snapshot}
+            port={operator}
+            enabled={professionalEnabled}
+            onEnableChange={handleProfessionalEnableChange}
+          />
+
+
         {/* (7) Fault. TWO DIFFERENT MESSAGES, because they mean two very
             different things to somebody standing next to an aircraft.
 
@@ -1252,9 +1277,14 @@ export function MotorsScreenView({
           )
         ) : null}
 
-        {/* The primary workspace. Selection, real FC facts, airframe
-            reference and the hold action stay together so the operator
-            never has to translate between separate cards. */}
+        {/* P3: THE LEGACY BENCH IS NOW A SECONDARY TOOL. The professional
+            workspace above is the primary path; this card keeps the
+            verification workflow (selection, airframe reference, the hold
+            action) reachable without ever standing between Enable and the
+            sliders. */}
+        <Text style={styles.toolsHeading} testID="motors-tools-heading">
+          التحقق والأدوات
+        </Text>
         <View style={styles.benchCard} testID="motors-workspace">
           <View style={styles.benchHeadingRow}>
             <View style={styles.flexOne}>
@@ -1274,6 +1304,7 @@ export function MotorsScreenView({
               </Text>
             </View>
           </View>
+
 
           <View style={styles.workflowSteps} testID="motors-workflow-steps">
             <View style={styles.workflowStep}>
@@ -1335,6 +1366,9 @@ export function MotorsScreenView({
             </View>
           </View>
 
+          <Text style={styles.toolsHeading} testID="motors-settings-heading">
+            إعدادات المحركات
+          </Text>
           <MotorConfigurationSummary scope={snapshot?.motorScope} />
 
           {snapshot?.phase === 'IDLE' ? (
@@ -1449,6 +1483,10 @@ export function MotorsScreenView({
               {t('motorsScreen.diagramDirectionSource')}
             </Text>
           </View>
+
+          {/* Select on the diagram, then hold here - the legacy
+              verification order, preserved inside the tools area. */}
+          {holdControl}
 
           <View
             style={styles.selectedMotorPanel}
@@ -1623,11 +1661,31 @@ export function MotorsScreenView({
           hold control cannot be confused with the explanatory Step 3 card
           or disappear below the airframe diagram. Stop stays mounted and
           is NEVER disabled for a transient UI or Promise state. */}
+      {/* P3: STICKY PROFESSIONAL STOP. Pinned above the legacy dock while
+          the professional session is live, so STOP never scrolls out of
+          reach on narrow layouts. One tap, no confirmation, canonical
+          facade stop. Hidden entirely when motor control is not active. */}
+      {professionalEnabled && snapshot?.outcome.kind === 'READY' ? (
+        <View style={styles.professionalStopDock} testID="motors-sticky-stop">
+          <Pressable
+            onPress={() => operator?.stopAll()}
+            accessibilityRole="button"
+            accessibilityLabel="إيقاف المحركات"
+            style={styles.professionalStopButton}
+          >
+            <Text style={styles.professionalStopLabel}>إيقاف المحركات</Text>
+          </Pressable>
+        </View>
+      ) : null}
+
       <View
         style={[styles.sessionDock, { marginBottom: effectiveBottomInset + spacing.md }]}
         testID="motors-session-dock"
       >
-        {holdControl}
+        {/* P3: the long-press control moved into the التحقق والأدوات bench
+            card below - the pinned dock no longer teaches press-and-hold
+            as the way to drive motors. Stop-all and end-session remain
+            pinned for every workflow. */}
         {pulseRejected ? (
           <Text style={styles.inlineError} testID="motors-pulse-rejected">
             {t('motorsScreen.pulseRejected')}
@@ -1655,6 +1713,27 @@ export function MotorsScreenView({
 const MIN_TOUCH_TARGET = 44;
 
 const styles = StyleSheet.create({
+  toolsHeading: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+    marginTop: spacing.sm,
+  },
+  professionalStopDock: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
+  },
+  professionalStopButton: {
+    minHeight: MIN_TOUCH_TARGET,
+    borderRadius: radii.md,
+    backgroundColor: colors.error,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  professionalStopLabel: {
+    ...typography.sectionTitle,
+    color: colors.surface,
+    fontSize: 16,
+  },
   root: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
   scrollContent: {
