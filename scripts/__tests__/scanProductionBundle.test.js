@@ -329,15 +329,139 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'MSP_SET_RX_CONFIG',
       'MSP_SET_RX_MAP',
       'buildAllStopVector',
+      // P1-C/P1-D: general motor-command primitives, declared with an
+      // empty importer list so the boundary exists before the first
+      // runtime caller does.
+      'buildAllStopVectorForDomain',
+      'buildMotorVector',
       'buildSingleMotorVector',
+      'buildSingleOutputVectorForDomain',
       'encodeChangedGeneralConfiguration',
       'encodeChangedMotorConfiguration',
       'encodeChangedPidTuning',
       'encodeChangedReceiverConfiguration',
+      'encodeDshotCommand',
       'encodeDshotEscDirection',
+      'encodeDshotMotorStopCommand',
       'encodeMotorOutputOrder',
       'encodeSetMotorPayload',
     ]);
+  });
+
+  /**
+   * The boundary must detect REACHABILITY, not the literal presence of a
+   * token. Each case below injects one forbidden path into an in-memory
+   * copy of the tree; the real tree is never touched.
+   */
+  describe('forbidden reachability - negative cases', () => {
+    const inject = mutate => {
+      const sources = readSourceTree();
+      mutate(sources);
+      return analyzeEngineBoundaries(sources);
+    };
+    const findings = result => [
+      ...result.violations.map(entry => `namedImport:${entry.token}`),
+      ...result.reExportViolations.map(entry => `reExport:${entry.token}`),
+      ...result.indirectUses.map(entry => `indirectUse:${entry.token}`),
+    ];
+
+    it('fails on a direct import from a UI screen', () => {
+      const result = inject(sources => {
+        sources['src/ui/screens/MotorsScreen.tsx'] +=
+          "\nimport {buildMotorVector} from '../../core/firmware-adapters/betaflightMotorVectorsV147';\n";
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain('namedImport:buildMotorVector');
+    });
+
+    it('fails on reachability through a barrel re-export', () => {
+      const result = inject(sources => {
+        sources['src/core/index.ts'] +=
+          "\nexport {buildMotorVector} from './firmware-adapters/betaflightMotorVectorsV147';\n";
+        sources['src/ui/screens/MotorsScreen.tsx'] +=
+          "\nimport * as core from '../../core';\nconst v = core.buildMotorVector(d, x);\n";
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain('reExport:buildMotorVector');
+      // and the consumer is caught too, even though it never names the
+      // token in an import statement.
+      expect(
+        result.indirectUses.some(
+          entry =>
+            entry.token === 'buildMotorVector' &&
+            entry.module === 'src/ui/screens/MotorsScreen.tsx',
+        ),
+      ).toBe(true);
+    });
+
+    it('fails on an import from a platform module', () => {
+      const result = inject(sources => {
+        sources[
+          'src/platforms/react-native/protocol/MotorConfigurationController.ts'
+        ] +=
+          "\nimport {encodeDshotMotorStopCommand} from '../../../core/protocol/msp/encoding/encodeDshotEscDirection';\n";
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain(
+        'namedImport:encodeDshotMotorStopCommand',
+      );
+    });
+
+    it('fails on an import from another runtime controller outside the Motors engine', () => {
+      const result = inject(sources => {
+        sources['src/platforms/react-native/protocol/PidTuningController.ts'] +=
+          "\nimport {encodeDshotCommand} from '../../../core/protocol/msp/encoding/encodeDshotEscDirection';\n";
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain('namedImport:encodeDshotCommand');
+    });
+
+    it('fails on a namespace import that never names the token', () => {
+      const result = inject(sources => {
+        sources['src/ui/screens/MotorsScreen.tsx'] +=
+          "\nimport * as vectors from '../../core/firmware-adapters/betaflightMotorVectorsV147';\n" +
+          'const z = vectors.buildSingleOutputVectorForDomain(d, 0, 1);\n';
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain(
+        'indirectUse:buildSingleOutputVectorForDomain',
+      );
+    });
+
+    it('does NOT fail when the token appears only in a comment', () => {
+      const result = inject(sources => {
+        sources['src/ui/screens/MotorsScreen.tsx'] +=
+          '\n// TODO later: buildMotorVector will be used here\n';
+      });
+      expect(result.ok).toBe(true);
+    });
+
+    it('the unmodified tree is clean, so the fixture is restored', () => {
+      expect(analyzeEngineBoundaries(readSourceTree()).ok).toBe(true);
+    });
+  });
+
+  it('holds the P1 general motor primitives at zero runtime importers', () => {
+    const p1Tokens = [
+      'buildMotorVector',
+      'buildAllStopVectorForDomain',
+      'buildSingleOutputVectorForDomain',
+      'encodeDshotCommand',
+      'encodeDshotMotorStopCommand',
+    ];
+    for (const token of p1Tokens) {
+      const boundary = ENGINE_BOUNDARIES.find(entry => entry.token === token);
+      expect(boundary).toBeDefined();
+      expect(boundary.importers).toEqual([]);
+      // No barrel may re-export them either.
+      expect(boundary.reExporters ?? []).toEqual([]);
+    }
+    // And the real tree agrees: none of them is imported anywhere yet.
+    const result = analyzeEngineBoundaries(readSourceTree());
+    for (const token of p1Tokens) {
+      expect(result.violations.map(entry => entry.token)).not.toContain(token);
+      expect(result.stale.map(entry => entry.token)).not.toContain(token);
+    }
   });
 });
 

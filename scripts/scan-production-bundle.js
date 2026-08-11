@@ -259,6 +259,21 @@ const POSITIVE_CONTROLS = ['diagnostics-section', 'fc-tools-section'];
  * A module not on the list importing it is a failure; so is the list
  * naming a module that no longer imports it, because a stale allowance is
  * how a boundary quietly stops being one.
+ *
+ * `reExporters` lists every non-test module permitted to RE-EXPORT the
+ * token (`export { token } from ...`, or `export * from` the defining
+ * module). A named import is not the only way to widen a boundary: a
+ * barrel that re-exports the token makes it reachable from anywhere that
+ * imports the barrel, including through a namespace import that never
+ * names the token in an import statement at all. Omitted means "no module
+ * may re-export this", which is what every P1 primitive wants.
+ *
+ * The analysis additionally rejects any USE of the token identifier in a
+ * module that is neither the definer nor a permitted importer, with
+ * comments and string literals stripped first. That is what turns this
+ * from a check on import statements into a check on reachability: a
+ * namespace import (`import * as core`) or a dynamic import followed by
+ * `.token(...)` is caught even though no import statement names it.
  */
 const ENGINE_BOUNDARIES = [
   {
@@ -270,6 +285,35 @@ const ENGINE_BOUNDARIES = [
     token: 'buildSingleMotorVector',
     from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
     importers: ['src/core/state/motorTestController.ts'],
+  },
+  // P1-C/P1-D declared these general motor-command primitives without a
+  // runtime caller. An EMPTY importer list is the point: the boundary is
+  // in place from the day the primitive exists, so the P2 pass that first
+  // imports one has to say so here rather than slipping it in.
+  {
+    token: 'buildMotorVector',
+    from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
+    importers: [],
+  },
+  {
+    token: 'buildAllStopVectorForDomain',
+    from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
+    importers: [],
+  },
+  {
+    token: 'buildSingleOutputVectorForDomain',
+    from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
+    importers: [],
+  },
+  {
+    token: 'encodeDshotCommand',
+    from: 'src/core/protocol/msp/encoding/encodeDshotEscDirection.ts',
+    importers: [],
+  },
+  {
+    token: 'encodeDshotMotorStopCommand',
+    from: 'src/core/protocol/msp/encoding/encodeDshotEscDirection.ts',
+    importers: [],
   },
   {
     token: 'buildAllStopVector',
@@ -286,6 +330,9 @@ const ENGINE_BOUNDARIES = [
     from: 'src/core/protocol/msp/encoding/encodeMotorConfiguration.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -304,31 +351,61 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/OsdConfigurationController.ts',
       'src/platforms/react-native/protocol/VtxConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'encodeChangedPidTuning',
     from: 'src/core/protocol/msp/encoding/encodePidTuning.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_PID',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_PID_ADVANCED',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_FILTER_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_RC_TUNING',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_FEATURE_CONFIG',
@@ -339,12 +416,22 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP2_COMMON_SET_SERIAL_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -353,12 +440,22 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_MIXER_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -368,12 +465,22 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'encodeChangedGeneralConfiguration',
     from: 'src/core/protocol/msp/encoding/encodeGeneralConfiguration.ts',
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -382,6 +489,11 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_BEEPER_CONFIG',
@@ -389,12 +501,22 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'encodeChangedReceiverConfiguration',
     from: 'src/core/protocol/msp/encoding/encodeReceiver.ts',
     importers: [
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -404,12 +526,22 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_RX_MAP',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -418,12 +550,22 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_RC_DEADBAND',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -432,12 +574,22 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_MOTOR_3D_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -446,12 +598,22 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'encodeMotorOutputOrder',
     from: 'src/core/protocol/msp/encoding/encodeMotorOutputOrder.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -461,12 +623,22 @@ const ENGINE_BOUNDARIES = [
       'src/core/state/motorTestController.ts',
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP2_SET_MOTOR_OUTPUT_REORDERING',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -475,6 +647,11 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/core/state/motorTestController.ts',
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
 ];
@@ -590,24 +767,71 @@ function collectSourceFiles(directory, into) {
  * Pure analysis of an already-collected {relativePath -> source} map, so
  * tests can drive every verdict without touching the real tree.
  */
+/** Comments and string/template literals removed, so a token mentioned in
+ * prose or in a log message is never mistaken for a reference to it. */
+function executableText(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/`(?:\\.|[^`\\])*`/g, '``');
+}
+
+/** Module specifier without extension, for `export * from` matching. */
+function moduleSpecifierOf(path) {
+  return path.replace(/^src\//, '').replace(/\.tsx?$/, '');
+}
+
 function analyzeEngineBoundaries(sources) {
   const violations = [];
   const stale = [];
+  const reExportViolations = [];
+  const indirectUses = [];
 
   for (const boundary of ENGINE_BOUNDARIES) {
+    const allowedReExporters = boundary.reExporters ?? [];
+    const definingSpecifier = moduleSpecifierOf(boundary.from);
     const actual = [];
     for (const [path, text] of Object.entries(sources)) {
       if (path === boundary.from) {
         continue;
       }
-      // An import edge, not a mention: the token must appear inside an
-      // import statement naming the defining module's basename.
+      const code = executableText(text);
+      // 1. An import edge: the token inside an import statement.
       const importPattern = new RegExp(
         `import[^;]*\\b${boundary.token}\\b[^;]*from[^;]*;`,
         'g',
       );
       if (importPattern.test(text)) {
         actual.push(path);
+      }
+      // 2. A re-export edge, named or wildcard. Either makes the token
+      //    reachable from every module that imports THIS one.
+      const namedReExport = new RegExp(
+        `export[^;]*\\b${boundary.token}\\b[^;]*from[^;]*;`,
+        'g',
+      );
+      const wildcardReExport = new RegExp(
+        `export\\s*\\*\\s*from\\s*['"][^'"]*${definingSpecifier.split('/').pop()}['"]`,
+        'g',
+      );
+      if (
+        (namedReExport.test(text) || wildcardReExport.test(text)) &&
+        !allowedReExporters.includes(path)
+      ) {
+        reExportViolations.push({ token: boundary.token, reExporter: path });
+      }
+      // 3. Any USE of the identifier in executable code from a module that
+      //    is neither a permitted importer nor a permitted re-exporter.
+      //    Catches namespace imports and dynamic imports, which name
+      //    nothing in an import statement.
+      if (
+        !boundary.importers.includes(path) &&
+        !allowedReExporters.includes(path) &&
+        new RegExp(`\\b${boundary.token}\\b`).test(code)
+      ) {
+        indirectUses.push({ token: boundary.token, module: path });
       }
     }
     for (const path of actual) {
@@ -642,9 +866,16 @@ function analyzeEngineBoundaries(sources) {
   return {
     violations,
     stale,
+    reExportViolations,
+    indirectUses,
     dispatchSites,
     unleashed,
-    ok: violations.length === 0 && stale.length === 0 && unleashed.length === 0,
+    ok:
+      violations.length === 0 &&
+      stale.length === 0 &&
+      reExportViolations.length === 0 &&
+      indirectUses.length === 0 &&
+      unleashed.length === 0,
   };
 }
 

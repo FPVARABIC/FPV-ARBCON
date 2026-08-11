@@ -108,8 +108,18 @@ describe('encodeSetMotorPayload - allocation and immutability', () => {
 });
 
 describe('encodeSetMotorPayload - motorCount validation', () => {
-  it('rejects every out-of-scope motorCount', () => {
-    for (const motorCount of [0, -1, -4, 1, 2, 3, 5, 6, 8, 12]) {
+  /* REWRITTEN IN P1-A. The old assertion was "every motorCount except 4
+   * throws", which encoded an approved product scope rather than the
+   * protocol. MAX_SUPPORTED_MOTORS is 8
+   * (target/common_defaults_post.h:351 @ 79065c96), so 1..8 are legal
+   * counts and only counts outside that range - or a length mismatch
+   * against the supplied vector - are rejected here. */
+  it('rejects motorCounts outside 1..8, and length mismatches inside it', () => {
+    for (const motorCount of [0, -1, -4, 9, 12]) {
+      expect(() => encodeSetMotorPayload(ALL_STOP, motorCount)).toThrow(MspSetMotorEncodeError);
+    }
+    // In-range counts are legal, but the vector must match them exactly.
+    for (const motorCount of [1, 2, 3, 5, 6, 8]) {
       expect(() => encodeSetMotorPayload(ALL_STOP, motorCount)).toThrow(MspSetMotorEncodeError);
     }
   });
@@ -190,26 +200,115 @@ describe('encodeSetMotorPayload - value validation', () => {
   });
 });
 
-describe('encodeSetMotorPayload - one-active-motor invariant', () => {
+/**
+ * REWRITTEN IN P1-A, NOT DELETED.
+ *
+ * This block previously asserted a ONE-ACTIVE-MOTOR INVARIANT: a payload
+ * could be all-stop or carry exactly one value above stop, and anything
+ * else threw. That rule described the old single-pulse product, not
+ * MSP_SET_MOTOR. src/main/msp/msp.c @ 79065c96 reads the request as a
+ * plain vector -
+ *
+ *     case MSP_SET_MOTOR:
+ *         for (int i = 0; i < getMotorCount(); i++) {
+ *             motor_disarmed[i] = motorConvertFromExternal(sbufReadU16(src));
+ *         }
+ *
+ * - and both reference configurators drive every element independently.
+ *
+ * The SAFETY INTENT the old block carried is preserved and moved, not
+ * dropped: how many outputs a caller may command is decided by the layers
+ * above (the lease, the armed-state evidence, the arming restriction and,
+ * for the shipping path, `assertSupportedMotorScope` +
+ * `buildSingleMotorVector`, all unchanged by P1). What is removed is only
+ * this pure encoder's claim that the protocol forbids a multi-element
+ * vector, which it never did.
+ */
+describe('encodeSetMotorPayload - full motor vectors (P1-A contract)', () => {
   it('accepts the all-stop vector', () => {
     expect(() => encodeSetMotorPayload(ALL_STOP, 4)).not.toThrow();
   });
 
-  it('rejects two, three and four non-stop values', () => {
-    expect(() => encodeSetMotorPayload([1100, 1100, STOP, STOP], 4)).toThrow(
+  it('accepts several independently different values in one vector', () => {
+    const payload = encodeSetMotorPayload([1100, 1200, 1300, 1400], 4);
+    expect(Array.from(payload)).toEqual([
+      1100 & 0xff, 1100 >> 8,
+      1200 & 0xff, 1200 >> 8,
+      1300 & 0xff, 1300 >> 8,
+      1400 & 0xff, 1400 >> 8,
+    ]);
+  });
+
+  it('accepts a master-style vector where every element is equal', () => {
+    const payload = encodeSetMotorPayload([1250, 1250, 1250, 1250], 4);
+    const view = new DataView(payload.buffer);
+    for (let index = 0; index < 4; index += 1) {
+      expect(view.getUint16(index * 2, true)).toBe(1250);
+    }
+  });
+
+  it('accepts a multi-element vector at the protocol floor', () => {
+    expect(() =>
+      encodeSetMotorPayload([PROTOCOL_FLOOR, PROTOCOL_FLOOR, STOP, STOP], 4),
+    ).not.toThrow();
+  });
+});
+
+describe('encodeSetMotorPayload - motor count range (P1-A contract)', () => {
+  const stopVector = (motorCount: number): number[] =>
+    Array.from({length: motorCount}, () => STOP);
+
+  it('encodes exactly motorCount * 2 bytes for every supported count', () => {
+    for (let motorCount = 1; motorCount <= 8; motorCount += 1) {
+      const payload = encodeSetMotorPayload(stopVector(motorCount), motorCount);
+      expect(payload).toHaveLength(motorCount * 2);
+    }
+  });
+
+  it('rejects motorCount 0 and motorCount above MAX_SUPPORTED_MOTORS', () => {
+    for (const motorCount of [0, -1, 9, 12, 255]) {
+      expect(() =>
+        encodeSetMotorPayload(stopVector(Math.max(0, motorCount)), motorCount),
+      ).toThrow(MspSetMotorEncodeError);
+    }
+  });
+
+  it('rejects a values array whose length does not equal motorCount', () => {
+    expect(() => encodeSetMotorPayload(stopVector(3), 4)).toThrow(MspSetMotorEncodeError);
+    expect(() => encodeSetMotorPayload(stopVector(5), 4)).toThrow(MspSetMotorEncodeError);
+    expect(() => encodeSetMotorPayload(stopVector(6), 6)).not.toThrow();
+  });
+});
+
+describe('encodeSetMotorPayload - supplied external domain (P1-A contract)', () => {
+  it('measures values against a supplied analog domain, not PWM_RANGE', () => {
+    // An analog board may legally report mincommand 900 (pg/motor.h:85).
+    const analog = {externalMin: 900, externalMax: 1900};
+    expect(() => encodeSetMotorPayload([900, 900, 900, 900], 4, analog)).not.toThrow();
+    expect(() => encodeSetMotorPayload([1950, 900, 900, 900], 4, analog)).toThrow(
       MspSetMotorEncodeError,
     );
-    expect(() => encodeSetMotorPayload([1100, 1100, 1100, STOP], 4)).toThrow(
-      MspSetMotorEncodeError,
-    );
-    expect(() => encodeSetMotorPayload([1100, 1100, 1100, 1100], 4)).toThrow(
+    // The same 900 is out of range under the default DShot domain.
+    expect(() => encodeSetMotorPayload([900, 900, 900, 900], 4)).toThrow(
       MspSetMotorEncodeError,
     );
   });
 
-  it('rejects a multi-motor vector even at the protocol floor', () => {
+  it('rejects an inverted or non-integer domain', () => {
     expect(() =>
-      encodeSetMotorPayload([PROTOCOL_FLOOR, PROTOCOL_FLOOR, STOP, STOP], 4),
+      encodeSetMotorPayload(ALL_STOP, 4, {externalMin: 2000, externalMax: 1000}),
+    ).toThrow(MspSetMotorEncodeError);
+    expect(() =>
+      encodeSetMotorPayload(ALL_STOP, 4, {externalMin: 1000.5, externalMax: 2000}),
+    ).toThrow(MspSetMotorEncodeError);
+  });
+
+  it('rejects a domain outside the u16 wire field', () => {
+    expect(() =>
+      encodeSetMotorPayload([70000, 70000, 70000, 70000], 4, {
+        externalMin: 0,
+        externalMax: 70000,
+      }),
     ).toThrow(MspSetMotorEncodeError);
   });
 });

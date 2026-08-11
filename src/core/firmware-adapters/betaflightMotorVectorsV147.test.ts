@@ -14,7 +14,10 @@
 import {
   assertSupportedMotorScope,
   buildAllStopVector,
+  buildAllStopVectorForDomain,
+  buildMotorVector,
   buildSingleMotorVector,
+  buildSingleOutputVectorForDomain,
   MotorVectorScopeError,
   MotorVectorValueError,
   MOTOR_EXTERNAL_MAX_VALUE,
@@ -23,6 +26,7 @@ import {
   MOTOR_VECTOR_MOTOR_COUNT,
   type MotorVectorScope,
 } from './betaflightMotorVectorsV147';
+import {resolveMotorTestValueDomain} from './betaflightMotorDomainV147';
 import {MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2} from '../protocol/msp/decoding/decodeAdvancedConfig';
 import {encodeSetMotorPayload} from '../protocol/msp/encoding/encodeSetMotorPayload';
 
@@ -237,5 +241,115 @@ describe('betaflightMotorVectorsV147 - what it deliberately does NOT do', () => 
       const vector = buildSingleMotorVector(inScope(), motorIndex, 1234);
       expect(vector.indexOf(1234)).toBe(motorIndex);
     }
+  });
+});
+
+/* ===================================================================== *
+ * P1-C - the GENERAL vector primitives. The legacy single-pulse helpers
+ * above are unchanged; these tests cover the new domain-driven forms that
+ * no runtime caller uses yet.
+ * ===================================================================== */
+describe('P1-C general motor vector primitives', () => {
+  const digitalDomain = resolveMotorTestValueDomain({
+    motorCount: 4,
+    motorProtocolRaw: 7,
+    feature3dEnabled: false,
+    minCommand: 1000,
+    maxThrottle: 2000,
+  });
+  const analogDomain = resolveMotorTestValueDomain({
+    motorCount: 6,
+    motorProtocolRaw: 3,
+    feature3dEnabled: false,
+    minCommand: 900,
+    maxThrottle: 1900,
+  });
+  const threeDomain = resolveMotorTestValueDomain({
+    motorCount: 4,
+    motorProtocolRaw: 7,
+    feature3dEnabled: true,
+    minCommand: 1000,
+    maxThrottle: 2000,
+    motor3d: {deadband3dLow: 1406, deadband3dHigh: 1514, neutral3d: 1460},
+  });
+
+  it('builds an all-stop vector at each domain own stop value', () => {
+    expect(buildAllStopVectorForDomain(digitalDomain)).toEqual([1000, 1000, 1000, 1000]);
+    expect(buildAllStopVectorForDomain(analogDomain)).toEqual([900, 900, 900, 900, 900, 900]);
+    expect(buildAllStopVectorForDomain(threeDomain)).toEqual([1500, 1500, 1500, 1500]);
+  });
+
+  it('builds a full vector with independently different values', () => {
+    expect(buildMotorVector(digitalDomain, [1100, 1200, 1300, 1400])).toEqual([
+      1100, 1200, 1300, 1400,
+    ]);
+  });
+
+  it('builds a master-style vector where every element is equal', () => {
+    expect(buildMotorVector(analogDomain, [1200, 1200, 1200, 1200, 1200, 1200])).toEqual([
+      1200, 1200, 1200, 1200, 1200, 1200,
+    ]);
+  });
+
+  it('rejects a wrong-length, sparse, fractional or out-of-domain vector', () => {
+    expect(() => buildMotorVector(digitalDomain, [1000, 1000, 1000])).toThrow(
+      MotorVectorValueError,
+    );
+    const sparse: number[] = [1000, 1000, 1000, 1000];
+    delete sparse[2];
+    expect(() => buildMotorVector(digitalDomain, sparse)).toThrow(MotorVectorValueError);
+    expect(() => buildMotorVector(digitalDomain, [1000.5, 1000, 1000, 1000])).toThrow(
+      MotorVectorValueError,
+    );
+    expect(() => buildMotorVector(digitalDomain, [900, 1000, 1000, 1000])).toThrow(
+      MotorVectorValueError,
+    );
+    expect(() => buildMotorVector(analogDomain, [900, 900, 900, 900, 900, 1950])).toThrow(
+      MotorVectorValueError,
+    );
+  });
+
+  it('builds a single-output vector against the domain stop value', () => {
+    expect(buildSingleOutputVectorForDomain(digitalDomain, 2, 1100)).toEqual([
+      1000, 1000, 1100, 1000,
+    ]);
+    expect(buildSingleOutputVectorForDomain(analogDomain, 0, 1200)).toEqual([
+      1200, 900, 900, 900, 900, 900,
+    ]);
+    expect(buildSingleOutputVectorForDomain(threeDomain, 1, 1600)).toEqual([
+      1500, 1600, 1500, 1500,
+    ]);
+  });
+
+  it('rejects an out-of-range output index', () => {
+    for (const index of [-1, 4, 4.5]) {
+      expect(() => buildSingleOutputVectorForDomain(digitalDomain, index, 1100)).toThrow(
+        MotorVectorValueError,
+      );
+    }
+  });
+
+  it('returns frozen arrays', () => {
+    expect(Object.isFrozen(buildMotorVector(digitalDomain, [1000, 1000, 1000, 1000]))).toBe(true);
+    expect(Object.isFrozen(buildAllStopVectorForDomain(digitalDomain))).toBe(true);
+  });
+});
+
+/* The shipping single-pulse path must stay byte-identical after P1. */
+describe('P1-C legacy compatibility wrappers are unchanged', () => {
+  const scope = {motorCount: 4, motorProtocolRaw: 7, feature3dEnabled: false};
+
+  it('buildAllStopVector still returns the four-element non-3D stop vector', () => {
+    expect(buildAllStopVector(scope)).toEqual([1000, 1000, 1000, 1000]);
+  });
+
+  it('buildSingleMotorVector still returns one active output and three stops', () => {
+    expect(buildSingleMotorVector(scope, 1, 1050)).toEqual([1000, 1050, 1000, 1000]);
+  });
+
+  it('assertSupportedMotorScope still refuses 3D, non-DShot and non-four scopes', () => {
+    expect(() => assertSupportedMotorScope({...scope, feature3dEnabled: true})).toThrow();
+    expect(() => assertSupportedMotorScope({...scope, motorProtocolRaw: 3})).toThrow();
+    expect(() => assertSupportedMotorScope({...scope, motorCount: 6})).toThrow();
   });
 });
