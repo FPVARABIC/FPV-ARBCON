@@ -350,25 +350,27 @@ async function serveOne(harness: Harness): Promise<boolean> {
     return false;
   }
   const data = harness.transport.writes[0].data;
-  const command = writtenCommand(data);
-  // v1 request frame: $ M < size cmd <payload...> checksum
+  // P2-ii: wire-format-aware. The engine's supplemental DShot stop is a
+  // real MSPv2 request; answering it with a v1 error would never match and
+  // would wedge the serialized FIFO for the rest of the session. The
+  // pinned API 1.47 firmware speaks MSPv2, so a v2 reply is correct
+  // simulation, not a convenience.
+  const isV2 = data[1] === 0x58; // '$X<'
+  const command = isV2 ? data[4] | (data[5] << 8) : writtenCommand(data);
   harness.writes.push({
     command,
-    payload: Array.from(data.subarray(5, 5 + data[3])),
+    payload: isV2
+      ? Array.from(data.subarray(8, 8 + (data[6] | (data[7] << 8))))
+      : Array.from(data.subarray(5, 5 + data[3])),
   });
   harness.transport.resolveNextWrite();
   await flush();
   const payload = harness.replies.get(command);
+  const wireFormat = isV2 ? ('v2' as const) : ('v1' as const);
   harness.transport.emitData(
     payload === undefined
-      ? buildMspFrameBytes(command, EMPTY, {
-          wireFormat: 'v1',
-          direction: 'error',
-        })
-      : buildMspFrameBytes(command, payload, {
-          wireFormat: 'v1',
-          direction: 'response',
-        }),
+      ? buildMspFrameBytes(command, EMPTY, {wireFormat, direction: 'error'})
+      : buildMspFrameBytes(command, payload, {wireFormat, direction: 'response'}),
   );
   await flush();
   return true;

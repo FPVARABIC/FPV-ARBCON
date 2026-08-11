@@ -18,6 +18,8 @@ function snapshot(machine: 'Ready' | 'Pulsing', allowed: boolean, live = false):
     pulse: {attemptId: 1, motorNumber: live ? 1 : undefined, submitted: live, acknowledged: false, deadlineArmedAtSubmission: live, mayHaveReachedFc: live, outcome: undefined},
     activation: {allowed, reasons: allowed ? [] : ['PULSE_OR_STOP_IN_PROGRESS']}, verificationReceipt: undefined,
     armedStateEvidence: allowed ? 'FRESH_DISARMED' : 'UNKNOWN_OR_STALE',
+    motorDomain: undefined,
+    motorRuntimeScope: undefined,
   } as MotorTestControllerSnapshot;
 }
 

@@ -280,10 +280,12 @@ describe('scanner - the engine boundary is the remaining structural containment'
 
   it('fails when an allowance goes stale rather than silently testing nothing', () => {
     const sources = readSourceTree();
-    // The controller stops importing the encoder: the rule now guards a
-    // module that does not exercise it.
-    sources['src/core/state/motorTestController.ts'] = sources[
-      'src/core/state/motorTestController.ts'
+    // P2-ii: the encoder's importer moved to the command engine, so the
+    // stale-detection fixture mutates THAT file now. The property under
+    // test is unchanged: an allowance whose module no longer exercises the
+    // token must fail, not silently test nothing.
+    sources['src/core/state/motorControlCommandEngine.ts'] = sources[
+      'src/core/state/motorControlCommandEngine.ts'
     ].replace(/\bencodeSetMotorPayload\b/g, 'somethingElse');
     const result = analyzeEngineBoundaries(sources);
     expect(result.ok).toBe(false);
@@ -299,6 +301,7 @@ describe('scanner - the engine boundary is the remaining structural containment'
     const result = analyzeEngineBoundaries(sources);
     expect(result.ok).toBe(false);
     expect(result.unleashed).toContainEqual({
+      file: 'src/core/state/motorTestController.ts',
       receiver: 'client',
       method: 'request',
     });
@@ -442,23 +445,38 @@ describe('scanner - the engine boundary is the remaining structural containment'
   });
 
   it('holds the P1 general motor primitives at zero runtime importers', () => {
+    // REWRITTEN IN P2-ii, NOT DELETED.
+    //
+    // In P1 these primitives had NO runtime consumer, and the assertion
+    // was that every importer list is empty. P2-ii gives them exactly one
+    // consumer - `motorControlCommandEngine.ts`, MotorTestController's
+    // tightly-owned helper - so "zero importers" is no longer the true
+    // statement, and asserting it would have to be deleted rather than
+    // tightened.
+    //
+    // The SAFETY INTENT is preserved and made sharper: the allowed set is
+    // pinned to exactly that one file, no barrel may re-export any of
+    // them, and the real tree must agree. A UI screen, a platform
+    // controller or a second state controller reaching one of these still
+    // fails, which is the property this test exists for.
+    const OWNED_HELPER = 'src/core/state/motorControlCommandEngine.ts';
     const p1Tokens = [
-      'buildMotorVector',
-      'buildAllStopVectorForDomain',
-      'buildSingleOutputVectorForDomain',
-      'encodeDshotCommand',
-      'encodeDshotMotorStopCommand',
+      ['buildMotorVector', [OWNED_HELPER]],
+      ['buildAllStopVectorForDomain', [OWNED_HELPER]],
+      ['buildSingleOutputVectorForDomain', ['src/core/state/motorTestController.ts']],
+      ['encodeDshotCommand', []],
+      ['encodeDshotMotorStopCommand', [OWNED_HELPER]],
     ];
-    for (const token of p1Tokens) {
+    for (const [token, allowed] of p1Tokens) {
       const boundary = ENGINE_BOUNDARIES.find(entry => entry.token === token);
       expect(boundary).toBeDefined();
-      expect(boundary.importers).toEqual([]);
+      expect(boundary.importers).toEqual(allowed);
       // No barrel may re-export them either.
       expect(boundary.reExporters ?? []).toEqual([]);
     }
-    // And the real tree agrees: none of them is imported anywhere yet.
+    // And the real tree agrees: nothing outside the allowlists reaches them.
     const result = analyzeEngineBoundaries(readSourceTree());
-    for (const token of p1Tokens) {
+    for (const [token] of p1Tokens) {
       expect(result.violations.map(entry => entry.token)).not.toContain(token);
       expect(result.stale.map(entry => entry.token)).not.toContain(token);
     }

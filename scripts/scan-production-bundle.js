@@ -279,12 +279,14 @@ const ENGINE_BOUNDARIES = [
   {
     token: 'encodeSetMotorPayload',
     from: 'src/core/protocol/msp/encoding/encodeSetMotorPayload.ts',
-    importers: ['src/core/state/motorTestController.ts'],
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
   },
   {
     token: 'buildSingleMotorVector',
     from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: ['src/core/state/motorTestController.ts'],
+    importers: [],
   },
   // P1-C/P1-D declared these general motor-command primitives without a
   // runtime caller. An EMPTY importer list is the point: the boundary is
@@ -293,17 +295,23 @@ const ENGINE_BOUNDARIES = [
   {
     token: 'buildMotorVector',
     from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: [],
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
   },
   {
     token: 'buildAllStopVectorForDomain',
     from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: [],
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
   },
   {
     token: 'buildSingleOutputVectorForDomain',
     from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: [],
+    importers: [
+      'src/core/state/motorTestController.ts',
+    ],
   },
   {
     token: 'encodeDshotCommand',
@@ -313,17 +321,21 @@ const ENGINE_BOUNDARIES = [
   {
     token: 'encodeDshotMotorStopCommand',
     from: 'src/core/protocol/msp/encoding/encodeDshotEscDirection.ts',
-    importers: [],
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
   },
   {
     token: 'buildAllStopVector',
     from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: ['src/core/state/motorTestController.ts'],
+    importers: [],
   },
   {
     token: 'MSP_SET_MOTOR',
     from: 'src/core/protocol/msp/commands/motorTestCommands.ts',
-    importers: ['src/core/state/motorTestController.ts'],
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
   },
   {
     token: 'encodeChangedMotorConfiguration',
@@ -647,6 +659,7 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/core/state/motorTestController.ts',
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+          'src/core/state/motorControlCommandEngine.ts',
     ],
     reExporters: [
       'src/core/index.ts',
@@ -846,17 +859,27 @@ function analyzeEngineBoundaries(sources) {
     }
   }
 
-  // D3: every dispatch of the motor command goes through a lease. The
-  // controller is the only importer (D2), so this is checked there.
-  const controller = sources['src/core/state/motorTestController.ts'] ?? '';
-  const executable = controller
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
-  const dispatchSites = Array.from(
-    executable.matchAll(
-      /([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(\s*MSP_SET_MOTOR/g,
-    ),
-  ).map(match => ({ receiver: match[1], method: match[2] }));
+  // D3: every dispatch of the motor command goes through a lease.
+  //
+  // P2-ii FINAL STATE: the dispatch sites moved OUT of the controller and
+  // into its tightly-owned command engine - the controller now encodes and
+  // sends nothing itself. Both files are scanned so a dispatch reappearing
+  // in the controller is caught, and the engine's sites are still required
+  // to be lease-shaped.
+  const dispatchOwners = [
+    'src/core/state/motorTestController.ts',
+    'src/core/state/motorControlCommandEngine.ts',
+  ];
+  const dispatchSites = dispatchOwners.flatMap(file => {
+    const executable = (sources[file] ?? '')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    return Array.from(
+      executable.matchAll(
+        /([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(\s*MSP_SET_MOTOR\b/g,
+      ),
+    ).map(match => ({ file, receiver: match[1], method: match[2] }));
+  });
   const unleashed = dispatchSites.filter(
     site =>
       site.receiver !== 'lease' &&

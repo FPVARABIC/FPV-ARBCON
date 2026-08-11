@@ -122,6 +122,12 @@ describe('createMotorTestSessionBinding - A/A construction', () => {
       'renewPulseHold',
       'requestStop',
       'setEscDirection',
+      // P2-ii: the professional facade, part of the controller's own
+      // frozen surface. The binding still adds, removes and wraps nothing.
+      'setMaster',
+      'setMotorValue',
+      'setMotorValues',
+      'stopAll',
       'subscribe',
     ]);
     binding.close();

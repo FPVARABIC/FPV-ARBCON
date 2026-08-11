@@ -116,6 +116,8 @@ function snapshotFor(options: {
       escTelemetrySource: 'BIDIRECTIONAL_DSHOT',
     },
     armedStateEvidence: allowed ? 'FRESH_DISARMED' : 'UNKNOWN_OR_STALE',
+    motorDomain: undefined,
+    motorRuntimeScope: undefined,
     telemetryHeld: true,
     warnings: [],
     stopDescriptors: [],
@@ -600,6 +602,7 @@ describe('MotorsScreen - state presentation', () => {
         safetyMonitorStopped: true,
         leaseRelease: 'RELEASED' as const,
         telemetryTokensReleased: true,
+      armingRestrictionRelease: 'RELEASED' as const,
         complete: true,
       },
     } satisfies MotorTestControllerSnapshot;
@@ -627,6 +630,8 @@ describe('MotorsScreen - state presentation', () => {
       setupStep: 'READY' as const,
       outcome: {kind: 'READY' as const},
       armedStateEvidence: 'UNKNOWN_OR_STALE' as const,
+      motorDomain: undefined,
+      motorRuntimeScope: undefined,
     } satisfies MotorTestControllerSnapshot;
     const rendered = render(new FakeOperator(barredReady));
 

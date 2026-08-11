@@ -227,6 +227,22 @@ describe('no production file can manufacture the permitting armed-state answer',
 describe('the ESC-direction command stays inside its dedicated transaction', () => {
   const sources = productionSources();
 
+  /**
+   * WIDENED IN P2-ii, BY EXACTLY ONE FILE, AND THE REASON IS RECORDED.
+   *
+   * `motorControlCommandEngine.ts` is MotorTestController's tightly-owned
+   * helper - constructed by the controller, handed the controller's own
+   * lease and official authority, and reachable from nowhere else. It
+   * sends DSHOT_CMD_MOTOR_STOP after the all-stop vector, through THAT
+   * SAME lease: no second transport queue, no second client, no bypass.
+   *
+   * The containment property this test exists for is unchanged: the
+   * command still appears only in declarations, re-exports and the guarded
+   * command authority. It is still absent from every screen, every
+   * platform binding and every unrelated state controller, which the
+   * exact-set assertion below is what proves - the set cannot grow
+   * unnoticed.
+   */
   it('allows the MSP command only in declarations, re-exports, and the guarded controller', () => {
     const users = sources
       .filter(file => executableOf(file).includes('MSP2_SEND_DSHOT_COMMAND'))
@@ -238,6 +254,7 @@ describe('the ESC-direction command stays inside its dedicated transaction', () 
         join('src', 'core', 'protocol', 'index.ts'),
         join('src', 'core', 'protocol', 'msp', 'commands', 'mspCommands.ts'),
         join('src', 'core', 'protocol', 'msp', 'index.ts'),
+        join('src', 'core', 'state', 'motorControlCommandEngine.ts'),
         join('src', 'core', 'state', 'motorTestController.ts'),
         join(
           'src',

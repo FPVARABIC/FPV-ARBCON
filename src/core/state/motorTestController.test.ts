@@ -125,6 +125,9 @@ const PHYSICAL_GENERATION = 7;
 /** The one command the accepted restriction module sends. Named here only
  * so the fixture can answer it; this file builds no motor command. */
 const MSP_SET_ARMING_DISABLED_FIXTURE = 99;
+/** MSP_MOTOR_3D_CONFIG - deadband 1406/1514, neutral 1460, LE u16 x3. */
+const MSP_MOTOR_3D_CONFIG_FIXTURE = 124;
+const MOTOR_3D_CONFIG_PAYLOAD = Uint8Array.from([126, 5, 234, 5, 180, 5]);
 
 /** Phase 2F: the stop command the controller now dispatches during
  * teardown. A real FC acknowledges it, so the fixture does too. */
@@ -306,10 +309,63 @@ function supportedScript(): Map<number, ScriptedReply> {
     [MSP_BATTERY_STATE, reply(batteryPayload())],
     [MSP_SET_ARMING_DISABLED_FIXTURE, reply(EMPTY)],
     [MSP_SET_MOTOR_FIXTURE, reply(EMPTY)],
+    // P2 closure: FEATURE_3D sessions read the real 3D config bytes.
+    [MSP_MOTOR_3D_CONFIG_FIXTURE, reply(MOTOR_3D_CONFIG_PAYLOAD)],
   ]);
 }
 
 /** Byte 4 of a v1 request frame is the command. */
+
+/**
+ * P2-ii - WIRE-FORMAT-AWARE REQUEST PARSING AND REPLIES.
+ *
+ * The harness used to read only the v1 layout (`data[4]` as the command)
+ * and answer EVERYTHING in v1. A real MSPv2 request - the engine's
+ * supplemental DSHOT stop - was therefore misparsed, answered with a v1
+ * error the real client rightly never matches to a v2 request, and the
+ * FIFO wedged behind it forever. The pinned API 1.47 firmware speaks
+ * MSPv2, so answering a v2 request in v2 is CORRECT simulation, not a
+ * test convenience. The client is deliberately left strict.
+ */
+interface ParsedHarnessWrite {
+  readonly wireFormat: 'v1' | 'v2';
+  readonly command: number;
+  readonly payload: number[];
+}
+
+function parseHarnessWrite(data: Uint8Array): ParsedHarnessWrite {
+  if (data[1] === 0x58 /* 'X' - v2 native */) {
+    const command = data[4] | (data[5] << 8);
+    const length = data[6] | (data[7] << 8);
+    return {
+      wireFormat: 'v2',
+      command,
+      payload: Array.from(data.subarray(8, 8 + length)),
+    };
+  }
+  return {
+    wireFormat: 'v1',
+    command: data[4],
+    payload: Array.from(data.subarray(5, 5 + data[3])),
+  };
+}
+
+/** A reply in the SAME wire format the request used. */
+const replyFrame = (
+  write: ParsedHarnessWrite,
+  payload: Uint8Array,
+): Uint8Array =>
+  buildMspFrameBytes(write.command, payload, {
+    wireFormat: write.wireFormat,
+    direction: 'response',
+  });
+
+const errorReplyFrame = (write: ParsedHarnessWrite): Uint8Array =>
+  buildMspFrameBytes(write.command, EMPTY, {
+    wireFormat: write.wireFormat,
+    direction: 'error',
+  });
+
 function writtenCommand(data: Uint8Array): number {
   return data[4];
 }
@@ -703,21 +759,20 @@ async function serveOne(harness: Harness): Promise<boolean> {
     return false;
   }
   const data = harness.transport.writes[0].data;
-  const command = writtenCommand(data);
+  const write = parseHarnessWrite(data);
+  const command = write.command;
   harness.commands.push(command);
-  // v1 request frame: $ M < size cmd <payload…> checksum
-  harness.writes.push({
-    command,
-    payload: Array.from(data.subarray(5, 5 + data[3])),
-  });
+  harness.writes.push({command, payload: write.payload});
   harness.transport.resolveNextWrite();
   await flush();
   harness.beforeReply?.(command);
   const scripted = harness.script.get(command) ?? REJECT;
+  // The reply travels the SAME wire format as the request - a v1 error
+  // for a v2 request would never match and would wedge the FIFO.
   harness.transport.emitData(
     scripted.kind === 'RESPONSE'
-      ? responseFrame(command, scripted.payload)
-      : errorFrame(command),
+      ? replyFrame(write, scripted.payload)
+      : errorReplyFrame(write),
   );
   await flush();
   return true;
@@ -801,6 +856,11 @@ describe('MotorTestController - supported profile', () => {
     // MSP_STATUS_EX does not appear here because this suite injects a
     // controlled monitor stand-in; the real read is proven end to end in
     // motorTestBenchGate.test.ts.
+    // REWRITTEN IN P2-ii. The final assertion used to be "command 99 is
+    // not in the bundle any more, at all". P2-ii restores the FC-side
+    // arming restriction, so that statement is no longer true and could
+    // only have been deleted. The EXACTNESS this test exists for is kept:
+    // the enable path sends this list and nothing else, in this order.
     expect(harness.commands).toEqual([
       // (7) only what the encoder needs
       MSP_MOTOR_CONFIG,
@@ -808,13 +868,20 @@ describe('MotorTestController - supported profile', () => {
       MSP_FEATURE_CONFIG,
       // (8) only what armed state needs
       MSP_BOXIDS,
+      // (10b) P2-ii: the restriction, plus its own verification re-read.
+      MSP_SET_ARMING_DISABLED_FIXTURE,
+      MSP_STATUS_EX,
     ]);
     // MSP_BOXIDS keeps its at-most-once guarantee.
     expect(
       harness.commands.filter(command => command === MSP_BOXIDS),
     ).toHaveLength(1);
-    // Command 99 is not in the bundle any more, at all.
-    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
+    // The restriction is established exactly once, never repeatedly.
+    expect(
+      harness.commands.filter(
+        command => command === MSP_SET_ARMING_DISABLED_FIXTURE,
+      ),
+    ).toHaveLength(1);
   });
 
   it('writes no motor command while the session is being prepared', async () => {
@@ -1314,14 +1381,39 @@ describe('MotorTestController - the removed proof chain', () => {
     expect(harness.commands).not.toContain(MSP_BATTERY_STATE);
   });
 
-  it('reaches READY with no MSP arming restriction present', async () => {
+  /**
+   * INVERTED IN P2-ii, DELIBERATELY, AND THAT IS THE POINT.
+   *
+   * This asserted that a session reaches READY even when no arming
+   * restriction is present - correct for a pass that had removed the
+   * restriction and relied on continuous armed-state observation alone.
+   * P2-ii restores it, so the SAME fixture must now produce the opposite
+   * result: a flight controller that refuses command 99, or that reports
+   * the restriction absent afterwards, must NOT yield a commandable
+   * session.
+   *
+   * Kept rather than deleted because it pins the exact configuration that
+   * used to be tolerated and must no longer be.
+   */
+  it('refuses READY when the arming restriction cannot be established', async () => {
     const harness = createHarness([
       [MSP_STATUS_EX, reply(statusPayload({mspRestrictionPresent: false}))],
       [MSP_SET_ARMING_DISABLED_FIXTURE, REJECT],
     ]);
     const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toEqual({kind: 'READY'});
-    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
+    expect(snapshot.outcome.kind).not.toBe('READY');
+    expect(snapshot.activation.allowed).toBe(false);
+  });
+
+  it('refuses READY when the FC acknowledges 99 but reports the flag absent', async () => {
+    // The write was accepted and the device says the restriction is not in
+    // force. Believing the ACK over the device would be exactly the
+    // weakness the independent re-read exists to close.
+    const harness = createHarness([
+      [MSP_STATUS_EX, reply(statusPayload({mspRestrictionPresent: false}))],
+    ]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome.kind).not.toBe('READY');
   });
 });
 
@@ -1492,6 +1584,13 @@ describe('MotorTestController - session boundaries', () => {
  * after authority validation and before any arming-restriction
  * settlement, which is the whole point of the ordering.
  */
+/**
+ * EXTENDED IN P2-ii by one step. The comment above notes the array
+ * predates command 214 and that EXECUTE_STOP_VECTOR is ordered "before
+ * any arming-restriction settlement" - P2-ii is where that settlement
+ * actually arrives, and it lands exactly where that sentence predicted:
+ * after the all-stop, before the lease.
+ */
 const TEARDOWN_STEPS = [
   'MARK_CLOSING',
   'REMOVE_LISTENERS',
@@ -1499,12 +1598,13 @@ const TEARDOWN_STEPS = [
   'AUTHORIZED_TEARDOWN_ONLY',
   'EXECUTE_STOP_VECTOR',
   'STOP_SAFETY_MONITOR',
+  'RELEASE_ARMING_RESTRICTION',
   'RELEASE_LEASE',
   'RELEASE_TELEMETRY_TOKENS',
 ];
 
 describe('MotorTestController - teardown', () => {
-  it('runs the seven required steps in order', async () => {
+  it('runs the required teardown steps in order', async () => {
     const harness = createHarness();
     await runSetup(harness);
     const snapshot = await drive(harness, harness.controller.close());
@@ -1596,9 +1696,11 @@ describe('MotorTestController - teardown', () => {
     const second = harness.controller.close();
     expect(second).toBe(first);
     const snapshot = await drive(harness, first);
-    expect(snapshot.teardown?.steps).toHaveLength(8);
+    // P2-ii adds RELEASE_ARMING_RESTRICTION; the property under test is
+    // idempotency - the list must not GROW on repeated close() calls.
+    expect(snapshot.teardown?.steps).toHaveLength(TEARDOWN_STEPS.length);
     const third = await harness.controller.close();
-    expect(third.teardown?.steps).toHaveLength(8);
+    expect(third.teardown?.steps).toHaveLength(TEARDOWN_STEPS.length);
     expect(third).toBe(snapshot);
   });
 
@@ -1637,7 +1739,7 @@ describe('MotorTestController - teardown', () => {
     expect(saw).toBeGreaterThan(0);
   });
 
-  it('rolls a partial acquisition back through the same seven steps', async () => {
+  it('rolls a partial acquisition back through the same steps', async () => {
     const harness = createHarness([[MSP_BOXIDS, reply(EMPTY)]]);
     const snapshot = await runSetup(harness);
     expect(snapshot.teardown?.steps.map(step => step.step)).toEqual(
@@ -1718,15 +1820,33 @@ describe('Phase 2F - stop execution', () => {
     const harness = createHarness();
     await runSetup(harness);
     await drive(harness, harness.controller.close());
-    // The stop is the LAST command of the session and follows every
-    // evidence read, proving it used the same held lease.
-    expect(harness.commands[harness.commands.length - 1]).toBe(
-      MSP_SET_MOTOR_FIXTURE,
-    );
+    // UPDATED IN P2-ii. The stop used to be the LAST command of the
+    // session. It is now the last MOTOR command, followed by the arming
+    // restriction release - which is the correct order and the whole
+    // point: outputs are commanded to stop while a command can still be
+    // sent, and only then is the flight controller allowed to arm again.
     const stopIndex = harness.commands.lastIndexOf(MSP_SET_MOTOR_FIXTURE);
     const lastEvidenceIndex = harness.commands.lastIndexOf(MSP_BOXIDS);
     expect(lastEvidenceIndex).toBeGreaterThanOrEqual(0);
     expect(stopIndex).toBeGreaterThan(lastEvidenceIndex);
+    // The release is the last command, and it comes AFTER the stop.
+    expect(harness.commands[harness.commands.length - 1]).toBe(
+      MSP_SET_ARMING_DISABLED_FIXTURE,
+    );
+    expect(harness.commands.lastIndexOf(MSP_SET_ARMING_DISABLED_FIXTURE))
+      .toBeGreaterThan(stopIndex);
+  });
+
+  it('releases the restriction with payload [0], only after the stop', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    const closed = await drive(harness, harness.controller.close());
+    const armingWrites = harness.writes.filter(
+      write => write.command === MSP_SET_ARMING_DISABLED_FIXTURE,
+    );
+    // Exactly two: establish [1] at enable, release [0] at teardown.
+    expect(armingWrites.map(write => write.payload)).toEqual([[1], [0]]);
+    expect(closed.teardown?.armingRestrictionRelease).toBe('RELEASED');
   });
 
   it('orders the stop before the monitor stop and the lease release', async () => {
@@ -1772,18 +1892,29 @@ describe('Phase 2F - stop execution', () => {
     // command'). What is asserted HERE is this controller's consumption of
     // that flag: ambiguity must gate the acknowledgement, fail the lease
     // closed, and be reported as a FAILED outcome - never as a stop.
+    // REWRITTEN IN P2-ii: the ambiguity algorithm MOVED, it did not
+    // weaken. The controller no longer owns any stop dispatch - the
+    // professional engine does - so the source assertions now hold against
+    // motorControlCommandEngine.ts, where the counting argument, the
+    // confirming second all-stop and the fail-closed second ambiguity all
+    // live (and are behaviourally proven in its own suite with
+    // deterministic deferreds).
     const source = readFileSync(
-      join(__dirname, 'motorTestController.ts'),
+      join(__dirname, 'motorControlCommandEngine.ts'),
       'utf8',
     );
-    const ambiguousBranch = source.slice(source.indexOf('if (ambiguous)'));
-    expect(source).toContain('ambiguous = dispatch.attributionAmbiguous;');
+    const ambiguousBranch = source.slice(
+      source.indexOf('if (attributionAmbiguous)'),
+    );
+    expect(source).toContain(
+      'attributionAmbiguous = dispatch.attributionAmbiguous;',
+    );
     expect(ambiguousBranch).toContain('lease.failClosed()');
     expect(ambiguousBranch).toContain("reason: 'ATTRIBUTION_AMBIGUOUS'");
     // The ambiguity check precedes the only ACKNOWLEDGED return, so an
     // ambiguous exchange can never fall through to it.
-    expect(source.indexOf('if (ambiguous)')).toBeLessThan(
-      source.indexOf("settle({kind: 'ACKNOWLEDGED'}"),
+    expect(source.indexOf('if (attributionAmbiguous)')).toBeLessThan(
+      source.indexOf("kind: 'ACKNOWLEDGED' as const"),
     );
     // ATTRIBUTION_AMBIGUOUS is a FAILED outcome, so the teardown's
     // stop-unsafe gate holds telemetry paused exactly as for any other
@@ -1853,13 +1984,15 @@ describe('Phase 2F - stop execution', () => {
   });
 
   it('an unsupported scope dispatches nothing at all', async () => {
-    // Motor protocol 4 is BRUSHED/PWM-family, not a reviewed digital scope.
+    // P2 CLOSURE UPDATE: raw 4 (BRUSHED, analog family) is now a
+    // professionally ELIGIBLE runtime, so it no longer models "unusable by
+    // everyone". Raw 9 is unrecognised by the pinned resolver, refuses
+    // BOTH gates, and preserves this test's actual property: a session
+    // neither path can use encodes nothing and dispatches nothing.
     const harness = createHarness([
-      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(4))],
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(9))],
     ]);
     const snapshot = await runSetup(harness);
-    // The profile blocked before the restriction, and the scope guard
-    // refuses before a single byte is encoded.
     expect(snapshot.outcome.kind).toBe('BLOCKED');
     expect(harness.commands).not.toContain(MSP_SET_MOTOR_FIXTURE);
     expect(snapshot.stopExecution.commandDispatched).toBe(false);
@@ -1928,17 +2061,30 @@ describe('Phase 2F - stop execution', () => {
     expect(closed.stopExecution.attempts).toBe(1);
   });
 
-  it('never sends command 99 at any point in the session', async () => {
+  /**
+   * REWRITTEN IN P2-ii. The closing assertion was "the arming restriction
+   * is gone from the bundle: no establishment at setup, and nothing to
+   * settle at teardown". P2-ii restores both halves, so what this test now
+   * pins is the ORDER, which is the safety-relevant part and was always
+   * the reason the step indices were being compared:
+   *
+   *   all-stop  ->  release restriction  ->  release lease
+   *
+   * A restriction released before the stop would re-permit arming while an
+   * output could still be commanded, which inverts the entire point of
+   * establishing it.
+   */
+  it('orders teardown all-stop BEFORE the restriction release, and both before the lease', async () => {
     const harness = createHarness();
     await runSetup(harness);
     const closed = await drive(harness, harness.controller.close());
     const steps = closed.teardown?.steps.map(s => s.step) ?? [];
     expect(steps.indexOf('EXECUTE_STOP_VECTOR')).toBeLessThan(
+      steps.indexOf('RELEASE_ARMING_RESTRICTION'),
+    );
+    expect(steps.indexOf('RELEASE_ARMING_RESTRICTION')).toBeLessThan(
       steps.indexOf('RELEASE_LEASE'),
     );
-    // The arming restriction is gone from the bundle: no establishment at
-    // setup, and nothing to settle at teardown.
-    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
   });
 
   it('emits no pulse value anywhere on the wire', async () => {
@@ -2175,19 +2321,26 @@ describe('MotorTestController - live motor diagnostics', () => {
  * ------------------------------------------------------------------ */
 
 describe('MotorTestController - public surface', () => {
-  it('exposes exactly nine frozen operations, one of which activates', () => {
+  it('exposes exactly the frozen surface: legacy plus the professional facade', () => {
     const controller = createHarness().controller;
+    // EXTENDED IN P2-ii by exactly the four professional operations, all
+    // thin wrappers over the one session-owned engine. The exact-set
+    // assertion is the point: nothing else can be added unnoticed.
     expect(Object.keys(controller).sort()).toEqual([
       'close',
       'getSnapshot',
       'initializeSession',
-      // Phase 2G's ONE activating operation. Superseded assertion: this
-      // list was five before a pulse path existed.
+      // Phase 2G's ONE legacy activating operation. Superseded assertion:
+      // this list was five before a pulse path existed.
       'pulseMotor',
       'refreshDiagnostics',
       'renewPulseHold',
       'requestStop',
       'setEscDirection',
+      'setMaster',
+      'setMotorValue',
+      'setMotorValues',
+      'stopAll',
       'subscribe',
     ]);
     expect(Object.isFrozen(controller)).toBe(true);
@@ -2663,9 +2816,16 @@ describe('the versioned motor firmware gate', () => {
  * ------------------------------------------------------------------ */
 
 describe('the motor scope gate', () => {
+  /**
+   * REWRITTEN FOR THE P2 CLOSURE. These three used to assert that ONE gate
+   * refused the whole session. There are now two consumers with two
+   * truthful eligibilities: the professional runtime (P1 domain + runtime
+   * scope) and the legacy pulse UI (exactly four DShot motors, non-3D).
+   * The session refuses outright only when NEITHER can use it.
+   */
   it('blocks and never writes when the motor protocol is unrecognized', async () => {
     const harness = createHarness([
-      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(4))],
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(9))],
     ]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome.kind).toBe('BLOCKED');
@@ -2673,29 +2833,27 @@ describe('the motor scope gate', () => {
     expect(harness.commands).not.toContain(MSP_SET_MOTOR_FIXTURE);
   });
 
-  it('blocks on a motor count outside the one supported scope', async () => {
+  it('motor count 6: session proceeds professionally, legacy gate still refuses', async () => {
     const harness = createHarness([[MSP_MOTOR_CONFIG, reply(motorConfigPayload(6))]]);
     const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'MOTOR_SCOPE_UNSUPPORTED',
-    });
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
     expect(snapshot.motorScope?.motorCount).toBe(6);
+    expect(snapshot.activation.allowed).toBe(false);
+    expect(snapshot.activation.reasons).toContain('MOTOR_SCOPE_UNSUPPORTED');
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
   });
 
-  it('blocks with the dedicated 3D reason, and keeps the scope readable', async () => {
+  it('digital 3D: session proceeds, legacy 3D reason still bars the old UI', async () => {
     const harness = createHarness([
       [MSP_FEATURE_CONFIG, reply(Uint8Array.from(u32(FEATURE_3D_BIT)))],
     ]);
     const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'MOTOR_SCOPE_UNSUPPORTED',
-    });
-    // The scope is RETAINED on failure so the gate can name 3D specifically
-    // rather than reporting a generic dead link.
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    // The scope is RETAINED so the gate can name 3D specifically.
     expect(snapshot.motorScope?.feature3dEnabled).toBe(true);
+    expect(snapshot.activation.allowed).toBe(false);
     expect(snapshot.activation.reasons).toContain('MOTOR_3D_ENABLED');
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
   });
 
   it('reads exactly the three configuration commands the encoder needs', async () => {
@@ -2725,11 +2883,23 @@ describe('the motor scope gate', () => {
     }
   });
 
-  it('never establishes an arming restriction: command 99 is not sent at all', async () => {
+  /**
+   * REWRITTEN IN P2-ii. It asserted command 99 is never sent. The
+   * restriction is restored, so the true statement is now about POLARITY
+   * and COUNT: exactly one establish, carrying [1], and never [0] during
+   * setup - a release issued at bring-up would undo the very protection
+   * being established.
+   */
+  it('establishes the arming restriction exactly once, with payload [1]', async () => {
     const harness = createHarness();
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome.kind).toBe('READY');
-    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
+    const writes = harness.writes.filter(
+      write => write.command === MSP_SET_ARMING_DISABLED_FIXTURE,
+    );
+    expect(writes).toHaveLength(1);
+    // 1 DISABLES arming. Polarity is inverted from the command name.
+    expect(writes[0].payload).toEqual([1]);
   });
 });
 
@@ -2774,8 +2944,12 @@ describe('containment', () => {
     }
     // Exactly one lease is ever acquired.
     expect(code.match(/acquireMotorTestLease\(/g) ?? []).toHaveLength(1);
-    // And exactly one emergency-stop route exists.
-    expect(code.match(/\.emergencyStop\(/g) ?? []).toHaveLength(1);
+    // FINAL P2-ii STATE: the controller no longer holds ANY emergency-stop
+    // call site. The canonical priority stop lives in the engine, which is
+    // where the single \`.emergencyStop(\` route is asserted (its own suite
+    // and the boundary scan pin that). Zero here is the migration's end
+    // state, not a loosening.
+    expect(code.match(/\.emergencyStop\(/g) ?? []).toHaveLength(0);
   });
 
   it('contains no motor-command capability beyond the authorised stop', () => {
@@ -2823,20 +2997,47 @@ describe('containment', () => {
       expect(code).not.toMatch(new RegExp(`\\b${forbiddenValue}\\b`));
     }
     // Phase 2G: exactly TWO dispatch sites exist in this whole file - the
-    // pulse, on the ordinary lease FIFO, and the stop, on the priority
-    // route. Three mentions of the symbol: the import plus those two.
-    expect(code.match(/\bMSP_SET_MOTOR\b/g) ?? []).toHaveLength(3);
-    // Exactly one stop dispatch, and it is the PRIORITY route. A stop
-    // that could be queued behind other work is not a stop.
-    expect(code.match(/lease\.emergencyStop\(/g) ?? []).toHaveLength(1);
-    // Exactly one pulse dispatch, and it is the ORDINARY route - the
-    // pulse must never be able to jump the queue ahead of a stop.
-    expect(code.match(/lease\.request\(MSP_SET_MOTOR/g) ?? []).toHaveLength(1);
-    expect(code).not.toMatch(/emergencyStop\([^)]*buildSingleMotorVector/);
-    expect(code).toContain('buildSingleMotorVector');
-    // The vector and the bytes come from the protected accepted modules.
-    expect(code).toContain('buildAllStopVector');
-    expect(code).toContain('encodeSetMotorPayload');
+    // UPDATED IN P2-ii STEP 4. This used to be THREE mentions: the import,
+    // the legacy pulse's own `lease.request(MSP_SET_MOTOR, ...)`, and the
+    // stop. The legacy direct write is GONE - the pulse now routes through
+    // MotorControlCommandEngine, which owns that dispatch - so the
+    // controller retains exactly two: the import and the canonical
+    // priority stop. The count shrinking is the migration's whole point,
+    // and pinning it here is what stops a direct writer reappearing.
+    // FINAL P2-ii STATE: down from 3 (import + pulse + stop) to ZERO.
+    // Even the import is gone - the controller encodes and dispatches no
+    // motor frame by any route, so the symbol has nothing to be consumed
+    // by. Both write routes live in the engine.
+    expect(code.match(/\bMSP_SET_MOTOR\b/g) ?? []).toHaveLength(0);
+    // And there is no motor request left in this file by ANY route.
+    expect(code).not.toMatch(/lease\.request\(\s*MSP_SET_MOTOR/);
+    expect(code).not.toMatch(/emergencyStop\(\s*MSP_SET_MOTOR/);
+    // FINAL P2-ii STATE: zero stop dispatches here. The priority route is
+    // the engine's, asserted in its own suite and by the boundary scan.
+    expect(code.match(/lease\.emergencyStop\(/g) ?? []).toHaveLength(0);
+    // REWRITTEN IN P2-ii STEP 4. This asserted "exactly one pulse
+    // dispatch, on the ORDINARY route" - true when the controller owned
+    // the pulse write. It owns NO active motor dispatch any more: the
+    // legacy pulse routes through MotorControlCommandEngine, which keeps
+    // that same ordinary-route-vs-priority-stop split (proven in
+    // motorControlCommandEngine.test.ts). The controller's remaining
+    // motor traffic is the canonical stop, asserted above.
+    //
+    // The property is preserved and now stated as an absence, which is
+    // strictly stronger: this file may not dispatch an active vector at
+    // all, by any route.
+    expect(code).not.toMatch(/lease\.request\(\s*MSP_SET_MOTOR/);
+    expect(code).not.toContain('buildSingleMotorVector');
+    // The single-output vector now comes from the P1 domain builder, and
+    // is handed to the engine rather than encoded here.
+    expect(code).toContain('buildSingleOutputVectorForDomain');
+    expect(code).toContain('MotorControlCommandEngine');
+    // FINAL P2-ii STATE: the encode symbols left this file with the
+    // dispatches - the engine imports them now, under the boundary scan's
+    // allowlist. The legacy scope guard alone remains, because refusing a
+    // configuration is still this controller's job.
+    expect(code).not.toContain('buildAllStopVector');
+    expect(code).not.toContain('encodeSetMotorPayload');
     expect(code).toContain('assertSupportedMotorScope');
   });
 
@@ -4210,5 +4411,422 @@ describe('a safe Motors departure releases everything the shell depends on', () 
     // transaction with its own interlock.
     expect(Object.keys(snapshot)).not.toContain('configurationDirty');
     expect(Object.keys(snapshot)).not.toContain('pendingConfiguration');
+  });
+});
+
+/* ================================================================== *
+ * P2-ii STEP 5 - THE OLD REDUCER IS DEMOTED
+ *
+ * `motorTestStateMachine` may still own legacy UI and verification
+ * semantics. It may NOT be sufficient, on its own, to put a motor value
+ * on the wire. These are structural proofs against the production source,
+ * not against comments.
+ * ================================================================== */
+
+describe('P2-ii - the old reducer cannot independently authorize a motor write', () => {
+  /** Comments describe what the module must NOT do, so only executable
+   * text is examined - the same rule the containment suite uses. */
+  const controllerSource = (): string =>
+    readFileSync(join(__dirname, 'motorTestController.ts'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\/\/[^\n]*/g, ' ');
+
+  it('has NO legacy direct write: no ordinary-route MSP_SET_MOTOR in the controller', () => {
+    const code = controllerSource();
+    // The one thing that must be zero for P2-ii to be complete.
+    expect(code).not.toMatch(/lease\.request\(\s*MSP_SET_MOTOR/);
+    expect(code).not.toMatch(/runPulse\s*\(/);
+  });
+
+  it('routes the legacy pulse through the professional engine', () => {
+    const code = controllerSource();
+    // pulseMotor must reach the engine, and must not encode for itself.
+    // The IMPLEMENTATION, not the interface declaration that precedes it.
+    const pulseStart = code.lastIndexOf('pulseMotor(motorNumber: number)');
+    const pulseBody = code.slice(
+      pulseStart,
+      code.indexOf('renewPulseHold()', pulseStart),
+    );
+    expect(pulseBody).toContain('engine.setMotorValues');
+    expect(pulseBody).not.toContain('encodeSetMotorPayload');
+    expect(pulseBody).not.toContain('lease.request');
+  });
+
+  /**
+   * STRUCTURAL RATHER THAN RUNTIME, AND THE REASON IS STATED.
+   *
+   * `createMotorTestController` returns a frozen facade, so a test cannot
+   * reach in and remove the engine to observe the refusal at runtime -
+   * which is itself the containment property working as designed. What
+   * can be proven, and is proven here, is that the refusal branch exists
+   * and precedes every side effect: `pulseMotor` returns
+   * GATES_NOT_SATISFIED when there is no engine, BEFORE it mints an
+   * attempt, arms the watchdog, or latches `pulseMayHaveReachedFc`.
+   */
+  it('has an engine-absent refusal that precedes every pulse side effect', () => {
+    const code = controllerSource();
+    const pulseStart = code.lastIndexOf('pulseMotor(motorNumber: number)');
+    const pulseBody = code.slice(
+      pulseStart,
+      code.indexOf('renewPulseHold()', pulseStart),
+    );
+    const refusal = pulseBody.indexOf('engine === undefined');
+    expect(refusal).toBeGreaterThan(0);
+    // Every irreversible step comes AFTER the refusal.
+    expect(pulseBody.indexOf('this.pulseAttempt = attempt')).toBeGreaterThan(
+      refusal,
+    );
+    expect(pulseBody.indexOf('this.armPulseDeadline')).toBeGreaterThan(refusal);
+    expect(
+      pulseBody.indexOf('this.pulseMayHaveReachedFc = true'),
+    ).toBeGreaterThan(refusal);
+  });
+});
+
+/* ===================================================================== *
+ * P2-ii FINAL CONVERGENCE - THE PROFESSIONAL FACADE, THROUGH THE REAL
+ * CONTROLLER
+ *
+ * Everything below drives createMotorTestController's frozen surface over
+ * the real client, lease, engine and harness-scripted flight controller.
+ * No long press, no heartbeat and no fixed magnitude appear anywhere on
+ * this path. Nothing asserts a physical outcome.
+ * ===================================================================== */
+
+const activeMotorWrites = (harness: Harness): number[][] =>
+  harness.writes
+    .filter(write => write.command === MSP_SET_MOTOR_FIXTURE)
+    .map(write => write.payload)
+    .filter(payload => {
+      for (let index = 0; index + 1 < payload.length; index += 2) {
+        if (payload[index] + payload[index + 1] * 256 !== 1000) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+const armingWrites = (harness: Harness): number[][] =>
+  harness.writes
+    .filter(write => write.command === MSP_SET_ARMING_DISABLED_FIXTURE)
+    .map(write => write.payload);
+
+/** Serves pending traffic until nothing is outstanding. */
+async function settleWire(harness: Harness, turns = 12): Promise<void> {
+  for (let step = 0; step < turns; step++) {
+    await flush(4);
+    if (!(await serveOne(harness))) {
+      break;
+    }
+  }
+  await flush(4);
+}
+
+describe('P2-ii facade - professional command API through the controller', () => {
+  it('setMotorValues works with no long press, no heartbeat and no 1050', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    const accepted = harness.controller.setMotorValues([1100, 1200, 1300, 1400]);
+    expect(accepted).toEqual({kind: 'ACCEPTED', coalesced: false});
+    await settleWire(harness);
+    // Multiple independent non-stop values in ONE frame; 1050 nowhere.
+    expect(activeMotorWrites(harness)).toEqual([
+      [
+        ...[1100, 1200, 1300, 1400].flatMap(v => [v % 256, Math.floor(v / 256)]),
+      ],
+    ]);
+  });
+
+  it('setMotorValue mutates one desired entry and sends the full vector', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    harness.controller.setMotorValues([1100, 1200, 1000, 1000]);
+    await settleWire(harness);
+    expect(harness.controller.setMotorValue(2, 1300).kind).toBe('ACCEPTED');
+    await settleWire(harness);
+    const writes = activeMotorWrites(harness);
+    expect(writes[writes.length - 1]).toEqual(
+      [1100, 1200, 1300, 1000].flatMap(v => [v % 256, Math.floor(v / 256)]),
+    );
+  });
+
+  it('setMaster fills exactly N outputs at motorCount 4 through the LIVE controller', async () => {
+    const harness = createHarness([
+      [MSP_MOTOR_CONFIG, reply(motorConfigPayload(4))],
+    ]);
+    await runSetup(harness);
+    expect(harness.controller.setMaster(1234).kind).toBe('ACCEPTED');
+    await settleWire(harness);
+    const writes = activeMotorWrites(harness);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toHaveLength(8);
+    for (let index = 0; index < 4; index++) {
+      expect(writes[0][index * 2] + writes[0][index * 2 + 1] * 256).toBe(1234);
+    }
+  });
+
+  /**
+   * P2 CLOSURE: the limitation that used to be pinned here is REMOVED.
+   * Professional eligibility now comes from the P1 domain + runtime scope,
+   * so every firmware-supported motor count commands through the LIVE
+   * controller - while the legacy pulse UI stays four-motor-only through
+   * its own unchanged activation gate, asserted separately below.
+   */
+  it.each([1, 2, 6, 8])(
+    'motorCount %i: professional vector reaches the lease with N*2 bytes',
+    async motorCount => {
+      const harness = createHarness([
+        [MSP_MOTOR_CONFIG, reply(motorConfigPayload(motorCount))],
+      ]);
+      const snapshot = await runSetup(harness);
+      expect(snapshot.outcome).toEqual({kind: 'READY'});
+      // From MSP_MOTOR_CONFIG offset 6 - never MSP_MOTOR's fixed slots.
+      expect(snapshot.motorDomain?.motorCount).toBe(motorCount);
+
+      const values: number[] = [];
+      for (let index = 0; index < motorCount; index++) {
+        values.push(1100 + index * 10);
+      }
+      expect(harness.controller.setMotorValues(values)).toEqual({
+        kind: 'ACCEPTED',
+        coalesced: false,
+      });
+      await settleWire(harness);
+      const writes = activeMotorWrites(harness);
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toHaveLength(motorCount * 2);
+      for (let index = 0; index < motorCount; index++) {
+        expect(writes[0][index * 2] + writes[0][index * 2 + 1] * 256).toBe(
+          1100 + index * 10,
+        );
+      }
+      // THE LEGACY UI DID NOT WIDEN: its gate still refuses this count.
+      expect(harness.controller.getSnapshot().activation.allowed).toBe(false);
+      expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+    },
+  );
+
+  it('digital 3D: professional session commands both proven regions and stops at 1500', async () => {
+    const harness = createHarness([
+      [MSP_FEATURE_CONFIG, reply(Uint8Array.from(u32(FEATURE_3D_BIT)))],
+    ]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.motorDomain?.stopValue).toBe(1500);
+
+    // A reverse-region and a forward-region value in one dense vector.
+    expect(
+      harness.controller.setMotorValues([1200, 1800, 1500, 1500]).kind,
+    ).toBe('ACCEPTED');
+    await settleWire(harness);
+    // stopAll stops at the RESOLVED midpoint - 1000 here is FULL REVERSE.
+    expect(harness.controller.stopAll()).toBe('ACCEPTED');
+    await settleWire(harness, 20);
+    const stops = harness.writes
+      .filter(write => write.command === MSP_SET_MOTOR_FIXTURE)
+      .map(write => write.payload)
+      .filter(payload =>
+        payload.every(
+          (byte, index) => (index % 2 === 0 ? byte === 220 : byte === 5),
+        ),
+      );
+    expect(stops.length).toBeGreaterThan(0);
+    // The legacy 3D bar never moved.
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+  });
+
+  it('analog non-3D: professional session commands inside CONFIGURATION_POLICY bounds', async () => {
+    const harness = createHarness([
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(3))],
+    ]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.motorDomain?.domainSource).toBe('CONFIGURATION_POLICY');
+    expect(harness.controller.setMaster(1500).kind).toBe('ACCEPTED');
+    await settleWire(harness);
+    // Out of the configured domain: refused as PRODUCT POLICY, zero write.
+    expect(harness.controller.setMaster(2001).kind).toBe('REFUSED');
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+  });
+
+  it('analog 3D: refused for BOTH paths - the professional runtime does not guess', async () => {
+    const harness = createHarness([
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(3))],
+      [MSP_FEATURE_CONFIG, reply(Uint8Array.from(u32(FEATURE_3D_BIT)))],
+    ]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toMatchObject({
+      kind: 'BLOCKED',
+      reason: 'MOTOR_SCOPE_UNSUPPORTED',
+    });
+    expect(harness.controller.setMaster(1500).kind).toBe('REFUSED');
+    await settleWire(harness);
+    expect(activeMotorWrites(harness)).toHaveLength(0);
+  });
+
+  it('refuses an out-of-domain value and a wrong-length vector with ZERO writes', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    expect(harness.controller.setMaster(2001)).toEqual({
+      kind: 'REFUSED',
+      reason: 'INVALID_VECTOR',
+    });
+    expect(harness.controller.setMotorValues([1100, 1100, 1100]).kind).toBe(
+      'REFUSED',
+    );
+    await settleWire(harness);
+    expect(activeMotorWrites(harness)).toHaveLength(0);
+  });
+
+  it('coalesces 20 rapid updates into at most two frames', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    for (let value = 1100; value < 1120; value++) {
+      harness.controller.setMaster(value);
+    }
+    await settleWire(harness, 20);
+    const writes = activeMotorWrites(harness);
+    expect(writes.length).toBeLessThanOrEqual(2);
+    // Last-value-wins: the final frame carries 1119.
+    const last = writes[writes.length - 1];
+    expect(last[0] + last[1] * 256).toBe(1119);
+  });
+
+  it('stopAll destroys the pending update and a late ACK cannot restore commanding', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    // A dispatched, B coalesced - neither served yet.
+    harness.controller.setMaster(1100);
+    harness.controller.setMaster(1200);
+    // STOP through the SAME canonical funnel every other source uses.
+    expect(harness.controller.stopAll()).toBe('ACCEPTED');
+    await settleWire(harness, 20);
+    // B (1200) never reached the wire - the pending vector was destroyed
+    // by the stop, and A's late ACK could not resurrect it.
+    const values = activeMotorWrites(harness).map(
+      payload => payload[0] + payload[1] * 256,
+    );
+    expect(values).not.toContain(1200);
+    // The canonical all-stop DID go on the wire.
+    const stops = harness.writes.filter(
+      write =>
+        write.command === MSP_SET_MOTOR_FIXTURE &&
+        write.payload.every(
+          (byte, index) =>
+            (index % 2 === 0 ? byte : byte * 256) ===
+            (index % 2 === 0 ? 1000 % 256 : Math.floor(1000 / 256) * 256),
+        ),
+    );
+    expect(stops.length).toBeGreaterThan(0);
+    // An ORDINARY confirmed stop returns to commandable - that is the
+    // professional model's EnabledIdle, not a defect - and a genuinely
+    // new command is a fresh dispatch, never a resurrection of B.
+    expect(harness.controller.setMaster(1300).kind).toBe('ACCEPTED');
+  });
+
+  it('a fresh session starts with no stale pending vector', async () => {
+    const first = createHarness();
+    await runSetup(first);
+    first.controller.setMaster(1500);
+    await drive(first, first.controller.close());
+
+    const second = createHarness();
+    await runSetup(second);
+    await settleWire(second);
+    // Nothing from the first session leaks: zero active writes until the
+    // operator asks for one.
+    expect(activeMotorWrites(second)).toHaveLength(0);
+  });
+});
+
+describe('P2-ii convergence - monitor, lifecycle and session invalidation', () => {
+  it('background routes through the canonical professional stop', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    harness.controller.setMaster(1100);
+    await settleWire(harness);
+    expect(harness.controller.requestStop('APP_STATE_BACKGROUNDED')).toBe(
+      'ACCEPTED',
+    );
+    await settleWire(harness, 20);
+    // A locking stop: the professional path refuses further commands.
+    expect(harness.controller.setMaster(1100).kind).toBe('REFUSED');
+  });
+
+  it('departure routes through the same stop and refuses further commands', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    harness.controller.setMaster(1100);
+    await settleWire(harness);
+    expect(harness.controller.requestStop('NAVIGATION_BLURRED')).toBe(
+      'ACCEPTED',
+    );
+    await settleWire(harness, 20);
+    expect(harness.controller.setMaster(1100).kind).toBe('REFUSED');
+  });
+
+  it('disconnect invalidates pending work and refuses every later command', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    harness.controller.setMaster(1100);
+    harness.controller.setMaster(1200); // pending, unserved
+    harness.invalidate('USB_DETACHED');
+    await settleWire(harness, 20);
+    // The pending 1200 never reached the wire and never will.
+    expect(
+      activeMotorWrites(harness).filter(
+        payload => payload[0] + payload[1] * 256 === 1200,
+      ),
+    ).toHaveLength(0);
+    expect(harness.controller.setMaster(1300).kind).toBe('REFUSED');
+  });
+
+  it('session replacement invalidates continuations the same way', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    harness.controller.setMaster(1100);
+    harness.invalidate('SESSION_CHANGED');
+    await settleWire(harness, 20);
+    expect(harness.controller.setMaster(1300).kind).toBe('REFUSED');
+    expect(
+      activeMotorWrites(harness).filter(
+        payload => payload[0] + payload[1] * 256 === 1300,
+      ),
+    ).toHaveLength(0);
+  });
+});
+
+describe('P2-ii convergence - arming restriction release contract', () => {
+  it('a FAILED primary stop sends NO release [0] and is not clean', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    // A command may be live, and every 214 now fails.
+    harness.controller.setMaster(1100);
+    await settleWire(harness);
+    harness.script.set(MSP_SET_MOTOR_FIXTURE, REJECT);
+    const closed = await drive(harness, harness.controller.close());
+    // Establish [1] only - the release was WITHHELD, deliberately.
+    expect(armingWrites(harness)).toEqual([[1]]);
+    expect(closed.teardown?.armingRestrictionRelease).toBe(
+      'WITHHELD_STOP_UNPROVEN',
+    );
+    expect(closed.teardown?.complete).toBe(false);
+  });
+
+  it('a failed release [0] is a distinct recovery result, never clean', async () => {
+    const harness = createHarness();
+    await runSetup(harness);
+    harness.controller.setMaster(1100);
+    await settleWire(harness);
+    // The stop succeeds; only the RELEASE is refused.
+    harness.beforeReply = command => {
+      if (command === MSP_SET_ARMING_DISABLED_FIXTURE) {
+        harness.script.set(MSP_SET_ARMING_DISABLED_FIXTURE, REJECT);
+      }
+    };
+    const closed = await drive(harness, harness.controller.close());
+    expect(closed.teardown?.armingRestrictionRelease).toBe('RELEASE_FAILED');
+    // NOT ordinary clean teardown: the report says recovery is required.
+    expect(closed.teardown?.complete).toBe(false);
   });
 });

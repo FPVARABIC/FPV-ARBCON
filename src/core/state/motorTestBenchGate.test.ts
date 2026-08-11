@@ -45,6 +45,10 @@ import {FakeMspTransport} from '../protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../protocol/__testUtils__/mspFixtures';
 import {betaflightApi147Identity} from '../protocol/__testUtils__/motorFirmwareFixtures';
 import {ARMING_DISABLE_FLAGS_COUNT} from './armingBlockers';
+import {
+  ARMING_DISABLED_MSP_BIT_INDEX,
+  MSP_SET_ARMING_DISABLED,
+} from './motorArmingRestriction';
 import {FEATURE_3D_BIT} from '../protocol/msp/decoding/decodeFeatureConfig';
 import {
   MSP_ADVANCED_CONFIG,
@@ -52,6 +56,7 @@ import {
   MSP_FEATURE_CONFIG,
   MSP_MOTOR_CONFIG,
   MSP_STATUS_EX,
+  MSP_MOTOR_3D_CONFIG,
 } from '../protocol/msp/commands/mspCommands';
 
 const EMPTY = new Uint8Array(0);
@@ -133,7 +138,7 @@ const BOX_IDS_PAYLOAD = Uint8Array.from([5, 1, 0, 13]);
 const ARM_BIT = 2;
 
 /** MSP_STATUS_EX per msp.c:1094-1143 @ the pinned tag. */
-function statusPayload(armed = false): Uint8Array {
+function statusPayload(armed = false, armingDisableFlags = 0): Uint8Array {
   return Uint8Array.from([
     ...u16(125),
     ...u16(0),
@@ -146,12 +151,23 @@ function statusPayload(armed = false): Uint8Array {
     1,
     0,
     ARMING_DISABLE_FLAGS_COUNT,
-    ...u32(0),
+    ...u32(armingDisableFlags),
     0,
     ...u16(3400),
     6,
   ]);
 }
+
+/**
+ * P2-ii. The status a flight controller reports AFTER it has accepted
+ * MSP_SET_ARMING_DISABLED [1]: ARMING_DISABLED_MSP (bit 16) is set in the
+ * global armingDisableFlags mask. `establishMotorArmingRestriction`
+ * re-reads MSP_STATUS_EX and refuses unless that bit is present, so a
+ * harness that did not model this would be asserting against a flight
+ * controller that ignored the write.
+ */
+const MSP_RESTRICTED_STATUS = () =>
+  statusPayload(false, Math.pow(2, ARMING_DISABLED_MSP_BIT_INDEX));
 
 /* ------------------------------------------------------------------ *
  * The scripted flight controller
@@ -175,20 +191,72 @@ function supportedScript(): Map<number, ScriptedReply> {
     [MSP_BOXIDS, reply(BOX_IDS_PAYLOAD)],
     [MSP_STATUS_EX, reply(statusPayload())],
     [MSP_SET_MOTOR_FIXTURE, reply(EMPTY)],
+    // P2-ii: the enable path now establishes the FC-side arming
+    // restriction. Command 99 is acknowledged with an empty payload,
+    // exactly as Betaflight does.
+    [MSP_SET_ARMING_DISABLED, reply(EMPTY)],
+    // P2 closure: FEATURE_3D sessions resolve their domain from the real
+    // deadband/neutral bytes. Deadbands 1406/1514, neutral 1460.
+    [
+      MSP_MOTOR_3D_CONFIG,
+      reply(Uint8Array.from([126, 5, 234, 5, 180, 5])),
+    ],
   ]);
 }
 
-/** Byte 4 of a v1 request frame is the command. */
+/** Byte 4 of a v1 request frame is the command. Kept for the v1-only
+ * assertions that inspect raw transport writes directly. */
 const writtenCommand = (data: Uint8Array): number => data[4];
 
-const responseFrame = (command: number, payload: Uint8Array): Uint8Array =>
-  buildMspFrameBytes(command, payload, {
+/**
+ * P2-ii - WIRE-FORMAT-AWARE REQUEST PARSING AND REPLIES.
+ *
+ * The harness used to read only the v1 layout (`data[4]` as the command)
+ * and answer EVERYTHING in v1. A real MSPv2 request - the engine's
+ * supplemental DSHOT stop - was therefore misparsed, answered with a v1
+ * error the real client rightly never matches to a v2 request, and the
+ * FIFO wedged behind it forever. The pinned API 1.47 firmware speaks
+ * MSPv2, so answering a v2 request in v2 is CORRECT simulation, not a
+ * test convenience. The client is deliberately left strict.
+ */
+interface ParsedHarnessWrite {
+  readonly wireFormat: 'v1' | 'v2';
+  readonly command: number;
+  readonly payload: number[];
+}
+
+function parseHarnessWrite(data: Uint8Array): ParsedHarnessWrite {
+  if (data[1] === 0x58 /* 'X' - v2 native */) {
+    const command = data[4] | (data[5] << 8);
+    const length = data[6] | (data[7] << 8);
+    return {
+      wireFormat: 'v2',
+      command,
+      payload: Array.from(data.subarray(8, 8 + length)),
+    };
+  }
+  return {
     wireFormat: 'v1',
+    command: data[4],
+    payload: Array.from(data.subarray(5, 5 + data[3])),
+  };
+}
+
+/** A reply in the SAME wire format the request used. */
+const replyFrame = (
+  write: ParsedHarnessWrite,
+  payload: Uint8Array,
+): Uint8Array =>
+  buildMspFrameBytes(write.command, payload, {
+    wireFormat: write.wireFormat,
     direction: 'response',
   });
 
-const errorFrame = (command: number): Uint8Array =>
-  buildMspFrameBytes(command, EMPTY, {wireFormat: 'v1', direction: 'error'});
+const errorReplyFrame = (write: ParsedHarnessWrite): Uint8Array =>
+  buildMspFrameBytes(write.command, EMPTY, {
+    wireFormat: write.wireFormat,
+    direction: 'error',
+  });
 
 async function flush(times = 6): Promise<void> {
   for (let index = 0; index < times; index++) {
@@ -329,20 +397,28 @@ async function serveOne(harness: Harness): Promise<boolean> {
     return false;
   }
   const data = harness.transport.writes[0].data;
-  const command = writtenCommand(data);
+  const write = parseHarnessWrite(data);
+  const command = write.command;
   harness.commands.push(command);
-  harness.writes.push({
-    command,
-    payload: Array.from(data.subarray(5, 5 + data[3])),
-  });
+  harness.writes.push({command, payload: write.payload});
   harness.transport.resolveNextWrite();
   await flush();
   const scripted = harness.script.get(command) ?? REJECT;
+  // The reply travels the SAME wire format as the request - a v1 error
+  // for a v2 request would never match and would wedge the FIFO.
   harness.transport.emitData(
     scripted.kind === 'RESPONSE'
-      ? responseFrame(command, scripted.payload)
-      : errorFrame(command),
+      ? replyFrame(write, scripted.payload)
+      : errorReplyFrame(write),
   );
+  // A flight controller that ACCEPTED command 99 reports the restriction
+  // in every later MSP_STATUS_EX. Modelled here so the establishment's own
+  // independent re-read verifies against a truthful device rather than one
+  // that silently ignored the write. Overrides that deliberately REJECT 99
+  // never reach this, so a refusing device stays refusing.
+  if (command === MSP_SET_ARMING_DISABLED && scripted.kind === 'RESPONSE') {
+    harness.script.set(MSP_STATUS_EX, reply(MSP_RESTRICTED_STATUS()));
+  }
   await flush();
   return true;
 }
@@ -420,11 +496,27 @@ describe('the bench gate, with the real observation path', () => {
     expect(snapshot.activation.reasons).toEqual([]);
   });
 
+  /**
+   * REWRITTEN IN P2-ii, NOT DELETED, AND THE CHANGE IS INTENTIONAL.
+   *
+   * This used to assert that command 99 is NEVER sent. That was accurate
+   * for a pass whose enable path had deliberately dropped the FC-side
+   * arming restriction, relying on continuous armed-state observation
+   * alone. P2-ii restores the restriction, because observation DETECTS an
+   * aircraft arming underneath a commanded output while the restriction
+   * PREVENTS it - they are complements, not alternatives.
+   *
+   * The property this test exists for is unchanged and still exact: the
+   * enable path sends THIS list and nothing else, in THIS order. It has
+   * grown by exactly two frames - command 99, and the establishment's own
+   * independent MSP_STATUS_EX re-read that verifies bit 16 actually came
+   * back set. No motor command is sent, which the final assertion still
+   * pins down.
+   */
   it('runs the whole simplified sequence and nothing else', async () => {
     const harness = harnessFor();
     await runSetup(harness);
 
-    // Steps 7, 8 and 10 - in that order, and no other command.
     expect(harness.commands).toEqual([
       MSP_MOTOR_CONFIG,
       MSP_ADVANCED_CONFIG,
@@ -432,9 +524,49 @@ describe('the bench gate, with the real observation path', () => {
       MSP_BOXIDS,
       // The monitor's own first observation, AWAITED before READY.
       MSP_STATUS_EX,
+      // P2-ii: the restriction, established only after DISARMED is proven.
+      MSP_SET_ARMING_DISABLED,
+      // ...and its independent verification re-read.
+      MSP_STATUS_EX,
     ]);
-    expect(harness.commands).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
+    // Still no motor command anywhere in the enable path.
     expect(harness.commands).not.toContain(MSP_SET_MOTOR_FIXTURE);
+  });
+
+  it('establishes the arming restriction AFTER disarmed is proven and BEFORE READY', async () => {
+    const harness = harnessFor();
+    const snapshot = await runSetup(harness);
+
+    const firstObservation = harness.commands.indexOf(MSP_STATUS_EX);
+    const restriction = harness.commands.indexOf(MSP_SET_ARMING_DISABLED);
+    expect(firstObservation).toBeGreaterThanOrEqual(0);
+    expect(restriction).toBeGreaterThan(firstObservation);
+    // And the session only becomes usable once both are done.
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.activation.allowed).toBe(true);
+  });
+
+  it('sends command 99 with payload [1] - establish, never release', async () => {
+    const harness = harnessFor();
+    await runSetup(harness);
+    const write = harness.writes.find(
+      entry => entry.command === MSP_SET_ARMING_DISABLED,
+    );
+    expect(write).toBeDefined();
+    // Polarity is inverted from the command name: 1 DISABLES arming.
+    expect(write?.payload).toEqual([1]);
+  });
+
+  it('refuses to publish READY when the FC rejects the restriction', async () => {
+    const harness = harnessFor([[MSP_SET_ARMING_DISABLED, REJECT]]);
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.outcome.kind).not.toBe('READY');
+    expect(snapshot.activation.allowed).toBe(false);
+    // Command 99 may have reached the wire, so this is uncertainty.
+    expect(snapshot.outcome).toMatchObject({
+      reason: 'ARMING_RESTRICTION_NOT_ESTABLISHED',
+    });
   });
 
   it('cannot publish READY before the first observation is served', async () => {
@@ -620,46 +752,65 @@ describe('motor scope through the real configuration reads', () => {
     expect(snapshot.activation.allowed).toBe(true);
   });
 
-  it('refuses a 3D-configured aircraft with the dedicated reason', async () => {
+  /**
+   * REWRITTEN FOR THE P2 CLOSURE, and the split is the point. DIGITAL 3D
+   * is a fully-resolved professional domain (the midpoint stop is the
+   * firmware's own branch), so the SESSION now proceeds - while the OLD
+   * pulse UI stays exactly as blocked as before, through the activation
+   * gate it always used. What used to be one refusal is now two truthful
+   * statements about two different consumers.
+   */
+  it('digital 3D: the session proceeds professionally; the legacy UI stays blocked', async () => {
     const harness = harnessFor([
       [MSP_FEATURE_CONFIG, reply(featureConfigPayload(FEATURE_3D_BIT))],
     ]);
     const snapshot = await runSetup(harness);
 
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'MOTOR_SCOPE_UNSUPPORTED',
-    });
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
     expect(snapshot.motorScope?.feature3dEnabled).toBe(true);
+    // The domain is the pinned 3D semantics - stop is the midpoint.
+    expect(snapshot.motorDomain?.stopValue).toBe(1500);
+    expect(snapshot.motorRuntimeScope?.eligible).toBe(true);
+    // THE LEGACY UI IS STILL BLOCKED, by its own gate, exactly as before.
+    expect(snapshot.activation.allowed).toBe(false);
     expect(snapshot.activation.reasons).toContain('MOTOR_3D_ENABLED');
-    // 3D inverts stop semantics, so nothing may be encoded for it - and
-    // the observation is never even attempted.
-    expect(harness.commands).not.toContain(MSP_STATUS_EX);
-    expect(harness.commands).not.toContain(MSP_SET_MOTOR_FIXTURE);
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
   });
 
-  it('refuses a motor count outside the one supported scope', async () => {
+  it('non-four motor counts: session proceeds; legacy activation refuses', async () => {
     const harness = harnessFor([
       [MSP_MOTOR_CONFIG, reply(motorConfigPayload(6))],
     ]);
     const snapshot = await runSetup(harness);
-    expect(snapshot.outcome).toMatchObject({
-      kind: 'BLOCKED',
-      reason: 'MOTOR_SCOPE_UNSUPPORTED',
-    });
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.activation.allowed).toBe(false);
     expect(snapshot.activation.reasons).toContain('MOTOR_SCOPE_UNSUPPORTED');
-    expect(snapshot.activation.reasons).not.toContain('MOTOR_3D_ENABLED');
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
   });
 
-  it('refuses an analog raw motor protocol the digital adapter is not scoped for', async () => {
+  it('analog non-3D: session proceeds under CONFIGURATION_POLICY; legacy refuses', async () => {
     const harness = harnessFor([
       [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(4))],
+    ]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.motorDomain?.domainSource).toBe('CONFIGURATION_POLICY');
+    expect(snapshot.activation.allowed).toBe(false);
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+  });
+
+  it('analog 3D: NEITHER path can use it - refused outright, exactly as before', async () => {
+    const harness = harnessFor([
+      [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(4))],
+      [MSP_FEATURE_CONFIG, reply(featureConfigPayload(FEATURE_3D_BIT))],
     ]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome).toMatchObject({
       kind: 'BLOCKED',
       reason: 'MOTOR_SCOPE_UNSUPPORTED',
     });
+    // The refusal names what is MISSING, not a policy preference.
+    expect(snapshot.motorRuntimeScope).toMatchObject({eligible: false});
   });
 });
 
@@ -1091,6 +1242,21 @@ describe('the normal release lifecycle', () => {
     // The SECOND motor, in the same session - no reconnect, no new lease.
     expect(harness.controller.pulseMotor(2)).toBe('ACCEPTED');
     await flush(10);
+    // UPDATED IN P2-ii, AND THE DIFFERENCE IS SCHEDULING, NOT SEMANTICS.
+    // The stop now settles through the professional engine, which adds a
+    // microtask hop before Ready republishes - so the resumed monitor's
+    // MSP_STATUS_EX reaches the transport BEFORE this second pulse, and
+    // the pulse queues behind it in the SAME serialized FIFO instead of
+    // ahead of it. The wire content is identical; only the interleaving
+    // moved. The assertion therefore serves the FIFO to the next motor
+    // command instead of assuming the queue head.
+    while (
+      harness.transport.writes.length > 0 &&
+      writtenCommand(harness.transport.writes[0].data) !== MSP_SET_MOTOR_FIXTURE
+    ) {
+      await serveOne(harness);
+      await flush(4);
+    }
     const write = harness.transport.writes[0];
     expect(writtenCommand(write.data)).toBe(MSP_SET_MOTOR_FIXTURE);
     // Slot 1 above stop, every other slot at stop.
@@ -1574,5 +1740,169 @@ describe('all four motors, one session', () => {
     expect(later).not.toContain(MSP_FEATURE_CONFIG);
     expect(later).not.toContain(MSP_BOXIDS);
     expect(later).not.toContain(MSP_SET_ARMING_DISABLED_FIXTURE);
+  });
+});
+
+/* ================================================================== *
+ * P2-ii-A - THE P1 DOMAIN, RESOLVED INSIDE THE LIVE ENABLE PATH
+ *
+ * The domain is DESCRIPTIVE. Resolving one never widens what the shipping
+ * pulse path will command - `motorScope` and the legacy scope guard still
+ * decide that on their own terms, which the assertions below pin down.
+ * Nothing here asserts a physical outcome.
+ * ================================================================== */
+
+describe('P2-ii-A - domain resolution in the live enable path', () => {
+  it('resolves the P1 domain and finds the runtime scope ELIGIBLE', async () => {
+    const harness = harnessFor([]);
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.outcome.kind).toBe('READY');
+    expect(snapshot.motorDomain).toBeDefined();
+    expect(snapshot.motorDomain?.protocolFamily).toBe('DSHOT');
+    expect(snapshot.motorDomain?.feature3dEnabled).toBe(false);
+    // Digital non-3D is firmware-constrained, and stop is 1000.
+    expect(snapshot.motorDomain?.domainSource).toBe('FIRMWARE_CONSTRAIN');
+    expect(snapshot.motorDomain?.stopValue).toBe(1000);
+    expect(snapshot.motorRuntimeScope?.eligible).toBe(true);
+  });
+
+  it('sends NO MSP_MOTOR_3D_CONFIG frame for a non-3D aircraft', async () => {
+    const harness = harnessFor([]);
+    await runSetup(harness);
+    // The shipping enable byte stream is unchanged: the read fires only
+    // where its result can be used.
+    expect(harness.commands).not.toContain(MSP_MOTOR_3D_CONFIG);
+  });
+
+  it('digital 3D reads 124 and resolves the FULL domain from its bytes', async () => {
+    // REWRITTEN FOR THE P2 CLOSURE: this used to assert the refusal and
+    // the ABSENCE of command 124. The professional runtime now owns 3D
+    // eligibility, so the read fires and its result participates in
+    // domain resolution - never a decorative request.
+    const harness = harnessFor([
+      [MSP_FEATURE_CONFIG, reply(featureConfigPayload(FEATURE_3D_BIT))],
+    ]);
+    const snapshot = await runSetup(harness);
+
+    expect(harness.commands).toContain(MSP_MOTOR_3D_CONFIG);
+    expect(snapshot.outcome).toEqual({kind: 'READY'});
+    expect(snapshot.motorDomain?.neutral).toBe(1500);
+    expect(snapshot.motorDomain?.provenReverseRegion).toEqual({
+      min: 1000,
+      max: 1499,
+    });
+    expect(snapshot.motorDomain?.provenForwardRegion).toEqual({
+      min: 1501,
+      max: 2000,
+    });
+  });
+
+  it('carries the exact command-domain bounds the encoder would use', async () => {
+    const harness = harnessFor([]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.motorDomain?.commandDomainMin).toBe(1000);
+    expect(snapshot.motorDomain?.commandDomainMax).toBe(2000);
+  });
+});
+
+/* ================================================================== *
+ * P2-ii - HARNESS WIRE-FORMAT FIDELITY
+ *
+ * These drive the REAL MspClient over the fake transport and the same
+ * reply helpers the whole suite uses. They exist because a v1 error frame
+ * answering a v2 request wedged the FIFO for an entire session - the
+ * client is CORRECT to require matching framing, and the harness must be
+ * a faithful API 1.47 device, which speaks MSPv2.
+ * ================================================================== */
+
+describe('harness wire-format fidelity', () => {
+  const CMD_V1 = MSP_STATUS_EX;
+  const CMD_V2 = 0x3003; // MSP2_SEND_DSHOT_COMMAND
+
+  interface ProtocolRig {
+    readonly client: MspClient;
+    readonly transport: FakeMspTransport;
+    serveOnce(reply: 'RESPONSE' | 'ERROR', payload?: Uint8Array): Promise<ParsedHarnessWrite>;
+  }
+
+  function protocolRig(): ProtocolRig {
+    const transport = new FakeMspTransport();
+    const client = new MspClient(transport, 'wire-format-rig');
+    return {
+      client,
+      transport,
+      async serveOnce(reply, payload = EMPTY) {
+        await flush();
+        const data = transport.writes[transport.writes.length - 1].data;
+        const write = parseHarnessWrite(data);
+        transport.resolveNextWrite();
+        await flush();
+        transport.emitData(
+          reply === 'RESPONSE'
+            ? replyFrame(write, payload)
+            : errorReplyFrame(write),
+        );
+        await flush();
+        return write;
+      },
+    };
+  }
+
+  it('v1 request -> v1 success reply matches, preserving the command', async () => {
+    const rig = protocolRig();
+    const request = rig.client.request(CMD_V1, EMPTY, {wireFormat: 'v1'});
+    const write = await rig.serveOnce('RESPONSE', statusPayload());
+    expect(write.wireFormat).toBe('v1');
+    expect(write.command).toBe(CMD_V1);
+    await expect(request).resolves.toMatchObject({command: CMD_V1});
+    rig.client.dispose();
+  });
+
+  it('v1 request -> v1 error reply settles as a rejection', async () => {
+    const rig = protocolRig();
+    const request = rig.client.request(CMD_V1, EMPTY, {wireFormat: 'v1'});
+    const write = await rig.serveOnce('ERROR');
+    expect(write.wireFormat).toBe('v1');
+    await expect(request).rejects.toBeDefined();
+    rig.client.dispose();
+  });
+
+  it('v2 request -> v2 success reply matches, preserving the 16-bit command', async () => {
+    const rig = protocolRig();
+    const request = rig.client.request(CMD_V2, Uint8Array.from([1, 255, 1, 0, 0]), {
+      wireFormat: 'v2',
+    });
+    const write = await rig.serveOnce('RESPONSE');
+    expect(write.wireFormat).toBe('v2');
+    // The full 16-bit id - a v1-shaped parse would have read 0x03.
+    expect(write.command).toBe(CMD_V2);
+    await expect(request).resolves.toMatchObject({command: CMD_V2});
+    rig.client.dispose();
+  });
+
+  it('v2 request -> v2 error reply settles instead of leaving it pending', async () => {
+    const rig = protocolRig();
+    const request = rig.client.request(CMD_V2, EMPTY, {wireFormat: 'v2'});
+    const write = await rig.serveOnce('ERROR');
+    expect(write.wireFormat).toBe('v2');
+    await expect(request).rejects.toBeDefined();
+    rig.client.dispose();
+  });
+
+  it('a settled v2 error does not wedge the FIFO: the next v1 request proceeds', async () => {
+    const rig = protocolRig();
+    // The exact shape that wedged a whole session: optional MSP2, rejected.
+    const optional = rig.client.request(CMD_V2, EMPTY, {wireFormat: 'v2'});
+    await rig.serveOnce('ERROR');
+    await expect(optional).rejects.toBeDefined();
+
+    // The FIFO is free: an ordinary v1 request goes out and completes.
+    const next = rig.client.request(CMD_V1, EMPTY, {wireFormat: 'v1'});
+    const write = await rig.serveOnce('RESPONSE', statusPayload());
+    expect(write.wireFormat).toBe('v1');
+    expect(write.command).toBe(CMD_V1);
+    await expect(next).resolves.toMatchObject({command: CMD_V1});
+    rig.client.dispose();
   });
 });
