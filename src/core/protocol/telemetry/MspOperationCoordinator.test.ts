@@ -63,6 +63,11 @@ function createFakeScheduler(): MspTelemetryScheduler & {
       // Never called by MspOperationCoordinator.
       return () => undefined;
     },
+    acquirePollIntervalOverride(): () => void {
+      // Never called by MspOperationCoordinator either - cadence boosts
+      // are acquired by screen-scoped telemetry owners, not by operations.
+      return () => undefined;
+    },
     acquirePauseLease(): TelemetryPauseLease {
       fake.acquirePauseLeaseCallCount += 1;
       fake.leaseReleased = false;

@@ -120,7 +120,28 @@ export {
   receiverDraftsEqual,
   receiverSnapshotsEqual,
   validateReceiverDraft,
+  RECEIVER_REBOOT_SENSITIVE_FIELDS,
+  receiverChangeMayRequireReboot,
 } from './receiverConfigurationModel';
+export {
+  resolveReceiverMode,
+  resolveReceiverPortDependency,
+  resolveReceiverSignalState,
+  resolveRssiSource,
+  receiverProviderIsMeaningful,
+  receiverValuesMayBeFailsafeOutput,
+  RECEIVER_MODE_FEATURE_MASK,
+  RECEIVER_FAILSAFE_BIT,
+  RECEIVER_RXLOSS_BIT,
+  RECEIVER_BOXFAILSAFE_BIT,
+  RSSI_SOURCE_TOKENS,
+} from './receiverRuntimeSemantics';
+export type {
+  ReceiverMode,
+  ReceiverPortDependency,
+  ReceiverSignalState,
+  ReceiverRssiSource,
+} from './receiverRuntimeSemantics';
 export type {
   ReceiverConfigurationSnapshot,
   ReceiverConfigurationDraft,

@@ -11,6 +11,7 @@ export {
   MSP_GPS_SV_INFO,
   MSP_ANALOG,
   MSP_STATUS_EX,
+  MSP_TX_INFO,
   MSP_BOXIDS,
   MSP_ACC_CALIBRATION,
   MSP_MAG_CALIBRATION,
@@ -183,6 +184,8 @@ export {
   RECEIVER_CHANNEL_MAX_COUNT,
 } from './decoding/decodeReceiver';
 export type { MspRcChannels, MspReceiverDeadband } from './decoding/decodeReceiver';
+export { decodeTxInfo } from './decoding/decodeTxInfo';
+export type { MspTxInfo } from './decoding/decodeTxInfo';
 export {
   decodePidTerms,
   decodeRcTuning,

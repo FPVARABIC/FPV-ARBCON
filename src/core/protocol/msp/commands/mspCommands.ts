@@ -83,6 +83,13 @@ export const MSP_ANALOG = 110;
  * (decodeStatusEx.ts). */
 export const MSP_STATUS_EX = 150;
 
+/** src/main/msp/msp_protocol.h:230 @ the pinned Betaflight API 1.47
+ * authority (79065c96ba0bb5cdc675e67d7093e05dab8b330e):
+ * `#define MSP_TX_INFO 187`. Receiver P2 reads it for the firmware's
+ * rssiSource enum (msp.c:2164-2176); see decodeTxInfo.ts. It carries no
+ * link-quality value - the pinned firmware serialises none. */
+export const MSP_TX_INFO = 187;
+
 /** src/main/msp/msp_protocol.h:187 @ BETAFLIGHT_API147_COMMIT (Pass 7.7):
  * `#define MSP_BOXIDS 119  // out message: Get the permanent IDs
  * associated to BOXes` - msp.c:2336-2341 serializes the permanent IDs in

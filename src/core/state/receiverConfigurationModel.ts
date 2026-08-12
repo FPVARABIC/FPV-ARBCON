@@ -71,6 +71,48 @@ export function receiverDraftsEqual(a: ReceiverConfigurationDraft, b: ReceiverCo
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/**
+ * RECEIVER P2 - the draft fields whose MSP_SET_RX_CONFIG handler marks the
+ * flight controller's configuration as REBOOT REQUIRED.
+ *
+ * FIRMWARE FACT - src/main/msp/msp.c @ pinned Betaflight API 1.47
+ * (79065c96ba0bb5cdc675e67d7093e05dab8b330e). `configRebootUpdateCheckU8`
+ * (msp.c:353) calls `setRebootRequired()` when the incoming value differs
+ * from the stored one, and inside MSP_SET_RX_CONFIG it is used at exactly
+ * five sites - all of them rc_smoothing, and all five exposed by our UI:
+ *
+ *   msp.c:3779  rc_smoothing_setpoint_cutoff        -> setpointCutoff
+ *   msp.c:3780  rc_smoothing_throttle_cutoff        -> throttleCutoff
+ *   msp.c:3781  rc_smoothing_auto_factor_throttle   -> throttleAutoFactor
+ *   msp.c:3807  rc_smoothing_auto_factor_rpy        -> setpointAutoFactor
+ *   msp.c:3815  rc_smoothing                        -> smoothingEnabled
+ *
+ * No other Receiver field this screen writes (channel map, RSSI channel,
+ * deadbands, mincheck/midrc/maxcheck) flags a reboot at this pin, and
+ * none is added here on suspicion.
+ *
+ * THIS IS AN EXPECTATION, NOT THE VERDICT. The firmware only raises the
+ * flag when the value actually CHANGED, which is why this compares the
+ * two drafts rather than merely listing the fields; but the authoritative
+ * answer still comes from re-reading the FC's own reboot-required bit
+ * after the write (see ReceiverConfigurationController.save). This
+ * function exists so the controller knows when to go and ask.
+ */
+export const RECEIVER_REBOOT_SENSITIVE_FIELDS = Object.freeze([
+  'setpointCutoff',
+  'throttleCutoff',
+  'throttleAutoFactor',
+  'setpointAutoFactor',
+  'smoothingEnabled',
+] as const satisfies readonly (keyof ReceiverConfigurationDraft)[]);
+
+export function receiverChangeMayRequireReboot(
+  original: ReceiverConfigurationDraft,
+  draft: ReceiverConfigurationDraft,
+): boolean {
+  return RECEIVER_REBOOT_SENSITIVE_FIELDS.some(field => original[field] !== draft[field]);
+}
+
 export function receiverSnapshotsEqual(a: ReceiverConfigurationSnapshot, b: ReceiverConfigurationSnapshot): boolean {
   return a.rssiChannel === b.rssiChannel &&
     a.channelMap.length === b.channelMap.length && a.channelMap.every((v, i) => v === b.channelMap[i]) &&

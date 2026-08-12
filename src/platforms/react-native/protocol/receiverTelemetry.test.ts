@@ -17,7 +17,8 @@ afterEach(() => jest.restoreAllMocks());
 describe('acquireReceiverTelemetry', () => {
   it('registers one real MSP_RC poll and releases it by reference count', () => {
     const unregister = jest.fn(); const registerPoll = jest.fn(() => unregister); const releaseSuppression = jest.fn(); const acquirePollSuppression = jest.fn(() => releaseSuppression);
-    jest.spyOn(mspSessionCoordinator, 'getTelemetryScheduler').mockReturnValue({registerPoll, acquirePollSuppression} as unknown as MspTelemetryScheduler);
+    const acquirePollIntervalOverride = jest.fn(() => jest.fn());
+    jest.spyOn(mspSessionCoordinator, 'getTelemetryScheduler').mockReturnValue({registerPoll, acquirePollSuppression, acquirePollIntervalOverride} as unknown as MspTelemetryScheduler);
     jest.spyOn(mspSessionCoordinator, 'getSessionKey').mockReturnValue({sessionId: 'rx', generation: 1});
     const key = {sessionId: 'rx', generation: 1}; const first = acquireReceiverTelemetry(key); const second = acquireReceiverTelemetry(key);
     expect(registerPoll).toHaveBeenCalledWith(expect.objectContaining({id: RECEIVER_CHANNELS_POLL_ID, command: MSP_RC, intervalMs: RECEIVER_CHANNELS_POLL_INTERVAL_MS}));
@@ -25,7 +26,7 @@ describe('acquireReceiverTelemetry', () => {
     first(); expect(unregister).not.toHaveBeenCalled(); expect(releaseSuppression).not.toHaveBeenCalled(); second(); expect(unregister).toHaveBeenCalledTimes(1); expect(releaseSuppression).toHaveBeenCalledTimes(1);
   });
   it('rejects a stale generation', () => {
-    const registerPoll = jest.fn(); const acquirePollSuppression = jest.fn(); jest.spyOn(mspSessionCoordinator, 'getTelemetryScheduler').mockReturnValue({registerPoll, acquirePollSuppression} as unknown as MspTelemetryScheduler); jest.spyOn(mspSessionCoordinator, 'getSessionKey').mockReturnValue({sessionId: 'rx', generation: 2});
+    const registerPoll = jest.fn(); const acquirePollSuppression = jest.fn(); const acquirePollIntervalOverride = jest.fn(() => jest.fn()); jest.spyOn(mspSessionCoordinator, 'getTelemetryScheduler').mockReturnValue({registerPoll, acquirePollSuppression, acquirePollIntervalOverride} as unknown as MspTelemetryScheduler); jest.spyOn(mspSessionCoordinator, 'getSessionKey').mockReturnValue({sessionId: 'rx', generation: 2});
     acquireReceiverTelemetry({sessionId: 'rx', generation: 1}); expect(registerPoll).not.toHaveBeenCalled();
     expect(acquirePollSuppression).not.toHaveBeenCalled();
   });
@@ -90,11 +91,13 @@ describe('Receiver P1 - live RC registration contract', () => {
     }) => unregister);
     const releaseSuppression = jest.fn();
     const acquirePollSuppression = jest.fn(() => releaseSuppression);
+    const releaseStatusBoost = jest.fn();
+    const acquirePollIntervalOverride = jest.fn((_id: string, _intervalMs: number) => releaseStatusBoost);
     jest
       .spyOn(mspSessionCoordinator, 'getTelemetryScheduler')
-      .mockReturnValue({registerPoll, acquirePollSuppression} as unknown as MspTelemetryScheduler);
+      .mockReturnValue({registerPoll, acquirePollSuppression, acquirePollIntervalOverride} as unknown as MspTelemetryScheduler);
     jest.spyOn(mspSessionCoordinator, 'getSessionKey').mockReturnValue({sessionId: 'rx', generation: 1});
-    return {registerPoll, unregister, acquirePollSuppression, releaseSuppression};
+    return {registerPoll, unregister, acquirePollSuppression, releaseSuppression, acquirePollIntervalOverride, releaseStatusBoost};
   };
 
   it('P1-B: requests the decoupled 33ms interval, not the old 50ms grid value', () => {

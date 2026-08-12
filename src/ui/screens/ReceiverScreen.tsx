@@ -2,15 +2,18 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Alert, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions} from 'react-native';
 import {
   createReceiverConfigurationDraft, deriveReceiverRssi, receiverDraftsEqual,
+  receiverValuesMayBeFailsafeOutput, resolveReceiverSignalState,
   validateReceiverDraft, RECEIVER_CHANNEL_MAX_COUNT, type MspAnalog, type MspRcChannels,
   type MspStatusExDiagnostics, type ReceiverConfigurationDraft,
-  type ReceiverConfigurationSnapshot, type TelemetryValue,
+  type ReceiverConfigurationSnapshot, type ReceiverMode, type ReceiverPortDependency,
+  type ReceiverSignalState, type TelemetryValue,
 } from '../../core';
 import {
   FC_STATUS_TELEMETRY_POLL_ID, RECEIVER_CHANNELS_POLL_ID,
   RECEIVER_TELEMETRY_POLL_ID, acquireReceiverTelemetry,
   receiverConfigurationController, useTelemetryValue,
-  type ReceiverBlockReason, type ReceiverLoadOutcome, type ReceiverSaveOutcome,
+  type ReceiverBlockReason, type ReceiverLoadOutcome, type ReceiverRebootOutcome,
+  type ReceiverRuntimeOutcome, type ReceiverRuntimeTruth, type ReceiverSaveOutcome,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
@@ -20,6 +23,12 @@ import {Button, Stepper as SharedStepper, ToggleSwitch} from '../components/cont
 export interface ReceiverControllerPort {
   load(key: SetupUiSessionKey): Promise<ReceiverLoadOutcome>;
   save(key: SetupUiSessionKey, original: ReceiverConfigurationSnapshot, draft: ReceiverConfigurationDraft): Promise<ReceiverSaveOutcome>;
+  /** P2 read-only firmware truth: active receiver mode, Ports agreement,
+   * RSSI source. Optional so an existing test double stays valid. */
+  readRuntime?(key: SetupUiSessionKey): Promise<ReceiverRuntimeOutcome>;
+  /** P2: the canonical reboot, owned by the controller. The screen never
+   * issues MSP_REBOOT itself and never infers reconnection from it. */
+  requestReboot?(key: SetupUiSessionKey): Promise<ReceiverRebootOutcome>;
 }
 export interface ReceiverScreenProps {
   readonly sessionKey?: SetupUiSessionKey;
@@ -52,6 +61,10 @@ function saveMessage(outcome: ReceiverSaveOutcome): {text: string; warning: bool
   switch (outcome.kind) {
     case 'NO_CHANGES': return {text: 'لا توجد تغييرات لإرسالها.', warning: false};
     case 'SAVED_VERIFIED': return {text: 'حُفظت إعدادات المستقبل وتطابقت إعادة القراءة من متحكم الطيران.', warning: false};
+    // P2: read-back matched, but the flight controller reports the change
+    // is not yet in force. Presenting this as a plain success is the exact
+    // "looked saved but was not applied" defect this phase removes.
+    case 'SAVED_REBOOT_REQUIRED': return {text: 'تم الحفظ — يلزم إعادة تشغيل وحدة التحكم لتطبيق التغييرات.', warning: true};
     case 'SAVED_UNVERIFIED': return {text: 'أقرّ المتحكم الحفظ، لكن تعذرت إعادة القراءة التحققية. أعد الاتصال قبل أي محاولة أخرى.', warning: true};
     case 'UNCONFIRMED': return {text: `نتيجة الكتابة غير مؤكدة عند مرحلة ${outcome.stage}. لا تكرر الحفظ؛ أعد الاتصال واقرأ القيم أولًا.`, warning: true};
     case 'SESSION_ENDED': return {text: 'انتهت الجلسة أثناء العملية. أعد الاتصال واقرأ القيم.', warning: true};
@@ -93,6 +106,36 @@ function RssiChannelField({value, disabled, onChange}: {value: number; disabled:
   </View>;
 }
 
+/** P2: each failsafe cause is named, because "signal lost" and "you
+ * flipped the failsafe switch" call for different operator responses. */
+const SIGNAL_TITLES: Record<ReceiverSignalState['kind'], string> = {
+  LIVE: 'الإشارة حية',
+  RX_LOSS: 'فقد إشارة المستقبل (RXLOSS)',
+  FAILSAFE_ACTIVE: 'Failsafe نشط',
+  BOXFAILSAFE_ACTIVE: 'Failsafe مُفعّل من مفتاح (BOXFAILSAFE)',
+  UNKNOWN: 'حالة الإشارة غير معروفة',
+};
+
+const RECEIVER_MODE_LABELS: Record<ReceiverMode, string> = {
+  SERIAL: 'Serial RX',
+  PPM: 'PPM',
+  PARALLEL_PWM: 'Parallel PWM',
+  MSP: 'MSP RX',
+  SPI: 'SPI RX',
+  NONE: 'غير مُفعّل',
+};
+
+/** P2: read-only Ports consistency, never a claim about physical wiring. */
+function portDependencyMessage(dependency: ReceiverPortDependency): string | undefined {
+  switch (dependency.kind) {
+    case 'SERIAL_RX_READY': return undefined;
+    case 'SERIAL_RX_UART_MISSING': return 'وضع المستقبل هو Serial RX لكن لا يوجد منفذ UART معيّن لوظيفة Serial RX. افتح شاشة المنافذ.';
+    case 'MULTIPLE_SERIAL_RX_ASSIGNMENTS': return 'أكثر من منفذ UART معيّن لوظيفة Serial RX. راجع شاشة المنافذ.';
+    case 'PORT_STATE_UNKNOWN': return 'تعذّرت قراءة إعدادات المنافذ، لذلك لا يمكن التحقق من تطابق المستقبل مع المنفذ.';
+    case 'NOT_APPLICABLE': return undefined;
+  }
+}
+
 function StickPad({horizontal, vertical, horizontalLabel, verticalLabel, testID}: {horizontal?: number; vertical?: number; horizontalLabel: string; verticalLabel: string; testID: string}) {
   const hasSample = horizontal !== undefined && vertical !== undefined;
   const x = Math.max(0, Math.min(100, (((horizontal ?? 1000) - 1000) / 1000) * 100));
@@ -119,15 +162,19 @@ const ReceiverLiveMonitor = React.memo(function ReceiverLiveMonitorContent({sess
   const channels = valueOf(channelsState)?.channels ?? [];
   const analog = valueOf(analogState);
   const rssi = analog === undefined ? undefined : deriveReceiverRssi(analog);
-  const blockers = valueOf(statusState)?.readiness.armingDisableFlags;
-  const failsafe = blockers !== undefined && (Math.floor(blockers / 2) % 2 === 1 || Math.floor(blockers / 4) % 2 === 1);
+  // P2: firmware-truth signal state from the shared canonical resolver.
+  // This replaced inline bit arithmetic that tested only FAILSAFE and
+  // RX_FAILSAFE and silently missed BOXFAILSAFE, so an operator-induced
+  // failsafe rendered as a healthy live link.
+  const signal = resolveReceiverSignalState(valueOf(statusState)?.readiness.armingDisableFlags);
+  const failsafe = receiverValuesMayBeFailsafeOutput(signal);
   const live = channelsState.status === 'FRESH' && channels.length > 0;
   const stale = channelsState.status === 'STALE';
 
   return <View style={styles.liveMonitor} testID="receiver-live-monitor">
     <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.eyebrow}>RECEIVER · MSP_RC LIVE · TARGET 20 HZ</Text><Text style={styles.title}>المستقبل والقنوات</Text><Text style={styles.subtitle}>راقب استجابة جهاز الإرسال لحظيًا، واضبط الخريطة والنطاق والـdeadband واحفظ بتحقق إعادة قراءة.</Text></View><View style={[styles.liveBadge, live ? styles.liveBadgeGood : styles.liveBadgeMuted]}><View style={[styles.liveDot, live && styles.liveDotGood]} /><Text style={styles.liveText}>{live ? 'بيانات حية' : stale ? 'بيانات قديمة' : 'بانتظار القنوات'}</Text></View></View>
     <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>REQUIRES HARDWARE TEST</Text><Text style={styles.hardwareText}>لا تولّد الشاشة قنوات تجريبية. حرّك العصي والمفاتيح وتأكد أن القيم تتحرك فعلًا. انزع المراوح قبل العمل.</Text></View>
-    {failsafe ? <View style={styles.danger}><Text style={styles.dangerTitle}>فقد إشارة / Failsafe نشط</Text><Text style={styles.dangerText}>القيم قد تكون مخارج failsafe وليست أوامر حية.</Text></View> : null}
+    {failsafe ? <View style={styles.danger} testID="receiver-signal-alert"><Text style={styles.dangerTitle}>{SIGNAL_TITLES[signal.kind]}</Text><Text style={styles.dangerText}>القيم قد تكون مخارج failsafe وليست أوامر حية.</Text></View> : null}
     <View style={[styles.primaryGrid, wide && styles.primaryGridWide]}>
       <View style={[styles.card, wide && styles.previewCardWide]}><Heading title="حركة العصي" hint="القيم الطبيعية تقارب 1000–2000 والمنتصف 1500" /><View style={styles.sticksRow}><StickPad horizontal={channels[2]} vertical={channels[3]} horizontalLabel="Yaw" verticalLabel="Throttle" testID="receiver-stick-left" /><StickPad horizontal={channels[0]} vertical={channels[1]} horizontalLabel="Roll" verticalLabel="Pitch" testID="receiver-stick-right" /></View><View style={styles.signalSummary}><Text style={styles.signalLabel}>RSSI</Text><Text style={styles.signalValue}>{rssi?.kind === 'PERCENT' ? `${rssi.percent}%` : 'غير متاح'}</Text><Text style={styles.signalLabel}>القنوات</Text><Text style={styles.signalValue}>{channels.length || '—'}</Text></View></View>
       <View style={[styles.card, wide && styles.channelsCardWide]}><Heading title="مراقبة القنوات" hint="كل صف يتحدث من رد MSP_RC الحقيقي" />{channels.length === 0 ? <Text style={styles.emptyText}>شغّل جهاز الإرسال وتأكد من توصيل المستقبل وضبط المنفذ والبروتوكول.</Text> : channels.map((v, i) => <ChannelBar key={i} index={i} value={v} />)}</View>
@@ -145,11 +192,26 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
   const [loadOutcome, setLoadOutcome] = useState<ReceiverLoadOutcome>();
   const [saveOutcome, setSaveOutcome] = useState<ReceiverSaveOutcome>();
   const [reloadToken, setReloadToken] = useState(0);
+  const [runtime, setRuntime] = useState<ReceiverRuntimeTruth>();
+  const [rebootOutcome, setRebootOutcome] = useState<ReceiverRebootOutcome>();
 
   useEffect(() => {
     if (!active || sessionKey === undefined) return;
     let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined);
     controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createReceiverConfigurationDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } });
+    return () => { cancelled = true; };
+  }, [active, controller, reloadToken, sessionKey]);
+
+  // P2: read-only runtime truth, alongside the configuration load. Kept
+  // in its own effect so a board that cannot answer MSP_FEATURE_CONFIG or
+  // MSP_TX_INFO still loads its editable configuration normally.
+  useEffect(() => {
+    if (!active || sessionKey === undefined || controller.readRuntime === undefined) return;
+    let cancelled = false;
+    controller.readRuntime(sessionKey).then(outcome => {
+      if (cancelled) return;
+      setRuntime(outcome.kind === 'READ' ? outcome.runtime : undefined);
+    });
     return () => { cancelled = true; };
   }, [active, controller, reloadToken, sessionKey]);
 
@@ -160,8 +222,13 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
   const update = useCallback(<K extends keyof ReceiverConfigurationDraft>(key: K, value: ReceiverConfigurationDraft[K]) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [key]: value})); setSaveOutcome(undefined); }, []);
   const reload = useCallback(() => { const perform = () => setReloadToken(v => v + 1); if (!dirty) return perform(); Alert.alert('تجاهل التغييرات؟', 'ستُستبدل القيم الحالية بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]); }, [dirty]);
   const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); const outcome = await controller.save(sessionKey, snapshot, draft); setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { setSnapshot(outcome.snapshot); setDraft(createReceiverConfigurationDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, sessionKey, snapshot]);
+  // P2: the reboot is an explicit operator action - never automatic.
+  const requestReboot = useCallback(async () => {
+    if (sessionKey === undefined || controller.requestReboot === undefined) return;
+    setRebootOutcome(await controller.requestReboot(sessionKey));
+  }, [controller, sessionKey]);
   const statusCopy = saveOutcome === undefined ? undefined : saveMessage(saveOutcome);
-  const provider = snapshot === undefined ? '—' : SERIAL_RX_NAMES[snapshot.rx.serialRxProvider] ?? `Provider ${snapshot.rx.serialRxProvider}`;
+  const provider: string = snapshot === undefined ? '—' : SERIAL_RX_NAMES[snapshot.rx.serialRxProvider] ?? `Provider ${snapshot.rx.serialRxProvider}`;
   const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? 'تعذرت قراءة إعدادات المستقبل من متحكم الطيران.' : loadOutcome?.kind === 'SESSION_ENDED' ? 'انتهت جلسة الاتصال.' : undefined;
 
   return <View style={styles.root} testID="receiver-screen">
@@ -170,7 +237,26 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
       {loadingMessage !== undefined ? <View style={styles.warning} testID="receiver-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} />}</View> : null}
 
       {draft !== undefined && snapshot !== undefined ? <>
-        <View style={styles.card}><Heading title="مصدر المستقبل" hint="قراءة من MSP_RX_CONFIG. تعيين منفذ Serial RX يتم من شاشة المنافذ؛ لا يغيّر هذا الزر البروتوكول." /><View style={styles.providerRow}><View><Text style={styles.fieldLabel}>البروتوكول الحالي</Text><Text style={styles.providerValue}>{provider}</Text></View><Button label="فتح المنافذ" onPress={onOpenPorts} variant="secondary" icon="cable" /></View></View>
+        {/* P2 reboot truth. Shown only when the flight controller says the
+            saved change is not yet in force; the action is the controller's
+            canonical reboot, and success means the request was accepted -
+            never that the board has reconnected. */}
+        {saveOutcome?.kind === 'SAVED_REBOOT_REQUIRED' ? <View style={styles.warning} testID="receiver-reboot-required">
+          <Text style={styles.warningText}>تم الحفظ — يلزم إعادة تشغيل وحدة التحكم لتطبيق التغييرات.</Text>
+          {rebootOutcome?.kind === 'REBOOT_REQUESTED'
+            ? <Text style={styles.warningText} testID="receiver-reboot-requested">أُرسل أمر إعادة التشغيل. ستنتهي الجلسة الحالية؛ أعد الاتصال ثم أعد القراءة للتحقق.</Text>
+            : <Button label="إعادة تشغيل المتحكم" onPress={requestReboot} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="receiver-reboot-action" />}
+        </View> : null}
+
+        <View style={styles.card}><Heading title="مصدر المستقبل" hint="قراءة من MSP_RX_CONFIG. تعيين منفذ Serial RX يتم من شاشة المنافذ؛ لا يغيّر هذا الزر البروتوكول." />
+          {/* P2: the ACTIVE receiver mode comes from the firmware feature
+              mask, never from the stored serial provider - a board running
+              SPI still stores a serial provider value. */}
+          {runtime !== undefined ? <View style={styles.providerRow} testID="receiver-mode-row"><View><Text style={styles.fieldLabel}>وضع المستقبل الفعّال</Text><Text style={styles.providerValue}>{RECEIVER_MODE_LABELS[runtime.mode]}</Text></View></View> : null}
+          <View style={styles.providerRow}><View><Text style={styles.fieldLabel}>البروتوكول الحالي</Text><Text style={styles.providerValue}>{provider}</Text>{runtime !== undefined && !runtime.providerMeaningful ? <Text style={styles.sectionHint} testID="receiver-provider-not-active">هذه القيمة مخزّنة فقط ولا تصف المستقبل الفعّال في الوضع الحالي.</Text> : null}</View><Button label="فتح المنافذ" onPress={onOpenPorts} variant="secondary" icon="cable" /></View>
+          {runtime !== undefined && portDependencyMessage(runtime.portDependency) !== undefined
+            ? <Text style={styles.warningText} testID="receiver-port-mismatch">{portDependencyMessage(runtime.portDependency)}</Text> : null}
+        </View>
         <View style={styles.card}><Heading title="خريطة القنوات" hint="كل حرف مرة واحدة: Aileron, Elevator, Rudder, Throttle ثم AUX." /><View style={styles.mapRow}><TextInput value={draft.channelMapText} editable={phase === 'READY'} autoCapitalize="characters" maxLength={8} onChangeText={v => update('channelMapText', v.toUpperCase())} style={[styles.mapInput, issues.includes('CHANNEL_MAP_INVALID') && styles.invalidInput]} testID="receiver-channel-map" /><Button label="AETR1234" onPress={() => update('channelMapText', 'AETR1234')} variant="secondary" /><Button label="TAER1234" onPress={() => update('channelMapText', 'TAER1234')} variant="secondary" /></View></View>
         <View style={styles.card}><Heading title="نطاق العصا وRSSI" hint="حدود تعرف المتحكم على وضع العصا؛ ليست معايرة جهاز الإرسال. RSSI: صفر للتعطيل أو قناة AUX من 5 إلى 18." /><View style={styles.fieldsGrid}><NumericField label="الحد الأدنى" value={draft.stickMin} min={1000} max={1200} disabled={phase !== 'READY'} onChange={v => update('stickMin', v)} testID="receiver-stick-min" /><NumericField label="المنتصف" value={draft.stickCenter} min={1401} max={1599} disabled={phase !== 'READY'} onChange={v => update('stickCenter', v)} testID="receiver-stick-center" /><NumericField label="الحد الأعلى" value={draft.stickMax} min={1800} max={2000} disabled={phase !== 'READY'} onChange={v => update('stickMax', v)} testID="receiver-stick-max" /><RssiChannelField value={draft.rssiChannel} disabled={phase !== 'READY'} onChange={v => update('rssiChannel', v)} /></View></View>
         <View style={styles.card}><Heading title="Deadband" hint="ارفع القيم فقط إذا كانت القنوات تهتز حول المنتصف." /><View style={styles.fieldsGrid}><NumericField label="Roll / Pitch" value={draft.deadband} min={0} max={32} disabled={phase !== 'READY'} onChange={v => update('deadband', v)} testID="receiver-deadband" /><NumericField label="Yaw" value={draft.yawDeadband} min={0} max={100} disabled={phase !== 'READY'} onChange={v => update('yawDeadband', v)} testID="receiver-yaw-deadband" /><NumericField label="Throttle في وضع 3D" value={draft.throttle3dDeadband} min={0} max={100} disabled={phase !== 'READY'} onChange={v => update('throttle3dDeadband', v)} testID="receiver-3d-deadband" /></View></View>

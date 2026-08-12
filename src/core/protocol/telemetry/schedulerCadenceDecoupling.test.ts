@@ -505,3 +505,107 @@ describe('Receiver P1 - stale async safety (P1-I)', () => {
     expect(scheduler.getValue(RC_POLL_ID)).toEqual({status: 'UNAVAILABLE'});
   });
 });
+
+/**
+ * RECEIVER P2 - the shared FC status poll runs faster while a Receiver
+ * surface needs it, WITHOUT a second registration for the same data.
+ */
+describe('Receiver P2 - status cadence boost on the shared poll', () => {
+  jest.setTimeout(120_000);
+
+  const FC_STATUS = 150;
+  const BOOST_MS = 300;
+
+  async function runWithStatusBoost(boost: boolean) {
+    const clock = new FakeClock(0);
+    const pending: Pending[] = [];
+    const dispatches = new Map<number, number>();
+    const requester = {
+      request: (command: number) => {
+        dispatches.set(command, (dispatches.get(command) ?? 0) + 1);
+        return new Promise(resolve => {
+          pending.push({
+            at: clock.now() + 15,
+            command,
+            settle: () => resolve({protocolVersion: 'v1', wireFormat: 'v1', direction: 'in', command, flags: 0, payload: new Uint8Array(16)}),
+          });
+        });
+      },
+    };
+    const scheduler = createMspTelemetryScheduler(requester as never, {clock, singleFlight: true});
+    let rcSamples = 0;
+    scheduler.registerPoll({id: RC_POLL_ID, command: MSP_RC, intervalMs: RECEIVER_CHANNELS_POLL_INTERVAL_MS, staleAfterMs: 700, priority: 2, decode: () => {rcSamples += 1; return {};}});
+    scheduler.registerPoll({id: 'battery', command: 130, intervalMs: 3000, staleAfterMs: 9000, priority: -1, decode: () => ({})});
+    scheduler.registerPoll({id: 'gps', command: 106, intervalMs: 5000, staleAfterMs: 15000, priority: -3, decode: () => ({})});
+    scheduler.registerPoll({id: 'fcStatus', command: FC_STATUS, intervalMs: 8000, staleAfterMs: 24000, priority: -4, decode: () => ({})});
+    const release = boost ? scheduler.acquirePollIntervalOverride('fcStatus', BOOST_MS) : undefined;
+
+    let nextTickAt = 0;
+    const durationMs = 10_000;
+    for (let guard = 0; guard < 4_000_000; guard += 1) {
+      const nextResponseAt = pending.length > 0 ? Math.min(...pending.map(p => p.at)) : Infinity;
+      const target = Math.min(nextTickAt, nextResponseAt);
+      if (!Number.isFinite(target) || target > durationMs) break;
+      clock.set(target);
+      for (let i = pending.length - 1; i >= 0; i -= 1) {
+        if (pending[i].at <= clock.now()) { const [s] = pending.splice(i, 1); s.settle(); }
+      }
+      await flush();
+      if (clock.now() >= nextTickAt) { scheduler.tick(); nextTickAt += PRODUCTION.tickMs; await flush(); }
+    }
+    return {statusDispatches: dispatches.get(FC_STATUS) ?? 0, rcHz: (rcSamples / durationMs) * 1000, release, scheduler};
+  }
+
+  it('P2-X item 31: status refreshes far sooner than the old ~8s path', async () => {
+    const before = await runWithStatusBoost(false);
+    const after = await runWithStatusBoost(true);
+    // 10s at the registered 8000ms cadence affords 1-2 status reads; at
+    // the 300ms boost it is an order of magnitude more.
+    expect(before.statusDispatches).toBeLessThanOrEqual(2);
+    expect(after.statusDispatches).toBeGreaterThanOrEqual(20);
+    expect(after.statusDispatches).toBeGreaterThan(before.statusDispatches * 8);
+  });
+
+  it('P2-X item 32: the faster status does not starve live RC', async () => {
+    const after = await runWithStatusBoost(true);
+    // Live RC keeps its 25Hz-class cadence with the boost in force.
+    expect(after.rcHz).toBeGreaterThanOrEqual(20);
+  });
+
+  it('P2-X item 33: the boost re-uses the ONE registered status poll - no duplicate registration', async () => {
+    const {scheduler} = await runWithStatusBoost(true);
+    const statusPolls = scheduler.describeDiagnostics().polls.filter(poll => poll.command === FC_STATUS);
+    expect(statusPolls).toHaveLength(1);
+    // The registered interval is untouched; only the effective cadence moved.
+    expect(statusPolls[0].intervalMs).toBe(8000);
+    expect(statusPolls[0].deliveredSampleCount).toBeGreaterThanOrEqual(20);
+  });
+
+  it('P2-X item 34: releasing every owner restores the registered cadence, and minimum wins while several hold it', async () => {
+    const clock = new FakeClock(0);
+    const scheduler = createMspTelemetryScheduler({request: () => new Promise(() => {})} as never, {clock, singleFlight: true});
+    const dispatched: number[] = [];
+    scheduler.registerPoll({
+      id: 'fcStatus', command: FC_STATUS, intervalMs: 8000, staleAfterMs: 24000, priority: -4,
+      decode: () => { dispatched.push(clock.now()); return {}; },
+    });
+
+    const receiverScreen = scheduler.acquirePollIntervalOverride('fcStatus', 300);
+    const failsafeScreen = scheduler.acquirePollIntervalOverride('fcStatus', 500);
+    // Minimum wins: the poll is pulled in to the shortest request.
+    scheduler.tick();
+    expect(scheduler.describeDiagnostics().polls[0].inFlight).toBe(true);
+
+    // Releasing the shorter owner leaves the longer one in force; only
+    // when BOTH release does the registered 8000ms cadence return.
+    receiverScreen();
+    failsafeScreen();
+    failsafeScreen(); // double release is a safe no-op
+    scheduler.discardPendingDemands();
+    const dueAfterRelease = clock.now() + 8000;
+    clock.set(dueAfterRelease - 1);
+    scheduler.tick();
+    // Still not due at the registered cadence.
+    expect(scheduler.describeDiagnostics().polls[0].requestCount).toBe(1);
+  });
+});

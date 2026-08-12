@@ -1,9 +1,35 @@
 import {MSP_RC, decodeRcChannels, type MspTelemetryScheduler} from '../../../core';
 import {
   ATTITUDE_TELEMETRY_POLL_ID,
+  FC_STATUS_TELEMETRY_POLL_ID,
   mspSessionCoordinator,
   type SetupUiSessionKey,
 } from './MspSessionCoordinator';
+
+/**
+ * RECEIVER P2 - how fast the SHARED FC status poll runs while a Receiver
+ * surface is visible.
+ *
+ * The status poll carries the arming-disable flags from which failsafe /
+ * RXLOSS / BOXFAILSAFE are resolved. Its registered cadence is 8000ms,
+ * chosen for an idle Setup screen; for a live receiver view that is far
+ * too slow - a pilot could lose the link and see a healthy screen for up
+ * to eight seconds.
+ *
+ * This is a reference-counted OVERRIDE of the one canonical poll, not a
+ * second registration: duplicating the status command would put two
+ * requests for identical data on a serialised link and let two screens
+ * disagree. The boost is released with the Receiver acquisition, so
+ * Setup's idle cadence is unaffected once the screen is left.
+ *
+ * 300ms, chosen against our own scheduler rather than copied: it makes a
+ * failsafe transition visible inside roughly a third of a second, and it
+ * costs ~3.3 requests/second against the ~25/second live RC already uses.
+ * Deterministic mixed-load tests confirm RC keeps its cadence and no
+ * slower family is starved. Betaflight Configurator polls comparable
+ * status at 250ms; that is corroboration, not the reason.
+ */
+export const RECEIVER_STATUS_BOOST_INTERVAL_MS = 300;
 
 export const RECEIVER_CHANNELS_POLL_ID = 'receiver-channels-live';
 
@@ -47,6 +73,8 @@ interface Registration {
   references: number;
   readonly unregister: () => void;
   readonly releaseAttitudeSuppression: () => void;
+  /** P2: the shared FC status poll's Receiver-scoped cadence boost. */
+  readonly releaseStatusBoost: () => void;
 }
 const active = new Map<string, Registration>();
 
@@ -59,6 +87,7 @@ export function acquireReceiverTelemetry(key: SetupUiSessionKey): () => void {
   if (existing !== undefined) {
     existing.unregister();
     existing.releaseAttitudeSuppression();
+    existing.releaseStatusBoost();
   }
   // The hidden Setup model otherwise consumes every other 50ms scheduler
   // slot. Suppress only that poll while Receiver is visible, preserving
@@ -79,6 +108,10 @@ export function acquireReceiverTelemetry(key: SetupUiSessionKey): () => void {
     releaseAttitudeSuppression: scheduler.acquirePollSuppression(
       ATTITUDE_TELEMETRY_POLL_ID,
     ),
+    releaseStatusBoost: scheduler.acquirePollIntervalOverride(
+      FC_STATUS_TELEMETRY_POLL_ID,
+      RECEIVER_STATUS_BOOST_INTERVAL_MS,
+    ),
   };
   active.set(key.sessionId, registration);
   return releaseFor(key, registration);
@@ -86,5 +119,5 @@ export function acquireReceiverTelemetry(key: SetupUiSessionKey): () => void {
 
 function releaseFor(key: SetupUiSessionKey, registration: Registration): () => void {
   let released = false;
-  return () => { if (released) return; released = true; const current = active.get(key.sessionId); if (current !== registration) return; current.references -= 1; if (current.references > 0) return; current.unregister(); current.releaseAttitudeSuppression(); active.delete(key.sessionId); };
+  return () => { if (released) return; released = true; const current = active.get(key.sessionId); if (current !== registration) return; current.references -= 1; if (current.references > 0) return; current.unregister(); current.releaseAttitudeSuppression(); current.releaseStatusBoost(); active.delete(key.sessionId); };
 }

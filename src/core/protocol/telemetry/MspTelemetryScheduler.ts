@@ -281,6 +281,23 @@ export interface MspTelemetryScheduler {
    * while the real MSP link remains globally single-flight.
    */
   acquirePollSuppression(id: string): () => void;
+  /**
+   * RECEIVER P2: temporarily raises ONE registered poll's cadence without
+   * registering a second poll for the same data.
+   *
+   * The Receiver screen needs failsafe/signal status far sooner than the
+   * 8s an idle Setup screen is happy with, but duplicating the status
+   * command would put two requests for identical data on a serialised
+   * link and give two screens conflicting answers. Instead the single
+   * canonical poll is asked to run faster while somebody needs it to.
+   *
+   * Reference-counted per poll id and MINIMUM-wins: with several owners
+   * the shortest requested interval applies, and the poll reverts to its
+   * registered interval only after every owner releases. Acquiring also
+   * pulls the poll's next due time in, so a boost takes effect
+   * immediately instead of after the old, slower period elapses.
+   */
+  acquirePollIntervalOverride(id: string, intervalMs: number): () => void;
   getValue<T>(id: string): TelemetryValue<T>;
   /** See this file's own class-level doc comment: the caller-driven,
    * pull-based entry point. Calling tick() with nothing currently due
@@ -424,6 +441,9 @@ function describeErrorCode(error: unknown): string {
 class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private readonly polls = new Map<string, PollRuntimeState>();
   private readonly suppressedPollReferences = new Map<string, number>();
+  /** P2: outstanding interval-override requests per poll id. Minimum
+   * wins; an empty list means the registered interval applies. */
+  private readonly intervalOverrides = new Map<string, number[]>();
   private readonly activeLeaseIds = new Set<string>();
   /** Checkpoint F: the REASON behind each active lease id, so a
    * diagnostics report can say WHICH owner is holding polling off
@@ -526,6 +546,48 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         this.suppressedPollReferences.set(id, current - 1);
       }
     };
+  }
+
+  acquirePollIntervalOverride(id: string, intervalMs: number): () => void {
+    const requests = this.intervalOverrides.get(id) ?? [];
+    requests.push(intervalMs);
+    this.intervalOverrides.set(id, requests);
+    // Take effect now rather than after the old, slower period: if the
+    // poll is not due until later than the new cadence allows, pull it in.
+    const poll = this.polls.get(id);
+    if (poll !== undefined) {
+      const earliest = this.clock.now() + intervalMs;
+      if (poll.dueAtMs > earliest) {
+        poll.dueAtMs = earliest;
+      }
+    }
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      const current = this.intervalOverrides.get(id);
+      if (current === undefined) {
+        return;
+      }
+      const index = current.indexOf(intervalMs);
+      if (index >= 0) {
+        current.splice(index, 1);
+      }
+      if (current.length === 0) {
+        this.intervalOverrides.delete(id);
+      }
+    };
+  }
+
+  /** The cadence a poll is actually running at: its registered interval
+   * unless an override asks for something shorter. */
+  private effectiveIntervalMs(poll: PollRuntimeState): number {
+    const overrides = this.intervalOverrides.get(poll.definition.id);
+    return overrides === undefined || overrides.length === 0
+      ? poll.definition.intervalMs
+      : Math.min(poll.definition.intervalMs, ...overrides);
   }
 
   /** Pure cache lookup - see this file's own class-level doc comment
@@ -649,7 +711,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         if (restrictToAuxiliary && poll.definition.priority >= 0) {
           continue;
         }
-        const ratio = (now - poll.dueAtMs) / poll.definition.intervalMs;
+        const ratio = (now - poll.dueAtMs) / this.effectiveIntervalMs(poll);
         const isBetter =
           best === undefined || ratio > bestRatio || (ratio === bestRatio && poll.definition.priority > best.definition.priority);
         if (isBetter) {
@@ -790,7 +852,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     const now = this.clock.now();
     for (const poll of this.polls.values()) {
       if (!poll.inFlight && now >= poll.dueAtMs) {
-        poll.dueAtMs = now + poll.definition.intervalMs;
+        poll.dueAtMs = now + this.effectiveIntervalMs(poll);
       }
     }
   }
@@ -807,7 +869,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
 
   private dispatch(poll: PollRuntimeState, dispatchedAtMs: number): void {
     poll.inFlight = true;
-    poll.dueAtMs = dispatchedAtMs + poll.definition.intervalMs;
+    poll.dueAtMs = dispatchedAtMs + this.effectiveIntervalMs(poll);
     this.inFlightCount += 1;
     poll.requestCount += 1;
     // Receiver P1 measurement seam: the request half of a round trip.
