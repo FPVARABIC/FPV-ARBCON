@@ -9,6 +9,10 @@
 import React from 'react';
 import { act, create, ReactTestRenderer } from 'react-test-renderer';
 
+// Resolve the catalogue: these assertions are about OPERATOR COPY, and a
+// raw i18n key would pass a `toContain` check that proves nothing.
+import '../../i18n';
+
 import {
   deriveWorkspacePhase,
   MotorWorkspace,
@@ -132,6 +136,8 @@ describe('MotorWorkspace - structure', () => {
   it('renders enable, Master, STOP and the ONE safety line', () => {
     const renderer = render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({})}
         port={makePort()}
         enabled
@@ -142,7 +148,8 @@ describe('MotorWorkspace - structure', () => {
     expect(findAll(renderer, 'motor-slider-master')).toHaveLength(1);
     expect(findAll(renderer, 'motor-workspace-stop')).toHaveLength(1);
     const body = text(renderer);
-    expect(body).toContain('تفعيل التحكم بالمحركات');
+    expect(body).toContain('جلسة المحركات');
+    expect(body).toContain('التحكم بالمحركات');
     expect(body).toContain('إيقاف المحركات');
     // The propeller warning lives ONCE at page level, not inside the
     // workspace - asserted in MotorsScreen.test.tsx.
@@ -154,6 +161,8 @@ describe('MotorWorkspace - structure', () => {
     motorCount => {
       const renderer = render(
         <MotorWorkspace
+          sessionState="ON"
+          onSessionChange={() => {}}
           snapshot={makeSnapshot({ motorCount })}
           port={makePort()}
           enabled
@@ -162,7 +171,8 @@ describe('MotorWorkspace - structure', () => {
       );
       for (let index = 1; index <= motorCount; index++) {
         expect(findAll(renderer, `motor-slider-${index}`)).toHaveLength(1);
-        expect(text(renderer)).toContain(`محرك ${index}`);
+        // PART H: the SAME M-number the diagram prints and pulseMotor takes.
+        expect(text(renderer)).toContain(`M${index}`);
       }
       expect(
         findAll(renderer, `motor-slider-${motorCount + 1}`),
@@ -183,6 +193,8 @@ describe('MotorWorkspace - facade calls', () => {
     const port = makePort();
     const renderer = render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({ feature3d: true })}
         port={port}
         enabled
@@ -209,6 +221,8 @@ describe('MotorWorkspace - facade calls', () => {
   it('digital 3D renders the neutral legend and never labels 1000 as stop', () => {
     const renderer = render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({ feature3d: true })}
         port={makePort()}
         enabled
@@ -227,6 +241,8 @@ describe('MotorWorkspace - facade calls', () => {
   it('analog 3D renders the concise unsupported state and no sliders', () => {
     const renderer = render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({ analog: true, feature3d: true, eligible: false })}
         port={makePort()}
         enabled
@@ -241,6 +257,8 @@ describe('MotorWorkspace - facade calls', () => {
   it('analog non-3D workspace is available with its policy bounds', () => {
     const renderer = render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({ analog: true })}
         port={makePort()}
         enabled
@@ -255,13 +273,15 @@ describe('MotorWorkspace - facade calls', () => {
     const port = makePort();
     const renderer = render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({})}
         port={port}
         enabled={false}
         onEnableChange={() => {}}
       />,
     );
-    expect(text(renderer)).toContain('غير مفعّل');
+    expect(text(renderer)).toContain('غير مسموح');
     // No call reached the port during render.
     expect(port.calls).toHaveLength(0);
   });
@@ -269,6 +289,8 @@ describe('MotorWorkspace - facade calls', () => {
   it('shows recovery copy when the enable attempt failed, without dev codes', () => {
     const renderer = render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({ outcome: 'BLOCKED' })}
         port={makePort()}
         enabled
@@ -302,6 +324,8 @@ describe('MotorWorkspace - no physical claims', () => {
   it('never renders motion language', () => {
     const renderer = render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({})}
         port={makePort()}
         enabled
@@ -345,6 +369,8 @@ describe('P3 - web Escape-to-STOP', () => {
     const port = makePort();
     render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({})}
         port={port}
         enabled
@@ -363,6 +389,8 @@ describe('P3 - web Escape-to-STOP', () => {
     const port = makePort();
     render(
       <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
         snapshot={makeSnapshot({})}
         port={port}
         enabled={false}

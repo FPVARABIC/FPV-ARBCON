@@ -786,10 +786,21 @@ function renderTabShell() {
   return {
     renderer,
     find,
-    press: (testID: string) =>
+    // Resolves the node that OWNS the gesture - see the note in
+    // motorsBeginSessionReachesDevice.test.tsx. A ToggleSwitch's outermost
+    // testID node has no onPress, so `find(testID).props.onPress()` would
+    // throw and `onPress?.()` would silently pass.
+    press: (testID: string) => {
+      const node = renderer.root
+        .findAll(candidate => candidate.props?.testID === testID)
+        .find(candidate => typeof candidate.props?.onPress === 'function');
+      if (node === undefined) {
+        throw new Error(`no pressable node with testID "${testID}"`);
+      }
       ReactTestRenderer.act(() => {
-        find(testID).props.onPress();
-      }),
+        node.props.onPress();
+      });
+    },
     longPress: (testID: string) =>
       ReactTestRenderer.act(() => {
         const node = find(testID);
@@ -835,7 +846,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     // the in-flight acquisition land anyway, after the operator has already
     // gone". Asserted rather than timed, so no microtask count is assumed.
     ReactTestRenderer.act(() => {
-      shell.press('motors-begin-session-button');
+      shell.press('motor-session-toggle');
     });
     expect(controller.getSnapshot().phase).not.toBe('ACTIVE');
     expect(client.isMotorTestLeaseHeld()).toBe(false);
@@ -878,7 +889,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const controller = shellController();
 
     await ReactTestRenderer.act(async () => {
-      shell.press('motors-begin-session-button');
+      shell.press('motor-session-toggle');
       for (
         let i = 0;
         i < 400 && !client.isMotorTestLeaseHeld();
@@ -914,7 +925,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const controller = shellController();
 
     await ReactTestRenderer.act(async () => {
-      shell.press('motors-begin-session-button');
+      shell.press('motor-session-toggle');
       for (
         let i = 0;
         i < 400 && controller.getSnapshot().machine?.name !== 'Ready';

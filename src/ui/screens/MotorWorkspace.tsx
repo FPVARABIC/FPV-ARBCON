@@ -33,9 +33,15 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 
 import type { MotorTestControllerSnapshot } from '../../core/state/motorTestController';
 import type { MotorTestValueDomain } from '../../core/firmware-adapters/betaflightMotorDomainV147';
+import {
+  motorSessionIsTransitioning,
+  motorSessionSwitchValue,
+  type MotorSessionState,
+} from '../../core/state/motorSessionPresentation';
 import { ToggleSwitch } from '../components/controls/ToggleSwitch';
 import { Button } from '../components/controls/Button';
 import { colors, radii, spacing, typography } from '../theme';
@@ -63,7 +69,28 @@ export interface MotorWorkspacePort {
 export interface MotorWorkspaceProps {
   readonly snapshot: MotorTestControllerSnapshot | undefined;
   readonly port: MotorWorkspacePort | undefined;
-  /** True once the operator's enable intent is in flight or granted. */
+  /**
+   * TWO AUTHORITIES, NOT ONE - and the reason they are separate is a
+   * defect, not a preference.
+   *
+   * `sessionState` is CONTROLLER TRUTH (see motorSessionPresentation.ts):
+   * whether an FC test session exists, with the configuration lease, the
+   * arming restriction and the telemetry pause that implies. It is derived
+   * from the published phase, never from a boolean this screen owns, because
+   * the boolean version rendered READY for a session the controller had
+   * already closed.
+   *
+   * `enabled` is MOTOR CONTROL: permission to put a value on an output
+   * INSIDE that session. It is an operator intent and may legitimately be
+   * false while the session is wide open.
+   *
+   * Session ON never turns a motor. Motor Control ON never implies a value
+   * above stop. Neither sentence is a UI convention - both are enforced
+   * below and proven in MotorWorkspace.test.tsx.
+   */
+  readonly sessionState: MotorSessionState;
+  readonly onSessionChange: (next: boolean) => void;
+  /** True once the operator's motor-control intent is granted. */
   readonly enabled: boolean;
   readonly onEnableChange: (next: boolean) => void;
   /** Compact width stacks the master row; wide puts controls side-by-side. */
@@ -102,14 +129,35 @@ export function deriveWorkspacePhase(
   return 'RECOVERY_REQUIRED';
 }
 
-const PHASE_LABEL: Record<MotorWorkspacePhase, string> = {
-  DISABLED: 'غير مفعّل',
-  ENABLING: 'جارٍ التفعيل',
-  READY: 'جاهز',
-  STOPPING: 'جارٍ الإيقاف',
-  RECOVERY_REQUIRED: 'يتطلب إعادة الاتصال',
-  UNSUPPORTED_3D_ANALOG: 'غير متاح لهذا الإعداد',
+/** i18n keys, not literals: PART AF keeps operator copy in the catalogue. */
+const SESSION_STATE_KEY: Record<MotorSessionState, string> = {
+  OFF: 'motorsScreen.sessionStateOff',
+  OPENING: 'motorsScreen.sessionStateOpening',
+  ON: 'motorsScreen.sessionStateOn',
+  CLOSING: 'motorsScreen.sessionStateClosing',
+  ERROR: 'motorsScreen.sessionStateError',
+  UNKNOWN: 'motorsScreen.sessionStateUnknown',
 };
+
+/**
+ * MEANING IS NEVER CARRIED BY COLOUR ALONE. Every session state also
+ * publishes a text label (above) and this shape token, so the row is
+ * readable in greyscale and to a screen reader.
+ */
+function sessionToneStyle(state: MotorSessionState) {
+  switch (state) {
+    case 'ON':
+      return styles.stateChipOn;
+    case 'ERROR':
+    case 'UNKNOWN':
+      return styles.stateChipUncertain;
+    case 'OPENING':
+    case 'CLOSING':
+      return styles.stateChipBusy;
+    case 'OFF':
+      return styles.stateChipOff;
+  }
+}
 
 /* ------------------------------------------------------------------ *
  * Slider
@@ -265,13 +313,23 @@ function MotorSlider({
 export function MotorWorkspace({
   snapshot,
   port,
+  sessionState,
+  onSessionChange,
   enabled,
   onEnableChange,
   compact = false,
 }: MotorWorkspaceProps): React.JSX.Element {
+  const { t } = useTranslation();
   const domain: MotorTestValueDomain | undefined = snapshot?.motorDomain;
   const phase = deriveWorkspacePhase(snapshot, enabled);
-  const commandable = phase === 'READY' && port !== undefined && domain !== undefined;
+  /**
+   * BOTH GATES, ALWAYS. `sessionState === 'ON'` is the context and
+   * `phase === 'READY'` is the motor-control permission; a command needs
+   * both, so neither toggle alone can put a value on an output.
+   */
+  const sessionOn = sessionState === 'ON';
+  const commandable =
+    sessionOn && phase === 'READY' && port !== undefined && domain !== undefined;
 
   const motorCount = domain?.motorCount ?? snapshot?.motorScope?.motorCount ?? 0;
   const min = domain?.commandDomainMin ?? 1000;
@@ -350,10 +408,51 @@ export function MotorWorkspace({
       ? desired[0]
       : stopValue;
 
+  const sessionLabel = t(SESSION_STATE_KEY[sessionState]);
+  const sessionBusy = motorSessionIsTransitioning(sessionState);
+
+  /**
+   * THE SESSION ROW, rendered even when the analog-3D scope makes motor
+   * control impossible. The operator still needs to see - and close - a
+   * session the app opened; hiding the only OFF control behind an
+   * unsupported-configuration card is how a session becomes unreachable.
+   */
+  const sessionRow = (
+    <View style={styles.enableRow} testID="motor-session-row">
+      <View style={styles.enableTextBlock}>
+        <Text style={styles.sectionTitle}>
+          {t('motorsScreen.sessionToggleTitle')}
+        </Text>
+        <View
+          style={[styles.stateChip, sessionToneStyle(sessionState)]}
+          testID="motor-session-state"
+        >
+          <Text style={styles.stateChipText}>{sessionLabel}</Text>
+        </View>
+        <Text style={styles.phaseText}>
+          {t('motorsScreen.sessionToggleHint')}
+        </Text>
+      </View>
+      <ToggleSwitch
+        // ON is the ONLY state that reads as on. ERROR and UNKNOWN read as
+        // off on the track but carry their own chip and detail line above,
+        // so neither can be mistaken for a proven-closed session.
+        value={motorSessionSwitchValue(sessionState)}
+        onValueChange={onSessionChange}
+        disabled={sessionBusy}
+        accessibilityLabel={`${t('motorsScreen.sessionToggleTitle')} — ${sessionLabel}`}
+        testID="motor-session-toggle"
+      />
+    </View>
+  );
+
   if (phase === 'UNSUPPORTED_3D_ANALOG') {
     return (
       <View style={styles.card} testID="motor-workspace-unsupported">
-        <Text style={styles.sectionTitle}>التحكم بالمحركات</Text>
+        {sessionRow}
+        <Text style={styles.sectionTitle}>
+          {t('motorsScreen.controlToggleTitle')}
+        </Text>
         <Text style={styles.unsupportedText}>
           اختبار المحركات غير متاح لإعداد 3D التناظري الحالي، لأن حدود الخرج
           المطلوبة لا يمكن قراءتها من هذا الإصدار من البرنامج الثابت.
@@ -364,19 +463,60 @@ export function MotorWorkspace({
 
   return (
     <View style={styles.card} testID="motor-workspace">
-      {/* Enable row */}
-      <View style={styles.enableRow}>
+      {sessionRow}
+
+      {sessionState === 'ERROR' ? (
+        <Text style={styles.recoveryText} testID="motor-session-error-detail">
+          {t('motorsScreen.sessionErrorDetail')}
+        </Text>
+      ) : null}
+      {sessionState === 'UNKNOWN' ? (
+        <Text style={styles.recoveryText} testID="motor-session-unknown-detail">
+          {t('motorsScreen.sessionUnknownDetail')}
+        </Text>
+      ) : null}
+
+      {/* MOTOR CONTROL - a different authority, in its own row. */}
+      <View style={[styles.enableRow, styles.controlRow]}>
         <View style={styles.enableTextBlock}>
-          <Text style={styles.sectionTitle}>تفعيل التحكم بالمحركات</Text>
-          <Text style={styles.phaseText} testID="motor-workspace-phase">
-            {PHASE_LABEL[phase]}
+          <Text style={styles.sectionTitle}>
+            {t('motorsScreen.controlToggleTitle')}
+          </Text>
+          <View
+            style={[
+              styles.stateChip,
+              commandable ? styles.stateChipOn : styles.stateChipOff,
+            ]}
+            testID="motor-workspace-phase"
+          >
+            <Text style={styles.stateChipText}>
+              {t(
+                commandable
+                  ? 'motorsScreen.controlStateOn'
+                  : 'motorsScreen.controlStateOff',
+              )}
+            </Text>
+          </View>
+          <Text style={styles.phaseText}>
+            {sessionOn
+              ? t('motorsScreen.controlToggleHint')
+              : t('motorsScreen.controlRequiresSession')}
           </Text>
         </View>
         <ToggleSwitch
-          value={enabled}
+          value={enabled && sessionOn}
           onValueChange={onEnableChange}
-          disabled={phase === 'ENABLING' || phase === 'STOPPING'}
-          accessibilityLabel="تفعيل التحكم بالمحركات"
+          // Not operational without a session - PART C. Disabled rather
+          // than hidden, so the hierarchy stays visible and the operator
+          // can see WHY it cannot be used.
+          disabled={
+            !sessionOn || phase === 'ENABLING' || phase === 'STOPPING'
+          }
+          accessibilityLabel={`${t('motorsScreen.controlToggleTitle')} — ${t(
+            commandable
+              ? 'motorsScreen.controlStateOn'
+              : 'motorsScreen.controlStateOff',
+          )}`}
           testID="motor-workspace-enable"
         />
       </View>
@@ -389,13 +529,16 @@ export function MotorWorkspace({
         </Text>
       ) : null}
 
-      {/* Motor sliders - rendered from the REAL motor count. */}
+      {/* Motor sliders - rendered from the REAL motor count, labelled with
+          the SAME M-number the diagram prints and pulseMotor receives. */}
       <View style={styles.slidersBlock}>
         {Array.from({ length: motorCount }, (_, index) => (
           <MotorSlider
             key={index}
-            label={`محرك ${index + 1}`}
-            accessibilityLabel={`محرك ${index + 1}`}
+            label={t('motorsScreen.motorNumber', { number: index + 1 })}
+            accessibilityLabel={t('motorsScreen.motorAccessibleName', {
+              number: index + 1,
+            })}
             min={min}
             max={max}
             stopValue={stopValue}
@@ -414,8 +557,8 @@ export function MotorWorkspace({
       {/* Master */}
       <View style={[styles.masterRow, compact && styles.masterRowCompact]}>
         <MotorSlider
-          label="الكل"
-          accessibilityLabel="الكل - جميع المحركات"
+          label={t('motorsScreen.masterLabel')}
+          accessibilityLabel={t('motorsScreen.masterAccessibleName')}
           min={min}
           max={max}
           stopValue={stopValue}
@@ -520,7 +663,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: spacing.sm,
   },
-  enableTextBlock: { flexShrink: 1, gap: 2 },
+  enableTextBlock: { flex: 1, gap: 4, alignItems: 'flex-start' },
+  /* The second authority is visually subordinate to the session it lives
+     inside - a divider, not a second heading of equal weight. */
+  controlRow: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: spacing.sm,
+  },
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
@@ -528,6 +678,31 @@ const styles = StyleSheet.create({
   phaseText: {
     ...typography.caption,
     color: colors.textSecondary,
+  },
+  /* STATE IS TEXT IN A SHAPE, never colour alone: the label inside the
+     chip is the truth, the border is only reinforcement. */
+  stateChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+  },
+  stateChipText: {
+    ...typography.caption,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  stateChipOn: {
+    borderColor: colors.accentStrong,
+    backgroundColor: colors.accentSoft,
+  },
+  stateChipOff: { borderColor: colors.border, backgroundColor: colors.surfaceRaised },
+  stateChipBusy: { borderColor: colors.info, backgroundColor: colors.surfaceRaised },
+  stateChipUncertain: {
+    borderColor: colors.error,
+    borderWidth: 2,
+    backgroundColor: colors.surfaceRaised,
   },
   safetyLine: {
     ...typography.caption,

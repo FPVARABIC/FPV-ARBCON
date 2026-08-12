@@ -172,6 +172,17 @@ export function MotorOutputReorderPanel({
           <Text style={styles.caption}>
             {t('motorOutputReorder.reviewWarning')}
           </Text>
+          {/* Both sentences come from the pinned firmware, not from
+              product preference: the payload is written full-length so
+              msp.c:3559-3567 never resets the outputs this workflow did
+              not touch, and the array is only read at motor device init
+              (pwm_output_hw.c:213), so nothing changes until a reboot. */}
+          <Text style={styles.caption} testID="motor-output-reorder-tail">
+            {t('motorOutputReorder.tailPreserved')}
+          </Text>
+          <Text style={styles.caption} testID="motor-output-reorder-reboot">
+            {t('motorOutputReorder.rebootRequired')}
+          </Text>
           <View style={styles.mapRow}>
             {desired.map((resource, index) => (
               <View key={index} style={styles.mapCell}>

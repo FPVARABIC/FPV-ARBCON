@@ -245,9 +245,11 @@ describe('MotorConfigurationPanel', () => {
     const tree = await render(
       controllerDouble({ kind: 'REJECTED', reason: 'MOTOR_TEST_ACTIVE' }),
     );
-    expect(JSON.stringify(tree.toJSON())).toContain(
-      'إنهاء جلسة الاختبار وتحرير الإعدادات',
-    );
+    // The reason must name the control the operator can actually use. The
+    // old copy pointed at a pinned "end session" rectangle that no longer
+    // exists; lifecycle now belongs to the جلسة المحركات switch, and an
+    // instruction naming a deleted button is worse than no instruction.
+    expect(JSON.stringify(tree.toJSON())).toContain('جلسة المحركات');
     expect(
       tree.root.findAllByProps({ testID: 'motor-config-review-save' }),
     ).toHaveLength(0);

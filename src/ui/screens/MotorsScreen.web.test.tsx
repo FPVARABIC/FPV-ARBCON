@@ -88,3 +88,100 @@ describe('MotorsScreen real react-native-web hold responder', () => {
     expect(operator.stopCalls).toEqual(['TOUCH_RELEASED']);
   });
 });
+
+/**
+ * PART AD - THE SAME MOTORS SCREEN IN A BROWSER.
+ *
+ * There is no separate Web implementation and none is created here: this
+ * renders the SAME MotorsScreenView through real react-native-web, which
+ * is the only way to catch the class of defect that has bitten this repo
+ * twice - a React Native style property the web renderer silently drops
+ * (`direction` on a View), which no assertion against the style OBJECT can
+ * see because the object is perfectly well-formed.
+ */
+describe('PART AD: Motors web parity', () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  let operator: WebOperator;
+  beforeEach(() => {
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    operator = new WebOperator();
+    act(() => {
+      root.render(<MotorsScreenView operator={operator} />);
+    });
+  });
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  const q = (testID: string) => host.querySelector(`[data-testid="${testID}"]`);
+
+  it('renders BOTH authorities, as two separate switches', () => {
+    const session = q('motor-session-toggle');
+    const control = q('motor-workspace-enable');
+    expect(session).not.toBeNull();
+    expect(control).not.toBeNull();
+    expect(session).not.toBe(control);
+    expect(session!.getAttribute('role')).toBe('switch');
+    expect(control!.getAttribute('role')).toBe('switch');
+  });
+
+  it('announces each switch state in the browser accessibility tree', () => {
+    // aria-checked specifically: react-native-web renders
+    // accessibilityState.checked as NOTHING, which is why ToggleSwitch
+    // sets both channels. A regression here is silent on native.
+    expect(q('motor-session-toggle')!.getAttribute('aria-checked')).toBe('true');
+    expect(q('motor-workspace-enable')!.getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('prints M1..M4 in the browser build', () => {
+    const text = host.textContent ?? '';
+    for (const slot of [1, 2, 3, 4]) {
+      expect(text).toContain(`M${slot}`);
+    }
+  });
+
+  it('does NOT mirror the physical airframe under RTL', () => {
+    // The rendered boxes, not the style object. FRONT_RIGHT must sit to
+    // the right of FRONT_LEFT on screen whatever the writing direction is.
+    const right = q('motors-diagram-cell-FRONT-RIGHT');
+    const left = q('motors-diagram-cell-FRONT-LEFT');
+    expect(right).not.toBeNull();
+    expect(left).not.toBeNull();
+    // jsdom reports zero-size boxes, so compare DOCUMENT ORDER against the
+    // computed direction instead: under RTL the first painted child is the
+    // rightmost one. MotorAirframeDiagram computes this itself precisely
+    // because react-native-web drops the `direction` style.
+    const row = right!.parentElement!;
+    const order = [...row.children];
+    const rtl = document.documentElement.getAttribute('dir') === 'rtl';
+    const rightIndex = order.indexOf(right!);
+    const leftIndex = order.indexOf(left!);
+    expect(rightIndex).toBeGreaterThanOrEqual(0);
+    expect(leftIndex).toBeGreaterThanOrEqual(0);
+    expect(rtl ? rightIndex < leftIndex : rightIndex > leftIndex).toBe(true);
+  });
+
+  it('shows exactly one rotation indicator per motor', () => {
+    for (const slot of [1, 2, 3, 4]) {
+      expect(
+        host.querySelectorAll(`[data-testid="motors-diagram-direction-${slot}"]`),
+      ).toHaveLength(1);
+    }
+  });
+
+  it('keeps STOP reachable in the browser', () => {
+    expect(q('motor-workspace-stop')).not.toBeNull();
+    expect(q('motors-stop-button')).not.toBeNull();
+  });
+
+  it('leaks no raw motor MSP authority into the browser bundle path', () => {
+    const html = host.innerHTML;
+    for (const token of ['MSP_SET_MOTOR', 'MSP2_SET_MOTOR_OUTPUT_REORDERING']) {
+      expect(html).not.toContain(token);
+    }
+  });
+});

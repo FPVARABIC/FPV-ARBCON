@@ -43,7 +43,20 @@ import { resolveLayoutTier } from '../theme/layout';
 export interface MotorAirframeEntry {
   readonly slot: number;
   readonly position: MotorPhysicalPosition;
-  readonly direction: MotorRotationDirection;
+  /**
+   * UNDEFINED MEANS UNKNOWN, AND UNKNOWN IS RENDERED AS UNKNOWN.
+   *
+   * There is no MSP field at API 1.47 that reports which way a motor
+   * actually spins - `motorsScreen.diagramDirectionSource` has said so in
+   * Arabic since P3, and auditing the pinned firmware again for this pass
+   * did not turn one up. What the screen supplies today is therefore the
+   * EXPECTED Quad-X reference, not a measurement.
+   *
+   * This field exists so that distinction is structural rather than a
+   * caption: a caller with no direction truth passes undefined and gets an
+   * explicit unknown mark, never a confident arrow pointing the wrong way.
+   */
+  readonly direction?: MotorRotationDirection;
 }
 
 /**
@@ -66,6 +79,22 @@ export interface MotorAirframeDiagramProps {
   readonly liveActivity?: MotorSlotActivity;
   readonly verifiedSlots?: readonly number[];
   readonly onSelectSlot: (slot: number) => void;
+  /**
+   * The REAL output count from the flight controller.
+   *
+   * PART Q, and an honesty problem rather than a layout one. This file has
+   * authoritative geometry for exactly one airframe: Quad X. It was being
+   * rendered unconditionally, so a hex or octo build was shown a
+   * four-motor aircraft with M1-M4 on it - measured on the `motors-p3-hex`
+   * scene, which produced an identical quad at all three widths. Outputs
+   * 5-8 simply were not on the drawing, and the four that were carried
+   * positions the frame does not have.
+   *
+   * Inventing arm angles for a frame this app cannot identify would be
+   * worse. Any count other than four therefore gets a numbered output list
+   * that claims no geometry at all, and says so.
+   */
+  readonly motorCount?: number;
 }
 
 /**
@@ -174,7 +203,13 @@ export function computeMotorGlyphLayout(): readonly MotorGlyphCell[] {
         row: geometry.row,
         side: geometry.side,
         positionKey: positionKey(entry.position),
-        directionKey: directionKey(entry.direction),
+        // computeMotorGlyphLayout builds from MOTOR_TEST_EXPECTED_CONFIGURATION,
+        // where every entry carries a direction. An unknown-direction entry
+        // reaches the RENDERED diagram, never this identity helper.
+        directionKey:
+          entry.direction === undefined
+            ? 'directionUnknown'
+            : directionKey(entry.direction),
       });
     }),
   );
@@ -235,27 +270,42 @@ function cellTestId(position: MotorPhysicalPosition): string {
 }
 
 /**
- * A hub, two blades and a LARGE curved rotation arrow whose direction is
- * also written out (CW / CCW), so the arrow is never the only carrier of
- * meaning.
+ * ONE motor: a disc with two blades and a hub, and ONE rotation arrow
+ * placed on a ring OUTSIDE that disc.
+ *
+ * WHAT WAS WRONG, measured at 390px before this pass. The arrow was an
+ * icon rendered INSIDE the 30px rotor circle, on top of the blades and the
+ * hub, at roughly 19px - three glyphs stacked in the same 30px box. The
+ * operator reported it as "arrows overlap" and "arrows can appear
+ * distorted", which is exactly what a rotation arrow drawn over a
+ * two-bladed propeller looks like. The CW/CCW text sat directly beneath,
+ * making the node tall enough to collide with the node in the other row.
+ *
+ * NOW: the disc keeps the blades, the arrow gets its own radius outside
+ * it, and the CW/CCW token moves up beside the M-number where it reads as
+ * a label rather than a caption. Nothing is stacked on anything.
+ *
+ * MEANING IS NEVER THE ARROW ALONE - the written CW / CCW / ؟ token in the
+ * label row carries the same fact for anyone the arrow does not reach.
  */
 function RotorGlyph({
   direction,
   scale,
   active,
 }: {
-  direction: MotorRotationDirection;
+  direction: MotorRotationDirection | undefined;
   scale: number;
   active: boolean;
 }): React.JSX.Element {
-  const { t } = useTranslation();
   const size = Math.round(30 * scale);
   const bladeLength = Math.round(size * 0.86);
   const bladeThickness = Math.max(3, Math.round(size * 0.13));
   const hub = Math.max(6, Math.round(size * 0.26));
-  const arrowFont = Math.max(14, Math.round(size * 0.62));
+  /** The arrow's own ring. 1.55x the disc keeps a real gap at every tier. */
+  const ring = Math.round(size * 1.55);
+  const arrow = Math.max(15, Math.round(size * 0.55));
   return (
-    <View style={styles.rotorWrap}>
+    <View style={[styles.rotorRing, { width: ring, height: ring }]}>
       <View
         style={[
           styles.rotor,
@@ -271,45 +321,35 @@ function RotorGlyph({
         <View
           style={[
             styles.blade,
-            {
-              width: bladeLength,
-              height: bladeThickness,
-              transform: [{ rotate: '32deg' }],
-            },
+            { width: bladeLength, height: bladeThickness, transform: [{ rotate: '32deg' }] },
           ]}
         />
         <View
           style={[
             styles.blade,
-            {
-              width: bladeLength,
-              height: bladeThickness,
-              transform: [{ rotate: '-32deg' }],
-            },
+            { width: bladeLength, height: bladeThickness, transform: [{ rotate: '-32deg' }] },
           ]}
         />
         <View
           style={[styles.hub, { width: hub, height: hub, borderRadius: hub / 2 }]}
         />
-        <Icon
-          name={direction === 'CW' ? 'rotate-cw' : 'rotate-ccw'}
-          size={Math.round(arrowFont * 1.05)}
-          color={active ? colors.accentText : colors.textSecondary}
-        />
       </View>
-      <Text
-        style={[
-          styles.directionText,
-          { fontSize: Math.max(12, Math.round(12 * scale)) },
-        ]}
-        testID={`motors-diagram-direction-${direction}`}
-      >
-        {t(
-          direction === 'CW'
-            ? 'motorsScreen.diagramCw'
-            : 'motorsScreen.diagramCcw',
-        )}
-      </Text>
+      {direction !== undefined ? (
+        <Icon
+          // Absolutely positioned on the ring, clear of the disc entirely.
+          name={direction === 'CW' ? 'rotate-cw' : 'rotate-ccw'}
+          size={arrow}
+          color={active ? colors.warning : colors.accentStrong}
+          strokeWidth={2.5}
+        />
+      ) : (
+        <Icon
+          name="circle-question-mark"
+          size={arrow}
+          color={colors.textMuted}
+          strokeWidth={2.5}
+        />
+      )}
     </View>
   );
 }
@@ -330,8 +370,8 @@ function MotorNode({
   onSelect: () => void;
 }): React.JSX.Element {
   const { t } = useTranslation();
-  const slotFont = Math.max(13, Math.round(18 * scale));
-  const positionFont = Math.max(12, Math.round(12 * scale));
+  const slotFont = Math.max(14, Math.round(17 * scale));
+  const tokenFont = Math.max(11, Math.round(12 * scale));
   const badge =
     activity !== undefined
       ? { text: t(activityLabelKey(activity)), color: activityColor(activity) }
@@ -340,6 +380,18 @@ function MotorNode({
       : selected
       ? { text: t('motorsScreen.slotStateSelected'), color: colors.accentStrong }
       : undefined;
+  const directionToken =
+    entry.direction === undefined
+      ? t('motorsScreen.directionUnknownShort')
+      : t(
+          entry.direction === 'CW'
+            ? 'motorsScreen.diagramCw'
+            : 'motorsScreen.diagramCcw',
+        );
+  const directionSpoken =
+    entry.direction === undefined
+      ? t('motorsScreen.directionUnknown')
+      : t(`motorsScreen.${directionKey(entry.direction)}`);
 
   return (
     <View style={styles.motorCell} testID={cellTestId(entry.position)}>
@@ -347,14 +399,14 @@ function MotorNode({
         onPress={onSelect}
         accessibilityRole="radio"
         accessibilityState={{ selected }}
+        // The position IS spoken, even though it left the visible node: a
+        // screen-reader user cannot see where the mark sits on the frame.
         accessibilityLabel={`${`M${entry.slot}`}، ${t(
           `motorsScreen.${positionKey(entry.position)}`,
-        )}، ${t(`motorsScreen.${directionKey(entry.direction)}`)}${
-          badge !== undefined ? `، ${badge.text}` : ''
-        }`}
+        )}، ${directionSpoken}${badge !== undefined ? `، ${badge.text}` : ''}`}
         style={[
           styles.motorNode,
-          { padding: Math.round(6 * scale), gap: Math.round(3 * scale) },
+          { padding: Math.round(5 * scale) },
           selected && styles.motorNodeSelected,
           verified && styles.motorNodeVerified,
           activity !== undefined && {
@@ -369,37 +421,139 @@ function MotorNode({
           scale={scale}
           active={activity !== undefined}
         />
-        <Text
-          style={[styles.slot, { fontSize: slotFont, lineHeight: slotFont + 2 }]}
-          testID={`motors-diagram-slot-${entry.slot}`}
-        >
-          {`M${entry.slot}`}
-        </Text>
-        <Text
-          style={[
-            styles.position,
-            { fontSize: positionFont, lineHeight: positionFont + 3 },
-          ]}
-          numberOfLines={1}
-        >
-          {t(`motorsScreen.${positionKey(entry.position)}`)}
-        </Text>
-        {badge !== undefined ? (
-          <View
-            style={[styles.stateBadge, { borderColor: badge.color }]}
-            testID={`motors-diagram-state-${entry.slot}`}
+        {/* ONE label row: the M-number and the direction token side by
+            side. The Arabic position phrase that used to sit here is gone
+            - it was the widest and tallest thing in the node, it repeated
+            what the node's own place on the frame already says, and it is
+            still spoken by the accessibility label above. */}
+        <View style={styles.labelRow}>
+          <Text
+            style={[styles.slot, { fontSize: slotFont, lineHeight: slotFont + 2 }]}
+            testID={`motors-diagram-slot-${entry.slot}`}
           >
-            <Text
-              style={[
-                styles.stateBadgeText,
-                { color: badge.color, fontSize: positionFont },
-              ]}
+            {`M${entry.slot}`}
+          </Text>
+          <Text
+            style={[
+              styles.directionText,
+              { fontSize: tokenFont, lineHeight: tokenFont + 3 },
+            ]}
+            testID={`motors-diagram-direction-${entry.slot}`}
+          >
+            {directionToken}
+          </Text>
+        </View>
+        {/* A RESERVED badge row, always present.
+            Measured before this pass: the selected node grew from 95px to
+            124px at 390px because the badge appeared inside it, and the
+            two rows then overlapped by 19.31px - an overlap that came and
+            went as the operator selected different motors. A fixed slot
+            makes every node the same height in every state. */}
+        <View
+          style={[
+            styles.badgeSlot,
+            { height: Math.max(16, Math.round(18 * scale)) },
+          ]}
+        >
+          {badge !== undefined ? (
+            <View
+              style={[styles.stateBadge, { borderColor: badge.color }]}
+              testID={`motors-diagram-state-${entry.slot}`}
             >
-              {badge.text}
-            </Text>
-          </View>
-        ) : null}
+              <Text
+                style={[
+                  styles.stateBadgeText,
+                  { color: badge.color, fontSize: tokenFont },
+                ]}
+                numberOfLines={1}
+              >
+                {badge.text}
+              </Text>
+            </View>
+          ) : null}
+        </View>
       </Pressable>
+    </View>
+  );
+}
+
+/** The one airframe this file can draw truthfully. */
+export const MOTOR_AIRFRAME_QUAD_COUNT = 4;
+
+/**
+ * The honest fallback: numbered outputs, no aircraft, no claimed
+ * positions, no rotation arrows. It says what it is in the caption.
+ */
+function GenericMotorOutputs({
+  motorCount,
+  selectedSlot,
+  liveSlot,
+  liveActivity,
+  verifiedSlots,
+  onSelectSlot,
+}: {
+  motorCount: number;
+  selectedSlot: number;
+  liveSlot?: number;
+  liveActivity?: MotorSlotActivity;
+  verifiedSlots: readonly number[];
+  onSelectSlot: (slot: number) => void;
+}): React.JSX.Element {
+  const { t } = useTranslation();
+  return (
+    <View style={styles.root} testID="motors-generic-outputs">
+      <Text style={styles.diagramTitle}>
+        {t('motorsScreen.layoutGenericHeading')}
+      </Text>
+      <View style={styles.genericGrid}>
+        {Array.from({ length: motorCount }, (_, index) => {
+          const slot = index + 1;
+          const activity = slot === liveSlot ? liveActivity : undefined;
+          const verified = verifiedSlots.includes(slot);
+          const badge =
+            activity !== undefined
+              ? { text: t(activityLabelKey(activity)), color: activityColor(activity) }
+              : verified
+              ? { text: t('motorsScreen.slotStateObserved'), color: colors.success }
+              : slot === selectedSlot
+              ? { text: t('motorsScreen.slotStateSelected'), color: colors.accentStrong }
+              : undefined;
+          return (
+            <Pressable
+              key={slot}
+              onPress={() => onSelectSlot(slot)}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: slot === selectedSlot }}
+              accessibilityLabel={`M${slot}${
+                badge !== undefined ? `، ${badge.text}` : ''
+              }`}
+              style={[
+                styles.genericCell,
+                slot === selectedSlot && styles.motorNodeSelected,
+                verified && styles.motorNodeVerified,
+                // Only the COLOUR is dynamic; the weight is a constant and
+                // belongs in the stylesheet, not inline.
+                activity !== undefined && styles.genericCellActive,
+                activity !== undefined && { borderColor: activityColor(activity) },
+              ]}
+              testID={`motors-generic-slot-${slot}`}
+            >
+              <Text style={styles.genericSlotText}>{`M${slot}`}</Text>
+              {badge !== undefined ? (
+                <Text
+                  style={[styles.genericBadgeText, { color: badge.color }]}
+                  numberOfLines={1}
+                >
+                  {badge.text}
+                </Text>
+              ) : null}
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={styles.caption} testID="motors-generic-outputs-caption">
+        {t('motorsScreen.layoutGenericCaption')}
+      </Text>
     </View>
   );
 }
@@ -411,6 +565,7 @@ export function MotorAirframeDiagram({
   liveActivity,
   verifiedSlots = [],
   onSelectSlot,
+  motorCount = MOTOR_AIRFRAME_QUAD_COUNT,
 }: MotorAirframeDiagramProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
@@ -418,6 +573,19 @@ export function MotorAirframeDiagram({
   // Every internal dimension is a multiple of this, so the whole diagram
   // grows as one drawing instead of a big box around small glyphs.
   const scale = stageWidth / 260;
+
+  if (motorCount !== MOTOR_AIRFRAME_QUAD_COUNT) {
+    return (
+      <GenericMotorOutputs
+        motorCount={motorCount}
+        selectedSlot={selectedSlot}
+        liveSlot={liveSlot}
+        liveActivity={liveActivity}
+        verifiedSlots={verifiedSlots}
+        onSelectSlot={onSelectSlot}
+      />
+    );
+  }
 
   const ordered = orderAirframeEntries(entries);
   /**
@@ -657,8 +825,13 @@ const styles = StyleSheet.create({
   },
   motorRow: {
     position: 'absolute',
-    left: '2%',
-    right: '2%',
+    /* PART M - BREATHING ROOM, sized from the measurement rather than
+       guessed. Pulling the rows in from 2% to 6% moves each node ~8px off
+       the stage edge at 390px and, with the node now ~40px shorter and
+       height-stable, leaves a real gap between the front and rear rows
+       instead of the measured 19.31px overlap. */
+    left: '6%',
+    right: '6%',
     /**
      * A plain row. The PHYSICAL placement is decided in the component
      * (see paintOrder), not by this style: react-native-web drops the
@@ -668,8 +841,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  frontRow: { top: '2%' },
-  rearRow: { bottom: '2%' },
+  frontRow: { top: '3%' },
+  rearRow: { bottom: '3%' },
   motorCell: { alignItems: 'center' },
   motorNode: {
     minWidth: 44,
@@ -681,14 +854,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: radii.md,
   },
+  /* The arrow's own radius. `justifyContent: flex-start` puts the arrow at
+     the top of the ring and the disc is centred inside by the absolute
+     rule below, so the two never share pixels. */
+  rotorRing: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+  },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: spacing.xs,
+    /* A technical row: M-number then CW/CCW, in that order, in every
+       locale. Physical identity is not a reading direction. */
+    direction: 'ltr',
+  },
+  /* Reserved whether or not a badge exists - see MotorNode. */
+  badgeSlot: { justifyContent: 'center', alignItems: 'center' },
   motorNodeSelected: {
     borderColor: colors.accent,
     borderWidth: 2,
     backgroundColor: colors.accentSoft,
   },
   motorNodeVerified: { borderColor: colors.success },
-  rotorWrap: { alignItems: 'center', gap: 1 },
   rotor: {
+    position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
     borderColor: colors.textSecondary,
@@ -749,6 +939,40 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     justifyContent: 'center',
     gap: spacing.sm,
+  },
+  genericGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  genericCellActive: { borderWidth: 2 },
+  genericSlotText: {
+    ...typography.mono,
+    color: colors.textPrimary,
+    fontWeight: '700',
+    writingDirection: 'ltr',
+    fontSize: 16,
+    lineHeight: 20,
+  },
+  genericBadgeText: {
+    fontFamily: fonts.family,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+    fontSize: 11,
+  },
+  genericCell: {
+    minWidth: 64,
+    minHeight: 56,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+    backgroundColor: colors.white,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.md,
   },
   legendItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
   legendDot: { width: 10, height: 10, borderRadius: 5 },

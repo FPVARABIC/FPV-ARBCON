@@ -301,12 +301,17 @@ function render(operator: MotorTestOperatorPort | undefined): Rendered {
       return node;
     },
     press: (testID: string) => {
-      const node = query(testID);
+      // The node that owns the gesture. `onPress?.()` on the first testID
+      // match silently no-ops for a ToggleSwitch, which would let a
+      // session test pass while pressing nothing at all.
+      const node = tree.root
+        .findAll(candidate => candidate.props?.testID === testID)
+        .find(candidate => typeof candidate.props?.onPress === 'function');
       if (node === undefined) {
-        throw new Error(`no node with testID "${testID}"`);
+        throw new Error(`no pressable node with testID "${testID}"`);
       }
       act(() => {
-        node.props.onPress?.();
+        node.props.onPress();
       });
     },
     unmount: () => {
@@ -803,15 +808,26 @@ describe('MotorsScreen - long-press contract', () => {
    * dock, which made press-and-hold read as THE way to drive motors. The
    * professional workspace is the primary path now, so the hold control
    * moved into the التحقق والأدوات bench area - still fully functional,
-   * no longer pinned teaching. The dock keeps what every workflow needs:
-   * stop-all and end-session.
+   * no longer pinned teaching.
+   *
+   * THE DOCK NOW PINS STOP AND NOTHING ELSE. The end-session rectangle it
+   * used to carry is gone: session lifecycle belongs to the ONE جلسة
+   * المحركات switch at the top of the workspace, and a second remote
+   * control for the same authority was the confusion the operator
+   * reported. STOP stays pinned because STOP is not a lifecycle action.
    */
-  it('keeps stop and end-session pinned; the hold action lives in the tools bench', () => {
+  it('pins STOP only; lifecycle lives on the session switch and the hold action in the tools bench', () => {
     const { rendered } = readyRendered();
     const dock = rendered.find('motors-session-dock');
     expect(dock.findAll(node => node.props?.testID === 'motors-hold-button')).toHaveLength(0);
     expect(dock.findAll(node => node.props?.testID === 'motors-stop-button').length).toBeGreaterThan(0);
-    expect(dock.findAll(node => node.props?.testID === 'motors-end-session-button').length).toBeGreaterThan(0);
+    // No session lifecycle control in the dock - anywhere.
+    expect(
+      dock.findAll(node => node.props?.testID === 'motors-end-session-button'),
+    ).toHaveLength(0);
+    expect(
+      dock.findAll(node => node.props?.testID === 'motor-session-toggle'),
+    ).toHaveLength(0);
     // The hold action itself remains reachable, after the diagram.
     expect(rendered.find('motors-hold-button')).toBeDefined();
     rendered.unmount();
@@ -847,7 +863,7 @@ describe('MotorsScreen - long-press contract', () => {
       resolveBegin = resolve;
     });
     const rendered = render(operator);
-    rendered.press('motors-begin-session-button');
+    rendered.press('motor-session-toggle');
     expect(operator.beginCalls).toBe(1);
     expect(operator.pulseCalls).toEqual([]);
     const ready = snapshotFor({allowed: true});
@@ -882,7 +898,7 @@ describe('MotorsScreen - long-press contract', () => {
     });
     const rendered = render(operator);
 
-    rendered.press('motors-begin-session-button');
+    rendered.press('motor-session-toggle');
     await act(async () => {
       await operator.beginResult;
       await Promise.resolve();

@@ -32,7 +32,7 @@
  * fires one event and the bridge decides everything else.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   StyleSheet,
@@ -72,6 +72,54 @@ import {
 import type { RootStackParamList } from '../../navigation/types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
+
+/**
+ * ONE MOUNTED TAB, RENDERED ONLY WHEN ITS OWN INPUTS CHANGE.
+ *
+ * THE DEFECT THIS FIXES, measured rather than assumed. Every panel was
+ * inline JSX in the shell's own return, so `setActiveTab` re-rendered the
+ * shell and React re-rendered EVERY mounted screen with it - including the
+ * ones sitting behind `display:'none'`. The instrumented shell recorded
+ * one tab tap costing 7 full screen renders after 7 tabs had been visited,
+ * and the cost grows with every tab the operator has ever opened: with all
+ * 15 mounted, one tap re-renders 15 screens, among them a 2,600-line
+ * Motors tree and a live Receiver workspace. That is the reported
+ * "moving from one screen to another feels sluggish", and it gets worse
+ * the longer a session runs, which is exactly how it was described.
+ *
+ * WHAT THIS DOES NOT CHANGE. Panels are still MOUNTED and hidden, never
+ * unmounted - the Motors lifecycle bridge stays attached and every
+ * screen's own state (scroll position, drafts, volatile verification
+ * observations) survives a tab switch exactly as before. This is a
+ * rendering fix, not a navigation rewrite.
+ *
+ * WHY `screenProps` MUST BE STABLE. React.memo compares props shallowly,
+ * so a fresh object literal per render would defeat it silently. Every
+ * call site below builds its props with `useMemo` over the real inputs;
+ * the two panels involved in a switch re-render because their `active`
+ * genuinely changed, and no others do.
+ */
+const TabPanel = React.memo(function TabPanelContent({
+  tabKey,
+  active,
+  Screen,
+  screenProps,
+}: {
+  readonly tabKey: MainTabKey;
+  readonly active: boolean;
+  readonly Screen: React.ComponentType<never>;
+  readonly screenProps: Record<string, unknown>;
+}): React.JSX.Element {
+  const Component = Screen as React.ComponentType<Record<string, unknown>>;
+  return (
+    <View
+      style={active ? styles.visible : styles.hidden}
+      testID={`main-tab-panel-${tabKey}`}
+    >
+      <Component {...screenProps} active={active} />
+    </View>
+  );
+});
 
 export default function MainTabsScreen(props: Props): React.JSX.Element {
   /**
@@ -364,6 +412,163 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     ],
   );
 
+  /**
+   * A STABLE `onOpenX` FOR EVERY SCREEN.
+   *
+   * `handleSelectTab` legitimately closes over `activeTab`,
+   * `awaitingMotorStop` and `rawCliBusy`, so its identity changes on every
+   * tab switch. Passing it into the memoised prop objects rebuilt all of
+   * them and silently defeated TabPanel's memo - measured: the switch cost
+   * stayed at 7 renders with the memo apparently "applied".
+   *
+   * The ref indirection gives the screens ONE function identity for the
+   * life of the shell while every call still runs the CURRENT logic,
+   * including the motor departure gate and the dirty-draft prompt. No
+   * behaviour is captured stale, because nothing is captured at all.
+   */
+  const selectTabRef = useRef(handleSelectTab);
+  selectTabRef.current = handleSelectTab;
+  const selectTab = useCallback(
+    (next: MainTabKey) => selectTabRef.current(next),
+    [],
+  );
+
+  /**
+   * STABLE PROP OBJECTS - the half of the memoisation that is easy to get
+   * silently wrong. React.memo compares shallowly, so a literal rebuilt
+   * every render would make TabPanel re-render anyway and the fix would
+   * look applied while changing nothing.
+   */
+  const sessionKey = props.route.params?.sessionKey;
+
+  const setupProps = useMemo(
+    () => ({
+      ...props,
+      onOpenGps: () => selectTab('GPS'),
+    }),
+    [props, selectTab],
+  );
+  const motorsProps = useMemo(
+    () => ({
+      sessionKey,
+      navigation: props.navigation,
+      subscribeTabBlur,
+      registerDepartureGate,
+      onConfigurationDirtyChange: reportMotorsDirty,
+      // The tab bar below already consumes the bottom safe-area inset;
+      // the screen must not add it a second time.
+      bottomInset: 0,
+    }),
+    [props.navigation, registerDepartureGate, reportMotorsDirty, sessionKey, subscribeTabBlur],
+  );
+  const portsProps = useMemo(
+    () => ({
+      sessionKey,
+      onDirtyChange: reportPortsDirty,
+      onOpenGps: () => selectTab('GPS'),
+    }),
+    [reportPortsDirty, selectTab, sessionKey],
+  );
+  const gpsProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenPorts: () => selectTab('PORTS'),
+      onDirtyChange: reportGpsDirty,
+    }),
+    [reportGpsDirty, selectTab, sessionKey],
+  );
+  const configurationsProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenSetup: () => selectTab('SETUP'),
+      onOpenMotors: () => selectTab('MOTORS'),
+      onOpenPorts: () => selectTab('PORTS'),
+      onOpenGps: () => selectTab('GPS'),
+      onDirtyChange: reportConfigurationsDirty,
+    }),
+    [reportConfigurationsDirty, selectTab, sessionKey],
+  );
+  const receiverProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenPorts: () => selectTab('PORTS'),
+      onOpenMotors: () => selectTab('MOTORS'),
+      onDirtyChange: reportReceiverDirty,
+    }),
+    [reportReceiverDirty, selectTab, sessionKey],
+  );
+  const pidProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenMotors: () => selectTab('MOTORS'),
+      onDirtyChange: reportPidDirty,
+    }),
+    [reportPidDirty, selectTab, sessionKey],
+  );
+  const modesProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenMotors: () => selectTab('MOTORS'),
+      onDirtyChange: reportModesDirty,
+    }),
+    [reportModesDirty, selectTab, sessionKey],
+  );
+  const failsafeProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenReceiver: () => selectTab('RECEIVER'),
+      onOpenMotors: () => selectTab('MOTORS'),
+      onDirtyChange: reportFailsafeDirty,
+    }),
+    [reportFailsafeDirty, selectTab, sessionKey],
+  );
+  const powerProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenMotors: () => selectTab('MOTORS'),
+      onDirtyChange: reportPowerDirty,
+    }),
+    [reportPowerDirty, selectTab, sessionKey],
+  );
+  const osdProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenMotors: () => selectTab('MOTORS'),
+      onDirtyChange: reportOsdDirty,
+    }),
+    [reportOsdDirty, selectTab, sessionKey],
+  );
+  const vtxProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenMotors: () => selectTab('MOTORS'),
+      onDirtyChange: reportVtxDirty,
+    }),
+    [reportVtxDirty, selectTab, sessionKey],
+  );
+  const sensorsProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenSetup: () => selectTab('SETUP'),
+    }),
+    [selectTab, sessionKey],
+  );
+  const presetsProps = useMemo(
+    () => ({
+      sessionKey,
+      onCliBusyChange: setRawCliBusy,
+    }),
+    [sessionKey],
+  );
+  const cliProps = useMemo(
+    () => ({
+      sessionKey,
+      onCliBusyChange: setRawCliBusy,
+    }),
+    [sessionKey],
+  );
+
+
   return (
     <View
       style={[styles.root, useSideRail && styles.rootDesktop]}
@@ -377,205 +582,124 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
       ) : null}
       <View style={styles.content}>
         {mountedTabs.includes('SETUP') ? (
-          <View
-            style={activeTab === 'SETUP' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-SETUP"
-          >
-            <SetupScreen
-              {...props}
-              active={activeTab === 'SETUP'}
-              onOpenGps={() => handleSelectTab('GPS')}
-            />
-          </View>
+          <TabPanel
+            tabKey="SETUP"
+            active={activeTab === 'SETUP'}
+            Screen={SetupScreen as never}
+            screenProps={setupProps}
+          />
         ) : null}
         {mountedTabs.includes('MOTORS') ? (
-          <View
-            style={activeTab === 'MOTORS' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-MOTORS"
-          >
-            <MotorsTab
-              sessionKey={props.route.params?.sessionKey}
-              navigation={props.navigation}
-              subscribeTabBlur={subscribeTabBlur}
-              registerDepartureGate={registerDepartureGate}
-              onConfigurationDirtyChange={reportMotorsDirty}
-              // The tab bar below already consumes the bottom safe-area
-              // inset; the screen must not add it a second time.
-              bottomInset={0}
-            />
-          </View>
+          <TabPanel
+            tabKey="MOTORS"
+            active={activeTab === 'MOTORS'}
+            Screen={MotorsTab as never}
+            screenProps={motorsProps}
+          />
         ) : null}
         {mountedTabs.includes('PORTS') ? (
-          <View
-            style={activeTab === 'PORTS' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-PORTS"
-          >
-            <PortsScreen
-              sessionKey={props.route.params?.sessionKey}
-              onDirtyChange={reportPortsDirty}
-              onOpenGps={() => handleSelectTab('GPS')}
-            />
-          </View>
+          <TabPanel
+            tabKey="PORTS"
+            active={activeTab === 'PORTS'}
+            Screen={PortsScreen as never}
+            screenProps={portsProps}
+          />
         ) : null}
         {mountedTabs.includes('GPS') ? (
-          <View
-            style={activeTab === 'GPS' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-GPS"
-          >
-            <GpsScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'GPS'}
-              onOpenPorts={() => handleSelectTab('PORTS')}
-              onDirtyChange={reportGpsDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="GPS"
+            active={activeTab === 'GPS'}
+            Screen={GpsScreen as never}
+            screenProps={gpsProps}
+          />
         ) : null}
         {mountedTabs.includes('CONFIGURATIONS') ? (
-          <View
-            style={
-              activeTab === 'CONFIGURATIONS' ? styles.visible : styles.hidden
-            }
-            testID="main-tab-panel-CONFIGURATIONS"
-          >
-            <ConfigurationsScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'CONFIGURATIONS'}
-              onOpenSetup={() => handleSelectTab('SETUP')}
-              onOpenMotors={() => handleSelectTab('MOTORS')}
-              onOpenPorts={() => handleSelectTab('PORTS')}
-              onOpenGps={() => handleSelectTab('GPS')}
-              onDirtyChange={reportConfigurationsDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="CONFIGURATIONS"
+            active={activeTab === 'CONFIGURATIONS'}
+            Screen={ConfigurationsScreen as never}
+            screenProps={configurationsProps}
+          />
         ) : null}
         {mountedTabs.includes('RECEIVER') ? (
-          <View
-            style={activeTab === 'RECEIVER' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-RECEIVER"
-          >
-            <ReceiverScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'RECEIVER'}
-              onOpenPorts={() => handleSelectTab('PORTS')}
-              onOpenMotors={() => handleSelectTab('MOTORS')}
-              onDirtyChange={reportReceiverDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="RECEIVER"
+            active={activeTab === 'RECEIVER'}
+            Screen={ReceiverScreen as never}
+            screenProps={receiverProps}
+          />
         ) : null}
         {mountedTabs.includes('PID') ? (
-          <View
-            style={activeTab === 'PID' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-PID"
-          >
-            <PidTuningScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'PID'}
-              onOpenMotors={() => handleSelectTab('MOTORS')}
-              onDirtyChange={reportPidDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="PID"
+            active={activeTab === 'PID'}
+            Screen={PidTuningScreen as never}
+            screenProps={pidProps}
+          />
         ) : null}
         {mountedTabs.includes('MODES') ? (
-          <View
-            style={activeTab === 'MODES' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-MODES"
-          >
-            <ModesScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'MODES'}
-              onOpenMotors={() => handleSelectTab('MOTORS')}
-              onDirtyChange={reportModesDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="MODES"
+            active={activeTab === 'MODES'}
+            Screen={ModesScreen as never}
+            screenProps={modesProps}
+          />
         ) : null}
         {mountedTabs.includes('FAILSAFE') ? (
-          <View
-            style={activeTab === 'FAILSAFE' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-FAILSAFE"
-          >
-            <FailsafeScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'FAILSAFE'}
-              onOpenReceiver={() => handleSelectTab('RECEIVER')}
-              onOpenMotors={() => handleSelectTab('MOTORS')}
-              onDirtyChange={reportFailsafeDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="FAILSAFE"
+            active={activeTab === 'FAILSAFE'}
+            Screen={FailsafeScreen as never}
+            screenProps={failsafeProps}
+          />
         ) : null}
         {mountedTabs.includes('POWER') ? (
-          <View
-            style={activeTab === 'POWER' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-POWER"
-          >
-            <PowerBatteryScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'POWER'}
-              onOpenMotors={() => handleSelectTab('MOTORS')}
-              onDirtyChange={reportPowerDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="POWER"
+            active={activeTab === 'POWER'}
+            Screen={PowerBatteryScreen as never}
+            screenProps={powerProps}
+          />
         ) : null}
         {mountedTabs.includes('OSD') ? (
-          <View
-            style={activeTab === 'OSD' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-OSD"
-          >
-            <OsdScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'OSD'}
-              onOpenMotors={() => handleSelectTab('MOTORS')}
-              onDirtyChange={reportOsdDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="OSD"
+            active={activeTab === 'OSD'}
+            Screen={OsdScreen as never}
+            screenProps={osdProps}
+          />
         ) : null}
         {mountedTabs.includes('VTX') ? (
-          <View
-            style={activeTab === 'VTX' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-VTX"
-          >
-            <VideoTransmitterScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'VTX'}
-              onOpenMotors={() => handleSelectTab('MOTORS')}
-              onDirtyChange={reportVtxDirty}
-            />
-          </View>
+          <TabPanel
+            tabKey="VTX"
+            active={activeTab === 'VTX'}
+            Screen={VideoTransmitterScreen as never}
+            screenProps={vtxProps}
+          />
         ) : null}
         {mountedTabs.includes('SENSORS') ? (
-          <View
-            style={activeTab === 'SENSORS' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-SENSORS"
-          >
-            <SensorsScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'SENSORS'}
-              onOpenSetup={() => handleSelectTab('SETUP')}
-            />
-          </View>
+          <TabPanel
+            tabKey="SENSORS"
+            active={activeTab === 'SENSORS'}
+            Screen={SensorsScreen as never}
+            screenProps={sensorsProps}
+          />
         ) : null}
         {mountedTabs.includes('PRESETS') ? (
-          <View
-            style={activeTab === 'PRESETS' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-PRESETS"
-          >
-            <PresetsScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'PRESETS'}
-              onCliBusyChange={setRawCliBusy}
-            />
-          </View>
+          <TabPanel
+            tabKey="PRESETS"
+            active={activeTab === 'PRESETS'}
+            Screen={PresetsScreen as never}
+            screenProps={presetsProps}
+          />
         ) : null}
         {mountedTabs.includes('CLI') ? (
-          <View
-            style={activeTab === 'CLI' ? styles.visible : styles.hidden}
-            testID="main-tab-panel-CLI"
-          >
-            <CliScreen
-              sessionKey={props.route.params?.sessionKey}
-              active={activeTab === 'CLI'}
-              onCliBusyChange={setRawCliBusy}
-            />
-          </View>
+          <TabPanel
+            tabKey="CLI"
+            active={activeTab === 'CLI'}
+            Screen={CliScreen as never}
+            screenProps={cliProps}
+          />
         ) : null}
       </View>
       {awaitingMotorStop ? (

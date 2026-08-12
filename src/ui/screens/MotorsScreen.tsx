@@ -69,6 +69,7 @@ import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 import { createMotorTestLifecycleBridge } from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
 import { evaluateMotorDeparture } from '../../core/state/motorDepartureGate';
+import { deriveMotorSessionState } from '../../core/state/motorSessionPresentation';
 import type { MotorDepartureVerdict } from '../../core/state/motorDepartureGate';
 import {
   readMotorTestCapability,
@@ -94,7 +95,10 @@ import {
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
-import { MotorAirframeDiagram } from './MotorAirframeDiagram';
+import {
+  MotorAirframeDiagram,
+  MOTOR_AIRFRAME_QUAD_COUNT,
+} from './MotorAirframeDiagram';
 import type { MotorSlotActivity } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
 // P3: the professional workspace - the PRIMARY motor experience.
@@ -405,6 +409,8 @@ export interface MotorsScreenViewProps {
    * an unbound view. */
   readonly sessionId?: string;
   readonly onConfigurationDirtyChange?: (dirty: boolean) => void;
+  /** See MotorsTabProps.active - presentation only, never safety. */
+  readonly active?: boolean;
 }
 
 export function MotorsScreenView({
@@ -414,6 +420,7 @@ export function MotorsScreenView({
   bringUpFailure,
   sessionId,
   onConfigurationDirtyChange,
+  active = true,
 }: MotorsScreenViewProps): React.JSX.Element {
   const { t } = useTranslation();
   // Desktop tiers get the wider workspace envelope; narrower tiers keep
@@ -433,7 +440,19 @@ export function MotorsScreenView({
   /** P3: the operator's professional enable intent. Enabling runs the
    * SAME canonical session bring-up the legacy flow used; disabling runs
    * the same safe teardown. No second session path exists. */
-  const [professionalEnabled, setProfessionalEnabled] = useState(false);
+  /**
+   * MOTOR CONTROL intent - the SECOND authority, deliberately separate
+   * from the session. Defaults OFF and is forced OFF whenever the session
+   * is not ON, so opening a session never carries command permission with
+   * it.
+   *
+   * THERE IS NO `professionalEnabled` ANY MORE. A UI boolean that claimed
+   * to know whether a session existed was the defect; session truth now
+   * comes from deriveMotorSessionState(snapshot, ...) and lives in exactly
+   * one place.
+   */
+  const [motorControlEnabled, setMotorControlEnabled] = useState(false);
+  const [sessionCloseFailed, setSessionCloseFailed] = useState(false);
   /**
    * Phase 2I - VOLATILE, MEMORY-ONLY verification data, bound to one exact
    * session by reference. Never persisted, exported, uploaded or shared,
@@ -455,6 +474,19 @@ export function MotorsScreenView({
   const [pulseRejected, setPulseRejected] = useState(false);
   const [endingSession, setEndingSession] = useState(false);
   const [endSessionFailed, setEndSessionFailed] = useState(false);
+  /**
+   * THE ONE SESSION TRUTH ON THIS SCREEN.
+   *
+   * Derived from the controller's published phase, with the operator's
+   * in-flight open intent (`beginning`/`beginQueued`) admitted for exactly
+   * one purpose: naming the gap between the press and the controller's
+   * first publication. Both of those flags clear themselves, so no stale
+   * intent can survive a teardown the operator did not perform.
+   */
+  const sessionState = deriveMotorSessionState(
+    snapshot,
+    beginning || beginQueued,
+  );
   useEffect(() => {
     onConfigurationDirtyChange?.(
       motorConfigurationDirty || outputOrderDirty || escDirectionDirty,
@@ -568,11 +600,6 @@ export function MotorsScreenView({
   const stopUnconfirmed = stopIsGenuinelyUnconfirmed(snapshot);
   const sessionHasEnded =
     snapshot?.phase === 'CLOSED' && snapshot.teardown?.complete === true;
-  const endActionDisabled =
-    operator === undefined ||
-    snapshot?.phase === 'IDLE' ||
-    sessionHasEnded ||
-    endingSession;
   const controllerAllows = snapshot?.activation.allowed === true;
   const blockReasons = snapshot?.activation.reasons ?? [];
 
@@ -741,45 +768,115 @@ export function MotorsScreenView({
       });
   }, []);
 
-  /** P3: one toggle, both directions, over the canonical session paths. */
-  const handleProfessionalEnableChange = useCallback(
+  /**
+   * THE SESSION TOGGLE - ON and OFF over the canonical paths, and nothing
+   * else. It opens or closes the FC test session; it never commands a
+   * motor, in either direction.
+   *
+   * The only intent this keeps is `beginning`/`beginQueued`, which name
+   * the gap between the press and the controller's first publication.
+   * Nothing here is allowed to answer "is there a session?" - the
+   * controller's published phase does that, in one place.
+   */
+  const handleSessionChange = useCallback(
     (next: boolean) => {
-      setProfessionalEnabled(next);
-      const port = operator;
-      if (port === undefined) {
+      const port = operatorRef.current;
+      if (next) {
+        setSessionCloseFailed(false);
+        if (
+          port === undefined ||
+          beginning ||
+          port.getSnapshot().phase !== 'IDLE'
+        ) {
+          return;
+        }
+        // The configuration panel and the motor-test controller share one
+        // exclusive MSP interlock. An instruction issued during the
+        // automatic settings read is REMEMBERED and opens as soon as that
+        // read releases ownership; it is never converted into a rejected,
+        // apparently inert interaction. Unchanged from the accepted flow -
+        // only its entry point moved.
+        if (motorConfigurationBusy) {
+          setBeginning(true);
+          setBeginQueued(true);
+          setBeginFailed(false);
+          return;
+        }
+        runBeginSession(port);
         return;
       }
-      if (next) {
-        runBeginSession(port);
-      } else {
-        endMotorTestSessionSafely(port).catch(() => {});
+      // OFF. Intent drops immediately so the row cannot keep claiming ON,
+      // but the STATE still comes from the controller: it will read
+      // CLOSING until teardown actually completes, and ERROR if it does
+      // not. Nothing here says "closed" on its own authority.
+      // Command authority is withdrawn BEFORE the teardown starts, so no
+      // slider can accept a value while the session is closing.
+      setMotorControlEnabled(false);
+      if (
+        port === undefined ||
+        endingSession ||
+        port.getSnapshot().phase === 'IDLE'
+      ) {
+        return;
       }
+      setEndingSession(true);
+      setSessionCloseFailed(false);
+      // The ONE canonical shutdown: stop first, wait for the controller to
+      // settle, endSession, and require a COMPLETE teardown. No second
+      // stop implementation exists, and none is written here.
+      endMotorTestSessionSafely(port)
+        .catch(() => {
+          if (mountedRef.current && operatorRef.current === port) {
+            setSessionCloseFailed(true);
+          }
+        })
+        .finally(() => {
+          if (mountedRef.current && operatorRef.current === port) {
+            setEndingSession(false);
+          }
+        });
     },
-    [operator, runBeginSession],
+    [beginning, endingSession, motorConfigurationBusy, runBeginSession],
   );
 
 
-  const handleBeginSessionPress = useCallback(() => {
-    const port = operatorRef.current;
-    if (
-      port === undefined ||
-      beginning ||
-      port.getSnapshot().phase !== 'IDLE'
-    ) {
-      return;
+  /**
+   * MOTOR CONTROL - permission to put a value on an output, inside a
+   * session that already exists. Turning it OFF withdraws that permission,
+   * so it must also stop: leaving a commanded value live while removing
+   * the control that governs it is the exact shape of an unattended motor.
+   */
+  const handleMotorControlChange = useCallback(
+    (next: boolean) => {
+      if (next) {
+        // Never grants itself a session. If one is not open this is inert.
+        if (sessionState !== 'ON') {
+          return;
+        }
+        setMotorControlEnabled(true);
+        return;
+      }
+      setMotorControlEnabled(false);
+      operatorRef.current?.stopAll();
+    },
+    [sessionState],
+  );
+
+  /**
+   * THE RECONCILIATION THIS SCREEN DID NOT HAVE.
+   *
+   * A session can end without the operator touching either toggle - a tab
+   * departure, an app background, a USB drop, a session-epoch change. When
+   * that happens the controller publishes a new phase and this effect
+   * withdraws command authority. Without it, `motorControlEnabled` stayed
+   * true across a teardown and the workspace came back looking armed.
+   */
+  useEffect(() => {
+    if (sessionState !== 'ON' && motorControlEnabled) {
+      setMotorControlEnabled(false);
     }
-    // The configuration panel and the motor-test controller intentionally
-    // share one exclusive MSP interlock. A tap during the automatic settings
-    // read is remembered and begins as soon as that read releases ownership;
-    // it is never converted into a rejected, apparently inert button press.
-    if (motorConfigurationBusy) {
-      setBeginning(true);
-      setBeginQueued(true);
-      setBeginFailed(false);
-      return;
-    }
-    runBeginSession(port);
-  }, [beginning, motorConfigurationBusy, runBeginSession]);
+  }, [motorControlEnabled, sessionState]);
+
 
   useEffect(() => {
     if (!beginQueued || motorConfigurationBusy) {
@@ -793,18 +890,6 @@ export function MotorsScreenView({
     }
     runBeginSession(port);
   }, [beginQueued, motorConfigurationBusy, runBeginSession]);
-
-  const handleEndSessionPress = useCallback(() => {
-    const port = operatorRef.current;
-    if (port === undefined || endingSession || port.getSnapshot().phase === 'IDLE') return;
-    setEndingSession(true);
-    setEndSessionFailed(false);
-    endMotorTestSessionSafely(port).catch(() => {
-      if (mountedRef.current && operatorRef.current === port) setEndSessionFailed(true);
-    }).finally(() => {
-      if (mountedRef.current && operatorRef.current === port) setEndingSession(false);
-    });
-  }, [endingSession]);
 
   const clearHoldHeartbeat = useCallback(() => {
     if (heartbeatTimerRef.current !== undefined) {
@@ -1233,8 +1318,10 @@ export function MotorsScreenView({
           <MotorWorkspace
             snapshot={snapshot}
             port={operator}
-            enabled={professionalEnabled}
-            onEnableChange={handleProfessionalEnableChange}
+            sessionState={sessionState}
+            onSessionChange={handleSessionChange}
+            enabled={motorControlEnabled}
+            onEnableChange={handleMotorControlChange}
           />
 
 
@@ -1371,36 +1458,6 @@ export function MotorsScreenView({
           </Text>
           <MotorConfigurationSummary scope={snapshot?.motorScope} />
 
-          {snapshot?.phase === 'IDLE' ? (
-            <Pressable
-              onPress={handleBeginSessionPress}
-              disabled={operator === undefined || beginning}
-              accessibilityRole="button"
-              accessibilityState={{
-                disabled:
-                  operator === undefined || beginning,
-                busy: beginning || motorConfigurationBusy,
-              }}
-              style={[
-                styles.prepareButton,
-                (operator === undefined || beginning) &&
-                  styles.holdButtonOff,
-              ]}
-              testID="motors-begin-session-button"
-            >
-              <Text style={styles.prepareLabel}>
-                {beginQueued
-                  ? t('motorsScreen.configurationReadBusy')
-                  : beginning
-                  ? t('motorsScreen.beginSessionBusy')
-                  : motorConfigurationBusy
-                    ? t('motorsScreen.beginAfterConfigurationRead')
-                    : t('motorsScreen.beginSession')}
-              </Text>
-              <Text style={styles.caption}>{t('motorsScreen.beginSessionHint')}</Text>
-            </Pressable>
-          ) : null}
-
           {canActivate ? (
             <View style={styles.readyBanner} testID="motors-session-ready">
               <View style={styles.readyBadge}>
@@ -1462,14 +1519,33 @@ export function MotorsScreenView({
                 {t('motorsScreen.diagramSummary')}
               </Text>
             </View>
-            <MotorAirframeDiagram
-              entries={airframeEntries}
-              selectedSlot={selectedSlot}
-              liveSlot={liveSlot}
-              liveActivity={liveActivity}
-              verifiedSlots={verifiedSlots}
-              onSelectSlot={handleSelectSlot}
-            />
+            {/* PART V: the visualisation does no work while nobody can
+                see it. It holds NO state of its own - every mark is
+                derived from these props - so returning to the tab draws
+                the current truth with no second source to reconcile.
+                Safety is unaffected: the controller subscription, the
+                lifecycle bridge and the stop path are all outside this. */}
+            {active ? (
+              <MotorAirframeDiagram
+                entries={airframeEntries}
+                selectedSlot={selectedSlot}
+                liveSlot={liveSlot}
+                liveActivity={liveActivity}
+                verifiedSlots={verifiedSlots}
+                onSelectSlot={handleSelectSlot}
+                // The REAL count. Anything other than a quad gets the
+                // numbered-output fallback rather than a borrowed
+                // four-motor airframe - see MotorAirframeDiagramProps.
+                motorCount={
+                  snapshot?.motorDomain?.motorCount ??
+                  snapshot?.motorScope?.motorCount ??
+                  MOTOR_AIRFRAME_QUAD_COUNT
+                }
+              />
+            ) : null}
+            <Text style={styles.caption} testID="motors-numbering-notice">
+              {t('motorsScreen.numberingNotice')}
+            </Text>
             <Text style={styles.caption} testID="motors-diagram-front-hint">
               {t('motorsScreen.diagramFrontHint')}
             </Text>
@@ -1665,7 +1741,11 @@ export function MotorsScreenView({
           the professional session is live, so STOP never scrolls out of
           reach on narrow layouts. One tap, no confirmation, canonical
           facade stop. Hidden entirely when motor control is not active. */}
-      {professionalEnabled && snapshot?.outcome.kind === 'READY' ? (
+      {/* PART R: STOP stays obvious whenever COMMAND AUTHORITY is active.
+          Keyed on motor control rather than the session: a session with
+          control off cannot put a value on an output, and a sticky STOP
+          for a state that cannot command is noise. */}
+      {motorControlEnabled && snapshot?.outcome.kind === 'READY' ? (
         <View style={styles.professionalStopDock} testID="motors-sticky-stop">
           <Pressable
             onPress={() => operator?.stopAll()}
@@ -1695,10 +1775,7 @@ export function MotorsScreenView({
           <Icon name="square" size={26} color={colors.white} />
           <Text style={styles.stopLabel}>{t('motorsScreen.stop')}</Text>
         </Pressable>
-        <Pressable onPress={handleEndSessionPress} disabled={endActionDisabled} accessibilityRole="button" accessibilityState={{ disabled: endActionDisabled, busy: endingSession }} style={[styles.endSessionButton, endActionDisabled && styles.holdButtonOff]} testID="motors-end-session-button">
-          <Text style={styles.endSessionLabel}>{endingSession ? t('motorsScreen.endSessionBusy') : t('motorsScreen.endSession')}</Text>
-        </Pressable>
-        {endSessionFailed ? <Text style={styles.inlineError} testID="motors-end-session-failed">{t('motorsScreen.endSessionFailed')}</Text> : null}
+        {endSessionFailed || sessionCloseFailed ? <Text style={styles.inlineError} testID="motors-end-session-failed">{t('motorsScreen.endSessionFailed')}</Text> : null}
         {sessionHasEnded ? <Text style={styles.sessionEndedText} testID="motors-end-session-done">{t('motorsScreen.endSessionDone')}</Text> : null}
       </View>
 
@@ -2283,6 +2360,22 @@ export interface MotorsTabProps {
   readonly subscribeTabBlur: (listener: () => void) => () => void;
   readonly bottomInset?: number;
   readonly onConfigurationDirtyChange?: (dirty: boolean) => void;
+  /**
+   * The shell's established lifecycle signal - the SAME prop ten other
+   * tabs already receive. Motors and Ports were the only screens the shell
+   * never handed it to, so Motors had no way to tell "visible" from
+   * "mounted but behind another tab" and kept rendering its whole tree,
+   * diagram included, on every controller publication while hidden.
+   *
+   * IT PAUSES PRESENTATION ONLY. Every safety obligation - the controller
+   * subscription, the lifecycle bridge, the departure gate, the blur stop
+   * path - stays live regardless. A hidden Motors tab must still be able
+   * to stop a motor; it just does not need to draw an aircraft nobody is
+   * looking at.
+   *
+   * Defaults true so a direct render (tests, a future host) is unchanged.
+   */
+  readonly active?: boolean;
 }
 
 export default function MotorsTab({
@@ -2292,6 +2385,7 @@ export default function MotorsTab({
   bottomInset,
   onConfigurationDirtyChange,
   registerDepartureGate,
+  active = true,
 }: MotorsTabProps): React.JSX.Element {
   if (!sessionKey) {
     // No live session: the screen renders inert and blocked. That is the
@@ -2302,6 +2396,7 @@ export default function MotorsTab({
         operator={undefined}
         bottomInset={bottomInset}
         onConfigurationDirtyChange={onConfigurationDirtyChange}
+        active={active}
       />
     );
   }
@@ -2310,6 +2405,7 @@ export default function MotorsTab({
       sessionKey={sessionKey}
       navigation={navigation}
       subscribeTabBlur={subscribeTabBlur}
+      active={active}
       bottomInset={bottomInset}
       onConfigurationDirtyChange={onConfigurationDirtyChange}
       registerDepartureGate={registerDepartureGate}
@@ -2325,6 +2421,7 @@ function MotorsScreenBinding({
   bottomInset,
   onConfigurationDirtyChange,
   registerDepartureGate,
+  active = true,
 }: {
   sessionKey: SetupUiSessionKey;
   navigation: MotorsHostNavigation;
@@ -2332,6 +2429,7 @@ function MotorsScreenBinding({
   bottomInset?: number;
   onConfigurationDirtyChange?: (dirty: boolean) => void;
   registerDepartureGate?: (gate: MotorsDepartureGate | undefined) => void;
+  active?: boolean;
 }): React.JSX.Element {
   /**
    * EXACTLY ONE binding owns the current official session. The capability
@@ -2649,6 +2747,7 @@ function MotorsScreenBinding({
       bringUpFailure={bringUpFailure}
       sessionId={sessionKey.sessionId}
       onConfigurationDirtyChange={onConfigurationDirtyChange}
+      active={active}
     />
   );
 }

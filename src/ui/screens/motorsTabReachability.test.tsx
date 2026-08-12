@@ -72,10 +72,18 @@ function renderShell() {
     renderer,
     find,
     query: (testID: string) => renderer.root.findAllByProps({testID}),
-    press: (testID: string) =>
+    // The gesture-owning node, not merely the first testID match.
+    press: (testID: string) => {
+      const node = renderer.root
+        .findAll(candidate => candidate.props?.testID === testID)
+        .find(candidate => typeof candidate.props?.onPress === 'function');
+      if (node === undefined) {
+        throw new Error(`no pressable node with testID "${testID}"`);
+      }
       ReactTestRenderer.act(() => {
-        find(testID).props.onPress();
-      }),
+        node.props.onPress();
+      });
+    },
     /**
      * A FAITHFUL long press. Honours `disabled` exactly as the platform
      * does, and reports refusal rather than silently doing nothing - a
@@ -203,7 +211,7 @@ describe('Motors tab reachability with a session that arrives late', () => {
     expect(readMotorTestCapability(SESSION_ID)).toBeDefined();
     expect(shell.query('motors-begin-session-card')).toHaveLength(0);
     expect(shell.query('motors-ack-propellers')).toHaveLength(0);
-    expect(shell.find('motors-begin-session-button').props.disabled).toBe(false);
+    expect(shell.find('motor-session-toggle').props.disabled).toBe(false);
     expect(shell.find('motors-hold-button').props.disabled).toBe(true);
     // Nothing starts merely because the capability appeared.
     expect(shell.query('motors-status-NO_SESSION').length).toBeGreaterThan(0);
@@ -223,7 +231,7 @@ describe('Motors tab reachability with a session that arrives late', () => {
     });
 
     shell.press('main-tab-MOTORS');
-    expect(shell.find('motors-begin-session-button').props.disabled).toBe(false);
+    expect(shell.find('motor-session-toggle').props.disabled).toBe(false);
     expect(shell.find('motors-hold-button').props.disabled).toBe(true);
     shell.unmount();
   });
@@ -245,7 +253,7 @@ describe('Motors tab reachability with a session that arrives late', () => {
     });
     const hold = shell.find('motors-hold-button');
     expect(
-      shell.query('motors-begin-session-button').length,
+      shell.query('motor-session-toggle').length,
     ).toBeGreaterThan(0);
     expect(hold.props.delayLongPress).toBe(800);
     expect(hold.props.disabled).toBe(true);
@@ -289,7 +297,7 @@ describe('Leaving Motors after starting a session still releases everything', ()
     ReactTestRenderer.act(() => {
       openRealCapability();
     });
-    expect(shell.find('motors-begin-session-button').props.disabled).toBe(false);
+    expect(shell.find('motor-session-toggle').props.disabled).toBe(false);
     expect(shell.find('motors-hold-button').props.disabled).toBe(true);
     // Leaving must not throw and must not tear the panel out of the tree -
     // an unmount here would drop the bridge with no stop requested at all.
@@ -363,7 +371,7 @@ describe('begin -> leave BEFORE holding releases the lease and resumes telemetry
       openRealCapability();
     });
     // Preparation is explicit and does not submit any motor pulse.
-    shell.press('motors-begin-session-button');
+    shell.press('motor-session-toggle');
     await ReactTestRenderer.act(async () => {
       await Promise.resolve();
     });
