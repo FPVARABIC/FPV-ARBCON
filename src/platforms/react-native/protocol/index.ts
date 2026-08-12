@@ -102,6 +102,7 @@ export type {
 } from './ReceiverConfigurationController';
 export {
   acquireReceiverTelemetry,
+  getReceiverObservedRateHz,
   RECEIVER_CHANNELS_POLL_ID,
 } from './receiverTelemetry';
 export {

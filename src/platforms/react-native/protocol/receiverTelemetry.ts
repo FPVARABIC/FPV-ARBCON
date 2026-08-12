@@ -121,3 +121,30 @@ function releaseFor(key: SetupUiSessionKey, registration: Registration): () => v
   let released = false;
   return () => { if (released) return; released = true; const current = active.get(key.sessionId); if (current !== registration) return; current.references -= 1; if (current.references > 0) return; current.unregister(); current.releaseAttitudeSuppression(); current.releaseStatusBoost(); active.delete(key.sessionId); };
 }
+
+/**
+ * RECEIVER P3 - the OBSERVED live-RC update rate, for display.
+ *
+ * Derived from samples the scheduler actually delivered (P1's
+ * observedSampleRateHz, a bounded rolling window), never from the
+ * requested interval. This is the facade that lets the screen show a
+ * measured rate without importing the scheduler: the UI asks this
+ * module, this module asks the session's scheduler.
+ *
+ * Returns undefined when there is not yet enough evidence, when the poll
+ * is not registered, or when there is no session at all - so the screen
+ * can render an honest placeholder rather than invent a number. Because
+ * the scheduler is created per session, a disconnect or a replacement
+ * session naturally resets this to undefined.
+ */
+export function getReceiverObservedRateHz(sessionId: string): number | undefined {
+  const scheduler = mspSessionCoordinator.getTelemetryScheduler(sessionId);
+  if (scheduler === undefined) return undefined;
+  const poll = scheduler
+    .describeDiagnostics()
+    .polls.find(entry => entry.id === RECEIVER_CHANNELS_POLL_ID);
+  // Require a few real samples before quoting a rate: one or two gaps
+  // are noise, not a cadence.
+  if (poll === undefined || (poll.deliveredSampleCount ?? 0) < 5) return undefined;
+  return poll.observedSampleRateHz;
+}

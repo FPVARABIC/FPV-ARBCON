@@ -142,7 +142,7 @@ describe('Receiver P1 - all live channels are reachable', () => {
       const renderer = await renderAt(width);
       const flexValues = allStyleObjects(renderer)
         .map(style => style.flex)
-        .filter(value => value === 4 || value === 5);
+        .filter(value => value === 2 || value === 3);
       // This is exactly the defect: a 4:5 proportional split applied in a
       // column layout, where flex-basis 0 detaches box height from
       // content height.
@@ -152,12 +152,15 @@ describe('Receiver P1 - all live channels are reachable', () => {
   );
 
   it('P1-M: the proportional split is still applied in the wide ROW layout, where it is correct', async () => {
+    // P3 rebalanced the wide split from 4:5 to 3:2 so the LIVE CHANNELS
+    // column is the larger one; the P1 contract itself is unchanged -
+    // proportional flex only where the cards sit side by side.
     const renderer = await renderAt(1366);
     const flexValues = allStyleObjects(renderer)
       .map(style => style.flex)
-      .filter(value => value === 4 || value === 5);
-    expect(flexValues).toContain(4);
-    expect(flexValues).toContain(5);
+      .filter(value => value === 2 || value === 3);
+    expect(flexValues).toContain(3);
+    expect(flexValues).toContain(2);
     act(() => renderer.unmount());
   });
 
@@ -168,10 +171,11 @@ describe('Receiver P1 - all live channels are reachable', () => {
         .findByProps({testID})
         .findAllByType('Text' as never)
         .map(node => String(node.props.children));
-    expect(textOf('receiver-channel-1')).toContain('Roll');
-    expect(textOf('receiver-channel-2')).toContain('Pitch');
-    expect(textOf('receiver-channel-3')).toContain('Yaw');
-    expect(textOf('receiver-channel-4')).toContain('Throttle');
+    // P3-AC: the four primary axes are named in Arabic, AUX stays Latin.
+    expect(textOf('receiver-channel-1')).toContain('الدوران');
+    expect(textOf('receiver-channel-2')).toContain('الميل');
+    expect(textOf('receiver-channel-3')).toContain('الانحراف');
+    expect(textOf('receiver-channel-4')).toContain('الخانق');
     expect(textOf('receiver-channel-5')).toContain('AUX 1');
     expect(textOf('receiver-channel-16')).toContain('AUX 12');
     act(() => renderer.unmount());
