@@ -10,6 +10,17 @@ export interface ReceiverConfigurationSnapshot {
 }
 
 export interface ReceiverConfigurationDraft {
+  /**
+   * RECEIVER P4. The serial receiver provider lives in RX_CONFIG byte 0
+   * (msp.c MSP_SET_RX_CONFIG: `rxConfigMutable()->serialrx_provider =
+   * sbufReadU8(src)`), so it is ordinary Receiver CONFIGURATION and
+   * belongs in this draft - unlike the receiver MODE, which lives in the
+   * global feature mask and is deliberately kept out (see
+   * ReceiverRuntimeTruth). Putting it here means the existing dirty
+   * tracking, stale-base comparison, validation and read-modify-write all
+   * cover it with no second save authority.
+   */
+  readonly serialRxProvider: number;
   readonly channelMapText: string;
   readonly rssiChannel: number;
   readonly stickMin: number;
@@ -29,7 +40,8 @@ export type ReceiverConfigurationValidationCode =
   | 'CHANNEL_MAP_INVALID' | 'STICK_MIN_INVALID' | 'STICK_CENTER_INVALID'
   | 'STICK_MAX_INVALID' | 'STICK_ORDER_INVALID' | 'RSSI_CHANNEL_INVALID'
   | 'DEADBAND_INVALID' | 'YAW_DEADBAND_INVALID'
-  | 'THROTTLE_3D_DEADBAND_INVALID' | 'SMOOTHING_INVALID';
+  | 'THROTTLE_3D_DEADBAND_INVALID' | 'SMOOTHING_INVALID'
+  | 'SERIAL_RX_PROVIDER_INVALID';
 
 export function receiverMapToText(map: readonly number[]): string {
   if (map.length !== 8) return '';
@@ -51,6 +63,7 @@ export function receiverMapFromText(text: string): readonly number[] | undefined
 
 export function createReceiverConfigurationDraft(snapshot: ReceiverConfigurationSnapshot): ReceiverConfigurationDraft {
   return Object.freeze({
+    serialRxProvider: snapshot.rx.serialRxProvider,
     channelMapText: receiverMapToText(snapshot.channelMap),
     rssiChannel: snapshot.rssiChannel,
     stickMin: snapshot.rx.stickMin,
@@ -123,8 +136,19 @@ export function receiverSnapshotsEqual(a: ReceiverConfigurationSnapshot, b: Rece
     a.deadband.throttle3dDeadband === b.deadband.throttle3dDeadband;
 }
 
+/**
+ * RECEIVER P4 - FIRMWARE FACT, src/main/rx/rx.h:53-69 @ pinned 1.47:
+ * `SERIALRX_NONE = 0` through `SERIALRX_MAVLINK = 16`, contiguous.
+ *
+ * A value inside this range is a value the firmware's enum can hold. It
+ * is NOT a claim that this particular build compiled that receiver
+ * driver in - see SERIAL_RX_PROVIDER_SUPPORT_IS_NOT_REPORTED.
+ */
+export const SERIAL_RX_PROVIDER_MAX = 16;
+
 export function validateReceiverDraft(draft: ReceiverConfigurationDraft): readonly ReceiverConfigurationValidationCode[] {
   const issues: ReceiverConfigurationValidationCode[] = [];
+  if (!Number.isInteger(draft.serialRxProvider) || draft.serialRxProvider < 0 || draft.serialRxProvider > SERIAL_RX_PROVIDER_MAX) issues.push('SERIAL_RX_PROVIDER_INVALID');
   if (receiverMapFromText(draft.channelMapText) === undefined) issues.push('CHANNEL_MAP_INVALID');
   if (!Number.isInteger(draft.stickMin) || draft.stickMin < 1000 || draft.stickMin > 1200) issues.push('STICK_MIN_INVALID');
   if (!Number.isInteger(draft.stickCenter) || draft.stickCenter < 1401 || draft.stickCenter > 1599) issues.push('STICK_CENTER_INVALID');

@@ -120,6 +120,7 @@ export {
   receiverDraftsEqual,
   receiverSnapshotsEqual,
   validateReceiverDraft,
+  SERIAL_RX_PROVIDER_MAX,
   RECEIVER_REBOOT_SENSITIVE_FIELDS,
   receiverChangeMayRequireReboot,
 } from './receiverConfigurationModel';
@@ -136,6 +137,36 @@ export {
   RECEIVER_BOXFAILSAFE_BIT,
   RSSI_SOURCE_TOKENS,
 } from './receiverRuntimeSemantics';
+export {
+  RECEIVER_MODE_CAPABILITY,
+  WRITABLE_RECEIVER_MODES,
+  RECEIVER_MODE_APPLY_REQUIREMENT,
+  RECEIVER_PROVIDER_APPLY_REQUIREMENT,
+  receiverModeIsWritable,
+  receiverOwnedModeBits,
+  applyReceiverModeToFeatureMask,
+  receiverModeBaseIsStale,
+  resolveReceiverTargetDependency,
+  receiverModeAfterMutation,
+  receiverModeIsSelectable,
+  selectableReceiverModes,
+  providerWriteIsPermitted,
+} from './receiverModeCapability';
+export {
+  resolveProviderAvailability,
+  resolveModeAvailability,
+  selectableProviders,
+  RECEIVER_MODE_BUILD_OPTION,
+  BUILD_OPTION_RX_PPM,
+  BUILD_OPTION_SERIALRX_CRSF,
+} from './receiverBuildCapability';
+export type {ReceiverBuildAvailability} from './receiverBuildCapability';
+export type {
+  ReceiverModeCapability,
+  ReceiverModeWriteClassification,
+  ReceiverApplyRequirement,
+  ReceiverDependencyVerdict,
+} from './receiverModeCapability';
 export type {
   ReceiverMode,
   ReceiverPortDependency,

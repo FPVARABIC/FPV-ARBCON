@@ -20,7 +20,7 @@ import {join} from 'path';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 import '../../i18n';
 import ar from '../../i18n/locales/ar.json';
-import {decodeRxConfig, type ReceiverConfigurationSnapshot} from '../../core';
+import {decodeRxConfig, RECEIVER_MODE_CAPABILITY, type ReceiverConfigurationSnapshot} from '../../core';
 // A TYPE-only import from the mocked module: erased at compile time, so
 // it cannot pull the real protocol layer into this test.
 import type {ReceiverRuntimeTruth} from '../../platforms/react-native/protocol';
@@ -80,6 +80,11 @@ function snapshot(provider = 9): ReceiverConfigurationSnapshot {
 const SERIAL_RUNTIME: ReceiverRuntimeTruth = {
   mode: 'SERIAL', featureMaskRaw: 2 ** 3, providerMeaningful: true,
   portDependency: {kind: 'SERIAL_RX_READY', portIdentifier: 1},
+  serialTargetDependency: {kind: 'SATISFIED'},
+  // P4 CLOSURE: a build that reported CRSF, SBUS, GHST and PPM.
+  buildOptionsKnown: true,
+  selectableModes: ['PPM', 'SERIAL'],
+  selectableProviders: [2, 9, 14],
   rssiSource: {kind: 'KNOWN', token: 'RX_PROTOCOL_CRSF', value: 6},
 };
 
@@ -308,11 +313,41 @@ describe('P3-AQ E: the channel map is edited as text and validated', () => {
 
 /* ======================================= F - MODE / PROVIDER / PORTS */
 describe('P3-AQ F: firmware truth is shown, never authored', () => {
-  it('shows the active mode as read-only text with no control attached', async () => {
+  /* CONTRACT CHANGE, P2 -> P4, recorded rather than quietly rewritten.
+     P2 held EVERY mode read-only because whole-feature-mask mutation was
+     not yet proven; that was a deferral, not a permanent rule, and P4 is
+     the phase that discharges it. What replaces it is narrower and
+     stronger: a mode is operable if and only if the capability matrix
+     says this product can fully configure it. */
+  it('offers a control for a mode it can fully configure', async () => {
     const {renderer} = await mount();
+    expect(RECEIVER_MODE_CAPABILITY.SERIAL.classification).toBe('WRITABLE');
     const row = renderer.root.findByProps({testID: 'receiver-mode-row'});
     expect(textUnder(renderer, 'receiver-mode-row')).toContain(ar.receiverScreen.modeSerial);
+    expect(row.findAll(node => node.props.onPress !== undefined).length).toBeGreaterThan(0);
+    act(() => renderer.unmount());
+  });
+
+  /* P4 CLOSURE refined this rule. A read-only ACTIVE mode no longer
+     implies a read-only control: a board running SPI whose build also
+     contains CRSF can legitimately be switched to SERIAL, and refusing
+     that would be its own kind of dishonesty. What makes the control
+     read-only is the build proving NOTHING selectable. */
+  it('still offers a control when the active mode is read-only but the build proves another', async () => {
+    expect(RECEIVER_MODE_CAPABILITY.SPI.classification).toBe('READ_ONLY');
+    const {renderer} = await mount({runtime: {...SERIAL_RUNTIME, mode: 'SPI', providerMeaningful: false, portDependency: {kind: 'NOT_APPLICABLE', mode: 'SPI'}}});
+    expect(textUnder(renderer, 'receiver-mode-row')).toContain(ar.receiverScreen.modeSpi);
+    expect(renderer.root.findByProps({testID: 'receiver-mode-row'}).findAll(node => node.props.onPress !== undefined).length).toBeGreaterThan(0);
+    act(() => renderer.unmount());
+  });
+
+  it('shows mode as read-only text with no control when the build proves nothing', async () => {
+    const {renderer} = await mount({runtime: {...SERIAL_RUNTIME, mode: 'SPI', providerMeaningful: false, portDependency: {kind: 'NOT_APPLICABLE', mode: 'SPI'}, buildOptionsKnown: false, selectableModes: [], selectableProviders: []}});
+    const row = renderer.root.findByProps({testID: 'receiver-mode-row'});
+    expect(textUnder(renderer, 'receiver-mode-row')).toContain(ar.receiverScreen.modeSpi);
     expect(row.findAll(node => node.props.onPress !== undefined || node.props.onChangeText !== undefined || node.props.onValueChange !== undefined)).toHaveLength(0);
+    // And it says WHY, in the not-proven wording rather than "unsupported".
+    expect(textUnder(renderer, 'receiver-mode-read-only')).toContain(ar.receiverScreen.capabilityNotProven);
     act(() => renderer.unmount());
   });
 
@@ -485,5 +520,171 @@ describe('P3-AQ J: the screen stays on the UI side of the boundary', () => {
     expect(EXECUTABLE).toContain('getReceiverObservedRateHz');
     expect(EXECUTABLE).not.toContain('describeDiagnostics');
     expect(EXECUTABLE).not.toContain('observedSampleRateHz');
+  });
+});
+
+/* ================================================ P4 - MODE / PROVIDER */
+describe('P4: mode and provider editing, without disturbing P3', () => {
+  function pressSelect(renderer: ReactTestRenderer.ReactTestRenderer, testID: string) {
+    const node = renderer.root.findAllByProps({testID}).find(entry => entry.props.onPress !== undefined)
+      ?? renderer.root.findByProps({testID}).findAll(entry => entry.props.onPress !== undefined)[0];
+    act(() => node.props.onPress());
+  }
+
+  it('keeps mode editing BELOW the live workspace - P3 hierarchy is untouched', async () => {
+    const {renderer} = await mount();
+    const order = renderer.root
+      .findAll(node => typeof node.props.testID === 'string' && ['receiver-live-monitor', 'receiver-mode-row'].includes(node.props.testID as string))
+      .map(node => node.props.testID as string);
+    expect(order.indexOf('receiver-live-monitor')).toBeLessThan(order.indexOf('receiver-mode-row'));
+    act(() => renderer.unmount());
+  });
+
+  it('offers only the modes THIS BUILD proved it can run', async () => {
+    const {renderer} = await mount();
+    pressSelect(renderer, 'receiver-mode-select');
+    const labels = renderer.root.findAllByType('Text' as never).map(node => String(node.props.children));
+    // The runtime double reports PPM and SERIAL as proven.
+    expect(labels).toContain(ar.receiverScreen.modeSerial);
+    expect(labels).toContain(ar.receiverScreen.modePpm);
+    // Never offered: unobservable presence, incomplete configuration, or
+    // removal of the control source.
+    expect(labels).not.toContain(ar.receiverScreen.modeParallelPwm);
+    expect(labels).not.toContain(ar.receiverScreen.modeNone);
+    expect(labels).not.toContain(ar.receiverScreen.modeMsp);
+    act(() => renderer.unmount());
+  });
+
+  it('shows the mode-change warning ONLY once a different mode is chosen', async () => {
+    const {renderer} = await mount();
+    expect(renderer.root.findAllByProps({testID: 'receiver-mode-change-warning'})).toHaveLength(0);
+    pressSelect(renderer, 'receiver-mode-select');
+    const option = renderer.root.findAll(node => node.props.onPress !== undefined && node.findAllByType('Text' as never).some(text => text.props.children === ar.receiverScreen.modePpm))[0];
+    act(() => option.props.onPress());
+    expect(renderer.root.findAllByProps({testID: 'receiver-mode-change-warning'}).length).toBeGreaterThan(0);
+    expect(textUnder(renderer, 'receiver-mode-change-warning')).toContain(ar.receiverScreen.modeChangeWarning);
+    act(() => renderer.unmount());
+  });
+
+  it('makes a mode change dirty, so it rides the existing Save with no second button', async () => {
+    const {renderer} = await mount();
+    expect(renderer.root.findAllByProps({testID: 'receiver-save-bar-save'})).toHaveLength(0);
+    pressSelect(renderer, 'receiver-mode-select');
+    const option = renderer.root.findAll(node => node.props.onPress !== undefined && node.findAllByType('Text' as never).some(text => text.props.children === ar.receiverScreen.modePpm))[0];
+    act(() => option.props.onPress());
+    expect(renderer.root.findAllByProps({testID: 'receiver-save-bar-save'}).length).toBeGreaterThan(0);
+    // No separate apply control anywhere.
+    expect(renderer.root.findAllByProps({testID: 'receiver-mode-apply'})).toHaveLength(0);
+    act(() => renderer.unmount());
+  });
+
+  it('blocks a SERIAL target with no UART, names why, and never touches Ports', async () => {
+    const save = jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: snapshot()}));
+    const {renderer} = await mount({
+      runtime: {...SERIAL_RUNTIME, mode: 'PPM', providerMeaningful: false, portDependency: {kind: 'NOT_APPLICABLE', mode: 'PPM'}, serialTargetDependency: {kind: 'DEPENDENCY_MISSING'}},
+      save: save as ReceiverControllerPort['save'],
+    });
+    pressSelect(renderer, 'receiver-mode-select');
+    const option = renderer.root.findAll(node => node.props.onPress !== undefined && node.findAllByType('Text' as never).some(text => text.props.children === ar.receiverScreen.modeSerial))[0];
+    act(() => option.props.onPress());
+    expect(textUnder(renderer, 'receiver-dependency-block')).toContain(ar.receiverScreen.blockDependencyMissing);
+    const bar = renderer.root.findAllByProps({testID: 'receiver-save-bar-save'});
+    if (bar.length > 0) await act(async () => { await bar[0].props.onPress(); });
+    expect(save).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('passes the operator choice to the ONE save call, with the fresh mask as its base', async () => {
+    const save = jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: snapshot()}));
+    const {renderer} = await mount({save: save as ReceiverControllerPort['save']});
+    pressSelect(renderer, 'receiver-mode-select');
+    const option = renderer.root.findAll(node => node.props.onPress !== undefined && node.findAllByType('Text' as never).some(text => text.props.children === ar.receiverScreen.modePpm))[0];
+    act(() => option.props.onPress());
+    await act(async () => { await renderer.root.findByProps({testID: 'receiver-save-bar-save'}).props.onPress(); });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect((save.mock.calls[0] as unknown[])[3]).toEqual({mode: 'PPM', baseFeatureMaskRaw: SERIAL_RUNTIME.featureMaskRaw});
+    act(() => renderer.unmount());
+  });
+
+  it('shows the provider control only where it controls the active receiver', async () => {
+    const serial = await mount();
+    expect(serial.renderer.root.findAllByProps({testID: 'receiver-provider-select'}).length).toBeGreaterThan(0);
+    act(() => serial.renderer.unmount());
+
+    const spi = await mount({runtime: {...SERIAL_RUNTIME, mode: 'SPI', providerMeaningful: false, portDependency: {kind: 'NOT_APPLICABLE', mode: 'SPI'}}});
+    expect(spi.renderer.root.findAllByProps({testID: 'receiver-provider-select'})).toHaveLength(0);
+    // Still reported as stored diagnostic information, not as a control.
+    expect(textUnder(spi.renderer, 'receiver-provider-value')).toBe('CRSF');
+    expect(spi.renderer.root.findAllByProps({testID: 'receiver-provider-stored-only'}).length).toBeGreaterThan(0);
+    act(() => spi.renderer.unmount());
+  });
+
+  it('offers only the providers this build reported, never the whole enum', async () => {
+    const {renderer} = await mount();
+    pressSelect(renderer, 'receiver-provider-select');
+    const labels = renderer.root.findAllByType('Text' as never).map(node => String(node.props.children));
+    // Reported by the runtime double: SBUS(2), CRSF(9), GHST(14).
+    for (const token of ['CRSF', 'SBUS', 'GHST']) expect(labels).toContain(token);
+    // In the firmware enum, absent from this build's report.
+    for (const token of ['IBUS', 'FPORT', 'SRXL2', 'MAVLINK']) expect(labels).not.toContain(token);
+    expect(labels.join(' ')).not.toMatch(/\bELRS\b/);
+    act(() => renderer.unmount());
+  });
+
+  it('withholds the provider control entirely when nothing is proven, and says so', async () => {
+    const {renderer} = await mount({runtime: {...SERIAL_RUNTIME, buildOptionsKnown: false, selectableModes: [], selectableProviders: []}});
+    expect(renderer.root.findAllByProps({testID: 'receiver-provider-select'})).toHaveLength(0);
+    // The STORED provider is still displayed as truth.
+    expect(textUnder(renderer, 'receiver-provider-value')).toBe('CRSF');
+    expect(textUnder(renderer, 'receiver-provider-not-proven')).toContain(ar.receiverScreen.providerNotProven);
+    act(() => renderer.unmount());
+  });
+
+  it('claims no build support it cannot prove', async () => {
+    const {renderer} = await mount();
+    // The helper says the opposite of "supported by this flight controller".
+    expect(pageText(renderer)).toContain(ar.receiverScreen.providerHelper);
+    expect(pageText(renderer)).not.toContain('مدعوم من وحدة التحكم');
+    act(() => renderer.unmount());
+  });
+
+  it('reports a partially-written transaction as its own state, not as a failure', async () => {
+    const save = jest.fn(async () => ({kind: 'PARTIAL_UNPERSISTED' as const, confirmedStages: ['RX_CONFIG' as const], failedStage: 'FEATURE' as const, definitelyNotSent: true}));
+    const {renderer} = await mount({save: save as ReceiverControllerPort['save']});
+    const preset = renderer.root.findAll(node => node.props.onPress !== undefined && node.findAllByType('Text' as never).some(text => text.props.children === 'TAER1234'))[0];
+    act(() => preset.props.onPress());
+    await act(async () => { await renderer.root.findByProps({testID: 'receiver-save-bar-save'}).props.onPress(); });
+    const body = pageText(renderer);
+    expect(body).toContain(ar.receiverScreen.partialUnpersisted);
+    expect(body).not.toContain(ar.receiverScreen.savedVerified);
+    act(() => renderer.unmount());
+  });
+
+  it('uses definite wording for a structurally-required reboot, not the hedged one', async () => {
+    const save = jest.fn(async () => ({kind: 'SAVED_REBOOT_REQUIRED' as const, snapshot: snapshot(), evidence: 'STRUCTURAL_REQUIRED' as const}));
+    const {renderer} = await mount({save: save as ReceiverControllerPort['save']});
+    const preset = renderer.root.findAll(node => node.props.onPress !== undefined && node.findAllByType('Text' as never).some(text => text.props.children === 'TAER1234'))[0];
+    act(() => preset.props.onPress());
+    await act(async () => { await renderer.root.findByProps({testID: 'receiver-save-bar-save'}).props.onPress(); });
+    expect(textUnder(renderer, 'receiver-reboot-required')).toContain(ar.receiverScreen.savedRebootStructural);
+    expect(textUnder(renderer, 'receiver-reboot-required')).not.toContain(ar.receiverScreen.savedRebootExpected);
+    act(() => renderer.unmount());
+  });
+
+  it('exposes no raw feature-mask number in the primary UI', async () => {
+    // A distinctive mask (RX_SERIAL | GPS | OSD) so the assertion cannot
+    // be satisfied or defeated by an unrelated small number on the page.
+    const featureMaskRaw = 2 ** 3 + 2 ** 7 + 2 ** 18;
+    const {renderer} = await mount({runtime: {...SERIAL_RUNTIME, featureMaskRaw}});
+    const body = pageText(renderer);
+    expect(body).not.toContain(String(featureMaskRaw));
+    expect(body).not.toMatch(/0x[0-9a-f]{4,}/i);
+    act(() => renderer.unmount());
+  });
+
+  it('adds no Ports setter, RXFAIL editor or feature-mask encoder to the screen', () => {
+    for (const forbidden of ['MSP_SET_FEATURE_CONFIG', 'MSP_SET_RX_CONFIG', 'MSP2_COMMON_SET_SERIAL_CONFIG', 'MSP_SET_RXFAIL_CONFIG', 'encodeFeatureConfig', 'setSerialRole', 'applyReceiverModeToFeatureMask']) {
+      expect(EXECUTABLE).not.toContain(forbidden);
+    }
   });
 });

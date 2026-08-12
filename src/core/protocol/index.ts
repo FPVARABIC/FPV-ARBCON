@@ -300,6 +300,7 @@ export {
   encodeReceiverDeadband,
   encodeReceiverConfig,
   encodeChangedReceiverConfiguration,
+  encodeFeatureConfig,
 } from './msp';
 export type {
   MspFeatureConfig,

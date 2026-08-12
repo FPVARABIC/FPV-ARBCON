@@ -191,11 +191,14 @@ describe('Receiver P2 - canonical reboot action', () => {
 });
 
 describe('Receiver P2 - runtime truth read (read-only)', () => {
-  function queueRuntime(h: ReturnType<typeof harness>, featureMask: number, options: {ports?: Uint8Array; txInfo?: Uint8Array | 'reject'} = {}) {
+  function queueRuntime(h: ReturnType<typeof harness>, featureMask: number, options: {ports?: Uint8Array | 'reject'; txInfo?: Uint8Array | 'reject'} = {}) {
     const feature = new Uint8Array(4);
     new DataView(feature.buffer).setUint32(0, featureMask, true);
     h.client.enqueue(MSP_FEATURE_CONFIG, {payload: feature});
-    if (options.ports !== undefined) h.client.enqueue(MSP2_COMMON_SERIAL_CONFIG, {payload: options.ports});
+    // P4 reads Ports on every runtime read, so an absent option means the
+    // port table is simply not answerable in that scenario.
+    if (options.ports === 'reject') h.client.enqueue(MSP2_COMMON_SERIAL_CONFIG, {reject: new Error('unsupported')});
+    else if (options.ports !== undefined) h.client.enqueue(MSP2_COMMON_SERIAL_CONFIG, {payload: options.ports});
     h.client.enqueue(MSP_TX_INFO, options.txInfo === 'reject' ? {reject: new Error('unsupported')} : {payload: options.txInfo ?? Uint8Array.from([6, 0])});
   }
   /** Count byte, then one 9-byte record: identifier, u32 function mask,
@@ -239,14 +242,49 @@ describe('Receiver P2 - runtime truth read (read-only)', () => {
     });
   });
 
-  it('P2-X item 25: a non-serial mode never even reads Ports', async () => {
+  /* CONTRACT CHANGE, P2 -> P4. P2 skipped the Ports read whenever the
+     ACTIVE mode was not serial, because the only question then was "does
+     the running receiver have its UART". P4 lets the operator switch TO
+     serial from any mode, so the answer is needed before Save on every
+     load - discovering the missing UART only after the operator presses
+     Save wastes their time and, worse, would mean deciding it inside the
+     write transaction. Ports is still READ-ONLY here; what changed is
+     when it is read, not what is done with it. */
+  it('P4: Ports is read on every runtime read, so a serial TARGET can be judged before Save', async () => {
     const h = harness();
-    queueRuntime(h, 2 ** 25); // RX_SPI
+    queueRuntime(h, 2 ** 25, {ports: portsPayload([1, 2 ** 6])}); // RX_SPI active
     await expect(h.controller.readRuntime(key)).resolves.toMatchObject({
       kind: 'READ',
-      runtime: {mode: 'SPI', providerMeaningful: false, portDependency: {kind: 'NOT_APPLICABLE', mode: 'SPI'}},
+      runtime: {
+        mode: 'SPI',
+        providerMeaningful: false,
+        // The ACTIVE mode's verdict is unchanged: SPI needs no UART.
+        portDependency: {kind: 'NOT_APPLICABLE', mode: 'SPI'},
+        // The TARGET verdict is the new, separate answer.
+        serialTargetDependency: {kind: 'SATISFIED'},
+      },
     });
-    expect(h.client.calls.map(call => call.command)).not.toContain(MSP2_COMMON_SERIAL_CONFIG);
+    expect(h.client.calls.map(call => call.command)).toContain(MSP2_COMMON_SERIAL_CONFIG);
+    // Read, never written.
+    expect(h.client.calls.map(call => call.command)).not.toContain(MSP2_COMMON_SET_SERIAL_CONFIG);
+  });
+
+  it('P4: with no Serial RX UART, a serial TARGET is reported missing while the active mode is untouched', async () => {
+    const h = harness();
+    queueRuntime(h, 2 ** 25, {ports: portsPayload([1, 0])}); // RX_SPI active, UART has no RX role
+    await expect(h.controller.readRuntime(key)).resolves.toMatchObject({
+      kind: 'READ',
+      runtime: {mode: 'SPI', serialTargetDependency: {kind: 'DEPENDENCY_MISSING'}},
+    });
+  });
+
+  it('P4: an unreadable port table reports UNKNOWN for a serial target, never "no UART"', async () => {
+    const h = harness();
+    queueRuntime(h, 2 ** 25, {ports: 'reject'});
+    await expect(h.controller.readRuntime(key)).resolves.toMatchObject({
+      kind: 'READ',
+      runtime: {serialTargetDependency: {kind: 'DEPENDENCY_UNKNOWN'}},
+    });
   });
 
   it('P2-X item 35: a board that cannot answer MSP_TX_INFO reports UNAVAILABLE, never a guess', async () => {
@@ -506,10 +544,19 @@ describe('Receiver P2 closure - structural read-only proofs', () => {
     require('path').join(__dirname, 'ReceiverConfigurationController.ts'), 'utf8',
   ).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-  it('19/20: the Receiver controller never names a feature-mask or Ports SETTER', () => {
+  /* CONTRACT CHANGE, P2 -> P4 for HALF of this rule. Writing the feature
+     mask is what P4 was authorised to add, so naming
+     MSP_SET_FEATURE_CONFIG here is now correct. The PORTS half is not a
+     deferral and never becomes writable from Receiver: Ports is a
+     separate configuration authority and P4-G/AE forbid this screen from
+     assigning, clearing or "tidying" a UART. */
+  it('19/20: the Receiver controller writes the feature mask but NEVER Ports', () => {
     expect(source).toContain('MSP_FEATURE_CONFIG'); // reading is intended
-    expect(source).not.toContain('MSP_SET_FEATURE_CONFIG');
+    expect(source).toContain('MSP_SET_FEATURE_CONFIG'); // P4: mode writing
+    expect(source).toContain('MSP2_COMMON_SERIAL_CONFIG'); // reading Ports
     expect(source).not.toContain('MSP2_COMMON_SET_SERIAL_CONFIG');
+    // Nor by any other name.
+    expect(source).not.toMatch(/setSerialRole|writeSerialPorts|encodeSerialPorts/);
   });
 
   it('19: no receiver-mode setter is reachable on the controller surface', () => {

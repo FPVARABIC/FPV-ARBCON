@@ -68,22 +68,41 @@ const RUNTIME: ReceiverRuntimeTruth = {
   featureMaskRaw: 2 ** 3,
   providerMeaningful: true,
   portDependency: {kind: 'SERIAL_RX_READY', portIdentifier: 1},
+  serialTargetDependency: {kind: 'SATISFIED'},
+  buildOptionsKnown: true,
+  selectableModes: ['PPM', 'SERIAL'],
+  selectableProviders: [2, 9, 14],
   rssiSource: {kind: 'KNOWN', token: 'RX_PROTOCOL_CRSF', value: 6},
 };
 
 let host: HTMLDivElement;
 let root: Root;
 let saveKind: 'SAVED_VERIFIED' | 'SAVED_REBOOT_REQUIRED' = 'SAVED_VERIFIED';
+let mockRuntimeMode: 'SERIAL' | 'SPI' | 'PPM' = 'SERIAL';
+let mockDependency: {kind: string} = {kind: 'SATISFIED'};
+let mockCapabilityProven = true;
 let rebootCalls = 0;
+let saveCalls = 0;
 
 function controller(): ReceiverControllerPort {
   const original = snapshot();
   return {
     load: async () => ({kind: 'LOADED', snapshot: original}),
-    save: async () => saveKind === 'SAVED_REBOOT_REQUIRED'
+    save: async () => (saveCalls += 1, saveKind === 'SAVED_REBOOT_REQUIRED')
       ? {kind: 'SAVED_REBOOT_REQUIRED', snapshot: original, evidence: 'FC_REPORTED'}
       : {kind: 'SAVED_VERIFIED', snapshot: original},
-    readRuntime: async () => ({kind: 'READ', runtime: RUNTIME}),
+    readRuntime: async () => ({kind: 'READ', runtime: {
+      ...RUNTIME,
+      mode: mockRuntimeMode,
+      providerMeaningful: mockRuntimeMode === 'SERIAL',
+      portDependency: mockRuntimeMode === 'SERIAL'
+        ? {kind: 'SERIAL_RX_READY' as const, portIdentifier: 1}
+        : {kind: 'NOT_APPLICABLE' as const, mode: mockRuntimeMode},
+      serialTargetDependency: mockDependency,
+      buildOptionsKnown: mockCapabilityProven,
+      selectableModes: mockCapabilityProven ? ['PPM', 'SERIAL'] : [],
+      selectableProviders: mockCapabilityProven ? [2, 9, 14] : [],
+    } as never}),
     requestReboot: async () => { rebootCalls += 1; return {kind: 'REBOOT_REQUESTED'}; },
   };
 }
@@ -107,7 +126,11 @@ beforeEach(() => {
   mockChannelsState = {status: 'FRESH', value: {channels: CHANNELS}, updatedAtMs: 1, sampleSeq: 1};
   mockArmingDisableFlags = 0;
   saveKind = 'SAVED_VERIFIED';
+  mockRuntimeMode = 'SERIAL';
+  mockDependency = {kind: 'SATISFIED'};
+  mockCapabilityProven = true;
   rebootCalls = 0;
+  saveCalls = 0;
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
@@ -223,14 +246,38 @@ describe('ReceiverScreen under real react-native-web', () => {
     expect(text('receiver-channel-1')).toContain('1612');
   });
 
-  it('shows the firmware-derived receiver mode as read-only text, with no control', async () => {
+  it('renders an operable receiver-mode control for a mode it can fully configure', async () => {
+    // P2 held every mode read-only pending proven whole-mask mutation;
+    // P4 discharged that for the modes the capability matrix clears.
     await mount();
     const row = q('receiver-mode-row') as HTMLElement;
     expect(row).not.toBeNull();
     expect(row.textContent).toContain('تسلسلي (Serial RX)');
-    // P2 kept mode NON-editable until whole-mask mutation is proven:
-    // nothing in this row may be operable.
+    expect(row.querySelector('[role="button"]')).not.toBeNull();
+  });
+
+  it('renders mode as read-only text with no control when the build proves nothing', async () => {
+    // P4 closure: what makes it read-only is the connected build proving
+    // no selectable implementation, not the active mode being exotic.
+    mockRuntimeMode = 'SPI';
+    mockCapabilityProven = false;
+    await mount();
+    const row = q('receiver-mode-row') as HTMLElement;
+    expect(row.textContent).toContain('SPI');
     expect(row.querySelector('input,select,button,[role="button"],[tabindex]')).toBeNull();
+    expect(q('receiver-mode-read-only')).not.toBeNull();
+    // The stored provider is still displayed; only authoring is withheld.
+    expect(text('receiver-provider-value')).toBe('CRSF');
+    expect(q('receiver-provider-select')).toBeNull();
+  });
+
+  it('an unproven capability never renders as a functional unsupported selector', async () => {
+    mockCapabilityProven = false;
+    await mount();
+    expect(q('receiver-mode-select')).toBeNull();
+    expect(q('receiver-provider-select')).toBeNull();
+    // Honest wording, not "unsupported".
+    expect(text('receiver-provider-not-proven')).toContain('لا يمكن التحقق');
   });
 
   it('reaches the whole configuration surface through the DOM', async () => {
@@ -272,6 +319,57 @@ describe('ReceiverScreen under real react-native-web', () => {
     // The screen never issues MSP_REBOOT itself.
     expect(rebootCalls).toBe(1);
     expect(q('receiver-reboot-requested')).not.toBeNull();
+  });
+
+  /* ------------------------------------------------ P4 on the web */
+  it('renders the mode and provider controls through shared logic, no native-only API', async () => {
+    await mount();
+    const mode = q('receiver-mode-select');
+    const provider = q('receiver-provider-select');
+    expect(mode).not.toBeNull();
+    expect(provider).not.toBeNull();
+    // Real, operable DOM controls with accessible names and values.
+    expect(mode!.getAttribute('role')).toBe('button');
+    expect(mode!.getAttribute('aria-label')).toBe('وضع الريسيفر');
+    expect(provider!.getAttribute('aria-label')).toBe('البروتوكول التسلسلي');
+  });
+
+  it('opens the mode list in the DOM and offers only fully-configurable modes', async () => {
+    await mount();
+    await act(async () => {
+      (q('receiver-mode-select') as HTMLElement).dispatchEvent(new MouseEvent('click', {bubbles: true}));
+    });
+    const body = document.body.textContent ?? '';
+    expect(body).toContain('تسلسلي (Serial RX)');
+    expect(body).toContain('PPM');
+    expect(body).not.toContain('بدون ريسيفر');
+  });
+
+  it('renders the dependency block and disables Save when a SERIAL target has no UART', async () => {
+    mockDependency = {kind: 'DEPENDENCY_MISSING'};
+    mockRuntimeMode = 'PPM';
+    await mount();
+    await act(async () => {
+      (q('receiver-mode-select') as HTMLElement).dispatchEvent(new MouseEvent('click', {bubbles: true}));
+    });
+    const serial = document.querySelector('[data-testid="receiver-mode-select-option-SERIAL"]') as HTMLElement;
+    expect(serial).not.toBeNull();
+    await act(async () => { serial.dispatchEvent(new MouseEvent('click', {bubbles: true})); });
+    expect(q('receiver-dependency-block')).not.toBeNull();
+    expect(text('receiver-dependency-block')).toContain('افتح المنافذ');
+    // And pressing Save does nothing: the transition is refused in the UI
+    // before it can reach the controller.
+    saveCalls = 0;
+    const saveButton = q('receiver-save-bar-save') as HTMLElement | null;
+    if (saveButton !== null) await act(async () => { saveButton.dispatchEvent(new MouseEvent('click', {bubbles: true})); });
+    expect(saveCalls).toBe(0);
+  });
+
+  it('keeps the P3 bar animation working alongside the new controls', async () => {
+    await mount();
+    const fill = q('receiver-channel-1-fill') as HTMLElement;
+    expect(fill.style.width).toBe(`${((1612 - 800) / 1400) * 100}%`);
+    expect(q('receiver-live-monitor')).not.toBeNull();
   });
 
   it('never puts raw protocol vocabulary in front of the pilot', async () => {

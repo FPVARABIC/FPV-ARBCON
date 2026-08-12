@@ -95,6 +95,7 @@ export type {
   ReceiverRebootEvidence,
   ReceiverRebootOutcome,
   ReceiverRuntimeOutcome,
+  ReceiverModeTarget,
   ReceiverRuntimeTruth,
   ReceiverSessionCoordinator,
   ReceiverAppStateOwner,

@@ -429,6 +429,14 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      // RECEIVER P4: writing the receiver MODE means replacing the whole
+      // feature word (msp.c:3712-3714 is featureConfigReplace), so this
+      // controller joins the registry deliberately and visibly. Its
+      // mutation is the shared, tested one in
+      // src/core/state/receiverModeCapability.ts, which clears ONLY the
+      // five RX bits and preserves every other bit of a mask read fresh
+      // inside the same transaction.
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
     reExporters: [
       'src/core/index.ts',

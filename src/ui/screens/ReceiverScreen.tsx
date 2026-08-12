@@ -4,7 +4,8 @@ import {useTranslation} from 'react-i18next';
 import {
   createReceiverConfigurationDraft, deriveReceiverRssi, receiverDraftsEqual,
   receiverValuesMayBeFailsafeOutput, resolveReceiverSignalState,
-  validateReceiverDraft, RECEIVER_CHANNEL_MAX_COUNT, type MspAnalog, type MspRcChannels,
+  validateReceiverDraft, RECEIVER_CHANNEL_MAX_COUNT,
+  type MspAnalog, type MspRcChannels,
   type MspStatusExDiagnostics, type ReceiverConfigurationDraft,
   type ReceiverConfigurationSnapshot, type ReceiverMode, type ReceiverPortDependency,
   type ReceiverSignalState, type TelemetryValue,
@@ -14,17 +15,17 @@ import {
   RECEIVER_TELEMETRY_POLL_ID, acquireReceiverTelemetry, getReceiverObservedRateHz,
   receiverConfigurationController, useTelemetryValue,
   type ReceiverBlockReason, type ReceiverLoadOutcome, type ReceiverRebootOutcome,
-  type ReceiverRuntimeOutcome, type ReceiverRuntimeTruth, type ReceiverSaveOutcome,
-  type SetupUiSessionKey,
+  type ReceiverModeTarget, type ReceiverRuntimeOutcome, type ReceiverRuntimeTruth,
+  type ReceiverSaveOutcome, type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
 import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
-import {Button, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
+import {Button, SelectField, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
 import {Icon, type IconName} from '../icons/Icon';
 
 export interface ReceiverControllerPort {
   load(key: SetupUiSessionKey): Promise<ReceiverLoadOutcome>;
-  save(key: SetupUiSessionKey, original: ReceiverConfigurationSnapshot, draft: ReceiverConfigurationDraft): Promise<ReceiverSaveOutcome>;
+  save(key: SetupUiSessionKey, original: ReceiverConfigurationSnapshot, draft: ReceiverConfigurationDraft, modeTarget?: ReceiverModeTarget): Promise<ReceiverSaveOutcome>;
   /** P2 read-only firmware truth: active receiver mode, Ports agreement,
    * RSSI source. Optional so an existing test double stays valid. */
   readRuntime?(key: SetupUiSessionKey): Promise<ReceiverRuntimeOutcome>;
@@ -166,8 +167,16 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
   const [loadOutcome, setLoadOutcome] = useState<ReceiverLoadOutcome>();
   const [saveOutcome, setSaveOutcome] = useState<ReceiverSaveOutcome>();
   const [reloadToken, setReloadToken] = useState(0);
+  /* P4-R. Re-reads runtime truth ONLY. Deliberately separate from
+     reloadToken: that one drives the full load effect, which clears the
+     save outcome - and wiping the "reboot required" panel the instant it
+     appears is exactly the false-success this phase exists to avoid. */
+  const [runtimeToken, setRuntimeToken] = useState(0);
   const [runtime, setRuntime] = useState<ReceiverRuntimeTruth>();
   const [rebootOutcome, setRebootOutcome] = useState<ReceiverRebootOutcome>();
+  /** P4: the PROPOSED receiver mode. undefined means "unchanged"; it is
+   * never seeded from runtime so a mere page load can never look dirty. */
+  const [modeDraft, setModeDraft] = useState<ReceiverMode>();
 
   const blockMessage = useCallback((reason: ReceiverBlockReason): string => ({
     DISCONNECTED: t('receiverScreen.blockDisconnected'),
@@ -181,11 +190,17 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
     CONFIGURATION_BUSY: t('receiverScreen.blockBusy'),
     STALE_BASE: t('receiverScreen.blockStaleBase'),
     INVALID_CONFIGURATION: t('receiverScreen.blockInvalid'),
+    DEPENDENCY_MISSING: t('receiverScreen.blockDependencyMissing'),
+    DEPENDENCY_AMBIGUOUS: t('receiverScreen.blockDependencyAmbiguous'),
+    DEPENDENCY_UNKNOWN: t('receiverScreen.blockDependencyUnknown'),
+    MODE_NOT_WRITABLE: t('receiverScreen.blockModeNotWritable'),
+    CAPABILITY_UNAVAILABLE: t('receiverScreen.blockCapabilityUnavailable'),
+    CAPABILITY_NOT_PROVEN: t('receiverScreen.blockCapabilityNotProven'),
   } as Record<ReceiverBlockReason, string>)[reason], [t]);
 
   useEffect(() => {
     if (!active || sessionKey === undefined) return;
-    let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); setRebootOutcome(undefined);
+    let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); setRebootOutcome(undefined); setModeDraft(undefined);
     controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createReceiverConfigurationDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } });
     return () => { cancelled = true; };
   }, [active, controller, reloadToken, sessionKey]);
@@ -200,15 +215,54 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
       setRuntime(outcome.kind === 'READ' ? outcome.runtime : undefined);
     });
     return () => { cancelled = true; };
-  }, [active, controller, reloadToken, sessionKey]);
+  }, [active, controller, reloadToken, runtimeToken, sessionKey]);
 
-  const dirty = snapshot !== undefined && draft !== undefined && !receiverDraftsEqual(createReceiverConfigurationDraft(snapshot), draft);
+  /* P4. The proposed mode, and whether it actually differs from what the
+     flight controller is running. Selecting the current mode again is
+     not a change and must not make the page dirty. */
+  const activeMode = runtime?.mode;
+  const targetMode: ReceiverMode | undefined = modeDraft ?? activeMode;
+  const modeChanged = modeDraft !== undefined && activeMode !== undefined && modeDraft !== activeMode;
+  // Memoised so `save` keeps a stable identity: a fresh object literal
+  // every render would rebuild the callback on every telemetry frame.
+  const modeTarget: ReceiverModeTarget | undefined = useMemo(
+    () => (modeChanged && runtime !== undefined && modeDraft !== undefined
+      ? {mode: modeDraft, baseFeatureMaskRaw: runtime.featureMaskRaw}
+      : undefined),
+    [modeChanged, modeDraft, runtime],
+  );
+  /* P4-V. A SERIAL target needs a Serial RX UART, and Ports is a separate
+     configuration authority - this reads its verdict and never writes it.
+     Only blocking when the operator is actually PROPOSING serial: an
+     aircraft already running serial with an odd port table is a state to
+     report, not a reason to refuse an unrelated deadband edit. */
+  const dependencyBlock = modeChanged && modeDraft === 'SERIAL' && runtime !== undefined && runtime.serialTargetDependency.kind !== 'SATISFIED'
+    ? runtime.serialTargetDependency
+    : undefined;
+  const dirty = (snapshot !== undefined && draft !== undefined && !receiverDraftsEqual(createReceiverConfigurationDraft(snapshot), draft)) || modeChanged;
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined ? [] : validateReceiverDraft(draft), [draft]);
   const update = useCallback(<K extends keyof ReceiverConfigurationDraft>(key: K, value: ReceiverConfigurationDraft[K]) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [key]: value})); setSaveOutcome(undefined); }, []);
   const reload = useCallback(() => { const perform = () => setReloadToken(v => v + 1); if (!dirty) return perform(); Alert.alert(t('receiverScreen.discardTitle'), t('receiverScreen.discardBody'), [{text: t('receiverScreen.cancel'), style: 'cancel'}, {text: t('receiverScreen.reload'), style: 'destructive', onPress: perform}]); }, [dirty, t]);
-  const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); setRebootOutcome(undefined); const outcome = await controller.save(sessionKey, snapshot, draft); setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES' || outcome.kind === 'SAVED_REBOOT_REQUIRED') { setSnapshot(outcome.snapshot); setDraft(createReceiverConfigurationDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, sessionKey, snapshot]);
+  const save = useCallback(async () => {
+    if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0 || dependencyBlock !== undefined) return;
+    setPhase('SAVING'); setRebootOutcome(undefined);
+    // ONE save authority: the mode target rides along with the same call
+    // the rest of the configuration already uses.
+    const outcome = await controller.save(sessionKey, snapshot, draft, modeTarget);
+    setSaveOutcome(outcome);
+    if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES' || outcome.kind === 'SAVED_REBOOT_REQUIRED') {
+      setSnapshot(outcome.snapshot);
+      setDraft(createReceiverConfigurationDraft(outcome.snapshot));
+      /* P4-R. A written mode is NOT applied until the FC restarts, so the
+         proposal is cleared and the mode shown falls back to freshly read
+         runtime truth. Nothing here claims the new mode is in force. */
+      setModeDraft(undefined);
+      setRuntimeToken(value => value + 1);
+    }
+    setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
+  }, [controller, dependencyBlock, draft, issues.length, modeTarget, sessionKey, snapshot]);
   const requestReboot = useCallback(async () => { if (sessionKey === undefined || controller.requestReboot === undefined) return; setRebootOutcome(await controller.requestReboot(sessionKey)); }, [controller, sessionKey]);
 
   const saveMessage = (outcome: ReceiverSaveOutcome): {text: string; warning: boolean} => {
@@ -219,7 +273,13 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
       // states the flight controller said so; EXPECTED_UNCONFIRMED only
       // says a reboot may be needed, because the flag could not be read.
       case 'SAVED_REBOOT_REQUIRED': return {
-        text: outcome.evidence === 'FC_REPORTED' ? t('receiverScreen.savedRebootReported') : t('receiverScreen.savedRebootExpected'),
+        text: outcome.evidence === 'FC_REPORTED' ? t('receiverScreen.savedRebootReported')
+          /* P4-P: a mode or provider change is PROVEN to need a restart
+             from firmware structure, so it gets definite wording of its
+             own - never the hedged "may be needed" reserved for a flag
+             that could not be read. */
+          : outcome.evidence === 'STRUCTURAL_REQUIRED' ? t('receiverScreen.savedRebootStructural')
+          : t('receiverScreen.savedRebootExpected'),
         warning: true,
       };
       case 'SAVED_UNVERIFIED': return {text: t('receiverScreen.savedUnverified'), warning: true};
@@ -227,10 +287,39 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
       case 'SESSION_ENDED': return {text: t('receiverScreen.sessionEnded'), warning: true};
       case 'FAILED': return {text: t('receiverScreen.failed'), warning: true};
       case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
+      /* P4-M. Deliberately NOT worded as a failure: nothing was
+         persisted, but the flight controller's RAM is no longer what it
+         was, and an operator who is told "save failed" will assume
+         otherwise. */
+      case 'PARTIAL_UNPERSISTED': return {text: t('receiverScreen.partialUnpersisted'), warning: true};
     }
   };
 
   const statusCopy = saveOutcome === undefined ? undefined : saveMessage(saveOutcome);
+  /* P4-D. Only modes the capability matrix marks WRITABLE are offered.
+     The ACTIVE mode is always present even when it is read-only, so the
+     control shows the truth rather than an empty or wrong selection. */
+  /* P4 CLOSURE. A control is offered only for something the CONNECTED
+     build proved it can run. `selectableModes` / `selectableProviders`
+     are resolved in the controller from this session's MSP_BUILD_INFO
+     option list; an empty list means "nothing proven", which renders as
+     read-only truth rather than as an unrestricted dropdown. */
+  // Memoised on `runtime` so the derived option lists keep stable
+  // identities across telemetry frames.
+  const selectableModes = useMemo(() => runtime?.selectableModes ?? [], [runtime]);
+  const selectableProviderValues = useMemo(() => runtime?.selectableProviders ?? [], [runtime]);
+  const modeIsWritable = selectableModes.length > 0;
+  const modeOptions = useMemo(
+    () => selectableModes.map(mode => ({key: mode, label: t(MODE_LABEL_KEYS[mode])})),
+    [selectableModes, t],
+  );
+  /* P4-U/I + closure. Firmware enum tokens, not invented names, and only
+     the ones this build reported. */
+  const providerIsWritable = selectableProviderValues.length > 0;
+  const providerOptions = useMemo(
+    () => selectableProviderValues.map(value => ({key: String(value), label: SERIAL_RX_NAMES[value] ?? `Provider ${value}`})),
+    [selectableProviderValues],
+  );
   const providerIndex = snapshot?.rx.serialRxProvider;
   const provider: string = providerIndex === undefined ? '—' : SERIAL_RX_NAMES[providerIndex] ?? `Provider ${providerIndex}`;
   const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? t('receiverScreen.failed') : loadOutcome?.kind === 'SESSION_ENDED' ? t('receiverScreen.sessionEnded') : undefined;
@@ -261,18 +350,66 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
         </View> : null}
 
         <Section title={t('receiverScreen.sourceHeading')} icon="cable" testID="receiver-source-card">
-          {runtime !== undefined ? <Row label={t('receiverScreen.modeLabel')} testID="receiver-mode-row">
-            <Text style={styles.rowValue}>{t(MODE_LABEL_KEYS[runtime.mode])}</Text>
-          </Row> : null}
-          <Row label={t('receiverScreen.providerLabel')}>
+          {/* P4-S: mode editing lives HERE, in the secondary configuration
+              area, never above the live workspace. */}
+          {runtime !== undefined ? (
+            modeIsWritable ? <View testID="receiver-mode-row">
+              <SelectField
+                label={t('receiverScreen.modeLabel')}
+                options={selectableModes.includes(runtime.mode) ? modeOptions : [{key: runtime.mode, label: t(MODE_LABEL_KEYS[runtime.mode]), disabled: true}, ...modeOptions]}
+                selectedKey={targetMode ?? runtime.mode}
+                onSelect={key => setModeDraft(key as ReceiverMode)}
+                disabled={phase !== 'READY'}
+                helper={t('receiverScreen.modeHelper')}
+                testID="receiver-mode-select"
+              />
+            </View> : <Row label={t('receiverScreen.modeLabel')} testID="receiver-mode-row">
+              <Text style={styles.rowValue}>{t(MODE_LABEL_KEYS[runtime.mode])}</Text>
+            </Row>
+          ) : null}
+          {/* P4-D: a mode this product cannot fully configure is stated as
+              read-only rather than quietly missing from the list. */}
+          {runtime !== undefined && !modeIsWritable
+            ? <Text style={styles.sectionHint} testID="receiver-mode-read-only">{runtime.buildOptionsKnown ? t('receiverScreen.modeReadOnly') : t('receiverScreen.capabilityNotProven')}</Text> : null}
+          {/* P4-T: a warning about losing control input, shown only while
+              a mode change is actually pending. */}
+          {modeChanged ? <View style={styles.warning} testID="receiver-mode-change-warning">
+            <View style={styles.alertHead}><Icon name="triangle-alert" size={18} color={colors.warning} /><Text style={styles.warningText}>{t('receiverScreen.modeChangeWarning')}</Text></View>
+          </View> : null}
+
+          {/* P4-J: the serial provider is presented as an active setting
+              only when the receiver the FC will run is a serial one. */}
+          {targetMode === 'SERIAL' && draft !== undefined && providerIsWritable ? <>
+            <SelectField
+              label={t('receiverScreen.providerLabel')}
+              options={providerOptions}
+              selectedKey={String(draft.serialRxProvider)}
+              onSelect={key => update('serialRxProvider', Number(key))}
+              disabled={phase !== 'READY'}
+              helper={t('receiverScreen.providerHelper')}
+              testID="receiver-provider-select"
+            />
+            <Text style={styles.rowValue} testID="receiver-provider-value">{SERIAL_RX_NAMES[draft.serialRxProvider] ?? `Provider ${draft.serialRxProvider}`}</Text>
+          </> : <Row label={t('receiverScreen.providerLabel')}>
             <Text style={styles.rowValue} testID="receiver-provider-value">{provider}</Text>
-          </Row>
+          </Row>}
+          {/* P4 CLOSURE: when nothing is proven the stored provider is
+              still shown as truth; only AUTHORING a new one is withheld,
+              and the reason is stated rather than left as a dead control. */}
+          {targetMode === 'SERIAL' && !providerIsWritable
+            ? <Text style={styles.sectionHint} testID="receiver-provider-not-proven">{runtime?.buildOptionsKnown === true ? t('receiverScreen.providerNoneAvailable') : t('receiverScreen.providerNotProven')}</Text> : null}
           {/* P3-O: CRSF stays CRSF. ExpressLRS is explained as a user of
               CRSF over UART, never introduced as its own provider. */}
-          {providerIndex === CRSF_PROVIDER_INDEX && runtime?.providerMeaningful !== false
+          {(targetMode === 'SERIAL' ? draft?.serialRxProvider : providerIndex) === CRSF_PROVIDER_INDEX && runtime?.providerMeaningful !== false
             ? <Text style={styles.sectionHint} testID="receiver-provider-note">{t('receiverScreen.providerCrsfElrs')}</Text> : null}
-          {runtime !== undefined && !runtime.providerMeaningful
+          {runtime !== undefined && !runtime.providerMeaningful && targetMode !== 'SERIAL'
             ? <Text style={styles.sectionHint} testID="receiver-provider-stored-only">{t('receiverScreen.providerStoredOnly')}</Text> : null}
+
+          {/* P4-V: the dependency that blocks a serial transition, named
+              rather than hidden behind a disabled button. */}
+          {dependencyBlock !== undefined ? <View style={styles.warning} testID="receiver-dependency-block">
+            <View style={styles.alertHead}><Icon name="triangle-alert" size={18} color={colors.warning} /><Text style={styles.warningText}>{blockMessage(dependencyBlock.kind)}</Text></View>
+          </View> : null}
           {runtime !== undefined ? <PortDependencyNote dependency={runtime.portDependency} /> : null}
           <Button label={t('receiverScreen.openPorts')} onPress={onOpenPorts} variant="secondary" icon="cable" style={styles.inlineAction} />
         </Section>
@@ -330,7 +467,7 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
       </> : phase === 'LOADING' ? <Text style={styles.loading}>{t('receiverScreen.loading')}</Text> : null}
       <View style={styles.bottomSpace} />
     </ScrollView>
-    <StickyActionBar visible={dirty} summary={t('receiverScreen.saveSummary')} details={[t('receiverScreen.saveDetails')]} saveLabel={t('receiverScreen.saveLabel')} discardLabel={t('receiverScreen.discardLabel')} onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createReceiverConfigurationDraft(snapshot))} disabledReason={issues.length > 0 ? t('receiverScreen.blockInvalid') : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel={t('receiverScreen.saveLabel')} testID="receiver-save-bar" />
+    <StickyActionBar visible={dirty} summary={t('receiverScreen.saveSummary')} details={[t('receiverScreen.saveDetails')]} saveLabel={t('receiverScreen.saveLabel')} discardLabel={t('receiverScreen.discardLabel')} onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createReceiverConfigurationDraft(snapshot))} disabledReason={issues.length > 0 ? t('receiverScreen.blockInvalid') : dependencyBlock !== undefined ? blockMessage(dependencyBlock.kind) : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel={t('receiverScreen.saveLabel')} testID="receiver-save-bar" />
   </View>;
 }
 

@@ -204,6 +204,9 @@ describe('Receiver P2 - RSSI source and the absence of link quality', () => {
 
 describe('Receiver P2 - reboot-sensitive field detection', () => {
   const base: ReceiverConfigurationDraft = Object.freeze({
+    // P4 added the serial provider to the draft; this P2 suite is about
+    // rc_smoothing reboot sensitivity and is unaffected by its value.
+    serialRxProvider: 9,
     channelMapText: 'AETR1234',
     rssiChannel: 0,
     stickMin: 1100,

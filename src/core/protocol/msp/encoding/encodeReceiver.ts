@@ -26,6 +26,14 @@ export function encodeReceiverConfig(original: MspRxConfig, draft: ReceiverConfi
   if (original.raw.length < 39) throw new RangeError('MSP_RX_CONFIG API 1.47 payload is truncated.');
   if (validateReceiverDraft(draft).length > 0) throw new RangeError('Invalid receiver configuration draft.');
   const bytes = original.raw.slice();
+  // RECEIVER P4. Byte 0 is serialrx_provider (msp.c MSP_SET_RX_CONFIG,
+  // first field). Patched into a CLONE of the payload the flight
+  // controller just sent, exactly like every other field here, so the
+  // ~25 bytes this screen does not own - rx_min/max_usec, the SPI
+  // protocol/id/channel-count block, the USB HID type owned by General
+  // Configuration, the ExpressLRS SPI UID and modelId - survive
+  // bit-for-bit. A synthetic payload would silently reset all of them.
+  bytes[0] = draft.serialRxProvider;
   writeU16(bytes, 1, draft.stickMax);
   writeU16(bytes, 3, draft.stickCenter);
   writeU16(bytes, 5, draft.stickMin);
@@ -37,7 +45,14 @@ export function encodeReceiverConfig(original: MspRxConfig, draft: ReceiverConfi
   return bytes;
 }
 
-export type ReceiverWriteGroup = 'RX_MAP' | 'RSSI' | 'DEADBAND' | 'RX_CONFIG';
+/**
+ * RECEIVER P4 adds 'FEATURE'. It is not produced by
+ * encodeChangedReceiverConfiguration - the feature mask is not part of
+ * the Receiver configuration snapshot and must be read fresh inside the
+ * save transaction - but it is a stage a save can be interrupted at, so
+ * it belongs in the same vocabulary the outcome types report.
+ */
+export type ReceiverWriteGroup = 'RX_MAP' | 'RSSI' | 'DEADBAND' | 'RX_CONFIG' | 'FEATURE';
 export interface EncodedReceiverWrite { readonly group: ReceiverWriteGroup; readonly payload: Uint8Array }
 
 export function encodeChangedReceiverConfiguration(original: ReceiverConfigurationSnapshot, draft: ReceiverConfigurationDraft): readonly EncodedReceiverWrite[] {

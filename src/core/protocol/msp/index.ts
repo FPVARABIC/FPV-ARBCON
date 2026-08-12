@@ -335,6 +335,7 @@ export {
   encodeChangedReceiverConfiguration,
 } from './encoding/encodeReceiver';
 export type { ReceiverWriteGroup, EncodedReceiverWrite } from './encoding/encodeReceiver';
+export { encodeFeatureConfig } from './encoding/encodeFeatureConfig';
 
 export {
   checkMspCompatibility,
