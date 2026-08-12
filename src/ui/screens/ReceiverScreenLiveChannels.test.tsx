@@ -38,8 +38,8 @@ jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
   default: () => ({width: mockWindowWidth, height: 844, scale: 2, fontScale: 1}),
 }));
 
-jest.mock('../../platforms/react-native/protocol', () => {
-  const actual = jest.requireActual('../../platforms/react-native/protocol');
+jest.mock('../../platforms/react-native/protocol/receiverPresentation', () => {
+  const actual = jest.requireActual('../../platforms/react-native/protocol/receiverPresentation');
   return {
     ...actual,
     acquireReceiverTelemetry: () => () => undefined,

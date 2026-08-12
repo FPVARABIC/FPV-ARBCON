@@ -493,3 +493,60 @@ describe('scanner - build failure is never a pass', () => {
     expect(analyzeBundle('').ok).toBe(false);
   });
 });
+
+/**
+ * RECEIVER P5 - the Receiver UI/protocol authority boundary rule.
+ *
+ * P0 recorded the risk structurally: ReceiverScreen's imports were clean,
+ * but it reached them through a barrel that also exports RNMspTransport
+ * and the live session coordinator, so one added identifier would have
+ * handed a React component the wire. These tests prove the new scanner
+ * rule is not decoration - it fails on each way that could happen.
+ */
+describe('scanner - the Receiver UI/protocol authority boundary', () => {
+  const {
+    analyzeReceiverBoundary,
+    RECEIVER_FORBIDDEN_AUTHORITY,
+  } = require('../scan-production-bundle.js');
+  const SCREEN = 'src/ui/screens/ReceiverScreen.tsx';
+
+  it('holds against the real source tree', () => {
+    const result = analyzeReceiverBoundary(readSourceTree());
+    expect(result.violations).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('fails when the screen imports the broad platform barrel', () => {
+    const sources = readSourceTree();
+    sources[SCREEN] = sources[SCREEN].replace(
+      "from '../../platforms/react-native/protocol/receiverPresentation'",
+      "from '../../platforms/react-native/protocol'",
+    );
+    const result = analyzeReceiverBoundary(sources);
+    expect(result.ok).toBe(false);
+    expect(result.violations.map(entry => entry.kind)).toContain('BROAD_PROTOCOL_IMPORT');
+    expect(result.violations.map(entry => entry.kind)).toContain('FACADE_NOT_USED');
+  });
+
+  it.each(RECEIVER_FORBIDDEN_AUTHORITY)('fails when the screen names %s in executable code', token => {
+    const sources = readSourceTree();
+    sources[SCREEN] = `const smuggled = ${token};\n${sources[SCREEN]}`;
+    const result = analyzeReceiverBoundary(sources);
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContainEqual({kind: 'RAW_AUTHORITY', detail: token});
+  });
+
+  it('does NOT fail when a forbidden name appears only in a comment', () => {
+    // The screen documents these names at length; a prose-level grep
+    // would have fired on ordinary explanation rather than on authority.
+    const sources = readSourceTree();
+    sources[SCREEN] = `/* discussion of MSP_SET_FEATURE_CONFIG and RNMspTransport */\n// and mspSessionCoordinator too\n${sources[SCREEN]}`;
+    expect(analyzeReceiverBoundary(sources).ok).toBe(true);
+  });
+
+  it('fails loudly rather than silently if the screen file disappears', () => {
+    const result = analyzeReceiverBoundary({});
+    expect(result.ok).toBe(false);
+    expect(result.violations[0].kind).toBe('MISSING_SCREEN');
+  });
+});

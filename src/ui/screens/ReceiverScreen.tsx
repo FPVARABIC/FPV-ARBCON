@@ -10,6 +10,10 @@ import {
   type ReceiverConfigurationSnapshot, type ReceiverMode, type ReceiverPortDependency,
   type ReceiverSignalState, type TelemetryValue,
 } from '../../core';
+/* P5: the NARROW Receiver facade, not the ~180-symbol platform barrel.
+   The barrel also exports RNMspTransport and the live session
+   coordinator; importing from it left raw wire authority one keystroke
+   from a React component. receiverBoundary.test.ts enforces this. */
 import {
   FC_STATUS_TELEMETRY_POLL_ID, RECEIVER_CHANNELS_POLL_ID,
   RECEIVER_TELEMETRY_POLL_ID, acquireReceiverTelemetry, getReceiverObservedRateHz,
@@ -17,7 +21,7 @@ import {
   type ReceiverBlockReason, type ReceiverLoadOutcome, type ReceiverRebootOutcome,
   type ReceiverModeTarget, type ReceiverRuntimeOutcome, type ReceiverRuntimeTruth,
   type ReceiverSaveOutcome, type SetupUiSessionKey,
-} from '../../platforms/react-native/protocol';
+} from '../../platforms/react-native/protocol/receiverPresentation';
 import {StickyActionBar} from '../components/editing';
 import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, SelectField, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';

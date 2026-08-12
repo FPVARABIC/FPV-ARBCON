@@ -32,8 +32,8 @@ const CHANNELS = [1612, 1478, 1500, 1185, 2000, 1000, 1500, 1000, 1712, 1000, 10
  * plain mutable value would not: the workspace is memoised, so nothing
  * short of a store notification reaches it.
  */
-jest.mock('../../platforms/react-native/protocol', () => {
-  const actual = jest.requireActual('../../platforms/react-native/protocol');
+jest.mock('../../platforms/react-native/protocol/receiverPresentation', () => {
+  const actual = jest.requireActual('../../platforms/react-native/protocol/receiverPresentation');
   const {useSyncExternalStore} = require('react');
   const listeners = new Set<() => void>();
   const store = {
@@ -68,7 +68,7 @@ var FC_STATUS_POLL_ID_MOCK = 'fcStatus';
 // stubbed telemetry hook, not the real one.
 import ReceiverScreen, {CHANNEL_SMOOTHING_MS, channelDisplayFraction, type ReceiverControllerPort} from './ReceiverScreen';
 
-const store = (jest.requireMock('../../platforms/react-native/protocol') as {__store: {
+const store = (jest.requireMock('../../platforms/react-native/protocol/receiverPresentation') as {__store: {
   publish(next: Record<string, unknown>): void;
   reset(): void;
 }}).__store;

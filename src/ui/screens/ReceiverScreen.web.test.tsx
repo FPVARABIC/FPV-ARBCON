@@ -22,8 +22,8 @@ let mockObservedHz: number | undefined;
 let mockChannelsState: Record<string, unknown> = {status: 'FRESH', value: {channels: CHANNELS}, updatedAtMs: 1, sampleSeq: 1};
 let mockArmingDisableFlags = 0;
 
-jest.mock('../../platforms/react-native/protocol', () => {
-  const actual = jest.requireActual('../../platforms/react-native/protocol');
+jest.mock('../../platforms/react-native/protocol/receiverPresentation', () => {
+  const actual = jest.requireActual('../../platforms/react-native/protocol/receiverPresentation');
   return {
     ...actual,
     acquireReceiverTelemetry: () => () => undefined,
@@ -45,7 +45,7 @@ import '../../i18n';
 import {decodeRxConfig, type ReceiverConfigurationSnapshot} from '../../core';
 // A TYPE-only import from the mocked module: erased at compile time, so
 // it cannot pull the real protocol layer into this test.
-import type {ReceiverRuntimeTruth} from '../../platforms/react-native/protocol';
+import type {ReceiverRuntimeTruth} from '../../platforms/react-native/protocol/receiverPresentation';
 import ReceiverScreen, {type ReceiverControllerPort} from './ReceiverScreen';
 
 function snapshot(): ReceiverConfigurationSnapshot {

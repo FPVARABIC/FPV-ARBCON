@@ -188,6 +188,39 @@ const REQUIRED_ENGINE_TOKENS = [
   'MSP_SET_RX_MAP',
   'MSP_SET_RSSI_CONFIG',
   'MSP_SET_RC_DEADBAND',
+  // RECEIVER P5. The tokens above prove the Receiver PROTOCOL owner ships.
+  // These prove the professional surface built in P3/P4 ships with it -
+  // a Release that tree-shook the workspace, the smoothing node or the
+  // capability gating would otherwise pass every category here.
+  //
+  //   receiver-live-monitor      P3 live workspace
+  //   receiver-status-strip      P3 live/stale/rate/RSSI strip
+  //   receiver-observed-rate     MEASURED cadence surface (no fabricated Hz)
+  //   -fill                      P3 smoothing target (receiver-channel-N-fill)
+  //   CHANNEL_SMOOTHING_MS       the 50ms presentation constant itself
+  //   receiver-mode-row          P4 mode surface
+  //   receiver-mode-select       P4 capability-gated mode control
+  //   receiver-provider-select   P4 capability-gated provider control
+  //   receiver-dependency-block  P4 Ports dependency blocking
+  //   applyReceiverModeToFeatureMask
+  //                              the ONLY legal feature-mask mutation
+  //   resolveProviderAvailability
+  //                              connected-build capability resolution
+  //   selectableReceiverModes    capability-filtered mode offering
+  //   encodeFeatureConfig        the whole-mask encoder
+  'receiver-live-monitor',
+  'receiver-status-strip',
+  'receiver-observed-rate',
+  '-fill',
+  'CHANNEL_SMOOTHING_MS',
+  'receiver-mode-row',
+  'receiver-mode-select',
+  'receiver-provider-select',
+  'receiver-dependency-block',
+  'applyReceiverModeToFeatureMask',
+  'resolveProviderAvailability',
+  'selectableReceiverModes',
+  'encodeFeatureConfig',
   // Firmware Flasher and the new landing route are product surfaces, not
   // optional debug code. Their protocol owners must ship in Release.
   'firmware-flasher-screen',
@@ -912,6 +945,75 @@ function analyzeEngineBoundaries(sources) {
   };
 }
 
+/**
+ * RECEIVER P5 - the UI/protocol authority boundary, checked in CI.
+ *
+ * ReceiverScreen is a presentation component. It must reach protocol only
+ * through the narrow `receiverPresentation` facade, never through the
+ * ~180-symbol platform barrel that also exports RNMspTransport and the
+ * live session coordinator, and it must name no raw MSP command constant.
+ *
+ * SOURCE-AWARE, not prose-aware: comments are stripped first, because the
+ * screen legitimately DISCUSSES these names in its documentation and the
+ * pre-P3 version of this check would have fired on ordinary explanatory
+ * text rather than on executable authority.
+ *
+ * receiverBoundary.test.ts asserts the same contract at a finer grain;
+ * this runs it in the production scan so a bundle cannot be published
+ * from a tree that violates it.
+ */
+const RECEIVER_SCREEN_PATH = 'src/ui/screens/ReceiverScreen.tsx';
+const RECEIVER_FACADE_SPECIFIER = 'platforms/react-native/protocol/receiverPresentation';
+const RECEIVER_FORBIDDEN_AUTHORITY = [
+  'MspClient',
+  'RNMspTransport',
+  'mspSessionCoordinator',
+  'MspTelemetryScheduler',
+  'MSP_RC',
+  'MSP_SET_RX_CONFIG',
+  'MSP_SET_RX_MAP',
+  'MSP_SET_RSSI_CONFIG',
+  'MSP_SET_RC_DEADBAND',
+  'MSP_SET_FEATURE_CONFIG',
+  'MSP2_COMMON_SET_SERIAL_CONFIG',
+  'MSP_SET_RXFAIL_CONFIG',
+  'MSP_REBOOT',
+  'MSP_EEPROM_WRITE',
+  'encodeFeatureConfig',
+  'encodeChangedReceiverConfiguration',
+  'applyReceiverModeToFeatureMask',
+];
+
+function analyzeReceiverBoundary(sources) {
+  const source = sources[RECEIVER_SCREEN_PATH];
+  if (source === undefined) {
+    return { violations: [{ kind: 'MISSING_SCREEN', detail: RECEIVER_SCREEN_PATH }], ok: false };
+  }
+  const executable = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const violations = [];
+
+  const specifiers = [...executable.matchAll(/from\s+'([^']+)'/g)].map(match => match[1]);
+  if (!specifiers.some(specifier => specifier.endsWith(RECEIVER_FACADE_SPECIFIER))) {
+    violations.push({ kind: 'FACADE_NOT_USED', detail: RECEIVER_FACADE_SPECIFIER });
+  }
+  for (const specifier of specifiers) {
+    if (
+      specifier.includes('platforms/react-native/protocol') &&
+      !specifier.endsWith(RECEIVER_FACADE_SPECIFIER)
+    ) {
+      violations.push({ kind: 'BROAD_PROTOCOL_IMPORT', detail: specifier });
+    }
+  }
+  for (const token of RECEIVER_FORBIDDEN_AUTHORITY) {
+    if (executable.includes(token)) {
+      violations.push({ kind: 'RAW_AUTHORITY', detail: token });
+    }
+  }
+  return { violations, ok: violations.length === 0 };
+}
+
 function readSourceTree() {
   const files = [];
   collectSourceFiles(join(REPO_ROOT, 'src'), files);
@@ -974,7 +1076,9 @@ function main() {
   }
 
   const bundle = analyzeBundle(bundleText);
-  const boundaries = analyzeEngineBoundaries(readSourceTree());
+  const sourceTree = readSourceTree();
+  const boundaries = analyzeEngineBoundaries(sourceTree);
+  const receiverBoundary = analyzeReceiverBoundary(sourceTree);
 
   console.log(`Bundle size: ${bytes} bytes`);
   console.log(`Bundle SHA-256: ${sha256}`);
@@ -1052,19 +1156,50 @@ function main() {
     );
   }
 
-  if (!bundle.ok || !boundaries.ok) {
+  console.log('');
+  console.log('E. Receiver UI/protocol authority boundary (source)');
+  for (const entry of receiverBoundary.violations) {
+    if (entry.kind === 'FACADE_NOT_USED') {
+      console.error(
+        `   BOUNDARY BROKEN: ReceiverScreen no longer imports the narrow ${entry.detail} facade.`,
+      );
+    } else if (entry.kind === 'BROAD_PROTOCOL_IMPORT') {
+      console.error(
+        `   BOUNDARY CROSSED: ReceiverScreen imports ${JSON.stringify(
+          entry.detail,
+        )} - the broad platform barrel also exports RNMspTransport and the live session coordinator.`,
+      );
+    } else if (entry.kind === 'RAW_AUTHORITY') {
+      console.error(
+        `   RAW AUTHORITY IN UI: ReceiverScreen names ${JSON.stringify(
+          entry.detail,
+        )} in executable code.`,
+      );
+    } else {
+      console.error(`   ${entry.kind}: ${entry.detail}`);
+    }
+  }
+  if (receiverBoundary.ok) {
+    console.log(
+      `   ReceiverScreen reaches protocol only through receiverPresentation; ${RECEIVER_FORBIDDEN_AUTHORITY.length} raw-authority tokens absent from executable code.`,
+    );
+  }
+
+  if (!bundle.ok || !boundaries.ok || !receiverBoundary.ok) {
     console.error('');
     console.error('SCAN FAILED.');
     return 1;
   }
   console.log('');
   console.log(
-    'OK - no forbidden token present, engine and Arabic safety copy both shipped, positive controls present, engine boundary intact.',
+    'OK - no forbidden token present, engine and Arabic safety copy both shipped, positive controls present, engine and Receiver boundaries intact.',
   );
   return 0;
 }
 
 module.exports = {
+  analyzeReceiverBoundary,
+  RECEIVER_FORBIDDEN_AUTHORITY,
   analyzeBundle,
   analyzeEngineBoundaries,
   containsEitherForm,
