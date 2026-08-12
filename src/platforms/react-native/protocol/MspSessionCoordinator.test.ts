@@ -929,16 +929,26 @@ describe('MspSessionCoordinator - Pass 7.4 real telemetry scheduler integration'
     await flushAsync();
     expect(countAttitudeWrites()).toBe(1);
 
-    // The second tick is fairly available to the immediately-due slow
-    // battery poll, so it cannot create a second attitude dispatch.
-    await jest.advanceTimersByTimeAsync(50);
-    await flushAsync();
-    expect(countAttitudeWrites()).toBe(1);
-
-    // The next tick returns to the primary attitude channel.
+    // UPDATED BY RECEIVER P1, and the change is an improvement, not an
+    // accommodation. This assertion used to read 1 here and reach 2 only
+    // after a THIRD 50ms window, because the opportunity clock and the
+    // attitude interval were the same 50ms number: the immediately-due
+    // battery poll fairly took the single slot at t=50, and attitude -
+    // having missed it - could not retry until its next whole period, so
+    // a poll DECLARED at 50ms actually delivered at ~100ms.
+    //
+    // With the clock decoupled (10ms grid vs 50ms interval) the auxiliary
+    // still gets its own slot, but it now costs 10ms of grid rather than
+    // a whole attitude period, so attitude achieves its declared cadence.
     await jest.advanceTimersByTimeAsync(50);
     await flushAsync();
     expect(countAttitudeWrites()).toBe(2);
+
+    // Still exactly one dispatch per interval, never a catch-up burst:
+    // three 50ms windows produce three attitude writes, not more.
+    await jest.advanceTimersByTimeAsync(50);
+    await flushAsync();
+    expect(countAttitudeWrites()).toBe(3);
     coordinator.deactivateMspSession(SESSION_ID); // stop the real tick interval
   });
 

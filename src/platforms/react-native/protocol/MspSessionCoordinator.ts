@@ -127,9 +127,44 @@ const ATTITUDE_POLL_INTERVAL_MS = 50;
  * still flagging genuinely stopped data within half a second. */
 const ATTITUDE_POLL_STALE_AFTER_MS = 500;
 
-/** The tick cadence intentionally matches the fastest poll. tick() is a
- * safe no-op while the prior single-flight request is still outstanding. */
-const TELEMETRY_TICK_INTERVAL_MS = 50;
+/**
+ * THE SCHEDULER'S OPPORTUNITY CLOCK - deliberately NOT equal to any
+ * poll's interval.
+ *
+ * It used to be 50ms, "intentionally matching the fastest poll". Receiver
+ * P0 measured what that costs. tick() starts at most one dispatch, so the
+ * achieved period of any poll is quantised UP to a whole number of ticks:
+ * with the tick and the interval both 50ms, a round trip that takes 51ms
+ * misses its own slot entirely and waits for the next one, halving the
+ * delivered rate from ~19Hz to ~9Hz. Crossing one millisecond boundary
+ * cost half the sample rate, and no poll could ever exceed ~20Hz however
+ * fast the link was - declaring MSP_RC at 10ms still measured exactly
+ * 20.0Hz.
+ *
+ * Separating the two removes the cliff: the opportunity grid is now finer
+ * than every registered interval, so a poll resumes at the next 10ms
+ * boundary after its response instead of losing a whole period. Measured
+ * against the real scheduler, MSP_RC at a 33ms interval holds ~25Hz
+ * across service times from 5ms to 30ms and then degrades smoothly,
+ * rather than stepping 19 -> 9.
+ *
+ * 10ms, not smaller: the win is bounded by the quantisation error it
+ * removes (on average half a tick of added latency, so 5ms here), while
+ * the cost - a staleness sweep and a selection pass over a handful of
+ * polls - is paid on every fire. Going finer buys single-digit
+ * milliseconds and pays for them 100+ times a second.
+ *
+ * This is safe ONLY together with the scheduler's change-driven
+ * notification discipline (MspTelemetryScheduler's own notifyIfDirty
+ * note). Raising the tick rate while it still notified every subscriber
+ * on every tick would have replaced a cadence problem with a rendering
+ * one.
+ *
+ * tick() remains a safe no-op while the prior single-flight request is
+ * outstanding, so a finer grid creates no extra requests - only earlier
+ * opportunities to start the one that is already due.
+ */
+export const TELEMETRY_TICK_INTERVAL_MS = 10;
 
 /**
  * Pass 7.4, Step 3: RESERVED poll ids for a future pass's real armed-flag

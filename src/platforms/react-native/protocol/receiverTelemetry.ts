@@ -6,7 +6,41 @@ import {
 } from './MspSessionCoordinator';
 
 export const RECEIVER_CHANNELS_POLL_ID = 'receiver-channels-live';
-export const RECEIVER_CHANNELS_POLL_INTERVAL_MS = 50;
+
+/**
+ * REQUESTED live-RC interval. Not a promise of a delivered rate - the
+ * achieved cadence is transport-dependent and is measured, not declared
+ * (see MspTelemetryScheduler's observedSampleRateHz).
+ *
+ * Chosen against our own scheduler, not copied from another configurator.
+ * With the opportunity clock at 10ms (MspSessionCoordinator's own
+ * TELEMETRY_TICK_INTERVAL_MS note), a poll's steady-state period is its
+ * interval rounded up to the next 10ms boundary, so 33ms settles at a
+ * 40ms period - about 25 delivered samples per second whenever the link
+ * services a request inside that window.
+ *
+ * Why not lower: 30ms would land exactly on the grid and run ~33Hz, which
+ * buys little perceptually and spends noticeably more of a serialised
+ * link that also carries attitude, battery, GPS and status. At a 15ms
+ * service time, 33ms leaves roughly 60% of the link idle for them;
+ * chasing 40Hz would leave far less. Why not higher: 50ms is where the
+ * old cadence already sat.
+ *
+ * Anything in (30, 40] produces the same 40ms period; 33 is stated
+ * because it is the value the P0 model was built and re-verified on.
+ */
+export const RECEIVER_CHANNELS_POLL_INTERVAL_MS = 33;
+
+/**
+ * Audited at the P1 cadence rather than rescaled with it. 700ms is ~17
+ * missed samples at the new 40ms period (it was ~14 at the old 50ms one)
+ * - still comfortably under a second, so a genuinely frozen link is still
+ * flagged promptly. It must also stay well clear of the worst delivered
+ * gap on a SLOW but working link: at a 224ms service time the measured
+ * gap is ~230ms, so 700ms leaves 3x headroom and cannot flash a false
+ * stale state on a link that is merely slow. Deliberately unchanged.
+ */
+const RECEIVER_CHANNELS_STALE_AFTER_MS = 700;
 interface Registration {
   readonly generation: number;
   readonly scheduler: MspTelemetryScheduler;
@@ -38,7 +72,7 @@ export function acquireReceiverTelemetry(key: SetupUiSessionKey): () => void {
       id: RECEIVER_CHANNELS_POLL_ID,
       command: MSP_RC,
       intervalMs: RECEIVER_CHANNELS_POLL_INTERVAL_MS,
-      staleAfterMs: 700,
+      staleAfterMs: RECEIVER_CHANNELS_STALE_AFTER_MS,
       priority: 2,
       decode: decodeRcChannels,
     }),

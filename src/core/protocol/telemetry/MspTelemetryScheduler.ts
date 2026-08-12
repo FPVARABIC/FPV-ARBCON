@@ -122,6 +122,33 @@
  * timer of its own.
  *
  * ==========================================================================
+ * RECEIVER P1: (2) ABOVE IS NOW CHANGE-DRIVEN, NOT TICK-DRIVEN
+ * ==========================================================================
+ * Pass 7.4's "notify at the end of every tick(), unconditionally" was
+ * affordable only because tick() ran at 50ms. Receiver P1 drives it at
+ * 10ms so that a poll's achieved cadence stops being quantised to the
+ * same 50ms grid as its own requested interval (the measured defect: one
+ * round trip crossing 50ms halved the delivered sample rate). At 10ms the
+ * old rule would have meant 100 notifications per second to every mounted
+ * useTelemetryValue consumer, almost all of them reporting no change.
+ *
+ * tick() now ends in notifyIfDirty(). `dirty` is set by exactly the
+ * events that REPLACE a published snapshot:
+ *   - registerPoll / unregister      (UNAVAILABLE <-> WAITING)
+ *   - a dispatch settling            (FRESH or ERROR)
+ *   - FRESH -> STALE                 (published immediately, never throttled)
+ *   - an already-STALE age advancing  (throttled, see
+ *                                      STALE_AGE_REFRESH_INTERVAL_MS)
+ * Starting a dispatch is deliberately NOT one of them: it changes
+ * inFlight, which only describeDiagnostics() reads, and leaves getValue()
+ * identical.
+ *
+ * The FRESH->STALE guarantee (2) existed for is fully preserved - it is
+ * still tick(), and only tick(), that discovers staleness, and it still
+ * needs no timer of its own. What changed is that a tick which discovers
+ * nothing now stays silent.
+ *
+ * ==========================================================================
  * PASS 7.4: getValue() MUST BE A STABLE CACHE LOOKUP, NOT A LIVE COMPUTATION
  * ==========================================================================
  * getValue() originally (Pass 7.2) computed FRESH/STALE freshly on every
@@ -226,6 +253,13 @@ interface PollRuntimeState<T = unknown> {
   responseCount: number;
   errorCount: number;
   lastErrorCode: string | undefined;
+  /** Receiver P1 observed-cadence state. All bounded; see
+   * CADENCE_WINDOW_SAMPLES. Never read by any scheduling decision. */
+  dispatchStartedAtMs: number | undefined;
+  lastSampleAtMs: number | undefined;
+  deliveredSampleCount: number;
+  sampleGapsMs: number[];
+  serviceTimesMs: number[];
 }
 
 export interface MspTelemetryScheduler {
@@ -314,6 +348,54 @@ const UNAVAILABLE_VALUE: TelemetryValue<never> = {status: 'UNAVAILABLE'};
 const MAX_CONSECUTIVE_PRIMARY_DISPATCHES = 5;
 
 /**
+ * Receiver P1: how often a poll that is ALREADY stale republishes its
+ * growing age.
+ *
+ * Before P1 the scheduler notified every subscriber at the end of every
+ * tick() unconditionally, so the tick period doubled as the "stale age
+ * keeps incrementing" mechanism for free. P1 drives tick() five times
+ * faster (see MspSessionCoordinator's own TELEMETRY_TICK_INTERVAL_MS
+ * note), which would have turned that free ride into 100 notifications a
+ * second across every mounted useTelemetryValue consumer, for data that
+ * had not changed.
+ *
+ * Notification is therefore now change-driven (see notifyIfDirty), and an
+ * already-STALE poll counts as "changed" only once its published age has
+ * advanced by this much. The FRESH -> STALE transition itself is never
+ * quantised - it publishes the instant staleAfterMs is crossed.
+ *
+ * 250ms is chosen against the only consumers that read ageMs at all -
+ * orientationViewModel's STALE branch and the technical telemetry report
+ * - both of which render an age a human reads in tenths of a second at
+ * best. It bounds a stale poll to 4 notifications per second instead of
+ * 100, while staying far finer than any age either surface displays.
+ */
+const STALE_AGE_REFRESH_INTERVAL_MS = 250;
+
+/** Receiver P1: rolling window for the observed-cadence figures in
+ * describeDiagnostics(). Bounded on purpose - this is observability, and
+ * an unbounded history on a 25Hz poll would grow without limit for the
+ * life of a session. Twenty samples is ~0.8s at the Receiver cadence and
+ * ~1s at the attitude cadence: long enough to average out one slow round
+ * trip, short enough to still reflect the link's current behaviour rather
+ * than its behaviour a minute ago. */
+const CADENCE_WINDOW_SAMPLES = 20;
+
+/** Pushes onto a bounded FIFO window, dropping the oldest entry. */
+function pushBounded(window: number[], value: number): void {
+  window.push(value);
+  if (window.length > CADENCE_WINDOW_SAMPLES) {
+    window.shift();
+  }
+}
+
+function meanOf(values: readonly number[]): number | undefined {
+  return values.length === 0
+    ? undefined
+    : Math.round(values.reduce((total, value) => total + value, 0) / values.length);
+}
+
+/**
  * Checkpoint F: reduces any thrown value to a SHORT, ENUMERATED tag for
  * the diagnostics report.
  *
@@ -364,6 +446,11 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
   private inFlightCount = 0;
   private idleWaiters: Array<() => void> = [];
 
+  /** Receiver P1: set whenever a published snapshot actually changes -
+   * the only thing that now earns a subscriber notification. See
+   * notifyIfDirty(). */
+  private dirty = false;
+
   private lastDispatchedPriority: number | undefined;
   /**
    * A fast primary cadence must not make every slow auxiliary's normalized
@@ -394,8 +481,18 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       responseCount: 0,
       errorCount: 0,
       lastErrorCode: undefined,
+      dispatchStartedAtMs: undefined,
+      lastSampleAtMs: undefined,
+      deliveredSampleCount: 0,
+      sampleGapsMs: [],
+      serviceTimesMs: [],
     };
     this.polls.set(definition.id, state as PollRuntimeState);
+    // Registering changes what getValue(id) returns (UNAVAILABLE ->
+    // WAITING), so under the P1 change-driven discipline it must mark the
+    // scheduler dirty - otherwise a newly acquired poll would show
+    // nothing until some unrelated poll happened to settle.
+    this.dirty = true;
 
     return () => {
       // Only remove if this exact registration is still the one on
@@ -404,6 +501,9 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       // older unregister function called late.
       if (this.polls.get(definition.id) === (state as PollRuntimeState)) {
         this.polls.delete(definition.id);
+        // Symmetric with registration: WAITING/FRESH -> UNAVAILABLE is a
+        // real snapshot change for every subscriber.
+        this.dirty = true;
       }
     };
   }
@@ -449,17 +549,31 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       return;
     }
     const ageMs = now - poll.cachedValue.updatedAtMs;
-    if (ageMs >= poll.definition.staleAfterMs) {
-      // The sample itself is unchanged - only its age is - so it keeps
-      // its own sampleSeq. A STALE value is still sample N.
-      poll.cachedValue = {
-        status: 'STALE',
-        value: poll.cachedValue.value,
-        updatedAtMs: poll.cachedValue.updatedAtMs,
-        ageMs,
-        sampleSeq: poll.cachedValue.sampleSeq,
-      };
+    if (ageMs < poll.definition.staleAfterMs) {
+      return;
     }
+    // Receiver P1: the FRESH -> STALE crossing always publishes
+    // immediately - that is a genuine state change a UI must see at once.
+    // Re-publishing a value that is ALREADY stale only to advance its age
+    // is throttled to STALE_AGE_REFRESH_INTERVAL_MS, because tick() now
+    // runs five times faster and that path would otherwise notify every
+    // subscriber on every tick forever.
+    if (
+      poll.cachedValue.status === 'STALE' &&
+      ageMs - poll.cachedValue.ageMs < STALE_AGE_REFRESH_INTERVAL_MS
+    ) {
+      return;
+    }
+    // The sample itself is unchanged - only its age is - so it keeps
+    // its own sampleSeq. A STALE value is still sample N.
+    poll.cachedValue = {
+      status: 'STALE',
+      value: poll.cachedValue.value,
+      updatedAtMs: poll.cachedValue.updatedAtMs,
+      ageMs,
+      sampleSeq: poll.cachedValue.sampleSeq,
+    };
+    this.dirty = true;
   }
 
   tick(): void {
@@ -552,7 +666,7 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
       }
     }
 
-    this.notify();
+    this.notifyIfDirty();
   }
 
   subscribe(listener: () => void): () => void {
@@ -560,6 +674,29 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  /**
+   * Receiver P1: the change-driven replacement for the old
+   * notify-on-every-tick behaviour.
+   *
+   * Every path that REPLACES a published snapshot sets `dirty`
+   * (registration, unregistration, a dispatch settling, and the
+   * FRESH -> STALE / stale-age-advance transitions). Nothing else does -
+   * in particular, starting a dispatch is invisible to getValue() and so
+   * earns no notification.
+   *
+   * This is what makes a 10ms opportunity clock affordable: an idle
+   * scheduler with nothing changing now notifies zero times per second
+   * instead of one hundred, across every mounted useTelemetryValue
+   * consumer.
+   */
+  private notifyIfDirty(): void {
+    if (!this.dirty) {
+      return;
+    }
+    this.dirty = false;
+    this.notify();
   }
 
   private notify(): void {
@@ -597,7 +734,21 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     const polls: TelemetryPollDiagnostics[] = [];
     for (const poll of this.polls.values()) {
       const cached = poll.cachedValue;
+      const meanSampleGapMs = meanOf(poll.sampleGapsMs);
       polls.push({
+        deliveredSampleCount: poll.deliveredSampleCount,
+        meanSampleGapMs,
+        worstSampleGapMs: poll.sampleGapsMs.length === 0 ? undefined : Math.max(...poll.sampleGapsMs),
+        // Derived from DELIVERED samples only, never from intervalMs -
+        // the entire point is that the two can differ. Rounded to one
+        // decimal so a report reads 24.6Hz rather than 24.5901639344.
+        observedSampleRateHz:
+          meanSampleGapMs === undefined || meanSampleGapMs <= 0
+            ? undefined
+            : Math.round((1000 / meanSampleGapMs) * 10) / 10,
+        meanServiceMs: meanOf(poll.serviceTimesMs),
+        minServiceMs: poll.serviceTimesMs.length === 0 ? undefined : Math.min(...poll.serviceTimesMs),
+        maxServiceMs: poll.serviceTimesMs.length === 0 ? undefined : Math.max(...poll.serviceTimesMs),
         id: poll.definition.id,
         command: poll.definition.command,
         intervalMs: poll.definition.intervalMs,
@@ -659,6 +810,10 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     poll.dueAtMs = dispatchedAtMs + poll.definition.intervalMs;
     this.inFlightCount += 1;
     poll.requestCount += 1;
+    // Receiver P1 measurement seam: the request half of a round trip.
+    // Recorded for BOTH outcomes below - a timeout's cost is exactly the
+    // number a hardware service-time measurement most needs.
+    poll.dispatchStartedAtMs = dispatchedAtMs;
 
     const payload = poll.definition.requestPayload ?? EMPTY_PAYLOAD;
     Promise.resolve(this.requester.request(poll.definition.command, payload, REQUEST_OPTIONS))
@@ -667,7 +822,13 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         const updatedAtMs = this.clock.now();
         poll.lastOutcome = {type: 'success', value, updatedAtMs};
         poll.lastSuccessAtMs = updatedAtMs;
-        // THE canonical publication boundary for a genuine sample.
+        // THE canonical publication boundary for a genuine sample - and
+        // therefore the only place a delivered-sample GAP is meaningful.
+        if (poll.lastSampleAtMs !== undefined) {
+          pushBounded(poll.sampleGapsMs, updatedAtMs - poll.lastSampleAtMs);
+        }
+        poll.lastSampleAtMs = updatedAtMs;
+        poll.deliveredSampleCount += 1;
         poll.cachedValue = {status: 'FRESH', value, updatedAtMs, sampleSeq: this.nextSampleSeq++};
         poll.responseCount += 1;
       })
@@ -678,6 +839,10 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         poll.lastErrorCode = describeErrorCode(error);
       })
       .finally(() => {
+        if (poll.dispatchStartedAtMs !== undefined) {
+          pushBounded(poll.serviceTimesMs, this.clock.now() - poll.dispatchStartedAtMs);
+          poll.dispatchStartedAtMs = undefined;
+        }
         poll.inFlight = false;
         this.inFlightCount -= 1;
         if (this.inFlightCount === 0) {
@@ -685,7 +850,10 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
           this.idleWaiters = [];
           waiters.forEach(resolve => resolve());
         }
-        this.notify();
+        // A settle always replaced cachedValue (FRESH or ERROR), so this
+        // always notifies - the pre-P1 behaviour for this path exactly.
+        this.dirty = true;
+        this.notifyIfDirty();
       });
   }
 }

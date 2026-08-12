@@ -164,6 +164,39 @@ export type TelemetryPollDiagnostics = {
   readonly status: TelemetryValue<unknown>['status'];
   readonly sampleSeq?: number;
   readonly updatedAtMs?: number;
+  /**
+   * P1 (Receiver responsiveness): OBSERVED cadence, derived only from
+   * samples this scheduler actually delivered. These exist because
+   * `intervalMs` is a REQUEST, not an outcome - the whole Receiver P1
+   * finding was that the achieved rate can be a fraction of the declared
+   * one, and nothing in the app could tell the difference.
+   *
+   * Three separate concepts, deliberately not collapsed into one number:
+   *   intervalMs            - what we ASK for (already above)
+   *   meanSampleGapMs       - what we actually GET between delivered samples
+   *   mean/min/maxServiceMs - what the LINK costs per round trip
+   *
+   * Bounded rolling window (see CADENCE_WINDOW_SAMPLES); no unbounded
+   * history is retained. Undefined until enough samples exist to derive
+   * the figure. Reset with the poll registration, and therefore with the
+   * session, since the coordinator builds one scheduler per session.
+   *
+   * READ-ONLY OBSERVABILITY, exactly like the counters above: nothing
+   * here is consulted by tick(), selection, pausing, staleness or
+   * publication, nothing is transmitted anywhere, and no user-facing
+   * string may present these as a promised rate.
+   *
+   * Every field here is optional for the same reason `sampleSeq` above
+   * is: so this addition cannot invalidate an existing hand-built
+   * diagnostics literal. The scheduler always sets deliveredSampleCount.
+   */
+  readonly deliveredSampleCount?: number;
+  readonly meanSampleGapMs?: number;
+  readonly worstSampleGapMs?: number;
+  readonly observedSampleRateHz?: number;
+  readonly meanServiceMs?: number;
+  readonly minServiceMs?: number;
+  readonly maxServiceMs?: number;
 };
 
 /** Checkpoint F: read-only whole-scheduler observability. `pauseReasons`
