@@ -8,6 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import {
   filterCompatiblePresets,
   type FirmwarePresetCategory,
@@ -87,6 +88,7 @@ export default function PresetsScreen({
   repository = firmwarePresetRepository,
   cli = rawCliSessionController,
 }: Props): React.JSX.Element {
+  const { t } = useTranslation();
   const { maxWidth } = useContentEnvelope(true);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<string>();
@@ -559,8 +561,8 @@ export default function PresetsScreen({
           <Text style={styles.statusText}>{status}</Text>
         </View>
         <Text style={styles.hardware}>
-          REQUIRES HARDWARE TEST · نجاح إرسال CLI لا يثبت جودة الضبط أو سلامة
-          الطيران؛ اختبر على الطاولة بلا مراوح.
+          {t('hardwareVerification.behaviourTitle')} · نجاح إرسال CLI لا يثبت
+          جودة الضبط أو سلامة الطيران؛ اختبر على الطاولة بلا مراوح.
         </Text>
       </ScrollView>
     </View>

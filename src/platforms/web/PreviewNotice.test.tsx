@@ -38,11 +38,23 @@ function textOf(tree: ReactTestRenderer.ReactTestRenderer): string {
 }
 
 describe('PreviewNotice', () => {
-  it('states the REQUIRES HARDWARE TEST status verbatim', () => {
+  /**
+   * COPY CONTRACT CHANGED, DELIBERATELY.
+   *
+   * This used to pin the banner's headline verbatim, including the
+   * literal review token `REQUIRES HARDWARE TEST`. The operator opened
+   * the deployed build on a phone and read that English process term as
+   * the FIRST line of the product on every screen width - a local sweep
+   * of the real bundle at 360/390/412/768/1024/1366 confirmed it renders
+   * at the top of every one. The layout was fine; the vocabulary was
+   * ours, not the operator's. The banner keeps saying exactly the same
+   * true things, in their language.
+   */
+  it('names itself a preview under validation, without internal review vocabulary', () => {
     const tree = render();
 
     expect(textOf(tree)).toContain(
-      'نسخة معاينة — مسارات العتاد ما زالت REQUIRES HARDWARE TEST',
+      'نسخة معاينة قيد التحقق',
     );
     act(() => tree.unmount());
   });
@@ -60,7 +72,7 @@ describe('PreviewNotice', () => {
   it('promises no demo devices and no synthetic telemetry', () => {
     const tree = render();
 
-    expect(textOf(tree)).toContain('لا توجد أجهزة تجريبية ولا telemetry مصطنعة');
+    expect(textOf(tree)).toContain('لا توجد أجهزة تجريبية ولا قراءات مصطنعة');
     act(() => tree.unmount());
   });
 

@@ -63,11 +63,49 @@ controls and RTL *within* that identity.
 | `ChoiceChips` | per-screen chip radios | check + tint + border selection; 44px chips |
 | `SelectField` | any dropdown need | modal option sheet — **cannot** cover its own label, on any width |
 | `SettingRow` | ad-hoc title/desc/control stacks | side-by-side when `wide`, stacked otherwise |
-| `NoticeBox` | hand-rolled status boxes | danger / warning / success / info / **hardware** (REQUIRES HARDWARE TEST keeps its accent look) |
+| `NoticeBox` | hand-rolled status boxes | danger / warning / success / info / **hardware** (hardware verification keeps its accent look; see below for its copy) |
 
 Interaction states come from `readInteraction()` — hover is web-only and
 harmless on Android. `MIN_TOUCH_TARGET = 44` is exported from
 `controls/interaction.ts`; do not re-declare it per file.
+
+### The hardware-verification notice
+
+**The contract, in one line: the visual treatment is fixed by the design
+system, the words are fixed by the Arabic catalogue, and neither is
+allowed to be an English review token.**
+
+This convention used to be written down as the literal
+`REQUIRES HARDWARE TEST`, and nine shared screens rendered exactly that
+string to operators — on Android and in the browser alike, since these
+are the same files. That phrase is our own engineering process
+vocabulary. It belongs in comments, audit documents and test names; it
+does not belong in a product whose entire interface is Arabic.
+
+What the notice says has not changed and must not be weakened. A
+software ACK, a successful write-readback, or a green UI state proves
+storage and protocol correctness — never physical behaviour. Every one
+of these notices exists to say so.
+
+Two titles, both in `ar.json` under `hardwareVerification`:
+
+| Key | Arabic | Use when |
+|---|---|---|
+| `hardwareVerification.title` | يتطلب التحقق على جهاز فعلي | the operator must **look at or measure** the result on real hardware — OSD in the goggles, battery figures against a meter, VTX output on an analyser |
+| `hardwareVerification.behaviourTitle` | يتطلب اختبارًا على جهاز فعلي | the operator must **physically actuate something and watch what happens** — move TX switches, cut the RF link, move each sensor axis, run a bench or staged flight test |
+
+Rules for new notices:
+
+- Never inline either Arabic title at a call site; always go through `t()`,
+  so `i18nCoverage.test.ts` keeps guarding it and there is one place to
+  change the wording.
+- Never introduce a third variant of this phrase. If neither title fits,
+  the notice is probably a `danger` or `warning`, not a `hardware` one.
+- Keep the accent styling. The title changed; the visual language of
+  "unproven on real hardware" did not.
+- `src/ui/operatorVocabulary.test.ts` fails the build if an internal
+  review token reaches runtime source, and `scripts/scan-web-bundle.js`
+  fails it again if one reaches the shipped browser bundle.
 
 ## Color
 

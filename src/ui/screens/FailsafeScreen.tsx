@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
+import {useTranslation} from 'react-i18next';
 import {
   RX_FAILSAFE_MAX,
   RX_FAILSAFE_MIN,
@@ -55,7 +56,7 @@ function ChannelRow({index, draft, live, disabled, onChange}: {index: number; dr
 }
 
 export default function FailsafeScreen({sessionKey, active, onOpenReceiver, onOpenMotors, onDirtyChange, controller = failsafeConfigurationController}: FailsafeScreenProps): React.JSX.Element {
-  const {maxWidth} = useContentEnvelope(true); const {width, fontScale} = useWindowDimensions(); const wide = width / Math.max(1, fontScale) >= 900;
+  const {t} = useTranslation(); const {maxWidth} = useContentEnvelope(true); const {width, fontScale} = useWindowDimensions(); const wide = width / Math.max(1, fontScale) >= 900;
   const [phase, setPhase] = useState<Phase>('IDLE'); const [snapshot, setSnapshot] = useState<MspFailsafeSnapshot>(); const [draft, setDraft] = useState<FailsafeConfigurationDraft>(); const [loadOutcome, setLoadOutcome] = useState<FailsafeLoadOutcome>(); const [saveOutcome, setSaveOutcome] = useState<FailsafeSaveOutcome>(); const [reloadToken, setReloadToken] = useState(0);
   useEffect(() => {if (active && sessionKey !== undefined) return acquireReceiverTelemetry(sessionKey);}, [active, sessionKey]);
   useEffect(() => {if (!active || sessionKey === undefined) return; let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); controller.load(sessionKey).then(outcome => {if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') {setSnapshot(outcome.snapshot); setDraft(createFailsafeConfigurationDraft(outcome.snapshot)); setPhase('READY');} else {setSnapshot(undefined); setDraft(undefined); setPhase('ERROR');}}); return () => {cancelled = true;};}, [active, controller, reloadToken, sessionKey]);
@@ -70,7 +71,7 @@ export default function FailsafeScreen({sessionKey, active, onOpenReceiver, onOp
   return <View style={styles.root} testID="failsafe-screen"><ScrollView contentContainerStyle={[styles.content, {maxWidth}]}>
     <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.eyebrow}>FAILSAFE · RX FALLBACK · BETAFLIGHT API 1.47</Text><Text style={styles.title}>الأمان عند فقد الإشارة</Text><Text style={styles.subtitle}>اضبط زمن الحراسة، إجراء المرحلة الثانية، وسلوك كل قناة عند فقد النبض. لا يدّعي التطبيق أن الإعداد آمن للطيران قبل اختبار عتاد مضبوط.</Text></View>{snapshot !== undefined ? <View style={[styles.supportBadge, snapshot.supportsGpsRescue && styles.supportBadgeGood]}><Text style={styles.supportLabel}>GPS Rescue في البناء</Text><Text style={styles.supportValue}>{snapshot.supportsGpsRescue ? 'مدعوم' : 'غير مثبت'}</Text></View> : null}</View>
     <View style={styles.danger}><Text style={styles.dangerTitle}>اختبار Failsafe قد يسبب تسليحًا أو حركة غير متوقعة</Text><Text style={styles.dangerText}>انزع جميع المراوح، ثبّت الطائرة، واختبر أولًا عبر USB ومن دون LiPo إن أمكن. لا تختبره لأول مرة في الجو.</Text></View>
-    <View style={styles.hardware}><Text style={styles.hardwareTitle}>REQUIRES HARDWARE TEST</Text><Text style={styles.hardwareText}>الـpayload والحفظ والتحقق مختبرة؛ سلوك المستقبل والراديو وGPS Rescue لا يُثبت إلا بقطع الإشارة فعليًا على منصة آمنة.</Text></View>
+    <View style={styles.hardware}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>الـpayload والحفظ والتحقق مختبرة؛ سلوك المستقبل والراديو وGPS Rescue لا يُثبت إلا بقطع الإشارة فعليًا على منصة آمنة.</Text></View>
     <FailsafeLiveStatus sessionKey={sessionKey} active={active} />
     {loadingMessage !== undefined ? <View style={styles.warning} testID="failsafe-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} testID="failsafe-open-motors" /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="failsafe-reload" />}</View> : null}
     {draft !== undefined && snapshot !== undefined ? <>

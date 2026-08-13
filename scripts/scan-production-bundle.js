@@ -96,6 +96,18 @@ const FORBIDDEN_TOKENS = [
   'dev-open-motor-test',
   'DevBenchScreen',
   'DevBenchEntry',
+  // OUR OWN REVIEW VOCABULARY, held at zero in the shipped bundle.
+  //
+  // Nine shared screens rendered this English phrase as the title of
+  // their hardware warning. They are SHARED files, so Android carried it
+  // exactly as the browser did - which is why this guard is mirrored in
+  // scripts/scan-web-bundle.js rather than living only there. Comments,
+  // audit documents and test names keep the phrase and are stripped by
+  // the release build, so enforcing zero HERE separates engineering
+  // vocabulary from product copy without policing either one wrongly.
+  // The warning itself still ships; see the two hardware-verification
+  // titles in the required-Arabic list below.
+  'REQUIRES HARDWARE TEST',
 ];
 
 /**
@@ -280,6 +292,13 @@ const REQUIRED_ARABIC_STRINGS = [
   'التكوينات',
   'حفظ جراحي موثّق',
   'لا توجد روابط أو واجهات خارجية',
+  // The hardware-verification titles that replaced the English review
+  // token above. Required, not merely permitted: removing an internal
+  // phrase must not quietly remove the warning with it. A software ACK
+  // still proves storage, never physical behaviour, and these two lines
+  // are how the operator is told so.
+  'يتطلب التحقق على جهاز فعلي',
+  'يتطلب اختبارًا على جهاز فعلي',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous.

@@ -8,6 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import {
   rawCliSessionController,
   type CliCommandResult,
@@ -80,6 +81,7 @@ export default function CliScreen({
   onCliBusyChange,
   cli = rawCliSessionController,
 }: Props): React.JSX.Element {
+  const { t } = useTranslation();
   const { maxWidth } = useContentEnvelope(true);
   const [phase, setPhase] = useState<RawCliPhase>(() => cli.getPhase());
   const [output, setOutput] = useState(() => cli.getOutput());
@@ -480,8 +482,9 @@ export default function CliScreen({
           <Text style={styles.statusText}>{status}</Text>
         </View>
         <Text style={styles.hardware}>
-          REQUIRES HARDWARE TEST · نجاح prompt لا يثبت صحة الأمر أو ملاءمة الضبط
-          للطائرة؛ راجع مخرجات CLI واختبر على الطاولة بلا مراوح.
+          {t('hardwareVerification.behaviourTitle')} · نجاح prompt لا يثبت صحة
+          الأمر أو ملاءمة الضبط للطائرة؛ راجع مخرجات CLI واختبر على الطاولة بلا
+          مراوح.
         </Text>
       </ScrollView>
     </View>

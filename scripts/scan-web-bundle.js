@@ -80,6 +80,17 @@ const FORBIDDEN_TOKENS = [
   'debug-send-custom',
   'dev-open-motor-test',
   'DevBenchScreen',
+  // OUR OWN REVIEW VOCABULARY, held at zero in the shipped bundle.
+  //
+  // Nine shared screens rendered this English phrase as the title of
+  // their hardware warning, inside an Arabic-first product, on Android
+  // and in the browser alike. It is legitimate in comments, audit
+  // documents and test names - all of which the minifier strips or never
+  // sees - so a bundle-level zero is exactly the right place to enforce
+  // it: source keeps its engineering vocabulary, the operator never
+  // reads it. The warning itself did not go anywhere; see the two
+  // `hardwareVerification` titles in the required-Arabic list below.
+  'REQUIRES HARDWARE TEST',
 ];
 
 /** CATEGORY B - every entry must be PRESENT at least once. */
@@ -150,9 +161,18 @@ const REQUIRED_ARABIC_STRINGS = [
   // Firmware erase gates.
   'أزلت جميع المراوح',
   'تجاوز عدم تطابق Target',
-  // The browser-specific capability messages.
-  'هذا المتصفح لا يدعم Web Serial. استخدم Chrome أو Edge على سطح المكتب للاتصال بمتحكم الطيران.',
+  // The browser-specific capability messages. These are CAPABILITY
+  // statements, not device advice: the previous copy told every
+  // visitor to move to a desktop, which reads as a desktop-only
+  // product to someone holding a phone.
+  'هذا المتصفح لا يوفّر واجهة Web Serial المطلوبة للاتصال بمتحكم الطيران. جرّب Chrome أو Edge حديثًا عبر HTTPS.',
   'يتطلب الاتصال بجهاز USB صفحة آمنة عبر HTTPS. افتح التطبيق من عنوان HTTPS ثم أعد المحاولة.',
+  // The hardware-verification titles that replaced the English review
+  // token above. Required, not merely permitted: the point of removing
+  // an internal phrase is to say the same true thing in the operator's
+  // language, NOT to delete the warning. Both must ship.
+  'يتطلب التحقق على جهاز فعلي',
+  'يتطلب اختبارًا على جهاز فعلي',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous. */

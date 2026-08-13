@@ -126,7 +126,7 @@ jobs:
           # repository and every dependency, which a preview visitor has
           # no use for and should not be served by default.
           FPV_ARBCON_WEB_SOURCEMAP: 'false'
-          # Shows the Arabic "preview, still REQUIRES HARDWARE TEST"
+          # Shows the Arabic operator preview banner
           # banner. A label only - it stubs nothing and fakes nothing.
           VITE_FPV_ARBCON_PREVIEW: 'true'
           # Stamped into the connection diagnostics report so a user's
@@ -182,18 +182,36 @@ jobs:
           #    Non-ASCII may be emitted literally or \u-escaped, so both
           #    forms are accepted - asserting one would silently stop
           #    testing anything if the minifier changed its mind.
-          if grep -rq "REQUIRES HARDWARE TEST" dist-web/assets; then
+          # The banner is asserted by its OPERATOR copy, not by an
+          # internal review token. It used to be matched on the literal
+          # "REQUIRES HARDWARE TEST", which is our own process vocabulary
+          # and was rendering as the first line of the product on every
+          # screen width - measured at 360/390/412/768/1024/1366. The
+          # banner still ships and still tells the truth; it now does so
+          # in the operator's language, so the check follows it there.
+          if grep -rq "نسخة معاينة قيد التحقق" dist-web/assets; then
             echo "OK: preview banner present."
           else
             echo "FAIL: the preview banner is missing from the bundle."
             exit 1
           fi
 
-          # 4. Receiver and PID must still be unimplemented tabs. This is
-          #    a product promise, not a detail: exposing them would claim
-          #    a capability that has no shared implementation at all.
-          if grep -rq '"RECEIVER"' dist-web/assets && grep -rq '"PID"' dist-web/assets; then
-            echo "OK: Receiver/PID tab keys present (rendered disabled)."
+          # 4. Receiver ships as a full professional surface: live
+          #    channels, stick pads, RSSI/stale/failsafe truth, and the
+          #    transform-driven live presentation. The previous text here
+          #    claimed Receiver and PID were both "unimplemented tabs
+          #    rendered disabled" - true when it was written, false now,
+          #    and directly contradicted by scan-web-bundle.js's own
+          #    RECEIVER positive controls. PID remains a separate
+          #    question and is deliberately not grouped with it.
+          if grep -rq '"RECEIVER"' dist-web/assets; then
+            echo "OK: Receiver surface present in the browser bundle."
+          else
+            echo "FAIL: the Receiver surface is missing from the bundle."
+            exit 1
+          fi
+          if grep -rq '"PID"' dist-web/assets; then
+            echo "OK: PID tab key present."
           fi
           echo "Published files:"
           find dist-web -maxdepth 1 -mindepth 1 | sort

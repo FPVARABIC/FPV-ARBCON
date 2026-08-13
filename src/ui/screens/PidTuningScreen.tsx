@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
+import {useTranslation} from 'react-i18next';
 import {
   createPidTuningDraft, pidTuningDraftsEqual, validatePidTuningDraft,
   type FiltersDraft, type MspPidTuningSnapshot, type PidAxisDraft, type PidAxisKey,
@@ -102,7 +103,7 @@ function RateAxisCard({axisKey, title, value, rates, disabled, update}: {axisKey
 }
 
 export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDirtyChange, controller = pidTuningController}: PidTuningScreenProps): React.JSX.Element {
-  const {width, fontScale} = useWindowDimensions(); const {maxWidth} = useContentEnvelope(true); const wide = width / Math.max(fontScale, 1) >= 1040;
+  const {t} = useTranslation(); const {width, fontScale} = useWindowDimensions(); const {maxWidth} = useContentEnvelope(true); const wide = width / Math.max(fontScale, 1) >= 1040;
   const [phase, setPhase] = useState<Phase>('IDLE'); const [snapshot, setSnapshot] = useState<MspPidTuningSnapshot>(); const [draft, setDraft] = useState<PidTuningDraft>(); const [loadOutcome, setLoadOutcome] = useState<PidLoadOutcome>(); const [saveOutcome, setSaveOutcome] = useState<PidSaveOutcome>(); const [reloadToken, setReloadToken] = useState(0);
   useEffect(() => { if (!active || sessionKey === undefined) return; let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } }); return () => { cancelled = true; }; }, [active, controller, reloadToken, sessionKey]);
   const dirty = snapshot !== undefined && draft !== undefined && !pidTuningDraftsEqual(createPidTuningDraft(snapshot), draft);
@@ -122,7 +123,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   return <View style={styles.root} testID="pid-screen"><ScrollView contentContainerStyle={[styles.content, {maxWidth}]}>
     <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.eyebrow}>PID TUNING · BETAFLIGHT API 1.47</Text><Text style={styles.title}>ضبط PID وRates والفلاتر</Text><Text style={styles.subtitle}>اضبط استجابة المحاور ومعدلات الحركة والفلاتر الفعالة. الحفظ لا يبدأ إلا بعد إثبات DISARMED، ثم تُحفظ المجموعات المتغيرة فقط في EEPROM وتُقرأ مجددًا للتحقق.</Text></View><View style={styles.profileBadges}><View style={styles.profileBadge} testID="pid-active-profile"><Text style={styles.profileLabel}>PID Profile النشط</Text><Text style={styles.profileValue}>{snapshot === undefined ? '—' : `${snapshot.pidProfileIndex + 1} / ${snapshot.pidProfileCount}`}</Text></View><View style={styles.profileBadge} testID="pid-active-rates-profile"><Text style={styles.profileLabel}>Rates Profile النشط</Text><Text style={styles.profileValue}>{snapshot === undefined ? '—' : snapshot.controlRateProfileIndex + 1}</Text></View></View></View>
     <View style={styles.danger}><Text style={styles.dangerTitle}>تغيير PID قد يجعل الطائرة غير مستقرة</Text><Text style={styles.dangerText}>احفظ القيم الأصلية، غيّر تدريجيًا، وانزع المراوح أثناء الإعداد. لا يثبت نجاح MSP أن الضبط مناسب للطيران.</Text></View>
-    <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>REQUIRES HARDWARE TEST</Text><Text style={styles.hardwareText}>الترميز والقراءة الراجعة مختبران آليًا، لكن النتيجة الديناميكية لا يمكن اعتمادها دون Flight Controller وطائرة حقيقية واختبار متدرج آمن.</Text></View>
+    <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>الترميز والقراءة الراجعة مختبران آليًا، لكن النتيجة الديناميكية لا يمكن اعتمادها دون Flight Controller وطائرة حقيقية واختبار متدرج آمن.</Text></View>
     {loadingMessage !== undefined ? <View style={styles.warning} testID="pid-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} />}</View> : null}
     {draft !== undefined ? <>
       <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>المعاملات الأساسية</Text><Text style={styles.sectionHint}>P للتصحيح الحالي، I للخطأ المتراكم، D لتخميد التغير، وF لتتبع الأمر. الحدود من Betaflight 2025.12.2.</Text></View>

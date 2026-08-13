@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions} from 'react-native';
+import {useTranslation} from 'react-i18next';
 import {
   MODE_RANGE_MAX,
   MODE_RANGE_MIN,
@@ -171,6 +172,7 @@ function ModeCard({definition, snapshot, draft, sessionKey, active, disabled, on
 }
 
 export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyChange, controller = modesConfigurationController}: ModesScreenProps): React.JSX.Element {
+  const {t} = useTranslation();
   const {maxWidth} = useContentEnvelope(true);
   const {width, fontScale} = useWindowDimensions();
   const wide = width / Math.max(1, fontScale) >= 920;
@@ -265,7 +267,7 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
   return <View style={styles.root} testID="modes-screen">
     <ScrollView contentContainerStyle={[styles.content, {maxWidth}]}>
       <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.eyebrow}>MODES · AUXILIARY · BETAFLIGHT API 1.47</Text><Text style={styles.title}>الأوضاع ومفاتيح AUX</Text><Text style={styles.subtitle}>أنشئ نطاقات القنوات واربط الأوضاع ببعضها، مع حالة حية من متحكم الطيران وحفظ كامل لجدول الشروط ثم قراءة تحقق.</Text></View>{snapshot !== undefined && draft !== undefined ? <View style={styles.capacityBadge}><Text style={styles.capacityLabel}>خانات مستخدمة</Text><Text style={styles.capacityValue}>{draft.conditions.length} / {snapshot.capacity}</Text></View> : null}</View>
-      <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>REQUIRES HARDWARE TEST</Text><Text style={styles.hardwareText}>القراءة والـpayload والتحقق مختبرة آليًا، لكن يجب تحريك مفاتيح جهاز الإرسال ومشاهدة القيمة والحالة الحية على FC حقيقي بعد نزع المراوح.</Text></View>
+      <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>القراءة والـpayload والتحقق مختبرة آليًا، لكن يجب تحريك مفاتيح جهاز الإرسال ومشاهدة القيمة والحالة الحية على FC حقيقي بعد نزع المراوح.</Text></View>
       <View style={styles.warning}><Text style={styles.warningTitle}>لا تختبر ARM والمراوح مركبة</Text><Text style={styles.warningText}>المؤشر الحي يصف علم الوضع الذي يرسله Betaflight؛ لا يعني أن الاقتراب من الطائرة آمن.</Text></View>
       {loadingMessage !== undefined ? <View style={styles.loadError} testID="modes-load-message"><Text style={styles.loadErrorText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} testID="modes-open-motors" /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="modes-reload" />}</View> : null}
       {snapshot !== undefined && draft !== undefined ? <>

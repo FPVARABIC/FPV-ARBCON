@@ -1,6 +1,7 @@
 /* eslint-disable no-bitwise -- MSP_STATUS_EX sensor presence is a firmware bit mask. */
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import type {
   MspAltitude,
   MspRawImu,
@@ -125,6 +126,7 @@ export default function SensorsScreen({
   active,
   onOpenSetup,
 }: Props): React.JSX.Element {
+  const { t } = useTranslation();
   const { maxWidth } = useContentEnvelope(true);
   const sessionId = sessionKey?.sessionId ?? '';
   const imuState = useTelemetryValue<MspRawImu>(
@@ -278,7 +280,9 @@ export default function SensorsScreen({
           </View>
         </View>
         <View style={styles.hardware}>
-          <Text style={styles.hardwareTitle}>REQUIRES HARDWARE TEST</Text>
+          <Text style={styles.hardwareTitle}>
+            {t('hardwareVerification.behaviourTitle')}
+          </Text>
           <Text style={styles.hardwareText}>
             الحركة الفيزيائية المعروفة هي المرجع: حرّك كل محور منفردًا وتأكد من
             الإشارة، وضع الطائرة ثابتة ومستوًية لفحص الانحراف والضجيج.
