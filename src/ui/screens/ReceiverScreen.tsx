@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {Alert, Animated, Easing, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions} from 'react-native';
+import {Alert, Animated, Easing, I18nManager, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent} from 'react-native';
 import {useTranslation} from 'react-i18next';
 import {
   createReceiverConfigurationDraft, deriveReceiverRssi, receiverDraftsEqual,
@@ -99,6 +99,47 @@ export function channelDisplayFraction(value: number): number {
 export const CHANNEL_SMOOTHING_MS = 50;
 
 /**
+ * Stick-pad geometry, hoisted out of the stylesheet so the dot's travel
+ * can be computed from the same numbers the pad is drawn with.
+ *
+ * These are fixed style constants, not measured layout, so the dot needs
+ * NO onLayout and no per-sample measurement: the travel is a compile-time
+ * constant. The dot is centred on its own position (the negative margins
+ * in `stickDot`), so its centre sweeps the FULL pad edge to edge - which
+ * is exactly what the previous `left: '0%'..'100%'` positioning did,
+ * including the half-dot clipped at each extreme by the pad's
+ * `overflow: 'hidden'`.
+ */
+export const STICK_PAD_SIZE = 112;
+export const STICK_DOT_SIZE = 14;
+export const STICK_PAD_BORDER = 1;
+
+/**
+ * The dot's travel is the pad's PADDING box, not its border box.
+ *
+ * Measured regression, caught by the P2 responsive sweep: translating by
+ * the full 112px border-box size put the dot's centre at 113px inside a
+ * pad whose inner edge is at 111px, so at full deflection the dot pressed
+ * 2px past the corner and was flattened by the pad's `overflow: 'hidden'`
+ * instead of sitting on it - and every intermediate position was 1px out.
+ *
+ * The previous `left: '0%'..'100%'` did not have this problem because a
+ * percentage offset on an absolutely-positioned child resolves against
+ * the containing block's PADDING box, which excludes the 1px border. A
+ * pixel translation has to subtract that border explicitly.
+ */
+export const STICK_PAD_TRAVEL = STICK_PAD_SIZE - STICK_PAD_BORDER * 2;
+
+/** Dot centre offset, in pixels, for a 0..1 channel fraction. */
+export function stickDotTranslateX(fraction: number): number {
+  return fraction * STICK_PAD_TRAVEL;
+}
+/** Screen coordinates grow downward while stick travel grows upward. */
+export function stickDotTranslateY(fraction: number): number {
+  return (1 - fraction) * STICK_PAD_TRAVEL;
+}
+
+/**
  * ONE eased display position per channel, in 0..1, shared by that
  * channel's bar and by the stick pad that also draws it.
  *
@@ -148,7 +189,11 @@ function useSmoothedChannelPositions(channels: readonly number[], animate: boole
       if (position === undefined) return;
       const target = channelDisplayFraction(value);
       if (!glide) { position.setValue(target); return; }
-      const animation = Animated.timing(position, {toValue: target, duration: CHANNEL_SMOOTHING_MS, easing: Easing.out(Easing.quad), useNativeDriver: false});
+      // NATIVE DRIVER. Every style this node drives is a transform
+      // (scaleX for the bars, translateX/translateY for the stick dots),
+      // which is what makes `useNativeDriver: true` legal here - see
+      // ChannelRow and StickPad below, and the note on CHANNEL_SMOOTHING_MS.
+      const animation = Animated.timing(position, {toValue: target, duration: CHANNEL_SMOOTHING_MS, easing: Easing.out(Easing.quad), useNativeDriver: true});
       animation.start();
       running.push(animation);
     });
@@ -582,17 +627,58 @@ const PRIMARY_AXIS_KEYS = ['receiverScreen.axisRoll', 'receiverScreen.axisPitch'
  * P3-E/F/G: one live channel. The exact delivered integer is the loudest
  * element in the row; the bar is the supporting visualisation.
  */
+/**
+ * RECEIVER LIVE LATENCY P2: the fill is a FULL-WIDTH layer scaled on the
+ * X axis, not a layer whose `width` is animated.
+ *
+ * WHY. `width` is a layout property, and React Native's native animated
+ * driver supports only `opacity` and `transform`. Animating `width`
+ * therefore FORCES `useNativeDriver: false`, which makes every animation
+ * frame depend on the JavaScript execution path - the same path that is
+ * already servicing a 25Hz MSP_RC stream and React on the device. Phase 1
+ * eliminated the wire, the scheduler, the decoder, precision and sample
+ * backlog as causes of the operator's reported lag, leaving JS-driven
+ * layout animation as the remaining candidate. `scaleX` is
+ * native-driver-capable and carries exactly the same geometry.
+ *
+ * ANCHORING. A transform scales about the node's CENTRE, so `scaleX(f)`
+ * alone would shrink the bar toward the middle and grow it in both
+ * directions. The fill is re-anchored to the track's START edge by
+ * pairing the scale with a translation of half the removed width:
+ *
+ *     translateX = -(W / 2) * (1 - f)      (LTR: start edge is the left)
+ *     translateX = +(W / 2) * (1 - f)      (RTL: start edge is the right)
+ *
+ * Both are LINEAR in f, so each is a plain numeric interpolation of the
+ * same Animated.Value - no second node, and nothing that would disqualify
+ * the native driver. W comes from one onLayout on the track (the track is
+ * `flex: 1`, so its width is only known after layout); layout is measured
+ * when the row is laid out, never per sample and never per frame. Before
+ * the first layout W is 0, at which point the fill has no width to show
+ * anyway, so there is no incorrect intermediate frame.
+ */
 function ChannelRow({index, value, primary, stale, position}: {index: number; value: number; primary: boolean; stale: boolean; position: Animated.Value}) {
   const {t} = useTranslation();
   const label = primary ? t(PRIMARY_AXIS_KEYS[index]) : `AUX ${index - 3}`;
-  const width = useMemo(() => position.interpolate({inputRange: [0, 1], outputRange: ['0%', '100%']}), [position]);
+  const [trackWidth, setTrackWidth] = useState(0);
+  const handleTrackLayout = useCallback((event: LayoutChangeEvent) => {
+    const next = event.nativeEvent.layout.width;
+    setTrackWidth(previous => (Math.abs(previous - next) < 0.5 ? previous : next));
+  }, []);
+  // The physical start edge. A transform is physical and is NOT mirrored
+  // by RTL, so the anchor sign is chosen explicitly rather than inherited.
+  const anchorSign = I18nManager.isRTL ? 1 : -1;
+  const translateX = useMemo(
+    () => position.interpolate({inputRange: [0, 1], outputRange: [(anchorSign * trackWidth) / 2, 0]}),
+    [position, trackWidth, anchorSign],
+  );
   return <View style={[styles.channelRow, primary ? styles.channelRowPrimary : styles.channelRowAux]} testID={`receiver-channel-${index + 1}`} accessible accessibilityLabel={`${label}: ${value}`}>
     <Text style={primary ? styles.channelNamePrimary : styles.channelName} numberOfLines={1}>{label}</Text>
-    <View style={styles.channelTrack}>
+    <View style={styles.channelTrack} onLayout={handleTrackLayout}>
       {/* P3-G: a short ease follows real samples. It carries no data of
           its own and is dropped when the samples stop being fresh, so it
           can never imply motion that is not arriving. */}
-      <Animated.View style={[styles.channelFill, stale && styles.channelFillStale, {width}]} testID={`receiver-channel-${index + 1}-fill`} />
+      <Animated.View style={[styles.channelFill, stale && styles.channelFillStale, {transform: [{translateX}, {scaleX: position}]}]} testID={`receiver-channel-${index + 1}-fill`} />
       <View style={styles.channelCenter} />
     </View>
     <Text style={primary ? styles.channelValuePrimary : styles.channelValue}>{value}</Text>
@@ -613,14 +699,23 @@ function ChannelRow({index, value, primary, stale, position}: {index: number; va
  */
 function StickPad({horizontal, vertical, horizontalPosition, verticalPosition, horizontalLabel, verticalLabel, testID}: {horizontal?: number; vertical?: number; horizontalPosition: Animated.Value; verticalPosition: Animated.Value; horizontalLabel: string; verticalLabel: string; testID: string}) {
   const hasSample = horizontal !== undefined && vertical !== undefined;
-  const left = useMemo(() => horizontalPosition.interpolate({inputRange: [0, 1], outputRange: ['0%', '100%']}), [horizontalPosition]);
+  // RECEIVER LIVE LATENCY P2: translate, not left/top. `left` and `top`
+  // are layout properties and cannot be native-driven; translateX/Y can,
+  // and describe the same motion in pixels over the pad's fixed travel.
+  const translateX = useMemo(
+    () => horizontalPosition.interpolate({inputRange: [0, 1], outputRange: [stickDotTranslateX(0), stickDotTranslateX(1)]}),
+    [horizontalPosition],
+  );
   // Screen coordinates grow downward, stick travel grows upward: the SAME
   // node, read in the opposite direction, so no second value can drift.
-  const top = useMemo(() => verticalPosition.interpolate({inputRange: [0, 1], outputRange: ['100%', '0%']}), [verticalPosition]);
+  const translateY = useMemo(
+    () => verticalPosition.interpolate({inputRange: [0, 1], outputRange: [stickDotTranslateY(0), stickDotTranslateY(1)]}),
+    [verticalPosition],
+  );
   return <View style={styles.stickWrap} testID={testID}>
     <View style={styles.stickPad}>
       <View style={styles.crossH} /><View style={styles.crossV} />
-      {hasSample ? <Animated.View style={[styles.stickDot, {left, top}]} testID={`${testID}-position`} /> : null}
+      {hasSample ? <Animated.View style={[styles.stickDot, {transform: [{translateX}, {translateY}]}]} testID={`${testID}-position`} /> : null}
     </View>
     {/* Each label/value pair is its own isolated run so the Latin values
         cannot be reordered into the Arabic text around them. */}
@@ -743,7 +838,9 @@ const styles = StyleSheet.create({
   channelName: {...typography.caption, color: colors.textSecondary, width: 62, textAlign: 'right'},
   channelNamePrimary: {...typography.label, color: colors.textPrimary, fontWeight: '700', width: 62, textAlign: 'right'},
   channelTrack: {height: 14, flex: 1, minWidth: 80, borderRadius: 7, backgroundColor: colors.backgroundRaised, overflow: 'hidden', borderWidth: 1, borderColor: colors.borderSoft},
-  channelFill: {height: '100%', backgroundColor: colors.accent},
+  /* Full width, scaled on X. See ChannelRow: `width` is a layout
+     property and cannot be native-driven, `scaleX` can. */
+  channelFill: {height: '100%', width: '100%', backgroundColor: colors.accent},
   channelFillStale: {backgroundColor: colors.disabled},
   channelCenter: {position: 'absolute', top: 0, bottom: 0, left: '50%', width: 1, backgroundColor: colors.accentStrong},
   // P3-E: the delivered value is a prominent, tabular figure - never the
@@ -770,10 +867,14 @@ const styles = StyleSheet.create({
      noise. Proven on both sides: ReceiverScreenContract asserts the
      native pin, ReceiverScreen.web asserts the web render emits no
      dropped-style error and positions the dot physically. */
-  stickPad: {width: 112, height: 112, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.backgroundRaised, overflow: 'hidden', ...(Platform.OS === 'web' ? null : {direction: 'ltr' as const})},
+  stickPad: {width: STICK_PAD_SIZE, height: STICK_PAD_SIZE, borderRadius: radii.md, borderWidth: STICK_PAD_BORDER, borderColor: colors.border, backgroundColor: colors.backgroundRaised, overflow: 'hidden', ...(Platform.OS === 'web' ? null : {direction: 'ltr' as const})},
   crossH: {position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: colors.border},
   crossV: {position: 'absolute', top: 0, bottom: 0, left: '50%', width: 1, backgroundColor: colors.border},
-  stickDot: {position: 'absolute', width: 14, height: 14, borderRadius: 7, marginLeft: -7, marginTop: -7, backgroundColor: colors.accentStrong, borderWidth: 2, borderColor: colors.accent},
+  /* Pinned at the pad origin and moved by transform. The negative
+     margins keep the DOT'S CENTRE on the origin, exactly as the previous
+     left/top percentage positioning did, so the travel and the clipping
+     at the pad edges are unchanged. */
+  stickDot: {position: 'absolute', left: 0, top: 0, width: STICK_DOT_SIZE, height: STICK_DOT_SIZE, borderRadius: STICK_DOT_SIZE / 2, marginLeft: -STICK_DOT_SIZE / 2, marginTop: -STICK_DOT_SIZE / 2, backgroundColor: colors.accentStrong, borderWidth: 2, borderColor: colors.accent},
   stickLabelRow: {flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap', justifyContent: 'center'},
   stickLabel: {...typography.caption, color: colors.textMuted},
   stickLabelValue: {...typography.caption, color: colors.textPrimary, fontWeight: '700', fontVariant: ['tabular-nums']},

@@ -170,15 +170,23 @@ describe('ReceiverScreen under real react-native-web', () => {
     expect(text('receiver-channel-16')).toContain('1800');
   });
 
-  it('gives every bar a DOM width the animated node actually drives', async () => {
+  /**
+   * RECEIVER LIVE LATENCY P2: the bar's geometry moved from an animated
+   * `width` percentage to a native-driver-capable `scaleX` transform, and
+   * the stick dot from `left`/`top` to `translateX`/`translateY`. This
+   * asserts react-native-web actually emits those transforms, because a
+   * transform the web renderer silently dropped would leave the bar
+   * frozen at full width and the dot pinned at the pad origin.
+   */
+  it('gives every bar a DOM transform the animated node actually drives', async () => {
     await mount();
     const fill = q('receiver-channel-1-fill') as HTMLElement;
     expect(fill).not.toBeNull();
-    // (1612-800)/1400 -> 58%. An animated interpolation that the web
-    // renderer failed to apply would leave this empty.
-    expect(fill.style.width).toBe(`${((1612 - 800) / 1400) * 100}%`);
+    // Full-width layer, scaled on X. (1612-800)/1400 -> 0.58.
+    expect(fill.style.transform).toContain('scaleX(0.58');
     const dot = q('receiver-stick-right-position') as HTMLElement;
-    expect(dot.style.left).toBe(fill.style.width);
+    // 0.58 of the pad's 110px inner travel -> 63.8px.
+    expect(dot.style.transform).toContain('translateX(63.8');
   });
 
   it('positions the stick dot physically, so the pad cannot mirror with the Arabic text', async () => {
@@ -189,7 +197,9 @@ describe('ReceiverScreen under real react-native-web', () => {
     // direction pin, which react-native-web does not support (see the
     // stickPad style comment).
     const dot = q('receiver-stick-right-position') as HTMLElement;
-    expect(dot.style.left).toBe(`${((1612 - 800) / 1400) * 100}%`);
+    // translateX is a PHYSICAL displacement - it is not mirrored by RTL,
+    // which is exactly the property this diagram needs.
+    expect(dot.style.transform).toContain('translateX(63.8');
     expect(dot.style.right).toBe('');
     // While the Arabic labels around it stay in the page's RTL flow.
     expect(text('receiver-sticks-card')).toContain('حركة العصي');
@@ -368,7 +378,7 @@ describe('ReceiverScreen under real react-native-web', () => {
   it('keeps the P3 bar animation working alongside the new controls', async () => {
     await mount();
     const fill = q('receiver-channel-1-fill') as HTMLElement;
-    expect(fill.style.width).toBe(`${((1612 - 800) / 1400) * 100}%`);
+    expect(fill.style.transform).toContain('scaleX(0.58');
     expect(q('receiver-live-monitor')).not.toBeNull();
   });
 
