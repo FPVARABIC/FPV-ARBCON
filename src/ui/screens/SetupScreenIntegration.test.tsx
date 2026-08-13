@@ -660,7 +660,10 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       // Region 5 enabled controls - all from the same session.
       expect(text).toContain('متوافق مع واجهة MSP 1.47');
       expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
-      expect(text).toEqual(expect.arrayContaining(['ACC', 'GYRO']));
+      // SETUP P1: sensors are named with their own detection state.
+      expect(text).toEqual(
+        expect.arrayContaining(['ACC — مكتشف', 'GYRO — مكتشف']),
+      );
     },
   );
 
@@ -752,8 +755,12 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       // "ACC" is now also a permanent visual mark on the calibration
       // card, so only the live diagnostics region can prove that the
       // replacement generation did not inherit the old ACC bit.
-      expect(sensorText).toContain('GYRO');
-      expect(sensorText).not.toContain('ACC');
+      // SETUP P1: an exhaustive list makes this assertion STRONGER - the
+      // replacement generation's mask must show GYRO detected AND ACC
+      // explicitly not detected, rather than merely omitting ACC.
+      expect(sensorText).toContain('GYRO — مكتشف');
+      expect(sensorText).toContain('ACC — غير مكتشف');
+      expect(sensorText).not.toContain('ACC — مكتشف');
 
       // The dead client emitting a late frame changes nothing.
       const beforeLateFrame = allText(renderer);

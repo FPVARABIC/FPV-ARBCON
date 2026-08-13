@@ -19,7 +19,6 @@ export type {
 } from './orientationStability';
 
 export {
-  deriveArmingReadiness,
   rankArmingBlockReasons,
   selectTopArmingBlockReasons,
 } from './armingReadiness';
@@ -27,8 +26,33 @@ export type {
   ArmingBlockSeverity,
   ArmingBlockReason,
   ArmingReadiness,
+  ArmingReadinessUnknownCause,
   ArmingBlockReasonSelection,
 } from './armingReadiness';
+
+export {
+  describeArmingBlockers,
+  deriveSetupArmingReadiness,
+  deriveSetupSafetyFlags,
+  deriveSetupRebootRequired,
+  deriveSetupSensorSummary,
+  deriveSetupWarnings,
+  SETUP_SENSOR_TOKENS,
+  SETUP_SENSOR_TOKENS_MATCH_DECODER,
+} from './setupSafetyModel';
+export type {
+  SetupSafetyFlagState,
+  SetupSafetyFlags,
+  SetupSensorState,
+  SetupSensorEntry,
+  SetupSensorSummary,
+  SetupUnknownSensorBit,
+  SetupWarning,
+  SetupWarningId,
+  SetupWarningInput,
+  SetupWarningOwner,
+  SetupWarningSeverity,
+} from './setupSafetyModel';
 
 export { pickTopNotice } from './setupNotice';
 export type {

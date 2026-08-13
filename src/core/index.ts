@@ -624,7 +624,6 @@ export type {
   OrientationStabilityResult,
 } from './state';
 export {
-  deriveArmingReadiness,
   rankArmingBlockReasons,
   selectTopArmingBlockReasons,
 } from './state';
@@ -632,7 +631,31 @@ export type {
   ArmingBlockSeverity,
   ArmingBlockReason,
   ArmingReadiness,
+  ArmingReadinessUnknownCause,
   ArmingBlockReasonSelection,
+} from './state';
+export {
+  describeArmingBlockers,
+  deriveSetupArmingReadiness,
+  deriveSetupSafetyFlags,
+  deriveSetupRebootRequired,
+  deriveSetupSensorSummary,
+  deriveSetupWarnings,
+  SETUP_SENSOR_TOKENS,
+  SETUP_SENSOR_TOKENS_MATCH_DECODER,
+} from './state';
+export type {
+  SetupSafetyFlagState,
+  SetupSafetyFlags,
+  SetupSensorState,
+  SetupSensorEntry,
+  SetupSensorSummary,
+  SetupUnknownSensorBit,
+  SetupWarning,
+  SetupWarningId,
+  SetupWarningInput,
+  SetupWarningOwner,
+  SetupWarningSeverity,
 } from './state';
 export { pickTopNotice } from './state';
 export type {

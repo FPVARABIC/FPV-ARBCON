@@ -75,6 +75,7 @@ import {
   OrientationHero,
   OrientationStabilityPanel,
   SafetyStrip,
+  SetupSafetyNotices,
   BatteryCard,
   ReceiverCard,
   GpsCard,
@@ -82,27 +83,36 @@ import {
   DiagnosticsSection,
   FcToolsSection,
 } from '../components/setup';
+// SETUP P1: every protocol/session read now goes through the read-only
+// Setup presentation boundary. `mspSessionCoordinator` and the raw
+// telemetry poll ids are no longer reachable from this file - which is
+// what makes the P0 defect unrepresentable rather than merely fixed: a
+// screen that cannot name a poll id cannot subscribe to one that nothing
+// registers. Commands remain a separate, explicit import
+// (fcToolsController), so Setup's own capability stays visible.
 import {
-  useTelemetryValue,
-  useMspOwnershipState,
-  useMspIdentificationState,
-  useMspRecoveryState,
+  useSetupAttitude,
+  useSetupBattery,
+  useSetupReceiver,
+  useSetupGps,
+  useSetupStatus,
+  useSetupChannelState,
+  useSetupConnected,
+  useSetupIdentificationState,
+  useSetupRecoveryState,
   useSetupAppStatePhase,
-  useFcToolArmedState,
+  useSetupArmedState,
+  readSetupFreshAttitude,
+  readSetupOwnershipState,
+  readSetupIdentificationStatus,
+  readSetupTelemetryDiagnostics,
+  readSetupAppStatePhase,
+  startSetupTelemetryOwnership,
+  ensureSetupArmedStateAvailable,
+} from '../../platforms/react-native/protocol/setupPresentation';
+import {
   useFcToolPublication,
-  fcToolsController,
-  useAuxTelemetryChannelState,
-  useBatteryLatchedValue,
-  setupAppStateTelemetryOwner,
   setupUiSessionStore,
-  mspSessionCoordinator,
-  ATTITUDE_TELEMETRY_POLL_ID,
-  ARMED_TELEMETRY_POLL_ID,
-  ARMING_BLOCKERS_TELEMETRY_POLL_ID,
-  BATTERY_TELEMETRY_POLL_ID,
-  RECEIVER_TELEMETRY_POLL_ID,
-  GPS_TELEMETRY_POLL_ID,
-  FC_STATUS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 // Checkpoint F - "نسخ تقرير التليمترية". Web-only by the same file
@@ -114,20 +124,16 @@ import {
 } from '../../platforms/telemetryReport';
 import { orientationRenderObserver } from '../orientation3d/orientationRenderObserver';
 import {
+  deriveBatterySemantics,
   deriveOrientationViewState,
-  deriveArmingReadiness,
+  deriveSetupArmingReadiness,
+  deriveSetupSafetyFlags,
+  deriveSetupRebootRequired,
+  deriveSetupWarnings,
   isGpsPresent,
   deriveSetupDiagnostics,
 } from '../../core';
-import type {
-  MspAttitude,
-  MspBatteryState,
-  MspAnalog,
-  MspRawGpsCompact,
-  MspStatusExDiagnostics,
-  ArmingBlockReason,
-  OrientationViewOffset,
-} from '../../core';
+import type { OrientationViewOffset } from '../../core';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'> & {
   readonly onOpenGps?: () => void;
@@ -205,64 +211,29 @@ function SetupScreenContent({
   // the 1180px reading cap. See useContentEnvelope.ts.
   const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
 
-  const armed = useTelemetryValue<boolean>(
-    sessionId,
-    ARMED_TELEMETRY_POLL_ID,
-    active,
-  );
-  const blockers = useTelemetryValue<ArmingBlockReason[]>(
-    sessionId,
-    ARMING_BLOCKERS_TELEMETRY_POLL_ID,
-    active,
-  );
-  // Pass 7.6b: the same generic hook/scheduler path attitude uses - the
-  // poll itself exists only for identified-compatible Betaflight sessions
-  // (Pass 7.6a), so every other session renders the card's honest
-  // "unavailable" state through the exact same UNAVAILABLE mechanism.
-  const batteryPolled = useTelemetryValue<MspBatteryState>(
-    sessionId,
-    BATTERY_TELEMETRY_POLL_ID,
-    active,
-  );
-  // Pass 7.7: once the one-strike battery timeout breaker has fired, the
-  // poll is unregistered (scheduler reports UNAVAILABLE). The latch is the
-  // truthful replacement: the pre-timeout reading frozen as STALE (no
-  // longer updating), or a read-timeout ERROR when nothing ever succeeded.
-  const batteryLatched = useBatteryLatchedValue(sessionId);
-  const battery = batteryLatched ?? batteryPolled;
+  // SETUP P1: the `armed` and `armingBlockers` subscriptions are GONE.
+  // Nothing in this application registers those two poll ids (the
+  // coordinator documents both as reserved placeholders), so they
+  // returned UNAVAILABLE forever and pinned the safety strip and the
+  // top-bar badge to "arming state not confirmed" - while the FC tools on
+  // this same screen correctly reported the aircraft as ARMED. The armed
+  // truth now comes from the one authoritative source, below.
 
-  // Pass 7.6c: Region 3's remaining channels - the same generic hook/
-  // scheduler path, plus the per-channel circuit-breaker verdicts from
-  // the coordinator.
-  const receiver = useTelemetryValue<MspAnalog>(
-    sessionId,
-    RECEIVER_TELEMETRY_POLL_ID,
-    active,
-  );
-  const gps = useTelemetryValue<MspRawGpsCompact>(
-    sessionId,
-    GPS_TELEMETRY_POLL_ID,
-    active,
-  );
-  const fcStatus = useTelemetryValue<MspStatusExDiagnostics>(
-    sessionId,
-    FC_STATUS_TELEMETRY_POLL_ID,
-    active,
-  );
-  const receiverChannelState = useAuxTelemetryChannelState(
-    sessionId,
-    RECEIVER_TELEMETRY_POLL_ID,
-  );
-  const gpsChannelState = useAuxTelemetryChannelState(
-    sessionId,
-    GPS_TELEMETRY_POLL_ID,
-  );
-  const fcChannelState = useAuxTelemetryChannelState(
-    sessionId,
-    FC_STATUS_TELEMETRY_POLL_ID,
-  );
-  const ownershipState = useMspOwnershipState(sessionId);
-  const connected = ownershipState === 'ACTIVE';
+  // Pass 7.6b: the poll exists only for identified-compatible Betaflight
+  // sessions (Pass 7.6a), so every other session renders the card's
+  // honest "unavailable" state through the same UNAVAILABLE mechanism.
+  // The one-strike timeout latch is applied inside the facade.
+  const battery = useSetupBattery(sessionId, active);
+
+  // Pass 7.6c: Region 3's remaining channels, plus the per-channel
+  // circuit-breaker verdicts.
+  const receiver = useSetupReceiver(sessionId, active);
+  const gps = useSetupGps(sessionId, active);
+  const fcStatus = useSetupStatus(sessionId, active);
+  const receiverChannelState = useSetupChannelState(sessionId, 'RECEIVER');
+  const gpsChannelState = useSetupChannelState(sessionId, 'GPS');
+  const fcChannelState = useSetupChannelState(sessionId, 'FC_STATUS');
+  const connected = useSetupConnected(sessionId);
 
   const freshStatusValue =
     fcStatus.status === 'FRESH' || fcStatus.status === 'STALE'
@@ -272,7 +243,7 @@ function SetupScreenContent({
   // Pass 7.7, Region 4: derived from the SAME identification state
   // Region 1 already reads and the SAME single FC-status poll Region 3
   // already renders - no second reader, no extra command.
-  const identification = useMspIdentificationState(sessionId);
+  const identification = useSetupIdentificationState(sessionId);
   const diagnosticsView = deriveSetupDiagnostics({
     connected,
     channelState: fcChannelState,
@@ -289,19 +260,22 @@ function SetupScreenContent({
   // at-most-once BOXIDS mapping (never from the blocker mask, never
   // guessed); the effect below starts that one acquisition after a
   // compatible identification, and never polls it.
-  const recoveryState = useMspRecoveryState(sessionId);
+  const recoveryState = useSetupRecoveryState(sessionId);
   const appStatePhase = useSetupAppStatePhase();
-  const cachedArmedState = useFcToolArmedState(sessionId, freshStatusValue);
+  // SETUP P1: THE single armed source on this screen. The FC tools gate
+  // on this exact value, so the safety strip, the top-bar badge and the
+  // tool buttons cannot contradict one another about ARMED.
+  const armedState = useSetupArmedState(sessionId, freshStatusValue);
   // Deliberately dependency-free: the composite readiness identity is
   // (physicalGeneration, mspEpoch), and the epoch can change without any
   // rendered value changing with it (a desync/recovery cycle that
-  // settles back to READY within one batch). ensureBoxIdsMapping() is
+  // settles back to READY within one batch). The acquisition is
   // idempotent and returns immediately when the CURRENT identity has
   // already settled or is already in flight, so this is at most ONE
   // MSP_BOXIDS request per identity - never a poll, and never a retry
   // inside an identity.
   useEffect(() => {
-    fcToolsController.ensureBoxIdsMapping(sessionId);
+    ensureSetupArmedStateAvailable(sessionId);
   });
 
   // GPS presence proof comes from the SHARED MSP_STATUS_EX decode (a
@@ -316,8 +290,7 @@ function SetupScreenContent({
   // AppState listener or a second polling owner, and unmounting the
   // screen does NOT close the coordinator-owned physical session.
   useEffect(() => {
-    setupAppStateTelemetryOwner.start();
-    setupAppStateTelemetryOwner.track(sessionId);
+    startSetupTelemetryOwnership(sessionId);
   }, [sessionId]);
 
   // A new PHYSICAL session (new coordinator generation) must never read
@@ -332,11 +305,58 @@ function SetupScreenContent({
     setupUiSessionStore.getState(sessionKey),
   );
 
-  // Computed ONCE, threaded to both SafetyStrip and TopSystemBar's Row 2
-  // arming badge - per Step 4's own established design, avoiding two
-  // independently-derived ArmingReadiness values that could diverge by
-  // a render tick.
-  const armingReadiness = deriveArmingReadiness(armed, blockers);
+  // SETUP P1 - THE ONE SAFETY MODEL.
+  //
+  // Computed ONCE and threaded to both SafetyStrip and TopSystemBar's
+  // arming badge, so the two surfaces cannot diverge - the same design
+  // Step 4 established, now fed by evidence that actually exists.
+  //
+  // ARMED comes from the canonical BOXIDS + STATUS_EX path; the blocker
+  // verdict comes from the SAME diagnostics view Region 4 renders, so
+  // "the strip says blocked" and "the diagnostics list says blocked" are
+  // by construction the same reading. No second decode, no second poll.
+  const armingReadiness = deriveSetupArmingReadiness(
+    armedState,
+    diagnosticsView.blockers,
+  );
+  // RXLOSS / FAILSAFE / BOXFAILSAFE stay three SEPARATE facts, from that
+  // same blocker evidence - never merged into one vague receiver problem.
+  const safetyFlags = deriveSetupSafetyFlags(diagnosticsView.blockers);
+  // The firmware's own reboot-required bit, off the STATUS_EX frame Setup
+  // already polls. Only a FRESH reading may assert either answer: a stale
+  // frame must not leave the warning glowing as though it were current.
+  const rebootRequired = deriveSetupRebootRequired(
+    freshStatusValue?.readiness.rebootRequired,
+    diagnosticsView.dataState,
+    freshStatusValue?.readiness.malformedTail === true,
+  );
+  // The firmware's own battery enum, via the SAME semantics BatteryCard
+  // renders - no second mapping table. An unrecognised raw value stays
+  // {kind:'UNKNOWN'} and is deliberately dropped here rather than
+  // degrading to a false all-clear or a fabricated warning.
+  const batterySemantics =
+    battery.status === 'FRESH' ? deriveBatterySemantics(battery.value) : undefined;
+  const batteryFirmwareState =
+    typeof batterySemantics?.firmwareState === 'string'
+      ? batterySemantics.firmwareState
+      : undefined;
+  // P1 builds the warning model; P2 owns rendering a warning region.
+  // Deriving it here now means the truth is proven and tested before any
+  // layout depends on it.
+  const setupWarnings = deriveSetupWarnings({
+    connected,
+    recovering: recoveryState !== undefined && recoveryState !== 'READY',
+    armed: armedState,
+    readinessStatus: armingReadiness.status,
+    flags: safetyFlags,
+    rebootRequired,
+    receiverSignalUnavailable:
+      connected &&
+      (receiverChannelState !== 'ACTIVE' ||
+        receiver.status === 'ERROR' ||
+        receiver.status === 'UNAVAILABLE'),
+    batteryState: batteryFirmwareState,
+  });
 
   const handleResetView = useCallback(() => {
     // Read the AUTHORITATIVE state at press time, from the coordinator
@@ -345,18 +365,13 @@ function SetupScreenContent({
     // tap already in flight, or a stale reference held by a queued event
     // - would otherwise capture a sample belonging to a session that has
     // since ended, and store it as this session's heading reference.
-    if (mspSessionCoordinator.getOwnershipState(sessionId) !== 'ACTIVE') {
-      return;
-    }
-    const current = mspSessionCoordinator
-      .getTelemetryScheduler(sessionId)
-      ?.getValue<MspAttitude>(ATTITUDE_TELEMETRY_POLL_ID);
-    if (current === undefined || current.status !== 'FRESH') {
+    const current = readSetupFreshAttitude(sessionId);
+    if (current === undefined) {
       return;
     }
     setupUiSessionStore.resetOrientationViewOffset(
       sessionKey,
-      current.value.yawDegrees,
+      current.yawDegrees,
     );
     setUiState(setupUiSessionStore.getState(sessionKey));
   }, [sessionKey, sessionId]);
@@ -380,14 +395,11 @@ function SetupScreenContent({
     copyTelemetryReportToClipboard({
       sessionId,
       generation: sessionKey.generation,
-      ownershipState: mspSessionCoordinator.getOwnershipState(sessionId),
-      identificationStatus:
-        mspSessionCoordinator.getIdentificationState(sessionId).status,
-      appStatePhase: setupAppStateTelemetryOwner.getPhase(),
+      ownershipState: readSetupOwnershipState(sessionId),
+      identificationStatus: readSetupIdentificationStatus(sessionId),
+      appStatePhase: readSetupAppStatePhase(),
       setupActive: active,
-      scheduler: mspSessionCoordinator
-        .getTelemetryScheduler(sessionId)
-        ?.describeDiagnostics(),
+      scheduler: readSetupTelemetryDiagnostics(sessionId),
       render: orientationRenderObserver.read(),
       wallClockMs: Date.now(),
     })
@@ -439,7 +451,7 @@ function SetupScreenContent({
             dataState: diagnosticsView.dataState,
             readingMalformed:
               freshStatusValue?.readiness.malformedTail === true,
-            armedState: cachedArmedState,
+            armedState,
             sensors:
               diagnosticsView.sensors.kind === 'REPORTED'
                 ? diagnosticsView.sensors.bits
@@ -457,6 +469,12 @@ function SetupScreenContent({
           testID="setup-readiness-heading"
         />
         <SafetyStrip readiness={armingReadiness} />
+        {/* SETUP P1: the safety facts that are NOT "can it arm" - link
+            loss, failsafe, reboot pending, FC-reported battery state.
+            Renders nothing at all when nothing is true. Its position in
+            the existing readiness region is unchanged from P0; laying
+            the page out around it belongs to P2. */}
+        <SetupSafetyNotices warnings={setupWarnings} />
         {/* Pass 7.6c: the complete Region 3 2x2 card grid at the audited
             insertion point (after the approved Region 1+2 sequence).
             Tree/accessibility order is the approved diagnostic order
@@ -615,12 +633,8 @@ function LiveOrientationHero({
   onResetView: () => void;
   onResetHintShown: () => void;
 }): React.JSX.Element {
-  const attitude = useTelemetryValue<MspAttitude>(
-    sessionKey.sessionId,
-    ATTITUDE_TELEMETRY_POLL_ID,
-    active,
-  );
-  const ownershipState = useMspOwnershipState(sessionKey.sessionId);
+  const attitude = useSetupAttitude(sessionKey.sessionId, active);
+  const connected = useSetupConnected(sessionKey.sessionId);
   const orientationView = deriveOrientationViewState(
     attitude,
     orientationViewOffset,
@@ -640,7 +654,7 @@ function LiveOrientationHero({
       sessionToken={`${sessionKey.sessionId}:${sessionKey.generation}`}
       sampleSeq={sampleSeq}
       sampleReceivedAt={sampleReceivedAt}
-      canReset={attitude.status === 'FRESH' && ownershipState === 'ACTIVE'}
+      canReset={attitude.status === 'FRESH' && connected}
       onResetView={onResetView}
       onResetHintShown={onResetHintShown}
     />
@@ -657,11 +671,7 @@ function LiveOrientationStabilityPanel({
   sessionKey: SetupUiSessionKey;
   active: boolean;
 }): React.JSX.Element {
-  const attitude = useTelemetryValue<MspAttitude>(
-    sessionKey.sessionId,
-    ATTITUDE_TELEMETRY_POLL_ID,
-    active,
-  );
+  const attitude = useSetupAttitude(sessionKey.sessionId, active);
   const orientationView = deriveOrientationViewState(attitude);
   const hasSample = attitude.status === 'FRESH' || attitude.status === 'STALE';
   const outcome = useFcToolPublication(sessionKey.sessionId);

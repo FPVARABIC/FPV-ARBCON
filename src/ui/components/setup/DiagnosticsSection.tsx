@@ -32,12 +32,16 @@ import { Icon } from '../../icons';
 import { readInteraction } from '../controls/interaction';
 import { useTranslation } from 'react-i18next';
 
-import { BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION } from '../../../core';
+import {
+  BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION,
+  deriveSetupSensorSummary,
+} from '../../../core';
 import type {
   DiagnosticsBlockers,
   DiagnosticsDataState,
   DiagnosticsSensors,
   SetupDiagnosticsView,
+  SetupSensorState,
 } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
 
@@ -200,20 +204,54 @@ export default function DiagnosticsSection({
   );
 }
 
-/** Sensor copy: presence only ("reported as detected"), unknown bits
- * preserved with their hex value, an empty mask stated literally. */
+/**
+ * Sensor copy: DETECTION only, never health.
+ *
+ * SETUP P1 - the list is now EXHAUSTIVE. It used to print only the bits
+ * that were set, so a flight controller reporting no gyro produced a
+ * shorter list rather than a visible "GYRO — غير مكتشف": the single most
+ * important sensor fact an operator can be told was rendered as the
+ * absence of a line. Every canonical sensor is now named with its own
+ * state, from the shared derivation
+ * (src/core/state/setupSafetyModel.ts's deriveSetupSensorSummary), so
+ * this section and any future sensor card cannot disagree.
+ *
+ * The three states are DETECTED / NOT_DETECTED / UNKNOWN. There is no
+ * HEALTHY or UNHEALTHY wording anywhere, because the firmware mask
+ * proves the FC found the hardware and nothing whatsoever about whether
+ * it is working. Unknown bits keep their hex and are still listed.
+ */
 function describeSensors(sensors: DiagnosticsSensors, t: Translate): string[] {
-  if (sensors.kind === 'UNCONFIRMED') {
-    return [t('diagnostics.sensorsUnconfirmed')];
-  }
-  if (sensors.bits.length === 0) {
-    return [t('diagnostics.sensorsNoneInReading')];
-  }
-  return sensors.bits.map(bit =>
-    bit.kind === 'KNOWN'
-      ? bit.token
-      : t('diagnostics.sensorsUnknownBit', { hex: bit.hex }),
+  const summary = deriveSetupSensorSummary(sensors);
+  const stateKey: Record<SetupSensorState, string> = {
+    DETECTED: 'diagnostics.sensorDetected',
+    NOT_DETECTED: 'diagnostics.sensorNotDetected',
+    UNKNOWN: 'diagnostics.sensorUnknown',
+  };
+  const lines = summary.entries.map(entry =>
+    t('diagnostics.sensorLine', {
+      token: entry.token,
+      state: t(stateKey[entry.state]),
+    }),
   );
+  if (summary.unconfirmed) {
+    // Keep the explicit "nothing currently proves anything" sentence at
+    // the top: an all-UNKNOWN list must not read as seven findings.
+    return [t('diagnostics.sensorsUnconfirmed'), ...lines];
+  }
+  const anyDetected = summary.entries.some(entry => entry.state === 'DETECTED');
+  const unknownLines = summary.unknownBits.map(bit =>
+    t('diagnostics.sensorsUnknownBit', { hex: bit.hex }),
+  );
+  if (!anyDetected && unknownLines.length === 0) {
+    // A mask that carried no set bit at all. The per-sensor lines below
+    // are still true, but the leading sentence keeps the nuance the mask
+    // itself has: the FC reported a mask and named nothing in it - which
+    // is unusual, and is not the same claim as "this aircraft has no
+    // sensors fitted".
+    return [t('diagnostics.sensorsNoneInReading'), ...lines];
+  }
+  return [...lines, ...unknownLines];
 }
 
 /** Blocker copy: source-proven Arabic where proven, canonical token

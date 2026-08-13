@@ -151,6 +151,20 @@
     "showAllReasons": "عرض جميع الأسباب",
     "showAllReasonsAccessibilityLabel": "عرض جميع الأسباب، {{count}} أسباب إضافية"
   },
+  "setupWarnings": {
+    "heading": "تنبيهات السلامة",
+    "FC_DISCONNECTED": "لا يوجد اتصال بمتحكم الطيران",
+    "FC_RECOVERING": "جارٍ استعادة الاتصال بمتحكم الطيران",
+    "ARMED": "الطائرة مسلّحة الآن — المراوح قد تدور",
+    "ARMING_BLOCKED": "التسليح ممنوع حاليًا؛ راجع الأسباب أعلاه",
+    "REBOOT_REQUIRED": "إعادة التشغيل مطلوبة لتطبيق الإعدادات",
+    "RX_LOSS": "إشارة جهاز التحكم مفقودة (RXLOSS)",
+    "FAILSAFE": "وضع الأمان (FAILSAFE) نشط",
+    "BOX_FAILSAFE": "مفتاح وضع الأمان (BOXFAILSAFE) مُفعَّل",
+    "RECEIVER_SIGNAL_UNAVAILABLE": "قراءة جهاز الاستقبال غير متاحة",
+    "BATTERY_WARNING": "متحكم الطيران يُبلّغ عن تحذير بطارية",
+    "BATTERY_CRITICAL": "متحكم الطيران يُبلّغ عن حالة بطارية حرجة"
+  },
   "setupTopBar": {
     "title": "الإعداد",
     "back": "رجوع",
@@ -324,6 +338,10 @@
     "sensorsUnconfirmed": "لا يمكن تأكيد المستشعرات في الوقت الحالي",
     "sensorsNoneInReading": "لم يُبلِّغ متحكم الطيران عن أي مستشعر في هذه القراءة",
     "sensorsUnknownBit": "بت غير معروف {{hex}}",
+    "sensorDetected": "مكتشف",
+    "sensorNotDetected": "غير مكتشف",
+    "sensorUnknown": "غير معروف",
+    "sensorLine": "{{token}} — {{state}}",
     "blockersHeading": "موانع التسليح",
     "blockersUnconfirmed": "لا يمكن تأكيد موانع التسليح في الوقت الحالي",
     "blockersMalformed": "بيانات الجاهزية غير مكتملة أو غير متسقة؛ تعذّر تأكيد موانع التسليح",

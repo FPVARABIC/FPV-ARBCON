@@ -26,11 +26,14 @@ import { useTranslation } from 'react-i18next';
 import { deriveConnectionIndicatorState } from './connectionIndicator';
 import type { SetupConnectionIndicatorState } from './connectionIndicator';
 import { useTopBarNotice } from './useTopBarNotice';
+// SETUP P1: through the read-only Setup presentation boundary, like the
+// rest of the Setup surface - the top bar reads session truth, it does
+// not own protocol access.
 import {
-  useMspIdentificationState,
-  useMspOwnershipState,
-  useMspRecoveryState,
-} from '../../../platforms/react-native/protocol';
+  useSetupIdentificationState,
+  useSetupOwnershipState,
+  useSetupRecoveryState,
+} from '../../../platforms/react-native/protocol/setupPresentation';
 import type { ArmingReadiness } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
 import { Icon } from '../../icons';
@@ -87,9 +90,9 @@ export default function TopSystemBar({
   armingReadiness,
 }: TopSystemBarProps): React.JSX.Element {
   const { t } = useTranslation();
-  const ownership = useMspOwnershipState(sessionId);
-  const identification = useMspIdentificationState(sessionId);
-  const recovery = useMspRecoveryState(sessionId);
+  const ownership = useSetupOwnershipState(sessionId);
+  const identification = useSetupIdentificationState(sessionId);
+  const recovery = useSetupRecoveryState(sessionId);
 
   const indicator = deriveConnectionIndicatorState(ownership, recovery);
   const notice = useTopBarNotice(ownership, recovery, identification);

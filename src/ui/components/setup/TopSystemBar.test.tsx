@@ -29,7 +29,7 @@ import type {
 
 const UNKNOWN_ARMING: ArmingReadiness = {
   status: 'UNKNOWN',
-  cause: 'UNAVAILABLE',
+  cause: 'ARMED_UNPROVEN',
 };
 
 function ascii(text: string): number[] {
@@ -325,7 +325,7 @@ describe('TopSystemBar', () => {
       [{ status: 'ARMED' }, 'مسلّحة'],
       [{ status: 'READY' }, 'جاهزة'],
       [{ status: 'BLOCKED', reasons: [] }, 'غير جاهزة'],
-      [{ status: 'UNKNOWN', cause: 'WAITING' }, 'غير مؤكدة'],
+      [{ status: 'UNKNOWN', cause: 'ARMED_UNPROVEN' }, 'غير مؤكدة'],
     ];
     for (const [readiness, expectedLabel] of cases) {
       let renderer!: ReactTestRenderer.ReactTestRenderer;

@@ -146,7 +146,12 @@ export default function SafetyStrip({
               { backgroundColor: SEVERITY_COLOR[reason.severity] },
             ]}
           />
-          <Text style={styles.reasonText}>{reason.message}</Text>
+          {/* SETUP P1: the reason carries an i18n KEY, not Arabic -
+              src/core holds no operator copy. The raw firmware code is
+              still never rendered; it is only the React key/testID. */}
+          <Text style={styles.reasonText}>
+            {t(reason.messageKey, reason.messageParams)}
+          </Text>
         </View>
       ))}
       {!expanded && remainingCount > 0 && (

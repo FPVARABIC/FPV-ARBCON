@@ -1,5 +1,7 @@
 export { default as SafetyStrip } from './SafetyStrip';
 export type { SafetyStripProps } from './SafetyStrip';
+export { default as SetupSafetyNotices } from './SetupSafetyNotices';
+export type { SetupSafetyNoticesProps } from './SetupSafetyNotices';
 
 export { default as BatteryCard } from './BatteryCard';
 export type { BatteryCardProps } from './BatteryCard';

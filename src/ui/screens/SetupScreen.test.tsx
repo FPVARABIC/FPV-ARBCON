@@ -19,6 +19,9 @@ jest.mock('../orientation3d', () => ({
   OrientationRenderer: jest.fn(() => null),
 }));
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 import React from 'react';
 import { Text } from 'react-native';
 import ReactTestRenderer, { act } from 'react-test-renderer';
@@ -49,7 +52,6 @@ import {
   MSP_RAW_GPS,
   MSP_STATUS_EX,
 } from '../../core';
-import type { ArmingBlockReason } from '../../core';
 import { buildMspFrameBytes } from '../../core/protocol/__testUtils__/mspFixtures';
 import {
   base64ToBytes,
@@ -736,219 +738,66 @@ describe('SetupScreen - Step 6: STALE freeze visible in real rendered output', (
 });
 
 /**
- * Pass 7.4, Step 6 - SafetyStrip compact vs. expanded through the REAL
- * assembled screen. Production's own startTelemetry()
- * (MspSessionCoordinator.ts) does NOT register ARMED_TELEMETRY_POLL_ID/
- * ARMING_BLOCKERS_TELEMETRY_POLL_ID yet - no real MSP armed/blocker
- * decoder exists (Step 3's own explicit placeholder design), so
- * useTelemetryValue() for those ids normally reports UNAVAILABLE
- * forever (already covered by the Step 5 smoke test's own
- * 'safety-strip-unknown' assertion).
+ * SETUP P1 - THE OBSOLETE ARMING BLOCK IS GONE, DELIBERATELY.
  *
- * To genuinely exercise the REAL pipeline beyond that placeholder state
- * (useTelemetryValue -> deriveArmingReadiness -> SafetyStrip/TopSystemBar
- * rendering) without waiting for a future decoder pass, these tests
- * manually call scheduler.registerPoll() - a real, public
- * MspTelemetryScheduler method - for those same two poll ids, using a
- * fake command number and a decode() that reads a test-local variable
- * instead of a real MSP payload. This bypasses only the ONE thing that
- * does not exist yet (a real decoder for a real MSP command); the entire
- * rest of the pipeline (the real scheduler, the real useTelemetryValue()
- * hook, the real deriveArmingReadiness(), the real SafetyStrip/
- * TopSystemBar rendering) is exercised exactly as production code will
- * use it once that decoder is added.
+ * A "Step 6: SafetyStrip compact vs expanded" suite used to live here. It
+ * called `scheduler.registerPoll()` ITSELF for ARMED_TELEMETRY_POLL_ID and
+ * ARMING_BLOCKERS_TELEMETRY_POLL_ID with two invented command numbers,
+ * because production registers neither. It therefore proved a pipeline
+ * production never runs, and stayed green for the entire life of the
+ * shipping defect it was nominally covering: on a real board the strip
+ * read "حالة التسليح غير مؤكدة" while the FC tools on the same screen
+ * read "غير متاح: الطائرة مسلّحة".
+ *
+ * Its replacement is SetupArmingTruth.test.tsx, which drives ARMED /
+ * READY / BLOCKED / UNKNOWN through the REAL BOXIDS + STATUS_EX path and
+ * registers no poll of its own. The negative half - that Setup can never
+ * again reach for a poll id at all - is enforced structurally by
+ * setupPresentationBoundary.test.ts.
+ *
+ * The one thing worth keeping here is the negative contract itself.
  */
-describe('SetupScreen - Step 6: SafetyStrip compact vs expanded through the real screen', () => {
-  const FAKE_ARMED_COMMAND = 220;
-  const FAKE_BLOCKERS_COMMAND = 221;
-
-  async function openAndRegisterArmingPolls(
-    sessionId: string,
-    client: ReturnType<typeof makeFakeClient>,
-    armedValue: boolean,
-    blockersValue: ArmingBlockReason[],
-  ) {
-    client.setResponse(FAKE_ARMED_COMMAND, Uint8Array.from([0]));
-    client.setResponse(FAKE_BLOCKERS_COMMAND, Uint8Array.from([0]));
-    // MspClient allows only ONE in-flight request at a time (an
-    // already-established finding this pass, re-confirmed here the hard
-    // way): the real 50ms tick driver dispatches MSP_ATTITUDE
-    // automatically once startTelemetry() runs, and without a scripted
-    // response that request would sit forever un-settled, permanently
-    // occupying MspClient's single in-flight slot and queuing every
-    // OTHER poll's own request (armed/blockers included) behind it,
-    // forever - confirmed by an actual failing assertion + writeBytes
-    // call-log inspection during this test's development, not assumed.
+describe('SETUP P1 - the dead placeholder polls stay dead', () => {
+  it('a real session registers neither placeholder poll id', async () => {
+    const sessionId = 'p1-no-placeholder-polls';
+    const client = makeFakeClient(sessionId);
     client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
 
-    mspSessionCoordinator.openSession(
-      client as unknown as UsbSerialTransportClient,
-      sessionId,
-    );
-    await flushAsync();
+    await act(async () => {
+      mspSessionCoordinator.openSession(
+        client as unknown as UsbSerialTransportClient,
+        sessionId,
+      );
+      await flushAsync();
+    });
 
     const scheduler = mspSessionCoordinator.getTelemetryScheduler(sessionId);
-    if (!scheduler) {
-      throw new Error(
-        'expected a real telemetry scheduler after openSession()',
-      );
-    }
-    scheduler.registerPoll({
-      id: ARMED_TELEMETRY_POLL_ID,
-      command: FAKE_ARMED_COMMAND,
-      intervalMs: 100_000,
-      staleAfterMs: 100_000,
-      priority: 0,
-      decode: () => armedValue,
+    expect(scheduler).toBeDefined();
+    // Never registered => the scheduler has no definition for them, and
+    // getValue() reports UNAVAILABLE through its own real mechanism.
+    expect(scheduler!.getValue(ARMED_TELEMETRY_POLL_ID)).toEqual({
+      status: 'UNAVAILABLE',
     });
-    scheduler.registerPoll({
-      id: ARMING_BLOCKERS_TELEMETRY_POLL_ID,
-      command: FAKE_BLOCKERS_COMMAND,
-      intervalMs: 100_000,
-      staleAfterMs: 100_000,
-      priority: 0,
-      decode: () => blockersValue,
+    expect(scheduler!.getValue(ARMING_BLOCKERS_TELEMETRY_POLL_ID)).toEqual({
+      status: 'UNAVAILABLE',
     });
 
-    // tick() dispatches only the single MOST-OVERDUE poll per call (its
-    // own coalescing design - see MspTelemetryScheduler.ts's own class
-    // doc comment), not every due poll at once - and MSP_ATTITUDE (due
-    // since session-open time, already registered) competes for that
-    // slot too. A single tick() call is not enough to settle BOTH newly
-    // registered polls (confirmed by an actual failing assertion during
-    // this test's development, not assumed) - loop until both report
-    // something other than WAITING.
-    for (let i = 0; i < 10; i++) {
-      scheduler.tick();
-      // Deliberately sequential (not Promise.all'd) - each tick() must
-      // fully settle (including its own dispatch's microtask chain)
-      // before the next tick() re-evaluates what's still due.
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
       await flushAsync();
-      const armedSettled =
-        scheduler.getValue(ARMED_TELEMETRY_POLL_ID).status !== 'WAITING';
-      const blockersSettled =
-        scheduler.getValue(ARMING_BLOCKERS_TELEMETRY_POLL_ID).status !==
-        'WAITING';
-      if (armedSettled && blockersSettled) {
-        break;
-      }
-    }
-  }
-
-  it('READY (compact "✓ جاهزة للتسليح"): armed=false, no blockers', async () => {
-    const sessionId = 'step6-safety-ready-1';
-    const client = makeFakeClient(sessionId);
-    const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
-
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
-    });
-
-    await act(async () => {
-      await openAndRegisterArmingPolls(sessionId, client, false, []);
-    });
-
-    expect(findAnyByTestID(renderer, 'safety-strip-ready')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('safetyStrip.ready'));
-    expect(
-      findAnyByTestID(renderer, 'setup-top-bar-arming-badge'),
-    ).not.toBeNull();
-    expect(allText(renderer)).toContain(
-      i18n.t('setupTopBar.armingBadge.ready'),
-    );
-
-    await act(async () => {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    });
-    act(() => {
-      renderer.unmount();
     });
   });
 
-  it('ARMED (compact, danger-colored): armed=true, regardless of blockers', async () => {
-    const sessionId = 'step6-safety-armed-1';
-    const client = makeFakeClient(sessionId);
-    const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
-
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
-    });
-
-    await act(async () => {
-      await openAndRegisterArmingPolls(sessionId, client, true, []);
-    });
-
-    expect(findAnyByTestID(renderer, 'safety-strip-armed')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('safetyStrip.armed'));
-    expect(allText(renderer)).toContain(
-      i18n.t('setupTopBar.armingBadge.armed'),
-    );
-
-    await act(async () => {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    });
-    act(() => {
-      renderer.unmount();
-    });
-  });
-
-  it('BLOCKED (auto-expanded, top-3 + show-all link): armed=false, 4 real blocker reasons', async () => {
-    const sessionId = 'step6-safety-blocked-1';
-    const client = makeFakeClient(sessionId);
-    const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
-    const reasons: ArmingBlockReason[] = [
-      {
-        code: 'THROTTLE',
-        message: 'الخانق مرتفع جدًا',
-        severity: 'CRITICAL_DANGER',
-      },
-      {
-        code: 'GYRO',
-        message: 'الجيروسكوب غير معاير',
-        severity: 'ARMING_BLOCKER',
-      },
-      { code: 'FAILSAFE', message: 'وضع الفشل الآمن نشط', severity: 'WARNING' },
-      { code: 'RX', message: 'لم يتم اكتشاف جهاز الاستقبال', severity: 'INFO' },
-    ];
-
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
-    });
-
-    await act(async () => {
-      await openAndRegisterArmingPolls(sessionId, client, false, reasons);
-    });
-
-    expect(findAnyByTestID(renderer, 'safety-strip-blocked')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('safetyStrip.blockedHeading'));
-    // Top 3 by priority: THROTTLE, GYRO, FAILSAFE - not RX (rank 4).
-    expect(allText(renderer)).toContain('الخانق مرتفع جدًا');
-    expect(allText(renderer)).toContain('الجيروسكوب غير معاير');
-    expect(allText(renderer)).toContain('وضع الفشل الآمن نشط');
-    expect(allText(renderer)).not.toContain('لم يتم اكتشاف جهاز الاستقبال');
-    const showAll = findAnyByTestID(renderer, 'safety-strip-show-all');
-    expect(showAll).not.toBeNull();
-    expect(allText(renderer)).toContain(
-      i18n.t('setupTopBar.armingBadge.blocked'),
-    );
-
-    await act(async () => {
-      showAll!.props.onPress();
-    });
-    expect(allText(renderer)).toContain('لم يتم اكتشاف جهاز الاستقبال');
-    expect(findAnyByTestID(renderer, 'safety-strip-show-all')).toBeNull();
-
-    await act(async () => {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    });
-    act(() => {
-      renderer.unmount();
-    });
+  it('SetupScreen source names neither placeholder poll id', () => {
+    const source = readFileSync(
+      join(__dirname, 'SetupScreen.tsx'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(source).not.toMatch(/ARMED_TELEMETRY_POLL_ID/);
+    expect(source).not.toMatch(/ARMING_BLOCKERS_TELEMETRY_POLL_ID/);
   });
 });
+
 
 describe('SetupScreen - Step 6: resetOrientationViewOffset() end-to-end', () => {
   it('pressing the reset button captures the CURRENT raw yaw as the REAL stored heading reference, drives the displayed Heading to 0, leaves roll/pitch untouched, and shows the one-time hint only on the first press', async () => {
@@ -2382,9 +2231,23 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const sessionId = 'pass77-region4-sensors';
     const { renderer } = await renderSession(sessionId);
     const text = allText(renderer);
-    // Fixture mask 41 = ACC | GPS | GYRO.
-    expect(text).toEqual(expect.arrayContaining(['ACC', 'GPS', 'GYRO']));
-    expect(text).not.toContain('BARO');
+    // SETUP P1: the sensor block is now EXHAUSTIVE - every canonical
+    // sensor is named with its own state, so a missing one is visible as
+    // a line rather than as the absence of one. Fixture mask 41 =
+    // ACC | GPS | GYRO.
+    const detected = i18n.t('diagnostics.sensorDetected');
+    const notDetected = i18n.t('diagnostics.sensorNotDetected');
+    const line = (token: string, state: string) =>
+      i18n.t('diagnostics.sensorLine', { token, state });
+    expect(text).toEqual(
+      expect.arrayContaining([
+        line('ACC', detected),
+        line('GPS', detected),
+        line('GYRO', detected),
+      ]),
+    );
+    expect(text).toContain(line('BARO', notDetected));
+    expect(text).not.toContain(line('BARO', detected));
     await teardown(sessionId, renderer);
   });
 
@@ -2398,7 +2261,13 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     );
     // The rest of the section still works - one absent field does not
     // take down identity, compatibility or sensors.
-    expect(text).toEqual(expect.arrayContaining(['ACC', 'GYRO']));
+    const detectedState = i18n.t('diagnostics.sensorDetected');
+    expect(text).toEqual(
+      expect.arrayContaining([
+        i18n.t('diagnostics.sensorLine', { token: 'ACC', state: detectedState }),
+        i18n.t('diagnostics.sensorLine', { token: 'GYRO', state: detectedState }),
+      ]),
+    );
     await teardown(sessionId, renderer);
   });
 

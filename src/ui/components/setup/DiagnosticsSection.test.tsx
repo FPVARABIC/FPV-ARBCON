@@ -254,17 +254,27 @@ describe('DiagnosticsSection - lifecycle state copy', () => {
 });
 
 describe('DiagnosticsSection - sensor truthfulness', () => {
-  it('lists only the detected sensors of the pinned mapping, under a "reported as detected" heading', () => {
+  /* SETUP P1: the list is now EXHAUSTIVE - every canonical sensor is
+   * named with its own DETECTED / NOT_DETECTED state, so a flight
+   * controller reporting no gyro produces a visible "GYRO — غير مكتشف"
+   * line instead of one fewer line. Still detection only: no HEALTHY or
+   * UNHEALTHY wording exists anywhere. */
+  it('names every canonical sensor with its own detection state', () => {
     const renderer = render(view());
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
         'المستشعرات المُبلَّغ عن اكتشافها',
-        'ACC',
-        'GPS',
-        'GYRO',
+        'ACC — مكتشف',
+        'GPS — مكتشف',
+        'GYRO — مكتشف',
+        // The fixture mask omits these, and their absence is now VISIBLE.
+        'BARO — غير مكتشف',
+        'MAG — غير مكتشف',
+        'RANGEFINDER — غير مكتشف',
+        'OPTICALFLOW — غير مكتشف',
       ]),
     );
-    expect(texts(renderer)).not.toContain('BARO');
+    expect(texts(renderer)).not.toContain('BARO — مكتشف');
     unmount(renderer);
   });
 
@@ -377,7 +387,9 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
     );
     expect(all).not.toContain('جاهزة للطيران');
     // The safely decoded prefix (sensors) is still shown.
-    expect(texts(renderer)).toEqual(expect.arrayContaining(['ACC', 'GYRO']));
+    expect(texts(renderer)).toEqual(
+      expect.arrayContaining(['ACC — مكتشف', 'GYRO — مكتشف']),
+    );
     unmount(renderer);
   });
 

@@ -18,8 +18,15 @@ function findByTestID(renderer: ReactTestRenderer.ReactTestRenderer, testID: str
   return matches.length > 0 ? matches[0] : null;
 }
 
-function reason(code: string, severity: ArmingBlockReason['severity'], message = `message-${code}`): ArmingBlockReason {
-  return {code, message, severity};
+/* SETUP P1: a reason carries an i18n KEY plus optional params, not
+ * Arabic - src/core holds no operator copy. Real catalogue keys are used
+ * here so the assertions below exercise the same lookup production does. */
+function reason(
+  code: string,
+  severity: ArmingBlockReason['severity'],
+  messageKey = `diagnostics.blockerDescriptions.${code}`,
+): ArmingBlockReason {
+  return {code, messageKey, severity};
 }
 
 function render(readiness: ArmingReadiness): ReactTestRenderer.ReactTestRenderer {
@@ -44,7 +51,11 @@ describe('SafetyStrip', () => {
   });
 
   it('UNKNOWN: renders "حالة التسليح غير مؤكدة" regardless of cause', () => {
-    (['WAITING', 'STALE', 'ERROR', 'UNAVAILABLE'] as const).forEach(cause => {
+    ([
+      'ARMED_UNPROVEN',
+      'BLOCKERS_UNCONFIRMED',
+      'BLOCKERS_MALFORMED',
+    ] as const).forEach(cause => {
       const renderer = render({status: 'UNKNOWN', cause});
       expect(allText(renderer)).toContain(i18n.t('safetyStrip.unknown'));
       expect(findByTestID(renderer, 'safety-strip-unknown')).not.toBeNull();
