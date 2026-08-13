@@ -196,22 +196,35 @@ jobs:
             exit 1
           fi
 
-          # 4. Receiver ships as a full professional surface: live
-          #    channels, stick pads, RSSI/stale/failsafe truth, and the
-          #    transform-driven live presentation. The previous text here
-          #    claimed Receiver and PID were both "unimplemented tabs
-          #    rendered disabled" - true when it was written, false now,
-          #    and directly contradicted by scan-web-bundle.js's own
-          #    RECEIVER positive controls. PID remains a separate
-          #    question and is deliberately not grouped with it.
-          if grep -rq '"RECEIVER"' dist-web/assets; then
-            echo "OK: Receiver surface present in the browser bundle."
+          # 4. Receiver and PID both ship as full surfaces, and both are
+          #    proven by a STABLE SEMANTIC TOKEN rather than a tab-key
+          #    literal.
+          #
+          #    A production minifier is free to change quote style: this
+          #    build emits `RECEIVER` in backticks, so the previous
+          #    grep for '"RECEIVER"' matched nothing. It had no failing
+          #    branch, so for its whole life it silently proved nothing;
+          #    adding one turned it fail-closed and it immediately failed
+          #    a bundle that was completely correct. A deployment gate
+          #    must never be bound to emitted syntax.
+          #
+          #    testIDs are the stable contract - the same strategy
+          #    scripts/scan-web-bundle.js already uses for its Receiver
+          #    positive controls. Both tokens below are plain literals,
+          #    NOT template literals: `pid-axis-${axisKey}` interpolates
+          #    at runtime and never appears in the bundle at all, which
+          #    is why the PID gate anchors on the screen's own root.
+          if grep -rq 'receiver-live-monitor' dist-web/assets; then
+            echo "OK: Receiver professional surface present in the browser bundle."
           else
-            echo "FAIL: the Receiver surface is missing from the bundle."
+            echo "FAIL: the Receiver professional surface is missing from the bundle."
             exit 1
           fi
-          if grep -rq '"PID"' dist-web/assets; then
-            echo "OK: PID tab key present."
+          if grep -rq 'pid-screen' dist-web/assets; then
+            echo "OK: PID surface present in the browser bundle."
+          else
+            echo "FAIL: the PID surface is missing from the bundle."
+            exit 1
           fi
           echo "Published files:"
           find dist-web -maxdepth 1 -mindepth 1 | sort
