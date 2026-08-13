@@ -151,6 +151,15 @@
     "showAllReasons": "عرض جميع الأسباب",
     "showAllReasonsAccessibilityLabel": "عرض جميع الأسباب، {{count}} أسباب إضافية"
   },
+  "setupSensorsCard": {
+    "title": "المستشعرات المكتشفة"
+  },
+  "setupNavigation": {
+    "openReceiver": "فتح شاشة جهاز الاستقبال",
+    "openGps": "فتح شاشة نظام GPS",
+    "openPower": "فتح شاشة الطاقة والبطارية",
+    "openSensors": "فتح شاشة المستشعرات"
+  },
   "setupWarnings": {
     "heading": "تنبيهات السلامة",
     "FC_DISCONNECTED": "لا يوجد اتصال بمتحكم الطيران",
@@ -189,6 +198,21 @@
     "back": "العودة إلى الاتصال"
   },
   "setupSections": {
+    "live": {
+      "eyebrow": "الحالة المباشرة",
+      "title": "ملخص الطائرة الآن",
+      "description": "الاستقبال والموقع والطاقة والمستشعرات في أول الصفحة."
+    },
+    "orientationSection": {
+      "eyebrow": "الاتجاه",
+      "title": "اتجاه الطائرة",
+      "description": "عرض مباشر لوضع الطائرة، وفحص ثبات القراءة."
+    },
+    "maintenance": {
+      "eyebrow": "الصيانة",
+      "title": "أدوات وتشخيص متقدم",
+      "description": "المعايرة وإعادة التشغيل والتفاصيل التقنية."
+    },
     "readiness": {
       "eyebrow": "الحالة الفعلية",
       "title": "الجاهزية وموانع التشغيل",
@@ -276,6 +300,7 @@
     "reportedConsumed": "الاستهلاك المُبلّغ: {{value}} mAh",
     "stateUnknown": "حالة البطارية غير معروفة",
     "noMeasurement": "لا يوجد قياس جهد بطارية",
+    "cellCount": "عدد الخلايا: {{count}}S",
     "reportedRawVoltage": "قراءة مقياس الجهد المُبلّغة من المتحكم: {{value}} V — ليست جهد حزمة بطارية",
     "state": {
       "OK": "طبيعية",
@@ -296,6 +321,8 @@
     },
     "receiver": {
       "title": "جهاز الاستقبال",
+      "linkLive": "الاستقبال مباشر",
+      "linkStale": "القراءة غير محدثة",
       "rssi": "RSSI: {{percent}}%"
     },
     "gps": {

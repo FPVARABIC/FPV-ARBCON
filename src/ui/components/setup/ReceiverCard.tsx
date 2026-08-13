@@ -42,16 +42,27 @@ export default function ReceiverCard({connected, channelState, telemetry}: Recei
   }
 
   const rssi = deriveReceiverRssi(telemetry.value);
+  const stale = telemetry.status === 'STALE';
   const bodyText =
     rssi.kind === 'PERCENT' ? t('telemetryCards.receiver.rssi', {percent: rssi.percent}) : t('telemetryCards.state.unavailable');
+  /* SETUP P2: the live/stale distinction becomes its own SENTENCE rather
+   * than only a dimmed opacity. P0 measured this card carrying 23
+   * characters in the same footprint the Battery card fills with 96 -
+   * it had room to say what it means, and "the number you are looking at
+   * stopped updating" is exactly the thing an operator must not have to
+   * infer from a shade of grey. */
+  const linkText = t(stale ? 'telemetryCards.receiver.linkStale' : 'telemetryCards.receiver.linkLive');
 
   return (
     <TelemetryCardFrame
       title={title}
       testIDPrefix="receiver-card"
       gate={undefined}
-      stale={telemetry.status === 'STALE'}
-      contentAccessibilityLabel={`${title}، ${bodyText}`}>
+      stale={stale}
+      contentAccessibilityLabel={`${title}، ${linkText}، ${bodyText}`}>
+      <Text style={telemetryCardContentStyles.captionText} testID="receiver-card-link-state">
+        {linkText}
+      </Text>
       {rssi.kind === 'PERCENT' ? (
         <Text style={telemetryCardContentStyles.primaryValueText} testID="receiver-card-rssi">
           {bodyText}

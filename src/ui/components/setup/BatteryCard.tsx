@@ -134,12 +134,18 @@ export default function BatteryCard({
   const rawVoltageText = t('batteryCard.reportedRawVoltage', {
     value: semantics.voltageVolts.toFixed(2),
   });
+  const cellText =
+    measurementProven && semantics.cellCount > 0
+      ? t('batteryCard.cellCount', {count: semantics.cellCount})
+      : undefined;
   const accessibilityLabel = measurementProven
     ? `${t('batteryCard.title')}، ${t(
         'batteryCard.voltageLabel',
       )} ${voltageText}، ${stateText}${
-        isStale ? `، ${t('batteryCard.stale')}` : ''
-      }${reportedDetails.length > 0 ? `، ${reportedDetails.join('، ')}` : ''}`
+        cellText !== undefined ? `، ${cellText}` : ''
+      }${isStale ? `، ${t('batteryCard.stale')}` : ''}${
+        reportedDetails.length > 0 ? `، ${reportedDetails.join('، ')}` : ''
+      }`
     : `${t('batteryCard.title')}، ${t(
         'batteryCard.noMeasurement',
       )}، ${stateText}، ${rawVoltageText}${
@@ -183,6 +189,16 @@ export default function BatteryCard({
             {rawVoltageText}
           </Text>
         )}
+        {/* SETUP P2: cell count, shown ONLY when the firmware itself
+            proved a pack. cellCount === 0 is Betaflight's own "battery
+            not detected", which the measurementProven gate above already
+            routes to the no-measurement headline - so a count can never
+            appear next to a reading the FC does not stand behind. */}
+        {measurementProven && semantics.cellCount > 0 ? (
+          <Text style={styles.captionText} testID="battery-card-cells">
+            {t('batteryCard.cellCount', {count: semantics.cellCount})}
+          </Text>
+        ) : null}
         {reportedDetails.map((detail, index) => (
           <Text
             key={detail}
@@ -192,9 +208,12 @@ export default function BatteryCard({
             {detail}
           </Text>
         ))}
-        <Text style={styles.captionText}>
-          {t('batteryCard.percentageUnavailable')}
-        </Text>
+        {/* SETUP P2: the permanent "نسبة الشحن غير متاحة" line is GONE.
+            It spent a line of every phone viewport, in every state, to
+            announce the absence of a number this app deliberately never
+            computes. Saying nothing is the honest use of that space; the
+            refusal to invent a percentage is unchanged and is enforced by
+            batteryTelemetry.ts, not by a caption. */}
       </View>
       {isStale && (
         <Text style={styles.staleLabel} testID="battery-card-stale-label">

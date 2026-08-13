@@ -50,7 +50,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ScrollView,
-  Pressable,
   StyleSheet,
   Text,
   View,
@@ -63,19 +62,19 @@ import type { RootStackParamList } from '../../navigation/types';
 import {
   CONTENT_MAX_WIDTH,
   colors,
-  radii,
   spacing,
   typography,
   useContentEnvelope,
 } from '../theme';
 import { Button } from '../components/controls';
-import { readInteraction } from '../components/controls/interaction';
 import {
   TopSystemBar,
   OrientationHero,
   OrientationStabilityPanel,
   SafetyStrip,
   SetupSafetyNotices,
+  SetupSummaryLink,
+  SensorsCard,
   BatteryCard,
   ReceiverCard,
   GpsCard,
@@ -129,14 +128,26 @@ import {
   deriveSetupArmingReadiness,
   deriveSetupSafetyFlags,
   deriveSetupRebootRequired,
+  deriveSetupSensorSummary,
   deriveSetupWarnings,
   isGpsPresent,
   deriveSetupDiagnostics,
 } from '../../core';
 import type { OrientationViewOffset } from '../../core';
 
+/**
+ * SETUP P2: the navigation seam. Each callback opens the screen that OWNS
+ * the corresponding configuration; Setup itself never writes any of it.
+ * They are plain callbacks supplied by the tab shell (MainTabsScreen), so
+ * this screen imports no navigator internals and no owner-screen
+ * authority. Undefined means "no owner screen reachable in this host",
+ * and the card then renders non-interactive rather than pretending.
+ */
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'> & {
   readonly onOpenGps?: () => void;
+  readonly onOpenReceiver?: () => void;
+  readonly onOpenPower?: () => void;
+  readonly onOpenSensors?: () => void;
   readonly active?: boolean;
 };
 
@@ -151,6 +162,9 @@ export default function SetupScreen({
   route,
   navigation,
   onOpenGps,
+  onOpenReceiver,
+  onOpenPower,
+  onOpenSensors,
   active = true,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
@@ -184,6 +198,9 @@ export default function SetupScreen({
       sessionKey={sessionKey}
       onBack={() => navigation.goBack()}
       onOpenGps={onOpenGps}
+      onOpenReceiver={onOpenReceiver}
+      onOpenPower={onOpenPower}
+      onOpenSensors={onOpenSensors}
       active={active}
     />
   );
@@ -193,11 +210,17 @@ function SetupScreenContent({
   sessionKey,
   onBack,
   onOpenGps,
+  onOpenReceiver,
+  onOpenPower,
+  onOpenSensors,
   active,
 }: {
   sessionKey: SetupUiSessionKey;
   onBack: () => void;
   onOpenGps?: () => void;
+  onOpenReceiver?: () => void;
+  onOpenPower?: () => void;
+  onOpenSensors?: () => void;
   active: boolean;
 }): React.JSX.Element {
   const { t } = useTranslation();
@@ -340,6 +363,10 @@ function SetupScreenContent({
     typeof batterySemantics?.firmwareState === 'string'
       ? batterySemantics.firmwareState
       : undefined;
+  // SETUP P2: the sensor detection summary now feeds a real dashboard
+  // card as well as the diagnostics list below. ONE derivation, two
+  // presentations - the chip and the detail line cannot disagree.
+  const sensorSummary = deriveSetupSensorSummary(diagnosticsView.sensors);
   // P1 builds the warning model; P2 owns rendering a warning region.
   // Deriving it here now means the truth is proven and tested before any
   // layout depends on it.
@@ -422,6 +449,120 @@ function SetupScreenContent({
         armingReadiness={armingReadiness}
       />
       <ScrollView contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}>
+        {/* SETUP P2 - THE DASHBOARD ORDER, DECIDED FROM MEASUREMENT.
+            P0 measured this page at 390px: the orientation hero (969px)
+            and FC Tools (908px) together held 62% of a 3,021px page,
+            while the safety strip sat at y=2598, Receiver/RSSI and
+            battery voltage at y=2846, GPS at y=3144 and the sensor mask
+            at y=3241 behind a disclosure toggle. Nothing but chrome, a
+            model and two instruments was above the fold.
+
+            The order below is operational, not decorative:
+              1. connection + identity (TopSystemBar, above this scroll)
+              2. critical safety notices  - only when something is true
+              3. arming readiness
+              4. live aircraft summary    - Receiver, GPS, Battery, Sensors
+              5. orientation
+              6. orientation stability check
+              7. system diagnostics
+              8. FC tools (maintenance)
+            The most visually impressive element is deliberately NOT
+            first. Calibration tools no longer stand between the operator
+            and the aircraft's live state. */}
+
+        {/* 2. Conditional, and genuinely absent when nothing is true -
+               a healthy aircraft costs zero vertical space here. */}
+        <SetupSafetyNotices warnings={setupWarnings} />
+
+        {/* 3. Arming readiness. Same canonical P1 truth, same component,
+               same dimensions - only its position changed.
+
+               Its 106px section heading is deliberately gone. Above the
+               fold that heading cost more vertical space than the 52px
+               strip it introduced, to explain a state that reads itself:
+               "مسلّحة" / "✓ جاهزة للتسليح" needs no preamble. The
+               explanatory headings that remain sit further down, where
+               they orient rather than delay. */}
+        <SafetyStrip readiness={armingReadiness} />
+
+        {/* 4. THE LIVE SUMMARY. Every card reads the snapshot this screen
+               already derived - no card acquires telemetry of its own, so
+               promoting them costs zero extra subscriptions. Each one
+               navigates to the screen that OWNS its configuration; none
+               of them can write. */}
+        <SetupSectionHeading
+          eyebrow={t('setupSections.live.eyebrow')}
+          title={t('setupSections.live.title')}
+          description={t('setupSections.live.description')}
+          testID="setup-live-heading"
+        />
+        <View style={styles.cardGrid} testID="telemetry-card-grid">
+          <View
+            style={[styles.cardCell, useSingleColumnCards && styles.cardCellFull]}
+          >
+            <SetupSummaryLink
+              onPress={onOpenReceiver}
+              accessibilityLabel={t('setupNavigation.openReceiver')}
+              testID="setup-open-receiver"
+            >
+              <ReceiverCard
+                connected={connected}
+                channelState={receiverChannelState}
+                telemetry={receiver}
+              />
+            </SetupSummaryLink>
+          </View>
+          <View
+            style={[styles.cardCell, useSingleColumnCards && styles.cardCellFull]}
+          >
+            <SetupSummaryLink
+              onPress={onOpenGps}
+              accessibilityLabel={t('setupNavigation.openGps')}
+              testID="setup-open-gps"
+            >
+              <GpsCard
+                connected={connected}
+                channelState={gpsChannelState}
+                telemetry={gps}
+                gpsPresent={gpsPresent}
+              />
+            </SetupSummaryLink>
+          </View>
+          {/* Battery and Sensors take the full row. Measured reason, not
+              taste: in a half-width 179px column the seven sensor chips
+              stack vertically into a 534px tower that pushes the whole
+              page down, and the battery's voltage - the number an
+              operator reads first - competes with it for height. Across
+              the row the chips flow horizontally and both cards shrink. */}
+          <View style={[styles.cardCell, styles.cardCellFull]}>
+            <SetupSummaryLink
+              onPress={onOpenPower}
+              accessibilityLabel={t('setupNavigation.openPower')}
+              testID="setup-open-power"
+            >
+              <BatteryCard telemetry={battery} />
+            </SetupSummaryLink>
+          </View>
+          <View style={[styles.cardCell, styles.cardCellFull]}>
+            <SetupSummaryLink
+              onPress={onOpenSensors}
+              accessibilityLabel={t('setupNavigation.openSensors')}
+              testID="setup-open-sensors"
+            >
+              <SensorsCard summary={sensorSummary} />
+            </SetupSummaryLink>
+          </View>
+        </View>
+
+        {/* 5. Orientation. MOVED, not redesigned: its geometry, maths,
+               instruments and rendering are untouched - proportions and
+               the compass wording belong to P3. */}
+        <SetupSectionHeading
+          eyebrow={t('setupSections.orientationSection.eyebrow')}
+          title={t('setupSections.orientationSection.title')}
+          description={t('setupSections.orientationSection.description')}
+          testID="setup-orientation-heading"
+        />
         <LiveOrientationHero
           sessionKey={sessionKey}
           active={active}
@@ -430,16 +571,39 @@ function SetupScreenContent({
           onResetView={handleResetView}
           onResetHintShown={handleResetHintShown}
         />
-        {/* FINAL-POLISH PASS: "أدوات وحدة التحكم" moved to sit directly
-            below the COMPLETE Orientation section (model, instruments,
-            readouts, note, reset button) - calibration and reboot controls
-            belong next to the thing they act on, not below the
-            diagnostics. This is the SAME component invocation with the
-            same props, relocated; nothing about its gating, its
-            confirmation flow or its commands changed, and no status
-            strip, telemetry card or diagnostic block may sit between
-            the two. Everything below keeps its previous relative
-            order. */}
+
+        {/* 6. The read-only stability check stays with the thing it
+               measures, and no longer splits the live cards from the top
+               of the page. */}
+        <LiveOrientationStabilityPanel
+          sessionKey={sessionKey}
+          active={active}
+        />
+
+        {/* 7-8. Maintenance. Deep diagnostics and the calibration/reboot
+                 tools are real capability and are kept in full - they are
+                 simply no longer the first thing between the operator and
+                 the aircraft's live state. FcToolsSection is the SAME
+                 invocation with the SAME props and the SAME gating; only
+                 its position changed. */}
+        <SetupSectionHeading
+          eyebrow={t('setupSections.maintenance.eyebrow')}
+          title={t('setupSections.maintenance.title')}
+          description={t('setupSections.maintenance.description')}
+          testID="setup-maintenance-heading"
+        />
+        <View style={styles.cardGrid} testID="setup-system-grid">
+          <View
+            style={[styles.cardCell, styles.cardCellFull]}
+          >
+            <FlightControllerCard
+              connected={connected}
+              channelState={fcChannelState}
+              telemetry={fcStatus}
+            />
+          </View>
+        </View>
+        <DiagnosticsSection view={diagnosticsView} />
         <FcToolsSection
           sessionId={sessionId}
           gate={{
@@ -458,103 +622,6 @@ function SetupScreenContent({
                 : undefined,
           }}
         />
-        <LiveOrientationStabilityPanel
-          sessionKey={sessionKey}
-          active={active}
-        />
-        <SetupSectionHeading
-          eyebrow={t('setupSections.readiness.eyebrow')}
-          title={t('setupSections.readiness.title')}
-          description={t('setupSections.readiness.description')}
-          testID="setup-readiness-heading"
-        />
-        <SafetyStrip readiness={armingReadiness} />
-        {/* SETUP P1: the safety facts that are NOT "can it arm" - link
-            loss, failsafe, reboot pending, FC-reported battery state.
-            Renders nothing at all when nothing is true. Its position in
-            the existing readiness region is unchanged from P0; laying
-            the page out around it belongs to P2. */}
-        <SetupSafetyNotices warnings={setupWarnings} />
-        {/* Pass 7.6c: the complete Region 3 2x2 card grid at the audited
-            insertion point (after the approved Region 1+2 sequence).
-            Tree/accessibility order is the approved diagnostic order
-            Battery -> Receiver -> GPS -> FC; under the app's RTL layout,
-            row-wrapping renders row 1 as Battery (right) / Receiver
-            (left) and row 2 as GPS (right) / FC (left). Display-only -
-            no press actions, no navigation, no horizontal scroll. */}
-        <SetupSectionHeading
-          eyebrow={t('setupSections.overview.eyebrow')}
-          title={t('setupSections.overview.title')}
-          description={t('setupSections.overview.description')}
-          testID="setup-overview-heading"
-        />
-        <View style={styles.cardGrid} testID="telemetry-card-grid">
-          <View
-            style={[
-              styles.cardCell,
-              useSingleColumnCards && styles.cardCellFull,
-            ]}
-          >
-            <BatteryCard telemetry={battery} />
-          </View>
-          <View
-            style={[
-              styles.cardCell,
-              useSingleColumnCards && styles.cardCellFull,
-            ]}
-          >
-            <ReceiverCard
-              connected={connected}
-              channelState={receiverChannelState}
-              telemetry={receiver}
-            />
-          </View>
-          <View
-            style={[
-              styles.cardCell,
-              useSingleColumnCards && styles.cardCellFull,
-            ]}
-          >
-            <Pressable
-              disabled={onOpenGps === undefined}
-              onPress={onOpenGps}
-              accessibilityRole="button"
-              accessibilityLabel={t('gpsSystem.openFromSetup')}
-              style={state => {
-                const {pressed, hovered} = readInteraction(state);
-                return [
-                  styles.cardPress,
-                  (hovered || pressed) && styles.cardPressActive,
-                ];
-              }}
-              testID="setup-open-gps"
-            >
-              <GpsCard
-                connected={connected}
-                channelState={gpsChannelState}
-                telemetry={gps}
-                gpsPresent={gpsPresent}
-              />
-            </Pressable>
-          </View>
-          <View
-            style={[
-              styles.cardCell,
-              useSingleColumnCards && styles.cardCellFull,
-            ]}
-          >
-            <FlightControllerCard
-              connected={connected}
-              channelState={fcChannelState}
-              telemetry={fcStatus}
-            />
-          </View>
-        </View>
-        {/* Pass 7.7: Region 4 immediately after Region 3. Region 5
-            ("أدوات وحدة التحكم") used to follow here; the final-polish
-            pass moved that one section up to sit directly under the
-            Orientation hero. Nothing else in this order changed. */}
-        <DiagnosticsSection view={diagnosticsView} />
         {isTelemetryReportSupported() ? (
           <View style={styles.telemetryReportRow}>
             <Button
@@ -735,11 +802,6 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     textAlign: 'center',
   },
-  /* The GPS card doubles as a navigation target; a whole-card button with
-     no acknowledgement reads as decoration. Radius matches the card it
-     wraps so the wash cannot bleed past the corners. */
-  cardPress: {borderRadius: radii.lg},
-  cardPressActive: {backgroundColor: colors.surfaceHover},
   sectionHeading: {
     flexDirection: 'row',
     alignItems: 'stretch',

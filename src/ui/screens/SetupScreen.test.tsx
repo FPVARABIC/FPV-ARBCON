@@ -1639,9 +1639,9 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
 
     expect(allText(renderer)).toContain('16.85 V');
     expect(allText(renderer)).toContain(i18n.t('batteryCard.state.OK'));
-    expect(allText(renderer)).toContain(
-      i18n.t('batteryCard.percentageUnavailable'),
-    );
+    // SETUP P2: the permanent filler line is gone; the refusal to
+    // invent a percentage is asserted directly instead.
+    expect(allText(renderer).join(' ')).not.toMatch(/\d+%/);
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -1892,15 +1892,20 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'receiver-card-live')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'gps-card-live')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'sensors-card')).not.toBeNull();
+    // SETUP P2: the FC card moved OUT of the live grid and into the
+    // maintenance region - CPU load and cycle time are diagnostics, not
+    // the aircraft's operational state.
     expect(findAnyByTestID(renderer, 'fc-card-live')).not.toBeNull();
 
-    // Tree order = accessibility (reading) order: the four titles appear
-    // in exactly the approved diagnostic sequence.
+    // Tree order = accessibility (reading) order. SETUP P2 order is
+    // operational: what the pilot checks first comes first.
     const text = allText(renderer);
     const positions = [
-      text.indexOf(i18n.t('batteryCard.title')),
       text.indexOf(i18n.t('telemetryCards.receiver.title')),
       text.indexOf(i18n.t('telemetryCards.gps.title')),
+      text.indexOf(i18n.t('batteryCard.title')),
+      text.indexOf(i18n.t('setupSensorsCard.title')),
       text.indexOf(i18n.t('telemetryCards.fc.title')),
     ];
     for (const position of positions) {
@@ -1986,7 +1991,7 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     });
 
     const text = allText(renderer);
-    expect(text).toContain(i18n.t('batteryCard.percentageUnavailable'));
+    // SETUP P2: no filler caption, and still no percentage anywhere.
     expect(text.join(' ')).not.toContain('الشحن التقديري');
     // The battery card carries no percent figure at all (the receiver's
     // own RSSI percent lives on a different card and is unrelated).
@@ -2415,11 +2420,13 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
     const text = allText(renderer);
     const region4 = text.indexOf('التشخيص والجاهزية');
     const region5 = text.indexOf('أدوات وحدة التحكم');
-    // FINAL-POLISH PASS: Region 5 moved UP to sit under the Orientation
-    // hero, so it now precedes Region 4 rather than following it. The
-    // ordering is still asserted exactly - only its direction changed.
-    expect(region5).toBeGreaterThanOrEqual(0);
-    expect(region4).toBeGreaterThan(region5);
+    // SETUP P2: the calibration/reboot tools moved to the BOTTOM
+    // maintenance region. P0 measured them at 908px on a 390px phone,
+    // standing between the operator and every live aircraft fact. They
+    // keep every capability and every gate; they simply no longer come
+    // first. Diagnostics now precede them.
+    expect(region4).toBeGreaterThanOrEqual(0);
+    expect(region5).toBeGreaterThan(region4);
     expect(text).toEqual(
       expect.arrayContaining([
         'معايرة مقياس التسارع',
@@ -2486,15 +2493,29 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
  * file: findAll() walks depth-first in render order, so the sequence
  * these markers appear in IS the sequence a user scrolls through.
  */
-describe('SetupScreen - effective section order after the final polish', () => {
+/**
+ * SETUP P2 - THE DASHBOARD HIERARCHY CONTRACT.
+ *
+ * This block used to assert the pre-P2 order (orientation hero, then the
+ * calibration tools, then everything else). P0 measured what that cost on
+ * a 390px phone: the hero (969px) and FC Tools (908px) held 62% of a
+ * 3,021px page, the safety strip sat at y=2598, RSSI and battery voltage
+ * at y=2846, GPS at y=3144, and the sensor mask at y=3241 behind a
+ * disclosure. The order below is the replacement, and it is asserted
+ * SEMANTICALLY - pixel evidence is captured separately by the gitignored
+ * measurement harness, so this suite cannot become brittle.
+ */
+describe('SetupScreen - P2 dashboard hierarchy', () => {
   /** One stable marker per major section. SafetyStrip's own testID
    * varies with readiness state, so it is matched by prefix. */
   const SECTION_MARKERS = [
-    'orientation-hero',
-    'fc-tools-section',
     'safety-strip-',
     'telemetry-card-grid',
+    'orientation-hero',
+    'orientation-stability-panel',
+    'setup-system-grid',
     'diagnostics-section',
+    'fc-tools-section',
   ];
 
   function markerFor(testID: unknown): string | undefined {
@@ -2554,16 +2575,18 @@ describe('SetupScreen - effective section order after the final polish', () => {
     await flushAsync();
   });
 
-  it('renders Orientation, then أدوات وحدة التحكم, then the safety strip, cards and diagnostics', async () => {
-    const sessionId = 'final-polish-order';
+  it('puts arming readiness and the live aircraft summary before orientation, diagnostics and tools', async () => {
+    const sessionId = 'p2-hierarchy-order';
     const { renderer } = await renderConnectedScreen(sessionId);
 
     expect(renderedSectionOrder(renderer)).toEqual([
-      'orientation-hero',
-      'fc-tools-section',
       'safety-strip-',
       'telemetry-card-grid',
+      'orientation-hero',
+      'orientation-stability-panel',
+      'setup-system-grid',
       'diagnostics-section',
+      'fc-tools-section',
     ]);
 
     await act(async () => {
@@ -2575,25 +2598,31 @@ describe('SetupScreen - effective section order after the final polish', () => {
     });
   });
 
-  it('places NOTHING between the end of the Orientation section and the FC tools section', async () => {
-    const sessionId = 'final-polish-adjacency';
+  it('places every operational fact BEFORE the calibration tools', async () => {
+    const sessionId = 'p2-hierarchy-before-tools';
     const { renderer } = await renderConnectedScreen(sessionId);
 
     const order = renderedSectionOrder(renderer);
-    expect(order.indexOf('fc-tools-section')).toBe(
-      order.indexOf('orientation-hero') + 1,
-    );
-    // Named explicitly, because these are the sections that USED to be
-    // in between and must not creep back.
-    for (const displaced of [
+    const tools = order.indexOf('fc-tools-section');
+    expect(tools).toBeGreaterThanOrEqual(0);
+    // The exact list P0 found buried underneath 908px of calibration UI.
+    for (const operational of [
       'safety-strip-',
       'telemetry-card-grid',
-      'diagnostics-section',
+      'orientation-hero',
     ]) {
-      expect(order.indexOf(displaced)).toBeGreaterThan(
-        order.indexOf('fc-tools-section'),
-      );
+      const at = order.indexOf(operational);
+      expect({operational, at, beforeTools: at >= 0 && at < tools}).toEqual({
+        operational,
+        at,
+        beforeTools: true,
+      });
     }
+    // Deep diagnostics stay secondary - below the live summary, above
+    // the tools, and never in front of Receiver/GPS/Battery/Sensors.
+    expect(order.indexOf('diagnostics-section')).toBeGreaterThan(
+      order.indexOf('telemetry-card-grid'),
+    );
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -2604,32 +2633,52 @@ describe('SetupScreen - effective section order after the final polish', () => {
     });
   });
 
-  it('moves the FC TOOLS section, not the FlightController telemetry card', async () => {
-    const sessionId = 'final-polish-not-the-card';
+  /* The pre-P2 'nothing between orientation and the tools' adjacency
+   * test is deliberately gone: P2's whole point is that the live
+   * summary now sits between the operator and the calibration UI. */
+  it('keeps every FC TOOL capability, and separates it from the live summary', async () => {
+    const sessionId = 'p2-tools-intact';
     const { renderer } = await renderConnectedScreen(sessionId);
 
-    // The moved section is the one with the calibration/reboot controls.
+    // Nothing was weakened or dropped by the move: all three tools and
+    // the section's own Arabic title still render.
     expect(findAnyByTestID(renderer, 'fc-tool-ACC_CALIBRATION')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'fc-tool-MAG_CALIBRATION')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'fc-tool-REBOOT')).not.toBeNull();
     expect(allText(renderer)).toContain('أدوات وحدة التحكم');
 
-    // The FlightController CARD stayed where it was: inside the
-    // telemetry grid, which is still after the safety strip.
-    const grid = renderer.root.findAll(
+    // SETUP P2: the FlightController diagnostics CARD moved out of the
+    // live summary grid into the maintenance region. CPU load and cycle
+    // time are engineering detail, not the aircraft's operational state,
+    // and the live grid is now Receiver / GPS / Battery / Sensors.
+    const liveGrid = renderer.root.findAll(
       n =>
         typeof n.type === 'string' && n.props.testID === 'telemetry-card-grid',
     );
-    expect(grid).toHaveLength(1);
-    const cardTestIds = grid[0]
+    expect(liveGrid).toHaveLength(1);
+    const liveIds = liveGrid[0]
       .findAll(
         n => typeof n.type === 'string' && typeof n.props.testID === 'string',
       )
       .map(n => n.props.testID as string);
+    expect(liveIds.some(id => id.startsWith('fc-card'))).toBe(false);
+    expect(liveIds.some(id => id.startsWith('receiver-card'))).toBe(true);
+    expect(liveIds.some(id => id.startsWith('gps-card'))).toBe(true);
+    expect(liveIds.some(id => id.startsWith('battery-card'))).toBe(true);
+    expect(liveIds).toContain('sensors-card');
+
+    // And the FC card is still rendered - moved, never deleted.
+    const systemGrid = renderer.root.findAll(
+      n => typeof n.type === 'string' && n.props.testID === 'setup-system-grid',
+    );
+    expect(systemGrid).toHaveLength(1);
     expect(
-      cardTestIds.some(
-        id => id.startsWith('fc-card') || id.includes('flight-controller'),
-      ),
+      systemGrid[0]
+        .findAll(
+          n => typeof n.type === 'string' && typeof n.props.testID === 'string',
+        )
+        .map(n => n.props.testID as string)
+        .some(id => id.startsWith('fc-card')),
     ).toBe(true);
 
     await act(async () => {

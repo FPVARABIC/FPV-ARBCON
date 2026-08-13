@@ -2,6 +2,10 @@ export { default as SafetyStrip } from './SafetyStrip';
 export type { SafetyStripProps } from './SafetyStrip';
 export { default as SetupSafetyNotices } from './SetupSafetyNotices';
 export type { SetupSafetyNoticesProps } from './SetupSafetyNotices';
+export { default as SetupSummaryLink } from './SetupSummaryLink';
+export type { SetupSummaryLinkProps } from './SetupSummaryLink';
+export { default as SensorsCard } from './SensorsCard';
+export type { SensorsCardProps } from './SensorsCard';
 
 export { default as BatteryCard } from './BatteryCard';
 export type { BatteryCardProps } from './BatteryCard';

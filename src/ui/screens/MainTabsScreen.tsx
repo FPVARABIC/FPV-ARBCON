@@ -441,10 +441,16 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
    */
   const sessionKey = props.route.params?.sessionKey;
 
+  /* SETUP P2: Setup's summary cards navigate to the screens that OWN the
+   * configuration they summarize. The shell supplies plain callbacks, so
+   * Setup imports no navigator internals and gains no owner authority. */
   const setupProps = useMemo(
     () => ({
       ...props,
       onOpenGps: () => selectTab('GPS'),
+      onOpenReceiver: () => selectTab('RECEIVER'),
+      onOpenPower: () => selectTab('POWER'),
+      onOpenSensors: () => selectTab('SENSORS'),
     }),
     [props, selectTab],
   );

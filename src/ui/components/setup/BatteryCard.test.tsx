@@ -88,7 +88,13 @@ describe('BatteryCard', () => {
     expect(text).toContain('الجهد');
     expect(text).toContain('16.85 V');
     expect(text).toContain('طبيعية'); // BATTERY_OK mapping
-    expect(text).toContain('نسبة الشحن غير متاحة');
+    // SETUP P2: the permanent "نسبة الشحن غير متاحة" filler line is
+    // GONE. It spent a line of every phone viewport, in every state, to
+    // announce the absence of a number this app deliberately never
+    // computes. The REFUSAL to invent a percentage is what matters and
+    // is asserted below and in batteryTelemetry.test.ts - not a caption.
+    expect(text).not.toContain('نسبة الشحن غير متاحة');
+    expect(text).toContain('عدد الخلايا: 4S');
     expect(
       renderer.root.findAllByProps({ testID: 'battery-card-live' }).length,
     ).toBeGreaterThan(0);
@@ -322,7 +328,7 @@ describe('BatteryCard', () => {
       testID: 'battery-card-stale',
     })[0];
     expect(staleCard.props.accessibilityLabel).toContain(
-      'البطارية، الجهد 16.85 V، طبيعية، بيانات البطارية غير محدثة',
+      'البطارية، الجهد 16.85 V، طبيعية، عدد الخلايا: 4S، بيانات البطارية غير محدثة',
     );
     unmount(stale);
   });
@@ -344,7 +350,7 @@ describe('BatteryCard', () => {
   it('Pass 7.6c closure: NO charge percentage exists in any state - consumed-mAh-since-startup cannot establish state of charge, so the honest fallback line is unconditional', () => {
     const renderer = render({ status: 'FRESH', value: GOLDEN, updatedAtMs: 0 });
     const joined = allText(renderer).join(' ');
-    expect(joined).toContain('نسبة الشحن غير متاحة');
+    expect(joined).not.toContain('نسبة الشحن غير متاحة');
     expect(joined).not.toContain('الشحن التقديري');
     expect(joined).not.toMatch(/\d+%/);
     const card = renderer.root.findAllByProps({

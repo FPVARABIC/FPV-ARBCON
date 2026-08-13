@@ -606,20 +606,20 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const { renderer } = await mount('integration-order');
       const text = allText(renderer);
 
-      // FINAL-POLISH PASS: Region 5 ("أدوات وحدة التحكم") now sits
-      // directly below the COMPLETE Orientation section rather than
-      // after Region 4 - the calibration and reboot controls belong
-      // next to the thing they act on. Region 4 keeps its own place
-      // after the telemetry cards; only Region 5 moved.
+      // SETUP P2: the dashboard order. The live aircraft summary comes
+      // before the orientation model, deep diagnostics (Region 4) come
+      // after it, and the calibration/reboot tools (Region 5) are last -
+      // they no longer stand between the operator and the aircraft's
+      // live state. Every region still assembles exactly once.
       const positions = [
         text.indexOf(ARABIC.region1Title),
         text.indexOf('نموذج الاتجاه'),
-        text.indexOf(ARABIC.region5Title),
         text.indexOf(ARABIC.region4Title),
-      ].filter(index => index >= 0);
-      expect(text.indexOf(ARABIC.region5Title)).toBeGreaterThan(0);
-      expect(text.indexOf(ARABIC.region4Title)).toBeGreaterThan(
         text.indexOf(ARABIC.region5Title),
+      ].filter(index => index >= 0);
+      expect(text.indexOf(ARABIC.region4Title)).toBeGreaterThan(0);
+      expect(text.indexOf(ARABIC.region5Title)).toBeGreaterThan(
+        text.indexOf(ARABIC.region4Title),
       );
       expect([...positions].sort((a, b) => a - b)).toEqual(positions);
 

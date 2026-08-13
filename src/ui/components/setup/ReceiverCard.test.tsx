@@ -143,7 +143,11 @@ describe('ReceiverCard', () => {
     expect(flat.fontVariant).toEqual(['tabular-nums']);
     const card = renderer.root.findAllByProps({testID: 'receiver-card-live'})[0];
     expect(card.props.accessible).toBe(true);
-    expect(card.props.accessibilityLabel).toBe('جهاز الاستقبال، RSSI: 53%');
+    // SETUP P2: the live/stale distinction is now its own sentence
+    // rather than only a dimmed opacity, and it is announced too.
+    expect(card.props.accessibilityLabel).toBe(
+      'جهاز الاستقبال، الاستقبال مباشر، RSSI: 53%',
+    );
     unmount(renderer);
   });
 
