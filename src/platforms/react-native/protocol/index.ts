@@ -194,6 +194,12 @@ export {
   SENSOR_ALTITUDE_POLL_ID,
   SENSOR_IMU_INTERVAL_MS,
 } from './sensorsTelemetry';
+/* SETUP P3. Only the acquire is public. `isSetupAttitudeSuppressedBySetup`
+ * is test-only introspection and stays off the barrel deliberately: the
+ * scheduler's own reference count is the authority on whether a poll is
+ * suppressed, and a second, weaker answer reachable from the UI would be
+ * a way for a screen to disagree with it. */
+export {acquireSetupHiddenAttitudeSuppression} from './setupHiddenAttitudeSuppression';
 export {
   GeneralConfigurationController,
   generalConfigurationController,

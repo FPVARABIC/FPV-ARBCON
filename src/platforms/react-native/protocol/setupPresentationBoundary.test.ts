@@ -187,12 +187,29 @@ describe('SETUP P1 - Setup UI protocol boundary', () => {
   it('imports from the protocol layer ONLY through the facade or the accepted command surface', () => {
     /** Names Setup UI may still take from the protocol barrel: the
      * Setup-OWNED command controller and its read hooks, the plain UI
-     * session store (not a protocol authority), and types. */
+     * session store (not a protocol authority), and types.
+     *
+     * SETUP P3 added exactly one more, and deliberately did NOT put it in
+     * the facade. `setupPresentation` is Setup's READ-ONLY window - hooks
+     * that observe and reads that snapshot - and every name in it can be
+     * called without changing anything. Acquiring a poll-suppression
+     * lease is a lifecycle ACTION with a side effect on the scheduler, so
+     * routing it through the read-only facade would have made that
+     * contract false in order to satisfy this test. It is listed here
+     * instead, which is the honest place for it: a reviewer sees a
+     * side-effecting protocol call being granted to the UI, by name.
+     *
+     * The lease itself is still owned by a dedicated protocol-layer
+     * module (setupHiddenAttitudeSuppression), beside the two lease
+     * owners that already exist for this poll id - Setup passes a session
+     * key and gets a release function, and still never names a poll id.
+     */
     const ACCEPTED_BARREL_NAMES = new Set([
       'fcToolsController',
       'useFcToolPhase',
       'useFcToolPublication',
       'setupUiSessionStore',
+      'acquireSetupHiddenAttitudeSuppression',
     ]);
     for (const file of files) {
       const source = readFileSync(file, 'utf8');

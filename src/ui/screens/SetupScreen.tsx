@@ -109,9 +109,15 @@ import {
   startSetupTelemetryOwnership,
   ensureSetupArmedStateAvailable,
 } from '../../platforms/react-native/protocol/setupPresentation';
+// SETUP P3: the ONE lifecycle action Setup performs on the protocol
+// layer. It is imported from the protocol barrel rather than from the
+// read-only presentation facade above, deliberately - acquiring a lease
+// has a side effect on the scheduler, and hiding that behind a facade
+// whose contract is "Setup only reads" would make the contract false.
 import {
   useFcToolPublication,
   setupUiSessionStore,
+  acquireSetupHiddenAttitudeSuppression,
 } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 // Checkpoint F - "نسخ تقرير التليمترية". Web-only by the same file
@@ -315,6 +321,31 @@ function SetupScreenContent({
   useEffect(() => {
     startSetupTelemetryOwnership(sessionId);
   }, [sessionId]);
+
+  // SETUP P3 - stop polling the orientation model nobody is looking at.
+  //
+  // MainTabsScreen keeps every opened tab MOUNTED behind display:'none'
+  // rather than unmounting it (deliberately - see that file's header on
+  // the Motors stop-bridge), so `active === false` is this screen's only
+  // signal that its 20Hz model is off screen. MSP_ATTITUDE is registered
+  // for the whole session and read by nothing outside this screen, so a
+  // user who opened Setup once and moved to another tab was paying 20
+  // requests a second, on a single-flight link, for pixels nobody could
+  // see.
+  //
+  // The lease is taken while HIDDEN and released on the way back, so the
+  // visible cadence is untouched. Effect ordering makes the return
+  // seamless: React runs this cleanup before the newly-visible frame's
+  // effects, so the poll is dispatchable again by the time the hero
+  // subscribes. Depending on `sessionKey` (not just `sessionId`) means a
+  // new generation re-acquires against its own scheduler instead of
+  // silently holding a lease on a dead one.
+  useEffect(() => {
+    if (active) {
+      return;
+    }
+    return acquireSetupHiddenAttitudeSuppression(sessionKey);
+  }, [active, sessionKey]);
 
   // A new PHYSICAL session (new coordinator generation) must never read
   // the previous connection's render counts. The observer also self-heals

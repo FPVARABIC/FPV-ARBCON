@@ -183,7 +183,23 @@ describe('OrientationHero', () => {
     expect(allText(renderer)).toContain('مباشر');
   });
 
-  it('places the two live instruments directly after the 3D model and before the numeric readouts', () => {
+  /**
+   * SETUP P3 CHANGED THIS ORDER, DELIBERATELY.
+   *
+   * React Native's jest defaults are 750px at fontScale 2, i.e. an
+   * EFFECTIVE 375px - a phone, and therefore the compact-row branch. On
+   * that branch the model and the numeric readouts share one column and
+   * the instrument rail stands beside them, because the rail is the
+   * taller of the two and was leaving the space under the model empty
+   * (measured: 630px -> 528px of hero, at 390px).
+   *
+   * So the reading order is now model -> its own numbers -> the
+   * instruments beside them, which is also how the eye travels down the
+   * column. The pose handed to every one of the three is still the SAME
+   * sample - which is the part that actually matters, and is asserted
+   * below rather than assumed.
+   */
+  it('phone: the readouts share the model column, with the instrument rail beside them', () => {
     const { renderer } = render({
       status: 'LIVE',
       rollDeg: 8.5,
@@ -201,8 +217,8 @@ describe('OrientationHero', () => {
       .map(node => node.props.testID);
     expect(ordered).toEqual([
       'orientation-hero-renderer-wrapper',
-      'flight-instruments',
       'orientation-hero-roll',
+      'flight-instruments',
     ]);
     expect(
       findByTestID(renderer, 'artificial-horizon')?.props.accessibilityLabel,
@@ -210,6 +226,26 @@ describe('OrientationHero', () => {
     expect(
       findByTestID(renderer, 'direction-compass')?.props.accessibilityLabel,
     ).toContain('42');
+  });
+
+  it('renders the readouts exactly once, never in both positions', () => {
+    const { renderer } = render({
+      status: 'LIVE',
+      rollDeg: 8.5,
+      pitchDeg: -3,
+      yawDeg: 42,
+    });
+    for (const testID of [
+      'orientation-hero-roll',
+      'orientation-hero-pitch',
+      'orientation-hero-heading',
+    ]) {
+      expect(
+        renderer.root.findAll(
+          node => node.type === View && node.props.testID === testID,
+        ),
+      ).toHaveLength(1);
+    }
   });
 
   it('STALE: freezes the model/readouts at their last values, dimmed, and shows the stale label', () => {

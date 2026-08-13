@@ -2,7 +2,7 @@ import React, { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, radii, spacing, typography } from '../../theme';
+import { colors, fonts, radii, spacing, typography } from '../../theme';
 
 const MIN_INSTRUMENT_SIZE = 112;
 const MAX_INSTRUMENT_SIZE = 156;
@@ -16,12 +16,19 @@ const ARTIFICIAL_HORIZON_PITCH_LIMIT_DEG = 30;
 const COMPASS_BEARINGS = Object.freeze(
   Array.from({ length: 12 }, (_, index) => index * 30),
 );
-const CARDINALS = Object.freeze([
-  { bearing: 0, label: 'N' },
-  { bearing: 90, label: 'E' },
-  { bearing: 180, label: 'S' },
-  { bearing: 270, label: 'W' },
-]);
+/**
+ * SETUP P3: relative graduations, not cardinal points. These are the
+ * quarter-turn marks of the dial - 0 is the operator's own reset
+ * reference, not north. Rendered as degree numbers so nothing about them
+ * can be read as a magnetic bearing.
+ */
+const RELATIVE_MARKS = Object.freeze([0, 90, 180, 270]);
+
+/** Latin digits with a degree sign, isolated LTR by the style below so
+ * the surrounding Arabic paragraph cannot reorder them. */
+function formatRelativeMark(mark: number): string {
+  return `${mark}°`;
+}
 
 export type FlightInstrumentsStatus = 'LIVE' | 'STALE' | 'WAITING' | 'ERROR';
 
@@ -116,18 +123,6 @@ function formatHeading(value: number): string {
   return `${String(roundHeadingDegrees(value)).padStart(3, '0')}°`;
 }
 
-function statusTranslationKey(status: FlightInstrumentsStatus): string {
-  switch (status) {
-    case 'LIVE':
-      return 'flightInstruments.status.live';
-    case 'STALE':
-      return 'flightInstruments.status.stale';
-    case 'ERROR':
-      return 'flightInstruments.status.error';
-    default:
-      return 'flightInstruments.status.waiting';
-  }
-}
 
 /** Static ladder marks are isolated from the 20Hz pose updates. Only the
  * parent plane transform changes when a new sample arrives. */
@@ -191,22 +186,32 @@ const CompassDialMarks = memo(function RenderCompassDialMarks({
           />
         );
       })}
-      {CARDINALS.map(cardinal => {
-        const radians = (cardinal.bearing * Math.PI) / 180;
+      {/* SETUP P3: the N/E/S/W cardinal rose is GONE, deliberately.
+          P0 proved this dial is driven by FC attitude yaw offset by the
+          operator's own reset point - a RELATIVE direction with no
+          magnetometer guarantee. Cardinal letters and a red north needle
+          are the visual language of a magnetic compass, and they made
+          the instrument claim more than the data can support. They were
+          also the only four non-Cairo text nodes on the whole Setup
+          surface; removing them closes that inconsistency at the same
+          time, by deleting the misleading thing rather than restyling
+          it. The graduated ticks remain: they show RELATIVE rotation,
+          which is exactly what the yaw value is. */}
+      {RELATIVE_MARKS.map(mark => {
+        const radians = (mark * Math.PI) / 180;
         return (
           <Text
-            key={cardinal.label}
+            key={`mark-${mark}`}
             style={[
-              styles.cardinal,
-              cardinal.label === 'N' && styles.cardinalNorth,
+              styles.relativeMark,
               {
                 left: center + Math.sin(radians) * labelRadius - 12,
                 top: center - Math.cos(radians) * labelRadius - 9,
-                transform: [{ rotate: `${cardinal.bearing}deg` }],
+                transform: [{ rotate: `${mark}deg` }],
               },
             ]}
           >
-            {cardinal.label}
+            {formatRelativeMark(mark)}
           </Text>
         );
       })}
@@ -399,6 +404,8 @@ function DirectionCompass({
           <CompassDialMarks size={size} />
         </View>
 
+        {/* The fixed lubber line: where the aircraft's own nose points
+            on this dial. Not a north pointer - it never moves. */}
         <View style={styles.compassTopMarker} />
         <View style={styles.aircraftPlanNose} />
         <View style={styles.aircraftPlanFuselage} />
@@ -436,7 +443,6 @@ function FlightInstruments({
   pitchDeg = 0,
   headingDeg = 0,
 }: FlightInstrumentsProps): React.JSX.Element {
-  const { t } = useTranslation();
   const sidebar = layout === 'sidebar';
   const stacked = sidebar || shouldStackFlightInstruments(stageWidth, fontScale);
   const size = computeFlightInstrumentSize(stageWidth, stacked, sizeScale);
@@ -448,33 +454,13 @@ function FlightInstruments({
       testID="flight-instruments"
       accessibilityState={{ disabled: !available }}
     >
-      {!sidebar ? <View style={styles.headerRow}>
-        <View style={styles.headerCopy}>
-          <Text style={styles.eyebrow}>{t('flightInstruments.eyebrow')}</Text>
-          <Text style={styles.title} accessibilityRole="header">
-            {t('flightInstruments.title')}
-          </Text>
-        </View>
-        <View
-          style={[
-            styles.statusPill,
-            status === 'WAITING' && styles.statusPillWaiting,
-            status === 'STALE' && styles.statusPillStale,
-            status === 'ERROR' && styles.statusPillError,
-          ]}
-        >
-          <Text
-            style={[
-              styles.statusText,
-              status === 'WAITING' && styles.statusTextWaiting,
-              status === 'STALE' && styles.statusTextStale,
-              status === 'ERROR' && styles.statusTextError,
-            ]}
-          >
-            {t(statusTranslationKey(status))}
-          </Text>
-        </View>
-      </View> : null}
+      {/* SETUP P3: the internal header row is GONE. It carried its own
+          eyebrow ("أدوات الاتجاه"), its own title and its own status
+          pill - and it renders INSIDE OrientationHero, which already has
+          all three. P0 measured "مباشر" appearing twice in one hero for
+          exactly this reason. One section, one state indicator; the
+          hero's badge is the survivor because it speaks for the whole
+          orientation section, not just these two dials. */}
 
       <View
         style={[
@@ -516,9 +502,9 @@ function FlightInstruments({
           </>
         )}
       </View>
-      {!sidebar ? <Text style={styles.relativeNote}>
-        {t('flightInstruments.relativeNote')}
-      </Text> : null}
+      {/* The relative-direction caveat lives once, on the hero's own
+          note line - repeating it under the dials spent 44px saying the
+          same sentence twice. */}
     </View>
   );
 }
@@ -699,18 +685,24 @@ const styles = StyleSheet.create({
     backgroundColor: colors.textMuted,
   },
   compassTickMajor: { height: 12, backgroundColor: colors.white },
-  cardinal: {
+  /* SETUP P3: the graduation labels. `fontFamily` is now set explicitly -
+     P0 measured the four cardinal letters this replaces as the ONLY
+     non-Cairo text nodes on the Setup surface, because this style set
+     size/weight/colour and silently inherited the platform default
+     family. There is no `cardinalNorth` variant any more: a red north
+     needle is exactly the claim this instrument may not make. */
+  relativeMark: {
     position: 'absolute',
     width: 24,
     height: 18,
     textAlign: 'center',
     color: colors.white,
-    fontSize: 12,
+    fontFamily: fonts.family,
+    fontSize: 11,
     lineHeight: 18,
     fontWeight: '700',
     writingDirection: 'ltr',
   },
-  cardinalNorth: { color: colors.error },
   compassTopMarker: {
     position: 'absolute',
     top: 3,

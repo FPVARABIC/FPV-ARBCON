@@ -110,9 +110,14 @@ describe('FlightInstruments rendering contract', () => {
     expect(
       byTestID(renderer, 'artificial-horizon').props.accessibilityLabel,
     ).toBe('الأفق الاصطناعي، الدوران 12.5 درجة، الميل -6.5 درجة');
+    // SETUP P3: the word "بوصلة" (compass) is gone from this label on
+    // purpose. Screen-reader users were being told this instrument was a
+    // compass; it is the FC's yaw offset from the operator's own reset
+    // point, so the label now names the reference instead of implying a
+    // magnetic one.
     expect(
       byTestID(renderer, 'direction-compass').props.accessibilityLabel,
-    ).toBe('بوصلة الاتجاه النسبي، 275 درجة');
+    ).toBe('الاتجاه النسبي، 275 درجة من نقطة الضبط الحالية');
     const horizonTransform = StyleSheet.flatten(
       byTestID(renderer, 'artificial-horizon-moving-world').props.style,
     ).transform;
@@ -130,8 +135,12 @@ describe('FlightInstruments rendering contract', () => {
         byTestID(renderer, 'direction-compass-dial').props.style,
       ).transform,
     ).toEqual([{ rotate: '-275deg' }]);
+    // The dial's own title is "الاتجاه النسبي" (relative direction), and
+    // its graduations are degree numbers rather than N/E/S/W - see the
+    // dedicated relative-direction suite below for why the cardinal rose
+    // was removed rather than restyled.
     expect(allText(renderer)).toEqual(
-      expect.arrayContaining(['الأفق الاصطناعي', 'بوصلة الاتجاه', '275°']),
+      expect.arrayContaining(['الأفق الاصطناعي', 'الاتجاه النسبي', '275°']),
     );
   });
 
@@ -183,7 +192,23 @@ describe('FlightInstruments rendering contract', () => {
     ).toBe(112);
   });
 
-  it('keeps stale values visible but labels them as delayed', () => {
+  /**
+   * SETUP P3: this component no longer SPEAKS about status.
+   *
+   * It used to carry its own eyebrow, title and status pill, and it
+   * renders inside OrientationHero, which already has all three - P0
+   * measured "مباشر" printed twice in one hero for exactly that reason.
+   * One section, one state indicator, and the hero's badge is the
+   * survivor because it speaks for the whole orientation section rather
+   * than for two dials.
+   *
+   * The stale TRUTH is not lost, only de-duplicated: OrientationHero's
+   * own test asserts both the STALE badge and the
+   * `orientation-hero-stale-label` line. What this component must still
+   * do is keep showing the last real numbers instead of blanking them,
+   * and not raise the "unavailable" overlay - both asserted here.
+   */
+  it('keeps the last real values visible when stale, and claims no status of its own', () => {
     const renderer = render({
       status: 'STALE',
       stageWidth: 330,
@@ -191,11 +216,12 @@ describe('FlightInstruments rendering contract', () => {
       pitchDeg: 2,
       headingDeg: 5,
     });
-    expect(allText(renderer)).toContain('قراءة متأخرة');
     expect(allText(renderer)).toContain('005°');
     expect(
       findByTestID(renderer, 'artificial-horizon-overlay'),
     ).toBeUndefined();
+    expect(allText(renderer)).not.toContain('قراءة متأخرة');
+    expect(allText(renderer)).not.toContain('مباشر');
   });
 
   it.each(['WAITING', 'ERROR'] as const)(

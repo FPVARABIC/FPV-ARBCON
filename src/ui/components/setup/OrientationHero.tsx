@@ -61,6 +61,29 @@ import FlightInstruments, { roundHeadingDegrees } from './FlightInstruments';
 import { ORIENTATION_DESKTOP_WORKSPACE_ENABLED } from './orientationHeroDesktopWorkspace';
 
 const HERO_MAX_SIZE = 340;
+/**
+ * SETUP P3 - THE PHONE COMPOSITION.
+ *
+ * P0 measured this hero at 969px on a 390px phone - taller than the whole
+ * viewport - and diagnosed the cause precisely: not an undersized model
+ * (it was 30.7% of the card), but a fully STACKED composition. Header,
+ * then a 330px square stage, then a 317px instrument panel with its own
+ * header and note, then three readouts, then a note, then the reset
+ * button, each on its own row.
+ *
+ * The fix is to put the model and the two dials side by side, the way the
+ * tablet layout already does, with numbers tuned for a phone. At 390 the
+ * card's inner width is 366 - 2*spacing.lg = 330px, so a 196px stage plus
+ * an 8px gap plus a 126px instrument rail fits with room to spare.
+ *
+ * The model is NOT scaled up to fill the freed space (P0 explicitly
+ * warned against that): the scene geometry, its maths and its rendering
+ * are untouched. Only the box it is drawn into got smaller, and the
+ * chrome around it got simpler.
+ */
+const COMPACT_ROW_MIN_WIDTH = 340;
+const COMPACT_ROW_STAGE_SIZE = 196;
+const COMPACT_ROW_RAIL_WIDTH = 126;
 const HERO_TABLET_MAX_SIZE = 410;
 const HERO_MIN_SIZE = 180;
 const SIDEBAR_LAYOUT_MIN_WIDTH = 620;
@@ -83,6 +106,28 @@ export function shouldUseOrientationSidebar(
   const safeScale =
     Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
   return Number.isFinite(windowWidth) && windowWidth / safeScale >= SIDEBAR_LAYOUT_MIN_WIDTH;
+}
+
+/**
+ * True when the phone is wide enough to put the model and the instrument
+ * rail on one row. Below this the layout stays stacked, which is correct
+ * for a very narrow or heavily font-scaled screen - crushing the
+ * instruments to fit a row would trade one legibility problem for
+ * another.
+ */
+export function shouldUseCompactOrientationRow(
+  windowWidth: number,
+  fontScale = 1,
+): boolean {
+  const safeScale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
+  if (!Number.isFinite(windowWidth)) {
+    return false;
+  }
+  const effective = windowWidth / safeScale;
+  return (
+    effective >= COMPACT_ROW_MIN_WIDTH &&
+    !shouldUseOrientationSidebar(windowWidth, fontScale)
+  );
 }
 
 export function computeOrientationHeroSize(
@@ -174,17 +219,32 @@ export default function OrientationHero({
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const sidebar = shouldUseOrientationSidebar(windowWidth, fontScale);
+  const compactRow = shouldUseCompactOrientationRow(windowWidth, fontScale);
   const [measuredVisualsWidth, setMeasuredVisualsWidth] = useState<number>();
   const workspace = computeOrientationWorkspaceLayout(windowWidth, fontScale, measuredVisualsWidth);
-  const heroSize = workspace.stageWidth;
-  const heroHeight = workspace.stageHeight;
-  const instrumentStageWidth = sidebar ? 156 : heroSize;
+  // SETUP P3: on a phone the stage is a fixed compact square beside the
+  // instrument rail rather than the full card width stacked above it.
+  const heroSize = compactRow ? COMPACT_ROW_STAGE_SIZE : workspace.stageWidth;
+  const heroHeight = compactRow ? COMPACT_ROW_STAGE_SIZE : workspace.stageHeight;
+  const instrumentStageWidth = sidebar
+    ? 156
+    : compactRow
+      ? COMPACT_ROW_RAIL_WIDTH
+      : heroSize;
+  /* The rail reuses the proven 'sidebar' instrument layout: two dials
+     stacked, no panel chrome, compass first. Only the width differs. */
+  const instrumentsLayout = sidebar || compactRow ? 'sidebar' : 'row';
   const [hintVisible, setHintVisible] = useState(false);
   const handleVisualsLayout = (event: LayoutChangeEvent) => {
     const measured = event.nativeEvent.layout.width;
     setMeasuredVisualsWidth(current => current === measured ? current : measured);
   };
-  const visualsStyle = [styles.visuals, sidebar && styles.visualsSidebar, workspace.expanded && styles.visualsDesktop];
+  const visualsStyle = [
+    styles.visuals,
+    (sidebar || compactRow) && styles.visualsSidebar,
+    compactRow && styles.visualsCompactRow,
+    workspace.expanded && styles.visualsDesktop,
+  ];
 
   const handleReset = () => {
     // Rejected, not merely visually disabled: a press delivered while the
@@ -284,7 +344,7 @@ export default function OrientationHero({
             status="WAITING"
             stageWidth={instrumentStageWidth}
             fontScale={fontScale}
-            layout={sidebar ? 'sidebar' : 'row'}
+            layout={instrumentsLayout}
             sizeScale={sidebar ? 0.8 : 1}
           />
         </View>
@@ -311,7 +371,7 @@ export default function OrientationHero({
             status="ERROR"
             stageWidth={instrumentStageWidth}
             fontScale={fontScale}
-            layout={sidebar ? 'sidebar' : 'row'}
+            layout={instrumentsLayout}
             sizeScale={sidebar ? 0.8 : 1}
           />
         </View>
@@ -350,34 +410,78 @@ export default function OrientationHero({
     );
   }
 
+  /**
+   * SETUP P3: the three numeric truths. On a phone they now sit UNDER the
+   * model inside the same column as the stage, filling space the taller
+   * instrument rail was leaving empty beside it. That is the whole trick
+   * of this layout - the row's height is set by the rail either way, so
+   * the readouts became free. Elsewhere they keep their own full-width
+   * row exactly as before.
+   */
+  const renderReadouts = () => (
+    <View style={styles.readoutsRow}>
+      <View style={styles.readout} testID="orientation-hero-roll">
+        <Text style={styles.readoutLabel}>
+          {t('orientationHero.rollLabel')}
+        </Text>
+        <Text style={styles.readoutValue}>
+          {formatTiltDegrees(displayed.rollDeg)}
+        </Text>
+      </View>
+      <View style={styles.readout} testID="orientation-hero-pitch">
+        <Text style={styles.readoutLabel}>
+          {t('orientationHero.pitchLabel')}
+        </Text>
+        <Text style={styles.readoutValue}>
+          {formatTiltDegrees(displayed.pitchDeg)}
+        </Text>
+      </View>
+      <View style={styles.readout} testID="orientation-hero-heading">
+        <Text style={styles.readoutLabel}>
+          {t('orientationHero.headingLabel')}
+        </Text>
+        <Text style={styles.readoutValue}>{`${roundHeadingDegrees(
+          displayed.yawDeg,
+        )}°`}</Text>
+      </View>
+    </View>
+  );
+
   return (
     <View style={styles.container} testID="orientation-hero">
       {renderHeader(isStale ? 'STALE' : 'LIVE')}
       <View style={visualsStyle} onLayout={handleVisualsLayout}>
-        <View
-          style={[styles.rendererWrapper, { width: heroSize, height: heroHeight }]}
-          accessible
-          accessibilityLabel={accessibilityText}
-          testID="orientation-hero-renderer-wrapper"
-        >
-          <OrientationRenderer
-            // The latest GENUINE sample, directly. No animation, no queue,
-            // no pending target: a newer sample simply replaces this prop,
-            // so an older pose can never be drawn after a newer one.
-            orientation={displayed}
-            width={heroSize}
-            height={heroHeight}
-            presentationScale={workspace.presentationScale}
-            stale={isStale}
-            sampleIdentity={sampleIdentity}
-          />
+        <View style={compactRow ? styles.compactStageColumn : undefined}>
+          <View
+            style={[
+              styles.rendererWrapper,
+              { width: heroSize, height: heroHeight },
+            ]}
+            accessible
+            accessibilityLabel={accessibilityText}
+            testID="orientation-hero-renderer-wrapper"
+          >
+            <OrientationRenderer
+              // The latest GENUINE sample, directly. No animation, no
+              // queue, no pending target: a newer sample simply replaces
+              // this prop, so an older pose can never be drawn after a
+              // newer one.
+              orientation={displayed}
+              width={heroSize}
+              height={heroHeight}
+              presentationScale={workspace.presentationScale}
+              stale={isStale}
+              sampleIdentity={sampleIdentity}
+            />
+          </View>
+          {compactRow ? renderReadouts() : null}
         </View>
 
         <FlightInstruments
           status={isStale ? 'STALE' : 'LIVE'}
           stageWidth={instrumentStageWidth}
           fontScale={fontScale}
-          layout={sidebar ? 'sidebar' : 'row'}
+          layout={instrumentsLayout}
           sizeScale={sidebar ? 0.8 : 1}
           rollDeg={displayed.rollDeg}
           pitchDeg={displayed.pitchDeg}
@@ -391,32 +495,7 @@ export default function OrientationHero({
         </Text>
       )}
 
-      <View style={styles.readoutsRow}>
-        <View style={styles.readout} testID="orientation-hero-roll">
-          <Text style={styles.readoutLabel}>
-            {t('orientationHero.rollLabel')}
-          </Text>
-          <Text style={styles.readoutValue}>
-            {formatTiltDegrees(displayed.rollDeg)}
-          </Text>
-        </View>
-        <View style={styles.readout} testID="orientation-hero-pitch">
-          <Text style={styles.readoutLabel}>
-            {t('orientationHero.pitchLabel')}
-          </Text>
-          <Text style={styles.readoutValue}>
-            {formatTiltDegrees(displayed.pitchDeg)}
-          </Text>
-        </View>
-        <View style={styles.readout} testID="orientation-hero-heading">
-          <Text style={styles.readoutLabel}>
-            {t('orientationHero.headingLabel')}
-          </Text>
-          <Text style={styles.readoutValue}>{`${roundHeadingDegrees(
-            displayed.yawDeg,
-          )}°`}</Text>
-        </View>
-      </View>
+      {compactRow ? null : renderReadouts()}
 
       {/* Heading here is a RELATIVE direction, not magnetic north: this
           app never claims a compass it cannot prove, and after the
@@ -503,6 +582,7 @@ const styles = StyleSheet.create({
   },
   rendererWrapper: {
     marginTop: spacing.sm,
+    flexShrink: 0,
     borderRadius: radii.lg,
     overflow: 'hidden',
     backgroundColor: colors.backgroundRaised,
@@ -525,6 +605,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
   },
+  /* SETUP P3: the phone row. `alignItems: flex-start` keeps the shorter
+     instrument rail top-aligned with the model instead of floating in the
+     middle of it, and the small gap is all the separation two bordered
+     surfaces need. */
+  visualsCompactRow: {
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  compactStageColumn: { alignItems: 'center' },
   visualsDesktop: { justifyContent: 'flex-start' },
   headerRow: {
     width: '100%',
