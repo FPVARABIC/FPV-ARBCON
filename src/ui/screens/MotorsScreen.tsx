@@ -68,6 +68,7 @@ import type { MotorTestOperatorPort } from '../../platforms/react-native/protoco
 import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 import { createMotorTestLifecycleBridge } from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
+import { subscribeWindowBlur } from '../../platforms/windowBlur';
 import { evaluateMotorDeparture } from '../../core/state/motorDepartureGate';
 import { deriveMotorSessionState } from '../../core/state/motorSessionPresentation';
 import type { MotorDepartureVerdict } from '../../core/state/motorDepartureGate';
@@ -728,6 +729,40 @@ export function MotorsScreenView({
    * gesture the gate accepted; it must never CREATE one. */
   const holdGateBlockedRef = useRef(holdGateBlocked);
   holdGateBlockedRef.current = holdGateBlocked;
+
+  /**
+   * WHY THE HOLD CONTROL IS LOCKED, IN THE OPERATOR'S WORDS.
+   *
+   * THE DEFECT THIS CLOSES, reported from a real flight controller: the
+   * operator pressed hold-to-test repeatedly and nothing happened at all.
+   * A browser probe of the gesture path cleared the gesture engine - it
+   * activates correctly whenever the gate admits it - so the failure was
+   * never the press. It was this: `disabled` on a react-native-web
+   * Pressable applies `pointerEvents: 'box-none'` and makes
+   * `onStartShouldSetResponder` return false, so a blocked control
+   * receives NO pointer event, changes nothing, and looks like dead
+   * pixels. Worse, `showReadinessDiagnostic` requires either a terminal
+   * outcome or `setupStep === 'READY'`, so with no session open there is
+   * no snapshot, no reason, and nothing rendered anywhere on screen.
+   *
+   * This adds NO command authority. It resolves the SAME canonical
+   * reasons the controller already publishes into one line rendered on
+   * the control itself, so a locked button always says why it is locked.
+   * Order is causal: the thing the operator must do first comes first.
+   */
+  const holdBlockedReason: string | undefined = !holdGateBlocked
+    ? undefined
+    : requiresNewConnection
+      ? t('motorsScreen.requiresNewConnection')
+      : operator === undefined || sessionId === undefined
+        ? t('motorsScreen.holdBlockedNoSession')
+        : !motorControlEnabled
+          ? t('motorsScreen.holdBlockedControlOff')
+          : motorConfigurationBusy
+            ? t('motorsScreen.holdBlockedBusy')
+            : primaryBlockReason !== undefined
+              ? t(`motorsScreen.blockReason.${primaryBlockReason}`)
+              : t('motorsScreen.holdBlockedUnknown');
   /** Ends the exclusive test session before the optional output-reorder
    * transaction, which deliberately owns a separate interlock. */
   const handleEndSessionForConfiguration = useCallback(async () => {
@@ -994,6 +1029,68 @@ export function MotorsScreenView({
     }
   }, [clearHoldHeartbeat, clearWebLongPressTimer, stopNow]);
 
+  /**
+   * THE PRESSED POINTER LEFT THE CONTROL - STOP NOW, NOT AT MOUSE-UP.
+   *
+   * MEASURED DEFECT: hold past the threshold, then drag the still-pressed
+   * pointer off the button, and the motor command stayed live until the
+   * button was finally released somewhere else on the page.
+   * react-native-web keeps the responder when the pointer leaves, so no
+   * press-out arrives - yet "my pointer is no longer on the control" is
+   * exactly when an operator believes they have let go.
+   *
+   * WHY THIS SEAM AND NOT `onPressMove`. Probed in Chromium rather than
+   * assumed: an earlier bounds-checking attempt through `onPressMove`
+   * never fired and was removed. A DOM probe then showed the host node
+   * really does receive `pointerleave` mid-drag, and that
+   * react-native-web forwards `onPointerLeave` straight to it - so this
+   * is a real W3C pointer event, not responder emulation. The harness now
+   * records `I_PULSE_ACCEPTED -> SEAM_POINTER_LEAVE -> STOP` on leave,
+   * with the later mouse-up landing as an inert second press-out.
+   *
+   * It creates NO stop transaction of its own. It calls the same
+   * `handlePressOut` every release, cancel and termination already uses,
+   * and only while this control owns a live gesture.
+   */
+  const handleHoldPointerLoss = useCallback(() => {
+    if (!holdOwnedRef.current) {
+      return;
+    }
+    handlePressOut();
+  }, [handlePressOut]);
+
+  /**
+   * WINDOW BLUR WITHDRAWS AN OWNED HOLD - a fail-safe, not a feature.
+   *
+   * WHY IT IS EXPLICIT. react-native-web's AppState subscribes ONLY to
+   * `visibilitychange` (AppState/index.js), so switching to another
+   * window while this page stays VISIBLE raises no AppState change and
+   * the motor lifecycle bridge never hears about it. A probe of that
+   * exact case was inconclusive in headless Chromium - it could not
+   * produce a trustworthy OS-level window switch with a button held - and
+   * an unproven incidental behaviour is not something a live motor
+   * command may depend on. So the guarantee is made here instead of
+   * assumed.
+   *
+   * STOP-ONLY, AND NARROW. It cannot start a motor: its single action is
+   * the SAME `handlePressOut` that every release, leave, cancel and
+   * termination already uses, so blur + pointerleave + pointerup collapse
+   * onto one stop episode rather than three transport writes. The
+   * listener exists only while a gesture is actually owned - not while
+   * idle, not after release, not after unmount - and Android is untouched
+   * because the effect is inert off the web.
+   */
+  useEffect(() => {
+    if (!holdOwned) {
+      return;
+    }
+    return subscribeWindowBlur(() => {
+      if (holdOwnedRef.current) {
+        handlePressOut();
+      }
+    });
+  }, [handlePressOut, holdOwned]);
+
   const handleStopPress = useCallback(() => {
     holdOwnedRef.current = false;
     setHoldOwned(false);
@@ -1096,6 +1193,14 @@ export function MotorsScreenView({
       onLongPress={handleLongPress}
       delayLongPress={MOTOR_TEST_LONG_PRESS_DELAY_MILLIS}
       onPressOut={handlePressOut}
+      onPointerLeave={handleHoldPointerLoss}
+      onPointerCancel={handleHoldPointerLoss}
+      /* NATIVE ONLY IN PRACTICE. react-native-web's Pressable spreads its
+         own press handlers AFTER the caller's props and supplies its own
+         onResponderTerminate, so this one is overwritten in the browser -
+         where RNW's internal terminate reaches onPressOut anyway. It stays
+         because on Android it IS the termination hook, and deleting it
+         would remove real native safety to tidy a web no-op. */
       onResponderTerminate={(_event: GestureResponderEvent) => handlePressOut()}
       disabled={holdDisabled}
       accessibilityRole="button"
@@ -1103,6 +1208,9 @@ export function MotorsScreenView({
         disabled: holdDisabled,
         busy: beginning,
       }}
+      accessibilityHint={
+        holdBlockedReason ?? t('motorsScreen.holdHint')
+      }
       style={[
         styles.holdButton,
         holdDisabled && styles.holdButtonOff,
@@ -1126,8 +1234,25 @@ export function MotorsScreenView({
       <Text
         style={[styles.caption, canActivate && styles.holdSupportingActive]}
       >
-        {t('motorsScreen.holdHint')}
+        {holdBlockedReason === undefined
+          ? t('motorsScreen.holdHint')
+          : t('motorsScreen.holdBlockedHint')}
       </Text>
+      {/* A locked safety control must never look like dead pixels. It
+          issues zero commands either way; it now says why. */}
+      {holdBlockedReason !== undefined ? (
+        <View style={styles.holdBlocked} testID="motors-hold-blocked">
+          <Text style={styles.holdBlockedTitle}>
+            {t('motorsScreen.holdBlockedTitle')}
+          </Text>
+          <Text
+            style={styles.holdBlockedReason}
+            testID="motors-hold-blocked-reason"
+          >
+            {holdBlockedReason}
+          </Text>
+        </View>
+      ) : null}
     </Pressable>
   );
 
@@ -1691,6 +1816,25 @@ export function MotorsScreenView({
 
         {advancedVerificationOpen ? (
           <View style={styles.advancedStack} testID="motors-advanced-verification">
+            {/* THE DEFECT THIS CLOSES. Every child below is conditional on
+                a verification session token or a receipt, both of which
+                only exist AFTER a motor observation has been confirmed.
+                Before that, opening this disclosure rendered an empty
+                View: the operator pressed it, state flipped, and nothing
+                appeared - which is exactly the "does not open" report.
+                Output reordering lives in here, so it was unreachable.
+                An expanded section now always says what it is waiting
+                for. */}
+            {receipt === undefined && verification.sessionToken === undefined ? (
+              <View style={styles.advancedEmpty} testID="motors-advanced-empty">
+                <Text style={styles.advancedEmptyTitle}>
+                  {t('motorsScreen.advancedEmptyTitle')}
+                </Text>
+                <Text style={styles.caption}>
+                  {t('motorsScreen.advancedEmptyBody')}
+                </Text>
+              </View>
+            ) : null}
             {receipt !== undefined || verification.sessionToken !== undefined ? (
               <MotorVerificationWizard
                 receipt={receipt}
@@ -2054,6 +2198,45 @@ const styles = StyleSheet.create({
     color: colors.warning,
     writingDirection: 'rtl',
     flexShrink: 1,
+  },
+  /* Rendered INSIDE the hold control, so the reason a locked button is
+     locked is read where the operator is already pressing. */
+  holdBlocked: {
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.md,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accentStrong,
+    gap: spacing.xs,
+    alignSelf: 'stretch',
+  },
+  holdBlockedTitle: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '700',
+    textAlign: 'center',
+    writingDirection: 'rtl',
+  },
+  holdBlockedReason: {
+    ...typography.body,
+    color: colors.textPrimary,
+    textAlign: 'center',
+    writingDirection: 'rtl',
+  },
+  advancedEmpty: {
+    padding: spacing.md,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.xs,
+  },
+  advancedEmptyTitle: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
   },
   checkRow: {
     flexDirection: 'row',
