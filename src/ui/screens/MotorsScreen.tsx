@@ -818,6 +818,36 @@ export function MotorsScreenView({
   // See holdOwned's own declaration: disabling mid-gesture is what
   // terminated the responder and stopped a held motor in the field.
   const holdDisabled = holdGateBlocked && !holdOwned;
+  /**
+   * PRESENTATION IS FROZEN WHILE A HOLD IS OWNED - THE MEASURED FIX.
+   *
+   * Forensic trace (Chromium, mouse physically stationary): accepting the
+   * pulse at the 800 ms threshold makes the controller publish
+   * activation.allowed=false / PULSE_OR_STOP_IN_PROGRESS with
+   * mayBeLive=true, and SIX surfaces restructured on that one frame -
+   * the status ack notice, the readiness banner, the direction section,
+   * the mapping section, the hold panel and the block row. The scroller
+   * grew 5176px -> 5399px, the browser's scroll anchoring compensated by
+   * ~90px, and react-native-web's ResponderSystem terminates a press when
+   * a `scroll` fires on an ancestor of the responder - so onPressOut
+   * arrived ~20 ms after activation with no pointer event at all and the
+   * hold stopped itself.
+   *
+   * The pointer never left: the control's own rect was identical at every
+   * sample. So the defect is the application restructuring itself under a
+   * held pointer, and the fix is to stop doing that for the ONE state
+   * that is self-caused: a command the operator is issuing right now is
+   * not a new blocking condition to report to them.
+   *
+   * PRESENTATION ONLY, AND NARROW. Nothing here relaxes a gate: the
+   * controller still refuses every command while one is in flight,
+   * `holdGateBlocked` is unchanged, and pointer-leave, pointer-cancel,
+   * blur, release, STOP and native termination all still stop the motor.
+   * The pinned live-command strip and STOP are outside the scroller and
+   * keep updating in real time. The instant the gesture ends, the true
+   * state renders exactly as before.
+   */
+  const freezeTransientPresentation = holdOwned;
   /** Read at CALL time by handlePressIn, so ownership can only ever be
    * taken for a press the gate actually admitted. Ownership PROTECTS a
    * gesture the gate accepted; it must never CREATE one. */
@@ -844,7 +874,29 @@ export function MotorsScreenView({
    * the control itself, so a locked button always says why it is locked.
    * Order is causal: the thing the operator must do first comes first.
    */
-  const holdBlockedReason: string | undefined = !holdGateBlocked
+  /**
+   * MEASURED WEB DEFECT (forensic trace, Chromium, stationary mouse):
+   * at the 800 ms threshold the pulse is accepted and the controller
+   * immediately publishes activation.allowed=false with
+   * PULSE_OR_STOP_IN_PROGRESS. That made this reason defined mid-gesture,
+   * which INSERTED the blocked panel inside the pressed control and grew
+   * it 131px -> 191px. The browser's scroll anchoring then compensated
+   * the internal scroller by +90px, and react-native-web's
+   * ResponderSystem terminates a press when a `scroll` fires on an
+   * ancestor of the responder (ResponderSystem.js: `isScrollEvent &&
+   * eventTarget.contains(node)`). onPressOut therefore fired ~20 ms after
+   * activation, with the mouse never moving and no pointer event at all,
+   * and the hold stopped itself.
+   *
+   * An owned hold is ACTIVE, not blocked: the only reason the gate
+   * withdrew is the operator's own in-flight command. Suppressing the
+   * mid-gesture explanation is presentation only - `holdGateBlocked`,
+   * every controller precondition, and every stop seam are untouched -
+   * and it keeps the pressed surface geometrically stable, which is what
+   * the gesture actually needs. Genuine blocks render exactly as before
+   * the moment the gesture ends.
+   */
+  const holdBlockedReason: string | undefined = !holdGateBlocked || holdOwned
     ? undefined
     : requiresNewConnection
       ? t('motorsScreen.requiresNewConnection')
@@ -1327,7 +1379,8 @@ export function MotorsScreenView({
     // name a safety field, let alone branch on one - see the containment
     // test - so the reading happens inside the evaluator.
     scope: snapshot?.motorScope,
-    activationAllowed: snapshot?.activation.allowed === true,
+    activationAllowed:
+      snapshot?.activation.allowed === true || freezeTransientPresentation,
   });
   const selectedDirectionCommand = directionCommandFor(
     directionLog,
@@ -1340,7 +1393,9 @@ export function MotorsScreenView({
    * a pulse for the same serialized session.
    */
   const configurationReadBlockedReason =
-    operator !== undefined && commandMayBeLive(operator.getSnapshot())
+    operator !== undefined &&
+    !freezeTransientPresentation &&
+    commandMayBeLive(operator.getSnapshot())
       ? t('motorsScreen.mappingBlockedLiveCommand')
       : undefined;
   /** One block, used wherever a Quad-X claim is withheld. */
@@ -1501,7 +1556,7 @@ export function MotorsScreenView({
               </Text>
             </View>
           </View>
-          {presentation === 'ACKNOWLEDGED' ? (
+          {presentation === 'ACKNOWLEDGED' && !freezeTransientPresentation ? (
             <Text style={styles.caption} testID="motors-ack-notice">
               {t('motorsScreen.statusAcknowledgedNotice')}
             </Text>
@@ -1517,7 +1572,13 @@ export function MotorsScreenView({
               array stays available under diagnostics, and the controller's
               internal protections remain strictly stronger than what is
               displayed. */}
-          {primaryBlockReason !== undefined ? (
+          {/* Not while a hold is owned: this row renders ABOVE the hold
+              control, so appearing mid-gesture moves the pressed surface
+              under a stationary pointer (see holdBlockedReason for the
+              measured chain). The reason is displayed the instant the
+              gesture ends; nothing about the controller's own gating
+              depends on this text. */}
+          {primaryBlockReason !== undefined && !holdOwned ? (
             <View style={styles.blockList} testID="motors-block-reasons">
               <Text style={styles.blockHeading}>
                 {t('motorsScreen.blockedHeading')}
@@ -1759,7 +1820,7 @@ export function MotorsScreenView({
           </Text>
           <MotorConfigurationSummary scope={snapshot?.motorScope} />
 
-          {canActivate ? (
+          {canActivate || freezeTransientPresentation ? (
             <View style={styles.readyBanner} testID="motors-session-ready">
               <View style={styles.readyBadge}>
                 <Icon name="check" size={18} color={colors.white} />
@@ -1781,7 +1842,7 @@ export function MotorsScreenView({
               identity is a core question, and answering it from the bottom
               of a tools card was the reason it read as advanced. */}
 
-          {showReadinessDiagnostic ? (
+          {showReadinessDiagnostic && !freezeTransientPresentation ? (
             <View
               style={styles.readinessBlock}
               testID="motors-readiness-blocked-detail"
@@ -2379,6 +2440,12 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
   },
   holdButton: {
+    /* A FIXED height, not a minimum: the label legitimately changes
+       three times during one gesture (hold-to-test -> counting ->
+       active). While the pointer is down, ANY size change can move this
+       surface and terminate the press through scroll anchoring, so the
+       box is reserved once and the text changes inside it. */
+    height: 132,
     minHeight: MIN_TOUCH_TARGET + spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',

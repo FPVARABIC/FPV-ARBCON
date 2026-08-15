@@ -389,6 +389,11 @@ export default function CliScreen({
               </View>
               <ScrollView style={styles.terminal} nestedScrollEnabled>
                 <Text
+                  /* Selectable ON PURPOSE: the terminal log is meant to
+                     be read and copied. The shell's non-selectable chrome
+                     policy (index.html) names this testID explicitly as
+                     an opt-out, so it keeps native selection and a real
+                     caret. */
                   selectable
                   style={styles.terminalText}
                   testID="cli-output"

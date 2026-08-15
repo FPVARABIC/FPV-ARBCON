@@ -139,6 +139,15 @@ export function MotorOutputMappingSection({
         );
   const tailPreserved = values !== undefined && values.length > rowCount;
 
+  /** Usable, or explained - never a silent grey control. */
+  const disabledReason: string | undefined =
+    blockedReason ??
+    (sessionId === undefined
+      ? t('motorsScreen.mappingBlockedNoSession')
+      : phase === 'LOADING'
+        ? t('motorsScreen.mappingReading')
+        : undefined);
+
   return (
     <View style={styles.card} testID="motor-output-mapping-section">
       <Text style={styles.eyebrow}>{t('motorsScreen.mappingEyebrow')}</Text>
@@ -151,9 +160,16 @@ export function MotorOutputMappingSection({
         </Text>
       ) : null}
 
-      {blockedReason !== undefined ? (
+      {/* MEASURED DEFECT (browser probe, no motor session): this control
+          rendered aria-disabled with pointer-events:none and NO reason
+          anywhere - the operator saw a grey button that could not be
+          pressed and said nothing. Reading the firmware's output order
+          needs only a real configuration session and a quiet link, so the
+          one state that genuinely blocks it now says so on the control
+          itself. No new capability, no fallback mapping, no write. */}
+      {disabledReason !== undefined ? (
         <Text style={styles.caption} testID="motor-output-mapping-blocked">
-          {blockedReason}
+          {disabledReason}
         </Text>
       ) : null}
 
