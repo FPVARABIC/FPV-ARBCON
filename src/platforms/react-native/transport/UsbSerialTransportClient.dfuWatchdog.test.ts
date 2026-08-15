@@ -103,6 +103,30 @@ describe('WebUSB DFU terminal watchdog', () => {
     expect(mockedNative.flashDfuFirmware).toHaveBeenCalledTimes(1);
   });
 
+  it('also poisons the device when the lower WebUSB layer reports an early transfer timeout', async () => {
+    mockedNative.flashDfuFirmware.mockRejectedValueOnce(
+      Object.assign(new Error('pending WebUSB transfer exceeded its deadline'), {
+        code: 'DFU_TRANSFER_TIMEOUT',
+      }),
+    );
+    mockedNative.onDfuFlashProgress.mockReturnValue({remove: jest.fn()});
+    const client = new UsbSerialTransportClient();
+
+    await expect(client.flashDfuFirmware(1000005, 'HEX', false))
+      .rejects.toBeInstanceOf(DfuCompletionUnconfirmedError);
+    await expect(client.flashDfuFirmware(1000005, 'HEX', false))
+      .rejects.toBeInstanceOf(DfuCompletionUnconfirmedError);
+
+    expect(mockedNative.flashDfuFirmware).toHaveBeenCalledTimes(1);
+    expect(mockedNative.cancelDfuFlash).toHaveBeenCalledTimes(1);
+
+    mockedNative.listDfuDevices.mockResolvedValueOnce([]);
+    await expect(client.listDfuDevices()).resolves.toEqual([]);
+    mockedNative.flashDfuFirmware.mockResolvedValueOnce(undefined);
+    await expect(client.flashDfuFirmware(1000005, 'HEX', false)).resolves.toBeUndefined();
+    expect(mockedNative.flashDfuFirmware).toHaveBeenCalledTimes(2);
+  });
+
   it('clears the poison only after the timed-out device id disappears from DFU enumeration', async () => {
     mockedNative.flashDfuFirmware.mockReturnValueOnce(new Promise<void>(() => undefined));
     mockedNative.onDfuFlashProgress.mockReturnValue({remove: jest.fn()});
