@@ -84,10 +84,17 @@ export function defaultBuildSelection(
   detail: FirmwareTargetDetail,
   options: ReturnType<typeof parseBuildOptions>,
 ) {
+  const hasCloudOptions = [
+    options.radioProtocols,
+    options.telemetryProtocols,
+    options.osdProtocols,
+    options.motorProtocols,
+    options.generalOptions,
+  ].some(items => items.length > 0);
   const radio = defaultOption(options.radioProtocols);
   const selectedRadio = options.radioProtocols.find(option => option.value === radio);
   return {
-    coreBuild: !detail.cloudBuild,
+    coreBuild: !detail.cloudBuild || !hasCloudOptions,
     radioProtocol: radio,
     telemetryProtocol: selectedRadio?.includesTelemetry === true
       ? '-1'
@@ -127,6 +134,7 @@ export default function FirmwareFlasherSimpleScreen({
   const abortRef = useRef<AbortController | null>(null);
   const bootloader = useMemo(() => new FirmwareBootloaderController(client), [client]);
   const cloudBuild = useMemo(() => new CloudBuildCoordinator(betaflightBuildApi), []);
+  const supportsSerialPicker = useMemo(() => client.supportsDevicePicker(), [client]);
   const isBusy = ['detecting', 'loading', 'flashing'].includes(phase);
 
   const filteredTargets = useMemo(
@@ -175,7 +183,7 @@ export default function FirmwareFlasherSimpleScreen({
         if (controller.signal.aborted) return;
         const stable = items.filter(item => item.channel === 'stable');
         setReleases(items);
-        setSelectedRelease(stable[0]?.release ?? items[0]?.release ?? '');
+        setSelectedRelease(stable[0]?.release ?? '');
       })
       .catch(reason => {
         if (!controller.signal.aborted) fail(reason);
@@ -228,7 +236,9 @@ export default function FirmwareFlasherSimpleScreen({
       const devices = (await client.listDevices()).filter(isSupportedDevice);
       if (devices.length !== 1) {
         throw new Error(devices.length === 0
-          ? 'لم يُعثر على Flight Controller متصل. وصّل اللوحة عبر USB ثم أعد المحاولة.'
+          ? supportsSerialPicker
+            ? 'لم يُسمح للمتصفح بالوصول إلى اللوحة بعد. اضغط «اختيار جهاز USB» ثم أعد التعرف.'
+            : 'لم يُعثر على Flight Controller متصل. وصّل اللوحة عبر USB ثم أعد المحاولة.'
           : 'يوجد أكثر من Flight Controller. اترك لوحة واحدة متصلة ثم أعد المحاولة.');
       }
       if (devices[0].portCount !== 1) {
@@ -259,7 +269,18 @@ export default function FirmwareFlasherSimpleScreen({
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [bootloader, client, fail, isBusy, targets]);
+  }, [bootloader, client, fail, isBusy, supportsSerialPicker, targets]);
+
+  const chooseSerialAndDetect = useCallback(() => {
+    // Web Serial's chooser must be opened directly by this press.
+    client.requestDevicePermission()
+      .then(device => {
+        if (device === null) return;
+        setStatus('تم السماح بالوصول إلى USB. جارٍ التعرف على اللوحة…');
+        void autoDetect();
+      })
+      .catch(fail);
+  }, [autoDetect, client, fail]);
 
   const loadFirmware = useCallback(async () => {
     if (!selectedTarget || !selectedRelease || isBusy) return;
@@ -275,10 +296,6 @@ export default function FirmwareFlasherSimpleScreen({
         controller.signal,
       );
       const detail = parseTargetDetail(detailInput, selectedTarget, selectedRelease);
-
-      // Options are useful for cloud builds, but their endpoint must not be
-      // able to make the ordinary path unusable. If it is unavailable, use
-      // the official CORE_BUILD path instead of failing the entire flow.
       let request;
       try {
         const optionInput = await betaflightBuildApi.loadOptions(selectedRelease, controller.signal);
@@ -347,7 +364,9 @@ export default function FirmwareFlasherSimpleScreen({
       const devices = (await client.listDevices()).filter(isSupportedDevice);
       if (devices.length !== 1) {
         throw new Error(devices.length === 0
-          ? 'لم يُعثر على Flight Controller في وضع Serial. إذا كانت اللوحة في DFU يدوياً فاستخدم «متقدم».'
+          ? supportsSerialPicker
+            ? 'لم يُعثر على لوحة Serial مسموح بها. اختر جهاز USB أولاً.'
+            : 'لم يُعثر على Flight Controller في وضع Serial. إذا كانت اللوحة في DFU يدوياً فاستخدم «متقدم».'
           : 'يوجد أكثر من Flight Controller. اترك لوحة واحدة متصلة قبل التفليش.');
       }
       if (devices[0].portCount !== 1) {
@@ -385,11 +404,19 @@ export default function FirmwareFlasherSimpleScreen({
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [bootloader, client, completeFlash, fail, firmware, phase, selectedTarget]);
+  }, [
+    bootloader,
+    client,
+    completeFlash,
+    fail,
+    firmware,
+    phase,
+    selectedTarget,
+    supportsSerialPicker,
+  ]);
 
   const chooseDfuAndContinue = useCallback(() => {
     if (!pendingFlash) return;
-    // WebUSB requires requestDevice() to originate directly from this press.
     client.requestDfuDevicePermission()
       .then(async device => {
         const verdict = verifySelectedDfuDevice(
@@ -519,6 +546,15 @@ export default function FirmwareFlasherSimpleScreen({
         keyboardShouldPersistTaps="handled">
         <View style={styles.card}>
           <StepHeader number="1" title="اللوحة" />
+          {supportsSerialPicker ? (
+            <FirmwareButton
+              title="اختيار جهاز USB"
+              tone="secondary"
+              onPress={chooseSerialAndDetect}
+              disabled={isBusy}
+              testID="simple-choose-serial"
+            />
+          ) : null}
           <FirmwareButton
             title={phase === 'detecting' ? 'جارٍ التعرف…' : 'التعرف على اللوحة المتصلة'}
             tone="secondary"
@@ -542,7 +578,7 @@ export default function FirmwareFlasherSimpleScreen({
           <StepHeader number="2" title="الإصدار" />
           {releasesLoading ? <ActivityIndicator color={colors.accent} /> : null}
           {!releasesLoading && selectedTarget && stableReleases.length === 0 ? (
-            <Text style={styles.helper}>لا يوجد إصدار مستقر ظاهر لهذا Target.</Text>
+            <Text style={styles.helper}>لا يوجد إصدار مستقر ظاهر. استخدم «متقدم» لإصدارات RC/Development.</Text>
           ) : null}
           <View style={styles.releaseWrap}>
             {stableReleases.slice(0, 6).map(release => {
@@ -581,7 +617,6 @@ export default function FirmwareFlasherSimpleScreen({
 
         <View style={styles.card}>
           <StepHeader number="4" title="التفليش" />
-
           {isBusy ? <FirmwareProgress percent={progress} label={status} /> : null}
 
           {phase === 'success' ? (
@@ -592,7 +627,7 @@ export default function FirmwareFlasherSimpleScreen({
             />
           ) : null}
           {phase === 'failed' ? (
-            <FirmwareNotice title="فشل التفليش" text={status} tone="error" />
+            <FirmwareNotice title="تعذر إكمال العملية" text={status} tone="error" />
           ) : null}
           {phase === 'unconfirmed' ? (
             <FirmwareNotice
@@ -642,7 +677,13 @@ export default function FirmwareFlasherSimpleScreen({
   );
 }
 
-function StepHeader({number, title}: {readonly number: string; readonly title: string}) {
+function StepHeader({
+  number,
+  title,
+}: {
+  readonly number: string;
+  readonly title: string;
+}): React.JSX.Element {
   return (
     <View style={styles.stepHeader}>
       <View style={styles.stepNumber}><Text style={styles.stepNumberText}>{number}</Text></View>
