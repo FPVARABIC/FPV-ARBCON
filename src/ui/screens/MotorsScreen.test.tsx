@@ -913,7 +913,7 @@ describe('MotorsScreen - long-press contract', () => {
 
   it('activates exactly the selected output, exactly once per hold', () => {
     const { operator, rendered } = readyRendered();
-    rendered.press('motors-slot-3');
+    rendered.press('motor-identity-M3');
     longPress(rendered);
     act(() => {
       const hold = rendered.find('motors-hold-button');
@@ -1011,7 +1011,7 @@ describe('MotorsScreen - long-press contract', () => {
 
   it('stops the live episode on a motor switch and never auto-starts the second output', () => {
     const { operator, rendered } = readyRendered();
-    rendered.press('motors-slot-1');
+    rendered.press('motor-identity-M1');
     longPress(rendered);
     act(() => {
       operator.publish(
@@ -1023,7 +1023,7 @@ describe('MotorsScreen - long-press contract', () => {
       );
     });
 
-    rendered.press('motors-slot-2');
+    rendered.press('motor-identity-M2');
     expect(operator.stopCalls).toEqual(['MOTOR_SELECTION_CHANGED']);
     // Motor 2 was NOT started. Only the original activation happened.
     expect(operator.pulseCalls).toEqual([1]);
@@ -1600,7 +1600,7 @@ describe('MotorsScreen - the four-motor flow', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
-    rendered.press(`motors-slot-${slot}`);
+    rendered.press(`motor-identity-M${slot}`);
     longPress(rendered);
     // The number on the card IS the number handed to the controller.
     expect(operator.pulseCalls).toEqual([slot]);
@@ -1613,7 +1613,7 @@ describe('MotorsScreen - the four-motor flow', () => {
     acknowledgeAll(rendered);
 
     for (const slot of [3, 1, 4, 2, 3]) {
-      rendered.press(`motors-slot-${slot}`);
+      rendered.press(`motor-identity-M${slot}`);
       longPress(rendered);
       pressOut(rendered);
       // The release round trip the controller really performs.

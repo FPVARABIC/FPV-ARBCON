@@ -560,9 +560,12 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
       const operator = new FakeOperator(readySnapshot());
       const rendered = render(operator);
 
-      // Select the output the way an operator does.
+      // Select the output the way an operator does. The numbered selector
+      // moved out of the legacy tools card into the core identity section
+      // in P1b-B; only the locator changed, and the assertions below -
+      // submitted number, rendered cell, payload index - are untouched.
       ReactTestRenderer.act(() => {
-        rendered.find(`motors-slot-${slot}`).props.onPress();
+        rendered.find(`motor-identity-M${slot}`).props.onPress();
       });
       // The long press is the ONE activation gesture.
       expect(MOTOR_TEST_LONG_PRESS_DELAY_MILLIS).toBe(800);

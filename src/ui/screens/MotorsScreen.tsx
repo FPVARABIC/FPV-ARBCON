@@ -79,17 +79,16 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/types';
 import { AppState, BackHandler } from 'react-native';
-import {
-  MotorVerificationWizard,
-  MotorTestReport,
-} from './MotorVerificationWizard';
+import { MotorTestReport } from './MotorVerificationWizard';
+import { MotorIdentitySection } from './MotorIdentitySection';
+import { MotorOutputMappingSection } from './MotorOutputMappingSection';
 import {
   abortVerificationAsUnsafe,
   beginVerification,
+  clearObservation,
   confirmedCount,
   confirmObservation,
   EMPTY_VERIFICATION_STATE,
-  expectedFor,
   finalizeVerification,
   MOTOR_TEST_EXPECTED_CONFIGURATION,
   type MotorObservation,
@@ -100,17 +99,13 @@ import {
   type MotorIdentificationCapability,
 } from '../../core/state/motorIdentificationCapability';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
-import {
-  MotorAirframeDiagram,
-  MOTOR_AIRFRAME_QUAD_COUNT,
-} from './MotorAirframeDiagram';
+import { MOTOR_AIRFRAME_QUAD_COUNT } from './MotorAirframeDiagram';
 import type { MotorSlotActivity } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
 // P3: the professional workspace - the PRIMARY motor experience.
 import { MotorWorkspace } from './MotorWorkspace';
 import { MotorConfigurationPanel } from './MotorConfigurationPanel';
 import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
-import { MotorOutputReorderPanel } from './MotorOutputReorderPanel';
 import { EscDirectionPanel } from './EscDirectionPanel';
 
 // Kept as public exports for the payload-identity and screen contract tests.
@@ -473,6 +468,16 @@ export function MotorsScreenView({
   const [motorConfigurationBusy, setMotorConfigurationBusy] = useState(false);
   const [outputOrderDirty, setOutputOrderDirty] = useState(false);
   const [escDirectionDirty, setEscDirectionDirty] = useState(false);
+  /**
+   * The output vector AS READ from the flight controller, lifted here so
+   * the identity section can name the output for one motor without owning
+   * a second read. Undefined means NOT READ - never identity, never a
+   * template, because a silent identity fallback is indistinguishable from
+   * a genuinely unmodified aircraft.
+   */
+  const [outputOrderValues, setOutputOrderValues] = useState<
+    readonly number[] | undefined
+  >(undefined);
   const [beginning, setBeginning] = useState(false);
   const [beginQueued, setBeginQueued] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
@@ -687,6 +692,23 @@ export function MotorsScreenView({
     },
     [],
   );
+
+  /**
+   * WITHDRAWS ONE OBSERVATION, THROUGH THE DOMAIN.
+   *
+   * A person who taps the wrong arm needs a way to say so. The transition
+   * lives in `motorVerificationModel` rather than here precisely so this
+   * component cannot invent one: it names a single output, returns it to
+   * UNTESTED, and touches no other entry. It sends no command, changes no
+   * output mapping, no mixer and no direction - it is a pure state
+   * function, and a rejected correction changes nothing.
+   */
+  const handleClearObservation = useCallback((motorNumber: number) => {
+    setVerification(current => {
+      const result = clearObservation(current, motorNumber);
+      return result.kind === 'ACCEPTED' ? result.state : current;
+    });
+  }, []);
 
   /** The user saw more than one motor move: stop testing and tear down
    * through the ACCEPTED route. This is NOT converted into a controller
@@ -1159,10 +1181,9 @@ export function MotorsScreenView({
       ? colors.warning
       : colors.textSecondary;
 
-  const selectedExpected = expectedFor(selectedSlot);
-  const verifiedSlots = verification.entries
-    .filter(entry => entry.observation !== undefined)
-    .map(entry => entry.motorNumber);
+  // The expected pair and the verified-slot list are derived inside
+  // MotorIdentitySection now, from the same verification state, so the
+  // screen no longer keeps a second copy that could drift from it.
   const liveSlot =
     presentation === 'SUBMITTED_AWAITING_RESPONSE' ||
     presentation === 'ACKNOWLEDGED' ||
@@ -1204,6 +1225,34 @@ export function MotorsScreenView({
     );
   const quadIdentificationSupported =
     identificationCapability.kind === 'SUPPORTED';
+
+  /**
+   * THE LOGICAL MOTORS THIS AIRCRAFT ACTUALLY HAS.
+   *
+   * Derived from the same live count the workspace sliders use, so the
+   * selector cannot list four motors on a hex or hide two on one. Before
+   * anything has been read there is no count to derive from, and the
+   * shipped four-slot constant is the honest placeholder - it is what the
+   * legacy pulse path is scoped to anyway.
+   */
+  const liveMotorCount =
+    snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount;
+  const identitySlots: readonly number[] =
+    liveMotorCount !== undefined &&
+    Number.isInteger(liveMotorCount) &&
+    liveMotorCount > 0
+      ? Array.from({length: liveMotorCount}, (_, index) => index + 1)
+      : MOTOR_TEST_OUTPUT_SLOTS;
+
+  /**
+   * A configuration read shares the link with the motor-test lease. While
+   * a command may be live it waits and says so, rather than competing with
+   * a pulse for the same serialized session.
+   */
+  const configurationReadBlockedReason =
+    operator !== undefined && commandMayBeLive(operator.getSnapshot())
+      ? t('motorsScreen.mappingBlockedLiveCommand')
+      : undefined;
   /** One block, used wherever a Quad-X claim is withheld. */
   const identificationUnavailableNotice = (testID: string) => (
     <View style={styles.advancedEmpty} testID={testID}>
@@ -1485,6 +1534,46 @@ export function MotorsScreenView({
             onEnableChange={handleMotorControlChange}
           />
 
+          {/* ---- P1b-B: MOTOR IDENTITY IS CORE. ------------------------
+            * Which motor am I addressing, where did I observe it, which
+            * output drives it, what is actually confirmed - answerable
+            * without opening a disclosure. The map, the numbered
+            * selector, the protected hold and the observation wizard now
+            * sit together in the order a person performs them. */}
+          <MotorIdentitySection
+            slots={identitySlots}
+            selectedSlot={selectedSlot}
+            onSelectSlot={handleSelectSlot}
+            capability={identificationCapability}
+            airframeEntries={airframeEntries}
+            diagramMotorCount={liveMotorCount ?? MOTOR_AIRFRAME_QUAD_COUNT}
+            active={active}
+            liveSlot={liveSlot}
+            liveActivity={liveActivity}
+            verification={verification}
+            receipt={receipt}
+            onConfirm={handleConfirmObservation}
+            onMultipleMotorsReported={handleMultipleMotors}
+            onClearObservation={handleClearObservation}
+            outputOrder={outputOrderValues}
+            holdControl={holdControl}
+          />
+
+          {/* Reading which output drives which motor is firmware truth and
+            * needs no observation at all. Writing one still needs
+            * everything it always needed - the panel below the read is the
+            * same panel, reaching the same controller transaction. */}
+          <MotorOutputMappingSection
+            sessionId={sessionId}
+            motorCount={liveMotorCount}
+            verification={verification}
+            capability={identificationCapability}
+            onEndMotorTestSession={handleEndSessionForConfiguration}
+            onDirtyChange={setOutputOrderDirty}
+            blockedReason={configurationReadBlockedReason}
+            onValuesChange={setOutputOrderValues}
+          />
+
 
         {/* (7) Fault. TWO DIFFERENT MESSAGES, because they mean two very
             different things to somebody standing next to an aircraft.
@@ -1635,138 +1724,11 @@ export function MotorsScreenView({
             </View>
           ) : null}
 
-          <View style={styles.outputSection} testID="motors-outputs">
-            <Text style={styles.miniHeading}>
-              {t('motorsScreen.outputsHeading')}
-            </Text>
-            <View style={styles.slotRow}>
-              {MOTOR_TEST_OUTPUT_SLOTS.map(slot => (
-                <Pressable
-                  key={slot}
-                  onPress={() => handleSelectSlot(slot)}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: selectedSlot === slot }}
-                  style={[
-                    styles.slotCard,
-                    selectedSlot === slot && styles.slotCardSelected,
-                    liveSlot === slot && styles.slotCardLive,
-                  ]}
-                  testID={`motors-slot-${slot}`}
-                >
-                  <Text
-                    style={[
-                      styles.slotLabel,
-                      liveSlot === slot && styles.slotLabelLive,
-                    ]}
-                  >
-                    {`M${slot}`}
-                  </Text>
-                  {selectedSlot === slot ? (
-                    <Text style={styles.slotSelected}>
-                      {t('motorsScreen.selected')}
-                    </Text>
-                  ) : null}
-                </Pressable>
-              ))}
-            </View>
-          </View>
-
-          <View style={styles.airframeSection} testID="motors-diagram">
-            <View style={styles.airframeHeading}>
-              <Text style={styles.miniHeading}>
-                {t('motorsScreen.diagramHeading')}
-              </Text>
-              <Text style={styles.caption}>
-                {t('motorsScreen.diagramSummary')}
-              </Text>
-            </View>
-            {/* PART V: the visualisation does no work while nobody can
-                see it. It holds NO state of its own - every mark is
-                derived from these props - so returning to the tab draws
-                the current truth with no second source to reconcile.
-                Safety is unaffected: the controller subscription, the
-                lifecycle bridge and the stop path are all outside this. */}
-            {active ? (
-              <MotorAirframeDiagram
-                entries={airframeEntries}
-                selectedSlot={selectedSlot}
-                liveSlot={liveSlot}
-                liveActivity={liveActivity}
-                verifiedSlots={verifiedSlots}
-                onSelectSlot={handleSelectSlot}
-                // The REAL count. Anything other than a quad gets the
-                // numbered-output fallback rather than a borrowed
-                // four-motor airframe - see MotorAirframeDiagramProps.
-                motorCount={
-                  snapshot?.motorDomain?.motorCount ??
-                  snapshot?.motorScope?.motorCount ??
-                  MOTOR_AIRFRAME_QUAD_COUNT
-                }
-              />
-            ) : null}
-            <Text style={styles.caption} testID="motors-numbering-notice">
-              {t('motorsScreen.numberingNotice')}
-            </Text>
-            <Text style={styles.caption} testID="motors-diagram-front-hint">
-              {t('motorsScreen.diagramFrontHint')}
-            </Text>
-            <Text style={styles.referenceNotice} testID="motors-diagram-notice">
-              {t('motorsScreen.diagramNotice')}
-            </Text>
-            <Text
-              style={styles.caption}
-              testID="motors-diagram-direction-source"
-            >
-              {t('motorsScreen.diagramDirectionSource')}
-            </Text>
-          </View>
-
-          {/* Select on the diagram, then hold here - the legacy
-              verification order, preserved inside the tools area. */}
-          {holdControl}
-
-          <View
-            style={styles.selectedMotorPanel}
-            testID="motors-selected-summary"
-          >
-            <View style={styles.selectedMotorBadge}>
-              <Text style={styles.selectedMotorSlot}>{`M${selectedSlot}`}</Text>
-            </View>
-            <View style={styles.flexOne}>
-              <Text style={styles.miniHeading}>
-                {t('motorsScreen.selectedMotorHeading')}
-              </Text>
-              {/* The expected position/direction pair is a Quad-X reference.
-                  On any other output count it describes arms this airframe
-                  does not have, so it is withheld rather than printed with
-                  a caveat under it. */}
-              {quadIdentificationSupported ? (
-                <Text style={styles.caption}>
-                  {t('motorsScreen.selectedMotorExpected', {
-                    position:
-                      selectedExpected === undefined
-                        ? '—'
-                        : t(
-                            `motorVerification.position.${selectedExpected.position}`,
-                          ),
-                    direction:
-                      selectedExpected === undefined
-                        ? '—'
-                        : t(
-                            `motorVerification.direction.${selectedExpected.direction}`,
-                          ),
-                  })}
-                </Text>
-              ) : (
-                <Text
-                  style={styles.caption}
-                  testID="motors-selected-expected-unavailable"
-                >
-                  {t('motorsScreen.selectedMotorExpectedUnavailable')}
-                </Text>
-              )}
-            </View>
-          </View>
+          {/* P1b-B: the numbered selector, the airframe map, the protected
+              hold and the selected-motor facts all moved UP into
+              MotorIdentitySection. They are not duplicated here - motor
+              identity is a core question, and answering it from the bottom
+              of a tools card was the reason it read as advanced. */}
 
           {showReadinessDiagnostic ? (
             <View
@@ -1884,27 +1846,21 @@ export function MotorsScreenView({
                 </Text>
               </View>
             ) : null}
-            {/* THE CAPABILITY GATE, and the reason it wraps all three.
-                The wizard offers four Quad-X arms, the report compares
-                against them, and the reorder panel derives an output map
-                from those same answers. On an output count the model
-                cannot describe, every one of them would be asking about -
-                or writing - a physical layout this app has no model for.
-                So the stack states what is unavailable and why, and the
-                numbered controls above stay exactly as they were. */}
+            {/* P1b-B: WHAT IS LEFT IN HERE, AND WHY.
+                The observation wizard and the output-mapping workflow both
+                moved to the core sections above - an operator must not
+                need this disclosure to identify a motor, read the current
+                mapping, or start a reorder. What remains is the technical
+                READ-ONLY report: per-output outcomes, the receipt
+                attribution and the overall verdict. It is genuinely
+                secondary, and it is not a second copy of anything.
+                The capability gate still applies: the report compares
+                against Quad-X expectations, so it is withheld where those
+                expectations do not describe the aircraft. */}
             {!quadIdentificationSupported &&
             (receipt !== undefined || verification.sessionToken !== undefined)
-              ? identificationUnavailableNotice('motors-identification-unsupported')
+              ? identificationUnavailableNotice('motors-identification-unsupported-report')
               : null}
-            {quadIdentificationSupported &&
-            (receipt !== undefined || verification.sessionToken !== undefined) ? (
-              <MotorVerificationWizard
-                receipt={receipt}
-                state={verification}
-                onConfirm={handleConfirmObservation}
-                onMultipleMotorsReported={handleMultipleMotors}
-              />
-            ) : null}
             {quadIdentificationSupported &&
             verification.sessionToken !== undefined ? (
               <MotorTestReport
@@ -1915,16 +1871,6 @@ export function MotorsScreenView({
                     snapshot?.stopExecution.attributionResolvedByConfirmation ===
                       true)
                 }
-              />
-            ) : null}
-            {quadIdentificationSupported &&
-            verification.sessionToken !== undefined &&
-            sessionId !== undefined ? (
-              <MotorOutputReorderPanel
-                sessionId={sessionId}
-                verification={verification}
-                onEndMotorTestSession={handleEndSessionForConfiguration}
-                onDirtyChange={setOutputOrderDirty}
               />
             ) : null}
           </View>

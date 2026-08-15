@@ -315,6 +315,126 @@ export function confirmObservation(
 }
 
 /**
+ * WITHDRAWS ONE CONFIRMED OBSERVATION, DELIBERATELY.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS NOT A WEAKENING. Confirmation is
+ * immutable so that a later observation cannot silently erase an earlier
+ * contradiction - `confirmObservation` rejects ALREADY_CONFIRMED for
+ * exactly that reason, and that rule is untouched. What was missing was a
+ * way for a person who mis-tapped to say so OUT LOUD. Without one, the
+ * only escape was to end the session, and a workflow whose only correction
+ * path is "start again" is a workflow operators work around.
+ *
+ * This is the narrowest transition that helps: it names ONE output, it
+ * returns that output to UNTESTED, and it touches nothing else. It cannot
+ * write an observation, cannot change another entry, cannot unfinalize a
+ * report, cannot revive an aborted verification, and - being a pure
+ * function over state - cannot reach a flight controller, a mixer, an
+ * output mapping, a direction command or a motor.
+ *
+ * WHAT IT IS NOT. It is not an undo of evidence in the sense of hiding a
+ * problem: clearing MULTIPLE_MOTORS is impossible because that outcome
+ * aborts the whole verification, and an aborted or finalized state is
+ * refused outright.
+ */
+export function clearObservation(
+  state: MotorVerificationState,
+  motorNumber: number,
+): MotorVerificationResult {
+  if (state.finalized) {
+    return {kind: 'REJECTED', reason: 'FINALIZED'};
+  }
+  // An aborted verification is not corrected by editing one row. The
+  // session itself is the thing that has to be restarted.
+  if (state.aborted) {
+    return {kind: 'REJECTED', reason: 'ABORTED'};
+  }
+  if (state.sessionToken === undefined) {
+    return {kind: 'REJECTED', reason: 'SESSION_MISMATCH'};
+  }
+  const index = state.entries.findIndex(
+    entry => entry.motorNumber === motorNumber,
+  );
+  if (index < 0) {
+    return {kind: 'REJECTED', reason: 'UNSUPPORTED_OUTPUT'};
+  }
+  if (state.entries[index].outcome === 'UNTESTED') {
+    // Nothing to withdraw. Reported rather than treated as success, so a
+    // caller cannot mistake "already empty" for "just cleared".
+    return {kind: 'REJECTED', reason: 'ALREADY_CONFIRMED'};
+  }
+
+  const entries = state.entries.map((entry, position) =>
+    position === index
+      ? Object.freeze({
+          motorNumber: entry.motorNumber,
+          outcome: 'UNTESTED' as const,
+          observation: undefined,
+          // The attempt binding goes with the observation. A cleared entry
+          // must not keep pointing at a pulse it no longer describes.
+          attemptId: undefined,
+        })
+      : entry,
+  );
+
+  return {
+    kind: 'ACCEPTED',
+    state: Object.freeze({
+      sessionToken: state.sessionToken,
+      entries: Object.freeze(entries),
+      finalized: false,
+      aborted: false,
+    }),
+  };
+}
+
+/** One physical position claimed by more than one logical motor. */
+export interface MotorPositionConflict {
+  readonly position: MotorPhysicalPosition;
+  /** Every logical motor confirmed at that position, in ascending order. */
+  readonly motorNumbers: readonly number[];
+}
+
+/**
+ * Reports duplicate observed positions so the UI can name them.
+ *
+ * `deriveOverall` already refuses to call a duplicated set a match, and
+ * `deriveMotorOutputOrder` already refuses to derive a mapping from one.
+ * Neither can say WHICH motors collide, and "there is a mismatch
+ * somewhere" is not something a person standing next to an aircraft can
+ * act on. This adds no rule - it reads the same entries and reports what
+ * is already true.
+ */
+export function findPositionConflicts(
+  state: MotorVerificationState,
+): readonly MotorPositionConflict[] {
+  const byPosition = new Map<MotorPhysicalPosition, number[]>();
+  for (const entry of state.entries) {
+    if (entry.observation?.kind !== 'OBSERVED') {
+      continue;
+    }
+    const existing = byPosition.get(entry.observation.position);
+    if (existing === undefined) {
+      byPosition.set(entry.observation.position, [entry.motorNumber]);
+    } else {
+      existing.push(entry.motorNumber);
+    }
+  }
+  const conflicts: MotorPositionConflict[] = [];
+  for (const [position, motorNumbers] of byPosition) {
+    if (motorNumbers.length > 1) {
+      conflicts.push(
+        Object.freeze({
+          position,
+          motorNumbers: Object.freeze([...motorNumbers].sort((a, b) => a - b)),
+        }),
+      );
+    }
+  }
+  return Object.freeze(conflicts);
+}
+
+/**
  * Marks verification unsafe. Used when software evidence itself failed -
  * an unsafe or ambiguous stop, a fault, a detach or a session
  * replacement. Never derived from a user observation other than
