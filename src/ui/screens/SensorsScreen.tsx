@@ -98,6 +98,9 @@ export function tracePoints(
     .join(' ');
 }
 
+/** Quarter-window time ticks (percent of the stage width). */
+const TIME_TICK_POSITIONS = [25, 50, 75] as const;
+
 const AXIS_COLORS: Record<keyof Sample, string> = {
   x: colors.accentStrong,
   y: colors.success,
@@ -130,6 +133,24 @@ function AxisTrace({
         </Text>
       </View>
       <View style={styles.traceStage}>
+        {/* Monitor-style reference structure, drawn as Views so every
+            line is pixel-crisp on both platforms: hairlines at +-half
+            scale and quarter-window time ticks. References only - the
+            trace itself never snaps to them. */}
+        <View
+          style={[styles.refLine, styles.refLinePos]}
+          testID={`sensor-trace-${axis}-ref-pos`}
+        />
+        <View
+          style={[styles.refLine, styles.refLineNeg]}
+          testID={`sensor-trace-${axis}-ref-neg`}
+        />
+        {TIME_TICK_POSITIONS.map(percent => (
+          <View
+            key={percent}
+            style={[styles.timeTick, { left: `${percent}%` }]}
+          />
+        ))}
         {/* The zero reference: a real line, always visible, exactly at
             the signed origin. Positive samples draw above it, negative
             below it - the sign IS the geometry. */}
@@ -142,11 +163,17 @@ function AxisTrace({
             preserveAspectRatio="none"
           >
             <Polyline
+              // A <polyline> is piecewise-linear BY CONSTRUCTION - it
+              // cannot encode a curve, so no smoothing can exist here.
+              // Miter joins keep every real turning point a sharp
+              // corner; the thin stroke keeps the trace high-definition
+              // instead of soft.
               points={tracePoints(samples, axis, bound)}
               fill="none"
               stroke={AXIS_COLORS[axis]}
-              strokeWidth={1.75}
-              strokeLinejoin="round"
+              strokeWidth={1.25}
+              strokeLinejoin="miter"
+              strokeLinecap="butt"
               vectorEffect="non-scaling-stroke"
             />
           </Svg>
@@ -230,7 +257,7 @@ export function VectorCard({
             ))}
           </View>
           <Text style={styles.scaleNote} testID={`sensor-card-${id}-scale`}>
-            {`المقياس المشترك للمحاور الثلاثة: ±${bound} ${suffix} · الزمن من اليسار إلى اليمين، والموجب فوق خط الصفر.`}
+            {`المقياس المشترك للمحاور الثلاثة: ±${bound} ${suffix} · الخطوط الباهتة عند ±نصف المقياس · الزمن من اليسار إلى اليمين، والموجب فوق خط الصفر.`}
           </Text>
         </>
       )}
@@ -555,8 +582,27 @@ const styles = StyleSheet.create({
     right: 0,
     top: TRACE_HEIGHT / 2 - 0.5,
     height: 1,
+    backgroundColor: colors.textSecondary,
+    opacity: 0.85,
+  },
+  refLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 1,
     backgroundColor: colors.textMuted,
-    opacity: 0.55,
+    opacity: 0.22,
+  },
+  /* traceY(+bound/2) and traceY(-bound/2): center -/+ usable/2. */
+  refLinePos: { top: TRACE_HEIGHT / 2 - (TRACE_HEIGHT / 2 - 4) / 2 - 0.5 },
+  refLineNeg: { top: TRACE_HEIGHT / 2 + (TRACE_HEIGHT / 2 - 4) / 2 - 0.5 },
+  timeTick: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 1,
+    backgroundColor: colors.textMuted,
+    opacity: 0.14,
   },
   traceWaiting: {
     ...typography.caption,

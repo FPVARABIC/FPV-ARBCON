@@ -118,3 +118,78 @@ describe('sensor trace truth', () => {
     ReactTestRenderer.act(() => renderer.unmount());
   });
 });
+
+describe('monitor-sharp trace presentation', () => {
+  it('renders unsmoothed piecewise-linear traces: miter joins, butt caps, thin stroke, exact sample points', () => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    const history = [
+      { x: 0, y: 0, z: 0 },
+      { x: 100, y: -50, z: 25 },
+      { x: -100, y: 50, z: -25 },
+    ];
+    ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <VectorCard
+          id="gyro"
+          title="الجيروسكوب"
+          vector={history[2]}
+          history={history}
+          suffix="dps"
+          detected
+        />,
+      );
+    });
+    const polylines = renderer.root.findAll(
+      node =>
+        node.props?.points !== undefined && node.props?.stroke !== undefined,
+    );
+    expect(polylines.length).toBeGreaterThanOrEqual(3);
+    for (const line of polylines) {
+      // Sharp corners, no rounding, no curve primitive: a polyline's
+      // points attribute IS the raw sample geometry, one pair per
+      // sample, nothing interpolated between them.
+      expect(line.props.strokeLinejoin).toBe('miter');
+      expect(line.props.strokeLinecap).toBe('butt');
+      expect(line.props.strokeWidth).toBeLessThanOrEqual(1.5);
+      expect(String(line.props.points).split(' ')).toHaveLength(
+        history.length,
+      );
+    }
+    // The exact mapping, verbatim - raw positions preserved.
+    const bound = sharedTraceBound(history);
+    const xLine = polylines.find(l =>
+      String(l.props.points).startsWith(`0,${traceY(0, bound).toFixed(2)}`),
+    );
+    expect(xLine).toBeDefined();
+    ReactTestRenderer.act(() => renderer.unmount());
+  });
+
+  it('draws the monitor reference structure: zero line plus ±half-scale hairlines per axis', () => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <VectorCard
+          id="acc"
+          title="مقياس التسارع"
+          vector={{ x: 1, y: 2, z: 3 }}
+          history={[
+            { x: 1, y: 2, z: 3 },
+            { x: -1, y: -2, z: -3 },
+          ]}
+          suffix="raw"
+          detected
+        />,
+      );
+    });
+    for (const axis of ['x', 'y', 'z']) {
+      for (const ref of ['zero', 'ref-pos', 'ref-neg']) {
+        expect(
+          renderer.root.findAllByProps({
+            testID: `sensor-trace-${axis}-${ref}`,
+          }).length,
+        ).toBeGreaterThan(0);
+      }
+    }
+    ReactTestRenderer.act(() => renderer.unmount());
+  });
+});
