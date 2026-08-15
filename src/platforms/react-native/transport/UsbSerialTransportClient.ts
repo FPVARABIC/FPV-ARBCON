@@ -15,6 +15,30 @@ import {normalizeNativeError} from './transportErrors';
 export type {SerialConfiguration, UsbSerialDeviceDescriptor};
 
 /**
+ * WebUSB controlTransferIn/controlTransferOut do not accept an AbortSignal
+ * or a per-transfer timeout. A single browser promise can therefore remain
+ * pending forever even though the higher-level DFU poll loops are bounded.
+ *
+ * This watchdog is deliberately based on SILENCE, not total flash duration:
+ * long but healthy flashes keep emitting progress and are never cut off.
+ * The longest legitimate silent DFU phase in the product is below this
+ * window. The watchdog never retries erase/write/manifest commands.
+ */
+export const DFU_WEBUSB_SILENCE_TIMEOUT_MS = 45_000;
+const DFU_WEBUSB_WATCHDOG_POLL_MS = 500;
+
+export class DfuCompletionUnconfirmedError extends Error {
+  readonly code = 'DFU_COMPLETION_UNCONFIRMED';
+
+  constructor() {
+    super(
+      'تعذر تأكيد اكتمال التفليش لأن اتصال WebUSB توقف عن الاستجابة. لا تعِد التفليش على الجلسة نفسها. افصل Flight Controller وأعد توصيله ثم تحقق من تشغيله قبل أي محاولة جديدة.',
+    );
+    this.name = 'DfuCompletionUnconfirmedError';
+  }
+}
+
+/**
  * driverType value the Kotlin side (UsbSerialDriverType.UNSUPPORTED) reports
  * for any device it does not recognize as a supported serial driver.
  */
@@ -175,6 +199,14 @@ function dfuPicker(): OptionalDevicePicker['requestDfuDevice'] {
 }
 
 export class UsbSerialTransportClient {
+  /**
+   * A timed-out WebUSB transfer cannot be cancelled by the browser. Once a
+   * DFU attempt becomes unconfirmed, the device id is poisoned so another
+   * destructive attempt cannot be started on the same unresolved session.
+   * The poison is cleared only after that id disappears from enumeration.
+   */
+  private readonly poisonedDfuDeviceIds = new Set<number>();
+
   /**
    * Whether this platform has an explicit "choose a device" step. False on
    * Android. The UI uses this to decide whether to OFFER the button at
@@ -366,7 +398,14 @@ export class UsbSerialTransportClient {
     if (!Array.isArray(result)) {
       throw normalizeNativeError(new Error('listDfuDevices resolved with a non-array result.'));
     }
-    return result.filter(isValidDfuDescriptor);
+    const devices = result.filter(isValidDfuDescriptor);
+    const presentIds = new Set(devices.map(device => device.deviceId));
+    for (const poisonedId of this.poisonedDfuDeviceIds) {
+      if (!presentIds.has(poisonedId)) {
+        this.poisonedDfuDeviceIds.delete(poisonedId);
+      }
+    }
+    return devices;
   }
 
   async pickFirmwareFile(): Promise<FirmwareFileSelection | null> {
@@ -399,10 +438,70 @@ export class UsbSerialTransportClient {
   }
 
   async flashDfuFirmware(deviceId: number, intelHexBase64: string, fullErase: boolean): Promise<void> {
+    // Android's native worker has its own bounded worker/cancellation model.
+    // The extra watchdog is only needed on WebUSB, identified by the
+    // browser-only DFU chooser capability.
+    if (!this.supportsDfuDevicePicker()) {
+      try {
+        await NativeUsbSerialTransport.flashDfuFirmware(deviceId, intelHexBase64, fullErase);
+        return;
+      } catch (reason) {
+        throw normalizeNativeError(reason);
+      }
+    }
+
+    if (this.poisonedDfuDeviceIds.has(deviceId)) {
+      throw new DfuCompletionUnconfirmedError();
+    }
+
+    let lastProgressAt = Date.now();
+    let watchdogHandle: ReturnType<typeof setInterval> | undefined;
+    let timedOut = false;
+    const progressSubscription = NativeUsbSerialTransport.onDfuFlashProgress?.(event => {
+      if (isValidDfuProgress(event)) {
+        lastProgressAt = Date.now();
+      }
+    });
+
+    const nativeAttempt = NativeUsbSerialTransport.flashDfuFirmware(
+      deviceId,
+      intelHexBase64,
+      fullErase,
+    );
+    // If the browser promise settles after our truthful terminal timeout,
+    // consume that late settlement so it cannot become an unhandled
+    // rejection or mutate the already-finished UI attempt.
+    void nativeAttempt.catch(() => undefined);
+
+    const watchdog = new Promise<never>((_resolve, reject) => {
+      watchdogHandle = setInterval(() => {
+        if (Date.now() - lastProgressAt < DFU_WEBUSB_SILENCE_TIMEOUT_MS) {
+          return;
+        }
+        timedOut = true;
+        this.poisonedDfuDeviceIds.add(deviceId);
+        // Best-effort only. WebUSB cannot abort a control transfer that is
+        // already pending; this flag merely prevents later DFU steps if the
+        // current promise eventually settles.
+        void NativeUsbSerialTransport.cancelDfuFlash().catch(() => undefined);
+        reject(new DfuCompletionUnconfirmedError());
+      }, DFU_WEBUSB_WATCHDOG_POLL_MS);
+    });
+
     try {
-      await NativeUsbSerialTransport.flashDfuFirmware(deviceId, intelHexBase64, fullErase);
+      await Promise.race([nativeAttempt, watchdog]);
     } catch (reason) {
+      if (reason instanceof DfuCompletionUnconfirmedError || timedOut) {
+        throw reason instanceof DfuCompletionUnconfirmedError
+          ? reason
+          : new DfuCompletionUnconfirmedError();
+      }
       throw normalizeNativeError(reason);
+    } finally {
+      if (watchdogHandle !== undefined) {
+        clearInterval(watchdogHandle);
+      }
+      progressSubscription?.remove?.();
     }
   }
 
