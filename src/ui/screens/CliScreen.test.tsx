@@ -60,10 +60,15 @@ function harness() {
   return { cli };
 }
 
+/**
+ * CLI FINAL: the terminal enters its session AUTOMATICALLY when mounted
+ * active over a live sessionKey - there is no start screen. Mount, then
+ * flush the auto-entry.
+ */
 async function renderStarted(cli: CliScreenPort) {
   const onBusy = jest.fn();
   let renderer!: ReactTestRenderer.ReactTestRenderer;
-  ReactTestRenderer.act(() => {
+  await ReactTestRenderer.act(async () => {
     renderer = ReactTestRenderer.create(
       <CliScreen
         sessionKey={SESSION_KEY}
@@ -72,9 +77,7 @@ async function renderStarted(cli: CliScreenPort) {
         cli={cli}
       />,
     );
-  });
-  await ReactTestRenderer.act(async () => {
-    await renderer.root.findByProps({ testID: 'cli-start' }).props.onPress();
+    await Promise.resolve();
   });
   return { renderer, onBusy };
 }
@@ -152,6 +155,92 @@ describe('CliScreen', () => {
         .props.onPress();
     });
     expect(cli.exitWithoutSave).toHaveBeenCalledTimes(1);
+    ReactTestRenderer.act(() => renderer.unmount());
+  });
+
+  it('enters the CLI session automatically - exactly once - and shows the terminal immediately', async () => {
+    const { cli } = harness();
+    const { renderer } = await renderStarted(cli);
+    expect(cli.begin).toHaveBeenCalledTimes(1);
+    expect(cli.begin).toHaveBeenCalledWith(SESSION_KEY);
+    // No start gate exists; the terminal surface is already present.
+    expect(
+      renderer.root.findAllByProps({ testID: 'cli-start' }),
+    ).toHaveLength(0);
+    expect(
+      renderer.root.findByProps({ testID: 'cli-output' }),
+    ).toBeDefined();
+    expect(
+      renderer.root.findByProps({ testID: 'cli-command-input' }),
+    ).toBeDefined();
+    ReactTestRenderer.act(() => renderer.unmount());
+  });
+
+  it('a failed entry shows the REAL reason with an explicit retry - and never loops', async () => {
+    const { cli } = harness();
+    let attempts = 0;
+    (cli.begin as jest.Mock).mockImplementation(async () => {
+      attempts += 1;
+      throw new Error('جلسة MSP غير جاهزة لـCLI.');
+    });
+    const { renderer } = await renderStarted(cli);
+    expect(attempts).toBe(1);
+    // The real reason is rendered, with a retry action.
+    const texts = renderer.root
+      .findAll(node => typeof node.props.children === 'string')
+      .map(node => node.props.children as string);
+    expect(texts.some(text => text.includes('جلسة MSP غير جاهزة'))).toBe(true);
+    const retry = renderer.root.findByProps({ testID: 'cli-start' });
+    // A re-render does not re-attempt on its own.
+    await ReactTestRenderer.act(async () => {
+      await Promise.resolve();
+    });
+    expect(attempts).toBe(1);
+    // Explicit retry does.
+    (cli.begin as jest.Mock).mockImplementation(async () => {
+      attempts += 1;
+    });
+    await ReactTestRenderer.act(async () => {
+      await retry.props.onPress();
+    });
+    expect(attempts).toBe(2);
+    ReactTestRenderer.act(() => renderer.unmount());
+  });
+
+  it('a dropped connection terminates the CLI state truthfully and frees the link', async () => {
+    const { cli } = harness();
+    const onBusy = jest.fn();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <CliScreen
+          sessionKey={SESSION_KEY}
+          active
+          onCliBusyChange={onBusy}
+          cli={cli}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(cli.begin).toHaveBeenCalledTimes(1);
+    // The physical session ends: the parent clears sessionKey.
+    await ReactTestRenderer.act(async () => {
+      renderer.update(
+        <CliScreen
+          sessionKey={undefined}
+          active
+          onCliBusyChange={onBusy}
+          cli={cli}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(cli.exitWithoutSave).toHaveBeenCalled();
+    expect(onBusy).toHaveBeenLastCalledWith(false);
+    const texts = renderer.root
+      .findAll(node => typeof node.props.children === 'string')
+      .map(node => node.props.children as string);
+    expect(texts.some(text => text.includes('انقطع اتصال'))).toBe(true);
     ReactTestRenderer.act(() => renderer.unmount());
   });
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -115,6 +115,38 @@ export default function CliScreen({
     },
     [cli],
   );
+
+  /**
+   * CLI FINAL: a professional terminal opens READY. When this tab is
+   * active over a live session and no CLI window exists, entry begins
+   * immediately - no intermediate start screen. One attempt per
+   * activation: a failed entry parks with its real reason and an
+   * explicit retry, it never loops.
+   */
+  const autoEntryTried = useRef(false);
+  useEffect(() => {
+    if (!active || sessionKey === undefined) {
+      autoEntryTried.current = false;
+      return;
+    }
+    if (autoEntryTried.current || cli.getPhase() !== 'IDLE') return;
+    autoEntryTried.current = true;
+    start().catch(() => undefined);
+  });
+
+  /**
+   * CLI FINAL: the connection died under an open CLI window (the parent
+   * clears sessionKey when the physical session ends). Terminate the
+   * CLI state truthfully and release every lease so the next session
+   * starts from a clean link - never an ambiguous half-open terminal.
+   */
+  useEffect(() => {
+    if (sessionKey === undefined && cli.getPhase() !== 'IDLE') {
+      cli.exitWithoutSave().catch(() => undefined);
+      setFailure('انقطع اتصال Flight Controller؛ أُنهيت جلسة CLI وتحرر الرابط بأمان.');
+      onCliBusyChange(false);
+    }
+  }, [cli, onCliBusyChange, sessionKey]);
 
   const identity = useMemo(() => {
     if (!sessionKey) return 'لا توجد جلسة Flight Controller.';
@@ -257,74 +289,50 @@ export default function CliScreen({
   return (
     <View style={styles.root} testID="cli-screen">
       <ScrollView contentContainerStyle={[styles.content, { maxWidth }]}>
-        <View style={styles.hero}>
-          <Text style={styles.eyebrow}>
-            RAW BETAFLIGHT CLI · EXCLUSIVE LINK
-          </Text>
-          <Text style={styles.title}>سطر الأوامر</Text>
-          <Text style={styles.subtitle}>
-            أداة متقدمة تتصل بـCLI الحقيقي. لا تُرسل save تلقائيًا، وتوقف
-            التليمترية طوال امتلاك الرابط.
-          </Text>
-          <View style={styles.identityRow}>
-            <Text style={styles.identity}>{identity}</Text>
-            <Text style={[styles.phase, isOpen && styles.phaseOpen]}>
-              {phaseLabel(phase)}
+        {/* CLI FINAL: ONE compact header - the terminal is the product
+            here, so nothing bulky stands before it. The full safety
+            teaching lives where it acts: the save confirmation. */}
+        <View style={styles.header}>
+          <View style={styles.headerCopy}>
+            <Text style={styles.eyebrow}>
+              RAW BETAFLIGHT CLI · EXCLUSIVE LINK
             </Text>
+            <Text style={styles.title}>سطر الأوامر</Text>
+            <Text style={styles.identity}>{identity}</Text>
           </View>
-        </View>
-
-        <View style={styles.warning} accessibilityRole="alert">
-          <Text style={styles.warningTitle}>قبل فتح CLI</Text>
-          <Text style={styles.warningText}>
-            انزع المراوح، وأنهِ جلسة المحركات، ولا تفصل USB أثناء أمر جارٍ.
-            الأوامر الخاطئة قد تمنع الإقلاع؛ التقط diff all قبل أي تعديل.
+          <Text style={[styles.phase, isOpen && styles.phaseOpen]}>
+            {phaseLabel(phase)}
           </Text>
         </View>
+        <Text style={styles.safetyLine} accessibilityRole="alert">
+          انزع المراوح، ولا تفصل USB أثناء أمر جارٍ. التليمترية متوقفة طوال
+          امتلاك CLI للرابط، ولا يُرسل save إلا من زره الصريح.
+        </Text>
 
         {failure ? (
           <View style={styles.error} accessibilityRole="alert">
             <Text style={styles.errorText}>{failure}</Text>
+            {!isOpen && sessionKey !== undefined && active ? (
+              <Pressable
+                testID="cli-start"
+                onPress={() => start().catch(() => undefined)}
+                style={styles.retry}
+              >
+                <Text style={styles.retryText}>إعادة محاولة الدخول</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
-        {!isOpen ? (
-          <Pressable
-            testID="cli-start"
-            disabled={!sessionKey || !active}
-            onPress={() => start().catch(() => undefined)}
-            style={[styles.start, (!sessionKey || !active) && styles.disabled]}
-          >
-            <Text style={styles.startText}>ابدأ جلسة CLI الآمنة</Text>
-          </Pressable>
+        {sessionKey === undefined ? (
+          <View style={styles.noSession} testID="cli-no-session">
+            <Text style={styles.noSessionText}>
+              لا توجد جلسة Flight Controller. اتصل بالمتحكم أولًا ثم افتح
+              CLI؛ الطرفية تدخل الجلسة تلقائيًا.
+            </Text>
+          </View>
         ) : (
           <>
-            <View style={styles.quickCard}>
-              <Text style={styles.sectionTitle}>أوامر قراءة سريعة</Text>
-              <Text style={styles.hint}>
-                أزرار معروفة للقراءة والتشخيص؛ لا تحفظ شيئًا.
-              </Text>
-              <View style={styles.quickGrid}>
-                {QUICK_COMMANDS.map(item => (
-                  <Pressable
-                    key={item.command}
-                    testID={`cli-quick-${item.command}`}
-                    disabled={phase !== 'ACTIVE'}
-                    onPress={() =>
-                      runCommand(item.command).catch(() => undefined)
-                    }
-                    style={[
-                      styles.quick,
-                      phase !== 'ACTIVE' && styles.disabled,
-                    ]}
-                  >
-                    <Text style={styles.quickText}>{item.label}</Text>
-                    <Text style={styles.quickCode}>{item.command}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
             <View style={styles.terminalCard}>
               <View style={styles.terminalHeader}>
                 <Text style={styles.terminalTitle}>مخرجات المتحكم الحية</Text>
@@ -445,6 +453,32 @@ export default function CliScreen({
               </View>
             </View>
 
+            <View style={styles.quickCard}>
+              <Text style={styles.sectionTitle}>أوامر قراءة سريعة</Text>
+              <Text style={styles.hint}>
+                أزرار معروفة للقراءة والتشخيص؛ لا تحفظ شيئًا.
+              </Text>
+              <View style={styles.quickGrid}>
+                {QUICK_COMMANDS.map(item => (
+                  <Pressable
+                    key={item.command}
+                    testID={`cli-quick-${item.command}`}
+                    disabled={phase !== 'ACTIVE'}
+                    onPress={() =>
+                      runCommand(item.command).catch(() => undefined)
+                    }
+                    style={[
+                      styles.quick,
+                      phase !== 'ACTIVE' && styles.disabled,
+                    ]}
+                  >
+                    <Text style={styles.quickText}>{item.label}</Text>
+                    <Text style={styles.quickCode}>{item.command}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
             <View style={styles.decision}>
               <View style={styles.decisionCopy}>
                 <Text style={styles.sectionTitle}>إنهاء الجلسة</Text>
@@ -500,34 +534,54 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xl,
     gap: spacing.lg,
   },
-  hero: {
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.lg,
-    padding: spacing.xl,
-    gap: spacing.sm,
+  /* CLI FINAL: one compact header row instead of a hero card - the
+     terminal is the first real surface on this screen. */
+  header: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: spacing.md,
   },
+  headerCopy: { flex: 1, minWidth: 0, gap: 2 },
   eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   title: {
-    ...typography.display,
+    ...typography.title,
     color: colors.textPrimary,
     textAlign: 'right',
   },
-  subtitle: {
+  identity: { ...typography.caption, color: colors.textMuted },
+  safetyLine: {
+    ...typography.caption,
+    color: colors.warning,
+    fontWeight: '600',
+    textAlign: 'right',
+    backgroundColor: colors.warningSoft,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  noSession: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+    borderRadius: radii.md,
+    padding: spacing.lg,
+  },
+  noSessionText: {
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'right',
   },
-  identityRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: spacing.md,
+  retry: {
     marginTop: spacing.sm,
+    minHeight: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.sm,
+    borderWidth: 1,
+    borderColor: colors.error,
   },
-  identity: { ...typography.caption, color: colors.textMuted },
+  retryText: { ...typography.body, color: colors.error, fontWeight: '700' },
   phase: {
     ...typography.caption,
     color: colors.textSecondary,
@@ -538,20 +592,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   phaseOpen: { color: colors.success, backgroundColor: colors.accentSoft },
-  warning: {
-    backgroundColor: colors.warningSoft,
-    borderWidth: 1,
-    borderColor: colors.warning,
-    borderRadius: radii.md,
-    padding: spacing.lg,
-    gap: spacing.xs,
-  },
-  warningTitle: { ...typography.sectionTitle, color: colors.warning },
-  warningText: {
-    ...typography.body,
-    color: colors.textPrimary,
-    textAlign: 'right',
-  },
   error: {
     backgroundColor: colors.errorSoft,
     borderWidth: 1,
@@ -560,15 +600,6 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   errorText: { ...typography.body, color: colors.error, textAlign: 'right' },
-  start: {
-    minHeight: 54,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accent,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.xl,
-  },
-  startText: { ...typography.sectionTitle, color: colors.accentText },
   disabled: { opacity: 0.42 },
   quickCard: {
     backgroundColor: colors.surface,
