@@ -49,9 +49,12 @@ class DeadlineDevice {
   eraseCount = 0;
   dataWriteCount = 0;
   uploadCount = 0;
+  statusCount = 0;
   hangUpload = false;
+  hangStatusAfterWrites = false;
   hangManifest = false;
   disappearOnManifest = false;
+  corruptVerify = false;
   usb!: {getDevices: jest.Mock};
 
   get configurations() {
@@ -120,6 +123,8 @@ class DeadlineDevice {
     length: number,
   ): Promise<{status: string; data?: DataView}> {
     if (setup.request === DFU_GETSTATUS) {
+      this.statusCount += 1;
+      if (this.hangStatusAfterWrites && this.dataWriteCount > 0) return pending();
       const bytes = Uint8Array.from([0, 0, 0, 0, this.state, 0]);
       return Promise.resolve({status: 'ok', data: new DataView(bytes.buffer)});
     }
@@ -131,6 +136,7 @@ class DeadlineDevice {
       for (let index = 0; index < length; index += 1) {
         out[index] = this.flash.get(this.address + offset + index) ?? 0xff;
       }
+      if (this.corruptVerify && out.length > 0) out[0] ^= 0xff;
       this.state = UPLOAD_IDLE;
       return Promise.resolve({status: 'ok', data: new DataView(out.buffer)});
     }
@@ -179,6 +185,52 @@ describe('WebUSB DFU terminal deadlines', () => {
     expect(device.eraseCount).toBe(1);
     expect(device.dataWriteCount).toBe(1);
     expect(device.uploadCount).toBe(1);
+
+    // Even if much more wall time passes, the timed-out transfer cannot
+    // resume the state machine into another erase/write command.
+    await jest.advanceTimersByTimeAsync(WEBUSB_CONTROL_TRANSFER_TIMEOUT_MS * 3);
+    expect(device.eraseCount).toBe(1);
+    expect(device.dataWriteCount).toBe(1);
+  });
+
+  it('turns a permanently pending late GETSTATUS into DFU_TRANSFER_TIMEOUT without claiming success', async () => {
+    const device = new DeadlineDevice();
+    device.hangStatusAfterWrites = true;
+    const id = await registered(device);
+    const updates: Array<{phase: string; percent: number}> = [];
+    const attempt = flashDfuFirmware(
+      id,
+      intelHex([21, 22, 23, 24]),
+      false,
+      update => updates.push({phase: update.phase, percent: update.percent}),
+    );
+    const rejection = expect(attempt).rejects.toMatchObject({code: 'DFU_TRANSFER_TIMEOUT'});
+
+    await jest.advanceTimersByTimeAsync(WEBUSB_CONTROL_TRANSFER_TIMEOUT_MS + 100);
+    await rejection;
+
+    expect(device.eraseCount).toBe(1);
+    expect(device.dataWriteCount).toBe(1);
+    expect(updates.some(update => update.percent === 100)).toBe(false);
+  });
+
+  it('keeps a read-back mismatch as a hard verification failure, never success or unconfirmed', async () => {
+    const device = new DeadlineDevice();
+    device.corruptVerify = true;
+    const id = await registered(device);
+    const updates: Array<{phase: string; percent: number}> = [];
+
+    await expect(flashDfuFirmware(
+      id,
+      intelHex([31, 32, 33, 34]),
+      false,
+      update => updates.push({phase: update.phase, percent: update.percent}),
+    )).rejects.toMatchObject({code: 'DFU_VERIFY_FAILED'});
+
+    expect(device.eraseCount).toBe(1);
+    expect(device.dataWriteCount).toBe(1);
+    expect(device.uploadCount).toBe(1);
+    expect(updates.some(update => update.percent === 100)).toBe(false);
   });
 
   it('settles an unresolved manifestation as UNCONFIRMED when the DFU device is still present', async () => {
