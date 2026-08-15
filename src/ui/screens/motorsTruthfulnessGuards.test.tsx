@@ -510,9 +510,21 @@ describe('J - numbered motor control survives an unsupported airframe', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('keeps the hold control mounted rather than hard-disabling the screen', () => {
+  it('leaves the screen usable rather than hard-disabling it', () => {
+    // P1b-B.1 withdrew the protected identify control on an airframe the
+    // identification model does not describe - it looked actionable for a
+    // workflow that cannot run. The screen is NOT disabled: the numbered
+    // sliders, master and STOP are all still here, and the withdrawal is
+    // explained rather than silent.
     expect(
       tree.root.findAllByProps({testID: 'motors-hold-button'}).length,
+    ).toBe(0);
+    expect(
+      tree.root.findAllByProps({testID: 'motor-identification-unavailable'})
+        .length,
+    ).toBeGreaterThan(0);
+    expect(
+      tree.root.findAllByProps({testID: 'motor-slider-master'}).length,
     ).toBeGreaterThan(0);
   });
 });

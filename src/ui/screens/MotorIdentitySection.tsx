@@ -32,7 +32,7 @@
  * it, cannot be derived from it, and is asked for explicitly below.
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -41,6 +41,8 @@ import {
   confirmedCount,
   expectedFor,
   findPositionConflicts,
+  summarizeMotorIdentification,
+  type MotorIdentificationStatus,
   type MotorObservation,
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
@@ -127,7 +129,19 @@ export function MotorIdentitySection({
   // the map beside the selected-motor facts - never a stretched phone card.
   const twoColumn = tier === 'desktop' || tier === 'desktopWide';
 
+  const [notesOpen, setNotesOpen] = useState(false);
+
   const quadSupported = capability.kind === 'SUPPORTED';
+  /**
+   * A COUNT WAS READ AND IT IS NOT THE MODEL'S. This is the case where an
+   * identify action would be a lie, so the call to action is withdrawn.
+   * A merely UNKNOWN count is NOT this case: nothing has been read yet,
+   * the protected control explains its own blocked state, and hiding it
+   * there would remove the surface that does the explaining.
+   */
+  const identificationOutOfScope =
+    capability.kind === 'UNSUPPORTED' &&
+    capability.reason === 'MOTOR_COUNT_MISMATCH';
 
   const entry = verification.entries.find(e => e.motorNumber === selectedSlot);
   const confirmedPosition =
@@ -161,29 +175,72 @@ export function MotorIdentitySection({
     .filter(e => e.observation !== undefined)
     .map(e => e.motorNumber);
 
+  /**
+   * THE COMPACT ALL-MOTOR SUMMARY. One row per logical motor, carrying its
+   * identification status in words - so the other motors stay present
+   * conceptually without four full observation forms on screen. Selecting
+   * a row is addressing and nothing more: it issues no command, mints no
+   * receipt, and confirms nothing.
+   */
+  const summaryRows = useMemo(
+    () =>
+      quadSupported
+        ? summarizeMotorIdentification(verification, slots)
+        : // The model describes ONE airframe. Where it does not describe
+          // this one, no motor is outstanding - none was ever in scope, and
+          // showing four of six as "not confirmed" would read as work left
+          // to do rather than as a capability that does not exist.
+          slots.map(motorNumber => ({
+            motorNumber,
+            status: 'NOT_APPLICABLE' as const,
+          })),
+    [quadSupported, slots, verification],
+  );
+
+  const statusLabel = (
+    motorNumber: number,
+    status: MotorIdentificationStatus,
+  ): string => {
+    // "Being identified" is a PRESENTATION state, not an evidence state:
+    // an attributable attempt exists for this motor and is awaiting an
+    // answer. It survives a correction, because the receipt does.
+    if (
+      status === 'UNCONFIRMED' &&
+      receipt !== undefined &&
+      receipt.motorNumber === motorNumber
+    ) {
+      return t('motorsScreen.identityStatusPending');
+    }
+    return t(`motorsScreen.identityStatus.${status}`);
+  };
+
   const selectionRow = (
-    <View style={styles.slotRow} testID="motor-identity-slots">
-      {slots.map(slot => (
+    <View style={styles.slotRow} testID="motor-identification-summary">
+      {summaryRows.map(row => (
         <Pressable
-          key={slot}
-          onPress={() => onSelectSlot(slot)}
+          key={row.motorNumber}
+          onPress={() => onSelectSlot(row.motorNumber)}
           accessibilityRole="radio"
-          accessibilityState={{ selected: selectedSlot === slot }}
-          accessibilityLabel={t('motorsScreen.motorAccessibleName', {
-            number: slot,
-          })}
+          accessibilityState={{ selected: selectedSlot === row.motorNumber }}
+          accessibilityLabel={`${t('motorsScreen.motorAccessibleName', {
+            number: row.motorNumber,
+          })} — ${statusLabel(row.motorNumber, row.status)}`}
           style={[
             styles.slotCard,
-            selectedSlot === slot && styles.slotCardSelected,
+            selectedSlot === row.motorNumber && styles.slotCardSelected,
           ]}
-          testID={`motor-identity-M${slot}`}
+          testID={`motor-identity-M${row.motorNumber}`}
         >
-          <Text style={styles.slotLabel}>{`M${slot}`}</Text>
-          {verifiedSlots.includes(slot) ? (
-            <Text style={styles.slotMark}>
-              {t('motorsScreen.identityConfirmedShort')}
-            </Text>
-          ) : null}
+          <Text style={styles.slotLabel}>{`M${row.motorNumber}`}</Text>
+          <Text
+            style={[
+              styles.slotMark,
+              row.status === 'CONFIRMED' && styles.slotMarkConfirmed,
+            ]}
+            testID={`motor-identification-summary-M${row.motorNumber}`}
+          >
+            {statusLabel(row.motorNumber, row.status)}
+          </Text>
         </Pressable>
       ))}
     </View>
@@ -213,15 +270,42 @@ export function MotorIdentitySection({
       </Text>
       {quadSupported ? (
         <>
-          <Text style={styles.caption} testID="motors-diagram-front-hint">
-            {t('motorsScreen.diagramFrontHint')}
-          </Text>
+          {/* The "expected, not confirmed" statement stays visible: it is
+              the claim the whole template rests on. The longer reference
+              prose sits behind a toggle IN PLACE - progressive disclosure
+              inside the core section, not a move into Advanced. */}
           <Text style={styles.referenceNotice} testID="motors-diagram-notice">
             {t('motorsScreen.diagramNotice')}
           </Text>
-          <Text style={styles.caption} testID="motors-diagram-direction-source">
+          {/* STAYS VISIBLE. This is the claim that the arrows on the
+              diagram are a reference and not a reading from the flight
+              controller. Putting a truthfulness statement behind a tap to
+              win vertical space is exactly the trade this project does not
+              make - only the operating hint below is disclosed. */}
+          <Text
+            style={styles.caption}
+            testID="motors-diagram-direction-source"
+          >
             {t('motorsScreen.diagramDirectionSource')}
           </Text>
+          <Pressable
+            onPress={() => setNotesOpen(open => !open)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: notesOpen }}
+            style={styles.notesToggle}
+            testID="motors-diagram-notes-toggle"
+          >
+            <Text style={styles.notesToggleText}>
+              {t('motorsScreen.diagramNotes')}
+            </Text>
+          </Pressable>
+          {notesOpen ? (
+            <View style={styles.notesBlock} testID="motors-diagram-notes">
+              <Text style={styles.caption} testID="motors-diagram-front-hint">
+                {t('motorsScreen.diagramFrontHint')}
+              </Text>
+            </View>
+          ) : null}
         </>
       ) : null}
     </View>
@@ -385,29 +469,89 @@ export function MotorIdentitySection({
         </View>
       ) : null}
 
-      {/* THE IDENTIFICATION WORKFLOW, in the order a person performs it. */}
-      <View style={styles.stepsBlock} testID="motor-identification-steps">
-        <Text style={styles.stepsTitle}>
-          {t('motorsScreen.identifyHeading')}
-        </Text>
-        {[1, 2, 3, 4].map(step => (
-          <Text key={step} style={styles.step}>
-            {t(`motorsScreen.identifyStep.${step}`)}
+      {/* THE IDENTIFICATION WORKFLOW. The four steps are one paragraph
+          rather than four stacked lines: the same words, less chrome. */}
+      {!identificationOutOfScope ? (
+        <View style={styles.stepsBlock} testID="motor-identification-steps">
+          <Text style={styles.stepsTitle}>
+            {t('motorsScreen.identifyHeading')}
           </Text>
-        ))}
-      </View>
+          <Text style={styles.step}>{t('motorsScreen.identifySteps')}</Text>
+        </View>
+      ) : null}
 
-      <View testID="motor-identification-start">{holdControl}</View>
+      {/* NO IDENTIFY CALL TO ACTION WHERE IDENTIFICATION CANNOT HAPPEN.
+          A protected hold offered on an airframe this model does not
+          describe is a control that looks actionable and is not. It is
+          replaced by the capability statement, and by a pointer to what
+          IS still available - the numbered workspace above. */}
+      {identificationOutOfScope ? (
+        <View
+          style={styles.unsupported}
+          testID="motor-identification-unavailable"
+        >
+          <Text style={styles.unsupportedTitle}>
+            {t('motorsScreen.identifyUnavailableTitle')}
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorsScreen.identifyUnavailableBody', {
+              motor: `M${selectedSlot}`,
+            })}
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorsScreen.identifyUnavailableRemains')}
+          </Text>
+        </View>
+      ) : (
+        <View testID="motor-identification-start">{holdControl}</View>
+      )}
 
-      {/* Only an operator observation may confirm a position, so the
-          wizard is the ONLY writer of confirmed truth on this screen. */}
+      {/* EXACTLY ONE ACTIVE OBSERVATION FORM, and it belongs to the motor
+          the RECEIPT names - never to whatever happens to be selected.
+          That binding is the reason a pending answer cannot drift onto
+          another motor, so when the two differ the screen says so out loud
+          instead of letting the form look like it describes the selection. */}
       {quadSupported ? (
-        <MotorVerificationWizard
-          receipt={receipt}
-          state={verification}
-          onConfirm={onConfirm}
-          onMultipleMotorsReported={onMultipleMotorsReported}
-        />
+        <View
+          style={styles.activeBlock}
+          testID={
+            receipt === undefined
+              ? 'motor-identification-active'
+              : `motor-identification-active-M${receipt.motorNumber}`
+          }
+        >
+          {receipt !== undefined && receipt.motorNumber !== selectedSlot ? (
+            <View
+              style={styles.pendingBanner}
+              testID="motor-identification-pending-elsewhere"
+            >
+              <Text style={styles.pendingText}>
+                {t('motorsScreen.identifyPendingElsewhere', {
+                  pending: `M${receipt.motorNumber}`,
+                  selected: `M${selectedSlot}`,
+                })}
+              </Text>
+              <Pressable
+                onPress={() => onSelectSlot(receipt.motorNumber)}
+                accessibilityRole="button"
+                style={styles.secondaryButton}
+                testID="motor-identification-go-pending"
+              >
+                <Text style={styles.secondaryButtonText}>
+                  {t('motorsScreen.identifyGoToPending', {
+                    motor: `M${receipt.motorNumber}`,
+                  })}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+          <MotorVerificationWizard
+            receipt={receipt}
+            state={verification}
+            onConfirm={onConfirm}
+            onMultipleMotorsReported={onMultipleMotorsReported}
+          />
+        </View>
       ) : (
         <View
           style={styles.unsupported}
@@ -417,8 +561,7 @@ export function MotorIdentitySection({
             {t('motorsScreen.identificationQuadOnlyTitle')}
           </Text>
           <Text style={styles.caption}>
-            {capability.kind === 'UNSUPPORTED' &&
-            capability.reason === 'MOTOR_COUNT_MISMATCH'
+            {identificationOutOfScope
               ? t('motorsScreen.identificationQuadOnlyBody', {
                   count: capability.motorCount,
                 })
@@ -517,7 +660,35 @@ const styles = StyleSheet.create({
   slotMark: {
     ...typography.caption,
     fontSize: 11,
-    color: colors.success,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+  },
+  slotMarkConfirmed: { color: colors.success, fontWeight: '700' },
+  notesToggle: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  notesToggleText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  notesBlock: { gap: spacing.xs },
+  activeBlock: { gap: spacing.xs },
+  pendingBanner: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: colors.surfaceAlt,
+  },
+  pendingText: {
+    ...typography.body,
+    color: colors.warning,
+    fontWeight: '700',
     writingDirection: 'rtl',
   },
   factsBlock: {

@@ -388,6 +388,70 @@ export function clearObservation(
   };
 }
 
+/**
+ * WHERE EACH LOGICAL MOTOR STANDS, FOR A COMPACT LIST.
+ *
+ * READ-ONLY, AND ADDITIVE. This derives nothing new - it reads the same
+ * entries `deriveOverall` reads and names them one motor at a time, so a
+ * summary row does not have to re-implement the outcome vocabulary in a
+ * component. No evidence semantics change here.
+ *
+ * NOT_APPLICABLE is the important member. A motor outside the shipped
+ * identification model has not FAILED identification and must never be
+ * counted as an outstanding one - it was never in scope for it.
+ */
+export type MotorIdentificationStatus =
+  /** A position was observed and confirmed. */
+  | 'CONFIRMED'
+  /** The operator answered, but the answer was not a position. */
+  | 'ANSWERED_WITHOUT_POSITION'
+  /** Software evidence was unsafe or ambiguous for this output. */
+  | 'UNSAFE'
+  /** In scope, nothing confirmed yet. */
+  | 'UNCONFIRMED'
+  /** Outside the shipped identification model entirely. */
+  | 'NOT_APPLICABLE';
+
+export interface MotorIdentificationSummaryRow {
+  readonly motorNumber: number;
+  readonly status: MotorIdentificationStatus;
+}
+
+export function summarizeMotorIdentification(
+  state: MotorVerificationState,
+  motorNumbers: readonly number[],
+): readonly MotorIdentificationSummaryRow[] {
+  return Object.freeze(
+    motorNumbers.map(motorNumber => {
+      const entry = state.entries.find(e => e.motorNumber === motorNumber);
+      if (entry === undefined) {
+        return Object.freeze({
+          motorNumber,
+          status: 'NOT_APPLICABLE' as const,
+        });
+      }
+      switch (entry.outcome) {
+        case 'UNTESTED':
+          return Object.freeze({motorNumber, status: 'UNCONFIRMED' as const});
+        case 'UNSAFE_OR_AMBIGUOUS':
+          return Object.freeze({motorNumber, status: 'UNSAFE' as const});
+        case 'NO_MOVEMENT':
+        case 'MULTIPLE_MOTORS':
+        case 'UNCERTAIN':
+          return Object.freeze({
+            motorNumber,
+            status: 'ANSWERED_WITHOUT_POSITION' as const,
+          });
+        default:
+          // MATCH and every mismatch variant all rest on a confirmed
+          // OBSERVED position; whether it agrees with the template is a
+          // different question, answered elsewhere.
+          return Object.freeze({motorNumber, status: 'CONFIRMED' as const});
+      }
+    }),
+  );
+}
+
 /** One physical position claimed by more than one logical motor. */
 export interface MotorPositionConflict {
   readonly position: MotorPhysicalPosition;

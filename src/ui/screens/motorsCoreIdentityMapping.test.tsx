@@ -471,7 +471,18 @@ describe('27 - a six-motor aircraft is addressed truthfully', () => {
   it('keeps numbered motor control and STOP available', () => {
     expect(has(tree, 'motor-workspace')).toBe(true);
     expect(has(tree, 'motor-workspace-stop')).toBe(true);
-    expect(has(tree, 'motors-hold-button')).toBe(true);
+  });
+
+  it('offers no protected identify action it cannot honour', () => {
+    // P1b-B.1: the hold used to render here on a hex, looking actionable
+    // for a workflow this airframe has no model for. It is withdrawn, and
+    // replaced by a statement of what is and is not available.
+    expect(has(tree, 'motor-identification-start')).toBe(false);
+    expect(has(tree, 'motors-hold-button')).toBe(false);
+    expect(has(tree, 'motor-identification-unavailable')).toBe(true);
+    expect(textOf(tree)).toContain(
+      ar.motorsScreen.identifyUnavailableRemains,
+    );
   });
 
   it('still offers to READ the flight controller output mapping', () => {

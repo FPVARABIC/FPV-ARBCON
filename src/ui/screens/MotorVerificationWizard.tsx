@@ -155,12 +155,15 @@ export function MotorVerificationWizard({
         {t('motorVerification.disclaimer')}
       </Text>
 
-      {/* Evidence source (2): SOFTWARE - stated as reception only. */}
-      <View style={styles.evidenceBlock} testID="verification-software-evidence">
-        <Text style={styles.evidenceHeading}>
-          {t('motorVerification.softwareHeading')}
+      {/* Evidence source (2): SOFTWARE - stated as reception only.
+          Both sentences are kept verbatim; only the block chrome and the
+          separate heading are gone, because the words are the safety
+          content and the box around them is not. */}
+      <View style={styles.compactEvidence} testID="verification-software-evidence">
+        <Text style={styles.caption}>
+          {t('motorVerification.softwareHeading')}:{' '}
+          {t('motorVerification.softwareAck')}
         </Text>
-        <Text style={styles.body}>{t('motorVerification.softwareAck')}</Text>
         <Text style={styles.caption}>
           {t('motorVerification.softwareNotClaim')}
         </Text>
@@ -272,20 +275,27 @@ export function MotorVerificationWizard({
           <Text style={styles.evidenceHeading}>
             {t('motorVerification.exceptionHeading')}
           </Text>
-          {EXCEPTIONS.map(exception => (
-            <Pressable
-              key={exception.kind}
-              onPress={() =>
-                confirm({kind: exception.kind} as MotorObservation)
-              }
-              accessibilityRole="button"
-              style={styles.option}
-              testID={`verification-exception-${exception.kind}`}>
-              <Text style={styles.optionLabel}>
-                {t(`motorVerification.${exception.labelKey}`)}
-              </Text>
-            </Pressable>
-          ))}
+          {/* DELIBERATELY NOT BEHIND A DISCLOSURE. "no motor moved" and
+              "more than one motor moved" are the two answers that matter
+              most when something is wrong, and the second aborts the whole
+              verification. They wrap into a compact grid instead of a tall
+              stack; they are never a tap further away. */}
+          <View style={styles.optionRow}>
+            {EXCEPTIONS.map(exception => (
+              <Pressable
+                key={exception.kind}
+                onPress={() =>
+                  confirm({kind: exception.kind} as MotorObservation)
+                }
+                accessibilityRole="button"
+                style={styles.exceptionOption}
+                testID={`verification-exception-${exception.kind}`}>
+                <Text style={styles.optionLabel}>
+                  {t(`motorVerification.${exception.labelKey}`)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
       )}
     </View>
@@ -445,6 +455,20 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
   },
   optionOn: {borderColor: colors.accent, borderWidth: 2},
+  /** Same 44dp target, two per row on a phone instead of four stacked. */
+  exceptionOption: {
+    flexGrow: 1,
+    flexBasis: '46%',
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+  },
+  /** The safety sentences without the box: same words, less height. */
+  compactEvidence: {gap: 2},
   optionLabel: {
     ...typography.body,
     color: colors.textPrimary,
