@@ -614,6 +614,11 @@ export type { OrientationViewOffset, OrientationViewState } from './state';
 export { deriveMotorOutputOrder } from './state/motorOutputReordering';
 export type { MotorOutputReorderDerivation } from './state/motorOutputReordering';
 export {
+  evaluateMotorIdentificationCapability,
+  MOTOR_IDENTIFICATION_MODEL_OUTPUT_COUNT,
+} from './state/motorIdentificationCapability';
+export type { MotorIdentificationCapability } from './state/motorIdentificationCapability';
+export {
   analyzeOrientationStability,
   ORIENTATION_STABILITY_WINDOW_MS,
   ORIENTATION_STABILITY_MIN_SAMPLES,

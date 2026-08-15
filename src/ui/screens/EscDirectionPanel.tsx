@@ -1,3 +1,28 @@
+/**
+ * ESC SPIN DIRECTION - A WRITE-ONLY SETTING, PRESENTED AS ONE.
+ *
+ * THE DEFECT THIS FILE NOW REFUSES TO REPEAT. The panel used to open with
+ * NORMAL already selected. Nothing had read NORMAL from anywhere: the
+ * audited firmware has no command that reports ESC spin direction at all -
+ * `MSP2_SEND_DSHOT_COMMAND` carries commands outward and returns no
+ * direction, the setting is saved inside the ESC rather than in flight
+ * controller configuration, and a search of the pinned firmware's MSP
+ * surface for a spin-direction read finds nothing. A preselected NORMAL was
+ * therefore a default wearing the clothes of a reading, on a control whose
+ * whole job is to change which way a propeller turns.
+ *
+ * THE THREE CONCEPTS, KEPT APART ON SCREEN:
+ *   EXPECTED  - what an airframe reference says. Not shown here.
+ *   COMMANDED - what THIS session asked the ESC to become, after an
+ *               acknowledgement. Session memory, never a reading, and
+ *               deliberately discarded when the selected output changes.
+ *   OBSERVED  - what a person saw. Only the verification workflow collects
+ *               it, and nothing here may stand in for it.
+ *
+ * WHAT AN ACKNOWLEDGEMENT MEANS. The flight controller accepted and
+ * processed the request. It is not proof that the ESC applied it, that the
+ * motor turns that way, or that anything was verified physically.
+ */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
@@ -39,7 +64,19 @@ export function EscDirectionPanel({
   onDirtyChange,
 }: EscDirectionPanelProps): React.JSX.Element {
   const { t } = useTranslation();
-  const [direction, setDirection] = useState<DshotEscDirection>('NORMAL');
+  /**
+   * UNDEFINED IS THE HONEST INITIAL STATE, and it is undefined rather than
+   * a sentinel value so the type system refuses a silent default: there is
+   * no readable current direction, so neither option may start selected.
+   * The operator picks a COMMAND TARGET; nothing here reports a state.
+   */
+  const [direction, setDirection] = useState<DshotEscDirection | undefined>(
+    undefined,
+  );
+  /** COMMANDED, and only after an acknowledgement. Session memory. */
+  const [commanded, setCommanded] = useState<DshotEscDirection | undefined>(
+    undefined,
+  );
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<
@@ -60,14 +97,26 @@ export function EscDirectionPanel({
   // an acknowledgement for M1 must never be rendered under an M2 heading.
   useEffect(() => {
     operationRef.current = undefined;
-    setDirection('NORMAL');
+    // Back to UNKNOWN, not back to a default. A target chosen for M1 is not
+    // a statement about M2, and a command acknowledged for M1 is not one
+    // either - both are discarded rather than carried across outputs.
+    setDirection(undefined);
+    setCommanded(undefined);
     setReviewing(false);
     setBusy(false);
     setResult(undefined);
   }, [operator, selectedMotor]);
 
   const apply = useCallback(async () => {
-    if (!reviewing || busy || !available || operator === undefined) {
+    if (
+      !reviewing ||
+      busy ||
+      !available ||
+      operator === undefined ||
+      // No target, no command. The gate is here as well as on the button so
+      // an undefined direction can never reach the encoder.
+      direction === undefined
+    ) {
       return;
     }
     const operation = {};
@@ -84,6 +133,12 @@ export function EscDirectionPanel({
         return;
       }
       setResult(resultText(t, outcome));
+      // COMMANDED is recorded ONLY on an acknowledgement, and it records
+      // what was asked for - not what the ESC now is, which remains
+      // unreadable, and not what the motor does, which needs human eyes.
+      if (outcome.kind === 'ACKNOWLEDGED') {
+        setCommanded(direction);
+      }
       setReviewing(false);
     } catch {
       if (
@@ -119,6 +174,16 @@ export function EscDirectionPanel({
         {t('escDirection.motor')}: {`M${selectedMotor}`}
       </Text>
 
+      {/* THE CURRENT DIRECTION IS NOT AVAILABLE, and the panel says so
+          before it offers anything. This block is unconditional: there is
+          no firmware state that could ever fill it in. */}
+      <View style={styles.unknownBlock} testID="esc-direction-current-unknown">
+        <Text style={styles.sectionTitle}>
+          {t('escDirection.currentUnknownTitle')}
+        </Text>
+        <Text style={styles.caption}>{t('escDirection.currentUnknown')}</Text>
+      </View>
+
       <Text style={styles.sectionTitle}>{t('escDirection.target')}</Text>
       <View style={styles.optionRow}>
         {(['NORMAL', 'REVERSED'] as const).map(value => (
@@ -133,6 +198,7 @@ export function EscDirectionPanel({
             }}
             disabled={busy}
             accessibilityRole="radio"
+            // Neither option is selected until the operator selects one.
             accessibilityState={{ selected: direction === value }}
             style={[
               styles.directionOption,
@@ -149,7 +215,13 @@ export function EscDirectionPanel({
         ))}
       </View>
 
-      {reviewing ? (
+      {direction === undefined ? (
+        <Text style={styles.caption} testID="esc-direction-no-target">
+          {t('escDirection.targetNotSelected')}
+        </Text>
+      ) : null}
+
+      {reviewing && direction !== undefined ? (
         <View style={styles.confirmation} testID="esc-direction-confirmation">
           <Text style={styles.sectionTitle}>
             {t('escDirection.confirmTitle', {
@@ -176,12 +248,15 @@ export function EscDirectionPanel({
       ) : (
         <Pressable
           onPress={() => setReviewing(true)}
-          disabled={!available || busy}
+          disabled={!available || busy || direction === undefined}
           accessibilityRole="button"
-          accessibilityState={{ disabled: !available || busy }}
+          accessibilityState={{
+            disabled: !available || busy || direction === undefined,
+          }}
           style={[
             styles.primaryButton,
-            (!available || busy) && styles.optionDisabled,
+            (!available || busy || direction === undefined) &&
+              styles.optionDisabled,
           ]}
           testID="esc-direction-review"
         >
@@ -190,6 +265,25 @@ export function EscDirectionPanel({
           </Text>
         </Pressable>
       )}
+
+      {/* COMMANDED, never "current". Rendered under its own heading so it
+          cannot be read as a direction that was looked up. */}
+      {commanded !== undefined ? (
+        <View style={styles.commandedBlock} testID="esc-direction-commanded">
+          <Text style={styles.sectionTitle}>
+            {t('escDirection.commandedTitle')}
+          </Text>
+          <Text style={styles.caption}>
+            {t('escDirection.commandedBody', {
+              motor: selectedMotor,
+              direction:
+                commanded === 'NORMAL'
+                  ? t('escDirection.normal')
+                  : t('escDirection.reversed'),
+            })}
+          </Text>
+        </View>
+      ) : null}
 
       {!available ? (
         <Text style={styles.caption} testID="esc-direction-needs-observation">
@@ -282,6 +376,22 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     padding: spacing.md,
     borderColor: colors.warning,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  unknownBlock: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderColor: colors.borderSoft,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceAlt,
+  },
+  commandedBlock: {
+    gap: spacing.xs,
+    padding: spacing.md,
+    borderColor: colors.borderSoft,
     borderWidth: 1,
     borderRadius: radii.md,
     backgroundColor: colors.surfaceAlt,

@@ -95,6 +95,10 @@ import {
   type MotorObservation,
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
+import {
+  evaluateMotorIdentificationCapability,
+  type MotorIdentificationCapability,
+} from '../../core/state/motorIdentificationCapability';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
 import {
   MotorAirframeDiagram,
@@ -1185,6 +1189,38 @@ export function MotorsScreenView({
     direction: entry.direction,
   }));
 
+  /**
+   * MAY THE QUAD-X PHYSICAL MODEL BE APPLIED TO THIS AIRCRAFT?
+   *
+   * Read from the SAME live count the workspace uses for its sliders, so
+   * control and identification can never disagree about how many motors
+   * exist. An unsupported answer withdraws POSITION CLAIMS ONLY - the
+   * numbered controls, the hold path and STOP are untouched, because a
+   * numbered output is addressable without knowing which arm it drives.
+   */
+  const identificationCapability: MotorIdentificationCapability =
+    evaluateMotorIdentificationCapability(
+      snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount,
+    );
+  const quadIdentificationSupported =
+    identificationCapability.kind === 'SUPPORTED';
+  /** One block, used wherever a Quad-X claim is withheld. */
+  const identificationUnavailableNotice = (testID: string) => (
+    <View style={styles.advancedEmpty} testID={testID}>
+      <Text style={styles.advancedEmptyTitle}>
+        {t('motorsScreen.identificationQuadOnlyTitle')}
+      </Text>
+      <Text style={styles.caption}>
+        {identificationCapability.kind === 'UNSUPPORTED' &&
+        identificationCapability.reason === 'MOTOR_COUNT_MISMATCH'
+          ? t('motorsScreen.identificationQuadOnlyBody', {
+              count: identificationCapability.motorCount,
+            })
+          : t('motorsScreen.identificationCountUnknownBody')}
+      </Text>
+    </View>
+  );
+
   /** The protected hold control only submits a motor pulse after the
    * separate preparation action has reached an activation-ready state. */
   const holdControl = (
@@ -1700,22 +1736,35 @@ export function MotorsScreenView({
               <Text style={styles.miniHeading}>
                 {t('motorsScreen.selectedMotorHeading')}
               </Text>
-              <Text style={styles.caption}>
-                {t('motorsScreen.selectedMotorExpected', {
-                  position:
-                    selectedExpected === undefined
-                      ? '—'
-                      : t(
-                          `motorVerification.position.${selectedExpected.position}`,
-                        ),
-                  direction:
-                    selectedExpected === undefined
-                      ? '—'
-                      : t(
-                          `motorVerification.direction.${selectedExpected.direction}`,
-                        ),
-                })}
-              </Text>
+              {/* The expected position/direction pair is a Quad-X reference.
+                  On any other output count it describes arms this airframe
+                  does not have, so it is withheld rather than printed with
+                  a caveat under it. */}
+              {quadIdentificationSupported ? (
+                <Text style={styles.caption}>
+                  {t('motorsScreen.selectedMotorExpected', {
+                    position:
+                      selectedExpected === undefined
+                        ? '—'
+                        : t(
+                            `motorVerification.position.${selectedExpected.position}`,
+                          ),
+                    direction:
+                      selectedExpected === undefined
+                        ? '—'
+                        : t(
+                            `motorVerification.direction.${selectedExpected.direction}`,
+                          ),
+                  })}
+                </Text>
+              ) : (
+                <Text
+                  style={styles.caption}
+                  testID="motors-selected-expected-unavailable"
+                >
+                  {t('motorsScreen.selectedMotorExpectedUnavailable')}
+                </Text>
+              )}
             </View>
           </View>
 
@@ -1835,7 +1884,20 @@ export function MotorsScreenView({
                 </Text>
               </View>
             ) : null}
-            {receipt !== undefined || verification.sessionToken !== undefined ? (
+            {/* THE CAPABILITY GATE, and the reason it wraps all three.
+                The wizard offers four Quad-X arms, the report compares
+                against them, and the reorder panel derives an output map
+                from those same answers. On an output count the model
+                cannot describe, every one of them would be asking about -
+                or writing - a physical layout this app has no model for.
+                So the stack states what is unavailable and why, and the
+                numbered controls above stay exactly as they were. */}
+            {!quadIdentificationSupported &&
+            (receipt !== undefined || verification.sessionToken !== undefined)
+              ? identificationUnavailableNotice('motors-identification-unsupported')
+              : null}
+            {quadIdentificationSupported &&
+            (receipt !== undefined || verification.sessionToken !== undefined) ? (
               <MotorVerificationWizard
                 receipt={receipt}
                 state={verification}
@@ -1843,7 +1905,8 @@ export function MotorsScreenView({
                 onMultipleMotorsReported={handleMultipleMotors}
               />
             ) : null}
-            {verification.sessionToken !== undefined ? (
+            {quadIdentificationSupported &&
+            verification.sessionToken !== undefined ? (
               <MotorTestReport
                 state={verification}
                 safeTeardownConfirmed={
@@ -1854,7 +1917,9 @@ export function MotorsScreenView({
                 }
               />
             ) : null}
-            {verification.sessionToken !== undefined && sessionId !== undefined ? (
+            {quadIdentificationSupported &&
+            verification.sessionToken !== undefined &&
+            sessionId !== undefined ? (
               <MotorOutputReorderPanel
                 sessionId={sessionId}
                 verification={verification}
