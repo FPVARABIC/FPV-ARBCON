@@ -165,14 +165,20 @@ describe('Phase 2I - correcting before confirmation, immutable after', () => {
         }
       />,
     );
-    // Confirm is inert until both answers exist.
-    rendered.press('verification-confirm');
+    // The questions are staged now, so there is no confirm control at all
+    // until both answers exist - a stronger form of "confirm is inert".
+    expect(rendered.query('verification-confirm')).toBeUndefined();
     expect(calls).toEqual([]);
 
     rendered.press('verification-position-FRONT_LEFT');
     rendered.press('verification-direction-CW');
-    // Corrected before confirming.
+    // Corrected before confirming, through the staged step-back controls.
+    // Withdrawing the position does not withdraw the direction, so
+    // re-answering the position returns to review with CW still selected -
+    // which is what the second step-back is for.
+    rendered.press('verification-change-position');
     rendered.press('verification-position-REAR_RIGHT');
+    rendered.press('verification-change-direction');
     rendered.press('verification-direction-CCW');
     rendered.press('verification-confirm');
 

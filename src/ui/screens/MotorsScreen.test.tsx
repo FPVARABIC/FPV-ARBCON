@@ -1658,9 +1658,12 @@ describe('MotorsScreen - direction handling', () => {
 
   it('never presents the displayed directions as read from the aircraft', () => {
     const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    // P1b-B.2 shortened the visible line and moved the longer explanation
+    // under a details toggle. The CLAIM is unchanged and still requires no
+    // interaction to read: expected, not read from the flight controller.
     expect(rendered.query('motors-diagram-direction-source')).toBeDefined();
     expect(texts(rendered)).toContain(
-      'اتجاهات الدوران المعروضة مرجع شائع لمخطط Quad X وليست قراءة من متحكم الطيران.',
+      'اتجاهات المخطط متوقعة، وليست مقروءة من متحكم الطيران.',
     );
     rendered.unmount();
   });

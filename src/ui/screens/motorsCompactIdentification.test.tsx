@@ -199,9 +199,16 @@ describe('20 - one active form, every motor still represented', () => {
   it('mounts exactly ONE observation form, not one per motor', () => {
     // The measured fact this file exists to pin.
     expect(hostCount(tree, 'verification-questions')).toBe(1);
-    expect(hostCount(tree, 'verification-confirm')).toBe(1);
     // Four position choices belong to that single form, not to four forms.
     expect(hostCount(tree, 'verification-position-FRONT_LEFT')).toBe(1);
+  });
+
+  it('shows only the question being answered right now', () => {
+    // P1b-B.2: position first. The direction options and the confirm
+    // control are not merely below the fold - they are not mounted.
+    expect(hostCount(tree, 'verification-stage-position')).toBe(1);
+    expect(hostCount(tree, 'verification-direction-CW')).toBe(0);
+    expect(hostCount(tree, 'verification-confirm')).toBe(0);
   });
 
   it('names the motor the active form belongs to', () => {
@@ -464,6 +471,210 @@ describe('23 - a quad keeps the whole identification workflow', () => {
     // The truthfulness statements themselves are never behind the toggle.
     expect(has(tree, 'motors-numbering-notice')).toBe(true);
     expect(has(tree, 'motors-diagram-notice')).toBe(true);
+  });
+});
+
+/* ================================================================== *
+ * 17. THE PROGRESSIVE WIZARD
+ * ================================================================== */
+
+describe('17 - the wizard asks one question at a time', () => {
+  let port: Port;
+  let tree: ReactTestRenderer.ReactTestRenderer;
+
+  beforeEach(() => {
+    port = new Port(snapshotFor(4, receiptFor(3)));
+    tree = mount(port);
+  });
+  afterEach(() => act(() => tree.unmount()));
+
+  it('opens on the POSITION question, and only that', () => {
+    expect(has(tree, 'verification-stage-position')).toBe(true);
+    expect(has(tree, 'verification-stage-direction')).toBe(false);
+    expect(has(tree, 'verification-stage-review')).toBe(false);
+    expect(has(tree, 'verification-confirm')).toBe(false);
+  });
+
+  it('advances to DIRECTION once a position is chosen', () => {
+    act(() => first(tree, 'verification-position-REAR_LEFT').props.onPress());
+    expect(has(tree, 'verification-stage-direction')).toBe(true);
+    expect(has(tree, 'verification-stage-position')).toBe(false);
+    // The answer already given stays in view, and stays undoable.
+    expect(has(tree, 'verification-chosen-position')).toBe(true);
+    expect(has(tree, 'verification-change-position')).toBe(true);
+  });
+
+  it('advances to REVIEW once a direction is chosen', () => {
+    act(() => first(tree, 'verification-position-REAR_LEFT').props.onPress());
+    act(() => first(tree, 'verification-direction-CW').props.onPress());
+    expect(has(tree, 'verification-stage-review')).toBe(true);
+    expect(has(tree, 'verification-confirm')).toBe(true);
+    const summary = first(tree, 'verification-review-summary').props.children;
+    expect(summary).toContain('M3');
+    expect(summary).toContain(ar.motorVerification.position.REAR_LEFT);
+  });
+
+  it('steps back without confirming anything', () => {
+    act(() => first(tree, 'verification-position-REAR_LEFT').props.onPress());
+    act(() => first(tree, 'verification-direction-CW').props.onPress());
+    act(() => first(tree, 'verification-change-position').props.onPress());
+    expect(has(tree, 'verification-stage-position')).toBe(true);
+    expect(
+      first(tree, 'motor-identification-summary-M3').props.children,
+    ).toBe(ar.motorsScreen.identityStatusPending);
+  });
+
+  it('confirms through the existing domain path, with no shortcut', () => {
+    act(() => first(tree, 'verification-position-REAR_LEFT').props.onPress());
+    act(() => first(tree, 'verification-direction-CW').props.onPress());
+    // Nothing is confirmed by reaching the review stage.
+    expect(
+      first(tree, 'motor-identification-summary-M3').props.children,
+    ).toBe(ar.motorsScreen.identityStatusPending);
+    act(() => first(tree, 'verification-confirm').props.onPress());
+    expect(
+      first(tree, 'motor-identification-summary-M3').props.children,
+    ).toBe(ar.motorsScreen.identityStatus.CONFIRMED);
+    expect(port.pulseCalls).toEqual([]);
+  });
+});
+
+/* ================================================================== *
+ * 18. THE EXCEPTIONAL ANSWERS
+ * ================================================================== */
+
+describe('18 - every exceptional answer stays reachable', () => {
+  let port: Port;
+  let tree: ReactTestRenderer.ReactTestRenderer;
+
+  beforeEach(() => {
+    port = new Port(snapshotFor(4, receiptFor(1)));
+    tree = mount(port);
+  });
+  afterEach(() => act(() => tree.unmount()));
+
+  it('keeps the two aircraft observations one tap away, never disclosed', () => {
+    // MULTIPLE_MOTORS aborts the whole verification. Putting it behind a
+    // disclosure would be a safety regression, so it is asserted visible
+    // with nothing opened.
+    expect(has(tree, 'verification-exception-MULTIPLE_MOTORS')).toBe(true);
+    expect(has(tree, 'verification-exception-NO_MOVEMENT')).toBe(true);
+  });
+
+  it('keeps them reachable at the direction and review stages too', () => {
+    act(() => first(tree, 'verification-position-REAR_RIGHT').props.onPress());
+    expect(has(tree, 'verification-exception-MULTIPLE_MOTORS')).toBe(true);
+    act(() => first(tree, 'verification-direction-CCW').props.onPress());
+    expect(has(tree, 'verification-exception-MULTIPLE_MOTORS')).toBe(true);
+  });
+
+  it('reveals the two observer answers behind one labelled toggle', () => {
+    expect(has(tree, 'verification-exception-POSITION_UNCERTAIN')).toBe(false);
+    act(() => first(tree, 'verification-uncertain-toggle').props.onPress());
+    expect(has(tree, 'verification-exception-POSITION_UNCERTAIN')).toBe(true);
+    expect(has(tree, 'verification-exception-DIRECTION_UNCERTAIN')).toBe(true);
+  });
+
+  it('records an uncertainty answer as evidence, not as a position', () => {
+    act(() => first(tree, 'verification-uncertain-toggle').props.onPress());
+    act(() =>
+      first(tree, 'verification-exception-POSITION_UNCERTAIN').props.onPress(),
+    );
+    expect(
+      first(tree, 'motor-identification-summary-M1').props.children,
+    ).toBe(ar.motorsScreen.identityStatus.ANSWERED_WITHOUT_POSITION);
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(
+      ar.motorsScreen.identityUnconfirmed,
+    );
+  });
+
+  it('issues no motor command from any exceptional answer', () => {
+    act(() =>
+      first(tree, 'verification-exception-NO_MOVEMENT').props.onPress(),
+    );
+    expect(port.pulseCalls).toEqual([]);
+    expect(port.stopCalls).toEqual([]);
+  });
+});
+
+/* ================================================================== *
+ * 20. TRUTHS THAT MUST SURVIVE THE COMPACTION
+ * ================================================================== */
+
+describe('20 - no truth claim is behind a disclosure', () => {
+  let tree: ReactTestRenderer.ReactTestRenderer;
+
+  beforeEach(() => {
+    tree = mount(new Port(snapshotFor(4, receiptFor(1))));
+  });
+  afterEach(() => act(() => tree.unmount()));
+
+  it('states, with nothing opened, that the map arrows are expected only', () => {
+    expect(textOf(tree)).toContain(
+      ar.motorsScreen.diagramDirectionSourceShort,
+    );
+    expect(textOf(tree)).toContain(ar.motorsScreen.diagramNotice);
+  });
+
+  it('states that M numbers and FC outputs are different things', () => {
+    expect(textOf(tree)).toContain(ar.motorsScreen.numberingNoticeShort);
+  });
+
+  it('states that confirmation comes from the operator, not the controller', () => {
+    expect(textOf(tree)).toContain(ar.motorVerification.truthObservation);
+  });
+
+  it('shows expected and confirmed as separate, differently-labelled facts', () => {
+    expect(has(tree, 'motor-identity-expected')).toBe(true);
+    expect(has(tree, 'motor-identity-confirmed')).toBe(true);
+    expect(textOf(tree)).toContain(ar.motorsScreen.truthExpected);
+    expect(textOf(tree)).toContain(ar.motorsScreen.truthUnconfirmed);
+  });
+
+  it('keeps the longer explanations reachable rather than deleted', () => {
+    act(() => first(tree, 'motors-diagram-notes-toggle').props.onPress());
+    expect(textOf(tree)).toContain(ar.motorsScreen.numberingNotice);
+    expect(textOf(tree)).toContain(ar.motorsScreen.diagramDirectionSource);
+    expect(textOf(tree)).toContain(ar.motorsScreen.diagramFrontHint);
+
+    act(() => first(tree, 'verification-details-toggle').props.onPress());
+    const rendered = textOf(tree);
+    expect(rendered).toContain(ar.motorVerification.softwareAck);
+    expect(rendered).toContain(ar.motorVerification.softwareNotClaim);
+    expect(rendered).toContain(ar.motorVerification.disclaimer);
+    expect(rendered).toContain(ar.motorVerification.progressNotice);
+  });
+});
+
+/* ================================================================== *
+ * 21. NOTHING BUT THE PROTECTED HOLD MAY COMMAND A MOTOR
+ * ================================================================== */
+
+describe('21 - only the protected hold commands a motor', () => {
+  it('issues nothing from selection, answering, or any disclosure', () => {
+    const port = new Port(snapshotFor(4, receiptFor(1)));
+    const tree = mount(port);
+
+    act(() => first(tree, 'motor-identity-M2').props.onPress());
+    act(() => first(tree, 'motors-diagram-notes-toggle').props.onPress());
+    act(() => first(tree, 'verification-details-toggle').props.onPress());
+    act(() => first(tree, 'verification-uncertain-toggle').props.onPress());
+    act(() => first(tree, 'verification-position-REAR_RIGHT').props.onPress());
+    act(() => first(tree, 'verification-direction-CCW').props.onPress());
+    act(() => first(tree, 'verification-confirm').props.onPress());
+    act(() => first(tree, 'motor-identity-M3').props.onPress());
+
+    expect(port.pulseCalls).toEqual([]);
+    expect(port.stopCalls).toEqual([]);
+
+    // And the hold still does.
+    act(() => {
+      const hold = first(tree, 'motors-hold-button');
+      hold.props.onPressIn();
+      hold.props.onLongPress();
+    });
+    expect(port.pulseCalls).toEqual([3]);
+    act(() => tree.unmount());
   });
 });
 

@@ -265,8 +265,12 @@ export function MotorIdentitySection({
           whatever the airframe, so it is present alongside the map rather
           than instead of it. */}
       {selectionRow}
+      {/* CONCISE TRUTH, ALWAYS VISIBLE. The full paragraph says the same
+          thing at four times the height and now lives under the single
+          details toggle below - the CLAIM is never disclosed, only its
+          elaboration. */}
       <Text style={styles.caption} testID="motors-numbering-notice">
-        {t('motorsScreen.numberingNotice')}
+        {t('motorsScreen.numberingNoticeShort')}
       </Text>
       {quadSupported ? (
         <>
@@ -277,30 +281,37 @@ export function MotorIdentitySection({
           <Text style={styles.referenceNotice} testID="motors-diagram-notice">
             {t('motorsScreen.diagramNotice')}
           </Text>
-          {/* STAYS VISIBLE. This is the claim that the arrows on the
-              diagram are a reference and not a reading from the flight
-              controller. Putting a truthfulness statement behind a tap to
-              win vertical space is exactly the trade this project does not
-              make - only the operating hint below is disclosed. */}
+          {/* STAYS VISIBLE, in its short form. The CLAIM - these arrows are
+              expected, not read from the aircraft - is never behind a tap.
+              What moves is the paragraph explaining which MSP field does
+              not exist, which is elaboration, not the claim. */}
           <Text
             style={styles.caption}
             testID="motors-diagram-direction-source"
           >
-            {t('motorsScreen.diagramDirectionSource')}
+            {t('motorsScreen.diagramDirectionSourceShort')}
           </Text>
+          {/* ONE disclosure for this section, not one per paragraph. */}
           <Pressable
             onPress={() => setNotesOpen(open => !open)}
             accessibilityRole="button"
             accessibilityState={{ expanded: notesOpen }}
+            accessibilityLabel={t('motorsScreen.diagramNotes')}
             style={styles.notesToggle}
             testID="motors-diagram-notes-toggle"
           >
             <Text style={styles.notesToggleText}>
-              {t('motorsScreen.diagramNotes')}
+              {t('motorsScreen.detailsToggle')}
             </Text>
           </Pressable>
           {notesOpen ? (
             <View style={styles.notesBlock} testID="motors-diagram-notes">
+              <Text style={styles.caption} testID="motors-numbering-detail">
+                {t('motorsScreen.numberingNotice')}
+              </Text>
+              <Text style={styles.caption} testID="motors-direction-detail">
+                {t('motorsScreen.diagramDirectionSource')}
+              </Text>
               <Text style={styles.caption} testID="motors-diagram-front-hint">
                 {t('motorsScreen.diagramFrontHint')}
               </Text>
@@ -469,14 +480,22 @@ export function MotorIdentitySection({
         </View>
       ) : null}
 
-      {/* THE IDENTIFICATION WORKFLOW. The four steps are one paragraph
-          rather than four stacked lines: the same words, less chrome. */}
+      {/* ONE INSTRUCTION, FOR THE STEP ACTUALLY IN FRONT OF THE OPERATOR.
+          Listing all four steps meant three of them were always noise. The
+          wording follows the same evidence state the wizard reads, so the
+          instruction and the question can never describe different steps. */}
       {!identificationOutOfScope ? (
         <View style={styles.stepsBlock} testID="motor-identification-steps">
           <Text style={styles.stepsTitle}>
             {t('motorsScreen.identifyHeading')}
           </Text>
-          <Text style={styles.step}>{t('motorsScreen.identifySteps')}</Text>
+          <Text style={styles.step} testID="motor-identification-instruction">
+            {t(
+              receipt === undefined
+                ? 'motorsScreen.identifyInstructionSelect'
+                : 'motorsScreen.identifyInstructionObserve',
+            )}
+          </Text>
         </View>
       ) : null}
 
