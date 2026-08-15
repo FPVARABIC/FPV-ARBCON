@@ -39,6 +39,21 @@ export class DfuCompletionUnconfirmedError extends Error {
 }
 
 /**
+ * Errors from the browser DFU implementation that mean the underlying
+ * WebUSB transfer may still be unresolved. They are not ordinary failures:
+ * starting another erase/write against the same device id could overlap a
+ * late transfer. Treat all of them as one truthful UNCONFIRMED contract.
+ */
+function isUnconfirmedWebUsbDfuReason(reason: unknown): boolean {
+  if (reason instanceof DfuCompletionUnconfirmedError) return true;
+  if (typeof reason !== 'object' || reason === null) return false;
+  const code = (reason as {code?: unknown}).code;
+  return code === 'DFU_TRANSFER_TIMEOUT' ||
+    code === 'DFU_COMPLETION_UNCONFIRMED' ||
+    code === 'DFU_SESSION_POISONED';
+}
+
+/**
  * driverType value the Kotlin side (UsbSerialDriverType.UNSUPPORTED) reports
  * for any device it does not recognize as a supported serial driver.
  */
@@ -473,17 +488,21 @@ export class UsbSerialTransportClient {
     // rejection or mutate the already-finished UI attempt.
     void nativeAttempt.catch(() => undefined);
 
+    const poisonAttempt = () => {
+      timedOut = true;
+      this.poisonedDfuDeviceIds.add(deviceId);
+      // Best-effort only. WebUSB cannot abort an already-pending control
+      // transfer; this flag merely prevents any later DFU step if the
+      // native promise eventually wakes up.
+      void NativeUsbSerialTransport.cancelDfuFlash().catch(() => undefined);
+    };
+
     const watchdog = new Promise<never>((_resolve, reject) => {
       watchdogHandle = setInterval(() => {
         if (Date.now() - lastProgressAt < DFU_WEBUSB_SILENCE_TIMEOUT_MS) {
           return;
         }
-        timedOut = true;
-        this.poisonedDfuDeviceIds.add(deviceId);
-        // Best-effort only. WebUSB cannot abort a control transfer that is
-        // already pending; this flag merely prevents later DFU steps if the
-        // current promise eventually settles.
-        void NativeUsbSerialTransport.cancelDfuFlash().catch(() => undefined);
+        poisonAttempt();
         reject(new DfuCompletionUnconfirmedError());
       }, DFU_WEBUSB_WATCHDOG_POLL_MS);
     });
@@ -491,7 +510,8 @@ export class UsbSerialTransportClient {
     try {
       await Promise.race([nativeAttempt, watchdog]);
     } catch (reason) {
-      if (reason instanceof DfuCompletionUnconfirmedError || timedOut) {
+      if (isUnconfirmedWebUsbDfuReason(reason) || timedOut) {
+        if (!timedOut) poisonAttempt();
         throw reason instanceof DfuCompletionUnconfirmedError
           ? reason
           : new DfuCompletionUnconfirmedError();
