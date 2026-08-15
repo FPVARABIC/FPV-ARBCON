@@ -213,6 +213,6 @@ describe('WebUSB DFU terminal deadlines', () => {
     await expect(attempt).resolves.toBeUndefined();
 
     expect(device.uploadCount).toBe(1);
-    expect(updates.at(-1)).toEqual({phase: 'complete', percent: 100});
+    expect(updates[updates.length - 1]).toEqual({phase: 'complete', percent: 100});
   });
 });
