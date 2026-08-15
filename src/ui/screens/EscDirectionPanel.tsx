@@ -36,6 +36,18 @@ export interface EscDirectionPanelProps {
   readonly selectedMotor: number;
   readonly operator: MotorTestOperatorPort | undefined;
   readonly onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * Raises the outcome of ONE command so the host can keep the session's
+   * COMMANDED record. It reports what was ASKED FOR and how the flight
+   * controller answered - never a physical claim, and never an
+   * observation. UNCONFIRMED is reported as such rather than dropped: an
+   * outcome nobody knows is exactly the one an operator must be told.
+   */
+  readonly onCommandOutcome?: (
+    motorNumber: number,
+    target: DshotEscDirection,
+    status: 'ACKNOWLEDGED' | 'UNCONFIRMED',
+  ) => void;
 }
 
 function resultText(
@@ -62,6 +74,7 @@ export function EscDirectionPanel({
   selectedMotor,
   operator,
   onDirtyChange,
+  onCommandOutcome,
 }: EscDirectionPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   /**
@@ -77,6 +90,7 @@ export function EscDirectionPanel({
   const [commanded, setCommanded] = useState<DshotEscDirection | undefined>(
     undefined,
   );
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<
@@ -133,11 +147,16 @@ export function EscDirectionPanel({
         return;
       }
       setResult(resultText(t, outcome));
-      // COMMANDED is recorded ONLY on an acknowledgement, and it records
-      // what was asked for - not what the ESC now is, which remains
-      // unreadable, and not what the motor does, which needs human eyes.
+      // COMMANDED is recorded for the two outcomes that say something
+      // about the request itself. It records what was ASKED FOR - not what
+      // the ESC now is, which remains unreadable, and not what the motor
+      // does, which needs human eyes. A REJECTED command never happened,
+      // so it produces no record at all.
       if (outcome.kind === 'ACKNOWLEDGED') {
         setCommanded(direction);
+        onCommandOutcome?.(targetMotor, direction, 'ACKNOWLEDGED');
+      } else if (outcome.kind === 'UNCONFIRMED') {
+        onCommandOutcome?.(targetMotor, direction, 'UNCONFIRMED');
       }
       setReviewing(false);
     } catch {
@@ -157,6 +176,7 @@ export function EscDirectionPanel({
     busy,
     direction,
     available,
+    onCommandOutcome,
     operator,
     reviewing,
     selectedMotor,
@@ -165,24 +185,51 @@ export function EscDirectionPanel({
 
   return (
     <View style={styles.root} testID="esc-direction-panel">
-      <Text style={styles.eyebrow}>{t('escDirection.eyebrow')}</Text>
-      <Text style={styles.title}>{t('escDirection.title')}</Text>
-      <Text style={styles.caption}>{t('escDirection.subtitle')}</Text>
-      <Text style={styles.warning}>{t('escDirection.physicalCaveat')}</Text>
-
+      {/* THE CURRENT DIRECTION IS NOT AVAILABLE, and this says so before
+          anything is offered. Unconditional: there is no firmware state
+          that could ever fill it in. The heading is the CLAIM and stays
+          visible; the sentence explaining why sits under the one details
+          toggle below, with the protocol scope. The eyebrow, title and
+          selected-motor line are gone because MotorDirectionSection
+          already names all three above this panel. */}
       <Text style={styles.sectionTitle} testID="esc-direction-selected-motor">
         {t('escDirection.motor')}: {`M${selectedMotor}`}
       </Text>
 
-      {/* THE CURRENT DIRECTION IS NOT AVAILABLE, and the panel says so
-          before it offers anything. This block is unconditional: there is
-          no firmware state that could ever fill it in. */}
       <View style={styles.unknownBlock} testID="esc-direction-current-unknown">
         <Text style={styles.sectionTitle}>
           {t('escDirection.currentUnknownTitle')}
         </Text>
+        {/* KEPT VISIBLE. This sentence is the P1b-A claim itself - the
+            flight controller offers no reading - not an elaboration of
+            it, so it does not go behind a tap. Only the protocol-scope
+            paragraph does. */}
         <Text style={styles.caption}>{t('escDirection.currentUnknown')}</Text>
       </View>
+
+      {/* SAFETY, NOT EXPLANATION: Normal/Reverse is an ESC setting and not
+          a measure of clockwise or anticlockwise, and the physical result
+          also depends on wiring. That stays on screen. */}
+      <Text style={styles.warning}>{t('escDirection.physicalCaveat')}</Text>
+
+      <Pressable
+        onPress={() => setDetailsOpen(open => !open)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: detailsOpen }}
+        accessibilityLabel={t('escDirection.title')}
+        style={styles.detailsToggle}
+        testID="esc-direction-details-toggle"
+      >
+        <Text style={styles.detailsToggleText}>
+          {t('motorsScreen.detailsToggle')}
+        </Text>
+      </Pressable>
+      {detailsOpen ? (
+        <View style={styles.notesBlock} testID="esc-direction-details">
+          <Text style={styles.caption}>{t('escDirection.title')}</Text>
+          <Text style={styles.caption}>{t('escDirection.subtitle')}</Text>
+        </View>
+      ) : null}
 
       <Text style={styles.sectionTitle}>{t('escDirection.target')}</Text>
       <View style={styles.optionRow}>
@@ -266,23 +313,21 @@ export function EscDirectionPanel({
         </Pressable>
       )}
 
-      {/* COMMANDED, never "current". Rendered under its own heading so it
-          cannot be read as a direction that was looked up. */}
+      {/* COMMANDED lives in MotorDirectionSection now, beside EXPECTED and
+          OBSERVED, so the three sources are read together and this panel
+          stays what it is: the place a command is authored. `commanded`
+          is still tracked here only to keep the panel truthful when it is
+          mounted on its own. */}
       {commanded !== undefined ? (
-        <View style={styles.commandedBlock} testID="esc-direction-commanded">
-          <Text style={styles.sectionTitle}>
-            {t('escDirection.commandedTitle')}
-          </Text>
-          <Text style={styles.caption}>
-            {t('escDirection.commandedBody', {
-              motor: selectedMotor,
-              direction:
-                commanded === 'NORMAL'
-                  ? t('escDirection.normal')
-                  : t('escDirection.reversed'),
-            })}
-          </Text>
-        </View>
+        <Text style={styles.caption} testID="esc-direction-commanded">
+          {t('escDirection.commandedBody', {
+            motor: selectedMotor,
+            direction:
+              commanded === 'NORMAL'
+                ? t('escDirection.normal')
+                : t('escDirection.reversed'),
+          })}
+        </Text>
       ) : null}
 
       {!available ? (
@@ -382,19 +427,19 @@ const styles = StyleSheet.create({
   },
   unknownBlock: {
     gap: spacing.xs,
-    padding: spacing.md,
-    borderColor: colors.borderSoft,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceAlt,
+    paddingVertical: spacing.xs,
   },
-  commandedBlock: {
-    gap: spacing.xs,
-    padding: spacing.md,
-    borderColor: colors.borderSoft,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    backgroundColor: colors.surfaceAlt,
+  notesBlock: { gap: spacing.xs },
+  detailsToggle: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  detailsToggleText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '700',
+    writingDirection: 'rtl',
   },
   primaryButton: {
     minHeight: 48,

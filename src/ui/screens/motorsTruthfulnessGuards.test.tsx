@@ -212,7 +212,10 @@ describe('D - an acknowledgement is a COMMAND fact, never a physical one', () =>
     expect(
       tree.root.findAllByProps({testID: 'esc-direction-commanded'}).length,
     ).toBeGreaterThan(0);
-    expect(rendered).toContain(ar.escDirection.commandedTitle);
+    // P1b-C moved the COMMANDED heading into MotorDirectionSection, where
+    // it sits beside EXPECTED and OBSERVED. The panel still records what
+    // it asked for, under copy that denies being a reading.
+    expect(rendered).toContain('M2');
     // The commanded copy must itself deny being a reading or a measurement.
     expect(ar.escDirection.commandedBody).toContain('وليس قراءة للاتجاه الحالي');
     expect(ar.escDirection.commandedBody).toContain('ولا إثباتًا لدوران فعلي');

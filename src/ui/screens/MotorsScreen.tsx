@@ -106,7 +106,18 @@ import { MotorConfigurationSummary } from './MotorConfigurationSummary';
 import { MotorWorkspace } from './MotorWorkspace';
 import { MotorConfigurationPanel } from './MotorConfigurationPanel';
 import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
-import { EscDirectionPanel } from './EscDirectionPanel';
+import { MotorDirectionSection } from './MotorDirectionSection';
+import {
+  evaluateMotorDirectionCommandCapability,
+} from '../../core/state/motorDirectionCapability';
+import {
+  beginDirectionCommandLog,
+  directionCommandFor,
+  EMPTY_DIRECTION_COMMAND_LOG,
+  recordDirectionCommand,
+  type MotorDirectionCommandLog,
+} from '../../core/state/motorDirectionCommandRecord';
+import type { DshotEscDirection } from '../../core';
 
 // Kept as public exports for the payload-identity and screen contract tests.
 // Their implementation lives with the diagram so slot geometry has one
@@ -478,6 +489,23 @@ export function MotorsScreenView({
   const [outputOrderValues, setOutputOrderValues] = useState<
     readonly number[] | undefined
   >(undefined);
+  /**
+   * WHAT THIS SESSION ASKED ESCs TO BECOME.
+   *
+   * SCOPE, AND WHY THIS ONE. The log is bound to the CONNECTION session
+   * (`sessionId`), not to the motor-test session. A direction command
+   * changes a setting stored inside the ESC, which outlives the bench
+   * session the operator opened to send it - and verifying it means
+   * ending that bench session and starting another. Binding to the bench
+   * session would therefore discard the record at exactly the moment the
+   * operator needs it. Binding to the connection is still narrow: a new
+   * connection may be a different aircraft, so the log starts empty.
+   * Nothing is written to disk and no board identifier is used as a key.
+   */
+  const [directionLog, setDirectionLog] = useState<MotorDirectionCommandLog>(
+    EMPTY_DIRECTION_COMMAND_LOG,
+  );
+  const directionSessionRef = useRef<object | undefined>(undefined);
   const [beginning, setBeginning] = useState(false);
   const [beginQueued, setBeginQueued] = useState(false);
   const [beginFailed, setBeginFailed] = useState(false);
@@ -709,6 +737,47 @@ export function MotorsScreenView({
       return result.kind === 'ACCEPTED' ? result.state : current;
     });
   }, []);
+
+  /**
+   * A NEW CONNECTION STARTS WITH NO COMMAND HISTORY. The token is a fresh
+   * object per `sessionId`, so a replaced connection cannot inherit
+   * records minted against the previous one - `recordDirectionCommand`
+   * compares by reference and refuses a stale token outright.
+   */
+  useEffect(() => {
+    // Keyed on BOTH, because either changing means the aircraft on the
+    // other end of the command may not be the same one.
+    if (operator === undefined && sessionId === undefined) {
+      directionSessionRef.current = undefined;
+      setDirectionLog(EMPTY_DIRECTION_COMMAND_LOG);
+      return;
+    }
+    const token = {};
+    directionSessionRef.current = token;
+    setDirectionLog(beginDirectionCommandLog(token));
+  }, [operator, sessionId]);
+
+  /**
+   * Records ONE direction command outcome. It writes COMMANDED and only
+   * COMMANDED: no observation, no verification, no expected value and no
+   * physical claim of any kind change here.
+   */
+  const handleDirectionCommandOutcome = useCallback(
+    (
+      motorNumber: number,
+      target: DshotEscDirection,
+      status: 'ACKNOWLEDGED' | 'UNCONFIRMED',
+    ) => {
+      const token = directionSessionRef.current;
+      if (token === undefined) {
+        return;
+      }
+      setDirectionLog(current =>
+        recordDirectionCommand(current, token, {motorNumber, target, status}),
+      );
+    },
+    [],
+  );
 
   /** The user saw more than one motor move: stop testing and tear down
    * through the ACCEPTED route. This is NOT converted into a controller
@@ -1245,6 +1314,28 @@ export function MotorsScreenView({
       : MOTOR_TEST_OUTPUT_SLOTS;
 
   /**
+   * MAY A DIRECTION COMMAND BE SENT FOR THE SELECTED MOTOR? A DIFFERENT
+   * QUESTION FROM IDENTIFICATION, and answered from the gates the command
+   * path actually runs rather than from the airframe template.
+   */
+  const directionCommandCapability = evaluateMotorDirectionCommandCapability({
+    // The command travels the motor-test facade, so the session that
+    // matters is the operator port - NOT the configuration session id
+    // that the output-mapping transaction uses.
+    hasSession: operator !== undefined,
+    motorNumber: selectedSlot,
+    // The scope is handed through WHOLE. This screen must not be able to
+    // name a safety field, let alone branch on one - see the containment
+    // test - so the reading happens inside the evaluator.
+    scope: snapshot?.motorScope,
+    activationAllowed: snapshot?.activation.allowed === true,
+  });
+  const selectedDirectionCommand = directionCommandFor(
+    directionLog,
+    selectedSlot,
+  );
+
+  /**
    * A configuration read shares the link with the motor-test lease. While
    * a command may be live it waits and says so, rather than competing with
    * a pulse for the same serialized session.
@@ -1559,6 +1650,21 @@ export function MotorsScreenView({
             holdControl={holdControl}
           />
 
+          {/* DIRECTION, beside identity rather than at the bottom of the
+            * page. Three sources on three rows - template expectation,
+            * what this session commanded, what a person observed - and
+            * the one authoring workflow underneath them. */}
+          <MotorDirectionSection
+            selectedMotor={selectedSlot}
+            operator={operator}
+            identificationCapability={identificationCapability}
+            commandCapability={directionCommandCapability}
+            verification={verification}
+            commanded={selectedDirectionCommand}
+            onCommandOutcome={handleDirectionCommandOutcome}
+            onDirtyChange={setEscDirectionDirty}
+          />
+
           {/* Reading which output drives which motor is firmware truth and
             * needs no observation at all. Writing one still needs
             * everything it always needed - the panel below the read is the
@@ -1760,11 +1866,10 @@ export function MotorsScreenView({
             </View>
           ) : null}
 
-          <EscDirectionPanel
-            selectedMotor={selectedSlot}
-            operator={operator}
-            onDirtyChange={setEscDirectionDirty}
-          />
+          {/* P1b-C: the direction workflow moved UP into
+              MotorDirectionSection, beside the identity it describes. It
+              is not duplicated here - there is exactly one place a
+              direction command is authored. */}
         </View>
 
         {/* Outside a test lease monitoring uses the canonical scheduler.

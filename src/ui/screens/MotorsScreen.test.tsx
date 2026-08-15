@@ -1642,6 +1642,9 @@ describe('MotorsScreen - direction handling', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
+    // P1b-C put the authoring panel inside the core direction section,
+    // beside the expected/commanded/observed rows it belongs to.
+    expect(rendered.query('motor-direction-section')).toBeDefined();
     expect(rendered.query('esc-direction-panel')).toBeDefined();
     expect(rendered.query('esc-direction-review')).toBeDefined();
     expect(rendered.query('esc-direction-apply')).toBeUndefined();
