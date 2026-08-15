@@ -6,19 +6,6 @@
  * useSessionLossRedirect() - the one shared implementation of the
  * "tracked session died -> return to Connection" safety rule - rather
  * than carrying a second copy of it.
- *
- * THE THREE THINGS THAT LEGITIMATELY DIFFER HERE, and why:
- *
- * 1. LAZY ROUTES. On Android, Metro ships one bundle and `getComponent`
- *    is enough to keep the flasher out of the connection path. A browser
- *    downloads what it is given, so Connection, MainTabs and the Firmware
- *    Flasher are React.lazy() chunks.
- *
- * 2. THE ALERT HOST. react-native-web's Alert.alert is a no-op; see
- *    webAlert.tsx for the safety decisions that need a real browser host.
- *
- * 3. THE COMPATIBILITY NOTICE. Rendered above the navigator, and only
- *    when a capability is genuinely absent.
  */
 
 import React, {Suspense} from 'react';
@@ -85,10 +72,7 @@ function App(): React.JSX.Element {
               <Stack.Screen name="Start" component={StartScreen} />
               <Stack.Screen name="Connection" component={UsbConnectionScreen} />
               <Stack.Screen name="Setup" component={MainTabsScreen} />
-              <Stack.Screen
-                name="FirmwareFlasher"
-                component={FirmwareFlasherScreen}
-              />
+              <Stack.Screen name="FirmwareFlasher" component={FirmwareFlasherScreen} />
             </Stack.Navigator>
           </Suspense>
         </NavigationContainer>
@@ -114,17 +98,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.backgroundRaised,
   },
   fallbackText: {
-    ...typographyLikeFallback,
+    fontFamily: 'Cairo',
+    fontSize: 14,
+    lineHeight: 22,
     color: colors.textSecondary,
   },
 });
-
-// Keep the fallback tiny and independent from the full UI typography barrel
-// so the web entry chunk does not pull the configurator eagerly.
-const typographyLikeFallback = {
-  fontFamily: 'Cairo',
-  fontSize: 14,
-  lineHeight: 22,
-} as const;
 
 export default App;
