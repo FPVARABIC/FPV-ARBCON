@@ -37,13 +37,12 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 /**
  * Keep the firmware tool outside the connection/Motors module graph until
- * the operator explicitly opens it.  The flasher pulls in catalogue,
- * parsing and bootloader engines (including esptool); evaluating those at
- * application start would make an independent tool part of the critical
- * connection path for no user benefit.
+ * the operator explicitly opens it. The default route is now the compact
+ * workflow; the full legacy surface remains reachable from its "متقدم"
+ * control for recovery and specialist cases.
  */
 function getFirmwareFlasherScreen() {
-  return require('./src/ui/screens/FirmwareFlasherScreen').default;
+  return require('./src/ui/screens/FirmwareFlasherSimpleScreen').default;
 }
 
 function App(): React.JSX.Element {
