@@ -58,7 +58,7 @@ type Props = Partial<NativeStackScreenProps<RootStackParamList, 'FirmwareFlasher
   readonly client?: UsbSerialTransportClient;
 };
 
-type Phase =
+export type SimpleFlasherPhase =
   | 'idle'
   | 'detecting'
   | 'loading'
@@ -107,12 +107,22 @@ export function defaultBuildSelection(
   } as const;
 }
 
+/** Simple mode never silently falls from Stable to RC/Development. */
+export function defaultStableRelease(releases: readonly FirmwareRelease[]): string {
+  return releases.find(release => release.channel === 'stable')?.release ?? '';
+}
+
+/** Waiting for the one-time DFU permission is part of the flash operation. */
+export function simpleFlasherNavigationLocked(phase: SimpleFlasherPhase): boolean {
+  return ['detecting', 'loading', 'waiting-permission', 'flashing'].includes(phase);
+}
+
 export default function FirmwareFlasherSimpleScreen({
   navigation,
   client = usbSerialTransportClient,
 }: Props): React.JSX.Element {
   const [advanced, setAdvanced] = useState(false);
-  const [phase, setPhase] = useState<Phase>('idle');
+  const [phase, setPhase] = useState<SimpleFlasherPhase>('idle');
   const [status, setStatus] = useState('اختر اللوحة والإصدار، ثم حمّل Firmware.');
   const [progress, setProgress] = useState(0);
 
@@ -136,6 +146,7 @@ export default function FirmwareFlasherSimpleScreen({
   const cloudBuild = useMemo(() => new CloudBuildCoordinator(betaflightBuildApi), []);
   const supportsSerialPicker = useMemo(() => client.supportsDevicePicker(), [client]);
   const isBusy = ['detecting', 'loading', 'flashing'].includes(phase);
+  const navigationLocked = simpleFlasherNavigationLocked(phase);
 
   const filteredTargets = useMemo(
     () => filterAndSortTargets(targets, targetQuery),
@@ -160,11 +171,15 @@ export default function FirmwareFlasherSimpleScreen({
     const controller = new AbortController();
     setTargetsLoading(true);
     betaflightBuildApi.loadTargets(controller.signal)
-      .then(setTargets)
+      .then(items => {
+        if (!controller.signal.aborted) setTargets(items);
+      })
       .catch(reason => {
         if (!controller.signal.aborted) fail(reason);
       })
-      .finally(() => setTargetsLoading(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setTargetsLoading(false);
+      });
     return () => controller.abort();
   }, [fail]);
 
@@ -181,14 +196,15 @@ export default function FirmwareFlasherSimpleScreen({
       .then(parseTargetReleases)
       .then(items => {
         if (controller.signal.aborted) return;
-        const stable = items.filter(item => item.channel === 'stable');
         setReleases(items);
-        setSelectedRelease(stable[0]?.release ?? '');
+        setSelectedRelease(defaultStableRelease(items));
       })
       .catch(reason => {
         if (!controller.signal.aborted) fail(reason);
       })
-      .finally(() => setReleasesLoading(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setReleasesLoading(false);
+      });
     return () => controller.abort();
   }, [fail, selectedTarget]);
 
@@ -200,6 +216,8 @@ export default function FirmwareFlasherSimpleScreen({
 
   useEffect(() => client.onDfuFlashProgress(update => {
     if (phase !== 'flashing') return;
+    // 100 is reserved for the resolved flash promise. A progress event alone
+    // is never allowed to visually claim success.
     setProgress(Math.max(0, Math.min(99, update.percent)));
     const label = update.phase === 'erasing'
       ? 'مسح الذاكرة…'
@@ -216,6 +234,7 @@ export default function FirmwareFlasherSimpleScreen({
   }), [client, phase]);
 
   const selectTarget = useCallback((target: string) => {
+    if (navigationLocked) return;
     setSelectedTarget(target);
     setTargetQuery('');
     setTargetPickerOpen(false);
@@ -224,10 +243,10 @@ export default function FirmwareFlasherSimpleScreen({
     setProgress(0);
     setPhase('idle');
     setStatus('اختر الإصدار ثم حمّل Firmware.');
-  }, []);
+  }, [navigationLocked]);
 
   const autoDetect = useCallback(async () => {
-    if (isBusy) return;
+    if (navigationLocked) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase('detecting');
@@ -265,13 +284,14 @@ export default function FirmwareFlasherSimpleScreen({
         await detected.release();
       }
     } catch (reason) {
-      fail(reason);
+      if (!controller.signal.aborted) fail(reason);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [bootloader, client, fail, isBusy, supportsSerialPicker, targets]);
+  }, [bootloader, client, fail, navigationLocked, supportsSerialPicker, targets]);
 
   const chooseSerialAndDetect = useCallback(() => {
+    if (navigationLocked) return;
     // Web Serial's chooser must be opened directly by this press.
     client.requestDevicePermission()
       .then(device => {
@@ -280,10 +300,10 @@ export default function FirmwareFlasherSimpleScreen({
         void autoDetect();
       })
       .catch(fail);
-  }, [autoDetect, client, fail]);
+  }, [autoDetect, client, fail, navigationLocked]);
 
   const loadFirmware = useCallback(async () => {
-    if (!selectedTarget || !selectedRelease || isBusy) return;
+    if (!selectedTarget || !selectedRelease || navigationLocked) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase('loading');
@@ -328,7 +348,7 @@ export default function FirmwareFlasherSimpleScreen({
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [cloudBuild, fail, isBusy, selectedRelease, selectedTarget]);
+  }, [cloudBuild, fail, navigationLocked, selectedRelease, selectedTarget]);
 
   const completeFlash = useCallback(async (
     dfu: DfuDeviceDescriptor,
@@ -349,7 +369,7 @@ export default function FirmwareFlasherSimpleScreen({
   }, [client, fail]);
 
   const flashPreparedFirmware = useCallback(async () => {
-    if (!firmware || phase === 'flashing') return;
+    if (!firmware || navigationLocked) return;
     if (firmware.kind !== 'HEX') {
       setPhase('failed');
       setStatus('الوضع المبسط مخصص لـ Betaflight HEX. استخدم «متقدم» للأنواع الأخرى.');
@@ -410,13 +430,13 @@ export default function FirmwareFlasherSimpleScreen({
     completeFlash,
     fail,
     firmware,
-    phase,
+    navigationLocked,
     selectedTarget,
     supportsSerialPicker,
   ]);
 
   const chooseDfuAndContinue = useCallback(() => {
-    if (!pendingFlash) return;
+    if (!pendingFlash || phase !== 'waiting-permission') return;
     client.requestDfuDevicePermission()
       .then(async device => {
         const verdict = verifySelectedDfuDevice(
@@ -430,10 +450,10 @@ export default function FirmwareFlasherSimpleScreen({
         await completeFlash(device, pendingFlash.image);
       })
       .catch(fail);
-  }, [client, completeFlash, fail, pendingFlash]);
+  }, [client, completeFlash, fail, pendingFlash, phase]);
 
   const confirmFlash = useCallback(() => {
-    if (!firmware || isBusy) return;
+    if (!firmware || navigationLocked) return;
     Alert.alert(
       'تفليش Firmware',
       `سيتم تثبيت ${selectedRelease} على ${selectedTarget}. أزل المراوح وافصل البطارية واترك USB موصولاً حتى تظهر النتيجة النهائية.`,
@@ -446,15 +466,34 @@ export default function FirmwareFlasherSimpleScreen({
         },
       ],
     );
-  }, [firmware, flashPreparedFirmware, isBusy, selectedRelease, selectedTarget]);
+  }, [firmware, flashPreparedFirmware, navigationLocked, selectedRelease, selectedTarget]);
 
   const cancel = useCallback(() => {
+    if (phase === 'waiting-permission') {
+      // Reboot happened, but writeAlreadyStarted is false. Dropping this
+      // prepared operation is safe and releases the UI without lying.
+      setPendingFlash(null);
+      setProgress(0);
+      setPhase(firmware ? 'ready' : 'idle');
+      setStatus(firmware
+        ? 'أُلغي التفليش قبل بدء الكتابة. Firmware ما زال جاهزاً.'
+        : 'أُلغي التفليش قبل بدء الكتابة.');
+      return;
+    }
+
     abortRef.current?.abort();
     if (phase === 'flashing') {
+      // WebUSB may still own one native transfer. Do not announce cancellation
+      // as complete until the transport settles the actual terminal result.
       void client.cancelDfuFlash();
-      setStatus('تم طلب إيقاف التفليش بأمان…');
+      setStatus('تم طلب الإيقاف. انتظار انتهاء الخطوة الحالية بأمان…');
+      return;
     }
-  }, [client, phase]);
+
+    setPhase(firmware ? 'ready' : 'idle');
+    setProgress(0);
+    setStatus('أُلغيت العملية.');
+  }, [client, firmware, phase]);
 
   if (advanced) {
     return (
@@ -479,21 +518,25 @@ export default function FirmwareFlasherSimpleScreen({
       <Modal
         visible={targetPickerOpen}
         animationType="slide"
-        onRequestClose={() => setTargetPickerOpen(false)}>
+        onRequestClose={() => {
+          if (!navigationLocked) setTargetPickerOpen(false);
+        }}>
         <View style={styles.modal}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>اختيار Flight Controller</Text>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="إغلاق"
+              disabled={navigationLocked}
               onPress={() => setTargetPickerOpen(false)}
-              style={styles.closeButton}>
+              style={[styles.closeButton, navigationLocked && styles.dimmed]}>
               <Text style={styles.closeText}>×</Text>
             </Pressable>
           </View>
           <TextInput
             value={targetQuery}
             onChangeText={setTargetQuery}
+            editable={!navigationLocked}
             placeholder="ابحث باسم Target"
             placeholderTextColor={colors.textMuted}
             style={styles.search}
@@ -506,6 +549,7 @@ export default function FirmwareFlasherSimpleScreen({
             keyboardShouldPersistTaps="handled"
             renderItem={({item}) => (
               <Pressable
+                disabled={navigationLocked}
                 onPress={() => selectTarget(item.target)}
                 style={styles.targetRow}
                 testID={`simple-target-${item.target}`}>
@@ -522,8 +566,8 @@ export default function FirmwareFlasherSimpleScreen({
           accessibilityRole="button"
           accessibilityLabel="العودة"
           onPress={() => navigation?.goBack()}
-          disabled={isBusy}
-          style={styles.backButton}>
+          disabled={navigationLocked}
+          style={[styles.backButton, navigationLocked && styles.dimmed]}>
           <Icon name="chevron-back" size={24} color={colors.textPrimary} />
         </Pressable>
         <View style={styles.headerCopy}>
@@ -533,8 +577,8 @@ export default function FirmwareFlasherSimpleScreen({
         <Pressable
           accessibilityRole="button"
           onPress={() => setAdvanced(true)}
-          disabled={isBusy}
-          style={styles.advancedLink}
+          disabled={navigationLocked}
+          style={[styles.advancedLink, navigationLocked && styles.dimmed]}
           testID="flasher-advanced-mode">
           <Text style={styles.advancedLinkText}>متقدم</Text>
         </Pressable>
@@ -551,7 +595,7 @@ export default function FirmwareFlasherSimpleScreen({
               title="اختيار جهاز USB"
               tone="secondary"
               onPress={chooseSerialAndDetect}
-              disabled={isBusy}
+              disabled={navigationLocked}
               testID="simple-choose-serial"
             />
           ) : null}
@@ -559,14 +603,14 @@ export default function FirmwareFlasherSimpleScreen({
             title={phase === 'detecting' ? 'جارٍ التعرف…' : 'التعرف على اللوحة المتصلة'}
             tone="secondary"
             onPress={() => void autoDetect()}
-            disabled={isBusy || targetsLoading}
+            disabled={navigationLocked || targetsLoading}
             testID="simple-auto-detect"
           />
           <Pressable
             accessibilityRole="button"
             onPress={() => setTargetPickerOpen(true)}
-            disabled={isBusy}
-            style={styles.selector}
+            disabled={navigationLocked}
+            style={[styles.selector, navigationLocked && styles.dimmed]}
             testID="simple-target-selector">
             <Text style={styles.selectorLabel}>Target</Text>
             <Text style={styles.selectorValue}>{selectedTarget || 'اختر اللوحة'}</Text>
@@ -578,7 +622,9 @@ export default function FirmwareFlasherSimpleScreen({
           <StepHeader number="2" title="الإصدار" />
           {releasesLoading ? <ActivityIndicator color={colors.accent} /> : null}
           {!releasesLoading && selectedTarget && stableReleases.length === 0 ? (
-            <Text style={styles.helper}>لا يوجد إصدار مستقر ظاهر. استخدم «متقدم» لإصدارات RC/Development.</Text>
+            <Text style={styles.helper}>
+              لا يوجد إصدار مستقر ظاهر. استخدم «متقدم» لإصدارات RC/Development.
+            </Text>
           ) : null}
           <View style={styles.releaseWrap}>
             {stableReleases.slice(0, 6).map(release => {
@@ -587,10 +633,14 @@ export default function FirmwareFlasherSimpleScreen({
                 <Pressable
                   key={release.release}
                   accessibilityRole="radio"
-                  accessibilityState={{selected}}
+                  accessibilityState={{selected, disabled: navigationLocked}}
                   onPress={() => setSelectedRelease(release.release)}
-                  disabled={isBusy}
-                  style={[styles.releaseChip, selected && styles.releaseChipSelected]}>
+                  disabled={navigationLocked}
+                  style={[
+                    styles.releaseChip,
+                    selected && styles.releaseChipSelected,
+                    navigationLocked && styles.dimmed,
+                  ]}>
                   <Text style={[styles.releaseText, selected && styles.releaseTextSelected]}>
                     {release.release}
                   </Text>
@@ -609,7 +659,7 @@ export default function FirmwareFlasherSimpleScreen({
                 ? 'إعادة تحميل Firmware'
                 : 'تحميل Firmware'}
             onPress={() => void loadFirmware()}
-            disabled={isBusy || !selectedTarget || !selectedRelease}
+            disabled={navigationLocked || !selectedTarget || !selectedRelease}
             testID="simple-load-firmware"
           />
           {firmware ? <Text style={styles.readyText}>جاهز: {firmware.filename}</Text> : null}
@@ -640,7 +690,7 @@ export default function FirmwareFlasherSimpleScreen({
             <>
               <FirmwareNotice
                 title="اختر جهاز DFU"
-                text="إعادة التشغيل إلى DFU تمت بالفعل. اختيار الجهاز سيكمل نفس العملية دون إعادة reboot."
+                text="اللوحة دخلت DFU ولم تبدأ الكتابة بعد. اخترها مرة واحدة لمتابعة نفس العملية."
               />
               <FirmwareButton
                 title="اختيار جهاز DFU والمتابعة"
@@ -654,14 +704,14 @@ export default function FirmwareFlasherSimpleScreen({
             <FirmwareButton
               title={phase === 'flashing' ? 'التفليش جارٍ…' : 'تفليش Firmware'}
               onPress={confirmFlash}
-              disabled={isBusy || firmware === null}
+              disabled={navigationLocked || firmware === null}
               testID="simple-flash-firmware"
             />
           ) : null}
 
-          {isBusy ? (
+          {isBusy || phase === 'waiting-permission' ? (
             <FirmwareButton
-              title="إلغاء"
+              title={phase === 'waiting-permission' ? 'إلغاء قبل بدء الكتابة' : 'إلغاء'}
               tone="secondary"
               onPress={cancel}
               testID="simple-cancel-flash"
@@ -785,6 +835,7 @@ const styles = StyleSheet.create({
   },
   targetName: {...typography.sectionTitle, color: colors.textPrimary},
   targetMeta: {...typography.caption, color: colors.textSecondary},
+  dimmed: {opacity: 0.5},
   advancedRoot: {flex: 1, backgroundColor: colors.background},
   advancedBar: {padding: spacing.sm, backgroundColor: colors.backgroundRaised},
   advancedBody: {flex: 1},
