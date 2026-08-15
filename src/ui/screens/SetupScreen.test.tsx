@@ -1898,13 +1898,15 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     // the aircraft's operational state.
     expect(findAnyByTestID(renderer, 'fc-card-live')).not.toBeNull();
 
-    // Tree order = accessibility (reading) order. SETUP P2 order is
-    // operational: what the pilot checks first comes first.
+    // Tree order = accessibility (reading) order. FINAL UI CORRECTION:
+    // Battery leads the live summary (the number an operator reads
+    // first), then Receiver/RSSI, GPS and Sensors; the FC card stays in
+    // maintenance below.
     const text = allText(renderer);
     const positions = [
+      text.indexOf(i18n.t('batteryCard.title')),
       text.indexOf(i18n.t('telemetryCards.receiver.title')),
       text.indexOf(i18n.t('telemetryCards.gps.title')),
-      text.indexOf(i18n.t('batteryCard.title')),
       text.indexOf(i18n.t('setupSensorsCard.title')),
       text.indexOf(i18n.t('telemetryCards.fc.title')),
     ];
@@ -2512,6 +2514,7 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
     'safety-strip-',
     'telemetry-card-grid',
     'orientation-hero',
+    'orientation-calibration-card',
     'orientation-stability-panel',
     'setup-system-grid',
     'diagnostics-section',
@@ -2575,15 +2578,19 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
     await flushAsync();
   });
 
-  it('puts arming readiness and the live aircraft summary before orientation, diagnostics and tools', async () => {
+  it('puts arming readiness and the orientation workspace (model, calibration, stability) before the live summary, diagnostics and tools', async () => {
+    // FINAL UI CORRECTION: the accepted order. Orientation - with the
+    // accelerometer calibration directly beside the model - now leads;
+    // the live summary follows immediately after.
     const sessionId = 'p2-hierarchy-order';
     const { renderer } = await renderConnectedScreen(sessionId);
 
     expect(renderedSectionOrder(renderer)).toEqual([
       'safety-strip-',
-      'telemetry-card-grid',
       'orientation-hero',
+      'orientation-calibration-card',
       'orientation-stability-panel',
+      'telemetry-card-grid',
       'setup-system-grid',
       'diagnostics-section',
       'fc-tools-section',

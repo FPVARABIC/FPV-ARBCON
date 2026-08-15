@@ -136,7 +136,10 @@ describe('OrientationHero', () => {
     expect(computeOrientationHeroSize(800, true)).toBe(410);
   });
   it('uses the measured desktop remainder only for web desktop', () => {
-    expect(computeOrientationWorkspaceLayout(1600, 1, 1540, true)).toEqual({expanded: true, stageWidth: 1400, stageHeight: 512, presentationScale: 0.56 / 0.37});
+    // 430, not 512 (FINAL UI CORRECTION): the shorter desktop stage keeps
+    // the dials and the calibration card reachable without scrolling at
+    // 1024x768 while the model stays dominant.
+    expect(computeOrientationWorkspaceLayout(1600, 1, 1540, true)).toEqual({expanded: true, stageWidth: 1400, stageHeight: 430, presentationScale: 0.56 / 0.37});
     expect(computeOrientationWorkspaceLayout(1024, 1, 964, true).stageWidth).toBe(824);
     expect(computeOrientationWorkspaceLayout(800, 1, 740, true).expanded).toBe(false);
     expect(computeOrientationWorkspaceLayout(1600, 1, 1540, false).expanded).toBe(false);
@@ -199,7 +202,11 @@ describe('OrientationHero', () => {
    * sample - which is the part that actually matters, and is asserted
    * below rather than assumed.
    */
-  it('phone: the readouts share the model column, with the instrument rail beside them', () => {
+  it('phone: the dominant model leads, the dials sit directly under it, the readouts follow', () => {
+    // FINAL UI CORRECTION: the stage is the full card width (dominant)
+    // and the reading order is model -> instruments -> numbers. Every
+    // one of the three still renders the SAME sample - asserted below,
+    // not assumed.
     const { renderer } = render({
       status: 'LIVE',
       rollDeg: 8.5,
@@ -217,8 +224,8 @@ describe('OrientationHero', () => {
       .map(node => node.props.testID);
     expect(ordered).toEqual([
       'orientation-hero-renderer-wrapper',
-      'orientation-hero-roll',
       'flight-instruments',
+      'orientation-hero-roll',
     ]);
     expect(
       findByTestID(renderer, 'artificial-horizon')?.props.accessibilityLabel,

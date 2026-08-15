@@ -70,6 +70,7 @@ import { Button } from '../components/controls';
 import {
   TopSystemBar,
   OrientationHero,
+  OrientationCalibrationCard,
   OrientationStabilityPanel,
   SafetyStrip,
   SetupSafetyNotices,
@@ -472,6 +473,23 @@ function SetupScreenContent({
     setUiState(setupUiSessionStore.getState(sessionKey));
   }, [sessionKey]);
 
+  // FINAL UI CORRECTION: ONE gate object for BOTH FC-tool surfaces (the
+  // orientation-adjacent accelerometer card and the maintenance section
+  // below), so their enablement can never diverge.
+  const fcToolGate = {
+    connected,
+    appActive: appStatePhase === 'ACTIVE',
+    recovering: recoveryState !== undefined && recoveryState !== 'READY',
+    compatibility: diagnosticsView.compatibility,
+    dataState: diagnosticsView.dataState,
+    readingMalformed: freshStatusValue?.readiness.malformedTail === true,
+    armedState,
+    sensors:
+      diagnosticsView.sensors.kind === 'REPORTED'
+        ? diagnosticsView.sensors.bits
+        : undefined,
+  };
+
   return (
     <View style={styles.root} testID="setup-screen">
       <TopSystemBar
@@ -480,26 +498,25 @@ function SetupScreenContent({
         armingReadiness={armingReadiness}
       />
       <ScrollView contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}>
-        {/* SETUP P2 - THE DASHBOARD ORDER, DECIDED FROM MEASUREMENT.
-            P0 measured this page at 390px: the orientation hero (969px)
-            and FC Tools (908px) together held 62% of a 3,021px page,
-            while the safety strip sat at y=2598, Receiver/RSSI and
-            battery voltage at y=2846, GPS at y=3144 and the sensor mask
-            at y=3241 behind a disclosure toggle. Nothing but chrome, a
-            model and two instruments was above the fold.
+        {/* SETUP FINAL UI CORRECTION - THE ACCEPTED DASHBOARD ORDER.
+            The product decision reversed P2's "live summary first" call:
+            the orientation tools ARE the primary Setup instrument, so the
+            3D model, the artificial horizon, the relative-direction dial
+            and the accelerometer-calibration action now open the page -
+            reachable without scrolling - with the stability check that
+            calibration auto-starts directly beneath them.
 
-            The order below is operational, not decorative:
+            The order below is the accepted one:
               1. connection + identity (TopSystemBar, above this scroll)
               2. critical safety notices  - only when something is true
               3. arming readiness
-              4. live aircraft summary    - Receiver, GPS, Battery, Sensors
-              5. orientation
-              6. orientation stability check
+              4. orientation: model + horizon + direction + calibration
+              5. orientation stability check
+              6. live aircraft summary    - Battery, Receiver/RSSI, GPS,
+                 Sensors - immediately after the orientation block
               7. system diagnostics
-              8. FC tools (maintenance)
-            The most visually impressive element is deliberately NOT
-            first. Calibration tools no longer stand between the operator
-            and the aircraft's live state. */}
+              8. FC tools (maintenance: compass calibration + reboot;
+                 the accelerometer action lives beside the model above) */}
 
         {/* 2. Conditional, and genuinely absent when nothing is true -
                a healthy aircraft costs zero vertical space here. */}
@@ -516,11 +533,44 @@ function SetupScreenContent({
                they orient rather than delay. */}
         <SafetyStrip readiness={armingReadiness} />
 
-        {/* 4. THE LIVE SUMMARY. Every card reads the snapshot this screen
-               already derived - no card acquires telemetry of its own, so
-               promoting them costs zero extra subscriptions. Each one
-               navigates to the screen that OWNS its configuration; none
-               of them can write. */}
+        {/* 4. ORIENTATION FIRST. The hero (dominant model + horizon +
+               relative direction) opens the page, and the accelerometer
+               calibration action sits directly under it so the operator
+               levels the aircraft while watching the model - no scroll
+               between seeing and acting. */}
+        <SetupSectionHeading
+          eyebrow={t('setupSections.orientationSection.eyebrow')}
+          title={t('setupSections.orientationSection.title')}
+          description={t('setupSections.orientationSection.description')}
+          testID="setup-orientation-heading"
+        />
+        <LiveOrientationHero
+          sessionKey={sessionKey}
+          active={active}
+          orientationViewOffset={uiState.orientationViewOffset}
+          hasSeenResetHint={uiState.hasSeenOrientationResetHint}
+          onResetView={handleResetView}
+          onResetHintShown={handleResetHintShown}
+          calibrationSlot={
+            <OrientationCalibrationCard
+              sessionId={sessionId}
+              gate={fcToolGate}
+              variant="inline"
+            />
+          }
+        />
+
+        {/* 5. The read-only stability check stays with the thing it
+               measures - and with the calibration that auto-starts it. */}
+        <LiveOrientationStabilityPanel
+          sessionKey={sessionKey}
+          active={active}
+        />
+
+        {/* 6. THE LIVE SUMMARY, immediately after orientation. Every card
+               reads the snapshot this screen already derived - no card
+               acquires telemetry of its own. Battery leads (the number an
+               operator reads first), then Receiver/RSSI, GPS, Sensors. */}
         <SetupSectionHeading
           eyebrow={t('setupSections.live.eyebrow')}
           title={t('setupSections.live.title')}
@@ -528,6 +578,21 @@ function SetupScreenContent({
           testID="setup-live-heading"
         />
         <View style={styles.cardGrid} testID="telemetry-card-grid">
+          {/* Battery and Sensors take the full row. Measured reason, not
+              taste: in a half-width 179px column the seven sensor chips
+              stack vertically into a 534px tower that pushes the whole
+              page down, and the battery's voltage - the number an
+              operator reads first - competes with it for height. Across
+              the row the chips flow horizontally and both cards shrink. */}
+          <View style={[styles.cardCell, styles.cardCellFull]}>
+            <SetupSummaryLink
+              onPress={onOpenPower}
+              accessibilityLabel={t('setupNavigation.openPower')}
+              testID="setup-open-power"
+            >
+              <BatteryCard telemetry={battery} />
+            </SetupSummaryLink>
+          </View>
           <View
             style={[styles.cardCell, useSingleColumnCards && styles.cardCellFull]}
           >
@@ -559,21 +624,6 @@ function SetupScreenContent({
               />
             </SetupSummaryLink>
           </View>
-          {/* Battery and Sensors take the full row. Measured reason, not
-              taste: in a half-width 179px column the seven sensor chips
-              stack vertically into a 534px tower that pushes the whole
-              page down, and the battery's voltage - the number an
-              operator reads first - competes with it for height. Across
-              the row the chips flow horizontally and both cards shrink. */}
-          <View style={[styles.cardCell, styles.cardCellFull]}>
-            <SetupSummaryLink
-              onPress={onOpenPower}
-              accessibilityLabel={t('setupNavigation.openPower')}
-              testID="setup-open-power"
-            >
-              <BatteryCard telemetry={battery} />
-            </SetupSummaryLink>
-          </View>
           <View style={[styles.cardCell, styles.cardCellFull]}>
             <SetupSummaryLink
               onPress={onOpenSensors}
@@ -585,38 +635,10 @@ function SetupScreenContent({
           </View>
         </View>
 
-        {/* 5. Orientation. MOVED, not redesigned: its geometry, maths,
-               instruments and rendering are untouched - proportions and
-               the compass wording belong to P3. */}
-        <SetupSectionHeading
-          eyebrow={t('setupSections.orientationSection.eyebrow')}
-          title={t('setupSections.orientationSection.title')}
-          description={t('setupSections.orientationSection.description')}
-          testID="setup-orientation-heading"
-        />
-        <LiveOrientationHero
-          sessionKey={sessionKey}
-          active={active}
-          orientationViewOffset={uiState.orientationViewOffset}
-          hasSeenResetHint={uiState.hasSeenOrientationResetHint}
-          onResetView={handleResetView}
-          onResetHintShown={handleResetHintShown}
-        />
-
-        {/* 6. The read-only stability check stays with the thing it
-               measures, and no longer splits the live cards from the top
-               of the page. */}
-        <LiveOrientationStabilityPanel
-          sessionKey={sessionKey}
-          active={active}
-        />
-
-        {/* 7-8. Maintenance. Deep diagnostics and the calibration/reboot
-                 tools are real capability and are kept in full - they are
-                 simply no longer the first thing between the operator and
-                 the aircraft's live state. FcToolsSection is the SAME
-                 invocation with the SAME props and the SAME gating; only
-                 its position changed. */}
+        {/* 7-8. Maintenance. Deep diagnostics and the remaining protected
+                 tools (compass calibration, reboot) keep their full
+                 surface here; the accelerometer action moved beside the
+                 model above with identical gating and identical flow. */}
         <SetupSectionHeading
           eyebrow={t('setupSections.maintenance.eyebrow')}
           title={t('setupSections.maintenance.title')}
@@ -637,21 +659,8 @@ function SetupScreenContent({
         <DiagnosticsSection view={diagnosticsView} />
         <FcToolsSection
           sessionId={sessionId}
-          gate={{
-            connected,
-            appActive: appStatePhase === 'ACTIVE',
-            recovering:
-              recoveryState !== undefined && recoveryState !== 'READY',
-            compatibility: diagnosticsView.compatibility,
-            dataState: diagnosticsView.dataState,
-            readingMalformed:
-              freshStatusValue?.readiness.malformedTail === true,
-            armedState,
-            sensors:
-              diagnosticsView.sensors.kind === 'REPORTED'
-                ? diagnosticsView.sensors.bits
-                : undefined,
-          }}
+          gate={fcToolGate}
+          tools={['MAG_CALIBRATION', 'REBOOT']}
         />
         {isTelemetryReportSupported() ? (
           <View style={styles.telemetryReportRow}>
@@ -723,6 +732,7 @@ function LiveOrientationHero({
   hasSeenResetHint,
   onResetView,
   onResetHintShown,
+  calibrationSlot,
 }: {
   sessionKey: SetupUiSessionKey;
   active: boolean;
@@ -730,6 +740,7 @@ function LiveOrientationHero({
   hasSeenResetHint: boolean;
   onResetView: () => void;
   onResetHintShown: () => void;
+  calibrationSlot?: React.ReactNode;
 }): React.JSX.Element {
   const attitude = useSetupAttitude(sessionKey.sessionId, active);
   const connected = useSetupConnected(sessionKey.sessionId);
@@ -755,6 +766,7 @@ function LiveOrientationHero({
       canReset={attitude.status === 'FRESH' && connected}
       onResetView={onResetView}
       onResetHintShown={onResetHintShown}
+      calibrationSlot={calibrationSlot}
     />
   );
 }

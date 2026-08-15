@@ -53,12 +53,32 @@ export interface FcToolsSectionProps {
   gate: Omit<FcToolGateInput, 'busy'>;
   /** Injectable for tests; defaults to the app-wide singleton. */
   controller?: FcToolsController;
+  /**
+   * FINAL UI CORRECTION: which tools THIS surface presents. Defaults to
+   * all of them so existing callers/tests are unchanged. SetupScreen now
+   * hosts ACC_CALIBRATION beside the orientation hero (see
+   * OrientationCalibrationCard), so it passes the remaining two here -
+   * one tool, one surface, and the shared phase/outcome banners below
+   * only render for a tool this instance actually owns.
+   */
+  tools?: readonly FcToolId[];
+}
+
+/** True when this surface owns the tool an outcome/phase refers to. */
+function ownsOutcomeTool(
+  tools: readonly FcToolId[],
+  outcome: FcToolOutcome,
+): boolean {
+  return outcome.kind === 'REBOOT_REQUESTED'
+    ? tools.includes('REBOOT')
+    : tools.includes(outcome.tool);
 }
 
 export default function FcToolsSection({
   sessionId,
   gate,
   controller,
+  tools = FC_TOOL_IDS,
 }: FcToolsSectionProps): React.JSX.Element {
   const { t } = useTranslation();
   const active = controller ?? fcToolsController;
@@ -125,7 +145,7 @@ export default function FcToolsSection({
         ))}
       </View>
 
-      {FC_TOOL_IDS.map(tool => {
+      {tools.map(tool => {
         const availability = resolveFcToolAvailability(tool, { ...gate, busy });
         const name = t(`fcTools.toolNames.${tool}`);
         const description = t(`fcTools.toolDescriptions.${tool}`);
@@ -233,7 +253,7 @@ export default function FcToolsSection({
         );
       })}
 
-      {phase.kind === 'RUNNING' && (
+      {phase.kind === 'RUNNING' && tools.includes(phase.tool) && (
         <View style={styles.runningBanner} testID="fc-tools-running">
           <View style={styles.runningDot} />
           <View style={styles.runningCopy}>
@@ -245,7 +265,7 @@ export default function FcToolsSection({
         </View>
       )}
 
-      {phase.kind === 'CONFIRMING' && (
+      {phase.kind === 'CONFIRMING' && tools.includes(phase.tool) && (
         <View
           style={styles.confirmation}
           accessibilityRole="alert"
@@ -274,7 +294,7 @@ export default function FcToolsSection({
         </View>
       )}
 
-      {outcome !== undefined && (
+      {outcome !== undefined && ownsOutcomeTool(tools, outcome) && (
         <View
           style={styles.outcomeCard}
           accessibilityRole="alert"
@@ -285,7 +305,7 @@ export default function FcToolsSection({
             accessibilityRole="alert"
             testID="fc-tools-outcome"
           >
-            {describeOutcome(outcome, t)}
+            {describeFcToolOutcome(outcome, t)}
           </Text>
           {outcome.kind === 'ACCEPTED' &&
             outcome.tool === 'ACC_CALIBRATION' && (
@@ -301,8 +321,13 @@ export default function FcToolsSection({
 
 type Translate = ReturnType<typeof useTranslation>['t'];
 
-/** Never claims more than the firmware actually confirmed. */
-function describeOutcome(outcome: FcToolOutcome, t: Translate): string {
+/** Never claims more than the firmware actually confirmed. Exported so
+ * OrientationCalibrationCard announces the SAME wording for the same
+ * outcome - two surfaces, one truth. */
+export function describeFcToolOutcome(
+  outcome: FcToolOutcome,
+  t: Translate,
+): string {
   switch (outcome.kind) {
     case 'ACCEPTED':
       return t('fcTools.outcomeAccepted');

@@ -606,17 +606,29 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const { renderer } = await mount('integration-order');
       const text = allText(renderer);
 
-      // SETUP P2: the dashboard order. The live aircraft summary comes
-      // before the orientation model, deep diagnostics (Region 4) come
-      // after it, and the calibration/reboot tools (Region 5) are last -
-      // they no longer stand between the operator and the aircraft's
-      // live state. Every region still assembles exactly once.
-      const positions = [
-        text.indexOf(ARABIC.region1Title),
-        text.indexOf('نموذج الاتجاه'),
-        text.indexOf(ARABIC.region4Title),
-        text.indexOf(ARABIC.region5Title),
-      ].filter(index => index >= 0);
+      // SETUP FINAL UI CORRECTION: the accepted dashboard order puts the
+      // orientation section (model + dials + the accelerometer
+      // calibration beside it) FIRST, the live aircraft summary
+      // immediately after, then deep diagnostics (Region 4) and finally
+      // the remaining maintenance tools (Region 5). Every probe below is
+      // a string the assembled screen actually renders (the old
+      // 'نموذج الاتجاه' probe matched nothing and silently dropped out
+      // of the order check), and every one must be found.
+      const orderedProbes = [
+        // NOT ARABIC.region1Title: the top bar never rendered that
+        // string - the old assertion filtered its -1 away silently.
+        // Region 1's presence is proven by the setup-top-bar singleton
+        // check below instead.
+        'اتجاه الطائرة', // orientation section heading - FIRST content
+        'معايرة مقياس التسارع', // calibration card beside the model
+        'ملخص الطائرة الآن', // live summary, immediately after
+        ARABIC.region4Title,
+        ARABIC.region5Title,
+      ];
+      const positions = orderedProbes.map(probe => text.indexOf(probe));
+      for (const [index, probe] of orderedProbes.entries()) {
+        expect(`${probe}:${positions[index] >= 0}`).toBe(`${probe}:true`);
+      }
       expect(text.indexOf(ARABIC.region4Title)).toBeGreaterThan(0);
       expect(text.indexOf(ARABIC.region5Title)).toBeGreaterThan(
         text.indexOf(ARABIC.region4Title),
@@ -626,6 +638,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       for (const testID of [
         'setup-top-bar',
         'orientation-hero',
+        'orientation-calibration-card',
         'telemetry-card-grid',
         'diagnostics-section',
         'fc-tools-section',

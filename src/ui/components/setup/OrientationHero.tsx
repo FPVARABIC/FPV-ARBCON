@@ -62,33 +62,34 @@ import { ORIENTATION_DESKTOP_WORKSPACE_ENABLED } from './orientationHeroDesktopW
 
 const HERO_MAX_SIZE = 340;
 /**
- * SETUP P3 - THE PHONE COMPOSITION.
+ * SETUP FINAL UI CORRECTION - THE PHONE COMPOSITION, DECIDED AGAIN.
  *
- * P0 measured this hero at 969px on a 390px phone - taller than the whole
- * viewport - and diagnosed the cause precisely: not an undersized model
- * (it was 30.7% of the card), but a fully STACKED composition. Header,
- * then a 330px square stage, then a 317px instrument panel with its own
- * header and note, then three readouts, then a note, then the reset
- * button, each on its own row.
+ * P3 put a 196px stage beside a 126px instrument rail to shrink the
+ * hero's height. The accepted final direction reverses that priority:
+ * the model is the primary orientation instrument and must be visually
+ * dominant, with the horizon and relative-direction dials directly under
+ * it and the accelerometer-calibration action immediately after - all
+ * reachable without scrolling on a phone.
  *
- * The fix is to put the model and the two dials side by side, the way the
- * tablet layout already does, with numbers tuned for a phone. At 390 the
- * card's inner width is 366 - 2*spacing.lg = 330px, so a 196px stage plus
- * an 8px gap plus a 126px instrument rail fits with room to spare.
- *
- * The model is NOT scaled up to fill the freed space (P0 explicitly
- * warned against that): the scene geometry, its maths and its rendering
- * are untouched. Only the box it is drawn into got smaller, and the
- * chrome around it got simpler.
+ * So the phone stage is the full card width again (300px at 360,
+ * 330px at 390, capped at 340), and the two dials sit side by side
+ * BELOW it via the instruments' own 'row' layout - which also renders
+ * them larger than the old 126px rail did. The model is still NOT
+ * scaled: scene geometry, maths and rendering are untouched (P0's
+ * explicit warning); only the box it is drawn into grew.
  */
-const COMPACT_ROW_MIN_WIDTH = 340;
-const COMPACT_ROW_STAGE_SIZE = 196;
-const COMPACT_ROW_RAIL_WIDTH = 126;
 const HERO_TABLET_MAX_SIZE = 410;
 const HERO_MIN_SIZE = 180;
 const SIDEBAR_LAYOUT_MIN_WIDTH = 620;
 const DESKTOP_WORKSPACE_MIN_WIDTH = 1024;
-const DESKTOP_STAGE_MAX_HEIGHT = 512;
+/**
+ * 430, not 512: at 1024x768 the old 512px stage alone consumed the fold,
+ * pushing the dials and the calibration action off screen. 430 keeps the
+ * model unmistakably dominant while the calibration card that now
+ * follows the hero stays reachable without scrolling on the shortest
+ * desktop tier.
+ */
+const DESKTOP_STAGE_MAX_HEIGHT = 430;
 const DESKTOP_INSTRUMENT_RAIL_WIDTH = 128;
 const DESKTOP_WORKSPACE_GAP = 12;
 const DESKTOP_MODEL_SCALE = 0.56 / 0.37;
@@ -106,28 +107,6 @@ export function shouldUseOrientationSidebar(
   const safeScale =
     Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
   return Number.isFinite(windowWidth) && windowWidth / safeScale >= SIDEBAR_LAYOUT_MIN_WIDTH;
-}
-
-/**
- * True when the phone is wide enough to put the model and the instrument
- * rail on one row. Below this the layout stays stacked, which is correct
- * for a very narrow or heavily font-scaled screen - crushing the
- * instruments to fit a row would trade one legibility problem for
- * another.
- */
-export function shouldUseCompactOrientationRow(
-  windowWidth: number,
-  fontScale = 1,
-): boolean {
-  const safeScale = Number.isFinite(fontScale) && fontScale > 0 ? fontScale : 1;
-  if (!Number.isFinite(windowWidth)) {
-    return false;
-  }
-  const effective = windowWidth / safeScale;
-  return (
-    effective >= COMPACT_ROW_MIN_WIDTH &&
-    !shouldUseOrientationSidebar(windowWidth, fontScale)
-  );
 }
 
 export function computeOrientationHeroSize(
@@ -204,6 +183,17 @@ export interface OrientationHeroProps {
   canReset?: boolean;
   onResetView: () => void;
   onResetHintShown: () => void;
+  /**
+   * FINAL UI CORRECTION: the accelerometer-calibration surface, rendered
+   * DIRECTLY after the model and dials so leveling the aircraft while
+   * watching the model and pressing calibrate happens in one screenful.
+   * An opaque slot on purpose - this component stays presentational and
+   * controller-free; SetupScreen owns what goes here
+   * (OrientationCalibrationCard). Rendered in every status branch, so a
+   * blocked calibration still shows its causal reason before telemetry
+   * flows.
+   */
+  calibrationSlot?: React.ReactNode;
 }
 
 export default function OrientationHero({
@@ -215,25 +205,19 @@ export default function OrientationHero({
   canReset = true,
   onResetView,
   onResetHintShown,
+  calibrationSlot,
 }: OrientationHeroProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const sidebar = shouldUseOrientationSidebar(windowWidth, fontScale);
-  const compactRow = shouldUseCompactOrientationRow(windowWidth, fontScale);
   const [measuredVisualsWidth, setMeasuredVisualsWidth] = useState<number>();
   const workspace = computeOrientationWorkspaceLayout(windowWidth, fontScale, measuredVisualsWidth);
-  // SETUP P3: on a phone the stage is a fixed compact square beside the
-  // instrument rail rather than the full card width stacked above it.
-  const heroSize = compactRow ? COMPACT_ROW_STAGE_SIZE : workspace.stageWidth;
-  const heroHeight = compactRow ? COMPACT_ROW_STAGE_SIZE : workspace.stageHeight;
-  const instrumentStageWidth = sidebar
-    ? 156
-    : compactRow
-      ? COMPACT_ROW_RAIL_WIDTH
-      : heroSize;
-  /* The rail reuses the proven 'sidebar' instrument layout: two dials
-     stacked, no panel chrome, compass first. Only the width differs. */
-  const instrumentsLayout = sidebar || compactRow ? 'sidebar' : 'row';
+  // FINAL UI CORRECTION: on a phone the stage is the full card width
+  // (dominant), with the dials on their own row directly beneath it.
+  const heroSize = workspace.stageWidth;
+  const heroHeight = workspace.stageHeight;
+  const instrumentStageWidth = sidebar ? 156 : heroSize;
+  const instrumentsLayout = sidebar ? 'sidebar' : 'row';
   const [hintVisible, setHintVisible] = useState(false);
   const handleVisualsLayout = (event: LayoutChangeEvent) => {
     const measured = event.nativeEvent.layout.width;
@@ -241,8 +225,7 @@ export default function OrientationHero({
   };
   const visualsStyle = [
     styles.visuals,
-    (sidebar || compactRow) && styles.visualsSidebar,
-    compactRow && styles.visualsCompactRow,
+    sidebar && styles.visualsSidebar,
     workspace.expanded && styles.visualsDesktop,
   ];
 
@@ -348,6 +331,7 @@ export default function OrientationHero({
             sizeScale={sidebar ? 0.8 : 1}
           />
         </View>
+        {calibrationSlot}
       </View>
     );
   }
@@ -375,6 +359,7 @@ export default function OrientationHero({
             sizeScale={sidebar ? 0.8 : 1}
           />
         </View>
+        {calibrationSlot}
       </View>
     );
   }
@@ -410,14 +395,8 @@ export default function OrientationHero({
     );
   }
 
-  /**
-   * SETUP P3: the three numeric truths. On a phone they now sit UNDER the
-   * model inside the same column as the stage, filling space the taller
-   * instrument rail was leaving empty beside it. That is the whole trick
-   * of this layout - the row's height is set by the rail either way, so
-   * the readouts became free. Elsewhere they keep their own full-width
-   * row exactly as before.
-   */
+  /** The three numeric truths, on their own full-width row under the
+   * visuals on every tier. */
   const renderReadouts = () => (
     <View style={styles.readoutsRow}>
       <View style={styles.readout} testID="orientation-hero-roll">
@@ -451,30 +430,27 @@ export default function OrientationHero({
     <View style={styles.container} testID="orientation-hero">
       {renderHeader(isStale ? 'STALE' : 'LIVE')}
       <View style={visualsStyle} onLayout={handleVisualsLayout}>
-        <View style={compactRow ? styles.compactStageColumn : undefined}>
-          <View
-            style={[
-              styles.rendererWrapper,
-              { width: heroSize, height: heroHeight },
-            ]}
-            accessible
-            accessibilityLabel={accessibilityText}
-            testID="orientation-hero-renderer-wrapper"
-          >
-            <OrientationRenderer
-              // The latest GENUINE sample, directly. No animation, no
-              // queue, no pending target: a newer sample simply replaces
-              // this prop, so an older pose can never be drawn after a
-              // newer one.
-              orientation={displayed}
-              width={heroSize}
-              height={heroHeight}
-              presentationScale={workspace.presentationScale}
-              stale={isStale}
-              sampleIdentity={sampleIdentity}
-            />
-          </View>
-          {compactRow ? renderReadouts() : null}
+        <View
+          style={[
+            styles.rendererWrapper,
+            { width: heroSize, height: heroHeight },
+          ]}
+          accessible
+          accessibilityLabel={accessibilityText}
+          testID="orientation-hero-renderer-wrapper"
+        >
+          <OrientationRenderer
+            // The latest GENUINE sample, directly. No animation, no
+            // queue, no pending target: a newer sample simply replaces
+            // this prop, so an older pose can never be drawn after a
+            // newer one.
+            orientation={displayed}
+            width={heroSize}
+            height={heroHeight}
+            presentationScale={workspace.presentationScale}
+            stale={isStale}
+            sampleIdentity={sampleIdentity}
+          />
         </View>
 
         <FlightInstruments
@@ -489,13 +465,16 @@ export default function OrientationHero({
         />
       </View>
 
+      {/* The one action that belongs to this view: level, watch, press. */}
+      {calibrationSlot}
+
       {isStale && (
         <Text style={styles.staleLabel} testID="orientation-hero-stale-label">
           {t('orientationHero.staleLabel')}
         </Text>
       )}
 
-      {compactRow ? null : renderReadouts()}
+      {renderReadouts()}
 
       {/* Heading here is a RELATIVE direction, not magnetic north: this
           app never claims a compass it cannot prove, and after the
@@ -605,16 +584,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: spacing.md,
   },
-  /* SETUP P3: the phone row. `alignItems: flex-start` keeps the shorter
-     instrument rail top-aligned with the model instead of floating in the
-     middle of it, and the small gap is all the separation two bordered
-     surfaces need. */
-  visualsCompactRow: {
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  compactStageColumn: { alignItems: 'center' },
   visualsDesktop: { justifyContent: 'flex-start' },
   headerRow: {
     width: '100%',
