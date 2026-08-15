@@ -86,7 +86,6 @@ import {
   abortVerificationAsUnsafe,
   beginVerification,
   clearObservation,
-  confirmedCount,
   confirmObservation,
   EMPTY_VERIFICATION_STATE,
   finalizeVerification,
@@ -1610,6 +1609,50 @@ export function MotorsScreenView({
           ) : null}
         </View>
 
+        {/* (7) Fault - MOVED TO THE TOP OF THE CONTENT FLOW (final-review
+            M-1). An emergency instruction rendered below Identity,
+            Direction and Mapping measured ~3100px deep on a phone; the
+            detailed banner now sits directly under the status card, and a
+            compact copy of the SAME instruction is pinned beside STOP so
+            scroll position can never hide it. TWO DIFFERENT MESSAGES, because they mean two very
+            different things to somebody standing next to an aircraft.
+
+            The LiPo instruction is reserved for a stop that is genuinely
+            unconfirmed while a command may be live - see
+            stopIsGenuinelyUnconfirmed(). Every other fault ends the
+            session and needs a reconnect, which is worth saying plainly,
+            but it is NOT a reason to tell somebody to pull a battery. */}
+        {presentation === 'FAULT' ? (
+          stopUnconfirmed ? (
+            <View style={styles.faultBanner} testID="motors-fault-banner">
+              <Icon name="octagon-alert" size={24} color={colors.error} />
+              <View style={styles.flexOne}>
+                <Text style={styles.faultText} testID="motors-emergency-text">
+                  {t('motorsScreen.emergencyDisconnect')}
+                </Text>
+                <Text
+                  style={styles.dangerBody}
+                  testID="motors-new-session-text"
+                >
+                  {t('motorsScreen.emergencyNewSession')}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.card} testID="motors-fault-notice">
+              <Text
+                style={styles.blockHeading}
+                testID="motors-fault-session-text"
+              >
+                {t('motorsScreen.faultSessionEnded')}
+              </Text>
+              <Text style={styles.caption} testID="motors-fault-no-lipo-text">
+                {t('motorsScreen.faultNoBatteryAction')}
+              </Text>
+            </View>
+          )
+        ) : null}
+
           {/* ---- P3: THE PRIMARY EXPERIENCE. -------------------------
             * Professional Motor 1..N workspace over the P2 facade. No
             * long press, no heartbeat, no fixed magnitude. The legacy
@@ -1681,44 +1724,6 @@ export function MotorsScreenView({
           />
 
 
-        {/* (7) Fault. TWO DIFFERENT MESSAGES, because they mean two very
-            different things to somebody standing next to an aircraft.
-
-            The LiPo instruction is reserved for a stop that is genuinely
-            unconfirmed while a command may be live - see
-            stopIsGenuinelyUnconfirmed(). Every other fault ends the
-            session and needs a reconnect, which is worth saying plainly,
-            but it is NOT a reason to tell somebody to pull a battery. */}
-        {presentation === 'FAULT' ? (
-          stopUnconfirmed ? (
-            <View style={styles.faultBanner} testID="motors-fault-banner">
-              <Icon name="octagon-alert" size={24} color={colors.error} />
-              <View style={styles.flexOne}>
-                <Text style={styles.faultText} testID="motors-emergency-text">
-                  {t('motorsScreen.emergencyDisconnect')}
-                </Text>
-                <Text
-                  style={styles.dangerBody}
-                  testID="motors-new-session-text"
-                >
-                  {t('motorsScreen.emergencyNewSession')}
-                </Text>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.card} testID="motors-fault-notice">
-              <Text
-                style={styles.blockHeading}
-                testID="motors-fault-session-text"
-              >
-                {t('motorsScreen.faultSessionEnded')}
-              </Text>
-              <Text style={styles.caption} testID="motors-fault-no-lipo-text">
-                {t('motorsScreen.faultNoBatteryAction')}
-              </Text>
-            </View>
-          )
-        ) : null}
 
         {/* P3: THE LEGACY BENCH IS NOW A SECONDARY TOOL. The professional
             workspace above is the primary path; this card keeps the
@@ -1729,6 +1734,14 @@ export function MotorsScreenView({
           التحقق والأدوات
         </Text>
         <View style={styles.benchCard} testID="motors-workspace">
+          {/* FINAL-REVIEW M-2: this card no longer carries a second
+              identification model. The X-of-4 badge contradicted the
+              identity summary on non-quad aircraft (0-of-4 beside "not
+              available for this layout"), and the old copy directed the
+              operator to the strip, the diagram and the hold - controls
+              that moved into the identity section in P1b-B. What remains
+              here is what the card actually contains: session readiness
+              detail and the read-only settings summary. */}
           <View style={styles.benchHeadingRow}>
             <View style={styles.flexOne}>
               <Text style={styles.sectionTitle}>
@@ -1738,76 +1751,8 @@ export function MotorsScreenView({
                 {t('motorsScreen.workspaceSubtitle')}
               </Text>
             </View>
-            <View style={styles.progressBadge} testID="motors-progress">
-              <Text style={styles.progressText}>
-                {t('motorsScreen.verificationProgress', {
-                  done: confirmedCount(verification),
-                  total: MOTOR_TEST_OUTPUT_SLOTS.length,
-                })}
-              </Text>
-            </View>
           </View>
 
-
-          <View style={styles.workflowSteps} testID="motors-workflow-steps">
-            <View style={styles.workflowStep}>
-              <View style={styles.workflowNumber}>
-                <Text style={styles.workflowNumberText}>1</Text>
-              </View>
-              <View style={styles.flexOne}>
-                <Text style={styles.workflowTitle}>
-                  {t('motorsScreen.flowSafety')}
-                </Text>
-                <Text style={styles.workflowDetail}>
-                  {t('motorsScreen.flowSafetyDetail')}
-                </Text>
-              </View>
-            </View>
-            <View
-              style={[
-                styles.workflowStep,
-                (beginning || presentation === 'CHECKING') &&
-                  styles.workflowStepActive,
-                canActivate && styles.workflowStepDone,
-              ]}>
-              <View
-                style={[
-                  styles.workflowNumber,
-                  canActivate && styles.workflowNumberDone,
-                ]}>
-                {canActivate ? (
-                  <Icon name="check" size={18} color={colors.white} />
-                ) : (
-                  <Text style={styles.workflowNumberText}>2</Text>
-                )}
-              </View>
-              <View style={styles.flexOne}>
-                <Text style={styles.workflowTitle}>
-                  {t('motorsScreen.flowSession')}
-                </Text>
-                <Text style={styles.workflowDetail}>{statusText}</Text>
-              </View>
-            </View>
-            <View
-              style={[
-                styles.workflowStep,
-                canActivate && styles.workflowStepActive,
-              ]}>
-              <View style={styles.workflowNumber}>
-                <Text style={styles.workflowNumberText}>3</Text>
-              </View>
-              <View style={styles.flexOne}>
-                <Text style={styles.workflowTitle}>
-                  {t('motorsScreen.flowHold')}
-                </Text>
-                <Text style={styles.workflowDetail}>
-                  {canActivate
-                    ? t('motorsScreen.flowHoldReady')
-                    : t('motorsScreen.flowHoldWaiting')}
-                </Text>
-              </View>
-            </View>
-          </View>
 
           <Text style={styles.toolsHeading} testID="motors-settings-heading">
             إعدادات المحركات
@@ -2026,6 +1971,18 @@ export function MotorsScreenView({
             card below - the pinned dock no longer teaches press-and-hold
             as the way to drive motors. Stop-all and end-session remain
             pinned for every workflow. */}
+        {/* FINAL-REVIEW M-1: the one instruction that must survive any
+            scroll position. Same predicate and same sentence as the
+            detailed banner above - deliberate safety repetition, pinned
+            with STOP, never covering it, never interactive. */}
+        {presentation === 'FAULT' && stopUnconfirmed ? (
+          <Text
+            style={styles.pinnedFaultGuidance}
+            testID="motors-pinned-fault-guidance"
+          >
+            {t('motorsScreen.emergencyDisconnect')}
+          </Text>
+        ) : null}
         {pulseRejected ? (
           <Text style={styles.inlineError} testID="motors-pulse-rejected">
             {t('motorsScreen.pulseRejected')}
@@ -2211,75 +2168,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     gap: spacing.sm,
   },
-  workflowSteps: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  workflowStep: {
-    flexGrow: 1,
-    flexBasis: 220,
-    minHeight: 74,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    padding: spacing.sm,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    backgroundColor: colors.backgroundRaised,
-  },
-  workflowStepActive: {
-    borderColor: colors.accentStrong,
-    backgroundColor: colors.accentSoft,
-  },
-  workflowStepDone: {
-    borderColor: '#A9D8CB',
-    backgroundColor: '#EAF7F2',
-  },
-  workflowNumber: {
-    width: 34,
-    height: 34,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.pill,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  workflowNumberDone: {
-    backgroundColor: colors.success,
-    borderColor: colors.success,
-  },
-  workflowNumberText: {
-    ...typography.sectionTitle,
-    color: colors.textPrimary,
-  },
   workflowNumberTextDone: { color: colors.white },
-  workflowTitle: {
-    ...typography.sectionTitle,
-    color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
-  workflowDetail: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
-  progressBadge: {
-    maxWidth: 126,
-    borderRadius: radii.pill,
-    backgroundColor: colors.surfaceAlt,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  progressText: {
-    ...typography.caption,
-    color: colors.success,
-    fontWeight: '700',
-    textAlign: 'center',
-    writingDirection: 'rtl',
-  },
   outputSection: { gap: spacing.sm },
   miniHeading: {
     ...typography.caption,
@@ -2563,6 +2452,13 @@ const styles = StyleSheet.create({
   readyBody: {
     ...typography.body,
     color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  pinnedFaultGuidance: {
+    ...typography.body,
+    color: colors.error,
+    fontWeight: '700',
+    textAlign: 'center',
     writingDirection: 'rtl',
   },
   inlineError: { ...typography.caption, color: colors.error, writingDirection: 'rtl', textAlign: 'center' },
