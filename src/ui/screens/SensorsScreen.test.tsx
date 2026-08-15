@@ -1,4 +1,4 @@
-import React from 'react'; import ReactTestRenderer from 'react-test-renderer'; import '../../i18n'; import SensorsScreen from './SensorsScreen'; describe('SensorsScreen', () => {it('renders real telemetry surfaces and calibration route', () => {const onOpenSetup = jest.fn(); let renderer!: ReactTestRenderer.ReactTestRenderer; ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<SensorsScreen active={false} onOpenSetup={onOpenSetup} />);}); expect(renderer.root.findByProps({testID: 'sensors-screen'})).toBeDefined(); expect(renderer.root.findAllByProps({testID: 'sensor-trace-x'}).length).toBeGreaterThanOrEqual(3); ReactTestRenderer.act(() => renderer.root.findByProps({testID: 'sensors-open-setup'}).props.onPress()); expect(onOpenSetup).toHaveBeenCalledTimes(1); ReactTestRenderer.act(() => renderer.unmount());});});
+import React from 'react'; import ReactTestRenderer from 'react-test-renderer'; import '../../i18n'; import SensorsScreen from './SensorsScreen'; describe('SensorsScreen', () => {it('renders real telemetry surfaces and calibration route', () => {const onOpenSetup = jest.fn(); let renderer!: ReactTestRenderer.ReactTestRenderer; ReactTestRenderer.act(() => {renderer = ReactTestRenderer.create(<SensorsScreen active={false} onOpenSetup={onOpenSetup} />);}); expect(renderer.root.findByProps({testID: 'sensors-screen'})).toBeDefined(); for (const sensor of ['gyro', 'acc', 'mag']) {expect(renderer.root.findAllByProps({testID: `sensor-${sensor}-trace-x`}).length).toBeGreaterThan(0);} expect(renderer.root.findAllByProps({testID: 'sensor-trace-x'})).toHaveLength(0); ReactTestRenderer.act(() => renderer.root.findByProps({testID: 'sensors-open-setup'}).props.onPress()); expect(onOpenSetup).toHaveBeenCalledTimes(1); ReactTestRenderer.act(() => renderer.unmount());});});
 
 /**
  * SENSORS FINAL UI CORRECTION - the trace is asserted as GEOMETRY, not
@@ -74,11 +74,13 @@ describe('sensor trace truth', () => {
     });
     for (const axis of ['x', 'y', 'z']) {
       expect(
-        renderer.root.findAllByProps({ testID: `sensor-trace-${axis}` }).length,
+        renderer.root.findAllByProps({ testID: `sensor-gyro-trace-${axis}` })
+          .length,
       ).toBeGreaterThan(0);
       expect(
-        renderer.root.findAllByProps({ testID: `sensor-trace-${axis}-zero` })
-          .length,
+        renderer.root.findAllByProps({
+          testID: `sensor-gyro-trace-${axis}-zero`,
+        }).length,
       ).toBeGreaterThan(0);
     }
     const scale = renderer.root.findAllByProps({
@@ -110,7 +112,7 @@ describe('sensor trace truth', () => {
         .length,
     ).toBeGreaterThan(0);
     expect(
-      renderer.root.findAllByProps({ testID: 'sensor-trace-x' }),
+      renderer.root.findAllByProps({ testID: 'sensor-mag-trace-x' }),
     ).toHaveLength(0);
     expect(
       renderer.root.findAllByProps({ testID: 'sensor-card-mag-scale' }),
@@ -185,7 +187,7 @@ describe('monitor-sharp trace presentation', () => {
       for (const ref of ['zero', 'ref-pos', 'ref-neg']) {
         expect(
           renderer.root.findAllByProps({
-            testID: `sensor-trace-${axis}-${ref}`,
+            testID: `sensor-acc-trace-${axis}-${ref}`,
           }).length,
         ).toBeGreaterThan(0);
       }

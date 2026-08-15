@@ -108,26 +108,31 @@ const AXIS_COLORS: Record<keyof Sample, string> = {
 };
 
 function AxisTrace({
+  sensorId,
   samples,
   axis,
   bound,
   suffix,
 }: {
+  /** The owning sensor (gyro | acc | mag). Every display id below is
+   * prefixed with it, so the three cards never share a testID. */
+  sensorId: string;
   samples: readonly Sample[];
   axis: keyof Sample;
   bound: number;
   suffix: string;
 }) {
   const latest = samples.length > 0 ? samples[samples.length - 1][axis] : undefined;
+  const traceId = `sensor-${sensorId}-trace-${axis}`;
   return (
-    <View style={styles.trace} testID={`sensor-trace-${axis}`}>
+    <View style={styles.trace} testID={traceId}>
       <View style={styles.traceMeta}>
         <View style={[styles.axisChip, { backgroundColor: AXIS_COLORS[axis] }]}>
           <Text style={styles.axisChipText}>{axis.toUpperCase()}</Text>
         </View>
         <Text
           style={styles.traceValue}
-          testID={`sensor-trace-${axis}-value`}
+          testID={`${traceId}-value`}
         >
           {latest === undefined ? '—' : `${latest} ${suffix}`}
         </Text>
@@ -139,11 +144,11 @@ function AxisTrace({
             trace itself never snaps to them. */}
         <View
           style={[styles.refLine, styles.refLinePos]}
-          testID={`sensor-trace-${axis}-ref-pos`}
+          testID={`${traceId}-ref-pos`}
         />
         <View
           style={[styles.refLine, styles.refLineNeg]}
-          testID={`sensor-trace-${axis}-ref-neg`}
+          testID={`${traceId}-ref-neg`}
         />
         {TIME_TICK_POSITIONS.map(percent => (
           <View
@@ -154,7 +159,7 @@ function AxisTrace({
         {/* The zero reference: a real line, always visible, exactly at
             the signed origin. Positive samples draw above it, negative
             below it - the sign IS the geometry. */}
-        <View style={styles.zeroLine} testID={`sensor-trace-${axis}-zero`} />
+        <View style={styles.zeroLine} testID={`${traceId}-zero`} />
         {samples.length >= 2 ? (
           <Svg
             width="100%"
@@ -249,6 +254,7 @@ export function VectorCard({
             {(['x', 'y', 'z'] as const).map(axis => (
               <AxisTrace
                 key={axis}
+                sensorId={id}
                 samples={history}
                 axis={axis}
                 bound={bound}
