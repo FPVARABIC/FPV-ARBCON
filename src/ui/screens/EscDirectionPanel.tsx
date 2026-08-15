@@ -46,7 +46,8 @@ export interface EscDirectionPanelProps {
   readonly onCommandOutcome?: (
     motorNumber: number,
     target: DshotEscDirection,
-    status: 'ACKNOWLEDGED' | 'UNCONFIRMED',
+    status: 'ACKNOWLEDGED' | 'UNCONFIRMED' | 'REJECTED' | 'FAILED',
+    message: string,
   ) => void;
 }
 
@@ -146,25 +147,25 @@ export function EscDirectionPanel({
       ) {
         return;
       }
-      setResult(resultText(t, outcome));
-      // COMMANDED is recorded for the two outcomes that say something
-      // about the request itself. It records what was ASKED FOR - not what
-      // the ESC now is, which remains unreadable, and not what the motor
-      // does, which needs human eyes. A REJECTED command never happened,
-      // so it produces no record at all.
+      const message = resultText(t, outcome);
+      setResult(message);
+      // EVERY outcome is raised so the host can show a compact result
+      // even after this panel collapses. Only the two that say something
+      // about the request itself become COMMANDED evidence there - a
+      // rejected command never happened, and the host does not record it.
       if (outcome.kind === 'ACKNOWLEDGED') {
         setCommanded(direction);
-        onCommandOutcome?.(targetMotor, direction, 'ACKNOWLEDGED');
-      } else if (outcome.kind === 'UNCONFIRMED') {
-        onCommandOutcome?.(targetMotor, direction, 'UNCONFIRMED');
       }
+      onCommandOutcome?.(targetMotor, direction, outcome.kind, message.text);
       setReviewing(false);
     } catch {
       if (
         operationRef.current === operation &&
         selectedMotorRef.current === targetMotor
       ) {
-        setResult({ text: t('escDirection.failed'), danger: true });
+        const failure = t('escDirection.failed');
+        setResult({ text: failure, danger: true });
+        onCommandOutcome?.(targetMotor, direction, 'FAILED', failure);
       }
     } finally {
       if (operationRef.current === operation) {

@@ -1642,9 +1642,12 @@ describe('MotorsScreen - direction handling', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
-    // P1b-C put the authoring panel inside the core direction section,
-    // beside the expected/commanded/observed rows it belongs to.
+    // P1b-C put the authoring panel inside the core direction section;
+    // P1b-C.1 collapsed it behind an explicit action, so the resting
+    // state offers the entry and the form appears only when asked for.
     expect(rendered.query('motor-direction-section')).toBeDefined();
+    expect(rendered.query('esc-direction-panel')).toBeUndefined();
+    rendered.press('motor-direction-authoring-open');
     expect(rendered.query('esc-direction-panel')).toBeDefined();
     expect(rendered.query('esc-direction-review')).toBeDefined();
     expect(rendered.query('esc-direction-apply')).toBeUndefined();

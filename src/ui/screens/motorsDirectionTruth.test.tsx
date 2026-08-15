@@ -219,11 +219,22 @@ function textOf(tree: ReactTestRenderer.ReactTestRenderer): string {
   return out.join(' ');
 }
 
+/**
+ * P1b-C.1: authoring is collapsed by default, so every command path goes
+ * through the explicit open action first. Opening sends nothing.
+ */
+function openAuthoring(tree: ReactTestRenderer.ReactTestRenderer): void {
+  if (!has(tree, 'esc-direction-panel')) {
+    act(() => first(tree, 'motor-direction-authoring-open').props.onPress());
+  }
+}
+
 /** Drives the real two-step authoring flow to completion. */
 async function sendDirection(
   tree: ReactTestRenderer.ReactTestRenderer,
   target: 'normal' | 'reversed',
 ): Promise<void> {
+  openAuthoring(tree);
   await act(async () => {
     first(tree, `esc-direction-${target}`).props.onPress();
   });
@@ -288,12 +299,13 @@ describe('31/32 - expected exists alone, and nothing pretends to read the ESC', 
     const rendered = textOf(tree);
     // The one phrase this whole model exists to prevent.
     expect(rendered).not.toContain('الاتجاه الحالي هو');
-    // And the panel still states outright that it cannot be read.
-    expect(rendered).toContain(ar.escDirection.currentUnknown);
+    // And the section states outright that it cannot be read - with
+    // authoring collapsed and nothing opened.
+    expect(rendered).toContain(ar.motorsScreen.directionNoReadback);
   });
 
   it('keeps the two vocabularies explicitly apart', () => {
-    expect(textOf(tree)).toContain(ar.motorsScreen.directionVocabularyNote);
+    expect(textOf(tree)).toContain(ar.motorsScreen.directionVocabularyShort);
   });
 });
 
@@ -373,6 +385,7 @@ describe('33 - a target is not a command, and evidence stays on its motor', () =
   afterEach(() => act(() => tree.unmount()));
 
   it('sends nothing when a target is merely chosen', () => {
+    openAuthoring(tree);
     act(() => first(tree, 'esc-direction-normal').props.onPress());
     act(() => first(tree, 'esc-direction-reversed').props.onPress());
     expect(port.directionCalls).toEqual([]);
@@ -386,9 +399,14 @@ describe('33 - a target is not a command, and evidence stays on its motor', () =
 
   it('does not carry an UNSENT target to another motor', () => {
     act(() => first(tree, 'motor-identity-M3').props.onPress());
+    openAuthoring(tree);
     act(() => first(tree, 'esc-direction-reversed').props.onPress());
     act(() => first(tree, 'motor-identity-M2').props.onPress());
-    // Back to no target at all - not REVERSED inherited from M3.
+    // Authoring closes with the motor change, so the unsent target goes
+    // with the form that held it.
+    expect(has(tree, 'esc-direction-panel')).toBe(false);
+    // Reopening for M2 starts neutral - not REVERSED inherited from M3.
+    openAuthoring(tree);
     expect(
       first(tree, 'esc-direction-reversed').props.accessibilityState.selected,
     ).toBe(false);
@@ -457,7 +475,9 @@ describe('34 - a blocked command says why, and offers no control', () => {
       expect(valueOf(tree, 'motor-direction-unavailable-reason')).toBe(
         ar.motorsScreen.directionBlocked[scenario.reason],
       );
-      // No inert button: the control is absent, not disabled-and-silent.
+      // No inert control: the authoring entry itself is replaced by the
+      // reason, so there is nothing to press that would do nothing.
+      expect(has(tree, 'motor-direction-authoring-open')).toBe(false);
       expect(has(tree, 'esc-direction-panel')).toBe(false);
       expect(has(tree, 'esc-direction-apply')).toBe(false);
       act(() => tree.unmount());
@@ -549,9 +569,7 @@ describe('35 - a command acknowledgement creates no physical evidence', () => {
 
   it('offers verification rather than claiming it', () => {
     expect(has(tree, 'motor-direction-verify')).toBe(true);
-    const rendered = textOf(tree);
-    expect(rendered).toContain(ar.motorsScreen.directionVerifyTitle);
-    expect(rendered).toContain(ar.motorsScreen.directionVerifyBody);
+    expect(textOf(tree)).toContain(ar.motorsScreen.directionVerifyCompact);
     // Still nothing spun by merely offering.
     expect(port.pulseCalls).toEqual([]);
   });
@@ -601,7 +619,7 @@ describe('36/37 - expected versus observed, and nothing else', () => {
     expect(has(tree, 'motor-direction-commanded-badge')).toBe(true);
     expect(has(tree, 'motor-direction-observed-badge')).toBe(true);
     expect(has(tree, 'motor-direction-match')).toBe(true);
-    expect(textOf(tree)).toContain(ar.motorsScreen.directionVocabularyNote);
+    expect(textOf(tree)).toContain(ar.motorsScreen.directionVocabularyShort);
     act(() => tree.unmount());
   });
 
@@ -786,5 +804,237 @@ describe('39 - yaw_motors_reversed never becomes a per-motor direction', () => {
     expect(ar.motorConfiguration.propsDirectionDetail).toContain(
       'لا يثبت الاتجاه الميكانيكي الفعلي للمحركات',
     );
+  });
+});
+
+/* ================================================================== *
+ * 22-28. P1b-C.1 - AUTHORING ON DEMAND
+ *
+ * The truth rows are what an operator READS; the Normal/Reverse form is
+ * what they occasionally DO. Measured at 360px, that form owned 562 of
+ * the section's 855 pixels at rest and 718 of 1187 after a command. It is
+ * now collapsed until asked for - and every truth it used to carry has a
+ * home above it that needs no interaction.
+ * ================================================================== */
+
+describe('22 - the resting state is truth only', () => {
+  let port: Port;
+  let tree: ReactTestRenderer.ReactTestRenderer;
+
+  beforeEach(() => {
+    port = new Port(snapshotFor({}));
+    tree = mount(port);
+  });
+  afterEach(() => act(() => tree.unmount()));
+
+  it('shows all three sources with nothing opened', () => {
+    expect(has(tree, 'motor-direction-expected')).toBe(true);
+    expect(has(tree, 'motor-direction-commanded')).toBe(true);
+    expect(has(tree, 'motor-direction-observed')).toBe(true);
+  });
+
+  it('shows both safety truths with nothing opened', () => {
+    const rendered = textOf(tree);
+    expect(has(tree, 'motor-direction-no-readback')).toBe(true);
+    expect(rendered).toContain(ar.motorsScreen.directionNoReadback);
+    expect(has(tree, 'motor-direction-vocabulary')).toBe(true);
+    expect(rendered).toContain(ar.motorsScreen.directionVocabularyShort);
+  });
+
+  it('offers the authoring entry and mounts no authoring control', () => {
+    expect(has(tree, 'motor-direction-authoring-open')).toBe(true);
+    // Not merely hidden: the target radios and the send action do not
+    // exist in the tree at all.
+    expect(has(tree, 'esc-direction-panel')).toBe(false);
+    expect(has(tree, 'esc-direction-normal')).toBe(false);
+    expect(has(tree, 'esc-direction-reversed')).toBe(false);
+    expect(has(tree, 'esc-direction-review')).toBe(false);
+    expect(has(tree, 'esc-direction-apply')).toBe(false);
+  });
+
+  it('keeps the long explanations reachable rather than deleted', () => {
+    act(() => first(tree, 'motor-direction-details-toggle').props.onPress());
+    const rendered = textOf(tree);
+    expect(rendered).toContain(ar.motorsScreen.directionVocabularyNote);
+    expect(rendered).toContain(ar.escDirection.currentUnknown);
+    expect(rendered).toContain(ar.escDirection.physicalCaveat);
+    // Reading is never commanding.
+    expect(port.directionCalls).toEqual([]);
+    expect(port.pulseCalls).toEqual([]);
+  });
+});
+
+describe('23/24 - opening and closing authoring commands nothing', () => {
+  let port: Port;
+  let tree: ReactTestRenderer.ReactTestRenderer;
+
+  beforeEach(() => {
+    port = new Port(snapshotFor({}));
+    tree = mount(port);
+  });
+  afterEach(() => act(() => tree.unmount()));
+
+  it('reveals the existing workflow, and sends nothing to do it', () => {
+    act(() => first(tree, 'motor-direction-authoring-open').props.onPress());
+    expect(has(tree, 'esc-direction-panel')).toBe(true);
+    expect(has(tree, 'esc-direction-normal')).toBe(true);
+    expect(has(tree, 'esc-direction-reversed')).toBe(true);
+    expect(port.directionCalls).toEqual([]);
+    expect(port.pulseCalls).toEqual([]);
+    expect(port.stopCalls).toEqual([]);
+  });
+
+  it('starts with NEITHER target selected, every time it opens', () => {
+    act(() => first(tree, 'motor-direction-authoring-open').props.onPress());
+    expect(
+      first(tree, 'esc-direction-normal').props.accessibilityState.selected,
+    ).toBe(false);
+    expect(
+      first(tree, 'esc-direction-reversed').props.accessibilityState.selected,
+    ).toBe(false);
+  });
+
+  it('discards an UNSENT target when authoring is closed', () => {
+    act(() => first(tree, 'motor-direction-authoring-open').props.onPress());
+    act(() => first(tree, 'esc-direction-reversed').props.onPress());
+    act(() => first(tree, 'motor-direction-authoring-cancel').props.onPress());
+    expect(has(tree, 'esc-direction-panel')).toBe(false);
+    expect(port.directionCalls).toEqual([]);
+
+    // Reopening is neutral - the withdrawn target did not survive.
+    act(() => first(tree, 'motor-direction-authoring-open').props.onPress());
+    expect(
+      first(tree, 'esc-direction-reversed').props.accessibilityState.selected,
+    ).toBe(false);
+  });
+
+  it('leaves acknowledged COMMANDED evidence alone when closing', async () => {
+    await sendDirection(tree, 'reversed');
+    const before = valueOf(tree, 'motor-direction-commanded');
+    act(() => first(tree, 'motor-direction-authoring-open').props.onPress());
+    act(() => first(tree, 'motor-direction-authoring-cancel').props.onPress());
+    expect(valueOf(tree, 'motor-direction-commanded')).toBe(before);
+    expect(before).toContain(ar.escDirection.reversed);
+  });
+});
+
+describe('26 - an acknowledgement collapses the form and leaves a result', () => {
+  let port: Port;
+  let tree: ReactTestRenderer.ReactTestRenderer;
+
+  beforeEach(async () => {
+    port = new Port(snapshotFor({receipt: receiptFor(1)}));
+    tree = mount(port);
+    await sendDirection(tree, 'reversed');
+  });
+  afterEach(() => act(() => tree.unmount()));
+
+  it('ran exactly one controller operation', () => {
+    expect(port.directionCalls).toEqual([{motor: 1, direction: 'REVERSED'}]);
+  });
+
+  it('collapses the authoring form', () => {
+    expect(has(tree, 'esc-direction-panel')).toBe(false);
+    expect(has(tree, 'esc-direction-apply')).toBe(false);
+    expect(has(tree, 'motor-direction-authoring-open')).toBe(true);
+  });
+
+  it('keeps a compact result the operator can still read', () => {
+    expect(has(tree, 'motor-direction-result')).toBe(true);
+    expect(valueOf(tree, 'motor-direction-result')).toBe(
+      ar.escDirection.acknowledged,
+    );
+  });
+
+  it('updates COMMANDED and leaves EXPECTED and OBSERVED alone', () => {
+    expect(valueOf(tree, 'motor-direction-commanded')).toContain(
+      ar.escDirection.reversed,
+    );
+    expect(valueOf(tree, 'motor-direction-expected')).toBe(
+      ar.motorVerification.direction.CCW,
+    );
+    expect(valueOf(tree, 'motor-direction-observed')).toBe(
+      ar.motorsScreen.directionObservedNone,
+    );
+  });
+
+  it('offers physical verification without performing any of it', () => {
+    expect(has(tree, 'motor-direction-verify')).toBe(true);
+    expect(textOf(tree)).toContain(ar.motorsScreen.directionVerifyCompact);
+    // The offer is a statement, not a control that could spin anything.
+    expect(port.pulseCalls).toEqual([]);
+    expect(port.stopCalls).toEqual([]);
+    expect(port.directionCalls).toHaveLength(1);
+  });
+});
+
+describe('27 - an unconfirmed outcome stays unconfirmed', () => {
+  let port: Port;
+  let tree: ReactTestRenderer.ReactTestRenderer;
+
+  beforeEach(async () => {
+    port = new Port(snapshotFor({}));
+    port.outcome = {kind: 'UNCONFIRMED'};
+    tree = mount(port);
+    await sendDirection(tree, 'normal');
+  });
+  afterEach(() => act(() => tree.unmount()));
+
+  it('says the outcome is unconfirmed, not that it failed', () => {
+    expect(valueOf(tree, 'motor-direction-result')).toBe(
+      ar.escDirection.unconfirmed,
+    );
+    expect(valueOf(tree, 'motor-direction-commanded')).toBe(
+      ar.motorsScreen.directionCommandedUnconfirmed.replace(
+        '{{target}}',
+        ar.escDirection.normal,
+      ),
+    );
+  });
+
+  it('retries nothing on its own', () => {
+    expect(port.directionCalls).toHaveLength(1);
+  });
+
+  it('creates no observation', () => {
+    expect(valueOf(tree, 'motor-direction-observed')).toBe(
+      ar.motorsScreen.directionObservedNone,
+    );
+  });
+});
+
+describe('27 - a rejected command leaves no evidence but is still reported', () => {
+  it('shows the result and records nothing', async () => {
+    const port = new Port(snapshotFor({}));
+    port.outcome = {kind: 'REJECTED', reason: 'BUSY'};
+    const tree = mount(port);
+    await sendDirection(tree, 'normal');
+
+    expect(has(tree, 'motor-direction-result')).toBe(true);
+    expect(valueOf(tree, 'motor-direction-commanded')).toBe(
+      ar.motorsScreen.directionCommandedNone,
+    );
+    expect(has(tree, 'motor-direction-verify')).toBe(false);
+    expect(port.directionCalls).toHaveLength(1);
+    act(() => tree.unmount());
+  });
+});
+
+describe('30 - nothing in the direction surface can command a motor', () => {
+  it('opens, reads, selects, closes and reselects with zero pulses', () => {
+    const port = new Port(snapshotFor({receipt: receiptFor(1)}));
+    const tree = mount(port);
+
+    act(() => first(tree, 'motor-direction-details-toggle').props.onPress());
+    act(() => first(tree, 'motor-direction-authoring-open').props.onPress());
+    act(() => first(tree, 'esc-direction-reversed').props.onPress());
+    act(() => first(tree, 'motor-direction-authoring-cancel').props.onPress());
+    act(() => first(tree, 'motor-identity-M2').props.onPress());
+    act(() => first(tree, 'motor-direction-authoring-open').props.onPress());
+
+    expect(port.pulseCalls).toEqual([]);
+    expect(port.stopCalls).toEqual([]);
+    expect(port.directionCalls).toEqual([]);
+    act(() => tree.unmount());
   });
 });

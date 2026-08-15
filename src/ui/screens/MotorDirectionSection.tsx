@@ -26,8 +26,8 @@
  * and it never spins a motor.
  */
 
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import type { MotorIdentificationCapability } from '../../core/state/motorIdentificationCapability';
@@ -104,6 +104,56 @@ export function MotorDirectionSection({
   onDirtyChange,
 }: MotorDirectionSectionProps): React.JSX.Element {
   const { t } = useTranslation();
+  /**
+   * AUTHORING IS CLOSED UNTIL ASKED FOR. The three truth rows are what an
+   * operator reads; the Normal/Reverse form is what they occasionally do.
+   * Measured at 360px, that form owned 562 of the section's 855 pixels at
+   * rest and 718 of 1187 after a command - two thirds of the height for a
+   * control nobody is using most of the time.
+   */
+  const [authoringOpen, setAuthoringOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  /**
+   * The last outcome, kept HERE rather than in the panel, because the panel
+   * unmounts when authoring collapses and a result an operator never saw
+   * would be worse than no result at all. Presentation only: COMMANDED
+   * evidence still lives in the session log, and a rejected command still
+   * produces none.
+   */
+  const [lastResult, setLastResult] = useState<
+    {motorNumber: number; message: string; danger: boolean} | undefined
+  >(undefined);
+
+  // A different motor is a different question. Nothing about the previous
+  // one - open form, unsent target, last message - carries across.
+  useEffect(() => {
+    setAuthoringOpen(false);
+    setLastResult(undefined);
+  }, [selectedMotor, operator]);
+
+  const handleOutcome = useCallback(
+    (
+      motorNumber: number,
+      target: DshotEscDirection,
+      status: 'ACKNOWLEDGED' | 'UNCONFIRMED' | 'REJECTED' | 'FAILED',
+      message: string,
+    ) => {
+      setLastResult({
+        motorNumber,
+        message,
+        danger: status !== 'ACKNOWLEDGED',
+      });
+      // Only an outcome that says something about the REQUEST becomes
+      // session evidence. A rejection never happened.
+      if (status === 'ACKNOWLEDGED' || status === 'UNCONFIRMED') {
+        onCommandOutcome(motorNumber, target, status);
+      }
+      // Collapse on every settled outcome: the form has done its job, and
+      // leaving it expanded is what made this section a screenful.
+      setAuthoringOpen(false);
+    },
+    [onCommandOutcome],
+  );
 
   const templateApplies = identificationCapability.kind === 'SUPPORTED';
   const expected = templateApplies ? expectedFor(selectedMotor) : undefined;
@@ -195,10 +245,16 @@ export function MotorDirectionSection({
         strong={observedDirection !== undefined}
       />
 
-      {/* THE VOCABULARY WARNING, always visible, because it is the reason
-          two of these three rows are never compared. */}
+      {/* THE TWO SAFETY TRUTHS, IN ONE LINE EACH AND NEVER BEHIND A TAP.
+          The first is why COMMANDED can never become a current-state
+          reading; the second is why COMMANDED and OBSERVED are never
+          compared. Their longer explanations sit under the single details
+          toggle below - the claims themselves do not. */}
+      <Text style={styles.caption} testID="motor-direction-no-readback">
+        {t('motorsScreen.directionNoReadback')}
+      </Text>
       <Text style={styles.caption} testID="motor-direction-vocabulary">
-        {t('motorsScreen.directionVocabularyNote')}
+        {t('motorsScreen.directionVocabularyShort')}
       </Text>
 
       {directionMismatch ? (
@@ -212,15 +268,77 @@ export function MotorDirectionSection({
         </Text>
       ) : null}
 
-      {/* COMMAND AUTHORING. One workflow, the existing one, with its own
-          UNKNOWN-by-default target and explicit two-step send. */}
+      {/* ONE details disclosure for the whole section. Opening it sends
+          nothing and spins nothing. */}
+      <Pressable
+        onPress={() => setDetailsOpen(open => !open)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: detailsOpen }}
+        accessibilityLabel={t('motorsScreen.directionTitle')}
+        style={styles.linkButton}
+        testID="motor-direction-details-toggle"
+      >
+        <Text style={styles.linkText}>{t('motorsScreen.detailsToggle')}</Text>
+      </Pressable>
+      {detailsOpen ? (
+        <View style={styles.detailsBlock} testID="motor-direction-details">
+          <Text style={styles.caption}>
+            {t('motorsScreen.directionVocabularyNote')}
+          </Text>
+          <Text style={styles.caption}>{t('escDirection.currentUnknown')}</Text>
+          <Text style={styles.caption}>{t('escDirection.physicalCaveat')}</Text>
+        </View>
+      ) : null}
+
+      {/* THE LAST OUTCOME, compactly, and it survives the form closing. */}
+      {lastResult !== undefined &&
+      lastResult.motorNumber === selectedMotor ? (
+        <Text
+          style={lastResult.danger ? styles.resultDanger : styles.resultGood}
+          testID="motor-direction-result"
+        >
+          {lastResult.message}
+        </Text>
+      ) : null}
+
+      {/* COMMAND CAPABILITY, always stated - never an inert control. */}
       {commandAvailable ? (
-        <EscDirectionPanel
-          selectedMotor={selectedMotor}
-          operator={operator}
-          onDirtyChange={onDirtyChange}
-          onCommandOutcome={onCommandOutcome}
-        />
+        authoringOpen ? (
+          <View style={styles.authoringBlock} testID="motor-direction-authoring">
+            <EscDirectionPanel
+              selectedMotor={selectedMotor}
+              operator={operator}
+              onDirtyChange={onDirtyChange}
+              onCommandOutcome={handleOutcome}
+            />
+            {/* Closing discards an UNSENT target, because the panel
+                unmounts with it - reopening starts neutral. It cannot
+                discard COMMANDED evidence, which lives in the session log
+                rather than in the form. */}
+            <Pressable
+              onPress={() => setAuthoringOpen(false)}
+              accessibilityRole="button"
+              style={styles.secondaryButton}
+              testID="motor-direction-authoring-cancel"
+            >
+              <Text style={styles.secondaryButtonText}>
+                {t('motorsScreen.directionAuthoringCancel')}
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => setAuthoringOpen(true)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: false }}
+            style={styles.primaryButton}
+            testID="motor-direction-authoring-open"
+          >
+            <Text style={styles.primaryButtonText}>
+              {t('motorsScreen.directionAuthoringOpen')}
+            </Text>
+          </Pressable>
+        )
       ) : (
         <View style={styles.unavailable} testID="motor-direction-unavailable">
           <Text style={styles.unavailableTitle}>
@@ -244,16 +362,13 @@ export function MotorDirectionSection({
       )}
 
       {/* OFFERED, NEVER PERFORMED. No pulse, no authority change, no
-          confirmation - the operator decides when to verify. */}
+          confirmation - the operator decides when to verify, and the
+          verification itself is the protected hold in the identity
+          section above. Nothing here can spin a motor. */}
       {commanded !== undefined ? (
-        <View style={styles.verifyBlock} testID="motor-direction-verify">
-          <Text style={styles.verifyTitle}>
-            {t('motorsScreen.directionVerifyTitle')}
-          </Text>
-          <Text style={styles.caption}>
-            {t('motorsScreen.directionVerifyBody')}
-          </Text>
-        </View>
+        <Text style={styles.verifyTitle} testID="motor-direction-verify">
+          {t('motorsScreen.directionVerifyCompact')}
+        </Text>
       ) : null}
     </View>
   );
@@ -354,13 +469,53 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     writingDirection: 'rtl',
   },
-  verifyBlock: {
-    gap: 2,
-    padding: spacing.md,
+  authoringBlock: { gap: spacing.xs },
+  detailsBlock: { gap: spacing.xs },
+  linkButton: { minHeight: 44, justifyContent: 'center', alignItems: 'flex-start' },
+  linkText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  primaryButton: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    backgroundColor: colors.accent,
+    paddingHorizontal: spacing.lg,
+  },
+  primaryButtonText: {
+    ...typography.label,
+    color: colors.accentText,
+    writingDirection: 'rtl',
+  },
+  secondaryButton: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderRadius: radii.md,
     borderWidth: 1,
-    borderColor: colors.borderSoft,
-    backgroundColor: colors.surfaceAlt,
+    borderColor: colors.borderStrong,
+    paddingHorizontal: spacing.md,
+  },
+  secondaryButtonText: {
+    ...typography.label,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  resultGood: {
+    ...typography.caption,
+    color: colors.success,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  resultDanger: {
+    ...typography.caption,
+    color: colors.error,
+    fontWeight: '700',
+    writingDirection: 'rtl',
   },
   verifyTitle: {
     ...typography.body,
