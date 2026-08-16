@@ -216,8 +216,8 @@ describe('the flash result contract', () => {
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
     expect(renderer.root.findAllByProps({testID: 'flash-result'}).length).toBeGreaterThan(0);
     const text = screenText(renderer);
-    expect(text).toContain('تم تثبيت Firmware بنجاح');
-    expect(text).toContain('استُعيدت إعدادات CLI بعد التفليش وأُرسلت save.');
+    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(text).toContain('أُعيد إرسال إعدادات CLI بعد التفليش، وأُرسل أمر save.');
     expect(pipeline.restore).toHaveBeenCalledTimes(1);
     // Terminal: a new attempt is startable again.
     expect(
@@ -240,7 +240,7 @@ describe('the flash result contract', () => {
 
     const text = screenText(renderer);
     // The firmware truth stands...
-    expect(text).toContain('تم تثبيت Firmware بنجاح');
+    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
     // ...the restore truth is stated separately...
     expect(text).toContain('لكن فشلت استعادة الإعدادات');
     // ...and the failure line of the flash itself is NOT shown.
@@ -269,7 +269,7 @@ describe('the flash result contract', () => {
     const text = screenText(renderer);
     expect(text).toContain('تعذر تأكيد اكتمال العملية');
     expect(text).toContain('افصل USB وأعد توصيله');
-    expect(text).not.toContain('تم تثبيت Firmware بنجاح');
+    expect(text).not.toContain('تمت كتابة Firmware والتحقق منه بنجاح');
     // Terminal and restartable - not busy, not cancellable, not pending.
     expect(
       renderer.root.findByProps({testID: 'start-safe-flash'}).props.disabled,
@@ -311,7 +311,7 @@ describe('the flash result contract', () => {
     expect(client.flashDfuFirmware).not.toHaveBeenCalled();
     expect(renderer.root.findAllByProps({testID: 'flash-result'})).toHaveLength(0);
     const text = screenText(renderer);
-    expect(text).not.toContain('تم تثبيت Firmware بنجاح');
+    expect(text).not.toContain('تمت كتابة Firmware والتحقق منه بنجاح');
     expect(text).not.toContain('اكتمل التفليش والتحقق');
     expect(
       renderer.root.findAllByProps({testID: 'flasher-awaiting-dfu-permission'}).length,
@@ -336,7 +336,7 @@ describe('the flash result contract', () => {
     // permission chain had no continuation at all.
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
     const text = screenText(renderer);
-    expect(text).toContain('تم تثبيت Firmware بنجاح');
+    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
     expect(
       renderer.root.findByProps({testID: 'start-safe-flash'}).props.disabled,
     ).toBe(false);
@@ -377,7 +377,7 @@ describe('the flash result contract', () => {
 
     const text = screenText(renderer);
     expect(text).toContain('تعذر تأكيد اكتمال العملية');
-    expect(text).not.toContain('تم تثبيت Firmware بنجاح');
+    expect(text).not.toContain('تمت كتابة Firmware والتحقق منه بنجاح');
     expect(
       renderer.root.findByProps({testID: 'start-safe-flash'}).props.disabled,
     ).toBe(false);

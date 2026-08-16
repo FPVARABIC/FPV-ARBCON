@@ -104,10 +104,17 @@ import {
 } from '../../platforms/react-native/protocol/FirmwareBootloaderController';
 import {bytesToBase64} from '../../platforms/react-native/protocol/base64';
 import {FirmwareButton, FirmwareNotice, FirmwareProgress} from '../components/firmware';
-import {colors, radii, spacing, typography} from '../theme';
+import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
 
-import FirmwareFlasherScreen from './FirmwareFlasherScreen';
+/**
+ * LAZY. A static import here pulled the entire advanced screen - and
+ * with it the CLI backup service, the STM32 serial flasher, the ESP
+ * flasher and esptool - into the standard route's chunk, defeating the
+ * code splitting the bundle scan checks for. It is only rendered behind
+ * «متقدم», so it is only fetched then.
+ */
+const FirmwareFlasherScreen = React.lazy(() => import('./FirmwareFlasherScreen'));
 
 type Props = Partial<NativeStackScreenProps<RootStackParamList, 'FirmwareFlasher'>> & {
   readonly client?: UsbSerialTransportClient;
@@ -122,7 +129,9 @@ export type SimpleFlasherPhase =
   | 'flashing'
   | 'success'
   | 'failed'
-  | 'unconfirmed';
+  | 'unconfirmed'
+  /** A problem that is NOT a flash verdict - see FlasherProblemCategory. */
+  | 'problem';
 
 function errorText(reason: unknown): string {
   if (reason instanceof Error && reason.message.trim().length > 0) {
@@ -139,6 +148,57 @@ function errorText(reason: unknown): string {
 }
 
 /**
+ * WHAT WENT WRONG, AND WHETHER IT WAS THE FLASH AT ALL.
+ *
+ * Everything on this screen used to funnel through one presenter, so a
+ * target-catalogue download that failed at mount announced «فشل التفليش»
+ * on a board that had never been touched. These categories keep the
+ * destructive verdict for the destructive operation, and give every
+ * other failure its own honest heading.
+ */
+export type FlasherProblemCategory =
+  | 'CATALOGUE'
+  | 'RELEASES'
+  | 'BUILD'
+  | 'PREPARE'
+  | 'SERIAL'
+  | 'DFU_ACCESS'
+  | 'DFU_ENTRY';
+
+/**
+ * What the operator reads under a problem heading. A message the app
+ * itself wrote in Arabic is shown as-is; anything else (a browser's
+ * "Failed to fetch", a DOMException name, a transport sentence) is
+ * replaced by the category's own Arabic explanation, because an
+ * untranslated English fragment tells an Arabic operator nothing and
+ * reads as a defect in the product.
+ */
+export function operatorDetail(reason: unknown, category: FlasherProblemCategory): string {
+  const raw = errorText(reason);
+  return /[\u0600-\u06FF]/.test(raw) ? raw : PROBLEM_FALLBACKS[category];
+}
+
+export const PROBLEM_FALLBACKS: Readonly<Record<FlasherProblemCategory, string>> = {
+  CATALOGUE: 'تعذّر الوصول إلى خادم Betaflight. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
+  RELEASES: 'تعذّر جلب إصدارات هذه اللوحة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
+  BUILD: 'تعذّر جلب خيارات البناء لهذا الإصدار.',
+  PREPARE: 'تعذّر بناء أو تنزيل Firmware. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
+  SERIAL: 'تعذّر فتح اتصال USB مع اللوحة. أعد توصيل الكابل ثم أعد المحاولة.',
+  DFU_ACCESS: 'تعذّر الوصول إلى جهاز DFU. أعد توصيل اللوحة في وضع DFU ثم اخترها من جديد.',
+  DFU_ENTRY: 'تعذّر تجهيز وضع DFU. أعد توصيل اللوحة ثم أعد المحاولة.',
+};
+
+export const PROBLEM_TITLES: Readonly<Record<FlasherProblemCategory, string>> = {
+  CATALOGUE: 'تعذّر تحميل قائمة اللوحات',
+  RELEASES: 'تعذّر تحميل قائمة الإصدارات',
+  BUILD: 'تعذّر تحميل خيارات البناء',
+  PREPARE: 'تعذّر تحضير Firmware',
+  SERIAL: 'تعذّر الاتصال باللوحة',
+  DFU_ACCESS: 'تعذّر الوصول إلى جهاز DFU',
+  DFU_ENTRY: 'تعذّر الدخول إلى وضع DFU',
+};
+
+/**
  * THE STANDARD SCREEN'S TERMINAL-FAILURE TRUTH, pure and exported for tests.
  *
  * Maps a settled rejection onto the SAME contract the classic screen and
@@ -147,6 +207,9 @@ function errorText(reason: unknown): string {
  * become the honest UNCONFIRMED third result with a safe next action;
  * everything else is a FAILED with its real stated reason. Never SUCCESS:
  * a rejection carries no completion evidence.
+ *
+ * It is reached ONLY from the flash engine's own rejection. Failures
+ * before any destructive operation take the category path above.
  */
 export function simpleFailurePresentation(
   reason: unknown,
@@ -225,6 +288,7 @@ function SingleChoiceGroup({
   disabled,
   testIDPrefix,
   lockedLabel,
+  lockedReason,
 }: {
   readonly title: string;
   readonly options: readonly FirmwareBuildOption[];
@@ -233,6 +297,7 @@ function SingleChoiceGroup({
   readonly disabled: boolean;
   readonly testIDPrefix: string;
   readonly lockedLabel?: string;
+  readonly lockedReason?: string;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const selected = options.find(option => option.value === value);
@@ -240,6 +305,8 @@ function SingleChoiceGroup({
   const locked = lockedLabel !== undefined;
   return (
     <View style={styles.optionGroup} testID={`${testIDPrefix}-group`}>
+      {/* A locked group is dimmed and chevron-less, which alone reads as
+          a dead row. The reason - and where to change it - is stated. */}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`${title}: ${summary}`}
@@ -260,6 +327,11 @@ function SingleChoiceGroup({
           />
         )}
       </Pressable>
+      {locked ? (
+        <Text style={styles.lockedNote} testID={`${testIDPrefix}-locked-note`}>
+          {lockedReason ?? 'محدد تلقائيًا حسب اختيارك في مجموعة أخرى.'}
+        </Text>
+      ) : null}
       {open && !locked ? (
         <View style={styles.optionChoices}>
           {options.map(option => {
@@ -358,6 +430,8 @@ export default function FirmwareFlasherSimpleScreen({
 }: Props): React.JSX.Element {
   const {t} = useTranslation();
   const [advanced, setAdvanced] = useState(false);
+  /** True while the embedded advanced screen owns a running operation. */
+  const [advancedBusy, setAdvancedBusy] = useState(false);
   const [phase, setPhase] = useState<SimpleFlasherPhase>('idle');
   const [status, setStatus] = useState('اختر اللوحة والإصدار، ثم حضّر Firmware.');
   const [progress, setProgress] = useState(0);
@@ -417,17 +491,43 @@ export default function FirmwareFlasherSimpleScreen({
   const [dfuPresent, setDfuPresent] = useState<DfuDeviceDescriptor | null>(null);
   /** Set only when software bootloader entry is genuinely unavailable. */
   const [manualDfuReason, setManualDfuReason] = useState<string | null>(null);
-  const [unverifiedDfuAccepted, setUnverifiedDfuAccepted] = useState(false);
+  /** A non-flash problem, kept apart from any flash verdict. */
+  const [problem, setProblem] = useState<{
+    readonly category: FlasherProblemCategory;
+    readonly text: string;
+  } | null>(null);
+  /**
+   * The board's own reset, as OBSERVED by the engine - the second truth
+   * that must never rewrite the first. `undefined` until a flash
+   * completes; the success notice reads it to decide whether it may say
+   * the board came back.
+   */
+  const [resetConfirmed, setResetConfirmed] = useState<boolean | undefined>(undefined);
 
   const abortRef = useRef<AbortController | null>(null);
   /** The last engine-reported phase - what classifyFlashRejection needs
    * to tell Android's manifestation-window timeout from an early one. */
   const lastFlashPhaseRef = useRef<FlashPhase | undefined>(undefined);
+  /** The engine's reset observation from the terminal progress event. */
+  const resetConfirmedRef = useRef<boolean | undefined>(undefined);
+  /** True from the moment a flash starts until it settles. */
+  const flashingRef = useRef(false);
   const bootloader = useMemo(() => new FirmwareBootloaderController(client), [client]);
   const cloudBuild = useMemo(() => new CloudBuildCoordinator(betaflightBuildApi), []);
   const supportsSerialPicker = useMemo(() => client.supportsDevicePicker(), [client]);
+  // The standard flasher is one column of steps, so it keeps the reading
+  // column cap instead of stretching cards across a 1920px window.
+  const {maxWidth: contentMaxWidth} = useContentEnvelope(false);
   const isBusy = ['detecting', 'loading', 'flashing'].includes(phase);
   const navigationLocked = simpleFlasherNavigationLocked(phase);
+  /**
+   * Whether the destructive action may be offered at all. The image kind
+   * is part of this: standard mode writes Betaflight HEX, and a UF2/BIN
+   * image used to leave the button live, open the confirmation dialog,
+   * and only THEN dead-end. A control that cannot work is disabled
+   * before it is pressed.
+   */
+  const flashable = firmware !== null && firmware.kind === 'HEX';
 
   /**
    * DERIVED, not stored: whether the frozen MSP identity matches the
@@ -547,7 +647,11 @@ export default function FirmwareFlasherSimpleScreen({
     );
   }, [buildOptions, choices]);
 
-  const fail = useCallback((reason: unknown) => {
+  /**
+   * A FLASH verdict. Only the engine's own rejection may reach this - it
+   * is the one path allowed to say «فشل التفليش».
+   */
+  const failFlash = useCallback((reason: unknown) => {
     const presentation = simpleFailurePresentation(
       reason,
       lastFlashPhaseRef.current,
@@ -556,6 +660,19 @@ export default function FirmwareFlasherSimpleScreen({
     setPhase(presentation.phase);
     setStatus(presentation.text);
   }, [t]);
+
+  /**
+   * Everything else: a catalogue download, a permission, a build, a
+   * detection. The board was never written to, and the copy says so.
+   */
+  const failOperation = useCallback(
+    (category: FlasherProblemCategory, reason: unknown) => {
+      setProblem({category, text: operatorDetail(reason, category)});
+      setPhase('problem');
+      setStatus(PROBLEM_TITLES[category]);
+    },
+    [],
+  );
 
   /* ---- Catalogue: the official dataset, unfiltered ---- */
   useEffect(() => {
@@ -566,13 +683,13 @@ export default function FirmwareFlasherSimpleScreen({
         if (!controller.signal.aborted) setTargets(items);
       })
       .catch(reason => {
-        if (!controller.signal.aborted) fail(reason);
+        if (!controller.signal.aborted) failOperation('CATALOGUE', reason);
       })
       .finally(() => {
         if (!controller.signal.aborted) setTargetsLoading(false);
       });
     return () => controller.abort();
-  }, [fail]);
+  }, [failOperation]);
 
   /* ---- Releases for the chosen board ---- */
   useEffect(() => {
@@ -599,13 +716,13 @@ export default function FirmwareFlasherSimpleScreen({
         setSelectedRelease(defaultReleaseForChannel(items, preferred));
       })
       .catch(reason => {
-        if (!controller.signal.aborted) fail(reason);
+        if (!controller.signal.aborted) failOperation('RELEASES', reason);
       })
       .finally(() => {
         if (!controller.signal.aborted) setReleasesLoading(false);
       });
     return () => controller.abort();
-  }, [fail, selectedTarget]);
+  }, [failOperation, selectedTarget]);
 
   /* ---- The official build document and its options ----
    *
@@ -642,7 +759,7 @@ export default function FirmwareFlasherSimpleScreen({
       if (controller.signal.aborted) return;
       setBuildOptions(options);
       setChoices(defaultStandardChoices(detail, options));
-    })().catch(reason => {
+    })().catch(() => {
       if (controller.signal.aborted) return;
       // A missing options document is not a dead end: the official core
       // build still works, and that is what the screen offers instead of
@@ -657,7 +774,9 @@ export default function FirmwareFlasherSimpleScreen({
         generalOptions: [],
         customDefines: '',
       });
-      setBuildOptionsError(errorText(reason));
+      // The raw engine text stays out of the operator's view; the
+      // helper line below says what it means for the build.
+      setBuildOptionsError('CORE_ONLY');
     }).finally(() => {
       if (!controller.signal.aborted) setBuildOptionsLoading(false);
     });
@@ -666,8 +785,17 @@ export default function FirmwareFlasherSimpleScreen({
 
   /* ---- Live flash progress ---- */
   useEffect(() => client.onDfuFlashProgress(update => {
-    if (phase !== 'flashing') return;
+    // Gated on a ref, not on the rendered phase: an engine that emits
+    // its terminal event in the same tick the flash starts would
+    // otherwise have it dropped by a stale closure - and with it the
+    // reset observation the success line reads.
+    if (!flashingRef.current) return;
     lastFlashPhaseRef.current = toFlashPhase(update.phase);
+    if (typeof update.resetConfirmed === 'boolean') {
+      // The terminal event's second truth. Held in a ref because the
+      // resolved promise reads it in the same tick.
+      resetConfirmedRef.current = update.resetConfirmed;
+    }
     // 100 is reserved for the resolved flash promise. A progress event alone
     // is never allowed to visually claim success.
     setProgress(Math.max(0, Math.min(99, update.percent)));
@@ -683,7 +811,7 @@ export default function FirmwareFlasherSimpleScreen({
             ? 'إنهاء التفليش وإعادة التشغيل…'
             : 'تفليش Firmware…';
     setStatus(label);
-  }), [client, phase]);
+  }), [client]);
 
   const updateChoices = useCallback((next: StandardBuildChoices) => {
     setChoices(buildOptions === null ? next : applyRadioTelemetryRule(next, buildOptions));
@@ -704,8 +832,6 @@ export default function FirmwareFlasherSimpleScreen({
     // the new selection is derived (dfuTargetVerified). Clearing the
     // transport here was half of the real hardware-test trap: pick target
     // after entering DFU and the flasher demanded normal USB again.
-    // The manual acknowledgement IS per-target, so it resets.
-    setUnverifiedDfuAccepted(false);
     setProgress(0);
     setPhase('idle');
     setStatus('اختر الإصدار ثم راجع إعدادات البناء.');
@@ -743,6 +869,7 @@ export default function FirmwareFlasherSimpleScreen({
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase('detecting');
+    setProblem(null);
     setManualDfuReason(null);
     setDetectionNote(null);
     setStatus('التعرف على Flight Controller…');
@@ -778,11 +905,11 @@ export default function FirmwareFlasherSimpleScreen({
         await detected.release();
       }
     } catch (reason) {
-      if (!controller.signal.aborted) fail(reason);
+      if (!controller.signal.aborted) failOperation('SERIAL', reason);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [bootloader, fail, freezeIdentity, navigationLocked, requireSingleSerialDevice, targets]);
+  }, [bootloader, failOperation, freezeIdentity, navigationLocked, requireSingleSerialDevice, targets]);
 
   const chooseSerialAndDetect = useCallback(() => {
     if (navigationLocked) return;
@@ -793,8 +920,8 @@ export default function FirmwareFlasherSimpleScreen({
         setStatus('تم السماح بالوصول إلى USB. جارٍ التعرف على اللوحة…');
         autoDetect().catch(() => undefined);
       })
-      .catch(fail);
-  }, [autoDetect, client, fail, navigationLocked]);
+      .catch(reason => failOperation('SERIAL', reason));
+  }, [autoDetect, client, failOperation, navigationLocked]);
 
   /**
    * PREPARE FIRMWARE. Sends exactly the configuration on screen - every
@@ -807,6 +934,7 @@ export default function FirmwareFlasherSimpleScreen({
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase('loading');
+    setProblem(null);
     setProgress(0);
     setStatus('تحضير Firmware الرسمي…');
     try {
@@ -829,14 +957,14 @@ export default function FirmwareFlasherSimpleScreen({
       setPhase('ready');
       setStatus(`Firmware ${selectedRelease} جاهز للتفليش.`);
     } catch (reason) {
-      if (!controller.signal.aborted) fail(reason);
+      if (!controller.signal.aborted) failOperation('PREPARE', reason);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
   }, [
     choices,
     cloudBuild,
-    fail,
+    failOperation,
     navigationLocked,
     selectedRelease,
     selectedTarget,
@@ -848,9 +976,14 @@ export default function FirmwareFlasherSimpleScreen({
     image: Extract<FirmwareImage, {kind: 'HEX'}>,
   ) => {
     setPhase('flashing');
+    flashingRef.current = true;
     setProgress(0);
-    // A stale phase from an earlier attempt must not classify this one.
+    setProblem(null);
+    // A stale phase - and a stale reset observation - from an earlier
+    // attempt must not describe this one.
     lastFlashPhaseRef.current = undefined;
+    resetConfirmedRef.current = undefined;
+    setResetConfirmed(undefined);
     setStatus('بدء تفليش Firmware…');
     try {
       // Bind to the LIVE enumeration of the device, not a remembered
@@ -876,15 +1009,27 @@ export default function FirmwareFlasherSimpleScreen({
       }
       await client.flashDfuFirmware(bound.deviceId, bytesToBase64(image.bytes), false);
       setProgress(100);
+      // TWO TRUTHS, REPORTED SEPARATELY. The resolved promise means the
+      // firmware was written and read back byte-for-byte. Whether the
+      // board was SEEN coming back is the engine's separate observation,
+      // and it only chooses which success sentence is honest.
+      const observedReset = resetConfirmedRef.current;
+      setResetConfirmed(observedReset);
       setPhase('success');
-      setStatus('تم تثبيت Firmware بنجاح.');
+      setStatus(
+        observedReset === true
+          ? 'تمت كتابة Firmware والتحقق منه، وأعادت اللوحة الاتصال.'
+          : 'تمت كتابة Firmware والتحقق منه بنجاح.',
+      );
       setPendingFlash(null);
       setDfuReady(null);
       setDfuPresent(null);
     } catch (reason) {
-      fail(reason);
+      failFlash(reason);
+    } finally {
+      flashingRef.current = false;
     }
-  }, [client, fail, supportsSerialPicker]);
+  }, [client, failFlash, supportsSerialPicker]);
 
   /**
    * ENTER DFU - phase-aware. Three legitimate starting points, none of
@@ -972,7 +1117,7 @@ export default function FirmwareFlasherSimpleScreen({
         setStatus('بانتظار جهاز DFU…');
       }
     } catch (reason) {
-      if (!controller.signal.aborted) fail(reason);
+      if (!controller.signal.aborted) failOperation('DFU_ENTRY', reason);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
@@ -980,7 +1125,7 @@ export default function FirmwareFlasherSimpleScreen({
     bootloader,
     dfuPresent,
     dfuReady,
-    fail,
+    failOperation,
     firmware,
     freezeIdentity,
     navigationLocked,
@@ -1005,14 +1150,19 @@ export default function FirmwareFlasherSimpleScreen({
         setManualDfuReason(null);
         setStatus('تم اختيار جهاز DFU. يمكنك الآن التفليش.');
       })
-      .catch(fail);
-  }, [client, fail, navigationLocked]);
+      .catch(reason => failOperation('DFU_ACCESS', reason));
+  }, [client, failOperation, navigationLocked]);
 
   const flashPreparedFirmware = useCallback(async () => {
     if (!firmware || navigationLocked) return;
     if (firmware.kind !== 'HEX') {
-      setPhase('failed');
-      setStatus('الوضع القياسي مخصص لـ Betaflight HEX. استخدم «متقدم» للأنواع الأخرى.');
+      // Defence in depth: the button is already disabled for this case
+      // (see `flashable`), so this can only be reached programmatically.
+      // It is a capability limit, not a flash failure.
+      failOperation(
+        'PREPARE',
+        new Error('الوضع القياسي مخصص لـ Betaflight HEX. استخدم «متقدم» للأنواع الأخرى.'),
+      );
       return;
     }
     // THE DFU PHASE COMES FIRST. A board in DFU - put there by this
@@ -1021,11 +1171,12 @@ export default function FirmwareFlasherSimpleScreen({
     // point was the core of the real hardware-test trap.
     const dfuNow = dfuReady ?? dfuPresent;
     if (dfuNow !== null) {
-      if (!dfuTargetVerified && !unverifiedDfuAccepted) {
-        setPhase('failed');
-        setStatus('اللوحة في وضع DFU ولا يمكن قراءة هويتها هناك. أكّد مطابقة Target عبر خانة التأكيد ثم اضغط تفليش.');
-        return;
-      }
+      // UNKNOWN IS NOT MISMATCH. A board in DFU cannot be asked who it
+      // is - that is a property of the bootloader, not a reason to
+      // refuse. The operator picked the Target and confirmed the
+      // destructive dialog; a warning is shown beside the action and the
+      // flash proceeds. (A board whose identity WAS read and does not
+      // match is still blocked, below and in enterDfuMode.)
       await completeFlash(dfuNow, firmware);
       return;
     }
@@ -1068,7 +1219,10 @@ export default function FirmwareFlasherSimpleScreen({
         setStatus('تم تجهيز Firmware. اختر جهاز DFU للمتابعة.');
       }
     } catch (reason) {
-      if (!controller.signal.aborted) fail(reason);
+      // Everything in this block happens BEFORE the first destructive
+      // command: identify, verify the target, reboot into DFU. A failure
+      // here is a preparation problem, not a flash verdict.
+      if (!controller.signal.aborted) failOperation('DFU_ENTRY', reason);
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
@@ -1077,14 +1231,12 @@ export default function FirmwareFlasherSimpleScreen({
     completeFlash,
     dfuPresent,
     dfuReady,
-    dfuTargetVerified,
-    fail,
+    failOperation,
     firmware,
     freezeIdentity,
     navigationLocked,
     requireSingleSerialDevice,
     selectedTarget,
-    unverifiedDfuAccepted,
   ]);
 
   const chooseDfuAndContinue = useCallback(() => {
@@ -1108,11 +1260,11 @@ export default function FirmwareFlasherSimpleScreen({
         }
         await completeFlash(device, pendingFlash.image);
       })
-      .catch(fail);
-  }, [client, completeFlash, fail, pendingFlash, phase]);
+      .catch(reason => failOperation('DFU_ACCESS', reason));
+  }, [client, completeFlash, failOperation, pendingFlash, phase]);
 
   const confirmFlash = useCallback(() => {
-    if (!firmware || navigationLocked) return;
+    if (!flashable || navigationLocked) return;
     Alert.alert(
       'تفليش Firmware',
       `سيتم تثبيت ${selectedRelease} على ${selectedTarget}. أزل المراوح واترك USB موصولاً حتى تظهر النتيجة النهائية.`,
@@ -1125,7 +1277,7 @@ export default function FirmwareFlasherSimpleScreen({
         },
       ],
     );
-  }, [firmware, flashPreparedFirmware, navigationLocked, selectedRelease, selectedTarget]);
+  }, [flashPreparedFirmware, flashable, navigationLocked, selectedRelease, selectedTarget]);
 
   const cancel = useCallback(() => {
     if (phase === 'waiting-permission') {
@@ -1158,15 +1310,34 @@ export default function FirmwareFlasherSimpleScreen({
     return (
       <View style={styles.advancedRoot}>
         <View style={styles.advancedBar}>
+          {/* GUARDED. This used to be unconditionally live: pressing it
+              during an advanced flash unmounted the screen mid-write,
+              which silently aborted the operation and showed no terminal
+              result anywhere. A destructive operation in flight is
+              finished or cancelled explicitly, never navigated away
+              from. */}
           <FirmwareButton
             title="العودة إلى الوضع القياسي"
             tone="secondary"
+            size="compact"
             onPress={() => setAdvanced(false)}
+            disabled={advancedBusy}
             testID="flasher-simple-mode"
           />
         </View>
         <View style={styles.advancedBody}>
-          <FirmwareFlasherScreen navigation={navigation} />
+          <React.Suspense
+            fallback={
+              <View style={styles.advancedLoading}>
+                <ActivityIndicator color={colors.accent} />
+              </View>
+            }>
+            <FirmwareFlasherScreen
+              navigation={navigation}
+              client={client}
+              onBusyChange={setAdvancedBusy}
+            />
+          </React.Suspense>
         </View>
       </View>
     );
@@ -1226,14 +1397,21 @@ export default function FirmwareFlasherSimpleScreen({
       </Modal>
 
       <View style={styles.header}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="العودة"
-          onPress={() => navigation?.goBack()}
-          disabled={navigationLocked}
-          style={[styles.backButton, navigationLocked && styles.dimmed]}>
-          <Icon name="chevron-back" size={24} color={colors.textPrimary} />
-        </Pressable>
+        {/* Rendered only when there is somewhere to go back TO. It used
+            to render unconditionally with an optional-chained handler,
+            so in any host without a navigator it looked live and did
+            nothing. */}
+        {navigation !== undefined ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="العودة"
+            onPress={() => navigation.goBack()}
+            disabled={navigationLocked}
+            style={[styles.backButton, navigationLocked && styles.dimmed]}
+            testID="simple-back">
+            <Icon name="chevron-back" size={24} color={colors.textPrimary} />
+          </Pressable>
+        ) : null}
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Firmware Flasher</Text>
           <Text style={styles.subtitle}>اللوحة · الإصدار · الإعدادات · التفليش</Text>
@@ -1250,27 +1428,44 @@ export default function FirmwareFlasherSimpleScreen({
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, {maxWidth: contentMaxWidth}]}
         keyboardShouldPersistTaps="handled">
+        {/* A problem that is NOT a flash verdict: a catalogue download, a
+            permission, a build, a detection. The board was never written
+            to, and this notice never claims otherwise. */}
+        {phase === 'problem' && problem !== null ? (
+          <View testID="simple-problem-notice">
+            <FirmwareNotice
+              title={PROBLEM_TITLES[problem.category]}
+              text={problem.text}
+              tone="warning"
+            />
+          </View>
+        ) : null}
+
         {/* 1 — the board */}
         <View style={styles.card}>
           <StepHeader number="١" title="اللوحة" />
-          {supportsSerialPicker ? (
+          <View style={styles.actionRow}>
+            {supportsSerialPicker ? (
+              <FirmwareButton
+                title="اختيار جهاز USB"
+                tone="secondary"
+                size="compact"
+                onPress={chooseSerialAndDetect}
+                disabled={navigationLocked}
+                testID="simple-choose-serial"
+              />
+            ) : null}
             <FirmwareButton
-              title="اختيار جهاز USB"
+              title={phase === 'detecting' ? 'جارٍ التعرف…' : 'التعرف على اللوحة المتصلة'}
               tone="secondary"
-              onPress={chooseSerialAndDetect}
-              disabled={navigationLocked}
-              testID="simple-choose-serial"
+              size="compact"
+              onPress={() => autoDetect().catch(() => undefined)}
+              disabled={navigationLocked || targetsLoading}
+              testID="simple-auto-detect"
             />
-          ) : null}
-          <FirmwareButton
-            title={phase === 'detecting' ? 'جارٍ التعرف…' : 'التعرف على اللوحة المتصلة'}
-            tone="secondary"
-            onPress={() => autoDetect().catch(() => undefined)}
-            disabled={navigationLocked || targetsLoading}
-            testID="simple-auto-detect"
-          />
+          </View>
           <Pressable
             accessibilityRole="button"
             onPress={() => setTargetPickerOpen(true)}
@@ -1375,7 +1570,7 @@ export default function FirmwareFlasherSimpleScreen({
           ) : null}
           {buildOptionsError !== null ? (
             <Text style={styles.helper} testID="simple-build-options-error">
-              تعذّر تحميل خيارات البناء لهذا الإصدار؛ سيُستخدم البناء الأساسي (Core). {buildOptionsError}
+              تعذّر تحميل خيارات البناء لهذا الإصدار؛ سيُستخدم البناء الأساسي (Core).
             </Text>
           ) : null}
           {selectedRelease && !buildOptionsLoading && buildOptionsError === null && !configurable ? (
@@ -1422,6 +1617,11 @@ export default function FirmwareFlasherSimpleScreen({
                     lockedLabel={
                       category.key === 'telemetry' && radioCarriesTelemetry
                         ? 'مضمّن تلقائياً مع بروتوكول الراديو'
+                        : undefined
+                    }
+                    lockedReason={
+                      category.key === 'telemetry' && radioCarriesTelemetry
+                        ? 'بروتوكول الراديو المحدد يوفّر Telemetry بنفسه. غيّر «بروتوكول الراديو» لفتح هذا الخيار.'
                         : undefined
                     }
                     onChange={value =>
@@ -1477,12 +1677,17 @@ export default function FirmwareFlasherSimpleScreen({
         {/* 4 — prepare */}
         <View style={styles.card}>
           <StepHeader number="٤" title="تحضير Firmware" />
+          {/* Downloading a build is reversible and repeatable, so it is
+              a normal action - deliberately NOT the same mint slab the
+              irreversible write used to share with it. */}
           <FirmwareButton
             title={phase === 'loading'
               ? 'جارٍ التحضير…'
               : firmware
                 ? 'إعادة تحضير Firmware'
                 : 'تحضير Firmware'}
+            tone="secondary"
+            size="compact"
             onPress={() => loadFirmware().catch(() => undefined)}
             disabled={navigationLocked || !selectedTarget || !selectedRelease || choices === null}
             testID="simple-load-firmware"
@@ -1494,17 +1699,29 @@ export default function FirmwareFlasherSimpleScreen({
           ) : null}
         </View>
 
-        {/* 5 — DFU + flash */}
+        {/* 5 — DFU + flash.
+            ONE readiness line, at most ONE warning, ONE dominant
+            destructive action, and the result right next to it. The
+            warning wall this used to render - readiness, manual-DFU
+            notice, acknowledgement pill, safety line and footer, all at
+            equal weight around the primary action - is what buried the
+            thing the operator actually came here to press. */}
         <View style={styles.card}>
           <StepHeader number="٥" title="التفليش" />
           {isBusy ? <FirmwareProgress percent={progress} label={status} /> : null}
 
           {phase === 'success' ? (
-            <FirmwareNotice
-              title="تم تثبيت Firmware بنجاح"
-              text="اكتملت الكتابة والتحقق بالقراءة الراجعة، وأعادت اللوحة التشغيل."
-              tone="success"
-            />
+            <View testID="simple-flash-success">
+              <FirmwareNotice
+                title="تمت كتابة Firmware والتحقق منه بنجاح"
+                text={
+                  resetConfirmed === true
+                    ? 'أعادت اللوحة الاتصال بنجاح.'
+                    : 'لم نتمكن من تأكيد عودة اللوحة تلقائيًا. إن لم تظهر خلال لحظات، افصل USB وأعد توصيله.'
+                }
+                tone="success"
+              />
+            </View>
           ) : null}
           {phase === 'failed' ? (
             <FirmwareNotice title="فشل التفليش" text={status} tone="error" />
@@ -1517,53 +1734,57 @@ export default function FirmwareFlasherSimpleScreen({
             />
           ) : null}
 
+          {/* The DFU phase in one line, with the identity caveat as a
+              plain warning rather than a gate. */}
           {dfuReady !== null ? (
             <Text style={styles.detected} testID="simple-dfu-ready">
               {dfuTargetVerified
                 ? 'اللوحة في وضع DFU وهويتها مطابقة للـ Target المحدد.'
-                : 'اللوحة في وضع DFU وجاهزة للتفليش.'}
+                : 'اللوحة في وضع DFU. لا يمكن قراءة هويتها هناك، فتأكد أن Target صحيح.'}
             </Text>
-          ) : (
-            <FirmwareButton
-              title="الدخول إلى وضع DFU"
-              tone="secondary"
-              onPress={() => enterDfuMode().catch(() => undefined)}
-              disabled={navigationLocked}
-              testID="simple-enter-dfu"
-            />
-          )}
+          ) : null}
+
+          <View style={styles.actionRow}>
+            {dfuReady === null ? (
+              <FirmwareButton
+                title="الدخول إلى وضع DFU"
+                tone="secondary"
+                size="compact"
+                onPress={() => enterDfuMode().catch(() => undefined)}
+                disabled={navigationLocked}
+                testID="simple-enter-dfu"
+              />
+            ) : null}
+            {/* The one-press browser chooser is a FIRST-CLASS path, not an
+                error remedy: a board already in DFU (manual BOOT entry, a
+                previous session, a replug) has no serial device to detect.
+                Android needs no chooser - the presence watcher adopts any
+                DFU device automatically. */}
+            {supportsSerialPicker && dfuReady === null && phase !== 'waiting-permission' ? (
+              <FirmwareButton
+                title="اختيار جهاز DFU"
+                tone="secondary"
+                size="compact"
+                onPress={chooseDfuDevice}
+                disabled={navigationLocked}
+                testID="simple-choose-dfu-device"
+              />
+            ) : null}
+            {isBusy || phase === 'waiting-permission' ? (
+              <FirmwareButton
+                title={phase === 'waiting-permission' ? 'إلغاء قبل بدء الكتابة' : 'إلغاء'}
+                tone="secondary"
+                size="compact"
+                onPress={cancel}
+                testID="simple-cancel-flash"
+              />
+            ) : null}
+          </View>
+
           {manualDfuReason !== null ? (
             <View testID="simple-manual-dfu">
               <FirmwareNotice title="وضع DFU" text={manualDfuReason} tone="warning" />
             </View>
-          ) : null}
-          {/* The one-press browser chooser is a FIRST-CLASS path, not an
-              error remedy: a board already in DFU (manual BOOT entry, a
-              previous session, a replug) has no serial device to detect,
-              and hiding this button behind failure states was half of
-              the real hardware-test dead end. Android needs no chooser - the
-              presence watcher adopts any DFU device automatically. */}
-          {supportsSerialPicker && dfuReady === null && phase !== 'waiting-permission' ? (
-            <FirmwareButton
-              title="اختيار جهاز DFU"
-              tone="secondary"
-              onPress={chooseDfuDevice}
-              disabled={navigationLocked}
-              testID="simple-choose-dfu-device"
-            />
-          ) : null}
-          {dfuReady !== null && !dfuTargetVerified ? (
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityState={{checked: unverifiedDfuAccepted, disabled: navigationLocked}}
-              disabled={navigationLocked}
-              onPress={() => setUnverifiedDfuAccepted(current => !current)}
-              style={[styles.choice, unverifiedDfuAccepted && styles.choiceSelected]}
-              testID="simple-accept-unverified-dfu">
-              <Text style={styles.choiceText}>
-                أؤكد أن Target مطابق (لا يمكن قراءة الهوية في وضع DFU)
-              </Text>
-            </Pressable>
           ) : null}
 
           {phase === 'waiting-permission' ? (
@@ -1579,22 +1800,17 @@ export default function FirmwareFlasherSimpleScreen({
               />
             </>
           ) : (
+            /* THE destructive action: the only danger-toned control on
+               the screen, and the only one that writes the board. */
             <FirmwareButton
               title={phase === 'flashing' ? 'التفليش جارٍ…' : 'تفليش Firmware'}
+              tone="danger"
               onPress={confirmFlash}
-              disabled={navigationLocked || firmware === null}
+              disabled={navigationLocked || !flashable}
               testID="simple-flash-firmware"
             />
           )}
 
-          {isBusy || phase === 'waiting-permission' ? (
-            <FirmwareButton
-              title={phase === 'waiting-permission' ? 'إلغاء قبل بدء الكتابة' : 'إلغاء'}
-              tone="secondary"
-              onPress={cancel}
-              testID="simple-cancel-flash"
-            />
-          ) : null}
           {firmware !== null && phase === 'ready' ? (
             <Text style={styles.helper} testID="simple-flash-safety">
               أزل المراوح قبل التفليش، واترك USB موصولاً حتى تظهر النتيجة النهائية.
@@ -1629,7 +1845,19 @@ const styles = StyleSheet.create({
   advancedLink: {minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm},
   advancedLinkText: {...typography.caption, color: colors.accentStrong, fontWeight: '700'},
   scroll: {flex: 1},
-  content: {padding: spacing.md, gap: spacing.md, paddingBottom: spacing.xl},
+  content: {
+    padding: spacing.md,
+    gap: spacing.md,
+    paddingBottom: spacing.xl,
+    // Capped by useContentEnvelope at render time and centred, so cards
+    // stop spanning the whole width of a desktop window.
+    width: '100%',
+    alignSelf: 'center',
+  },
+  /** Supporting actions sit on one wrapping row, sized to their labels. */
+  actionRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  lockedNote: {...typography.caption, color: colors.textSecondary},
+  advancedLoading: {paddingVertical: spacing.xl, alignItems: 'center'},
   card: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,

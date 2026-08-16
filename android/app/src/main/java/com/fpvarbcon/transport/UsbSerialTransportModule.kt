@@ -569,6 +569,9 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
         putDouble("percent", progress.percent.toDouble())
         putDouble("bytesProcessed", progress.bytesProcessed.toDouble())
         putDouble("totalBytes", progress.totalBytes.toDouble())
+        // Terminal 'complete' only - the reset observation, carried
+        // separately from the firmware verdict.
+        progress.resetConfirmed?.let { putBoolean("resetConfirmed", it) }
       },
     )
   }

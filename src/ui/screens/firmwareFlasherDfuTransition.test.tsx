@@ -342,7 +342,7 @@ describe('THE KAKUTE F7 REPRODUCTION - expected MSP disappearance must never abo
     expect(client.flashDfuFirmware.mock.calls[0][0]).toBe(DFU_B.deviceId);
 
     const text = screenText(renderer);
-    expect(text).toContain('تم تثبيت Firmware بنجاح');
+    expect(text).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
     // The trap messages must never have become the terminal state.
     expect(text).not.toContain('لم يُعثر على Flight Controller');
     expect(text).not.toContain('وصّل اللوحة عبر USB');
@@ -395,20 +395,18 @@ describe('the board is ALREADY in DFU - the second legitimate entry path', () =>
     await selectKakuteTarget(renderer);
     await prepareFirmware(renderer);
 
-    // Identity cannot be read in DFU: flashing without the explicit
-    // acknowledgement is BLOCKED, with the checkbox named - not with a
-    // demand to leave DFU.
-    await press(renderer, 'simple-flash-firmware');
-    await flush();
-    expect(screenText(renderer)).toContain('أكّد مطابقة Target');
-    expect(client.flashDfuFirmware).not.toHaveBeenCalled();
-    expect(screenText(renderer)).not.toContain('وصّل اللوحة عبر USB');
+    // UNKNOWN IS NOT MISMATCH. Identity cannot be read in DFU - that is
+    // a property of the bootloader, not a reason to refuse. The screen
+    // WARNS and the flash proceeds on the first press; there is no
+    // acknowledgement checkbox and no hidden post-confirmation gate.
+    expect(screenText(renderer)).toContain('لا يمكن قراءة هويتها');
+    expect(has(renderer, 'simple-accept-unverified-dfu')).toBe(false);
 
-    await press(renderer, 'simple-accept-unverified-dfu');
     await press(renderer, 'simple-flash-firmware');
     await flush(24);
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
-    expect(screenText(renderer)).toContain('تم تثبيت Firmware بنجاح');
+    expect(screenText(renderer)).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
+    expect(screenText(renderer)).not.toContain('وصّل اللوحة عبر USB');
   });
 
   it('«الدخول إلى وضع DFU» with the board already in DFU reports ready instead of failing over the missing serial device', async () => {
@@ -452,7 +450,9 @@ describe('target identity is frozen across the re-enumeration', () => {
     await flush();
     expect(has(renderer, 'simple-dfu-ready')).toBe(true);
     expect(screenText(renderer)).not.toContain('هويتها مطابقة');
-    expect(has(renderer, 'simple-accept-unverified-dfu')).toBe(true);
+    // Downgraded to a warning, never a gate.
+    expect(screenText(renderer)).toContain('لا يمكن قراءة هويتها');
+    expect(has(renderer, 'simple-accept-unverified-dfu')).toBe(false);
 
     // Returning to the verified target restores the derived match - the
     // identity was never erased by USB churn or selection churn.
@@ -526,7 +526,7 @@ describe('WebUSB permission is a one-press continuation, never a restart', () =>
     expect(pipeline.rebootToBootloader).toHaveBeenCalledTimes(1);
     expect(build).toHaveBeenCalledTimes(1);
     expect(client.flashDfuFirmware).toHaveBeenCalledTimes(1);
-    expect(screenText(renderer)).toContain('تم تثبيت Firmware بنجاح');
+    expect(screenText(renderer)).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
   });
 
   it('a cancelled chooser changes nothing: firmware stays prepared, the hold remains, no failure is declared', async () => {
@@ -640,7 +640,6 @@ describe('the completion engine keeps its P0 contract through the new phases', (
     trackedRenderers.push(renderer);
     await selectKakuteTarget(renderer);
     await prepareFirmware(renderer);
-    await press(renderer, 'simple-accept-unverified-dfu');
     await press(renderer, 'simple-flash-firmware');
     await flush(24);
     return {client, renderer};
@@ -690,20 +689,19 @@ describe('the completion engine keeps its P0 contract through the new phases', (
     trackedRenderers.push(renderer);
     await selectKakuteTarget(renderer);
     await prepareFirmware(renderer);
-    await press(renderer, 'simple-accept-unverified-dfu');
     await press(renderer, 'simple-flash-firmware');
     await act(async () => {
       client.emitDfuProgress({phase: 'writing', percent: 99.9} as DfuFlashProgressEvent);
       await Promise.resolve();
     });
 
-    expect(screenText(renderer)).not.toContain('تم تثبيت Firmware بنجاح');
+    expect(screenText(renderer)).not.toContain('تمت كتابة Firmware والتحقق منه بنجاح');
 
     await act(async () => {
       resolveFlash();
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(screenText(renderer)).toContain('تم تثبيت Firmware بنجاح');
+    expect(screenText(renderer)).toContain('تمت كتابة Firmware والتحقق منه بنجاح');
   });
 });

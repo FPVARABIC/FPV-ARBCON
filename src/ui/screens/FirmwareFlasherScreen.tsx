@@ -116,6 +116,12 @@ import type {
 
 type ScreenDependencies = {
   readonly client?: UsbSerialTransportClient;
+  /**
+   * Reports whether a destructive operation is in flight, so a host that
+   * embeds this screen can refuse to unmount it mid-write instead of
+   * silently aborting the flash.
+   */
+  readonly onBusyChange?: (busy: boolean) => void;
   readonly buildApi?: BetaflightBuildApi;
 };
 type Props = Partial<NativeStackScreenProps<RootStackParamList, 'FirmwareFlasher'>> & ScreenDependencies;
@@ -373,6 +379,7 @@ export default function FirmwareFlasherScreen({
   navigation,
   client = usbSerialTransportClient,
   buildApi = betaflightBuildApi,
+  onBusyChange,
 }: Props): React.JSX.Element {
   const {t} = useTranslation();
   const [step, setStep] = useState<Step>('board');
@@ -476,13 +483,38 @@ export default function FirmwareFlasherScreen({
     appendLog(`خطأ: ${message}`);
   }, [appendLog]);
 
-  const reportProgress = useCallback((percent: number, message: string, force = false) => {
-    const now = Date.now();
-    if (!force && now - lastProgressAt.current < 80 && percent < 100) return;
-    lastProgressAt.current = now;
-    setProgress(Math.max(0, Math.min(100, percent)));
-    setStatus(sanitizeUserVisibleText(message));
-  }, []);
+  /**
+   * `percent` is clamped to 99 while an operation is still running: 100
+   * is reserved for the SETTLED terminal state, exactly as in standard
+   * mode. A progress event alone must never paint a full bar for a flash
+   * whose promise has not resolved - the operator reads a full bar as
+   * "done", and that is a claim only the settlement can make.
+   */
+  /**
+   * BUSY, as the host needs to know it. Anything that is writing to the
+   * board, talking to it, or holding a prepared destructive operation
+   * counts - an embedding screen must not be able to unmount this one in
+   * the middle of it.
+   */
+  useEffect(() => {
+    onBusyChange?.(
+      ['detecting', 'building', 'saving', 'backing-up', 'flashing', 'restoring'].includes(
+        operation,
+      ),
+    );
+  }, [onBusyChange, operation]);
+
+  const reportProgress = useCallback(
+    (percent: number, message: string, force = false, terminal = false) => {
+      const now = Date.now();
+      if (!force && now - lastProgressAt.current < 80 && percent < 100) return;
+      lastProgressAt.current = now;
+      const ceiling = terminal ? 100 : 99;
+      setProgress(Math.max(0, Math.min(ceiling, percent)));
+      setStatus(sanitizeUserVisibleText(message));
+    },
+    [],
+  );
 
   /**
    * THE ~98% STALL CORRECTION, UI half.
@@ -1384,15 +1416,24 @@ export default function FirmwareFlasherScreen({
     signal: AbortSignal,
     attempt: number,
   ) => {
-    reportProgress(100, 'اكتمل التفليش والتحقق وإعادة التشغيل.', true);
+    reportProgress(100, 'اكتملت الكتابة والتحقق بنجاح.', true, true);
     appendLog('اكتملت كتابة Firmware والتحقق بالقراءة الراجعة.');
     let restore: FlashRestoreTruth;
     try {
       restore = {kind: await restoreBackupAfterFlash(backup, signal)};
     } catch (restoreError) {
+      // Same Arabic-first treatment the flash reasons get: a known code
+      // becomes operator copy, and only a genuinely unmapped message
+      // falls back - so a transport error can no longer surface its raw
+      // English sentence inside the restore line.
+      const restoreCode = (restoreError as {code?: unknown} | null)?.code;
+      const rawDetail = sanitizeUserVisibleText(errorMessage(restoreError));
       restore = {
         kind: 'FAILED',
-        detail: sanitizeUserVisibleText(errorMessage(restoreError)),
+        detail:
+          typeof restoreCode === 'string' && restoreCode.length > 0
+            ? t(flashReasonLabelKey(restoreCode), {defaultValue: rawDetail})
+            : rawDetail,
       };
       appendLog(`فشلت استعادة إعدادات CLI بعد تفليش ناجح: ${restore.detail}`);
     }
@@ -1402,10 +1443,10 @@ export default function FirmwareFlasherScreen({
     setStatus(
       restore.kind === 'FAILED'
         ? 'نجح تثبيت Firmware، لكن فشلت استعادة الإعدادات.'
-        : 'اكتمل التفليش والتحقق وإعادة التشغيل.',
+        : 'تمت كتابة Firmware والتحقق منه بنجاح.',
     );
     await refreshDevices().catch(() => undefined);
-  }, [appendLog, refreshDevices, reportProgress, restoreBackupAfterFlash]);
+  }, [appendLog, refreshDevices, reportProgress, restoreBackupAfterFlash, t]);
 
   const startFlash = useCallback(async () => {
     if (!['idle', 'success', 'error', 'unconfirmed'].includes(operation)) return;

@@ -83,10 +83,17 @@ export class BetaflightBuildApi {
       if (reason instanceof Error && reason.name === 'AbortError') {
         throw reason;
       }
+      // The operator gets the Arabic meaning; the browser's own English
+      // sentence ("Failed to fetch") goes to the console for developers
+      // instead of into the UI, where it read as an untranslated defect.
+      if (typeof console !== 'undefined') {
+        console.warn(
+          '[buildApi] network/CORS failure:',
+          reason instanceof Error ? reason.message : String(reason),
+        );
+      }
       throw new BuildApiError(
-        `تعذّر الوصول إلى خادم البناء من هذه الصفحة (انقطاع شبكة أو حجب CORS). التفاصيل التقنية: ${
-          reason instanceof Error ? reason.message : String(reason)
-        }`,
+        'تعذّر الوصول إلى خادم البناء من هذه الصفحة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
       );
     }
   }

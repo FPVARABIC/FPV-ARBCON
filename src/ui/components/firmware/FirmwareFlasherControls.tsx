@@ -29,17 +29,32 @@ export function FirmwareSection({
   );
 }
 
+/**
+ * `size` is the hierarchy control.
+ *
+ *   'block'   - spans its container. Reserved for the one action a step
+ *               exists to perform.
+ *   'compact' - sized to its own label. Everything else: supporting
+ *               actions, tools, cancel.
+ *
+ * Before this existed every action rendered as the same full-width 46px
+ * slab, so a reversible download and an irreversible write to a flight
+ * controller looked identical and read as a wall of bars on a desktop
+ * viewport. The default stays 'block' so existing callers are unchanged.
+ */
 export function FirmwareButton({
   title,
   onPress,
   disabled = false,
   tone = 'primary',
+  size = 'block',
   testID,
 }: {
   readonly title: string;
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly tone?: 'primary' | 'secondary' | 'danger';
+  readonly size?: 'block' | 'compact';
   readonly testID?: string;
 }): React.JSX.Element {
   return (
@@ -51,6 +66,7 @@ export function FirmwareButton({
       onPress={onPress}
       style={({pressed}) => [
         styles.button,
+        size === 'compact' && styles.buttonCompact,
         tone === 'secondary' && styles.buttonSecondary,
         tone === 'danger' && styles.buttonDanger,
         disabled && styles.disabled,
@@ -59,6 +75,7 @@ export function FirmwareButton({
       <Text
         style={[
           styles.buttonText,
+          size === 'compact' && styles.buttonTextCompact,
           tone === 'secondary' && styles.buttonTextSecondary,
           tone === 'danger' && styles.buttonTextDanger,
         ]}>
@@ -209,9 +226,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     backgroundColor: colors.accent,
   },
+  /** Sized to its label, never stretched. Still a 44px+ touch target. */
+  buttonCompact: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+  },
   buttonSecondary: {backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border},
   buttonDanger: {backgroundColor: colors.error},
   buttonText: {...typography.sectionTitle, color: colors.accentText, textAlign: 'center'},
+  buttonTextCompact: {...typography.bodyStrong},
   buttonTextSecondary: {color: colors.textPrimary},
   buttonTextDanger: {color: colors.white},
   disabled: {opacity: 0.45},

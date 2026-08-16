@@ -72,7 +72,6 @@ import {parseIntelHex} from '../../../../core/firmware-flasher/intelHex';
 import type {IntelHexImage} from '../../../../core/firmware-flasher/intelHex';
 import {
   DFU_CODE_SESSION_POISONED,
-  DFU_CODE_UNCONFIRMED_MANIFEST,
   classifyDfuOverrun,
 } from '../../../../core/firmware-flasher/flashCompletionModel';
 import type {DfuFlashStage} from '../../../../core/firmware-flasher/flashCompletionModel';
@@ -193,6 +192,17 @@ export const DFU_TRANSFER_DEADLINE_MS: Readonly<Record<DfuFlashStage, number>> =
  * non-destructive, and a frozen attempt must not be held open by them. */
 export const DFU_RELEASE_DEADLINE_MS = 5_000;
 export const DFU_PRESENCE_PROBE_DEADLINE_MS = 2_000;
+
+/**
+ * How long the engine WAITS for the board to leave the bus after the
+ * manifestation, before reporting the reset as unobserved. Real STM32
+ * bootloaders detach anywhere from ~100ms to several seconds after the
+ * leave command, so this window is sized for the slow end of real
+ * hardware. Nothing destructive happens inside it, and its outcome never
+ * changes the firmware verdict - it only decides `resetConfirmed`.
+ */
+export const DFU_RESET_OBSERVATION_MS = 8_000;
+export const DFU_RESET_POLL_INTERVAL_MS = 250;
 
 /** Internal: a transfer outlived its observation window. Never leaves
  * this module - flashDfuFirmware converts it into a truthful verdict. */
@@ -676,21 +686,19 @@ class DfuConnection {
   }
 
   /**
-   * True when the device has reset out from under us - the browser's
-   * equivalent of Android re-reading UsbManager.deviceList. See note 2 in
-   * the file header: this is weaker evidence than Android's, so it is used
-   * ONLY to accept an expected post-manifestation disappearance, never to
-   * claim a flash succeeded.
+   * A SINGLE-SAMPLE presence probe: is the device on the bus right now?
+   *
+   * This answers a much narrower question than its name once suggested.
+   * It is deliberately NOT used to decide whether a flash completed - see
+   * awaitDeviceDisappearance below and the note on classifyDfuOverrun.
    */
-  async deviceWentAway(): Promise<boolean> {
+  private async deviceIsAbsentNow(): Promise<boolean> {
     if (!this.device.opened) {
       return true;
     }
     try {
-      // Bounded: this probe decides whether a frozen manifestation may
-      // count as completion, and it must not itself pend forever. An
-      // unanswerable probe reports PRESENT - the conservative answer,
-      // because "gone" is completion evidence and "present" never is.
+      // Bounded so an unanswerable probe cannot pend forever. An
+      // unanswerable probe reports PRESENT - the conservative answer.
       const devices = await awaitBounded(
         navigator.usb.getDevices(),
         'getDevices() presence probe',
@@ -700,6 +708,65 @@ class DfuConnection {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * The presence answer used when a transfer FROZE. A frozen session is
+   * already poisoned and nothing further will be sent to it, so this is a
+   * single sample rather than a wait: the classification it feeds treats
+   * "gone" only as extra information, never as the thing that decides
+   * whether verified bytes count.
+   */
+  async deviceIsAbsentAfterOverrun(): Promise<boolean> {
+    return this.deviceIsAbsentNow();
+  }
+
+  /**
+   * WAITS - bounded - for the board to actually leave the bus.
+   *
+   * THE BUG THIS REPLACES. A real Pavo/BetaFPV F405 was flashed and
+   * byte-for-byte verified, and then reported as "the board did not
+   * restart", because the old code took ONE instantaneous sample of
+   * navigator.usb.getDevices() the moment the leave transfer settled. A
+   * resetting STM32 stays enumerated for hundreds of milliseconds to
+   * several seconds; the sample simply arrived too early. The window here
+   * is long enough for real hardware, and both signals are used: the
+   * browser's own `disconnect` event (immediate and authoritative) and
+   * polling (for browsers that deliver the event late or not at all).
+   *
+   * Its answer is REPORTED, never used to invalidate verified bytes.
+   */
+  async awaitDeviceDisappearance(timeoutMs: number): Promise<boolean> {
+    if (await this.deviceIsAbsentNow()) {
+      return true;
+    }
+    const usb = typeof navigator === 'undefined' ? undefined : navigator.usb;
+    return new Promise<boolean>(resolve => {
+      let settled = false;
+      const finish = (gone: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        clearInterval(poll);
+        usb?.removeEventListener?.('disconnect', onDisconnect as EventListener);
+        resolve(gone);
+      };
+      const onDisconnect = (event: {device?: USBDevice}) => {
+        if (event?.device === this.device) {
+          finish(true);
+        }
+      };
+      usb?.addEventListener?.('disconnect', onDisconnect as EventListener);
+      const poll = setInterval(() => {
+        this.deviceIsAbsentNow().then(
+          absent => {
+            if (absent) finish(true);
+          },
+          () => undefined,
+        );
+      }, DFU_RESET_POLL_INTERVAL_MS);
+      const deadline = setTimeout(() => finish(false), timeoutMs);
+    });
   }
 
   private checkCancelled(): void {
@@ -1121,6 +1188,29 @@ export type DfuDiscoveryDiagnostics = {
   };
   readonly failureCode?: string;
 };
+
+/**
+ * THE FLASH TIMELINE - developer evidence for the next hardware test.
+ *
+ * Records the moments a real board's behaviour is judged by, so a
+ * hardware run can be reconstructed exactly: when verification finished,
+ * when the leave command went out, when (or whether) the device left the
+ * bus, and what the attempt was finally called. Never rendered in the
+ * operator UI; read it from the console or a diagnostics panel.
+ */
+export type DfuFlashTimeline = {
+  readonly verifyCompletedAt?: number;
+  readonly manifestationSentAt?: number;
+  readonly deviceDisappearedAt?: number;
+  readonly resetConfirmed?: boolean;
+  readonly terminalResult?: string;
+  readonly totalBytes?: number;
+};
+
+let lastDfuFlashTimeline: DfuFlashTimeline | undefined;
+export function getLastDfuFlashTimeline(): DfuFlashTimeline | undefined {
+  return lastDfuFlashTimeline;
+}
 
 /**
  * Developer diagnostics for the LAST discovery attempt - the record §21
@@ -1580,13 +1670,28 @@ export async function flashDfuFirmware(
   let written = 0;
   let verified = 0;
   let manifestationRequested = false;
+  const timeline: {
+    verifyCompletedAt?: number;
+    manifestationSentAt?: number;
+    deviceDisappearedAt?: number;
+    resetConfirmed?: boolean;
+    terminalResult?: string;
+    totalBytes?: number;
+  } = {totalBytes: total};
+  lastDfuFlashTimeline = {...timeline};
 
-  const complete = () =>
+  /**
+   * The terminal completion event. `resetConfirmed` is the SEPARATE
+   * second truth: whether the board was actually seen leaving the bus.
+   * It is reported, never used to decide whether the firmware landed.
+   */
+  const complete = (resetConfirmed: boolean) =>
     onProgress({
       phase: 'complete',
       percent: 100,
       bytesProcessed: total,
       totalBytes: total,
+      resetConfirmed,
     });
 
   try {
@@ -1683,6 +1788,7 @@ export async function flashDfuFirmware(
      * never interrupted. Nothing below retries an erase, a write or a
      * manifestation. */
     connection.stage = 'FINALIZE';
+    timeline.verifyCompletedAt = Date.now();
     onProgress({
       phase: 'finalizing',
       percent: 99,
@@ -1705,32 +1811,34 @@ export async function flashDfuFirmware(
     // swallows the promise and the board turns out to be gone, the
     // evidence must already say the manifestation was requested.
     manifestationRequested = true;
-    let resetOnLeaveCommand = false;
+    timeline.manifestationSentAt = Date.now();
+
+    /* ---- THE FLASH IS ALREADY DECIDED FROM HERE DOWN ----
+     *
+     * Every byte has been written, read back and compared equal. That is
+     * a fact about the board's flash memory, and no USB event after this
+     * point can make it untrue. What remains - did the leave command get
+     * accepted, did the board reset, did it leave the bus - is a second,
+     * separate question about the USB bus.
+     *
+     * The old code merged the two, and a real Pavo/BetaFPV F405 paid for
+     * it: verified firmware, reported as "the board did not restart",
+     * with unplug/replug instructions. The pinned Betaflight Configurator
+     * declares programming SUCCESSFUL at the end of verification and only
+     * then calls leave(), whose failures it merely logs. We keep more
+     * information than Betaflight does - we report the reset outcome -
+     * but we no longer let it contradict proven byte truth.
+     *
+     * So: nothing below may throw. Each step is attempted, its outcome
+     * observed, and the attempt ends in a resolved completion carrying
+     * `resetConfirmed`. */
+    let resetObserved = false;
     try {
       await connection.download(0, new Uint8Array(0));
-    } catch (error) {
+    } catch {
       // STM32 bootloaders set bitWillDetach: a fast board resets on the
-      // leave command ITSELF, failing this very transfer. With every
-      // byte verified and the device genuinely gone, that rejection IS
-      // the completion signal - exactly how exitDfuMode, the Android
-      // worker and the pinned Betaflight reference already treat it.
-      // Reporting it as failure told operators a finished flash died.
-      const code = error instanceof DfuError ? error.code : '';
-      if (code !== 'DFU_TRANSFER_FAILED') {
-        throw error;
-      }
-      if (await connection.deviceWentAway()) {
-        resetOnLeaveCommand = true;
-      } else {
-        // The transfer was refused and the board is STILL PRESENT. Every
-        // byte is already verified in flash; only the reset is unproven.
-        // Calling this "فشل التفليش" would be a lie about the firmware -
-        // it is the honest third result instead.
-        throw new DfuError(
-          DFU_CODE_UNCONFIRMED_MANIFEST,
-          'DFU leave command was rejected without a reset; firmware bytes are verified but the reboot is unconfirmed.',
-        );
-      }
+      // leave command ITSELF, failing this very transfer. That is a
+      // normal successful outcome, not an error.
     }
     onProgress({
       phase: 'resetting',
@@ -1738,31 +1846,26 @@ export async function flashDfuFirmware(
       bytesProcessed: total,
       totalBytes: total,
     });
-    if (!resetOnLeaveCommand) {
-      try {
-        await connection.waitForManifestation();
-      } catch (error) {
-        // A manifestation-tolerant device reports status; another resets
-        // immediately and every further transfer fails. A transfer-level
-        // rejection here is acceptable as COMPLETION only when the device
-        // has genuinely gone. With the board still present it becomes the
-        // honest UNCONFIRMED - the bytes are verified, the reset is not -
-        // while a device-DECLARED failure (DFU_DEVICE_ERROR) and a poll
-        // cap that ran out with the device still answering
-        // (DFU_STATUS_TIMEOUT) keep their own codes.
-        const code = error instanceof DfuError ? error.code : '';
-        if (code !== 'DFU_STATUS_FAILED' && code !== 'DFU_TRANSFER_FAILED') {
-          throw error;
-        }
-        if (!(await connection.deviceWentAway())) {
-          throw new DfuError(
-            DFU_CODE_UNCONFIRMED_MANIFEST,
-            'DFU manifestation status was refused without a reset; firmware bytes are verified but the reboot is unconfirmed.',
-          );
-        }
-      }
+    try {
+      // A manifestation-tolerant device answers this; one that already
+      // reset does not. Either way the firmware verdict is settled.
+      await connection.waitForManifestation();
+    } catch {
+      // Expected on a board that reset out from under the status poll.
     }
-    complete();
+    // The reset OBSERVATION - a real bounded wait, not a single sample.
+    resetObserved = await connection.awaitDeviceDisappearance(
+      DFU_RESET_OBSERVATION_MS,
+    );
+    if (resetObserved) {
+      timeline.deviceDisappearedAt = Date.now();
+    }
+    timeline.resetConfirmed = resetObserved;
+    timeline.terminalResult = resetObserved
+      ? 'VERIFIED_FLASH_SUCCESS'
+      : 'VERIFIED_FLASH_SUCCESS_RESET_UNCONFIRMED';
+    lastDfuFlashTimeline = {...timeline};
+    complete(resetObserved);
   } catch (error) {
     if (!(error instanceof DfuPendingTransferOverrun)) {
       throw error;
@@ -1772,21 +1875,29 @@ export async function flashDfuFirmware(
      * window closed) so no future attempt can race the pending transfer.
      * Classify the frozen attempt from measured evidence - never from
      * the timeout itself. */
+    const deviceGone = await connection.deviceIsAbsentAfterOverrun();
     const verdict = classifyDfuOverrun({
       stage: connection.stage,
       allBytesWritten: written === total,
       allBytesVerified: verified === total,
       manifestationRequested,
-      deviceGone: await connection.deviceWentAway(),
+      deviceGone,
     });
+    timeline.resetConfirmed = deviceGone;
+    timeline.terminalResult =
+      verdict.outcome === 'SUCCESS'
+        ? deviceGone
+          ? 'VERIFIED_FLASH_SUCCESS'
+          : 'VERIFIED_FLASH_SUCCESS_RESET_UNCONFIRMED'
+        : `${verdict.outcome}:${verdict.code ?? ''}`;
+    lastDfuFlashTimeline = {...timeline};
     if (verdict.outcome === 'SUCCESS') {
       // Not a timeout converted into success: every byte was read back
-      // equal, the manifestation was issued, and the board has
-      // PHYSICALLY left the bus - the same disappearance evidence the
-      // Android worker and Betaflight's own leave path accept. The
-      // wedged GETSTATUS is exactly what MANIFEST-WAIT-RESET looks like
-      // on a device that resets without answering.
-      complete();
+      // and compared EQUAL before this stage was ever entered. The
+      // wedged transfer is in the leave/reset window, which cannot
+      // unwrite verified flash - so the firmware verdict stands and only
+      // the reset observation is reported as unproven.
+      complete(deviceGone);
       return;
     }
     if (cancelRequested) {
@@ -1824,11 +1935,10 @@ export async function exitDfuMode(deviceId: number): Promise<void> {
     } catch {
       // The board resetting into the application is the SUCCESS case here,
       // and it makes this very transfer fail. Only a device that is still
-      // present has actually failed to leave DFU - so the rejection value
-      // itself carries no information worth keeping. (An overrun lands
-      // here too: the transfer neither settled nor did the device leave,
-      // so it is reported as a failed exit against a poisoned session.)
-      if (!(await connection.deviceWentAway())) {
+      // present AFTER a real bounded wait has actually failed to leave DFU
+      // - the same timing race the flash path had, so it gets the same
+      // cure rather than a single instantaneous sample.
+      if (!(await connection.awaitDeviceDisappearance(DFU_RESET_OBSERVATION_MS))) {
         throw new DfuError(
           'DFU_EXIT_FAILED',
           'DFU manifestation request failed without a reset.',
@@ -1854,7 +1964,10 @@ export async function unprotectDfuDevice(deviceId: number): Promise<void> {
     await connection.readUnprotect();
     const initial = await connection.status().catch(() => null);
     if (!initial) {
-      if (await connection.deviceWentAway()) {
+      // Same timing race as the flash path: a mass erase that resets the
+      // board makes this read fail, and the board takes a moment to leave
+      // the bus. Wait for the disappearance instead of sampling once.
+      if (await connection.awaitDeviceDisappearance(DFU_RESET_OBSERVATION_MS)) {
         return;
       }
       throw new DfuError(
@@ -1877,10 +1990,13 @@ export async function unprotectDfuDevice(deviceId: number): Promise<void> {
     if (!final) {
       return;
     }
-    if (await connection.deviceWentAway()) {
+    // The device's OWN reported state is checked first - it is immediate
+    // and authoritative - and only an unclear state pays for the bounded
+    // disappearance wait.
+    if (final[4] === DFU_STATE_IDLE || final[4] === DFU_STATE_MANIFEST_WAIT_RESET) {
       return;
     }
-    if (final[4] === DFU_STATE_IDLE || final[4] === DFU_STATE_MANIFEST_WAIT_RESET) {
+    if (await connection.awaitDeviceDisappearance(DFU_RESET_OBSERVATION_MS)) {
       return;
     }
     throw new DfuError(
@@ -1912,4 +2028,5 @@ export function __resetWebUsbDfuForTests(): void {
   cancelRequested = false;
   poisonedDevices = new WeakMap<USBDevice, string>();
   lastDfuDiscoveryDiagnostics = undefined;
+  lastDfuFlashTimeline = undefined;
 }

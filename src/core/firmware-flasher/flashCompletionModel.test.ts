@@ -27,6 +27,7 @@ import {
   classifyFlashRejection,
   flashNextActionLabelKey,
   flashReasonLabelKey,
+  flashTerminalResult,
 } from './flashCompletionModel';
 import type {DfuOverrunEvidence} from './flashCompletionModel';
 
@@ -46,19 +47,22 @@ describe('classifyDfuOverrun', () => {
     expect(classifyDfuOverrun(evidence({}))).toEqual({outcome: 'SUCCESS'});
   });
 
-  it('a still-present, silent board is NEVER success, even fully verified', () => {
+  it('a still-present, silent board IS a success once every byte is verified', () => {
+    // THE PAVO/BETAFPV F405 CORRECTION. Whether the board has left the
+    // bus yet says nothing about what is in its flash memory. Verified
+    // bytes are the flash truth; the reset is reported separately as
+    // `resetConfirmed` and may not downgrade this.
     expect(classifyDfuOverrun(evidence({deviceGone: false}))).toEqual({
-      outcome: 'UNCONFIRMED',
-      code: DFU_CODE_UNCONFIRMED_MANIFEST,
+      outcome: 'SUCCESS',
     });
   });
 
-  it('a device that vanished BEFORE the manifestation was issued is not blessed', () => {
+  it('a device that vanished before the manifestation still has verified bytes on it', () => {
     expect(
       classifyDfuOverrun(
         evidence({stage: 'FINALIZE', manifestationRequested: false}),
       ),
-    ).toEqual({outcome: 'UNCONFIRMED', code: DFU_CODE_UNCONFIRMED_MANIFEST});
+    ).toEqual({outcome: 'SUCCESS'});
   });
 
   it('a manifestation freeze without complete verification is not blessed either', () => {
@@ -111,6 +115,32 @@ describe('classifyDfuOverrun', () => {
         }),
       ),
     ).toEqual({outcome: 'FAILED', code: DFU_CODE_UNRESPONSIVE_WRITE});
+  });
+});
+
+describe('flashTerminalResult - the two truths, never merged', () => {
+  it('a verified flash with an OBSERVED reset is the plain success', () => {
+    expect(flashTerminalResult('SUCCESS', true)).toBe('VERIFIED_FLASH_SUCCESS');
+  });
+
+  it('a verified flash whose reset was NOT observed is still a success', () => {
+    expect(flashTerminalResult('SUCCESS', false)).toBe(
+      'VERIFIED_FLASH_SUCCESS_RESET_UNCONFIRMED',
+    );
+    expect(flashTerminalResult('SUCCESS', undefined)).toBe(
+      'VERIFIED_FLASH_SUCCESS_RESET_UNCONFIRMED',
+    );
+  });
+
+  it('the reset observation can never turn a success into a failure', () => {
+    for (const reset of [true, false, undefined]) {
+      expect(flashTerminalResult('SUCCESS', reset)).toMatch(/^VERIFIED_FLASH_SUCCESS/);
+    }
+  });
+
+  it('real failures and genuinely ambiguous attempts keep their own names', () => {
+    expect(flashTerminalResult('FAILED', true)).toBe('FLASH_FAILED');
+    expect(flashTerminalResult('UNCONFIRMED', true)).toBe('FLASH_UNCONFIRMED');
   });
 });
 

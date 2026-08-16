@@ -48,6 +48,49 @@ export type DfuFlashStage =
 /** The only three ways a flash attempt is allowed to end. */
 export type FlashOutcomeKind = 'SUCCESS' | 'FAILED' | 'UNCONFIRMED';
 
+/**
+ * THE PRODUCT-FACING TERMINAL MODEL - three separate truths, never merged.
+ *
+ *   VERIFIED_FLASH_SUCCESS
+ *     erased as required, written, and read back byte-for-byte equal,
+ *     AND the board's reset was observed.
+ *   VERIFIED_FLASH_SUCCESS_RESET_UNCONFIRMED
+ *     the same firmware truth; only the reset/return was not observed
+ *     inside the observation window. This is NOT a failure and must never
+ *     be presented as one.
+ *   FLASH_FAILED
+ *     the destructive work is not proven complete: erase or write failed,
+ *     or the read-back proved a mismatch.
+ *   FLASH_UNCONFIRMED
+ *     genuinely ambiguous - bytes were sent but their read-back proof
+ *     never completed, so byte truth is not established.
+ */
+export type FlashTerminalResult =
+  | 'VERIFIED_FLASH_SUCCESS'
+  | 'VERIFIED_FLASH_SUCCESS_RESET_UNCONFIRMED'
+  | 'FLASH_FAILED'
+  | 'FLASH_UNCONFIRMED';
+
+/**
+ * Names the terminal result from the two facts that are actually
+ * independent. `resetConfirmed` may only refine a SUCCESS; it can never
+ * turn one into a failure, which is the whole point of the split.
+ */
+export function flashTerminalResult(
+  outcome: FlashOutcomeKind,
+  resetConfirmed: boolean | undefined,
+): FlashTerminalResult {
+  if (outcome === 'FAILED') {
+    return 'FLASH_FAILED';
+  }
+  if (outcome === 'UNCONFIRMED') {
+    return 'FLASH_UNCONFIRMED';
+  }
+  return resetConfirmed === true
+    ? 'VERIFIED_FLASH_SUCCESS'
+    : 'VERIFIED_FLASH_SUCCESS_RESET_UNCONFIRMED';
+}
+
 /* Error codes the WebUSB engine mints for frozen attempts. They travel as
  * `code` on the rejection because the transport client's
  * normalizeNativeError() copies ONLY `code` and `message` - any richer
@@ -92,14 +135,22 @@ export interface DfuOverrunVerdict {
  *                            operator must re-flash before flying.
  *   VERIFY                -> UNCONFIRMED. Every byte was written and
  *                            acknowledged, but the read-back proof did not
- *                            finish - neither success nor failure is
- *                            honest.
- *   FINALIZE / MANIFEST   -> SUCCESS only with the full evidence triple
- *                            (verified + manifestation issued + device
- *                            physically gone). Anything less - including
- *                            a present-but-silent board and a device that
- *                            vanished BEFORE the manifestation was issued
- *                            - is UNCONFIRMED.
+ *                            finish - byte truth is not established, so
+ *                            neither success nor failure is honest.
+ *   FINALIZE / MANIFEST   -> SUCCESS whenever every byte was read back and
+ *                            matched. Reaching these stages at all means
+ *                            the read-back pass completed.
+ *
+ * WHY `deviceGone` IS NO LONGER PART OF THE SUCCESS TEST. It used to be,
+ * and that is precisely what a real Pavo/BetaFPV F405 ran into: the board
+ * was flashed and byte-for-byte verified, then the engine sampled the bus
+ * once, still saw the device (a resetting STM32 stays enumerated for a
+ * noticeable interval), and downgraded a finished flash to UNCONFIRMED
+ * with restart doubt. Verified flash memory is a fact; USB disappearance
+ * timing is not evidence about it. The reset observation still happens -
+ * it travels separately as `resetConfirmed` on the terminal progress
+ * event, so the operator learns whether the board came back WITHOUT that
+ * answer being allowed to rewrite what is already on the board.
  */
 export function classifyDfuOverrun(evidence: DfuOverrunEvidence): DfuOverrunVerdict {
   switch (evidence.stage) {
@@ -112,11 +163,7 @@ export function classifyDfuOverrun(evidence: DfuOverrunEvidence): DfuOverrunVerd
       return {outcome: 'UNCONFIRMED', code: DFU_CODE_UNCONFIRMED_VERIFY};
     case 'FINALIZE':
     case 'MANIFEST':
-      if (
-        evidence.manifestationRequested &&
-        evidence.allBytesVerified &&
-        evidence.deviceGone
-      ) {
+      if (evidence.allBytesVerified) {
         return {outcome: 'SUCCESS'};
       }
       return {outcome: 'UNCONFIRMED', code: DFU_CODE_UNCONFIRMED_MANIFEST};

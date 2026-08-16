@@ -101,4 +101,17 @@ export type DfuFlashProgressEvent = {
   percent: number;
   bytesProcessed: number;
   totalBytes: number;
+  /**
+   * Carried ONLY on the terminal 'complete' event, and only by the DFU
+   * engines. It answers a question that is separate from whether the
+   * firmware was written: did the board's reset actually get OBSERVED?
+   *
+   * A verified image is a fact about flash memory. A reset is a fact
+   * about the USB bus, and a real STM32 can remain enumerated for
+   * seconds after it resets. Reporting them as one verdict is what made
+   * a completed, byte-verified flash read as "the board did not
+   * restart" - so they travel separately and the write truth never
+   * depends on this field.
+   */
+  resetConfirmed?: boolean;
 };

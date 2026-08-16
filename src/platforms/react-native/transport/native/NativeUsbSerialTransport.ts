@@ -80,6 +80,9 @@ export type DfuFlashProgressEvent = {
   percent: number;
   bytesProcessed: number;
   totalBytes: number;
+  /** Terminal 'complete' only: whether the board's reset was OBSERVED.
+   * Separate from write truth by design - see usbSerialTransportTypes.ts. */
+  resetConfirmed?: boolean;
 };
 
 export interface Spec extends TurboModule {

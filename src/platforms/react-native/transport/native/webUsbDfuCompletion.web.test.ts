@@ -30,7 +30,6 @@ import {
 } from './webUsbDfu.web';
 import {
   DFU_CODE_SESSION_POISONED,
-  DFU_CODE_UNCONFIRMED_MANIFEST,
   DFU_CODE_UNCONFIRMED_VERIFY,
   DFU_CODE_UNRESPONSIVE_WRITE,
 } from '../../../../core/firmware-flasher/flashCompletionModel';
@@ -241,16 +240,41 @@ class HangableDfuDevice {
   }
 }
 
-type FakeUsb = {getDevices: jest.Mock; requestDevice: jest.Mock};
+type FakeUsb = {
+  getDevices: jest.Mock;
+  requestDevice: jest.Mock;
+  addEventListener: jest.Mock;
+  removeEventListener: jest.Mock;
+};
 
 function installUsb(devices: HangableDfuDevice[]): FakeUsb {
+  const present = [...devices];
   const usb: FakeUsb = {
-    getDevices: jest.fn(async () => devices),
+    getDevices: jest.fn(async () => present),
     requestDevice: jest.fn(async () => devices[0]),
+    // A real browser also fires 'disconnect'. Both signals exist here so
+    // a test can exercise either one, or neither.
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
   };
   Object.defineProperty(navigator, 'usb', {value: usb, configurable: true});
   Object.defineProperty(window, 'isSecureContext', {value: true, configurable: true});
   return usb;
+}
+
+/**
+ * REAL HARDWARE TIMING. A resetting STM32 does not vanish from
+ * navigator.usb the instant the leave command settles - it stays
+ * enumerated for anywhere between a moment and several seconds. This
+ * schedules exactly that, so the engine's disappearance WAIT is tested
+ * against the timing that broke a real Pavo/BetaFPV F405.
+ */
+function detachAfter(usb: FakeUsb, device: HangableDfuDevice, delayMs: number): void {
+  setTimeout(() => {
+    device.gone = true;
+    device.opened = false;
+    usb.getDevices.mockResolvedValue([]);
+  }, delayMs);
 }
 
 function intelHexAt(address: number, bytes: number[]): string {
@@ -444,24 +468,90 @@ describe('every hang scenario now ends in a terminal settlement', () => {
     expect(manifestations(device)).toHaveLength(1);
   });
 
-  it('a manifest transfer REJECTED by a still-present board is UNCONFIRMED, not a failure', async () => {
-    // Every byte is verified in flash by this point; only the reset is
-    // unproven. "فشل التفليش" here would be a lie about the firmware.
+  /* ---- REAL DETACH TIMING: the Pavo/BetaFPV F405 class of run ----
+   *
+   * The board is flashed and verified, then leaves the bus after a real,
+   * non-zero delay. Every one of these is a SUCCESS, and the reset is
+   * CONFIRMED because the engine waits for the disappearance instead of
+   * sampling once. Under the old one-shot probe all three reported the
+   * board as not having restarted. */
+  it.each([200, 2_000, 5_000])(
+    'a verified flash whose board detaches after %ims is SUCCESS with the reset CONFIRMED',
+    async (detachDelayMs: number) => {
+      const device = new HangableDfuDevice();
+      const usb = installUsb([device]);
+      detachAfter(usb, device, detachDelayMs);
+
+      const {settled, progress} = await driveFlash(device);
+
+      expect(settled).toEqual({kind: 'resolved'});
+      expect(progress[progress.length - 1]).toMatchObject({
+        phase: 'complete',
+        percent: 100,
+        resetConfirmed: true,
+      });
+      expect(eraseCommands(device)).toHaveLength(1);
+      expect(dataBlockWrites(device)).toHaveLength(2);
+      expect(manifestations(device)).toHaveLength(1);
+    },
+  );
+
+  it('a verified flash whose board NEVER detaches is still SUCCESS, with the reset unconfirmed', async () => {
+    const device = new HangableDfuDevice();
+    installUsb([device]);
+
+    const {settled, progress} = await driveFlash(device);
+
+    expect(settled).toEqual({kind: 'resolved'});
+    expect(progress[progress.length - 1]).toMatchObject({
+      phase: 'complete',
+      percent: 100,
+      resetConfirmed: false,
+    });
+    // Waiting for a reset that never came must not have re-sent anything.
+    expect(eraseCommands(device)).toHaveLength(1);
+    expect(manifestations(device)).toHaveLength(1);
+  });
+
+  it('the browser disconnect EVENT confirms the reset without waiting for a poll', async () => {
+    const device = new HangableDfuDevice();
+    const usb = installUsb([device]);
+    // Event-only browser: getDevices keeps reporting the device.
+    usb.addEventListener.mockImplementation(
+      (type: string, listener: (event: {device: unknown}) => void) => {
+        if (type === 'disconnect') {
+          setTimeout(() => listener({device}), 300);
+        }
+      },
+    );
+
+    const {settled, progress} = await driveFlash(device);
+
+    expect(settled).toEqual({kind: 'resolved'});
+    expect(progress[progress.length - 1]).toMatchObject({resetConfirmed: true});
+    expect(usb.removeEventListener).toHaveBeenCalled();
+  });
+
+  it('a manifest transfer REJECTED by a still-present board is a VERIFIED SUCCESS with the reset unconfirmed', async () => {
+    // THE PAVO/BETAFPV F405 CONTRACT. Every byte is written and read back
+    // equal by this point. Whether the leave command was accepted, and
+    // whether the board left the bus, are facts about USB - they cannot
+    // unwrite verified flash. This attempt therefore RESOLVES, and the
+    // unobserved reset travels as resetConfirmed:false instead of
+    // rewriting the firmware verdict.
     const device = new HangableDfuDevice();
     device.rejectManifestButStay = true;
     installUsb([device]);
 
     const {settled, progress} = await driveFlash(device);
 
-    expect(settled).toEqual({
-      kind: 'rejected',
-      code: DFU_CODE_UNCONFIRMED_MANIFEST,
-    });
-    expect(progress.some(event => event.phase === 'complete')).toBe(false);
+    expect(settled).toEqual({kind: 'resolved'});
+    const last = progress[progress.length - 1];
+    expect(last).toMatchObject({phase: 'complete', percent: 100, resetConfirmed: false});
     expect(manifestations(device)).toHaveLength(1);
   });
 
-  it('E. a PRESENT board that goes silent in manifestation is UNCONFIRMED - never success', async () => {
+  it('E. a PRESENT board that goes silent in manifestation is a VERIFIED SUCCESS, reset unconfirmed', async () => {
     const device = new HangableDfuDevice();
     installUsb([device]);
     let manifested = false;
@@ -473,12 +563,15 @@ describe('every hang scenario now ends in a terminal settlement', () => {
       return op.kind === 'GETSTATUS' && manifested;
     };
 
-    const {settled} = await driveFlash(device);
+    const {settled, progress} = await driveFlash(device);
 
-    expect(settled).toEqual({
-      kind: 'rejected',
-      code: DFU_CODE_UNCONFIRMED_MANIFEST,
+    expect(settled).toEqual({kind: 'resolved'});
+    expect(progress[progress.length - 1]).toMatchObject({
+      phase: 'complete',
+      percent: 100,
+      resetConfirmed: false,
     });
+    // Still exactly one manifestation: nothing was retried to get here.
     expect(manifestations(device)).toHaveLength(1);
   });
 
@@ -604,7 +697,9 @@ describe('the poisoned session and the inert late settlement', () => {
     installUsb([device]);
 
     const {settled, progress} = await driveFlash(device);
-    expect(settled).toEqual({kind: 'rejected', code: DFU_CODE_UNCONFIRMED_MANIFEST});
+    // The attempt is terminal (verified bytes, reset unobserved) BEFORE
+    // the wedged transfer ever answers.
+    expect(settled).toEqual({kind: 'resolved'});
     const progressCount = progress.length;
 
     device.pendingSettlers[0].reject(new DOMException('late disconnect', 'NetworkError'));
