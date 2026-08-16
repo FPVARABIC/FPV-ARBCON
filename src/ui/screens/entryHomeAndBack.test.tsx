@@ -13,7 +13,7 @@
 jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
 
 import React from 'react';
-import {Text} from 'react-native';
+import {Text, View} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 import '../../i18n';
 
@@ -61,7 +61,34 @@ function styleOf(renderer: Renderer, testID: string): Record<string, unknown> {
   }, {});
 }
 
-function renderStart(navigate: jest.Mock): Renderer {
+function flatStyle(value: unknown): Record<string, unknown> {
+  return Array.isArray(value)
+    ? value.reduce<Record<string, unknown>>(
+        (all, item) => ({...all, ...flatStyle(item)}),
+        {},
+      )
+    : value && typeof value === 'object'
+      ? (value as Record<string, unknown>)
+      : {};
+}
+
+/** The two Home route cards, by the shape only they have: a clipped,
+ * rounded, bordered surface inside the route group. */
+function routeCards(renderer: Renderer): Array<Record<string, unknown>> {
+  return renderer.root
+    .findAllByProps({testID: 'start-route-group'})[0]
+    .findAllByType(View)
+    .map(node => flatStyle(node.props.style))
+    .filter(style => style.overflow === 'hidden' && style.borderWidth === 1);
+}
+
+function renderStart(navigate: jest.Mock, width?: number): Renderer {
+  let dimensions: jest.SpyInstance | undefined;
+  if (width !== undefined) {
+    dimensions = jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({width, height: 900, scale: 2, fontScale: 1});
+  }
   let renderer!: Renderer;
   act(() => {
     renderer = ReactTestRenderer.create(
@@ -71,6 +98,7 @@ function renderStart(navigate: jest.Mock): Renderer {
       />,
     );
   });
+  dimensions?.mockRestore();
   return renderer;
 }
 
@@ -158,6 +186,51 @@ describe('Home offers exactly two destinations', () => {
       expect(style.alignSelf).toBe('flex-start');
       // Still a comfortable target.
       expect(Number(style.minHeight)).toBeGreaterThanOrEqual(44);
+    }
+  });
+
+  /**
+   * THE COLLAPSED-CARD DEFECT.
+   *
+   * Both cards carried `flexGrow/flexShrink/flexBasis: 0`, documented as
+   * "inert inside routeColumn where the parent is not a row". It is the
+   * opposite of inert: `flexBasis` sizes the MAIN axis, and a column's
+   * main axis is VERTICAL - so every stacked card asked for a height of
+   * zero and, being `overflow: hidden`, cut off its own title along with
+   * the bullets and the call to action. Chromium against the deployed
+   * bundle showed ~50px cards at 360/390/412/768; at >=1024 the cards sit
+   * in a genuine row, where the same properties do the intended thing,
+   * which is exactly why a width-only check reported PASS.
+   */
+  it.each([360, 390, 412, 768, 1023])(
+    'a stacked card at %ipx never asks for zero height',
+    windowWidth => {
+      const renderer = renderStart(jest.fn(), windowWidth);
+      renderers.push(renderer);
+
+      const cards = routeCards(renderer);
+      expect(cards).toHaveLength(2);
+      for (const style of cards) {
+        // Not "0 but overridden" - absent, so the card is content-sized.
+        expect(style.flexBasis).toBeUndefined();
+        expect(style.flexGrow).toBeUndefined();
+      }
+    },
+  );
+
+  it('side by side on a desktop window, the two cards still share the row equally', () => {
+    const renderer = renderStart(jest.fn(), 1440);
+    renderers.push(renderer);
+
+    const group = renderer.root.findAllByProps({testID: 'start-route-group'})[0];
+    expect(flatStyle(group.props.style).flexDirection).toBe('row');
+
+    const cards = routeCards(renderer);
+    expect(cards).toHaveLength(2);
+    for (const style of cards) {
+      // Equal halves of the row - the one place these belong.
+      expect(style.flexBasis).toBe(0);
+      expect(style.flexGrow).toBe(1);
     }
   });
 

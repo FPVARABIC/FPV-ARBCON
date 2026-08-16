@@ -43,6 +43,8 @@ type RouteCardProps = {
   readonly button: string;
   readonly testID: string;
   readonly accent: 'teal' | 'blue';
+  /** True only where the two cards share a row - see styles.routeCardShare. */
+  readonly sideBySide: boolean;
   readonly onPress: () => void;
 };
 
@@ -53,10 +55,16 @@ function RouteCard({
   button,
   testID,
   accent,
+  sideBySide,
   onPress,
 }: RouteCardProps): React.JSX.Element {
   return (
-    <View style={[styles.routeCard, accent === 'blue' && styles.routeCardBlue]}>
+    <View
+      style={[
+        styles.routeCard,
+        sideBySide && styles.routeCardShare,
+        accent === 'blue' && styles.routeCardBlue,
+      ]}>
       <View style={[styles.routeMark, accent === 'blue' && styles.routeMarkBlue]} />
       <Text style={styles.routeTitle}>{title}</Text>
       <Text style={styles.routeDescription}>{description}</Text>
@@ -170,6 +178,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
         button="فتح إعدادات متحكم الطيران"
         testID="start-configure"
         accent="teal"
+        sideBySide={desktop}
         onPress={() => navigation.navigate('Setup')}
       />
 
@@ -180,6 +189,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
         button="فتح Firmware Flasher"
         testID="start-firmware"
         accent="blue"
+        sideBySide={desktop}
         onPress={() => navigation.navigate('FirmwareFlasher')}
       />
       </View>
@@ -240,11 +250,6 @@ const styles = StyleSheet.create({
   heroTitle: {...typography.display, color: colors.textPrimary},
   heroBody: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
   routeCard: {
-    /* flexBasis 0 + flexGrow 1: equal halves inside routeRow, and inert
-       inside routeColumn where the parent is not a row. */
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: 0,
     position: 'relative',
     overflow: 'hidden',
     padding: spacing.lg,
@@ -254,6 +259,19 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     gap: spacing.sm,
   },
+  /* EQUAL HALVES OF A ROW - and ONLY of a row.
+     `flexBasis: 0` sizes the MAIN axis. In routeRow the main axis is
+     horizontal, so this is the intended "two equal columns". These
+     properties used to live on routeCard itself, described as "inert
+     inside routeColumn where the parent is not a row" - which is exactly
+     wrong: in a COLUMN the main axis is vertical, so flexBasis 0 gave
+     every stacked card a hypothetical HEIGHT of zero, and `overflow:
+     hidden` then cut the card off mid-title, taking the bullets and the
+     call to action with it. Measured in Chromium against the deployed
+     bundle: at 360/390/412/768 both cards rendered ~50px tall with their
+     own titles sliced in half; at >=1024 (a genuine row) they were
+     correct, which is why a numeric width check never saw it. */
+  routeCardShare: {flexGrow: 1, flexShrink: 1, flexBasis: 0},
   routeCardBlue: {borderColor: colors.info},
   routeMark: {position: 'absolute', start: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.accent},
   routeMarkBlue: {backgroundColor: colors.info},
