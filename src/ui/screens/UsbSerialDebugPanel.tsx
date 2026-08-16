@@ -6,6 +6,7 @@ import type {TransportError, UsbSerialTransportClient} from '../../platforms/rea
 import {mspSessionCoordinator, useMspIdentificationState} from '../../platforms/react-native/protocol';
 import type {MspIdentificationState} from '../../platforms/react-native/protocol';
 import type {MspClientState} from '../../core';
+import {describeFlightControllerHardware} from '../../core';
 import {
   runPollingCapacityAudit,
   summarizePollingCapacityAudit,
@@ -452,7 +453,7 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
             الفئة: <Text style={styles.identityValue}>{firmwareFamilyLabel(identificationState.identity.firmware.knownFamily)}</Text>
           </Text>
           <Text style={styles.identityLabel}>
-            اسم اللوحة: <Text style={styles.identityValue}>{identificationState.identity.board.targetName}</Text>
+            اللوحة: <Text style={styles.identityValue}>{describeFlightControllerHardware(identificationState.identity.board)}</Text>
           </Text>
           {identificationMetrics ? (
             <Text testID="msp-identification-metrics" style={styles.metricsText}>

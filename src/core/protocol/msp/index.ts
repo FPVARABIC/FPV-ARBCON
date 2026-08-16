@@ -344,6 +344,21 @@ export {
 } from './identification/mspCompatibility';
 export type { MspCompatibilityResult } from './identification/mspCompatibility';
 export { deriveFcFamily } from './identification/mspIdentificationTypes';
+export {
+  classifyConnectionStage,
+  connectionStageLabelKey,
+} from './identification/connectionStageTruth';
+export type {
+  ConnectionStage,
+  ConnectionStageEvidence,
+} from './identification/connectionStageTruth';
+export {
+  boardIdentityNames,
+  boardMatchesTarget,
+  describeFlightControllerHardware,
+  isIdentifiedFlightController,
+  resolveCatalogTarget,
+} from './identification/flightControllerNaming';
 export type {
   MspFcFamily,
   MspFcVariant,

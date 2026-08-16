@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 
 import type {RootStackParamList} from '../../navigation/types';
+import {describeFlightControllerHardware, resolveCatalogTarget} from '../../core';
 import {
   CloudBuildCoordinator,
   MAX_UNIFIED_CONFIG_BYTES,
@@ -1048,7 +1049,10 @@ export default function FirmwareFlasherScreen({
       const detected = await bootloader.detectFlightController(controller.signal, selection);
       try {
         const identity = detected.identity;
-        const target = identity.board.targetName || identity.board.boardName || identity.board.boardIdentifier;
+        // Board name first - see flightControllerNaming.ts. A unified
+        // target answers its MCU family as targetName, which is never a
+        // catalogue entry.
+        const target = resolveCatalogTarget(identity.board);
         setDetectedTarget(target);
         setDetectedSummary(
           `${firmwareFamilyLabel(identity.firmware.knownFamily)} • ${identity.board.boardName || identity.board.boardIdentifier} • Target ${target}`,
@@ -1218,7 +1222,7 @@ export default function FirmwareFlasherScreen({
         portIndex: selectedPortIndex,
       });
       if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
-        const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+        const actual = describeFlightControllerHardware(detected.identity.board);
         setDetectedTarget(actual);
         await detected.release();
         throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}. فعّل تجاوز عدم التطابق فقط بعد التحقق اليدوي.`);
@@ -1288,7 +1292,7 @@ export default function FirmwareFlasherScreen({
         portIndex: selectedPortIndex,
       });
       if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
-        const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+        const actual = describeFlightControllerHardware(detected.identity.board);
         setDetectedTarget(actual);
         await detected.release();
         throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
@@ -1336,7 +1340,7 @@ export default function FirmwareFlasherScreen({
       });
       try {
         if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
-          const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+          const actual = describeFlightControllerHardware(detected.identity.board);
           setDetectedTarget(actual);
           throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
         }

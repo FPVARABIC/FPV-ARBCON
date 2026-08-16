@@ -196,7 +196,12 @@ export default function SetupScreen({
 
   if (!sessionKey) {
     return (
-      <SetupConnectWorkspace onSessionEstablished={handleSessionEstablished} />
+      <SetupConnectWorkspace
+        onSessionEstablished={handleSessionEstablished}
+        /* Optional-chained: a host that supplies no navigator at all
+           (tests, embeds) gets no back control rather than a crash. */
+        onBack={navigation?.canGoBack?.() === true ? () => navigation.goBack() : undefined}
+      />
     );
   }
 

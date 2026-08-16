@@ -37,10 +37,11 @@
  */
 
 import React, { useCallback, useEffect } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors } from '../theme';
+import { colors, spacing, typography } from '../theme';
+import { Icon } from '../icons';
 import UsbConnectionScreen from './UsbConnectionScreen';
 import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
@@ -52,8 +53,11 @@ import type { TransportError } from '../../platforms/react-native/transport';
 
 export function SetupConnectWorkspace({
   onSessionEstablished,
+  onBack,
 }: {
   readonly onSessionEstablished: (key: SetupUiSessionKey) => void;
+  /** Leaves the configurator. Absent only in hosts with nowhere to go. */
+  readonly onBack?: () => void;
 }): React.JSX.Element {
   useEffect(() => {
     for (const sessionId of mspSessionCoordinator.listSessionIds()) {
@@ -69,6 +73,23 @@ export function SetupConnectWorkspace({
 
   return (
     <View style={styles.root} testID="setup-connect-workspace">
+      {/* THE WAY OUT. Before this, opening the configurator without a
+          connected board landed the operator on the connection workspace
+          with no visible way back - the tab shell's own back affordance
+          belongs to the CONNECTED screen, which this state is not. A
+          navigation dead end is a defect regardless of how correct the
+          connection logic underneath it is. */}
+      {onBack !== undefined ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="العودة"
+          onPress={onBack}
+          style={styles.backRow}
+          testID="setup-connect-back">
+          <Icon name="chevron-back" size={22} color={colors.textPrimary} />
+          <Text style={styles.backLabel}>العودة</Text>
+        </Pressable>
+      ) : null}
       <UsbConnectionScreen onSessionEstablished={onSessionEstablished} />
     </View>
   );
@@ -96,4 +117,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  backRow: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+  },
+  backLabel: { ...typography.bodyStrong, color: colors.textPrimary },
 });

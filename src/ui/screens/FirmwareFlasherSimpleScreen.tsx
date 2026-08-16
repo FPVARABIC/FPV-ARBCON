@@ -83,6 +83,11 @@ import type {
   StandardBuildChoices,
 } from '../../core/firmware-flasher/standardBuildConfiguration';
 import {
+  boardIdentityNames,
+  describeFlightControllerHardware,
+  resolveCatalogTarget,
+} from '../../core';
+import {
   isSupportedDevice,
   usbSerialTransportClient,
 } from '../../platforms/react-native/transport';
@@ -550,15 +555,11 @@ export default function FirmwareFlasherSimpleScreen({
       readonly boardIdentifier: string;
     };
   }) => {
-    setVerifiedIdentity({
-      names: [
-        identity.board.targetName,
-        identity.board.boardName,
-        identity.board.boardIdentifier,
-      ]
-        .map(value => value.trim().toUpperCase())
-        .filter(value => value.length > 0),
-    });
+    // EVERY name the board answers to, board-name first - the shared,
+    // vendor-neutral list (flightControllerNaming.ts). A modern unified
+    // target answers "STM32F7X2" as its targetName, so a list that put
+    // that first could never agree with a catalogue selection.
+    setVerifiedIdentity({names: boardIdentityNames(identity.board)});
   }, []);
 
   /**
@@ -847,12 +848,19 @@ export default function FirmwareFlasherSimpleScreen({
    * (firmwareFlasherDfuTransition.test.tsx).
    */
   const requireSingleSerialDevice = useCallback(async () => {
-    const devices = (await client.listDevices()).filter(isSupportedDevice);
+    // STAGE TRUTH: an attached-but-undrivable device is not "no device".
+    const attached = await client.listDevices();
+    const devices = attached.filter(isSupportedDevice);
     if (devices.length === 0) {
+      if (attached.length > 0) {
+        throw new Error(
+          'تم العثور على جهاز USB، لكنه لا يعرض منفذًا تسلسليًا يمكن فتحه. تأكد أن الكابل كابل بيانات وأن اللوحة في الوضع العادي وليست في وضع DFU.',
+        );
+      }
       throw new Error(
         supportsSerialPicker
           ? 'لا يوجد منفذ تسلسلي مسموح به. إن كانت اللوحة في الوضع العادي اضغط «اختيار جهاز USB»، وإن كانت في وضع DFU اضغط «اختيار جهاز DFU».'
-          : 'لم يُعثر على Flight Controller في الوضع العادي. إن كانت اللوحة في وضع DFU فسيكتشفها التطبيق تلقائياً خلال لحظات.',
+          : 'لا يوجد أي جهاز USB متصل في الوضع العادي. إن كانت اللوحة في وضع DFU فسيكتشفها التطبيق تلقائياً خلال لحظات.',
       );
     }
     if (devices.length > 1) {
@@ -881,19 +889,23 @@ export default function FirmwareFlasherSimpleScreen({
       });
       try {
         const identity = detected.identity;
-        const target = identity.board.targetName ||
-          identity.board.boardName ||
-          identity.board.boardIdentifier;
-        const match = targets.find(item => item.target.toUpperCase() === target.toUpperCase());
+        // THE BOARD, not the MCU family. Betaflight's unified targets
+        // report targetName as the MCU family and boardName as the actual
+        // board, so asking targetName first made every modern board look
+        // like an unknown target - the real-hardware detection defect.
+        // See flightControllerNaming.ts.
+        const target = resolveCatalogTarget(identity.board);
+        const hardware = describeFlightControllerHardware(identity.board);
+        const match = targets.find(item => item.target.toUpperCase() === target);
         if (!match) {
           // Honest, and still usable: the board answered, its identity is
           // simply not a catalogue target, so manual selection stands.
-          setDetectedTarget(target);
+          setDetectedTarget(hardware);
           setPhase('idle');
           setDetectionNote(
-            `تم التعرف على ${target}، لكنه غير موجود في قائمة Targets الرسمية. اختر Target يدويًا.`,
+            `تم التعرف على ${hardware}، لكن اسم اللوحة غير موجود في قائمة Targets الرسمية. اختر Target يدويًا.`,
           );
-          setStatus(`تم التعرف على ${target}. اختر Target يدويًا.`);
+          setStatus(`تم التعرف على ${hardware}. اختر Target يدويًا.`);
           return;
         }
         setDetectedTarget(match.target);
@@ -1070,7 +1082,7 @@ export default function FirmwareFlasherSimpleScreen({
         portIndex: 0,
       });
       if (selectedTarget && !detected.targetMatches(selectedTarget)) {
-        const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+        const actual = describeFlightControllerHardware(detected.identity.board);
         await detected.release();
         throw new Error(`Target المحدد ${selectedTarget} لا يطابق اللوحة ${actual}. صحّح Target قبل المتابعة.`);
       }
@@ -1083,9 +1095,7 @@ export default function FirmwareFlasherSimpleScreen({
         setStatus('يلزم الدخول اليدوي إلى وضع DFU.');
         return;
       }
-      setDetectedTarget(
-        detected.identity.board.targetName || detected.identity.board.boardName,
-      );
+      setDetectedTarget(describeFlightControllerHardware(detected.identity.board));
       freezeIdentity(detected.identity);
       setStatus('تم التعرف على اللوحة. جارٍ الانتقال إلى وضع DFU…');
       await detected.rebootToBootloader(selectedTarget, false);
@@ -1192,7 +1202,7 @@ export default function FirmwareFlasherSimpleScreen({
         portIndex: 0,
       });
       if (!detected.targetMatches(selectedTarget)) {
-        const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+        const actual = describeFlightControllerHardware(detected.identity.board);
         await detected.release();
         throw new Error(`تم إيقاف التفليش: Target ${selectedTarget} لا يطابق اللوحة ${actual}.`);
       }

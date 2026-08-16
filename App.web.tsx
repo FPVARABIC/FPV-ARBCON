@@ -42,6 +42,7 @@
 import React, {Suspense} from 'react';
 import {ActivityIndicator, I18nManager, StyleSheet, Text, View} from 'react-native';
 import {NavigationContainer} from '@react-navigation/native';
+import {useBrowserBackIntegration} from './src/navigation/useBrowserBackIntegration.web';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {useTranslation} from 'react-i18next';
 
@@ -105,6 +106,10 @@ function ScreenFallback(): React.JSX.Element {
 
 function App(): React.JSX.Element {
   const {navigationRef, onReady, onStateChange} = useSessionLossRedirect();
+  // Browser Back navigates the app instead of doing nothing - see the
+  // hook's own note on why this is history-depth mirroring rather than
+  // path linking.
+  useBrowserBackIntegration(navigationRef);
 
   return (
     <View style={styles.container}>

@@ -39,7 +39,6 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Start'>;
 type RouteCardProps = {
   readonly title: string;
   readonly description: string;
-  readonly eyebrow: string;
   readonly bullets: readonly string[];
   readonly button: string;
   readonly testID: string;
@@ -50,7 +49,6 @@ type RouteCardProps = {
 function RouteCard({
   title,
   description,
-  eyebrow,
   bullets,
   button,
   testID,
@@ -60,7 +58,6 @@ function RouteCard({
   return (
     <View style={[styles.routeCard, accent === 'blue' && styles.routeCardBlue]}>
       <View style={[styles.routeMark, accent === 'blue' && styles.routeMarkBlue]} />
-      <Text style={styles.eyebrow}>{eyebrow}</Text>
       <Text style={styles.routeTitle}>{title}</Text>
       <Text style={styles.routeDescription}>{description}</Text>
       <View style={styles.bullets}>
@@ -109,6 +106,13 @@ function RouteCard({
   );
 }
 
+/**
+ * The widest this screen's column may get. Two route cards side by side
+ * stay cards at this width; beyond it a 1920px window gave two ~770px
+ * slabs each holding a small button - the stretched-desktop look.
+ */
+const HOME_MAX_WIDTH = 1200;
+
 export default function StartScreen({navigation}: Props): React.JSX.Element {
   const {width, fontScale} = useWindowDimensions();
   const tier = resolveLayoutTier(width, fontScale);
@@ -125,7 +129,10 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
       style={styles.root}
       contentContainerStyle={[
         styles.content,
-        {maxWidth: contentEnvelope(tier, desktop)},
+        // Capped so the whole column - brand row, heading, cards and the
+        // safety line - shares one edge instead of the note spanning
+        // wider than the cards above it.
+        {maxWidth: Math.min(contentEnvelope(tier, desktop), HOME_MAX_WIDTH)},
       ]}
       keyboardShouldPersistTaps="handled">
       <View style={styles.brandRow}>
@@ -146,30 +153,30 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
       </View>
 
       <View style={styles.hero}>
-        <Text style={styles.heroEyebrow}>اختر مسار العمل</Text>
-        <Text style={styles.heroTitle}>مهمتان، بابان مباشران</Text>
-        <Text style={styles.heroBody}>
-          افتح مساحة الإعداد مباشرة وتصل بوحدة التحكم من داخلها، أو افتح أداة Firmware للتثبيت والتحديث.
-        </Text>
+        <Text style={styles.heroTitle}>اختر ما تريد تنفيذه</Text>
       </View>
 
       <View style={desktop ? styles.routeRow : styles.routeColumn} testID="start-route-group">
       <RouteCard
-        eyebrow="إعداد الدرون"
-        title="إعداد وحدة التحكم"
-        description="تدخل مساحة الضبط الكاملة فورًا، والاتصال بوحدة التحكم يتم من داخلها عند الحاجة."
-        bullets={['Setup ومؤشرات الطيران', 'المحركات وفحوص الأمان', 'OSD والاستقبال وضبط PID']}
-        button="فتح مساحة الإعداد"
+        title="إعداد متحكم الطيران"
+        description="الاتصال باللوحة وضبط إعداداتها."
+        bullets={[
+          'الاتصال باللوحة',
+          'Setup والإعدادات',
+          'Motors و Receiver',
+          'OSD و GPS و Sensors',
+          'CLI',
+        ]}
+        button="فتح إعدادات متحكم الطيران"
         testID="start-configure"
         accent="teal"
         onPress={() => navigation.navigate('Setup')}
       />
 
       <RouteCard
-        eyebrow="تثبيت Firmware"
         title="Firmware Flasher"
-        description="تنزيل أو اختيار Firmware محلي، التحقق منه، ثم التفليش أو الحفظ حسب نوع الملف."
-        bullets={['HEX عبر DFU أو STM32 serial', 'BIN عبر ESP ROM bootloader', 'UF2 مع تحقق كامل وتعليمات نسخ واضحة']}
+        description="تثبيت أو تحديث Firmware واختيار Target وإعدادات البناء."
+        bullets={['اختيار اللوحة والإصدار', 'إعدادات البناء الرسمية', 'تفليش عبر DFU مع تحقق كامل']}
         button="فتح Firmware Flasher"
         testID="start-firmware"
         accent="blue"
@@ -178,9 +185,8 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
       </View>
 
       <View style={styles.safetyNote}>
-        <Text style={styles.safetyTitle}>سياسة أمان ثابتة</Text>
         <Text style={styles.safetyText}>
-          لن يبدأ أي مسح أو كتابة قبل التحقق من الملف والجهاز والـ Target وإقرارات السلامة.
+          لن يبدأ أي مسح أو كتابة قبل التحقق من الملف واللوحة و Target.
         </Text>
       </View>
     </ScrollView>
@@ -231,7 +237,6 @@ const styles = StyleSheet.create({
      the document lays out RTL.) */
   routeRow: {flexDirection: 'row', alignItems: 'stretch', gap: spacing.lg},
   routeColumn: {gap: spacing.lg},
-  heroEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   heroTitle: {...typography.display, color: colors.textPrimary},
   heroBody: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
   routeCard: {
@@ -252,7 +257,6 @@ const styles = StyleSheet.create({
   routeCardBlue: {borderColor: colors.info},
   routeMark: {position: 'absolute', start: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.accent},
   routeMarkBlue: {backgroundColor: colors.info},
-  eyebrow: {...typography.eyebrow, color: colors.textMuted},
   routeTitle: {...typography.title, color: colors.textPrimary},
   routeDescription: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
   bullets: {gap: 7, paddingVertical: spacing.sm},
@@ -272,17 +276,22 @@ const styles = StyleSheet.create({
     textAlign: 'right',
   },
   routeButton: {
+    // Sized to its label, not stretched across the card. A full-width
+    // bar on a 1156px desktop card read as a banner rather than a
+    // button, and two of them competed with each other instead of
+    // reading as two choices.
+    alignSelf: 'flex-start',
     minHeight: 48,
     borderRadius: radii.md,
     backgroundColor: colors.accent,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: spacing.sm,
   },
   routeButtonBlue: {backgroundColor: colors.info},
   routeButtonHovered: {opacity: 0.9},
-  routeButtonText: {...typography.sectionTitle, color: colors.accentText, flex: 1},
+  routeButtonText: {...typography.sectionTitle, color: colors.accentText},
   routeButtonTextBlue: {color: colors.white},
   pressed: {opacity: 0.75},
   safetyNote: {
@@ -293,6 +302,5 @@ const styles = StyleSheet.create({
     borderColor: colors.success,
     gap: 3,
   },
-  safetyTitle: {...typography.sectionTitle, color: colors.success},
   safetyText: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
 });

@@ -1,5 +1,11 @@
-import {MSP_REBOOT} from '../../../core';
-import type {FlightControllerIdentity, MspClient} from '../../../core';
+import {
+  MSP_REBOOT,
+  boardMatchesTarget,
+  classifyConnectionStage,
+  describeFlightControllerHardware,
+  resolveCatalogTarget,
+} from '../../../core';
+import type {ConnectionStage, FlightControllerIdentity, MspClient} from '../../../core';
 import type {
   DfuDeviceDescriptor,
   UsbSerialDeviceDescriptor,
@@ -39,10 +45,18 @@ export class DfuPermissionRequiredError extends Error {
   }
 }
 
+/**
+ * A detection failure that KNOWS which stage it failed at - USB present
+ * or absent, port openable, MSP answering, board named. Callers can
+ * present the real stage instead of one catch-all sentence.
+ */
 export class FirmwareDetectionError extends Error {
-  constructor(message: string) {
+  readonly stage?: ConnectionStage;
+
+  constructor(message: string, stage?: ConnectionStage) {
     super(message);
     this.name = 'FirmwareDetectionError';
+    this.stage = stage;
   }
 }
 
@@ -58,15 +72,19 @@ export class DetectedFlightController {
     private readonly mspClient: MspClient,
   ) {}
 
+  /** Shared, vendor-neutral matching - see flightControllerNaming.ts. */
   targetMatches(selectedTarget: string): boolean {
-    const expected = selectedTarget.trim().toUpperCase();
-    if (expected.length === 0) return true;
-    const actual = [
-      this.identity.board.targetName,
-      this.identity.board.boardName,
-      this.identity.board.boardIdentifier,
-    ].map(value => value.trim().toUpperCase());
-    return actual.includes(expected);
+    return boardMatchesTarget(this.identity.board, selectedTarget);
+  }
+
+  /** The catalogue target this board answers to (board name first). */
+  get catalogTarget(): string {
+    return resolveCatalogTarget(this.identity.board);
+  }
+
+  /** The operator-facing hardware name, Betaflight-style. */
+  get hardwareName(): string {
+    return describeFlightControllerHardware(this.identity.board);
   }
 
   get rebootMode(): 1 | 4 {
@@ -79,7 +97,7 @@ export class DetectedFlightController {
     }
     if (!allowMismatch && !this.targetMatches(selectedTarget)) {
       throw new FirmwareDetectionError(
-        `Target المحدد ${selectedTarget} لا يطابق المتحكم ${this.identity.board.boardName}.`,
+        `Target المحدد ${selectedTarget} لا يطابق المتحكم ${this.hardwareName}.`,
       );
     }
     const mode = this.rebootMode;
@@ -120,10 +138,29 @@ export class FirmwareBootloaderController {
     selection?: {readonly deviceId: number; readonly portIndex: number},
   ): Promise<DetectedFlightController> {
     if (signal?.aborted) throw new FirmwareDetectionError('أُلغيَ اكتشاف Flight Controller.');
-    const supported = (await this.client.listDevices()).filter(isSupportedDevice);
-    if (supported.length === 0) throw new FirmwareDetectionError('لم يُعثر على Flight Controller تسلسلي مدعوم.');
+    // STAGE TRUTH. A USB device that is present but exposes no usable
+    // serial interface is a DIFFERENT fact from no device at all, and
+    // reporting both as "no flight controller found" sent operators to
+    // check a cable that was never the problem.
+    const attached = await this.client.listDevices();
+    const supported = attached.filter(isSupportedDevice);
+    if (supported.length === 0) {
+      const stage = classifyConnectionStage({
+        usbDeviceCount: attached.length,
+        serialCapableCount: 0,
+      });
+      throw new FirmwareDetectionError(
+        stage === 'NO_USB_DEVICE'
+          ? 'لا يوجد أي جهاز USB متصل. وصّل متحكم الطيران بكابل بيانات ثم أعد المحاولة.'
+          : 'تم العثور على جهاز USB، لكنه لا يعرض منفذًا تسلسليًا يمكن فتحه. تأكد أن الكابل كابل بيانات وأن اللوحة في الوضع العادي وليست في وضع DFU.',
+        stage,
+      );
+    }
     if (selection === undefined && supported.length > 1) {
-      throw new FirmwareDetectionError('وُجد أكثر من متحكم؛ اختر جهاز USB يدوياً لتجنب تفليش الجهاز الخطأ.');
+      throw new FirmwareDetectionError(
+        'وُجد أكثر من متحكم؛ اختر جهاز USB يدوياً لتجنب تفليش الجهاز الخطأ.',
+        'MULTIPLE_USB_DEVICES',
+      );
     }
     const device = selection === undefined
       ? supported[0]
@@ -132,7 +169,10 @@ export class FirmwareBootloaderController {
       throw new FirmwareDetectionError('جهاز USB المحدد يدوياً لم يعد متصلاً.');
     }
     if (selection === undefined && device.portCount !== 1) {
-      throw new FirmwareDetectionError('للمتحكم أكثر من منفذ؛ يلزم اختيار المنفذ يدوياً.');
+      throw new FirmwareDetectionError(
+        'للمتحكم أكثر من منفذ؛ يلزم اختيار المنفذ يدوياً.',
+        'MULTIPLE_PORTS',
+      );
     }
     const portIndex = selection?.portIndex ?? 0;
     if (!Number.isInteger(portIndex) || portIndex < 0 || portIndex >= device.portCount) {
@@ -217,7 +257,15 @@ export class FirmwareBootloaderController {
       };
       const unsubscribe = this.coordinator.subscribeIdentificationState(inspect);
       const timer = setTimeout(
-        () => finish(() => reject(new FirmwareDetectionError('انتهت مهلة التعرف التلقائي على المتحكم.'))),
+        () =>
+          finish(() =>
+            reject(
+              new FirmwareDetectionError(
+                'فُتح المنفذ لكن لم يرد متحكم الطيران على بروتوكول MSP. تأكد أن اللوحة تعمل بـ Betaflight وليست في وضع DFU.',
+                'MSP_NOT_RESPONDING',
+              ),
+            ),
+          ),
         10_000,
       );
       const onAbort = () => finish(() => reject(new FirmwareDetectionError('أُلغيَ التعرف التلقائي.')));

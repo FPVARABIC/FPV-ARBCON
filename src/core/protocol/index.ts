@@ -333,8 +333,16 @@ export {
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
 } from './msp';
 export type { MspCompatibilityResult } from './msp';
+export type { ConnectionStage, ConnectionStageEvidence } from './msp';
 export {
+  boardIdentityNames,
+  classifyConnectionStage,
+  connectionStageLabelKey,
+  boardMatchesTarget,
+  describeFlightControllerHardware,
   deriveFcFamily,
+  isIdentifiedFlightController,
+  resolveCatalogTarget,
   MspIdentificationService,
   MspIncompatibleFirmwareError,
   BoxIdsAcquisition,
