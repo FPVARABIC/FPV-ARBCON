@@ -1,3 +1,35 @@
+/**
+ * THE STANDARD FIRMWARE FLASHER - Betaflight capability, Arabic clarity.
+ *
+ * WHAT THIS SCREEN IS FOR. An Arabic-speaking operator should be able to
+ * pick their board, pick a stable version, review the official build
+ * configuration, and flash - in that order, without reading a wall of
+ * warnings and without dropping into the full engineering surface. It is
+ * the DEFAULT flasher route; the complete legacy screen is one press away
+ * behind «متقدم» for recovery and specialist work.
+ *
+ * SIMPLER IS NOT SMALLER. A first pass reduced this flow to
+ * target -> download -> flash and silently applied the API's default
+ * build options. That removed real capability: radio, telemetry, OSD and
+ * motor protocol, the release's other options and custom defines all
+ * became unreachable without the legacy screen. They are back here, as
+ * DATA rendered from GET /api/options/{release} (see
+ * core/firmware-flasher/standardBuildConfiguration.ts) with the official
+ * defaults pre-selected - so a beginner can still press through, and an
+ * intermediate operator can change exactly what they care about.
+ *
+ * NOTHING IS INVENTED. Every option, value and default comes from the
+ * official Build API for the SELECTED release. A feature a release does
+ * not expose does not appear. There is no hardcoded protocol list and no
+ * vendor allow-list anywhere in this file: the target catalogue is
+ * whatever GET /api/targets returned.
+ *
+ * THE FLASH ENGINE IS UNTOUCHED. Completion truth (SUCCESS / FAILED /
+ * UNCONFIRMED), bounded WebUSB transfers, poisoned-session refusal, the
+ * no-automatic-retry rule and read-back verification all live below this
+ * screen and are only RENDERED here.
+ */
+
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
@@ -29,11 +61,27 @@ import {
 import type {
   BetaflightTarget,
   FirmwareBuildOption,
+  FirmwareBuildOptions,
   FirmwareImage,
   FirmwareRelease,
+  FirmwareReleaseChannel,
   FirmwareTargetDetail,
   PendingBootloaderFlash,
 } from '../../core/firmware-flasher';
+import {
+  applyRadioTelemetryRule,
+  availableChannels,
+  defaultReleaseForChannel,
+  defaultStandardChoices,
+  hasConfigurableBuild,
+  releasesForChannel,
+  standardBuildCategories,
+  toBuildSelection,
+} from '../../core/firmware-flasher/standardBuildConfiguration';
+import type {
+  StandardBuildCategory,
+  StandardBuildChoices,
+} from '../../core/firmware-flasher/standardBuildConfiguration';
 import {
   isSupportedDevice,
   usbSerialTransportClient,
@@ -91,7 +139,7 @@ function errorText(reason: unknown): string {
 }
 
 /**
- * THE SIMPLE SCREEN'S TERMINAL-FAILURE TRUTH, pure and exported for tests.
+ * THE STANDARD SCREEN'S TERMINAL-FAILURE TRUTH, pure and exported for tests.
  *
  * Maps a settled rejection onto the SAME contract the classic screen and
  * the WebUSB engine share (flashCompletionModel): the engine's frozen-
@@ -119,46 +167,189 @@ export function simpleFailurePresentation(
   return {phase: 'failed', text: reasonLine};
 }
 
-function defaultOption(options: readonly FirmwareBuildOption[]): string {
-  return options.find(option => option.default)?.value ?? '';
-}
-
-/** Standard mode follows the official Build API defaults automatically. */
-export function defaultBuildSelection(
-  detail: FirmwareTargetDetail,
-  options: ReturnType<typeof parseBuildOptions>,
-) {
-  const hasCloudOptions = [
-    options.radioProtocols,
-    options.telemetryProtocols,
-    options.osdProtocols,
-    options.motorProtocols,
-    options.generalOptions,
-  ].some(items => items.length > 0);
-  const radio = defaultOption(options.radioProtocols);
-  const selectedRadio = options.radioProtocols.find(option => option.value === radio);
-  return {
-    coreBuild: !detail.cloudBuild || !hasCloudOptions,
-    radioProtocol: radio,
-    telemetryProtocol: selectedRadio?.includesTelemetry === true
-      ? '-1'
-      : defaultOption(options.telemetryProtocols),
-    osdProtocol: defaultOption(options.osdProtocols),
-    motorProtocol: defaultOption(options.motorProtocols),
-    generalOptions: options.generalOptions
-      .filter(option => option.default)
-      .map(option => option.value),
-  } as const;
-}
-
-/** Simple mode never silently falls from Stable to RC/Development. */
+/** Standard mode never silently falls from Stable to RC/Development. */
 export function defaultStableRelease(releases: readonly FirmwareRelease[]): string {
-  return releases.find(release => release.channel === 'stable')?.release ?? '';
+  return defaultReleaseForChannel(releases, 'stable');
 }
 
 /** Waiting for the one-time DFU permission is part of the flash operation. */
 export function simpleFlasherNavigationLocked(phase: SimpleFlasherPhase): boolean {
   return ['detecting', 'loading', 'waiting-permission', 'flashing'].includes(phase);
+}
+
+/** The Arabic heading for each official option category. */
+export const BUILD_CATEGORY_TITLES: Readonly<Record<StandardBuildCategory['key'], string>> = {
+  radio: 'بروتوكول الراديو',
+  telemetry: 'بروتوكول Telemetry',
+  osd: 'بروتوكول OSD',
+  motor: 'بروتوكول المحركات',
+  general: 'خيارات أخرى',
+};
+
+const CHANNEL_TITLES: Readonly<Record<FirmwareReleaseChannel, string>> = {
+  stable: 'مستقر',
+  candidate: 'مرشح',
+  development: 'تطويري',
+};
+
+/* ------------------------------------------------------------------ *
+ * Small presentation pieces
+ * ------------------------------------------------------------------ */
+
+function StepHeader({
+  number,
+  title,
+}: {
+  readonly number: string;
+  readonly title: string;
+}): React.JSX.Element {
+  return (
+    <View style={styles.stepHeader}>
+      <View style={styles.stepNumber}><Text style={styles.stepNumberText}>{number}</Text></View>
+      <Text style={styles.stepTitle}>{title}</Text>
+    </View>
+  );
+}
+
+/**
+ * One official single-choice category. Collapsed it shows the chosen
+ * option, which is the only thing most operators need to read; expanded
+ * it lists exactly the values the release returned. Long option names
+ * wrap instead of clipping, which is what keeps this usable at 360px.
+ */
+function SingleChoiceGroup({
+  title,
+  options,
+  value,
+  onChange,
+  disabled,
+  testIDPrefix,
+  lockedLabel,
+}: {
+  readonly title: string;
+  readonly options: readonly FirmwareBuildOption[];
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+  readonly disabled: boolean;
+  readonly testIDPrefix: string;
+  readonly lockedLabel?: string;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const selected = options.find(option => option.value === value);
+  const summary = lockedLabel ?? selected?.name ?? 'بدون';
+  const locked = lockedLabel !== undefined;
+  return (
+    <View style={styles.optionGroup} testID={`${testIDPrefix}-group`}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${title}: ${summary}`}
+        accessibilityState={{disabled: disabled || locked, expanded: open}}
+        disabled={disabled || locked}
+        onPress={() => setOpen(current => !current)}
+        style={[styles.optionHeader, (disabled || locked) && styles.dimmed]}
+        testID={`${testIDPrefix}-selector`}>
+        <View style={styles.optionCopy}>
+          <Text style={styles.optionLabel}>{title}</Text>
+          <Text style={styles.optionValue}>{summary}</Text>
+        </View>
+        {locked ? null : (
+          <Icon
+            name={open ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={colors.textSecondary}
+          />
+        )}
+      </Pressable>
+      {open && !locked ? (
+        <View style={styles.optionChoices}>
+          {options.map(option => {
+            const isSelected = option.value === value;
+            return (
+              <Pressable
+                key={option.value === '' ? '__none__' : option.value}
+                accessibilityRole="radio"
+                accessibilityState={{selected: isSelected, disabled}}
+                disabled={disabled}
+                onPress={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+                style={[styles.choice, isSelected && styles.choiceSelected]}
+                testID={`${testIDPrefix}-option-${option.value === '' ? 'none' : option.value}`}>
+                <Text style={[styles.choiceText, isSelected && styles.choiceTextSelected]}>
+                  {option.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** The release's other options: official values, multi-select. */
+function MultiChoiceGroup({
+  title,
+  options,
+  values,
+  onToggle,
+  disabled,
+  testIDPrefix,
+}: {
+  readonly title: string;
+  readonly options: readonly FirmwareBuildOption[];
+  readonly values: readonly string[];
+  readonly onToggle: (value: string) => void;
+  readonly disabled: boolean;
+  readonly testIDPrefix: string;
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={styles.optionGroup} testID={`${testIDPrefix}-group`}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${title}: ${values.length}`}
+        accessibilityState={{disabled, expanded: open}}
+        disabled={disabled}
+        onPress={() => setOpen(current => !current)}
+        style={[styles.optionHeader, disabled && styles.dimmed]}
+        testID={`${testIDPrefix}-selector`}>
+        <View style={styles.optionCopy}>
+          <Text style={styles.optionLabel}>{title}</Text>
+          <Text style={styles.optionValue}>
+            {values.length === 0 ? 'بدون' : `${values.length} مُفعّل`}
+          </Text>
+        </View>
+        <Icon
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={colors.textSecondary}
+        />
+      </Pressable>
+      {open ? (
+        <View style={styles.optionChoices}>
+          {options.map(option => {
+            const isSelected = values.includes(option.value);
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="checkbox"
+                accessibilityState={{checked: isSelected, disabled}}
+                disabled={disabled}
+                onPress={() => onToggle(option.value)}
+                style={[styles.choice, isSelected && styles.choiceSelected]}
+                testID={`${testIDPrefix}-option-${option.value}`}>
+                <Text style={[styles.choiceText, isSelected && styles.choiceTextSelected]}>
+                  {option.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 export default function FirmwareFlasherSimpleScreen({
@@ -168,7 +359,7 @@ export default function FirmwareFlasherSimpleScreen({
   const {t} = useTranslation();
   const [advanced, setAdvanced] = useState(false);
   const [phase, setPhase] = useState<SimpleFlasherPhase>('idle');
-  const [status, setStatus] = useState('اختر اللوحة والإصدار، ثم حمّل Firmware.');
+  const [status, setStatus] = useState('اختر اللوحة والإصدار، ثم حضّر Firmware.');
   const [progress, setProgress] = useState(0);
 
   const [targets, setTargets] = useState<readonly BetaflightTarget[]>([]);
@@ -178,13 +369,34 @@ export default function FirmwareFlasherSimpleScreen({
   const [selectedTarget, setSelectedTarget] = useState('');
   const [releases, setReleases] = useState<readonly FirmwareRelease[]>([]);
   const [releasesLoading, setReleasesLoading] = useState(false);
+  const [channel, setChannel] = useState<FirmwareReleaseChannel>('stable');
+  const [channelPickerOpen, setChannelPickerOpen] = useState(false);
   const [selectedRelease, setSelectedRelease] = useState('');
+
+  /** The official build document + options for the CURRENT selection. */
+  const [targetDetail, setTargetDetail] = useState<FirmwareTargetDetail | null>(null);
+  const [buildOptions, setBuildOptions] = useState<FirmwareBuildOptions | null>(null);
+  const [buildOptionsLoading, setBuildOptionsLoading] = useState(false);
+  const [buildOptionsError, setBuildOptionsError] = useState<string | null>(null);
+  const [choices, setChoices] = useState<StandardBuildChoices | null>(null);
+  const [customDefinesOpen, setCustomDefinesOpen] = useState(false);
+
   const [firmware, setFirmware] = useState<FirmwareImage | null>(null);
   const [detectedTarget, setDetectedTarget] = useState<string | null>(null);
+  /** A detection outcome the operator must read even though the screen is
+   * idle - the progress line only exists while an operation is running. */
+  const [detectionNote, setDetectionNote] = useState<string | null>(null);
   const [pendingFlash, setPendingFlash] = useState<{
     readonly pending: PendingBootloaderFlash;
     readonly image: Extract<FirmwareImage, {kind: 'HEX'}>;
   } | null>(null);
+
+  /** A board this session put into DFU after verifying its identity. */
+  const [dfuReady, setDfuReady] = useState<DfuDeviceDescriptor | null>(null);
+  const [dfuTargetVerified, setDfuTargetVerified] = useState(false);
+  /** Set only when software bootloader entry is genuinely unavailable. */
+  const [manualDfuReason, setManualDfuReason] = useState<string | null>(null);
+  const [unverifiedDfuAccepted, setUnverifiedDfuAccepted] = useState(false);
 
   const abortRef = useRef<AbortController | null>(null);
   /** The last engine-reported phase - what classifyFlashRejection needs
@@ -200,10 +412,29 @@ export default function FirmwareFlasherSimpleScreen({
     () => filterAndSortTargets(targets, targetQuery),
     [targetQuery, targets],
   );
-  const stableReleases = useMemo(
-    () => releases.filter(release => release.channel === 'stable'),
-    [releases],
+  const channels = useMemo(() => availableChannels(releases), [releases]);
+  const channelReleases = useMemo(
+    () => releasesForChannel(releases, channel),
+    [channel, releases],
   );
+  const categories = useMemo(
+    () => (buildOptions === null ? [] : standardBuildCategories(buildOptions)),
+    [buildOptions],
+  );
+  const configurable = useMemo(
+    () =>
+      targetDetail !== null &&
+      buildOptions !== null &&
+      hasConfigurableBuild(targetDetail, buildOptions),
+    [buildOptions, targetDetail],
+  );
+  const radioCarriesTelemetry = useMemo(() => {
+    if (buildOptions === null || choices === null) return false;
+    return (
+      buildOptions.radioProtocols.find(option => option.value === choices.radioProtocol)
+        ?.includesTelemetry === true
+    );
+  }, [buildOptions, choices]);
 
   const fail = useCallback((reason: unknown) => {
     const presentation = simpleFailurePresentation(
@@ -215,6 +446,7 @@ export default function FirmwareFlasherSimpleScreen({
     setStatus(presentation.text);
   }, [t]);
 
+  /* ---- Catalogue: the official dataset, unfiltered ---- */
   useEffect(() => {
     const controller = new AbortController();
     setTargetsLoading(true);
@@ -231,6 +463,7 @@ export default function FirmwareFlasherSimpleScreen({
     return () => controller.abort();
   }, [fail]);
 
+  /* ---- Releases for the chosen board ---- */
   useEffect(() => {
     if (!selectedTarget) {
       setReleases([]);
@@ -245,7 +478,14 @@ export default function FirmwareFlasherSimpleScreen({
       .then(items => {
         if (controller.signal.aborted) return;
         setReleases(items);
-        setSelectedRelease(defaultStableRelease(items));
+        // Stable is the standard choice. When a target publishes no
+        // stable release the screen says so rather than quietly handing
+        // the operator a release candidate.
+        const preferred = availableChannels(items).includes('stable')
+          ? 'stable'
+          : (availableChannels(items)[0] ?? 'stable');
+        setChannel(preferred);
+        setSelectedRelease(defaultReleaseForChannel(items, preferred));
       })
       .catch(reason => {
         if (!controller.signal.aborted) fail(reason);
@@ -256,12 +496,64 @@ export default function FirmwareFlasherSimpleScreen({
     return () => controller.abort();
   }, [fail, selectedTarget]);
 
+  /* ---- The official build document and its options ----
+   *
+   * This is what restores real Betaflight capability: the categories the
+   * SELECTED release exposes, with the API's own defaults pre-selected. */
   useEffect(() => {
     setFirmware(null);
     setPendingFlash(null);
     setProgress(0);
+    if (!selectedTarget || !selectedRelease) {
+      setTargetDetail(null);
+      setBuildOptions(null);
+      setChoices(null);
+      setBuildOptionsError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setBuildOptionsLoading(true);
+    setBuildOptionsError(null);
+    (async () => {
+      const detailInput = await betaflightBuildApi.loadBuild(
+        selectedTarget,
+        selectedRelease,
+        controller.signal,
+      );
+      const detail = parseTargetDetail(detailInput, selectedTarget, selectedRelease);
+      if (controller.signal.aborted) return;
+      setTargetDetail(detail);
+      const optionInput = await betaflightBuildApi.loadOptions(
+        selectedRelease,
+        controller.signal,
+      );
+      const options = parseBuildOptions(optionInput);
+      if (controller.signal.aborted) return;
+      setBuildOptions(options);
+      setChoices(defaultStandardChoices(detail, options));
+    })().catch(reason => {
+      if (controller.signal.aborted) return;
+      // A missing options document is not a dead end: the official core
+      // build still works, and that is what the screen offers instead of
+      // pretending the categories exist.
+      setBuildOptions(null);
+      setChoices({
+        coreBuild: true,
+        radioProtocol: '',
+        telemetryProtocol: '',
+        osdProtocol: '',
+        motorProtocol: '',
+        generalOptions: [],
+        customDefines: '',
+      });
+      setBuildOptionsError(errorText(reason));
+    }).finally(() => {
+      if (!controller.signal.aborted) setBuildOptionsLoading(false);
+    });
+    return () => controller.abort();
   }, [selectedRelease, selectedTarget]);
 
+  /* ---- Live flash progress ---- */
   useEffect(() => client.onDfuFlashProgress(update => {
     if (phase !== 'flashing') return;
     lastFlashPhaseRef.current = toFlashPhase(update.phase);
@@ -282,6 +574,12 @@ export default function FirmwareFlasherSimpleScreen({
     setStatus(label);
   }), [client, phase]);
 
+  const updateChoices = useCallback((next: StandardBuildChoices) => {
+    setChoices(buildOptions === null ? next : applyRadioTelemetryRule(next, buildOptions));
+    // The prepared image no longer matches the configuration.
+    setFirmware(null);
+  }, [buildOptions]);
+
   const selectTarget = useCallback((target: string) => {
     if (navigationLocked) return;
     setSelectedTarget(target);
@@ -289,31 +587,45 @@ export default function FirmwareFlasherSimpleScreen({
     setTargetPickerOpen(false);
     setDetectedTarget(null);
     setPendingFlash(null);
+    setDfuReady(null);
+    setDfuTargetVerified(false);
+    setUnverifiedDfuAccepted(false);
     setProgress(0);
     setPhase('idle');
-    setStatus('اختر الإصدار ثم حمّل Firmware.');
+    setStatus('اختر الإصدار ثم راجع إعدادات البناء.');
   }, [navigationLocked]);
+
+  /** Enumerates exactly one usable serial board, or says why not. */
+  const requireSingleSerialDevice = useCallback(async () => {
+    const devices = (await client.listDevices()).filter(isSupportedDevice);
+    if (devices.length === 0) {
+      throw new Error(
+        supportsSerialPicker
+          ? 'لم يُسمح للمتصفح بالوصول إلى اللوحة بعد. اضغط «اختيار جهاز USB» أولاً.'
+          : 'لم يُعثر على Flight Controller متصل. وصّل اللوحة عبر USB ثم أعد المحاولة.',
+      );
+    }
+    if (devices.length > 1) {
+      throw new Error('يوجد أكثر من Flight Controller. اترك لوحة واحدة متصلة ثم أعد المحاولة.');
+    }
+    if (devices[0].portCount !== 1) {
+      throw new Error('للوحة أكثر من منفذ USB serial. استخدم «متقدم» لاختيار المنفذ يدوياً.');
+    }
+    return devices[0];
+  }, [client, supportsSerialPicker]);
 
   const autoDetect = useCallback(async () => {
     if (navigationLocked) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase('detecting');
+    setManualDfuReason(null);
+    setDetectionNote(null);
     setStatus('التعرف على Flight Controller…');
     try {
-      const devices = (await client.listDevices()).filter(isSupportedDevice);
-      if (devices.length !== 1) {
-        throw new Error(devices.length === 0
-          ? supportsSerialPicker
-            ? 'لم يُسمح للمتصفح بالوصول إلى اللوحة بعد. اضغط «اختيار جهاز USB» ثم أعد التعرف.'
-            : 'لم يُعثر على Flight Controller متصل. وصّل اللوحة عبر USB ثم أعد المحاولة.'
-          : 'يوجد أكثر من Flight Controller. اترك لوحة واحدة متصلة ثم أعد المحاولة.');
-      }
-      if (devices[0].portCount !== 1) {
-        throw new Error('للوحة أكثر من منفذ USB serial. استخدم «متقدم» لاختيار المنفذ يدوياً.');
-      }
+      const device = await requireSingleSerialDevice();
       const detected = await bootloader.detectFlightController(controller.signal, {
-        deviceId: devices[0].deviceId,
+        deviceId: device.deviceId,
         portIndex: 0,
       });
       try {
@@ -323,12 +635,20 @@ export default function FirmwareFlasherSimpleScreen({
           identity.board.boardIdentifier;
         const match = targets.find(item => item.target.toUpperCase() === target.toUpperCase());
         if (!match) {
-          throw new Error(`تم التعرف على ${target} لكن Target غير موجود في القائمة الرسمية المحمّلة.`);
+          // Honest, and still usable: the board answered, its identity is
+          // simply not a catalogue target, so manual selection stands.
+          setDetectedTarget(target);
+          setPhase('idle');
+          setDetectionNote(
+            `تم التعرف على ${target}، لكنه غير موجود في قائمة Targets الرسمية. اختر Target يدويًا.`,
+          );
+          setStatus(`تم التعرف على ${target}. اختر Target يدويًا.`);
+          return;
         }
         setDetectedTarget(match.target);
         setSelectedTarget(match.target);
-        setStatus(`تم التعرف على ${match.target}. اختر الإصدار ثم حمّل Firmware.`);
         setPhase('idle');
+        setStatus(`تم التعرف على اللوحة ${match.target}.`);
       } finally {
         await detected.release();
       }
@@ -337,7 +657,7 @@ export default function FirmwareFlasherSimpleScreen({
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [bootloader, client, fail, navigationLocked, supportsSerialPicker, targets]);
+  }, [bootloader, fail, navigationLocked, requireSingleSerialDevice, targets]);
 
   const chooseSerialAndDetect = useCallback(() => {
     if (navigationLocked) return;
@@ -351,30 +671,21 @@ export default function FirmwareFlasherSimpleScreen({
       .catch(fail);
   }, [autoDetect, client, fail, navigationLocked]);
 
+  /**
+   * PREPARE FIRMWARE. Sends exactly the configuration on screen - every
+   * visible choice travels in the official request, nothing is added and
+   * nothing is dropped.
+   */
   const loadFirmware = useCallback(async () => {
     if (!selectedTarget || !selectedRelease || navigationLocked) return;
+    if (targetDetail === null || choices === null) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase('loading');
     setProgress(0);
     setStatus('تحضير Firmware الرسمي…');
     try {
-      const detailInput = await betaflightBuildApi.loadBuild(
-        selectedTarget,
-        selectedRelease,
-        controller.signal,
-      );
-      const detail = parseTargetDetail(detailInput, selectedTarget, selectedRelease);
-      let request;
-      try {
-        const optionInput = await betaflightBuildApi.loadOptions(selectedRelease, controller.signal);
-        const options = parseBuildOptions(optionInput);
-        request = createBuildRequest(detail, defaultBuildSelection(detail, options));
-      } catch (reason) {
-        if (controller.signal.aborted) throw reason;
-        request = createBuildRequest(detail, {coreBuild: true});
-      }
-
+      const request = createBuildRequest(targetDetail, toBuildSelection(choices));
       const result = await cloudBuild.buildAndDownload(
         request,
         update => {
@@ -384,7 +695,7 @@ export default function FirmwareFlasherSimpleScreen({
         controller.signal,
       );
       let parsed = parseFirmwareFile(result.response.file, result.firmware);
-      const configuration = result.configuration ?? detail.configuration ?? null;
+      const configuration = result.configuration ?? targetDetail.configuration ?? null;
       if (parsed.kind === 'HEX' && configuration !== null) {
         parsed = applyCustomDefaultsToFirmware(parsed, configuration);
       }
@@ -397,7 +708,15 @@ export default function FirmwareFlasherSimpleScreen({
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [cloudBuild, fail, navigationLocked, selectedRelease, selectedTarget]);
+  }, [
+    choices,
+    cloudBuild,
+    fail,
+    navigationLocked,
+    selectedRelease,
+    selectedTarget,
+    targetDetail,
+  ]);
 
   const completeFlash = useCallback(async (
     dfu: DfuDeviceDescriptor,
@@ -414,16 +733,112 @@ export default function FirmwareFlasherSimpleScreen({
       setPhase('success');
       setStatus('تم تثبيت Firmware بنجاح.');
       setPendingFlash(null);
+      setDfuReady(null);
+      setDfuTargetVerified(false);
     } catch (reason) {
       fail(reason);
     }
   }, [client, fail]);
 
+  /**
+   * ENTER DFU. The operator should not have to know about the BOOT
+   * button when the board can be rebooted in software. This verifies the
+   * board first, sends the genuine MSP reboot-to-bootloader, then waits
+   * for the DFU identity to appear. When the firmware family does not
+   * support it, the screen says so instead of showing a button that
+   * cannot work.
+   */
+  const enterDfuMode = useCallback(async () => {
+    if (navigationLocked) return;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setPhase('detecting');
+    setManualDfuReason(null);
+    setStatus('التحقق من اللوحة قبل الدخول إلى وضع DFU…');
+    try {
+      const device = await requireSingleSerialDevice();
+      const detected = await bootloader.detectFlightController(controller.signal, {
+        deviceId: device.deviceId,
+        portIndex: 0,
+      });
+      if (selectedTarget && !detected.targetMatches(selectedTarget)) {
+        const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+        await detected.release();
+        throw new Error(`Target المحدد ${selectedTarget} لا يطابق اللوحة ${actual}. صحّح Target قبل المتابعة.`);
+      }
+      if (detected.identity.firmware.knownFamily !== 'BETAFLIGHT') {
+        await detected.release();
+        setPhase('idle');
+        setManualDfuReason(
+          'هذا Firmware لا يدعم إعادة التشغيل البرمجية إلى وضع DFU. ادخل وضع DFU يدويًا ثم اختر جهاز DFU.',
+        );
+        setStatus('يلزم الدخول اليدوي إلى وضع DFU.');
+        return;
+      }
+      setDetectedTarget(
+        detected.identity.board.targetName || detected.identity.board.boardName,
+      );
+      await detected.rebootToBootloader(selectedTarget, false);
+      setStatus('أُرسل أمر إعادة التشغيل. انتظار ظهور وضع DFU…');
+      try {
+        const dfu = await bootloader.waitForOneDfuDevice(20_000, controller.signal);
+        setDfuReady(dfu);
+        setDfuTargetVerified(true);
+        setPhase(firmware ? 'ready' : 'idle');
+        setStatus('اللوحة الآن في وضع DFU وجاهزة للتفليش.');
+      } catch (reason) {
+        if (!(reason instanceof DfuPermissionRequiredError)) throw reason;
+        // The board IS in DFU; the browser has simply never been told it
+        // may talk to this identity. Ask once, from a real press.
+        setPhase('idle');
+        setDfuTargetVerified(true);
+        setManualDfuReason(
+          'اللوحة دخلت وضع DFU. اضغط «اختيار جهاز DFU» مرة واحدة للسماح للمتصفح بالتعامل معها.',
+        );
+        setStatus('اللوحة في وضع DFU وتنتظر إذن المتصفح.');
+      }
+    } catch (reason) {
+      if (!controller.signal.aborted) fail(reason);
+    } finally {
+      if (abortRef.current === controller) abortRef.current = null;
+    }
+  }, [
+    bootloader,
+    fail,
+    firmware,
+    navigationLocked,
+    requireSingleSerialDevice,
+    selectedTarget,
+  ]);
+
+  /** The browser's one-time WebUSB chooser, straight from the press. */
+  const chooseDfuDevice = useCallback(() => {
+    if (navigationLocked) return;
+    client.requestDfuDevicePermission()
+      .then(device => {
+        if (device === null) return;
+        setDfuReady(device);
+        setManualDfuReason(null);
+        setStatus('تم اختيار جهاز DFU. يمكنك الآن التفليش.');
+      })
+      .catch(fail);
+  }, [client, fail, navigationLocked]);
+
   const flashPreparedFirmware = useCallback(async () => {
     if (!firmware || navigationLocked) return;
     if (firmware.kind !== 'HEX') {
       setPhase('failed');
-      setStatus('الوضع المبسط مخصص لـ Betaflight HEX. استخدم «متقدم» للأنواع الأخرى.');
+      setStatus('الوضع القياسي مخصص لـ Betaflight HEX. استخدم «متقدم» للأنواع الأخرى.');
+      return;
+    }
+    // Already in DFU from this session (or explicitly chosen): flash it.
+    if (dfuReady !== null) {
+      if (!dfuTargetVerified && !unverifiedDfuAccepted) {
+        setPhase('failed');
+        setStatus('اللوحة في وضع DFU ولا يمكن قراءة هويتها. أكّد مطابقة Target أولاً.');
+        return;
+      }
+      await completeFlash(dfuReady, firmware);
       return;
     }
     const controller = new AbortController();
@@ -432,19 +847,9 @@ export default function FirmwareFlasherSimpleScreen({
     setProgress(0);
     setStatus('التحقق من اللوحة قبل التفليش…');
     try {
-      const devices = (await client.listDevices()).filter(isSupportedDevice);
-      if (devices.length !== 1) {
-        throw new Error(devices.length === 0
-          ? supportsSerialPicker
-            ? 'لم يُعثر على لوحة Serial مسموح بها. اختر جهاز USB أولاً.'
-            : 'لم يُعثر على Flight Controller في وضع Serial. إذا كانت اللوحة في DFU يدوياً فاستخدم «متقدم».'
-          : 'يوجد أكثر من Flight Controller. اترك لوحة واحدة متصلة قبل التفليش.');
-      }
-      if (devices[0].portCount !== 1) {
-        throw new Error('للوحة أكثر من منفذ USB serial. استخدم «متقدم» لاختيار المنفذ يدوياً.');
-      }
+      const device = await requireSingleSerialDevice();
       const detected = await bootloader.detectFlightController(controller.signal, {
-        deviceId: devices[0].deviceId,
+        deviceId: device.deviceId,
         portIndex: 0,
       });
       if (!detected.targetMatches(selectedTarget)) {
@@ -461,7 +866,7 @@ export default function FirmwareFlasherSimpleScreen({
       } catch (reason) {
         if (!(reason instanceof DfuPermissionRequiredError)) throw reason;
         const pending: PendingBootloaderFlash = {
-          operationId: `simple-flash-${Date.now()}`,
+          operationId: `standard-flash-${Date.now()}`,
           expectedTarget: selectedTarget,
           rebootAlreadySent: true,
           writeAlreadyStarted: false,
@@ -477,13 +882,15 @@ export default function FirmwareFlasherSimpleScreen({
     }
   }, [
     bootloader,
-    client,
     completeFlash,
+    dfuReady,
+    dfuTargetVerified,
     fail,
     firmware,
     navigationLocked,
+    requireSingleSerialDevice,
     selectedTarget,
-    supportsSerialPicker,
+    unverifiedDfuAccepted,
   ]);
 
   const chooseDfuAndContinue = useCallback(() => {
@@ -507,7 +914,7 @@ export default function FirmwareFlasherSimpleScreen({
     if (!firmware || navigationLocked) return;
     Alert.alert(
       'تفليش Firmware',
-      `سيتم تثبيت ${selectedRelease} على ${selectedTarget}. أزل المراوح وافصل البطارية واترك USB موصولاً حتى تظهر النتيجة النهائية.`,
+      `سيتم تثبيت ${selectedRelease} على ${selectedTarget}. أزل المراوح واترك USB موصولاً حتى تظهر النتيجة النهائية.`,
       [
         {text: 'إلغاء', style: 'cancel'},
         {
@@ -551,7 +958,7 @@ export default function FirmwareFlasherSimpleScreen({
       <View style={styles.advancedRoot}>
         <View style={styles.advancedBar}>
           <FirmwareButton
-            title="العودة إلى الوضع المبسط"
+            title="العودة إلى الوضع القياسي"
             tone="secondary"
             onPress={() => setAdvanced(false)}
             testID="flasher-simple-mode"
@@ -563,6 +970,9 @@ export default function FirmwareFlasherSimpleScreen({
       </View>
     );
   }
+
+  const noStableForTarget =
+    selectedTarget !== '' && !releasesLoading && !channels.includes('stable');
 
   return (
     <View style={styles.root} testID="firmware-flasher-simple-screen">
@@ -588,7 +998,7 @@ export default function FirmwareFlasherSimpleScreen({
             value={targetQuery}
             onChangeText={setTargetQuery}
             editable={!navigationLocked}
-            placeholder="ابحث باسم Target"
+            placeholder="ابحث باسم Target أو الشركة أو MCU"
             placeholderTextColor={colors.textMuted}
             style={styles.search}
             autoFocus
@@ -605,7 +1015,9 @@ export default function FirmwareFlasherSimpleScreen({
                 style={styles.targetRow}
                 testID={`simple-target-${item.target}`}>
                 <Text style={styles.targetName}>{item.target}</Text>
-                <Text style={styles.targetMeta}>{item.manufacturer ?? item.mcu ?? ''}</Text>
+                <Text style={styles.targetMeta}>
+                  {[item.manufacturer, item.mcu].filter(Boolean).join(' • ')}
+                </Text>
               </Pressable>
             )}
           />
@@ -623,7 +1035,7 @@ export default function FirmwareFlasherSimpleScreen({
         </Pressable>
         <View style={styles.headerCopy}>
           <Text style={styles.title}>Firmware Flasher</Text>
-          <Text style={styles.subtitle}>اختيار · تحميل · تفليش</Text>
+          <Text style={styles.subtitle}>اللوحة · الإصدار · الإعدادات · التفليش</Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -639,8 +1051,9 @@ export default function FirmwareFlasherSimpleScreen({
         style={styles.scroll}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled">
+        {/* 1 — the board */}
         <View style={styles.card}>
-          <StepHeader number="1" title="اللوحة" />
+          <StepHeader number="١" title="اللوحة" />
           {supportsSerialPicker ? (
             <FirmwareButton
               title="اختيار جهاز USB"
@@ -666,19 +1079,69 @@ export default function FirmwareFlasherSimpleScreen({
             <Text style={styles.selectorLabel}>Target</Text>
             <Text style={styles.selectorValue}>{selectedTarget || 'اختر اللوحة'}</Text>
           </Pressable>
-          {detectedTarget ? <Text style={styles.detected}>تم التعرف: {detectedTarget}</Text> : null}
+          {detectedTarget ? (
+            <Text style={styles.detected} testID="simple-detected-target">
+              تم التعرف على اللوحة {detectedTarget}
+            </Text>
+          ) : null}
+          {detectionNote !== null ? (
+            <Text style={styles.helper} testID="simple-detection-note">
+              {detectionNote}
+            </Text>
+          ) : null}
         </View>
 
+        {/* 2 — the version */}
         <View style={styles.card}>
-          <StepHeader number="2" title="الإصدار" />
+          <StepHeader number="٢" title="الإصدار" />
           {releasesLoading ? <ActivityIndicator color={colors.accent} /> : null}
-          {!releasesLoading && selectedTarget && stableReleases.length === 0 ? (
-            <Text style={styles.helper}>
-              لا يوجد إصدار مستقر ظاهر. استخدم «متقدم» لإصدارات RC/Development.
+          {channels.length > 1 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{expanded: channelPickerOpen, disabled: navigationLocked}}
+              disabled={navigationLocked}
+              onPress={() => setChannelPickerOpen(current => !current)}
+              style={[styles.channelToggle, navigationLocked && styles.dimmed]}
+              testID="simple-channel-toggle">
+              <Text style={styles.channelToggleText}>
+                القناة: {CHANNEL_TITLES[channel]}
+              </Text>
+              <Icon
+                name={channelPickerOpen ? 'chevron-up' : 'chevron-down'}
+                size={16}
+                color={colors.textSecondary}
+              />
+            </Pressable>
+          ) : null}
+          {channelPickerOpen ? (
+            <View style={styles.optionChoices}>
+              {channels.map(item => (
+                <Pressable
+                  key={item}
+                  accessibilityRole="radio"
+                  accessibilityState={{selected: item === channel, disabled: navigationLocked}}
+                  disabled={navigationLocked}
+                  onPress={() => {
+                    setChannel(item);
+                    setSelectedRelease(defaultReleaseForChannel(releases, item));
+                    setChannelPickerOpen(false);
+                  }}
+                  style={[styles.choice, item === channel && styles.choiceSelected]}
+                  testID={`simple-channel-${item}`}>
+                  <Text style={[styles.choiceText, item === channel && styles.choiceTextSelected]}>
+                    {CHANNEL_TITLES[item]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
+          {noStableForTarget ? (
+            <Text style={styles.helper} testID="simple-no-stable">
+              لا يوجد إصدار مستقر لهذه اللوحة. القناة المعروضة هي {CHANNEL_TITLES[channel]}.
             </Text>
           ) : null}
           <View style={styles.releaseWrap}>
-            {stableReleases.slice(0, 6).map(release => {
+            {channelReleases.slice(0, 6).map(release => {
               const selected = release.release === selectedRelease;
               return (
                 <Pressable
@@ -688,11 +1151,12 @@ export default function FirmwareFlasherSimpleScreen({
                   onPress={() => setSelectedRelease(release.release)}
                   disabled={navigationLocked}
                   style={[
-                    styles.releaseChip,
-                    selected && styles.releaseChipSelected,
+                    styles.choice,
+                    selected && styles.choiceSelected,
                     navigationLocked && styles.dimmed,
-                  ]}>
-                  <Text style={[styles.releaseText, selected && styles.releaseTextSelected]}>
+                  ]}
+                  testID={`simple-release-${release.release}`}>
+                  <Text style={[styles.choiceText, selected && styles.choiceTextSelected]}>
                     {release.release}
                   </Text>
                 </Pressable>
@@ -701,34 +1165,148 @@ export default function FirmwareFlasherSimpleScreen({
           </View>
         </View>
 
-        <View style={styles.card}>
-          <StepHeader number="3" title="Firmware" />
-          <FirmwareButton
-            title={phase === 'loading'
-              ? 'جارٍ التحميل…'
-              : firmware
-                ? 'إعادة تحميل Firmware'
-                : 'تحميل Firmware'}
-            onPress={() => loadFirmware().catch(() => undefined)}
-            disabled={navigationLocked || !selectedTarget || !selectedRelease}
-            testID="simple-load-firmware"
-          />
-          {firmware ? <Text style={styles.readyText}>جاهز: {firmware.filename}</Text> : null}
+        {/* 3 — the official build configuration */}
+        <View style={styles.card} testID="simple-build-configuration">
+          <StepHeader number="٣" title="إعدادات البناء" />
+          {buildOptionsLoading ? <ActivityIndicator color={colors.accent} /> : null}
+          {!selectedRelease ? (
+            <Text style={styles.helper}>اختر اللوحة والإصدار لعرض خيارات البناء الرسمية.</Text>
+          ) : null}
+          {buildOptionsError !== null ? (
+            <Text style={styles.helper} testID="simple-build-options-error">
+              تعذّر تحميل خيارات البناء لهذا الإصدار؛ سيُستخدم البناء الأساسي (Core). {buildOptionsError}
+            </Text>
+          ) : null}
+          {selectedRelease && !buildOptionsLoading && buildOptionsError === null && !configurable ? (
+            <Text style={styles.helper} testID="simple-core-build-only">
+              هذا الإصدار يوفّر بناءً أساسياً (Core) فقط لهذه اللوحة؛ لا توجد خيارات قابلة للتغيير.
+            </Text>
+          ) : null}
+          {configurable && choices !== null && buildOptions !== null ? (
+            <>
+              {categories.map(category =>
+                category.kind === 'multi' ? (
+                  <MultiChoiceGroup
+                    key={category.key}
+                    title={BUILD_CATEGORY_TITLES[category.key]}
+                    options={category.options}
+                    values={choices.generalOptions}
+                    disabled={navigationLocked}
+                    testIDPrefix={`simple-build-${category.key}`}
+                    onToggle={value =>
+                      updateChoices({
+                        ...choices,
+                        generalOptions: choices.generalOptions.includes(value)
+                          ? choices.generalOptions.filter(item => item !== value)
+                          : [...choices.generalOptions, value],
+                      })
+                    }
+                  />
+                ) : (
+                  <SingleChoiceGroup
+                    key={category.key}
+                    title={BUILD_CATEGORY_TITLES[category.key]}
+                    options={category.options}
+                    value={
+                      category.key === 'radio'
+                        ? choices.radioProtocol
+                        : category.key === 'telemetry'
+                          ? choices.telemetryProtocol
+                          : category.key === 'osd'
+                            ? choices.osdProtocol
+                            : choices.motorProtocol
+                    }
+                    disabled={navigationLocked}
+                    testIDPrefix={`simple-build-${category.key}`}
+                    lockedLabel={
+                      category.key === 'telemetry' && radioCarriesTelemetry
+                        ? 'مضمّن تلقائياً مع بروتوكول الراديو'
+                        : undefined
+                    }
+                    onChange={value =>
+                      updateChoices({
+                        ...choices,
+                        ...(category.key === 'radio'
+                          ? {radioProtocol: value}
+                          : category.key === 'telemetry'
+                            ? {telemetryProtocol: value}
+                            : category.key === 'osd'
+                              ? {osdProtocol: value}
+                              : {motorProtocol: value}),
+                      })
+                    }
+                  />
+                ),
+              )}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{expanded: customDefinesOpen, disabled: navigationLocked}}
+                disabled={navigationLocked}
+                onPress={() => setCustomDefinesOpen(current => !current)}
+                style={[styles.optionHeader, navigationLocked && styles.dimmed]}
+                testID="simple-custom-defines-toggle">
+                <View style={styles.optionCopy}>
+                  <Text style={styles.optionLabel}>Custom Defines</Text>
+                  <Text style={styles.optionValue}>
+                    {choices.customDefines.trim().length === 0 ? 'بدون' : choices.customDefines.trim()}
+                  </Text>
+                </View>
+                <Icon
+                  name={customDefinesOpen ? 'chevron-up' : 'chevron-down'}
+                  size={18}
+                  color={colors.textSecondary}
+                />
+              </Pressable>
+              {customDefinesOpen ? (
+                <TextInput
+                  value={choices.customDefines}
+                  onChangeText={value => updateChoices({...choices, customDefines: value})}
+                  editable={!navigationLocked}
+                  placeholder="مثال: USE_SOMETHING USE_OTHER=1"
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.definesInput}
+                  autoCapitalize="characters"
+                  testID="simple-custom-defines"
+                />
+              ) : null}
+            </>
+          ) : null}
         </View>
 
+        {/* 4 — prepare */}
         <View style={styles.card}>
-          <StepHeader number="4" title="التفليش" />
+          <StepHeader number="٤" title="تحضير Firmware" />
+          <FirmwareButton
+            title={phase === 'loading'
+              ? 'جارٍ التحضير…'
+              : firmware
+                ? 'إعادة تحضير Firmware'
+                : 'تحضير Firmware'}
+            onPress={() => loadFirmware().catch(() => undefined)}
+            disabled={navigationLocked || !selectedTarget || !selectedRelease || choices === null}
+            testID="simple-load-firmware"
+          />
+          {firmware ? (
+            <Text style={styles.readyText} testID="simple-firmware-ready">
+              جاهز: {firmware.filename}
+            </Text>
+          ) : null}
+        </View>
+
+        {/* 5 — DFU + flash */}
+        <View style={styles.card}>
+          <StepHeader number="٥" title="التفليش" />
           {isBusy ? <FirmwareProgress percent={progress} label={status} /> : null}
 
           {phase === 'success' ? (
             <FirmwareNotice
-              title="تم بنجاح"
-              text="تم تثبيت Firmware والتحقق منه وإعادة تشغيل اللوحة."
+              title="تم تثبيت Firmware بنجاح"
+              text="اكتملت الكتابة والتحقق بالقراءة الراجعة، وأعادت اللوحة التشغيل."
               tone="success"
             />
           ) : null}
           {phase === 'failed' ? (
-            <FirmwareNotice title="تعذر إكمال العملية" text={status} tone="error" />
+            <FirmwareNotice title="فشل التفليش" text={status} tone="error" />
           ) : null}
           {phase === 'unconfirmed' ? (
             <FirmwareNotice
@@ -737,6 +1315,48 @@ export default function FirmwareFlasherSimpleScreen({
               tone="warning"
             />
           ) : null}
+
+          {dfuReady !== null ? (
+            <Text style={styles.detected} testID="simple-dfu-ready">
+              اللوحة في وضع DFU وجاهزة للتفليش.
+            </Text>
+          ) : (
+            <FirmwareButton
+              title="الدخول إلى وضع DFU"
+              tone="secondary"
+              onPress={() => enterDfuMode().catch(() => undefined)}
+              disabled={navigationLocked}
+              testID="simple-enter-dfu"
+            />
+          )}
+          {manualDfuReason !== null ? (
+            <View testID="simple-manual-dfu">
+              <FirmwareNotice title="وضع DFU" text={manualDfuReason} tone="warning" />
+              {supportsSerialPicker ? (
+                <FirmwareButton
+                  title="اختيار جهاز DFU"
+                  tone="secondary"
+                  onPress={chooseDfuDevice}
+                  disabled={navigationLocked}
+                  testID="simple-choose-dfu-device"
+                />
+              ) : null}
+            </View>
+          ) : null}
+          {dfuReady !== null && !dfuTargetVerified ? (
+            <Pressable
+              accessibilityRole="checkbox"
+              accessibilityState={{checked: unverifiedDfuAccepted, disabled: navigationLocked}}
+              disabled={navigationLocked}
+              onPress={() => setUnverifiedDfuAccepted(current => !current)}
+              style={[styles.choice, unverifiedDfuAccepted && styles.choiceSelected]}
+              testID="simple-accept-unverified-dfu">
+              <Text style={styles.choiceText}>
+                أؤكد أن Target مطابق (لا يمكن قراءة الهوية في وضع DFU)
+              </Text>
+            </Pressable>
+          ) : null}
+
           {phase === 'waiting-permission' ? (
             <>
               <FirmwareNotice
@@ -749,16 +1369,14 @@ export default function FirmwareFlasherSimpleScreen({
                 testID="simple-choose-dfu"
               />
             </>
-          ) : null}
-
-          {phase !== 'waiting-permission' ? (
+          ) : (
             <FirmwareButton
               title={phase === 'flashing' ? 'التفليش جارٍ…' : 'تفليش Firmware'}
               onPress={confirmFlash}
               disabled={navigationLocked || firmware === null}
               testID="simple-flash-firmware"
             />
-          ) : null}
+          )}
 
           {isBusy || phase === 'waiting-permission' ? (
             <FirmwareButton
@@ -768,27 +1386,17 @@ export default function FirmwareFlasherSimpleScreen({
               testID="simple-cancel-flash"
             />
           ) : null}
+          {firmware !== null && phase === 'ready' ? (
+            <Text style={styles.helper} testID="simple-flash-safety">
+              أزل المراوح قبل التفليش، واترك USB موصولاً حتى تظهر النتيجة النهائية.
+            </Text>
+          ) : null}
         </View>
 
         <Text style={styles.footerNote}>
-          الخيارات اليدوية والاسترداد وملفات Firmware المحلية موجودة في «متقدم» فقط عند الحاجة.
+          المسح الكامل و Baud اليدوي وأدوات الاسترداد وملفات Firmware المحلية في «متقدم».
         </Text>
       </ScrollView>
-    </View>
-  );
-}
-
-function StepHeader({
-  number,
-  title,
-}: {
-  readonly number: string;
-  readonly title: string;
-}): React.JSX.Element {
-  return (
-    <View style={styles.stepHeader}>
-      <View style={styles.stepNumber}><Text style={styles.stepNumberText}>{number}</Text></View>
-      <Text style={styles.stepTitle}>{title}</Text>
     </View>
   );
 }
@@ -846,19 +1454,62 @@ const styles = StyleSheet.create({
   selectorValue: {...typography.sectionTitle, color: colors.textPrimary},
   detected: {...typography.caption, color: colors.success},
   helper: {...typography.caption, color: colors.textSecondary},
+  channelToggle: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.md,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
+  },
+  channelToggleText: {...typography.caption, color: colors.textSecondary, fontWeight: '700'},
+  optionGroup: {gap: spacing.sm},
+  optionHeader: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+  },
+  optionCopy: {flex: 1, gap: 2},
+  optionLabel: {...typography.caption, color: colors.textMuted},
+  optionValue: {...typography.bodyStrong, color: colors.textPrimary},
+  optionChoices: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   releaseWrap: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
-  releaseChip: {
+  choice: {
     minHeight: 44,
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
     borderRadius: radii.pill,
     backgroundColor: colors.surfaceAlt,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  releaseChipSelected: {backgroundColor: colors.accentSoft, borderColor: colors.accent},
-  releaseText: {...typography.caption, color: colors.textSecondary, fontWeight: '700'},
-  releaseTextSelected: {color: colors.accentStrong},
+  choiceSelected: {backgroundColor: colors.accentSoft, borderColor: colors.accent},
+  choiceText: {...typography.caption, color: colors.textSecondary, fontWeight: '700'},
+  choiceTextSelected: {color: colors.accentStrong},
+  definesInput: {
+    minHeight: 48,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    color: colors.textPrimary,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    fontFamily: 'Cairo',
+    textAlign: 'left',
+    writingDirection: 'ltr',
+  },
   readyText: {...typography.caption, color: colors.success},
   footerNote: {...typography.caption, color: colors.textMuted, textAlign: 'center'},
   modal: {flex: 1, backgroundColor: colors.background, padding: spacing.md, gap: spacing.md},
