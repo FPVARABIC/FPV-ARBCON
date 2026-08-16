@@ -29,12 +29,22 @@
  *      NetworkError and `device.opened` goes false. That is what is
  *      checked here, and it is weaker evidence - see deviceWentAway().
  *
- *   3. NO NATIVE CONTROL-TRANSFER TIMEOUT. WebUSB does not accept an
- *      AbortSignal or timeout for controlTransferIn/controlTransferOut.
- *      Every transfer is therefore wrapped in an application deadline.
- *      A deadline NEVER retries the command. Instead the claimed DFU
- *      connection is poisoned, later completion is ignored, and the flash
- *      attempt settles with an explicit timeout/unconfirmed result.
+ *   3. NO CONTROL-TRANSFER TIMEOUT. WebUSB has no timeout parameter and
+ *      no AbortSignal, so a wedged device leaves a transfer promise
+ *      pending FOREVER - the deterministic reproduction in
+ *      .dev-preview/audit/flasher-p0 proved a single such transfer held
+ *      the whole flash promise with zero timers remaining, which is the
+ *      "98% forever" the operator reported. The poll loops' iteration
+ *      caps bound only COMPLETED iterations and never engage on a pending
+ *      one. Every transfer await here is therefore wrapped in a bounded
+ *      OBSERVATION window (DFU_TRANSFER_DEADLINE_MS): when the window is
+ *      exceeded the attempt is FROZEN and classified truthfully
+ *      (classifyDfuOverrun), the device session is marked poisoned so no
+ *      further destructive command can be issued against it, and the
+ *      still-pending browser transfer is left alone - it cannot be
+ *      cancelled, it is never retried, and its late settlement is
+ *      deliberately inert. Android needs none of this: its every
+ *      controlTransfer carries CONTROL_TIMEOUT_MS = 5000.
  *
  * SAFETY POSTURE, unchanged from Android: the firmware's addresses are
  * checked against the device's OWN parsed memory layout BEFORE anything is
@@ -50,6 +60,11 @@
 // `fetch`, which is how this was noticed.
 import {parseIntelHex} from '../../../../core/firmware-flasher/intelHex';
 import type {IntelHexImage} from '../../../../core/firmware-flasher/intelHex';
+import {
+  DFU_CODE_SESSION_POISONED,
+  classifyDfuOverrun,
+} from '../../../../core/firmware-flasher/flashCompletionModel';
+import type {DfuFlashStage} from '../../../../core/firmware-flasher/flashCompletionModel';
 import type {DfuDeviceDescriptor, DfuFlashProgressEvent} from './usbSerialTransportTypes';
 
 /* eslint-disable no-bitwise -- DfuSe is a byte-level USB protocol: status
@@ -85,18 +100,6 @@ const MAX_STATUS_POLLS = 100;
 const MAX_SINGLE_POLL_DELAY_MS = 500;
 const MAX_REPORTED_ERASE_DELAY_MS = 30_000;
 const ERASE_SAFETY_DELAY_MS = 20_000;
-
-/**
- * A SINGLE WebUSB control transfer must never own the UI forever. These
- * deadlines are deliberately much longer than a normal 2 KiB transfer and
- * shorter than the user-visible phase watchdogs. They do not cancel the
- * browser transfer (WebUSB cannot); they only invalidate this attempt so no
- * later destructive command can be issued from the same poisoned session.
- */
-export const WEBUSB_CONTROL_TRANSFER_TIMEOUT_MS = 15_000;
-export const WEBUSB_MANIFEST_TRANSFER_TIMEOUT_MS = 25_000;
-const WEBUSB_DEVICE_CHECK_TIMEOUT_MS = 3_000;
-const WEBUSB_RELEASE_TIMEOUT_MS = 1_500;
 
 const DFU_INTERFACE_CLASS = 0xfe;
 const DFU_INTERFACE_SUBCLASS = 0x01;
@@ -140,22 +143,113 @@ export class DfuCancelledError extends DfuError {
   }
 }
 
-/**
- * A deadline firing is NOT proof that the USB command failed. The browser
- * may still have the transfer pending, so callers must not retry it. The
- * code is intentionally distinct from DFU_TRANSFER_FAILED so the UI/report
- * can tell an unknown outcome from a device-declared failure.
- */
-export class DfuTransferTimeoutError extends DfuError {
-  readonly operation: string;
+/* ------------------------------------------------------------------ *
+ * Bounded observation of unbounded WebUSB transfers
+ * ------------------------------------------------------------------ */
 
-  constructor(operation: string) {
-    super(
-      'DFU_TRANSFER_TIMEOUT',
-      `توقف اتصال WebUSB أثناء ${operation}. لم يُعَد أي أمر مسح أو كتابة تلقائياً. افصل USB وأعد توصيل اللوحة قبل إعادة المحاولة.`,
+/**
+ * How long each stage's transfers are OBSERVED before the attempt is
+ * frozen. These are observation windows, not protocol timeouts: nothing
+ * is cancelled and nothing is retried when one closes.
+ *
+ * Two constraints picked every number. Each window sits ABOVE the UI's
+ * advisory stall threshold for its phase (flashPhaseModel.ts: ERASING
+ * 30s, WRITING/VERIFYING 15s, MANIFESTING/RESETTING 40s), so the operator
+ * always sees the honest "stalled" notice before the attempt settles.
+ * And each sits above the device's own legitimate worst case - a full
+ * bank erase can hold GETSTATUS hostage for tens of seconds on some
+ * bootloaders, which is why ERASE gets the longest window.
+ */
+export const DFU_TRANSFER_DEADLINE_MS: Readonly<Record<DfuFlashStage, number>> =
+  Object.freeze({
+    OPEN: 15_000,
+    ERASE: 60_000,
+    WRITE: 30_000,
+    VERIFY: 30_000,
+    FINALIZE: 45_000,
+    MANIFEST: 60_000,
+  });
+
+/** Cleanup and presence probes get short windows of their own: they are
+ * non-destructive, and a frozen attempt must not be held open by them. */
+export const DFU_RELEASE_DEADLINE_MS = 5_000;
+export const DFU_PRESENCE_PROBE_DEADLINE_MS = 2_000;
+
+/** Internal: a transfer outlived its observation window. Never leaves
+ * this module - flashDfuFirmware converts it into a truthful verdict. */
+class DfuPendingTransferOverrun extends Error {
+  constructor(
+    readonly op: string,
+    readonly deadlineMs: number,
+  ) {
+    super(`WebUSB ${op} still pending after ${deadlineMs}ms.`);
+    this.name = 'DfuPendingTransferOverrun';
+  }
+}
+
+const OVERRUN = Symbol('dfu-transfer-overrun');
+
+/**
+ * Awaits `work` for at most `deadlineMs`. On overrun the still-pending
+ * promise is given no-op handlers - its late settlement must neither
+ * throw unhandled nor do anything else, because the attempt it belonged
+ * to is already terminally classified - and DfuPendingTransferOverrun is
+ * thrown for the caller to classify. A settlement that wins the race
+ * (either way) passes through untouched.
+ */
+async function awaitBounded<T>(
+  work: Promise<T>,
+  op: string,
+  deadlineMs: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const raced = await Promise.race([
+      work,
+      new Promise<typeof OVERRUN>(resolve => {
+        timer = setTimeout(() => resolve(OVERRUN), deadlineMs);
+      }),
+    ]);
+    if (raced === OVERRUN) {
+      work.then(
+        () => undefined,
+        () => undefined,
+      );
+      throw new DfuPendingTransferOverrun(op, deadlineMs);
+    }
+    return raced as T;
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+/**
+ * Devices with a transfer left pending against them. A WebUSB session
+ * that swallowed a transfer is POISONED: issuing further DFU commands
+ * against it would race an operation the browser can neither cancel nor
+ * report on, so every entry point refuses until the operator unplugs and
+ * replugs the board - a replug enumerates a NEW USBDevice object, which
+ * is exactly the "new device state" a safe fresh attempt needs. (A
+ * successful post-manifestation reset also re-enumerates a new object,
+ * so a poisoned SUCCESS never blocks the next flash.)
+ */
+let poisonedDevices = new WeakMap<USBDevice, string>();
+
+function poisonDevice(device: USBDevice, pendingOp: string): void {
+  if (!poisonedDevices.has(device)) {
+    poisonedDevices.set(device, pendingOp);
+  }
+}
+
+function assertSessionNotPoisoned(device: USBDevice): void {
+  const pendingOp = poisonedDevices.get(device);
+  if (pendingOp !== undefined) {
+    throw new DfuError(
+      DFU_CODE_SESSION_POISONED,
+      `A WebUSB transfer (${pendingOp}) from a previous attempt is still pending against this device session. Unplug the board, plug it back in, and select it again.`,
     );
-    this.name = 'DfuTransferTimeoutError';
-    this.operation = operation;
   }
 }
 
@@ -390,34 +484,15 @@ function requireTarget(deviceId: number): DfuTarget {
 const delay = (milliseconds: number): Promise<void> =>
   new Promise(resolve => setTimeout(resolve, milliseconds));
 
-function settleBestEffort(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
-  // Late rejection after the timeout must never become an unhandled promise.
-  promise.catch(() => undefined);
-  return new Promise(resolve => {
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve();
-    };
-    const timer = setTimeout(finish, timeoutMs);
-    promise.then(finish, finish);
-  });
-}
-
-function isExpectedResetTransferFailure(error: unknown): boolean {
-  if (!(error instanceof DfuError)) return false;
-  return [
-    'DFU_STATUS_FAILED',
-    'DFU_TRANSFER_FAILED',
-    'DFU_TRANSFER_TIMEOUT',
-  ].includes(error.code);
-}
-
 class DfuConnection {
-  private poisoned = false;
-  private pendingOperation: string | undefined;
+  /**
+   * The stage the flash is currently in, set by flashDfuFirmware as it
+   * advances. Chooses the observation window for every transfer, and is
+   * the first fact classifyDfuOverrun reads when one overruns.
+   */
+  stage: DfuFlashStage = 'OPEN';
+  /** The exact operation left pending when an overrun froze the attempt. */
+  pendingOp: string | undefined;
 
   constructor(
     private readonly device: USBDevice,
@@ -425,42 +500,75 @@ class DfuConnection {
     private readonly isCancelled: () => boolean,
   ) {}
 
+  private async bounded<T>(work: Promise<T>, op: string): Promise<T> {
+    try {
+      return await awaitBounded(work, op, DFU_TRANSFER_DEADLINE_MS[this.stage]);
+    } catch (error) {
+      if (error instanceof DfuPendingTransferOverrun) {
+        this.pendingOp = op;
+        poisonDevice(this.device, op);
+      }
+      throw error;
+    }
+  }
+
   static async open(
     target: DfuTarget,
     isCancelled: () => boolean,
   ): Promise<DfuConnection> {
     const {device, interfaceNumber, alternateSetting} = target;
+    const connection = new DfuConnection(device, interfaceNumber, isCancelled);
     try {
       if (!device.opened) {
-        await device.open();
+        await connection.bounded(device.open(), 'open()');
       }
     } catch (reason) {
+      if (reason instanceof DfuPendingTransferOverrun) {
+        throw new DfuError('DFU_OPEN_FAILED', reason.message);
+      }
       throw new DfuError('DFU_OPEN_FAILED', describe(reason));
     }
     try {
       if (device.configuration === null) {
-        await device.selectConfiguration(1);
+        await connection.bounded(device.selectConfiguration(1), 'selectConfiguration(1)');
       }
-      await device.claimInterface(interfaceNumber);
+      await connection.bounded(device.claimInterface(interfaceNumber), 'claimInterface');
       // DfuSe puts each memory region on its own alternate setting; the
       // wrong one silently addresses option bytes instead of flash.
-      await device.selectAlternateInterface(interfaceNumber, alternateSetting);
+      await connection.bounded(
+        device.selectAlternateInterface(interfaceNumber, alternateSetting),
+        'selectAlternateInterface',
+      );
     } catch (reason) {
       await device.close().catch(() => undefined);
+      if (reason instanceof DfuPendingTransferOverrun) {
+        throw new DfuError('DFU_CLAIM_FAILED', reason.message);
+      }
       throw new DfuError('DFU_CLAIM_FAILED', describe(reason));
     }
-    return new DfuConnection(device, interfaceNumber, isCancelled);
+    return connection;
   }
 
   async release(): Promise<void> {
-    // A timed-out WebUSB control transfer may still be pending inside the
-    // browser. Cleanup therefore also has a bound; cleanup must never turn a
-    // terminal flash result back into another eternal await.
-    await settleBestEffort(
-      this.device.releaseInterface(this.interfaceNumber),
-      WEBUSB_RELEASE_TIMEOUT_MS,
-    );
-    await settleBestEffort(this.device.close(), WEBUSB_RELEASE_TIMEOUT_MS);
+    // Best-effort AND bounded: after a successful manifestation the
+    // device has already reset and these calls throw - expected, not a
+    // failure. Against a wedged device they can also HANG, and this
+    // method sits on every exit path, so an unbounded await here would
+    // hold an already-classified attempt open forever. On overrun the
+    // pending cleanup is simply abandoned; it issues no DFU command.
+    try {
+      await awaitBounded(
+        this.device
+          .releaseInterface(this.interfaceNumber)
+          .catch(() => undefined)
+          .then(() => this.device.close())
+          .catch(() => undefined),
+        'release()',
+        DFU_RELEASE_DEADLINE_MS,
+      );
+    } catch {
+      // DfuPendingTransferOverrun only - swallowed by design.
+    }
   }
 
   /**
@@ -468,27 +576,23 @@ class DfuConnection {
    * equivalent of Android re-reading UsbManager.deviceList. See note 2 in
    * the file header: this is weaker evidence than Android's, so it is used
    * ONLY to accept an expected post-manifestation disappearance, never to
-   * claim a flash succeeded before every firmware byte was verified.
+   * claim a flash succeeded.
    */
   async deviceWentAway(): Promise<boolean> {
     if (!this.device.opened) {
       return true;
     }
     try {
-      const devicesPromise = navigator.usb.getDevices();
-      devicesPromise.catch(() => undefined);
-      const devices = await new Promise<USBDevice[] | null>(resolve => {
-        let settled = false;
-        const finish = (value: USBDevice[] | null) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve(value);
-        };
-        const timer = setTimeout(() => finish(null), WEBUSB_DEVICE_CHECK_TIMEOUT_MS);
-        devicesPromise.then(value => finish(value), () => finish(null));
-      });
-      return devices !== null && !devices.includes(this.device);
+      // Bounded: this probe decides whether a frozen manifestation may
+      // count as completion, and it must not itself pend forever. An
+      // unanswerable probe reports PRESENT - the conservative answer,
+      // because "gone" is completion evidence and "present" never is.
+      const devices = await awaitBounded(
+        navigator.usb.getDevices(),
+        'getDevices() presence probe',
+        DFU_PRESENCE_PROBE_DEADLINE_MS,
+      );
+      return !devices.includes(this.device);
     } catch {
       return false;
     }
@@ -500,58 +604,11 @@ class DfuConnection {
     }
   }
 
-  private checkUsable(): void {
+  async download(blockNumber: number, data: Uint8Array): Promise<void> {
     this.checkCancelled();
-    if (this.poisoned) {
-      throw new DfuError(
-        'DFU_SESSION_POISONED',
-        `جلسة WebUSB الحالية غير صالحة بعد توقف ${this.pendingOperation ?? 'نقل سابق'}. افصل USB وأعد توصيل اللوحة قبل أي محاولة جديدة.`,
-      );
-    }
-  }
-
-  private async transferWithDeadline<T>(
-    operation: string,
-    transfer: Promise<T>,
-    timeoutMs = WEBUSB_CONTROL_TRANSFER_TIMEOUT_MS,
-  ): Promise<T> {
-    this.checkUsable();
-    // The underlying WebUSB promise cannot be cancelled. Always attach a
-    // rejection handler so a late settlement after our deadline is inert.
-    transfer.catch(() => undefined);
-    return new Promise<T>((resolve, reject) => {
-      let settled = false;
-      const finish = (callback: () => void) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        callback();
-      };
-      const timer = setTimeout(() => {
-        finish(() => {
-          this.poisoned = true;
-          this.pendingOperation = operation;
-          reject(new DfuTransferTimeoutError(operation));
-        });
-      }, timeoutMs);
-      transfer.then(
-        value => finish(() => resolve(value)),
-        reason => finish(() => reject(reason)),
-      );
-    });
-  }
-
-  async download(
-    blockNumber: number,
-    data: Uint8Array,
-    operation = `DFU DNLOAD block ${blockNumber}`,
-    timeoutMs = WEBUSB_CONTROL_TRANSFER_TIMEOUT_MS,
-  ): Promise<void> {
-    this.checkUsable();
     let result: USBOutTransferResult;
     try {
-      result = await this.transferWithDeadline(
-        operation,
+      result = await this.bounded(
         this.device.controlTransferOut(
           {
             requestType: 'class',
@@ -565,10 +622,12 @@ class DfuConnection {
           // the read-back pass compares against afterwards.
           data.slice(),
         ),
-        timeoutMs,
+        `DNLOAD(block=${blockNumber}, length=${data.length})`,
       );
     } catch (reason) {
-      if (reason instanceof DfuError) throw reason;
+      if (reason instanceof DfuPendingTransferOverrun) {
+        throw reason;
+      }
       throw new DfuError('DFU_TRANSFER_FAILED', describe(reason));
     }
     if (result.status !== 'ok' || (result.bytesWritten ?? 0) !== data.length) {
@@ -581,15 +640,14 @@ class DfuConnection {
 
   /** A DfuSe command is a DNLOAD to block 0. */
   async command(data: Uint8Array): Promise<void> {
-    await this.download(0, data, 'DFU command');
+    await this.download(0, data);
   }
 
   async upload(blockNumber: number, length: number): Promise<Uint8Array> {
-    this.checkUsable();
+    this.checkCancelled();
     let result: USBInTransferResult;
     try {
-      result = await this.transferWithDeadline(
-        `DFU VERIFY UPLOAD block ${blockNumber}`,
+      result = await this.bounded(
         this.device.controlTransferIn(
           {
             requestType: 'class',
@@ -600,9 +658,12 @@ class DfuConnection {
           },
           length,
         ),
+        `UPLOAD(block=${blockNumber}, length=${length})`,
       );
     } catch (reason) {
-      if (reason instanceof DfuError) throw reason;
+      if (reason instanceof DfuPendingTransferOverrun) {
+        throw reason;
+      }
       throw new DfuError('DFU_TRANSFER_FAILED', describe(reason));
     }
     if (result.status !== 'ok' || !result.data) {
@@ -617,11 +678,9 @@ class DfuConnection {
 
   /** GETSTATUS: [status, pollTimeout(3 bytes LE), state, iString]. */
   async status(): Promise<Uint8Array> {
-    this.checkUsable();
     let result: USBInTransferResult;
     try {
-      result = await this.transferWithDeadline(
-        'DFU GETSTATUS',
+      result = await this.bounded(
         this.device.controlTransferIn(
           {
             requestType: 'class',
@@ -632,9 +691,12 @@ class DfuConnection {
           },
           6,
         ),
+        'GETSTATUS',
       );
     } catch (reason) {
-      if (reason instanceof DfuError) throw reason;
+      if (reason instanceof DfuPendingTransferOverrun) {
+        throw reason;
+      }
       throw new DfuError('DFU_STATUS_FAILED', describe(reason));
     }
     if (result.status !== 'ok' || !result.data || result.data.byteLength !== 6) {
@@ -648,10 +710,8 @@ class DfuConnection {
   }
 
   private async controlNoData(request: number): Promise<void> {
-    this.checkUsable();
     try {
-      const result = await this.transferWithDeadline(
-        request === DFU_ABORT ? 'DFU ABORT' : 'DFU CLRSTATUS',
+      const result = await this.bounded(
         this.device.controlTransferOut({
           requestType: 'class',
           recipient: 'interface',
@@ -659,12 +719,15 @@ class DfuConnection {
           value: 0,
           index: this.interfaceNumber,
         }),
+        request === DFU_CLRSTATUS ? 'CLRSTATUS' : 'ABORT',
       );
       if (result.status !== 'ok') {
         throw new Error(`status ${result.status}`);
       }
     } catch (reason) {
-      if (reason instanceof DfuError) throw reason;
+      if (reason instanceof DfuPendingTransferOverrun) {
+        throw reason;
+      }
       throw new DfuError('DFU_TRANSFER_FAILED', describe(reason));
     }
   }
@@ -679,7 +742,7 @@ class DfuConnection {
 
   async ensureIdle(): Promise<void> {
     for (let poll = 0; poll < MAX_STATUS_POLLS; poll += 1) {
-      this.checkUsable();
+      this.checkCancelled();
       const status = await this.status();
       await this.sleepPoll(status);
       const state = status[4];
@@ -697,7 +760,7 @@ class DfuConnection {
 
   async waitForDownloadIdle(): Promise<void> {
     for (let poll = 0; poll < MAX_STATUS_POLLS; poll += 1) {
-      this.checkUsable();
+      this.checkCancelled();
       const status = await this.status();
       await this.sleepPoll(status);
       const state = status[4];
@@ -719,7 +782,7 @@ class DfuConnection {
 
   async waitForManifestation(): Promise<void> {
     for (let poll = 0; poll < MAX_STATUS_POLLS; poll += 1) {
-      this.checkUsable();
+      this.checkCancelled();
       const status = await this.status();
       await this.sleepPoll(status);
       const state = status[4];
@@ -741,51 +804,8 @@ class DfuConnection {
     await this.waitForDownloadIdle();
   }
 
-  /**
-   * Completes the only ambiguous part of a verified flash. At this point
-   * every programmed byte has already been read back and compared. A reset
-   * that makes the DFU identity disappear is valid completion evidence; a
-   * device that stays present but stops answering is explicitly UNCONFIRMED.
-   */
-  async manifestAndConfirmReset(): Promise<void> {
-    try {
-      await this.download(
-        0,
-        new Uint8Array(0),
-        'DFU manifestation/reset',
-        WEBUSB_MANIFEST_TRANSFER_TIMEOUT_MS,
-      );
-    } catch (error) {
-      if (isExpectedResetTransferFailure(error) && await this.deviceWentAway()) {
-        return;
-      }
-      if (isExpectedResetTransferFailure(error)) {
-        throw new DfuError(
-          'DFU_COMPLETION_UNCONFIRMED',
-          'تم التحقق من جميع بايتات Firmware، لكن تعذر تأكيد إعادة تشغيل اللوحة. افصل USB وأعد توصيل اللوحة قبل اتخاذ قرار بإعادة التفليش.',
-        );
-      }
-      throw error;
-    }
-
-    try {
-      await this.waitForManifestation();
-    } catch (error) {
-      if (isExpectedResetTransferFailure(error) && await this.deviceWentAway()) {
-        return;
-      }
-      if (isExpectedResetTransferFailure(error)) {
-        throw new DfuError(
-          'DFU_COMPLETION_UNCONFIRMED',
-          'اكتملت الكتابة والتحقق، لكن لم يمكن إثبات خروج اللوحة من DFU. افصل USB وأعد توصيل اللوحة قبل إعادة المحاولة.',
-        );
-      }
-      throw error;
-    }
-  }
-
   async readUnprotect(): Promise<void> {
-    await this.download(0, Uint8Array.from([DFUSE_READ_UNPROTECT]), 'DFU read-unprotect');
+    await this.download(0, Uint8Array.from([DFUSE_READ_UNPROTECT]));
   }
 }
 
@@ -909,6 +929,11 @@ export async function flashDfuFirmware(
 ): Promise<void> {
   cancelRequested = false;
   const target = requireTarget(deviceId);
+  // A session with a transfer already pending must never be flashed
+  // again: the new attempt's commands would race an operation the
+  // browser can neither cancel nor observe. Replugging the board
+  // enumerates a fresh USBDevice and clears this naturally.
+  assertSessionNotPoisoned(target.device);
 
   let firmware: IntelHexImage;
   try {
@@ -952,7 +977,24 @@ export async function flashDfuFirmware(
 
   const total = firmware.totalBytes;
   const connection = await DfuConnection.open(target, () => cancelRequested);
+
+  /* Completion evidence, gathered as the attempt advances. When a
+   * transfer overruns its observation window this - and nothing else -
+   * decides the truthful verdict. */
+  let written = 0;
+  let verified = 0;
+  let manifestationRequested = false;
+
+  const complete = () =>
+    onProgress({
+      phase: 'complete',
+      percent: 100,
+      bytesProcessed: total,
+      totalBytes: total,
+    });
+
   try {
+    connection.stage = 'ERASE';
     await connection.ensureIdle();
 
     /* ---- Erase: 0-20% ---- */
@@ -971,8 +1013,8 @@ export async function flashDfuFirmware(
     }
 
     /* ---- Write: 20-75% ---- */
+    connection.stage = 'WRITE';
     const transferSize = DEFAULT_DFU_TRANSFER_SIZE;
-    let written = 0;
     for (const segment of firmware.segments) {
       await connection.ensureIdle();
       await connection.setAddress(segment.address);
@@ -984,6 +1026,8 @@ export async function flashDfuFirmware(
         await connection.download(blockNumber, segment.data.subarray(offset, offset + length));
         await connection.waitForDownloadIdle();
         offset += length;
+        // Counted only AFTER download-idle acknowledged the block:
+        // "written" means confirmed landed, not merely transferred.
         written += length;
         blockNumber += 1;
         onProgress({
@@ -996,7 +1040,7 @@ export async function flashDfuFirmware(
     }
 
     /* ---- Read back and compare: 75-99% ---- */
-    let verified = 0;
+    connection.stage = 'VERIFY';
     for (const segment of firmware.segments) {
       await connection.ensureIdle();
       await connection.setAddress(segment.address);
@@ -1031,12 +1075,19 @@ export async function flashDfuFirmware(
 
     /* ---- Manifest: 99% ---- *
      *
-     * Every byte has now been read back and compared. The final DfuSe
-     * sequence may legitimately make the USB device vanish as it resets.
-     * That disappearance is accepted ONLY here, after verification. A
-     * device that remains present but stops answering is never called a
-     * success; the attempt settles as DFU_COMPLETION_UNCONFIRMED instead
-     * of leaving the UI at 98/99% forever. */
+     * THE ~98% STALL THE OPERATOR REPORTED LIVES HERE. Read-back
+     * verification occupies 75-99%, so a bar sitting near 98% has
+     * finished neither verification nor manifestation. Each step below
+     * announces itself, so a stall names the operation it is stuck in -
+     * and since every transfer is now a bounded observation, a wedge in
+     * this phase ends in a truthful verdict instead of an eternal 99%.
+     *
+     * WebUSB LIMITATION, unchanged and deliberately not worked around:
+     * controlTransferIn/controlTransferOut take no AbortSignal and cannot
+     * be cancelled, so a pending transfer here can only be OBSERVED,
+     * never interrupted. Nothing below retries an erase, a write or a
+     * manifestation. */
+    connection.stage = 'FINALIZE';
     onProgress({
       phase: 'finalizing',
       percent: 99,
@@ -1054,19 +1105,84 @@ export async function flashDfuFirmware(
       bytesProcessed: total,
       totalBytes: total,
     });
+    connection.stage = 'MANIFEST';
+    // Raised BEFORE the transfer is issued: if the leave command itself
+    // swallows the promise and the board turns out to be gone, the
+    // evidence must already say the manifestation was requested.
+    manifestationRequested = true;
+    let resetOnLeaveCommand = false;
+    try {
+      await connection.download(0, new Uint8Array(0));
+    } catch (error) {
+      // STM32 bootloaders set bitWillDetach: a fast board resets on the
+      // leave command ITSELF, failing this very transfer. With every
+      // byte verified and the device genuinely gone, that rejection IS
+      // the completion signal - exactly how exitDfuMode, the Android
+      // worker and the pinned Betaflight reference already treat it.
+      // Reporting it as failure told operators a finished flash died.
+      const code = error instanceof DfuError ? error.code : '';
+      if (code === 'DFU_TRANSFER_FAILED' && (await connection.deviceWentAway())) {
+        resetOnLeaveCommand = true;
+      } else {
+        throw error;
+      }
+    }
     onProgress({
       phase: 'resetting',
       percent: 99,
       bytesProcessed: total,
       totalBytes: total,
     });
-    await connection.manifestAndConfirmReset();
-    onProgress({
-      phase: 'complete',
-      percent: 100,
-      bytesProcessed: total,
-      totalBytes: total,
+    if (!resetOnLeaveCommand) {
+      try {
+        await connection.waitForManifestation();
+      } catch (error) {
+        // A manifestation-tolerant device reports status; another resets
+        // immediately and every further transfer fails. Only the second
+        // is acceptable, and only when the device has genuinely gone.
+        const wentAway = await connection.deviceWentAway();
+        const code = error instanceof DfuError ? error.code : '';
+        if (!((code === 'DFU_STATUS_FAILED' || code === 'DFU_TRANSFER_FAILED') && wentAway)) {
+          throw error;
+        }
+      }
+    }
+    complete();
+  } catch (error) {
+    if (!(error instanceof DfuPendingTransferOverrun)) {
+      throw error;
+    }
+    /* A transfer outlived its observation window. The device session is
+     * already poisoned (DfuConnection.bounded did that the instant the
+     * window closed) so no future attempt can race the pending transfer.
+     * Classify the frozen attempt from measured evidence - never from
+     * the timeout itself. */
+    const verdict = classifyDfuOverrun({
+      stage: connection.stage,
+      allBytesWritten: written === total,
+      allBytesVerified: verified === total,
+      manifestationRequested,
+      deviceGone: await connection.deviceWentAway(),
     });
+    if (verdict.outcome === 'SUCCESS') {
+      // Not a timeout converted into success: every byte was read back
+      // equal, the manifestation was issued, and the board has
+      // PHYSICALLY left the bus - the same disappearance evidence the
+      // Android worker and Betaflight's own leave path accept. The
+      // wedged GETSTATUS is exactly what MANIFEST-WAIT-RESET looks like
+      // on a device that resets without answering.
+      complete();
+      return;
+    }
+    if (cancelRequested) {
+      // The operator had already asked to stop; without completion
+      // evidence the cancel is the truer terminal state.
+      throw new DfuCancelledError();
+    }
+    throw new DfuError(
+      verdict.code ?? 'DFU_DEVICE_UNRESPONSIVE_ERASE',
+      `WebUSB ${connection.pendingOp ?? error.op} did not settle within its ${error.deadlineMs}ms observation window; the attempt was frozen without retrying. Unplug and replug the board before any new attempt.`,
+    );
   } finally {
     await connection.release();
   }
@@ -1075,6 +1191,7 @@ export async function flashDfuFirmware(
 /** Leaves DfuSe by selecting the application address then a zero-length DNLOAD. */
 export async function exitDfuMode(deviceId: number): Promise<void> {
   const target = requireTarget(deviceId);
+  assertSessionNotPoisoned(target.device);
   const connection = await DfuConnection.open(target, () => false);
   try {
     // 0x08000000 - the STM32 application base, the same constant
@@ -1088,17 +1205,14 @@ export async function exitDfuMode(deviceId: number): Promise<void> {
       }
     }
     try {
-      await connection.download(
-        0,
-        new Uint8Array(0),
-        'DFU exit/reset',
-        WEBUSB_MANIFEST_TRANSFER_TIMEOUT_MS,
-      );
+      await connection.download(0, new Uint8Array(0));
     } catch {
       // The board resetting into the application is the SUCCESS case here,
       // and it makes this very transfer fail. Only a device that is still
       // present has actually failed to leave DFU - so the rejection value
-      // itself carries no information worth keeping.
+      // itself carries no information worth keeping. (An overrun lands
+      // here too: the transfer neither settled nor did the device leave,
+      // so it is reported as a failed exit against a poisoned session.)
       if (!(await connection.deviceWentAway())) {
         throw new DfuError(
           'DFU_EXIT_FAILED',
@@ -1119,6 +1233,7 @@ export async function exitDfuMode(deviceId: number): Promise<void> {
  */
 export async function unprotectDfuDevice(deviceId: number): Promise<void> {
   const target = requireTarget(deviceId);
+  assertSessionNotPoisoned(target.device);
   const connection = await DfuConnection.open(target, () => false);
   try {
     await connection.readUnprotect();
@@ -1180,4 +1295,5 @@ export function __resetWebUsbDfuForTests(): void {
   targetById.clear();
   nextDfuOrdinal = 0;
   cancelRequested = false;
+  poisonedDevices = new WeakMap<USBDevice, string>();
 }
