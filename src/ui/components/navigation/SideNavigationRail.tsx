@@ -59,10 +59,13 @@ export default function SideNavigationRail({
       accessibilityLabel={t('tabs.barAccessibilityLabel')}
       testID="main-side-rail"
     >
+      {/* ENTRY CLEANUP: the hand-drawn 'F' lettermark that stood in for
+          a real brand mark is GONE. The official logo now lives where
+          the brand brief puts it - the persistent web top chrome
+          (BrandTopChrome) and the Android Start screen - and repeating
+          an emblem here would stack two marks in the same corner. The
+          rail keeps the textual identity only. */}
       <View style={styles.brand} testID="main-side-rail-brand">
-        <View style={styles.brandMark}>
-          <Text style={styles.brandGlyph}>F</Text>
-        </View>
         <View style={styles.brandCopy}>
           <Text style={styles.brandName}>FPV-ARBCON</Text>
           <Text style={styles.brandTagline}>مركز الضبط العربي</Text>
@@ -141,19 +144,6 @@ const styles = StyleSheet.create({
     padding: spacing.sm,
     borderRadius: radii.md,
     backgroundColor: colors.accent,
-  },
-  brandMark: {
-    width: 38,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.md,
-    backgroundColor: colors.accentStrong,
-  },
-  brandGlyph: {
-    ...typography.sectionTitle,
-    color: colors.white,
-    writingDirection: 'ltr',
   },
   brandCopy: { flex: 1 },
   brandName: {

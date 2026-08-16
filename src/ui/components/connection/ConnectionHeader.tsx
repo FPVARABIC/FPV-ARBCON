@@ -27,10 +27,11 @@ export default function ConnectionHeader({
 
   return (
     <View style={styles.container}>
+      {/* ENTRY CLEANUP: the 'FPV' lettermark tile is gone - the official
+          logo is the product's one brand mark (web top chrome / Android
+          Start), and this header now identifies the WORKSPACE, not the
+          brand, inside an already-branded app. */}
       <View style={styles.brandRow}>
-        <View style={styles.brandMark} accessibilityElementsHidden>
-          <Text style={styles.brandMarkText}>FPV</Text>
-        </View>
         <View style={styles.brandCopy}>
           <Text style={styles.appName} numberOfLines={1}>
             {t('app.name')}
@@ -83,24 +84,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-  },
-  brandMark: {
-    width: 48,
-    height: 48,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.accent,
-    shadowColor: colors.shadow,
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 5,
-  },
-  brandMarkText: {
-    ...typography.eyebrow,
-    color: colors.accentText,
-    letterSpacing: 1.2,
   },
   brandCopy: {
     flex: 1,

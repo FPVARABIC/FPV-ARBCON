@@ -233,10 +233,14 @@ const REQUIRED_ENGINE_TOKENS = [
   'resolveProviderAvailability',
   'selectableReceiverModes',
   'encodeFeatureConfig',
-  // Firmware Flasher and the new landing route are product surfaces, not
+  // Firmware Flasher and the landing route are product surfaces, not
   // optional debug code. Their protocol owners must ship in Release.
+  // ENTRY CLEANUP: 'start-configure' replaced 'start-connection' - the
+  // Home choice now opens the configurator DIRECTLY, and the connection
+  // workspace ships inside the Setup tab (SetupScreen/setupSessionHost).
   'firmware-flasher-screen',
-  'start-connection',
+  'start-configure',
+  'setup-connect-workspace',
   'start-firmware',
   'start-safe-flash',
   'CloudBuildCoordinator',

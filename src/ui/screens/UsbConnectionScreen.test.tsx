@@ -1454,24 +1454,22 @@ describe('UsbConnectionScreen - Pass 6.4b mspActive prop reflects real MspSessio
   });
 });
 
-describe('UsbConnectionScreen - Pass 7.1 navigates to Setup on CONNECT_SUCCESS', () => {
-  // The real prop type (NativeStackScreenProps<RootStackParamList,
-  // 'Connection'>['navigation']) has many methods besides navigate() - this
-  // fake only ever needs the one handleConnect() actually calls, cast the
-  // same way this file already casts its fake client (`as unknown as ...`).
-  type NavigationProp = NonNullable<React.ComponentProps<typeof UsbConnectionScreen>['navigation']>;
-
-  function createFakeNavigation(): NavigationProp {
-    return {navigate: jest.fn()} as unknown as NavigationProp;
-  }
-
-  async function createScreenWithNavigation(client: MockClient, navigation: NavigationProp) {
+describe('UsbConnectionScreen - hands the established session to its host on CONNECT_SUCCESS', () => {
+  // ENTRY CLEANUP: what used to be navigation.navigate('Setup',
+  // {sessionKey}) is now the onSessionEstablished callback - the
+  // workspace renders INSIDE the Setup route (SetupScreen.tsx) and the
+  // host re-parameterizes that route in place. Same trigger, same
+  // coordinator-minted key, same single invocation.
+  async function createScreenWithHost(
+    client: MockClient,
+    onSessionEstablished: jest.Mock,
+  ) {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     await act(async () => {
       renderer = ReactTestRenderer.create(
         <UsbConnectionScreen
           client={client as unknown as UsbSerialTransportClient}
-          navigation={navigation}
+          onSessionEstablished={onSessionEstablished}
         />,
       );
     });
@@ -1479,24 +1477,24 @@ describe('UsbConnectionScreen - Pass 7.1 navigates to Setup on CONNECT_SUCCESS',
     return renderer;
   }
 
-  it("calls navigation.navigate('Setup', {sessionKey}) with the coordinator's own getSessionKey() value once CONNECT_SUCCESS fires", async () => {
+  it("calls onSessionEstablished with the coordinator's own getSessionKey() value once CONNECT_SUCCESS fires", async () => {
     const client = createMockClient();
     const device = supportedDevice();
     client.listDevices.mockResolvedValueOnce([device]);
     client.openDevice.mockResolvedValueOnce('session-nav-1');
-    const navigation = createFakeNavigation();
-    const renderer = await createScreenWithNavigation(client, navigation);
+    const onSessionEstablished = jest.fn();
+    const renderer = await createScreenWithHost(client, onSessionEstablished);
 
     await pressDevice(renderer, device);
     await pressConnect(renderer);
 
     const expectedKey = mspSessionCoordinator.getSessionKey('session-nav-1');
     expect(expectedKey).toBeDefined();
-    expect(navigation.navigate).toHaveBeenCalledTimes(1);
-    expect(navigation.navigate).toHaveBeenCalledWith('Setup', {sessionKey: expectedKey});
+    expect(onSessionEstablished).toHaveBeenCalledTimes(1);
+    expect(onSessionEstablished).toHaveBeenCalledWith(expectedKey);
   });
 
-  it('never throws when no navigation prop is supplied - the standalone rendering every other test in this file already relies on', async () => {
+  it('never throws when no onSessionEstablished host is supplied - the standalone rendering every other test in this file already relies on', async () => {
     const client = createMockClient();
     const device = supportedDevice();
     const renderer = await renderScreen(client, [device]);

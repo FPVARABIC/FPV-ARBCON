@@ -11,11 +11,19 @@
  *
  * 1. LAZY ROUTES. On Android, Metro ships one bundle and `getComponent`
  *    is enough to keep the flasher out of the connection path. A browser
- *    downloads what it is given, so Connection, MainTabs and the Firmware
- *    Flasher are React.lazy() chunks: opening the app fetches the Start
- *    screen and the shared core, not the entire configurator plus
- *    esptool. `getComponent` cannot express this - it must return a
- *    component synchronously - so these are lazy() + <Suspense>.
+ *    downloads what it is given, so MainTabs and the Firmware Flasher are
+ *    React.lazy() chunks: opening the app fetches the Start screen and
+ *    the shared core, not the entire configurator plus esptool.
+ *    `getComponent` cannot express this - it must return a component
+ *    synchronously - so these are lazy() + <Suspense>. The USB
+ *    connection workspace ships inside the MainTabs chunk now (the Setup
+ *    tab hosts it when no session exists - see SetupScreen.tsx), which
+ *    is the same download boundary the operator crosses anyway.
+ *
+ * 1b. THE PERSISTENT BRAND CHROME. The official logo lives in a slim
+ *    always-visible strip above the navigator - the browser top chrome
+ *    the product brief calls for. Android deliberately renders no such
+ *    strip; its logo lives on the Start screen (see BrandTopChrome.tsx).
  *
  * 2. THE ALERT HOST. react-native-web's Alert.alert is a no-op; see
  *    webAlert.tsx for the full list of safety decisions that silently
@@ -43,6 +51,7 @@ import './src/i18n';
 // importing through it would pull the entire configurator into the entry
 // chunk and defeat every lazy() boundary below.
 import StartScreen from './src/ui/screens/StartScreen';
+import BrandTopChrome from './src/ui/brand/BrandTopChrome';
 import {useSessionLossRedirect} from './src/navigation/useSessionLossRedirect';
 import type {RootStackParamList} from './src/navigation/types';
 import {WebAlertHost, installWebAlert} from './src/platforms/web/webAlert';
@@ -76,9 +85,6 @@ installWebAlert();
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-const UsbConnectionScreen = React.lazy(
-  () => import('./src/ui/screens/UsbConnectionScreen'),
-);
 const MainTabsScreen = React.lazy(() => import('./src/ui/screens/MainTabsScreen'));
 // The default flasher route is the compact simple workflow; the full
 // legacy surface stays reachable from its own «متقدم» control for recovery
@@ -107,6 +113,7 @@ function App(): React.JSX.Element {
           see PreviewNotice for why it changes no behaviour. */}
       {IS_PREVIEW_BUILD ? <PreviewNotice /> : null}
       <WebCompatibilityNotice />
+      <BrandTopChrome />
       <View style={styles.navigator}>
         <NavigationContainer
           ref={navigationRef}
@@ -129,7 +136,6 @@ function App(): React.JSX.Element {
               initialRouteName="Start"
               screenOptions={{headerShown: false}}>
               <Stack.Screen name="Start" component={StartScreen} />
-              <Stack.Screen name="Connection" component={UsbConnectionScreen} />
               <Stack.Screen name="Setup" component={MainTabsScreen} />
               <Stack.Screen
                 name="FirmwareFlasher"

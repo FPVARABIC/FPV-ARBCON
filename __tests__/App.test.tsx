@@ -97,6 +97,13 @@ jest.mock('../src/platforms/react-native/transport', () => {
     writeBytes: jest.fn(() => new Promise<void>(() => undefined)),
     stopReading: jest.fn(() => new Promise<void>(() => undefined)),
     startReading: jest.fn(() => new Promise<void>(() => undefined)),
+    // False = the Android posture (no browser chooser), which is what
+    // every pre-existing test here always exercised implicitly. The
+    // firmware screen calls this unconditionally on mount, and its
+    // flash-progress subscription must return an unsubscribe like the
+    // other listener fakes above.
+    supportsDevicePicker: jest.fn(() => false),
+    onDfuFlashProgress: jest.fn(() => jest.fn()),
   };
   return {...actual, usbSerialTransportClient: fakeClient};
 });
@@ -289,16 +296,6 @@ function findByTestID(renderer: ReactTestRenderer.ReactTestRenderer, testID: str
   return match;
 }
 
-// Only ever used here for setup-screen-session-key, a plain <Text> - but
-// findAllByProps({testID}) also matches an internal react-native-screens
-// wrapper that forwards the same testID prop through undisturbed (a
-// distinct artifact from the Pressable-vs-host-node duplication
-// findByTestID() above already accounts for). Filtering to the real Text
-// element is what actually disambiguates it.
-function queryByTestID(renderer: ReactTestRenderer.ReactTestRenderer, testID: string) {
-  return renderer.root.findAllByProps({testID}).filter(node => node.type === Text);
-}
-
 /** Pass 7.4, Step 5: the real SetupScreen no longer renders a raw
  * sessionId:generation Text node (that was only ever Pass 7.1's own stub-
  * verification device) - "is the real Setup screen currently showing"
@@ -394,11 +391,14 @@ function renderApp(): Promise<ReactTestRenderer.ReactTestRenderer> {
         await act(async () => {
           renderer = ReactTestRenderer.create(<App />);
         });
-        // The product now starts on a real choice screen. These legacy
-        // connection/session lifecycle tests intentionally continue through
-        // its connection path before observing the existing USB flow.
+        // ENTRY CLEANUP: the configure choice opens the 'Setup' route
+        // DIRECTLY - no 'Connection' stop exists anymore. The route has
+        // no sessionKey yet, so the tab shell renders the embedded
+        // connection workspace (SetupConnectWorkspace), whose mount-time
+        // auto-scan these lifecycle tests then observe exactly as they
+        // observed the old standalone screen's.
         await act(async () => {
-          findByTestID(renderer as ReactTestRenderer.ReactTestRenderer, 'start-connection').props.onPress();
+          findByTestID(renderer as ReactTestRenderer.ReactTestRenderer, 'start-configure').props.onPress();
           await flushSchedulerTick();
         });
         // Own the scan settlement in its own awaited act() scope: React
@@ -419,10 +419,10 @@ function renderApp(): Promise<ReactTestRenderer.ReactTestRenderer> {
 }
 
 /** Mounts App, lets the safe auto-select policy pick the sole supported
- * device, and presses اتصال - landing on the Setup screen exactly the way
- * a real user reaching it would, via UsbConnectionScreen's own
- * navigation.navigate('Setup', {sessionKey}) call (Pass 7.1). Returns the
- * sessionId the fake client resolved openDevice() with. */
+ * device, and presses اتصال - reaching the CONNECTED Setup workspace
+ * exactly the way a real user does now: the embedded connection
+ * workspace's onSessionEstablished re-parameterizes the already-focused
+ * 'Setup' route in place (SetupScreen.tsx), no navigation push involved. */
 function renderAppConnectedToSetup(sessionId: string) {
   return ownRendererOperation(
     async () => {
@@ -445,12 +445,15 @@ function allText(renderer: ReactTestRenderer.ReactTestRenderer): unknown[] {
     .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
 }
 
-testOwningRenderer('renders the USB connection screen and forces RTL', async () => {
+testOwningRenderer('opens the configurator DIRECTLY from Start, with the connection workspace hosted inside it, and forces RTL', async () => {
   const renderer = await renderApp();
 
   const texts = allText(renderer);
 
-  expect(texts).toContain(i18n.t('app.name'));
+  // The tab shell is the current route (Start -> Setup, one hop)...
+  expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBeGreaterThan(0);
+  // ...hosting the real, embedded connection workspace in its Setup tab.
+  expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
   expect(texts).toContain(i18n.t('connection.instructionPrimary'));
   // The spies were installed above the module-scope load of ../App, so
   // these still assert on App.tsx's own one-time module-scope RTL forcing
@@ -596,7 +599,7 @@ describe('App - Pass 7.7B: coverage lifecycle', () => {
 });
 
 describe('App - Pass 7.1 navigation foundation', () => {
-  itOwningRenderer('navigates Connection -> Setup on a successful connect, reaching the real SetupScreen wired to the coordinator\'s own session', async () => {
+  itOwningRenderer('transitions the Setup tab from the embedded connection workspace to the real connected SetupScreen on a successful connect - in place, no route change', async () => {
     const sessionId = 'session-app-nav-1';
     const renderer = await renderAppConnectedToSetup(sessionId);
 
@@ -631,7 +634,7 @@ describe('App - Pass 7.1 navigation foundation', () => {
     });
   });
 
-  itOwningRenderer("the root redirect listener resets the stack to 'Connection' once the tracked session's ownership goes INACTIVE while 'Setup' has focus", async () => {
+  itOwningRenderer("the root redirect listener resets the stack to the DISCONNECTED configurator once the tracked session's ownership goes INACTIVE while 'Setup' has focus", async () => {
     const sessionId = 'session-app-redirect-1';
     const renderer = await renderAppConnectedToSetup(sessionId);
     expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
@@ -647,14 +650,20 @@ describe('App - Pass 7.1 navigation foundation', () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
     });
 
+    // No screen is left holding the dead session: the connected content
+    // is gone, and what renders is the configurator's honest
+    // disconnected posture - the tab shell hosting the embedded
+    // connection workspace (Start sits beneath it, so Back leads Home).
     expect(isOnSetupScreen(renderer)).toBe(false);
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
     const texts = renderer.root
       .findAllByType(Text)
       .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
     expect(texts).toContain(i18n.t('connection.instructionPrimary'));
   });
 
-  itOwningRenderer('Android hardware Back from Setup returns to Connection WITHOUT deactivating the still-active MSP session', async () => {
+  itOwningRenderer('Android hardware Back from Setup returns HOME (Start) WITHOUT deactivating the still-active MSP session', async () => {
     const backHandlerSpy = jest.spyOn(BackHandler, 'addEventListener');
     const deactivateSpy = jest.spyOn(mspSessionCoordinator, 'deactivateMspSession');
     const sessionId = 'session-app-back-1';
@@ -682,6 +691,9 @@ describe('App - Pass 7.1 navigation foundation', () => {
     });
 
     expect(isOnSetupScreen(renderer)).toBe(false);
+    // The stack under Setup is Start alone now - Back is one hop Home,
+    // with no connection stop to loop through on the way.
+    expect(renderer.root.findAllByProps({testID: 'start-route-group'}).length).toBeGreaterThan(0);
     expect(deactivateSpy).not.toHaveBeenCalled();
     expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
 
@@ -693,6 +705,46 @@ describe('App - Pass 7.1 navigation foundation', () => {
     // or its real telemetry tick-driver setInterval leaks. Torn down
     // here, after every existing assertion above, once the spy itself is
     // no longer needed.
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+    });
+  });
+
+  itOwningRenderer('re-entering the configurator ADOPTS a still-active session instead of offering a second connect - no navigation loop, no duplicate connection surface', async () => {
+    const sessionId = 'session-app-adopt-1';
+    const renderer = await renderAppConnectedToSetup(sessionId);
+
+    // Back to Start, session deliberately left ACTIVE (previous test's
+    // own proven contract).
+    const backHandlerSpy = jest.spyOn(BackHandler, 'addEventListener');
+    const hardwareBackCall = backHandlerSpy.mock.calls.find(([eventName]) => eventName === 'hardwareBackPress');
+    const hardwareBackHandler = hardwareBackCall![1] as () => boolean;
+    await act(async () => {
+      hardwareBackHandler();
+    });
+    expect(renderer.root.findAllByProps({testID: 'start-route-group'}).length).toBeGreaterThan(0);
+    expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
+
+    // Configure again: SetupConnectWorkspace's adoption effect reads the
+    // coordinator's real registry and re-parameterizes the route with
+    // the LIVE session's own key - the connected workspace renders with
+    // no second اتصال press and no second openDevice() call.
+    const openDeviceCallsBefore = fakeClient.openDevice.mock.calls.length;
+    await act(async () => {
+      findByTestID(renderer, 'start-configure').props.onPress();
+      await flushSchedulerTick();
+    });
+    await act(async () => {
+      await settlePendingScans();
+    });
+
+    expect(isOnSetupScreen(renderer)).toBe(true);
+    expect(fakeClient.openDevice.mock.calls.length).toBe(openDeviceCallsBefore);
+    // Exactly one configurator instance - the adopted one; the embedded
+    // connect surface is gone from the tree.
+    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'})).toHaveLength(0);
+
+    backHandlerSpy.mockRestore();
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
     });
@@ -748,23 +800,60 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
   );
 });
 
-describe('App - Pass 7.1 defensive guard: malformed Setup route params', () => {
-  itOwningRenderer('does not throw and falls back gracefully when the Setup route is reached without sessionKey params', async () => {
+describe('App - the firmware path stays fully independent of the connection stack', () => {
+  itOwningRenderer('opens the Firmware Flasher DIRECTLY from Start - no connection surface renders and no USB session is opened on the way', async () => {
+    // The module-scope fake accumulates calls across this file's tests
+    // (established pattern: deltas, not absolute counts).
+    const openDeviceCallsBefore = fakeClient.openDevice.mock.calls.length;
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = ReactTestRenderer.create(<App />);
+      });
+      await act(async () => {
+        findByTestID(renderer, 'start-firmware').props.onPress();
+        await flushSchedulerTick();
+      });
+      await act(async () => {
+        await flushSchedulerTick();
+      });
+    } finally {
+      if (renderer !== undefined) {
+        trackedRenderers.push(renderer);
+      }
+    }
+
+    expect(renderer.root.findAllByProps({testID: 'firmware-flasher-simple-screen'}).length).toBeGreaterThan(0);
+    // The flasher owns its own serial/DFU permission flows - nothing of
+    // the configurator's connection workspace mounts on this path...
+    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'})).toHaveLength(0);
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'})).toHaveLength(0);
+    // ...and no MSP transport session was opened as a side effect.
+    expect(fakeClient.openDevice.mock.calls.length).toBe(openDeviceCallsBefore);
+  });
+});
+
+describe('App - Setup without params IS the product now, not a malformed fallback', () => {
+  itOwningRenderer('reaching Setup without sessionKey renders the disconnected configurator - the tab shell hosting the real connection workspace', async () => {
+    // renderApp() itself now lands here: Start -> configure -> 'Setup'
+    // with NO params. What used to be a defensive dead-end ("تعذّر فتح
+    // شاشة الإعداد" + a back button) is the first-class disconnected
+    // state: the full shell, the embedded connection workspace, and no
+    // fabricated session anywhere.
     const renderer = await renderApp();
 
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
+    // The connected content is genuinely absent - nothing pretends a
+    // session exists...
+    expect(isOnSetupScreen(renderer)).toBe(false);
+    // ...and the imperative param-less navigate a future linking config
+    // could produce is the SAME state, still crash-free. capturedRef is
+    // the exact navigationRef App.tsx itself uses (see the mock above).
     await act(async () => {
-      // Bypasses the real, type-checked call site (UsbConnectionScreen.tsx
-      // always supplies sessionKey) to simulate what a future call site
-      // (e.g. a linking config, per App.tsx's own guard comment) could
-      // reach without it - exactly the scenario both App.tsx's
-      // handleNavigationStateChange guard and SetupScreen.tsx's own guard
-      // exist for. capturedRef is the SAME navigationRef object App.tsx
-      // itself uses (see the @react-navigation/native mock above).
       navigationReadyControl.capturedRef?.navigate('Setup', undefined);
     });
-
-    // SetupScreen's own guard: an honest fallback, not a crash.
-    expect(queryByTestID(renderer, 'setup-screen-missing-session')).toHaveLength(1);
+    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
     expect(isOnSetupScreen(renderer)).toBe(false);
   });
 });

@@ -1,31 +1,39 @@
 /**
- * The app's entire STACK navigation surface: exactly two routes.
+ * The app's entire STACK navigation surface: exactly three routes.
  *
- * 'Connection' is the USB-connect flow (UsbConnectionScreen); 'Setup' is
- * the post-connection destination, reachable only once a session is
- * genuinely ACTIVE. Kept as its own module (not colocated with App.tsx) so
- * both App.tsx and any screen that needs to navigate/type its own route
- * props can import it without a circular dependency on App.tsx itself.
+ * 'Start' is the two-choice home. 'Setup' renders the main TAB SHELL
+ * (MainTabsScreen) and is now reachable DIRECTLY from Start with NO
+ * params: the shell opens in its honest disconnected posture and hosts
+ * the real USB connection workspace inside the Setup tab
+ * (SetupScreen.tsx), which re-parameterizes this same route in place via
+ * navigation.setParams({sessionKey}) once a session is genuinely ACTIVE.
+ * 'FirmwareFlasher' is the standalone flashing tool, also entered
+ * directly from Start.
  *
- * SINGLE-APP MERGE: 'Motors' is no longer a stack route. Motors is a TAB
- * inside the 'Setup' route's shell (MainTabsScreen), alongside the integrated
- * Setup and Ports tabs and the not-yet-implemented Receiver/PID tabs - see
- * navigation/tabs.ts for that set. It was previously typed here but registered
- * only when the build-variant seam supplied a component; both the seam and the
- * separate route are gone.
+ * THE 'Connection' ROUTE IS GONE - deliberately. It was a full-screen
+ * stop between Home and the configurator whose only product purpose was
+ * producing a sessionKey for navigate('Setup'). The screen component
+ * (UsbConnectionScreen.tsx) survives with all of its transport safety
+ * intact; it is now hosted INSIDE the Setup tab when no session exists,
+ * so connecting is contextual rather than a separate navigation stop.
+ * Nothing about USB permission, MSP activation or session ownership
+ * changed - only where the surface renders.
  *
- * The 'Setup' route NAME is deliberately unchanged even though it now
- * renders the whole tab shell. It is what the connect flow navigates to
- * and what App.tsx's session-loss redirect listener watches; renaming it
- * would have altered that redirect contract as a side effect of adding a
- * tab bar.
+ * `Setup`'s params are `... | undefined` on purpose: undefined IS the
+ * disconnected configurator, a first-class product state - not a
+ * malformed navigation. The session-loss redirect
+ * (useSessionLossRedirect.ts) resets to exactly that state when a
+ * tracked session dies.
+ *
+ * Kept as its own module (not colocated with App.tsx) so both App.tsx
+ * and any screen that needs to navigate/type its own route props can
+ * import it without a circular dependency on App.tsx itself.
  */
 
 import type {SetupUiSessionKey} from '../platforms/react-native/protocol';
 
 export type RootStackParamList = {
   Start: undefined;
-  Connection: undefined;
-  Setup: {sessionKey: SetupUiSessionKey};
+  Setup: {sessionKey: SetupUiSessionKey} | undefined;
   FirmwareFlasher: undefined;
 };

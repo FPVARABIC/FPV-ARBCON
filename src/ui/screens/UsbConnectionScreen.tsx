@@ -14,9 +14,7 @@ import {
   useWindowDimensions,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import type { RootStackParamList } from '../../navigation/types';
 import {
   colors,
   contentEnvelope,
@@ -58,6 +56,7 @@ import {
   mspSessionCoordinator,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
+import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 // Platform seam (same pattern as the USB picker and the map link): real
 // on web, inert on Android. The web build records staged connection
 // evidence and can copy a technical report; Android renders nothing.
@@ -479,22 +478,25 @@ interface Props {
   /** Injectable for tests; defaults to the real singleton client. */
   client?: UsbSerialTransportClient;
   /**
-   * Pass 7.1: optional (not the real Stack.Screen-injected prop's required
-   * type) so every existing test in UsbConnectionScreen.test.tsx that
-   * renders this screen standalone, outside a NavigationContainer, keeps
-   * working unchanged - handleConnect() below simply skips navigating when
-   * it is absent. The real app (App.tsx) always provides it via
-   * Stack.Screen's component prop.
+   * ENTRY CLEANUP: this screen is no longer a stack route - it is the
+   * connection WORKSPACE, hosted inside the Setup tab whenever the
+   * 'Setup' route has no sessionKey (see SetupScreen.tsx). What used to
+   * be handleConnect()'s navigation.navigate('Setup', {sessionKey}) is
+   * now this callback: the host re-parameterizes the already-focused
+   * Setup route in place. Optional for exactly the reason the old
+   * navigation prop was - every existing test that renders this screen
+   * standalone keeps working unchanged, and handleConnect() simply skips
+   * the handoff when absent. Everything else about this screen - the
+   * scan serialization, the explicit browser device chooser and its
+   * user-gesture requirement, MSP activation, hot-plug reconciliation,
+   * the CLOSE_FAILED cable-reset rule - is untouched.
    */
-  navigation?: NativeStackScreenProps<
-    RootStackParamList,
-    'Connection'
-  >['navigation'];
+  onSessionEstablished?: (sessionKey: SetupUiSessionKey) => void;
 }
 
 export default function UsbConnectionScreen({
   client = usbSerialTransportClient,
-  navigation,
+  onSessionEstablished,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const copyKeys = connectionCopyKeys(Platform.OS);
@@ -807,14 +809,15 @@ export default function UsbConnectionScreen({
       // Pass 7.1: openSession() above commits its session entry
       // synchronously before returning (see its own doc comment), so
       // getSessionKey() is always defined here - the `if` is a defensive
-      // invariant, not an expected-false branch. A push, never
-      // replace/reset: the user can still navigate back to this exact
-      // connected state. navigation is only absent in tests that render
-      // this screen standalone (see the Props doc comment above).
+      // invariant, not an expected-false branch. The host callback
+      // replaces the old navigate('Setup') push: the workspace already
+      // renders INSIDE the Setup route, so establishing a session is a
+      // param handoff, not a navigation. Only absent in tests that
+      // render this screen standalone (see the Props doc comment above).
       const sessionKey = mspSessionCoordinator.getSessionKey(sessionId);
       recordConnectionStage('MSP_SESSION_ACTIVATED', {sessionId});
       if (sessionKey) {
-        navigation?.navigate('Setup', { sessionKey });
+        onSessionEstablished?.(sessionKey);
       }
       dispatch({ type: 'CONNECT_SUCCESS', sessionId });
     } catch (error) {
@@ -844,7 +847,7 @@ export default function UsbConnectionScreen({
     client,
     isBusy,
     isConnected,
-    navigation,
+    onSessionEstablished,
     selectedDevice,
     state.requiresCableReset,
     state.selectedPortIndex,

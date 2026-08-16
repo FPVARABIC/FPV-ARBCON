@@ -61,7 +61,8 @@
     "src/platforms/web/connectionDiagnostics.test.ts",
     "src/platforms/web/telemetryDiagnostics.test.ts",
     "src/ui/screens/MotorsScreen.web.test.tsx",
-    "src/ui/screens/OsdScreen.web.test.tsx"
+    "src/ui/screens/OsdScreen.web.test.tsx",
+    "src/ui/brand/BrandTopChrome.web.test.tsx"
   ],
   "exclude": [
     "**/node_modules",
@@ -70,6 +71,10 @@
      * TurboModuleRegistry, which react-native-web does not export. Its
      * .web.ts sibling is what the browser build actually resolves. */
     "src/platforms/react-native/transport/native/NativeUsbSerialTransport.ts",
+    /* Same seam for the brand asset: the Metro half uses require(), a
+     * construct this DOM-typed project has no types for. Vite resolves
+     * brandLogoSource.web.ts instead (moduleSuffixes above). */
+    "src/ui/brand/brandLogoSource.ts",
     "src/platforms/react-native/transport/native/__mocks__/**",
     /* Tests run under Jest against the Android resolution, and are
      * typechecked by tsconfig.json. */

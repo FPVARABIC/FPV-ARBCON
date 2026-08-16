@@ -1,6 +1,7 @@
 import React from 'react';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -11,6 +12,7 @@ import {
 
 import type {RootStackParamList} from '../../navigation/types';
 import {Icon} from '../icons';
+import {BrandLogo} from '../brand';
 import {readInteraction} from '../components/controls/interaction';
 import {
   colors,
@@ -21,6 +23,16 @@ import {
   spacing,
   typography,
 } from '../theme';
+
+/**
+ * THE OFFICIAL LOGO ON START - Android only. The document is RTL, so the
+ * brand row's FIRST child sits at the RIGHT edge: exactly the top-right
+ * placement the brand calls for. On web the logo lives in the persistent
+ * top chrome instead (BrandTopChrome, rendered by App.web.tsx above every
+ * route), and repeating it here would stack two identical marks within a
+ * hundred pixels - so the web Start row carries the name and tagline only.
+ */
+const SHOW_START_LOGO = Platform.OS !== 'web';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Start'>;
 
@@ -117,11 +129,12 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
       ]}
       keyboardShouldPersistTaps="handled">
       <View style={styles.brandRow}>
-        <View style={styles.brandBadge}>
-          <View style={styles.brandCore} />
-          <View style={[styles.brandArm, styles.brandArmOne]} />
-          <View style={[styles.brandArm, styles.brandArmTwo]} />
-        </View>
+        {SHOW_START_LOGO ? (
+          /* First child of an RTL row = the RIGHT edge. 56dp of emblem:
+             prominent on a phone without pushing the two route cards
+             below the fold. */
+          <BrandLogo height={56} testID="start-brand-logo" />
+        ) : null}
         <View style={styles.brandCopy}>
           <Text style={styles.brandName}>FPV-ARBCON</Text>
           <Text style={styles.brandTagline}>مركز تحكم الطيران العربي</Text>
@@ -134,26 +147,26 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
 
       <View style={styles.hero}>
         <Text style={styles.heroEyebrow}>اختر مسار العمل</Text>
-        <Text style={styles.heroTitle}>ابدأ بأمان، ثم نفّذ المهمة مباشرة</Text>
+        <Text style={styles.heroTitle}>مهمتان، بابان مباشران</Text>
         <Text style={styles.heroBody}>
-          يمكنك الاتصال بوحدة التحكم لإدارة الإعدادات، أو فتح أداة Firmware Flasher المستقلة حتى لو لم يتصل التطبيق بعد.
+          افتح مساحة الإعداد مباشرة وتصل بوحدة التحكم من داخلها، أو افتح أداة Firmware للتثبيت والتحديث.
         </Text>
       </View>
 
       <View style={desktop ? styles.routeRow : styles.routeColumn} testID="start-route-group">
       <RouteCard
-        eyebrow="المسار الأول"
-        title="الاتصال بوحدة التحكم"
-        description="اكتشاف USB، التحقق من توافق MSP، ثم الدخول إلى مساحة الضبط الكاملة."
-        bullets={['Setup ومؤشرات الطيران', 'المحركات وفحوص الأمان', 'Ports والاستقبال وPID']}
-        button="اكتشاف Flight Controller"
-        testID="start-connection"
+        eyebrow="إعداد الدرون"
+        title="إعداد وحدة التحكم"
+        description="تدخل مساحة الضبط الكاملة فورًا، والاتصال بوحدة التحكم يتم من داخلها عند الحاجة."
+        bullets={['Setup ومؤشرات الطيران', 'المحركات وفحوص الأمان', 'OSD والاستقبال وضبط PID']}
+        button="فتح مساحة الإعداد"
+        testID="start-configure"
         accent="teal"
-        onPress={() => navigation.navigate('Connection')}
+        onPress={() => navigation.navigate('Setup')}
       />
 
       <RouteCard
-        eyebrow="المسار الثاني"
+        eyebrow="تثبيت Firmware"
         title="Firmware Flasher"
         description="تنزيل أو اختيار Firmware محلي، التحقق منه، ثم التفليش أو الحفظ حسب نوع الملف."
         bullets={['HEX عبر DFU أو STM32 serial', 'BIN عبر ESP ROM bootloader', 'UF2 مع تحقق كامل وتعليمات نسخ واضحة']}
@@ -184,22 +197,11 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
     gap: spacing.lg,
   },
+  /* The old hand-drawn placeholder badge (a square core with two rotated
+     arms, standing in for a real mark) is GONE - the official logo asset
+     renders in its place on Android, and the web top chrome carries it
+     persistently there. */
   brandRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
-  brandBadge: {
-    width: 48,
-    height: 48,
-    borderRadius: radii.md,
-    backgroundColor: colors.accentSoft,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  brandCore: {width: 15, height: 15, borderRadius: 4, backgroundColor: colors.accent, zIndex: 2},
-  brandArm: {position: 'absolute', width: 36, height: 3, borderRadius: 3, backgroundColor: colors.accent},
-  brandArmOne: {transform: [{rotate: '45deg'}]},
-  brandArmTwo: {transform: [{rotate: '-45deg'}]},
   brandCopy: {flex: 1},
   brandName: {...typography.sectionTitle, color: colors.textPrimary, letterSpacing: 0.6},
   brandTagline: {...typography.caption, color: colors.textSecondary},

@@ -190,12 +190,9 @@
       "ready": "جاهزة",
       "blocked": "غير جاهزة",
       "unknown": "غير مؤكدة"
-    }
-  },
-  "setupMissingSession": {
-    "title": "تعذّر فتح شاشة الإعداد",
-    "message": "لا توجد جلسة اتصال صالحة. ارجع إلى شاشة الاتصال ثم أعد توصيل متحكم الطيران.",
-    "back": "العودة إلى الاتصال"
+    },
+    "disconnect": "قطع الاتصال",
+    "disconnectFailedTitle": "تعذّر قطع الاتصال"
   },
   "setupSections": {
     "live": {

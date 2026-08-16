@@ -14,10 +14,12 @@ import './src/i18n';
 // SINGLE-APP MERGE: the 'Setup' route now renders the main TAB SHELL
 // (Setup / Motors / Ports / Receiver / PID), not the Setup screen alone.
 // The route name is unchanged on purpose - see src/navigation/types.ts.
+// ENTRY CLEANUP: the standalone 'Connection' route is gone. Start opens
+// the shell DIRECTLY; the USB connection workspace renders inside the
+// Setup tab whenever the route has no sessionKey (SetupScreen.tsx).
 import {
   MainTabsScreen,
   StartScreen,
-  UsbConnectionScreen,
 } from './src/ui';
 // The session-loss redirect (tracked sessionId -> reset to 'Connection'
 // once its MSP ownership goes INACTIVE) now lives in ONE shared hook, so
@@ -60,7 +62,6 @@ function App(): React.JSX.Element {
         onStateChange={onStateChange}>
         <Stack.Navigator initialRouteName="Start" screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Start" component={StartScreen} />
-          <Stack.Screen name="Connection" component={UsbConnectionScreen} />
           <Stack.Screen name="Setup" component={MainTabsScreen} />
           <Stack.Screen name="FirmwareFlasher" getComponent={getFirmwareFlasherScreen} />
         </Stack.Navigator>

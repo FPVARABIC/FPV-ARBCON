@@ -4,19 +4,31 @@
  * This logic used to live inline in App.tsx, which was correct while
  * Android was the only entry point. It is not correct now: index.web.tsx
  * mounts its own root (App.web.tsx) so the Start screen can stay in the
- * entry chunk while Connection/MainTabs/FirmwareFlasher load lazily, and a
+ * entry chunk while MainTabs/FirmwareFlasher load lazily, and a
  * second copy of "redirect when the tracked MSP session dies" would be a
  * second copy of a SAFETY rule. A Web build whose redirect drifted from
  * Android's would leave the operator sitting on a Motors or GPS tab whose
  * session is already gone - exactly the state this rule exists to prevent.
+ *
+ * WHERE THE REDIRECT LANDS - changed with the entry-flow cleanup. The
+ * standalone 'Connection' route is gone; the connection workspace now
+ * lives INSIDE the Setup tab whenever the 'Setup' route has no
+ * sessionKey params (see SetupScreen.tsx). So a dead tracked session
+ * resets the stack to Start -> Setup-with-no-params: the operator stays
+ * in the configurator, sees its honest disconnected posture with the
+ * real connection workspace, and hardware Back still leads Home. The
+ * SAFETY property is unchanged - no screen is ever left holding a
+ * sessionKey whose MSP ownership is INACTIVE, because the reset remounts
+ * the whole shell without one.
  *
  * Nothing here is platform-specific: it is react-navigation state plus the
  * existing useMspOwnershipState() hook. Both entries pass the returned
  * ref/onReady/onStateChange straight to their own NavigationContainer.
  *
  * The comments below are the original App.tsx investigation notes, kept
- * verbatim with the code they describe rather than left behind on a file
- * that no longer contains the logic.
+ * with the code they describe rather than left behind on a file that no
+ * longer contains the logic, updated only where the 'Connection' route
+ * they referenced no longer exists.
  */
 
 import {useCallback, useEffect, useState} from 'react';
@@ -55,25 +67,25 @@ export function useSessionLossRedirect(): SessionLossRedirect {
   // set/cleared from exactly one place: handleNavigationStateChange below,
   // itself only ever invoked by NavigationContainer's own onStateChange
   // prop, which React Navigation fires after EVERY navigation state change
-  // (a navigate(), goBack(), or reset() call anywhere in the tree,
-  // including UsbConnectionScreen's own navigation.navigate('Setup',
-  // {sessionKey}) call in handleConnect()). Deliberately NOT threaded down
-  // as a callback prop into UsbConnectionScreen: onStateChange is
-  // react-navigation's own supported mechanism for "know the current route
-  // from outside the navigator", so this stays correct for ANY future
-  // navigation to 'Setup' (or away from it), not just that one call site,
-  // without UsbConnectionScreen needing to know this tracking exists at
-  // all.
+  // (a navigate(), goBack(), reset() or setParams() call anywhere in the
+  // tree - including SetupScreen's own navigation.setParams({sessionKey})
+  // the moment the embedded connection workspace establishes a session).
+  // Deliberately NOT threaded down as a callback prop into that
+  // workspace: onStateChange is react-navigation's own supported
+  // mechanism for "know the current route from outside the navigator",
+  // so this stays correct for ANY way 'Setup' gains or loses a
+  // sessionKey, not just today's one call site.
   //
-  //  - Landing on 'Setup' (name === 'Setup'): trackedSessionId is set to
-  //    that route's own sessionKey.sessionId - always the CURRENT
+  //  - 'Setup' WITH sessionKey params: trackedSessionId is set to that
+  //    route's own sessionKey.sessionId - always the CURRENT
   //    navigation's own params, never stale.
-  //  - Landing back on 'Connection' (via hardware Back, or this listener's
-  //    own reset() below): trackedSessionId is cleared. Without this, a
-  //    manual Back off 'Setup' (which must NOT deactivate the session -
-  //    see SetupScreen/App.test.tsx) would leave a stale tracked id
-  //    watched forever; a later, unrelated deactivate from the Connection
-  //    screen would then trigger an unnecessary extra reset().
+  //  - 'Setup' WITHOUT params (the disconnected configurator - a
+  //    first-class state now, see navigation/types.ts) and 'Start':
+  //    trackedSessionId is cleared. Without this, a manual Back off a
+  //    connected 'Setup' (which must NOT deactivate the session - see
+  //    App.test.tsx) would leave a stale tracked id watched forever; a
+  //    later, unrelated deactivate would then trigger an unnecessary
+  //    extra reset().
   //
   // trackedOwnershipState below is the existing, reactive
   // useMspOwnershipState() hook (Pass 6.4b), watching whichever sessionId
@@ -86,23 +98,23 @@ export function useSessionLossRedirect(): SessionLossRedirect {
     const currentRoute = navigationRef.getCurrentRoute();
     if (currentRoute?.name === 'Setup') {
       // Defense-in-depth (mspClient.ts/RNMspTransport.ts precedent): the
-      // only call site today (UsbConnectionScreen.tsx) always supplies
-      // sessionKey, TypeScript-enforced - but `as` below is a compile-time
-      // assertion only, and nothing at runtime guarantees a future
-      // linking config or another call site can't reach 'Setup' without
-      // it. If params are genuinely absent/malformed, this is not really
-      // "on Setup" as far as tracking is concerned - skip silently rather
-      // than throw uncaught inside a React-invoked callback.
+      // params type is `... | undefined` and the runtime shape is not
+      // guaranteed by the compile-time assertion below, so both branches
+      // handle absence gracefully rather than throw uncaught inside a
+      // React-invoked callback.
       const params = currentRoute.params as
         | RootStackParamList['Setup']
         | undefined;
       if (params?.sessionKey) {
         setTrackedSessionId(params.sessionKey.sessionId);
+      } else {
+        // The disconnected configurator: nothing to watch. Clearing here
+        // (not just on 'Start') matters because the redirect below lands
+        // exactly on this state - a stale id surviving that landing
+        // would re-fire the reset on the next unrelated INACTIVE report.
+        setTrackedSessionId(null);
       }
-    } else if (
-      currentRoute?.name === 'Connection' ||
-      currentRoute?.name === 'Start'
-    ) {
+    } else if (currentRoute?.name === 'Start') {
       setTrackedSessionId(null);
     }
   }, [navigationRef]);
@@ -150,8 +162,20 @@ export function useSessionLossRedirect(): SessionLossRedirect {
     // imperatively" - no separate navigationRef.isReady() check needed
     // (and deliberately not kept as a second, independent source of truth
     // that could disagree with isNavigationReady).
+    //
+    // Two routes, index 1: the operator lands on the DISCONNECTED
+    // configurator (Setup with no params - the embedded connection
+    // workspace renders there) with Start underneath, so hardware Back
+    // still leads Home instead of exiting the app. Resetting to a bare
+    // [Setup] would have made Back an app exit; resetting to [Start]
+    // alone would have thrown the operator out of the tool they were
+    // using. Params deliberately ABSENT: this remount is exactly the
+    // "no live session" posture, never a fabricated one.
     setTrackedSessionId(null);
-    navigationRef.reset({index: 0, routes: [{name: 'Connection'}]});
+    navigationRef.reset({
+      index: 1,
+      routes: [{name: 'Start'}, {name: 'Setup'}],
+    });
   }, [
     navigationRef,
     trackedSessionId,

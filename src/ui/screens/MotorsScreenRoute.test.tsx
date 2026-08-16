@@ -36,18 +36,23 @@ const REPO_ROOT = join(__dirname, '..', '..', '..');
 
 describe('Motors reachability after the single-app merge', () => {
   it('is no longer a stack route - it stays inside Setup while Start and Firmware Flasher are independent routes', () => {
-    // Compile-time proof: Motors is absent while the four real stack routes remain.
+    // Compile-time proof: Motors is absent while the three real stack
+    // routes remain. 'Connection' left this list with the entry-flow
+    // cleanup - the connection workspace is hosted inside Setup now, and
+    // Setup's params are optional because the disconnected configurator
+    // is a first-class state (navigation/types.ts).
     const params: RootStackParamList['Setup'] = {
       sessionKey: { sessionId: 's-1', generation: 3 },
     };
-    expect(params.sessionKey.sessionId).toBe('s-1');
+    expect(params?.sessionKey.sessionId).toBe('s-1');
+    const disconnected: RootStackParamList['Setup'] = undefined;
+    expect(disconnected).toBeUndefined();
     const names: (keyof RootStackParamList)[] = [
       'Start',
-      'Connection',
       'Setup',
       'FirmwareFlasher',
     ];
-    expect(names).toHaveLength(4);
+    expect(names).toHaveLength(3);
   });
 
   it('is a selectable tab in the complete main shell', () => {

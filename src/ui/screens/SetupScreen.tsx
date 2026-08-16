@@ -5,11 +5,22 @@
  * ownership stays in the coordinator; this screen only subscribes to its
  * existing stores and dispatches through the established tool controller.
  *
- * The missing-sessionKey fallback (Pass 7.1's own defense-in-depth) is
- * unchanged: the only real call site (UsbConnectionScreen.tsx's
- * navigate('Setup', {sessionKey})) always supplies it, TypeScript-
- * enforced, but nothing at runtime stops a future linking config from
- * reaching this screen without it.
+ * ENTRY CLEANUP - the missing-sessionKey branch is now the PRODUCT, not
+ * a defensive fallback. Start opens the 'Setup' route directly with no
+ * params (see navigation/types.ts); this screen then renders the real
+ * USB connection workspace (UsbConnectionScreen, hosted as a child
+ * rather than a stack route) and re-parameterizes the route in place -
+ * navigation.setParams({sessionKey}) - the moment a session genuinely
+ * activates. No connection step is skipped and none is faked: the same
+ * scan, the same explicit browser device chooser under a real user
+ * gesture, the same MSP activation, the same ownership rules.
+ *
+ * If a session is ALREADY ACTIVE when the workspace mounts (the operator
+ * pressed Back to Start - which deliberately does NOT deactivate - and
+ * re-entered), the workspace ADOPTS the coordinator's real session
+ * instead of offering a second connect against an already-open port:
+ * a pure read of listSessionIds()/getOwnershipState()/getSessionKey(),
+ * written straight back into the route params. Truthful both ways.
  *
  * SetupUiSessionStore (Pass 7.1) is a PLAIN, non-reactive store (by its
  * own explicit design - "no useSyncExternalStore hook, no subscribe/
@@ -17,34 +28,15 @@
  * and re-reading+setState()-ing it after every write (resetView/
  * hintShown below) is what makes this screen's UI actually reflect
  * store writes, without adding new reactive machinery to the store
- * itself. This is safe for exactly the way this screen is actually
- * used: SetupScreen is the ONLY reader/writer of its own session's UI
- * state, and is reached via exactly one navigate('Setup', {sessionKey})
- * call site (UsbConnectionScreen.tsx) with no in-place re-parameterization
- * anywhere in this codebase (verified by search, not assumed) - so a
- * lazy, mount-time read of the store is genuinely correct here, not an
- * unexamined shortcut.
- *
- * KNOWN LATENT GAP IF THIS ASSUMPTION IS EVER VIOLATED (Pass 7.4 final
- * sweep, traced explicitly): if a SECOND SetupScreen instance were ever
- * mounted for the same SetupUiSessionKey while a first is still mounted,
- * a write from one instance's handleResetView()/handleResetHintShown()
- * would update the real store correctly but would NOT be reflected in
- * the other instance's own local `uiState` mirror - that sibling would
- * keep rendering its stale copy until it performs its own write or
- * remounts, since the store itself has no subscribe/notify to propagate
- * the change. NOT reachable today: the app's Stack.Navigator (App.tsx)
- * uses no custom getId(), and the one real call site
- * (UsbConnectionScreen.tsx) calls navigation.navigate() (not .push()),
- * whose default behavior for an already-present route name is to
- * refocus the existing instance rather than mount a second one - so two
- * concurrent instances for the same session cannot occur through any
- * navigation action this codebase performs today. Left unfixed
- * deliberately (per this project's own no-speculative-abstraction
- * convention): a future pass that adds a second entry point, or
- * switches this call site to .push(), must revisit this doc comment and
- * either give SetupUiSessionStore real subscribe/notify machinery or
- * otherwise resolve this before that change ships.
+ * itself. The old doc here justified the lazy mount-time read by "no
+ * in-place re-parameterization anywhere in this codebase"; setParams
+ * above made that argument stale, so the guarantee is now STRUCTURAL
+ * instead: SetupScreenContent is keyed by sessionKey.sessionId at its
+ * one render site below, so a param change is a fresh mount with fresh
+ * lazy reads - the same pattern MotorsScreen already uses for exactly
+ * this reason. Two concurrent instances for one session remain
+ * impossible (single stack route, no getId()), so the Pass 7.4 latent
+ * gap stays unreachable.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -121,6 +113,17 @@ import {
   acquireSetupHiddenAttitudeSuppression,
 } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
+// ENTRY CLEANUP: the disconnected state renders the real connection
+// workspace, and the top bar carries the intentional disconnect. BOTH
+// capabilities live in setupSessionHost.tsx - the connection-lifecycle
+// seam in this same screens layer - because SETUP P1
+// (setupPresentationBoundary.test.ts) fences this file away from the
+// coordinator, clients and transports. This screen consumes a component
+// and a callback; it holds no session authority of its own.
+import {
+  SetupConnectWorkspace,
+  useSetupSessionDisconnect,
+} from './setupSessionHost';
 // Checkpoint F - "نسخ تقرير التليمترية". Web-only by the same file
 // extension seam the connection report uses; on Android
 // isTelemetryReportSupported() is false and no button is rendered.
@@ -174,34 +177,35 @@ export default function SetupScreen({
   onOpenSensors,
   active = true,
 }: Props): React.JSX.Element {
-  const { t } = useTranslation();
   const sessionKey = route.params?.sessionKey;
+
+  /**
+   * The one place a session enters or leaves this route's params.
+   * setParams (never navigate/push): the route is already focused, so
+   * establishing a session is a param handoff - the navigation stack
+   * does not move, Back still leads Home, and the session-loss redirect
+   * (useSessionLossRedirect.ts) picks the new key up from its own
+   * onStateChange, which react-navigation fires for setParams too.
+   */
+  const handleSessionEstablished = useCallback(
+    (key: SetupUiSessionKey) => {
+      navigation.setParams({ sessionKey: key });
+    },
+    [navigation],
+  );
 
   if (!sessionKey) {
     return (
-      <View style={styles.missingSessionRoot}>
-        <Text
-          style={styles.missingSessionTitle}
-          testID="setup-screen-missing-session"
-        >
-          {t('setupMissingSession.title')}
-        </Text>
-        <Text style={styles.placeholderText}>
-          {t('setupMissingSession.message')}
-        </Text>
-        <Button
-          label={t('setupMissingSession.back')}
-          onPress={() => navigation.goBack()}
-          variant="primary"
-          icon="chevron-back"
-          testID="setup-screen-missing-session-back"
-        />
-      </View>
+      <SetupConnectWorkspace onSessionEstablished={handleSessionEstablished} />
     );
   }
 
   return (
     <SetupScreenContent
+      /* Keyed by session: a re-parameterization is a FRESH mount, which
+         is what keeps this component's lazy mount-time store reads
+         correct - see the header comment. */
+      key={sessionKey.sessionId}
       sessionKey={sessionKey}
       onBack={() => navigation.goBack()}
       onOpenGps={onOpenGps}
@@ -254,6 +258,12 @@ function SetupScreenContent({
   // honest "unavailable" state through the same UNAVAILABLE mechanism.
   // The one-strike timeout latch is applied inside the facade.
   const battery = useSetupBattery(sessionId, active);
+
+  // INTENTIONAL DISCONNECT for the top bar. The capability itself lives
+  // in setupSessionHost.tsx (the connection-lifecycle seam) - this
+  // fenced screen only threads the resulting callback to the bar, the
+  // same way it threads the shell's navigation callbacks.
+  const handleDisconnect = useSetupSessionDisconnect(sessionId);
 
   // Pass 7.6c: Region 3's remaining channels, plus the per-channel
   // circuit-breaker verdicts.
@@ -496,6 +506,7 @@ function SetupScreenContent({
         sessionId={sessionId}
         onBack={onBack}
         armingReadiness={armingReadiness}
+        onDisconnect={handleDisconnect}
       />
       <ScrollView contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}>
         {/* SETUP FINAL UI CORRECTION - THE ACCEPTED DASHBOARD ORDER.
@@ -806,13 +817,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  missingSessionRoot: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.background,
-    padding: spacing.lg,
-  },
   scrollContent: {
     paddingBottom: spacing.xxl,
     width: '100%',
@@ -876,25 +880,5 @@ const styles = StyleSheet.create({
   },
   cardCellFull: {
     width: '100%',
-  },
-  placeholderText: {
-    ...typography.body,
-    color: colors.textPrimary,
-    marginTop: spacing.md,
-    textAlign: 'center',
-  },
-  missingSessionTitle: {
-    ...typography.title,
-    color: colors.textPrimary,
-    textAlign: 'center',
-  },
-  missingSessionButton: {
-    minHeight: 48,
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.xl,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 16,
-    backgroundColor: colors.accent,
   },
 });

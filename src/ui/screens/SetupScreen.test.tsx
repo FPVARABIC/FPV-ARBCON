@@ -1,3 +1,9 @@
+// ENTRY CLEANUP: SetupScreen now hosts the USB connection workspace
+// (UsbConnectionScreen) for its disconnected state, so importing it pulls
+// in the transport client whose TurboModule must be mocked under Jest -
+// the exact mock App.test.tsx has always used.
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 /**
  * Pass 7.4, Step 5 - a MINIMAL smoke test only: confirms the real screen
  * assembles and mounts without crashing, and that the Pass 7.1 missing-
@@ -73,20 +79,6 @@ describe('SetupScreen responsive telemetry layout', () => {
     expect(shouldUseSingleColumnTelemetryCards(600, 2)).toBe(true);
   });
 });
-
-// Mirrors App.test.tsx's own queryByTestID(): findAllByProps({testID})
-// also matches Text's own underlying host-component instance (which
-// forwards the same testID prop through undisturbed), not just the
-// logical <Text> element - filtering to node.type === Text is what
-// actually disambiguates it.
-function queryByTestID(
-  renderer: ReactTestRenderer.ReactTestRenderer,
-  testID: string,
-) {
-  return renderer.root
-    .findAllByProps({ testID })
-    .filter(node => node.type === Text);
-}
 
 function findAnyByTestID(
   renderer: ReactTestRenderer.ReactTestRenderer,
@@ -370,22 +362,25 @@ function makeProps(params: RootStackParamList['Setup'] | undefined): Props {
 }
 
 describe('SetupScreen', () => {
-  it('does not throw and renders an honest fallback when route.params is missing (defense-in-depth)', () => {
+  it('renders the DISCONNECTED configurator - the real embedded connection workspace - when route.params is missing', async () => {
+    // ENTRY CLEANUP: params-less 'Setup' is the product's first-class
+    // disconnected state now (Start opens it directly), not a defensive
+    // dead-end. What must render is the genuine connection workspace;
+    // what must NOT render is any connected content or fabricated
+    // session.
     const props = makeProps(undefined);
     let renderer!: ReactTestRenderer.ReactTestRenderer;
 
-    expect(() => {
-      act(() => {
-        renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
-      });
-    }).not.toThrow();
+    await act(async () => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+      await Promise.resolve();
+    });
 
-    expect(
-      queryByTestID(renderer, 'setup-screen-missing-session'),
-    ).toHaveLength(1);
+    expect(findAnyByTestID(renderer, 'setup-connect-workspace')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'usb-refresh-button')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'setup-screen')).toBeNull();
 
-    act(() => {
+    await act(async () => {
       renderer.unmount();
     });
   });

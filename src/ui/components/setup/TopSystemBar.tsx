@@ -82,12 +82,23 @@ export interface TopSystemBarProps {
   sessionId: string;
   onBack: () => void;
   armingReadiness: ArmingReadiness;
+  /**
+   * ENTRY CLEANUP: the standalone connection screen is gone, so the
+   * intentional-disconnect control moved HERE - next to the connection
+   * indicator it acts on. Optional: hosts that cannot disconnect (tests,
+   * previews) simply render no control. Only offered while the session
+   * is genuinely CONNECTED - a session already recovering or gone has
+   * nothing intentional left to close, and offering it would imply
+   * otherwise.
+   */
+  onDisconnect?: () => void;
 }
 
 export default function TopSystemBar({
   sessionId,
   onBack,
   armingReadiness,
+  onDisconnect,
 }: TopSystemBarProps): React.JSX.Element {
   const { t } = useTranslation();
   const ownership = useSetupOwnershipState(sessionId);
@@ -150,6 +161,17 @@ export default function TopSystemBar({
             {t(INDICATOR_LABEL_KEY[indicator])}
           </Text>
         </View>
+        {onDisconnect && indicator === 'CONNECTED' ? (
+          <Pressable
+            onPress={onDisconnect}
+            accessibilityRole="button"
+            accessibilityLabel={t('setupTopBar.disconnect')}
+            style={styles.disconnectButton}
+            testID="setup-top-bar-disconnect"
+          >
+            <Icon name="unplug" size={18} color={colors.textPrimary} />
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.secondRow}>
@@ -283,6 +305,17 @@ const styles = StyleSheet.create({
   indicatorText: {
     ...typography.caption,
     fontWeight: '600',
+  },
+  disconnectButton: {
+    minWidth: 44,
+    minHeight: 44,
+    marginStart: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderSoft,
   },
   identityText: {
     ...typography.caption,

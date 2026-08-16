@@ -1,3 +1,8 @@
+// ENTRY CLEANUP: the shell's Setup tab hosts the USB connection workspace
+// now, so this import chain reaches the transport client whose TurboModule
+// must be mocked under Jest - the exact mock App.test.tsx has always used.
+jest.mock('../../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 /**
  * Bottom tab bar - order, RTL scroll position, disabled state and the
  * Motors stop guard.
