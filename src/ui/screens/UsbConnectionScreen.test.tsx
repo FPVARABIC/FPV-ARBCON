@@ -1504,3 +1504,110 @@ describe('UsbConnectionScreen - hands the established session to its host on CON
     await expect(pressConnect(renderer)).resolves.not.toThrow();
   });
 });
+
+/**
+ * THE WEB SERIAL PERMISSION BOUNDARY, at screen level.
+ *
+ * A real Kakute F7 session produced connectionState=ready with
+ * authorizedPorts=0, sent=0 and received=0: no port was ever opened and no
+ * MSP byte was ever written, because navigator.serial.getPorts() lists only
+ * ports the operator has already authorized and nothing on the screen led
+ * to requestPort(). These tests pin the corrected contract at the boundary
+ * where the browser's rules actually bite.
+ */
+describe('Web Serial permission boundary', () => {
+  function webClient(): MockClient & {
+    supportsDevicePicker: jest.Mock;
+    requestDevicePermission: jest.Mock;
+  } {
+    return Object.assign(createMockClient(), {
+      supportsDevicePicker: jest.fn(() => true),
+      requestDevicePermission: jest.fn(),
+    });
+  }
+
+  it('NEVER calls requestPort on load - browsers require a user gesture', async () => {
+    const client = webClient();
+    await renderScreen(client);
+
+    // getPorts() (listDevices) is the automatic one and is allowed.
+    expect(client.listDevices).toHaveBeenCalled();
+    // requestPort() is not, and must wait for a real press.
+    expect(client.requestDevicePermission).not.toHaveBeenCalled();
+  });
+
+  it('pressing the connect action calls requestPort EXACTLY once', async () => {
+    const client = webClient();
+    client.requestDevicePermission.mockResolvedValue(null);
+    const renderer = await renderScreen(client);
+
+    const button = renderer.root
+      .findAllByProps({testID: 'usb-request-device-button'})
+      .find(node => typeof node.props.onPress === 'function');
+    expect(button).toBeDefined();
+
+    await act(async () => {
+      button?.props.onPress();
+    });
+    expect(client.requestDevicePermission).toHaveBeenCalledTimes(1);
+  });
+
+  it('a chosen device becomes visible through a real re-enumeration, not a claim', async () => {
+    const client = webClient();
+    const device = supportedDevice();
+    client.requestDevicePermission.mockResolvedValue(device);
+    // getPorts() is the single source of truth: after permission it now
+    // genuinely lists the port.
+    const renderer = await renderScreen(client);
+    client.listDevices.mockResolvedValueOnce([device]);
+
+    const button = renderer.root
+      .findAllByProps({testID: 'usb-request-device-button'})
+      .find(node => typeof node.props.onPress === 'function');
+    await act(async () => {
+      button?.props.onPress();
+    });
+
+    expect(client.requestDevicePermission).toHaveBeenCalledTimes(1);
+    // The screen re-scanned rather than trusting the chooser's return value.
+    expect(client.listDevices.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('a DISMISSED chooser is not an error and never says the board is unsupported', async () => {
+    const client = webClient();
+    client.requestDevicePermission.mockResolvedValue(null);
+    const renderer = await renderScreen(client);
+
+    const button = renderer.root
+      .findAllByProps({testID: 'usb-request-device-button'})
+      .find(node => typeof node.props.onPress === 'function');
+    await act(async () => {
+      button?.props.onPress();
+    });
+
+    const screen = renderer.root
+      .findAllByType(Text)
+      .map(node => String(node.props.children ?? ''))
+      .join('\n');
+    expect(screen).not.toContain('غير مدعوم');
+    expect(screen).not.toContain('فشل');
+  });
+
+  it('an ALREADY-AUTHORIZED port needs no chooser at all', async () => {
+    const client = webClient();
+    const device = supportedDevice();
+    // getPorts() returns it straight away on a return visit.
+    await renderScreen(client, [device]);
+
+    expect(client.requestDevicePermission).not.toHaveBeenCalled();
+  });
+
+  it('ANDROID keeps its own path: no picker offered, nothing else changes', async () => {
+    const client = createMockClient(); // no supportsDevicePicker at all
+    const renderer = await renderScreen(client);
+
+    expect(
+      renderer.root.findAllByProps({testID: 'usb-request-device-button'}),
+    ).toHaveLength(0);
+  });
+});

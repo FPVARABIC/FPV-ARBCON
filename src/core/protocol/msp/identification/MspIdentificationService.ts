@@ -155,11 +155,23 @@ export class MspIdentificationService {
    *    changed.
    */
   async identify(): Promise<FlightControllerIdentity> {
-    const apiVersionFrame = await this.requester.request(
-      MSP_API_VERSION,
-      EMPTY_PAYLOAD,
-      IDENTIFICATION_REQUEST_OPTIONS,
-    );
+    // THE TWO STAGES A REAL FAILING TRACE HAD NO WAY TO EXPRESS. It read
+    // "sent=0 received=0", which is equally consistent with a permission
+    // problem, a dead port and a protocol fault. Recorded either side of
+    // the first request so those three can never be confused again.
+    this.trace?.reached('MSP_FIRST_WRITE', `MSP_API_VERSION (command ${MSP_API_VERSION}, v1)`);
+    let apiVersionFrame;
+    try {
+      apiVersionFrame = await this.requester.request(
+        MSP_API_VERSION,
+        EMPTY_PAYLOAD,
+        IDENTIFICATION_REQUEST_OPTIONS,
+      );
+    } catch (error) {
+      this.trace?.failed('MSP_FIRST_RESPONSE', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    this.trace?.reached('MSP_FIRST_RESPONSE', `${apiVersionFrame.payload.length} byte payload`);
     // The first well-framed response is itself the proof that the byte
     // stream is synchronized - it is recorded as its own stage because
     // "the port opened but nothing ever parsed" and "it parsed but the

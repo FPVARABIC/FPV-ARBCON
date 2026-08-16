@@ -61,6 +61,10 @@ import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 // on web, inert on Android. The web build records staged connection
 // evidence and can copy a technical report; Android renders nothing.
 import {
+  beginConnectionTrace,
+  getLastConnectionTrace,
+} from '../../core/protocol/msp/identification/connectionTrace';
+import {
   copyConnectionReportToClipboard,
   isConnectionReportSupported,
   recordConnectionStage,
@@ -579,6 +583,21 @@ export default function UsbConnectionScreen({
           if (!mountedRef.current) {
             return;
           }
+          // PERMISSION, NOT ABSENCE. Recording this distinctly is the
+          // whole point: the reported hardware trace showed three
+          // consecutive scans returning zero and nothing else, which read
+          // as "no flight controller" when it only ever meant "no port has
+          // been authorized yet".
+          if (
+            devices.length === 0 &&
+            typeof client.supportsDevicePicker === 'function' &&
+            client.supportsDevicePicker()
+          ) {
+            (getLastConnectionTrace() ?? beginConnectionTrace()).reached(
+              'SERIAL_AUTHORIZED_PORTS_NONE',
+              'getPorts() returned 0 - the browser has authorized no port yet',
+            );
+          }
           dispatch({ type: 'SCAN_SUCCESS', devices });
         } catch (error) {
           if (!mountedRef.current) {
@@ -631,9 +650,27 @@ export default function UsbConnectionScreen({
   );
 
   const handleRequestDevice = useCallback(() => {
+    // Started HERE, synchronously, before the chooser opens: the trace that
+    // exposed this defect had no way to say "a chooser was never opened",
+    // and that silence was indistinguishable from "the board is absent".
+    const trace = getLastConnectionTrace() ?? beginConnectionTrace();
+    trace.reached('SERIAL_CHOOSER_OPENED', 'requestPort() invoked from the operator gesture');
+    // NOT awaited before requestDevicePermission(): a browser only honours
+    // requestPort() inside the user gesture that started it, and any await
+    // before the call ends that gesture.
     client
       .requestDevicePermission()
       .then(device => {
+        if (device === null) {
+          // A dismissed chooser is a decision, not a failure, and above all
+          // it is not "this flight controller is unsupported".
+          trace.note('chooser dismissed by the operator - no device selected');
+        } else {
+          trace.reached(
+            'SERIAL_PORT_SELECTED',
+            `vid=0x${device.vendorId.toString(16)} pid=0x${device.productId.toString(16)}`,
+          );
+        }
         if (!mountedRef.current || device === null) {
           return;
         }
@@ -792,6 +829,7 @@ export default function UsbConnectionScreen({
       portIndex: state.selectedPortIndex,
     });
     try {
+      const openTrace = getLastConnectionTrace() ?? beginConnectionTrace();
       const sessionId = await client.openDevice(
         selectedDevice.deviceId,
         state.selectedPortIndex,
@@ -819,6 +857,7 @@ export default function UsbConnectionScreen({
       if (sessionKey) {
         onSessionEstablished?.(sessionKey);
       }
+      openTrace.reached('SERIAL_PORT_OPENED', sessionId);
       dispatch({ type: 'CONNECT_SUCCESS', sessionId });
     } catch (error) {
       if (!mountedRef.current) {

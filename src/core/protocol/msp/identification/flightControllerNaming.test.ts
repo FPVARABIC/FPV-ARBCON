@@ -270,6 +270,86 @@ describe('what counts as an identified flight controller', () => {
   });
 });
 
+/**
+ * THE ARCHITECTURE TEST: change every brand string and nothing about
+ * connection eligibility may change.
+ *
+ * These identifiers are deliberately invented and belong to no vendor that
+ * exists today. If a board like this appears in a future Betaflight release
+ * and answers the MSP contract, this app must connect to it with no code
+ * change at all.
+ */
+describe('a flight controller nobody has ever heard of', () => {
+  const FUTURE = board({
+    boardIdentifier: 'ZZ99',
+    targetName: 'NEW_TARGET',
+    boardName: 'FUTURE_FC_2030',
+    manufacturerId: 'ZZZZ',
+    mcuTypeId: 200,
+  });
+
+  const identityFor = (info: MspBoardInfo, extra: Partial<FlightControllerIdentity> = {}) => ({
+    apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: 47},
+    firmware: {identifier: 'BTFL', knownFamily: 'BETAFLIGHT' as const},
+    board: info,
+    ...extra,
+  });
+
+  it('CONNECTS on protocol truth alone', () => {
+    expect(isIdentifiedFlightController(identityFor(FUTURE))).toBe(true);
+  });
+
+  it('connects with the manufacturer metadata completely absent', () => {
+    const bare = board({
+      boardIdentifier: 'ZZ99',
+      targetName: 'NEW_TARGET',
+      boardName: 'FUTURE_FC_2030',
+      manufacturerId: '',
+    });
+    expect(isIdentifiedFlightController(identityFor(bare))).toBe(true);
+    expect(resolveCatalogTarget(bare)).toBe('FUTURE_FC_2030');
+  });
+
+  it('connects with a truncated optional BOARD_INFO tail', () => {
+    const truncated = board({
+      boardIdentifier: 'ZZ99',
+      targetName: 'NEW_TARGET',
+      boardName: 'FUTURE_FC_2030',
+      manufacturerId: 'ZZZZ',
+      truncated: true,
+    });
+    expect(isIdentifiedFlightController(identityFor(truncated))).toBe(true);
+  });
+
+  it('connects even when NO board metadata arrived at all - catalogue match is a separate question', () => {
+    const noMetadata = identityFor(board({boardIdentifier: '', targetName: '', boardName: ''}), {
+      boardInfoUnavailableReason: 'MSP_TIMEOUT',
+    });
+    expect(isIdentifiedFlightController(noMetadata)).toBe(true);
+    expect(hasUsableBoardMetadata(noMetadata)).toBe(false);
+  });
+
+  it('CHANGING THE BRAND STRINGS CHANGES NOTHING about eligibility', () => {
+    // The actual architectural claim, stated as an experiment: swap every
+    // identity string for another invented one and the answer is identical.
+    const alternatives = [
+      {boardIdentifier: 'AAAA', targetName: 'T_ONE', boardName: 'BOARD_ONE', manufacturerId: 'AAAA'},
+      {boardIdentifier: 'BBBB', targetName: 'T_TWO', boardName: 'BOARD_TWO', manufacturerId: 'BBBB'},
+      {boardIdentifier: 'QQQQ', targetName: 'ZZZZZZZ', boardName: 'UNSEEN_9999', manufacturerId: 'QQQQ'},
+    ];
+    const verdicts = alternatives.map(fields =>
+      isIdentifiedFlightController(identityFor(board(fields))),
+    );
+    expect(verdicts).toEqual([true, true, true]);
+  });
+
+  it('an UNSUPPORTED firmware family is still rejected honestly - fail closed where it matters', () => {
+    // Permissive about identity metadata; strict about protocol contract.
+    const nameless = identityFor(board({boardIdentifier: '', targetName: '', boardName: ''}));
+    expect(isIdentifiedFlightController({...nameless, firmware: {identifier: '', knownFamily: 'UNKNOWN'}})).toBe(false);
+  });
+});
+
 describe('vendor neutrality of the production identification path', () => {
   it('names no manufacturer, board or vendor id anywhere in its source', () => {
     // The fixtures above deliberately carry real family names; the LOGIC
@@ -282,7 +362,20 @@ describe('vendor neutrality of the production identification path', () => {
       'MspIdentificationService.ts',
       'mspIdentificationTypes.ts',
       'mspCompatibility.ts',
+      // The whole CONNECTION path, not just the naming helpers: a vendor
+      // gate anywhere between the port and the identity would reject a
+      // future board just as effectively as one in the resolver.
+      'connectionStageTruth.ts',
+      'connectionTrace.ts',
     ].map(file => fs.readFileSync(path.join(__dirname, file), 'utf8'));
+
+    const connectionPath = [
+      ['..', '..', '..', '..', 'ui', 'screens', 'UsbConnectionScreen.tsx'],
+      ['..', '..', '..', '..', 'ui', 'components', 'connection', 'UsbDeviceList.tsx'],
+      ['..', '..', '..', '..', 'platforms', 'react-native', 'transport', 'UsbSerialTransportClient.ts'],
+      ['..', '..', '..', '..', 'platforms', 'react-native', 'transport', 'native', 'NativeUsbSerialTransport.web.ts'],
+    ].map(segments => fs.readFileSync(path.join(__dirname, ...segments), 'utf8'));
+    sources.push(...connectionPath);
 
     for (const source of sources) {
       expect(

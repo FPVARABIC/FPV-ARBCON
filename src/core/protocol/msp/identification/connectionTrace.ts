@@ -14,9 +14,16 @@
  *
  * Progression, finest-grained first-to-last:
  *
+ *   SERIAL_AUTHORIZED_PORTS_NONE  the browser has granted no port yet -
+ *                        which means PERMISSION, never "no board exists"
+ *   SERIAL_CHOOSER_OPENED requestPort() was invoked from a user gesture
+ *   SERIAL_PORT_SELECTED  the operator picked a device in the chooser
+ *   SERIAL_PORT_OPENED    that port opened
  *   USB_DEVICE_FOUND     a device is on the bus
  *   PORT_OPENED          a serial port was opened on it
  *   SERIAL_READY         the read loop is running; writes are possible
+ *   MSP_FIRST_WRITE      the first MSP request actually reached the wire
+ *   MSP_FIRST_RESPONSE   the first bytes came back
  *   MSP_SYNCED           at least one well-framed MSP response was decoded
  *   API_VERSION_RECEIVED MSP_API_VERSION answered and decoded
  *   FC_VARIANT_RECEIVED  MSP_FC_VARIANT answered and decoded
@@ -31,9 +38,20 @@
  */
 
 export const CONNECTION_TRACE_STAGES = [
+  // THE PERMISSION BOUNDARY, which a real hardware trace proved was the
+  // first thing to fail: the app reported connectionState=ready with
+  // authorizedPorts=0, sent=0, received=0 - it never opened a port and
+  // never wrote one MSP byte. Nothing below MSP can be diagnosed until
+  // these stages are visible, so they come first and they are distinct.
+  'SERIAL_AUTHORIZED_PORTS_NONE',
+  'SERIAL_CHOOSER_OPENED',
+  'SERIAL_PORT_SELECTED',
+  'SERIAL_PORT_OPENED',
   'USB_DEVICE_FOUND',
   'PORT_OPENED',
   'SERIAL_READY',
+  'MSP_FIRST_WRITE',
+  'MSP_FIRST_RESPONSE',
   'MSP_SYNCED',
   'API_VERSION_RECEIVED',
   'FC_VARIANT_RECEIVED',

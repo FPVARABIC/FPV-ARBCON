@@ -55,7 +55,27 @@ export default function UsbDeviceList({
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const copyKeys = connectionCopyKeys(Platform.OS);
-  const showEmptyState = !scanning && hasScannedOnce && devices.length === 0;
+  const nothingFound = !scanning && hasScannedOnce && devices.length === 0;
+
+  /**
+   * THE PERMISSION STATE, WHICH IS NOT AN ABSENCE OF HARDWARE.
+   *
+   * navigator.serial.getPorts() lists only ports the operator has already
+   * authorized in THIS browser profile. On a first visit it returns zero
+   * no matter what is plugged in. A real hardware trace showed exactly
+   * this and exactly what it cost: connectionState=ready,
+   * authorizedPorts=0, sent=0, received=0 - the app told the operator
+   * "لم يتم العثور على جهاز USB", offered «تحديث» as the obvious action
+   * (which can only ever return zero again), and left the one control
+   * that could have worked as a secondary button underneath a verdict
+   * that contradicted it. The board was connected the whole time.
+   *
+   * So when a browser has no authorized port, this is a PERMISSION state:
+   * the chooser is the primary action, it is enabled, and nothing here
+   * claims a device is missing.
+   */
+  const awaitingPermission = nothingFound && onRequestDevice !== undefined;
+  const showEmptyState = nothingFound && !awaitingPermission;
 
   return (
     <View style={styles.container}>
@@ -100,7 +120,13 @@ export default function UsbDeviceList({
       )}
 
       {onRequestDevice ? (
-        <View style={styles.pickerSection}>
+        <View
+          style={[styles.pickerSection, awaitingPermission && styles.pickerSectionPrimary]}
+          testID={awaitingPermission ? 'usb-permission-required' : 'usb-picker-section'}
+        >
+          {awaitingPermission ? (
+            <Text style={styles.permissionLead}>{t('devices.permissionLead')}</Text>
+          ) : null}
           <Pressable
             testID="usb-request-device-button"
             onPress={requestDeviceDisabled ? undefined : onRequestDevice}
@@ -109,19 +135,27 @@ export default function UsbDeviceList({
             accessibilityState={{ disabled: requestDeviceDisabled }}
             style={[
               styles.pickerButton,
+              awaitingPermission && styles.pickerButtonPrimary,
               requestDeviceDisabled && styles.pickerButtonDisabled,
             ]}
           >
             <Text
               style={[
                 styles.pickerButtonText,
+                awaitingPermission && styles.pickerButtonTextPrimary,
                 requestDeviceDisabled && styles.refreshButtonTextDisabled,
               ]}
             >
-              {t('devices.chooseDevice')}
+              {awaitingPermission
+                ? t('devices.connectFlightController')
+                : t('devices.chooseDevice')}
             </Text>
           </Pressable>
-          <Text style={styles.pickerHint}>{t('devices.chooseDeviceHint')}</Text>
+          <Text style={styles.pickerHint}>
+            {awaitingPermission
+              ? t('devices.permissionHint')
+              : t('devices.chooseDeviceHint')}
+          </Text>
         </View>
       ) : null}
 
@@ -211,6 +245,34 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoft,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  /* The permission state's own emphasis: this is THE action on the screen
+     when a browser has authorized no port, so it reads as a filled primary
+     control rather than one option among several. */
+  pickerSectionPrimary: {
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSoft,
+    gap: spacing.sm,
+  },
+  permissionLead: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+    textAlign: 'right',
+    writingDirection: 'rtl',
+  },
+  pickerButtonPrimary: {
+    alignSelf: 'flex-start',
+    minHeight: 48,
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+    paddingHorizontal: spacing.lg,
+  },
+  pickerButtonTextPrimary: {
+    color: colors.accentText,
   },
   pickerButtonDisabled: {
     borderColor: colors.disabled,

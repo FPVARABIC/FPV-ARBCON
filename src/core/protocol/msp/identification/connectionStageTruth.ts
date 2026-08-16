@@ -86,6 +86,32 @@ export function classifyConnectionStage(evidence: ConnectionStageEvidence): Conn
   return 'IDENTIFIED';
 }
 
+/**
+ * THE SEVEN-STAGE CLASSIFICATION, AND WHERE THE GATE ACTUALLY IS.
+ *
+ *   1. USB/serial device available
+ *   2. port permission granted
+ *   3. port opened
+ *   4. MSP responding
+ *   5. supported FC firmware identified
+ *   -------------------------------------- entry to configuration
+ *   6. board metadata available
+ *   7. official target catalogue matched
+ *
+ * Stages 1-5 are protocol truth and they alone decide whether the operator
+ * may enter normal flight-controller configuration. Stages 6 and 7 enrich
+ * the experience - they name the board and match it to the firmware
+ * catalogue - and they must never block a controller that satisfied 1-5.
+ *
+ * That separation is the whole point: a board from a vendor this project
+ * has never heard of, or one whose BOARD_INFO is short or silent, answers
+ * the protocol correctly and is a working flight controller. Only features
+ * that genuinely need a known target may ask for a manual selection.
+ */
+export function canEnterConfiguration(stage: ConnectionStage): boolean {
+  return stage === 'IDENTIFIED' || stage === 'BOARD_METADATA_INCOMPLETE';
+}
+
 /** The i18n key carrying each stage's operator sentence. */
 export function connectionStageLabelKey(stage: ConnectionStage): string {
   return `connectionStage.${stage}`;

@@ -364,6 +364,8 @@ export type {
   MspFcVariant,
   FlightControllerIdentity,
 } from './identification/mspIdentificationTypes';
+export {canEnterConfiguration} from './identification/connectionStageTruth';
+
 export {
   beginConnectionTrace,
   getLastConnectionTrace,
