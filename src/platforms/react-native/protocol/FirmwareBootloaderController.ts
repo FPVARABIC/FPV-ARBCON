@@ -12,6 +12,7 @@ import type {
   UsbSerialTransportClient,
 } from '../transport';
 import {isSupportedDevice} from '../transport';
+import {beginConnectionTrace} from '../../../core/protocol/msp/identification/connectionTrace';
 import type {MspSessionCoordinator} from './MspSessionCoordinator';
 import {mspSessionCoordinator} from './MspSessionCoordinator';
 
@@ -138,17 +139,24 @@ export class FirmwareBootloaderController {
     selection?: {readonly deviceId: number; readonly portIndex: number},
   ): Promise<DetectedFlightController> {
     if (signal?.aborted) throw new FirmwareDetectionError('أُلغيَ اكتشاف Flight Controller.');
+    // Developer diagnostics only; see connectionTrace.ts. Started here so
+    // a failure at ANY stage - including "nothing on the bus" - produces
+    // an exportable report rather than only the successful cases.
+    const trace = beginConnectionTrace();
     // STAGE TRUTH. A USB device that is present but exposes no usable
     // serial interface is a DIFFERENT fact from no device at all, and
     // reporting both as "no flight controller found" sent operators to
     // check a cable that was never the problem.
     const attached = await this.client.listDevices();
     const supported = attached.filter(isSupportedDevice);
+    trace.fact('usbDevicesVisible', attached.length);
+    trace.fact('serialCapableDevices', supported.length);
     if (supported.length === 0) {
       const stage = classifyConnectionStage({
         usbDeviceCount: attached.length,
         serialCapableCount: 0,
       });
+      trace.failed('USB_DEVICE_FOUND', stage);
       throw new FirmwareDetectionError(
         stage === 'NO_USB_DEVICE'
           ? 'لا يوجد أي جهاز USB متصل. وصّل متحكم الطيران بكابل بيانات ثم أعد المحاولة.'
@@ -178,6 +186,14 @@ export class FirmwareBootloaderController {
     if (!Number.isInteger(portIndex) || portIndex < 0 || portIndex >= device.portCount) {
       throw new FirmwareDetectionError('منفذ USB serial المحدد غير صالح.');
     }
+    trace.reached('USB_DEVICE_FOUND', `vid=0x${device.vendorId.toString(16)} pid=0x${device.productId.toString(16)}`);
+    trace.fact('vendorId', `0x${device.vendorId.toString(16).padStart(4, '0')}`);
+    trace.fact('productId', `0x${device.productId.toString(16).padStart(4, '0')}`);
+    trace.fact('driverType', device.driverType);
+    trace.fact('portIndex', portIndex);
+    // The same parameters Betaflight opens with: 115200 8N1, no flow
+    // control, and no DTR/RTS assertion anywhere on this path.
+    trace.fact('openParameters', '115200 8N1 flowControl=off');
     const sessionId = await this.client.openDevice(device.deviceId, portIndex, {
       baudRate: 115200,
       dataBits: 8,
@@ -185,12 +201,16 @@ export class FirmwareBootloaderController {
       parity: 'none',
       flowControl: 'off',
     });
+    trace.reached('PORT_OPENED', sessionId);
     let mspClient: MspClient | undefined;
     try {
       mspClient = this.coordinator.openSession(this.client, sessionId);
+      trace.reached('SERIAL_READY', 'read loop started');
       const identity = await this.waitForIdentity(sessionId, signal);
+      trace.reached('READY', 'session usable');
       return new DetectedFlightController(device, sessionId, identity, this.client, this.coordinator, mspClient);
     } catch (error) {
+      trace.failed('SERIAL_READY', error instanceof Error ? error.message : String(error));
       if (mspClient !== undefined) this.coordinator.deactivateMspSession(sessionId);
       await this.client.stopReading(sessionId).catch(() => undefined);
       await this.client.closeSession(sessionId).catch(() => undefined);

@@ -26,6 +26,7 @@
 
 import {
   boardIdentityNames,
+  hasUsableBoardMetadata,
   boardMatchesTarget,
   describeFlightControllerHardware,
   isIdentifiedFlightController,
@@ -46,6 +47,7 @@ function board(over: Partial<MspBoardInfo>): MspBoardInfo {
     signature: new Uint8Array(32),
     mcuTypeId: 0,
     trailingBytes: new Uint8Array(0),
+    truncated: false,
     ...over,
   };
 }
@@ -241,11 +243,30 @@ describe('what counts as an identified flight controller', () => {
     expect(isIdentifiedFlightController(exotic)).toBe(true);
   });
 
-  it('a board that answered with no names at all is not identified', () => {
+  it('a board that answered with NO NAMES AT ALL is still an identified flight controller', () => {
+    // Betaflight parity, and a reversal of what this test used to assert.
+    // src/js/serial_backend.js onOpen() declares a board connected on the
+    // api version and the "BTFL" variant alone; processBoardInfo() has no
+    // path that can abort a connection. Requiring a board name here made
+    // metadata a precondition for being connected, so a board whose
+    // MSP_BOARD_INFO was slow, short or unanswered was reported as no
+    // flight controller at all.
     const nameless = identityFor(
       board({boardIdentifier: '', targetName: '', boardName: ''}),
     );
-    expect(isIdentifiedFlightController(nameless)).toBe(false);
+    expect(isIdentifiedFlightController(nameless)).toBe(true);
+    // The catalogue still cannot name it - a separate, lesser fact.
+    expect(hasUsableBoardMetadata(nameless)).toBe(false);
+    expect(resolveCatalogTarget(nameless.board)).toBe('');
+  });
+
+  it('a board whose MSP_BOARD_INFO never arrived is identified, with the reason kept', () => {
+    const unanswered = {
+      ...identityFor(board({boardIdentifier: '', targetName: '', boardName: ''})),
+      boardInfoUnavailableReason: 'MSP_TIMEOUT',
+    };
+    expect(isIdentifiedFlightController(unanswered)).toBe(true);
+    expect(hasUsableBoardMetadata(unanswered)).toBe(false);
   });
 });
 

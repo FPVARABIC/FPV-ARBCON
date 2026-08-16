@@ -111,16 +111,32 @@ export function describeFlightControllerHardware(board: Pick<
 /**
  * Whether this identity is usable as a flight controller at all.
  *
- * PROTOCOL TRUTH, NOT BRAND. The firmware answered MSP_API_VERSION,
- * MSP_FC_VARIANT and MSP_BOARD_INFO, so it IS a flight controller this
- * app can talk to. A board whose name is absent from our catalogue, from
- * an unreleased vendor, or carrying an unrecognized FC variant is still
- * identified - the catalogue lookup may fail, and that is a separate,
- * lesser fact reported separately.
+ * PROTOCOL TRUTH, NOT BRAND, AND NOT METADATA. The firmware answered
+ * MSP_API_VERSION at a supported version and named its firmware variant.
+ * That is the entire test - and it is the same test the pinned Betaflight
+ * Configurator applies: src/js/serial_backend.js onOpen() aborts only on
+ * an unparseable/too-old apiVersion or a variant that is not "BTFL", and
+ * its MSP_BOARD_INFO handler (processBoardInfo) has no path that can fail
+ * a connection.
+ *
+ * This function used to ALSO require a board name, which made board
+ * metadata a precondition for being connected at all. It is not one: a
+ * board whose MSP_BOARD_INFO is slow, short, or unanswered is a connected
+ * flight controller with unknown metadata. Whether the catalogue can name
+ * it is a separate, lesser question - ask resolveCatalogTarget() for that.
  */
 export function isIdentifiedFlightController(identity: FlightControllerIdentity): boolean {
+  return identity.firmware.identifier.trim().length > 0;
+}
+
+/**
+ * Whether the connected board named itself well enough to be looked up in
+ * the firmware catalogue. Deliberately separate from being identified -
+ * see isIdentifiedFlightController.
+ */
+export function hasUsableBoardMetadata(identity: FlightControllerIdentity): boolean {
   return (
-    identity.firmware.identifier.trim().length > 0 &&
+    identity.boardInfoUnavailableReason === undefined &&
     boardIdentityNames(identity.board).length > 0
   );
 }

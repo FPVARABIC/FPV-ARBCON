@@ -18,6 +18,7 @@ const IDENTITY: FlightControllerIdentity = {
     signature: new Uint8Array(32),
     mcuTypeId: 3,
     trailingBytes: new Uint8Array(0),
+    truncated: false,
   },
 };
 

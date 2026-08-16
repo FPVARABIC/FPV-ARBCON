@@ -99,6 +99,7 @@ import type {
   MspClientState,
   TelemetryValue,
 } from '../../../core';
+import {getLastConnectionTrace} from '../../../core/protocol/msp/identification/connectionTrace';
 import type {UsbSerialTransportClient} from '../transport';
 import {RNMspTransport} from './RNMspTransport';
 import {createBatteryDebugLogger} from './batteryDebugLog';
@@ -888,7 +889,10 @@ export class MspSessionCoordinator {
         this.recordBringUpFailure(sessionId, 'beginIdentification', finishError);
       }
     };
-    new MspIdentificationService(countingRequester).identify().then(
+    // The developer connection trace, if one was started for this attempt
+    // (FirmwareBootloaderController.detectFlightController starts it). The
+    // service only ever writes to it - see connectionTrace.ts.
+    new MspIdentificationService(countingRequester, getLastConnectionTrace()).identify().then(
       identity => settle({status: 'SUCCEEDED', identity}),
       error => settle({status: 'FAILED', error}),
     );

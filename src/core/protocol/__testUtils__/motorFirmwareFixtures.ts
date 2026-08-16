@@ -20,6 +20,7 @@ export function betaflightApi147Identity(): FlightControllerIdentity {
       signature: new Uint8Array(32),
       mcuTypeId: 0,
       trailingBytes: new Uint8Array(0),
+      truncated: false,
     },
   };
 }

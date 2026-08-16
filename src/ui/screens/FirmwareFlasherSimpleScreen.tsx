@@ -37,6 +37,7 @@ import {
   Alert,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -108,6 +109,8 @@ import {
   FirmwareBootloaderController,
 } from '../../platforms/react-native/protocol/FirmwareBootloaderController';
 import {bytesToBase64} from '../../platforms/react-native/protocol/base64';
+import {getLastConnectionTrace} from '../../core/protocol/msp/identification/connectionTrace';
+import {copyPlainTextToClipboard} from '../../platforms/clipboard';
 import {FirmwareButton, FirmwareNotice, FirmwareProgress} from '../components/firmware';
 import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
@@ -671,9 +674,29 @@ export default function FirmwareFlasherSimpleScreen({
       setProblem({category, text: operatorDetail(reason, category)});
       setPhase('problem');
       setStatus(PROBLEM_TITLES[category]);
+      // DEVELOPER DIAGNOSTICS, NOT UI. A failed connection is exactly the
+      // moment the stage-by-stage trace is worth having, and a hardware
+      // test is a one-off - so it is emitted to the console (adb logcat on
+      // Android, DevTools in a browser) whether or not anyone thought to
+      // turn diagnostics on first. The operator sees only the Arabic
+      // sentence above; nothing here reaches the interface.
+      if (category === 'SERIAL') {
+        const report = getLastConnectionTrace()?.toText();
+        if (report !== undefined) {
+          console.warn(report);
+        }
+      }
     },
     [],
   );
+
+  /** WEB ONLY, and only after a failed detection - see clipboard.ts on why
+   * Android returns false here rather than pretending. */
+  const [reportCopied, setReportCopied] = useState<boolean | null>(null);
+  const copyConnectionTrace = useCallback(() => {
+    const report = getLastConnectionTrace()?.toText() ?? '';
+    copyPlainTextToClipboard(report).then(setReportCopied, () => setReportCopied(false));
+  }, []);
 
   /* ---- Catalogue: the official dataset, unfiltered ---- */
   useEffect(() => {
@@ -1450,6 +1473,27 @@ export default function FirmwareFlasherSimpleScreen({
               text={problem.text}
               tone="warning"
             />
+            {/* Developer diagnostics. Deliberately NOT part of the normal
+                flow: it appears only after a failed detection, only where
+                a clipboard exists, and it copies an engineering report
+                that is never rendered on screen. */}
+            {problem.category === 'SERIAL' && Platform.OS === 'web' ? (
+              <View style={styles.actionRow}>
+                <FirmwareButton
+                  title={
+                    reportCopied === true
+                      ? 'تم نسخ تقرير الاتصال'
+                      : reportCopied === false
+                        ? 'تعذّر النسخ'
+                        : 'نسخ تقرير الاتصال'
+                  }
+                  tone="secondary"
+                  size="compact"
+                  onPress={copyConnectionTrace}
+                  testID="simple-copy-connection-report"
+                />
+              </View>
+            ) : null}
           </View>
         ) : null}
 

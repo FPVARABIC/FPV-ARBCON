@@ -365,6 +365,15 @@ export type {
   FlightControllerIdentity,
 } from './identification/mspIdentificationTypes';
 export {
+  beginConnectionTrace,
+  getLastConnectionTrace,
+  ConnectionTrace,
+  CONNECTION_TRACE_STAGES,
+  toHex as connectionTraceHex,
+} from './identification/connectionTrace';
+export type {ConnectionTraceStage, ConnectionTraceEntry} from './identification/connectionTrace';
+
+export {
   MspIdentificationService,
   MspIncompatibleFirmwareError,
 } from './identification/MspIdentificationService';

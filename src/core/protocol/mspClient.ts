@@ -81,6 +81,48 @@ export interface MspRequestOptions {
   flags?: number;
   /** Overrides MSP_RESPONSE_TIMEOUT_MILLIS for this request only. */
   responseTimeoutMs?: number;
+  /**
+   * BETAFLIGHT'S OWN RESEND, and the reason this option exists.
+   *
+   * Betaflight Configurator's MSP.send_message (src/js/msp.js) arms a
+   * `MSP.TIMEOUT` (1000 ms) timer per request whose ONLY job is to write
+   * the SAME encoded frame to the port a second time. The pending
+   * callback is not rejected, not dequeued, and not reported to anyone -
+   * the request simply stays outstanding until a matching response
+   * arrives. That is why a board which misses the very first MSP request
+   * after its port opens - a flight controller whose USB stack is still
+   * coming up is the ordinary case, not an exotic one - still connects in
+   * Betaflight: it gets asked again.
+   *
+   * This client had no equivalent. One request, one timeout, and the
+   * timeout latched desync (see onResponseTimeout), so identification
+   * failed permanently on a board that had merely been slow to answer
+   * once. Retrying from ABOVE the client cannot fix that - a retry loop
+   * in the identification service was tried and reverted precisely
+   * because the latch refuses every later attempt with MSP_RECOVERING
+   * before it reaches the wire (docs/IDENTIFICATION_RETRY_DECISION.md).
+   * The resend has to live where Betaflight puts it: inside the request,
+   * before the request is considered to have failed at all.
+   *
+   * Deliberate difference from Betaflight: Betaflight resends once and
+   * then waits forever. This keeps the overall responseTimeoutMs deadline
+   * so a genuinely silent port still fails in bounded time instead of
+   * hanging the UI - the retry is bounded by BOTH attempts and the
+   * deadline, whichever comes first.
+   *
+   * Resends are only ever written while the request is in
+   * AWAITING_RESPONSE - i.e. after its own first write已 settled - so
+   * this never overlaps two writes, and the single-flight invariant is
+   * untouched.
+   */
+  resend?: MspResendPolicy;
+}
+
+export interface MspResendPolicy {
+  /** Milliseconds of silence before the same frame is written again. */
+  intervalMs: number;
+  /** How many EXTRA writes are permitted. 1 matches Betaflight exactly. */
+  maxResends: number;
 }
 
 export interface MspClientOptions {
@@ -200,6 +242,8 @@ interface PendingRequest {
   wireFormat: MspWireFormat;
   flags?: number;
   responseTimeoutMs: number;
+  /** Betaflight-style resend; see MspRequestOptions.resend. */
+  resend: MspResendPolicy | undefined;
   settle: SettleOnce<MspFrame>;
   /** Required, never defaulted (same "no silent default" convention as
    * MspRequestOptions.wireFormat) - true only for the internal Pass 6.2b
@@ -224,6 +268,16 @@ interface ActiveRequest {
   responseTimeoutMs: number;
   settle: SettleOnce<MspFrame>;
   timer: ReturnType<typeof setTimeout> | undefined;
+  /** The exact bytes written for this request, kept so a resend writes the
+   * SAME frame Betaflight would rather than re-encoding it. */
+  encoded: Uint8Array;
+  resend: MspResendPolicy | undefined;
+  /** Extra writes still permitted; counts down from resend.maxResends. */
+  resendsLeft: number;
+  resendTimer: ReturnType<typeof setTimeout> | undefined;
+  /** True once this request has actually been written more than once, so
+   * its settlement can arm the duplicate-response quarantine below. */
+  wasResent: boolean;
   isProbe: boolean;
   isEmergencyStop: boolean;
   /** Phase 2G: set when an emergency stop was registered while THIS
@@ -789,9 +843,7 @@ export class MspClient {
 
     const active = this.active;
     if (active !== undefined) {
-      if (active.timer !== undefined) {
-        clearTimeout(active.timer);
-      }
+      this.clearRequestTimers(active);
       active.settle.reject(new MspClientError('MSP_SESSION_CLOSED'));
       this.active = undefined;
     }
@@ -866,6 +918,7 @@ export class MspClient {
         wireFormat: options.wireFormat,
         flags: options.flags,
         responseTimeoutMs: options.responseTimeoutMs ?? MSP_RESPONSE_TIMEOUT_MILLIS,
+        resend: options.resend,
         settle,
         isProbe: false,
         isEmergencyStop: false,
@@ -1121,10 +1174,7 @@ export class MspClient {
 
       if (active.phase === 'AWAITING_RESPONSE') {
         // Its write already settled, so the transport is free RIGHT NOW.
-        if (active.timer !== undefined) {
-          clearTimeout(active.timer);
-          active.timer = undefined;
-        }
+        this.clearRequestTimers(active);
         const won = active.settle.reject(
           new MspMotorTestStopDisplacementError(
             'MSP_DISPLACED_IN_FLIGHT_BY_EMERGENCY_STOP',
@@ -1164,6 +1214,13 @@ export class MspClient {
       wireFormat: options.wireFormat,
       flags: options.flags,
       responseTimeoutMs: options.responseTimeoutMs ?? MSP_RESPONSE_TIMEOUT_MILLIS,
+      // NEVER RESENT, whatever the caller asked for. A motor stop is a
+      // safety command whose write count is part of its meaning: the
+      // attribution contract around it (attributionAmbiguous, the
+      // quarantine exemption for emergencyStopCommand) is written for
+      // exactly one write, and a second copy would arrive with nothing
+      // able to tell the two acknowledgements apart.
+      resend: undefined,
       settle,
       isProbe: false,
       isEmergencyStop: true,
@@ -1471,6 +1528,11 @@ export class MspClient {
       responseTimeoutMs: pending.responseTimeoutMs,
       settle: pending.settle,
       timer: undefined,
+      encoded,
+      resend: pending.resend,
+      resendsLeft: pending.resend?.maxResends ?? 0,
+      resendTimer: undefined,
+      wasResent: false,
       isProbe: pending.isProbe,
       isEmergencyStop: pending.isEmergencyStop,
       displacedByEmergencyStop: false,
@@ -1565,6 +1627,7 @@ export class MspClient {
       }
       active.phase = 'AWAITING_RESPONSE';
       active.timer = setTimeout(() => this.onResponseTimeout(active), active.responseTimeoutMs);
+      this.armResend(active);
       return;
     }
 
@@ -1598,7 +1661,66 @@ export class MspClient {
     }
   }
 
+  /**
+   * Betaflight's `MSP.send_message` resend timer, transcribed.
+   *
+   * Arms only in AWAITING_RESPONSE (this request's own write has already
+   * settled, so nothing is in flight) and writes the SAME bytes again.
+   * The pending request is deliberately left completely alone: not
+   * rejected, not dequeued, not reported - exactly as Betaflight leaves
+   * its queued callback alone. Only the overall response timeout, or a
+   * matching response, ends the request.
+   */
+  private armResend(active: ActiveRequest): void {
+    const policy = active.resend;
+    if (policy === undefined || active.resendsLeft <= 0) {
+      return;
+    }
+    active.resendTimer = setTimeout(() => {
+      active.resendTimer = undefined;
+      // Every reason not to write: the request is over, the slot moved on,
+      // or the client is no longer in a state where writing is meaningful.
+      if (
+        active.settle.settled ||
+        this.active !== active ||
+        active.phase !== 'AWAITING_RESPONSE' ||
+        this.state !== 'READY'
+      ) {
+        return;
+      }
+      active.resendsLeft -= 1;
+      active.wasResent = true;
+      try {
+        // Fire and forget, like Betaflight. A resend that fails to write
+        // is not a request failure: the original write may still be
+        // answered, and the response timeout remains the single authority
+        // on when this request is actually over. Rejecting here would
+        // convert a harmless retry into the very failure the retry exists
+        // to prevent.
+        this.transport.writeBytes(active.encoded).catch(() => undefined);
+      } catch {
+        // A non-conforming transport that throws synchronously is treated
+        // identically - the resend is best-effort by construction.
+      }
+      this.armResend(active);
+    }, policy.intervalMs);
+  }
+
+  /** Clears both of a request's timers. Every exit path uses this so a
+   * resend can never outlive the request that armed it. */
+  private clearRequestTimers(active: ActiveRequest): void {
+    if (active.timer !== undefined) {
+      clearTimeout(active.timer);
+      active.timer = undefined;
+    }
+    if (active.resendTimer !== undefined) {
+      clearTimeout(active.resendTimer);
+      active.resendTimer = undefined;
+    }
+  }
+
   private onResponseTimeout(active: ActiveRequest): void {
+    this.clearRequestTimers(active);
     if (active.isProbe) {
       // Pass 6.2b: same isProbe branching as onWriteSettled() above - a
       // probe response timeout must never call triggerDesyncLatch().
@@ -1651,9 +1773,7 @@ export class MspClient {
       return;
     }
 
-    if (active.timer !== undefined) {
-      clearTimeout(active.timer);
-    }
+    this.clearRequestTimers(active);
 
     let won: boolean;
     if (frame.direction === 'error' && active.isProbe) {
@@ -1681,6 +1801,23 @@ export class MspClient {
       // here) - kept as a defensive invariant, not relied on to be false.
       return;
     }
+    // A REQUEST THAT WAS ASKED TWICE CAN BE ANSWERED TWICE.
+    //
+    // Betaflight tolerates this by accident: its callback is spliced out
+    // of the queue on the first answer, so the duplicate finds no callback
+    // and is dropped. This client matches on (command, protocolVersion)
+    // against whatever is active NOW, so a duplicate arriving later could
+    // settle a LATER request for the same command with a stale payload.
+    // One quarantine slot per extra write closes that for good - and it is
+    // armed on success as well as on failure, because success is exactly
+    // when the duplicate is still on its way.
+    const duplicatesInFlight = active.resend === undefined
+      ? 0
+      : active.resend.maxResends - active.resendsLeft;
+    for (let i = 0; i < duplicatesInFlight; i += 1) {
+      this.quarantineDisplacedResponse(active.command);
+    }
+
     if (active.phase === 'WRITING') {
       // The response won before the transport write settled. The caller's
       // result is final, but the transport slot is not: onWriteSettled()
@@ -1835,6 +1972,9 @@ export class MspClient {
       payload: MSP_PROBE_PAYLOAD,
       wireFormat: MSP_PROBE_WIRE_FORMAT,
       responseTimeoutMs: MSP_PROBE_TIMEOUT_MILLIS,
+      // The recovery probe is its own retry mechanism; resending it would
+      // nest one retry policy inside another.
+      resend: undefined,
       settle,
       isProbe: true,
       isEmergencyStop: false,
@@ -1890,9 +2030,7 @@ export class MspClient {
 
     const active = this.active;
     if (active !== undefined) {
-      if (active.timer !== undefined) {
-        clearTimeout(active.timer);
-      }
+      this.clearRequestTimers(active);
       active.settle.reject(new MspClientError(code));
       this.active = undefined;
     }
