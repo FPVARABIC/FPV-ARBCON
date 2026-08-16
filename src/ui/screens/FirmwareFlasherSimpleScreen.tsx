@@ -391,9 +391,30 @@ export default function FirmwareFlasherSimpleScreen({
     readonly image: Extract<FirmwareImage, {kind: 'HEX'}>;
   } | null>(null);
 
-  /** A board this session put into DFU after verifying its identity. */
+  /**
+   * P0 REAL-HARDWARE CORRECTION. Normal MSP USB and DFU
+   * bootloader USB are TWO PHASES of one workflow, and reboot-to-DFU
+   * NECESSARILY destroys the first to produce the second. The state
+   * below is what makes every guard phase-aware instead of demanding
+   * the dead normal-mode device back:
+   *
+   *  - verifiedIdentity: the identity read over MSP THIS session,
+   *    FROZEN across the re-enumeration that reboot causes. Whether the
+   *    selected target is verified is DERIVED from it against the
+   *    current selection - never invalidated by USB churn, only by a
+   *    different board identity being read.
+   *  - dfuPresent: a live watcher over listDfuDevices(), so a board
+   *    that is ALREADY in DFU (manual BOOT entry, previous session,
+   *    replug) is discovered without ever asking for the serial device
+   *    that no longer exists. On the web this only sees authorized
+   *    devices - the one-press chooser below covers the rest.
+   */
+  const [verifiedIdentity, setVerifiedIdentity] = useState<{
+    readonly names: readonly string[];
+  } | null>(null);
+  /** A DFU device this session may flash (adopted or explicitly chosen). */
   const [dfuReady, setDfuReady] = useState<DfuDeviceDescriptor | null>(null);
-  const [dfuTargetVerified, setDfuTargetVerified] = useState(false);
+  const [dfuPresent, setDfuPresent] = useState<DfuDeviceDescriptor | null>(null);
   /** Set only when software bootloader entry is genuinely unavailable. */
   const [manualDfuReason, setManualDfuReason] = useState<string | null>(null);
   const [unverifiedDfuAccepted, setUnverifiedDfuAccepted] = useState(false);
@@ -407,6 +428,96 @@ export default function FirmwareFlasherSimpleScreen({
   const supportsSerialPicker = useMemo(() => client.supportsDevicePicker(), [client]);
   const isBusy = ['detecting', 'loading', 'flashing'].includes(phase);
   const navigationLocked = simpleFlasherNavigationLocked(phase);
+
+  /**
+   * DERIVED, not stored: whether the frozen MSP identity matches the
+   * CURRENT selection. Changing the selected target does not erase what
+   * the board said about itself - it changes whether they agree.
+   */
+  const dfuTargetVerified = useMemo(
+    () =>
+      verifiedIdentity !== null &&
+      selectedTarget.trim().length > 0 &&
+      verifiedIdentity.names.includes(selectedTarget.trim().toUpperCase()),
+    [selectedTarget, verifiedIdentity],
+  );
+
+  /** The board's own names, frozen for the DFU phase of this workflow. */
+  const freezeIdentity = useCallback((identity: {
+    readonly board: {
+      readonly targetName: string;
+      readonly boardName: string;
+      readonly boardIdentifier: string;
+    };
+  }) => {
+    setVerifiedIdentity({
+      names: [
+        identity.board.targetName,
+        identity.board.boardName,
+        identity.board.boardIdentifier,
+      ]
+        .map(value => value.trim().toUpperCase())
+        .filter(value => value.length > 0),
+    });
+  }, []);
+
+  /**
+   * THE DFU PRESENCE WATCHER. Polls the AUTHORIZED DFU list whenever the
+   * flash engine does not own the bus. This is what lets the flasher
+   * meet a board that is already in DFU - at screen entry, after a
+   * manual BOOT-button entry, after a replug, or after a bounded wait
+   * elapsed - without ever demanding the normal serial device back.
+   * listDfuDevices() resolves [] on a browser without WebUSB and lists
+   * only already-authorized devices, so this can never raise a chooser
+   * by itself; the explicit one-press chooser handles first-time
+   * permission.
+   */
+  useEffect(() => {
+    if (phase === 'flashing') return;
+    let disposed = false;
+    const probe = async () => {
+      try {
+        const devices = await client.listDfuDevices();
+        if (disposed) return;
+        setDfuPresent(devices.length === 1 ? devices[0] : null);
+      } catch {
+        // Android can reject transiently mid-enumeration; the next tick
+        // answers. Absence of evidence here is never a workflow error.
+      }
+    };
+    probe();
+    const timer = setInterval(probe, 2_000);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [client, phase]);
+
+  /**
+   * ADOPTION. A visible DFU device IS the flash transport - bind to it
+   * (and rebind to its latest enumeration after a replug). Releasing a
+   * stale handle is CONFIRMATION-GATED: only a device the watcher has
+   * positively observed may be declared gone by the watcher observing
+   * nothing. Without that gate, a handle freshly bound by the reboot
+   * flow or the chooser would be erased by the probe that simply had
+   * not run yet.
+   */
+  const dfuConfirmedIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (phase === 'flashing') return;
+    if (dfuPresent !== null) {
+      dfuConfirmedIdRef.current = dfuPresent.deviceId;
+      if (dfuReady === null || dfuReady.deviceId !== dfuPresent.deviceId) {
+        setDfuReady(dfuPresent);
+        setManualDfuReason(null);
+      }
+      return;
+    }
+    if (dfuReady !== null && dfuConfirmedIdRef.current === dfuReady.deviceId) {
+      dfuConfirmedIdRef.current = null;
+      setDfuReady(null);
+    }
+  }, [dfuPresent, dfuReady, phase]);
 
   const filteredTargets = useMemo(
     () => filterAndSortTargets(targets, targetQuery),
@@ -587,22 +698,35 @@ export default function FirmwareFlasherSimpleScreen({
     setTargetPickerOpen(false);
     setDetectedTarget(null);
     setPendingFlash(null);
-    setDfuReady(null);
-    setDfuTargetVerified(false);
+    // DELIBERATELY KEPT: dfuReady and verifiedIdentity. The board being
+    // in DFU is a physical fact a catalogue choice cannot change, and
+    // the frozen identity stays what the board said - whether it MATCHES
+    // the new selection is derived (dfuTargetVerified). Clearing the
+    // transport here was half of the real hardware-test trap: pick target
+    // after entering DFU and the flasher demanded normal USB again.
+    // The manual acknowledgement IS per-target, so it resets.
     setUnverifiedDfuAccepted(false);
     setProgress(0);
     setPhase('idle');
     setStatus('اختر الإصدار ثم راجع إعدادات البناء.');
   }, [navigationLocked]);
 
-  /** Enumerates exactly one usable serial board, or says why not. */
+  /**
+   * Enumerates exactly one usable serial board, or says why not. Callers
+   * MUST try the DFU phase first (dfuReady/dfuPresent): this helper is
+   * only for operations that genuinely need the NORMAL-mode device, and
+   * its absence message therefore names both connection phases instead
+   * of sending an operator whose board is in DFU back to "reconnect
+   * normally" - the exact trap the real flight-controller test caught
+   * (firmwareFlasherDfuTransition.test.tsx).
+   */
   const requireSingleSerialDevice = useCallback(async () => {
     const devices = (await client.listDevices()).filter(isSupportedDevice);
     if (devices.length === 0) {
       throw new Error(
         supportsSerialPicker
-          ? 'لم يُسمح للمتصفح بالوصول إلى اللوحة بعد. اضغط «اختيار جهاز USB» أولاً.'
-          : 'لم يُعثر على Flight Controller متصل. وصّل اللوحة عبر USB ثم أعد المحاولة.',
+          ? 'لا يوجد منفذ تسلسلي مسموح به. إن كانت اللوحة في الوضع العادي اضغط «اختيار جهاز USB»، وإن كانت في وضع DFU اضغط «اختيار جهاز DFU».'
+          : 'لم يُعثر على Flight Controller في الوضع العادي. إن كانت اللوحة في وضع DFU فسيكتشفها التطبيق تلقائياً خلال لحظات.',
       );
     }
     if (devices.length > 1) {
@@ -647,6 +771,7 @@ export default function FirmwareFlasherSimpleScreen({
         }
         setDetectedTarget(match.target);
         setSelectedTarget(match.target);
+        freezeIdentity(detected.identity);
         setPhase('idle');
         setStatus(`تم التعرف على اللوحة ${match.target}.`);
       } finally {
@@ -657,7 +782,7 @@ export default function FirmwareFlasherSimpleScreen({
     } finally {
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [bootloader, fail, navigationLocked, requireSingleSerialDevice, targets]);
+  }, [bootloader, fail, freezeIdentity, navigationLocked, requireSingleSerialDevice, targets]);
 
   const chooseSerialAndDetect = useCallback(() => {
     if (navigationLocked) return;
@@ -728,28 +853,66 @@ export default function FirmwareFlasherSimpleScreen({
     lastFlashPhaseRef.current = undefined;
     setStatus('بدء تفليش Firmware…');
     try {
-      await client.flashDfuFirmware(dfu.deviceId, bytesToBase64(image.bytes), false);
+      // Bind to the LIVE enumeration of the device, not a remembered
+      // one: a replug between discovery and this press re-enumerates
+      // under a new id, and opening the dead id is exactly the "USB is
+      // no longer readable" dead end from the hardware report. One
+      // visible device is the flash device; zero is an honest failure
+      // to START (nothing was erased); the engine itself never guesses.
+      let bound = dfu;
+      try {
+        const live = await client.listDfuDevices();
+        if (live.length === 1) {
+          bound = live[0];
+        } else if (live.length === 0 && supportsSerialPicker) {
+          throw new Error('جهاز DFU لم يعد ظاهراً. أعد توصيل اللوحة في وضع DFU ثم أعد المحاولة.');
+        }
+      } catch (probeError) {
+        if (probeError instanceof Error && probeError.message.startsWith('جهاز DFU')) {
+          throw probeError;
+        }
+        // A transient enumeration error must not veto a device we
+        // already hold - the engine will report the truth either way.
+      }
+      await client.flashDfuFirmware(bound.deviceId, bytesToBase64(image.bytes), false);
       setProgress(100);
       setPhase('success');
       setStatus('تم تثبيت Firmware بنجاح.');
       setPendingFlash(null);
       setDfuReady(null);
-      setDfuTargetVerified(false);
+      setDfuPresent(null);
     } catch (reason) {
       fail(reason);
     }
-  }, [client, fail]);
+  }, [client, fail, supportsSerialPicker]);
 
   /**
-   * ENTER DFU. The operator should not have to know about the BOOT
-   * button when the board can be rebooted in software. This verifies the
-   * board first, sends the genuine MSP reboot-to-bootloader, then waits
-   * for the DFU identity to appear. When the firmware family does not
-   * support it, the screen says so instead of showing a button that
-   * cannot work.
+   * ENTER DFU - phase-aware. Three legitimate starting points, none of
+   * which may demand a device from another phase:
+   *
+   *   1. Board already in DFU (adopted by the watcher, or authorized a
+   *      moment ago): nothing to enter - report ready.
+   *   2. Board in NORMAL mode: verify identity over MSP, FREEZE it,
+   *      send the genuine reboot-to-bootloader, then treat the
+   *      disappearance of the serial device as the EXPECTED transition
+   *      it is and wait for the DFU identity - never as a disconnect
+   *      error, and never asking for the serial device again.
+   *   3. Software entry impossible (non-Betaflight family): the
+   *      shortest board-neutral manual instruction, plus the chooser.
+   *
+   * A bounded wait that elapses is NOT a terminal failure either: the
+   * presence watcher keeps scanning, so a board that is slow to
+   * re-enumerate (or needed a manual BOOT entry) is adopted the moment
+   * it appears.
    */
   const enterDfuMode = useCallback(async () => {
     if (navigationLocked) return;
+    if (dfuReady !== null || dfuPresent !== null) {
+      if (dfuReady === null && dfuPresent !== null) setDfuReady(dfuPresent);
+      setPhase(firmware ? 'ready' : 'idle');
+      setStatus('اللوحة في وضع DFU بالفعل وجاهزة للتفليش.');
+      return;
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     setPhase('detecting');
@@ -770,7 +933,7 @@ export default function FirmwareFlasherSimpleScreen({
         await detected.release();
         setPhase('idle');
         setManualDfuReason(
-          'هذا Firmware لا يدعم إعادة التشغيل البرمجية إلى وضع DFU. ادخل وضع DFU يدويًا ثم اختر جهاز DFU.',
+          'هذا Firmware لا يدعم إعادة التشغيل البرمجية إلى وضع DFU. ادخل وضع DFU يدويًا (زر BOOT أثناء توصيل USB) وسيُكتشف الجهاز تلقائياً أو عبر «اختيار جهاز DFU».',
         );
         setStatus('يلزم الدخول اليدوي إلى وضع DFU.');
         return;
@@ -778,24 +941,35 @@ export default function FirmwareFlasherSimpleScreen({
       setDetectedTarget(
         detected.identity.board.targetName || detected.identity.board.boardName,
       );
+      freezeIdentity(detected.identity);
+      setStatus('تم التعرف على اللوحة. جارٍ الانتقال إلى وضع DFU…');
       await detected.rebootToBootloader(selectedTarget, false);
-      setStatus('أُرسل أمر إعادة التشغيل. انتظار ظهور وضع DFU…');
+      // From here the NORMAL device is gone BY DESIGN. Its session was
+      // released cleanly inside rebootToBootloader; nothing below may
+      // reference it again.
+      setStatus('انتهى اتصال الإعدادات كما هو متوقع. بانتظار جهاز DFU…');
       try {
         const dfu = await bootloader.waitForOneDfuDevice(20_000, controller.signal);
         setDfuReady(dfu);
-        setDfuTargetVerified(true);
         setPhase(firmware ? 'ready' : 'idle');
         setStatus('اللوحة الآن في وضع DFU وجاهزة للتفليش.');
       } catch (reason) {
         if (!(reason instanceof DfuPermissionRequiredError)) throw reason;
-        // The board IS in DFU; the browser has simply never been told it
-        // may talk to this identity. Ask once, from a real press.
-        setPhase('idle');
-        setDfuTargetVerified(true);
+        // No AUTHORIZED device appeared inside the bounded wait. On the
+        // web that usually means the browser was never told about this
+        // DFU identity - one real press opens the chooser. On Android
+        // (no chooser) the same signal means the board has not
+        // re-enumerated yet; the watcher keeps scanning either way, so
+        // a late appearance still completes this workflow.
+        setPhase(firmware ? 'ready' : 'idle');
         setManualDfuReason(
-          'اللوحة دخلت وضع DFU. اضغط «اختيار جهاز DFU» مرة واحدة للسماح للمتصفح بالتعامل معها.',
+          supportsSerialPicker
+            ? firmware !== null
+              ? 'تم تجهيز Firmware. اختر جهاز DFU للمتابعة.'
+              : 'اللوحة دخلت وضع DFU. اضغط «اختيار جهاز DFU» مرة واحدة للسماح للمتصفح بالتعامل معها.'
+            : 'لم يظهر جهاز DFU بعد. إن لم تُعد اللوحة التشغيل تلقائياً، ادخل وضع DFU يدوياً (زر BOOT أثناء توصيل USB)؛ سيُكتشف الجهاز فور ظهوره.',
         );
-        setStatus('اللوحة في وضع DFU وتنتظر إذن المتصفح.');
+        setStatus('بانتظار جهاز DFU…');
       }
     } catch (reason) {
       if (!controller.signal.aborted) fail(reason);
@@ -804,20 +978,30 @@ export default function FirmwareFlasherSimpleScreen({
     }
   }, [
     bootloader,
+    dfuPresent,
+    dfuReady,
     fail,
     firmware,
+    freezeIdentity,
     navigationLocked,
     requireSingleSerialDevice,
     selectedTarget,
+    supportsSerialPicker,
   ]);
 
-  /** The browser's one-time WebUSB chooser, straight from the press. */
+  /**
+   * The browser's one-time WebUSB chooser, straight from the press. A
+   * dismissed chooser is the operator changing their mind, not an error
+   * - the prepared firmware, the frozen identity and the whole workflow
+   * stay exactly where they were.
+   */
   const chooseDfuDevice = useCallback(() => {
     if (navigationLocked) return;
     client.requestDfuDevicePermission()
       .then(device => {
         if (device === null) return;
         setDfuReady(device);
+        setDfuPresent(device);
         setManualDfuReason(null);
         setStatus('تم اختيار جهاز DFU. يمكنك الآن التفليش.');
       })
@@ -831,14 +1015,18 @@ export default function FirmwareFlasherSimpleScreen({
       setStatus('الوضع القياسي مخصص لـ Betaflight HEX. استخدم «متقدم» للأنواع الأخرى.');
       return;
     }
-    // Already in DFU from this session (or explicitly chosen): flash it.
-    if (dfuReady !== null) {
+    // THE DFU PHASE COMES FIRST. A board in DFU - put there by this
+    // session, adopted by the watcher, or explicitly chosen - IS the
+    // flash transport. Asking for the normal serial device at this
+    // point was the core of the real hardware-test trap.
+    const dfuNow = dfuReady ?? dfuPresent;
+    if (dfuNow !== null) {
       if (!dfuTargetVerified && !unverifiedDfuAccepted) {
         setPhase('failed');
-        setStatus('اللوحة في وضع DFU ولا يمكن قراءة هويتها. أكّد مطابقة Target أولاً.');
+        setStatus('اللوحة في وضع DFU ولا يمكن قراءة هويتها هناك. أكّد مطابقة Target عبر خانة التأكيد ثم اضغط تفليش.');
         return;
       }
-      await completeFlash(dfuReady, firmware);
+      await completeFlash(dfuNow, firmware);
       return;
     }
     const controller = new AbortController();
@@ -858,8 +1046,12 @@ export default function FirmwareFlasherSimpleScreen({
         throw new Error(`تم إيقاف التفليش: Target ${selectedTarget} لا يطابق اللوحة ${actual}.`);
       }
       setDetectedTarget(selectedTarget);
+      freezeIdentity(detected.identity);
+      setStatus('تم التعرف على اللوحة. جارٍ الانتقال إلى وضع DFU…');
       await detected.rebootToBootloader(selectedTarget, false);
-      setStatus('انتظار وضع DFU…');
+      // The serial device is now gone BY DESIGN - the expected phase
+      // transition, not a disconnect.
+      setStatus('انتهى اتصال الإعدادات كما هو متوقع. بانتظار جهاز DFU…');
       try {
         const dfu = await bootloader.waitForOneDfuDevice(20_000, controller.signal);
         await completeFlash(dfu, firmware);
@@ -873,7 +1065,7 @@ export default function FirmwareFlasherSimpleScreen({
         };
         setPendingFlash({pending, image: firmware});
         setPhase('waiting-permission');
-        setStatus('اللوحة دخلت وضع DFU. اختر جهاز DFU مرة واحدة للمتابعة.');
+        setStatus('تم تجهيز Firmware. اختر جهاز DFU للمتابعة.');
       }
     } catch (reason) {
       if (!controller.signal.aborted) fail(reason);
@@ -883,10 +1075,12 @@ export default function FirmwareFlasherSimpleScreen({
   }, [
     bootloader,
     completeFlash,
+    dfuPresent,
     dfuReady,
     dfuTargetVerified,
     fail,
     firmware,
+    freezeIdentity,
     navigationLocked,
     requireSingleSerialDevice,
     selectedTarget,
@@ -897,12 +1091,19 @@ export default function FirmwareFlasherSimpleScreen({
     if (!pendingFlash || phase !== 'waiting-permission') return;
     client.requestDfuDevicePermission()
       .then(async device => {
+        if (device === null) {
+          // A dismissed chooser is the operator changing their mind -
+          // the prepared operation stays exactly where it is, ready for
+          // the next press. Treating this as a failure was itself a
+          // phase confusion: nothing about the workflow changed.
+          return;
+        }
         const verdict = verifySelectedDfuDevice(
           device,
           pendingFlash.pending,
           pendingFlash.pending.operationId,
         );
-        if (!verdict.ok || device === null) {
+        if (!verdict.ok) {
           throw new Error('جهاز DFU المختار غير صالح لهذه العملية. اختر Flight Controller الصحيح.');
         }
         await completeFlash(device, pendingFlash.image);
@@ -1318,7 +1519,9 @@ export default function FirmwareFlasherSimpleScreen({
 
           {dfuReady !== null ? (
             <Text style={styles.detected} testID="simple-dfu-ready">
-              اللوحة في وضع DFU وجاهزة للتفليش.
+              {dfuTargetVerified
+                ? 'اللوحة في وضع DFU وهويتها مطابقة للـ Target المحدد.'
+                : 'اللوحة في وضع DFU وجاهزة للتفليش.'}
             </Text>
           ) : (
             <FirmwareButton
@@ -1332,16 +1535,22 @@ export default function FirmwareFlasherSimpleScreen({
           {manualDfuReason !== null ? (
             <View testID="simple-manual-dfu">
               <FirmwareNotice title="وضع DFU" text={manualDfuReason} tone="warning" />
-              {supportsSerialPicker ? (
-                <FirmwareButton
-                  title="اختيار جهاز DFU"
-                  tone="secondary"
-                  onPress={chooseDfuDevice}
-                  disabled={navigationLocked}
-                  testID="simple-choose-dfu-device"
-                />
-              ) : null}
             </View>
+          ) : null}
+          {/* The one-press browser chooser is a FIRST-CLASS path, not an
+              error remedy: a board already in DFU (manual BOOT entry, a
+              previous session, a replug) has no serial device to detect,
+              and hiding this button behind failure states was half of
+              the real hardware-test dead end. Android needs no chooser - the
+              presence watcher adopts any DFU device automatically. */}
+          {supportsSerialPicker && dfuReady === null && phase !== 'waiting-permission' ? (
+            <FirmwareButton
+              title="اختيار جهاز DFU"
+              tone="secondary"
+              onPress={chooseDfuDevice}
+              disabled={navigationLocked}
+              testID="simple-choose-dfu-device"
+            />
           ) : null}
           {dfuReady !== null && !dfuTargetVerified ? (
             <Pressable
@@ -1361,7 +1570,7 @@ export default function FirmwareFlasherSimpleScreen({
             <>
               <FirmwareNotice
                 title="اختر جهاز DFU"
-                text="اللوحة دخلت DFU ولم تبدأ الكتابة بعد. اخترها مرة واحدة لمتابعة نفس العملية."
+                text="تم تجهيز Firmware واللوحة دخلت DFU ولم تبدأ الكتابة بعد. اختر جهاز DFU للمتابعة من نفس العملية."
               />
               <FirmwareButton
                 title="اختيار جهاز DFU والمتابعة"
