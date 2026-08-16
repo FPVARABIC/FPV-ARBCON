@@ -89,3 +89,37 @@ export const OSD_ELEMENT_NAMES_AR: readonly string[] = Object.freeze([
 ]);
 
 export function osdElementName(index: number): string {return OSD_ELEMENT_NAMES_AR[index] ?? `عنصر OSD ${index + 1}`;}
+
+/**
+ * The short ASCII token the PREVIEW draws for each element.
+ *
+ * WHY A TOKEN AND NOT A VALUE. The preview exists to answer "where will
+ * this sit over my video", so each element has to occupy roughly the
+ * cells it will really occupy - a name in Arabic script is neither the
+ * right width nor the right script for a MAX7456/HD character grid. What
+ * it must NOT do is invent a reading: showing "16.8V" would be fabricated
+ * telemetry from a flight controller that has told us nothing of the
+ * kind. Each token therefore NAMES the element in the same technical
+ * vocabulary the firmware uses, and its length is what sets the element's
+ * preview width in character cells.
+ *
+ * Same index basis as OSD_ELEMENT_NAMES_AR - an index the firmware
+ * reports beyond this table gets a neutral token rather than a guess.
+ */
+export const OSD_ELEMENT_TOKENS: readonly string[] = Object.freeze([
+  'RSSI', 'VBAT', 'CROSS', 'HORIZON', 'SIDES',
+  'TIMER1', 'TIMER2', 'MODE', 'CRAFT', 'THR', 'VTX', 'CURR',
+  'MAH', 'GPS SPD', 'GPS SATS', 'ALT', 'PID R', 'PID P', 'PID Y',
+  'PWR', 'RATE', 'WARN', 'CELL V', 'GPS LON', 'GPS LAT',
+  'DEBUG', 'PITCH', 'ROLL', 'BAT %', 'DISARMED', 'HOME DIR', 'HOME DIST',
+  'HEADING', 'VARIO', 'COMPASS', 'ESC TEMP', 'ESC RPM', 'TIME LEFT',
+  'DATE TIME', 'ADJUST', 'CORE T', 'ANTIGRAV', 'G-FORCE', 'MOTORS',
+  'LOG', 'FLIP', 'LQ', 'FLT DIST', 'STICKS L', 'STICKS R',
+  'PILOT', 'RPM FRQ', 'RATE NAME', 'PID NAME', 'OSD PROF', 'RSSI dBm',
+  'RC CH', 'CAM FRAME', 'EFFIC', 'FLIGHTS', 'UP/DOWN', 'TX PWR',
+  'WATT H', 'AUX', 'READY', 'RSNR', 'SYS VBAT', 'VTX V', 'BITRATE',
+  'DELAY', 'SYS DIST', 'SYS LQ', 'GOG DVR', 'VTX DVR', 'SYS WARN',
+  'VTX TEMP', 'FAN',
+]);
+
+export function osdElementToken(index: number): string {return OSD_ELEMENT_TOKENS[index] ?? `EL${index + 1}`;}

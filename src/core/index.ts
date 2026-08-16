@@ -422,11 +422,41 @@ export {
   validateOsdDraft,
   OSD_ELEMENT_NAMES_AR,
   osdElementName,
+  OSD_ELEMENT_TOKENS,
+  osdElementToken,
 } from './state/osdConfigurationModel';
 export type {
   OsdConfigurationDraft,
   OsdValidationCode,
 } from './state/osdConfigurationModel';
+export {
+  OSD_VIDEO_AUTO,
+  OSD_VIDEO_PAL,
+  OSD_VIDEO_NTSC,
+  OSD_VIDEO_HD,
+  OSD_PAL_GRID,
+  OSD_NTSC_GRID,
+  OSD_CELL_WIDTH_UNITS,
+  OSD_CELL_HEIGHT_UNITS,
+  resolveOsdCanvas,
+  osdPreviewAspectRatio,
+  osdCellSize,
+  clampOsdCell,
+  isCellWithinCanvas,
+  pointToOsdCell,
+  osdCellToPoint,
+  osdCellToFraction,
+  beginOsdDrag,
+  resolveOsdDragCell,
+  hitTestOsdElements,
+} from './state/osdLayoutGeometry';
+export type {
+  OsdCell,
+  OsdPoint,
+  OsdPreviewBox,
+  OsdDragGrab,
+  OsdHitTarget,
+} from './state/osdLayoutGeometry';
 export {
   MSP_SET_VTX_CONFIG,
   MSP_VTXTABLE_BAND,
