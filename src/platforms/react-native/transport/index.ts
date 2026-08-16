@@ -19,8 +19,6 @@ export {
   UsbSerialTransportClient,
   usbSerialTransportClient,
   isSupportedDevice,
-  DfuCompletionUnconfirmedError,
-  DFU_WEBUSB_SILENCE_TIMEOUT_MS,
 } from './UsbSerialTransportClient';
 
 export {

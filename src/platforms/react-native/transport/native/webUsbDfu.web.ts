@@ -62,6 +62,7 @@ import {parseIntelHex} from '../../../../core/firmware-flasher/intelHex';
 import type {IntelHexImage} from '../../../../core/firmware-flasher/intelHex';
 import {
   DFU_CODE_SESSION_POISONED,
+  DFU_CODE_UNCONFIRMED_MANIFEST,
   classifyDfuOverrun,
 } from '../../../../core/firmware-flasher/flashCompletionModel';
 import type {DfuFlashStage} from '../../../../core/firmware-flasher/flashCompletionModel';
@@ -1121,10 +1122,20 @@ export async function flashDfuFirmware(
       // worker and the pinned Betaflight reference already treat it.
       // Reporting it as failure told operators a finished flash died.
       const code = error instanceof DfuError ? error.code : '';
-      if (code === 'DFU_TRANSFER_FAILED' && (await connection.deviceWentAway())) {
+      if (code !== 'DFU_TRANSFER_FAILED') {
+        throw error;
+      }
+      if (await connection.deviceWentAway()) {
         resetOnLeaveCommand = true;
       } else {
-        throw error;
+        // The transfer was refused and the board is STILL PRESENT. Every
+        // byte is already verified in flash; only the reset is unproven.
+        // Calling this "فشل التفليش" would be a lie about the firmware -
+        // it is the honest third result instead.
+        throw new DfuError(
+          DFU_CODE_UNCONFIRMED_MANIFEST,
+          'DFU leave command was rejected without a reset; firmware bytes are verified but the reboot is unconfirmed.',
+        );
       }
     }
     onProgress({
@@ -1138,12 +1149,22 @@ export async function flashDfuFirmware(
         await connection.waitForManifestation();
       } catch (error) {
         // A manifestation-tolerant device reports status; another resets
-        // immediately and every further transfer fails. Only the second
-        // is acceptable, and only when the device has genuinely gone.
-        const wentAway = await connection.deviceWentAway();
+        // immediately and every further transfer fails. A transfer-level
+        // rejection here is acceptable as COMPLETION only when the device
+        // has genuinely gone. With the board still present it becomes the
+        // honest UNCONFIRMED - the bytes are verified, the reset is not -
+        // while a device-DECLARED failure (DFU_DEVICE_ERROR) and a poll
+        // cap that ran out with the device still answering
+        // (DFU_STATUS_TIMEOUT) keep their own codes.
         const code = error instanceof DfuError ? error.code : '';
-        if (!((code === 'DFU_STATUS_FAILED' || code === 'DFU_TRANSFER_FAILED') && wentAway)) {
+        if (code !== 'DFU_STATUS_FAILED' && code !== 'DFU_TRANSFER_FAILED') {
           throw error;
+        }
+        if (!(await connection.deviceWentAway())) {
+          throw new DfuError(
+            DFU_CODE_UNCONFIRMED_MANIFEST,
+            'DFU manifestation status was refused without a reset; firmware bytes are verified but the reboot is unconfirmed.',
+          );
         }
       }
     }

@@ -35,7 +35,6 @@ import type {
   PendingBootloaderFlash,
 } from '../../core/firmware-flasher';
 import {
-  DfuCompletionUnconfirmedError,
   isSupportedDevice,
   usbSerialTransportClient,
 } from '../../platforms/react-native/transport';
@@ -43,6 +42,14 @@ import type {
   DfuDeviceDescriptor,
   UsbSerialTransportClient,
 } from '../../platforms/react-native/transport';
+import {useTranslation} from 'react-i18next';
+import {
+  classifyFlashRejection,
+  flashNextActionLabelKey,
+  flashReasonLabelKey,
+} from '../../core/firmware-flasher/flashCompletionModel';
+import {toFlashPhase} from '../../core/firmware-flasher/flashPhaseModel';
+import type {FlashPhase} from '../../core/firmware-flasher/flashPhaseModel';
 import {
   DfuPermissionRequiredError,
   FirmwareBootloaderController,
@@ -70,9 +77,46 @@ export type SimpleFlasherPhase =
   | 'unconfirmed';
 
 function errorText(reason: unknown): string {
-  return reason instanceof Error && reason.message.trim().length > 0
-    ? reason.message
-    : 'حدث خطأ غير متوقع أثناء العملية.';
+  if (reason instanceof Error && reason.message.trim().length > 0) {
+    return reason.message;
+  }
+  // The transport client rejects with a plain {code, nativeMessage}
+  // object (normalizeNativeError strips everything else); without this
+  // read every DFU failure showed only the generic line below.
+  const native = (reason as {nativeMessage?: unknown} | null)?.nativeMessage;
+  if (typeof native === 'string' && native.trim().length > 0) {
+    return native;
+  }
+  return 'حدث خطأ غير متوقع أثناء العملية.';
+}
+
+/**
+ * THE SIMPLE SCREEN'S TERMINAL-FAILURE TRUTH, pure and exported for tests.
+ *
+ * Maps a settled rejection onto the SAME contract the classic screen and
+ * the WebUSB engine share (flashCompletionModel): the engine's frozen-
+ * attempt codes and Android's manifestation-window DFU_STATUS_TIMEOUT
+ * become the honest UNCONFIRMED third result with a safe next action;
+ * everything else is a FAILED with its real stated reason. Never SUCCESS:
+ * a rejection carries no completion evidence.
+ */
+export function simpleFailurePresentation(
+  reason: unknown,
+  phaseAtFailure: FlashPhase | undefined,
+  translate: (key: string, options?: {defaultValue: string}) => string,
+): {readonly phase: 'failed' | 'unconfirmed'; readonly text: string} {
+  const rawCode = (reason as {code?: unknown} | null)?.code;
+  const code = typeof rawCode === 'string' && rawCode.length > 0 ? rawCode : undefined;
+  const message = errorText(reason);
+  const reasonLine =
+    code === undefined ? message : translate(flashReasonLabelKey(code), {defaultValue: message});
+  if (classifyFlashRejection(code, phaseAtFailure) === 'UNCONFIRMED') {
+    return {
+      phase: 'unconfirmed',
+      text: `${reasonLine}\n${translate(flashNextActionLabelKey(code))}`,
+    };
+  }
+  return {phase: 'failed', text: reasonLine};
 }
 
 function defaultOption(options: readonly FirmwareBuildOption[]): string {
@@ -121,6 +165,7 @@ export default function FirmwareFlasherSimpleScreen({
   navigation,
   client = usbSerialTransportClient,
 }: Props): React.JSX.Element {
+  const {t} = useTranslation();
   const [advanced, setAdvanced] = useState(false);
   const [phase, setPhase] = useState<SimpleFlasherPhase>('idle');
   const [status, setStatus] = useState('اختر اللوحة والإصدار، ثم حمّل Firmware.');
@@ -142,6 +187,9 @@ export default function FirmwareFlasherSimpleScreen({
   } | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  /** The last engine-reported phase - what classifyFlashRejection needs
+   * to tell Android's manifestation-window timeout from an early one. */
+  const lastFlashPhaseRef = useRef<FlashPhase | undefined>(undefined);
   const bootloader = useMemo(() => new FirmwareBootloaderController(client), [client]);
   const cloudBuild = useMemo(() => new CloudBuildCoordinator(betaflightBuildApi), []);
   const supportsSerialPicker = useMemo(() => client.supportsDevicePicker(), [client]);
@@ -158,14 +206,14 @@ export default function FirmwareFlasherSimpleScreen({
   );
 
   const fail = useCallback((reason: unknown) => {
-    if (reason instanceof DfuCompletionUnconfirmedError) {
-      setPhase('unconfirmed');
-      setStatus(reason.message);
-      return;
-    }
-    setPhase('failed');
-    setStatus(errorText(reason));
-  }, []);
+    const presentation = simpleFailurePresentation(
+      reason,
+      lastFlashPhaseRef.current,
+      t,
+    );
+    setPhase(presentation.phase);
+    setStatus(presentation.text);
+  }, [t]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -216,6 +264,7 @@ export default function FirmwareFlasherSimpleScreen({
 
   useEffect(() => client.onDfuFlashProgress(update => {
     if (phase !== 'flashing') return;
+    lastFlashPhaseRef.current = toFlashPhase(update.phase);
     // 100 is reserved for the resolved flash promise. A progress event alone
     // is never allowed to visually claim success.
     setProgress(Math.max(0, Math.min(99, update.percent)));
@@ -297,7 +346,7 @@ export default function FirmwareFlasherSimpleScreen({
       .then(device => {
         if (device === null) return;
         setStatus('تم السماح بالوصول إلى USB. جارٍ التعرف على اللوحة…');
-        void autoDetect();
+        autoDetect().catch(() => undefined);
       })
       .catch(fail);
   }, [autoDetect, client, fail, navigationLocked]);
@@ -356,6 +405,8 @@ export default function FirmwareFlasherSimpleScreen({
   ) => {
     setPhase('flashing');
     setProgress(0);
+    // A stale phase from an earlier attempt must not classify this one.
+    lastFlashPhaseRef.current = undefined;
     setStatus('بدء تفليش Firmware…');
     try {
       await client.flashDfuFirmware(dfu.deviceId, bytesToBase64(image.bytes), false);
@@ -462,7 +513,7 @@ export default function FirmwareFlasherSimpleScreen({
         {
           text: 'ابدأ التفليش',
           style: 'destructive',
-          onPress: () => void flashPreparedFirmware(),
+          onPress: () => flashPreparedFirmware().catch(() => undefined),
         },
       ],
     );
@@ -485,7 +536,7 @@ export default function FirmwareFlasherSimpleScreen({
     if (phase === 'flashing') {
       // WebUSB may still own one native transfer. Do not announce cancellation
       // as complete until the transport settles the actual terminal result.
-      void client.cancelDfuFlash();
+      client.cancelDfuFlash().catch(() => undefined);
       setStatus('تم طلب الإيقاف. انتظار انتهاء الخطوة الحالية بأمان…');
       return;
     }
@@ -602,7 +653,7 @@ export default function FirmwareFlasherSimpleScreen({
           <FirmwareButton
             title={phase === 'detecting' ? 'جارٍ التعرف…' : 'التعرف على اللوحة المتصلة'}
             tone="secondary"
-            onPress={() => void autoDetect()}
+            onPress={() => autoDetect().catch(() => undefined)}
             disabled={navigationLocked || targetsLoading}
             testID="simple-auto-detect"
           />
@@ -658,7 +709,7 @@ export default function FirmwareFlasherSimpleScreen({
               : firmware
                 ? 'إعادة تحميل Firmware'
                 : 'تحميل Firmware'}
-            onPress={() => void loadFirmware()}
+            onPress={() => loadFirmware().catch(() => undefined)}
             disabled={navigationLocked || !selectedTarget || !selectedRelease}
             testID="simple-load-firmware"
           />

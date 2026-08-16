@@ -75,6 +75,8 @@ class HangableDfuDevice {
   onHang: (op: UsbOp) => void = () => undefined;
   gone = false;
   resetOnManifest = false;
+  /** Reject the manifestation ZLP while REMAINING present on the bus. */
+  rejectManifestButStay = false;
   /** Corrupt one byte on read-back, simulating a bad write. */
   corruptReadBackAt: number | null = null;
   readonly pendingSettlers: Array<{
@@ -168,6 +170,9 @@ class HangableDfuDevice {
           this.gone = true;
           this.opened = false;
           return Promise.reject(new DOMException('device disconnected', 'NetworkError'));
+        }
+        if (this.rejectManifestButStay) {
+          return Promise.reject(new DOMException('transfer error', 'NetworkError'));
         }
         this.state = STATE_IDLE;
         return Promise.resolve({status: 'ok', bytesWritten: 0});
@@ -436,6 +441,23 @@ describe('every hang scenario now ends in a terminal settlement', () => {
     // MANIFEST-WAIT-RESET on a device that resets without answering.
     expect(settled).toEqual({kind: 'resolved'});
     expect(progress[progress.length - 1]).toMatchObject({phase: 'complete', percent: 100});
+    expect(manifestations(device)).toHaveLength(1);
+  });
+
+  it('a manifest transfer REJECTED by a still-present board is UNCONFIRMED, not a failure', async () => {
+    // Every byte is verified in flash by this point; only the reset is
+    // unproven. "فشل التفليش" here would be a lie about the firmware.
+    const device = new HangableDfuDevice();
+    device.rejectManifestButStay = true;
+    installUsb([device]);
+
+    const {settled, progress} = await driveFlash(device);
+
+    expect(settled).toEqual({
+      kind: 'rejected',
+      code: DFU_CODE_UNCONFIRMED_MANIFEST,
+    });
+    expect(progress.some(event => event.phase === 'complete')).toBe(false);
     expect(manifestations(device)).toHaveLength(1);
   });
 
