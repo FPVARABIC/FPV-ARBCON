@@ -10,16 +10,26 @@
  * genuinely cannot do what libusb can, and every such point is called out
  * below rather than papered over.
  *
- * THE THREE PLACES WebUSB IS GENUINELY WEAKER:
+ * THE PLACES WebUSB IS GENUINELY WEAKER:
  *
- *   1. NO RAW DESCRIPTORS, SO NO wTransferSize. Android reads the DFU
- *      functional descriptor off `connection.rawDescriptors` to learn the
- *      device's advertised transfer size. WebUSB exposes no equivalent, so
- *      this uses the same 2048-byte default Android falls back to and
- *      Betaflight Configurator's own WebUSB path uses. A device
- *      advertising a SMALLER transfer size than 2048 would reject the
- *      write - which surfaces as a real DFU_TRANSFER_FAILED, not as
- *      silent corruption.
+ *   1. (CORRECTED by the memory-layout P0.) An earlier revision of this
+ *      header claimed WebUSB exposes no raw descriptors and no
+ *      wTransferSize. That claim was FALSE, and it was load-bearing in a
+ *      real-hardware failure: a real flight controller enumerated with
+ *      `alternate.interfaceName` unpopulated, this module trusted only
+ *      that convenience property, and flashing died with "DFU device did
+ *      not expose a readable memory layout descriptor" even though the
+ *      device was advertising its layout the whole time. The pinned
+ *      Betaflight Configurator (2025.12.2, webusbdfu.js) reads the RAW
+ *      configuration descriptor and the interface STRING descriptors
+ *      with ordinary standard GET_DESCRIPTOR control transfers on the
+ *      opened device - getInterfaceDescriptor()/getString() there - and
+ *      reads wTransferSize from the DFU functional descriptor the same
+ *      way (getFunctionalDescriptor(), fallback 2048 ONLY when that
+ *      read itself fails). This module now does the same: see
+ *      discoverDfuMemory() below. The 2048 default remains exactly as
+ *      Betaflight's read-failure fallback, never a substitute for a
+ *      readable descriptor.
  *
  *   2. NO DEVICE-LIST POLLING. Android resolves the "did it manifest, or
  *      did it just reset?" ambiguity by re-reading UsbManager.deviceList
@@ -104,6 +114,14 @@ const ERASE_SAFETY_DELAY_MS = 20_000;
 
 const DFU_INTERFACE_CLASS = 0xfe;
 const DFU_INTERFACE_SUBCLASS = 0x01;
+
+/* Standard USB descriptor machinery for the raw reads discoverDfuMemory()
+ * performs - the same requests Betaflight's webusbdfu.js issues. */
+const USB_REQUEST_GET_DESCRIPTOR = 6;
+const USB_DESCRIPTOR_CONFIGURATION = 0x02;
+const USB_DESCRIPTOR_STRING = 0x03;
+const USB_DESCRIPTOR_INTERFACE = 0x04;
+const USB_DESCRIPTOR_DFU_FUNCTIONAL = 0x21;
 
 /** The same identities android/.../DfuFlashWorker.kt's SUPPORTED_DFU_IDS lists. */
 const SUPPORTED_DFU_IDS: ReadonlyArray<readonly [number, number]> = [
@@ -255,13 +273,47 @@ function assertSessionNotPoisoned(device: USBDevice): void {
 }
 
 /* ------------------------------------------------------------------ *
- * Memory layout - a direct port of DfuMemoryLayout.kt
+ * Memory layout - a direct port of DfuMemoryLayout.kt, extended with the
+ * DfuSe per-group permission flags (ST UM0424): the trailing letter of
+ * each sector group encodes readable/erasable/writable as bits 0/1/2 of
+ * (letter - 'a' + 1). 'a' = readable, 'e' = readable+writable,
+ * 'g' = readable+erasable+writable. A group WITHOUT a flag letter is
+ * treated as fully accessible - deliberately matching the pinned
+ * Betaflight Configurator, whose parser never reads the flags at all, so
+ * a quirky bootloader Betaflight can flash is not refused here for
+ * omitting a letter. A PRESENT flag is honoured strictly: option-byte
+ * regions marked 'e' (not erasable) are excluded from erase planning and
+ * their sectors never count as flash-writable space.
  * ------------------------------------------------------------------ */
 
-export type DfuSector = {readonly address: number; readonly sizeBytes: number};
+export type DfuSector = {
+  readonly address: number;
+  readonly sizeBytes: number;
+  readonly readable: boolean;
+  readonly erasable: boolean;
+  readonly writable: boolean;
+};
 
-const REGION_PATTERN = /\/(0x[0-9a-fA-F]+)\/([^/]+)/g;
-const SECTOR_PATTERN = /^\s*(\d+)\s*\*\s*(\d+)\s*([bBkKmM]?)\s*[a-gA-G]?\s*$/;
+const REGION_PATTERN = /\/(0x[0-9a-fA-F]+)\/([^/@]+)/g;
+const SECTOR_PATTERN = /^\s*(\d+)\s*\*\s*(\d+)\s*([bBkKmM]?)\s*([a-gA-G]?)\s*$/;
+
+/**
+ * Known-broken bootloader strings, corrected EXACTLY as the pinned
+ * Betaflight Configurator corrects them (webusbdfu.js parseDescriptor,
+ * 2025.12.2) - each conditioned on the exact broken string so nothing
+ * else is ever rewritten:
+ *  - early SPRacing H7 EXST bootloaders advertise a layout whose group
+ *    arithmetic does not match the hardware;
+ *  - AT32F43x bootloaders misname their option-byte region.
+ */
+const KNOWN_DESCRIPTOR_CORRECTIONS: ReadonlyArray<readonly [string, string]> = [
+  [
+    '@External Flash /0x90000000/1001*128Kg,3*128Kg,20*128Ka',
+    '@External Flash /0x90000000/998*128Kg,1*128Kg,4*128Kg,21*128Ka',
+  ],
+  ['@Option byte   /0x1FFFC000/01*4096 g', '@Option bytes   /0x1FFFC000/01*4096 g'],
+  ['@Option byte   /0x1FFFC000/01*512 g', '@Option bytes   /0x1FFFC000/01*512 g'],
+];
 
 export class DfuMemoryLayout {
   constructor(
@@ -297,6 +349,32 @@ export class DfuMemoryLayout {
     );
   }
 
+  /** True when [address, address+length) is fully covered by WRITABLE sectors. */
+  containsWritable(address: number, length: number): boolean {
+    if (length <= 0) {
+      return false;
+    }
+    let cursor = address;
+    const end = address + length;
+    while (cursor < end) {
+      const sector = this.sectors.find(
+        candidate =>
+          cursor >= candidate.address &&
+          cursor < candidate.address + candidate.sizeBytes,
+      );
+      if (!sector || !sector.writable) {
+        return false;
+      }
+      cursor = Math.min(end, sector.address + sector.sizeBytes);
+    }
+    return true;
+  }
+
+  /** At least one sector may be written - the minimum for a flash target. */
+  get hasWritableSectors(): boolean {
+    return this.sectors.some(sector => sector.writable);
+  }
+
   /**
    * Parses a DfuSe memory descriptor such as
    * `@Internal Flash  /0x08000000/04*016Kg,01*064Kg,07*128Kg`.
@@ -305,12 +383,17 @@ export class DfuMemoryLayout {
     // Strip anything outside printable ASCII first: some bootloaders pad
     // the string descriptor with NULs, which would otherwise land inside a
     // sector token and fail the pattern for a reason nobody could read.
-    const printable = Array.from(descriptor)
+    let printable = Array.from(descriptor)
       .filter(character => {
         const code = character.charCodeAt(0);
         return code >= 0x20 && code <= 0x7e;
       })
       .join('');
+    for (const [broken, corrected] of KNOWN_DESCRIPTOR_CORRECTIONS) {
+      if (printable.trim() === broken) {
+        printable = corrected;
+      }
+    }
     if (!printable.trim().startsWith('@')) {
       throw new DfuError(
         'DFU_LAYOUT_INVALID',
@@ -344,8 +427,16 @@ export class DfuMemoryLayout {
         if (!(count > 0) || !(size >= 1) || !Number.isSafeInteger(size)) {
           throw new DfuError('DFU_LAYOUT_INVALID', 'Invalid DFU sector size/count.');
         }
+        // The DfuSe permission letter (see the section comment). Absent =
+        // fully accessible, exactly as permissive as the pinned Betaflight
+        // parser which never decodes the letter at all.
+        const flagLetter = match[4].toLowerCase();
+        const flagBits = flagLetter === '' ? 0b111 : flagLetter.charCodeAt(0) - 96;
+        const readable = (flagBits & 0b001) !== 0;
+        const erasable = (flagBits & 0b010) !== 0;
+        const writable = (flagBits & 0b100) !== 0;
         for (let index = 0; index < count; index += 1) {
-          sectors.push({address, sizeBytes: size});
+          sectors.push({address, sizeBytes: size, readable, erasable, writable});
           address += size;
           if (!Number.isSafeInteger(address)) {
             throw new DfuError('DFU_LAYOUT_INVALID', 'DFU sector address overflowed.');
@@ -497,9 +588,21 @@ class DfuConnection {
 
   constructor(
     private readonly device: USBDevice,
-    private readonly interfaceNumber: number,
+    private interfaceNumber: number,
     private readonly isCancelled: () => boolean,
   ) {}
+
+  /**
+   * DFU class requests route by wIndex = interface number. When discovery
+   * claims a DIFFERENT interface than the one open() claimed (legal per
+   * the DFU spec even though ST bootloaders always use interface 0), every
+   * subsequent class transfer must target the newly claimed interface or
+   * the requests would be addressed to an interface the flash no longer
+   * runs on.
+   */
+  rebindInterface(interfaceNumber: number): void {
+    this.interfaceNumber = interfaceNumber;
+  }
 
   private async bounded<T>(work: Promise<T>, op: string): Promise<T> {
     try {
@@ -808,6 +911,91 @@ class DfuConnection {
   async readUnprotect(): Promise<void> {
     await this.download(0, Uint8Array.from([DFUSE_READ_UNPROTECT]));
   }
+
+  /* ---- Standard GET_DESCRIPTOR reads on the OPENED device ----
+   *
+   * The exact mechanism the pinned Betaflight Configurator uses
+   * (webusbdfu.js getInterfaceDescriptor/getString/getFunctionalDescriptor,
+   * 2025.12.2): ordinary standard control transfers, which work on every
+   * DfuSe bootloader regardless of whether the browser chose to populate
+   * the WebUSB convenience properties. All bounded under the current
+   * stage's observation window like every other transfer here. */
+
+  async readConfigurationDescriptorBlob(): Promise<Uint8Array> {
+    const header = await this.standardIn(USB_DESCRIPTOR_CONFIGURATION << 8, 9, 'GET_DESCRIPTOR(config header)');
+    if (header.length < 4) {
+      throw new DfuError('DFU_DESCRIPTOR_READ_FAILED', 'Configuration descriptor header was short.');
+    }
+    const totalLength = header[2] | (header[3] << 8);
+    if (totalLength < 9 || totalLength > 4096) {
+      throw new DfuError('DFU_DESCRIPTOR_READ_FAILED', `Configuration descriptor length ${totalLength} is not plausible.`);
+    }
+    const blob = await this.standardIn(USB_DESCRIPTOR_CONFIGURATION << 8, totalLength, 'GET_DESCRIPTOR(configuration)');
+    if (blob.length < totalLength) {
+      throw new DfuError('DFU_DESCRIPTOR_READ_FAILED', 'Configuration descriptor read returned fewer bytes than declared.');
+    }
+    return blob;
+  }
+
+  async readStringDescriptor(index: number): Promise<string> {
+    if (index === 0) {
+      return '';
+    }
+    // Language id table first (index 0), then the string itself in the
+    // first advertised language - Betaflight passes langid 0 and relies on
+    // bootloader leniency; asking with the device's own first langid works
+    // on those same bootloaders and on stricter ones.
+    let langId = 0x0409;
+    try {
+      const table = await this.standardIn(USB_DESCRIPTOR_STRING << 8, 255, 'GET_DESCRIPTOR(langids)');
+      if (table.length >= 4) {
+        langId = table[2] | (table[3] << 8);
+      }
+    } catch {
+      // Keep the en-US default; the string read below decides the outcome.
+    }
+    const raw = await this.standardIn((USB_DESCRIPTOR_STRING << 8) | index, 255, `GET_DESCRIPTOR(string ${index})`, langId);
+    // [bLength, bDescriptorType, UTF-16LE payload...]
+    let text = '';
+    const limit = Math.min(raw.length, raw[0] ?? raw.length);
+    for (let offset = 2; offset + 1 < limit; offset += 2) {
+      text += String.fromCharCode(raw[offset] | (raw[offset + 1] << 8));
+    }
+    return text;
+  }
+
+  private async standardIn(
+    value: number,
+    length: number,
+    op: string,
+    index = 0,
+  ): Promise<Uint8Array> {
+    let result: USBInTransferResult;
+    try {
+      result = await this.bounded(
+        this.device.controlTransferIn(
+          {
+            requestType: 'standard',
+            recipient: 'device',
+            request: USB_REQUEST_GET_DESCRIPTOR,
+            value,
+            index,
+          },
+          length,
+        ),
+        op,
+      );
+    } catch (reason) {
+      if (reason instanceof DfuPendingTransferOverrun) {
+        throw reason;
+      }
+      throw new DfuError('DFU_DESCRIPTOR_READ_FAILED', describe(reason));
+    }
+    if (result.status !== 'ok' || !result.data) {
+      throw new DfuError('DFU_DESCRIPTOR_READ_FAILED', `${op} returned status ${result.status}.`);
+    }
+    return new Uint8Array(result.data.buffer, result.data.byteOffset, result.data.byteLength);
+  }
 }
 
 function u32le(value: number): number[] {
@@ -817,6 +1005,318 @@ function u32le(value: number): number[] {
     (value >>> 16) & 0xff,
     (value >>> 24) & 0xff,
   ];
+}
+
+/* ------------------------------------------------------------------ *
+ * DFU memory discovery - the real-hardware P0 correction.
+ *
+ * WHY THIS EXISTS. register() snapshots `alternate.interfaceName` from
+ * the UNOPENED device because that is what lets listDfuDevices() report
+ * a layout without claiming anything. A real flight controller
+ * enumerated with that property empty, and the flash refused with
+ * "DFU device did not expose a readable memory layout descriptor" while
+ * the device was advertising its layout in its string descriptors the
+ * whole time. The pinned Betaflight Configurator never trusts the
+ * convenience property: it reads the raw configuration descriptor and
+ * every alternate's string descriptor off the OPENED device and then
+ * picks the region NAMED Internal Flash (falling back to External
+ * Flash). discoverDfuMemory() is that algorithm, with the flag-aware
+ * parser and an explicit error taxonomy on top.
+ * ------------------------------------------------------------------ */
+
+export type DfuAlternateCandidate = {
+  readonly interfaceNumber: number;
+  readonly alternateSetting: number;
+  readonly interfaceClass: number;
+  readonly interfaceSubclass: number;
+  readonly interfaceProtocol: number;
+  readonly stringIndex: number;
+};
+
+export type DfuConfigDescriptorSummary = {
+  readonly candidates: readonly DfuAlternateCandidate[];
+  /** wTransferSize from the DFU functional descriptor, when present. */
+  readonly transferSize?: number;
+};
+
+/**
+ * Walks a raw configuration-descriptor blob. Length-prefix driven, so
+ * endpoint descriptors, class-specific blocks and vendor extensions are
+ * skipped correctly instead of assumed absent (the pinned Betaflight
+ * implementation uses fixed 9-byte offsets, which happens to work on ST
+ * bootloaders; walking properly costs nothing and survives devices that
+ * interleave other descriptors).
+ */
+export function parseConfigurationDescriptorBlob(
+  blob: Uint8Array,
+): DfuConfigDescriptorSummary {
+  const candidates: DfuAlternateCandidate[] = [];
+  let transferSize: number | undefined;
+  let offset = 0;
+  while (offset + 2 <= blob.length) {
+    const length = blob[offset];
+    const type = blob[offset + 1];
+    if (length < 2 || offset + length > blob.length) {
+      break;
+    }
+    if (type === USB_DESCRIPTOR_INTERFACE && length >= 9) {
+      const interfaceClass = blob[offset + 5];
+      const interfaceSubclass = blob[offset + 6];
+      if (
+        interfaceClass === DFU_INTERFACE_CLASS &&
+        interfaceSubclass === DFU_INTERFACE_SUBCLASS
+      ) {
+        candidates.push({
+          interfaceNumber: blob[offset + 2],
+          alternateSetting: blob[offset + 3],
+          interfaceClass,
+          interfaceSubclass,
+          interfaceProtocol: blob[offset + 7],
+          stringIndex: blob[offset + 8],
+        });
+      }
+    } else if (type === USB_DESCRIPTOR_DFU_FUNCTIONAL && length >= 9) {
+      // DFU functional descriptor: bmAttributes(1) wDetachTimeOut(2)
+      // wTransferSize(2) bcdDFUVersion(2) after the 2-byte header.
+      const size = blob[offset + 5] | (blob[offset + 6] << 8);
+      if (size > 0) {
+        transferSize = size;
+      }
+    }
+    offset += length;
+  }
+  return {candidates, transferSize};
+}
+
+export type DfuDiscoveredMemory = {
+  readonly interfaceNumber: number;
+  readonly alternateSetting: number;
+  readonly layout: DfuMemoryLayout;
+  readonly layoutText: string;
+  readonly transferSize?: number;
+};
+
+export type DfuDiscoveryDiagnostics = {
+  readonly vendorId: number;
+  readonly productId: number;
+  readonly productName?: string;
+  readonly manufacturerName?: string;
+  readonly configurationValue?: number;
+  readonly candidates: ReadonlyArray<{
+    readonly interfaceNumber: number;
+    readonly alternateSetting: number;
+    readonly interfaceProtocol: number;
+    readonly stringIndex: number;
+    readonly descriptorText?: string;
+    readonly parse: 'ok' | 'empty' | 'invalid';
+    readonly parseError?: string;
+    readonly regionName?: string;
+    readonly writable?: boolean;
+  }>;
+  readonly transferSize?: number;
+  readonly chosen?: {
+    readonly interfaceNumber: number;
+    readonly alternateSetting: number;
+    readonly regionName: string;
+  };
+  readonly failureCode?: string;
+};
+
+/**
+ * Developer diagnostics for the LAST discovery attempt - the record §21
+ * of the P0 brief asks for, kept out of the operator UI. Read it from
+ * the console (or a future diagnostics panel) after a failure to know
+ * exactly which configuration/interface/alternate/string was seen.
+ */
+let lastDfuDiscoveryDiagnostics: DfuDiscoveryDiagnostics | undefined;
+export function getLastDfuDiscoveryDiagnostics(): DfuDiscoveryDiagnostics | undefined {
+  return lastDfuDiscoveryDiagnostics;
+}
+
+/** Region-name normalization for evidence-based selection. */
+function normalizedRegionName(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Reads every DFU alternate's memory descriptor off the OPENED device and
+ * chooses the flash target by the same evidence Betaflight uses:
+ * the region NAMED "Internal Flash", else "External Flash", else - going
+ * one honest step further than Betaflight - the only writable parsed
+ * candidate when the names are nonstandard. Vendor and board names play
+ * no part. Every dead end throws its own taxonomy code.
+ */
+async function discoverDfuMemory(
+  connection: DfuConnection,
+  device: USBDevice,
+  claimedInterfaceNumber: number,
+): Promise<DfuDiscoveredMemory> {
+  const diagnosticsCandidates: Array<DfuDiscoveryDiagnostics['candidates'][number]> = [];
+  const finish = (
+    failureCode: string | undefined,
+    chosen?: DfuDiscoveredMemory,
+    transferSize?: number,
+  ): void => {
+    lastDfuDiscoveryDiagnostics = {
+      vendorId: device.vendorId,
+      productId: device.productId,
+      productName: device.productName ?? undefined,
+      manufacturerName: device.manufacturerName ?? undefined,
+      configurationValue: device.configuration?.configurationValue,
+      candidates: diagnosticsCandidates,
+      transferSize,
+      ...(chosen
+        ? {
+            chosen: {
+              interfaceNumber: chosen.interfaceNumber,
+              alternateSetting: chosen.alternateSetting,
+              regionName: chosen.layout.name,
+            },
+          }
+        : {}),
+      ...(failureCode ? {failureCode} : {}),
+    };
+  };
+
+  const blob = await connection.readConfigurationDescriptorBlob();
+  const summary = parseConfigurationDescriptorBlob(blob);
+  if (summary.candidates.length === 0) {
+    finish('DFU_INTERFACE_NOT_FOUND');
+    throw new DfuError(
+      'DFU_INTERFACE_NOT_FOUND',
+      'The configuration descriptor exposes no DFU-class interface.',
+    );
+  }
+
+  type Parsed = {
+    readonly candidate: DfuAlternateCandidate;
+    readonly text: string;
+    readonly layout: DfuMemoryLayout;
+  };
+  const parsed: Parsed[] = [];
+  let sawAnyText = false;
+  for (const candidate of summary.candidates) {
+    let text = '';
+    let entry: DfuDiscoveryDiagnostics['candidates'][number];
+    try {
+      text = await connection.readStringDescriptor(candidate.stringIndex);
+    } catch {
+      // An unreadable string is recorded and the candidate skipped; the
+      // taxonomy below reports MISSING only if nothing anywhere read.
+    }
+    if (text.trim().length === 0) {
+      entry = {
+        interfaceNumber: candidate.interfaceNumber,
+        alternateSetting: candidate.alternateSetting,
+        interfaceProtocol: candidate.interfaceProtocol,
+        stringIndex: candidate.stringIndex,
+        parse: 'empty',
+      };
+    } else {
+      sawAnyText = true;
+      try {
+        const layout = DfuMemoryLayout.parse(text);
+        parsed.push({candidate, text, layout});
+        entry = {
+          interfaceNumber: candidate.interfaceNumber,
+          alternateSetting: candidate.alternateSetting,
+          interfaceProtocol: candidate.interfaceProtocol,
+          stringIndex: candidate.stringIndex,
+          descriptorText: text,
+          parse: 'ok',
+          regionName: layout.name,
+          writable: layout.hasWritableSectors,
+        };
+      } catch (reason) {
+        entry = {
+          interfaceNumber: candidate.interfaceNumber,
+          alternateSetting: candidate.alternateSetting,
+          interfaceProtocol: candidate.interfaceProtocol,
+          stringIndex: candidate.stringIndex,
+          descriptorText: text,
+          parse: 'invalid',
+          parseError: describe(reason),
+        };
+      }
+    }
+    diagnosticsCandidates.push(entry);
+  }
+
+  if (parsed.length === 0) {
+    const code = sawAnyText ? 'DFU_MEMORY_LAYOUT_INVALID' : 'DFU_MEMORY_LAYOUT_MISSING';
+    finish(code, undefined, summary.transferSize);
+    throw new DfuError(
+      code,
+      sawAnyText
+        ? 'Every DFU alternate advertised a memory descriptor this parser could not understand.'
+        : 'No DFU alternate exposed a readable memory layout string descriptor.',
+    );
+  }
+
+  // Selection by protocol evidence, in Betaflight's own order.
+  const byName = (wanted: string): Parsed | undefined =>
+    parsed.find(item => normalizedRegionName(item.layout.name) === wanted);
+  let chosen = byName('internal flash') ?? byName('external flash');
+  if (!chosen) {
+    const writable = parsed.filter(item => item.layout.hasWritableSectors);
+    if (writable.length === 1) {
+      chosen = writable[0];
+    } else if (writable.length === 0) {
+      finish('DFU_MEMORY_LAYOUT_NOT_WRITABLE', undefined, summary.transferSize);
+      throw new DfuError(
+        'DFU_MEMORY_LAYOUT_NOT_WRITABLE',
+        'No DFU alternate advertises writable flash sectors.',
+      );
+    } else {
+      finish('DFU_FLASH_ALTERNATE_NOT_FOUND', undefined, summary.transferSize);
+      throw new DfuError(
+        'DFU_FLASH_ALTERNATE_NOT_FOUND',
+        `Multiple writable DFU regions with nonstandard names (${writable
+          .map(item => item.layout.name)
+          .join(', ')}); refusing to guess the flash target.`,
+      );
+    }
+  }
+  if (!chosen.layout.hasWritableSectors) {
+    finish('DFU_MEMORY_LAYOUT_NOT_WRITABLE', undefined, summary.transferSize);
+    throw new DfuError(
+      'DFU_MEMORY_LAYOUT_NOT_WRITABLE',
+      `The ${chosen.layout.name} region advertises no writable sectors.`,
+    );
+  }
+
+  // Bind the bus to the chosen region: re-claim only when the interface
+  // genuinely differs, re-select the alternate when it differs. DfuSe
+  // routes by absolute address, but UPLOAD/DNLOAD default to the selected
+  // alternate's region - the read-back MUST run against the same one.
+  if (chosen.candidate.interfaceNumber !== claimedInterfaceNumber) {
+    try {
+      await device.claimInterface(chosen.candidate.interfaceNumber);
+    } catch (reason) {
+      finish('DFU_INTERFACE_CLAIM_FAILED', undefined, summary.transferSize);
+      throw new DfuError('DFU_INTERFACE_CLAIM_FAILED', describe(reason));
+    }
+    connection.rebindInterface(chosen.candidate.interfaceNumber);
+  }
+  try {
+    await device.selectAlternateInterface(
+      chosen.candidate.interfaceNumber,
+      chosen.candidate.alternateSetting,
+    );
+  } catch (reason) {
+    finish('DFU_ALTERNATE_SELECTION_FAILED', undefined, summary.transferSize);
+    throw new DfuError('DFU_ALTERNATE_SELECTION_FAILED', describe(reason));
+  }
+
+  const result: DfuDiscoveredMemory = {
+    interfaceNumber: chosen.candidate.interfaceNumber,
+    alternateSetting: chosen.candidate.alternateSetting,
+    layout: chosen.layout,
+    layoutText: chosen.text,
+    ...(summary.transferSize !== undefined ? {transferSize: summary.transferSize} : {}),
+  };
+  finish(undefined, result, summary.transferSize);
+  return result;
 }
 
 function describe(reason: unknown): string {
@@ -947,37 +1447,132 @@ export async function flashDfuFirmware(
     throw new DfuError('DFU_FIRMWARE_INVALID', 'The firmware image contains no data.');
   }
 
-  const layoutText = target.memoryLayout;
-  if (!layoutText) {
-    throw new DfuError(
-      'DFU_LAYOUT_MISSING',
-      'DFU device did not expose a readable memory layout descriptor.',
-    );
-  }
-  const layout = DfuMemoryLayout.parse(layoutText);
-
-  // EVERY address is checked BEFORE the first erase. A firmware built for
-  // a different target must not get as far as destroying the flash that is
-  // already on the board.
-  for (const segment of firmware.segments) {
-    if (!layout.contains(segment.address, segment.data.length)) {
-      throw new DfuError(
-        'DFU_ADDRESS_OUT_OF_RANGE',
-        `Firmware address 0x${segment.address.toString(16)} is outside the DFU memory layout.`,
-      );
+  /**
+   * LAYOUT RESOLUTION - two sources, one truth.
+   *
+   * Fast path: the registry snapshot taken from WebUSB's
+   * `alternate.interfaceName` at enumeration time. When the browser
+   * populated it, it IS the device's own string descriptor, and it can
+   * be validated without any extra bus traffic.
+   *
+   * Deep path (the real-hardware P0 correction): when the snapshot is
+   * absent, unparseable, or does not cover the firmware, the layout is
+   * read from the OPENED device exactly the way the pinned Betaflight
+   * Configurator reads it - raw configuration descriptor, every DFU
+   * alternate's string descriptor, evidence-based region choice
+   * (discoverDfuMemory above). Only after BOTH sources fail may the
+   * flash refuse for lack of a layout - and then with the taxonomy code
+   * describing what was actually seen, never a blind fallback address.
+   */
+  let snapshotLayout: DfuMemoryLayout | undefined;
+  if (target.memoryLayout) {
+    try {
+      snapshotLayout = DfuMemoryLayout.parse(target.memoryLayout);
+    } catch {
+      snapshotLayout = undefined;
     }
+  }
+  const snapshotCoversFirmware =
+    snapshotLayout !== undefined &&
+    firmware.segments.every(segment =>
+      snapshotLayout.containsWritable(segment.address, segment.data.length),
+    );
+
+  const total = firmware.totalBytes;
+  const connection = await DfuConnection.open(target, () => cancelRequested);
+
+  let layout: DfuMemoryLayout;
+  let transferSize = DEFAULT_DFU_TRANSFER_SIZE;
+  try {
+    if (snapshotLayout !== undefined && snapshotCoversFirmware) {
+      layout = snapshotLayout;
+      // §15: honour the device's advertised wTransferSize even on the
+      // fast path. Fallback to 2048 happens ONLY when the descriptor
+      // read itself fails - the exact condition under which the pinned
+      // Betaflight Configurator falls back (webusbdfu.js, getFunctional-
+      // Descriptor resultCode path).
+      try {
+        const summary = parseConfigurationDescriptorBlob(
+          await connection.readConfigurationDescriptorBlob(),
+        );
+        if (summary.transferSize !== undefined) {
+          transferSize = summary.transferSize;
+        }
+      } catch {
+        // Betaflight-documented fallback: keep DEFAULT_DFU_TRANSFER_SIZE.
+      }
+    } else {
+      try {
+        const discovered = await discoverDfuMemory(
+          connection,
+          target.device,
+          target.interfaceNumber,
+        );
+        layout = discovered.layout;
+        if (discovered.transferSize !== undefined) {
+          transferSize = discovered.transferSize;
+        }
+      } catch (discoveryError) {
+        const code = discoveryError instanceof DfuError ? discoveryError.code : '';
+        if (code !== 'DFU_DESCRIPTOR_READ_FAILED') {
+          throw discoveryError;
+        }
+        if (snapshotLayout !== undefined) {
+          // The bus refused standard descriptor reads - unusual, but the
+          // snapshot is still the device's own earlier string. Validate
+          // against it and let the segment checks below tell the truth
+          // (this is how an out-of-range firmware still reports
+          // DFU_ADDRESS_OUT_OF_RANGE rather than a descriptor error).
+          layout = snapshotLayout;
+        } else {
+          throw new DfuError(
+            'DFU_LAYOUT_MISSING',
+            'DFU device did not expose a readable memory layout descriptor: WebUSB reported no interface name and standard descriptor reads failed.',
+          );
+        }
+      }
+    }
+
+    // EVERY address is checked BEFORE the first erase - and against the
+    // WRITABLE map specifically. A firmware built for a different target,
+    // or aimed at a read-only region, must not get as far as destroying
+    // the flash that is already on the board.
+    for (const segment of firmware.segments) {
+      if (!layout.contains(segment.address, segment.data.length)) {
+        throw new DfuError(
+          'DFU_ADDRESS_OUT_OF_RANGE',
+          `Firmware address 0x${segment.address.toString(16)} is outside the ${layout.name} layout.`,
+        );
+      }
+      if (!layout.containsWritable(segment.address, segment.data.length)) {
+        throw new DfuError(
+          'DFU_MEMORY_LAYOUT_NOT_WRITABLE',
+          `Firmware address 0x${segment.address.toString(16)} falls in a non-writable ${layout.name} sector.`,
+        );
+      }
+    }
+  } catch (resolutionError) {
+    // Nothing destructive has been issued; release the bus and let the
+    // truthful taxonomy error reach the screen.
+    await connection.release();
+    throw resolutionError;
   }
 
   const sectors = fullErase
-    ? layout.sectors
+    ? layout.sectors.filter(sector => sector.erasable)
     : dedupeByAddress(
         firmware.segments.flatMap(segment =>
           layout.sectorsOverlapping(segment.address, segment.data.length),
         ),
       );
-
-  const total = firmware.totalBytes;
-  const connection = await DfuConnection.open(target, () => cancelRequested);
+  const nonErasable = sectors.find(sector => !sector.erasable);
+  if (nonErasable !== undefined) {
+    await connection.release();
+    throw new DfuError(
+      'DFU_MEMORY_LAYOUT_NOT_WRITABLE',
+      `Sector at 0x${nonErasable.address.toString(16)} is not erasable; refusing a write that could not be completed.`,
+    );
+  }
 
   /* Completion evidence, gathered as the attempt advances. When a
    * transfer overruns its observation window this - and nothing else -
@@ -1015,7 +1610,6 @@ export async function flashDfuFirmware(
 
     /* ---- Write: 20-75% ---- */
     connection.stage = 'WRITE';
-    const transferSize = DEFAULT_DFU_TRANSFER_SIZE;
     for (const segment of firmware.segments) {
       await connection.ensureIdle();
       await connection.setAddress(segment.address);
@@ -1317,4 +1911,5 @@ export function __resetWebUsbDfuForTests(): void {
   nextDfuOrdinal = 0;
   cancelRequested = false;
   poisonedDevices = new WeakMap<USBDevice, string>();
+  lastDfuDiscoveryDiagnostics = undefined;
 }

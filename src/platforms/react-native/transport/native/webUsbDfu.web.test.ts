@@ -295,11 +295,13 @@ describe('DfuMemoryLayout.parse', () => {
     const layout = DfuMemoryLayout.parse(F405_LAYOUT);
 
     expect(layout.name).toBe('Internal Flash');
-    // 4 x 16K + 1 x 64K + 7 x 128K = 12 sectors, 1MB total.
+    // 4 x 16K + 1 x 64K + 7 x 128K = 12 sectors, 1MB total. The 'g' flag
+    // on every group decodes to readable+erasable+writable.
+    const rew = {readable: true, erasable: true, writable: true};
     expect(layout.sectors).toHaveLength(12);
-    expect(layout.sectors[0]).toEqual({address: 0x08000000, sizeBytes: 16 * 1024});
-    expect(layout.sectors[4]).toEqual({address: 0x08010000, sizeBytes: 64 * 1024});
-    expect(layout.sectors[5]).toEqual({address: 0x08020000, sizeBytes: 128 * 1024});
+    expect(layout.sectors[0]).toEqual({address: 0x08000000, sizeBytes: 16 * 1024, ...rew});
+    expect(layout.sectors[4]).toEqual({address: 0x08010000, sizeBytes: 64 * 1024, ...rew});
+    expect(layout.sectors[5]).toEqual({address: 0x08020000, sizeBytes: 128 * 1024, ...rew});
     const last = layout.sectors[11];
     expect(last.address + last.sizeBytes).toBe(0x08100000);
   });
