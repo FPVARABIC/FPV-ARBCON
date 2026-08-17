@@ -1,4 +1,5 @@
 import type {MspPidTuningSnapshot} from '../decoding/decodePidTuning';
+import {IDLE_MIN_RPM_OFFSET} from '../decoding/decodePidTuning';
 import type {PidTuningDraft} from '../../../state/pidTuningModel';
 import {createPidTuningDraft, pidTuningDraftsEqual, validatePidTuningDraft} from '../../../state/pidTuningModel';
 
@@ -17,6 +18,11 @@ export function encodeChangedPidTuning(snapshot: MspPidTuningSnapshot, draft: Pi
   axes.forEach((axis, index) => { const offset = index * 3; pid[offset] = axis.p; pid[offset + 1] = axis.i; pid[offset + 2] = axis.d; });
   const advanced = snapshot.advancedRaw.slice();
   axes.forEach((axis, index) => writeU16(advanced, 32 + index * 2, axis.f));
+  // Patched into a CLONE of the payload the board just sent, like every other
+  // field here, so the ~60 bytes this screen does not own are returned
+  // byte-for-byte. A PID_ADVANCED write is emitted below only if some byte
+  // actually changed, so reading this screen never rewrites tuning.
+  if (advanced.length > IDLE_MIN_RPM_OFFSET) advanced[IDLE_MIN_RPM_OFFSET] = draft.idleMinRpm;
   const rates = snapshot.ratesRaw.slice();
   rates[0] = draft.rates.roll.rcRate;
   rates[12] = draft.rates.pitch.rcRate;

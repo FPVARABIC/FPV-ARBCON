@@ -1,4 +1,5 @@
 import type {MspPidTuningSnapshot} from '../protocol/msp/decoding/decodePidTuning';
+import {IDLE_MIN_RPM_MAX} from '../protocol/msp/decoding/decodePidTuning';
 
 export type PidAxisKey = 'roll' | 'pitch' | 'yaw';
 export interface PidAxisDraft { readonly p: number; readonly i: number; readonly d: number; readonly f: number }
@@ -37,6 +38,11 @@ export interface PidTuningDraft {
   readonly yaw: PidAxisDraft;
   readonly rates: RatesDraft;
   readonly filters: FiltersDraft;
+  /**
+   * Dynamic Idle floor, in units of 100 rpm, exactly as the wire carries it.
+   * Betaflight's own bound is 0-100, raised to 0-200 for API >= 1.45.
+   */
+  readonly idleMinRpm: number;
 }
 export type PidTuningValidationCode =
   | 'PID_GAIN_INVALID'
@@ -46,6 +52,7 @@ export type PidTuningValidationCode =
   | 'RATE_VALUE_INVALID'
   | 'THROTTLE_CURVE_INVALID'
   | 'FILTER_VALUE_INVALID'
+  | 'IDLE_MIN_RPM_INVALID'
   | 'FILTER_ORDER_INVALID'
   | 'FILTER_CAPABILITY_UNPROVEN'
   | 'FILTER_RATE_UNKNOWN'
@@ -82,11 +89,13 @@ export function createPidTuningDraft(snapshot: MspPidTuningSnapshot): PidTuningD
       throttleLimitPercent: snapshot.rcTuning.throttleLimitPercent,
     }),
     filters: Object.freeze({...snapshot.filterConfig}),
+    idleMinRpm: snapshot.idleMinRpm,
   });
 }
 
 export function pidTuningDraftsEqual(a: PidTuningDraft, b: PidTuningDraft): boolean {
-  return AXES.every(key => a[key].p === b[key].p && a[key].i === b[key].i && a[key].d === b[key].d && a[key].f === b[key].f) &&
+  return a.idleMinRpm === b.idleMinRpm &&
+    AXES.every(key => a[key].p === b[key].p && a[key].i === b[key].i && a[key].d === b[key].d && a[key].f === b[key].f) &&
     ratesEqual(a.rates, b.rates) && filtersEqual(a.filters, b.filters);
 }
 
@@ -124,6 +133,15 @@ const enabledFrequencyBelow = (value: number, nyquist: number) => value === 0 ||
 
 export function validatePidTuningDraft(draft: PidTuningDraft, snapshot?: MspPidTuningSnapshot): readonly PidTuningValidationCode[] {
   const issues = new Set<PidTuningValidationCode>();
+  // Betaflight's own bound: 0-100, raised to 0-200 for API >= 1.45. We speak
+  // 1.47. Enforced on the way OUT, which is where Betaflight enforces it.
+  if (
+    !Number.isInteger(draft.idleMinRpm) ||
+    draft.idleMinRpm < 0 ||
+    draft.idleMinRpm > IDLE_MIN_RPM_MAX
+  ) {
+    issues.add('IDLE_MIN_RPM_INVALID');
+  }
   for (const key of AXES) {
     const value = draft[key];
     if ([value.p, value.i, value.d].some(gain => !Number.isInteger(gain) || gain < 0 || gain > 250)) issues.add('PID_GAIN_INVALID');

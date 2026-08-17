@@ -3,6 +3,15 @@ import {MspPayloadReadError, MspPayloadReader} from './MspPayloadReader';
 export const PID_ITEM_COUNT = 5;
 export const PID_AXIS_COUNT = 3;
 export const PID_ADVANCED_API147_MIN_BYTES = 61;
+
+/** MSP_PID_ADVANCED byte carrying idle_min_rpm. See MspPidTuningSnapshot. */
+export const IDLE_MIN_RPM_OFFSET = 49;
+
+/**
+ * Betaflight's own input bound: max 100, raised to 200 for API >= 1.45
+ * (src/js/tabs/pid_tuning.js). We speak 1.47, so 200.
+ */
+export const IDLE_MIN_RPM_MAX = 200;
 export const RC_TUNING_API147_BYTES = 24;
 export const FILTER_CONFIG_API147_BYTES = 49;
 
@@ -43,6 +52,19 @@ export interface MspPidTuningSnapshot {
   readonly pidProfileCount: number;
   readonly controlRateProfileIndex: number;
   readonly pidRaw: Uint8Array;
+  /**
+   * Dynamic Idle floor, in units of 100 rpm. MSP_PID_ADVANCED offset 49.
+   *
+   * OFFSET DERIVATION, not a guess: summing Betaflight's own read order in
+   * MSPHelper.js puts it at 49, and the same sum puts feedforwardRoll at 32 -
+   * which is exactly where this file already reads it. The two agree, so the
+   * offset model is confirmed against working code rather than asserted.
+   *
+   * Introduced in API 1.43. Only meaningful when bidirectional DShot is on:
+   * without RPM telemetry the firmware has no rpm to hold a floor against,
+   * which is why Betaflight disables the input in that case.
+   */
+  readonly idleMinRpm: number;
   readonly advancedRaw: Uint8Array;
   readonly ratesRaw: Uint8Array;
   readonly filtersRaw: Uint8Array;
@@ -151,6 +173,9 @@ export function decodePidTuningSnapshot(input: {
     pidProfileCount: input.pidProfileCount,
     controlRateProfileIndex: input.controlRateProfileIndex,
     pidRaw: input.pid.slice(),
+    idleMinRpm: input.advanced.length > IDLE_MIN_RPM_OFFSET
+      ? input.advanced[IDLE_MIN_RPM_OFFSET]
+      : 0,
     advancedRaw: input.advanced.slice(),
     ratesRaw: input.rates.slice(),
     filtersRaw: input.filters.slice(),

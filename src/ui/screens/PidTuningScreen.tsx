@@ -68,6 +68,7 @@ function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} 
 function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]): string {
   return ({
     PID_GAIN_INVALID: 'إحدى قيم P/I/D خارج 0–250',
+    IDLE_MIN_RPM_INVALID: 'قيمة Dynamic Idle خارج 0–200',
     FEEDFORWARD_INVALID: 'إحدى قيم F خارج 0–1000',
     RATES_TYPE_INVALID: 'نوع Rates المقروء غير مدعوم للتحرير الآمن',
     RATES_TYPE_CHANGE_UNSUPPORTED: 'تبديل خوارزمية Rates غير متاح في هذه المرحلة الآمنة',
@@ -131,6 +132,14 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
       <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Rates</Text><Text style={styles.sectionHint}>الخوارزمية الحالية: {RATE_TYPES[draft.rates.type]?.name ?? `غير معروفة (${draft.rates.type})`}. لا نبدّل نوع الخوارزمية تلقائيًا لأن المعاني والمدى يتغيران جذريًا بين الأنواع.</Text></View>
       <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <RateAxisCard key={axis.key} axisKey={axis.key} title={axis.title} value={draft.rates[axis.key]} rates={draft.rates} disabled={phase !== 'READY'} update={updateRate} />)}</View>
       <View style={styles.card} testID="pid-throttle-rates"><Text style={styles.sectionTitle}>منحنى وحدّ الخانق</Text><Text style={styles.sectionHint}>القيم نسب مئوية خام موثقة في MSP_RC_TUNING. تغيير حد الخانق قد يقلل الدفع الأقصى.</Text><View style={styles.fieldsRow}><NumericField label="Throttle mid %" value={draft.rates.throttleMid} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleMid', next)} testID="pid-throttle-mid" /><NumericField label="Throttle expo %" value={draft.rates.throttleExpo} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleExpo', next)} testID="pid-throttle-expo" /><NumericField label="Hover %" value={draft.rates.throttleHover} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleHover', next)} testID="pid-throttle-hover" /><NumericField label="Limit %" value={draft.rates.throttleLimitPercent} min={25} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleLimitPercent', next)} testID="pid-throttle-limit-percent" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'إيقاف'}, {value: 1, label: 'Scale'}, {value: 2, label: 'Clip'}].map(option => <Pressable key={option.value} disabled={phase !== 'READY'} onPress={() => updateThrottle('throttleLimitType', option.value)} style={[styles.choice, draft.rates.throttleLimitType === option.value && styles.choiceSelected]} testID={`pid-throttle-limit-${option.value}`}><Text style={[styles.choiceText, draft.rates.throttleLimitType === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
+
+      {/* DYNAMIC IDLE. Betaflight edits idle_min_rpm here, on the PID tab -
+          its own Motors tab shows the very same value `readonly`
+          (src/tabs/motors.html) and its label key is `pidTuningIdleMinRpm`.
+          The value rides in MSP_PID_ADVANCED, whose sole writer in this app
+          is this screen's transaction, so editing it anywhere else would
+          mean two writers for one payload and a way to clobber tuning. */}
+      <View style={styles.card} testID="pid-dynamic-idle"><Text style={styles.sectionTitle}>Dynamic Idle</Text><Text style={styles.sectionHint}>أدنى دوران يحافظ عليه المتحكم بوحدة 100 دورة/دقيقة. يتطلب تفعيل Bidirectional DShot من شاشة المحركات؛ بدون قياس RPM لا يملك المتحكم قراءة يحافظ عليها. القيمة 0 تعني تعطيل الميزة.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic Idle (×100 rpm)" value={draft.idleMinRpm} min={0} max={200} disabled={phase !== 'READY'} onChange={next => setDraft(current => current === undefined ? current : {...current, idleMinRpm: next})} testID="pid-idle-min-rpm" /></View></View>
 
       <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Filters</Text><Text style={styles.sectionHint}>تُعدّل فقط أوضاع الفلاتر النشطة التي أثبتتها القراءة. لا يفعّل التطبيق ميزة غير مثبتة في بناء الـFC ولا يغيّر نوع الفلتر.</Text></View>
       {!filtersEditable ? <View style={styles.warning}><Text style={styles.warningText}>تعذرت معرفة Gyro/PID loop rate؛ الفلاتر معروضة للقراءة فقط ولن يُسمح بكتابتها دون حد Nyquist موثوق.</Text></View> : <View style={styles.rateEvidence}><Text style={styles.readout}>Gyro Nyquist: {gyroNyquist} Hz</Text><Text style={styles.readout}>D-term Nyquist: {pidNyquist} Hz</Text></View>}
