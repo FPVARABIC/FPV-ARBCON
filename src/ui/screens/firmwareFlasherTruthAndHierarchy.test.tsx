@@ -559,7 +559,13 @@ describe('action hierarchy', () => {
     }
     // The destructive action stays full width - it is the one thing the
     // step exists to do.
-    expect(styleOf(renderer, 'simple-flash-firmware').alignSelf).toBeUndefined();
+    //
+    // It now SAYS so. This used to assert `undefined`, i.e. full width
+    // inherited from the parent column's stretch - which is exactly how
+    // buttons all over the app became screen-wide bars nobody intended.
+    // An action that means to fill declares it, so the deliberate case
+    // can be told apart from the accidental one.
+    expect(styleOf(renderer, 'simple-flash-firmware').alignSelf).toBe('stretch');
   });
 
   it('every visible action keeps a >=44px touch target', async () => {

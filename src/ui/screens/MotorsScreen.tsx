@@ -2076,6 +2076,9 @@ const styles = StyleSheet.create({
   professionalStopDock: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.xs,
+    // Centred rather than stretched, so the control below can be its own
+    // size without drifting to one edge.
+    alignItems: 'center',
   },
   professionalStopButton: {
     minHeight: MIN_TOUCH_TARGET,
@@ -2083,6 +2086,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.error,
     alignItems: 'center',
     justifyContent: 'center',
+    /* SIZED TO THE ACTION, NOT TO THE SCREEN.
+       This was a full-width red slab, because the dock is a column and a
+       child that names no alignSelf stretches. Danger is carried by the
+       colour, the wording and the fact that it is pinned where it cannot
+       scroll away - none of which needs the whole width of the display,
+       and all of which was being drowned out by a bar that read as a
+       banner. It stays a large, unmissable target: generous padding and
+       the same 44pt floor as every other control. */
+    alignSelf: 'center',
+    paddingHorizontal: spacing.xl,
   },
   professionalStopLabel: {
     ...typography.sectionTitle,
@@ -2438,6 +2451,16 @@ const styles = StyleSheet.create({
        box is reserved once and the text changes inside it. */
     height: 132,
     minHeight: MIN_TOUCH_TARGET + spacing.xl,
+    /* THE ONE CONTROL THAT EARNS ITS SIZE, and now says so.
+       This is a press-and-HOLD gesture that spins a motor: it must be
+       easy to hit without looking and impossible to lose mid-press, so
+       filling the column is deliberate rather than accidental. What it
+       must not become is a 1200px slab on a desktop window, so the fill
+       is capped - stated here instead of being inherited silently from
+       the parent's stretch, which is what made every other button in the
+       app full width by accident. */
+    alignSelf: 'stretch',
+    maxWidth: 520,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accent,

@@ -2573,10 +2573,27 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
     await flushAsync();
   });
 
-  it('puts arming readiness and the orientation workspace (model, calibration, stability) before the live summary, diagnostics and tools', async () => {
-    // FINAL UI CORRECTION: the accepted order. Orientation - with the
-    // accelerometer calibration directly beside the model - now leads;
-    // the live summary follows immediately after.
+  it('shows the aircraft first and its diagnostics after', async () => {
+    /**
+     * AIRCRAFT STATE FIRST, ANALYSIS SECOND.
+     *
+     * The page used to open with the warning stack and the stability
+     * check, so the first thing an operator saw after connecting was a
+     * list of what was wrong with the aircraft rather than the aircraft.
+     * What they came to see - the model, the battery, the receiver, the
+     * GPS, which sensors were detected - was below all of it.
+     *
+     * The order now runs: compact readiness strip, model with its
+     * calibration, the live summary, the system card - and only then the
+     * warning stack, the stability check and deep diagnostics.
+     *
+     * NOTHING WAS REMOVED. The readiness strip still leads, so
+     * ARMING_DISABLED is still the first thing stated; it is the
+     * multi-line warning STACK that moved down to sit with the rest of
+     * the analysis. A safety warning that has been relocated is still a
+     * safety warning; one that has been deleted is a defect, which is
+     * why the strip stays at the top and the notices are asserted below.
+     */
     const sessionId = 'p2-hierarchy-order';
     const { renderer } = await renderConnectedScreen(sessionId);
 
@@ -2584,9 +2601,9 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
       'safety-strip-',
       'orientation-hero',
       'orientation-calibration-card',
-      'orientation-stability-panel',
       'telemetry-card-grid',
       'setup-system-grid',
+      'orientation-stability-panel',
       'diagnostics-section',
       'fc-tools-section',
     ]);

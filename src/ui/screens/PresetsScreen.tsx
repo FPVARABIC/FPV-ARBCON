@@ -800,6 +800,8 @@ const styles = StyleSheet.create({
   primaryText: {...typography.label, color: colors.accentStrong},
   apply: {
     minHeight: 50,
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,

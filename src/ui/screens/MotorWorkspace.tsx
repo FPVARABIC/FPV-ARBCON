@@ -577,7 +577,10 @@ export function MotorWorkspace({
           onPress={handleStop}
           variant="danger"
           size="lg"
-          block
+          /* NOT `block`. The danger is carried by the red fill, the
+             wording and the position - a full-width slab added none of
+             that and read as a banner rather than a control. `lg` keeps
+             it the largest button on the page. */
           disabled={port === undefined}
           accessibilityLabel="إيقاف المحركات"
           testID="motor-workspace-stop"

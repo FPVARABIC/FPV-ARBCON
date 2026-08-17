@@ -230,6 +230,23 @@ export interface MotorTestSessionBindingOptions {
   readonly registry?: MotorTestTelemetryRegistry;
 }
 
+/**
+ * Whether a controller has finished its life and can host nothing further.
+ *
+ * CLOSED is terminal for a controller, but "closed" alone is not enough to
+ * retire it: a close that FAILED also ends here, and that state must keep
+ * blocking rather than be swept away by a fresh instance. `teardown.complete`
+ * is the controller's own report that exclusivity was released and every
+ * teardown step finished - the same signal isMotorTestSnapshotActive() uses
+ * to decide a session is genuinely over.
+ */
+export function isSpentController(controller: {
+  getSnapshot(): MotorTestControllerSnapshot;
+}): boolean {
+  const snapshot = controller.getSnapshot();
+  return snapshot.phase === 'CLOSED' && snapshot.teardown?.complete === true;
+}
+
 class MotorTestSessionBinding implements MotorTestSessionCapability {
   readonly telemetrySession: MotorTestTelemetrySession;
 
@@ -239,14 +256,43 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
   private readonly client: MspClient;
   private readonly registrations: { unregister(): void }[] = [];
   private closed = false;
-  /** THE ONE controller for this session. Constructed at most once, never
-   * replaced, never exposed. */
+  /**
+   * The controller this capability is CURRENTLY driving. At most one at a
+   * time, never exposed - but no longer "constructed once, forever after".
+   * See ensureController() for why a spent one is replaced.
+   */
   private controller: MotorTestController | undefined;
+  /**
+   * Facade subscribers, held here rather than on the controller.
+   *
+   * A consumer subscribes ONCE, through a frozen facade it keeps for the
+   * life of the screen. If that subscription lived on the controller
+   * directly, retiring a spent controller would silently orphan it - the
+   * screen would go permanently deaf to a session it had just started.
+   * The binding owns the listeners and re-attaches them to whichever
+   * controller is live, so a swap is invisible from outside.
+   */
+  private readonly listeners = new Set<() => void>();
+  /** Detaches the fan-out from the outgoing controller. */
+  private detachFanOut: (() => void) | undefined;
 
   constructor(client: MspClient, registry: MotorTestTelemetryRegistry) {
     this.client = client;
     this.registry = registry;
     this.telemetrySession = registry.openSession(client);
+  }
+
+  /** Points the fan-out at `controller` and notifies once, so a consumer
+   * re-reads immediately after a swap instead of waiting for the next
+   * publication. */
+  private attachFanOut(controller: MotorTestController): void {
+    this.detachFanOut?.();
+    this.detachFanOut = controller.subscribe(() => {
+      // Snapshot first: a listener may unsubscribe during dispatch.
+      for (const listener of Array.from(this.listeners)) {
+        listener();
+      }
+    });
   }
 
   createScheduler(
@@ -297,39 +343,68 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
     port: MotorTestSessionPortInput,
     readMonotonicMillis: () => number,
   ): MotorTestOperatorPort {
-    const controller = this.ensureController(port, readMonotonicMillis);
+    // Exists, but is NOT retired here - taking a port is an observation,
+    // not a request for a new session.
+    this.ensureControllerExists(port, readMonotonicMillis);
+    /**
+     * The live controller, resolved AT CALL TIME rather than captured.
+     *
+     * The facade is frozen and a consumer keeps it for the life of the
+     * screen, so a captured reference would go on driving a controller
+     * that had been retired - every read reporting the dead session's
+     * final state and every command landing on an object that refuses
+     * them. Reading resolves the current one; it never builds one, so a
+     * getSnapshot() still cannot bring a controller into existence.
+     */
+    const live = (): MotorTestController =>
+      this.ensureControllerExists(port, readMonotonicMillis);
+    /**
+     * Starting a session is the ONE call allowed to retire a spent
+     * controller and build its replacement - see ensureController().
+     */
+    const forNewSession = (): MotorTestController =>
+      this.ensureController(port, readMonotonicMillis);
     // A frozen, capability-scoped facade: no controller, no
     // client, no lease, no authority token, no mutable internal.
     return Object.freeze({
       beginSession: () =>
         isMotorConfigurationTransactionActive(this.client)
           ? Promise.reject(new MotorConfigurationTransactionInProgressError())
-          : controller.initializeSession(),
-      getSnapshot: () => controller.getSnapshot(),
-      subscribe: (listener: () => void) => controller.subscribe(listener),
-      pulseMotor: (motorNumber: number) => controller.pulseMotor(motorNumber),
-      renewPulseHold: () => controller.renewPulseHold(),
+          : forNewSession().initializeSession(),
+      getSnapshot: () => live().getSnapshot(),
+      // Registered with the BINDING, not the controller, so the
+      // subscription survives a controller swap - see `listeners`.
+      subscribe: (listener: () => void) => {
+        this.listeners.add(listener);
+        return () => {
+          this.listeners.delete(listener);
+        };
+      },
+      pulseMotor: (motorNumber: number) => live().pulseMotor(motorNumber),
+      renewPulseHold: () => live().renewPulseHold(),
       setEscDirection: (
         motorNumber: number,
         direction: import('../../../core').DshotEscDirection,
       ) =>
-        controller.setEscDirection(motorNumber, direction),
-      refreshDiagnostics: () => controller.refreshDiagnostics(),
+        live().setEscDirection(motorNumber, direction),
+      refreshDiagnostics: () => live().refreshDiagnostics(),
       requestStop: (trigger: MotorTestStopTriggerReason) =>
-        controller.requestStop(trigger),
-      endSession: () => controller.close(),
+        live().requestStop(trigger),
+      endSession: () => live().close(),
       // P3: professional facade forwards.
       setMotorValues: (values: readonly number[]) =>
-        controller.setMotorValues(values),
+        live().setMotorValues(values),
       setMotorValue: (motorIndex: number, value: number) =>
-        controller.setMotorValue(motorIndex, value),
-      setMaster: (value: number) => controller.setMaster(value),
-      stopAll: () => controller.stopAll(),
+        live().setMotorValue(motorIndex, value),
+      setMaster: (value: number) => live().setMaster(value),
+      stopAll: () => live().stopAll(),
     });
   }
 
   lifecycleStopPort(): MotorTestLifecycleStopPort | undefined {
-    const controller = this.controller;
+    // A closed binding exposes nothing, even though it still holds its
+    // last controller so an outstanding facade can read the final state.
+    const controller = this.closed ? undefined : this.controller;
     if (controller === undefined) {
       // No controller means no motor-test session was ever initiated. A
       // lifecycle listener must not be the thing that creates one.
@@ -342,19 +417,81 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
     });
   }
 
+  /**
+   * The controller to use for a NEW session, building one when the
+   * current one cannot host another.
+   *
+   * THE DEFECT THIS CLOSES. A controller runs IDLE -> PREPARING -> ACTIVE
+   * -> CLOSING -> CLOSED and never returns to IDLE; CLOSED is terminal, by
+   * design. This method used to return the first controller "forever
+   * after", so once a session had been closed the capability was left
+   * holding a spent controller, and the screen's own gate - which starts a
+   * session only from IDLE - refused every further attempt. Turning the
+   * session off and on again did nothing at all, and the only way back was
+   * to leave the Motors screen entirely so the whole capability was rebuilt.
+   *
+   * A spent controller is therefore retired and a fresh one built.
+   *
+   * ONLY A CLEANLY SPENT ONE. `teardown.complete` is the controller's own
+   * statement that exclusivity was released AND every teardown step
+   * finished. Anything else - a close that failed, one still in progress,
+   * one that never reported - keeps the existing controller, so its
+   * unresolved state goes on blocking exactly as before. That matters far
+   * more than the convenience: a controller whose stop was never confirmed
+   * may correspond to a motor that is still turning, and replacing it with
+   * a fresh IDLE one would launder that into "nothing has ever been
+   * commanded" for both this gate and the output-engagement predicate.
+   * Recovery from a failed close stays where it was - a real teardown, or
+   * a new connection.
+   */
   private ensureController(
     port: MotorTestSessionPortInput,
     readMonotonicMillis: () => number,
   ): MotorTestController {
-    if (this.controller === undefined) {
-      // Construction alone performs NO I/O: createMotorTestController
-      // only wires dependencies. Everything that touches the link happens
-      // inside initializeSession(), which only the operator port exposes.
-      this.controller = createMotorTestController(
-        this.controllerDependencies(port, readMonotonicMillis),
-      );
+    const existing = this.controller;
+    // A CLOSED BINDING NEVER BUILDS ANOTHER ONE. Without this, a facade
+    // handed out earlier would quietly resurrect the capability: the first
+    // read after close() found no controller, built a fresh one, and
+    // reported IDLE - a torn-down session presenting itself as a new,
+    // never-commanded one. That is the exact laundering the
+    // output-engagement predicate exists to prevent.
+    if (existing !== undefined && (this.closed || !isSpentController(existing))) {
+      return existing;
     }
-    return this.controller;
+    return this.buildController(port, readMonotonicMillis);
+  }
+
+  /**
+   * The controller this capability already has, building one only when it
+   * has none at all. NEVER retires a spent one.
+   *
+   * Taking an operator port, or reading through one, is an OBSERVATION -
+   * a screen may hold a port purely to watch a session it did not start.
+   * Retiring on that path replaced a just-closed controller the moment
+   * anything looked at it, so a self-closed session read back as a fresh
+   * IDLE one and its terminal state disappeared. Only starting a new
+   * session may retire; see ensureController().
+   */
+  private ensureControllerExists(
+    port: MotorTestSessionPortInput,
+    readMonotonicMillis: () => number,
+  ): MotorTestController {
+    return this.controller ?? this.buildController(port, readMonotonicMillis);
+  }
+
+  private buildController(
+    port: MotorTestSessionPortInput,
+    readMonotonicMillis: () => number,
+  ): MotorTestController {
+    // Construction alone performs NO I/O: createMotorTestController
+    // only wires dependencies. Everything that touches the link happens
+    // inside initializeSession(), which only the operator port exposes.
+    const controller = createMotorTestController(
+      this.controllerDependencies(port, readMonotonicMillis),
+    );
+    this.controller = controller;
+    this.attachFanOut(controller);
+    return controller;
   }
 
   isOpen(): boolean {
@@ -366,11 +503,22 @@ class MotorTestSessionBinding implements MotorTestSessionCapability {
       return;
     }
     this.closed = true;
+    // Detach the fan-out before the controller goes: a closing controller
+    // may publish, and there is nothing left for a listener to read.
+    this.detachFanOut?.();
+    this.detachFanOut = undefined;
+    this.listeners.clear();
     // The controller first: it owns the lease and the barrier token, and
     // its own seven-step teardown must run while both are still valid.
     // Errors are absorbed so one failure cannot skip the rest.
+    //
+    // THE REFERENCE IS KEPT, deliberately. A facade already handed out
+    // must go on reporting this controller's FINAL state - CLOSED - and
+    // clearing the field made the next read build a replacement that
+    // reported IDLE instead. `closed` is what prevents anything new being
+    // constructed; lifecycleStopPort() below is what stops the retained
+    // controller being handed to a lifecycle listener.
     const controller = this.controller;
-    this.controller = undefined;
     if (controller !== undefined) {
       try {
         const closing = controller.close();

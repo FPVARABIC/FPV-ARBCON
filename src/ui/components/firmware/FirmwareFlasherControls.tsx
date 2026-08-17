@@ -220,6 +220,13 @@ const styles = StyleSheet.create({
   sectionBody: {gap: spacing.md, paddingTop: spacing.sm},
   button: {
     minHeight: 46,
+    /* The 'block' variant, and full width ON PURPOSE: this is the flash
+       action, the one thing the step exists to do. It was full width by
+       ACCIDENT before - the parent column stretches any child that says
+       nothing - which is indistinguishable from intent when you read it.
+       Stated explicitly so the discipline test can tell the two apart;
+       `buttonCompact` overrides it for every supporting action. */
+    alignSelf: 'stretch',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,

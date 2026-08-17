@@ -501,6 +501,10 @@ const styles = StyleSheet.create({
   },
   action: {
     minHeight: 48,
+    // «إعادة معايرة مقياس التسارع» is a short label and does not need the
+    // width of the card behind it.
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.lg,
     marginTop: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',

@@ -480,6 +480,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     minHeight: 48,
+    alignSelf: 'flex-start',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,

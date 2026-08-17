@@ -534,9 +534,17 @@ function SetupScreenContent({
               8. FC tools (maintenance: compass calibration + reboot;
                  the accelerometer action lives beside the model above) */}
 
-        {/* 2. Conditional, and genuinely absent when nothing is true -
-               a healthy aircraft costs zero vertical space here. */}
-        <SetupSafetyNotices warnings={setupWarnings} />
+        {/* THE ORDER CHANGED, AND THIS IS THE POINT OF IT.
+            The page used to open with a stack of warnings and readiness
+            diagnostics, so the first thing an operator saw after
+            connecting was a list of what was wrong - and the aircraft's
+            own state, the reason they connected, was below all of it.
+
+            Aircraft state now comes first: the compact readiness strip,
+            the model, then Battery / Receiver / GPS / Sensors. The
+            warning STACK moved down to Diagnostics, where the detail
+            belongs. Nothing was deleted - see the diagnostics block at
+            the foot of this screen, which now carries it. */}
 
         {/* 3. Arming readiness. Same canonical P1 truth, same component,
                same dimensions - only its position changed.
@@ -576,17 +584,12 @@ function SetupScreenContent({
           }
         />
 
-        {/* 5. The read-only stability check stays with the thing it
-               measures - and with the calibration that auto-starts it. */}
-        <LiveOrientationStabilityPanel
-          sessionKey={sessionKey}
-          active={active}
-        />
-
-        {/* 6. THE LIVE SUMMARY, immediately after orientation. Every card
-               reads the snapshot this screen already derived - no card
-               acquires telemetry of its own. Battery leads (the number an
-               operator reads first), then Receiver/RSSI, GPS, Sensors. */}
+        {/* 6. THE LIVE SUMMARY, immediately after the model - the two are
+               one unit now. Battery, Receiver, GPS and Sensors are what
+               an operator checks the instant they connect, so they sit
+               with the aircraft rather than below a page of diagnostics.
+               Every card reads the snapshot this screen already derived;
+               no card acquires telemetry of its own. */}
         <SetupSectionHeading
           eyebrow={t('setupSections.live.eyebrow')}
           title={t('setupSections.live.title')}
@@ -672,6 +675,20 @@ function SetupScreenContent({
             />
           </View>
         </View>
+        {/* DIAGNOSTICS, SECOND - not deleted, relocated.
+
+            The full warning stack and the stability check used to open
+            the page. They are still here in full, with the same
+            component, the same canonical truth and the same wording; what
+            changed is that the operator reaches their aircraft's state
+            first and the analysis of it after. ARMING_DISABLED and every
+            other blocker still surface at the top too, in the compact
+            readiness strip beside the model. */}
+        <SetupSafetyNotices warnings={setupWarnings} />
+        <LiveOrientationStabilityPanel
+          sessionKey={sessionKey}
+          active={active}
+        />
         <DiagnosticsSection view={diagnosticsView} />
         <FcToolsSection
           sessionId={sessionId}

@@ -45,7 +45,21 @@ export interface ButtonProps {
   /** Leading icon, drawn in the label colour at the size's icon scale. */
   icon?: IconName;
   disabled?: boolean;
-  /** Stretch to the container width (row of actions vs inline action). */
+  /**
+   * Fill the container width. OFF by default, and now actually off.
+   *
+   * This prop existed before and did nothing useful, which is how the app
+   * filled up with screen-wide bars reading «اتصال» or «إعادة ضبط الاتجاه».
+   * A React Native View is a column with `alignItems: 'stretch'`, so a
+   * button placed in one stretches to the full width unless it says
+   * otherwise - and saying nothing was exactly what `block={false}` did.
+   * The default now sets `alignSelf: 'flex-start'`, so a button takes the
+   * room its label needs and `block` is the deliberate exception.
+   *
+   * Use it only where filling is the real intent: a single call to action
+   * at the foot of a narrow sheet, or one of several buttons that must
+   * share a row edge-to-edge.
+   */
   block?: boolean;
   accessibilityLabel?: string;
   accessibilityHint?: string;
@@ -127,7 +141,7 @@ export function Button({
           hovered && !disabled && {backgroundColor: palette.bgHover},
           pressed && !disabled && {backgroundColor: palette.bgPressed},
           disabled && styles.disabled,
-          block && styles.block,
+          block ? styles.block : styles.intrinsic,
           style,
         ];
       }}>
@@ -175,4 +189,17 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
   },
   block: {alignSelf: 'stretch'},
+  /**
+   * THE DEFAULT, and the whole fix.
+   *
+   * A React Native View is a column whose `alignItems` is `stretch`, so a
+   * button that says nothing about its own cross-axis size fills the
+   * container. That is why the app was full of screen-wide bars carrying
+   * two words. `flex-start` makes the button as wide as its label needs.
+   *
+   * Inside a ROW this sets the vertical alignment instead of the width -
+   * where it is harmless, because every button already carries a
+   * minHeight and rows of buttons are uniform.
+   */
+  intrinsic: {alignSelf: 'flex-start'},
 });

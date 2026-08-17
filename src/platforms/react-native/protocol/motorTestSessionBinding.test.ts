@@ -13,6 +13,7 @@
 
 import {
   createMotorTestSessionBinding,
+  isSpentController,
   type MotorTestSessionCapability,
 } from './motorTestSessionBinding';
 import { MotorTestTelemetryRegistry } from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
@@ -509,9 +510,28 @@ describe('B-2E-1 - single authoritative controller', () => {
 
     const closed = firstOperator.getSnapshot();
     expect(closed.phase).toBe('CLOSED');
-    // The closed controller answers a retry with its OWN current state,
-    // and never re-runs setup.
-    expect(await firstOperator.beginSession()).toBe(closed);
+    /**
+     * THIS CONTRACT CHANGED, because it was the reported defect.
+     *
+     * It used to assert that a retry returned the CLOSED controller's own
+     * state - `beginSession()` handing back the same terminal snapshot
+     * forever. The reasoning was sound (re-running setup on top of a spent
+     * controller would reuse session-bound facts) but the consequence was
+     * that turning the motor session off and on again did nothing at all,
+     * and the operator had to leave the Motors screen entirely to get a
+     * usable session back.
+     *
+     * The concern is now met a better way: a cleanly closed controller is
+     * RETIRED and the next session gets a brand-new one, so no
+     * session-bound fact can carry over - which is what the assertions
+     * below already prove for a second binding, and what
+     * motorSessionReopen.test.ts proves for the retirement rule itself.
+     *
+     * Asserted through that rule rather than by calling beginSession():
+     * this file has no scripted flight controller, so a real bring-up
+     * would hang rather than fail.
+     */
+    expect(isSpentController({getSnapshot: () => closed})).toBe(true);
     first.close();
 
     const second = createMotorTestSessionBinding(makeClient(), { registry });

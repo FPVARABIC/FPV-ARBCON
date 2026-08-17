@@ -614,7 +614,6 @@ export default function GpsScreen({
               variant="secondary"
               icon="map-pin"
               disabled={raw?.hasFix !== true}
-              block
               style={styles.blockActionSpacing}
               testID="gps-open-map"
             />
@@ -698,7 +697,6 @@ export default function GpsScreen({
                 onPress={requestReload}
                 variant="secondary"
                 icon="refresh-cw"
-                block
                 style={styles.blockActionSpacing}
                 testID="gps-retry-load"
               />
