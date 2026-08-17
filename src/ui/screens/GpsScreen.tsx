@@ -800,9 +800,15 @@ export default function GpsScreen({
                   {t('gpsSystem.autoBaudModern')}
                 </Text>
               </View>
-              {invalid.length > 0 ? (
-                <Text style={styles.errorText}>{t('gpsSystem.invalid')}</Text>
-              ) : null}
+              {/* One sentence per issue, naming the setting - the same
+                  contract Failsafe and Ports use. A generic "something is
+                  invalid" leaves the operator hunting through the screen for
+                  which of two dropdowns it means. */}
+              {invalid.map(code => (
+                <Text key={code} style={styles.errorText}>
+                  {t(`gpsSystem.validation.${code}`)}
+                </Text>
+              ))}
               {saveOutcome !== undefined ? (
                 <Text
                   style={[
