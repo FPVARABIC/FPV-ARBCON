@@ -77,6 +77,13 @@ export interface MotorOutputEngagementVerdict {
 export type MotorOutputEngagementReason =
   /** No controller snapshot at all: no evidence either way. */
   | 'NO_SNAPSHOT'
+  /**
+   * The session exists and is open, but no motor-test controller was ever
+   * built for it - so nothing could have been commanded. Decided at the
+   * capability layer, which is the only place that can see it; see
+   * motorTestCapability.ts's motorOutputEngagementForSession().
+   */
+  | 'NEVER_INITIATED'
   /** Neither liveness latch was ever set. */
   | 'NEVER_COMMANDED'
   /** A command may be live and no stop has been dispatched. */

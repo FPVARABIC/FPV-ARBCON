@@ -54,7 +54,6 @@ import type {MspClient} from '../../../core/protocol/mspClient';
 import type {MotorTestControllerSnapshot} from '../../../core/state/motorTestController';
 import {
   evaluateMotorOutputEngagement,
-  isMotorOutputEngaged,
   type MotorOutputEngagementVerdict,
 } from '../../../core/state/motorOutputEngagement';
 
@@ -256,21 +255,53 @@ export function isMotorTestSessionActive(sessionId: string): boolean {
  * be TURNING, which is the question the in-Motors configuration gate should
  * have been asking all along.
  *
- * A missing capability reports ENGAGED here rather than "no session": absent
- * evidence is never evidence of safety, and this predicate is consulted
- * precisely when something may already be spinning.
+ * THREE STATES, NOT TWO. Collapsing the first two is a defect this function
+ * shipped and now fixes:
+ *
+ *   no capability .......... no identified session, or one torn down while a
+ *                            command may have been live -> ENGAGED.
+ *   capability, no port .... the session is open but never built a
+ *                            controller -> AT REST, see below.
+ *   capability with port ... ask the snapshot.
+ *
+ * WHY "NO PORT" IS PROOF OF REST, NOT AN ASSUMPTION. lifecycleStopPort()
+ * returns undefined for exactly one reason - the binding never constructed a
+ * MotorTestController - and that controller is the ONLY thing in the build
+ * that can issue MSP_SET_MOTOR. No controller means no motor command was ever
+ * emitted for this capability, which is a stronger guarantee than any latch.
+ *
+ * The isOpen() test is what keeps that honest. close() clears the controller
+ * as well as the session, so a closed binding would otherwise present as
+ * "never initiated" and read AT REST after a real motor test. The only
+ * production teardown removes the capability from the registry first, but
+ * close() is on the public facade, so this does not rely on that ordering.
+ *
+ * Absent or unreadable evidence is never evidence of safety: every path that
+ * cannot prove rest returns ENGAGED.
  */
-export function isMotorOutputEngagedForSession(sessionId: string): boolean {
-  return isMotorOutputEngaged(
-    CAPABILITIES.get(sessionId)?.lifecycleStopPort()?.getSnapshot(),
-  );
-}
-
-/** The full verdict, for surfaces that must explain a refusal. */
 export function motorOutputEngagementForSession(
   sessionId: string,
 ): MotorOutputEngagementVerdict {
-  return evaluateMotorOutputEngagement(
-    CAPABILITIES.get(sessionId)?.lifecycleStopPort()?.getSnapshot(),
-  );
+  const capability = CAPABILITIES.get(sessionId);
+  if (capability === undefined) {
+    return {engagement: 'ENGAGED', reason: 'NO_SNAPSHOT'};
+  }
+  const port = capability.lifecycleStopPort();
+  if (port === undefined) {
+    return capability.isOpen()
+      ? {engagement: 'AT_REST', reason: 'NEVER_INITIATED'}
+      : {engagement: 'ENGAGED', reason: 'NO_SNAPSHOT'};
+  }
+  return evaluateMotorOutputEngagement(port.getSnapshot());
+}
+
+/**
+ * Convenience for gates that only need the boolean.
+ *
+ * DELEGATES rather than re-deriving. These two were written independently and
+ * that is precisely how they could have disagreed - a gate blocking for one
+ * reason while the screen explained a different one.
+ */
+export function isMotorOutputEngagedForSession(sessionId: string): boolean {
+  return motorOutputEngagementForSession(sessionId).engagement === 'ENGAGED';
 }
