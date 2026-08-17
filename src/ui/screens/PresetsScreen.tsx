@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import {
   filterCompatiblePresets,
   type FirmwarePresetCategory,
+  type FirmwarePresetStatus,
   type FirmwarePresetSummary,
 } from '../../core';
 import {
@@ -64,6 +65,18 @@ const CATEGORY_LABEL: Record<FirmwarePresetCategory, string> = {
   RC_LINK: 'RC Link',
   BNF: 'BNF',
   OTHER: 'Other',
+};
+/**
+ * The catalogue's provenance words, in Arabic. They used to render raw
+ * ("OFFICIAL", "EXPERIMENTAL") to an operator reading an Arabic screen, and
+ * EXPERIMENTAL in particular is a safety signal about a tune that will be
+ * written to a flight controller - it deserves to be legible and to look
+ * different from the other two, not to be a grey pill in another language.
+ */
+const STATUS_LABEL: Record<FirmwarePresetStatus, string> = {
+  OFFICIAL: 'رسمية',
+  COMMUNITY: 'من المجتمع',
+  EXPERIMENTAL: 'تجريبية',
 };
 const ALL_CATEGORIES: readonly FirmwarePresetCategory[] = [
   'TUNE',
@@ -129,10 +142,17 @@ export default function PresetsScreen({
       const compatible = filterCompatiblePresets(index, version.versionString);
       setFirmwareVersion(version.versionString);
       setPresets(compatible);
+      // A dropped entry is one we refused to make downloadable - an unsafe
+      // path or a bad hash. The operator is told, rather than shown a quietly
+      // shorter list.
+      const dropped =
+        index.rejectedCount > 0
+          ? ` تجاهلنا ${index.rejectedCount} مدخلًا لم تُطابق بصمته أو مساره.`
+          : '';
       setStatus(
         compatible.length
-          ? `عُثر على ${compatible.length} حزمة متوافقة مع ${version.versionString}.`
-          : `لا توجد حزم في المصدر الرسمي للإصدار ${version.versionString}.`,
+          ? `عُثر على ${compatible.length} حزمة متوافقة مع ${version.versionString}.${dropped}`
+          : `لا توجد حزم في المصدر الرسمي للإصدار ${version.versionString}.${dropped}`,
       );
     } catch (error) {
       setFailure(errorText(error));
@@ -309,13 +329,9 @@ export default function PresetsScreen({
     <View style={styles.root} testID="presets-screen">
       <ScrollView contentContainerStyle={[styles.content, { maxWidth }]}>
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>
-            BETAFLIGHT OFFICIAL PRESETS · HASH VERIFIED · CLI REVIEW
-          </Text>
           <Text style={styles.title}>الحزم الجاهزة</Text>
           <Text style={styles.subtitle}>
-            حزم Betaflight الرسمية والمتوافقة فقط؛ معاينة ونسخة احتياطية وتطبيق
-            مؤقت قبل الحفظ.
+            حزم Betaflight الرسمية، مع معاينة الأوامر ونسخة احتياطية قبل الحفظ.
           </Text>
           <View style={styles.identityRow}>
             <Text style={styles.identity}>
@@ -389,7 +405,14 @@ export default function PresetsScreen({
                   <Text style={styles.badge}>
                     {CATEGORY_LABEL[preset.category]}
                   </Text>
-                  <Text style={styles.badge}>{preset.status}</Text>
+                  <Text
+                    style={[
+                      styles.badge,
+                      preset.status === 'EXPERIMENTAL' && styles.badgeWarn,
+                    ]}
+                  >
+                    {STATUS_LABEL[preset.status]}
+                  </Text>
                 </View>
                 <Text style={styles.presetTitle}>{preset.title}</Text>
                 <Text style={styles.meta}>
@@ -702,6 +725,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     borderRadius: radii.pill,
   },
+  badgeWarn: { color: colors.warning, backgroundColor: colors.warningSoft },
   presetTitle: {
     ...typography.body,
     color: colors.textPrimary,

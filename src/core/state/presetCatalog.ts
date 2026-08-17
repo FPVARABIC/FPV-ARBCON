@@ -20,6 +20,9 @@ export interface FirmwarePresetSummary {
   readonly firmwareVersions: readonly string[];
   readonly category: FirmwarePresetCategory;
   readonly status: FirmwarePresetStatus;
+  /** The catalogue's own words when they are not one of ours. */
+  readonly rawCategory: string;
+  readonly rawStatus: string;
   readonly keywords: readonly string[];
   readonly author?: string;
   readonly forceOptionsReview: boolean;
@@ -30,6 +33,12 @@ export interface FirmwarePresetIndex {
   readonly majorVersion: 1;
   readonly minorVersion: number;
   readonly presets: readonly FirmwarePresetSummary[];
+  /**
+   * Entries the catalogue offered that we refused to make downloadable - an
+   * unsafe path or a malformed hash. Reported so the screen can say so
+   * instead of quietly showing a shorter list.
+   */
+  readonly rejectedCount: number;
 }
 
 export interface FirmwarePresetOption {
@@ -81,31 +90,38 @@ function record(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function stringField(source: Record<string, unknown>, key: string): string {
-  const value = source[key];
-  if (typeof value !== 'string' || value.trim() === '')
-    throw new Error(`حقل Presets ${key} غير صالح.`);
-  return value;
-}
 
-function stringArray(
-  source: Record<string, unknown>,
-  key: string,
-): readonly string[] {
-  const value = source[key];
-  if (
-    !Array.isArray(value) ||
-    value.some(item => typeof item !== 'string' || item.trim() === '')
-  ) {
-    throw new Error(`حقل Presets ${key} ليس قائمة نصية صالحة.`);
-  }
-  return value as string[];
-}
 
 export function isSafePresetPath(path: string): boolean {
   return SAFE_PATH.test(path) && !path.includes('..') && !path.includes('//');
 }
 
+/** Descriptive text we will show but never act on. Missing is not fatal. */
+function optionalStrings(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (item): item is string => typeof item === 'string' && item.trim() !== '',
+  );
+}
+
+/**
+ * ONE UNKNOWN WORD MUST NOT EMPTY THE CATALOGUE.
+ *
+ * This index is remote data maintained on Betaflight's own schedule, and the
+ * pinned Configurator validates none of it: PresetsRepoIndexed.loadIndex is
+ * `res.json()` straight into `this._index`, and the search filters simply read
+ * whatever fields happen to be there. The moment a new category or status word
+ * appears upstream - which is a normal catalogue edit, not a breaking change -
+ * a build that rejected the whole document would show an empty Presets screen
+ * with no way for the operator to tell why.
+ *
+ * So the taxonomy fails OPEN: an unrecognized category or status is preserved
+ * verbatim in rawCategory/rawStatus and mapped to a safe typed value for the
+ * filter chips. Security fails CLOSED and is unchanged: an entry whose path is
+ * unsafe or whose hash is malformed is DROPPED, because those two fields are
+ * what decide which file we will download and turn into CLI commands. A
+ * dropped entry is counted, never silently swallowed.
+ */
 export function parseFirmwarePresetIndex(value: unknown): FirmwarePresetIndex {
   const root = record(value);
   if (
@@ -118,47 +134,66 @@ export function parseFirmwarePresetIndex(value: unknown): FirmwarePresetIndex {
   if (!Array.isArray(root.presets) || root.presets.length > MAX_INDEX_PRESETS) {
     throw new Error('قائمة Presets مفقودة أو أكبر من الحد الآمن.');
   }
-  const presets = root.presets.map(item => {
-    const source = record(item);
-    const fullPath = stringField(source, 'fullPath');
-    const hash = stringField(source, 'hash').toLowerCase();
-    const category = stringField(source, 'category') as FirmwarePresetCategory;
-    const status = stringField(source, 'status') as FirmwarePresetStatus;
-    if (!isSafePresetPath(fullPath))
-      throw new Error(`مسار Preset غير آمن: ${fullPath}`);
-    if (!SHA256.test(hash))
-      throw new Error(`بصمة Preset غير صالحة: ${fullPath}`);
-    if (!CATEGORY.has(category) || !STATUS.has(status))
-      throw new Error(`تصنيف Preset غير معروف: ${fullPath}`);
-    return Object.freeze({
-      fullPath,
-      hash,
-      title: stringField(source, 'title'),
-      firmwareVersions: Object.freeze([
-        ...stringArray(source, 'firmware_version'),
-      ]),
-      category,
-      status,
-      keywords: Object.freeze(
-        source.keywords === undefined
-          ? []
-          : [...stringArray(source, 'keywords')],
-      ),
-      author:
-        typeof source.author === 'string' && source.author.trim()
-          ? source.author
-          : undefined,
-      forceOptionsReview: source.force_options_review === true,
-      priority:
-        typeof source.priority === 'number' && Number.isFinite(source.priority)
-          ? source.priority
-          : 0,
-    });
-  });
+  let rejectedCount = 0;
+  const presets: FirmwarePresetSummary[] = [];
+  for (const item of root.presets) {
+    if (item === null || typeof item !== 'object' || Array.isArray(item)) {
+      rejectedCount += 1;
+      continue;
+    }
+    const source = item as Record<string, unknown>;
+    const fullPath = typeof source.fullPath === 'string' ? source.fullPath : '';
+    const hash =
+      typeof source.hash === 'string' ? source.hash.toLowerCase() : '';
+    // FAIL CLOSED: these two decide what we download and execute.
+    if (!isSafePresetPath(fullPath) || !SHA256.test(hash)) {
+      rejectedCount += 1;
+      continue;
+    }
+    const rawCategory =
+      typeof source.category === 'string' ? source.category.trim() : '';
+    const rawStatus =
+      typeof source.status === 'string' ? source.status.trim() : '';
+    const category = rawCategory.toUpperCase() as FirmwarePresetCategory;
+    const status = rawStatus.toUpperCase() as FirmwarePresetStatus;
+    const title =
+      typeof source.title === 'string' && source.title.trim()
+        ? source.title
+        : fullPath.split('/').pop() ?? fullPath;
+    presets.push(
+      Object.freeze({
+        fullPath,
+        hash,
+        title,
+        firmwareVersions: Object.freeze(
+          optionalStrings(source.firmware_version),
+        ),
+        // An unrecognized category lands in OTHER so the chips still work;
+        // an unrecognized status is treated as COMMUNITY, the cautious
+        // reading - never OFFICIAL, which would overstate its provenance.
+        category: CATEGORY.has(category) ? category : 'OTHER',
+        status: STATUS.has(status) ? status : 'COMMUNITY',
+        rawCategory,
+        rawStatus,
+        keywords: Object.freeze(optionalStrings(source.keywords)),
+        author:
+          typeof source.author === 'string' && source.author.trim()
+            ? source.author
+            : undefined,
+        forceOptionsReview: source.force_options_review === true,
+        priority:
+          typeof source.priority === 'number' &&
+          Number.isFinite(source.priority)
+            ? source.priority
+            : 0,
+      }),
+    );
+  }
   return Object.freeze({
     majorVersion: 1,
     minorVersion: root.minorVersion as number,
     presets: Object.freeze(presets),
+    rejectedCount,
   });
 }
 
@@ -169,19 +204,55 @@ export function presetFirmwareFamily(
   return match ? `${Number(match[1])}.${Number(match[2])}` : undefined;
 }
 
+/**
+ * Does this catalogue entry claim to fit the firmware the board reported?
+ *
+ * Betaflight's rule is a PREFIX match against the whole reported version
+ * string - `currentVersion.startsWith(bfVersion)` in presets.preselectFilterFields
+ * - not an equality test on a derived major.minor. Requiring equality on the
+ * family hid every catalogue entry that lists a patch-level version: an entry
+ * for "4.5.0" simply never appeared on a board running 4.5.0, because "4.5.0"
+ * is not equal to the family "4.5".
+ */
+function presetFitsFirmware(listed: string, firmwareVersion: string): boolean {
+  const version = firmwareVersion.trim();
+  const wanted = listed.trim();
+  if (wanted === '') return false;
+  if (version.startsWith(wanted)) return true;
+  // ...and the reverse, so an entry listing "4.5" still matches a board that
+  // reports only "4.5", and a family-level entry matches a family-level read.
+  const family = presetFirmwareFamily(version);
+  return family !== undefined && family === presetFirmwareFamily(wanted);
+}
+
 export function filterCompatiblePresets(
   index: FirmwarePresetIndex,
   firmwareVersion: string,
 ): readonly FirmwarePresetSummary[] {
-  const family = presetFirmwareFamily(firmwareVersion);
-  if (!family) return [];
   return index.presets
-    .filter(preset => preset.firmwareVersions.includes(family))
+    .filter(preset =>
+      preset.firmwareVersions.some(listed =>
+        presetFitsFirmware(listed, firmwareVersion),
+      ),
+    )
     .sort(
       (left, right) =>
         right.priority - left.priority || left.title.localeCompare(right.title),
     );
 }
+
+/**
+ * Betaflight does not hardcode these words. PresetsRepoIndexed.loadIndex sets
+ * `this._settings = this._index.settings` and hands them to PresetParser, so
+ * the directive vocabulary is data the catalogue itself ships - meaning it is
+ * expected to vary. Accepting both the underscored and the spaced spelling
+ * removes the single point of failure a hardcoded guess would be: if the
+ * catalogue ever writes the other one, exclusive groups would otherwise stop
+ * being recognized and the screen would let an operator tick two mutually
+ * exclusive tunes and send both.
+ */
+const GROUP_BEGIN = /^OPTION[_ ]GROUP BEGIN\s*(?:\(EXCLUSIVE\))?/i;
+const GROUP_END = /^OPTION[_ ]GROUP END$/i;
 
 function metadata(line: string): { key: string; value: string } | undefined {
   const match = /^#\$\s*([^:]+?)(?::\s*(.*))?$/i.exec(line.trim());
@@ -216,20 +287,15 @@ export function parseFirmwarePresetDocument(
       includeWarnings.push(item.value);
     else if (item.key === 'INCLUDE_DISCLAIMER' && isSafePresetPath(item.value))
       includeDisclaimers.push(item.value);
-    else if (item.key.startsWith('OPTION_GROUP BEGIN')) {
+    else if (GROUP_BEGIN.test(item.key)) {
       const exclusive = /\(EXCLUSIVE\)/i.test(`${item.key} ${item.value}`);
       group = {
-        name: (
-          item.value ||
-          item.key
-            .replace(/^OPTION_GROUP BEGIN\s*(?:\(EXCLUSIVE\))?/i, '')
-            .trim()
-        )
+        name: (item.value || item.key.replace(GROUP_BEGIN, '').trim())
           .replace(/\(EXCLUSIVE\)/i, '')
           .trim(),
         exclusive,
       };
-    } else if (item.key === 'OPTION_GROUP END') {
+    } else if (GROUP_END.test(item.key)) {
       group = undefined;
     } else if (item.key.startsWith('OPTION BEGIN')) {
       const checked = /\(CHECKED\)/i.test(item.key);
@@ -301,10 +367,26 @@ export async function expandFirmwarePresetIncludes(
   return Object.freeze(result);
 }
 
+/**
+ * Which CLI lines does this preset contribute, given the options the operator
+ * actually ticked?
+ *
+ * The comparison is CASE-INSENSITIVE because Betaflight's is: PresetParser
+ * .removeUncheckedOptions lowercases both the checked-option list and the name
+ * it reads out of each `OPTION BEGIN` line. Comparing exactly meant a preset
+ * that wrote its option name in one case in the group header and another in
+ * the body silently sent the wrong set of commands - either dropping lines the
+ * operator had approved, or including lines they had unticked. On a screen
+ * whose whole output is CLI commands written to a flight controller, either
+ * direction is unacceptable, and neither was visible to the operator.
+ */
 export function commandsForPreset(
   lines: readonly string[],
   selectedOptions: ReadonlySet<string>,
 ): readonly string[] {
+  const selected = new Set(
+    [...selectedOptions].map(name => name.trim().toLowerCase()),
+  );
   const result: string[] = [];
   let include = true;
   for (const raw of lines) {
@@ -313,7 +395,7 @@ export function commandsForPreset(
       const name =
         item.value ||
         item.key.replace(/^OPTION BEGIN\s*(?:\((?:UN)?CHECKED\))?/i, '').trim();
-      include = selectedOptions.has(name);
+      include = selected.has(name.trim().toLowerCase());
       continue;
     }
     if (item?.key === 'OPTION END') {
@@ -322,6 +404,13 @@ export function commandsForPreset(
     }
     if (item !== undefined || !include) continue;
     const line = raw.trim();
+    // `save` and `exit` are withheld deliberately, and this is the one place
+    // we do not follow Betaflight: it forwards whatever the file contains and
+    // then issues its own `save` afterwards. A stray `exit` inside a preset
+    // would close the CLI session mid-batch and send every remaining command
+    // into a closed channel, with the operator told the batch had been
+    // applied. Both commands are issued by this app explicitly, after the
+    // batch, under the operator's own confirmation.
     if (line && !line.startsWith('#') && !/^(?:save|exit)\b/i.test(line))
       result.push(line);
   }
