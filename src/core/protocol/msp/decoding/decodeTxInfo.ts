@@ -1,4 +1,4 @@
-import {MspPayloadReadError, MspPayloadReader} from './MspPayloadReader';
+import {MspPayloadReader} from './MspPayloadReader';
 
 /**
  * RECEIVER P2 - wire decoder for MSP_TX_INFO (187).
@@ -38,11 +38,9 @@ export interface MspTxInfo {
 }
 
 export function decodeTxInfo(payload: Uint8Array): MspTxInfo {
-  if (payload.length < 2) {
-    throw new MspPayloadReadError(
-      `MSP_TX_INFO requires 2 bytes; received ${payload.length}.`,
-    );
-  }
-  const reader = new MspPayloadReader(payload);
+  // Only byte 0 is interpreted, so demanding byte 1 rejected payloads whose
+  // one meaningful field had in fact arrived. Betaflight reads this
+  // positionally with no length guard.
+  const reader = new MspPayloadReader(payload, {lenient: true});
   return Object.freeze({rssiSource: reader.readU8()});
 }

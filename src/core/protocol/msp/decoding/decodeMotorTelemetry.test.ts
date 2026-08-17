@@ -1,4 +1,3 @@
-import { MspPayloadReadError } from './MspPayloadReader';
 import {
   decodeMotorTelemetry,
   MSP_MOTOR_TELEMETRY_MAX_COUNT,
@@ -67,7 +66,11 @@ describe('decodeMotorTelemetry', () => {
     });
   });
 
-  it('rejects every truncation of one complete entry', () => {
+  it('degrades to the entries that actually arrived instead of throwing', () => {
+    // Betaflight reads `count` entries positionally with no validation at all
+    // (MSPHelper.js case MSP_MOTOR_TELEMETRY). This is live read-only
+    // telemetry on the Motors screen: a short frame must not blank the
+    // readings, and must not invent motors either.
     const complete = [
       1,
       ...u32le(1),
@@ -78,16 +81,21 @@ describe('decodeMotorTelemetry', () => {
       ...u16le(6),
     ];
     for (let length = 0; length < complete.length; length++) {
-      expect(() =>
-        decodeMotorTelemetry(Uint8Array.from(complete.slice(0, length))),
-      ).toThrow(MspPayloadReadError);
+      const decoded = decodeMotorTelemetry(Uint8Array.from(complete.slice(0, length)));
+      // No entry is fabricated from bytes that never arrived.
+      expect(decoded.motors).toHaveLength(0);
+      expect(decoded.motorCount).toBe(0);
     }
+    // The complete frame still reads.
+    expect(decodeMotorTelemetry(Uint8Array.from(complete)).motors).toHaveLength(1);
   });
 
-  it('rejects a count beyond the eight-slot protocol maximum', () => {
+  it('CLAMPS a count beyond the eight-slot maximum rather than rejecting it', () => {
+    // The cap still bounds what we allocate - it is now a clamp, so an
+    // implausible declared count costs the operator nothing.
     expect(MSP_MOTOR_TELEMETRY_MAX_COUNT).toBe(8);
-    expect(() => decodeMotorTelemetry(Uint8Array.from([9]))).toThrow(
-      MspPayloadReadError,
-    );
+    expect(decodeMotorTelemetry(Uint8Array.from([9])).motors).toHaveLength(0);
+    const nine = [9, ...new Array(9 * 13).fill(0)];
+    expect(decodeMotorTelemetry(Uint8Array.from(nine)).motors).toHaveLength(8);
   });
 });

@@ -1,4 +1,4 @@
-import { MspPayloadReadError, MspPayloadReader } from './MspPayloadReader';
+import {MspPayloadReader} from './MspPayloadReader';
 export interface SensorVector3 {
   readonly x: number;
   readonly y: number;
@@ -21,11 +21,10 @@ function vector(reader: MspPayloadReader): SensorVector3 {
   });
 }
 export function decodeRawImu(payload: Uint8Array): MspRawImu {
-  if (payload.length !== 18)
-    throw new MspPayloadReadError(
-      `MSP_RAW_IMU must be exactly 18 bytes; received ${payload.length}.`,
-    );
-  const reader = new MspPayloadReader(payload);
+  // Betaflight reads this positionally with no length guard at all
+  // (src/js/msp/MSPHelper.js); a firmware that appends or omits a
+  // trailing field must not close the screen that shows it.
+  const reader = new MspPayloadReader(payload, {lenient: true});
   return Object.freeze({
     accelerometer: vector(reader),
     gyroscopeDps: vector(reader),
@@ -33,11 +32,10 @@ export function decodeRawImu(payload: Uint8Array): MspRawImu {
   });
 }
 export function decodeAltitude(payload: Uint8Array): MspAltitude {
-  if (payload.length !== 6)
-    throw new MspPayloadReadError(
-      `MSP_ALTITUDE must be exactly 6 bytes; received ${payload.length}.`,
-    );
-  const reader = new MspPayloadReader(payload);
+  // Betaflight reads this positionally with no length guard at all
+  // (src/js/msp/MSPHelper.js); a firmware that appends or omits a
+  // trailing field must not close the screen that shows it.
+  const reader = new MspPayloadReader(payload, {lenient: true});
   const raw = reader.readU32LE();
   return Object.freeze({
     altitudeCm: raw >= 0x80000000 ? raw - 0x100000000 : raw,

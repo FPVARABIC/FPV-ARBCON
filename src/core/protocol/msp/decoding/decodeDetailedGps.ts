@@ -1,4 +1,4 @@
-import { MspPayloadReadError, MspPayloadReader } from './MspPayloadReader';
+import { MspPayloadReader } from './MspPayloadReader';
 
 /** Full GPS-tab-only decode. The compact Setup decoder intentionally stays coordinate-free. */
 export interface MspDetailedGps {
@@ -19,7 +19,7 @@ function signed32(value: number): number {
 }
 
 export function decodeDetailedGps(payload: Uint8Array): MspDetailedGps {
-  const reader = new MspPayloadReader(payload);
+  const reader = new MspPayloadReader(payload, {lenient: true});
   const fixFlagRaw = reader.readU8();
   const satelliteCount = reader.readU8();
   const latitudeDegrees = signed32(reader.readU32LE()) / 10_000_000;
@@ -27,11 +27,9 @@ export function decodeDetailedGps(payload: Uint8Array): MspDetailedGps {
   const altitudeMeters = reader.readU16LE();
   const groundSpeedCentimetersPerSecond = reader.readU16LE();
   const groundCourseDecidegrees = reader.readU16LE();
-  if (reader.remaining() === 1) {
-    throw new MspPayloadReadError(
-      'MSP_RAW_GPS contains a truncated PDOP field.',
-    );
-  }
+  // Betaflight version-gates PDOP on API >= 1.46 and ignores anything else
+  // that follows (src/js/msp/MSPHelper.js case MSP_RAW_GPS). A single odd
+  // trailing byte is not a reason to refuse to show position and satellites.
   const pdopHundredths =
     reader.remaining() >= 2 ? reader.readU16LE() : undefined;
   return Object.freeze({

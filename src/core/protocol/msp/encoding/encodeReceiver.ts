@@ -1,5 +1,6 @@
 import type {MspReceiverDeadband} from '../decoding/decodeReceiver';
 import type {MspRxConfig} from '../decoding/decodeRxConfig';
+import {BETAFLIGHT_API_1_47_RX_CONFIG_BYTES} from '../decoding/decodeRxConfig';
 import type {ReceiverConfigurationDraft, ReceiverConfigurationSnapshot} from '../../../state/receiverConfigurationModel';
 import {receiverMapFromText, validateReceiverDraft} from '../../../state/receiverConfigurationModel';
 
@@ -23,7 +24,11 @@ export function encodeReceiverDeadband(value: MspReceiverDeadband): Uint8Array {
 }
 
 export function encodeReceiverConfig(original: MspRxConfig, draft: ReceiverConfigurationDraft): Uint8Array {
-  if (original.raw.length < 39) throw new RangeError('MSP_RX_CONFIG API 1.47 payload is truncated.');
+  // The strict half of the read/write pair. decodeRxConfig deliberately
+  // accepts a short payload so an older firmware can still VIEW its receiver
+  // settings; this refuses to build a write from one, because every field
+  // below is patched at a fixed offset inside the original response.
+  if (original.raw.length < BETAFLIGHT_API_1_47_RX_CONFIG_BYTES) throw new RangeError('MSP_RX_CONFIG API 1.47 payload is truncated.');
   if (validateReceiverDraft(draft).length > 0) throw new RangeError('Invalid receiver configuration draft.');
   const bytes = original.raw.slice();
   // RECEIVER P4. Byte 0 is serialrx_provider (msp.c MSP_SET_RX_CONFIG,

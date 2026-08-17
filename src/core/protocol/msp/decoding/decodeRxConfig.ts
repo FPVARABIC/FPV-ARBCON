@@ -1,6 +1,11 @@
-import { MspPayloadReadError, MspPayloadReader } from './MspPayloadReader';
+import {MspPayloadReader} from './MspPayloadReader';
 
-const BETAFLIGHT_API_1_47_RX_CONFIG_BYTES = 39;
+/**
+ * The full API 1.47 layout. This is a WRITE precondition, not a read one:
+ * encodeReceiverConfig patches fixed offsets inside the original response, so
+ * it must refuse a payload shorter than the layout it patches.
+ */
+export const BETAFLIGHT_API_1_47_RX_CONFIG_BYTES = 39;
 
 export interface MspRxConfig {
   readonly serialRxProvider: number;
@@ -20,18 +25,20 @@ export interface MspRxConfig {
 }
 
 /**
- * Betaflight MSP_RX_CONFIG API 1.47. The camera angle is byte 22. We still
- * bounds-check the prefix field by field so a short/corrupt response cannot
- * be accepted as editable state, while retaining the complete payload for a
- * surgical write that preserves receiver and smoothing settings.
+ * Betaflight MSP_RX_CONFIG API 1.47. The camera angle is byte 22.
+ *
+ * The read is TOLERANT and the write is STRICT, which is where Betaflight
+ * puts each: its handler reads every trailing field behind an apiVersion
+ * gate over a reader that returns null past the end, so an older firmware
+ * with a shorter payload still populates the tab. Demanding 39 bytes here
+ * meant such a board could not even VIEW its receiver settings. Nothing is
+ * lost by relaxing it: `raw` still carries the exact response, and
+ * encodeReceiverConfig independently refuses to build a write from a payload
+ * shorter than the offsets it patches - so a truncated read can never become
+ * a corrupt write.
  */
 export function decodeRxConfig(payload: Uint8Array): MspRxConfig {
-  if (payload.length < BETAFLIGHT_API_1_47_RX_CONFIG_BYTES) {
-    throw new MspPayloadReadError(
-      `MSP_RX_CONFIG API 1.47 requires ${BETAFLIGHT_API_1_47_RX_CONFIG_BYTES} bytes; received ${payload.length}.`,
-    );
-  }
-  const reader = new MspPayloadReader(payload);
+  const reader = new MspPayloadReader(payload, {lenient: true});
   const serialRxProvider = reader.readU8();
   const stickMax = reader.readU16LE();
   const stickCenter = reader.readU16LE();

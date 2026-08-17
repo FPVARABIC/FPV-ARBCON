@@ -1,4 +1,4 @@
-import {MspPayloadReadError, MspPayloadReader} from './MspPayloadReader';
+import {MspPayloadReader} from './MspPayloadReader';
 
 /** Betaflight API 1.47 rx.h: MAX_SUPPORTED_RC_CHANNEL_COUNT. */
 export const RECEIVER_CHANNEL_MAX_COUNT = 18;
@@ -15,36 +15,39 @@ export interface MspReceiverDeadband {
 }
 
 export function decodeRcChannels(payload: Uint8Array): MspRcChannels {
-  if (payload.length % 2 !== 0) {
-    throw new MspPayloadReadError('MSP_RC payload must contain complete u16 channels.');
-  }
-  const count = payload.length / 2;
-  if (count > RECEIVER_CHANNEL_MAX_COUNT) {
-    throw new MspPayloadReadError(`MSP_RC returned ${count} channels; maximum is ${RECEIVER_CHANNEL_MAX_COUNT}.`);
-  }
-  const reader = new MspPayloadReader(payload);
+  // Betaflight is `FC.RC.active_channels = data.byteLength / 2` with no cap
+  // and no evenness check (src/js/msp/MSPHelper.js case MSP_RC). These are the
+  // live stick bars: a firmware compiled for more channels than this build
+  // knows about, or one trailing byte, must not blank the receiver display -
+  // and it is exactly the display an operator uses to diagnose a bad link.
+  // The cap is kept as a CLAMP so a long payload cannot make us allocate
+  // without bound.
+  const count = Math.min(Math.floor(payload.length / 2), RECEIVER_CHANNEL_MAX_COUNT);
+  const reader = new MspPayloadReader(payload, {lenient: true});
   const channels: number[] = [];
-  while (reader.remaining() > 0) channels.push(reader.readU16LE());
+  for (let index = 0; index < count; index += 1) channels.push(reader.readU16LE());
   return Object.freeze({channels: Object.freeze(channels)});
 }
 
 export function decodeReceiverMap(payload: Uint8Array): readonly number[] {
-  if (payload.length !== 8) {
-    throw new MspPayloadReadError(`MSP_RX_MAP requires 8 bytes; received ${payload.length}.`);
-  }
+  // Betaflight reads this positionally with no length guard at all
+  // (src/js/msp/MSPHelper.js); a firmware that appends or omits a
+  // trailing field must not close the screen that shows it.
   return Object.freeze(Array.from(payload));
 }
 
 export function decodeRssiConfig(payload: Uint8Array): number {
-  if (payload.length < 1) throw new MspPayloadReadError('MSP_RSSI_CONFIG is empty.');
-  return payload[0];
+  // Betaflight reads this positionally with no length guard at all
+  // (src/js/msp/MSPHelper.js); a firmware that appends or omits a
+  // trailing field must not close the screen that shows it.
+  return payload.length > 0 ? payload[0] : 0;
 }
 
 export function decodeReceiverDeadband(payload: Uint8Array): MspReceiverDeadband {
-  if (payload.length < 5) {
-    throw new MspPayloadReadError(`MSP_RC_DEADBAND requires 5 bytes; received ${payload.length}.`);
-  }
-  const reader = new MspPayloadReader(payload);
+  // Betaflight reads this positionally with no length guard at all
+  // (src/js/msp/MSPHelper.js); a firmware that appends or omits a
+  // trailing field must not close the screen that shows it.
+  const reader = new MspPayloadReader(payload, {lenient: true});
   return Object.freeze({
     deadband: reader.readU8(),
     yawDeadband: reader.readU8(),
