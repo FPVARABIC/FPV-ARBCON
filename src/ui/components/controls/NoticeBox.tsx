@@ -93,7 +93,7 @@ export function NoticeBox({
   const spec = VARIANTS[variant];
   const body =
     typeof children === 'string' ? (
-      <Text style={[typography.body, styles.bodyText, {color: spec.fg}]}>
+      <Text style={[typography.caption, styles.bodyText, {color: spec.fg}]}>
         {children}
       </Text>
     ) : (
@@ -109,7 +109,7 @@ export function NoticeBox({
       </View>
       <View style={styles.textColumn}>
         {title ? (
-          <Text style={[typography.bodyStrong, styles.bodyText, {color: spec.fg}]}>
+          <Text style={[typography.caption, styles.titleText, {color: spec.fg}]}>
             {title}
           </Text>
         ) : null}
@@ -120,18 +120,29 @@ export function NoticeBox({
 }
 
 const styles = StyleSheet.create({
+  /* DELIBERATELY COMPACT. A notice is context, not content: at body size
+     with lg padding these boxes were taller than the settings they warned
+     about, and several screens stack two or three of them above the first
+     real control. One step down the type scale and tighter padding keeps
+     them readable while giving the screen back to the operator's task. */
   box: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
     borderWidth: 1,
-    borderRadius: radii.md,
-    padding: spacing.md,
+    borderRadius: radii.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   iconSlot: {
     // Optically centre the icon against the first text line
-    // (lineHeight 26 vs icon 20).
-    paddingTop: 3,
+    // (caption lineHeight 22 vs icon 20).
+    paddingTop: 1,
+  },
+  titleText: {
+    textAlign: 'right',
+    writingDirection: 'rtl',
+    fontWeight: '700',
   },
   textColumn: {
     flex: 1,

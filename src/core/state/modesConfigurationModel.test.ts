@@ -8,11 +8,11 @@ function snapshot(): MspModesConfiguration {
       {name: 'ANGLE', permanentId: 1, flagIndex: 1},
       {name: 'BEEPER', permanentId: 13, flagIndex: 40},
     ],
-    capacity: 3,
+    capacity: 3, unknownIds: [],
     slots: [
-      {permanentId: 1, auxChannelIndex: 2, start: 1200, end: 1600, logic: 0, linkedTo: 0},
-      {permanentId: 13, auxChannelIndex: 0, start: 900, end: 900, logic: 1, linkedTo: 1},
-      {permanentId: 0, auxChannelIndex: 0, start: 900, end: 900, logic: 0, linkedTo: 0},
+      {permanentId: 1, auxChannelIndex: 2, start: 1200, end: 1600, logic: 0, linkedTo: 0, outOfRange: false},
+      {permanentId: 13, auxChannelIndex: 0, start: 900, end: 900, logic: 1, linkedTo: 1, outOfRange: false},
+      {permanentId: 0, auxChannelIndex: 0, start: 900, end: 900, logic: 0, linkedTo: 0, outOfRange: false},
     ],
   };
 }
