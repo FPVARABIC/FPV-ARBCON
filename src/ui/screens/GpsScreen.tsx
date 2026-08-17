@@ -574,20 +574,35 @@ export default function GpsScreen({
             </Text>
             <Text style={styles.cardTitle}>{t('gpsSystem.positionTitle')}</Text>
             <View style={styles.positionPanel}>
-              <View
-                style={[
-                  styles.homeArrow,
-                  {
-                    transform: [
-                      { rotate: `${home?.directionToHomeDegrees ?? 0}deg` },
-                    ],
-                  },
-                ]}
-              >
-                {/* A physical compass bearing: raw geometry, never an
-                    RTL-mirrored alias. */}
-                <Icon name="navigation" size={30} color={colors.accentStrong} />
-              </View>
+              {/* NO DATUM, NO ARROW.
+                  This used to rotate by `home?.directionToHomeDegrees ?? 0`,
+                  so with no home reading at all it pointed due north and
+                  looked exactly like a real bearing - a fabricated
+                  direction an operator could have walked in. The arrow now
+                  renders only when the flight controller has actually
+                  reported a direction; otherwise the hint below says the
+                  reading has not arrived, which is the truth. */}
+              {home === undefined ? (
+                <View style={styles.homeArrowAbsent} testID="gps-home-arrow-absent">
+                  <Icon name="navigation" size={30} color={colors.textMuted} />
+                </View>
+              ) : (
+                <View
+                  testID="gps-home-arrow"
+                  style={[
+                    styles.homeArrow,
+                    {
+                      transform: [
+                        { rotate: `${home.directionToHomeDegrees}deg` },
+                      ],
+                    },
+                  ]}
+                >
+                  {/* A physical compass bearing: raw geometry, never an
+                      RTL-mirrored alias. */}
+                  <Icon name="navigation" size={30} color={colors.accentStrong} />
+                </View>
+              )}
               <Text style={styles.positionHint}>
                 {raw?.hasFix === true
                   ? t('gpsSystem.positionReady')
@@ -979,6 +994,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: spacing.md,
     overflow: 'hidden',
+  },
+  /* The same dial, drawn as UNKNOWN: muted, unrotated, and visibly not a
+     reading. Keeping the shape stops the card reflowing when a fix
+     arrives; the colour is what says there is nothing to point at. */
+  homeArrowAbsent: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1.5,
+    borderColor: colors.borderSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   homeArrow: {
     width: 58,
