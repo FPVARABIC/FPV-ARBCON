@@ -67,13 +67,21 @@ describe('PID tuning MSP decoding', () => {
     });
   });
 
-  it('rejects layouts that are not the pinned API 1.47 contract', () => {
-    expect(() => decodePidTerms(new Uint8Array(14))).toThrow('15 bytes');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(60), rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES})).toThrow('at least 61');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(23), filters: new Uint8Array(49), ...PROFILES})).toThrow('24 bytes');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(48), ...PROFILES})).toThrow('49 bytes');
-    expect(() => decodeRcTuning(new Uint8Array(23))).toThrow('24 bytes');
-    expect(() => decodeFilterConfiguration(new Uint8Array(48))).toThrow('49 bytes');
+  it('TOLERATES a layout that is not exactly the pinned API 1.47 contract', () => {
+    // Reversed deliberately. Betaflight reads MSP_PID, MSP_RC_TUNING and
+    // MSP_FILTER_CONFIG positionally with no length assertion, so a
+    // firmware that appends or omits a trailing field still opens its PID
+    // tab. Exact-length gates here meant a future Betaflight release would
+    // make PID tuning unreachable rather than showing one odd value.
+    expect(() => decodePidTerms(new Uint8Array(14))).not.toThrow();
+    expect(decodePidTerms(new Uint8Array(14))).toHaveLength(5);
+    // A LONGER payload is equally survivable - the extra bytes are ignored.
+    expect(() => decodePidTerms(new Uint8Array(18))).not.toThrow();
+    // Rates and filters take the same posture.
+    expect(() => decodeRcTuning(new Uint8Array(23))).not.toThrow();
+    expect(() => decodeRcTuning(new Uint8Array(30))).not.toThrow();
+    expect(() => decodeFilterConfiguration(new Uint8Array(48))).not.toThrow();
+    expect(() => decodeFilterConfiguration(new Uint8Array(60))).not.toThrow();
   });
   it('rejects missing or inconsistent profile identity', () => {
     const base = {pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES};

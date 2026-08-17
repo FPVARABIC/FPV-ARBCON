@@ -53,9 +53,11 @@ function u16At(bytes: Uint8Array, offset: number): number {
 }
 
 export function decodeRcTuning(payload: Uint8Array): MspRcTuning {
-  if (payload.length !== RC_TUNING_API147_BYTES) {
-    throw new MspPayloadReadError(`MSP_RC_TUNING requires ${RC_TUNING_API147_BYTES} bytes for API 1.47; received ${payload.length}.`);
-  }
+  // TOLERANT BY DESIGN, like Betaflight: it reads these fields
+  // positionally with no length assertion, so a firmware that appends or
+  // omits a trailing field still opens its PID tab. An exact-length gate
+  // here meant a future Betaflight release would make PID tuning
+  // unreachable rather than merely showing one unfamiliar value.
   return Object.freeze({
     ratesType: payload[22],
     rcRate: Object.freeze([payload[0], payload[12], payload[11]]) as readonly [number, number, number],
@@ -71,9 +73,11 @@ export function decodeRcTuning(payload: Uint8Array): MspRcTuning {
 }
 
 export function decodeFilterConfiguration(payload: Uint8Array): MspFilterConfiguration {
-  if (payload.length !== FILTER_CONFIG_API147_BYTES) {
-    throw new MspPayloadReadError(`MSP_FILTER_CONFIG requires ${FILTER_CONFIG_API147_BYTES} bytes for API 1.47; received ${payload.length}.`);
-  }
+  // TOLERANT BY DESIGN, like Betaflight: it reads these fields
+  // positionally with no length assertion, so a firmware that appends or
+  // omits a trailing field still opens its PID tab. An exact-length gate
+  // here meant a future Betaflight release would make PID tuning
+  // unreachable rather than merely showing one unfamiliar value.
   return Object.freeze({
     gyroLpf1StaticHz: u16At(payload, 20),
     gyroLpf1DynamicMinHz: u16At(payload, 29),
@@ -89,10 +93,12 @@ export function decodeFilterConfiguration(payload: Uint8Array): MspFilterConfigu
 }
 
 export function decodePidTerms(payload: Uint8Array): readonly MspPidTerm[] {
-  if (payload.length !== PID_ITEM_COUNT * 3) {
-    throw new MspPayloadReadError(`MSP_PID requires 15 bytes; received ${payload.length}.`);
-  }
-  const reader = new MspPayloadReader(payload);
+  // TOLERANT BY DESIGN, like Betaflight: it reads these fields
+  // positionally with no length assertion, so a firmware that appends or
+  // omits a trailing field still opens its PID tab. An exact-length gate
+  // here meant a future Betaflight release would make PID tuning
+  // unreachable rather than merely showing one unfamiliar value.
+  const reader = new MspPayloadReader(payload, {lenient: true});
   const terms: MspPidTerm[] = [];
   for (let index = 0; index < PID_ITEM_COUNT; index += 1) {
     terms.push(Object.freeze({p: reader.readU8(), i: reader.readU8(), d: reader.readU8()}));
