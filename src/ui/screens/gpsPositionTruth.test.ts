@@ -73,20 +73,69 @@ describe('no fabricated bearing', () => {
   });
 });
 
-describe('coordinates are shown only with a fix', () => {
-  it('renders a placeholder rather than a stale number', () => {
-    // Both coordinates are gated on the SAME live `hasFix`, so a dropped
-    // fix cannot leave the last known position on screen looking current.
-    const gated = EXECUTABLE.match(/raw\?\.hasFix === true\s*\?\s*raw\.(latitude|longitude)Degrees/g);
+/**
+ * LIVE, STALE AND UNAVAILABLE ARE THREE DIFFERENT THINGS.
+ *
+ * valueOf() returns the last value for STALE as well as FRESH, which is
+ * right for most readings on this screen - an ageing satellite count is a
+ * weaker fact, still worth showing with a label. A COORDINATE is the
+ * exception: one that is merely old is not weaker, it is WRONG, because
+ * it names a place the aircraft is no longer at.
+ *
+ * Before this, a link that went stale left the last known position on
+ * screen rendered identically to a live one, with the map link still
+ * enabled - one press from sending someone to where the aircraft used to
+ * be.
+ */
+describe('a stale position is never presented as a live one', () => {
+  it('derives liveness from FRESH, not from hasFix alone', () => {
+    expect(EXECUTABLE).toContain(
+      "const positionIsLive = rawTelemetry.status === 'FRESH' && raw?.hasFix === true",
+    );
+    expect(EXECUTABLE).toContain(
+      "const homeIsLive = homeTelemetry.status === 'FRESH' && home !== undefined",
+    );
+  });
+
+  it('withholds both coordinates unless the reading is live', () => {
+    const gated = EXECUTABLE.match(
+      /positionIsLive \? raw\.(latitude|longitude)Degrees\.toFixed\(7\) : '—'/g,
+    );
     expect(gated?.length ?? 0).toBe(2);
+  });
+
+  it('disables the map link on a stale reading, not just on no fix', () => {
+    expect(EXECUTABLE).toContain('disabled={!positionIsLive}');
+    // And the handler refuses independently of the prop.
+    expect(EXECUTABLE).toContain(
+      "if (rawTelemetry.status !== 'FRESH' || raw?.hasFix !== true) return;",
+    );
+  });
+
+  it('withholds the home bearing on a stale reading', () => {
+    expect(EXECUTABLE).toContain('{!homeIsLive ? (');
+  });
+
+  it('says which of the three states it is in', () => {
+    expect(EXECUTABLE).toContain("t('gpsSystem.positionStale')");
+    expect(EXECUTABLE).toContain("t('gpsSystem.positionWaiting')");
+    expect(EXECUTABLE).toContain("t('gpsSystem.positionReady')");
+    // The stale wording must name the actual risk, not just say "old".
+    expect(ar.gpsSystem.positionStale).toContain('متأخرة');
+    expect(ar.gpsSystem.positionStale).toContain('موقع الطائرة');
   });
 });
 
 describe('the map action is real, and stays real', () => {
-  it('is disabled without a fix and refuses to build a URL', () => {
-    expect(EXECUTABLE).toContain('disabled={raw?.hasFix !== true}');
+  it('is disabled without a usable position and refuses to build a URL', () => {
+    // The gate got STRICTER: it was `hasFix` alone, which let a stale
+    // reading through. `positionIsLive` requires a fix AND a fresh
+    // reading - see the staleness block below.
+    expect(EXECUTABLE).toContain('disabled={!positionIsLive}');
     // The handler re-checks rather than trusting the disabled prop.
-    expect(EXECUTABLE).toContain("if (raw?.hasFix !== true) return;");
+    expect(EXECUTABLE).toContain(
+      "if (rawTelemetry.status !== 'FRESH' || raw?.hasFix !== true) return;",
+    );
   });
 
   it('calls the real platform opener with the real coordinates', () => {

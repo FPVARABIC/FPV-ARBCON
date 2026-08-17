@@ -82,6 +82,40 @@ function saveMessage(outcome: ModesSaveOutcome): {text: string; warning: boolean
   }
 }
 
+/**
+ * A STABLE COLOUR PER MODE, and the reason it exists.
+ *
+ * Every mode card and every range bar was drawn in the same accent, so a
+ * screen with ARM, ANGLE and HORIZON configured showed three identical
+ * strips and nothing tied a strip to the mode that owned it. The colour
+ * is derived from the mode's PERMANENT ID - the firmware's own stable
+ * identifier - so a given mode keeps the same colour across sessions,
+ * boards and reorderings of the list.
+ *
+ * COLOUR IS NEVER THE ONLY SIGNAL. It marks WHICH mode a range belongs
+ * to; whether a mode is configured is carried by border, background and
+ * words as well, so the screen still reads correctly for an operator who
+ * cannot distinguish these hues. See modeCardConfigured below.
+ */
+const MODE_COLOURS: readonly string[] = [
+  '#2E7D9A', // teal
+  '#8E5BA6', // violet
+  '#C2683B', // amber-brown
+  '#3F7A46', // green
+  '#A8484F', // red-brown
+  '#5B6BA8', // indigo
+  '#7A6A2F', // olive
+  '#4B7F8C', // steel
+];
+
+export function modeColour(permanentId: number): string {
+  // Non-negative modulo: permanentId is firmware-supplied and must never
+  // index outside the palette even if a future build reports something
+  // unexpected.
+  const index = ((permanentId % MODE_COLOURS.length) + MODE_COLOURS.length) % MODE_COLOURS.length;
+  return MODE_COLOURS[index];
+}
+
 const ModeActiveBadge = React.memo(function ModeActiveBadge({sessionKey, active, definition}: {sessionKey?: SetupUiSessionKey; active: boolean; definition: MspModeDefinition}) {
   const status = useTelemetryValue<MspStatusExDiagnostics>(sessionKey?.sessionId ?? '', FC_STATUS_TELEMETRY_POLL_ID, active);
   const snapshot = valueOf(status);
@@ -92,15 +126,31 @@ const ModeActiveBadge = React.memo(function ModeActiveBadge({sessionKey, active,
   </View>;
 });
 
-const RangeLiveValue = React.memo(function RangeLiveValue({sessionKey, active, condition}: {sessionKey?: SetupUiSessionKey; active: boolean; condition: Extract<ModeConditionDraft, {kind: 'RANGE'}>}) {
+const RangeLiveValue = React.memo(function RangeLiveValue({sessionKey, active, condition, modeName}: {sessionKey?: SetupUiSessionKey; active: boolean; condition: Extract<ModeConditionDraft, {kind: 'RANGE'}>; modeName: string}) {
   const telemetry = useTelemetryValue<MspRcChannels>(sessionKey?.sessionId ?? '', RECEIVER_CHANNELS_POLL_ID, active);
   const value = valueOf(telemetry)?.channels[condition.auxChannelIndex + 4];
   const percent = value === undefined ? 0 : Math.max(0, Math.min(100, ((value - MODE_RANGE_MIN) / (MODE_RANGE_MAX - MODE_RANGE_MIN)) * 100));
   const inside = value !== undefined && value >= condition.start && value <= condition.end;
+  // The band is drawn in the OWNING MODE'S colour, so a glance at the bar
+  // says which mode it belongs to. Previously every band on the screen
+  // was the same accent and the bar could not be read without tracing it
+  // back to its card.
+  const colour = modeColour(condition.permanentId);
   return <View style={styles.liveRange} testID="modes-live-range">
-    <View style={styles.liveTrack}>
-      <View style={[styles.selectedRange, {left: `${((condition.start - MODE_RANGE_MIN) / (MODE_RANGE_MAX - MODE_RANGE_MIN)) * 100}%`, width: `${((condition.end - condition.start) / (MODE_RANGE_MAX - MODE_RANGE_MIN)) * 100}%`}]} />
+    <View style={styles.liveTrack} testID={`modes-range-track-${condition.permanentId}`}>
+      <View
+        testID={`modes-range-band-${condition.permanentId}`}
+        style={[styles.selectedRange, {backgroundColor: `${colour}33`, borderColor: colour, left: `${((condition.start - MODE_RANGE_MIN) / (MODE_RANGE_MAX - MODE_RANGE_MIN)) * 100}%`, width: `${((condition.end - condition.start) / (MODE_RANGE_MAX - MODE_RANGE_MIN)) * 100}%`}]}
+      />
       {value !== undefined ? <View style={[styles.liveMarker, inside && styles.liveMarkerInside, {left: `${percent}%`}]} /> : null}
+    </View>
+    {/* WHERE IT STARTS, WHERE IT ENDS, AND WHOSE IT IS - in words as well
+        as colour, so the bar is readable without relying on hue. */}
+    <View style={styles.rangeLegend}>
+      <View style={[styles.rangeSwatch, {backgroundColor: colour}]} testID={`modes-range-swatch-${condition.permanentId}`} />
+      <Text style={styles.rangeLegendText} testID="modes-range-bounds">
+        {modeName} · {condition.start}–{condition.end}
+      </Text>
     </View>
     <Text style={[styles.liveRangeText, inside && styles.liveRangeTextInside]}>القيمة الحية: {value ?? '—'}{inside ? ' · داخل النطاق' : ''}</Text>
   </View>;
@@ -124,7 +174,7 @@ function LogicToggle({value, disabled, onChange}: {value: 0 | 1; disabled: boole
   </View>;
 }
 
-function RangeConditionRow({index, condition, sessionKey, active, disabled, onChange, onRemove}: {index: number; condition: Extract<ModeConditionDraft, {kind: 'RANGE'}>; sessionKey?: SetupUiSessionKey; active: boolean; disabled: boolean; onChange: (value: ModeConditionDraft) => void; onRemove: () => void}) {
+function RangeConditionRow({index, condition, modeName, sessionKey, active, disabled, onChange, onRemove}: {index: number; condition: Extract<ModeConditionDraft, {kind: 'RANGE'}>; modeName: string; sessionKey?: SetupUiSessionKey; active: boolean; disabled: boolean; onChange: (value: ModeConditionDraft) => void; onRemove: () => void}) {
   return <View style={styles.condition} testID={`modes-condition-${index}`}>
     <View style={styles.conditionHeader}><View><Text style={styles.conditionType}>نطاق AUX</Text><Text style={styles.conditionHint}>يُفعّل عندما تدخل القناة النطاق المحدد.</Text></View><Pressable disabled={disabled} onPress={onRemove} style={styles.removeButton}><Text style={styles.removeText}>حذف</Text></Pressable></View>
     <View style={styles.fieldsRow}>
@@ -133,7 +183,7 @@ function RangeConditionRow({index, condition, sessionKey, active, disabled, onCh
       <Stepper label="النهاية µs" value={condition.end} min={condition.start + MODE_RANGE_STEP} max={MODE_RANGE_MAX} step={MODE_RANGE_STEP} disabled={disabled} onChange={value => onChange({...condition, end: value})} testID={`modes-end-${index}`} />
       <LogicToggle value={condition.logic} disabled={disabled} onChange={logic => onChange({...condition, logic})} />
     </View>
-    <RangeLiveValue sessionKey={sessionKey} active={active} condition={condition} />
+    <RangeLiveValue sessionKey={sessionKey} active={active} condition={condition} modeName={modeName} />
   </View>;
 }
 
@@ -159,10 +209,30 @@ function ModeCard({definition, snapshot, draft, sessionKey, active, disabled, on
   const rows = draft.conditions.map((condition, index) => ({condition, index})).filter(item => item.condition.permanentId === definition.permanentId);
   const canAdd = draft.conditions.length < snapshot.capacity;
   const linkTargets = snapshot.definitions.filter(item => item.permanentId !== 0 && item.permanentId !== definition.permanentId);
-  return <View style={styles.modeCard} testID={`modes-mode-${definition.permanentId}`}>
-    <View style={styles.modeHeader}><View style={styles.modeTitleGroup}><Text style={styles.modeTitle}>{modeArabicName(definition.name)}</Text><Text style={styles.modeRaw}>{definition.name} · ID {definition.permanentId}</Text></View><ModeActiveBadge sessionKey={sessionKey} active={active} definition={definition} /></View>
+  /**
+   * CONFIGURED, AND UNMISTAKABLY SO.
+   *
+   * Every mode card used to look identical - same surface, same border -
+   * whether it had ranges assigned or none at all, so "which mode am I
+   * working on?" could only be answered by reading the small print inside
+   * each card. A mode that owns at least one condition now carries its own
+   * colour as a left mark, a tinted surface and a coloured border.
+   *
+   * Three signals, not one: an operator who cannot distinguish the hues
+   * still sees a different border weight, a different background and the
+   * condition rows themselves.
+   */
+  const configured = rows.length > 0;
+  const colour = modeColour(definition.permanentId);
+  const name = modeArabicName(definition.name);
+  return <View
+    style={[styles.modeCard, configured && styles.modeCardConfigured, configured && {borderColor: colour}]}
+    testID={`modes-mode-${definition.permanentId}`}
+  >
+    {configured ? <View style={[styles.modeMark, {backgroundColor: colour}]} testID={`modes-mode-mark-${definition.permanentId}`} /> : null}
+    <View style={styles.modeHeader}><View style={styles.modeTitleGroup}><Text style={styles.modeTitle}>{name}</Text><Text style={styles.modeRaw}>{definition.name} · ID {definition.permanentId}</Text></View><ModeActiveBadge sessionKey={sessionKey} active={active} definition={definition} /></View>
     {rows.length === 0 ? <Text style={styles.emptyMode}>لا يوجد شرط لهذا الوضع.</Text> : rows.map(({condition, index}) => condition.kind === 'RANGE'
-      ? <RangeConditionRow key={index} index={index} condition={condition} sessionKey={sessionKey} active={active} disabled={disabled} onChange={next => onUpdate(index, next)} onRemove={() => onRemove(index)} />
+      ? <RangeConditionRow key={index} index={index} condition={condition} modeName={name} sessionKey={sessionKey} active={active} disabled={disabled} onChange={next => onUpdate(index, next)} onRemove={() => onRemove(index)} />
       : <LinkConditionRow key={index} index={index} condition={condition} definitions={snapshot.definitions} disabled={disabled} onChange={next => onUpdate(index, next)} onRemove={() => onRemove(index)} />)}
     <View style={styles.addRow}>
       <Pressable disabled={disabled || !canAdd} onPress={() => onAdd({kind: 'RANGE', permanentId: definition.permanentId, auxChannelIndex: 0, start: 1300, end: 1700, logic: 0})} style={[styles.addButton, (disabled || !canAdd) && styles.buttonDisabled]} testID={`modes-add-range-${definition.permanentId}`}><Text style={styles.addButtonText}>+ إضافة نطاق AUX</Text></Pressable>
@@ -309,7 +379,16 @@ const styles = StyleSheet.create({
   search: {flex: 1, minHeight: 44, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md, color: colors.textPrimary, textAlign: 'right', writingDirection: 'rtl'},
   showUnused: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   showUnusedText: {...typography.body, color: colors.textSecondary},
-  modeCard: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md},
+  modeCard: {position: 'relative', overflow: 'hidden', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md},
+  /* A configured mode is heavier than an empty one in three ways at once:
+     a thicker border in its own colour (applied inline), a raised
+     surface, and the colour bar below. Never colour alone. */
+  modeCardConfigured: {borderWidth: 2, backgroundColor: colors.backgroundRaised},
+  /* First child of an RTL card sits at the reading-start edge. */
+  modeMark: {position: 'absolute', start: 0, top: 0, bottom: 0, width: 5},
+  rangeLegend: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: 4},
+  rangeSwatch: {width: 14, height: 14, borderRadius: 4},
+  rangeLegendText: {...typography.caption, color: colors.textSecondary, writingDirection: 'rtl'},
   modeHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap'},
   modeTitleGroup: {gap: 2},
   modeTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},

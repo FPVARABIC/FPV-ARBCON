@@ -51,9 +51,19 @@ function statusSurfaces(source: string): readonly {name: string; body: string}[]
   // in surfaces that are not notices at all: a diagram canvas and the CLI's
   // terminal chrome are neutral backgrounds and must keep their own metrics.
   const TINT_HEX = String.raw`'#(?:FFF0F[12]|FFF4D8|FFF7E7|FFF8E6|E8F8F1|EAF7F2|E3F1F8)'`;
+  /**
+   * NOT ANCHORED TO THE START OF A LINE - that was a hole in this test.
+   *
+   * Several screens (FailsafeScreen, PidTuningScreen) write their entire
+   * StyleSheet as ONE line. With `^\s*name: {` only the first style on
+   * such a line could ever match, so every notice surface after it was
+   * invisible here and the guard silently passed while banners on those
+   * screens kept their full padding. Matching a name/brace pair anywhere
+   * catches both layouts; `[^{}]*` keeps each body to its own object.
+   */
   const pattern = new RegExp(
-    String.raw`^\s*([A-Za-z0-9_]+):\s*\{([^}]*backgroundColor:\s*(?:colors\.(?:error|warning|success|info)Soft|${TINT_HEX})[^}]*)\}`,
-    'gmi',
+    String.raw`([A-Za-z0-9_]+):\s*\{([^{}]*backgroundColor:\s*(?:colors\.(?:error|warning|success|info)Soft|${TINT_HEX})[^{}]*)\}`,
+    'gi',
   );
   return Array.from(source.matchAll(pattern), m => ({name: m[1], body: m[2]}));
 }

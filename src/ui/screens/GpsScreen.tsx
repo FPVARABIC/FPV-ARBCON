@@ -315,6 +315,23 @@ export default function GpsScreen({
   const raw = valueOf(rawTelemetry);
   const home = valueOf(homeTelemetry);
   const satellites = valueOf(satellitesTelemetry);
+  /**
+   * POSITION IS ONLY A POSITION WHILE IT IS FRESH.
+   *
+   * valueOf() deliberately returns the last value for STALE as well as
+   * FRESH - most readings on this screen are still worth showing while
+   * they age, clearly labelled. Position is the exception, because a
+   * COORDINATE that is merely old is not a weaker fact, it is a wrong
+   * one: it names a place the aircraft is no longer at.
+   *
+   * So the coordinate block, the home bearing and the map link are gated
+   * on FRESH, not on `hasFix` alone. Before this, a link that went stale
+   * left the last known position on screen looking exactly like a live
+   * one, with «فتح الموقع في تطبيق الخرائط» still enabled - one press away
+   * from sending someone to where the aircraft used to be.
+   */
+  const positionIsLive = rawTelemetry.status === 'FRESH' && raw?.hasFix === true;
+  const homeIsLive = homeTelemetry.status === 'FRESH' && home !== undefined;
   const ports = snapshot === undefined ? [] : assignedGpsPorts(snapshot);
   const originalDraft = useMemo(
     () =>
@@ -395,7 +412,11 @@ export default function GpsScreen({
   }, [dirty, reloadNow, t]);
 
   const openMap = useCallback(() => {
-    if (raw?.hasFix !== true) return;
+    // FRESH, not merely fixed. Handing a stale coordinate to a map
+    // application is the one failure on this screen that sends a person
+    // to the wrong place, so the handler re-checks rather than trusting
+    // the disabled prop.
+    if (rawTelemetry.status !== 'FRESH' || raw?.hasFix !== true) return;
     // Platform seam, not a behaviour change: Android still opens the same
     // `geo:` intent URI it always did, while the browser build resolves
     // mapLink.web.ts and opens OpenStreetMap over HTTPS - nothing in a
@@ -404,7 +425,7 @@ export default function GpsScreen({
       latitudeDegrees: raw.latitudeDegrees,
       longitudeDegrees: raw.longitudeDegrees,
     });
-  }, [raw]);
+  }, [raw, rawTelemetry.status]);
 
   const loadMessage =
     loadOutcome?.kind === 'REJECTED'
@@ -582,7 +603,7 @@ export default function GpsScreen({
                   renders only when the flight controller has actually
                   reported a direction; otherwise the hint below says the
                   reading has not arrived, which is the truth. */}
-              {home === undefined ? (
+              {!homeIsLive ? (
                 <View style={styles.homeArrowAbsent} testID="gps-home-arrow-absent">
                   <Icon name="navigation" size={30} color={colors.textMuted} />
                 </View>
@@ -603,24 +624,25 @@ export default function GpsScreen({
                   <Icon name="navigation" size={30} color={colors.accentStrong} />
                 </View>
               )}
-              <Text style={styles.positionHint}>
-                {raw?.hasFix === true
+              <Text style={styles.positionHint} testID="gps-position-hint">
+                {positionIsLive
                   ? t('gpsSystem.positionReady')
+                  : rawTelemetry.status === 'STALE'
+                  ? t('gpsSystem.positionStale')
                   : t('gpsSystem.positionWaiting')}
               </Text>
             </View>
             <View style={styles.coordinateRow}>
+              {/* A coordinate that is merely old is not a weaker fact, it
+                  is a wrong one - so it is withheld rather than shown
+                  next to a small "stale" label the eye skips. */}
               <Metric
                 label={t('gpsSystem.latitude')}
-                value={
-                  raw?.hasFix === true ? raw.latitudeDegrees.toFixed(7) : '—'
-                }
+                value={positionIsLive ? raw.latitudeDegrees.toFixed(7) : '—'}
               />
               <Metric
                 label={t('gpsSystem.longitude')}
-                value={
-                  raw?.hasFix === true ? raw.longitudeDegrees.toFixed(7) : '—'
-                }
+                value={positionIsLive ? raw.longitudeDegrees.toFixed(7) : '—'}
               />
             </View>
             <Button
@@ -628,7 +650,7 @@ export default function GpsScreen({
               onPress={openMap}
               variant="secondary"
               icon="map-pin"
-              disabled={raw?.hasFix !== true}
+              disabled={!positionIsLive}
               style={styles.blockActionSpacing}
               testID="gps-open-map"
             />

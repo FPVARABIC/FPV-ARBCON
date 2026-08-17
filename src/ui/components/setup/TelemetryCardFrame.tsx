@@ -165,9 +165,24 @@ export const telemetryCardContentStyles = StyleSheet.create({
   },
 });
 
+/**
+ * COMPACT BY DEFAULT - these are status tiles, not articles.
+ *
+ * Battery, Receiver, GPS and Sensors share this frame, and it used to
+ * spend `spacing.lg` of padding and a section-title-sized heading on each
+ * of them. Four cards at that scale filled the screen an operator had
+ * just connected to, so the thing they came to check - is there a
+ * battery, is the receiver alive, how many satellites, which sensors were
+ * detected - could not be taken in at a glance and needed scrolling.
+ *
+ * The padding, the heading size and the message spacing come down; the
+ * VALUES inside each card are untouched, so nothing about what is
+ * reported or how it is worded changes - only how much room the frame
+ * takes to report it.
+ */
 const styles = StyleSheet.create({
   container: {
-    padding: spacing.lg,
+    padding: spacing.md,
     borderWidth: 1,
     borderColor: colors.borderSoft,
     borderRadius: radii.md,
@@ -180,13 +195,13 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   title: {
-    ...typography.sectionTitle,
+    ...typography.label,
     color: colors.accentStrong,
   },
   messageText: {
-    ...typography.body,
+    ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.sm,
+    marginTop: 2,
   },
   staleContent: {
     opacity: STALE_OPACITY,
@@ -195,6 +210,6 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.warning,
     fontWeight: '600',
-    marginTop: spacing.sm,
+    marginTop: 2,
   },
 });

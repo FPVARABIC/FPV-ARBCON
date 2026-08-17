@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
@@ -27,6 +27,7 @@ export default function UsbDeviceRow({
   testID,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
+  const [technicalOpen, setTechnicalOpen] = useState(false);
   const supported = isSupportedDevice(device);
   const selectable = supported && !disabled;
   const productLabel = usbProductLabel(
@@ -82,7 +83,37 @@ export default function UsbDeviceRow({
         </Text>
       ) : null}
 
-      <View style={[styles.detailsGrid, !selected && styles.detailsCollapsed]}>
+      {/* TECHNICAL IDENTITY, BEHIND A DISCLOSURE.
+          Driver type, VID, PID and port count identify a device to a
+          DEVELOPER. An operator connecting a flight controller picks it
+          by its name, and four hex fields under every row turned the
+          connection surface into a hardware inventory. They were already
+          hidden for unselected rows; now the selected row hides them too
+          until asked, so the primary surface stays compact and nothing
+          is lost - the same values, one tap away. */}
+      {selected ? (
+        <Pressable
+          onPress={() => setTechnicalOpen(open => !open)}
+          accessibilityRole="button"
+          accessibilityState={{expanded: technicalOpen}}
+          style={styles.technicalToggle}
+          testID="device-technical-toggle"
+        >
+          <Text style={styles.technicalToggleText}>
+            {technicalOpen
+              ? t('devices.hideTechnical')
+              : t('devices.showTechnical')}
+          </Text>
+        </Pressable>
+      ) : null}
+
+      <View
+        style={[
+          styles.detailsGrid,
+          (!selected || !technicalOpen) && styles.detailsCollapsed,
+        ]}
+        testID="device-technical-details"
+      >
         <DetailItem label={t('devices.driverType')} value={device.driverType} />
         <DetailItem
           label={t('devices.vid')}
@@ -194,6 +225,17 @@ const styles = StyleSheet.create({
   },
   detailsCollapsed: {
     display: 'none',
+  },
+  technicalToggle: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.sm,
+    minHeight: 32,
+    justifyContent: 'center',
+  },
+  technicalToggleText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    textAlign: 'right',
   },
   detailItem: {
     minWidth: 80,
