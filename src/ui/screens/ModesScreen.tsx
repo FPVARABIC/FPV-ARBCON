@@ -58,7 +58,7 @@ function blockMessage(reason: ModesBlockReason): string {
   return ({
     DISCONNECTED: 'انتهى الاتصال بمتحكم الطيران. أعد الاتصال ثم أعد القراءة.',
     IDENTIFYING: 'ما زال التطبيق يتحقق من هوية متحكم الطيران.',
-    UNSUPPORTED_FIRMWARE: 'تتطلب شاشة الأوضاع Betaflight مع MSP API 1.47 بالضبط.',
+    UNSUPPORTED_FIRMWARE: 'إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لهذه الشاشة. حدّث البرنامج الثابت.',
     APP_BACKGROUNDED: 'أعد التطبيق إلى الواجهة قبل القراءة أو الحفظ.',
     LINK_RECOVERING: 'الرابط التسلسلي يتعافى. انتظر قليلًا ثم أعد القراءة.',
     FC_ARMED: 'رُفض الحفظ لأن متحكم الطيران ARMED. انزع المراوح ثم افصل التسليح.',

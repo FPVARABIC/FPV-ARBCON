@@ -112,9 +112,25 @@ export default function TopSystemBar({
     identification.status === 'SUCCEEDED'
       ? identification.identity.board.boardName
       : undefined;
+  /**
+   * WHAT BELONGS IN A BAR THE OPERATOR NEVER LEAVES.
+   *
+   * This chip used to read "MSP 1.47" - the wire protocol version. An
+   * operator cannot act on that: they cannot change it, it does not tell them
+   * whether their board is healthy, and it is not printed anywhere on their
+   * hardware. It was developer information occupying permanent space beside
+   * the two facts that DO matter here, the board and the arming state.
+   *
+   * The firmware family replaces it, because "is this actually a Betaflight
+   * board?" is a question the operator can act on - it is the difference
+   * between a screen that will work and one that will not. When we cannot
+   * name the family the chip is not rendered at all, rather than showing a
+   * dash that means nothing.
+   */
   const firmwareLabel =
-    identification.status === 'SUCCEEDED'
-      ? `MSP ${identification.identity.apiVersion.apiVersionMajor}.${identification.identity.apiVersion.apiVersionMinor}`
+    identification.status === 'SUCCEEDED' &&
+    identification.identity.firmware.knownFamily !== 'UNKNOWN'
+      ? identification.identity.firmware.knownFamily
       : undefined;
 
   return (
@@ -185,15 +201,17 @@ export default function TopSystemBar({
               {boardName ?? t('setupTopBar.boardPlaceholder')}
             </Text>
           </View>
-          <View style={styles.identityChip}>
-            <Text
-              style={styles.identityText}
-              numberOfLines={1}
-              testID="setup-top-bar-firmware"
-            >
-              {firmwareLabel ?? t('setupTopBar.boardPlaceholder')}
-            </Text>
-          </View>
+          {firmwareLabel === undefined ? null : (
+            <View style={styles.identityChip}>
+              <Text
+                style={styles.identityText}
+                numberOfLines={1}
+                testID="setup-top-bar-firmware"
+              >
+                {firmwareLabel}
+              </Text>
+            </View>
+          )}
         </View>
         <View
           style={[

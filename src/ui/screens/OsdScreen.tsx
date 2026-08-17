@@ -86,7 +86,7 @@ function blockMessage(reason: OsdBlockReason): string {
     {
       DISCONNECTED: 'لا توجد جلسة متصلة.',
       IDENTIFYING: 'بانتظار التحقق من المتحكم.',
-      UNSUPPORTED_FIRMWARE: 'تحتاج الشاشة Betaflight MSP API 1.47.',
+      UNSUPPORTED_FIRMWARE: 'إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لهذه الشاشة. حدّث البرنامج الثابت.',
       APP_BACKGROUNDED: 'أعد التطبيق إلى الواجهة.',
       LINK_RECOVERING: 'الرابط يتعافى؛ انتظر ثم أعد القراءة.',
       FC_ARMED: 'رُفض الحفظ لأن المتحكم ARMED.',

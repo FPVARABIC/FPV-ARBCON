@@ -229,7 +229,7 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
     const mspClient = mspSessionCoordinator.getActiveMspClient(sessionId);
     const transport = mspSessionCoordinator.getActiveTransport(sessionId);
     if (!mspClient || !transport) {
-      setPollingAuditError('لا توجد جلسة MSP نشطة لتشغيل هذا القياس.');
+      setPollingAuditError('لا يوجد اتصال نشط بمتحكم الطيران لتشغيل هذا القياس.');
       return;
     }
     setPollingAuditStatus('running');

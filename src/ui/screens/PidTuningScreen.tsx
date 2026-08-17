@@ -43,9 +43,9 @@ function blockMessage(reason: PidBlockReason): string {
   return ({
     DISCONNECTED: 'انتهى الاتصال بمتحكم الطيران. أعد الاتصال ثم أعد القراءة.',
     IDENTIFYING: 'ما زال التطبيق يتحقق من هوية متحكم الطيران.',
-    UNSUPPORTED_FIRMWARE: 'هذه الدفعة تدعم Betaflight MSP API 1.47 فقط، لأن تخطيط PID يختلف بين الإصدارات.',
+    UNSUPPORTED_FIRMWARE: 'إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لضبط PID، لأن تخطيط القيم يختلف بين الإصدارات.',
     APP_BACKGROUNDED: 'أعد التطبيق إلى الواجهة قبل قراءة أو حفظ PID.',
-    LINK_RECOVERING: 'رابط MSP يتعافى الآن. انتظر ثم أعد القراءة.',
+    LINK_RECOVERING: 'الاتصال قيد الاستعادة. انتظر ثم أعد القراءة.',
     FC_ARMED: 'رُفض الحفظ لأن متحكم الطيران مسلّح.',
     ARMED_STATE_UNKNOWN: 'تعذر إثبات أن متحكم الطيران DISARMED؛ لم يُرسل أي تعديل.',
     MOTOR_TEST_ACTIVE: 'أنهِ جلسة اختبار المحركات من الزر الثابت أسفل شاشة المحركات، ثم أعد القراءة.',

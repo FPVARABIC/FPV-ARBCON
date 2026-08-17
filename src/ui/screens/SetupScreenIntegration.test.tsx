@@ -72,7 +72,7 @@ const ARABIC = {
   toolDisconnected: 'غير متاح: لا يوجد اتصال نشط',
   toolArmed: 'غير متاح: الطائرة مسلّحة',
   toolBackgrounded: 'غير متاح: التطبيق ليس في المقدمة',
-  toolIncompatible: 'غير متاح: يتطلب واجهة MSP 1.47 المدعومة',
+  toolIncompatible: 'غير متاح مع إصدار البرنامج الثابت في هذه اللوحة.',
   toolArmedUnknown: 'غير متاح: تعذّر تأكيد أن الطائرة غير مسلّحة',
   confirmAction: 'نعم، المراوح مفكوكة — تابع',
 };
@@ -677,7 +677,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const text = allText(renderer);
       // Region 1 identity, Region 3 live cards, Region 4 compatibility,
       // Region 5 enabled controls - all from the same session.
-      expect(text).toContain('متوافق مع واجهة MSP 1.47');
+      expect(text).toContain('متوافق مع هذا الإصدار');
       expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
       // SETUP P1: sensors are named with their own detection state.
       expect(text).toEqual(

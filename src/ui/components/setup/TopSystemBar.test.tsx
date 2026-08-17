@@ -199,7 +199,11 @@ describe('TopSystemBar', () => {
     expect(allText(renderer)).toContain('متصل');
     expect(allText(renderer)).not.toContain('غير متصل');
     expect(allText(renderer)).toContain('MyBoard');
-    expect(allText(renderer)).toContain('MSP 1.48');
+    // The chip used to read the wire protocol version. An operator cannot act
+    // on that; the firmware family answers a question they can act on - is
+    // this board actually running Betaflight?
+    expect(allText(renderer)).toContain('BETAFLIGHT');
+    expect(allText(renderer).join(' ')).not.toMatch(/MSP\s*1\.\d+/);
     // No notice banner while genuinely connected with successful identification.
     expect(findByTestID(renderer, 'setup-top-bar-notice')).toBeNull();
 

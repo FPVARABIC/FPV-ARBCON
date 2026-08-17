@@ -165,10 +165,10 @@ describe('DiagnosticsSection - identity and compatibility copy', () => {
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
         'اللوحة: SPEEDYBEEF405V3',
-        'البرنامج الثابت: BTFL — واجهة MSP 1.47',
+        'البرنامج الثابت: BTFL',
       ]),
     );
-    expect(texts(renderer)).toContain('متوافق مع واجهة MSP 1.47');
+    expect(texts(renderer)).toContain('متوافق مع هذا الإصدار');
     unmount(renderer);
   });
 
@@ -181,7 +181,7 @@ describe('DiagnosticsSection - identity and compatibility copy', () => {
     expect(texts(renderer)).toContain(
       'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',
     );
-    expect(texts(renderer)).not.toContain('متوافق مع واجهة MSP 1.47');
+    expect(texts(renderer)).not.toContain('متوافق مع هذا الإصدار');
     unmount(renderer);
   });
 

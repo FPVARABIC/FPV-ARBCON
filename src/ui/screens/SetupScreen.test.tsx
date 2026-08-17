@@ -2304,11 +2304,11 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const sessionId = 'pass77-region4-compat';
     const { renderer } = await renderSession(sessionId);
     const text = allText(renderer);
-    expect(text).toContain('البرنامج الثابت: BTFL — واجهة MSP 1.48');
+    expect(text).toContain('البرنامج الثابت: BTFL');
     expect(text).toContain(
       'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',
     );
-    expect(text).not.toContain('متوافق مع واجهة MSP 1.47');
+    expect(text).not.toContain('متوافق مع هذا الإصدار');
     await teardown(sessionId, renderer);
   });
 
@@ -2317,7 +2317,7 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const { renderer } = await renderSession(sessionId, client => {
       client.setResponse(MSP_API_VERSION, Uint8Array.from([0, 1, 47]));
     });
-    expect(allText(renderer)).toContain('متوافق مع واجهة MSP 1.47');
+    expect(allText(renderer)).toContain('متوافق مع هذا الإصدار');
     await teardown(sessionId, renderer);
   });
 

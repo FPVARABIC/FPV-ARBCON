@@ -99,10 +99,11 @@ export default function DiagnosticsSection({
       t('diagnostics.identityBoard', { value: view.identity.boardName }),
     );
     identityLines.push(
+      // The wire protocol version was here too. It is developer information -
+      // the operator cannot change it and it is printed on no hardware - so it
+      // stays in the diagnostics EXPORT and out of the always-visible panel.
       t('diagnostics.identityFirmware', {
         identifier: view.identity.firmwareIdentifier,
-        major: view.identity.apiVersionMajor,
-        minor: view.identity.apiVersionMinor,
       }),
     );
   }

@@ -315,7 +315,7 @@ describe('FcToolsSection - disabled states name their reason in text', () => {
     ],
     [
       { compatibility: 'OTHER_FIRMWARE_OR_API' },
-      'غير متاح: يتطلب واجهة MSP 1.47 المدعومة',
+      'غير متاح مع إصدار البرنامج الثابت في هذه اللوحة.',
     ],
     [
       { dataState: 'WAITING' },
@@ -405,7 +405,7 @@ describe('FcToolsSection - confirmation', () => {
     const controller3 = makeFakeController();
     const reboot = render(controller3);
     press(reboot, 'fc-tool-REBOOT-button');
-    expect(texts(reboot).join(' ')).toContain('سينقطع اتصال USB/MSP');
+    expect(texts(reboot).join(' ')).toContain('سينقطع الاتصال مؤقتًا');
     unmount(reboot);
   });
 
