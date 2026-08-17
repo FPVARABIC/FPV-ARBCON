@@ -120,11 +120,19 @@ export function decodePidTuningSnapshot(input: {
   if (input.advanced.length < PID_ADVANCED_API147_MIN_BYTES) {
     throw new MspPayloadReadError(`MSP_PID_ADVANCED requires at least ${PID_ADVANCED_API147_MIN_BYTES} bytes for API 1.47; received ${input.advanced.length}.`);
   }
-  if (input.rates.length !== RC_TUNING_API147_BYTES) {
-    throw new MspPayloadReadError(`MSP_RC_TUNING requires ${RC_TUNING_API147_BYTES} bytes for API 1.47; received ${input.rates.length}.`);
+  // MINIMUMS, not exact lengths - the same posture MSP_PID_ADVANCED above
+  // already takes. Betaflight reads both of these positionally with version
+  // gates and no length guard at all (MSPHelper.js, cases MSP_RC_TUNING and
+  // MSP_FILTER_CONFIG), and both have grown across API versions - the
+  // semver.lt(API_VERSION_1_45) branches in its own reader are the proof.
+  // Demanding an exact length meant the next firmware to append one field
+  // would have taken the whole PID screen down; enough bytes for the fields
+  // this build reads is the real requirement.
+  if (input.rates.length < RC_TUNING_API147_BYTES) {
+    throw new MspPayloadReadError(`MSP_RC_TUNING requires at least ${RC_TUNING_API147_BYTES} bytes for API 1.47; received ${input.rates.length}.`);
   }
-  if (input.filters.length !== FILTER_CONFIG_API147_BYTES) {
-    throw new MspPayloadReadError(`MSP_FILTER_CONFIG requires ${FILTER_CONFIG_API147_BYTES} bytes for API 1.47; received ${input.filters.length}.`);
+  if (input.filters.length < FILTER_CONFIG_API147_BYTES) {
+    throw new MspPayloadReadError(`MSP_FILTER_CONFIG requires at least ${FILTER_CONFIG_API147_BYTES} bytes for API 1.47; received ${input.filters.length}.`);
   }
   if (!Number.isInteger(input.pidProfileIndex) || input.pidProfileIndex < 0 ||
     !Number.isInteger(input.pidProfileCount) || input.pidProfileCount < 1 ||
