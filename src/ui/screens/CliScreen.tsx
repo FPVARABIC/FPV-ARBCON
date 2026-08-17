@@ -7,6 +7,8 @@ import {
   Text,
   TextInput,
   View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import {
@@ -56,6 +58,12 @@ const QUICK_COMMANDS = Object.freeze([
   { command: 'resource show all', label: 'الموارد' },
 ]);
 
+/**
+ * How far from the bottom still counts as "at the bottom". A few pixels of
+ * slack keeps rounding and momentum from silently detaching the follow.
+ */
+const TERMINAL_STICK_SLACK = 24;
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -93,6 +101,35 @@ export default function CliScreen({
   const [status, setStatus] = useState(
     'ابدأ جلسة CLI صريحة. ستتوقف التليمترية مؤقتًا حتى الخروج.',
   );
+
+  /**
+   * FOLLOW THE OUTPUT, BUT LET GO WHEN THE OPERATOR READS BACK.
+   *
+   * Betaflight scrolls its terminal to the bottom on every write
+   * (writeToOutput in src/js/tabs/cli.js). Ours never scrolled at all, so on
+   * a long answer - `diff all` is thousands of lines - new output landed
+   * below the fold and the operator had to chase it by hand.
+   *
+   * Following blindly is the opposite mistake: it yanks the view away from
+   * someone scrolled up reading an error. So the view sticks to the bottom
+   * only while it is ALREADY at the bottom; scrolling up releases it, and
+   * scrolling back down re-arms it.
+   */
+  const terminalRef = useRef<ScrollView>(null);
+  const stickToBottom = useRef(true);
+  const onTerminalScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const {contentOffset, contentSize, layoutMeasurement} = event.nativeEvent;
+      const distanceFromBottom =
+        contentSize.height - layoutMeasurement.height - contentOffset.y;
+      stickToBottom.current = distanceFromBottom <= TERMINAL_STICK_SLACK;
+    },
+    [],
+  );
+  const onTerminalContentSizeChange = useCallback(() => {
+    if (stickToBottom.current)
+      terminalRef.current?.scrollToEnd({animated: false});
+  }, []);
 
   const sync = useCallback(() => {
     setPhase(cli.getPhase());
@@ -387,7 +424,15 @@ export default function CliScreen({
                   </Pressable>
                 </View>
               </View>
-              <ScrollView style={styles.terminal} nestedScrollEnabled>
+              <ScrollView
+                ref={terminalRef}
+                style={styles.terminal}
+                nestedScrollEnabled
+                onScroll={onTerminalScroll}
+                scrollEventThrottle={64}
+                onContentSizeChange={onTerminalContentSizeChange}
+                testID="cli-terminal-scroll"
+              >
                 <Text
                   /* Selectable ON PURPOSE: the terminal log is meant to
                      be read and copied. The shell's non-selectable chrome

@@ -256,4 +256,50 @@ describe('CliScreen', () => {
     expect(cli.execute).not.toHaveBeenCalledWith('save');
     ReactTestRenderer.act(() => renderer.unmount());
   });
+
+  it('follows new output, and lets go the moment the operator scrolls up', async () => {
+    // Betaflight scrolls its terminal to the bottom on every write. Ours did
+    // not scroll at all, so a long answer landed below the fold. Following
+    // blindly is the opposite mistake - it would yank the view away from
+    // someone scrolled up reading an error - so the follow releases on scroll
+    // up and re-arms on the way back down.
+    const { cli } = harness();
+    const { renderer } = await renderStarted(cli);
+    const scroll = renderer.root.findByProps({ testID: 'cli-terminal-scroll' });
+    const scrollToEnd = jest.fn();
+    // The ref points at the host ScrollView; stand in for its imperative API.
+    scroll.instance.scrollToEnd = scrollToEnd;
+
+    // At the bottom: new content follows.
+    ReactTestRenderer.act(() => scroll.props.onContentSizeChange(0, 100));
+    expect(scrollToEnd).toHaveBeenCalled();
+
+    // Operator scrolls up 400px into a 1000px log.
+    scrollToEnd.mockClear();
+    ReactTestRenderer.act(() =>
+      scroll.props.onScroll({
+        nativeEvent: {
+          contentOffset: { x: 0, y: 200 },
+          contentSize: { width: 0, height: 1000 },
+          layoutMeasurement: { width: 0, height: 400 },
+        },
+      }),
+    );
+    ReactTestRenderer.act(() => scroll.props.onContentSizeChange(0, 1200));
+    expect(scrollToEnd).not.toHaveBeenCalled();
+
+    // Back at the bottom: following resumes.
+    ReactTestRenderer.act(() =>
+      scroll.props.onScroll({
+        nativeEvent: {
+          contentOffset: { x: 0, y: 600 },
+          contentSize: { width: 0, height: 1000 },
+          layoutMeasurement: { width: 0, height: 400 },
+        },
+      }),
+    );
+    ReactTestRenderer.act(() => scroll.props.onContentSizeChange(0, 1400));
+    expect(scrollToEnd).toHaveBeenCalled();
+    ReactTestRenderer.act(() => renderer.unmount());
+  });
 });
