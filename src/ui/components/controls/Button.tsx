@@ -27,7 +27,15 @@ import {colors, radii, spacing, typography} from '../../theme';
 import {MIN_TOUCH_TARGET, readInteraction} from './interaction';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost';
-export type ButtonSize = 'md' | 'lg';
+/**
+ * `sm` is narrower, NOT shorter. A small action - "read again", "open
+ * Motors", a row-level correction - does not need the horizontal weight of a
+ * primary CTA, and giving it that weight was making minor actions compete
+ * with the one the operator actually came for. The 44pt minimum touch target
+ * is an accessibility floor and is NOT traded away for density: `sm` keeps
+ * exactly the same height as `md` and only takes back the padding.
+ */
+export type ButtonSize = 'sm' | 'md' | 'lg';
 
 export interface ButtonProps {
   label: string;
@@ -114,7 +122,7 @@ export function Button({
         const {pressed, hovered} = readInteraction(state);
         return [
           styles.base,
-          size === 'lg' ? styles.lg : styles.md,
+          styles[size],
           {backgroundColor: palette.bg, borderColor: palette.border},
           hovered && !disabled && {backgroundColor: palette.bgHover},
           pressed && !disabled && {backgroundColor: palette.bgPressed},
@@ -152,6 +160,7 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     paddingHorizontal: spacing.lg,
   },
+  sm: {minHeight: MIN_TOUCH_TARGET, paddingHorizontal: spacing.md},
   md: {minHeight: MIN_TOUCH_TARGET},
   lg: {minHeight: 52, paddingHorizontal: spacing.xl},
   lgText: {fontSize: 16, lineHeight: 27},
