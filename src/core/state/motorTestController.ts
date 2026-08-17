@@ -1304,6 +1304,24 @@ export interface MotorTestControllerSnapshot {
   readonly stopDescriptors: readonly MotorTestStopDescriptor[];
   readonly teardown: MotorTestTeardownReport | undefined;
   /** Phase 2F: the command-214 stop execution record. */
+  /**
+   * Whether a motor command MAY BE LIVE right now, by the SAME expression
+   * the real wire-stop gate uses (`pulseMayHaveReachedFc ||
+   * engine.mayHaveReachedFc`), so a consumer that trusts this can never
+   * disagree with the gate that actually stops motors.
+   *
+   * Reading `pulse.mayHaveReachedFc` alone is NOT equivalent and is the
+   * specific mistake this field exists to prevent: a facade `setMaster`
+   * latches the professional engine and never the legacy pulse, so a
+   * consumer consulting only the legacy latch would call a
+   * professionally-commanded, still-spinning output "at rest".
+   *
+   * False means NEITHER latch is set, which is the codebase's existing
+   * statement that the session provably never commanded anything. It never
+   * means "the motors have physically stopped" - see physicalStopConfirmed,
+   * which is permanently false because that is not knowable from here.
+   */
+  readonly outputMayBeLive: boolean;
   readonly stopExecution: MotorTestStopExecutionRecord;
   /** Phase 2G: the fixed single-motor pulse-attempt record. */
   readonly pulse: MotorTestPulseRecord;
@@ -1788,6 +1806,8 @@ class MotorTestControllerImpl {
       warnings: this.effectRecord.warnings,
       stopDescriptors: this.effectRecord.stopDescriptors,
       teardown: this.teardownReport,
+      outputMayBeLive:
+        this.pulseMayHaveReachedFc || (this.engine?.mayHaveReachedFc ?? false),
       stopExecution: this.stopExecution,
       pulse: this.pulse,
       activation: this.evaluateActivation(),

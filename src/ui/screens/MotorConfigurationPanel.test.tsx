@@ -245,11 +245,17 @@ describe('MotorConfigurationPanel', () => {
     const tree = await render(
       controllerDouble({ kind: 'REJECTED', reason: 'MOTOR_TEST_ACTIVE' }),
     );
-    // The reason must name the control the operator can actually use. The
-    // old copy pointed at a pinned "end session" rectangle that no longer
-    // exists; lifecycle now belongs to the جلسة المحركات switch, and an
-    // instruction naming a deleted button is worse than no instruction.
-    expect(JSON.stringify(tree.toJSON())).toContain('جلسة المحركات');
+    // The reason must name what the operator actually has to DO, and that
+    // changed with the gate. Configuration is no longer refused because a
+    // session exists - only because a motor may be turning - so telling them
+    // to switch the session off is now wrong advice: it asks for more than
+    // safety requires and sends them round the close-leave-return loop this
+    // change exists to remove. It must say "stop the motors", and it must
+    // say that the session can stay open.
+    const rendered = JSON.stringify(tree.toJSON());
+    expect(rendered).toContain('أوقف المحركات');
+    expect(rendered).toContain('دون إنهاء الجلسة');
+    expect(rendered).not.toContain('جلسة المحركات» في وضع الإيقاف');
     expect(
       tree.root.findAllByProps({ testID: 'motor-config-review-save' }),
     ).toHaveLength(0);

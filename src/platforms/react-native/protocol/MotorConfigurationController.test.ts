@@ -195,7 +195,7 @@ function makeHarness(
       getPhase: () =>
         options.appActive === false ? 'APP_BACKGROUND' : 'ACTIVE',
     },
-    isMotorTestActive: () => options.motorTestActive === true,
+    isMotorOutputEngaged: () => options.motorTestActive === true,
   });
   return { client, controller, telemetry, state };
 }

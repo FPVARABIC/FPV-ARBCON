@@ -14,6 +14,7 @@ function snapshot(machine: 'Ready' | 'Pulsing', allowed: boolean, live = false):
     machine: machine === 'Ready' ? ({name: 'Ready', authority: {}} as never) : ({name: 'Pulsing', authority: {}, pulseDeadlineArmed: true, startAcknowledged: false} as never),
     outcome: {kind: 'READY'}, firmwareCompatibility: undefined, motorScope: undefined,
     motorDiagnosticsSupport: undefined, telemetryHeld: true, warnings: [], stopDescriptors: [], teardown: undefined,
+    outputMayBeLive: false,
     stopExecution: {attempts: 0, commandDispatched: false, commandAcknowledged: false, physicalStopConfirmed: false, deferredBehindActiveWrite: false, attributionAmbiguous: false, attributionResolvedByConfirmation: false, wirePreemptionClaimed: false, submittedNextOnTransport: false, episodeId: 0, outcome: undefined},
     pulse: {attemptId: 1, motorNumber: live ? 1 : undefined, submitted: live, acknowledged: false, deadlineArmedAtSubmission: live, mayHaveReachedFc: live, outcome: undefined},
     activation: {allowed, reasons: allowed ? [] : ['PULSE_OR_STOP_IN_PROGRESS']}, verificationReceipt: undefined,

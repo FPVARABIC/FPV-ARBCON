@@ -71,7 +71,7 @@ import {
   type MotorFirmwareCapability,
 } from '../../../core/firmware-adapters/motorFirmwareCompatibility';
 import {
-  isMotorTestSessionActive,
+  isMotorOutputEngagedForSession,
 } from './motorTestCapability';
 import { mspSessionCoordinator } from './MspSessionCoordinator';
 import type {
@@ -220,8 +220,17 @@ export interface MotorConfigurationAppStateOwner {
 export interface MotorConfigurationControllerOptions {
   readonly coordinator?: MotorConfigurationSessionCoordinator;
   readonly appStateOwner?: MotorConfigurationAppStateOwner;
-  /** Test seam only. Production uses the official capability store. */
-  readonly isMotorTestActive?: (sessionId: string) => boolean;
+  /**
+   * Test seam only. Production uses the official capability store.
+   *
+   * Named for what it now asks: could a motor be TURNING? It used to be
+   * bound to isMotorTestSessionActive - "does a session exist?" - which
+   * refused configuration whenever a Motors session was open even with every
+   * motor at rest, and so forced the operator to close the session, leave
+   * Motors and come back to change something that concerns motors. Session
+   * existence was never the dangerous condition.
+   */
+  readonly isMotorOutputEngaged?: (sessionId: string) => boolean;
 }
 
 class MotorConfigurationPreflightError extends Error {
@@ -310,12 +319,12 @@ function isDefiniteNotApplied(error: unknown): boolean {
  * motorTestCapability.ts's own isMotorTestSessionActive() for why a
  * per-controller copy that read `mayHaveReachedFc` as liveness blocked
  * every configuration screen until the cable was replugged. */
-const defaultMotorTestActive = isMotorTestSessionActive;
+const defaultMotorOutputEngaged = isMotorOutputEngagedForSession;
 
 export class MotorConfigurationController {
   private readonly coordinator: MotorConfigurationSessionCoordinator;
   private readonly appStateOwner: MotorConfigurationAppStateOwner;
-  private readonly isMotorTestActive: (sessionId: string) => boolean;
+  private readonly isMotorOutputEngaged: (sessionId: string) => boolean;
   private readonly boxIds = new Map<
     string,
     {
@@ -327,8 +336,8 @@ export class MotorConfigurationController {
   constructor(options: MotorConfigurationControllerOptions = {}) {
     this.coordinator = options.coordinator ?? mspSessionCoordinator;
     this.appStateOwner = options.appStateOwner ?? setupAppStateTelemetryOwner;
-    this.isMotorTestActive =
-      options.isMotorTestActive ?? defaultMotorTestActive;
+    this.isMotorOutputEngaged =
+      options.isMotorOutputEngaged ?? defaultMotorOutputEngaged;
   }
 
   async load(sessionId: string): Promise<MotorConfigurationLoadOutcome> {
@@ -988,7 +997,10 @@ export class MotorConfigurationController {
     if (this.appStateOwner.getPhase() !== 'ACTIVE') {
       return { reason: 'APP_BACKGROUNDED' };
     }
-    if (this.isMotorTestActive(sessionId)) {
+    // Motors may be TURNING - not merely "a session is open". A session
+    // sitting at rest is exactly as safe as no session, and blocking it was
+    // the whole of the close-leave-return loop.
+    if (this.isMotorOutputEngaged(sessionId)) {
       return { reason: 'MOTOR_TEST_ACTIVE' };
     }
     const compatibility = this.compatibilityOf(
@@ -1049,7 +1061,9 @@ export class MotorConfigurationController {
     if (this.appStateOwner.getPhase() !== 'ACTIVE') {
       throw new MotorConfigurationPreflightError('APP_BACKGROUNDED');
     }
-    if (this.isMotorTestActive(sessionId)) {
+    // Re-checked at write time, not just at admission: the operator may have
+    // started a motor between opening the editor and pressing save.
+    if (this.isMotorOutputEngaged(sessionId)) {
       throw new MotorConfigurationPreflightError('MOTOR_TEST_ACTIVE');
     }
     if (!this.isStillOwned(sessionId, client, generation, epoch)) {

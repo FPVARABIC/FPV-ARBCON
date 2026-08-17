@@ -52,6 +52,11 @@ import {
 import {MotorTestTelemetryRegistry} from '../../../core/protocol/telemetry/motorTestTelemetryBarrier';
 import type {MspClient} from '../../../core/protocol/mspClient';
 import type {MotorTestControllerSnapshot} from '../../../core/state/motorTestController';
+import {
+  evaluateMotorOutputEngagement,
+  isMotorOutputEngaged,
+  type MotorOutputEngagementVerdict,
+} from '../../../core/state/motorOutputEngagement';
 
 /**
  * Builds the coordinator-wide motor-test telemetry registry.
@@ -237,6 +242,35 @@ export function isMotorTestSnapshotActive(
 /** The session-id lookup over isMotorTestSnapshotActive(). */
 export function isMotorTestSessionActive(sessionId: string): boolean {
   return isMotorTestSnapshotActive(
+    CAPABILITIES.get(sessionId)?.lifecycleStopPort()?.getSnapshot(),
+  );
+}
+
+/**
+ * The session-id lookup over evaluateMotorOutputEngagement().
+ *
+ * DIFFERENT QUESTION FROM isMotorTestSessionActive, deliberately. That one
+ * asks whether a session EXISTS and is used where an open session genuinely
+ * matters - the other screens, which share one serial link and must not
+ * interleave writes with a motor bench. This one asks whether a motor could
+ * be TURNING, which is the question the in-Motors configuration gate should
+ * have been asking all along.
+ *
+ * A missing capability reports ENGAGED here rather than "no session": absent
+ * evidence is never evidence of safety, and this predicate is consulted
+ * precisely when something may already be spinning.
+ */
+export function isMotorOutputEngagedForSession(sessionId: string): boolean {
+  return isMotorOutputEngaged(
+    CAPABILITIES.get(sessionId)?.lifecycleStopPort()?.getSnapshot(),
+  );
+}
+
+/** The full verdict, for surfaces that must explain a refusal. */
+export function motorOutputEngagementForSession(
+  sessionId: string,
+): MotorOutputEngagementVerdict {
+  return evaluateMotorOutputEngagement(
     CAPABILITIES.get(sessionId)?.lifecycleStopPort()?.getSnapshot(),
   );
 }

@@ -122,6 +122,8 @@ function snapshotFor(options: {
     warnings: [],
     stopDescriptors: [],
     teardown: undefined,
+    // A command may be live: the same fact the wire-stop gate reads.
+    outputMayBeLive: false,
     stopExecution: {
       attempts: 0,
       commandDispatched: false,
