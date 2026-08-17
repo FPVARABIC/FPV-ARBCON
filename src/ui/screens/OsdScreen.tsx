@@ -403,7 +403,7 @@ export default function OsdScreen({
         scrollEnabled={!dragging}
         contentContainerStyle={[styles.content, {maxWidth}]}>
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>OSD · API 1.47</Text>
+          
           <Text style={styles.title}>العرض على الشاشة</Text>
           <Text style={styles.subtitle}>
             اسحب أي عنصر داخل المعاينة لتغيير موضعه، ثم احفظ ليُكتب في متحكم الطيران.

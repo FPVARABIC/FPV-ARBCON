@@ -331,9 +331,6 @@ export default function SensorsScreen({
     <View style={styles.root} testID="sensors-screen">
       <ScrollView contentContainerStyle={[styles.content, { maxWidth }]}>
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>
-            SENSORS · MSP_RAW_IMU 20 HZ · MSP_ALTITUDE 5 HZ
-          </Text>
           <Text style={styles.title}>الحساسات</Text>
           <Text style={styles.subtitle}>
             راقب القيم الخام واتجاه الحركة لحظيًا، واستخدمها لاكتشاف محور مقلوب

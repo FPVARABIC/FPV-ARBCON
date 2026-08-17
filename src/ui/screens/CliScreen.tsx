@@ -331,9 +331,6 @@ export default function CliScreen({
             teaching lives where it acts: the save confirmation. */}
         <View style={styles.header}>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>
-              RAW BETAFLIGHT CLI · EXCLUSIVE LINK
-            </Text>
             <Text style={styles.title}>سطر الأوامر</Text>
             <Text style={styles.identity}>{identity}</Text>
           </View>
