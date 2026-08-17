@@ -24,5 +24,12 @@ export {
 } from './layout';
 export type {LayoutTier} from './layout';
 
+export {
+  noticeSurface,
+  noticeInline,
+  noticeText,
+  noticeTitle,
+} from './notice';
+
 export {useContentEnvelope} from './useContentEnvelope';
 export type {ContentEnvelope} from './useContentEnvelope';

@@ -49,7 +49,7 @@ import {
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
-import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {
   Button,
   ChoiceChips,
@@ -816,23 +816,13 @@ const styles = StyleSheet.create({
   title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
   subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right'},
   flexOne: {flex: 1},
-  warning: {
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.warning,
+  warning: {...noticeSurface, borderColor: colors.warning,
     backgroundColor: colors.warningSoft,
-    padding: spacing.md,
-    gap: spacing.sm,
-  },
-  warningText: {...typography.body, color: colors.warning, textAlign: 'right'},
-  success: {
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.success,
-    backgroundColor: colors.successSoft,
-    padding: spacing.md,
-  },
-  successText: {...typography.body, color: colors.success, textAlign: 'right'},
+    gap: spacing.sm},
+  warningText: {...typography.caption, color: colors.warning, textAlign: 'right'},
+  success: {...noticeSurface, borderColor: colors.success,
+    backgroundColor: colors.successSoft},
+  successText: {...typography.caption, color: colors.success, textAlign: 'right'},
   inlineAction: {alignSelf: 'flex-start'},
   card: {
     backgroundColor: colors.surface,

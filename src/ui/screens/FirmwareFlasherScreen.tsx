@@ -80,7 +80,7 @@ import {
   sanitizeUserVisibleText,
   usbProductLabel,
 } from '../presentation/brandSafeText';
-import {colors, radii, spacing, typography} from '../theme';
+import {colors, noticeSurface, radii, spacing, typography} from '../theme';
 import {Icon} from '../icons';
 import {useTranslation} from 'react-i18next';
 import {copyPlainTextToClipboard} from '../../platforms/clipboard';
@@ -2827,15 +2827,10 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textPrimary,
   },
-  stallNotice: {
-    marginTop: spacing.sm,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    borderWidth: 1,
+  stallNotice: {...noticeSurface, marginTop: spacing.sm,
     borderColor: colors.warning,
     backgroundColor: colors.warningSoft,
-    gap: spacing.xs,
-  },
+    gap: spacing.xs},
   stallTitle: {
     ...typography.sectionTitle,
     color: colors.warning,

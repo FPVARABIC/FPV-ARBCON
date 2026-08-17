@@ -32,7 +32,7 @@ import {
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
-import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, IconButton, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
 
 export interface ModesControllerPort {
@@ -296,13 +296,13 @@ const styles = StyleSheet.create({
   hardwareNotice: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, padding: spacing.md, gap: 3},
   hardwareTitle: {...typography.eyebrow, color: colors.accentStrong},
   hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl'},
-  warning: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.errorSoft, padding: spacing.md, gap: 3},
-  warningTitle: {...typography.heading, color: colors.error, textAlign: 'right'},
-  warningText: {...typography.body, color: colors.error, textAlign: 'right', writingDirection: 'rtl'},
-  loadError: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, padding: spacing.md, gap: spacing.sm},
-  loadErrorText: {...typography.body, color: colors.warning, textAlign: 'right', writingDirection: 'rtl'},
-  success: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, padding: spacing.md},
-  successText: {...typography.body, color: colors.success, textAlign: 'right'},
+  warning: {...noticeSurface, borderColor: colors.error, backgroundColor: colors.errorSoft, gap: 3},
+  warningTitle: {...typography.caption, fontWeight: '700', color: colors.error, textAlign: 'right'},
+  warningText: {...typography.caption, color: colors.error, textAlign: 'right', writingDirection: 'rtl'},
+  loadError: {...noticeSurface, borderColor: colors.warning, backgroundColor: colors.warningSoft, gap: spacing.sm},
+  loadErrorText: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'rtl'},
+  success: {...noticeSurface, borderColor: colors.success, backgroundColor: colors.successSoft},
+  successText: {...typography.caption, color: colors.success, textAlign: 'right'},
   inlineAction: {alignSelf: 'flex-start'},
   toolbar: {gap: spacing.sm, padding: spacing.md, borderRadius: radii.lg, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft},
   toolbarWide: {flexDirection: 'row', alignItems: 'center'},

@@ -23,7 +23,7 @@ import {
   type ReceiverSaveOutcome, type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol/receiverPresentation';
 import {StickyActionBar} from '../components/editing';
-import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, SelectField, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
 import {Icon, type IconName} from '../icons/Icon';
 
@@ -891,13 +891,13 @@ const styles = StyleSheet.create({
   toggleRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md},
   flexOne: {flex: 1},
 
-  warning: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, padding: spacing.md, gap: spacing.sm},
-  warningText: {...typography.body, color: colors.warning, textAlign: 'right', writingDirection: 'rtl'},
-  danger: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.errorSoft, padding: spacing.md, gap: 3},
-  dangerTitle: {...typography.heading, color: colors.error, textAlign: 'right'},
-  dangerText: {...typography.body, color: colors.error, textAlign: 'right', writingDirection: 'rtl'},
-  success: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, padding: spacing.md},
-  successText: {...typography.body, color: colors.success, textAlign: 'right'},
+  warning: {...noticeSurface, borderColor: colors.warning, backgroundColor: colors.warningSoft, gap: spacing.sm},
+  warningText: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'rtl'},
+  danger: {...noticeSurface, borderColor: colors.error, backgroundColor: colors.errorSoft, gap: 3},
+  dangerTitle: {...typography.caption, fontWeight: '700', color: colors.error, textAlign: 'right'},
+  dangerText: {...typography.caption, color: colors.error, textAlign: 'right', writingDirection: 'rtl'},
+  success: {...noticeSurface, borderColor: colors.success, backgroundColor: colors.successSoft},
+  successText: {...typography.caption, color: colors.success, textAlign: 'right'},
   inlineAction: {alignSelf: 'flex-start'},
   loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl},
   bottomSpace: {height: spacing.xl},

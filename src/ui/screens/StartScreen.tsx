@@ -14,15 +14,7 @@ import type {RootStackParamList} from '../../navigation/types';
 import {Icon} from '../icons';
 import {BrandLogo} from '../brand';
 import {readInteraction} from '../components/controls/interaction';
-import {
-  colors,
-  contentEnvelope,
-  isDesktopTier,
-  radii,
-  resolveLayoutTier,
-  spacing,
-  typography,
-} from '../theme';
+import {colors, contentEnvelope, isDesktopTier, noticeSurface, radii, resolveLayoutTier, spacing, typography} from '../theme';
 
 /**
  * THE OFFICIAL LOGO ON START - Android only. The document is RTL, so the
@@ -312,13 +304,8 @@ const styles = StyleSheet.create({
   routeButtonText: {...typography.sectionTitle, color: colors.accentText},
   routeButtonTextBlue: {color: colors.white},
   pressed: {opacity: 0.75},
-  safetyNote: {
-    padding: spacing.md,
-    borderRadius: radii.md,
-    backgroundColor: colors.successSoft,
-    borderWidth: 1,
+  safetyNote: {...noticeSurface, backgroundColor: colors.successSoft,
     borderColor: colors.success,
-    gap: 3,
-  },
+    gap: 3},
   safetyText: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
 });

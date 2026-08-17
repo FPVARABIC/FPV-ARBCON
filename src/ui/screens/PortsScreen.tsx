@@ -51,7 +51,7 @@ import {
   type SetupUiSessionKey,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import { StickyActionBar } from '../components/editing';
 import {
   Button,
@@ -1003,14 +1003,9 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     writingDirection: 'rtl',
   },
-  errorCard: {
-    backgroundColor: colors.errorSoft,
-    borderWidth: 1,
+  errorCard: {...noticeSurface, backgroundColor: colors.errorSoft,
     borderColor: colors.error,
-    borderRadius: radii.md,
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
+    gap: spacing.md},
   errorText: {
     ...typography.body,
     color: colors.error,
@@ -1065,14 +1060,9 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     writingDirection: 'rtl',
   },
-  validationCard: {
-    backgroundColor: colors.warningSoft,
-    borderWidth: 1,
+  validationCard: {...noticeSurface, backgroundColor: colors.warningSoft,
     borderColor: colors.warning,
-    borderRadius: radii.md,
-    padding: spacing.lg,
-    gap: spacing.xs,
-  },
+    gap: spacing.xs},
   validationTitle: {
     ...typography.sectionTitle,
     color: colors.warning,

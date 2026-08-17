@@ -6,7 +6,7 @@ import {
   View,
 } from 'react-native';
 
-import {colors, radii, spacing, typography} from '../../theme';
+import {colors, noticeSurface, radii, spacing, typography} from '../../theme';
 import {ToggleSwitch} from '../controls';
 
 export function FirmwareSection({
@@ -273,7 +273,7 @@ const styles = StyleSheet.create({
   progressPercent: {...typography.caption, color: colors.accentStrong, fontWeight: '700'},
   progressTrack: {height: 8, borderRadius: 4, backgroundColor: colors.surfaceRaised, overflow: 'hidden'},
   progressFill: {height: 8, borderRadius: 4, backgroundColor: colors.accent},
-  notice: {padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.infoSoft, gap: 3},
+  notice: {...noticeSurface, backgroundColor: colors.infoSoft, gap: 3},
   noticeWarning: {backgroundColor: colors.warningSoft},
   noticeSuccess: {backgroundColor: colors.successSoft},
   noticeError: {backgroundColor: colors.errorSoft},

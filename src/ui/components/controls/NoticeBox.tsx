@@ -26,7 +26,7 @@ import {StyleSheet, Text, View} from 'react-native';
 
 import {Icon} from '../../icons';
 import type {IconName} from '../../icons';
-import {colors, radii, spacing, typography} from '../../theme';
+import {colors, noticeSurface, noticeText, noticeTitle, spacing} from '../../theme';
 
 export type NoticeVariant =
   | 'danger'
@@ -93,7 +93,7 @@ export function NoticeBox({
   const spec = VARIANTS[variant];
   const body =
     typeof children === 'string' ? (
-      <Text style={[typography.caption, styles.bodyText, {color: spec.fg}]}>
+      <Text style={[styles.bodyText, {color: spec.fg}]}>
         {children}
       </Text>
     ) : (
@@ -109,7 +109,7 @@ export function NoticeBox({
       </View>
       <View style={styles.textColumn}>
         {title ? (
-          <Text style={[typography.caption, styles.titleText, {color: spec.fg}]}>
+          <Text style={[styles.titleText, {color: spec.fg}]}>
             {title}
           </Text>
         ) : null}
@@ -126,30 +126,20 @@ const styles = StyleSheet.create({
      real control. One step down the type scale and tighter padding keeps
      them readable while giving the screen back to the operator's task. */
   box: {
+    ...noticeSurface,
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: spacing.sm,
-    borderWidth: 1,
-    borderRadius: radii.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
   },
   iconSlot: {
     // Optically centre the icon against the first text line
     // (caption lineHeight 22 vs icon 20).
     paddingTop: 1,
   },
-  titleText: {
-    textAlign: 'right',
-    writingDirection: 'rtl',
-    fontWeight: '700',
-  },
+  titleText: noticeTitle,
   textColumn: {
     flex: 1,
     gap: 2,
   },
-  bodyText: {
-    textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+  bodyText: noticeText,
 });

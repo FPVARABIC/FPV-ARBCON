@@ -17,13 +17,7 @@ import {
   type RawCliPhase,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
-import {
-  colors,
-  radii,
-  spacing,
-  typography,
-  useContentEnvelope,
-} from '../theme';
+import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
 import {readInteraction} from '../components/controls/interaction';
 import {MIN_TOUCH_TARGET} from '../components/controls';
@@ -639,13 +633,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   phaseOpen: { color: colors.success, backgroundColor: colors.accentSoft },
-  error: {
-    backgroundColor: colors.errorSoft,
-    borderWidth: 1,
-    borderColor: colors.error,
-    borderRadius: radii.md,
-    padding: spacing.md,
-  },
+  error: {...noticeSurface, backgroundColor: colors.errorSoft,
+    borderColor: colors.error},
   errorText: { ...typography.body, color: colors.error, textAlign: 'right' },
   disabled: { opacity: 0.42 },
   quickCard: {

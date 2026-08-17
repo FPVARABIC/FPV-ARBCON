@@ -18,13 +18,7 @@ import {
   useTelemetryValue,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
-import {
-  colors,
-  radii,
-  spacing,
-  typography,
-  useContentEnvelope,
-} from '../theme';
+import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import { Button } from '../components/controls';
 interface Props {
   readonly sessionKey?: SetupUiSessionKey;
@@ -658,13 +652,8 @@ const styles = StyleSheet.create({
     flexBasis: 220,
     minWidth: 0,
   },
-  warning: {
-    borderWidth: 1,
-    borderColor: colors.warning,
-    backgroundColor: colors.warningSoft,
-    borderRadius: radii.md,
-    padding: spacing.md,
-  },
+  warning: {...noticeSurface, borderColor: colors.warning,
+    backgroundColor: colors.warningSoft},
   warningText: {
     ...typography.body,
     color: colors.warning,

@@ -45,7 +45,7 @@ import {
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
 import { openMapLocation } from '../../platforms/mapLink';
-import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {
   Button,
   MIN_TOUCH_TARGET,
@@ -1099,28 +1099,18 @@ const styles = StyleSheet.create({
     writingDirection: 'ltr',
   },
   choiceTextSelected: { color: colors.accentStrong },
-  infoBox: {
-    borderRadius: radii.md,
-    backgroundColor: colors.infoSoft,
-    borderWidth: 1,
+  infoBox: {...noticeSurface, backgroundColor: colors.infoSoft,
     borderColor: colors.info,
-    padding: spacing.md,
-    marginTop: spacing.md,
-  },
+    marginTop: spacing.md},
   infoTitle: { ...typography.bodyStrong, color: colors.info },
   infoText: {
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: spacing.xs,
   },
-  errorBox: {
-    borderWidth: 1,
-    borderColor: colors.error,
+  errorBox: {...noticeSurface, borderColor: colors.error,
     backgroundColor: colors.errorSoft,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    marginTop: spacing.md,
-  },
+    marginTop: spacing.md},
   errorText: { ...typography.body, color: colors.error },
   stateText: {
     ...typography.body,
