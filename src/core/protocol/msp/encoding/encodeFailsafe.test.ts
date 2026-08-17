@@ -2,7 +2,7 @@ import type {MspFailsafeSnapshot} from '../decoding/decodeFailsafe';
 import {createFailsafeConfigurationDraft} from '../../../state/failsafeConfigurationModel';
 import {encodeChangedFailsafeConfiguration} from './encodeFailsafe';
 
-const snapshot: MspFailsafeSnapshot = {config: {delayDeciseconds: 15, landingTimeSeconds: 60, throttle: 1000, switchMode: 0, throttleLowDelayDeciseconds: 100, procedure: 1}, channels: [{mode: 0, value: 1500}, {mode: 1, value: 1000}], supportsGpsRescue: true};
+const snapshot: MspFailsafeSnapshot = {config: {delayDeciseconds: 15, landingTimeSeconds: 60, throttle: 1000, switchMode: 0, rawSwitchMode: 0, throttleLowDelayDeciseconds: 100, procedure: 1, rawProcedure: 1, truncated: false}, channels: [{mode: 0, rawMode: 0, value: 1500, outOfRange: false}, {mode: 1, rawMode: 1, value: 1000, outOfRange: false}], supportsGpsRescue: true};
 describe('encodeChangedFailsafeConfiguration', () => {
   it('writes only changed owned groups with exact indexed payloads', () => {
     const draft = createFailsafeConfigurationDraft(snapshot);

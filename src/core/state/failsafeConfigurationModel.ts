@@ -36,8 +36,35 @@ export type FailsafeValidationCode =
   | 'CHANNEL_VALUE_INVALID'
   | 'AUX_AUTO_FORBIDDEN';
 
+/**
+ * PROJECTS the editable settings out of a snapshot - it does not spread it.
+ *
+ * A snapshot now also carries read-only diagnostics the decoder derived
+ * (rawSwitchMode, rawProcedure, truncated; rawMode and outOfRange per
+ * channel). Those describe what the FIRMWARE sent; they are not settings
+ * and an operator cannot edit them. Spreading them into the draft would
+ * put them inside the JSON comparison below, so a save whose readback was
+ * otherwise byte-perfect could be reported UNVERIFIED purely because a
+ * corrected value cleared its own `outOfRange` flag - a false negative on
+ * the safety-critical screen, produced by a diagnostic.
+ *
+ * Listing the fields explicitly also means a future diagnostic added to
+ * the snapshot cannot silently leak into drafts and equality again.
+ */
 export function createFailsafeConfigurationDraft(snapshot: MspFailsafeSnapshot): FailsafeConfigurationDraft {
-  return Object.freeze({...snapshot.config, channels: Object.freeze(snapshot.channels.map(channel => Object.freeze({...channel})))});
+  const {delayDeciseconds, landingTimeSeconds, throttle, switchMode, throttleLowDelayDeciseconds, procedure} =
+    snapshot.config;
+  return Object.freeze({
+    delayDeciseconds,
+    landingTimeSeconds,
+    throttle,
+    switchMode,
+    throttleLowDelayDeciseconds,
+    procedure,
+    channels: Object.freeze(
+      snapshot.channels.map(channel => Object.freeze({mode: channel.mode, value: channel.value})),
+    ),
+  });
 }
 
 export function failsafeDraftsEqual(a: FailsafeConfigurationDraft, b: FailsafeConfigurationDraft): boolean {

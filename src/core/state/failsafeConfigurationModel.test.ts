@@ -1,7 +1,7 @@
 import type {MspFailsafeSnapshot} from '../protocol/msp/decoding/decodeFailsafe';
 import {createFailsafeConfigurationDraft, validateFailsafeDraft} from './failsafeConfigurationModel';
 
-const snapshot: MspFailsafeSnapshot = {config: {delayDeciseconds: 15, landingTimeSeconds: 60, throttle: 1000, switchMode: 0, throttleLowDelayDeciseconds: 100, procedure: 1}, channels: [{mode: 0, value: 1500}, {mode: 0, value: 1500}, {mode: 0, value: 1500}, {mode: 0, value: 1000}, {mode: 1, value: 1500}], supportsGpsRescue: false};
+const snapshot: MspFailsafeSnapshot = {config: {delayDeciseconds: 15, landingTimeSeconds: 60, throttle: 1000, switchMode: 0, rawSwitchMode: 0, throttleLowDelayDeciseconds: 100, procedure: 1, rawProcedure: 1, truncated: false}, channels: [{mode: 0, rawMode: 0, value: 1500, outOfRange: false}, {mode: 0, rawMode: 0, value: 1500, outOfRange: false}, {mode: 0, rawMode: 0, value: 1500, outOfRange: false}, {mode: 0, rawMode: 0, value: 1000, outOfRange: false}, {mode: 1, rawMode: 1, value: 1500, outOfRange: false}], supportsGpsRescue: false};
 describe('failsafe configuration model', () => {
   it('accepts the firmware defaults', () => expect(validateFailsafeDraft(createFailsafeConfigurationDraft(snapshot), snapshot)).toEqual([]));
   it('rejects GPS rescue without build evidence and AUTO on AUX', () => {
