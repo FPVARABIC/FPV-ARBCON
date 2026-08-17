@@ -57,19 +57,30 @@ import {useSessionLossRedirect} from './src/navigation/useSessionLossRedirect';
 import type {RootStackParamList} from './src/navigation/types';
 import {WebAlertHost, installWebAlert} from './src/platforms/web/webAlert';
 import {WebCompatibilityNotice} from './src/platforms/web/WebCompatibilityNotice';
-import {PreviewNotice} from './src/platforms/web/PreviewNotice';
 import {colors} from './src/ui/theme';
 
 /**
  * True only in the GitHub Pages preview build, which sets
- * VITE_FPV_ARBCON_PREVIEW=true. This is the ONLY place the flag is read -
- * PreviewNotice itself takes no flag, so it stays a plain, testable
- * component and the build-time condition stays in one place.
+ * VITE_FPV_ARBCON_PREVIEW=true.
  *
  * `import.meta.env` is a Vite construct, which is why this read lives in
  * this file: App.web.tsx is only ever compiled by Vite, never by Jest.
+ *
+ * IT NO LONGER RENDERS ANYTHING. A yellow "unverified preview" strip used
+ * to sit above every route, and it was the first thing an operator saw on
+ * every screen - build provenance occupying the top of a flight-controller
+ * tool. Build status is a DEVELOPER fact, so it is now a developer
+ * diagnostic: emitted once to the console, where a developer looking for
+ * it will find it, and nowhere in the product surface.
  */
 const IS_PREVIEW_BUILD = import.meta.env.VITE_FPV_ARBCON_PREVIEW === 'true';
+
+if (IS_PREVIEW_BUILD) {
+  console.info(
+    '[FPV-ARBCON] Preview build. Connection paths are real and unmodified; ' +
+      'hardware behaviour still requires confirmation on a physical board.',
+  );
+}
 
 // The shared screens are written for a genuinely RTL layout (see
 // src/navigation/tabs.ts on tab order). react-native-web reads this the
@@ -113,10 +124,9 @@ function App(): React.JSX.Element {
 
   return (
     <View style={styles.container}>
-      {/* Above the compatibility notice: "this build is unverified" is
-          the first thing a preview visitor must read. Purely a label -
-          see PreviewNotice for why it changes no behaviour. */}
-      {IS_PREVIEW_BUILD ? <PreviewNotice /> : null}
+      {/* No build-status strip here. The compatibility notice stays: it
+          reports a capability the browser genuinely lacks, which changes
+          what the operator can do, unlike which build they are running. */}
       <WebCompatibilityNotice />
       <BrandTopChrome />
       <View style={styles.navigator}>

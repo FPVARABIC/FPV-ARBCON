@@ -18,6 +18,7 @@ import ReactTestRenderer, {act} from 'react-test-renderer';
 import '../../i18n';
 
 import StartScreen from './StartScreen';
+import {BRAND_PRODUCT_NAME} from '../brand';
 import {SetupConnectWorkspace} from './setupSessionHost';
 
 type Renderer = ReactTestRenderer.ReactTestRenderer;
@@ -234,13 +235,18 @@ describe('Home offers exactly two destinations', () => {
     }
   });
 
-  it('keeps the official logo on Home', () => {
+  it('keeps the official logo and the product NAME on Home', () => {
     const renderer = renderStart(jest.fn());
     renderers.push(renderer);
     // Native builds show the emblem here; the web build carries it in the
     // persistent top chrome instead. Either way it is the real artwork,
     // never a drawn lettermark badge.
-    expect(screenText(renderer)).toContain('FPV-ARBCON');
+    //
+    // The written name is the product's, not the repository's. This used
+    // to assert "FPV-ARBCON" - the repo slug - which is what the app
+    // actually called itself to its own users.
+    expect(screenText(renderer)).toContain(BRAND_PRODUCT_NAME);
+    expect(screenText(renderer)).not.toContain('FPV-ARBCON');
     const logos = renderer.root.findAllByProps({testID: 'start-brand-logo'});
     const lettermarks = renderer.root
       .findAllByType(Text)
@@ -249,6 +255,16 @@ describe('Home offers exactly two destinations', () => {
     // On web the emblem lives in the persistent chrome, so its absence
     // here is correct; on native it must be present.
     expect(logos.length >= 0).toBe(true);
+  });
+
+  it('shows no hardcoded "ready" badge pretending to be connection state', () => {
+    // A green dot and the word «جاهز» sat in the brand row as though they
+    // reported the link. Both were literals - no prop, no state - so the
+    // app announced itself ready with no board attached and would have
+    // kept saying it through a failed connection.
+    const renderer = renderStart(jest.fn());
+    renderers.push(renderer);
+    expect(screenText(renderer)).not.toContain('جاهز');
   });
 });
 

@@ -90,7 +90,16 @@ export function SetupConnectWorkspace({
           <Text style={styles.backLabel}>العودة</Text>
         </Pressable>
       ) : null}
-      <UsbConnectionScreen onSessionEstablished={onSessionEstablished} />
+      {/* autoConnectOnEntry: reaching this workspace IS the request to
+          connect - the operator pressed "فتح إعدادات متحكم الطيران" to get
+          here. When exactly one authorized board is present it opens by
+          itself and the settings appear; anything ambiguous, unauthorized
+          or absent still waits for them. See the prop's own comment for
+          why this needs no browser gesture. */}
+      <UsbConnectionScreen
+        onSessionEstablished={onSessionEstablished}
+        autoConnectOnEntry
+      />
     </View>
   );
 }

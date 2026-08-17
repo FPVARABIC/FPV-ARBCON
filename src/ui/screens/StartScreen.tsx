@@ -12,7 +12,7 @@ import {
 
 import type {RootStackParamList} from '../../navigation/types';
 import {Icon} from '../icons';
-import {BrandLogo} from '../brand';
+import {BrandLogo, BRAND_PRODUCT_NAME, BRAND_PRODUCT_TAGLINE} from '../brand';
 import {readInteraction} from '../components/controls/interaction';
 import {colors, contentEnvelope, isDesktopTier, noticeSurface, radii, resolveLayoutTier, spacing, typography} from '../theme';
 
@@ -135,22 +135,20 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
         {maxWidth: Math.min(contentEnvelope(tier, desktop), HOME_MAX_WIDTH)},
       ]}
       keyboardShouldPersistTaps="handled">
-      <View style={styles.brandRow}>
-        {SHOW_START_LOGO ? (
-          /* First child of an RTL row = the RIGHT edge. 56dp of emblem:
-             prominent on a phone without pushing the two route cards
-             below the fold. */
-          <BrandLogo height={56} testID="start-brand-logo" />
-        ) : null}
-        <View style={styles.brandCopy}>
-          <Text style={styles.brandName}>FPV-ARBCON</Text>
-          <Text style={styles.brandTagline}>مركز تحكم الطيران العربي</Text>
+      {/* WEB CARRIES ITS IDENTITY IN THE PERSISTENT CHROME (BrandTopChrome,
+          above every route), so repeating emblem and name here would stack
+          the same identity twice within a hundred pixels. On Android there
+          is no chrome strip, so this row IS the identity. */}
+      {SHOW_START_LOGO ? (
+        <View style={styles.brandRow}>
+          {/* First child of an RTL row = the RIGHT edge. */}
+          <BrandLogo height={72} testID="start-brand-logo" />
+          <View style={styles.brandCopy}>
+            <Text style={styles.brandName}>{BRAND_PRODUCT_NAME}</Text>
+            <Text style={styles.brandTagline}>{BRAND_PRODUCT_TAGLINE}</Text>
+          </View>
         </View>
-        <View style={styles.offlinePill}>
-          <View style={styles.offlineDot} />
-          <Text style={styles.offlineText}>جاهز</Text>
-        </View>
-      </View>
+      ) : null}
 
       <View style={styles.hero}>
         <Text style={styles.heroTitle}>اختر ما تريد تنفيذه</Text>
@@ -211,19 +209,22 @@ const styles = StyleSheet.create({
      persistently there. */
   brandRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   brandCopy: {flex: 1},
-  brandName: {...typography.sectionTitle, color: colors.textPrimary, letterSpacing: 0.6},
-  brandTagline: {...typography.caption, color: colors.textSecondary},
-  offlinePill: {
-    flexDirection: 'row',
-    gap: 6,
-    alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: radii.pill,
-    backgroundColor: colors.surface,
+  /* THE GREEN DOT AND "جاهز" ARE GONE. They sat here as though they were
+     connection state, and they were not: both were hardcoded literals with
+     no prop, no state and nothing behind them, so the app reported itself
+     "ready" on a machine with no board attached and would have gone on
+     saying it while a connection failed. A status indicator that cannot be
+     anything but green is decoration wearing the costume of telemetry -
+     worse than absent, because it invites the operator to trust it. Real
+     connection state is shown where it is genuinely known: the Setup
+     surface, driven by the session. */
+  brandName: {
+    ...typography.title,
+    color: colors.textPrimary,
+    letterSpacing: 0.4,
+    writingDirection: 'ltr',
   },
-  offlineDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.success},
-  offlineText: {...typography.label, color: colors.textSecondary},
+  brandTagline: {...typography.caption, color: colors.textSecondary},
   hero: {paddingVertical: spacing.lg, gap: spacing.sm},
   /* Peers, laid out in the product's RTL reading order: index 0 (connect)
      is the RIGHTMOST card, matching src/navigation/tabs.ts's convention.

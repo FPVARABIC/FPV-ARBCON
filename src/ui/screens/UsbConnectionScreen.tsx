@@ -496,11 +496,28 @@ interface Props {
    * the CLOSE_FAILED cable-reset rule - is untouched.
    */
   onSessionEstablished?: (sessionKey: SetupUiSessionKey) => void;
+  /**
+   * Connect to an unambiguous board by itself, ONCE, on the first scan
+   * after mount - see the effect below for the full reasoning.
+   *
+   * OPT-IN, and deliberately so. This screen's standing contract is that
+   * it opens a device only from an explicit press, and a dozen tests hold
+   * it to that. That contract is right for the screen in isolation: a
+   * scan, an attach event or a re-render must never grab a port. What
+   * changes it here is CALLER INTENT - the setup workspace renders this
+   * because the operator pressed "فتح إعدادات متحكم الطيران", which is
+   * already a request to connect. Only that caller passes this.
+   *
+   * Defaults to false, so nothing that renders this screen without asking
+   * gains automatic hardware access.
+   */
+  autoConnectOnEntry?: boolean;
 }
 
 export default function UsbConnectionScreen({
   client = usbSerialTransportClient,
   onSessionEstablished,
+  autoConnectOnEntry = false,
 }: Props): React.JSX.Element {
   const { t } = useTranslation();
   const copyKeys = connectionCopyKeys(Platform.OS);
@@ -891,6 +908,90 @@ export default function UsbConnectionScreen({
     state.requiresCableReset,
     state.selectedPortIndex,
     t,
+  ]);
+
+  /**
+   * OPENING THE CONFIGURATOR IS THE REQUEST TO CONNECT.
+   *
+   * "فتح إعدادات متحكم الطيران" used to mean: land on a connection page,
+   * find the one device already listed, press «اتصال», and only then reach
+   * the settings. Every one of those steps except the last was the app
+   * asking the operator to confirm a decision they had already made by
+   * pressing the button that got them here.
+   *
+   * So when the board is UNAMBIGUOUS, the screen connects to it itself.
+   *
+   * WHY THIS NEEDS NO USER GESTURE, which is the part that would otherwise
+   * make it impossible in a browser: only navigator.serial.requestPort()
+   * - the chooser - is gesture-bound. This path never calls it. It runs
+   * only when listDevices() ALREADY returned the device, and on web
+   * getPorts() returns exclusively ports the operator has previously
+   * authorized. So this connects to a board they have already granted, and
+   * a first-time visitor still sees the system chooser, still only from
+   * their own press on «اختيار جهاز». Android has no chooser at all; its
+   * permission dialog is raised by the system during open() and is not
+   * gesture-bound either.
+   *
+   * ONCE PER MOUNT, and only on the FIRST completed scan. Both halves are
+   * load-bearing:
+   *
+   *   - latching means a deliberate «قطع الاتصال» leaves the operator
+   *     disconnected instead of being reconnected a frame later, which
+   *     would make the disconnect button look broken and could reopen a
+   *     port they disconnected precisely in order to unplug;
+   *
+   *   - first-scan-only means a board plugged in LATER does not open
+   *     itself. An attach event must never raise Android's permission
+   *     dialog or seize a port as a side effect of a cable moving; that
+   *     is a standing rule of this screen and this does not bend it.
+   *
+   * It defers to every existing gate rather than restating them:
+   * handleConnect() is the same function the button calls, so a busy,
+   * connected, cable-reset or unselected state still refuses. The reducer
+   * only auto-selects when there is exactly ONE supported device with one
+   * port, so an ambiguous bench of two boards is still the operator's
+   * choice to make.
+   */
+  const autoConnectAttemptedRef = useRef(false);
+  const firstScanSettledRef = useRef(false);
+  useEffect(() => {
+    if (!autoConnectOnEntry || autoConnectAttemptedRef.current) {
+      return;
+    }
+    if (state.connectionState !== 'ready' || !state.hasScannedOnce) {
+      return;
+    }
+    // The first completed scan is the entry scan. Anything after it was
+    // provoked by something other than the operator arriving.
+    if (firstScanSettledRef.current) {
+      autoConnectAttemptedRef.current = true;
+      return;
+    }
+    firstScanSettledRef.current = true;
+    if (
+      state.selectedDeviceKey === null ||
+      state.selectedPortIndex === null ||
+      state.requiresCableReset ||
+      !selectedDevice
+    ) {
+      // Nothing unambiguous was present on arrival. The operator drives
+      // from here; a later attach must not connect by itself.
+      autoConnectAttemptedRef.current = true;
+      return;
+    }
+    autoConnectAttemptedRef.current = true;
+    // Fire and forget: handleConnect() owns every outcome through the
+    // reducer, exactly as it does for the button press.
+    handleConnect().catch(() => undefined);
+  }, [
+    autoConnectOnEntry,
+    handleConnect,
+    selectedDevice,
+    state.connectionState,
+    state.hasScannedOnce,
+    state.requiresCableReset,
+    state.selectedDeviceKey,
+    state.selectedPortIndex,
   ]);
 
   const handleDisconnect = useCallback(async () => {

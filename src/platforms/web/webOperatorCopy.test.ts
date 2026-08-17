@@ -51,20 +51,46 @@ function* walk(node: unknown, path = ''): Generator<[string, string]> {
 
 const ALL = [...walk(ar)];
 
-describe('the Web preview banner speaks to an operator', () => {
-  it('carries no internal review vocabulary', () => {
-    expect(ar.webPlatform.previewNotice).not.toContain('REQUIRES HARDWARE TEST');
-    expect(ar.webPlatform.previewDetail).not.toContain('REQUIRES HARDWARE TEST');
-    // `telemetry` untranslated was the other English token in the banner.
-    expect(ar.webPlatform.previewDetail).not.toContain('telemetry');
+/**
+ * THE BUILD-STATUS STRIP IS GONE, AND MAY NOT COME BACK.
+ *
+ * A yellow "نسخة معاينة قيد التحقق" bar used to sit above every route, so
+ * the first thing an operator read on every screen was which build they
+ * were running. Which build this is cannot change a single decision they
+ * make at the aircraft; it is a developer fact, and it now lives in a
+ * console diagnostic instead (App.web.tsx).
+ *
+ * This guards the surface rather than the words: the copy is deleted, so a
+ * test asserting on its wording would have nothing to protect. What must
+ * not return is a top-level strip announcing preview/beta/build status.
+ */
+describe('no build-status strip in the product surface', () => {
+  it('has no preview banner copy left to render', () => {
+    const web = ar.webPlatform as Record<string, unknown>;
+    expect(web.previewNotice).toBeUndefined();
+    expect(web.previewDetail).toBeUndefined();
   });
 
-  it('still tells the whole truth: preview, real connection, nothing faked', () => {
-    const both = `${ar.webPlatform.previewNotice} ${ar.webPlatform.previewDetail}`;
-    expect(both).toContain('معاينة'); // it is a preview
-    expect(both).toContain('لم يُعطَّل'); // the real connection is not disabled
-    expect(both).toContain('مصطنعة'); // nothing synthetic
-    expect(both).toContain('جهاز فعلي'); // hardware needs real-device confirmation
+  it('no locale string announces the build as a preview or beta', () => {
+    // ALL is every leaf string in the catalogue - see walk() above.
+    const offenders = ALL.filter(
+      ([, value]) =>
+        /نسخة\s*(معاينة|تجريبية)/.test(value) || /قيد\s*التحقق/.test(value),
+    ).map(([path]) => path);
+    expect(offenders).toEqual([]);
+  });
+
+  it('the web root renders no preview component', () => {
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const root = fs.readFileSync(
+      path.join(__dirname, '..', '..', '..', 'App.web.tsx'),
+      'utf8',
+    );
+    expect(root).not.toContain('<PreviewNotice');
+    // The flag may still be read - a console diagnostic is the point - but
+    // it must not gate a rendered element.
+    expect(root).not.toMatch(/IS_PREVIEW_BUILD\s*\?[^\n]*</);
   });
 });
 

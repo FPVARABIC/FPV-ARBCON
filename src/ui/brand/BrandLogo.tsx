@@ -41,6 +41,25 @@ export const BRAND_LOGO_ASPECT =
 /** The product's Arabic brand name, as written inside the logo itself. */
 export const BRAND_LOGO_LABEL = 'FPV بالعربي';
 
+/**
+ * The product name that sits beside the emblem, and the ONLY spelling of
+ * it in the interface.
+ *
+ * It lives here rather than in each surface because the identity used to
+ * be written twice - the web top strip showed the emblem alone, the Start
+ * screen showed "FPV-ARBCON" - so the product introduced itself by its
+ * repository slug on one surface and not at all on the other. One
+ * constant means the browser chrome and the Android Start screen cannot
+ * drift apart again.
+ *
+ * NOT translated. It is a proper noun, and the Arabic name is already
+ * inside the emblem next to it (BRAND_LOGO_LABEL).
+ */
+export const BRAND_PRODUCT_NAME = 'FPV Arabic Configurator';
+
+/** The Arabic line under the product name. */
+export const BRAND_PRODUCT_TAGLINE = 'مركز تحكم الطيران العربي';
+
 export interface BrandLogoProps {
   /** Height of the VISIBLE emblem in dp; width follows its true aspect. */
   readonly height: number;
