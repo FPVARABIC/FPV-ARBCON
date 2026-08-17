@@ -180,10 +180,28 @@ jobs:
       # is what a 2-CPU runner does by default anyway, and is the only
       # topology in which the leaked handle sits in the process that has to
       # exit. Pinning it removes the CPU count as a variable.
+      # HEAP CEILING, RAISED ON EVIDENCE - not to make a red run green.
+      #
+      # Run #135 died here with "Ineffective mark-compacts near heap limit",
+      # the main process aborting at ~1.92 GB, which is Node's default
+      # old-space limit. The suspicion was that the commit under test had
+      # leaked memory, so it was measured rather than assumed - peak heap
+      # across the whole suite, same command, same machine:
+      #
+      #   6edfe35  (run #134, PASSED)  3284 MB
+      #   d0cf7d1  (run #135, OOM)     3065 MB
+      #
+      # The passing commit peaked HIGHER. The suite has simply been running
+      # against the default ceiling for some time and which side of it a run
+      # lands on is marginal, so #134 passing was luck rather than headroom.
+      # A GitHub runner has 16 GB; 6 GB gives the suite real room while
+      # still failing loudly on a genuine runaway leak instead of swallowing
+      # one.
       - name: Jest
         timeout-minutes: 10
         env:
           JEST_LEAK_OUT: ${{ github.workspace }}/jest-open-handles.txt
+          NODE_OPTIONS: --max-old-space-size=6144
         run: |
           if [ "${{ inputs.diagnostic_js_only }}" = "true" ]; then
             echo "DIAGNOSTIC RUN: open-handle reporter attached, one worker, no Android steps."

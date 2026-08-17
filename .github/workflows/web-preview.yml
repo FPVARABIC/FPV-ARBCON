@@ -3,9 +3,16 @@ name: Web Preview (GitHub Pages)
 # PUBLISHES THE BROWSER BUILD OF THIS BRANCH AS AN HTTPS PREVIEW.
 #
 # This is a PREVIEW of unverified work, not a release. Every hardware path
-# in this branch is still REQUIRES HARDWARE TEST, and the deployed build
-# says so in Arabic at the top of the page (see PreviewNotice.tsx). The
-# banner is a label only - it disables nothing, and the real Web Serial /
+# in this branch still requires confirmation on a physical board.
+#
+# The deployed build no longer SAYS so on screen. It used to carry an
+# Arabic strip above every route announcing an unverified preview, and
+# that is a developer fact: which build an operator is running cannot
+# change a decision they make at the aircraft. It is now a console
+# diagnostic (App.web.tsx), and the check below asserts the strip stays
+# out of the shipped bytes.
+#
+# Nothing about the build is stubbed either way - the real Web Serial /
 # WebUSB connection path behaves exactly as it does locally.
 #
 # WHY HTTPS MATTERS HERE SPECIFICALLY, beyond the usual reasons: Web
@@ -126,8 +133,10 @@ jobs:
           # repository and every dependency, which a preview visitor has
           # no use for and should not be served by default.
           FPV_ARBCON_WEB_SOURCEMAP: 'false'
-          # Shows the Arabic operator preview banner
-          # banner. A label only - it stubs nothing and fakes nothing.
+          # Marks this as the preview build. It no longer renders anything:
+          # the flag now only emits a console diagnostic naming the build,
+          # for a developer who goes looking. It stubs nothing and fakes
+          # nothing, and never did.
           VITE_FPV_ARBCON_PREVIEW: 'true'
           # Stamped into the connection diagnostics report so a user's
           # copied evidence names the exact deployed commit.
@@ -178,22 +187,29 @@ jobs:
           fi
           echo "OK: index.html references ${ASSET_PREFIX}."
 
-          # 3. The preview banner is genuinely in the shipped bytes.
-          #    Non-ASCII may be emitted literally or \u-escaped, so both
-          #    forms are accepted - asserting one would silently stop
-          #    testing anything if the minifier changed its mind.
-          # The banner is asserted by its OPERATOR copy, not by an
-          # internal review token. It used to be matched on the literal
-          # "REQUIRES HARDWARE TEST", which is our own process vocabulary
-          # and was rendering as the first line of the product on every
-          # screen width - measured at 360/390/412/768/1024/1366. The
-          # banner still ships and still tells the truth; it now does so
-          # in the operator's language, so the check follows it there.
+          # 3. The build-status banner is genuinely ABSENT from the
+          #    shipped bytes.
+          #
+          #    THIS CHECK IS INVERTED FROM WHAT IT USED TO BE. It asserted
+          #    that "نسخة معاينة قيد التحقق" WAS present, because a strip
+          #    announcing an unverified preview build sat above every
+          #    route. That strip is gone: which build an operator is
+          #    running cannot change a single decision they make at the
+          #    aircraft, so it is a developer fact and now lives in a
+          #    console diagnostic (App.web.tsx) instead of at the top of a
+          #    flight-controller tool.
+          #
+          #    The gate is kept rather than deleted, pointing the other
+          #    way, so the banner cannot quietly return. Its Arabic copy
+          #    was removed from the catalogue too, and a unit test
+          #    (webOperatorCopy.test.ts) fails if any locale string starts
+          #    announcing the build as a preview or beta again - this is
+          #    the same rule enforced on the shipped bytes.
           if grep -rq "نسخة معاينة قيد التحقق" dist-web/assets; then
-            echo "OK: preview banner present."
-          else
-            echo "FAIL: the preview banner is missing from the bundle."
+            echo "FAIL: a build-status preview banner is back in the bundle."
             exit 1
+          else
+            echo "OK: no build-status banner in the shipped bytes."
           fi
 
           # 4. Receiver and PID both ship as full surfaces, and both are
