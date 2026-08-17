@@ -884,7 +884,7 @@ const styles = StyleSheet.create({
     borderColor: colors.textSecondary,
     backgroundColor: colors.backgroundRaised,
   },
-  rotorActive: { borderColor: colors.warning, backgroundColor: '#FFF4D8' },
+  rotorActive: { borderColor: colors.warning, backgroundColor: colors.warningSoft },
   blade: {
     position: 'absolute',
     borderRadius: radii.pill,

@@ -22,7 +22,7 @@ import {
   type MotorConfigurationLoadOutcome,
   type MotorConfigurationSaveOutcome,
 } from '../../platforms/react-native/protocol/MotorConfigurationController';
-import { colors, radii, spacing, typography } from '../theme';
+import {colors, noticeSurface, radii, spacing, typography} from '../theme';
 import { ToggleSwitch } from '../components/controls';
 import { formatMotorProtocol } from './MotorConfigurationSummary';
 
@@ -894,34 +894,21 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     writingDirection: 'rtl',
   },
-  confirmation: {
-    gap: spacing.md,
+  confirmation: {...noticeSurface, gap: spacing.md,
     borderColor: colors.warning,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    backgroundColor: '#FFF4D8',
-    padding: spacing.md,
-  },
+    backgroundColor: colors.warningSoft},
   confirmationTitle: {
     ...typography.sectionTitle,
     color: colors.warning,
     writingDirection: 'rtl',
   },
-  errorNotice: {
-    borderRadius: radii.sm,
-    backgroundColor: '#FFF0F1',
-    padding: spacing.md,
-  },
+  errorNotice: {...noticeSurface, backgroundColor: colors.errorSoft},
   errorText: {
     ...typography.body,
     color: colors.error,
     writingDirection: 'rtl',
   },
-  successNotice: {
-    borderRadius: radii.sm,
-    backgroundColor: '#EAF7F2',
-    padding: spacing.md,
-  },
+  successNotice: {...noticeSurface, backgroundColor: colors.successSoft},
   successText: {
     ...typography.body,
     color: colors.success,

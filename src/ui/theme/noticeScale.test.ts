@@ -36,10 +36,25 @@ function walk(dir: string): readonly string[] {
   });
 }
 
-/** Style bodies whose background is one of the status tints. */
+/**
+ * Style bodies whose background is one of the status tints.
+ *
+ * Matching `colors.*Soft` ALONE was not enough and missed real banners: the
+ * Motors screen wrote its tints as raw hex (`'#FFF0F1'`), so its propeller
+ * warning - the most prominent notice in the app and the heaviest box in it -
+ * was invisible to this test. Hex literals are now caught as well, which both
+ * closes the hole and makes bypassing the tokens pointless.
+ */
 function statusSurfaces(source: string): readonly {name: string; body: string}[] {
-  const pattern =
-    /^\s*([A-Za-z0-9_]+):\s*\{([^}]*colors\.(?:error|warning|success|info)Soft[^}]*)\}/gm;
+  // Only hex values that ARE status tints - the token values themselves and
+  // the near-miss shades screens hand-wrote for them. Matching any hex swept
+  // in surfaces that are not notices at all: a diagram canvas and the CLI's
+  // terminal chrome are neutral backgrounds and must keep their own metrics.
+  const TINT_HEX = String.raw`'#(?:FFF0F[12]|FFF4D8|FFF7E7|FFF8E6|E8F8F1|EAF7F2|E3F1F8)'`;
+  const pattern = new RegExp(
+    String.raw`^\s*([A-Za-z0-9_]+):\s*\{([^}]*backgroundColor:\s*(?:colors\.(?:error|warning|success|info)Soft|${TINT_HEX})[^}]*)\}`,
+    'gmi',
+  );
   return Array.from(source.matchAll(pattern), m => ({name: m[1], body: m[2]}));
 }
 

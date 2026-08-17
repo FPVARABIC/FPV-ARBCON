@@ -58,7 +58,7 @@ import {
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
 import type {
   MotorTestActivationBlockReason,
@@ -2120,15 +2120,10 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     writingDirection: 'rtl',
   },
-  dangerBanner: {
-    flexDirection: 'row',
+  dangerBanner: {...noticeSurface, flexDirection: 'row',
     gap: spacing.sm,
-    backgroundColor: '#FFF0F1',
-    borderColor: colors.error,
-    borderWidth: 1,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-  },
+    backgroundColor: colors.errorSoft,
+    borderColor: colors.error},
   dangerIcon: { fontSize: 22, color: colors.error },
   dangerTitle: {
     ...typography.sectionTitle,
@@ -2143,15 +2138,11 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   safetyNoticeCopy: { gap: spacing.xs },
-  faultBanner: {
-    flexDirection: 'row',
+  faultBanner: {...noticeSurface, flexDirection: 'row',
     gap: spacing.sm,
-    backgroundColor: '#FFF0F1',
+    backgroundColor: colors.errorSoft,
     borderColor: colors.error,
-    borderWidth: 2,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-  },
+    borderWidth: 2},
   faultText: {
     ...typography.title,
     color: colors.error,
@@ -2340,7 +2331,7 @@ const styles = StyleSheet.create({
   },
   slotCardLive: {
     borderColor: colors.warning,
-    backgroundColor: '#FFF4D8',
+    backgroundColor: colors.warningSoft,
   },
   slotLabel: {
     ...typography.mono,
@@ -2479,26 +2470,16 @@ const styles = StyleSheet.create({
   holdSupportingActive: {
     color: colors.accentText,
   },
-  readinessBlock: {
-    gap: spacing.xs,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    borderWidth: 1,
+  readinessBlock: {...noticeSurface, gap: spacing.xs,
     borderColor: colors.warning,
-    backgroundColor: '#FFF8E6',
-  },
+    backgroundColor: colors.warningSoft},
   prepareButton: { minHeight: MIN_TOUCH_TARGET + spacing.md, alignItems: 'center', justifyContent: 'center', borderColor: colors.accent, borderWidth: 2, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
   prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'rtl' },
-  readyBanner: {
-    flexDirection: 'row',
+  readyBanner: {...noticeSurface, flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    borderWidth: 1,
     borderColor: '#A9D8CB',
-    backgroundColor: '#EAF7F2',
-  },
+    backgroundColor: colors.successSoft},
   readyBadge: {
     width: 38,
     height: 38,
