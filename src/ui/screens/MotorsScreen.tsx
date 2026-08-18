@@ -437,18 +437,6 @@ export function MotorsScreenView({
   // the 1180px reading cap. See useContentEnvelope.ts.
   const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const effectiveBottomInset = bottomInset ?? 0;
-  /**
-   * The dock's REAL height, measured on layout.
-   *
-   * The scroll content used to reserve `spacing.xxl * 4` for it - a fixed
-   * guess. The dock is not a fixed height: it grows with the sticky stop,
-   * with the session state, and with however many lines the Arabic labels
-   * wrap to at a given width. Whenever it grew past the guess, the last
-   * rows of the motor list rendered UNDERNEATH it, which is the overlap
-   * visible in the reported screenshots.
-   */
-  const [dockHeight, setDockHeight] = useState(0);
-
   // The snapshot is the ONLY source of controller truth. `useState` plus an
   // explicit subscription rather than useSyncExternalStore: the controller
   // returns a frozen object that is referentially stable between
@@ -1555,18 +1543,24 @@ export function MotorsScreenView({
       style={[styles.root, { paddingBottom: effectiveBottomInset }]}
       testID="motors-screen"
     >
-      {/* Scrollable body. The emergency Stop control below is deliberately
-          OUTSIDE this ScrollView so it can never be scrolled out of reach,
-          and the body's bottom padding keeps it from being covered. */}
+      {/* Scrollable body.
+          THE STOP CONTROL IS A SIBLING, NOT AN OVERLAY, and that is the
+          whole reason nothing needs to reserve space for it. This root is
+          a column; the dock below is `flex: 0 0 auto` and takes its height
+          out of the column first, and this ScrollView is `flex: 1` and
+          gets what is left. The dock therefore cannot cover the list: the
+          list's viewport ENDS where the dock begins.
+
+          MEASURED, NOT ASSUMED. A previous round added a bottom padding
+          equal to the dock's measured height, on the belief that the dock
+          floated. It does not - Chromium reports it `position: relative,
+          flex: 0 0 auto` - so that padding covered nothing and cost 88px
+          of dead space the operator had to drag through on every phone
+          width. The geometry check (.dev-preview/geomcheck.mjs) confirms
+          zero collisions at 7 widths across 9 states without it. */}
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { maxWidth: contentMaxWidth },
-          // Clear the floating dock by its measured height, so the list
-          // always ends above it instead of behind it.
-          { paddingBottom: dockHeight + effectiveBottomInset + spacing.xl },
-        ]}
+        contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}
       >
         <View style={styles.screenHeader}>
           <Text style={styles.eyebrow}>{t('motorsScreen.eyebrow')}</Text>
@@ -2097,17 +2091,6 @@ export function MotorsScreenView({
       <View
         style={[styles.sessionDock, { marginBottom: effectiveBottomInset + spacing.md }]}
         testID="motors-session-dock"
-        /* MEASURED, NOT GUESSED - see scrollContent's paddingBottom. The
-           dock floats above the scroll view, so the list underneath has
-           to end above it; a constant could only ever be right for one
-           dock height, and this one changes with the session state, the
-           sticky stop and how many lines the Arabic labels wrap to. */
-        onLayout={event => {
-          const measured = Math.ceil(event.nativeEvent.layout.height);
-          setDockHeight(previous =>
-            Math.abs(previous - measured) > 1 ? measured : previous,
-          );
-        }}
       >
         {/* P3: the long-press control moved into the التحقق والأدوات bench
             card below - the pinned dock no longer teaches press-and-hold
@@ -2186,8 +2169,10 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
   scrollContent: {
+    // Even padding on every side. The old `paddingBottom: spacing.xxl * 4`
+    // was reserving room for a dock that is a flow sibling and never
+    // covered anything - see the ScrollView's own note.
     padding: spacing.lg,
-    paddingBottom: spacing.xxl * 4,
     gap: spacing.md,
     width: '100%',
     maxWidth: 1180,
@@ -2620,7 +2605,26 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     writingDirection: 'rtl',
   },
-  sessionDock: { width: '90%', maxWidth: 724, alignSelf: 'center', gap: spacing.sm, backgroundColor: colors.background },
+  /**
+   * The pinned stop bar. A SIBLING of the scroll view, never an overlay -
+   * see the ScrollView's note for why nothing reserves space for it.
+   *
+   * The hairline is not decoration. Without it the list's clipped edge
+   * runs straight into the red button, and a row that is merely SCROLLED
+   * OFF reads as a row the button is COVERING - which is exactly the
+   * complaint that started this, on a layout that never overlapped
+   * anything. The rule states where the scrolling surface ends.
+   */
+  sessionDock: {
+    width: '90%',
+    maxWidth: 724,
+    alignSelf: 'center',
+    gap: spacing.sm,
+    paddingTop: spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.background,
+  },
   stopButton: {
     flexDirection: 'row',
     alignItems: 'center',

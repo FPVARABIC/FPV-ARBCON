@@ -341,6 +341,7 @@ import {
   buildArmingReleasePayload,
   establishMotorArmingRestriction,
   MSP_SET_ARMING_DISABLED,
+  recordMotorArmingRestrictionReleased,
   type MotorArmingRestrictionReceipt,
 } from './motorArmingRestriction';
 import type {
@@ -4218,6 +4219,22 @@ class MotorTestControllerImpl {
             READ_REQUEST_OPTIONS,
           );
           this.armingRestrictionReleased = 'RELEASED';
+          // THE RELEASE IS REPORTED BACK TO THE MODULE THAT RECORDED THE
+          // ESTABLISHMENT, and this is not bookkeeping tidiness - it is
+          // the second half of the reopen fix.
+          //
+          // motorArmingRestriction.ts records an establishment against the
+          // OFFICIAL SESSION AUTHORITY, which deliberately outlives an
+          // ordinary lease release-and-reacquire. This release travels the
+          // lease, so without this call the module never learns the hold
+          // is gone: the operator's NEXT motor session on the same cable
+          // is refused with ARMING_RESTRICTION_ALREADY_ESTABLISHED and
+          // fails closed at setup. Reached only after the request above
+          // actually succeeded, so a withheld or failed release still
+          // leaves the record - and the refusal - standing.
+          if (this.armingRestrictionReceipt !== undefined) {
+            recordMotorArmingRestrictionReleased(this.armingRestrictionReceipt);
+          }
           record('RELEASE_ARMING_RESTRICTION', 'DONE');
         } else {
           // The transport is already gone. Nothing can be sent, and

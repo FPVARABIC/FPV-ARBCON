@@ -401,6 +401,73 @@ export type MotorArmingRestrictionEstablishment =
   | {readonly kind: 'ESTABLISHED'; readonly receipt: MotorArmingRestrictionReceipt}
   | {readonly kind: 'NOT_ESTABLISHED'; readonly reason: MotorArmingRestrictionFailureReason};
 
+export type MotorArmingRestrictionReleaseRecord =
+  /** The session record was cleared: nothing is established any more. */
+  | 'CLEARED'
+  /** A latched fault is NEVER cleared by a release. */
+  | 'FAULT_LATCHED'
+  /** This receipt is not the live record - nothing was changed. */
+  | 'NOT_CURRENT';
+
+/**
+ * RECORDS THAT THIS DESCRIPTOR'S HOLD IS GONE.
+ *
+ * THE DEFECT THIS CLOSES, and it is the deep half of the reopen bug. The
+ * establishment is recorded HERE, keyed by the official session
+ * authority, deliberately outliving an ordinary lease
+ * release-and-reacquire. The RELEASE, though, is performed by the
+ * controller's teardown - it owns the ordering rule that the all-stop
+ * must come first - and it never told this module. So after one clean
+ * motor session the record still said ESTABLISHED, and the operator's
+ * SECOND session on the same cable was refused at
+ * `ARMING_RESTRICTION_ALREADY_ESTABLISHED` and failed closed. The screen
+ * gates were fixed first and the bug survived them, because it was never
+ * only in the screen.
+ *
+ * WHY THIS IS NOT A WEAKENED GATE. The "already established" check exists
+ * so command 99 is not sent twice for one live hold. Once the hold has
+ * actually been released, there is no hold, and continuing to claim one
+ * is not caution - it is a stale fact that blocks a legitimate new
+ * session while proving nothing about the aircraft. Every conservative
+ * property is kept intact:
+ *
+ *   - a FAULTED session stays faulted, and is never cleared here;
+ *   - only a receipt this module itself minted, still holding the live
+ *     record by strict instance identity, can clear anything;
+ *   - the caller may only reach this after its release request actually
+ *     SUCCEEDED. A withheld release (the stop was unproven) and a release
+ *     that threw both leave the record standing, so the next session is
+ *     still refused - which is the fail-closed direction.
+ *
+ * Never throws: every lookup is this module's own state.
+ */
+export function recordMotorArmingRestrictionReleased(
+  receipt: MotorArmingRestrictionReceipt,
+): MotorArmingRestrictionReleaseRecord {
+  const lease = RECEIPT_LEASES.get(receipt);
+  if (lease === undefined) {
+    return 'NOT_CURRENT';
+  }
+  // Deliberately NOT gated on `lease.isActive()`, unlike isCurrent().
+  // Teardown releases the restriction and then releases the lease, and a
+  // caller that has already done both is exactly who needs to record
+  // this. The authority lookup below still fails safely if the session
+  // itself is gone, and instance identity is the real check either way.
+  const authority = lease.officialSessionAuthority();
+  if (authority === undefined) {
+    return 'NOT_CURRENT';
+  }
+  const outcome = SESSION_OUTCOMES.get(authority);
+  if (outcome?.kind === 'FAULTED') {
+    return 'FAULT_LATCHED';
+  }
+  if (outcome?.kind !== 'ESTABLISHED' || outcome.receipt !== receipt) {
+    return 'NOT_CURRENT';
+  }
+  SESSION_OUTCOMES.delete(authority);
+  return 'CLEARED';
+}
+
 export interface EstablishMotorArmingRestrictionOptions {
   /** The exact active Pass 2 capability. Only a lease is accepted - there
    * is no parameter for a raw MspClient, transport or writeBytes. */
