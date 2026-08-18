@@ -75,7 +75,7 @@ function saveMessage(outcome: ModesSaveOutcome): {text: string; warning: boolean
     case 'NO_CHANGES': return {text: 'لا توجد تغييرات لإرسالها.', warning: false};
     case 'SAVED_VERIFIED': return {text: 'حُفظت جميع شروط الأوضاع وتطابقت القراءة الراجعة من متحكم الطيران.', warning: false};
     case 'SAVED_UNVERIFIED': return {text: 'أقرّ المتحكم الحفظ، لكن تعذر إثبات القيم بالقراءة الراجعة. أعد الاتصال واقرأ قبل تعديل آخر.', warning: true};
-    case 'UNCONFIRMED': return {text: outcome.stage.kind === 'EEPROM' ? 'نتيجة حفظ EEPROM غير مؤكدة. لا تكرر الحفظ؛ أعد الاتصال واقرأ أولًا.' : `نتيجة كتابة خانة الوضع ${outcome.stage.index + 1} غير مؤكدة. لا تكرر العملية؛ أعد الاتصال واقرأ أولًا.`, warning: true};
+    case 'UNCONFIRMED': return {text: outcome.stage.kind === 'EEPROM' ? 'نتيجة الحفظ في ذاكرة المتحكم غير مؤكدة. لا تكرر الحفظ؛ أعد الاتصال واقرأ أولًا.' : `نتيجة كتابة خانة الوضع ${outcome.stage.index + 1} غير مؤكدة. لا تكرر العملية؛ أعد الاتصال واقرأ أولًا.`, warning: true};
     case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء العملية. أعد الاتصال واقرأ القيم.', warning: true};
     case 'FAILED': return {text: 'فشلت العملية قبل اكتمال التحقق.', warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
@@ -337,7 +337,7 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
   return <View style={styles.root} testID="modes-screen">
     <ScrollView contentContainerStyle={[styles.content, {maxWidth}]}>
       <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.title}>الأوضاع ومفاتيح AUX</Text><Text style={styles.subtitle}>أنشئ نطاقات القنوات واربط الأوضاع ببعضها، مع حالة حية من متحكم الطيران وحفظ كامل لجدول الشروط ثم قراءة تحقق.</Text></View>{snapshot !== undefined && draft !== undefined ? <View style={styles.capacityBadge}><Text style={styles.capacityLabel}>خانات مستخدمة</Text><Text style={styles.capacityValue}>{draft.conditions.length} / {snapshot.capacity}</Text></View> : null}</View>
-      <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>القراءة والـpayload والتحقق مختبرة آليًا، لكن يجب تحريك مفاتيح جهاز الإرسال ومشاهدة القيمة والحالة الحية على FC حقيقي بعد نزع المراوح.</Text></View>
+      <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>القراءة والكتابة والتحقق مختبرة آليًا، لكن يجب تحريك مفاتيح جهاز الإرسال ومشاهدة القيمة والحالة الحية على FC حقيقي بعد نزع المراوح.</Text></View>
       <View style={styles.warning}><Text style={styles.warningTitle}>لا تختبر ARM والمراوح مركبة</Text><Text style={styles.warningText}>المؤشر الحي يصف علم الوضع الذي يرسله Betaflight؛ لا يعني أن الاقتراب من الطائرة آمن.</Text></View>
       {loadingMessage !== undefined ? <View style={styles.loadError} testID="modes-load-message"><Text style={styles.loadErrorText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} testID="modes-open-motors" /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="modes-reload" />}</View> : null}
       {snapshot !== undefined && draft !== undefined ? <>

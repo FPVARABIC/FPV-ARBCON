@@ -304,3 +304,5 @@ export type {
   MotorStaticFactsFirmwareSnapshot,
   MotorStaticFactsBoardSnapshot,
 } from './motorStaticFacts';
+export {classifyGpsPositionQuality, isGpsPositionTrustworthyForRescue, GPS_PDOP_BANDS} from './gpsPositionQuality';
+export type {GpsPositionQuality} from './gpsPositionQuality';

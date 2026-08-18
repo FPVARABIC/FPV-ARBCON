@@ -840,3 +840,5 @@ export type {
   FirmwarePresetOption,
   FirmwarePresetDocument,
 } from './state/presetCatalog';
+export {classifyGpsPositionQuality, isGpsPositionTrustworthyForRescue, GPS_PDOP_BANDS} from './state/gpsPositionQuality';
+export type {GpsPositionQuality} from './state/gpsPositionQuality';

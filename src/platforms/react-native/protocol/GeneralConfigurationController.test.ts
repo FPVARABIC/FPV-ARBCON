@@ -337,3 +337,38 @@ describe('GeneralConfigurationController', () => {
     );
   });
 });
+
+/**
+ * THE SAME COMPLETE SAVE, ON EVERY API VERSION THE FLOOR ADMITS.
+ *
+ * Configuration is the screen whose save can end in a REBOOT, so an
+ * unnoticed version difference here would be discovered after the board
+ * had already restarted. `state.identification` is reassigned rather
+ * than threaded through the harness, matching how the admission tests
+ * above already do it.
+ */
+describe.each([47, 48, 49])('a complete Configuration save on API 1.%s', minor => {
+  it('writes, persists and verifies the readback', async () => {
+    const h = harness();
+    h.state.identification = identification(minor);
+    enqueueSnapshot(h.client);
+    const loaded = await h.controller.load(key);
+    if (loaded.kind !== 'LOADED') throw new Error(`load ${loaded.kind}`);
+
+    enqueueSnapshot(h.client);
+    h.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    h.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    h.client.enqueue(MSP_SET_FEATURE_CONFIG, { payload: EMPTY });
+    h.client.enqueue(MSP_EEPROM_WRITE, { payload: EMPTY });
+    enqueueSnapshot(h.client, { featureMask: 2 ** 22 });
+    h.client.enqueue(MSP_REBOOT, { payload: EMPTY });
+
+    await expect(
+      h.controller.save(key, loaded.snapshot, {
+        ...createGeneralConfigurationDraft(loaded.snapshot),
+        featureMaskRaw: 2 ** 22,
+      }),
+    ).resolves.toMatchObject({ kind: 'SAVED_VERIFIED' });
+    expect(h.client.calls.map(call => call.command)).toContain(MSP_EEPROM_WRITE);
+  });
+});

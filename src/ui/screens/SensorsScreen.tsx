@@ -210,7 +210,7 @@ export function VectorCard({
           <Text style={styles.sectionTitle}>{title}</Text>
           <Text style={styles.hint}>
             {detected === false
-              ? 'غير مكتشف في MSP_STATUS_EX'
+              ? 'لم يُبلِّغ متحكم الطيران عن وجوده'
               : detected === true
               ? 'مكتشف · قراءة حية'
               : 'بانتظار حالة الحساس'}

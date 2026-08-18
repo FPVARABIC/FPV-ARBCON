@@ -26,8 +26,8 @@ function statusPayload(armed: boolean, pidProfileIndex = 0, controlRateProfileIn
 }
 function identification(identifier = 'BTFL', minor = 47): MspIdentificationState { return {status: 'SUCCEEDED', identity: {firmware: {identifier, knownFamily: identifier === 'BTFL' ? 'BETAFLIGHT' : 'INAV'}, apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: minor}, board: {gyroSampleRateHz: 8000}}} as MspIdentificationState; }
 function scheduler(): MspTelemetryScheduler { return {acquirePauseLease: jest.fn(() => ({release: jest.fn()})), discardPendingDemands: jest.fn(), waitUntilIdle: jest.fn(() => Promise.resolve()), requestRefresh: jest.fn()} as unknown as MspTelemetryScheduler; }
-function harness(options: {motorTest?: boolean} = {}) {
-  const client = new FakeClient(); const telemetry = scheduler(); const state = {identification: identification(), generation: 4, ownership: 'ACTIVE' as const, recovery: 'READY' as const};
+function harness(options: {motorTest?: boolean; apiMinor?: number} = {}) {
+  const client = new FakeClient(); const telemetry = scheduler(); const state = {identification: identification('BTFL', options.apiMinor ?? 47), generation: 4, ownership: 'ACTIVE' as const, recovery: 'READY' as const};
   const coordinator: PidSessionCoordinator = {getOwnershipState: () => state.ownership, getIdentificationState: () => state.identification, getSessionKey: sessionId => ({sessionId, generation: state.generation}), getActiveMspClient: () => client, getTelemetryScheduler: () => telemetry, getMspRecoveryState: () => state.recovery};
   return {client, telemetry, state, controller: new PidTuningController({coordinator, appStateOwner: {getPhase: () => 'ACTIVE'}, isMotorTestActive: () => options.motorTest === true})};
 }
@@ -142,5 +142,37 @@ describe('PidTuningController', () => {
     await expect(h.controller.save(key, original, draft)).resolves.toEqual(
       expect.objectContaining({kind: 'SAVED_UNVERIFIED'}),
     );
+  });
+});
+
+/**
+ * THE SAME COMPLETE SAVE, ON EVERY API VERSION THE FLOOR ADMITS.
+ *
+ * PID is the screen with the largest 1.48 surface: MSP_FILTER_CONFIG
+ * gained seven appended bytes and the abs_control_gain slot in
+ * MSP_SET_PID_ADVANCED became a byte the firmware reads and discards.
+ * betaflightApiSupport.ts argues from the sources that a 1.47-shaped
+ * write stays correct; this runs it and checks the readback.
+ *
+ * Not a real 1.48 board - that stays a hardware item.
+ */
+describe.each([47, 48, 49])('a complete PID save on API 1.%s', minor => {
+  it('writes each changed group once, persists once and verifies the readback', async () => {
+    const h = harness({apiMinor: minor});
+    const original = await loadOriginal(h);
+    enqueueSnapshot(h.client);
+    h.client.enqueue(MSP_BOXIDS, {payload: Uint8Array.from([0])});
+    h.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)});
+    h.client.enqueue(MSP_SET_PID, {payload: EMPTY});
+    h.client.enqueue(MSP_SET_PID_ADVANCED, {payload: EMPTY});
+    h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
+    enqueueSnapshot(h.client, 50, 222);
+    const base = createPidTuningDraft(original);
+    const draft = {...base, roll: {...base.roll, p: 50}, yaw: {...base.yaw, f: 222}};
+
+    await expect(h.controller.save(key, original, draft)).resolves.toEqual(
+      expect.objectContaining({kind: 'SAVED_VERIFIED'}),
+    );
+    expect(h.client.calls.filter(call => call.command === MSP_EEPROM_WRITE)).toHaveLength(1);
   });
 });

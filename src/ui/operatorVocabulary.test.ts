@@ -373,3 +373,159 @@ describe('shipped source carries no internal review vocabulary', () => {
     expect(code).toContain('hardwareVerification.');
   });
 });
+
+/* ==================================================================== *
+ * PROTOCOL VOCABULARY
+ * ==================================================================== */
+
+/**
+ * THE SECOND CLASS OF LEAK, found by sweeping the whole app rather than
+ * the six examples an earlier round happened to name.
+ *
+ * The first half of this file catches OUR PROCESS leaking into the
+ * product ("Pass 2", "REQUIRES HARDWARE TEST"). This half catches OUR
+ * PROTOCOL leaking into it - the operator being shown how the bytes are
+ * arranged rather than what the setting means:
+ *
+ *     غير مكتشف في MSP_STATUS_EX
+ *     قنوات MSP_RC
+ *     الحالة من MSP_VTX_CONFIG
+ *     ثم EEPROM وقراءة تحقق
+ *     نتيجة الكتابة غير مؤكدة عند RXFAIL_CONFIG
+ *
+ * The last one was the worst: a raw write-group identifier interpolated
+ * into Arabic copy at the one moment the pilot most needs to understand
+ * what happened - an unconfirmed save. Five screens did it.
+ *
+ * WHAT IS DELIBERATELY STILL ALLOWED. A term the OPERATOR needs is not a
+ * leak. "MSP" is the real name of a serial-port function on the Ports
+ * screen and a real thing a pilot assigns a UART to; the CLI screen is a
+ * developer surface by definition; and a bare `MSP_...` string used as a
+ * routing key or a telemetry stage id is code, not copy. Those live in
+ * PROTOCOL_ALLOWED below, each with the reason - so an addition to that
+ * list is a decision somebody made on purpose, not an accident.
+ */
+const PROTOCOL_TOKENS: readonly string[] = [
+  'MSP_',
+  'EEPROM',
+  'payload',
+  'sbuf',
+  'readback',
+];
+
+/**
+ * Files whose runtime half may legitimately contain a protocol token,
+ * with the reason. Anything not on this list must be clean.
+ */
+const PROTOCOL_ALLOWED: Readonly<Record<string, string>> = {
+  // 'MSP' is a serial-port FUNCTION the operator assigns; the screen must
+  // be able to name it. (These are 'MSP_SHAREABLE'-style code symbols and
+  // port-function labels, not prose about our implementation.)
+  'src/ui/screens/PortsScreen.tsx': 'MSP is a port function the operator assigns',
+  // A developer surface by definition - the whole screen is a terminal.
+  'src/ui/screens/CliScreen.tsx': 'the CLI screen IS the developer surface',
+  // Notice-routing domain and connection-stage ids: code identifiers that
+  // are never rendered. Verified by reading every use site.
+  'src/ui/components/setup/connectionIndicator.ts': 'notice-routing domain key, never rendered',
+  'src/ui/screens/UsbConnectionScreen.tsx': 'connection-stage telemetry ids, never rendered',
+  // The map that REPLACES the raw identifiers; it must name them to
+  // translate them.
+  'src/ui/presentation/writeStageNames.ts': 'the translation table itself',
+  // Not imported by any screen - a developer diagnostic panel that the
+  // product never mounts. Verified by grepping every import site.
+  'src/ui/screens/UsbSerialDebugPanel.tsx': 'developer diagnostic panel, mounted by no screen',
+};
+
+describe('shipped UI carries no protocol vocabulary', () => {
+  const UI_SOURCES = SHIPPED_SOURCES.filter(path =>
+    path.startsWith(join(REPO_ROOT, 'src', 'ui')),
+  );
+
+  it('finds the UI files to check', () => {
+    expect(UI_SOURCES.length).toBeGreaterThan(30);
+  });
+
+  /**
+   * COPY IS ARABIC. That single fact is what makes this check precise.
+   *
+   * A first version flagged every occurrence in the runtime half and
+   * produced three false positives that were not copy at all:
+   * `outcome.stage.kind === 'EEPROM'` (a discriminant), the testID
+   * `motor-direction-no-readback` (never rendered), and a re-exported
+   * command constant. None of them is a sentence shown to a pilot.
+   *
+   * This app's user-facing text is Arabic without exception, so the rule
+   * is: a STRING OR JSX SPAN that carries Arabic IS copy, and a protocol
+   * token inside that same span is a token in a sentence.
+   *
+   * Per SPAN, not per line - a line is too coarse. ModesScreen puts
+   * `outcome.stage.kind === 'EEPROM' ? 'نتيجة الحفظ…' : …` on one line,
+   * where the token and the sentence are neighbours but not the same
+   * text. A backtick span deliberately keeps its `${...}` interpolation,
+   * because that is exactly how the worst leak of this round read:
+   * `نتيجة الكتابة غير مؤكدة عند ${outcome.stage.group}`.
+   */
+  const ARABIC = /[\u0600-\u06FF]/;
+
+  /** Every string literal, template literal and JSX text run. */
+  function copySpans(code: string): readonly string[] {
+    const spans: string[] = [];
+    for (const match of code.matchAll(/'([^'\n]*)'|"([^"\n]*)"|`([^`]*)`|>([^<>{}]+)</g)) {
+      const span = match[1] ?? match[2] ?? match[3] ?? match[4];
+      if (span !== undefined && span.length > 0) {
+        spans.push(span);
+      }
+    }
+    return spans;
+  }
+
+  it('shows the operator no protocol identifier, in any sentence', () => {
+    const offenders: string[] = [];
+    for (const path of UI_SOURCES) {
+      const relative = path.slice(REPO_ROOT.length + 1).split('\\').join('/');
+      if (PROTOCOL_ALLOWED[relative] !== undefined) {
+        continue;
+      }
+      const {code} = splitCodeAndComments(readFileSync(path, 'utf8'));
+      for (const span of copySpans(code)) {
+        if (!ARABIC.test(span)) {
+          continue;
+        }
+        for (const token of PROTOCOL_TOKENS) {
+          if (span.includes(token)) {
+            offenders.push(`${relative} :: ${token} in "${span.slice(0, 60)}"`);
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('keeps every allowance justified, so the list cannot quietly grow', () => {
+    // An allowance for a file that no longer needs one is an allowance
+    // that would hide the next regression in that file.
+    for (const [relative, reason] of Object.entries(PROTOCOL_ALLOWED)) {
+      expect(reason.length).toBeGreaterThan(10);
+      expect(SHIPPED_SOURCES.map(p => p.slice(REPO_ROOT.length + 1).split('\\').join('/'))).toContain(relative);
+    }
+  });
+
+  /**
+   * The five screens that interpolated a raw write group into their
+   * unconfirmed-save copy. Named individually so a regression reports
+   * WHICH screen came back.
+   */
+  it.each([
+    'FailsafeScreen',
+    'OsdScreen',
+    'PidTuningScreen',
+    'PowerBatteryScreen',
+    'VideoTransmitterScreen',
+  ])('%s translates its write stage instead of printing it', name => {
+    const source = readFileSync(join(REPO_ROOT, 'src', 'ui', 'screens', `${name}.tsx`), 'utf8');
+    const {code} = splitCodeAndComments(source);
+    // Not merely absent - actively translated through the shared map.
+    expect(code).toContain('unconfirmedWriteMessage');
+    expect(code).not.toMatch(/\$\{outcome\.stage(\.group)?\}/);
+  });
+});

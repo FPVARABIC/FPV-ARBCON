@@ -54,6 +54,7 @@ import {
 import { readInteraction } from '../components/controls/interaction';
 import { Icon } from '../icons';
 import { StickyActionBar } from '../components/editing';
+import {classifyGpsPositionQuality, type GpsPositionQuality} from '../../core';
 
 export interface GpsControllerPort {
   load(sessionKey: SetupUiSessionKey): Promise<GpsLoadOutcome>;
@@ -201,6 +202,23 @@ function ToggleRow({
     </View>
   );
 }
+
+/**
+ * Betaflight's five-star DOP scale, in words instead of stars.
+ *
+ * UNKNOWN is deliberately not "سيئة": a board that never sent the field
+ * has told us nothing about the fix, and reporting that as a bad fix
+ * would be as wrong as reporting it as a good one.
+ */
+const GPS_QUALITY_TEXT: Readonly<Record<GpsPositionQuality, string>> = {
+  IDEAL: 'مثالية',
+  EXCELLENT: 'ممتازة',
+  GOOD: 'جيدة',
+  MODERATE: 'متوسطة',
+  FAIR: 'ضعيفة',
+  POOR: 'رديئة',
+  UNKNOWN: 'غير معروفة',
+};
 
 export default function GpsScreen({
   sessionKey,
@@ -554,13 +572,19 @@ export default function GpsScreen({
                 }
                 unit="°"
               />
+              {/* Not a bare acronym any more. The number is the board's
+                  own PDOP; the word beside it is Betaflight's own verdict
+                  on that number, and the hint states the direction,
+                  because this is the one metric on the screen where
+                  LOWER is better. */}
               <Metric
-                label="PDOP"
+                label="دقة تحديد الموقع"
                 value={
                   raw?.pdopHundredths === undefined
                     ? '—'
-                    : (raw.pdopHundredths / 100).toFixed(2)
+                    : `${(raw.pdopHundredths / 100).toFixed(2)} · ${GPS_QUALITY_TEXT[classifyGpsPositionQuality(raw.pdopHundredths)]}`
                 }
+                testID="gps-position-quality"
               />
               <Metric
                 label={t('gpsSystem.homeDistance')}

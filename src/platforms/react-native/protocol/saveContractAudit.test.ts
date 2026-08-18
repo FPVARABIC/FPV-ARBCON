@@ -97,12 +97,12 @@ class FakeClient {
   }
 }
 
-function identification(): MspIdentificationState {
+function identification(minor = 47): MspIdentificationState {
   return {
     status: 'SUCCEEDED',
     identity: {
       firmware: {identifier: 'BTFL', knownFamily: 'BETAFLIGHT'},
-      apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: 47},
+      apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: minor},
       board: {},
     },
   } as MspIdentificationState;
@@ -438,12 +438,12 @@ function osdConfigPayload(rssi: number): Uint8Array {
   return bytes.slice(0, o);
 }
 
-function osdHarness() {
+function osdHarness(minor = 47) {
   const client = new FakeClient();
   const telemetry = scheduler();
   const coordinator = {
     getOwnershipState: () => 'ACTIVE' as const,
-    getIdentificationState: () => identification(),
+    getIdentificationState: () => identification(minor),
     getSessionKey: (sessionId: string) => ({sessionId, generation: 5}),
     getActiveMspClient: () => client,
     getTelemetryScheduler: () => telemetry,
@@ -554,12 +554,12 @@ function vtxConfigPayload(channel: number): Uint8Array {
 const VTX_BAND = Uint8Array.from([1, 8, 82, 65, 67, 69, 66, 65, 78, 68, 82, 1, 2, 20, 23, 34, 23]);
 const VTX_POWER = Uint8Array.from([1, 14, 0, 3, 50, 53, 0]);
 
-function vtxHarness() {
+function vtxHarness(minor = 47) {
   const client = new FakeClient();
   const telemetry = scheduler();
   const coordinator = {
     getOwnershipState: () => 'ACTIVE' as const,
-    getIdentificationState: () => identification(),
+    getIdentificationState: () => identification(minor),
     getSessionKey: (sessionId: string) => ({sessionId, generation: 5}),
     getActiveMspClient: () => client,
     getTelemetryScheduler: () => telemetry,
@@ -651,5 +651,64 @@ describe('vtx: the paths nothing was checking', () => {
 
     const result = await h.controller.save(key, original, vtxChannelTwo(original));
     expect(result.kind).toBe('FAILED');
+  });
+});
+
+/* ==================================================================== *
+ * THE SAME COMPLETE SAVE, ON EVERY API VERSION THE FLOOR ADMITS
+ * ==================================================================== */
+
+/**
+ * apiVersionCompatibility.test.ts proves this for Failsafe and Power.
+ * These are the other two controllers whose fixtures exist here, so the
+ * cheap thing to do is the right thing: run the WHOLE save - fresh read,
+ * DISARMED proof, write, EEPROM, readback compare - against a board
+ * reporting 1.47, then 1.48, then 1.49.
+ *
+ * The claim being tested is not "the screen opens". It is that the
+ * 1.47-shaped payload this app writes is still correct on a newer board,
+ * and the readback comparison at the end of the save is what would catch
+ * it if it were not.
+ *
+ * STILL NOT a real 1.48 board. The scripted board answers with the
+ * payloads this app decodes, which is exactly the forward-compatibility
+ * claim under test. A physical Betaflight 4.7 remains a hardware item.
+ */
+const SAVE_VERSIONS = [47, 48, 49] as const;
+
+describe.each(SAVE_VERSIONS)('a complete OSD save on API 1.%s', minor => {
+  it('writes, persists and verifies against a readback', async () => {
+    const h = osdHarness(minor);
+    const original = await loadOsd(h);
+    enqueueOsd(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_OSD_CONFIG, {payload: EMPTY});
+    h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
+    enqueueOsd(h.client, 35);
+
+    const result = await h.controller.save(key, original, {
+      ...createOsdConfigurationDraft(original),
+      rssiAlarmPercent: 35,
+    });
+
+    expect(result.kind).toBe('SAVED_VERIFIED');
+    expect(h.client.calls.map(call => call.command)).toContain(MSP_EEPROM_WRITE);
+  });
+});
+
+describe.each(SAVE_VERSIONS)('a complete VTX save on API 1.%s', minor => {
+  it('writes, persists and verifies against a readback', async () => {
+    const h = vtxHarness(minor);
+    const original = await loadVtx(h);
+    enqueueVtx(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_VTX_CONFIG, {payload: EMPTY});
+    h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
+    enqueueVtx(h.client, 2);
+
+    const result = await h.controller.save(key, original, vtxChannelTwo(original));
+
+    expect(result.kind).toBe('SAVED_VERIFIED');
+    expect(h.client.calls.map(call => call.command)).toContain(MSP_EEPROM_WRITE);
   });
 });

@@ -134,3 +134,67 @@ describe('the GPS Rescue card', () => {
     screen.unmount();
   });
 });
+
+/**
+ * UNITS ARE A DISPLAY CONCERN. THE PAYLOAD IS NOT.
+ *
+ * The board stores failsafe timings in tenths of a second and the screen
+ * used to print that storage unit at the pilot: "15 ×0.1s". The fix is
+ * purely presentational, and this suite exists to keep it that way - the
+ * dangerous version of this change is one where the formatter quietly
+ * becomes the source of truth and a 1.5-second guard time is saved as 1.
+ */
+describe('failsafe timings read as seconds and save as deciseconds', () => {
+  it('shows the pilot seconds, not the storage unit', async () => {
+    const screen = await render(loader(snapshot));
+
+    // 15 deciseconds IS 1.5 seconds. The old copy said "15 ×0.1s".
+    expect(screen.stepper('failsafe-delay').value).toBe('1.5 ثانية');
+    // 100 deciseconds is a round 10 seconds - and must not read "10.0".
+    expect(screen.stepper('failsafe-throttle-low-delay').value).toBe('10 ثانية');
+    screen.unmount();
+  });
+
+  it('states the range in seconds too, so the label and the value agree', async () => {
+    const screen = await render(loader(snapshot));
+    const shown = JSON.stringify(screen.renderer.toJSON());
+    expect(shown).toContain('0.1–20 ثانية');
+    expect(shown).not.toContain('×0.1s');
+    screen.unmount();
+  });
+
+  it('SAVES THE WIRE VALUE, not the number on screen', async () => {
+    // The assertion the whole change lives or dies on. One press moves
+    // the draft by one DECISECOND (15 -> 16, displayed 1.5 -> 1.6); the
+    // controller must receive 16, never 1.6.
+    const controller = loader(snapshot);
+    controller.save = jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot}));
+    const screen = await render(controller);
+
+    await ReactTestRenderer.act(async () => {
+      screen.stepper('failsafe-delay').onIncrement();
+      await Promise.resolve();
+    });
+    expect(screen.stepper('failsafe-delay').value).toBe('1.6 ثانية');
+
+    await ReactTestRenderer.act(async () => {
+      await screen.find('failsafe-save-bar').props.onSave();
+    });
+
+    expect(controller.save).toHaveBeenCalledWith(
+      expect.anything(),
+      snapshot,
+      expect.objectContaining({delayDeciseconds: 16}),
+    );
+    screen.unmount();
+  });
+
+  it('holds the stepper to the wire range, not to a rounded second', async () => {
+    // The minimum is 1 decisecond - 0.1 s - and a formatter that rounded
+    // to whole seconds would make the floor unreachable.
+    const low = {...snapshot, config: {...snapshot.config, delayDeciseconds: 1}};
+    const screen = await render(loader(low));
+    expect(screen.stepper('failsafe-delay').value).toBe('0.1 ثانية');
+    screen.unmount();
+  });
+});

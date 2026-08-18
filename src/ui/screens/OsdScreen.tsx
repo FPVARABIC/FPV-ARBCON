@@ -58,6 +58,7 @@ import {
   ToggleSwitch,
 } from '../components/controls';
 import {OsdPreview, type OsdPreviewElement} from './osd/OsdPreview';
+import {unconfirmedWriteMessage} from '../presentation/writeStageNames';
 
 type Phase = 'IDLE' | 'LOADING' | 'READY' | 'SAVING' | 'ERROR';
 
@@ -113,7 +114,7 @@ function saveMessage(outcome: OsdSaveOutcome): {text: string; warning: boolean} 
       };
     case 'UNCONFIRMED':
       return {
-        text: `نتيجة كتابة ${outcome.stage.group} غير مؤكدة؛ لا تكرر الحفظ.`,
+        text: unconfirmedWriteMessage(outcome.stage.group, 'index' in outcome.stage ? outcome.stage.index : undefined),
         warning: true,
       };
     case 'SESSION_ENDED':
@@ -790,7 +791,7 @@ export default function OsdScreen({
       <StickyActionBar
         visible={dirty}
         summary="تغيّر تخطيط OSD"
-        details={['تُكتب المجموعات المتغيرة فقط ثم EEPROM وقراءة تحقق']}
+        details={['تُكتب المجموعات المتغيرة فقط، ثم تُحفظ في ذاكرة المتحكم وتُقرأ للتأكد']}
         saveLabel="حفظ والتحقق"
         discardLabel="تجاهل"
         onSave={save}

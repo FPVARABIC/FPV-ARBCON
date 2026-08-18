@@ -2031,7 +2031,7 @@ export default function FirmwareFlasherScreen({
 
             {sourceMode === 'online' ? (
               <>
-                <FirmwareSection title="Flight Controller والـ Target" caption="اختر جهاز USB عند التعدد، أو استخدم التعرف التلقائي الذي يقرأ MSP_BOARD_INFO فعلياً.">
+                <FirmwareSection title="Flight Controller والـ Target" caption="اختر جهاز USB عند التعدد، أو استخدم التعرف التلقائي الذي يسأل اللوحة عن اسمها فعليًا.">
                   <View style={styles.twoButtons}>
                     <View style={styles.flexOne}>
                       <FirmwareButton
