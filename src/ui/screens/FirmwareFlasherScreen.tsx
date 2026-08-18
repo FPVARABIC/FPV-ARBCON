@@ -2761,7 +2761,7 @@ export default function FirmwareFlasherScreen({
               />
               {buildLogText ? (
                 <View style={styles.logBox} testID="build-log">
-                  <Text style={styles.logLine}>{buildLogText}</Text>
+                  <Text style={styles.machineLine}>{buildLogText}</Text>
                 </View>
               ) : null}
             </>
@@ -2936,6 +2936,15 @@ const styles = StyleSheet.create({
   commitMessage: {...typography.caption, color: colors.textPrimary, fontWeight: '700'},
   commitSha: {...typography.mono, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr'},
   logBox: {maxHeight: 280, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surfaceAlt, gap: 4},
-  logLine: {...typography.mono, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr'},
+  /* THE APP'S OWN MESSAGES, and they are Arabic sentences:
+     «اكتشاف USB: 1 serial و0 DFU.». They used to share the ltr style
+     below with the build server's log, which laid each sentence out
+     left-to-right-first and painted its words out of order. The Latin
+     identifiers inside stay left-to-right on their own, as bidi
+     isolates - that never needed the whole line to be ltr. */
+  logLine: {...typography.mono, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl'},
+  /* The BUILD SERVER's output. Machine text, genuinely left-to-right,
+     and it keeps that. */
+  machineLine: {...typography.mono, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr'},
   dimmed: {opacity: 0.4},
 });

@@ -762,7 +762,7 @@ function NumericField({label, value, min, max, disabled, onChange, testID}: {lab
       {/* P3-L: a numeric range is its own isolated LTR run. Written as a
           single Text with an explicit ltr direction it can no longer be
           reordered into "18-5" by the surrounding Arabic. */}
-      <Text style={styles.rangeHint}>{`${min}–${max}`}</Text>
+      <Text style={styles.rangeBounds}>{`${min}–${max}`}</Text>
     </View>
   );
 }
@@ -887,7 +887,14 @@ const styles = StyleSheet.create({
   presetRow: {flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap'},
   fieldsGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md},
   numericField: {flexGrow: 1, flexBasis: 180, gap: 5},
-  rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center', writingDirection: 'ltr'},
+  /* A numeric span - "1000–2000". Explicitly ltr so the surrounding
+     Arabic cannot reorder it into "2000–1000". */
+  rangeBounds: {...typography.caption, color: colors.textMuted, textAlign: 'center', writingDirection: 'ltr'},
+  /* Arabic prose, and it used to carry the ltr above by sharing a style
+     with the numeric span. That made the browser lay the sentence out
+     left-to-right-first, so "صفر للتعطيل، أو قناة AUX." painted its
+     Latin word ahead of the Arabic that introduces it. */
+  rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center', writingDirection: 'rtl'},
   toggleRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md},
   flexOne: {flex: 1},
 

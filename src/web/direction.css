@@ -1,0 +1,59 @@
+/*
+ * TEXT DIRECTION — the default the document already declares.
+ *
+ * THE DEFECT THIS FIXES. react-native-web puts `dir="auto"` on every
+ * root-level <Text> (Text/index.js: `supportedProps.dir = componentDirection
+ * != null ? componentDirection : 'auto'`). HTML's `auto` state does not
+ * inherit direction — it re-decides it per element from the FIRST STRONG
+ * CHARACTER in that element. So an Arabic sentence that happens to open
+ * with a Latin technical term resolved to `direction: ltr`, and the
+ * browser then laid the whole sentence out left-to-right-first:
+ *
+ *     written    ⁦Core Build⁩ أو ⁦Cloud Build⁩، ثم ⁦Radio⁩ و⁦Telemetry⁩ …
+ *     painted    أو ⁧Cloud Build⁩، ثم ⁦Radio⁩ و⁦Telemetry⁩ و⁦OSD⁩ ⁦Core Build⁩ …
+ *
+ * The words were all present and in the wrong order. Measured with
+ * docs/flight-guides/_tools/bidi-audit.mjs, which compares where each
+ * directional island is actually PAINTED against the order it was
+ * written: 21 sentences across 37 screens, every one of them on a node
+ * whose computed direction was `ltr`, and not a single `rtl` node
+ * affected. One root cause, not twenty-one string bugs.
+ *
+ * WHY U+2066/U+2069 WAS NOT ENOUGH. Isolating each Latin run keeps the
+ * Arabic conjunction from visually gluing itself to the Latin word (the
+ * "gTelemetry" effect) and is still worth having. But an isolate does
+ * not change which character is FIRST AND STRONG, so `dir="auto"` kept
+ * resolving those sentences to ltr. Two different problems.
+ *
+ * WHY NOT PATCH THE STRINGS. Reordering sentences so each opens with an
+ * Arabic word, or prefixing U+200F to a few dozen of them, treats every
+ * occurrence as its own bug and silently regresses the moment someone
+ * writes the next sentence. The direction of this app's text is a
+ * property of the app, not of each sentence.
+ *
+ * THE RULE. `direction: inherit` restores what `dir="auto"` broke:
+ * direction comes from the document, and index.html declares
+ * `<html lang="ar" dir="rtl">` before the first paint. Nothing here
+ * hard-codes rtl, so an ltr document would stay ltr.
+ *
+ * `:where()` IS LOAD-BEARING, NOT DECORATION. It gives the selector zero
+ * specificity, which puts this rule exactly where it belongs in the
+ * cascade:
+ *
+ *   - it still beats the browser's own `dir="auto"` resolution, because
+ *     any author rule outranks the user-agent origin whatever its
+ *     specificity; and
+ *   - it loses to every explicit `writingDirection` in the app. That
+ *     matters: log output, CLI text, serial identifiers and telemetry
+ *     values already declare `writingDirection: 'ltr'` because they are
+ *     genuinely left-to-right, and those surfaces must keep it. This is
+ *     a DEFAULT, not an override.
+ *
+ * Verified in Chromium against the production bundle: the caption above
+ * reads in written order, while the firmware log box beside it stays
+ * `direction: ltr`.
+ */
+
+:where([dir='auto']) {
+  direction: inherit;
+}

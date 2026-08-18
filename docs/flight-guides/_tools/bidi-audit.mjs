@@ -58,15 +58,52 @@ const SCAN = root => {
     }).filter(part => part.end > part.start);
   };
 
+  /**
+   * The mirror-image defect. A measured value like "4.45 V", or a bound
+   * like "1.00 V-5.00 V", carries no Arabic at all: it is left-to-right
+   * engineering text. Painted inside a right-to-left box it splits into
+   * runs that are then laid out right-to-left, so the unit crosses to the
+   * far side of its number and a range loses its two ends. Such text must
+   * DECLARE `writingDirection: 'ltr'` rather than rely on the browser
+   * guessing from its first strong character.
+   */
+  const measured = (node, text) => {
+    const tokens = [];
+    for (const m of text.matchAll(/[A-Za-z]+|[0-9][0-9.,:]*/g)) {
+      const range = document.createRange();
+      range.setStart(node, m.index);
+      range.setEnd(node, m.index + m[0].length);
+      const box = range.getClientRects()[0];
+      if (box === undefined) continue;
+      tokens.push({run: m[0], left: box.left, y: Math.round(box.top)});
+    }
+    if (tokens.length < 2) return null;
+    const visual = [...tokens].sort((a, b) => a.y - b.y || a.left - b.left);
+    return visual.every((t, i) => t === tokens[i]) ? null : visual.map(t => t.run);
+  };
+
   const walker = document.createTreeWalker(root ?? document.body, NodeFilter.SHOW_TEXT);
   const rows = [];
+  const ltrRows = [];
   const seen = new Set();
   while (walker.nextNode()) {
     const node = walker.currentNode;
     const text = node.nodeValue ?? '';
-    if (!ARABIC.test(text) || !LATIN.test(text)) continue;
-    if (text.trim().length < 12) continue;
     if (seen.has(text)) continue;
+
+    if (!ARABIC.test(text)) {
+      // No Arabic at all: engineering text that must read left to right.
+      if (!/[A-Za-z]/.test(text) || !/[0-9]/.test(text)) continue;
+      if (getComputedStyle(node.parentElement).direction !== 'rtl') continue;
+      const scrambled = measured(node, text);
+      if (scrambled !== null) {
+        seen.add(text);
+        ltrRows.push({text: text.trim().slice(0, 60), readsAs: scrambled.join(' ')});
+      }
+      continue;
+    }
+    if (!LATIN.test(text)) continue;
+    if (text.trim().length < 12) continue;
     seen.add(text);
 
     const logical = [];
@@ -96,7 +133,7 @@ const SCAN = root => {
       });
     }
   }
-  return rows;
+  return {rows, ltrRows};
 };
 
 /** The element this step's picture actually contains. */
@@ -113,6 +150,7 @@ async function pictureRoot(page, step) {
 const browser = await chromium.launch({executablePath: CHROME, args: ['--no-sandbox']});
 const inPicture = new Map();
 const onScreen = new Map();
+const measuredText = new Map();
 const directions = new Map();
 
 for (const style of STYLES) {
@@ -123,12 +161,17 @@ for (const style of STYLES) {
     await prepare(page, step.prepare);
     const where = `${style.id}/${step.n} · ${step.screen}`;
 
-    for (const row of await page.evaluate(SCAN, null)) {
+    const all = await page.evaluate(SCAN, null);
+    for (const row of all.rows) {
       directions.set(row.direction, (directions.get(row.direction) ?? 0) + 1);
       if (!onScreen.has(row.text)) onScreen.set(row.text, {...row, where});
     }
+    for (const row of all.ltrRows) {
+      if (!measuredText.has(row.text)) measuredText.set(row.text, {...row, where});
+    }
     const root = await pictureRoot(page, step);
-    for (const row of await page.evaluate(SCAN, root)) {
+    const inside = await page.evaluate(SCAN, root);
+    for (const row of inside.rows) {
       if (!inPicture.has(row.text)) inPicture.set(row.text, {...row, where});
     }
     await page.close();
@@ -152,9 +195,24 @@ console.log(`bidi scan over ${STYLES.reduce((n, s) => n + s.steps.length, 0)} sc
 console.log(`computed direction of out-of-order nodes: ${[...directions].map(([d, n]) => `${d} ${n}`).join(' · ')}`);
 console.log('');
 if (onScreen.size === 0) {
-  console.log('EVERY MIXED-SCRIPT SENTENCE READS IN THE ORDER IT WAS WRITTEN');
+  console.log('MIXED ARABIC/LATIN: every sentence reads in the order it was written');
 } else {
-  show('INSIDE A PUBLISHED PICTURE', inPicture);
-  show('ELSEWHERE ON THE SAME SCREENS', new Map([...onScreen].filter(([t]) => !inPicture.has(t))));
+  show('MIXED ARABIC/LATIN - INSIDE A PUBLISHED PICTURE', inPicture);
+  show('MIXED ARABIC/LATIN - ELSEWHERE ON THE SAME SCREENS',
+       new Map([...onScreen].filter(([t]) => !inPicture.has(t))));
+  process.exitCode = 1;
+}
+
+console.log('');
+if (measuredText.size === 0) {
+  console.log('MEASURED VALUES AND RANGES: every one keeps its left-to-right order');
+} else {
+  console.log(`MEASURED VALUES AND RANGES REORDERED BY AN RTL BOX: ${measuredText.size}`);
+  for (const row of measuredText.values()) {
+    console.log('');
+    console.log(`  ${row.where}`);
+    console.log(`  text     ${row.text}`);
+    console.log(`  reads as ${row.readsAs}`);
+  }
   process.exitCode = 1;
 }

@@ -22,6 +22,11 @@ import {AppRegistry} from 'react-native';
 // Metro never sees this file (index.js is the native entry).
 import './src/web/cairo.css';
 
+// Restores direction inheritance for react-native-web's `dir="auto"` text
+// nodes, which otherwise re-decide direction per sentence from the first
+// strong character. See the file itself - the reasoning is the point.
+import './src/web/direction.css';
+
 import App from './App';
 import {name as appName} from './app.json';
 

@@ -6,14 +6,22 @@
  * on the buttons. This one uses real minus/plus glyphs, 44px targets,
  * and an optional editable centre.
  *
- * DIRECTION FOLLOWS THE SURROUNDING LAYOUT. An earlier version set
- * `direction: 'ltr'` to force decrement-left/increment-right, but
- * react-native-web rejects that property outright ("Invalid style
- * property of 'direction'"), so it applied on Android and did nothing in
- * the browser — the two platforms disagreed. Following the ambient
- * direction is consistent on both: in this Arabic UI decrement sits at
- * the reading start. tabular-nums keeps the value from wobbling as the
- * digits change.
+ * LAYOUT DIRECTION FOLLOWS THE SURROUNDING UI; THE VALUE TEXT DOES NOT.
+ * An earlier version set `direction: 'ltr'` on the control to force
+ * decrement-left/increment-right, but react-native-web rejects that
+ * property outright ("Invalid style property of 'direction'"), so it
+ * applied on Android and did nothing in the browser — the two platforms
+ * disagreed. Button order therefore follows the ambient direction, which
+ * is consistent on both: in this Arabic UI decrement sits at the reading
+ * start.
+ *
+ * The value itself is a different question and gets the opposite answer.
+ * "4.45 V" is a number and its unit, and inside a right-to-left box those
+ * are two runs that swap into "V 4.45". The value style therefore
+ * declares `writingDirection: 'ltr'` — the property react-native-web does
+ * support, and the one that maps to CSS `direction` on web and to the
+ * platform text direction on Android. tabular-nums keeps the value from
+ * wobbling as the digits change.
  */
 import React from 'react';
 import {Pressable, StyleSheet, Text, TextInput, View} from 'react-native';
@@ -173,6 +181,13 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontVariant: ['tabular-nums'],
     paddingVertical: 8,
+    /* THE TEXT is left-to-right even though the CONTROL follows the
+       ambient direction. A value carries its unit after the number -
+       "4.45 V", "450 mAh", "-100 dBm" - and that pairing is engineering
+       notation, not prose. Read inside a right-to-left box the number and
+       the unit are separate runs, so they swap: "V 4.45". This only
+       affects the value text; the buttons keep following the layout. */
+    writingDirection: 'ltr',
   },
   valueInput: {
     paddingVertical: 0,
