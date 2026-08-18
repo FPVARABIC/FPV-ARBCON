@@ -88,7 +88,11 @@ describe('MotorDiagnosticsPanel', () => {
         />,
       );
     });
-    const text = JSON.stringify(tree.toJSON());
+    /* Bidi isolates (U+2066/U+2069) wrap the Latin runs in Arabic copy so
+       an RTL layout does not print the conjunction to the left of the
+       Latin word. They are invisible, so this asserts what a READER sees
+       rather than the exact code points. */
+    const text = JSON.stringify(tree.toJSON()).replace(/[\u2066-\u2069]/g, '');
     expect(text).toContain('مراقبة المحركات وESC');
     expect(text).toContain('12345 RPM');
     expect(text).toContain('أخطاء 2.50٪');

@@ -2160,7 +2160,7 @@ export default function FirmwareFlasherScreen({
 
                 <FirmwareSection
                   title="تهيئة البناء"
-                  caption="Core Build أو Cloud Build، ثم Radio وTelemetry وOSD وMotor وبقية الخيارات."
+                  caption="⁦Core Build⁩ أو ⁦Cloud Build⁩، ثم ⁦Radio⁩ و⁦Telemetry⁩ و⁦OSD⁩ و⁦Motor⁩ وبقية الخيارات."
                   testID="build-configuration">
                   {targetDetail ? (
                     <>

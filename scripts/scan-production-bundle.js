@@ -772,11 +772,31 @@ function escapeNonAscii(text) {
 }
 
 /** True when `text` appears either literally or fully escaped. */
+/**
+ * Bidi isolate marks (U+2066 LRI .. U+2069 PDI) are invisible: Arabic copy
+ * uses them so an RTL line does not print the conjunction to the LEFT of a
+ * Latin word ("...و" landing after "Telemetry"). Stripping them here keeps
+ * this guard asking the question it is for - did the SENTENCE ship, or did
+ * a raw i18n key ship - instead of failing on punctuation a reader cannot
+ * see. A missing sentence still fails, which is the point.
+ */
+function withoutBidiMarks(text) {
+  // Both the real characters and the \uXXXX escapes a minifier emits.
+  return text
+    .replace(/[\u2066-\u2069\u200e\u200f]/g, '')
+    .replace(/\\u20(?:6[6-9]|0[ef])/gi, '');
+}
+
 function containsEitherForm(haystack, text) {
   if (haystack.includes(text)) {
     return true;
   }
-  return haystack.includes(escapeNonAscii(text));
+  if (haystack.includes(escapeNonAscii(text))) {
+    return true;
+  }
+  const bare = withoutBidiMarks(text);
+  const plain = withoutBidiMarks(haystack);
+  return plain.includes(bare) || plain.includes(escapeNonAscii(bare));
 }
 
 /**
