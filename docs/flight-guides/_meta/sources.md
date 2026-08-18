@@ -49,6 +49,23 @@
 | S1.12c | `presets/2025.12/osd/defaults.txt` | 2025.12 | Betaflight | الأصل المرجعي للـ OSD |
 | S1.12d | `presets/2025.12/other/reset_gps.txt` | 2025.12 | Betaflight | GPS و GPS Rescue |
 | S1.12e | `presets/4.5/filters/defaults.txt` | 4.5 | Betaflight | الأصل المرجعي للفلاتر |
+| **S1.13** | `presets/2025.12/rc_link/defaults.txt` | 2025.12 | Betaflight | **الأصل المرجعي للرابط — يضمّنه كل إعداد RC_LINK رسمي** |
+
+**لماذا S1.13 حاسم.** ملفه يحمل تعليقًا صريحًا من Betaflight:
+«NOTE TO AUTHORS: Always include this Preset in any RC Preset»، وكل إعداد
+من S1.1 إلى S1.7 يضمّنه فعلًا قبل أن يكتب سطرًا واحدًا. أي إعداد **لا**
+يذكره الإعداد الخاص بنمط ما يبقى على قيمة هذا الملف — لا على صفر، ولا على
+«غير مضبوط». هذا ما يحدد قيمة `feedforward_boost` لكل من السينمائي والحر:
+
+```
+set feedforward_averaging = 2_POINT
+set feedforward_jitter_factor = 7
+set feedforward_boost = 15
+set rc_smoothing_auto_factor = 30
+set rc_smoothing_auto_factor_throttle = 30
+set rc_smoothing_setpoint_cutoff = 0
+set rc_smoothing_throttle_cutoff = 0
+```
 
 **اختصارات العائلات.** حين يتغيّر إعداد عبر مقاسات عائلة كاملة، يُشار
 إلى العائلة لا إلى ملف واحد:

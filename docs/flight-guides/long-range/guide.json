@@ -7,9 +7,24 @@
   "description_en": "Flying beyond visual line of sight — the one style where signal loss is a planned event, not an accident.",
   "difficulty": "advanced",
   "difficulty_ar": "متقدم",
-  "intended_aircraft": ["7 إنش", "6 إنش", "5 إنش خفيفة بمراوح كبيرة"],
-  "required_screens": ["FailsafeScreen", "GpsScreen", "PortsScreen", "ModesScreen", "PowerBatteryScreen", "OsdScreen"],
-  "optional_screens": ["PidTuningScreen", "ReceiverScreen", "VideoTransmitterScreen"],
+  "intended_aircraft": [
+    "7 إنش",
+    "6 إنش",
+    "5 إنش خفيفة بمراوح كبيرة"
+  ],
+  "required_screens": [
+    "FailsafeScreen",
+    "GpsScreen",
+    "PortsScreen",
+    "ModesScreen",
+    "PowerBatteryScreen",
+    "OsdScreen"
+  ],
+  "optional_screens": [
+    "PidTuningScreen",
+    "ReceiverScreen",
+    "VideoTransmitterScreen"
+  ],
   "hardware_requirements": [
     "وحدة GPS موصولة على UART مضبوط",
     "بوصلة (اختيارية لكن موصى بها بشدة)",
@@ -19,5 +34,10 @@
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE / REFERENCE VERIFIED",
   "image": "_shared/images/failsafe-and-rescue.png",
-  "sources": ["S1.5", "S1.10c", "S1.12d", "S2.1"]
+  "sources": [
+    "S1.5",
+    "S1.10c",
+    "S1.12d",
+    "S2.1"
+  ]
 }

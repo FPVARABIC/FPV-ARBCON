@@ -7,9 +7,22 @@
   "description_en": "Smooth, continuous flying where the shot should look like a camera on a gimbal, not on a drone.",
   "difficulty": "beginner",
   "difficulty_ar": "مبتدئ",
-  "intended_aircraft": ["Cinewhoop", "Cinelog", "5 إنش بكاميرا HD", "7 إنش للقطات الواسعة"],
-  "required_screens": ["PidTuningScreen", "ReceiverScreen", "FailsafeScreen"],
-  "optional_screens": ["MotorsScreen", "OsdScreen", "PowerBatteryScreen"],
+  "intended_aircraft": [
+    "Cinewhoop",
+    "Cinelog",
+    "5 إنش بكاميرا HD",
+    "7 إنش للقطات الواسعة"
+  ],
+  "required_screens": [
+    "PidTuningScreen",
+    "ReceiverScreen",
+    "FailsafeScreen"
+  ],
+  "optional_screens": [
+    "MotorsScreen",
+    "OsdScreen",
+    "ModesScreen"
+  ],
   "hardware_requirements": [
     "كاميرا أو مسجّل فيديو",
     "ESC يدعم DShot ثنائي الاتجاه (لفلتر RPM)"
@@ -17,5 +30,12 @@
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE / REFERENCE VERIFIED",
   "image": "_shared/images/pid-rates-and-feel.png",
-  "sources": ["S1.1", "S1.2", "S1.11a", "S1.11b"]
+  "sources": [
+    "S1.1",
+    "S1.2",
+    "S1.10b",
+    "S1.11a",
+    "S1.11b",
+    "S1.13"
+  ]
 }
