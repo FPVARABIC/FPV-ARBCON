@@ -30,7 +30,14 @@ import {
   MSP_CURRENT_METER_CONFIG,
   MSP_EEPROM_WRITE,
   MSP_FAILSAFE_CONFIG,
+  MSP_OSD_CANVAS,
+  MSP_OSD_CONFIG,
   MSP_RXFAIL_CONFIG,
+  MSP_SET_OSD_CONFIG,
+  MSP_SET_VTX_CONFIG,
+  MSP_VTX_CONFIG,
+  MSP_VTXTABLE_BAND,
+  MSP_VTXTABLE_POWERLEVEL,
   MSP_SET_BATTERY_CONFIG,
   MSP_SET_FAILSAFE_CONFIG,
   MSP_STATUS_EX,
@@ -38,8 +45,12 @@ import {
 } from '../../../core/protocol/msp/commands/mspCommands';
 import {createFailsafeConfigurationDraft} from '../../../core/state/failsafeConfigurationModel';
 import {createPowerConfigurationDraft} from '../../../core/state/powerConfigurationModel';
+import {createOsdConfigurationDraft} from '../../../core/state/osdConfigurationModel';
+import {createVtxConfigurationDraft} from '../../../core/state/vtxConfigurationModel';
 import type {MspFailsafeSnapshot} from '../../../core/protocol/msp/decoding/decodeFailsafe';
 import type {MspPowerConfigurationSnapshot} from '../../../core/protocol/msp/decoding/decodePowerConfiguration';
+import type {MspOsdSnapshot} from '../../../core/protocol/msp/decoding/decodeOsdConfiguration';
+import type {MspVtxSnapshot} from '../../../core/protocol/msp/decoding/decodeVtxConfiguration';
 import type {MspIdentificationState} from './MspSessionCoordinator';
 import {
   FailsafeConfigurationController,
@@ -49,6 +60,8 @@ import {
   PowerConfigurationController,
   type PowerSessionCoordinator,
 } from './PowerConfigurationController';
+import {OsdConfigurationController} from './OsdConfigurationController';
+import {VtxConfigurationController} from './VtxConfigurationController';
 
 type Script = {payload: Uint8Array} | {reject: unknown};
 const EMPTY = new Uint8Array(0);
@@ -383,6 +396,260 @@ describe('power: the paths nothing was checking', () => {
     const draft = {...createPowerConfigurationDraft(original), capacityMah: 1800};
 
     const result = await h.controller.save(key, original, draft);
+    expect(result.kind).toBe('FAILED');
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * OSD
+ *
+ * This file's own header named OSD and VTX alongside Failsafe and
+ * Power - four controllers with three tests each, covering "it saved"
+ * and "it refused while armed" and nothing else. The first round closed
+ * Failsafe and Power and left these two open, so an OSD save whose
+ * outcome was UNKNOWN, or whose base had moved, or whose readback
+ * disagreed, was unproven behaviour on a screen that writes to EEPROM.
+ *
+ * On OSD specifically the stale-base case is not theoretical. The layout
+ * is edited by dragging elements to positions; a base that moved between
+ * the read and the save means the operator's diff lands on somebody
+ * else's layout, and OSD element positions are packed bit fields, so a
+ * wrong base does not produce a wrong number - it produces an element
+ * somewhere nobody put it.
+ * ------------------------------------------------------------------ */
+
+function osdConfigPayload(rssi: number): Uint8Array {
+  const bytes = new Uint8Array(40);
+  const view = new DataView(bytes.buffer);
+  let o = 0;
+  bytes[o++] = 1; bytes[o++] = 3; bytes[o++] = 1; bytes[o++] = rssi;
+  view.setUint16(o, 1400, true); o += 2;
+  bytes[o++] = 0; bytes[o++] = 1;
+  view.setUint16(o, 120, true); o += 2;
+  view.setUint16(o, 0x0805, true); o += 2;
+  bytes[o++] = 1; bytes[o++] = 1; bytes[o++] = 1;
+  view.setUint16(o, 0x0a21, true); o += 2;
+  view.setUint16(o, 1, true); o += 2;
+  bytes[o++] = 2;
+  view.setUint32(o, 1, true); o += 4;
+  bytes[o++] = 3; bytes[o++] = 1; bytes[o++] = 0; bytes[o++] = 24; bytes[o++] = 11;
+  view.setUint16(o, 70, true); o += 2;
+  view.setInt16(o, -95, true); o += 2;
+  return bytes.slice(0, o);
+}
+
+function osdHarness() {
+  const client = new FakeClient();
+  const telemetry = scheduler();
+  const coordinator = {
+    getOwnershipState: () => 'ACTIVE' as const,
+    getIdentificationState: () => identification(),
+    getSessionKey: (sessionId: string) => ({sessionId, generation: 5}),
+    getActiveMspClient: () => client,
+    getTelemetryScheduler: () => telemetry,
+    getMspRecoveryState: () => 'READY' as const,
+  };
+  return {
+    client,
+    controller: new OsdConfigurationController({
+      coordinator: coordinator as never,
+      appStateOwner: {getPhase: () => 'ACTIVE'},
+      isMotorTestActive: () => false,
+    }),
+  };
+}
+
+function enqueueOsd(client: FakeClient, rssi = 30) {
+  client.enqueue(MSP_OSD_CONFIG, {payload: osdConfigPayload(rssi)});
+  client.enqueue(MSP_OSD_CANVAS, {payload: Uint8Array.from([53, 20])});
+}
+
+async function loadOsd(h: ReturnType<typeof osdHarness>): Promise<MspOsdSnapshot> {
+  enqueueOsd(h.client);
+  const result = await h.controller.load(key);
+  if (result.kind !== 'LOADED') throw new Error(result.kind);
+  return result.snapshot;
+}
+
+describe('osd: the paths nothing was checking', () => {
+  it('refuses to write onto a board that changed underneath the operator', async () => {
+    const h = osdHarness();
+    const original = await loadOsd(h);
+    enqueueOsd(h.client, 55); // the FC now reports a different alarm
+    const draft = {...createOsdConfigurationDraft(original), rssiAlarmPercent: 35};
+
+    await expect(h.controller.save(key, original, draft)).resolves.toEqual({
+      kind: 'REJECTED',
+      reason: 'STALE_BASE',
+    });
+    expect(h.client.calls.map(call => call.command)).not.toContain(MSP_SET_OSD_CONFIG);
+  });
+
+  it('reports a write whose outcome is UNKNOWN as unconfirmed, never as saved', async () => {
+    const h = osdHarness();
+    const original = await loadOsd(h);
+    enqueueOsd(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_OSD_CONFIG, {reject: {code: 'MSP_TIMEOUT'}});
+    const draft = {...createOsdConfigurationDraft(original), rssiAlarmPercent: 35};
+
+    const result = await h.controller.save(key, original, draft);
+    expect(result.kind).toBe('UNCONFIRMED');
+  });
+
+  it('does not persist when the settings write never landed', async () => {
+    const h = osdHarness();
+    const original = await loadOsd(h);
+    enqueueOsd(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_OSD_CONFIG, {reject: {code: 'MSP_TIMEOUT'}});
+    const draft = {...createOsdConfigurationDraft(original), rssiAlarmPercent: 35};
+
+    await h.controller.save(key, original, draft);
+    expect(h.client.calls.map(call => call.command)).not.toContain(MSP_EEPROM_WRITE);
+  });
+
+  it('does not claim verification when the readback disagrees', async () => {
+    const h = osdHarness();
+    const original = await loadOsd(h);
+    enqueueOsd(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_OSD_CONFIG, {payload: EMPTY});
+    h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
+    enqueueOsd(h.client); // still 30 - the write did not take
+    const draft = {...createOsdConfigurationDraft(original), rssiAlarmPercent: 35};
+
+    const result = await h.controller.save(key, original, draft);
+    expect(result.kind).not.toBe('SAVED_VERIFIED');
+  });
+
+  it('treats an encode failure as a definite non-write, not an ambiguous one', async () => {
+    const h = osdHarness();
+    const original = await loadOsd(h);
+    enqueueOsd(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_OSD_CONFIG, {reject: {code: 'MSP_ENCODE_FAILED'}});
+    const draft = {...createOsdConfigurationDraft(original), rssiAlarmPercent: 35};
+
+    const result = await h.controller.save(key, original, draft);
+    expect(result.kind).toBe('FAILED');
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * VTX
+ *
+ * The same five paths, and the stakes here are a transmitter that may
+ * be on a channel or a power level the operator did not choose - a
+ * regulatory problem as well as a flying one. An UNCONFIRMED write is
+ * exactly the case where the pilot must NOT be told the VTX is set.
+ * ------------------------------------------------------------------ */
+
+/** The 15-byte MSP_VTX_CONFIG frame; channel 1 is 5658 MHz, 2 is 5678. */
+function vtxConfigPayload(channel: number): Uint8Array {
+  return Uint8Array.from([
+    3, 1, channel, 1, 0, channel === 1 ? 168 : 188, 22, 1, 0, 0, 0, 1, 1, 2, 1,
+  ]);
+}
+const VTX_BAND = Uint8Array.from([1, 8, 82, 65, 67, 69, 66, 65, 78, 68, 82, 1, 2, 20, 23, 34, 23]);
+const VTX_POWER = Uint8Array.from([1, 14, 0, 3, 50, 53, 0]);
+
+function vtxHarness() {
+  const client = new FakeClient();
+  const telemetry = scheduler();
+  const coordinator = {
+    getOwnershipState: () => 'ACTIVE' as const,
+    getIdentificationState: () => identification(),
+    getSessionKey: (sessionId: string) => ({sessionId, generation: 5}),
+    getActiveMspClient: () => client,
+    getTelemetryScheduler: () => telemetry,
+    getMspRecoveryState: () => 'READY' as const,
+  };
+  return {
+    client,
+    controller: new VtxConfigurationController({
+      coordinator: coordinator as never,
+      appStateOwner: {getPhase: () => 'ACTIVE'},
+      isMotorTestActive: () => false,
+    }),
+  };
+}
+
+function enqueueVtx(client: FakeClient, channel = 1) {
+  client.enqueue(MSP_VTX_CONFIG, {payload: vtxConfigPayload(channel)});
+  client.enqueue(MSP_VTXTABLE_BAND, {payload: VTX_BAND});
+  client.enqueue(MSP_VTXTABLE_POWERLEVEL, {payload: VTX_POWER});
+}
+
+async function loadVtx(h: ReturnType<typeof vtxHarness>): Promise<MspVtxSnapshot> {
+  enqueueVtx(h.client);
+  const result = await h.controller.load(key);
+  if (result.kind !== 'LOADED') throw new Error(result.kind);
+  return result.snapshot;
+}
+
+/** Channel 2 on the same band, with the frequency that goes with it. */
+function vtxChannelTwo(original: MspVtxSnapshot) {
+  return {...createVtxConfigurationDraft(original), channel: 2, frequencyMhz: 5820};
+}
+
+describe('vtx: the paths nothing was checking', () => {
+  it('refuses to write onto a board that changed underneath the operator', async () => {
+    const h = vtxHarness();
+    const original = await loadVtx(h);
+    enqueueVtx(h.client, 2); // the VTX moved channel on its own
+    await expect(h.controller.save(key, original, vtxChannelTwo(original))).resolves.toEqual({
+      kind: 'REJECTED',
+      reason: 'STALE_BASE',
+    });
+    expect(h.client.calls.map(call => call.command)).not.toContain(MSP_SET_VTX_CONFIG);
+  });
+
+  it('reports a write whose outcome is UNKNOWN as unconfirmed, never as saved', async () => {
+    // The transmitter may now be on either channel. Telling the pilot it
+    // is set is the one answer that could put them on somebody else's.
+    const h = vtxHarness();
+    const original = await loadVtx(h);
+    enqueueVtx(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_VTX_CONFIG, {reject: {code: 'MSP_TIMEOUT'}});
+
+    const result = await h.controller.save(key, original, vtxChannelTwo(original));
+    expect(result.kind).toBe('UNCONFIRMED');
+  });
+
+  it('does not persist when the settings write never landed', async () => {
+    const h = vtxHarness();
+    const original = await loadVtx(h);
+    enqueueVtx(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_VTX_CONFIG, {reject: {code: 'MSP_TIMEOUT'}});
+
+    await h.controller.save(key, original, vtxChannelTwo(original));
+    expect(h.client.calls.map(call => call.command)).not.toContain(MSP_EEPROM_WRITE);
+  });
+
+  it('does not claim verification when the readback disagrees', async () => {
+    const h = vtxHarness();
+    const original = await loadVtx(h);
+    enqueueVtx(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_VTX_CONFIG, {payload: EMPTY});
+    h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
+    enqueueVtx(h.client); // still channel 1 - the write did not take
+
+    const result = await h.controller.save(key, original, vtxChannelTwo(original));
+    expect(result.kind).not.toBe('SAVED_VERIFIED');
+  });
+
+  it('treats an encode failure as a definite non-write, not an ambiguous one', async () => {
+    const h = vtxHarness();
+    const original = await loadVtx(h);
+    enqueueVtx(h.client);
+    enqueueDisarmed(h.client);
+    h.client.enqueue(MSP_SET_VTX_CONFIG, {reject: {code: 'MSP_ENCODE_FAILED'}});
+
+    const result = await h.controller.save(key, original, vtxChannelTwo(original));
     expect(result.kind).toBe('FAILED');
   });
 });
