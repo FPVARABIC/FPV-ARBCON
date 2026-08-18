@@ -34,6 +34,21 @@ import type {SetupUiSessionKey} from '../platforms/react-native/protocol';
 
 export type RootStackParamList = {
   Start: undefined;
-  Setup: {sessionKey: SetupUiSessionKey} | undefined;
+  /**
+   * `afterSessionLoss` says WHY the operator is on the disconnected
+   * configurator, and it exists because the two arrivals mean opposite
+   * things.
+   *
+   * Pressing "فتح إعدادات متحكم الطيران" IS a request to connect, so the
+   * workspace opens an unambiguous board by itself. Being RETURNED here
+   * by the session-loss redirect is the opposite: the link just died.
+   * Auto-connecting on that arrival reopens the port, the dead session
+   * ends again, the redirect fires again - an unbounded reconnect loop
+   * that hammers the port and, on Android, re-raises the permission
+   * dialog every cycle. Only the redirect sets this flag.
+   */
+  Setup:
+    | {sessionKey?: SetupUiSessionKey; afterSessionLoss?: true}
+    | undefined;
   FirmwareFlasher: undefined;
 };

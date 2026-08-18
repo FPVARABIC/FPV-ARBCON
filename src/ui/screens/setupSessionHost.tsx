@@ -54,16 +54,44 @@ import type { TransportError } from '../../platforms/react-native/transport';
 export function SetupConnectWorkspace({
   onSessionEstablished,
   onBack,
+  autoConnectOnEntry = true,
 }: {
   readonly onSessionEstablished: (key: SetupUiSessionKey) => void;
   /** Leaves the configurator. Absent only in hosts with nowhere to go. */
   readonly onBack?: () => void;
+  /**
+   * Whether this arrival is a request to connect.
+   *
+   * Defaults to true because the ordinary way to reach this workspace is
+   * pressing "فتح إعدادات متحكم الطيران", which already says so. The
+   * session-loss redirect passes false: being returned here by a link
+   * that just died is not a request to reopen it.
+   */
+  readonly autoConnectOnEntry?: boolean;
 }): React.JSX.Element {
   useEffect(() => {
     for (const sessionId of mspSessionCoordinator.listSessionIds()) {
       if (mspSessionCoordinator.getOwnershipState(sessionId) !== 'INACTIVE') {
         const existingKey = mspSessionCoordinator.getSessionKey(sessionId);
-        if (existingKey) {
+        /**
+         * A KEY WITHOUT A SESSION ID IDENTIFIES NOTHING, and adopting one
+         * is not a harmless optimism - it is an infinite loop.
+         *
+         * This used to test `if (existingKey)`. A key of `{generation: 1}`
+         * with no `sessionId` passes that, gets written into the route
+         * params, and the session-loss redirect then reads it back, finds
+         * the ownership of `undefined` reported INACTIVE, and resets the
+         * stack right back to this workspace - which mounts, adopts the
+         * same malformed key again, and never stops. Observed doing
+         * exactly that: the render loop allocated until the heap died.
+         *
+         * So the test is now what the field actually means: adopt a
+         * session only when there IS a session to name.
+         */
+        if (
+          typeof existingKey?.sessionId === 'string' &&
+          existingKey.sessionId.length > 0
+        ) {
           onSessionEstablished(existingKey);
           return;
         }
@@ -98,7 +126,7 @@ export function SetupConnectWorkspace({
           why this needs no browser gesture. */}
       <UsbConnectionScreen
         onSessionEstablished={onSessionEstablished}
-        autoConnectOnEntry
+        autoConnectOnEntry={autoConnectOnEntry}
       />
     </View>
   );

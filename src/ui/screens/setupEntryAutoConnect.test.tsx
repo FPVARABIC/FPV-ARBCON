@@ -260,3 +260,79 @@ describe('the production wiring, not the prop in isolation', () => {
     expect(host).toContain('UsbConnectionScreen');
   });
 });
+
+/**
+ * THE RECONNECT LOOP, AND WHY IT IS A SAFETY MATTER RATHER THAN TIDINESS.
+ *
+ * Auto-connect on entry has one dangerous neighbour: the session-loss
+ * redirect, which returns the operator to this same workspace whenever a
+ * tracked session dies. Connect on THAT arrival and the shape is a loop -
+ * reopen the port, the link dies again, the redirect fires again - which
+ * hammers the port, re-raises Android's permission dialog every cycle,
+ * and (observed) allocates React fibers until the process is killed.
+ *
+ * Two independent guards stop it, and both are held here:
+ *
+ *   1. the redirect marks its own arrival, and a marked arrival does not
+ *      auto-connect;
+ *   2. a session key with no sessionId names nothing and is never adopted
+ *      - the malformed key was what kept re-arming the redirect.
+ */
+describe('being returned here by a dead link is not a request to reconnect', () => {
+  const fs = require('fs') as typeof import('fs');
+  const path = require('path') as typeof import('path');
+  const read = (file: string): string =>
+    fs
+      .readFileSync(path.join(__dirname, file), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+
+  it('the redirect stamps the arrival it caused', () => {
+    const redirect = fs
+      .readFileSync(
+        path.join(__dirname, '..', '..', 'navigation', 'useSessionLossRedirect.ts'),
+        'utf8',
+      )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    expect(redirect).toContain("{name: 'Setup', params: {afterSessionLoss: true}}");
+  });
+
+  it('a stamped arrival turns auto-connect OFF', () => {
+    const setup = read('SetupScreen.tsx');
+    expect(setup).toContain(
+      'autoConnectOnEntry={route.params?.afterSessionLoss !== true}',
+    );
+  });
+
+  it('the workspace forwards the caller decision instead of hardcoding it', () => {
+    // It used to pass the flag unconditionally, which is what made the
+    // redirect's arrival indistinguishable from a chosen one.
+    const host = read('setupSessionHost.tsx');
+    expect(host).toContain('autoConnectOnEntry={autoConnectOnEntry}');
+    expect(host).not.toMatch(/<UsbConnectionScreen[^>]*\n\s*autoConnectOnEntry\s*\n/);
+  });
+
+  it('a session key with no sessionId is never adopted', () => {
+    // `if (existingKey)` accepted {generation: 1}. Written into the route
+    // params, the redirect read it back, found the ownership of undefined
+    // INACTIVE, and reset straight back here - for ever.
+    const host = read('setupSessionHost.tsx');
+    expect(host).toContain("typeof existingKey?.sessionId === 'string'");
+    expect(host).toContain('existingKey.sessionId.length > 0');
+    expect(host).not.toContain('if (existingKey) {');
+  });
+
+  it('the redirect will not track a session id it does not have', () => {
+    const redirect = fs
+      .readFileSync(
+        path.join(__dirname, '..', '..', 'navigation', 'useSessionLossRedirect.ts'),
+        'utf8',
+      )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    expect(redirect).toContain("typeof params?.sessionKey?.sessionId === 'string'");
+    expect(redirect).not.toContain('if (params?.sessionKey) {');
+  });
+});

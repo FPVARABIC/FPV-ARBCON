@@ -105,7 +105,14 @@ export function useSessionLossRedirect(): SessionLossRedirect {
       const params = currentRoute.params as
         | RootStackParamList['Setup']
         | undefined;
-      if (params?.sessionKey) {
+      // The same truth check the connect workspace applies: a key with no
+      // sessionId names no session, so tracking it would watch the
+      // ownership of `undefined` - reported INACTIVE - and fire the
+      // redirect below against a session that never existed.
+      if (
+        typeof params?.sessionKey?.sessionId === 'string' &&
+        params.sessionKey.sessionId.length > 0
+      ) {
         setTrackedSessionId(params.sessionKey.sessionId);
       } else {
         // The disconnected configurator: nothing to watch. Clearing here
@@ -172,9 +179,15 @@ export function useSessionLossRedirect(): SessionLossRedirect {
     // using. Params deliberately ABSENT: this remount is exactly the
     // "no live session" posture, never a fabricated one.
     setTrackedSessionId(null);
+    // `afterSessionLoss` is the ONE param this reset carries, and it is
+    // not a session: it records that the operator was RETURNED here
+    // rather than arriving by choice. The workspace auto-connects on a
+    // chosen arrival and must not on this one - otherwise it reopens the
+    // port, the link dies again, this same reset runs again, and the app
+    // spins in a reconnect loop instead of showing the operator a screen.
     navigationRef.reset({
       index: 1,
-      routes: [{name: 'Start'}, {name: 'Setup'}],
+      routes: [{name: 'Start'}, {name: 'Setup', params: {afterSessionLoss: true}}],
     });
   }, [
     navigationRef,

@@ -44,7 +44,10 @@ describe('Motors reachability after the single-app merge', () => {
     const params: RootStackParamList['Setup'] = {
       sessionKey: { sessionId: 's-1', generation: 3 },
     };
-    expect(params?.sessionKey.sessionId).toBe('s-1');
+    // Optional-chained through `sessionKey` too: the field is optional
+    // now, because the session-loss redirect carries `afterSessionLoss`
+    // on this same route with no session at all (navigation/types.ts).
+    expect(params?.sessionKey?.sessionId).toBe('s-1');
     const disconnected: RootStackParamList['Setup'] = undefined;
     expect(disconnected).toBeUndefined();
     const names: (keyof RootStackParamList)[] = [

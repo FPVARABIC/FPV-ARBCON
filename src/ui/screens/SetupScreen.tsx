@@ -198,6 +198,10 @@ export default function SetupScreen({
     return (
       <SetupConnectWorkspace
         onSessionEstablished={handleSessionEstablished}
+        /* Arriving by choice is a request to connect; being returned
+           here by the session-loss redirect is not. See the param's own
+           note in navigation/types.ts. */
+        autoConnectOnEntry={route.params?.afterSessionLoss !== true}
         /* Optional-chained: a host that supplies no navigator at all
            (tests, embeds) gets no back control rather than a crash. */
         onBack={navigation?.canGoBack?.() === true ? () => navigation.goBack() : undefined}

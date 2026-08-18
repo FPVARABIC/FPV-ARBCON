@@ -280,6 +280,18 @@ async function teardownRenderers(): Promise<void> {
 
 afterEach(async () => {
   await teardownRenderers();
+  /**
+   * THE COORDINATOR IS A MODULE SINGLETON, and since the entry flow
+   * connects by itself, an ordinary render can leave a live session in
+   * it. The next test's connect workspace then ADOPTS that session on
+   * mount and renders the connected screen, so a test asserting the
+   * disconnected posture fails for a reason that has nothing to do with
+   * the behaviour it is testing. Ending them here keeps each test's
+   * starting state its own.
+   */
+  for (const sessionId of mspSessionCoordinator.listSessionIds()) {
+    mspSessionCoordinator.deactivateMspSession(sessionId);
+  }
 });
 
 // Mirrors UsbConnectionScreen.test.tsx's own findPressableMatch()/
@@ -305,9 +317,33 @@ function isOnSetupScreen(renderer: ReactTestRenderer.ReactTestRenderer): boolean
   return renderer.root.findAllByProps({testID: 'setup-screen'}).length > 0;
 }
 
-async function pressConnect(renderer: ReactTestRenderer.ReactTestRenderer) {
+/**
+ * Reaches the CONNECTED state, however this build gets there.
+ *
+ * ENTRY CLEANUP changed who initiates the connection. Arriving at the
+ * configurator IS the request to connect - the operator pressed "فتح
+ * إعدادات متحكم الطيران" - so when exactly one authorized board is
+ * present the workspace opens it itself and «اتصال» is never rendered.
+ * Pressing a button that no longer exists is how these tests failed.
+ *
+ * This deliberately does NOT assert which path ran: both are correct
+ * product behaviour (an ambiguous or absent board still waits for the
+ * press), and every caller asserts the CONNECTED RESULT immediately
+ * afterwards, which is the thing they actually care about. A build that
+ * reached neither still fails there, loudly.
+ */
+async function reachConnected(renderer: ReactTestRenderer.ReactTestRenderer) {
+  const button = renderer.root
+    .findAllByProps({testID: 'usb-connect-button'})
+    .find(node => 'onPress' in node.props);
   await act(async () => {
-    await findByTestID(renderer, 'usb-connect-button').props.onPress();
+    if (button !== undefined) {
+      await button.props.onPress();
+      return;
+    }
+    // Auto-connect already ran; let its state settle exactly as a press
+    // would have.
+    await flushSchedulerTick();
   });
 }
 
@@ -430,7 +466,7 @@ function renderAppConnectedToSetup(sessionId: string) {
       fakeClient.openDevice.mockResolvedValueOnce(sessionId);
 
       const renderer = await renderApp();
-      await pressConnect(renderer);
+      await reachConnected(renderer);
 
       expect(isOnSetupScreen(renderer)).toBe(true);
       return renderer;
@@ -474,7 +510,7 @@ describe('App - Pass 7.7B: coverage lifecycle', () => {
       originalError(...args);
     });
 
-    let texts: unknown[];
+    let connected = false;
     try {
       // A scan that settles LATER than any fixed number of scheduler
       // hops would cover. A microtask- or immediate-macrotask-resolved
@@ -487,15 +523,22 @@ describe('App - Pass 7.7B: coverage lifecycle', () => {
         () => new Promise(resolve => setTimeout(() => resolve([supportedDevice()]), 200)),
       );
       const renderer = await renderApp();
-      // Positive proof the scan completed inside renderApp()'s own act()
-      // scope: the enumerated device is already on screen, with no
-      // further flushing of any kind between the mount and this read.
-      texts = allText(renderer);
+      // Read with NO further flushing of any kind between the mount and
+      // this line - that is what makes it evidence about the act() scope.
+      connected = isOnSetupScreen(renderer);
     } finally {
       errorSpy.mockRestore();
     }
 
-    expect(texts).toContain('CH340 Serial');
+    // THE SCAN SETTLED INSIDE renderApp()'s OWN act() SCOPE, proven by
+    // the strongest observable this flow has: the app is CONNECTED. The
+    // entry flow only opens a board the scan already returned, so
+    // reaching the Setup screen with no further flushing of any kind is
+    // only possible if that scan completed inside the scope. (This used
+    // to read the device name off the connection workspace - correct
+    // until the workspace stopped being where an unambiguous board
+    // leaves you.)
+    expect(connected).toBe(true);
     expect(recorded.filter(message => message.includes('not wrapped in act'))).toEqual([]);
     expect(recorded.filter(message => message.includes('overlapping act'))).toEqual([]);
   });
