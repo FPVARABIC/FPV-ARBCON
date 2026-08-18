@@ -1235,7 +1235,7 @@
     "minCommand": "أمر التوقف الأدنى",
     "externalRange": "قيمة خارجية ضمن 0–2000.",
     "escHeading": "ميزات ESC وسلوك الخمول",
-    "escDetail": "إعدادات التليمترية والخمول واتجاه اليaw المخزن في متحكم الطيران.",
+    "escDetail": "إعدادات التليمترية والخمول واتجاه yaw المخزن في متحكم الطيران.",
     "bidirectionalDshot": "Bidirectional DShot",
     "bidirectionalDshotDetail": "يعيد بيانات RPM عبر خط DShot. لا يتاح إلا مع DShot.",
     "escSensor": "حساس ESC",
