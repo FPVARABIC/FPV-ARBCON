@@ -1,0 +1,22 @@
+{
+  "id": "firmware",
+  "kind": "PREREQUISITE",
+  "title_ar": "البرنامج الثابت",
+  "title_en": "Firmware",
+  "description_ar": "ما يجب أن يكون صحيحًا في متحكم طيرانك قبل أن يعني أي دليل نمط شيئًا.",
+  "description_en": "What must be right on the flight controller before any style guide means anything.",
+  "difficulty": "intermediate",
+  "difficulty_ar": "متوسط",
+  "intended_aircraft": ["أي طائرة تعمل ببرنامج Betaflight"],
+  "required_screens": ["FirmwareFlasherScreen", "PortsScreen", "SetupScreen"],
+  "optional_screens": ["PresetsScreen", "ConfigurationsScreen", "CliScreen"],
+  "hardware_requirements": [
+    "متحكم طيران Betaflight بواجهة MSP API 1.47 فأعلى",
+    "كابل USB موثوق",
+    "المراوح مفكوكة"
+  ],
+  "hardware_verification_status": "NOT VERIFIED — DEFERRED",
+  "verification_level": "SOFTWARE VERIFIED",
+  "image": "_shared/images/firmware-flasher.png",
+  "sources": ["S1.12", "S2.1", "S2.2"]
+}

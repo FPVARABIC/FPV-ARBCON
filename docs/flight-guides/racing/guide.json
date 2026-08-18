@@ -1,0 +1,22 @@
+{
+  "id": "racing",
+  "kind": "FLIGHT_STYLE",
+  "title_ar": "السباق",
+  "title_en": "Racing",
+  "description_ar": "أقصر زمن حول مسار. كل شيء يُقاس بالتأخير.",
+  "description_en": "Fastest lap around a track. Everything is measured in latency.",
+  "difficulty": "advanced",
+  "difficulty_ar": "متقدم",
+  "intended_aircraft": ["5 إنش على 6S", "وووب 1S للسباق الداخلي"],
+  "required_screens": ["PidTuningScreen", "ReceiverScreen", "MotorsScreen", "FailsafeScreen"],
+  "optional_screens": ["VideoTransmitterScreen", "OsdScreen", "ModesScreen"],
+  "hardware_requirements": [
+    "ESC يدعم DShot600 و DShot ثنائي الاتجاه",
+    "إطار مخدوم — الضبط الحاد يكشف عيوب البناء",
+    "هوائي مرسل فيديو مركّب"
+  ],
+  "hardware_verification_status": "NOT VERIFIED — DEFERRED",
+  "verification_level": "SOFTWARE / REFERENCE VERIFIED",
+  "image": "_shared/images/vtx-channel-power.png",
+  "sources": ["S1.4", "S1.9", "S1.11d"]
+}

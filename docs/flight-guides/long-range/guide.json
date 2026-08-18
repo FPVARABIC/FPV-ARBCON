@@ -1,0 +1,23 @@
+{
+  "id": "long-range",
+  "kind": "FLIGHT_STYLE",
+  "title_ar": "المدى الطويل",
+  "title_en": "Long Range",
+  "description_ar": "الطيران خارج مدى البصر. النمط الوحيد الذي يكون فيه فقد الإشارة حدثًا متوقعًا لا حادثًا.",
+  "description_en": "Flying beyond visual line of sight — the one style where signal loss is a planned event, not an accident.",
+  "difficulty": "advanced",
+  "difficulty_ar": "متقدم",
+  "intended_aircraft": ["7 إنش", "6 إنش", "5 إنش خفيفة بمراوح كبيرة"],
+  "required_screens": ["FailsafeScreen", "GpsScreen", "PortsScreen", "ModesScreen", "PowerBatteryScreen", "OsdScreen"],
+  "optional_screens": ["PidTuningScreen", "ReceiverScreen", "VideoTransmitterScreen"],
+  "hardware_requirements": [
+    "وحدة GPS موصولة على UART مضبوط",
+    "بوصلة (اختيارية لكن موصى بها بشدة)",
+    "رابط راديو بعيد المدى",
+    "هوائي مرسل فيديو مركّب — الطاقة أعلى في هذا النمط"
+  ],
+  "hardware_verification_status": "NOT VERIFIED — DEFERRED",
+  "verification_level": "SOFTWARE / REFERENCE VERIFIED",
+  "image": "_shared/images/failsafe-and-rescue.png",
+  "sources": ["S1.5", "S1.10c", "S1.12d", "S2.1"]
+}

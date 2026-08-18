@@ -1,0 +1,21 @@
+{
+  "id": "freestyle",
+  "kind": "FLIGHT_STYLE",
+  "title_ar": "الطيران الحر",
+  "title_en": "Freestyle",
+  "description_ar": "حركات وقلبات وتدفّق حول العوائق، باستجابة حادة بلا عصبية.",
+  "description_en": "Tricks, flips and flow around obstacles, with sharp response that stays predictable.",
+  "difficulty": "intermediate",
+  "difficulty_ar": "متوسط",
+  "intended_aircraft": ["5 إنش", "3–4 إنش", "7 إنش"],
+  "required_screens": ["PidTuningScreen", "ReceiverScreen", "FailsafeScreen", "MotorsScreen"],
+  "optional_screens": ["OsdScreen", "PowerBatteryScreen", "ModesScreen"],
+  "hardware_requirements": [
+    "ESC يدعم DShot ثنائي الاتجاه (لفلتر RPM)",
+    "إطار مخدوم وأذرع سليمة"
+  ],
+  "hardware_verification_status": "NOT VERIFIED — DEFERRED",
+  "verification_level": "SOFTWARE / REFERENCE VERIFIED",
+  "image": "_shared/images/pid-rates-and-feel.png",
+  "sources": ["S1.3", "S1.10a", "S1.10b", "S1.10c"]
+}
