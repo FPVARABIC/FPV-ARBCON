@@ -166,5 +166,67 @@
       ]
     }
   ],
-  "step_count": 6
+  "step_count": 6,
+  "decisions": [
+    {
+      "requirement": "المستقبل · تنعيم الإشارة",
+      "decision": "KEEP_DEFAULT",
+      "detail": "إعداد الوووب الرسمي **لا يضمّن** ملف الرابط، فالتنعيم يبقى على أصله: معاملان تلقائيان 30/30 وترددا قطع 0. لا تغيّرهما لهذا النمط.",
+      "source": "S1.13"
+    },
+    {
+      "requirement": "Rates",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "الإعداد الرسمي يعرض ملف rates كخيار غير معلَّم، لا كقاعدة. الوووب يميل إلى yaw أعلى لأن دورانه بطيء بطبعه — والرقم اختيارك.",
+      "source": null
+    },
+    {
+      "requirement": "قيم PID (P · I · D)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "إعداد الوووب الرسمي يضبط PID عبر منزلقات simplified، وهي غير معروضة في التطبيق. لا تعدّل P/I/D يدويًا.",
+      "source": "S1.8"
+    },
+    {
+      "requirement": "الفلاتر",
+      "decision": "KEEP_DEFAULT",
+      "detail": "الإعداد الرسمي يطفئ Gyro LPF1 و Dynamic Notch ويعتمد على فلتر RPM وحده. لا يسمح التطبيق بتفعيل أو تعطيل Dynamic Notch، وهذا هو السلوك الصحيح هنا.",
+      "source": "S1.8"
+    },
+    {
+      "requirement": "وضع الطيران: Acro · Angle · Horizon",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "**Acro صحيح تمامًا للوووب، وليس Angle إلزاميًا.** Angle مساعدة تعلّم مفيدة داخل الغرف؛ ضعها على مفتاح إن أردت الرجوع إليها، أو اتركها.",
+      "source": null
+    },
+    {
+      "requirement": "Airmode",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "الإعداد الرسمي يقول إن إطفاءه أفضل أداءً في الطيران الداخلي، ويعرض ذلك كخيار غير معلَّم. للأكروبات في مساحة كبيرة، ضعه على مفتاح.",
+      "source": "S1.8"
+    },
+    {
+      "requirement": "تعويض هبوط الجهد (`vbat_sag_compensation`)",
+      "decision": "NOT_APPLICABLE",
+      "detail": "موصى به في الإعداد الرسمي (خيار معلَّم، القيمة 100) لأن خلية 1S تهبط بشدة تحت الحمل — لكن **هذا التطبيق لا يعرضه**. يُضبط من سطر الأوامر أو بتطبيق الحزمة الرسمية.",
+      "source": "S1.8"
+    },
+    {
+      "requirement": "OSD",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "لا يوجد رقم رسمي للوووب. إن كان لديك OSD، ابدأ من إنذار RSSI dBm عند −98 وعدّله بعد رحلة داخل مبناك — الجدران تغيّر الرقم أكثر من النمط.",
+      "source": null
+    },
+    {
+      "requirement": "مرسل الفيديو (VTX)",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "الطيران الداخلي لا يحتاج طاقة عالية؛ ابدأ من أقل مستوى يعطيك صورة نظيفة.",
+      "source": null
+    },
+    {
+      "requirement": "`cpu_late_limit_permille`",
+      "decision": "NOT_APPLICABLE",
+      "detail": "يضبطه الإعداد الرسمي عند 15، ولا يعرضه التطبيق. غيابه لا يمنع الطيران.",
+      "source": "S1.8"
+    }
+  ]
 }

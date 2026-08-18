@@ -20,6 +20,7 @@
  */
 import {chromium} from 'playwright-core';
 import {STYLES, query, PREVIEW} from './guide-spec.mjs';
+import {prepare} from './drive.mjs';
 
 const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
@@ -85,6 +86,9 @@ for (const style of STYLES) {
     const page = await browser.newPage({viewport: {width: 390, height: 4000}, locale: 'ar'});
     await page.goto(`${PREVIEW}?${query(step.fixture)}`, {waitUntil: 'networkidle'});
     await page.waitForTimeout(1400);
+    // Same clicks capture.mjs makes, so the check reads the state the
+    // picture shows and not the state the page loaded with.
+    await prepare(page, step.prepare);
 
     for (const target of step.targets) {
       checked += 1;

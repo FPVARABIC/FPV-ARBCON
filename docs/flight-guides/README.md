@@ -18,7 +18,7 @@
 | **البرنامج الثابت** · `firmware/` | ما يجب أن يكون صحيحًا قبل أن يعني أي دليل شيئًا. |
 | الصعوبة | متوسط |
 | المنصات | أي طائرة Betaflight |
-| الخطوات | 2 · تحديث البرنامج الثابت · الحزم الجاهزة |
+| الخطوات | 3 · اللوحة والإصدار وخيارات البناء · بوابة الأمان · الحزم الجاهزة |
 
 ### أنماط الطيران
 
@@ -47,15 +47,15 @@
 |---|---|
 | **السباق** · `racing/` | أقصر زمن حول مسار. كل شيء يُقاس بالتأخير. |
 | الصعوبة | متقدم |
-| المنصات | 5" على 6S · وووب 1S للسباق |
-| الخطوات | 7 · المستقبل · إحساس العصا · المحركات · Dynamic Idle · Failsafe · OSD · مرسل الفيديو |
+| المنصات | 5" على 6S · 5" على 4S |
+| الخطوات | 7 · المستقبل · إحساس العصا · المحركات · Dynamic Idle · Failsafe · OSD · مرسل الفيديو (قناتك ووضع الانتظار) |
 
 | | |
 |---|---|
 | **المدى الطويل** · `long-range/` | الطيران خارج مدى البصر، بخطة عودة. |
 | الصعوبة | متقدم |
 | المنصات | 7" · 6" · 5" خفيفة |
-| الخطوات | 9 · المنافذ · المستقبل · GPS · GPS Rescue · الأوضاع · الطاقة والبطارية · مرسل الفيديو · OSD · إحساس العصا |
+| الخطوات | 9 · المنافذ · المستقبل · GPS · GPS Rescue · الأوضاع · الطاقة والبطارية · مرسل الفيديو (الطاقة) · OSD · إحساس العصا |
 
 ---
 
@@ -108,7 +108,7 @@
 | `_meta/compatibility.md` | التوافق مع MSP API 1.47 · 1.48 · 1.49. |
 | `_meta/screen-map.md` | أين يُضبط كل إعداد — مرجع نصّي، بلا صور. |
 | `<النمط>/images/` | **لقطات ذلك النمط بقيمه هو.** لا صور مشتركة. |
-| `_shared/review/` | أوراق مراجعة للمالك — أداة مراجعة، ليست جزءًا من الدليل. |
+| `<النمط>/review/` | **ورقة مراجعة ذلك النمط وحده** — أداة مراجعة للمالك، ليست جزءًا من الدليل. |
 | `_tools/` | الأدوات التي تولّد كل ما سبق (انظر أدناه). |
 
 ---
@@ -120,17 +120,22 @@ docs/flight-guides/
   README.md            هذا الملف
   _meta/               البحث والمصادر وقدرة التطبيق
   _tools/              التوليد والتحقق
-  _shared/review/      أوراق مراجعة المالك
-  firmware/            guide.md · guide.json · images/
-  tiny-whoop/          guide.md · guide.json · images/
-  cinematic/           guide.md · guide.json · images/
-  freestyle/           guide.md · guide.json · images/
-  racing/              guide.md · guide.json · images/
-  long-range/          guide.md · guide.json · images/
+  firmware/            guide.md · guide.json · images/ · review/
+  tiny-whoop/          guide.md · guide.json · images/ · review/
+  cinematic/           guide.md · guide.json · images/ · review/
+  freestyle/           guide.md · guide.json · images/ · review/
+  racing/              guide.md · guide.json · images/ · review/
+  long-range/          guide.md · guide.json · images/ · review/
 ```
 
 **كل نمط مستقل تمامًا.** خطواته مرقّمة من 1 إلى النهاية، وصوره في مجلده،
-وقيمه في صوره. لا يُحال القارئ إلى مجلد آخر ليكمل نمطه.
+وقيمه في صوره، وورقة مراجعته في `review/` داخله. لا يُحال القارئ إلى مجلد
+آخر ليكمل نمطه، ولا يوجد مجلد مشترك للمحتوى.
+
+الأدوات مشتركة عمدًا؛ **المحتوى غير مشترك عمدًا**. هذا التمييز مفروض
+آليًا: `_tools/qa.mjs` يشغّل 19 فحص استقلال (`U1`–`U19`) ويفشل إن أحال
+ركنٌ قارئه إلى ركن آخر، أو عرض صورة من مجلد غيره، أو فقد قراره الخاص
+بإعداد لا تغيّره خطواته.
 
 ---
 
@@ -144,11 +149,18 @@ docs/flight-guides/
 | `node docs/flight-guides/_tools/capture.mjs` | يلتقط كل اللقطات من بناء المعاينة |
 | `node docs/flight-guides/_tools/validate.mjs` | يتحقق من **حالة عنصر التحكم**: القيمة داخل الحقل، والخيار المحدَّد، والمفتاح المفعّل |
 | `node docs/flight-guides/_tools/write-steps.mjs` | يكتب قسم الخطوات في `guide.md` و`steps` في `guide.json` |
-| `node docs/flight-guides/_tools/sheets.mjs` | يبني أوراق المراجعة |
-| `node docs/flight-guides/_tools/qa.mjs` | الروابط والصور اليتيمة والمصادر وتطابق `guide.md` مع `guide.json` |
+| `node docs/flight-guides/_tools/sheets.mjs` | يبني ورقة مراجعة لكل ركن داخل مجلده |
+| `node docs/flight-guides/_tools/qa.mjs` | الروابط والصور اليتيمة والمصادر وتطابق `guide.md` مع `guide.json` — و**19 فحص استقلال** (`U1`–`U19`) |
+| `node docs/flight-guides/_tools/bidi-audit.mjs` | يقيس ترتيب الرسم الفعلي للجمل المختلطة عربي/لاتيني، ويقارنه بالترتيب المكتوب |
 
-إذا تغيّرت واجهة التطبيق لاحقًا: أعد `capture` ثم `validate` ثم `sheets`.
-لا عمل يدوي.
+إذا تغيّرت واجهة التطبيق لاحقًا: أعد `capture` ثم `validate` ثم `write-steps`
+ثم `sheets` ثم `qa`. لا عمل يدوي.
+
+بعض اللقطات تحتاج استعمالًا حقيقيًا للوصول إلى حالتها (اختيار لوحة من
+القائمة، الانتقال إلى المرحلة 2، تفعيل مفتاح أمان). تلك الخطوات تعلن
+`prepare` في `guide-spec.mjs`، و`_tools/drive.mjs` **يضغط الأزرار نفسها**
+قبل التقاط الصورة وقبل فحصها — فلا تُحقَن حالة لا يستطيع المستخدم
+إنتاجها.
 
 ---
 

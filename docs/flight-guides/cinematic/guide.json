@@ -154,5 +154,55 @@
       ]
     }
   ],
-  "step_count": 6
+  "step_count": 6,
+  "decisions": [
+    {
+      "requirement": "ترددا القطع (setpoint · الخانق)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتركهما 0 — أي «تلقائي». الإعداد السينمائي الرسمي يضبط المعاملين التلقائيين ولا يلمس ترددي القطع.",
+      "source": "S1.13"
+    },
+    {
+      "requirement": "Rates",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "لا توجد Rates رسمية للسينمائي. اختر ملفًا أبطأ من ملفك المعتاد وارفع expo قليلًا لتنعيم المنتصف — ولا نفرض رقمًا واحدًا لهذا النمط.",
+      "source": null
+    },
+    {
+      "requirement": "قيم PID (P · I · D)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "الإعدادان السينمائيان الرسميان لا يلمسان P أو I أو D إطلاقًا. النعومة تأتي من إحساس العصا والتنعيم، لا من خفض PID.",
+      "source": "S1.1"
+    },
+    {
+      "requirement": "الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتبع ضبط منصتك. القيم المرجعية للسينمائي (سقف 750Hz لـ Cinelog، أدنى 125Hz لبناء نظيف) في قسم «اختياري»، والتطبيق لا يعدّلها إلا إذا أثبتت القراءة أن الميزة نشطة.",
+      "source": "S1.11a"
+    },
+    {
+      "requirement": "الأوضاع (Modes)",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "مفتاح ARM إلزامي ويُضبط مرة واحدة لكل طائرة. ما بعده — Angle أو Beeper أو Turtle — تفضيلك.",
+      "source": null
+    },
+    {
+      "requirement": "الطاقة والبطارية",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "لا توجد حدود بطارية «سينمائية». اضبطها على حزمتك أنت: عدد الخلايا، وتحذير الخلية، والسعة.",
+      "source": null
+    },
+    {
+      "requirement": "مرسل الفيديو (VTX)",
+      "decision": "NOT_APPLICABLE",
+      "detail": "لا يغيّره هذا النمط. اضبط القناة والطاقة مرة واحدة حسب مكانك وقوانينه.",
+      "source": null
+    },
+    {
+      "requirement": "`thrust_linear`",
+      "decision": "NOT_APPLICABLE",
+      "detail": "يضبطه الإعداد الرسمي حسب تردد ESC (0 عند 24k · 20 عند 48k · 40 عند 96k)، ولا يعرضه هذا التطبيق. يُضبط من سطر الأوامر أو بتطبيق الحزمة.",
+      "source": "S1.11a"
+    }
+  ]
 }

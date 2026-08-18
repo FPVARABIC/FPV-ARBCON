@@ -198,10 +198,16 @@ export const STYLES = [
         targets: [{testid: 'osd-rssi-dbm', kind: 'stepper', expect: '-95 dBm', source: 'S1.4'}],
       },
       {
-        n: 7, titleAr: 'مرسل الفيديو', screen: 'مرسل الفيديو · القناة والطاقة',
-        shot: 'vtx', card: null,
-        fixture: {screen: 'vtx'},
-        targets: [],
+        n: 7, titleAr: 'مرسل الفيديو — قناتك ووضع الانتظار',
+        screen: 'مرسل الفيديو · القناة والطاقة',
+        shot: 'vtx', card: {text: 'القناة والطاقة'},
+        fixture: {screen: 'vtx', band: 5, channel: 1, power: 1, pit: 1},
+        note: 'في السباق **النطاق والقناة ليسا اختيارك**، بل ما يخصصه لك المنظّم — واللقطة تعرض `Raceband` كمثال على ذلك، لا كتوصية. الحقل الذي يخصّك فعلًا هو **Pit Mode**: مفعّل هنا، أي أن المرسل صامت وأنت على خط الانطلاق، فلا تفسد فيديو من يطير الآن. أطفئه عند دورك. الجدول كله مقروء من متحكم الطيران، فما تراه هو ما يدعمه مرسلك أنت.',
+        targets: [
+          {testid: 'vtx-band-5', kind: 'option', expect: 'selected', source: 'C'},
+          {testid: 'vtx-channel-1', kind: 'option', expect: 'selected', source: 'C'},
+          {testid: 'vtx-pit', kind: 'switch', expect: 'on', source: 'C'},
+        ],
       },
     ],
   },
@@ -318,10 +324,15 @@ export const STYLES = [
         ],
       },
       {
-        n: 7, titleAr: 'مرسل الفيديو', screen: 'مرسل الفيديو · الطاقة',
-        shot: 'vtx', card: null,
-        fixture: {screen: 'vtx'},
-        targets: [],
+        n: 7, titleAr: 'مرسل الفيديو — الطاقة ومستوياتها الحقيقية',
+        screen: 'مرسل الفيديو · القناة والطاقة',
+        shot: 'vtx', card: {text: 'القناة والطاقة'},
+        fixture: {screen: 'vtx', band: 1, channel: 1, power: 4, lowPower: 1},
+        note: '**لا رقم رسمي هنا، والقانون هو من يقرر.** ما تعرضه اللقطة هو **أعلى مستوى يعلنه هذا المرسل** (600) — لتعرف أين تقرأ المستويات المتاحة على عتادك، لا لتنسخ الرقم. القاعدة الوحيدة في هذا الدليل: أعلى طاقة **تسمح بها قوانين مكانك**، لا أعلى طاقة موجودة.\n\nومفعَّل هنا أيضًا **طاقة منخفضة عند DISARM**: المدى الطويل يعني وقتًا طويلًا مسلَّحًا وطاقة عالية، فخفض الطاقة تلقائيًا بعد نزع التسليح يقلّل حرارة المرسل وأنت واقف. `[C]`',
+        targets: [
+          {testid: 'vtx-power-4', kind: 'option', expect: 'selected', source: 'C'},
+          {testid: 'vtx-low-power-1', kind: 'option', expect: 'selected', source: 'C'},
+        ],
       },
       {
         n: 8, titleAr: 'OSD', screen: 'OSD · إنذارات السلامة',
@@ -349,14 +360,50 @@ export const STYLES = [
     id: 'firmware', titleAr: 'البرنامج الثابت', titleEn: 'Firmware',
     steps: [
       {
-        n: 1, titleAr: 'قبل التحديث', screen: 'تحديث البرنامج الثابت · اللوحة والبناء',
-        shot: 'flasher', card: null,
+        /* The board is CHOSEN in this picture, and the build options are
+         * on screen. The earlier capture's subject was an empty USB bus
+         * and a not-yet-configured build - a picture of nothing having
+         * happened yet, which taught the reader nothing. */
+        n: 1, titleAr: 'اللوحة والإصدار وخيارات البناء',
+        screen: 'تحديث البرنامج الثابت · المرحلة 1: اللوحة والبناء',
+        shot: 'flasher-board', card: null,
+        prepare: [
+          {click: 'target-selector'},
+          {click: 'target-SPEEDYBEEF405V3', settle: 900},
+          {click: 'release-selector'},
+          {click: 'release-4.6.0', settle: 1200},
+        ],
+        note: 'الشاشة مرحلتان: **1 اللوحة والبناء**، ثم **2 التحقق والتفليش**. لا تنتقل إلى الثانية قبل أن تختار لوحة وإصدارًا.\n\nفي اللقطة اللوحة مختارة (`SPEEDYBEEF405V3`) والإصدار مختار (`4.6.0`)، ولهذا ظهرت **تهيئة البناء**: بروتوكول الراديو و Telemetry و OSD والمحركات. **هذه هي الخطوة التي تقرر ما سيوجد في لوحتك بعد التحديث** — ما لا تختاره هنا لن يكون موجودًا مهما بحثت عنه لاحقًا في الإعدادات.',
         fixture: {screen: 'flasher'},
-        targets: [{testid: 'firmware-flasher-screen', kind: 'not-contains', expect: 'القائمة غير متاحة', source: 'C'}],
+        targets: [
+          {testid: 'target-selector', kind: 'contains', expect: 'SPEEDYBEEF405V3', source: 'C'},
+          {testid: 'release-selector', kind: 'contains', expect: '4.6.0', source: 'C'},
+          {testid: 'build-configuration', kind: 'contains', expect: 'بروتوكول الراديو', source: 'C'},
+          {testid: 'radio-protocol-selector', kind: 'contains', expect: 'CRSF', source: 'C'},
+        ],
       },
       {
-        n: 2, titleAr: 'الحزم الجاهزة', screen: 'الحزم الجاهزة · المكتبة الرسمية',
+        /* The corner shouts "never flash with props on" in its warnings.
+         * Until now it never showed where the app makes you say so. */
+        n: 2, titleAr: 'بوابة الأمان قبل التفليش',
+        screen: 'تحديث البرنامج الثابت · المرحلة 2 · بطاقة بوابة الأمان',
+        shot: 'flasher-safety', card: {text: 'بوابة الأمان', min: 2},
+        prepare: [
+          {click: 'firmware-step-flash', settle: 700},
+          {click: 'confirm-props-removed'},
+          {click: 'confirm-usb-power-only'},
+        ],
+        note: 'المفتاحان في هذه البطاقة ليسا تذكيرًا — التفليش لا يبدأ قبل تفعيلهما، ولا تُتجاوَز البطاقة ضمنيًا حتى مع «Flash on connect». فعّلهما بعد أن تفعل ما يقولانه، لا قبله.',
+        fixture: {screen: 'flasher'},
+        targets: [
+          {testid: 'confirm-props-removed', kind: 'switch', expect: 'on', source: 'C'},
+          {testid: 'confirm-usb-power-only', kind: 'switch', expect: 'on', source: 'C'},
+        ],
+      },
+      {
+        n: 3, titleAr: 'الحزم الجاهزة', screen: 'الحزم الجاهزة · المكتبة الرسمية',
         shot: 'presets', card: null,
+        note: 'لاحظ **الحزم المتوافقة (5)** — العدد ليس كل ما في المكتبة، بل ما يوافق إصدار **لوحتك أنت**، والإصدار مقروء من المتحكم لا مكتوب يدويًا. وسم «رسمية» بجانب كل حزمة هو حالة `OFFICIAL`.',
         fixture: {screen: 'presets'},
         targets: [{testid: 'presets-screen', kind: 'contains', expect: 'الحزم المتوافقة (5)', source: 'S1'}],
       },
@@ -372,5 +419,125 @@ export function query(fixture) {
 }
 
 export const IMAGE_ROOT = 'docs/flight-guides';
-export const REVIEW_DIR = 'docs/flight-guides/_shared/review';
 export const PREVIEW = 'http://127.0.0.1:4182/index.html';
+
+/** Each style owns its review sheet, like it owns its pictures. */
+export const reviewDir = styleId => `docs/flight-guides/${styleId}/review`;
+
+/* =====================================================================
+ * DECISIONS - the other half of a self-contained corner.
+ * =====================================================================
+ *
+ * A guide that only lists what to CHANGE leaves the reader wondering
+ * about everything it never mentions. Each style therefore carries a
+ * verdict on every requirement in the matrix, not just the illustrated
+ * ones:
+ *
+ *   STEP              an illustrated step in this style's own sequence
+ *   ACTION            do it, but one line beats a screenshot
+ *   PILOT_PREFERENCE  no single right value exists; say so plainly
+ *   KEEP_DEFAULT      reviewed, and the answer is "do not touch it"
+ *   NOT_APPLICABLE    this style does not use it, or this app cannot
+ *
+ * Written per style ON PURPOSE, with no "same as Freestyle" pointers.
+ * Code may be shared; guidance may not - a reader inside one corner must
+ * never have to open another to learn what to do.
+ */
+export const DECISIONS = {
+  cinematic: [
+    {what: 'ترددا القطع (setpoint · الخانق)', kind: 'KEEP_DEFAULT', source: 'S1.13',
+     detail: 'اتركهما 0 — أي «تلقائي». الإعداد السينمائي الرسمي يضبط المعاملين التلقائيين ولا يلمس ترددي القطع.'},
+    {what: 'Rates', kind: 'PILOT_PREFERENCE',
+     detail: 'لا توجد Rates رسمية للسينمائي. اختر ملفًا أبطأ من ملفك المعتاد وارفع expo قليلًا لتنعيم المنتصف — ولا نفرض رقمًا واحدًا لهذا النمط.'},
+    {what: 'قيم PID (P · I · D)', kind: 'KEEP_DEFAULT', source: 'S1.1',
+     detail: 'الإعدادان السينمائيان الرسميان لا يلمسان P أو I أو D إطلاقًا. النعومة تأتي من إحساس العصا والتنعيم، لا من خفض PID.'},
+    {what: 'الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)', kind: 'KEEP_DEFAULT', source: 'S1.11a',
+     detail: 'اتبع ضبط منصتك. القيم المرجعية للسينمائي (سقف 750Hz لـ Cinelog، أدنى 125Hz لبناء نظيف) في قسم «اختياري»، والتطبيق لا يعدّلها إلا إذا أثبتت القراءة أن الميزة نشطة.'},
+    {what: 'الأوضاع (Modes)', kind: 'PILOT_PREFERENCE',
+     detail: 'مفتاح ARM إلزامي ويُضبط مرة واحدة لكل طائرة. ما بعده — Angle أو Beeper أو Turtle — تفضيلك.'},
+    {what: 'الطاقة والبطارية', kind: 'PILOT_PREFERENCE',
+     detail: 'لا توجد حدود بطارية «سينمائية». اضبطها على حزمتك أنت: عدد الخلايا، وتحذير الخلية، والسعة.'},
+    {what: 'مرسل الفيديو (VTX)', kind: 'NOT_APPLICABLE',
+     detail: 'لا يغيّره هذا النمط. اضبط القناة والطاقة مرة واحدة حسب مكانك وقوانينه.'},
+    {what: '`thrust_linear`', kind: 'NOT_APPLICABLE', source: 'S1.11a',
+     detail: 'يضبطه الإعداد الرسمي حسب تردد ESC (0 عند 24k · 20 عند 48k · 40 عند 96k)، ولا يعرضه هذا التطبيق. يُضبط من سطر الأوامر أو بتطبيق الحزمة.'},
+  ],
+  freestyle: [
+    {what: 'ترددا القطع (setpoint · الخانق)', kind: 'KEEP_DEFAULT', source: 'S1.13',
+     detail: 'اتركهما 0 — أي «تلقائي». إعداد الحر الرسمي يضبط المعاملين التلقائيين فقط.'},
+    {what: 'Rates', kind: 'PILOT_PREFERENCE', source: 'S1.10b',
+     detail: 'المكتبة الرسمية تعرض ثلاثة ملفات للنمط نفسه، وهذا في ذاته الجواب: لا يوجد رقم صحيح واحد. الخيارات الرسمية — RC rate 2 / expo 40 / super 80 · أو 3 / 35 / 105 · أو 25 / 45 / 108. ابدأ من الأول وارفع تدريجيًا.'},
+    {what: 'قيم PID (P · I · D)', kind: 'KEEP_DEFAULT', source: 'S1.3',
+     detail: 'إعداد الحر الرسمي للرابط لا يلمس P أو I أو D. حزم الضبط تستعمل منزلقات simplified التي لا يعرضها التطبيق؛ لا تعدّل القيم يدويًا لملاحقتها.'},
+    {what: 'الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)', kind: 'KEEP_DEFAULT', source: 'S1.10b',
+     detail: 'اتبع ضبط مقاسك. القيم المرجعية (سقف 400Hz وأدنى 90Hz لمقاس 3–5") في قسم «اختياري».'},
+    {what: 'الأوضاع (Modes)', kind: 'PILOT_PREFERENCE',
+     detail: 'مفتاح ARM إلزامي. Airmode و Turtle و Beeper تفضيلك.'},
+    {what: 'الطاقة والبطارية', kind: 'PILOT_PREFERENCE',
+     detail: 'اضبطها على حزمتك: عدد الخلايا وتحذير الخلية والسعة. لا قيمة «حرة» رسمية.'},
+    {what: 'مرسل الفيديو (VTX)', kind: 'NOT_APPLICABLE',
+     detail: 'لا يغيّره هذا النمط. اضبطه مرة واحدة حسب مكانك.'},
+    {what: '`thrust_linear`', kind: 'NOT_APPLICABLE', source: 'S1.10b',
+     detail: '30 لمقاس 5" · 40 لمقاس 3–4" · 10 لمقاس 7" في الإعداد الرسمي، ولا يعرضه هذا التطبيق.'},
+  ],
+  racing: [
+    {what: 'ترددا القطع (setpoint · الخانق)', kind: 'KEEP_DEFAULT', source: 'S1.13',
+     detail: 'اتركهما 0. إعداد السباق الرسمي يخفض المعاملين التلقائيين إلى 25 بدل استعمال ترددات قطع ثابتة.'},
+    {what: 'Rates', kind: 'PILOT_PREFERENCE',
+     detail: 'لا توجد Rates رسمية باسم «سباق». المكتبة تعرض ملفات مؤلفين كخيارات لا كقاعدة. المبدأ: expo أقل من الحر، لأن الدقة حول المنتصف أهم من مدى الطرف — والرقم يبقى اختيارك.'},
+    {what: 'قيم PID (P · I · D)', kind: 'KEEP_DEFAULT', source: 'S1.9',
+     detail: 'إعداد السباق الرسمي يضبط PID عبر منزلقات simplified ثم `simplified_tuning apply`، وهي غير معروضة في التطبيق. لا تحاكِ النتيجة بتعديل P/I/D يدويًا.'},
+    {what: 'الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)', kind: 'KEEP_DEFAULT', source: 'S1.9',
+     detail: 'اتبع حزمة الضبط. القيم المرجعية (سقف 650Hz، أدنى 125Hz لبناء نظيف) في قسم «اختياري».'},
+    {what: 'الأوضاع (Modes)', kind: 'PILOT_PREFERENCE',
+     detail: 'مفتاح ARM إلزامي. Turtle مفيد في السباق؛ بقية الأوضاع تفضيلك.'},
+    {what: 'الطاقة والبطارية', kind: 'PILOT_PREFERENCE',
+     detail: 'اضبطها على حزمتك. السباق لا يفرض حدود بطارية، لكن تحذير الخلية يجب أن يصلك قبل نهاية اللفة لا بعدها.'},
+    {what: '`thrust_linear` · `tpa_*`', kind: 'NOT_APPLICABLE', source: 'S1.9',
+     detail: 'يضبطهما الإعداد الرسمي (thrust_linear 20 · tpa_rate 70 · tpa_breakpoint 1250) ولا يعرضهما هذا التطبيق.'},
+  ],
+  'tiny-whoop': [
+    {what: 'المستقبل · تنعيم الإشارة', kind: 'KEEP_DEFAULT', source: 'S1.13',
+     detail: 'إعداد الوووب الرسمي **لا يضمّن** ملف الرابط، فالتنعيم يبقى على أصله: معاملان تلقائيان 30/30 وترددا قطع 0. لا تغيّرهما لهذا النمط.'},
+    {what: 'Rates', kind: 'PILOT_PREFERENCE',
+     detail: 'الإعداد الرسمي يعرض ملف rates كخيار غير معلَّم، لا كقاعدة. الوووب يميل إلى yaw أعلى لأن دورانه بطيء بطبعه — والرقم اختيارك.'},
+    {what: 'قيم PID (P · I · D)', kind: 'KEEP_DEFAULT', source: 'S1.8',
+     detail: 'إعداد الوووب الرسمي يضبط PID عبر منزلقات simplified، وهي غير معروضة في التطبيق. لا تعدّل P/I/D يدويًا.'},
+    {what: 'الفلاتر', kind: 'KEEP_DEFAULT', source: 'S1.8',
+     detail: 'الإعداد الرسمي يطفئ Gyro LPF1 و Dynamic Notch ويعتمد على فلتر RPM وحده. لا يسمح التطبيق بتفعيل أو تعطيل Dynamic Notch، وهذا هو السلوك الصحيح هنا.'},
+    {what: 'وضع الطيران: Acro · Angle · Horizon', kind: 'PILOT_PREFERENCE',
+     detail: '**Acro صحيح تمامًا للوووب، وليس Angle إلزاميًا.** Angle مساعدة تعلّم مفيدة داخل الغرف؛ ضعها على مفتاح إن أردت الرجوع إليها، أو اتركها.'},
+    {what: 'Airmode', kind: 'PILOT_PREFERENCE', source: 'S1.8',
+     detail: 'الإعداد الرسمي يقول إن إطفاءه أفضل أداءً في الطيران الداخلي، ويعرض ذلك كخيار غير معلَّم. للأكروبات في مساحة كبيرة، ضعه على مفتاح.'},
+    {what: 'تعويض هبوط الجهد (`vbat_sag_compensation`)', kind: 'NOT_APPLICABLE', source: 'S1.8',
+     detail: 'موصى به في الإعداد الرسمي (خيار معلَّم، القيمة 100) لأن خلية 1S تهبط بشدة تحت الحمل — لكن **هذا التطبيق لا يعرضه**. يُضبط من سطر الأوامر أو بتطبيق الحزمة الرسمية.'},
+    {what: 'OSD', kind: 'PILOT_PREFERENCE',
+     detail: 'لا يوجد رقم رسمي للوووب. إن كان لديك OSD، ابدأ من إنذار RSSI dBm عند −98 وعدّله بعد رحلة داخل مبناك — الجدران تغيّر الرقم أكثر من النمط.'},
+    {what: 'مرسل الفيديو (VTX)', kind: 'PILOT_PREFERENCE',
+     detail: 'الطيران الداخلي لا يحتاج طاقة عالية؛ ابدأ من أقل مستوى يعطيك صورة نظيفة.'},
+    {what: '`cpu_late_limit_permille`', kind: 'NOT_APPLICABLE', source: 'S1.8',
+     detail: 'يضبطه الإعداد الرسمي عند 15، ولا يعرضه التطبيق. غيابه لا يمنع الطيران.'},
+  ],
+  'long-range': [
+    {what: 'المحركات و Dynamic Idle', kind: 'ACTION', source: 'S1.10c',
+     detail: 'فعّل Bidirectional DShot، واضبط عدد الأقطاب على محركك، واضبط Dynamic Idle على **30** (×100 rpm) لمقاس 7". من شاشة المحركات وشاشة ضبط PID.'},
+    {what: 'Rates', kind: 'PILOT_PREFERENCE',
+     detail: 'لا توجد Rates رسمية للمدى الطويل. المبدأ: أبطأ من ملفك المعتاد — أنت تطير في خط مستقيم طويلًا لا تنعطف بحدة. والرقم اختيارك.'},
+    {what: 'قيم PID (P · I · D)', kind: 'KEEP_DEFAULT', source: 'S1.5',
+     detail: 'إعداد المدى الطويل الرسمي يغيّر إحساس العصا والتنعيم فقط، ولا يلمس P أو I أو D.'},
+    {what: 'الفلاتر', kind: 'KEEP_DEFAULT', source: 'S1.10c',
+     detail: 'اتبع ضبط مقاسك. القيمة المرجعية لمقاس 7" هي أدنى فلتر ديناميكي 40Hz، لأن الهيكل الطويل يرنّ عند تردد أخفض.'},
+    {what: 'قراءة جودة الرابط (LQ) و RSSI بوحدة dBm', kind: 'NOT_APPLICABLE',
+     detail: '**غير موجودتين في عقد MSP إطلاقًا**، فلا يستطيع أي تطبيق MSP عرضهما حيًّا. تراهما في نظارتك عبر OSD؛ التطبيق يضبط عتبة الإنذار فقط (الخطوة 8).'},
+    {what: 'نوع التثبيت (2D/3D) و HDOP/VDOP', kind: 'NOT_APPLICABLE',
+     detail: '`MSP_RAW_GPS` يرسل بت تثبيت واحدًا و PDOP وحده. التطبيق يعرض PDOP بالاسم الصحيح ولا يخترع بديلًا.'},
+  ],
+  firmware: [
+    {what: 'إعدادات الطيران', kind: 'NOT_APPLICABLE',
+     detail: 'هذه ليست بطاقة نمط طيران. بعد التحديث، افتح ركن نمطك واتبعه من خطوته الأولى.'},
+    {what: 'النسخة الاحتياطية قبل التحديث', kind: 'ACTION',
+     detail: 'فعّل خيار النسخ الاحتياطي قبل بدء التفليش. التحديث يمسح كل إعداداتك، بما فيها Failsafe و GPS Rescue والمعايرة.'},
+    {what: 'ترتيب ما بعد التحديث', kind: 'ACTION',
+     detail: 'المنافذ ← المستقبل ← المحركات ← الأوضاع (مفتاح ARM أولًا) ← Failsafe ← ثم دليل نمطك.'},
+  ],
+};

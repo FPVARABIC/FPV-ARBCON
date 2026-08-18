@@ -11,11 +11,17 @@
  * therefore grown to the scroller's own scrollHeight first; that is why
  * the output heights differ per screen instead of all being identical.
  *
+ * Some states are reachable only by using the app: choosing a board from
+ * its picker, moving to the second stage, arming a safety switch. A step
+ * may therefore declare `prepare: [{click: 'testid'}, ...]`, which drives
+ * the real controls. Nothing is injected that a user could not produce.
+ *
  * Usage: node docs/flight-guides/_tools/capture.mjs
  */
 import {chromium} from 'playwright-core';
 import {mkdirSync, rmSync} from 'node:fs';
 import {STYLES, query, PREVIEW, IMAGE_ROOT} from './guide-spec.mjs';
+import {prepare} from './drive.mjs';
 
 const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 
@@ -41,6 +47,14 @@ for (const style of STYLES) {
     page.on('pageerror', e => errors.push(String(e)));
     await page.goto(`${PREVIEW}?${query(step.fixture)}`, {waitUntil: 'networkidle'});
     await page.waitForTimeout(1500);
+    try {
+      await prepare(page, step.prepare);
+    } catch (error) {
+      report.push({style: style.id, step: step.n, file: `${dir}/${step.n}-${step.shot}.png`,
+                   error: `prepare failed: ${String(error).split('\n')[0]}`});
+      await context.close();
+      continue;
+    }
 
     const file = `${dir}/${step.n}-${step.shot}.png`;
     let size;
@@ -60,11 +74,11 @@ for (const style of STYLES) {
       await page.waitForTimeout(400);
       const handle = typeof step.card === 'string'
         ? await page.$(`[data-testid="${step.card}"]`)
-        : (await page.evaluateHandle(needle => {
+        : (await page.evaluateHandle(({needle, min}) => {
             const blocks = [...document.querySelectorAll('div')].filter(n =>
-              (n.innerText || '').includes(needle) && n.querySelectorAll('[data-testid]').length >= 3);
+              (n.innerText || '').includes(needle) && n.querySelectorAll('[data-testid]').length >= min);
             return blocks.sort((a, b) => a.innerText.length - b.innerText.length)[0] ?? null;
-          }, step.card.text)).asElement();
+          }, {needle: step.card.text, min: step.card.min ?? 3})).asElement();
       if (handle === null) {
         report.push({style: style.id, step: step.n, file, error: 'card not found'});
         await context.close();

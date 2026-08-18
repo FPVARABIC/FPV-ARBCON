@@ -9,7 +9,7 @@
   "difficulty_ar": "متقدم",
   "intended_aircraft": [
     "5 إنش على 6S",
-    "وووب 1S للسباق الداخلي"
+    "5 إنش على 4S"
   ],
   "required_screens": [
     "PidTuningScreen",
@@ -146,11 +146,74 @@
     },
     {
       "n": 7,
-      "title_ar": "مرسل الفيديو",
+      "title_ar": "مرسل الفيديو — قناتك ووضع الانتظار",
       "screen": "مرسل الفيديو · القناة والطاقة",
       "screenshot": "images/7-vtx.png",
-      "targets": []
+      "targets": [
+        {
+          "control": "vtx-band-5",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        },
+        {
+          "control": "vtx-channel-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        },
+        {
+          "control": "vtx-pit",
+          "kind": "switch",
+          "expected": "on",
+          "source": "C"
+        }
+      ]
     }
   ],
-  "step_count": 7
+  "step_count": 7,
+  "decisions": [
+    {
+      "requirement": "ترددا القطع (setpoint · الخانق)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتركهما 0. إعداد السباق الرسمي يخفض المعاملين التلقائيين إلى 25 بدل استعمال ترددات قطع ثابتة.",
+      "source": "S1.13"
+    },
+    {
+      "requirement": "Rates",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "لا توجد Rates رسمية باسم «سباق». المكتبة تعرض ملفات مؤلفين كخيارات لا كقاعدة. المبدأ: expo أقل من الحر، لأن الدقة حول المنتصف أهم من مدى الطرف — والرقم يبقى اختيارك.",
+      "source": null
+    },
+    {
+      "requirement": "قيم PID (P · I · D)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "إعداد السباق الرسمي يضبط PID عبر منزلقات simplified ثم `simplified_tuning apply`، وهي غير معروضة في التطبيق. لا تحاكِ النتيجة بتعديل P/I/D يدويًا.",
+      "source": "S1.9"
+    },
+    {
+      "requirement": "الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتبع حزمة الضبط. القيم المرجعية (سقف 650Hz، أدنى 125Hz لبناء نظيف) في قسم «اختياري».",
+      "source": "S1.9"
+    },
+    {
+      "requirement": "الأوضاع (Modes)",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "مفتاح ARM إلزامي. Turtle مفيد في السباق؛ بقية الأوضاع تفضيلك.",
+      "source": null
+    },
+    {
+      "requirement": "الطاقة والبطارية",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "اضبطها على حزمتك. السباق لا يفرض حدود بطارية، لكن تحذير الخلية يجب أن يصلك قبل نهاية اللفة لا بعدها.",
+      "source": null
+    },
+    {
+      "requirement": "`thrust_linear` · `tpa_*`",
+      "decision": "NOT_APPLICABLE",
+      "detail": "يضبطهما الإعداد الرسمي (thrust_linear 20 · tpa_rate 70 · tpa_breakpoint 1250) ولا يعرضهما هذا التطبيق.",
+      "source": "S1.9"
+    }
+  ]
 }

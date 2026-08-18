@@ -175,10 +175,23 @@
     },
     {
       "n": 7,
-      "title_ar": "مرسل الفيديو",
-      "screen": "مرسل الفيديو · الطاقة",
+      "title_ar": "مرسل الفيديو — الطاقة ومستوياتها الحقيقية",
+      "screen": "مرسل الفيديو · القناة والطاقة",
       "screenshot": "images/7-vtx.png",
-      "targets": []
+      "targets": [
+        {
+          "control": "vtx-power-4",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        },
+        {
+          "control": "vtx-low-power-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        }
+      ]
     },
     {
       "n": 8,
@@ -227,5 +240,43 @@
       ]
     }
   ],
-  "step_count": 9
+  "step_count": 9,
+  "decisions": [
+    {
+      "requirement": "المحركات و Dynamic Idle",
+      "decision": "ACTION",
+      "detail": "فعّل Bidirectional DShot، واضبط عدد الأقطاب على محركك، واضبط Dynamic Idle على **30** (×100 rpm) لمقاس 7\". من شاشة المحركات وشاشة ضبط PID.",
+      "source": "S1.10c"
+    },
+    {
+      "requirement": "Rates",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "لا توجد Rates رسمية للمدى الطويل. المبدأ: أبطأ من ملفك المعتاد — أنت تطير في خط مستقيم طويلًا لا تنعطف بحدة. والرقم اختيارك.",
+      "source": null
+    },
+    {
+      "requirement": "قيم PID (P · I · D)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "إعداد المدى الطويل الرسمي يغيّر إحساس العصا والتنعيم فقط، ولا يلمس P أو I أو D.",
+      "source": "S1.5"
+    },
+    {
+      "requirement": "الفلاتر",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتبع ضبط مقاسك. القيمة المرجعية لمقاس 7\" هي أدنى فلتر ديناميكي 40Hz، لأن الهيكل الطويل يرنّ عند تردد أخفض.",
+      "source": "S1.10c"
+    },
+    {
+      "requirement": "قراءة جودة الرابط (LQ) و RSSI بوحدة dBm",
+      "decision": "NOT_APPLICABLE",
+      "detail": "**غير موجودتين في عقد MSP إطلاقًا**، فلا يستطيع أي تطبيق MSP عرضهما حيًّا. تراهما في نظارتك عبر OSD؛ التطبيق يضبط عتبة الإنذار فقط (الخطوة 8).",
+      "source": null
+    },
+    {
+      "requirement": "نوع التثبيت (2D/3D) و HDOP/VDOP",
+      "decision": "NOT_APPLICABLE",
+      "detail": "`MSP_RAW_GPS` يرسل بت تثبيت واحدًا و PDOP وحده. التطبيق يعرض PDOP بالاسم الصحيح ولا يخترع بديلًا.",
+      "source": null
+    }
+  ]
 }

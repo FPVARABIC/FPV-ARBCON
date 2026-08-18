@@ -147,5 +147,55 @@
       ]
     }
   ],
-  "step_count": 6
+  "step_count": 6,
+  "decisions": [
+    {
+      "requirement": "ترددا القطع (setpoint · الخانق)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتركهما 0 — أي «تلقائي». إعداد الحر الرسمي يضبط المعاملين التلقائيين فقط.",
+      "source": "S1.13"
+    },
+    {
+      "requirement": "Rates",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "المكتبة الرسمية تعرض ثلاثة ملفات للنمط نفسه، وهذا في ذاته الجواب: لا يوجد رقم صحيح واحد. الخيارات الرسمية — RC rate 2 / expo 40 / super 80 · أو 3 / 35 / 105 · أو 25 / 45 / 108. ابدأ من الأول وارفع تدريجيًا.",
+      "source": "S1.10b"
+    },
+    {
+      "requirement": "قيم PID (P · I · D)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "إعداد الحر الرسمي للرابط لا يلمس P أو I أو D. حزم الضبط تستعمل منزلقات simplified التي لا يعرضها التطبيق؛ لا تعدّل القيم يدويًا لملاحقتها.",
+      "source": "S1.3"
+    },
+    {
+      "requirement": "الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتبع ضبط مقاسك. القيم المرجعية (سقف 400Hz وأدنى 90Hz لمقاس 3–5\") في قسم «اختياري».",
+      "source": "S1.10b"
+    },
+    {
+      "requirement": "الأوضاع (Modes)",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "مفتاح ARM إلزامي. Airmode و Turtle و Beeper تفضيلك.",
+      "source": null
+    },
+    {
+      "requirement": "الطاقة والبطارية",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "اضبطها على حزمتك: عدد الخلايا وتحذير الخلية والسعة. لا قيمة «حرة» رسمية.",
+      "source": null
+    },
+    {
+      "requirement": "مرسل الفيديو (VTX)",
+      "decision": "NOT_APPLICABLE",
+      "detail": "لا يغيّره هذا النمط. اضبطه مرة واحدة حسب مكانك.",
+      "source": null
+    },
+    {
+      "requirement": "`thrust_linear`",
+      "decision": "NOT_APPLICABLE",
+      "detail": "30 لمقاس 5\" · 40 لمقاس 3–4\" · 10 لمقاس 7\" في الإعداد الرسمي، ولا يعرضه هذا التطبيق.",
+      "source": "S1.10b"
+    }
+  ]
 }
