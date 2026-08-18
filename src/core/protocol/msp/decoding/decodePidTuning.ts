@@ -51,6 +51,10 @@ export interface MspPidTuningSnapshot {
   readonly pidProfileIndex: number;
   readonly pidProfileCount: number;
   readonly controlRateProfileIndex: number;
+  /** How many RATE profiles the board reports. Absent below API 1.47,
+   * where MSP_STATUS_EX does not carry it - a selector must then offer
+   * nothing rather than guess a count. */
+  readonly rateProfileCount?: number;
   readonly pidRaw: Uint8Array;
   /**
    * Dynamic Idle floor, in units of 100 rpm. MSP_PID_ADVANCED offset 49.
@@ -138,6 +142,10 @@ export function decodePidTuningSnapshot(input: {
   readonly pidProfileIndex: number;
   readonly pidProfileCount: number;
   readonly controlRateProfileIndex: number;
+  /** How many RATE profiles the board reports. Absent below API 1.47,
+   * where MSP_STATUS_EX does not carry it - a selector must then offer
+   * nothing rather than guess a count. */
+  readonly rateProfileCount?: number;
 }): MspPidTuningSnapshot {
   if (input.advanced.length < PID_ADVANCED_API147_MIN_BYTES) {
     throw new MspPayloadReadError(`MSP_PID_ADVANCED requires at least ${PID_ADVANCED_API147_MIN_BYTES} bytes for API 1.47; received ${input.advanced.length}.`);
@@ -172,6 +180,7 @@ export function decodePidTuningSnapshot(input: {
     pidProfileIndex: input.pidProfileIndex,
     pidProfileCount: input.pidProfileCount,
     controlRateProfileIndex: input.controlRateProfileIndex,
+    ...(input.rateProfileCount === undefined ? {} : {rateProfileCount: input.rateProfileCount}),
     pidRaw: input.pid.slice(),
     idleMinRpm: input.advanced.length > IDLE_MIN_RPM_OFFSET
       ? input.advanced[IDLE_MIN_RPM_OFFSET]

@@ -218,14 +218,29 @@ describe('GeneralConfigurationController', () => {
     ]);
   });
 
-  it('fails closed outside the exact reviewed MSP API', async () => {
-    const h = harness();
-    h.state.identification = identification(48);
-    await expect(h.controller.load(key)).resolves.toEqual({
+  it('fails closed BELOW the reviewed MSP API, and opens above it', async () => {
+    // This assertion changed deliberately. It used to demand
+    // UNSUPPORTED_FIRMWARE for API 1.48 - an exact `!== 47` lock that
+    // turned Betaflight 4.7 into a dead screen while Ports, GPS and
+    // Receiver kept working on the same board. The floor is real and
+    // still enforced; the ceiling was not, and every payload this screen
+    // reads or writes was re-checked against 1.48 in
+    // betaflightApiSupport.ts before it was removed.
+    const below = harness();
+    below.state.identification = identification(46);
+    await expect(below.controller.load(key)).resolves.toEqual({
       kind: 'REJECTED',
       reason: 'UNSUPPORTED_FIRMWARE',
     });
-    expect(h.client.calls).toEqual([]);
+    expect(below.client.calls).toEqual([]);
+
+    const above = harness();
+    above.state.identification = identification(48);
+    const result = (await above.controller.load(key)) as {kind: string; reason?: string};
+    // It may still fail further along on this harness's scripting - what
+    // it must not do is refuse the board for its version.
+    expect(result.reason).not.toBe('UNSUPPORTED_FIRMWARE');
+    expect(above.client.calls).not.toEqual([]);
   });
 
   it('rejects stale state before DISARMED proof or a write', async () => {

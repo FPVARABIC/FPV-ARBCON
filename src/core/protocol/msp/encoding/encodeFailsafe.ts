@@ -1,7 +1,8 @@
 import type {MspFailsafeSnapshot} from '../decoding/decodeFailsafe';
 import {createFailsafeConfigurationDraft, failsafeDraftsEqual, validateFailsafeDraft, type FailsafeConfigurationDraft} from '../../../state/failsafeConfigurationModel';
+import {encodeChangedGpsRescue} from './encodeGpsRescue';
 
-export type FailsafeWriteGroup = 'FAILSAFE_CONFIG' | 'RXFAIL_CONFIG';
+export type FailsafeWriteGroup = 'FAILSAFE_CONFIG' | 'RXFAIL_CONFIG' | 'GPS_RESCUE';
 export interface EncodedFailsafeWrite {readonly group: FailsafeWriteGroup; readonly index?: number; readonly payload: Uint8Array}
 
 export function encodeChangedFailsafeConfiguration(snapshot: MspFailsafeSnapshot, draft: FailsafeConfigurationDraft): readonly EncodedFailsafeWrite[] {
@@ -22,5 +23,13 @@ export function encodeChangedFailsafeConfiguration(snapshot: MspFailsafeSnapshot
     payload[0] = index; payload[1] = channel.mode; view.setUint16(2, channel.value, true);
     writes.push(Object.freeze({group: 'RXFAIL_CONFIG', index, payload}));
   });
+  // GPS Rescue LAST, and only when the board reported it. Order matters
+  // on a partly-failed save: the stage-2 procedure is written before the
+  // parameters it uses, so an interruption leaves the aircraft on the
+  // rescue settings it already had rather than on half-written new ones.
+  if (draft.gpsRescue !== undefined && snapshot.gpsRescue !== undefined) {
+    const payload = encodeChangedGpsRescue(snapshot.gpsRescue, draft.gpsRescue);
+    if (payload !== undefined) writes.push(Object.freeze({group: 'GPS_RESCUE', payload}));
+  }
   return Object.freeze(writes);
 }

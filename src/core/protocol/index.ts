@@ -177,6 +177,19 @@ export {
   RX_FAILSAFE_MAX,
   RX_FAILSAFE_STEP,
   BUILD_OPTION_GPS,
+  MSP_GPS_RESCUE,
+  MSP_SET_GPS_RESCUE,
+  decodeGpsRescue,
+  encodeChangedGpsRescue,
+  encodeGpsRescue,
+  GPS_RESCUE_BASE_BYTES,
+  GPS_RESCUE_WITH_RATES_BYTES,
+  GPS_RESCUE_WITH_MIN_START_BYTES,
+  GPS_RESCUE_FULL_BYTES,
+  encodeSelectSetting,
+  isEncodableProfileIndex,
+  SELECT_SETTING_RATE_PROFILE_FLAG,
+  SELECT_SETTING_MAX_INDEX,
 } from './msp';
 export type {
   FailsafeProcedure,
@@ -187,6 +200,10 @@ export type {
   MspFailsafeSnapshot,
   FailsafeWriteGroup,
   EncodedFailsafeWrite,
+  GpsRescueAvailability,
+  MspGpsRescueConfiguration,
+  MspGpsRescuePreservedFields,
+  SelectSettingProfileKind,
 } from './msp';
 export {MSP_BATTERY_CONFIG, MSP_SET_BATTERY_CONFIG, MSP_CURRENT_METER_CONFIG, MSP_SET_CURRENT_METER_CONFIG, MSP_VOLTAGE_METER_CONFIG, MSP_SET_VOLTAGE_METER_CONFIG, MSP_VOLTAGE_METERS, MSP_CURRENT_METERS, decodeBatteryConfiguration, decodeVoltageMeterConfiguration, decodeCurrentMeterConfiguration, encodeChangedPowerConfiguration} from './msp';
 export type {MspBatteryConfiguration, MspVoltageMeterConfiguration, MspCurrentMeterConfiguration, MspPowerConfigurationSnapshot, PowerWriteGroup, EncodedPowerWrite} from './msp';

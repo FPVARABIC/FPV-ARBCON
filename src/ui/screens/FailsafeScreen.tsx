@@ -2,16 +2,25 @@ import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
 import {useTranslation} from 'react-i18next';
 import {
+  GPS_RESCUE_RANGES,
   RX_FAILSAFE_MAX,
   RX_FAILSAFE_MIN,
   RX_FAILSAFE_STEP,
   createFailsafeConfigurationDraft,
   failsafeDraftsEqual,
+  gpsRescueSupportsInitialClimb,
+  gpsRescueSupportsMinStartDistance,
+  gpsRescueSupportsRates,
   validateFailsafeDraft,
   type FailsafeChannelDraft,
   type FailsafeConfigurationDraft,
   type FailsafeValidationCode,
+  type GpsRescueAltitudeMode,
+  type GpsRescueAvailability,
+  type GpsRescueDraft,
+  type GpsRescueSanityCheck,
   type MspFailsafeSnapshot,
+  type MspGpsRescueConfiguration,
   type MspRcChannels,
   type MspStatusExDiagnostics,
   type TelemetryValue,
@@ -56,6 +65,27 @@ const FAILSAFE_ISSUE_TEXT: Readonly<Record<FailsafeValidationCode, string>> = {
   CHANNEL_MODE_INVALID: 'إحدى القنوات تحمل وضعًا غير معروف؛ اختر AUTO أو HOLD أو SET.',
   CHANNEL_VALUE_INVALID: 'قيمة SET لإحدى القنوات خارج 750\u20132250\u00b5s أو ليست من مضاعفات 25\u00b5s.',
   AUX_AUTO_FORBIDDEN: 'AUTO متاح للمحاور الأربعة الأولى فقط؛ استخدم HOLD أو SET لقنوات AUX.',
+  GPS_RESCUE_NOT_READABLE: 'لم تُقرأ معاملات GPS Rescue من هذه اللوحة؛ لا يمكن حفظها.',
+  RETURN_ALTITUDE_INVALID: `ارتفاع العودة خارج مدى ${GPS_RESCUE_RANGES.returnAltitudeM.min}–${GPS_RESCUE_RANGES.returnAltitudeM.max} متر.`,
+  DESCENT_DISTANCE_INVALID: `مسافة بدء الهبوط خارج مدى ${GPS_RESCUE_RANGES.descentDistanceM.min}–${GPS_RESCUE_RANGES.descentDistanceM.max} متر.`,
+  GROUND_SPEED_INVALID: 'سرعة العودة خارج مدى 0–30 متر/ثانية.',
+  SANITY_CHECKS_INVALID: 'قيمة فحوص السلامة غير معروفة؛ اختر إيقاف أو تشغيل أو عند Failsafe فقط.',
+  MIN_SATS_INVALID: `أقل عدد أقمار خارج مدى ${GPS_RESCUE_RANGES.minSats.min}–${GPS_RESCUE_RANGES.minSats.max}.`,
+  ASCEND_RATE_INVALID: 'معدل الصعود خارج مدى 0.5–25 متر/ثانية.',
+  DESCEND_RATE_INVALID: 'معدل الهبوط خارج مدى 0.25–5 متر/ثانية.',
+  ALLOW_ARMING_INVALID: 'قيمة «السماح بالتسليح دون Fix» غير معروفة.',
+  ALTITUDE_MODE_INVALID: 'وضع ارتفاع العودة غير معروف؛ اختر أقصى أو ثابت أو الحالي.',
+  MIN_START_DISTANCE_INVALID: `أقل مسافة لبدء الإنقاذ خارج مدى ${GPS_RESCUE_RANGES.minStartDistM.min}–${GPS_RESCUE_RANGES.minStartDistM.max} متر.`,
+  INITIAL_CLIMB_INVALID: `الصعود الابتدائي خارج مدى ${GPS_RESCUE_RANGES.initialClimbM.min}–${GPS_RESCUE_RANGES.initialClimbM.max} متر.`,
+};
+
+/** Why the GPS Rescue card is not on screen, in the operator's language.
+ * Three different facts, not one - a wing build and a decode failure are
+ * not the same problem and must not read as the same message. */
+const GPS_RESCUE_ABSENT_TEXT: Readonly<Record<Exclude<GpsRescueAvailability, 'PRESENT'>, string>> = {
+  NO_GPS_IN_BUILD: 'هذا البناء لا يحتوي GPS، فلا توجد معاملات GPS Rescue لضبطها.',
+  COMMAND_UNSUPPORTED: 'البناء يحتوي GPS لكن اللوحة لا تستجيب لأمر معاملات GPS Rescue. اضبطها من CLI إن احتجتها.',
+  UNREADABLE: 'وصلت معاملات GPS Rescue بشكل يتعذّر قراءته. لم يُعرض أي رقم لأن عرض قيمة غير مؤكدة أسوأ من عدم عرضها.',
 };
 
 type Phase = 'IDLE' | 'LOADING' | 'READY' | 'SAVING' | 'ERROR';
@@ -64,7 +94,19 @@ function valueOf<T>(value: TelemetryValue<T>): T | undefined {return value.statu
 function blockMessage(reason: FailsafeBlockReason): string {return ({DISCONNECTED: 'انتهى الاتصال بمتحكم الطيران. أعد الاتصال ثم أعد القراءة.', IDENTIFYING: 'ما زال التطبيق يتحقق من هوية متحكم الطيران.', UNSUPPORTED_FIRMWARE: 'إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لهذه الشاشة. حدّث البرنامج الثابت.', APP_BACKGROUNDED: 'أعد التطبيق إلى الواجهة قبل القراءة أو الحفظ.', LINK_RECOVERING: 'الرابط التسلسلي يتعافى. انتظر ثم أعد القراءة.', FC_ARMED: 'رُفض الحفظ لأن متحكم الطيران ARMED.', ARMED_STATE_UNKNOWN: 'تعذر إثبات DISARMED؛ لم تُرسل الإعدادات.', MOTOR_TEST_ACTIVE: 'جلسة اختبار المحركات نشطة. افتح المحركات وأنهِ الجلسة ثم أعد القراءة.', CONFIGURATION_BUSY: 'توجد معاملة إعدادات أخرى قيد التنفيذ.', STALE_BASE: 'تغيرت إعدادات Failsafe في المتحكم. أعد القراءة قبل الحفظ.', INVALID_CONFIGURATION: 'توجد قيمة Failsafe غير صالحة.'} as const)[reason];}
 function saveMessage(outcome: FailsafeSaveOutcome): {text: string; warning: boolean} {switch (outcome.kind) {case 'NO_CHANGES': return {text: 'لا توجد تغييرات.', warning: false}; case 'SAVED_VERIFIED': return {text: 'حُفظ Failsafe وتطابقت القراءة الراجعة.', warning: false}; case 'SAVED_UNVERIFIED': return {text: 'أقرّ المتحكم الحفظ لكن تعذر التحقق. أعد الاتصال واقرأ قبل محاولة أخرى.', warning: true}; case 'UNCONFIRMED': {const channel = 'index' in outcome.stage && outcome.stage.index !== undefined ? ` للقناة ${outcome.stage.index + 1}` : ''; return {text: `نتيجة الكتابة غير مؤكدة عند ${outcome.stage.group}${channel}. لا تكرر الحفظ.`, warning: true};} case 'SESSION_ENDED': return {text: 'انتهت الجلسة أثناء العملية.', warning: true}; case 'FAILED': return {text: 'فشلت العملية قبل اكتمال التحقق.', warning: true}; case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};}}
 
-function NumberStepper({label, value, min, max, step = 1, suffix, disabled, onChange, testID}: {label: string; value: number; min: number; max: number; step?: number; suffix?: string; disabled: boolean; onChange: (value: number) => void; testID: string}) {return <View style={styles.numberField}><Text style={styles.fieldLabel}>{label}</Text><SharedStepper value={`${value}${suffix ?? ''}`} onDecrement={() => onChange(Math.max(min, value - step))} onIncrement={() => onChange(Math.min(max, value + step))} decrementDisabled={value <= min} incrementDisabled={value >= max} disabled={disabled} accessibilityLabel={label} testID={testID} /><Text style={styles.rangeText}>{min}–{max}{suffix}</Text></View>;}
+/**
+ * CLAMPS INTO the range, not just against it.
+ *
+ * `Math.max(min, value - step)` alone is not enough once a stored value
+ * can start OUTSIDE the range - which it can, both for an RXFAIL value
+ * off the 25µs grid and for a GPS Rescue parameter stored under a
+ * firmware whose limits have since moved. From 100 with a max of 30, a
+ * one-sided clamp walks down one step at a time; clamping on BOTH sides
+ * snaps to the nearest legal value on the first press, which is what an
+ * operator correcting a flagged field expects.
+ */
+function clampInto(value: number, min: number, max: number): number {return Math.min(max, Math.max(min, value));}
+function NumberStepper({label, value, min, max, step = 1, suffix, disabled, onChange, testID, format, rangeLabel, hint}: {label: string; value: number; min: number; max: number; step?: number; suffix?: string; disabled: boolean; onChange: (value: number) => void; testID: string; format?: (value: number) => string; rangeLabel?: string; hint?: string}) {return <View style={styles.numberField}><Text style={styles.fieldLabel}>{label}</Text><SharedStepper value={format !== undefined ? format(value) : `${value}${suffix ?? ''}`} onDecrement={() => onChange(clampInto(value - step, min, max))} onIncrement={() => onChange(clampInto(value + step, min, max))} decrementDisabled={value <= min} incrementDisabled={value >= max} disabled={disabled} accessibilityLabel={label} testID={testID} /><Text style={styles.rangeText}>{rangeLabel ?? `${min}–${max}${suffix ?? ''}`}</Text>{hint !== undefined ? <Text style={styles.fieldHint}>{hint}</Text> : null}</View>;}
 function Choice<T extends number>({label, value, options, disabled, onChange, testID}: {label: string; value: T; options: readonly {value: T; label: string; help?: string}[]; disabled: boolean; onChange: (value: T) => void; testID: string}) {return <View style={styles.choiceField}><Text style={styles.fieldLabel}>{label}</Text><View style={styles.choiceRow}>{options.map(option => <Pressable key={option.value} disabled={disabled} onPress={() => onChange(option.value)} style={[styles.choice, value === option.value && styles.choiceSelected]} testID={`${testID}-${option.value}`}><Text style={[styles.choiceText, value === option.value && styles.choiceTextSelected]}>{option.label}</Text>{option.help !== undefined ? <Text style={styles.choiceHelp}>{option.help}</Text> : null}</Pressable>)}</View></View>;}
 
 const FailsafeLiveStatus = React.memo(function FailsafeLiveStatus({sessionKey, active}: {sessionKey?: SetupUiSessionKey; active: boolean}) {
@@ -74,6 +116,74 @@ const FailsafeLiveStatus = React.memo(function FailsafeLiveStatus({sessionKey, a
   const blockers = status?.readiness.armingDisableFlags; const failsafe = blockers !== undefined && (Math.floor(blockers / 2) % 2 === 1 || Math.floor(blockers / 4) % 2 === 1);
   return <View style={[styles.liveCard, failsafe && styles.liveCardDanger]} testID="failsafe-live-status"><View><Text style={styles.liveLabel}>مراقبة حية من FC</Text><Text style={[styles.liveState, failsafe && styles.liveStateDanger]}>{failsafe ? 'RX LOSS / FAILSAFE نشط' : statusValue.status === 'FRESH' ? 'الرابط لا يعلن Failsafe' : 'بانتظار حالة الرابط'}</Text></View><View style={styles.liveMetric}><Text style={styles.liveMetricValue}>{channels?.channels.length ?? '—'}</Text><Text style={styles.liveMetricLabel}>قنوات MSP_RC</Text></View></View>;
 });
+
+/**
+ * cm/s on the wire, m/s to a pilot - EXACTLY, not rounded to a step.
+ *
+ * The step this screen offers is 10 cm/s, but a board can hold any value:
+ * the firmware's own minimum descent rate is 25 cm/s. Forcing one decimal
+ * showed that 0.25 m/s minimum as "0.3", which is a different number from
+ * the one the firmware will refuse to go below. So the conversion is
+ * exact and only the trailing zeros are trimmed - 850 reads 8.5, 155
+ * reads 1.55, 0 reads 0.
+ */
+const CM_S_PER_M_S = 100;
+const RATE_STEP_CM_S = 10;
+function metresFromCentimetres(centimetres: number): string {
+  return String(Math.round(centimetres) / CM_S_PER_M_S);
+}
+function metresPerSecond(centimetresPerSecond: number): string {return `${metresFromCentimetres(centimetresPerSecond)} م/ث`;}
+function rateRangeLabel(min: number, max: number): string {return `${metresFromCentimetres(min)}–${metresFromCentimetres(max)} م/ث`;}
+
+/**
+ * THE PARAMETERS THAT DECIDE WHETHER A LOST AIRCRAFT COMES HOME.
+ *
+ * Until now the screen could SELECT GPS Rescue as the stage-2 procedure
+ * and could not configure a single one of its parameters, so a long-range
+ * pilot enabled it and flew on whatever defaults the board happened to
+ * carry - including a return altitude that may sit below the trees.
+ *
+ * WHAT IS DELIBERATELY NOT HERE. Maximum pitch angle and the three
+ * throttle values travel in the same MSP payload but belong to the shared
+ * autopilot block that also drives Altitude Hold and Position Hold (see
+ * decodeGpsRescue.ts). Editing them from a card headed "GPS Rescue" would
+ * change a subsystem the operator did not open. They are preserved
+ * byte-for-byte on save and shown nowhere.
+ *
+ * FIELDS APPEAR ONLY IF THE BOARD SENT THEM. A board on an older payload
+ * length has no ascend rate and no altitude mode; a control for one would
+ * be a control that cannot reach the aircraft.
+ */
+function GpsRescueCard({snapshot, draft, disabled, onChange}: {snapshot: MspGpsRescueConfiguration; draft: GpsRescueDraft; disabled: boolean; onChange: (value: GpsRescueDraft) => void}) {
+  const set = <K extends keyof GpsRescueDraft>(key: K, value: GpsRescueDraft[K]) => onChange(Object.freeze({...draft, [key]: value}));
+  const hasRates = gpsRescueSupportsRates(snapshot);
+  return <View style={styles.card} testID="failsafe-gps-rescue">
+    <View><Text style={styles.sectionTitle}>معاملات GPS Rescue</Text><Text style={styles.sectionHint}>تُقرأ من متحكم الطيران وتُكتب إليه. تُستخدم عند اختيار GPS Rescue إجراءً للمرحلة 2 أو عند تفعيله كوضع طيران.</Text></View>
+    {hasRates ? <Choice label="ارتفاع العودة" value={draft.altitudeMode} options={[{value: 0 as GpsRescueAltitudeMode, label: 'الأقصى', help: 'الأعلى بين المسجّل والثابت'}, {value: 1 as GpsRescueAltitudeMode, label: 'ثابت', help: 'الارتفاع المحدد أدناه'}, {value: 2 as GpsRescueAltitudeMode, label: 'الحالي', help: 'ارتفاع لحظة الإنقاذ'}]} disabled={disabled} onChange={value => set('altitudeMode', value)} testID="failsafe-gps-altitude-mode" /> : null}
+    <View style={styles.fieldsRow}>
+      <NumberStepper label="ارتفاع العودة الثابت" value={draft.returnAltitudeM} min={GPS_RESCUE_RANGES.returnAltitudeM.min} max={GPS_RESCUE_RANGES.returnAltitudeM.max} suffix=" م" disabled={disabled} onChange={value => set('returnAltitudeM', value)} testID="failsafe-gps-return-altitude" hint={hasRates && draft.altitudeMode !== 1 ? 'يُستخدم في وضع الارتفاع الثابت، ويدخل في حساب وضع «الأقصى».' : undefined} />
+      {gpsRescueSupportsInitialClimb(snapshot) ? <NumberStepper label="الصعود الابتدائي" value={draft.initialClimbM} min={GPS_RESCUE_RANGES.initialClimbM.min} max={GPS_RESCUE_RANGES.initialClimbM.max} suffix=" م" disabled={disabled} onChange={value => set('initialClimbM', value)} testID="failsafe-gps-initial-climb" hint="يُضاف فوق الارتفاع الحالي عند بدء الإنقاذ في وضع «الحالي»، ويُضاف كذلك في وضع «الأقصى»." /> : null}
+    </View>
+    <View style={styles.fieldsRow}>
+      <NumberStepper label="مسافة بدء الهبوط" value={draft.descentDistanceM} min={GPS_RESCUE_RANGES.descentDistanceM.min} max={GPS_RESCUE_RANGES.descentDistanceM.max} suffix=" م" disabled={disabled} onChange={value => set('descentDistanceM', value)} testID="failsafe-gps-descent-distance" hint="المسافة من نقطة الانطلاق التي يبدأ عندها النزول." />
+      <NumberStepper label="سرعة العودة" value={draft.groundSpeedCmS} min={GPS_RESCUE_RANGES.groundSpeedCmS.min} max={GPS_RESCUE_RANGES.groundSpeedCmS.max} step={RATE_STEP_CM_S} disabled={disabled} onChange={value => set('groundSpeedCmS', value)} testID="failsafe-gps-ground-speed" format={metresPerSecond} rangeLabel={rateRangeLabel(GPS_RESCUE_RANGES.groundSpeedCmS.min, GPS_RESCUE_RANGES.groundSpeedCmS.max)} />
+    </View>
+    {hasRates ? <View style={styles.fieldsRow}>
+      <NumberStepper label="معدل الصعود" value={draft.ascendRate} min={GPS_RESCUE_RANGES.ascendRate.min} max={GPS_RESCUE_RANGES.ascendRate.max} step={RATE_STEP_CM_S} disabled={disabled} onChange={value => set('ascendRate', value)} testID="failsafe-gps-ascend-rate" format={metresPerSecond} rangeLabel={rateRangeLabel(GPS_RESCUE_RANGES.ascendRate.min, GPS_RESCUE_RANGES.ascendRate.max)} />
+      <NumberStepper label="معدل الهبوط" value={draft.descendRate} min={GPS_RESCUE_RANGES.descendRate.min} max={GPS_RESCUE_RANGES.descendRate.max} step={RATE_STEP_CM_S} disabled={disabled} onChange={value => set('descendRate', value)} testID="failsafe-gps-descend-rate" format={metresPerSecond} rangeLabel={rateRangeLabel(GPS_RESCUE_RANGES.descendRate.min, GPS_RESCUE_RANGES.descendRate.max)} hint="يبدأ النزول بثلاثة أضعاف هذه القيمة ثم يتناقص إليها عند ارتفاع الهبوط." />
+    </View> : null}
+    <View style={styles.fieldsRow}>
+      {/* No unit suffix: Arabic pluralisation of "قمر" changes with the
+          number (9 أقمار, 11 قمرًا), and a fixed suffix gets it wrong for
+          most of the 5..50 range. The label already names the unit. */}
+      <NumberStepper label="أقل عدد أقمار" value={draft.minSats} min={GPS_RESCUE_RANGES.minSats.min} max={GPS_RESCUE_RANGES.minSats.max} disabled={disabled} onChange={value => set('minSats', value)} testID="failsafe-gps-min-sats" />
+      {gpsRescueSupportsMinStartDistance(snapshot) ? <NumberStepper label="أقل مسافة لبدء الإنقاذ" value={draft.minStartDistM} min={GPS_RESCUE_RANGES.minStartDistM.min} max={GPS_RESCUE_RANGES.minStartDistM.max} suffix=" م" disabled={disabled} onChange={value => set('minStartDistM', value)} testID="failsafe-gps-min-start-distance" hint="إذا بدأ الإنقاذ أقرب من هذه المسافة، تبتعد الطائرة على اتجاهها الحالي حتى تتجاوزها ثم تبدأ العودة." /> : null}
+    </View>
+    <Choice label="فحوص السلامة أثناء الإنقاذ" value={draft.sanityChecks} options={[{value: 0 as GpsRescueSanityCheck, label: 'إيقاف'}, {value: 1 as GpsRescueSanityCheck, label: 'تشغيل'}, {value: 2 as GpsRescueSanityCheck, label: 'عند Failsafe فقط'}]} disabled={disabled} onChange={value => set('sanityChecks', value)} testID="failsafe-gps-sanity" />
+    {hasRates ? <><Choice label="السماح بالتسليح دون GPS Fix" value={draft.allowArmingWithoutFix} options={[{value: 0, label: 'لا'}, {value: 1, label: 'نعم'}]} disabled={disabled} onChange={value => set('allowArmingWithoutFix', value)} testID="failsafe-gps-allow-arming" />
+      {draft.allowArmingWithoutFix === 1 ? <View style={styles.gpsNotice}><Text style={styles.gpsNoticeText}>غير موصى به: بلا نقطة Home مسجّلة سيُلغى التسليح وتسقط الطائرة عند فقد إشارة حقيقي.</Text></View> : null}</> : null}
+  </View>;
+}
 
 function ChannelRow({index, draft, live, disabled, onChange}: {index: number; draft: FailsafeChannelDraft; live?: number; disabled: boolean; onChange: (value: FailsafeChannelDraft) => void}) {
   const name = ['Roll', 'Pitch', 'Yaw', 'Throttle'][index] ?? `AUX ${index - 3}`; const primary = index < 4;
@@ -98,6 +208,7 @@ export default function FailsafeScreen({sessionKey, active, onOpenReceiver, onOp
   const dirty = snapshot !== undefined && draft !== undefined && !failsafeDraftsEqual(createFailsafeConfigurationDraft(snapshot), draft); useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]); useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined || snapshot === undefined ? [] : validateFailsafeDraft(draft, snapshot), [draft, snapshot]);
   const update = useCallback(<K extends keyof Omit<FailsafeConfigurationDraft, 'channels'>>(key: K, value: FailsafeConfigurationDraft[K]) => {setDraft(current => current === undefined ? current : Object.freeze({...current, [key]: value})); setSaveOutcome(undefined);}, []);
+  const updateGpsRescue = useCallback((value: GpsRescueDraft) => {setDraft(current => current === undefined ? current : Object.freeze({...current, gpsRescue: value})); setSaveOutcome(undefined);}, []);
   const updateChannel = useCallback((index: number, value: FailsafeChannelDraft) => {setDraft(current => current === undefined ? current : Object.freeze({...current, channels: Object.freeze(current.channels.map((item, itemIndex) => itemIndex === index ? Object.freeze(value) : item))})); setSaveOutcome(undefined);}, []);
   const reload = useCallback(() => {const perform = () => setReloadToken(value => value + 1); if (!dirty) return perform(); Alert.alert('تجاهل تغييرات Failsafe؟', 'ستُستبدل المسودة بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]);}, [dirty]);
   const save = useCallback(async () => {if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); const outcome = await controller.save(sessionKey, snapshot, draft); setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') {setSnapshot(outcome.snapshot); setDraft(createFailsafeConfigurationDraft(outcome.snapshot));} setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');}, [controller, draft, issues.length, sessionKey, snapshot]);
@@ -112,6 +223,14 @@ export default function FailsafeScreen({sessionKey, active, onOpenReceiver, onOp
       <View style={styles.card}><View style={styles.sectionHeader}><View><Text style={styles.sectionTitle}>المرحلة 1 · كشف فقد الإشارة</Text><Text style={styles.sectionHint}>زمن الحراسة قبل إعلان RX loss، وزمن الخانق المنخفض الذي يسمح بالفصل المباشر بدل الإجراء الكامل.</Text></View><Pressable onPress={onOpenReceiver} style={styles.linkButton}><Text style={styles.linkButtonText}>فتح المستقبل والقنوات</Text></Pressable></View><View style={styles.fieldsRow}><NumberStepper label="زمن الحراسة" value={draft.delayDeciseconds} min={1} max={200} suffix=" ×0.1s" disabled={phase !== 'READY'} onChange={value => update('delayDeciseconds', value)} testID="failsafe-delay" /><NumberStepper label="مدة الخانق المنخفض" value={draft.throttleLowDelayDeciseconds} min={0} max={300} suffix=" ×0.1s" disabled={phase !== 'READY'} onChange={value => update('throttleLowDelayDeciseconds', value)} testID="failsafe-throttle-low-delay" /></View></View>
       <View style={styles.card}><Choice label="سلوك مفتاح Failsafe" value={draft.switchMode} options={[{value: 0, label: 'Stage 1', help: 'كفقد الرابط'}, {value: 1, label: 'Kill', help: 'فصل مباشر'}, {value: 2, label: 'Stage 2', help: 'الإجراء الكامل'}]} disabled={phase !== 'READY'} onChange={value => update('switchMode', value)} testID="failsafe-switch" /></View>
       <View style={styles.card}><Choice label="إجراء المرحلة 2" value={draft.procedure} options={[{value: 1, label: 'Drop', help: 'إيقاف وفصل'}, {value: 0, label: 'Land', help: 'هبوط بخانق ثابت'}, ...(snapshot.supportsGpsRescue ? [{value: 2 as const, label: 'GPS Rescue', help: 'عودة وإنقاذ'}] : [])]} disabled={phase !== 'READY'} onChange={value => update('procedure', value)} testID="failsafe-procedure" />{draft.procedure === 0 ? <View style={styles.fieldsRow}><NumberStepper label="خانق الهبوط" value={draft.throttle} min={RX_FAILSAFE_MIN} max={RX_FAILSAFE_MAX} step={1} suffix=" µs" disabled={phase !== 'READY'} onChange={value => update('throttle', value)} testID="failsafe-throttle" /><NumberStepper label="زمن الهبوط قبل الفصل" value={draft.landingTimeSeconds} min={0} max={250} suffix=" s" disabled={phase !== 'READY'} onChange={value => update('landingTimeSeconds', value)} testID="failsafe-landing-time" /></View> : null}{draft.procedure === 2 ? <View style={styles.gpsNotice}><Text style={styles.gpsNoticeText}>الدعم في البناء لا يثبت GPS fix أو Home أو صحة إعدادات Rescue. راجع شاشة GPS واختبر Rescue منفصلًا.</Text></View> : null}</View>
+      {snapshot.gpsRescue !== undefined && draft.gpsRescue !== undefined
+        ? <GpsRescueCard snapshot={snapshot.gpsRescue} draft={draft.gpsRescue} disabled={phase !== 'READY'} onChange={updateGpsRescue} />
+        // Shown only when the operator has a reason to look for it: the
+        // build carries GPS, so its absence is a fact about this board
+        // rather than a screen that simply has nothing to say.
+        : snapshot.supportsGpsRescue && snapshot.gpsRescueAvailability !== 'PRESENT'
+          ? <View style={styles.warning} testID="failsafe-gps-rescue-absent"><Text style={styles.warningText}>{GPS_RESCUE_ABSENT_TEXT[snapshot.gpsRescueAvailability]}</Text></View>
+          : null}
       <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>قيم القنوات عند فقد النبض</Text><Text style={styles.sectionHint}>AUTO متاح للمحاور الأربعة فقط؛ قنوات AUX تستخدم HOLD أو SET كما يفرض Betaflight. القيمة SET تتحرك بخطوة 25µs.</Text></View>
       <View style={[styles.channelGrid, wide && styles.channelGridWide]}>{draft.channels.map((channel, index) => <ChannelRow key={index} index={index} draft={channel} live={liveChannels[index]} disabled={phase !== 'READY'} onChange={value => updateChannel(index, value)} />)}</View>
       {issues.length > 0 ? <View style={styles.warning}><Text style={styles.warningText}>{issues.map(code => FAILSAFE_ISSUE_TEXT[code]).join(' ')}</Text></View> : null}{statusCopy !== undefined ? <View style={statusCopy.warning ? styles.warning : styles.success}><Text style={statusCopy.warning ? styles.warningText : styles.successText}>{statusCopy.text}</Text></View> : null}
@@ -125,5 +244,5 @@ const styles = StyleSheet.create({
      bars whose plus and minus sat at opposite ends of the screen with the
      value stranded in the middle - measured in Chromium, not theorised.
      It still grows on a phone, where the full row width IS the right size. */
-  numberField: {flexGrow: 1, flexBasis: 180, maxWidth: 340, gap: 5}, fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'right'}, rangeText: {...typography.caption, color: colors.textMuted, textAlign: 'center'}, choiceField: {gap: spacing.sm}, choiceRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm}, choice: {flexGrow: 1, flexBasis: 150, maxWidth: 280, minHeight: 58, padding: spacing.sm, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised}, choiceSelected: {borderColor: colors.accentStrong, backgroundColor: colors.accentSoft}, choiceText: {...typography.bodyStrong, color: colors.textSecondary}, choiceTextSelected: {color: colors.accentStrong}, choiceHelp: {...typography.caption, color: colors.textMuted, textAlign: 'center'}, gpsNotice: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, padding: spacing.sm}, gpsNoticeText: {...typography.caption, color: colors.warning, textAlign: 'right'}, channelGrid: {gap: spacing.sm}, channelGridWide: {flexDirection: 'row', flexWrap: 'wrap'}, channelRow: {flexGrow: 1, flexBasis: 360, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.sm}, channelHeading: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm}, channelName: {...typography.bodyStrong, color: colors.textPrimary}, channelLive: {...typography.caption, color: colors.textMuted, fontVariant: ['tabular-nums']}, channelExplanation: {...typography.caption, color: colors.textMuted, textAlign: 'right'}, loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl}, bottomSpace: {height: spacing.xl},
+  numberField: {flexGrow: 1, flexBasis: 180, maxWidth: 340, gap: 5}, fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'right'}, rangeText: {...typography.caption, color: colors.textMuted, textAlign: 'center'}, fieldHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl'}, choiceField: {gap: spacing.sm}, choiceRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm}, choice: {flexGrow: 1, flexBasis: 150, maxWidth: 280, minHeight: 58, padding: spacing.sm, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised}, choiceSelected: {borderColor: colors.accentStrong, backgroundColor: colors.accentSoft}, choiceText: {...typography.bodyStrong, color: colors.textSecondary}, choiceTextSelected: {color: colors.accentStrong}, choiceHelp: {...typography.caption, color: colors.textMuted, textAlign: 'center'}, gpsNotice: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, padding: spacing.sm}, gpsNoticeText: {...typography.caption, color: colors.warning, textAlign: 'right'}, channelGrid: {gap: spacing.sm}, channelGridWide: {flexDirection: 'row', flexWrap: 'wrap'}, channelRow: {flexGrow: 1, flexBasis: 360, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.sm}, channelHeading: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: spacing.sm}, channelName: {...typography.bodyStrong, color: colors.textPrimary}, channelLive: {...typography.caption, color: colors.textMuted, fontVariant: ['tabular-nums']}, channelExplanation: {...typography.caption, color: colors.textMuted, textAlign: 'right'}, loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl}, bottomSpace: {height: spacing.xl},
 });

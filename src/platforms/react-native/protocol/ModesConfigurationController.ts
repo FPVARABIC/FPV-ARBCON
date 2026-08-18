@@ -32,6 +32,7 @@ import {
   type SetupUiSessionKey,
 } from './MspSessionCoordinator';
 import {setupAppStateTelemetryOwner, type SetupAppStatePhase} from './setupAppStateTelemetryOwner';
+import {isSupportedConfigurationApi} from './betaflightApiSupport';
 import {
   acquireMotorConfigurationInterlock,
   MotorConfigurationTransactionInProgressError,
@@ -248,10 +249,7 @@ export class ModesConfigurationController {
     const identification = this.coordinator.getIdentificationState(key.sessionId);
     if (identification.status === 'IDLE' || identification.status === 'RUNNING') return {reason: 'IDENTIFYING'};
     if (
-      identification.status !== 'SUCCEEDED' ||
-      identification.identity.firmware.identifier !== 'BTFL' ||
-      identification.identity.apiVersion.apiVersionMajor !== 1 ||
-      identification.identity.apiVersion.apiVersionMinor !== 47
+      !isSupportedConfigurationApi(identification)
     ) return {reason: 'UNSUPPORTED_FIRMWARE'};
     const client = this.coordinator.getActiveMspClient(key.sessionId);
     const scheduler = this.coordinator.getTelemetryScheduler(key.sessionId);

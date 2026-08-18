@@ -114,6 +114,22 @@ export const MSP_SET_FAILSAFE_CONFIG = 76;
 export const MSP_RXFAIL_CONFIG = 77;
 export const MSP_SET_RXFAIL_CONFIG = 78;
 
+/**
+ * GPS Rescue - the stage-2 procedure's own parameters.
+ *
+ * `#define MSP_GPS_RESCUE 135` / `#define MSP_SET_GPS_RESCUE 225`, from
+ * betaflight-configurator's src/js/msp/MSPCodes.js and the firmware's
+ * src/main/msp/msp_protocol.h.
+ *
+ * BOTH ARE OPTIONAL COMMANDS. The firmware wraps them in
+ * `#ifdef USE_GPS_RESCUE` and `#ifndef USE_WING`, so a build without GPS
+ * Rescue - and every wing build - answers MSP_RESULT_CMD_UNKNOWN. A caller
+ * must treat "this board does not answer" as an absent capability, not as
+ * a failed read.
+ */
+export const MSP_GPS_RESCUE = 135;
+export const MSP_SET_GPS_RESCUE = 225;
+
 /** Betaflight 2025.12.2 / MSP API 1.47 power configuration and meters. */
 export const MSP_BATTERY_CONFIG = 32;
 export const MSP_SET_BATTERY_CONFIG = 33;
@@ -259,6 +275,36 @@ export const MSP_PID_ADVANCED = 94;
 export const MSP_SET_FILTER_CONFIG = 93;
 export const MSP_SET_PID_ADVANCED = 95;
 export const MSP_SET_PID = 202;
+
+/**
+ * `#define MSP_SELECT_SETTING 210` - the profile selector, and the ONE
+ * command that changes which PID or rate profile the board is running.
+ *
+ * ONE PAYLOAD BYTE, and the encoding is not symmetric:
+ *
+ *   PID profile   the zero-based index, sent as-is
+ *   RATE profile  the zero-based index OR'd with 0x80
+ *
+ * Verified in betaflight-configurator's own PidTuningTab.vue:
+ *
+ *   MSP.promise(MSPCodes.MSP_SELECT_SETTING, [currentProfile.value]);
+ *   MSP.promise(MSPCodes.MSP_SELECT_SETTING, [currentRateProfile.value | 128]);
+ *
+ * The high bit is therefore a DISCRIMINATOR, not part of the index, and
+ * an index of 128 or more is not representable - which is also why the
+ * count the board reports is validated before anything is sent.
+ *
+ * NOT a settings write: it selects the active profile and does not need
+ * an EEPROM write to take effect. Betaflight re-reads every profile-
+ * dependent group afterwards rather than assuming, and so does this app.
+ *
+ * The 0x80 discriminator itself lives in encoding/encodeSelectSetting.ts,
+ * NOT here. Every number in this module is a command id, and a test
+ * enforces that they are all distinct - a payload bit-flag sitting among
+ * them would collide with MSP_VOLTAGE_METERS (128) and make that
+ * invariant meaningless.
+ */
+export const MSP_SELECT_SETTING = 210;
 export const MSP_SET_RC_TUNING = 204;
 
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:

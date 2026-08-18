@@ -7,7 +7,8 @@ import {
   type PidTuningDraft, type RateAxisDraft, type RatesDraft,
 } from '../../core';
 import {
-  pidTuningController, type PidBlockReason, type PidLoadOutcome, type PidSaveOutcome,
+  pidTuningController, type PidBlockReason, type PidLoadOutcome,
+  type PidProfileKind, type PidProfileSwitchOutcome, type PidSaveOutcome,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
@@ -17,6 +18,9 @@ import {Button, Stepper as SharedStepper} from '../components/controls';
 export interface PidControllerPort {
   load(key: SetupUiSessionKey): Promise<PidLoadOutcome>;
   save(key: SetupUiSessionKey, original: MspPidTuningSnapshot, draft: PidTuningDraft): Promise<PidSaveOutcome>;
+  /** Optional so an existing test double stays valid; the selector is
+   * simply not rendered when a host supplies no implementation. */
+  selectProfile?(key: SetupUiSessionKey, kind: PidProfileKind, index: number): Promise<PidProfileSwitchOutcome>;
 }
 export interface PidTuningScreenProps {
   readonly sessionKey?: SetupUiSessionKey;
@@ -65,6 +69,23 @@ function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} 
     case 'FAILED': return {text: 'فشل الحفظ قبل تأكيد الاستمرار. لم يدّع التطبيق نجاحًا.', warning: true};
   }
 }
+/**
+ * Switching profiles is not saving, so it gets its own copy.
+ *
+ * NOT_APPLIED is the important one: the board acknowledged and did not
+ * change. Telling the pilot it worked would leave them tuning a profile
+ * that is not flying.
+ */
+function profileSwitchMessage(outcome: PidProfileSwitchOutcome): {text: string; warning: boolean} {
+  switch (outcome.kind) {
+    case 'SWITCHED': return {text: 'تم تفعيل الملف المطلوب، وأعيدت قراءة قيمه من متحكم الطيران.', warning: false};
+    case 'NOT_APPLIED': return {text: 'أقرّ المتحكم الأمر لكنه ما زال يعمل على الملف السابق. لم يتغيّر شيء؛ أعد المحاولة أو تحقق من البرنامج الثابت.', warning: true};
+    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة تبديل الملف. أعد القراءة قبل الاعتماد على القيم المعروضة.', warning: true};
+    case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
+    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء تبديل الملف.', warning: true};
+    case 'FAILED': return {text: 'فشل تبديل الملف قبل أن يصل إلى المتحكم.', warning: true};
+  }
+}
 function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]): string {
   return ({
     PID_GAIN_INVALID: 'إحدى قيم P/I/D خارج 0–250',
@@ -91,6 +112,25 @@ function ScaledNumericField({label, rawValue, rawMin, rawMax, scale, disabled, o
   return <View style={styles.numericField}><Text style={styles.fieldLabel}>{label}</Text><SharedStepper value={(rawValue * scale).toFixed(decimals)} onDecrement={() => apply(rawValue - 1)} onIncrement={() => apply(rawValue + 1)} decrementDisabled={rawValue <= rawMin} incrementDisabled={rawValue >= rawMax} disabled={disabled} keyboardType="decimal-pad" onChangeText={text => { const parsed = Number.parseFloat(text.replace(',', '.')); if (Number.isFinite(parsed)) apply(parsed / scale); }} accessibilityLabel={label} testID={testID} /><Text style={styles.rangeHint}>{(rawMin * scale).toFixed(decimals)}–{(rawMax * scale).toFixed(decimals)}</Text></View>;
 }
 
+/**
+ * The active profile, and the way to change it.
+ *
+ * It renders the BOARD's reported index, never a local selection: a
+ * press asks the flight controller to switch and the component only
+ * moves once the re-read says it did. Disabled while anything is in
+ * flight, and absent entirely when the host supplies no switch
+ * implementation - a control that cannot act must not be drawn.
+ */
+function ProfileSelector({label, count, active, disabled, onSelect, testID}: {label: string; count?: number; active?: number; disabled: boolean; onSelect: (index: number) => void; testID: string}) {
+  const total = count ?? 0;
+  return <View style={styles.profileBadge} testID={testID}>
+    <Text style={styles.profileLabel}>{label}</Text>
+    {active === undefined || total < 1
+      ? <Text style={styles.profileValue}>—</Text>
+      : <View style={styles.choiceRow}>{Array.from({length: total}, (_, index) => <Pressable key={index} accessibilityRole="button" accessibilityState={{selected: index === active, disabled}} accessibilityLabel={`${label} ${index + 1}`} disabled={disabled || index === active} onPress={() => onSelect(index)} style={[styles.profileChoice, index === active && styles.choiceSelected]} testID={`${testID}-${index + 1}`}><Text style={[styles.choiceText, index === active && styles.choiceTextSelected]}>{index + 1}</Text></Pressable>)}</View>}
+  </View>;
+}
+
 function AxisCard({axisKey, title, subtitle, value, disabled, update}: {axisKey: PidAxisKey; title: string; subtitle: string; value: PidAxisDraft; disabled: boolean; update: (axis: PidAxisKey, term: keyof PidAxisDraft, value: number) => void}) {
   return <View style={styles.axisCard} testID={`pid-axis-${axisKey}`}><View><Text style={styles.axisTitle}>{title}</Text><Text style={styles.axisSubtitle}>{subtitle}</Text></View><View style={styles.fieldsRow}><NumericField label="P" value={value.p} max={250} disabled={disabled} onChange={next => update(axisKey, 'p', next)} testID={`pid-${axisKey}-p`} /><NumericField label="I" value={value.i} max={250} disabled={disabled} onChange={next => update(axisKey, 'i', next)} testID={`pid-${axisKey}-i`} /><NumericField label="D" value={value.d} max={250} disabled={disabled} onChange={next => update(axisKey, 'd', next)} testID={`pid-${axisKey}-d`} /><NumericField label="F" value={value.f} max={1000} disabled={disabled} onChange={next => update(axisKey, 'f', next)} testID={`pid-${axisKey}-f`} /></View></View>;
 }
@@ -105,7 +145,7 @@ function RateAxisCard({axisKey, title, value, rates, disabled, update}: {axisKey
 
 export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDirtyChange, controller = pidTuningController}: PidTuningScreenProps): React.JSX.Element {
   const {t} = useTranslation(); const {width, fontScale} = useWindowDimensions(); const {maxWidth} = useContentEnvelope(true); const wide = width / Math.max(fontScale, 1) >= 1040;
-  const [phase, setPhase] = useState<Phase>('IDLE'); const [snapshot, setSnapshot] = useState<MspPidTuningSnapshot>(); const [draft, setDraft] = useState<PidTuningDraft>(); const [loadOutcome, setLoadOutcome] = useState<PidLoadOutcome>(); const [saveOutcome, setSaveOutcome] = useState<PidSaveOutcome>(); const [reloadToken, setReloadToken] = useState(0);
+  const [phase, setPhase] = useState<Phase>('IDLE'); const [snapshot, setSnapshot] = useState<MspPidTuningSnapshot>(); const [draft, setDraft] = useState<PidTuningDraft>(); const [loadOutcome, setLoadOutcome] = useState<PidLoadOutcome>(); const [saveOutcome, setSaveOutcome] = useState<PidSaveOutcome>(); const [switchOutcome, setSwitchOutcome] = useState<PidProfileSwitchOutcome>(); const [reloadToken, setReloadToken] = useState(0);
   useEffect(() => { if (!active || sessionKey === undefined) return; let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } }); return () => { cancelled = true; }; }, [active, controller, reloadToken, sessionKey]);
   const dirty = snapshot !== undefined && draft !== undefined && !pidTuningDraftsEqual(createPidTuningDraft(snapshot), draft);
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]); useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
@@ -116,13 +156,36 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   const updateFilter = useCallback((term: keyof FiltersDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, filters: Object.freeze({...current.filters, [term]: value})})); setSaveOutcome(undefined); }, []);
   const reload = useCallback(() => { const perform = () => setReloadToken(value => value + 1); if (!dirty) return perform(); Alert.alert('تجاهل تغييرات PID؟', 'ستُستبدل القيم الحالية بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]); }, [dirty]);
   const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); const outcome = await controller.save(sessionKey, snapshot, draft); setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, sessionKey, snapshot]);
-  const statusCopy = saveOutcome === undefined ? undefined : saveMessage(saveOutcome); const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? 'تعذرت قراءة إعدادات PID من متحكم الطيران.' : loadOutcome?.kind === 'SESSION_ENDED' ? 'انتهت جلسة الاتصال.' : undefined;
+    /**
+   * SWITCHES THE ACTIVE PROFILE ON THE BOARD, not in this component.
+   *
+   * The snapshot that comes back is the board's own re-read, so the
+   * screen renders what is ACTUALLY active - including the case where
+   * the board acknowledged and did not move (NOT_APPLIED), which must
+   * never look like success. Unsaved edits are refused rather than
+   * silently discarded: switching profiles replaces every value shown.
+   */
+  const selectProfile = useCallback(async (kind: PidProfileKind, index: number) => {
+    if (sessionKey === undefined || controller.selectProfile === undefined) return;
+    if (dirty) {
+      Alert.alert('لديك تغييرات غير محفوظة', 'تبديل الملف سيستبدل القيم المعروضة بقيم الملف الجديد. احفظ أولًا أو تجاهل التغييرات.', [{text: 'حسنًا', style: 'cancel'}]);
+      return;
+    }
+    setPhase('SAVING'); setSaveOutcome(undefined);
+    const outcome = await controller.selectProfile(sessionKey, kind, index);
+    setSwitchOutcome(outcome);
+    if (outcome.kind === 'SWITCHED' || outcome.kind === 'NOT_APPLIED') {
+      setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot));
+    }
+    setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
+  }, [controller, dirty, sessionKey]);
+  const statusCopy = saveOutcome !== undefined ? saveMessage(saveOutcome) : switchOutcome !== undefined ? profileSwitchMessage(switchOutcome) : undefined; const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? 'تعذرت قراءة إعدادات PID من متحكم الطيران.' : loadOutcome?.kind === 'SESSION_ENDED' ? 'انتهت جلسة الاتصال.' : undefined;
   const gyroNyquist = snapshot?.gyroSampleRateHz === undefined ? undefined : snapshot.gyroSampleRateHz / 2;
   const pidNyquist = snapshot?.gyroSampleRateHz === undefined || snapshot.pidProcessDenom === undefined || snapshot.pidProcessDenom < 1 ? undefined : snapshot.gyroSampleRateHz / snapshot.pidProcessDenom / 2;
   const filtersEditable = gyroNyquist !== undefined && pidNyquist !== undefined;
 
   return <View style={styles.root} testID="pid-screen"><ScrollView contentContainerStyle={[styles.content, {maxWidth}]}>
-    <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.title}>ضبط PID وRates والفلاتر</Text><Text style={styles.subtitle}>اضبط استجابة المحاور ومعدلات الحركة والفلاتر الفعالة. الحفظ لا يبدأ إلا بعد إثبات DISARMED، ثم تُحفظ المجموعات المتغيرة فقط في EEPROM وتُقرأ مجددًا للتحقق.</Text></View><View style={styles.profileBadges}><View style={styles.profileBadge} testID="pid-active-profile"><Text style={styles.profileLabel}>PID Profile النشط</Text><Text style={styles.profileValue}>{snapshot === undefined ? '—' : `${snapshot.pidProfileIndex + 1} / ${snapshot.pidProfileCount}`}</Text></View><View style={styles.profileBadge} testID="pid-active-rates-profile"><Text style={styles.profileLabel}>Rates Profile النشط</Text><Text style={styles.profileValue}>{snapshot === undefined ? '—' : snapshot.controlRateProfileIndex + 1}</Text></View></View></View>
+    <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.title}>ضبط PID وRates والفلاتر</Text><Text style={styles.subtitle}>اضبط استجابة المحاور ومعدلات الحركة والفلاتر الفعالة. الحفظ لا يبدأ إلا بعد إثبات DISARMED، ثم تُحفظ المجموعات المتغيرة فقط في EEPROM وتُقرأ مجددًا للتحقق.</Text></View><View style={styles.profileBadges}><ProfileSelector label="ملف PID النشط" testID="pid-active-profile" count={snapshot?.pidProfileCount} active={snapshot?.pidProfileIndex} disabled={phase !== 'READY' || controller.selectProfile === undefined} onSelect={index => selectProfile('PID', index)} /><ProfileSelector label="ملف Rates النشط" testID="pid-active-rates-profile" count={snapshot?.rateProfileCount} active={snapshot?.controlRateProfileIndex} disabled={phase !== 'READY' || controller.selectProfile === undefined} onSelect={index => selectProfile('RATE', index)} /></View></View>
     <View style={styles.danger}><Text style={styles.dangerTitle}>تغيير PID قد يجعل الطائرة غير مستقرة</Text><Text style={styles.dangerText}>احفظ القيم الأصلية، غيّر تدريجيًا، وانزع المراوح أثناء الإعداد. لا يثبت نجاح MSP أن الضبط مناسب للطيران.</Text></View>
     <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>الترميز والقراءة الراجعة مختبران آليًا، لكن النتيجة الديناميكية لا يمكن اعتمادها دون Flight Controller وطائرة حقيقية واختبار متدرج آمن.</Text></View>
     {loadingMessage !== undefined ? <View style={styles.warning} testID="pid-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} />}</View> : null}
@@ -155,5 +218,5 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
 }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: colors.background}, content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md}, hero: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.lg, flexWrap: 'wrap'}, heroCopy: {flex: 1, minWidth: 280, gap: 4}, eyebrow: {...typography.eyebrow, color: colors.accentStrong}, title: {...typography.title, color: colors.textPrimary, textAlign: 'right'}, subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl'}, profileBadges: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm}, profileBadge: {borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, borderRadius: radii.lg, padding: spacing.md, minWidth: 150}, profileLabel: {...typography.caption, color: colors.textMuted, textAlign: 'right'}, profileValue: {...typography.heading, color: colors.accentStrong, textAlign: 'right'}, danger: {borderRadius: radii.sm, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.errorSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 3}, dangerTitle: {...typography.heading, color: colors.error, textAlign: 'right'}, dangerText: {...typography.body, color: colors.error, textAlign: 'right', writingDirection: 'rtl'}, hardwareNotice: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, padding: spacing.md, gap: 3}, hardwareTitle: {...typography.eyebrow, color: colors.accentStrong}, hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl'}, sectionHeading: {gap: 3}, sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'}, sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl'}, axisGrid: {gap: spacing.md}, axisGridWide: {flexDirection: 'row'}, axisCard: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md}, axisTitle: {...typography.title, color: colors.accentStrong, textAlign: 'right'}, axisSubtitle: {...typography.caption, color: colors.textMuted, textAlign: 'right'}, fieldsRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm}, numericField: {flexGrow: 1, flexBasis: 156, minWidth: 156, gap: 5}, fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'center'}, rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center'}, readOnlyGrid: {gap: spacing.md}, readOnlyGridWide: {flexDirection: 'row'}, card: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.sm}, readout: {...typography.body, color: colors.textSecondary, textAlign: 'right', fontVariant: ['tabular-nums']}, choiceRow: {flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap'}, choice: {minHeight: 44, minWidth: 88, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md}, choiceSelected: {borderColor: colors.accentStrong, backgroundColor: colors.accentSoft}, choiceText: {...typography.label, color: colors.textSecondary}, choiceTextSelected: {color: colors.accentStrong}, rateEvidence: {flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.lg, flexWrap: 'wrap', borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, padding: spacing.sm}, warning: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm}, warningText: {...typography.body, color: colors.warning, textAlign: 'right', writingDirection: 'rtl'}, success: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm}, successText: {...typography.body, color: colors.success, textAlign: 'right'}, inlineAction: {alignSelf: 'flex-start'}, loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl}, bottomSpace: {height: spacing.xl},
+  root: {flex: 1, backgroundColor: colors.background}, content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md}, hero: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.lg, flexWrap: 'wrap'}, heroCopy: {flex: 1, minWidth: 280, gap: 4}, eyebrow: {...typography.eyebrow, color: colors.accentStrong}, title: {...typography.title, color: colors.textPrimary, textAlign: 'right'}, subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl'}, profileBadges: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm}, profileBadge: {borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, borderRadius: radii.lg, padding: spacing.md, minWidth: 150}, profileLabel: {...typography.caption, color: colors.textMuted, textAlign: 'right'}, profileValue: {...typography.heading, color: colors.accentStrong, textAlign: 'right'}, profileChoice: {minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.sm}, danger: {borderRadius: radii.sm, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.errorSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 3}, dangerTitle: {...typography.heading, color: colors.error, textAlign: 'right'}, dangerText: {...typography.body, color: colors.error, textAlign: 'right', writingDirection: 'rtl'}, hardwareNotice: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, padding: spacing.md, gap: 3}, hardwareTitle: {...typography.eyebrow, color: colors.accentStrong}, hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl'}, sectionHeading: {gap: 3}, sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'}, sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl'}, axisGrid: {gap: spacing.md}, axisGridWide: {flexDirection: 'row'}, axisCard: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md}, axisTitle: {...typography.title, color: colors.accentStrong, textAlign: 'right'}, axisSubtitle: {...typography.caption, color: colors.textMuted, textAlign: 'right'}, fieldsRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm}, numericField: {flexGrow: 1, flexBasis: 156, minWidth: 156, gap: 5}, fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'center'}, rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center'}, readOnlyGrid: {gap: spacing.md}, readOnlyGridWide: {flexDirection: 'row'}, card: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.sm}, readout: {...typography.body, color: colors.textSecondary, textAlign: 'right', fontVariant: ['tabular-nums']}, choiceRow: {flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap'}, choice: {minHeight: 44, minWidth: 88, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md}, choiceSelected: {borderColor: colors.accentStrong, backgroundColor: colors.accentSoft}, choiceText: {...typography.label, color: colors.textSecondary}, choiceTextSelected: {color: colors.accentStrong}, rateEvidence: {flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.lg, flexWrap: 'wrap', borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, padding: spacing.sm}, warning: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm}, warningText: {...typography.body, color: colors.warning, textAlign: 'right', writingDirection: 'rtl'}, success: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm}, successText: {...typography.body, color: colors.success, textAlign: 'right'}, inlineAction: {alignSelf: 'flex-start'}, loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl}, bottomSpace: {height: spacing.xl},
 });

@@ -345,6 +345,19 @@ export {
   RX_FAILSAFE_MAX,
   RX_FAILSAFE_STEP,
   BUILD_OPTION_GPS,
+  MSP_GPS_RESCUE,
+  MSP_SET_GPS_RESCUE,
+  decodeGpsRescue,
+  encodeChangedGpsRescue,
+  encodeGpsRescue,
+  GPS_RESCUE_BASE_BYTES,
+  GPS_RESCUE_WITH_RATES_BYTES,
+  GPS_RESCUE_WITH_MIN_START_BYTES,
+  GPS_RESCUE_FULL_BYTES,
+  encodeSelectSetting,
+  isEncodableProfileIndex,
+  SELECT_SETTING_RATE_PROFILE_FLAG,
+  SELECT_SETTING_MAX_INDEX,
 } from './protocol';
 export type {
   FailsafeProcedure,
@@ -355,6 +368,10 @@ export type {
   MspFailsafeSnapshot,
   FailsafeWriteGroup,
   EncodedFailsafeWrite,
+  GpsRescueAvailability,
+  MspGpsRescueConfiguration,
+  MspGpsRescuePreservedFields,
+  SelectSettingProfileKind,
 } from './protocol';
 export {
   createFailsafeConfigurationDraft,
@@ -367,6 +384,23 @@ export type {
   FailsafeConfigurationDraft,
   FailsafeValidationCode,
 } from './state/failsafeConfigurationModel';
+export {
+  createGpsRescueDraft,
+  gpsRescueDraftsEqual,
+  gpsRescueSnapshotsEqual,
+  validateGpsRescueDraft,
+  gpsRescueSupportsRates,
+  gpsRescueSupportsMinStartDistance,
+  gpsRescueSupportsInitialClimb,
+  GPS_RESCUE_RANGES,
+} from './state/gpsRescueConfigurationModel';
+export type {
+  GpsRescueDraft,
+  GpsRescueRange,
+  GpsRescueSanityCheck,
+  GpsRescueAltitudeMode,
+  GpsRescueValidationCode,
+} from './state/gpsRescueConfigurationModel';
 export {
   MSP_BATTERY_CONFIG,
   MSP_SET_BATTERY_CONFIG,

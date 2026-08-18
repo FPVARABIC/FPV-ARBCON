@@ -19,12 +19,45 @@ describe('PidTuningScreen', () => {
     const original = snapshot(); const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: original}))});
     expect(renderer.root.findAllByProps({testID: 'pid-screen'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-axis-roll'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-roll-p'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-yaw-f'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-rate-roll-rc'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-gyro-static'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByType('Image' as never)).toHaveLength(0); act(() => renderer.unmount());
   });
-  it('shows the exact active PID and Rates profiles read from STATUS_EX', async () => {
+  it('marks the active PID and Rates profiles read from STATUS_EX', async () => {
+    // The badge became a SELECTOR when profile switching landed, so the
+    // active profile is now carried by the pressed state rather than by
+    // a "2 / 3" string. The FACT under test is unchanged: the screen
+    // shows the board's own indices and marks exactly one of each.
     const original = snapshot(); const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn()});
-    const pidProfileText = renderer.root.findByProps({testID: 'pid-active-profile'}).findAllByType('Text' as never).map(node => node.props.children).join(' ');
-    const ratesProfileText = renderer.root.findByProps({testID: 'pid-active-rates-profile'}).findAllByType('Text' as never).map(node => node.props.children).join(' ');
-    expect(pidProfileText).toContain('2 / 3');
-    expect(ratesProfileText).toContain('3');
+    const selected = (testID: string) => renderer.root
+      .findAllByProps({testID})
+      .flatMap(node => node.findAll(child => child.props?.accessibilityState?.selected === true))
+      .map(child => child.props.accessibilityLabel);
+    // pidProfileIndex 1 of pidProfileCount 3 -> the second choice.
+    expect(selected('pid-active-profile')).toContain('ملف PID النشط 2');
+    expect(renderer.root.findAllByProps({testID: 'pid-active-profile-3'}).length).toBeGreaterThan(0);
+    act(() => renderer.unmount());
+  });
+
+  it('asks the flight controller to switch, and never switches on its own', async () => {
+    // A selector that only moved local state would be a lie: the board
+    // decides which profile is running.
+    const original = snapshot();
+    const selectProfile = jest.fn(async () => ({kind: 'SWITCHED' as const, snapshot: original}));
+    const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn(), selectProfile});
+    const target = renderer.root
+      .findAllByProps({testID: 'pid-active-profile-1'})
+      .find(node => typeof node.props?.onPress === 'function');
+    expect(target).toBeDefined();
+    await act(async () => { target?.props.onPress(); });
+    expect(selectProfile).toHaveBeenCalledWith({sessionId: 'pid-ui', generation: 1}, 'PID', 0);
+    act(() => renderer.unmount());
+  });
+
+  it('renders no selector at all when the host cannot switch', async () => {
+    // A control that cannot act must not be drawn.
+    const original = snapshot();
+    const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn()});
+    const pressable = renderer.root
+      .findAllByProps({testID: 'pid-active-profile-1'})
+      .find(node => typeof node.props?.onPress === 'function');
+    expect(pressable?.props.disabled).toBe(true);
     act(() => renderer.unmount());
   });
   it('sends the edited numeric draft through the verified save action', async () => {

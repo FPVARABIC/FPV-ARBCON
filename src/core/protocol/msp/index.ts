@@ -247,9 +247,33 @@ export type {
   MspFailsafeConfiguration,
   MspRxFailsafeChannel,
   MspFailsafeSnapshot,
+  GpsRescueAvailability,
 } from './decoding/decodeFailsafe';
 export {encodeChangedFailsafeConfiguration} from './encoding/encodeFailsafe';
 export type {FailsafeWriteGroup, EncodedFailsafeWrite} from './encoding/encodeFailsafe';
+export {
+  MSP_GPS_RESCUE,
+  MSP_SET_GPS_RESCUE,
+} from './commands/mspCommands';
+export {
+  decodeGpsRescue,
+  GPS_RESCUE_BASE_BYTES,
+  GPS_RESCUE_WITH_RATES_BYTES,
+  GPS_RESCUE_WITH_MIN_START_BYTES,
+  GPS_RESCUE_FULL_BYTES,
+} from './decoding/decodeGpsRescue';
+export type {
+  MspGpsRescueConfiguration,
+  MspGpsRescuePreservedFields,
+} from './decoding/decodeGpsRescue';
+export {encodeChangedGpsRescue, encodeGpsRescue} from './encoding/encodeGpsRescue';
+export {
+  encodeSelectSetting,
+  isEncodableProfileIndex,
+  SELECT_SETTING_RATE_PROFILE_FLAG,
+  SELECT_SETTING_MAX_INDEX,
+} from './encoding/encodeSelectSetting';
+export type {SelectSettingProfileKind} from './encoding/encodeSelectSetting';
 export {
   MSP_BATTERY_CONFIG,
   MSP_SET_BATTERY_CONFIG,

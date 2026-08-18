@@ -1,5 +1,6 @@
 import {MspPayloadReader} from './MspPayloadReader';
 import {RECEIVER_CHANNEL_MAX_COUNT} from './decodeReceiver';
+import type {MspGpsRescueConfiguration} from './decodeGpsRescue';
 
 export const RX_FAILSAFE_MIN = 750;
 export const RX_FAILSAFE_MAX = 2250;
@@ -37,10 +38,31 @@ export interface MspRxFailsafeChannel {
   readonly outOfRange: boolean;
 }
 
+/**
+ * Why the GPS Rescue parameters are absent, when they are.
+ *
+ * Three genuinely different situations that must not be shown as one
+ * message: the build has no GPS at all; the build has GPS but the board
+ * did not answer MSP_GPS_RESCUE (a wing build, or GPS_RESCUE compiled
+ * out); or it answered with something this decoder could not read.
+ */
+export type GpsRescueAvailability = 'PRESENT' | 'NO_GPS_IN_BUILD' | 'COMMAND_UNSUPPORTED' | 'UNREADABLE';
+
 export interface MspFailsafeSnapshot {
   readonly config: MspFailsafeConfiguration;
   readonly channels: readonly MspRxFailsafeChannel[];
   readonly supportsGpsRescue: boolean;
+  /**
+   * The stage-2 GPS Rescue parameters, when the board has them.
+   *
+   * Deliberately part of the FAILSAFE snapshot rather than a screen of
+   * its own: choosing GPS Rescue as the stage-2 procedure and setting the
+   * altitude it will return at are one decision, and splitting them would
+   * mean two saves, two readbacks and two chances to leave the aircraft
+   * configured to fly home at an altitude nobody checked.
+   */
+  readonly gpsRescue?: MspGpsRescueConfiguration;
+  readonly gpsRescueAvailability: GpsRescueAvailability;
 }
 
 /**

@@ -61,6 +61,7 @@ import {
   acquireMotorConfigurationInterlock,
   MotorConfigurationTransactionInProgressError,
 } from './motorConfigurationInterlock';
+import {isSupportedConfigurationApi} from './betaflightApiSupport';
 
 const EMPTY = new Uint8Array(0);
 const DEFINITELY_NOT_SENT = new Set([
@@ -528,10 +529,7 @@ export class GeneralConfigurationController {
     if (identification.status === 'IDLE' || identification.status === 'RUNNING')
       return { reason: 'IDENTIFYING' };
     if (
-      identification.status !== 'SUCCEEDED' ||
-      identification.identity.firmware.identifier !== 'BTFL' ||
-      identification.identity.apiVersion.apiVersionMajor !== 1 ||
-      identification.identity.apiVersion.apiVersionMinor !== 47
+      !isSupportedConfigurationApi(identification)
     )
       return { reason: 'UNSUPPORTED_FIRMWARE' };
     const currentKey = this.coordinator.getSessionKey(sessionKey.sessionId);

@@ -36,6 +36,10 @@ function snapshotFrom(configBytes: number[], channelBytes: number[]): MspFailsaf
     config: decodeFailsafeConfiguration(Uint8Array.from(configBytes)),
     channels: decodeRxFailsafeConfiguration(Uint8Array.from(channelBytes)),
     supportsGpsRescue: true,
+    // This file is about the failsafe values themselves; a board that
+    // does not answer MSP_GPS_RESCUE keeps that question out of the way
+    // without pretending the command succeeded.
+    gpsRescueAvailability: 'COMMAND_UNSUPPORTED',
   };
 }
 

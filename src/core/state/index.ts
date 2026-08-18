@@ -245,6 +245,23 @@ export type {
   FailsafeConfigurationDraft,
   FailsafeValidationCode,
 } from './failsafeConfigurationModel';
+export {
+  createGpsRescueDraft,
+  gpsRescueDraftsEqual,
+  gpsRescueSnapshotsEqual,
+  validateGpsRescueDraft,
+  gpsRescueSupportsRates,
+  gpsRescueSupportsMinStartDistance,
+  gpsRescueSupportsInitialClimb,
+  GPS_RESCUE_RANGES,
+} from './gpsRescueConfigurationModel';
+export type {
+  GpsRescueDraft,
+  GpsRescueRange,
+  GpsRescueSanityCheck,
+  GpsRescueAltitudeMode,
+  GpsRescueValidationCode,
+} from './gpsRescueConfigurationModel';
 export {createPowerConfigurationDraft, powerDraftsEqual, powerSnapshotsEqual, validatePowerDraft} from './powerConfigurationModel';
 export type {PowerConfigurationDraft, PowerValidationCode} from './powerConfigurationModel';
 export {

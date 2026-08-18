@@ -113,6 +113,8 @@ export {
 export type {
   PidBlockReason,
   PidLoadOutcome,
+  PidProfileKind,
+  PidProfileSwitchOutcome,
   PidSaveOutcome,
   PidSessionCoordinator,
   PidAppStateOwner,

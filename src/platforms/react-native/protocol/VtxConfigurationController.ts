@@ -29,6 +29,7 @@ import {
 import type { MspClientState } from '../../../core/protocol/mspClient';
 import { deriveArmedState } from '../../../core/state/armingBlockers';
 import { isMotorTestSessionActive } from './motorTestCapability';
+import {isSupportedConfigurationApi} from './betaflightApiSupport';
 import {
   mspSessionCoordinator,
   type MspIdentificationState,
@@ -351,10 +352,7 @@ export class VtxConfigurationController {
     if (identification.status === 'IDLE' || identification.status === 'RUNNING')
       return { reason: 'IDENTIFYING' };
     if (
-      identification.status !== 'SUCCEEDED' ||
-      identification.identity.firmware.identifier !== 'BTFL' ||
-      identification.identity.apiVersion.apiVersionMajor !== 1 ||
-      identification.identity.apiVersion.apiVersionMinor !== 47
+      !isSupportedConfigurationApi(identification)
     )
       return { reason: 'UNSUPPORTED_FIRMWARE' };
     const client = this.coordinator.getActiveMspClient(key.sessionId);
