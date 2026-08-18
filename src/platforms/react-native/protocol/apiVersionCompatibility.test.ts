@@ -50,6 +50,7 @@ import {
   MSP_STATUS_EX,
   MSP_VOLTAGE_METER_CONFIG,
 } from '../../../core/protocol/msp/commands/mspCommands';
+import {deriveSetupDiagnostics} from '../../../core/state/setupDiagnostics';
 import {gpsRescuePayload} from '../../../core/protocol/__testUtils__/gpsRescueFixtures';
 import {createFailsafeConfigurationDraft} from '../../../core/state/failsafeConfigurationModel';
 import {createPowerConfigurationDraft} from '../../../core/state/powerConfigurationModel';
@@ -183,6 +184,32 @@ describe('the configuration API floor is one rule, not eight', () => {
     expect(
       isSupportedConfigurationApi({status: 'FAILED', error: new Error('x')} as MspIdentificationState),
     ).toBe(false);
+  });
+
+  it('covers FC Tools too - the eighth screen, which had its own copy', () => {
+    // FC Tools does not expose load(); it gates every tool operation on
+    // its own compatibility verdict, and that verdict kept an exact
+    // `=== 47` after the other seven moved. On Betaflight 4.7 it refused
+    // every operation while the screens beside it worked.
+    const view = (minor: number, identifier = 'BTFL') =>
+      deriveSetupDiagnostics({
+        identificationStatus: 'SUCCEEDED',
+        identity: {
+          firmware: {identifier, knownFamily: 'BETAFLIGHT'},
+          apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: minor},
+          board: {},
+        },
+        status: 'FRESH',
+        value: undefined,
+        channelState: 'ACTIVE',
+        connected: true,
+      } as never).compatibility;
+
+    expect(view(46)).toBe('OTHER_FIRMWARE_OR_API');
+    expect(view(47)).toBe('BETAFLIGHT_API_1_47');
+    expect(view(48)).toBe('BETAFLIGHT_API_1_47');
+    expect(view(49)).toBe('BETAFLIGHT_API_1_47');
+    expect(view(48, 'INAV')).toBe('OTHER_FIRMWARE_OR_API');
   });
 
   it('knows absolute-control gain stopped being a setting at 1.48', () => {

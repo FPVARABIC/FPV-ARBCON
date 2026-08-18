@@ -548,16 +548,37 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
   });
 
   it('a board outside the pinned API contract reports UNKNOWN rather than a guess', async () => {
+    // The SAFETY property is unchanged and still the point of this test:
+    // off-contract, no BOXIDS acquisition is authorized, armed cannot be
+    // proven, and an unprovable armed state is never READY.
+    //
+    // Only the fixture moved. It used to say 1.48 is off-contract, which
+    // was the exact `=== 47` lock this round removed - Betaflight 4.7 is
+    // a supported configuration API now. 1.46 is the real floor: it is
+    // refused for a genuine payload difference, not an oversight.
     const sessionId = 'p1-other-api';
+    const {renderer} = await mountWithSession(sessionId, {
+      statusEx: statusExPayload({flightModeFlags: 0, armingDisableFlags: 0}),
+      boxIds: BOXIDS_WITH_ARM,
+      apiMinor: 46,
+    });
+    expect(has(renderer, 'safety-strip-unknown')).toBe(true);
+    expect(has(renderer, 'safety-strip-ready')).toBe(false);
+    await teardown(sessionId, renderer);
+  });
+
+  it('proves the armed state on a 1.48 board, which is the whole point of raising the ceiling', async () => {
+    // The companion to the case above. On Betaflight 4.7 the BOXIDS
+    // acquisition IS authorized, so DISARMED becomes provable instead of
+    // collapsing to UNKNOWN - the operator gets a real answer on a board
+    // the app previously treated as unverified firmware.
+    const sessionId = 'p1-api-148';
     const {renderer} = await mountWithSession(sessionId, {
       statusEx: statusExPayload({flightModeFlags: 0, armingDisableFlags: 0}),
       boxIds: BOXIDS_WITH_ARM,
       apiMinor: 48,
     });
-    // No BOXIDS acquisition is authorized off-contract, so armed cannot
-    // be proven - and an unprovable armed state is never READY.
-    expect(has(renderer, 'safety-strip-unknown')).toBe(true);
-    expect(has(renderer, 'safety-strip-ready')).toBe(false);
+    expect(has(renderer, 'safety-strip-unknown')).toBe(false);
     await teardown(sessionId, renderer);
   });
 

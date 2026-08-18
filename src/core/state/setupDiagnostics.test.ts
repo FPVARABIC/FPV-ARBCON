@@ -83,8 +83,14 @@ describe('deriveSetupDiagnostics - identity and compatibility', () => {
   });
 
   it('any other firmware or API version is NOT the compatible pair', () => {
+    // 1.48 moved from this list to the compatible one, deliberately.
+    // The floor is real - 1.46 has no numberOfRateProfiles in
+    // MSP_STATUS_EX - but there is no ceiling: an exact `=== 47` here
+    // reported Betaflight 4.7 as incompatible firmware and refused every
+    // FC Tools operation on it. See betaflightApiFloor.ts.
     expect(deriveSetupDiagnostics(input({identity: identity({minor: 46})})).compatibility).toBe('OTHER_FIRMWARE_OR_API');
-    expect(deriveSetupDiagnostics(input({identity: identity({minor: 48})})).compatibility).toBe('OTHER_FIRMWARE_OR_API');
+    expect(deriveSetupDiagnostics(input({identity: identity({minor: 48})})).compatibility).toBe('BETAFLIGHT_API_1_47');
+    expect(deriveSetupDiagnostics(input({identity: identity({minor: 49})})).compatibility).toBe('BETAFLIGHT_API_1_47');
     expect(deriveSetupDiagnostics(input({identity: identity({major: 2})})).compatibility).toBe('OTHER_FIRMWARE_OR_API');
     expect(deriveSetupDiagnostics(input({identity: identity({identifier: 'INAV'})})).compatibility).toBe(
       'OTHER_FIRMWARE_OR_API',

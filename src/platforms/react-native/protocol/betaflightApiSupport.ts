@@ -75,22 +75,21 @@
  * check is what stands behind this, and it is unchanged.
  */
 
+import {
+  isSupportedConfigurationIdentity,
+  MINIMUM_CONFIGURATION_API_MINOR,
+  SUPPORTED_FIRMWARE_IDENTIFIER,
+  SUPPORTED_MSP_API_MAJOR,
+} from '../../../core/protocol/msp/identification/betaflightApiFloor';
 import type {MspIdentificationState} from './MspSessionCoordinator';
 
-/** Betaflight's MSP major version. Anything else is a different protocol. */
-export const SUPPORTED_MSP_API_MAJOR = 1;
-
 /**
- * The lowest minor these configuration screens accept.
- *
- * Raising this is a product decision. LOWERING it requires re-verifying
- * every payload against that older contract, which is what the 1.47
- * figure above records having been done.
+ * The numbers live in core/protocol/msp/identification/betaflightApiFloor
+ * because core's own setup diagnostics need the same verdict and must not
+ * import from platform. Re-exported here so the eight controllers and the
+ * matrix keep one import site.
  */
-export const MINIMUM_CONFIGURATION_API_MINOR = 47;
-
-/** Firmware identifier this app configures. */
-export const SUPPORTED_FIRMWARE_IDENTIFIER = 'BTFL';
+export {MINIMUM_CONFIGURATION_API_MINOR, SUPPORTED_FIRMWARE_IDENTIFIER, SUPPORTED_MSP_API_MAJOR};
 
 /**
  * Whether the configuration screens may read and write this board.
@@ -112,12 +111,7 @@ export function isSupportedConfigurationApi(
   if (identification.status !== 'SUCCEEDED') {
     return false;
   }
-  const {firmware, apiVersion} = identification.identity;
-  return (
-    firmware.identifier === SUPPORTED_FIRMWARE_IDENTIFIER &&
-    apiVersion.apiVersionMajor === SUPPORTED_MSP_API_MAJOR &&
-    apiVersion.apiVersionMinor >= MINIMUM_CONFIGURATION_API_MINOR
-  );
+  return isSupportedConfigurationIdentity(identification.identity);
 }
 
 /**

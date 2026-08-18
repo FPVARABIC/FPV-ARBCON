@@ -57,6 +57,7 @@ import {
   MSP_ANALOG,
   MSP_RAW_GPS,
   MSP_STATUS_EX,
+  MSP_BOXIDS,
 } from '../../core';
 import { buildMspFrameBytes } from '../../core/protocol/__testUtils__/mspFixtures';
 import {
@@ -300,6 +301,15 @@ function makeFakeClient(
     MSP_BATTERY_STATE,
     Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]),
   );
+  // SAME isolation rationale, new cause. This fixture identifies as API
+  // 1.48, which used to be "identified but not the pinned pair" and so
+  // left the FC-tools BOXIDS mapping switched off. 1.48 is now a
+  // supported configuration API - that is the point of the fix - so the
+  // one-shot MSP_BOXIDS request genuinely fires, and an UNANSWERED one
+  // would occupy the serialized queue for its full 2000ms timeout and
+  // starve every poll behind it. The ARM box at permanent id 0 is the
+  // same benign mapping the protocol tests use.
+  fake.setResponse(MSP_BOXIDS, Uint8Array.from([0]));
   // Pass 7.6c (same isolation rationale): production now also registers
   // three auxiliary polls (MSP_ANALOG / MSP_RAW_GPS / MSP_STATUS_EX,
   // phase-staggered at 700/1400/2100ms) for every identified BETAFLIGHT
@@ -2300,15 +2310,21 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     await teardown(sessionId, renderer);
   });
 
-  it('reports the real identity and does NOT claim API-1.47 compatibility for the 1.48 fixture', async () => {
+  it('reports the real identity and now ACCEPTS the 1.48 fixture', async () => {
+    // This assertion is inverted deliberately. It used to demand that
+    // Betaflight 4.7 (API 1.48) be reported as unverified firmware with
+    // readings only - the exact `=== 47` lock that also made FC Tools
+    // refuse every operation on that board. The floor is unchanged and
+    // still refuses 1.46; there is simply no ceiling any more. See
+    // core/protocol/msp/identification/betaflightApiFloor.ts.
     const sessionId = 'pass77-region4-compat';
     const { renderer } = await renderSession(sessionId);
     const text = allText(renderer);
     expect(text).toContain('البرنامج الثابت: BTFL');
-    expect(text).toContain(
+    expect(text).toContain('متوافق مع هذا الإصدار');
+    expect(text).not.toContain(
       'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',
     );
-    expect(text).not.toContain('متوافق مع هذا الإصدار');
     await teardown(sessionId, renderer);
   });
 

@@ -63,6 +63,7 @@ import type {
   MspStatusExDiagnostics,
   SensorPresenceBit,
 } from '../../../core';
+import {isSupportedConfigurationApi} from './betaflightApiSupport';
 import {mspSessionCoordinator} from './MspSessionCoordinator';
 import type {MspSessionCoordinator} from './MspSessionCoordinator';
 import {setupAppStateTelemetryOwner} from './setupAppStateTelemetryOwner';
@@ -551,8 +552,10 @@ export class FcToolsController {
     if (identification.status !== 'SUCCEEDED') {
       return 'IDENTIFYING';
     }
-    const {firmware, apiVersion} = identification.identity;
-    return firmware.identifier === 'BTFL' && apiVersion.apiVersionMajor === 1 && apiVersion.apiVersionMinor === 47
+    // The eighth screen. This one kept its own `=== 47` after the other
+    // seven moved to the shared floor, so FC Tools refused every
+    // operation on Betaflight 4.7 while the screens beside it worked.
+    return isSupportedConfigurationApi(identification)
       ? 'BETAFLIGHT_API_1_47'
       : 'OTHER_FIRMWARE_OR_API';
   }
