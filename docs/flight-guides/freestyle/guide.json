@@ -36,5 +36,116 @@
     "S1.10b",
     "S1.10c",
     "S1.13"
-  ]
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "المستقبل",
+      "screen": "المستقبل · بطاقة تنعيم الإشارة",
+      "screenshot": "images/1-receiver-smoothing.png",
+      "targets": [
+        {
+          "control": "receiver-setpoint-factor",
+          "kind": "stepper",
+          "expected": "50",
+          "source": "S1.3"
+        },
+        {
+          "control": "receiver-throttle-factor",
+          "kind": "stepper",
+          "expected": "50",
+          "source": "S1.3"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "إحساس العصا",
+      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "screenshot": "images/2-pid-feel.png",
+      "targets": [
+        {
+          "control": "pid-ff-jitter",
+          "kind": "stepper",
+          "expected": "8",
+          "source": "S1.3"
+        },
+        {
+          "control": "pid-ff-boost",
+          "kind": "stepper",
+          "expected": "15",
+          "source": "S1.13"
+        },
+        {
+          "control": "pid-ff-averaging-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.3"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title_ar": "المحركات",
+      "screen": "المحركات · إعدادات ESC",
+      "screenshot": "images/3-motors.png",
+      "targets": [
+        {
+          "control": "motor-config-protocol-7",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.10b"
+        },
+        {
+          "control": "motor-config-bidirectional-dshot",
+          "kind": "switch",
+          "expected": "on",
+          "source": "S1.10b"
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "title_ar": "Dynamic Idle",
+      "screen": "ضبط PID · بطاقة Dynamic Idle",
+      "screenshot": "images/4-dynamic-idle.png",
+      "targets": [
+        {
+          "control": "pid-idle-min-rpm",
+          "kind": "stepper",
+          "expected": "30",
+          "source": "S1.10a–c"
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "title_ar": "Failsafe",
+      "screen": "Failsafe · إجراء المرحلة 2",
+      "screenshot": "images/5-failsafe.png",
+      "targets": [
+        {
+          "control": "failsafe-procedure-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "title_ar": "OSD",
+      "screen": "OSD · بطاقة التنبيهات",
+      "screenshot": "images/6-osd-alarms.png",
+      "targets": [
+        {
+          "control": "osd-rssi-dbm",
+          "kind": "stepper",
+          "expected": "-98 dBm",
+          "source": "S1.3"
+        }
+      ]
+    }
+  ],
+  "step_count": 6
 }

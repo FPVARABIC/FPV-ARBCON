@@ -39,5 +39,193 @@
     "S1.10c",
     "S1.12d",
     "S2.1"
-  ]
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "المنافذ",
+      "screen": "المنافذ · منفذ GPS",
+      "screenshot": "images/1-ports.png",
+      "targets": [
+        {
+          "control": "ports-screen",
+          "kind": "contains",
+          "expected": "GPS / GNSS",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "المستقبل",
+      "screen": "المستقبل · المصدر و RSSI",
+      "screenshot": "images/2-receiver-cutoffs.png",
+      "targets": [
+        {
+          "control": "receiver-setpoint-cutoff",
+          "kind": "stepper",
+          "expected": "10",
+          "source": "S1.5"
+        },
+        {
+          "control": "receiver-throttle-cutoff",
+          "kind": "stepper",
+          "expected": "15",
+          "source": "S1.5"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title_ar": "GPS",
+      "screen": "GPS · التفعيل و Home والدقة",
+      "screenshot": "images/3-gps.png",
+      "targets": [
+        {
+          "control": "gps-screen",
+          "kind": "contains",
+          "expected": "UART2",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "title_ar": "GPS Rescue",
+      "screen": "Failsafe · معاملات GPS Rescue",
+      "screenshot": "images/4-gps-rescue.png",
+      "targets": [
+        {
+          "control": "failsafe-gps-return-altitude",
+          "kind": "stepper",
+          "expected": "30 م",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-ground-speed",
+          "kind": "stepper",
+          "expected": "7.5 م/ث",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-descend-rate",
+          "kind": "stepper",
+          "expected": "1.5 م/ث",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-min-sats",
+          "kind": "stepper",
+          "expected": "8",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-allow-arming-0",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-allow-arming-1",
+          "kind": "option",
+          "expected": "not-selected",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-sanity-2",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.12d"
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "title_ar": "الأوضاع",
+      "screen": "الأوضاع · GPS Rescue على مفتاح",
+      "screenshot": "images/5-modes.png",
+      "targets": [
+        {
+          "control": "modes-screen",
+          "kind": "contains",
+          "expected": "GPS RESCUE",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "title_ar": "الطاقة والبطارية",
+      "screen": "الطاقة · مثال 6S",
+      "screenshot": "images/6-power.png",
+      "targets": [
+        {
+          "control": "power-cell-warning",
+          "kind": "stepper",
+          "expected": "3.50 V",
+          "source": "C"
+        },
+        {
+          "control": "power-live",
+          "kind": "contains",
+          "expected": "6S",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 7,
+      "title_ar": "مرسل الفيديو",
+      "screen": "مرسل الفيديو · الطاقة",
+      "screenshot": "images/7-vtx.png",
+      "targets": []
+    },
+    {
+      "n": 8,
+      "title_ar": "OSD",
+      "screen": "OSD · إنذارات السلامة",
+      "screenshot": "images/8-osd-alarms.png",
+      "targets": [
+        {
+          "control": "osd-rssi-dbm",
+          "kind": "stepper",
+          "expected": "-100 dBm",
+          "source": "C"
+        },
+        {
+          "control": "osd-lq",
+          "kind": "stepper",
+          "expected": "60%",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 9,
+      "title_ar": "إحساس العصا",
+      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "screenshot": "images/9-pid-feel.png",
+      "targets": [
+        {
+          "control": "pid-ff-jitter",
+          "kind": "stepper",
+          "expected": "10",
+          "source": "S1.5"
+        },
+        {
+          "control": "pid-ff-boost",
+          "kind": "stepper",
+          "expected": "0",
+          "source": "S1.5"
+        },
+        {
+          "control": "pid-ff-averaging-0",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.5"
+        }
+      ]
+    }
+  ],
+  "step_count": 9
 }

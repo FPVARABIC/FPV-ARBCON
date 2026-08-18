@@ -33,5 +33,36 @@
     "S2.1",
     "S2.2"
   ],
-  "image": "_shared/images/firmware-flasher.png"
+  "image": "_shared/images/firmware-flasher.png",
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "قبل التحديث",
+      "screen": "تحديث البرنامج الثابت · اللوحة والبناء",
+      "screenshot": "images/1-flasher.png",
+      "targets": [
+        {
+          "control": "firmware-flasher-screen",
+          "kind": "not-contains",
+          "expected": "القائمة غير متاحة",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "الحزم الجاهزة",
+      "screen": "الحزم الجاهزة · المكتبة الرسمية",
+      "screenshot": "images/2-presets.png",
+      "targets": [
+        {
+          "control": "presets-screen",
+          "kind": "contains",
+          "expected": "الحزم المتوافقة (5)",
+          "source": "S1"
+        }
+      ]
+    }
+  ],
+  "step_count": 2
 }

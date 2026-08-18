@@ -7,9 +7,21 @@
   "description_en": "Fastest lap around a track. Everything is measured in latency.",
   "difficulty": "advanced",
   "difficulty_ar": "متقدم",
-  "intended_aircraft": ["5 إنش على 6S", "وووب 1S للسباق الداخلي"],
-  "required_screens": ["PidTuningScreen", "ReceiverScreen", "MotorsScreen", "FailsafeScreen"],
-  "optional_screens": ["VideoTransmitterScreen", "OsdScreen", "ModesScreen"],
+  "intended_aircraft": [
+    "5 إنش على 6S",
+    "وووب 1S للسباق الداخلي"
+  ],
+  "required_screens": [
+    "PidTuningScreen",
+    "ReceiverScreen",
+    "MotorsScreen",
+    "FailsafeScreen"
+  ],
+  "optional_screens": [
+    "VideoTransmitterScreen",
+    "OsdScreen",
+    "ModesScreen"
+  ],
   "hardware_requirements": [
     "ESC يدعم DShot600 و DShot ثنائي الاتجاه",
     "إطار مخدوم — الضبط الحاد يكشف عيوب البناء",
@@ -18,5 +30,127 @@
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE / REFERENCE VERIFIED",
   "image": "_shared/images/vtx-channel-power.png",
-  "sources": ["S1.4", "S1.9", "S1.11d"]
+  "sources": [
+    "S1.4",
+    "S1.9",
+    "S1.11d"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "المستقبل",
+      "screen": "المستقبل · بطاقة تنعيم الإشارة",
+      "screenshot": "images/1-receiver-smoothing.png",
+      "targets": [
+        {
+          "control": "receiver-setpoint-factor",
+          "kind": "stepper",
+          "expected": "25",
+          "source": "S1.4"
+        },
+        {
+          "control": "receiver-throttle-factor",
+          "kind": "stepper",
+          "expected": "25",
+          "source": "S1.4"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "إحساس العصا",
+      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "screenshot": "images/2-pid-feel.png",
+      "targets": [
+        {
+          "control": "pid-ff-jitter",
+          "kind": "stepper",
+          "expected": "3",
+          "source": "S1.4"
+        },
+        {
+          "control": "pid-ff-boost",
+          "kind": "stepper",
+          "expected": "18",
+          "source": "S1.4"
+        },
+        {
+          "control": "pid-ff-averaging-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.4"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title_ar": "المحركات",
+      "screen": "المحركات · إعدادات ESC",
+      "screenshot": "images/3-motors.png",
+      "targets": [
+        {
+          "control": "motor-config-protocol-7",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.9"
+        },
+        {
+          "control": "motor-config-bidirectional-dshot",
+          "kind": "switch",
+          "expected": "on",
+          "source": "S1.9"
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "title_ar": "Dynamic Idle",
+      "screen": "ضبط PID · بطاقة Dynamic Idle",
+      "screenshot": "images/4-dynamic-idle.png",
+      "targets": [
+        {
+          "control": "pid-idle-min-rpm",
+          "kind": "stepper",
+          "expected": "40",
+          "source": "S1.9"
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "title_ar": "Failsafe",
+      "screen": "Failsafe · إجراء المرحلة 2",
+      "screenshot": "images/5-failsafe.png",
+      "targets": [
+        {
+          "control": "failsafe-procedure-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "title_ar": "OSD",
+      "screen": "OSD · بطاقة التنبيهات",
+      "screenshot": "images/6-osd-alarms.png",
+      "targets": [
+        {
+          "control": "osd-rssi-dbm",
+          "kind": "stepper",
+          "expected": "-95 dBm",
+          "source": "S1.4"
+        }
+      ]
+    },
+    {
+      "n": 7,
+      "title_ar": "مرسل الفيديو",
+      "screen": "مرسل الفيديو · القناة والطاقة",
+      "screenshot": "images/7-vtx.png",
+      "targets": []
+    }
+  ],
+  "step_count": 7
 }

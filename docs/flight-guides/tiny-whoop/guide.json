@@ -7,9 +7,20 @@
   "description_en": "A small ducted aircraft flown indoors — the smallest platform and the one whose numbers differ most.",
   "difficulty": "beginner",
   "difficulty_ar": "مبتدئ",
-  "intended_aircraft": ["وووب 1S بلا فرش (65 مم)", "وووب 2S"],
-  "required_screens": ["MotorsScreen", "PidTuningScreen", "PowerBatteryScreen", "FailsafeScreen"],
-  "optional_screens": ["ConfigurationsScreen", "OsdScreen"],
+  "intended_aircraft": [
+    "وووب 1S بلا فرش (65 مم)",
+    "وووب 2S"
+  ],
+  "required_screens": [
+    "MotorsScreen",
+    "PidTuningScreen",
+    "PowerBatteryScreen",
+    "FailsafeScreen"
+  ],
+  "optional_screens": [
+    "ConfigurationsScreen",
+    "OsdScreen"
+  ],
   "hardware_requirements": [
     "محركات بلا فرش — الإعداد الرسمي لا يصلح لوووب بفرش",
     "ESC يدعم Dshot300 و DShot ثنائي الاتجاه",
@@ -18,5 +29,142 @@
   "hardware_verification_status": "NOT VERIFIED — DEFERRED",
   "verification_level": "SOFTWARE / REFERENCE VERIFIED",
   "image": "_shared/images/motors-session.png",
-  "sources": ["S1.8"]
+  "sources": [
+    "S1.8"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "المحركات",
+      "screen": "المحركات · إعدادات ESC",
+      "screenshot": "images/1-motors.png",
+      "targets": [
+        {
+          "control": "motor-config-protocol-6",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.8"
+        },
+        {
+          "control": "motor-config-protocol-7",
+          "kind": "option",
+          "expected": "not-selected",
+          "source": "S1.8"
+        },
+        {
+          "control": "motor-config-bidirectional-dshot",
+          "kind": "switch",
+          "expected": "on",
+          "source": "S1.8"
+        },
+        {
+          "control": "motor-config-poles",
+          "kind": "input",
+          "expected": "12",
+          "source": "S1.8"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "Dynamic Idle",
+      "screen": "ضبط PID · بطاقة Dynamic Idle",
+      "screenshot": "images/2-dynamic-idle.png",
+      "targets": [
+        {
+          "control": "pid-idle-min-rpm",
+          "kind": "stepper",
+          "expected": "120",
+          "source": "S1.8"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title_ar": "إحساس العصا",
+      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "screenshot": "images/3-pid-feel.png",
+      "targets": [
+        {
+          "control": "pid-ff-jitter",
+          "kind": "stepper",
+          "expected": "3",
+          "source": "S1.8"
+        },
+        {
+          "control": "pid-ff-boost",
+          "kind": "stepper",
+          "expected": "18",
+          "source": "S1.8"
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "title_ar": "الطاقة والبطارية",
+      "screen": "الطاقة · حدود بطارية 1S",
+      "screenshot": "images/4-power.png",
+      "targets": [
+        {
+          "control": "power-cell-max",
+          "kind": "stepper",
+          "expected": "4.45 V",
+          "source": "S1.8"
+        },
+        {
+          "control": "power-capacity",
+          "kind": "stepper",
+          "expected": "450 mAh",
+          "source": "C"
+        },
+        {
+          "control": "power-live",
+          "kind": "contains",
+          "expected": "1S",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "title_ar": "منحنى الخانق",
+      "screen": "ضبط PID · منحنى وحدّ الخانق",
+      "screenshot": "images/5-throttle-curve.png",
+      "targets": [
+        {
+          "control": "pid-throttle-mid",
+          "kind": "stepper",
+          "expected": "30",
+          "source": "S1.8"
+        },
+        {
+          "control": "pid-throttle-expo",
+          "kind": "stepper",
+          "expected": "65",
+          "source": "S1.8"
+        },
+        {
+          "control": "pid-throttle-hover",
+          "kind": "stepper",
+          "expected": "30",
+          "source": "S1.8"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "title_ar": "Failsafe",
+      "screen": "Failsafe · إجراء المرحلة 2",
+      "screenshot": "images/6-failsafe.png",
+      "targets": [
+        {
+          "control": "failsafe-procedure-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        }
+      ]
+    }
+  ],
+  "step_count": 6
 }
