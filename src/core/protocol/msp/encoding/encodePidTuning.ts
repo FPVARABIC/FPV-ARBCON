@@ -1,5 +1,5 @@
 import type {MspPidTuningSnapshot} from '../decoding/decodePidTuning';
-import {IDLE_MIN_RPM_OFFSET} from '../decoding/decodePidTuning';
+import {IDLE_MIN_RPM_OFFSET, FEEDFORWARD_AVERAGING_OFFSET, FEEDFORWARD_BOOST_OFFSET, FEEDFORWARD_JITTER_FACTOR_OFFSET} from '../decoding/decodePidTuning';
 import type {PidTuningDraft} from '../../../state/pidTuningModel';
 import {createPidTuningDraft, pidTuningDraftsEqual, validatePidTuningDraft} from '../../../state/pidTuningModel';
 
@@ -23,6 +23,11 @@ export function encodeChangedPidTuning(snapshot: MspPidTuningSnapshot, draft: Pi
   // byte-for-byte. A PID_ADVANCED write is emitted below only if some byte
   // actually changed, so reading this screen never rewrites tuning.
   if (advanced.length > IDLE_MIN_RPM_OFFSET) advanced[IDLE_MIN_RPM_OFFSET] = draft.idleMinRpm;
+  // Patched into the board's OWN payload, like every other field here, so
+  // a byte this app does not understand is written back untouched.
+  if (advanced.length > FEEDFORWARD_AVERAGING_OFFSET) advanced[FEEDFORWARD_AVERAGING_OFFSET] = draft.feedforwardAveraging;
+  if (advanced.length > FEEDFORWARD_BOOST_OFFSET) advanced[FEEDFORWARD_BOOST_OFFSET] = draft.feedforwardBoost;
+  if (advanced.length > FEEDFORWARD_JITTER_FACTOR_OFFSET) advanced[FEEDFORWARD_JITTER_FACTOR_OFFSET] = draft.feedforwardJitterFactor;
   const rates = snapshot.ratesRaw.slice();
   rates[0] = draft.rates.roll.rcRate;
   rates[12] = draft.rates.pitch.rcRate;

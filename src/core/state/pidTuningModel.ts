@@ -43,10 +43,32 @@ export interface PidTuningDraft {
    * Betaflight's own bound is 0-100, raised to 0-200 for API >= 1.45.
    */
   readonly idleMinRpm: number;
+  /**
+   * The three feedforward "feel" settings, in wire units.
+   *
+   * Ranges are the firmware's own (settings.c): averaging is a lookup of
+   * four entries, boost 0-50, jitter factor 0-20. They are what
+   * Betaflight's official presets change to define a flight style, which
+   * is why they are editable here rather than left to the CLI.
+   */
+  readonly feedforwardAveraging: number;
+  readonly feedforwardBoost: number;
+  readonly feedforwardJitterFactor: number;
 }
+
+/** settings.c: lookupTableFeedforwardAveraging has four entries. */
+export const FEEDFORWARD_AVERAGING_MAX = 3;
+/** settings.c: PARAM_NAME_FEEDFORWARD_BOOST minmaxUnsigned {0, 50}. */
+export const FEEDFORWARD_BOOST_MAX = 50;
+/** settings.c: PARAM_NAME_FEEDFORWARD_JITTER_FACTOR minmaxUnsigned {0, 20}. */
+export const FEEDFORWARD_JITTER_FACTOR_MAX = 20;
+
 export type PidTuningValidationCode =
   | 'PID_GAIN_INVALID'
   | 'FEEDFORWARD_INVALID'
+  | 'FEEDFORWARD_AVERAGING_INVALID'
+  | 'FEEDFORWARD_BOOST_INVALID'
+  | 'FEEDFORWARD_JITTER_INVALID'
   | 'RATES_TYPE_INVALID'
   | 'RATES_TYPE_CHANGE_UNSUPPORTED'
   | 'RATE_VALUE_INVALID'
@@ -90,11 +112,17 @@ export function createPidTuningDraft(snapshot: MspPidTuningSnapshot): PidTuningD
     }),
     filters: Object.freeze({...snapshot.filterConfig}),
     idleMinRpm: snapshot.idleMinRpm,
+    feedforwardAveraging: snapshot.feedforwardAveraging,
+    feedforwardBoost: snapshot.feedforwardBoost,
+    feedforwardJitterFactor: snapshot.feedforwardJitterFactor,
   });
 }
 
 export function pidTuningDraftsEqual(a: PidTuningDraft, b: PidTuningDraft): boolean {
   return a.idleMinRpm === b.idleMinRpm &&
+    a.feedforwardAveraging === b.feedforwardAveraging &&
+    a.feedforwardBoost === b.feedforwardBoost &&
+    a.feedforwardJitterFactor === b.feedforwardJitterFactor &&
     AXES.every(key => a[key].p === b[key].p && a[key].i === b[key].i && a[key].d === b[key].d && a[key].f === b[key].f) &&
     ratesEqual(a.rates, b.rates) && filtersEqual(a.filters, b.filters);
 }
@@ -142,6 +170,27 @@ export function validatePidTuningDraft(draft: PidTuningDraft, snapshot?: MspPidT
   ) {
     issues.add('IDLE_MIN_RPM_INVALID');
   }
+  /*
+   * CHANGE-SCOPED, for the reason gpsRescueConfigurationModel.ts spells
+   * out at length: holding a field the operator never touched to a range
+   * would let one stored byte make the WHOLE screen unsaveable. These
+   * three offsets are only populated from API 1.44, and a board can
+   * present bytes there this app has no business judging - but the moment
+   * an operator moves one, it must land inside the firmware's own bound,
+   * because MSP_SET_PID_ADVANCED does not clamp and will store whatever
+   * arrives.
+   */
+  // The snapshot is optional on this function. With no board to compare
+  // against there is no "unchanged" to exempt, so every field is bounded -
+  // the stricter reading, which is the right default when in doubt.
+  const stored = snapshot === undefined ? undefined : createPidTuningDraft(snapshot);
+  const moved = (key: 'feedforwardAveraging' | 'feedforwardBoost' | 'feedforwardJitterFactor'): boolean =>
+    stored === undefined || draft[key] !== stored[key];
+  const bounded = (value: number, max: number): boolean =>
+    Number.isInteger(value) && value >= 0 && value <= max;
+  if (moved('feedforwardAveraging') && !bounded(draft.feedforwardAveraging, FEEDFORWARD_AVERAGING_MAX)) issues.add('FEEDFORWARD_AVERAGING_INVALID');
+  if (moved('feedforwardBoost') && !bounded(draft.feedforwardBoost, FEEDFORWARD_BOOST_MAX)) issues.add('FEEDFORWARD_BOOST_INVALID');
+  if (moved('feedforwardJitterFactor') && !bounded(draft.feedforwardJitterFactor, FEEDFORWARD_JITTER_FACTOR_MAX)) issues.add('FEEDFORWARD_JITTER_INVALID');
   for (const key of AXES) {
     const value = draft[key];
     if ([value.p, value.i, value.d].some(gain => !Number.isInteger(gain) || gain < 0 || gain > 250)) issues.add('PID_GAIN_INVALID');

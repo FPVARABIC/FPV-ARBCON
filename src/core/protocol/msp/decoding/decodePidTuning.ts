@@ -8,6 +8,32 @@ export const PID_ADVANCED_API147_MIN_BYTES = 61;
 export const IDLE_MIN_RPM_OFFSET = 49;
 
 /**
+ * FEEL, not gains - the three bytes that separate cinematic from racing.
+ *
+ * Betaflight's OWN official presets change exactly these to define a
+ * flight style (firmware-presets, authored by a Betaflight maintainer):
+ *
+ *   Generic 150Hz Cinematic   averaging OFF      jitter 12
+ *   Generic 150Hz Ultra Cine  averaging OFF      jitter 16
+ *   Generic 250Hz Freestyle   averaging 2_POINT  jitter 8
+ *   Generic 500Hz Race        averaging 2_POINT  jitter 3   boost 18
+ *
+ * OFFSETS ANCHORED, NOT GUESSED. MSPHelper.js reads, in order,
+ * motorOutputLimit, autoProfileCellCount (a SIGNED byte, and the one an
+ * eyeball count drops), then idleMinRpm. This file already proves
+ * idleMinRpm is at 49 against feedforwardRoll at 32, so averaging is 50,
+ * boost 52 and jitter 54 - each verified by that same anchored sum
+ * rather than by counting fields.
+ *
+ * Introduced at API 1.44, below this app's 1.47 floor, so every board it
+ * admits carries them. They are still read length-guarded, because a
+ * short payload is a decode question and never an assumption.
+ */
+export const FEEDFORWARD_AVERAGING_OFFSET = 50;
+export const FEEDFORWARD_BOOST_OFFSET = 52;
+export const FEEDFORWARD_JITTER_FACTOR_OFFSET = 54;
+
+/**
  * Betaflight's own input bound: max 100, raised to 200 for API >= 1.45
  * (src/js/tabs/pid_tuning.js). We speak 1.47, so 200.
  */
@@ -69,6 +95,13 @@ export interface MspPidTuningSnapshot {
    * which is why Betaflight disables the input in that case.
    */
   readonly idleMinRpm: number;
+  /** 0 OFF, 1 2_POINT, 2 3_POINT, 3 4_POINT (settings.c
+   * lookupTableFeedforwardAveraging). Smooths feedforward across samples. */
+  readonly feedforwardAveraging: number;
+  /** 0-50. Extra feedforward on stick acceleration. */
+  readonly feedforwardBoost: number;
+  /** 0-20. How much stick jitter is ignored before feedforward reacts. */
+  readonly feedforwardJitterFactor: number;
   readonly advancedRaw: Uint8Array;
   readonly ratesRaw: Uint8Array;
   readonly filtersRaw: Uint8Array;
@@ -182,6 +215,15 @@ export function decodePidTuningSnapshot(input: {
     controlRateProfileIndex: input.controlRateProfileIndex,
     ...(input.rateProfileCount === undefined ? {} : {rateProfileCount: input.rateProfileCount}),
     pidRaw: input.pid.slice(),
+    feedforwardAveraging: input.advanced.length > FEEDFORWARD_AVERAGING_OFFSET
+      ? input.advanced[FEEDFORWARD_AVERAGING_OFFSET]
+      : 0,
+    feedforwardBoost: input.advanced.length > FEEDFORWARD_BOOST_OFFSET
+      ? input.advanced[FEEDFORWARD_BOOST_OFFSET]
+      : 0,
+    feedforwardJitterFactor: input.advanced.length > FEEDFORWARD_JITTER_FACTOR_OFFSET
+      ? input.advanced[FEEDFORWARD_JITTER_FACTOR_OFFSET]
+      : 0,
     idleMinRpm: input.advanced.length > IDLE_MIN_RPM_OFFSET
       ? input.advanced[IDLE_MIN_RPM_OFFSET]
       : 0,

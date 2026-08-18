@@ -15,6 +15,7 @@ import {StickyActionBar} from '../components/editing';
 import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, Stepper as SharedStepper} from '../components/controls';
 import {unconfirmedWriteMessage} from '../presentation/writeStageNames';
+import {FEEDFORWARD_BOOST_MAX, FEEDFORWARD_JITTER_FACTOR_MAX} from '../../core/state/pidTuningModel';
 
 export interface PidControllerPort {
   load(key: SetupUiSessionKey): Promise<PidLoadOutcome>;
@@ -92,6 +93,9 @@ function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]):
     PID_GAIN_INVALID: 'إحدى قيم P/I/D خارج 0–250',
     IDLE_MIN_RPM_INVALID: 'قيمة Dynamic Idle خارج 0–200',
     FEEDFORWARD_INVALID: 'إحدى قيم F خارج 0–1000',
+    FEEDFORWARD_AVERAGING_INVALID: 'وضع تنعيم Feedforward غير معروف',
+    FEEDFORWARD_BOOST_INVALID: 'قيمة Feedforward boost خارج 0–50',
+    FEEDFORWARD_JITTER_INVALID: 'قيمة تجاهل ارتجاف العصا خارج 0–20',
     RATES_TYPE_INVALID: 'نوع Rates المقروء غير مدعوم للتحرير الآمن',
     RATES_TYPE_CHANGE_UNSUPPORTED: 'تبديل خوارزمية Rates غير متاح في هذه المرحلة الآمنة',
     RATE_VALUE_INVALID: 'إحدى قيم Rates خارج حدود الخوارزمية الحالية',
@@ -151,6 +155,13 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   const dirty = snapshot !== undefined && draft !== undefined && !pidTuningDraftsEqual(createPidTuningDraft(snapshot), draft);
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]); useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined ? [] : validatePidTuningDraft(draft, snapshot), [draft, snapshot]);
+  /** Top-level draft fields. Separate from `update`, which sets one term
+   * of one AXIS - overloading it would make two different things share a
+   * name on a screen where precision matters. */
+  const updateFeel = useCallback((key: 'feedforwardAveraging' | 'feedforwardBoost' | 'feedforwardJitterFactor', value: number) => {
+    setDraft(current => current === undefined ? current : Object.freeze({...current, [key]: value}));
+    setSaveOutcome(undefined);
+  }, []);
   const update = useCallback((axis: PidAxisKey, term: keyof PidAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [axis]: Object.freeze({...current[axis], [term]: value})})); setSaveOutcome(undefined); }, []);
   const updateRate = useCallback((axis: PidAxisKey, term: keyof RateAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [axis]: Object.freeze({...current.rates[axis], [term]: value})})})); setSaveOutcome(undefined); }, []);
   const updateThrottle = useCallback((term: keyof Omit<RatesDraft, PidAxisKey | 'type'>, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [term]: value})})); setSaveOutcome(undefined); }, []);
@@ -195,6 +206,13 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
       <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <AxisCard key={axis.key} axisKey={axis.key} title={axis.title} subtitle={axis.subtitle} value={draft[axis.key]} disabled={phase !== 'READY'} update={update} />)}</View>
       <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Rates</Text><Text style={styles.sectionHint}>الخوارزمية الحالية: {RATE_TYPES[draft.rates.type]?.name ?? `غير معروفة (${draft.rates.type})`}. لا نبدّل نوع الخوارزمية تلقائيًا لأن المعاني والمدى يتغيران جذريًا بين الأنواع.</Text></View>
       <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <RateAxisCard key={axis.key} axisKey={axis.key} title={axis.title} value={draft.rates[axis.key]} rates={draft.rates} disabled={phase !== 'READY'} update={updateRate} />)}</View>
+      {/* THE FEEL CARD. These three bytes are what Betaflight's own
+          official presets change to turn one aircraft into a cinematic
+          rig and another into a race quad - not the P/I/D gains above.
+          Grouped and labelled by EFFECT, because "feedforward jitter
+          factor" means nothing to a pilot deciding how smooth they want
+          the sticks to feel. */}
+      <View style={styles.card} testID="pid-feel"><Text style={styles.sectionTitle}>إحساس العصا</Text><Text style={styles.sectionHint}>تتحكم في نعومة الاستجابة لا في قوتها. ارفع التنعيم للتصوير، واخفضه للسباق.</Text><View style={styles.fieldsRow}><NumericField label="تجاهل ارتجاف العصا" value={draft.feedforwardJitterFactor} max={FEEDFORWARD_JITTER_FACTOR_MAX} disabled={phase !== 'READY'} onChange={next => updateFeel('feedforwardJitterFactor', next)} testID="pid-ff-jitter" /><NumericField label="دفعة الاستجابة" value={draft.feedforwardBoost} max={FEEDFORWARD_BOOST_MAX} disabled={phase !== 'READY'} onChange={next => updateFeel('feedforwardBoost', next)} testID="pid-ff-boost" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'بلا تنعيم'}, {value: 1, label: 'نقطتان'}, {value: 2, label: '3 نقاط'}, {value: 3, label: '4 نقاط'}].map(option => <Pressable key={option.value} disabled={phase !== 'READY'} onPress={() => updateFeel('feedforwardAveraging', option.value)} style={[styles.choice, draft.feedforwardAveraging === option.value && styles.choiceSelected]} testID={`pid-ff-averaging-${option.value}`} accessibilityState={{selected: draft.feedforwardAveraging === option.value}}><Text style={[styles.choiceText, draft.feedforwardAveraging === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
       <View style={styles.card} testID="pid-throttle-rates"><Text style={styles.sectionTitle}>منحنى وحدّ الخانق</Text><Text style={styles.sectionHint}>القيم نسب مئوية كما يخزّنها متحكم الطيران. تغيير حد الخانق قد يقلل الدفع الأقصى.</Text><View style={styles.fieldsRow}><NumericField label="Throttle mid %" value={draft.rates.throttleMid} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleMid', next)} testID="pid-throttle-mid" /><NumericField label="Throttle expo %" value={draft.rates.throttleExpo} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleExpo', next)} testID="pid-throttle-expo" /><NumericField label="Hover %" value={draft.rates.throttleHover} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleHover', next)} testID="pid-throttle-hover" /><NumericField label="Limit %" value={draft.rates.throttleLimitPercent} min={25} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleLimitPercent', next)} testID="pid-throttle-limit-percent" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'إيقاف'}, {value: 1, label: 'Scale'}, {value: 2, label: 'Clip'}].map(option => <Pressable key={option.value} disabled={phase !== 'READY'} onPress={() => updateThrottle('throttleLimitType', option.value)} style={[styles.choice, draft.rates.throttleLimitType === option.value && styles.choiceSelected]} testID={`pid-throttle-limit-${option.value}`}><Text style={[styles.choiceText, draft.rates.throttleLimitType === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
 
       {/* DYNAMIC IDLE. Betaflight edits idle_min_rpm here, on the PID tab -
