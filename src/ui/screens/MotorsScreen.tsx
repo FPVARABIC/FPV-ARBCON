@@ -437,6 +437,17 @@ export function MotorsScreenView({
   // the 1180px reading cap. See useContentEnvelope.ts.
   const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
   const effectiveBottomInset = bottomInset ?? 0;
+  /**
+   * The dock's REAL height, measured on layout.
+   *
+   * The scroll content used to reserve `spacing.xxl * 4` for it - a fixed
+   * guess. The dock is not a fixed height: it grows with the sticky stop,
+   * with the session state, and with however many lines the Arabic labels
+   * wrap to at a given width. Whenever it grew past the guess, the last
+   * rows of the motor list rendered UNDERNEATH it, which is the overlap
+   * visible in the reported screenshots.
+   */
+  const [dockHeight, setDockHeight] = useState(0);
 
   // The snapshot is the ONLY source of controller truth. `useState` plus an
   // explicit subscription rather than useSyncExternalStore: the controller
@@ -651,8 +662,35 @@ export function MotorsScreenView({
   const primaryBlockReason = CAUSAL_BLOCK_REASON_ORDER.find(reason =>
     blockReasons.includes(reason),
   );
+  /**
+   * A SESSION THAT ENDED CLEANLY IS SPENT, NOT BROKEN.
+   *
+   * Deliberately not imported from motorTestSessionBinding: the protocol
+   * barrel exports that module TYPE-ONLY on purpose, because a runtime
+   * import would pull the controller, the vector builders and the payload
+   * encoder into the Release bundle. The rule is one line and is stated
+   * identically there (isSpentSnapshot); the production-path test is what
+   * proves the two agree.
+   */
+  const sessionSpentCleanly =
+    snapshot?.phase === 'CLOSED' && snapshot.teardown?.complete === true;
+  /**
+   * THE DEFECT THIS FIXES, reported with screenshots: after closing a
+   * motor session the operator was told to unplug the USB cable, with the
+   * flight controller still connected and nothing having failed.
+   *
+   * `phase === 'CLOSED'` was treated as "you need a new connection". But
+   * CLOSED is where a HEALTHY session ends - it is the normal terminus of
+   * pressing the toggle off - so the one path that always works was the
+   * one being reported as broken.
+   *
+   * Only a close that did NOT complete now demands a new connection. That
+   * keeps the fail-closed half intact: an unconfirmed teardown may mean
+   * exclusivity is still held or a motor is still turning, and for that
+   * the cable really is the recovery.
+   */
   const requiresNewConnection =
-    snapshot?.phase === 'CLOSED' ||
+    (snapshot?.phase === 'CLOSED' && !sessionSpentCleanly) ||
     blockReasons.includes('REQUIRES_NEW_CONNECTION') ||
     (snapshot?.outcome.kind === 'FAILED_CLOSED' &&
       snapshot.outcome.requiresNewSession) ||
@@ -964,10 +1002,27 @@ export function MotorsScreenView({
       const port = operatorRef.current;
       if (next) {
         setSessionCloseFailed(false);
+        /**
+         * A SPENT SESSION MAY BE REPLACED, and this is the second half of
+         * the reopen fix.
+         *
+         * This gate used to require IDLE. A controller runs
+         * IDLE -> PREPARING -> ACTIVE -> CLOSING -> CLOSED and never
+         * returns, so after one clean close the phase was CLOSED forever
+         * and this returned early - silently. The press did nothing, and
+         * the binding's own retirement path (which builds a fresh
+         * controller on beginSession) was never even reached.
+         *
+         * CLEANLY spent only. A close that did not complete still refuses,
+         * because its exclusivity and its motor state are unproven.
+         */
+        const phase = port?.getSnapshot().phase;
+        const spent =
+          phase === 'CLOSED' && port?.getSnapshot().teardown?.complete === true;
         if (
           port === undefined ||
           beginning ||
-          port.getSnapshot().phase !== 'IDLE'
+          (phase !== 'IDLE' && !spent)
         ) {
           return;
         }
@@ -1064,7 +1119,16 @@ export function MotorsScreenView({
       return;
     }
     const port = operatorRef.current;
-    if (port === undefined || port.getSnapshot().phase !== 'IDLE') {
+    // THE SAME SPENT-SESSION RULE as the toggle itself. This is the
+    // QUEUED path - the operator pressed ON while a configuration read
+    // held the interlock, and the intent is honoured once it releases.
+    // With an IDLE-only test a queued REOPEN was silently dropped here
+    // too, so the press was remembered and then thrown away.
+    const queuedPhase = port?.getSnapshot().phase;
+    const queuedSpent =
+      queuedPhase === 'CLOSED' &&
+      port?.getSnapshot().teardown?.complete === true;
+    if (port === undefined || (queuedPhase !== 'IDLE' && !queuedSpent)) {
       setBeginQueued(false);
       setBeginning(false);
       return;
@@ -1496,7 +1560,13 @@ export function MotorsScreenView({
           and the body's bottom padding keeps it from being covered. */}
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}
+        contentContainerStyle={[
+          styles.scrollContent,
+          { maxWidth: contentMaxWidth },
+          // Clear the floating dock by its measured height, so the list
+          // always ends above it instead of behind it.
+          { paddingBottom: dockHeight + effectiveBottomInset + spacing.xl },
+        ]}
       >
         <View style={styles.screenHeader}>
           <Text style={styles.eyebrow}>{t('motorsScreen.eyebrow')}</Text>
@@ -2027,6 +2097,17 @@ export function MotorsScreenView({
       <View
         style={[styles.sessionDock, { marginBottom: effectiveBottomInset + spacing.md }]}
         testID="motors-session-dock"
+        /* MEASURED, NOT GUESSED - see scrollContent's paddingBottom. The
+           dock floats above the scroll view, so the list underneath has
+           to end above it; a constant could only ever be right for one
+           dock height, and this one changes with the session state, the
+           sticky stop and how many lines the Arabic labels wrap to. */
+        onLayout={event => {
+          const measured = Math.ceil(event.nativeEvent.layout.height);
+          setDockHeight(previous =>
+            Math.abs(previous - measured) > 1 ? measured : previous,
+          );
+        }}
       >
         {/* P3: the long-press control moved into the التحقق والأدوات bench
             card below - the pinned dock no longer teaches press-and-hold

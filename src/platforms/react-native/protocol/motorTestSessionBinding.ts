@@ -243,8 +243,23 @@ export interface MotorTestSessionBindingOptions {
 export function isSpentController(controller: {
   getSnapshot(): MotorTestControllerSnapshot;
 }): boolean {
-  const snapshot = controller.getSnapshot();
-  return snapshot.phase === 'CLOSED' && snapshot.teardown?.complete === true;
+  return isSpentSnapshot(controller.getSnapshot());
+}
+
+/**
+ * The same judgement, from a snapshot the SCREEN already holds.
+ *
+ * MotorsScreen has to answer two questions a controller cannot answer for
+ * it - "may another session start?" and "is this a reason to ask for a new
+ * connection?" - and it was answering both from `phase === 'CLOSED'`
+ * alone. That is why a healthy, cleanly closed session told the operator
+ * to unplug the cable. Exported so the screen and the binding decide with
+ * ONE rule instead of two that can drift.
+ */
+export function isSpentSnapshot(
+  snapshot: MotorTestControllerSnapshot | undefined,
+): boolean {
+  return snapshot?.phase === 'CLOSED' && snapshot.teardown?.complete === true;
 }
 
 class MotorTestSessionBinding implements MotorTestSessionCapability {
