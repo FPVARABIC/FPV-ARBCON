@@ -422,15 +422,54 @@ const styles = StyleSheet.create({
     borderColor: colors.success,
     gap: 3},
   safetyText: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
-  /* A HAIRLINE, NOT A CARD. Every surface on this screen that carries a
-     border, a fill or a radius is something to press; the support footer
-     is not, so it takes none of them. One rule at the top marks it as a
-     different kind of content, and the rest is spacing. */
+  /* A TINTED PANEL, AND STILL NOT A CARD.
+     The footer was an open area under a hairline. It now carries its own
+     fill so it reads as a distinct block rather than as more page - and
+     a fill needs the rest of a panel to be legible: padding on all four
+     sides so the text does not touch the colour's edge, and a radius so
+     the block has a shape. The old top hairline went with it, because a
+     rule drawn across the top of a filled box is a leftover, not a
+     separator.
+     IT IS STILL RANKED BELOW EVERY DOOR, and the shape is what keeps it
+     there: radii.sm where the route cards take radii.lg, a plain neutral
+     border where each of them takes its own accent colour, and no accent
+     rule down its edge. A reader sees three cards and then a quieter
+     block, not a fourth card.
+     THE TONE WAS CHOSEN BY MEASURING CANDIDATES, NOT BY TASTE. Five
+     palette tokens were painted into this panel in Chromium and sampled
+     from the captures, against the page behind it (#FAF8F3) and against
+     the safety note directly above it (successSoft #E8F8F1):
+
+       backgroundRaised #F3F0E8   page d15   note d16   <- chosen
+       surfaceAlt       #F2F0EA   page d14   note d15
+       infoSoft         #E3F1F8   page d25   note d11
+       accentSoft       #DDF8F3   page d29   note d11
+       surfaceRaised    #E9F7F4   page d17   note d3
+
+     surfaceRaised is disqualified outright: three points from the safety
+     note is a twin, and the footer would read as a second warning.
+     accentSoft is the most visible of them and still wrong - it is this
+     app's SELECTED state everywhere else (active rail item, chosen chip,
+     picked device row), so a panel that is never selected must not wear
+     it. infoSoft is the firmware door's blue. surfaceAlt is the DISABLED
+     surface (dimmed buttons, inert steppers).
+
+     backgroundRaised is the one token that already means "a container,
+     one step up from the page, claiming nothing" - the chip track, the
+     stepper track, the device-list ground. That is exactly what this is.
+     It is d30 from the white route cards above, which is the contrast
+     that matters for "not white", while staying warm enough that it can
+     never be mistaken for the green note. The border steps up from
+     borderSoft to border so the block has a definite edge, and the white
+     secondary button now reads against a tinted ground instead of
+     against bare page. */
   support: {
     marginTop: spacing.sm,
-    paddingTop: spacing.lg,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderSoft,
+    backgroundColor: colors.backgroundRaised,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.sm,
+    padding: spacing.lg,
     gap: spacing.sm,
     /* NO `alignItems: 'flex-start'` here, deliberately. It would be
        redundant for the button - Button already defaults to
