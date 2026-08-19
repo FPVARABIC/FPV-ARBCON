@@ -11,8 +11,10 @@ import {
 } from 'react-native';
 
 import type {RootStackParamList} from '../../navigation/types';
+import {openSupportPage} from '../../platforms/supportLink';
 import {Icon} from '../icons';
 import {BrandLogo, BRAND_PRODUCT_NAME, BRAND_PRODUCT_TAGLINE} from '../brand';
+import {Button} from '../components/controls';
 import {readInteraction} from '../components/controls/interaction';
 import {colors, contentEnvelope, isDesktopTier, noticeSurface, radii, resolveLayoutTier, spacing, typography} from '../theme';
 
@@ -121,6 +123,78 @@ function RouteCard({
 }
 
 /**
+ * SUPPORTING THE PROJECT IS A FOOTER, NOT A FOURTH DOOR.
+ *
+ * It sits below the safety line, at the very bottom of the scroll, and
+ * it is built out of everything the route cards deliberately are NOT: no
+ * fill, no accent rule down its edge, no card, no shadow - one hairline
+ * separating it from the content above, muted type, and the shared
+ * `secondary` button rather than the accent one the three real actions
+ * carry. That ranking is the whole design. A reader scanning the page
+ * sees three things to do and then, quietly, a way to help; nothing here
+ * competes with a door, and nothing appears over the top of anything.
+ *
+ * WHAT IT IS NOT ALLOWED TO BECOME. It is not a modal, an interstitial,
+ * a toast or a banner - it cannot appear unless the operator has already
+ * scrolled past everything the app is actually for. It never repeats on
+ * another screen. It carries no counter, no goal bar and no "X people
+ * supported" line, because the app knows none of those things and would
+ * be inventing them. And it gates nothing: no feature in this product
+ * reads whether anyone gave, and supportUrl.ts is imported by this
+ * screen and nowhere else.
+ *
+ * NO PAYMENT DETAILS LIVE IN THIS APPLICATION. There is no card field,
+ * no account number, no IBAN and no name anywhere in this section. The
+ * button hands one HTTPS address to the system browser and stops; the
+ * caption under it says so and names the host, so the destination is
+ * legible before the tap rather than a surprise after it.
+ */
+function SupportProjectSection(): React.JSX.Element {
+  return (
+    <View style={styles.support} testID="start-support">
+      {/* The product's own name, read from the brand module rather than
+          typed again here - Home already shows it in the chrome, and two
+          spellings of one product a few hundred pixels apart is the kind
+          of drift a literal invites. */}
+      <Text style={styles.supportTitle}>
+        {`ساهم في تطوير ${BRAND_PRODUCT_NAME}`}
+      </Text>
+      <Text style={styles.supportBody}>
+        إذا أفادك التطبيق، يمكنك دعم استمرار تطويره وتحسينه. دعمك اختياري
+        ويساعدنا على إضافة ميزات جديدة وتحسين التجربة للجميع.
+      </Text>
+      {/* The shared Button, `secondary`, `sm`: narrower than a door but
+          the same 44pt touch floor.
+
+          THE CUP IS THE ICON SYSTEM'S, NOT THE ☕ CHARACTER. This is not
+          a style preference. U+2615 falls outside every `unicode-range`
+          the three Cairo @font-face rules declare (src/web/cairo.css:
+          Latin U+0000-00FF and U+2000-206F, Latin-ext, Arabic), so the
+          browser would never render it in the product's typeface at all
+          - it drops to whatever emoji font the device happens to carry,
+          at that font's metrics and its own fixed colour. Measured in
+          Chromium against this build: the cup takes a 16.6px advance
+          where Cairo's own "A" takes 8.9px, i.e. a different font. The
+          glyph registry bans emoji for exactly this reason, and Lucide's
+          `coffee` draws in the app's stroke weight and text colour. */}
+      <Button
+        label="ادعم المشروع"
+        icon="coffee"
+        variant="secondary"
+        size="sm"
+        onPress={openSupportPage}
+        testID="start-support-kofi"
+        accessibilityHint="يفتح صفحة الدعم على Ko-fi في المتصفح خارج التطبيق"
+      />
+      <Text style={styles.supportFootnote}>
+        يفتح ko-fi.com في المتصفح خارج التطبيق. لا يطلب التطبيق أي بيانات دفع،
+        وكل الميزات تبقى متاحة بدونه.
+      </Text>
+    </View>
+  );
+}
+
+/**
  * The widest this screen's column may get. Two route cards side by side
  * stay cards at this width; beyond it a 1920px window gave two ~770px
  * slabs each holding a small button - the stretched-desktop look.
@@ -220,6 +294,10 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
           لن يبدأ أي مسح أو كتابة قبل التحقق من الملف واللوحة و Target.
         </Text>
       </View>
+
+      {/* Last on the page, after the doors and after the safety line -
+          so it is reachable but never in the way of either. */}
+      <SupportProjectSection />
     </ScrollView>
   );
 }
@@ -344,4 +422,49 @@ const styles = StyleSheet.create({
     borderColor: colors.success,
     gap: 3},
   safetyText: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
+  /* A HAIRLINE, NOT A CARD. Every surface on this screen that carries a
+     border, a fill or a radius is something to press; the support footer
+     is not, so it takes none of them. One rule at the top marks it as a
+     different kind of content, and the rest is spacing. */
+  support: {
+    marginTop: spacing.sm,
+    paddingTop: spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+    gap: spacing.sm,
+    /* NO `alignItems: 'flex-start'` here, deliberately. It would be
+       redundant for the button - Button already defaults to
+       `alignSelf: 'flex-start'` and sizes itself to its label - and
+       actively wrong for the two paragraphs, which would shrink-wrap to
+       their longest line and make their `textAlign: 'right'` inert. The
+       text stretches to the column and aligns inside it; the button
+       stays the width of its own label. */
+  },
+  /* sectionTitle, deliberately a step below the route cards' `title`:
+     this heading must never out-rank a door. */
+  supportTitle: {
+    ...typography.sectionTitle,
+    color: colors.textPrimary,
+    /* Ends with the product's Latin name. Without an explicit direction
+       the paragraph would take its own from the first strong character
+       and could lay the Arabic out left-to-right - the same defect the
+       route bullets carry this line for. */
+    writingDirection: 'rtl',
+    textAlign: 'right',
+  },
+  supportBody: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+    textAlign: 'right',
+  },
+  /* The smallest type on the screen, and still 12px - the floor the
+     rest of the product holds to. It opens with a bare host name, so it
+     needs the same explicit direction the title does. */
+  supportFootnote: {
+    ...typography.helper,
+    color: colors.textMuted,
+    writingDirection: 'rtl',
+    textAlign: 'right',
+  },
 });

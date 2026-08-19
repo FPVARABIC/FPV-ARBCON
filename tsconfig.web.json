@@ -55,6 +55,7 @@
     "src/platforms/web/webAlert.test.tsx",
     "src/platforms/web/webEnvironment.test.ts",
     "src/platforms/mapLink.web.test.ts",
+    "src/platforms/supportLink.web.test.ts",
     "src/platforms/react-native/transport/native/NativeUsbSerialTransport.web.test.ts",
     "src/platforms/react-native/transport/native/webUsbDfu.web.test.ts",
     "src/platforms/react-native/transport/native/webUsbDfuCompletion.web.test.ts",
