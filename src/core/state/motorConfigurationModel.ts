@@ -11,6 +11,34 @@ export const FEATURE_ESC_SENSOR_BIT = 2 ** 27;
 /** Raw motor protocol enum at the pinned API-1.47 firmware. */
 export const MOTOR_PROTOCOL_RAW_MIN = 0;
 export const MOTOR_PROTOCOL_RAW_MAX = 9;
+
+/**
+ * MOTOR POLE COUNT IS BOUNDED AT FOUR, NOT AT ONE.
+ *
+ * The firmware's own bound, unchanged across every reviewed revision:
+ *
+ *   cli/settings.c   PARAM_NAME_MOTOR_POLES, VAR_UINT8 | MASTER_VALUE,
+ *                    .config.minmaxUnsigned = { 4, UINT8_MAX }
+ *
+ * and the official Configurator's Motors tab enforces the same thing on the
+ * input itself (src/tabs/motors.html: `min="4" max="255"`).
+ *
+ * This matters because MSP DOES NOT RE-CHECK IT. The setter is a bare
+ * assignment - `motorConfigMutable()->motorPoleCount = sbufReadU8(src);`
+ * (msp.c, MSP_SET_MOTOR_CONFIG) - with no clamp, so a value the CLI would
+ * have refused is accepted, stored and committed to EEPROM without a word.
+ *
+ * And it is not an inert number. The pole count is the divisor that turns
+ * an ESC's electrical RPM into mechanical RPM, so a value below four
+ * silently scales every DShot telemetry reading and everything downstream
+ * of it - the RPM filter's notch centres above all. Nothing reports an
+ * error; the aircraft simply filters the wrong frequencies.
+ *
+ * The lower bound was 1 here. That was this app's own invention, matching
+ * neither of the two sources above.
+ */
+export const MOTOR_POLE_COUNT_MIN = 4;
+export const MOTOR_POLE_COUNT_MAX = 255;
 export const MOTOR_PROTOCOL_DSHOT_MIN = 5;
 // The configurator's API-1.47 protocol table treats PROSHOT1000 (raw 8)
 // as part of the digital DShot-family feature surface as well.
@@ -173,7 +201,13 @@ export function validateMotorConfigurationDraft(
   checkIntegerRange(draft, issues, 'motorIdleRaw', 0, 2000);
   checkIntegerRange(draft, issues, 'maxThrottle', 0, 2000);
   checkIntegerRange(draft, issues, 'minCommand', 0, 2000);
-  checkIntegerRange(draft, issues, 'motorPoleCount', 1, 255);
+  checkIntegerRange(
+    draft,
+    issues,
+    'motorPoleCount',
+    MOTOR_POLE_COUNT_MIN,
+    MOTOR_POLE_COUNT_MAX,
+  );
   checkIntegerRange(draft, issues, 'deadband3dLow', 0, 2000);
   checkIntegerRange(draft, issues, 'deadband3dHigh', 0, 2000);
   checkIntegerRange(draft, issues, 'neutral3d', 0, 2000);

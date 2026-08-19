@@ -138,6 +138,8 @@ function blockReasonText(
       return t('motorConfiguration.reasonBusy');
     case 'ESC_DIRECTION_UNSUPPORTED':
       return t('motorConfiguration.reasonEscDirectionUnsupported');
+    case 'CONFIGURATION_WRITE_UNVERIFIED':
+      return t('motorConfiguration.reasonWriteUnverified');
   }
 }
 

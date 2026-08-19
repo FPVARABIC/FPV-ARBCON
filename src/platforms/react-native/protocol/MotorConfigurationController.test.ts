@@ -246,8 +246,11 @@ describe('MotorConfigurationController', () => {
     expect(harness.client.calls).toEqual([]);
   });
 
-  it('keeps general configuration writes disabled on the partial API-1.48 adapter', async () => {
-    const harness = makeHarness();
+  /** Points the harness's identified firmware at a different API minor. */
+  function atApiMinor(
+    harness: ReturnType<typeof makeHarness>,
+    apiVersionMinor: number,
+  ): void {
     const compatible = compatibleIdentity();
     if (compatible.status !== 'SUCCEEDED') {
       throw new Error('fixture must be identified');
@@ -256,15 +259,67 @@ describe('MotorConfigurationController', () => {
       status: 'SUCCEEDED',
       identity: {
         ...compatible.identity,
-        apiVersion: {...compatible.identity.apiVersion, apiVersionMinor: 48},
+        apiVersion: { ...compatible.identity.apiVersion, apiVersionMinor },
       },
     };
+  }
 
-    await expect(harness.controller.load('fc-1')).resolves.toEqual({
-      kind: 'REJECTED',
-      reason: 'INCOMPATIBLE_FIRMWARE',
+  /**
+   * This test used to be called "keeps general configuration writes disabled
+   * on the partial API-1.48 adapter" and asserted that a 1.48 LOAD returned
+   * REJECTED/INCOMPATIBLE_FIRMWARE. Both halves of that were wrong.
+   *
+   * The write gate had nothing behind it: every motor MSP handler is
+   * byte-identical between the API 1.47 and API 1.48 firmware trees. And a
+   * LOAD should never have consulted the write capability in the first
+   * place - it did only because captureSession defaulted the required
+   * capability to MOTOR_CONFIGURATION_WRITE.
+   */
+  it('reads and writes on API 1.48, whose motor contract matches 1.47', async () => {
+    const harness = makeHarness();
+    atApiMinor(harness, 48);
+
+    const original = await loadOriginal(harness);
+    expect(original.advanced.motorProtocolRaw).toBe(7);
+
+    enqueueSnapshot(harness.client);
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload() });
+    harness.client.enqueue(MSP_SET_ADVANCED_CONFIG, {
+      payload: new Uint8Array(0),
     });
-    expect(harness.client.calls).toEqual([]);
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
+    enqueueSnapshot(harness.client, 550, 6);
+
+    const outcome = await harness.controller.save('fc-1', original, {
+      ...createMotorConfigurationDraft(original),
+      motorProtocolRaw: 6,
+    });
+    expect(outcome.kind).toBe('SAVED_VERIFIED');
+  });
+
+  /**
+   * API 1.49 has no published Betaflight source to check a setter against,
+   * so the write stays withheld - but the READ does not, and the refusal
+   * names the write rather than the screen.
+   */
+  it('reads on API 1.49 and refuses only the write, by its own reason', async () => {
+    const harness = makeHarness();
+    atApiMinor(harness, 49);
+
+    const original = await loadOriginal(harness);
+    const callsAfterLoad = harness.client.calls.length;
+    expect(callsAfterLoad).toBeGreaterThan(0);
+
+    const outcome = await harness.controller.save('fc-1', original, {
+      ...createMotorConfigurationDraft(original),
+      motorProtocolRaw: 6,
+    });
+    expect(outcome).toEqual({
+      kind: 'REJECTED',
+      reason: 'CONFIGURATION_WRITE_UNVERIFIED',
+    });
+    expect(harness.client.calls.length).toBe(callsAfterLoad);
   });
 
   it('loads all five groups under one telemetry pause lease', async () => {

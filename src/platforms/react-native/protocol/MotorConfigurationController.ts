@@ -118,7 +118,19 @@ export type MotorConfigurationBlockReason =
   | 'INVALID_DRAFT'
   | 'STALE_BASE'
   | 'CONFIGURATION_BUSY'
-  | 'ESC_DIRECTION_UNSUPPORTED';
+  | 'ESC_DIRECTION_UNSUPPORTED'
+  /**
+   * The board CAN be read, and this app will not write to it.
+   *
+   * Distinct from INCOMPATIBLE_FIRMWARE on purpose: that one means "this
+   * screen is not for this board", and telling an operator that in front of
+   * a Motors page that is visibly showing them their own live settings is
+   * simply a false statement. This one means the settings on screen are
+   * real and the save button is the part that is unavailable, because the
+   * firmware is NEWER than any revision whose setter payloads this build
+   * has been able to check. See motorFirmwareCompatibility.ts.
+   */
+  | 'CONFIGURATION_WRITE_UNVERIFIED';
 
 export type MotorConfigurationLoadOutcome =
   | { readonly kind: 'LOADED'; readonly snapshot: MotorConfigurationSnapshot }
@@ -341,7 +353,7 @@ export class MotorConfigurationController {
   }
 
   async load(sessionId: string): Promise<MotorConfigurationLoadOutcome> {
-    const preflight = this.captureSession(sessionId);
+    const preflight = this.captureSession(sessionId, 'MOTOR_CONFIGURATION_READ');
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
@@ -391,7 +403,7 @@ export class MotorConfigurationController {
   async loadOutputOrder(
     sessionId: string,
   ): Promise<MotorOutputOrderLoadOutcome> {
-    const preflight = this.captureSession(sessionId);
+    const preflight = this.captureSession(sessionId, 'MOTOR_CONFIGURATION_READ');
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
@@ -459,7 +471,10 @@ export class MotorConfigurationController {
       return { kind: 'NO_CHANGES', values: Object.freeze([...original]) };
     }
 
-    const preflight = this.captureSession(sessionId);
+    const preflight = this.captureSession(
+      sessionId,
+      'MOTOR_CONFIGURATION_WRITE',
+    );
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
@@ -729,7 +744,10 @@ export class MotorConfigurationController {
       return { kind: 'NO_CHANGES', snapshot: original };
     }
 
-    const preflight = this.captureSession(sessionId);
+    const preflight = this.captureSession(
+      sessionId,
+      'MOTOR_CONFIGURATION_WRITE',
+    );
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
@@ -982,10 +1000,20 @@ export class MotorConfigurationController {
     this.assertLivePreflight(sessionId, client, generation, epoch);
   }
 
+  /**
+   * The admission check every operation runs before touching the link.
+   *
+   * `requiredCapability` HAS NO DEFAULT, and that is the fix rather than an
+   * accident of style. It used to default to MOTOR_CONFIGURATION_WRITE, so
+   * every caller that forgot to pass one - including `load`, which only
+   * ever reads - demanded permission to WRITE. On a board whose writes were
+   * withheld but whose reads were fine, opening the Motors page returned
+   * INCOMPATIBLE_FIRMWARE and the operator was shown nothing at all. Asking
+   * for the capability you actually exercise is now compulsory.
+   */
   private captureSession(
     sessionId: string,
-    requiredCapability: MotorFirmwareCapability =
-      'MOTOR_CONFIGURATION_WRITE',
+    requiredCapability: MotorFirmwareCapability,
   ):
     | {
         readonly client: MotorConfigurationClient;
@@ -1032,6 +1060,18 @@ export class MotorConfigurationController {
     };
   }
 
+  /**
+   * Turns "this firmware lacks the capability" into the RIGHT refusal.
+   *
+   * Two different things were being reported identically. A board this app
+   * cannot read at all and a board it can read but will not write to are
+   * not the same situation, and collapsing them meant the second one was
+   * described to the operator with a sentence about the screen being
+   * unsupported - in front of a screen that had just loaded their settings.
+   *
+   * So the read capability is asked about SEPARATELY: if it is there and
+   * the requested write is not, the refusal is about the write.
+   */
   private compatibilityOf(
     sessionId: string,
     requiredCapability: MotorFirmwareCapability,
@@ -1044,11 +1084,12 @@ export class MotorConfigurationController {
       return 'INCOMPATIBLE_FIRMWARE';
     }
     const compatibility = resolveMotorFirmwareCompatibility(state.identity);
-    return motorFirmwareSupports(
-      compatibility,
-      requiredCapability,
-    )
-      ? undefined
+    if (motorFirmwareSupports(compatibility, requiredCapability)) {
+      return undefined;
+    }
+    return requiredCapability !== 'MOTOR_CONFIGURATION_READ' &&
+      motorFirmwareSupports(compatibility, 'MOTOR_CONFIGURATION_READ')
+      ? 'CONFIGURATION_WRITE_UNVERIFIED'
       : 'INCOMPATIBLE_FIRMWARE';
   }
 

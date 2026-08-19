@@ -89,6 +89,53 @@ function draft(
   });
 }
 
+/**
+ * THE POLE COUNT BOUND, which this app had wrong.
+ *
+ * Betaflight bounds motor_poles at 4..255 in two places that agree:
+ *
+ *   cli/settings.c      PARAM_NAME_MOTOR_POLES ... { 4, UINT8_MAX }
+ *   src/tabs/motors.html   <input name="motorPoles" min="4" max="255">
+ *
+ * and its MSP setter does NOT re-check it - MSP_SET_MOTOR_CONFIG assigns
+ * the byte straight into motorConfig, so a value the CLI would refuse is
+ * accepted and committed in silence. This build's own lower bound was 1,
+ * which is neither of those, and a pole count below four silently rescales
+ * every DShot RPM reading and the RPM filter that depends on it.
+ */
+describe('motor pole count is bounded where the firmware bounds it', () => {
+  it.each([0, 1, 2, 3])('refuses %i poles, which the CLI refuses too', value => {
+    const result = validateMotorConfigurationDraft(
+      draft({ motorPoleCount: value }),
+    );
+    expect(result.valid).toBe(false);
+    expect(result.issues).toContainEqual({
+      field: 'motorPoleCount',
+      code: 'OUT_OF_RANGE',
+    });
+  });
+
+  it.each([4, 12, 14, 255])('accepts %i poles', value => {
+    expect(
+      validateMotorConfigurationDraft(draft({ motorPoleCount: value })).valid,
+    ).toBe(true);
+  });
+
+  it('refuses 256, above the single byte the wire carries', () => {
+    expect(
+      validateMotorConfigurationDraft(draft({ motorPoleCount: 256 })).valid,
+    ).toBe(false);
+  });
+
+  /** The encoder is the last gate before the wire, and it must refuse too -
+   *  a caller that skipped validation must not be able to reach the FC. */
+  it('never encodes an under-bound pole count', () => {
+    expect(() =>
+      encodeMotorConfiguration(draft({ motorPoleCount: 1 })),
+    ).toThrow(MotorConfigurationEncodeError);
+  });
+});
+
 describe('motor configuration API-1.47 payload encoders', () => {
   it('matches the official MSP_SET_MIXER_CONFIG byte order', () => {
     expect(

@@ -28,6 +28,7 @@
  */
 
 import {
+  MSP_ADVANCED_CONFIG,
   MSP_BOARD_ALIGNMENT_CONFIG,
   MSP_EEPROM_WRITE,
   MSP_FAILSAFE_CONFIG,
@@ -37,6 +38,7 @@ import {
   MSP_STATUS_EX,
 } from '../../../core/protocol/msp/commands/mspCommands';
 import {createBoardAlignmentDraft} from '../../../core/state/boardAlignmentModel';
+import {createMotorConfigurationDraft} from '../../../core/state/motorConfigurationModel';
 import {createFailsafeConfigurationDraft} from '../../../core/state/failsafeConfigurationModel';
 import {
   createGpsConfigurationDraft,
@@ -45,6 +47,7 @@ import {
 import {createPidTuningDraft} from '../../../core/state/pidTuningModel';
 import {createPowerConfigurationDraft} from '../../../core/state/powerConfigurationModel';
 import {createReceiverConfigurationDraft} from '../../../core/state/receiverConfigurationModel';
+import {decodeAdvancedConfig} from '../../../core/protocol/msp/decoding/decodeAdvancedConfig';
 import {decodeBoardAlignment} from '../../../core/protocol/msp/decoding/decodeBoardAlignment';
 import {BoardAlignmentController} from './BoardAlignmentController';
 import {FailsafeConfigurationController} from './FailsafeConfigurationController';
@@ -55,6 +58,7 @@ import {PowerConfigurationController} from './PowerConfigurationController';
 import {ReceiverConfigurationController} from './ReceiverConfigurationController';
 import {
   DRONE_SPECS,
+  MOTOR_PWM,
   buildFactoryBoard,
   type DroneSpec,
 } from './__testUtils__/virtualDroneFixtures';
@@ -494,33 +498,64 @@ describe('virtual drone acceptance - API 1.47 / 1.48 / 1.49', () => {
   });
 
   /**
-   * MOTOR SETTINGS ARE GATED HARDER THAN EVERY OTHER SCREEN, and this
-   * records the boundary exactly rather than working around it.
+   * MOTOR SETTINGS NOW FOLLOW THE SAME POLICY AS EVERY OTHER SCREEN, and
+   * this records the boundary rather than working around it.
    *
-   * motorFirmwareCompatibility.ts grants MOTOR_CONFIGURATION_WRITE at API
-   * 1.47 only. 1.46 and 1.48 are admitted for bench operations with a
-   * written reason ("settings saves remain unavailable until every
-   * setter/readback pair has its own 1.48 fixtures"), and 1.49 and above
-   * fall through to NO_MOTOR_CAPABILITIES entirely.
+   * The three lines below used to read LOADED / REJECTED / REJECTED, and
+   * that was recorded here as a real limitation: a Racing or Freestyle
+   * build on Betaflight 4.7 could not have its motor protocol changed, and
+   * on 1.49 the Motors surface was unavailable outright - "the opposite of
+   * the read-leniently, never-hard-lock policy the other eleven screens
+   * follow", as the note used to say.
    *
-   * Two consequences follow, and both are reported rather than hidden:
-   *   - a Racing or Freestyle build on Betaflight 4.7 (API 1.48) cannot
-   *     have its motor protocol changed by this application;
-   *   - on API 1.49 the Motors surface is unavailable outright, which is
-   *     the opposite of the "read leniently, never hard-lock" policy the
-   *     other eleven screens follow.
+   * Both causes were then found and fixed (see
+   * motorConfigurationApiCompatibility.test.ts for the full account):
+   * API 1.48's motor MSP handlers are byte-identical to 1.47's, so the
+   * write gate had nothing behind it; and the READ was consulting the WRITE
+   * capability through a default argument, so a board that could be read
+   * perfectly well was refused before a frame was sent.
+   *
+   * What remains true, and is asserted rather than assumed: 1.49 loads and
+   * does not save, because no published Betaflight source declares it.
    */
   it.each([
     [47, 'LOADED'],
-    [48, 'REJECTED'],
-    [49, 'REJECTED'],
+    [48, 'LOADED'],
+    [49, 'LOADED'],
   ])('motor settings on API 1.%i are %s', async (minor, expected) => {
     const {session} = rigFor(spec('RACING'), minor as number);
     const motors = new MotorConfigurationController(session.options);
     const outcome = (await motors.load(session.sessionId)) as SaveOutcome;
-    expect(`1.${minor}: ${outcome.kind}`).toBe(`1.${minor}: ${expected}`);
-    if (outcome.kind === 'REJECTED') {
-      expect(outcome.reason).toBe('INCOMPATIBLE_FIRMWARE');
-    }
+    expect(`1.${minor}: ${describeOutcome(outcome)}`).toBe(
+      `1.${minor}: ${expected}`,
+    );
+  });
+
+  it.each([
+    [47, 'SAVED_VERIFIED'],
+    [48, 'SAVED_VERIFIED'],
+    [49, 'REJECTED (CONFIGURATION_WRITE_UNVERIFIED)'],
+  ])('a motor protocol change on API 1.%i is %s', async (minor, expected) => {
+    const {board, session} = rigFor(spec('RACING'), minor as number);
+    const motors = new MotorConfigurationController(session.options);
+    const loaded = await motors.load(session.sessionId);
+    expect(loaded.kind).toBe('LOADED');
+    if (loaded.kind !== 'LOADED') return;
+
+    const outcome = (await motors.save(session.sessionId, loaded.snapshot, {
+      ...createMotorConfigurationDraft(loaded.snapshot),
+      motorProtocolRaw: spec('RACING').target.motorProtocol,
+    })) as SaveOutcome;
+
+    expect(`1.${minor}: ${describeOutcome(outcome)}`).toBe(
+      `1.${minor}: ${expected}`,
+    );
+    // And the board agrees, either way round.
+    const persisted = decodeAdvancedConfig(
+      board.readPersisted(MSP_ADVANCED_CONFIG) as Uint8Array,
+    ).motorProtocolRaw;
+    expect(persisted).toBe(
+      minor === 49 ? MOTOR_PWM : spec('RACING').target.motorProtocol,
+    );
   });
 });

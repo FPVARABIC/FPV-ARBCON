@@ -103,6 +103,10 @@ import {FakeMspTransport} from '../protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../protocol/__testUtils__/mspFixtures';
 import {betaflightApi147Identity} from '../protocol/__testUtils__/motorFirmwareFixtures';
 import {
+  motorFirmwareSupports,
+  type MotorFirmwareCompatibility,
+} from '../firmware-adapters/motorFirmwareCompatibility';
+import {
   MSP_ADVANCED_CONFIG,
   MSP_API_VERSION,
   MSP_BATTERY_STATE,
@@ -2790,6 +2794,21 @@ describe('the versioned motor firmware gate', () => {
     expect(snapshot.activation.allowed).toBe(true);
   });
 
+  /**
+   * SPINNING MOTORS ON AN UNVERIFIED FUTURE API IS STILL REFUSED.
+   *
+   * What changed underneath this test is the shape, not the answer. API
+   * 1.49 used to resolve to UNSUPPORTED with no capabilities at all, which
+   * also blocked the Motors CONFIGURATION screen from so much as reading -
+   * a refusal to display settings justified by an inability to prove a
+   * write. It now resolves to a read-only adapter.
+   *
+   * MOTOR_TEST_WRITE is not in that adapter and must never be: turning a
+   * propeller on a firmware whose command payloads nobody has been able to
+   * check is not a thing this app does. So the assertion that matters -
+   * not one request left the app - is unchanged, and the capability itself
+   * is now asserted directly rather than inferred from the status.
+   */
   it('refuses an unverified future Betaflight API before all requests', async () => {
     const identity = betaflightApi147Identity();
     const harness = createHarness([], {
@@ -2804,9 +2823,16 @@ describe('the versioned motor firmware gate', () => {
     const snapshot = await runSetup(harness);
 
     expect(snapshot.firmwareCompatibility).toMatchObject({
-      status: 'UNSUPPORTED',
-      reason: 'API_VERSION_UNVERIFIED',
+      status: 'SUPPORTED',
+      adapterId: 'BETAFLIGHT_API_NEWER_READ_ONLY',
     });
+    expect(
+      motorFirmwareSupports(
+        snapshot.firmwareCompatibility as MotorFirmwareCompatibility,
+        'MOTOR_TEST_WRITE',
+      ),
+    ).toBe(false);
+    expect(snapshot.outcome.kind).not.toBe('READY');
     expect(harness.commands).toEqual([]);
   });
 });

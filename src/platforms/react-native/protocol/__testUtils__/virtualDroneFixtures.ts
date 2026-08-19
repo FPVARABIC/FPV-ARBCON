@@ -35,6 +35,7 @@ import {recordKey} from './virtualFlightController';
 import {
   MSP2_COMMON_SERIAL_CONFIG,
   MSP2_GET_TEXT,
+  MSP2_MOTOR_OUTPUT_REORDERING,
   MSP_ADVANCED_CONFIG,
   MSP_ARMING_CONFIG,
   MSP_BATTERY_CONFIG,
@@ -340,6 +341,18 @@ function motorConfig(o: {
     bytes[9] = 0; // esc sensor available
     bytes[10] = 0;
   });
+}
+
+/**
+ * MSP2_MOTOR_OUTPUT_REORDERING: a count then that many output indices.
+ *
+ * The firmware always answers with MAX_SUPPORTED_MOTORS entries regardless
+ * of the airframe - `sbufWriteU8(dst, MAX_SUPPORTED_MOTORS)` followed by the
+ * whole array (msp.c) - so a four-motor quad still reports eight. A factory
+ * board's array is the identity mapping.
+ */
+function motorOutputReordering(): Uint8Array {
+  return Uint8Array.from([8, 0, 1, 2, 3, 4, 5, 6, 7]);
 }
 
 /** MSP_MOTOR_3D_CONFIG: deadband low, high, neutral. */
@@ -1178,6 +1191,7 @@ export function buildFactoryBoard(spec: DroneSpec): Map<number, Uint8Array> {
         dshotTelemetry: false,
       }),
     ],
+    [MSP2_MOTOR_OUTPUT_REORDERING, motorOutputReordering()],
     [MSP_MOTOR_3D_CONFIG, motor3d()],
     [MSP_MIXER_CONFIG, u8(3, 0)], // QUADX, yaw not reversed
     [

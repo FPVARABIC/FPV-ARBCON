@@ -322,6 +322,19 @@ export class VirtualFlightController {
     this.counts.reboots += 1;
   }
 
+  /**
+   * A SECOND CONFIGURATOR changing this board while the app holds a
+   * snapshot of it - a laptop on the same USB port, a Lua script, the CLI.
+   *
+   * Deliberately not routed through `request`, because the point is that it
+   * happened WITHOUT this app's knowledge: the RAM moves and nothing in the
+   * request log records it, which is exactly the situation the stale-base
+   * re-read exists to catch.
+   */
+  overwriteParameter(command: number, bytes: Uint8Array): void {
+    this.ram.set(command, clone(bytes));
+  }
+
   /** Wipes the board back to a supplied defaults set, as a firmware flash
    *  followed by a factory reset would. */
   factoryReset(defaults: ReadonlyMap<number, Uint8Array>): void {
