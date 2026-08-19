@@ -63,6 +63,7 @@ import {
   TopSystemBar,
   OrientationHero,
   OrientationCalibrationCard,
+  BoardAlignmentCard,
   OrientationStabilityPanel,
   SafetyStrip,
   SetupSafetyNotices,
@@ -587,6 +588,14 @@ function SetupScreenContent({
             />
           }
         />
+
+        {/* 5. BOARD ALIGNMENT, between the model and the sensors it
+               governs - which is exactly where the question arises. The
+               model above shows attitude the firmware has ALREADY
+               corrected with these angles, so it can never reveal that
+               they are wrong or unread; this card says so in words and
+               lets the operator fix it without leaving the page. */}
+        <BoardAlignmentCard sessionKey={sessionKey} active={active} />
 
         {/* 6. THE LIVE SUMMARY, immediately after the model - the two are
                one unit now. Battery, Receiver, GPS and Sensors are what

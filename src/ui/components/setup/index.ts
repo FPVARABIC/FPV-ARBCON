@@ -35,6 +35,8 @@ export { default as OrientationHero } from './OrientationHero';
 export type { OrientationHeroProps } from './OrientationHero';
 export { default as OrientationCalibrationCard } from './OrientationCalibrationCard';
 export type { OrientationCalibrationCardProps } from './OrientationCalibrationCard';
+export { default as BoardAlignmentCard } from './BoardAlignmentCard';
+export type { BoardAlignmentCardProps } from './BoardAlignmentCard';
 export { default as FlightInstruments } from './FlightInstruments';
 export type {
   FlightInstrumentsProps,

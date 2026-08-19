@@ -43,9 +43,12 @@ import type {
   SerialRoleKey,
 } from '../core/state/serialPortsModel';
 import type {
+  BoardAlignmentBlockReason,
+  BoardAlignmentSaveStage,
   GpsBlockReason,
   PortsBlockReason,
 } from '../platforms/react-native/protocol';
+import type { BoardAlignmentAxis } from '../core/state/boardAlignmentModel';
 
 const REPO_ROOT = join(__dirname, '..', '..');
 const SCAN_ROOTS = [join(REPO_ROOT, 'src'), join(REPO_ROOT, 'App.tsx')];
@@ -216,6 +219,35 @@ const GPS_BLOCK_REASONS: Record<GpsBlockReason, true> = {
   INVALID_CONFIGURATION: true,
 };
 
+const BOARD_ALIGNMENT_BLOCK_REASONS: Record<BoardAlignmentBlockReason, true> = {
+  DISCONNECTED: true,
+  IDENTIFYING: true,
+  UNSUPPORTED_FIRMWARE: true,
+  APP_BACKGROUNDED: true,
+  LINK_RECOVERING: true,
+  FC_ARMED: true,
+  ARMED_STATE_UNKNOWN: true,
+  MOTOR_TEST_ACTIVE: true,
+  CONFIGURATION_BUSY: true,
+  STALE_BASE: true,
+  INVALID_CONFIGURATION: true,
+};
+
+const BOARD_ALIGNMENT_STAGES: Record<BoardAlignmentSaveStage, true> = {
+  BOARD_ALIGNMENT: true,
+  EEPROM: true,
+};
+
+const BOARD_ALIGNMENT_AXES: Record<BoardAlignmentAxis, true> = {
+  roll: true,
+  pitch: true,
+  yaw: true,
+};
+
+/** The card's own three-state verdict about what it knows. Not a
+ * protocol union, so it is spelled out here rather than imported. */
+const BOARD_ALIGNMENT_STATUSES = ['UNKNOWN', 'NEUTRAL', 'CONFIGURED'] as const;
+
 const PORT_VALIDATION: Record<SerialPortsValidationCode, true> = {
   NO_MSP_PORT: true,
   TOO_MANY_MSP_PORTS: true,
@@ -248,6 +280,24 @@ const ENUMERATED_FAMILIES: readonly {
   {
     prefix: 'gpsSystem.blockReason',
     members: Object.keys(GPS_BLOCK_REASONS),
+  },
+  {
+    prefix: 'boardAlignment.blockReasons',
+    members: Object.keys(BOARD_ALIGNMENT_BLOCK_REASONS),
+  },
+  {
+    prefix: 'boardAlignment.unconfirmed',
+    members: Object.keys(BOARD_ALIGNMENT_STAGES),
+  },
+  { prefix: 'boardAlignment.axes', members: Object.keys(BOARD_ALIGNMENT_AXES) },
+  {
+    prefix: 'boardAlignment.axisDetails',
+    members: Object.keys(BOARD_ALIGNMENT_AXES),
+  },
+  { prefix: 'boardAlignment.status', members: [...BOARD_ALIGNMENT_STATUSES] },
+  {
+    prefix: 'boardAlignment.statusNotes',
+    members: [...BOARD_ALIGNMENT_STATUSES],
   },
   {
     prefix: 'portsConfiguration.validation',

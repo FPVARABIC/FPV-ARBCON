@@ -238,6 +238,15 @@ const REQUIRED_ENGINE_TOKENS = [
   // ENTRY CLEANUP: 'start-configure' replaced 'start-connection' - the
   // Home choice now opens the configurator DIRECTLY, and the connection
   // workspace ships inside the Setup tab (SetupScreen/setupSessionHost).
+  // Board alignment ships as a working transaction, not as a read-only
+  // panel: the controller, both codecs, the write command and the card's
+  // own surface must all be present together.
+  'BoardAlignmentController',
+  'board-alignment-card',
+  'board-alignment-save',
+  'decodeBoardAlignment',
+  'encodeChangedBoardAlignment',
+  'MSP_SET_BOARD_ALIGNMENT_CONFIG',
   'firmware-flasher-screen',
   'start-configure',
   'setup-connect-workspace',
@@ -420,6 +429,7 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/PowerConfigurationController.ts',
       'src/platforms/react-native/protocol/OsdConfigurationController.ts',
       'src/platforms/react-native/protocol/VtxConfigurationController.ts',
+      'src/platforms/react-native/protocol/BoardAlignmentController.ts',
     ],
     reExporters: [
       'src/core/index.ts',
@@ -517,6 +527,34 @@ const ENGINE_BOUNDARIES = [
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
+  },
+  {
+    // Board alignment's write command. One owner, and the rule exists so
+    // it stays one: these three angles rotate every sensor reading the
+    // aircraft flies on, and a second module reaching them would be a
+    // second place that can silently change how the board is mounted.
+    token: 'MSP_SET_BOARD_ALIGNMENT_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/BoardAlignmentController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
+  },
+  {
+    token: 'encodeChangedBoardAlignment',
+    from: 'src/core/protocol/msp/encoding/encodeBoardAlignment.ts',
+    importers: [
+      'src/platforms/react-native/protocol/BoardAlignmentController.ts',
     ],
     reExporters: [
       'src/core/index.ts',

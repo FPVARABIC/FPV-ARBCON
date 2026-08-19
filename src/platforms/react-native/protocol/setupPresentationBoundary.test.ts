@@ -74,6 +74,24 @@ function importsOf(source: string): {specifier: string; clause: string}[] {
   return out;
 }
 
+/**
+ * One imported binding, reduced to the name it introduces.
+ *
+ * Two things have to come off, and the second one bit: `X as Y` binds
+ * Y, and in `import type { A, B }` the `type` keyword is glued to the
+ * FIRST name only - so `A` arrived here as `'type\n  A'` while `B`
+ * arrived clean. The scan therefore recognised a controller in second
+ * position and missed the identical one in first position, which is a
+ * hole in the boundary rather than a formatting detail.
+ */
+function importedName(raw: string): string {
+  return raw
+    .trim()
+    .split(/\s+as\s+/)[0]
+    .replace(/^type\s+/, '')
+    .trim();
+}
+
 /** Comments explain the boundary; they must not trip the scan. */
 function stripComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
@@ -203,6 +221,16 @@ describe('SETUP P1 - Setup UI protocol boundary', () => {
      * module (setupHiddenAttitudeSuppression), beside the two lease
      * owners that already exist for this poll id - Setup passes a session
      * key and gets a release function, and still never names a poll id.
+     *
+     * BOARD ALIGNMENT adds the second, and again on purpose rather than
+     * through the facade. `boardAlignmentController` is write authority:
+     * it sends MSP_SET_BOARD_ALIGNMENT_CONFIG, MSP_EEPROM_WRITE and a
+     * reboot. Putting write authority behind a read-only window would
+     * make that window's contract a lie, so it is granted here BY NAME,
+     * where a reviewer sees it. What the boundary still forbids is
+     * unchanged and is the whole point: Setup names no coordinator, no
+     * client, no transport, no raw MSP command, no codec and no poll id -
+     * it hands a session key to a controller and gets an outcome back.
      */
     const ACCEPTED_BARREL_NAMES = new Set([
       'fcToolsController',
@@ -210,6 +238,7 @@ describe('SETUP P1 - Setup UI protocol boundary', () => {
       'useFcToolPublication',
       'setupUiSessionStore',
       'acquireSetupHiddenAttitudeSuppression',
+      'boardAlignmentController',
     ]);
     for (const file of files) {
       const source = readFileSync(file, 'utf8');
@@ -220,7 +249,7 @@ describe('SETUP P1 - Setup UI protocol boundary', () => {
         const names = clause
           .replace(/[{}]/g, '')
           .split(',')
-          .map(name => name.trim().split(/\s+as\s+/)[0].trim())
+          .map(importedName)
           .filter(Boolean);
         for (const name of names) {
           expect({file, name, accepted: ACCEPTED_BARREL_NAMES.has(name)}).toEqual({
@@ -318,13 +347,20 @@ describe('SETUP P1 - Setup steals no other screen ownership', () => {
     }
   });
 
-  it('the only Setup-owned command surface is fcToolsController', () => {
+  /**
+   * Setup owns exactly two command surfaces, and this list is the review
+   * gate for a third. `fcToolsController` is calibration and reboot;
+   * `boardAlignmentController` is board alignment - a setting no other
+   * screen reads or writes, so owning it here steals nothing. Every
+   * OTHER screen's controller stays forbidden above, by name.
+   */
+  it('owns exactly its own two command surfaces and no other screen’s', () => {
     const controllerImports = new Set<string>();
     for (const file of files) {
       const source = readFileSync(file, 'utf8');
       for (const {clause} of importsOf(source)) {
         for (const name of clause.replace(/[{}]/g, '').split(',')) {
-          const trimmed = name.trim().split(/\s+as\s+/)[0].trim();
+          const trimmed = importedName(name);
           if (/Controller$|controller$/.test(trimmed)) {
             controllerImports.add(trimmed);
           }
@@ -332,7 +368,9 @@ describe('SETUP P1 - Setup steals no other screen ownership', () => {
       }
     }
     expect([...controllerImports].sort()).toEqual([
+      'BoardAlignmentController',
       'FcToolsController',
+      'boardAlignmentController',
       'fcToolsController',
     ]);
   });

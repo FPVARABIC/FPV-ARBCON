@@ -333,6 +333,43 @@ export type {
   MspModesConfiguration,
   EncodedModeRangeWrite,
 } from './protocol';
+/**
+ * BOARD ALIGNMENT - mounting angles of the whole flight controller.
+ * Separate from SENSOR alignment (MSP 126/220), which this app does not
+ * implement; see boardAlignmentModel.ts for why the two must not be
+ * treated as one feature.
+ */
+export {
+  MSP_BOARD_ALIGNMENT_CONFIG,
+  MSP_SET_BOARD_ALIGNMENT_CONFIG,
+} from './protocol/msp/commands/mspCommands';
+export {
+  decodeBoardAlignment,
+  BOARD_ALIGNMENT_PAYLOAD_BYTES,
+} from './protocol/msp/decoding/decodeBoardAlignment';
+export {
+  encodeBoardAlignment,
+  encodeChangedBoardAlignment,
+  BOARD_ALIGNMENT_WRITE_BYTES,
+} from './protocol/msp/encoding/encodeBoardAlignment';
+export {
+  BOARD_ALIGNMENT_MIN_DEGREES,
+  BOARD_ALIGNMENT_MAX_DEGREES,
+  BOARD_ALIGNMENT_DEFAULT_DEGREES,
+  BOARD_ALIGNMENT_AXES,
+  createBoardAlignmentDraft,
+  boardAlignmentDraftsEqual,
+  boardAlignmentSnapshotsEqual,
+  validateBoardAlignmentDraft,
+  isBoardAlignmentNeutral,
+} from './state/boardAlignmentModel';
+export type {
+  MspBoardAlignmentSnapshot,
+  BoardAlignmentDraft,
+  BoardAlignmentAxis,
+  BoardAlignmentValidationIssue,
+} from './state/boardAlignmentModel';
+
 export {
   MSP_FAILSAFE_CONFIG,
   MSP_SET_FAILSAFE_CONFIG,

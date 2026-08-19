@@ -67,6 +67,7 @@ import {PidTuningController} from './PidTuningController';
 import {VtxConfigurationController} from './VtxConfigurationController';
 import {ModesConfigurationController} from './ModesConfigurationController';
 import {GeneralConfigurationController} from './GeneralConfigurationController';
+import {BoardAlignmentController} from './BoardAlignmentController';
 
 const key = {sessionId: 'api-matrix', generation: 3} as const;
 
@@ -139,6 +140,10 @@ const CONTROLLERS = [
   ['VTX', (c: unknown) => new VtxConfigurationController({coordinator: c as never, ...OPTIONS})],
   ['Modes', (c: unknown) => new ModesConfigurationController({coordinator: c as never, ...OPTIONS})],
   ['Configuration', (c: unknown) => new GeneralConfigurationController({coordinator: c as never, ...OPTIONS})],
+  // Board Alignment shares the same floor. Its own suite runs a full
+  // save at 1.47/1.48/1.49; it is listed here so that a future change to
+  // the shared gate cannot silently leave it behind.
+  ['BoardAlignment', (c: unknown) => new BoardAlignmentController({coordinator: c as never, ...OPTIONS})],
 ] as const;
 
 /**

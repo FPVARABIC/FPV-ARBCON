@@ -134,6 +134,19 @@ export type {
   ModesConfigurationControllerOptions,
 } from './ModesConfigurationController';
 export {
+  BoardAlignmentController,
+  boardAlignmentController,
+} from './BoardAlignmentController';
+export type {
+  BoardAlignmentBlockReason,
+  BoardAlignmentSaveStage,
+  BoardAlignmentLoadOutcome,
+  BoardAlignmentSaveOutcome,
+  BoardAlignmentSessionCoordinator,
+  BoardAlignmentAppStateOwner,
+  BoardAlignmentControllerOptions,
+} from './BoardAlignmentController';
+export {
   FailsafeConfigurationController,
   failsafeConfigurationController,
 } from './FailsafeConfigurationController';

@@ -228,6 +228,24 @@ export const MSP_REBOOT = 68;
  * for whether 3D mode is active. */
 export const MSP_FEATURE_CONFIG = 36;
 
+/**
+ * BOARD ALIGNMENT - the mounting angles of the whole flight controller.
+ *
+ * `#define MSP_BOARD_ALIGNMENT_CONFIG 38` / `MSP_SET_BOARD_ALIGNMENT_CONFIG 39`,
+ * matching betaflight-configurator's MSPCodes.js:18-19. Six bytes each
+ * way: three little-endian 16-bit values, roll then pitch then yaw, in
+ * WHOLE DEGREES over -180..360 (cli/settings.c:995-997).
+ *
+ * NOT to be confused with MSP_SENSOR_ALIGNMENT (126) /
+ * MSP_SET_SENSOR_ALIGNMENT (220), which carry per-sensor orientation
+ * ENUMS and branch on API 1.47. Those are a separate feature and are
+ * deliberately not declared here - declaring a command this app does not
+ * implement would invite exactly the confusion the two names already
+ * cause.
+ */
+export const MSP_BOARD_ALIGNMENT_CONFIG = 38;
+export const MSP_SET_BOARD_ALIGNMENT_CONFIG = 39;
+
 /** General configuration groups used by the integrated Configurations area.
  * Values and payload layouts are pinned to Betaflight 2025.12.2 / MSP 1.47.
  * The SET commands are consumed only by the guarded configuration
