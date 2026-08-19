@@ -53,16 +53,35 @@ import {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FlightStyleGuide'>;
 
-/** Wide enough for two cards; a third column made each one a thumbnail. */
-const GUIDE_MAX_WIDTH = 1100;
+/** Wide enough for three cards; beyond it each one becomes a thumbnail. */
+const GUIDE_MAX_WIDTH = 1180;
+
+/** Half the gutter between cards; each cell carries one half per side. */
+const HALF_GUTTER = spacing.lg / 2;
+
+/**
+ * HOW MANY CARDS SHARE A ROW - decided by width, not by a flex guess.
+ *
+ * An earlier version let the cards flex-grow into whatever space was
+ * left, and the last row was measured stretching to fill it: at 1024px
+ * four cards sat at 485px each and the fifth spanned 988px; at 1366px
+ * three sat at 343px and two at 523px. Five is not divisible by two or
+ * three, so a wrapping row ALWAYS leaves a remainder - and letting the
+ * remainder decide a card's size makes one aircraft look twice as
+ * important as another for no reason. A fixed column count gives every
+ * card the same width in every row, including the short last one.
+ */
+function columnsFor(width: number): number {
+  if (width >= 1280) return 3;
+  if (width >= 720) return 2;
+  return 1;
+}
 
 function StyleCard({
   corner,
-  sideBySide,
   onPress,
 }: {
   readonly corner: GuideCorner;
-  readonly sideBySide: boolean;
   readonly onPress: () => void;
 }): React.JSX.Element {
   return (
@@ -73,12 +92,7 @@ function StyleCard({
       onPress={onPress}
       style={state => {
         const {pressed, hovered} = readInteraction(state);
-        return [
-          styles.card,
-          sideBySide && styles.cardShare,
-          hovered && styles.cardHovered,
-          pressed && styles.cardPressed,
-        ];
+        return [styles.card, hovered && styles.cardHovered, pressed && styles.cardPressed];
       }}>
       <StyleCover
         source={FLIGHT_STYLE_HERO_IMAGES[corner.id]}
@@ -119,6 +133,7 @@ export default function FlightStyleGuideScreen({
   const {width, fontScale} = useWindowDimensions();
   const tier = resolveLayoutTier(width, fontScale);
   const desktop = isDesktopTier(tier);
+  const columns = columnsFor(width);
 
   return (
     <View style={styles.root} testID="flight-style-guide-screen">
@@ -139,18 +154,18 @@ export default function FlightStyleGuideScreen({
           فتح نمط آخر لتكمل نمطك.
         </Text>
 
-        <View
-          style={desktop ? styles.grid : styles.column}
-          testID="guide-card-group">
+        <View style={styles.grid} testID="guide-card-group">
           {FLIGHT_STYLES.map(corner => (
-            <StyleCard
+            <View
               key={corner.id}
-              corner={corner}
-              sideBySide={desktop}
-              onPress={() =>
-                navigation.navigate('FlightStyleCorner', {styleId: corner.id})
-              }
-            />
+              style={[styles.cell, {width: `${100 / columns}%`}]}>
+              <StyleCard
+                corner={corner}
+                onPress={() =>
+                  navigation.navigate('FlightStyleCorner', {styleId: corner.id})
+                }
+              />
+            </View>
           ))}
         </View>
 
@@ -183,26 +198,27 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     writingDirection: 'rtl',
   },
-  /* Two columns on a desktop tier; the fifth card simply wraps onto its
-     own row rather than being squeezed into a third narrow column. */
+  /* A real grid: the CELL owns the width (one, two or three per row) and
+     the card fills it. Gutters come from cell padding rather than `gap`,
+     because a percentage width and a gap cannot both be satisfied - that
+     combination overflows the row by exactly the gap. */
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'stretch',
-    gap: spacing.lg,
+    marginHorizontal: -HALF_GUTTER,
   },
-  column: {gap: spacing.lg},
+  cell: {padding: HALF_GUTTER},
   card: {
+    /* Fills its cell and stretches to the tallest card in the row, so a
+       row reads as one shelf rather than a ragged edge. */
+    flex: 1,
     overflow: 'hidden',
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
   },
-  /* Half a row minus the gap. flexBasis sizes the MAIN axis, so this is
-     applied ONLY inside `grid`, where the main axis is horizontal - in
-     `column` it would give every card a hypothetical height of zero. */
-  cardShare: {flexGrow: 1, flexShrink: 1, flexBasis: 320},
   cardHovered: {borderColor: colors.accentStrong},
   cardPressed: {opacity: 0.85},
   cardBody: {padding: spacing.lg, gap: 6},

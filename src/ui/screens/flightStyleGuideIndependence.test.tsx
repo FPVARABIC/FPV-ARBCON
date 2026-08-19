@@ -21,6 +21,7 @@ import FlightStyleCornerScreen from './FlightStyleCornerScreen';
 import FlightStyleGuideScreen from './FlightStyleGuideScreen';
 import {
   FLIGHT_STYLES,
+  FLIGHT_STYLE_HERO_IMAGES,
   GUIDE_CORNERS,
   GUIDE_STEP_IMAGES,
   findCorner,
@@ -45,6 +46,21 @@ function renderCorner(styleId: string) {
   });
   if (tree === undefined) throw new Error('corner did not render');
   return JSON.stringify(tree.toJSON());
+}
+
+function renderIndexTree() {
+  let tree: ReactTestRenderer.ReactTestRenderer | undefined;
+  const navigate = jest.fn();
+  act(() => {
+    tree = ReactTestRenderer.create(
+      <FlightStyleGuideScreen
+        navigation={{navigate, goBack: jest.fn()} as unknown as never}
+        route={{key: 'guide', name: 'FlightStyleGuide'} as never}
+      />,
+    );
+  });
+  if (tree === undefined) throw new Error('index did not render');
+  return {tree, navigate};
 }
 
 function renderIndex() {
@@ -163,6 +179,69 @@ describe('the reviewed package and the app agree', () => {
         expect(step.width).toBeGreaterThan(0);
         expect(step.height).toBeGreaterThan(0);
       }
+    }
+  });
+});
+
+/**
+ * THE WIRING, NOT THE PICTURE.
+ *
+ * A cover photograph attached to the wrong corner is the one mistake in
+ * this feature that would be both easy to make and hard to notice: the
+ * page still looks finished, and a reader is simply shown the wrong
+ * aircraft for the numbers they are about to apply. These tests pin the
+ * wiring so it cannot happen silently - whether or not the photographs
+ * are present yet.
+ */
+describe('every card is wired to its own style', () => {
+  it.each(FLIGHT_STYLES.map(corner => [corner.id]))(
+    'pressing the %s card opens the %s corner and no other',
+    styleId => {
+      const {tree, navigate} = renderIndexTree();
+      const card = tree.root
+        .findAllByProps({testID: `guide-card-${styleId}`})
+        .find(node => typeof node.props.onPress === 'function');
+      expect(card).toBeDefined();
+      act(() => {
+        card?.props.onPress();
+      });
+      expect(navigate).toHaveBeenCalledTimes(1);
+      expect(navigate).toHaveBeenCalledWith('FlightStyleCorner', {styleId});
+      tree.unmount();
+    },
+  );
+
+  it('a registered cover always belongs to the style that holds it', () => {
+    // The map is keyed by style id and the file lives inside that
+    // style's own folder, so a cross-wired entry shows up as a key whose
+    // asset does not come from the matching directory. Until the owner's
+    // photographs are committed the map is empty, and this passes
+    // vacuously - which is correct: nothing is wired, so nothing is
+    // wired wrongly. It starts biting the moment the first one lands.
+    for (const [styleId, source] of Object.entries(FLIGHT_STYLE_HERO_IMAGES)) {
+      expect(findCorner(styleId)).toBeDefined();
+      expect(source).toBeDefined();
+      const asset = JSON.stringify(source);
+      // Jest's asset transformer stubs the require, so the path is only
+      // visible on web-style {uri} sources; when it IS visible, it must
+      // name this style's own folder.
+      if (asset.includes('/hero/')) {
+        expect(asset).toContain(`/${styleId}/hero/`);
+      }
+    }
+  });
+
+  it('no style is left without a way to be shown - cover or designed panel', () => {
+    // StyleCover renders a titled panel when there is no photograph, so
+    // every card is complete either way. What must never happen is a
+    // card falling back to ANOTHER style's picture.
+    const rendered = renderIndex();
+    for (const corner of FLIGHT_STYLES) {
+      const hasCover = FLIGHT_STYLE_HERO_IMAGES[corner.id] !== undefined;
+      const marker = hasCover
+        ? `guide-cover-${corner.id}`
+        : `guide-cover-${corner.id}-fallback`;
+      expect(rendered).toContain(marker);
     }
   });
 });
