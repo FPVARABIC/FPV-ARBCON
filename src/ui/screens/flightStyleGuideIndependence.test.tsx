@@ -231,6 +231,17 @@ describe('every card is wired to its own style', () => {
     }
   });
 
+  it('every flight style now has its own cover, and no card is left on the fallback', () => {
+    // The owner supplied five photographs and they are committed. A card
+    // quietly dropping back to the designed panel would mean an asset was
+    // lost or unregistered - visible only if someone happened to look at
+    // that card, which is exactly what a test is for.
+    for (const corner of FLIGHT_STYLES) {
+      expect(FLIGHT_STYLE_HERO_IMAGES[corner.id]).toBeDefined();
+    }
+    expect(renderIndex()).not.toContain('-fallback');
+  });
+
   it('no style is left without a way to be shown - cover or designed panel', () => {
     // StyleCover renders a titled panel when there is no photograph, so
     // every card is complete either way. What must never happen is a

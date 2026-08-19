@@ -35,6 +35,7 @@ import {Icon} from '../icons';
 import {readInteraction} from '../components/controls/interaction';
 import {
   FLIGHT_STYLES,
+  FLIGHT_STYLE_HERO_FIT,
   FLIGHT_STYLE_HERO_IMAGES,
   GuideHeader,
   StyleCover,
@@ -96,6 +97,7 @@ function StyleCard({
       }}>
       <StyleCover
         source={FLIGHT_STYLE_HERO_IMAGES[corner.id]}
+        fit={FLIGHT_STYLE_HERO_FIT[corner.id]}
         titleAr={corner.titleAr}
         titleEn={corner.titleEn}
         testID={`guide-cover-${corner.id}`}

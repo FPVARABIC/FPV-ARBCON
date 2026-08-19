@@ -38,6 +38,7 @@ import {
 
 import type {RootStackParamList} from '../../navigation/types';
 import {
+  FLIGHT_STYLE_HERO_FIT,
   FLIGHT_STYLE_HERO_IMAGES,
   GUIDE_STEP_IMAGES,
   GuideHeader,
@@ -172,6 +173,7 @@ export default function FlightStyleCornerScreen({
         ]}>
         <StyleCover
           source={FLIGHT_STYLE_HERO_IMAGES[corner.id]}
+          fit={FLIGHT_STYLE_HERO_FIT[corner.id]}
           titleAr={corner.titleAr}
           titleEn={corner.titleEn}
           testID={`corner-cover-${corner.id}`}

@@ -16,6 +16,8 @@ export type {
 } from './guideContent';
 export {GUIDE_STEP_IMAGES} from './guideImages';
 export {FLIGHT_STYLE_HERO_IMAGES} from './heroImages';
+export {FLIGHT_STYLE_HERO_FIT, HERO_FITTED_BACKGROUND} from './heroFit';
+export type {HeroFit} from './heroFit';
 export {GuideHeader} from './GuideHeader';
 export {GuideText} from './GuideText';
 export {StyleCover} from './StyleCover';

@@ -17,11 +17,20 @@
 
 import type {ImageSourcePropType} from 'react-native';
 
+import cinematicHero from '../../../docs/flight-guides/cinematic/hero/hero.jpg';
+import freestyleHero from '../../../docs/flight-guides/freestyle/hero/hero.jpg';
+import longRangeHero from '../../../docs/flight-guides/long-range/hero/hero.jpg';
+import racingHero from '../../../docs/flight-guides/racing/hero/hero.jpg';
+import tinyWhoopHero from '../../../docs/flight-guides/tiny-whoop/hero/hero.jpg';
+
 import type {FlightStyleId} from './guideContent';
 
 export const FLIGHT_STYLE_HERO_IMAGES: Partial<
   Record<FlightStyleId, ImageSourcePropType>
 > = {
-  // import cinematicHero from '../../../docs/flight-guides/cinematic/hero/hero.jpg';
-  // 'cinematic': {uri: cinematicHero},
+  cinematic: {uri: cinematicHero},
+  freestyle: {uri: freestyleHero},
+  racing: {uri: racingHero},
+  'tiny-whoop': {uri: tinyWhoopHero},
+  'long-range': {uri: longRangeHero},
 };
