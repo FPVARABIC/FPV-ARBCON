@@ -13,10 +13,64 @@ import {
 import type {RootStackParamList} from '../../navigation/types';
 import {openSupportPage} from '../../platforms/supportLink';
 import {Icon} from '../icons';
+import type {IconName} from '../icons';
 import {BrandLogo, BRAND_PRODUCT_NAME, BRAND_PRODUCT_TAGLINE} from '../brand';
 import {Button} from '../components/controls';
 import {readInteraction} from '../components/controls/interaction';
-import {colors, contentEnvelope, isDesktopTier, noticeSurface, radii, resolveLayoutTier, spacing, typography} from '../theme';
+import {
+  colors,
+  contentEnvelope,
+  isDesktopTier,
+  noticeSurface,
+  radii,
+  resolveLayoutTier,
+  spacing,
+  typography,
+} from '../theme';
+
+/**
+ * HOME, AS BANDS RATHER THAN ONE CENTRED COLUMN.
+ *
+ * THE COMPLAINT THIS ANSWERS. On a 1920px window the whole page was a
+ * 1164px card sitting in the middle with 378px of dead background on
+ * either side - measured, not felt. It read as a settings dialog that
+ * had been opened full-screen, not as a product's front page.
+ *
+ * THE FIX IS NOT A BIGGER `maxWidth`, and deliberately so: widening one
+ * column would only stretch the paragraphs. Instead the page is now a
+ * stack of FULL-BLEED BANDS, each with its own ground, and each capping
+ * its INNER content at the width that content deserves:
+ *
+ *   identity + primary actions   the WORKSPACE envelope (1600)
+ *   safety line, guide, support  the READING envelope   (1180)
+ *
+ * Both come from the design system's own helper, asked once per band:
+ * `contentEnvelope(tier, splitsIntoColumns)`. No cap is written here as
+ * a literal, and the helper's rule is followed rather than bent - the
+ * wider envelope is granted only where the layout GENUINELY splits into
+ * columns, which for this screen means the two primary cards side by
+ * side from the desktop tier up. The identity lockup shares that rail so
+ * the emblem's edge lines up with the cards' edge instead of floating on
+ * a different margin; nothing in it is a paragraph, so no line gets
+ * longer.
+ *
+ * Below the desktop tier the helper returns the reading envelope for
+ * every band and the bands are simply the screen width, which is what a
+ * phone wants.
+ *
+ * THE ORDER IS THE HIERARCHY, and it changed. It used to be three peer
+ * cards with the flight-style guide first. The guide is reference
+ * material; the two things an operator opens this application to DO are
+ * configuring a board and flashing firmware. So:
+ *
+ *   1  identity
+ *   2  the two primary actions, and the safety line that governs them
+ *   3  the guide, its own band, visibly a companion rather than a peer
+ *   4  support, last and quietest
+ *
+ * Nothing about where a button GOES changed - only what it looks like
+ * and where it sits on the page.
+ */
 
 /**
  * THE OFFICIAL LOGO ON START - Android only. The document is RTL, so the
@@ -24,72 +78,112 @@ import {colors, contentEnvelope, isDesktopTier, noticeSurface, radii, resolveLay
  * placement the brand calls for. On web the logo lives in the persistent
  * top chrome instead (BrandTopChrome, rendered by App.web.tsx above every
  * route), and repeating it here would stack two identical marks within a
- * hundred pixels - so the web Start row carries the name and tagline only.
+ * hundred pixels - so the web Start band carries the page's own title
+ * only, and the chrome owns the identity.
  */
 const SHOW_START_LOGO = Platform.OS !== 'web';
 
+/**
+ * Emblem height in the Android home lockup. Raised from 72 at the
+ * owner's request - the web chrome's emblem moved by the same ratio
+ * (BrandTopChrome: 56 -> 68) so the two platforms keep one identity.
+ */
+const HOME_LOGO_HEIGHT = 86;
+
 type Props = NativeStackScreenProps<RootStackParamList, 'Start'>;
 
-type RouteCardProps = {
+/* ------------------------------------------------------------- bands */
+
+type BandTone = 'page' | 'raised' | 'surface';
+
+type BandProps = {
+  readonly tone: BandTone;
+  /** Inner cap, from contentEnvelope(). Inert below the desktop tier. */
+  readonly cap: number;
+  readonly testID?: string;
+  readonly children: React.ReactNode;
+};
+
+/**
+ * A full-width strip whose GROUND reaches both screen edges while its
+ * CONTENT stays inside a readable rail. This is what stops the page
+ * looking like an island: the colour goes to the edge even though the
+ * words do not.
+ */
+function Band({tone, cap, testID, children}: BandProps): React.JSX.Element {
+  return (
+    <View
+      style={[
+        styles.band,
+        tone === 'raised' && styles.bandRaised,
+        tone === 'surface' && styles.bandSurface,
+      ]}
+      testID={testID}>
+      <View style={[styles.bandInner, {maxWidth: cap}]}>{children}</View>
+    </View>
+  );
+}
+
+/* --------------------------------------------------- primary actions */
+
+type PrimaryCardProps = {
   readonly title: string;
   readonly description: string;
   readonly bullets: readonly string[];
   readonly button: string;
   readonly testID: string;
-  readonly accent: 'teal' | 'blue' | 'deep';
-  /** True only where the two cards share a row - see styles.routeCardShare. */
+  readonly icon: IconName;
+  readonly accent: 'teal' | 'blue';
+  /** True only where the two cards share a row - see primaryCardShare. */
   readonly sideBySide: boolean;
   readonly onPress: () => void;
 };
 
-function RouteCard({
+function PrimaryCard({
   title,
   description,
   bullets,
   button,
   testID,
+  icon,
   accent,
   sideBySide,
   onPress,
-}: RouteCardProps): React.JSX.Element {
+}: PrimaryCardProps): React.JSX.Element {
+  const blue = accent === 'blue';
   return (
     <View
       style={[
-        styles.routeCard,
-        sideBySide && styles.routeCardShare,
-        accent === 'blue' && styles.routeCardBlue,
-        accent === 'deep' && styles.routeCardDeep,
+        styles.primaryCard,
+        sideBySide && styles.primaryCardShare,
+        blue && styles.primaryCardBlue,
       ]}>
-      <View
-        style={[
-          styles.routeMark,
-          accent === 'blue' && styles.routeMarkBlue,
-          accent === 'deep' && styles.routeMarkDeep,
-        ]}
-      />
-      <Text style={styles.routeTitle}>{title}</Text>
-      <Text style={styles.routeDescription}>{description}</Text>
+      <View style={[styles.primaryMark, blue && styles.primaryMarkBlue]} />
+      <View style={styles.primaryHeading}>
+        <View style={[styles.iconBadge, blue && styles.iconBadgeBlue]}>
+          <Icon
+            name={icon}
+            size={26}
+            color={blue ? colors.info : colors.accentStrong}
+          />
+        </View>
+        <Text style={styles.primaryTitle}>{title}</Text>
+      </View>
+      <Text style={styles.primaryDescription}>{description}</Text>
       <View style={styles.bullets}>
         {bullets.map(item => (
           <View key={item} style={styles.bulletRow}>
-            <View
-              style={[
-                styles.bulletDot,
-                accent === 'blue' && styles.bulletDotBlue,
-                accent === 'deep' && styles.bulletDotDeep,
-              ]}
-            />
+            <View style={[styles.bulletDot, blue && styles.bulletDotBlue]} />
             <Text style={styles.bulletText}>{item}</Text>
           </View>
         ))}
       </View>
-      {/* NOT the shared <Button>: this is the screen's hero call to
-          action, where the directional affordance must sit at the FAR
-          END of a full-width bar (space-between). Button centres a
-          LEADING icon, which would put the chevron at the start and
-          point it away from the direction of travel. Everything else -
-          fill, radius, height, label weight, states - comes from the
-          same tokens Button uses, so nothing here is a new style. */}
+      {/* NOT the shared <Button>: this is a hero call to action, where
+          the directional affordance must sit at the FAR END of the bar
+          (space-between). Button centres a LEADING icon, which would put
+          the chevron at the start and point it away from the direction
+          of travel. Everything else - fill, radius, height, label weight,
+          states - comes from the same tokens Button uses. */}
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={button}
@@ -98,64 +192,137 @@ function RouteCard({
         style={state => {
           const {pressed, hovered} = readInteraction(state);
           return [
-            styles.routeButton,
-            accent === 'blue' && styles.routeButtonBlue,
-            accent === 'deep' && styles.routeButtonDeep,
-            hovered && styles.routeButtonHovered,
+            styles.actionButton,
+            blue && styles.actionButtonBlue,
+            hovered && styles.actionButtonHovered,
             pressed && styles.pressed,
           ];
         }}>
-        <Text
-          style={[
-            styles.routeButtonText,
-            accent !== 'teal' && styles.routeButtonTextOnDark,
-          ]}>
+        <Text style={[styles.actionButtonText, blue && styles.actionButtonTextOnDark]}>
           {button}
         </Text>
         <Icon
           name="chevron-forward"
           size={22}
-          color={accent === 'teal' ? colors.accentText : colors.white}
+          color={blue ? colors.white : colors.accentText}
         />
       </Pressable>
     </View>
   );
 }
 
+/* ------------------------------------------------------ guide corner */
+
+/**
+ * THE GUIDE IS A COMPANION, NOT A THIRD DOOR, and every difference from
+ * the cards above says so: no fill of its own beyond the band, a
+ * section-title heading rather than a card title, its styles listed on
+ * one line instead of bulleted, and an outlined call to action instead
+ * of an accent-filled one. It still opens the same index it always did.
+ */
+function GuideSection({
+  desktop,
+  cap,
+  onPress,
+}: {
+  readonly desktop: boolean;
+  readonly cap: number;
+  readonly onPress: () => void;
+}): React.JSX.Element {
+  return (
+    <Band tone="surface" cap={cap} testID="start-guide-section">
+      <Text style={styles.eyebrow}>قبل الضبط</Text>
+      <View style={desktop ? styles.guideRow : styles.guideColumn}>
+        <View style={styles.guideCopy}>
+          <View style={styles.guideHeading}>
+            <Icon name="compass" size={22} color={colors.accentStrong} />
+            <Text style={styles.guideTitle}>دليل أنماط الطيران</Text>
+          </View>
+          <Text style={styles.guideDescription}>
+            خمسة أنماط، كل واحد بخطواته وقيمه وصوره.
+          </Text>
+          <Text style={styles.guideMeta}>
+            سينمائي · حر · سباق · وووب داخلي · مدى طويل
+          </Text>
+          <Text style={styles.guideMeta}>أرقام رسمية بمصادرها</Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="فتح دليل أنماط الطيران"
+          testID="start-flight-style-guide"
+          onPress={onPress}
+          style={state => {
+            const {pressed, hovered} = readInteraction(state);
+            return [
+              styles.actionButton,
+              styles.actionButtonQuiet,
+              hovered && styles.actionButtonQuietHovered,
+              pressed && styles.pressed,
+            ];
+          }}>
+          <Text style={styles.actionButtonQuietText}>فتح دليل أنماط الطيران</Text>
+          <Icon name="chevron-forward" size={22} color={colors.accentStrong} />
+        </Pressable>
+      </View>
+    </Band>
+  );
+}
+
+/* ---------------------------------------------------- support footer */
+
 /**
  * SUPPORTING THE PROJECT IS A FOOTER, NOT A FOURTH DOOR.
  *
- * It sits below the safety line, at the very bottom of the scroll, and
- * it is built out of everything the route cards deliberately are NOT: no
- * fill, no accent rule down its edge, no card, no shadow - one hairline
- * separating it from the content above, muted type, and the shared
- * `secondary` button rather than the accent one the three real actions
- * carry. That ranking is the whole design. A reader scanning the page
- * sees three things to do and then, quietly, a way to help; nothing here
- * competes with a door, and nothing appears over the top of anything.
+ * It sits last, after the primary actions, the safety line and the
+ * guide, and it is built out of everything the action cards are NOT: no
+ * accent rule down its edge, no shadow, a smaller radius, a plain
+ * neutral border where each card takes its own accent colour, muted
+ * type, and the shared `secondary` button rather than the accent one the
+ * real actions carry. A reader sees what to do, then how to learn, and
+ * only then - quietly - a way to help.
  *
- * WHAT IT IS NOT ALLOWED TO BECOME. It is not a modal, an interstitial,
- * a toast or a banner - it cannot appear unless the operator has already
- * scrolled past everything the app is actually for. It never repeats on
- * another screen. It carries no counter, no goal bar and no "X people
- * supported" line, because the app knows none of those things and would
- * be inventing them. And it gates nothing: no feature in this product
- * reads whether anyone gave, and supportUrl.ts is imported by this
- * screen and nowhere else.
+ * WHAT IT IS NOT ALLOWED TO BECOME. Not a modal, an interstitial, a
+ * toast or a banner: it cannot appear until the operator has scrolled
+ * past everything the app is actually for. It never repeats on another
+ * screen. It carries no counter and no goal bar, because the app knows
+ * no such numbers and would be inventing them. And it gates nothing: no
+ * feature reads whether anyone gave, and supportUrl.ts is imported by
+ * this screen and nowhere else.
  *
- * NO PAYMENT DETAILS LIVE IN THIS APPLICATION. There is no card field,
- * no account number, no IBAN and no name anywhere in this section. The
- * button hands one HTTPS address to the system browser and stops; the
- * caption under it says so and names the host, so the destination is
- * legible before the tap rather than a surprise after it.
+ * NO PAYMENT DETAILS LIVE IN THIS APPLICATION. No card field, no account
+ * number, no IBAN, no name. The button hands one HTTPS address to the
+ * system browser and stops; the caption says so and names the host, so
+ * the destination is legible before the tap rather than after it.
+ *
+ * THE PANEL TONE WAS MEASURED, NOT PICKED BY EYE. Five palette tokens
+ * were painted into it in Chromium and sampled back out of the captures,
+ * against the page (#FAF8F3) and the safety note above it (successSoft
+ * #E8F8F1):
+ *
+ *   backgroundRaised #F3F0E8   page d15   note d16   <- chosen
+ *   surfaceAlt       #F2F0EA   page d14   note d15
+ *   infoSoft         #E3F1F8   page d25   note d11
+ *   accentSoft       #DDF8F3   page d29   note d11
+ *   surfaceRaised    #E9F7F4   page d17   note d3
+ *
+ * surfaceRaised is disqualified outright: three points from the safety
+ * note is a twin, and the footer would read as a second warning.
+ * accentSoft is the most visible and still wrong - it is this app's
+ * SELECTED state everywhere else (active rail item, chosen chip, picked
+ * device row), and a panel that is never selected must not wear it.
+ * infoSoft is the firmware door's blue. surfaceAlt is the DISABLED
+ * surface. backgroundRaised is the one token that already means "a
+ * container, one step up from the page, claiming nothing" - the chip
+ * track, the stepper track, the device-list ground - and it is d30 from
+ * the white cards, which is the contrast that matters for "not white".
  */
 function SupportProjectSection(): React.JSX.Element {
   return (
     <View style={styles.support} testID="start-support">
       {/* The product's own name, read from the brand module rather than
-          typed again here - Home already shows it in the chrome, and two
-          spellings of one product a few hundred pixels apart is the kind
-          of drift a literal invites. */}
+          typed again here - Home already shows it in the identity band,
+          and two spellings of one product on one page is the kind of
+          drift a literal invites. */}
       <Text style={styles.supportTitle}>
         {`ساهم في تطوير ${BRAND_PRODUCT_NAME}`}
       </Text>
@@ -163,8 +330,8 @@ function SupportProjectSection(): React.JSX.Element {
         إذا أفادك التطبيق، يمكنك دعم استمرار تطويره وتحسينه. دعمك اختياري
         ويساعدنا على إضافة ميزات جديدة وتحسين التجربة للجميع.
       </Text>
-      {/* The shared Button, `secondary`, `sm`: narrower than a door but
-          the same 44pt touch floor.
+      {/* The shared Button, `secondary`, `sm`: narrower than an action
+          card's bar but the same 44pt touch floor.
 
           THE CUP IS THE ICON SYSTEM'S, NOT THE ☕ CHARACTER. This is not
           a style preference. U+2615 falls outside every `unicode-range`
@@ -194,277 +361,375 @@ function SupportProjectSection(): React.JSX.Element {
   );
 }
 
-/**
- * The widest this screen's column may get. Two route cards side by side
- * stay cards at this width; beyond it a 1920px window gave two ~770px
- * slabs each holding a small button - the stretched-desktop look.
- */
-const HOME_MAX_WIDTH = 1200;
+/* -------------------------------------------------------- the screen */
 
 export default function StartScreen({navigation}: Props): React.JSX.Element {
   const {width, fontScale} = useWindowDimensions();
   const tier = resolveLayoutTier(width, fontScale);
-  // The two route cards are peers - one connects, one flashes - and they
-  // are the whole point of this screen. Stacked vertically they made a
-  // 1920px desktop show two ~1100px letterboxes with 786px of dead space
-  // beside them (AUD-003). Side by side they read as the choice they are,
-  // and the wider envelope is earned because the screen genuinely splits.
+  // The two primary cards are peers - one configures, one flashes - and
+  // from the desktop tier up they genuinely sit side by side. That, and
+  // only that, is what earns the wider workspace envelope.
   const desktop = isDesktopTier(tier);
+  // Asked once per KIND of band rather than once per screen: the two
+  // primary cards genuinely split into columns and earn the workspace
+  // envelope, while a sentence, a guide strip and a footer are reading
+  // content and keep the reading one.
+  const columnsCap = contentEnvelope(tier, true);
+  const readingCap = contentEnvelope(tier, false);
 
   return (
     <ScrollView
       testID="start-screen"
       style={styles.root}
-      contentContainerStyle={[
-        styles.content,
-        // Capped so the whole column - brand row, heading, cards and the
-        // safety line - shares one edge instead of the note spanning
-        // wider than the cards above it.
-        {maxWidth: Math.min(contentEnvelope(tier, desktop), HOME_MAX_WIDTH)},
-      ]}
+      contentContainerStyle={styles.page}
       keyboardShouldPersistTaps="handled">
-      {/* WEB CARRIES ITS IDENTITY IN THE PERSISTENT CHROME (BrandTopChrome,
-          above every route), so repeating emblem and name here would stack
-          the same identity twice within a hundred pixels. On Android there
-          is no chrome strip, so this row IS the identity. */}
-      {SHOW_START_LOGO ? (
-        <View style={styles.brandRow}>
-          {/* First child of an RTL row = the RIGHT edge. */}
-          <BrandLogo height={72} testID="start-brand-logo" />
-          <View style={styles.brandCopy}>
-            <Text style={styles.brandName}>{BRAND_PRODUCT_NAME}</Text>
-            <Text style={styles.brandTagline}>{BRAND_PRODUCT_TAGLINE}</Text>
+      {/* ---------------------------------------------- 1. identity */}
+      <Band tone="raised" cap={columnsCap} testID="start-identity">
+        {/* WEB CARRIES ITS IDENTITY IN THE PERSISTENT CHROME
+            (BrandTopChrome, above every route), so repeating emblem and
+            name here would stack the same identity twice within a
+            hundred pixels. On Android there is no chrome strip, so this
+            lockup IS the identity. */}
+        {SHOW_START_LOGO ? (
+          <View style={styles.brandRow}>
+            {/* First child of an RTL row = the RIGHT edge. */}
+            <BrandLogo height={HOME_LOGO_HEIGHT} testID="start-brand-logo" />
+            {/* A hairline of accent between mark and word: the lockup
+                reads as one designed object rather than an image that
+                happens to have text beside it. */}
+            <View style={styles.brandRule} />
+            <View style={styles.brandCopy}>
+              <Text style={styles.brandName}>{BRAND_PRODUCT_NAME}</Text>
+              <Text style={styles.brandTagline}>{BRAND_PRODUCT_TAGLINE}</Text>
+            </View>
+          </View>
+        ) : null}
+
+        <View style={styles.hero}>
+          <Text style={styles.heroTitle}>اختر ما تريد تنفيذه</Text>
+        </View>
+      </Band>
+
+      {/* --------------------------------------- 2. primary actions */}
+      <Band tone="page" cap={columnsCap}>
+        <View
+          style={desktop ? styles.actionRow : styles.actionColumn}
+          testID="start-route-group">
+          {/* Reading order in an RTL row runs right to left, so the first
+              child is the RIGHTMOST card. Configuring the board leads,
+              because it is what most sessions are for; flashing is the
+              step before it, but only occasionally. */}
+          <PrimaryCard
+            title="إعداد الدرون"
+            description="الاتصال باللوحة وضبط إعداداتها."
+            bullets={[
+              'الاتصال باللوحة',
+              'Motors و Receiver و OSD',
+              'GPS و Sensors و CLI',
+            ]}
+            button="فتح إعداد الدرون"
+            testID="start-configure"
+            icon="sliders-horizontal"
+            accent="teal"
+            sideBySide={desktop}
+            onPress={() => navigation.navigate('Setup')}
+          />
+
+          <PrimaryCard
+            title="تحديث Firmware"
+            description="تثبيت أو تحديث Firmware واختيار Target وإعدادات البناء."
+            bullets={[
+              'اختيار اللوحة والإصدار',
+              'إعدادات البناء الرسمية',
+              'تفليش عبر DFU مع تحقق كامل',
+            ]}
+            button="فتح تحديث Firmware"
+            testID="start-firmware"
+            icon="cpu"
+            accent="blue"
+            sideBySide={desktop}
+            onPress={() => navigation.navigate('FirmwareFlasher')}
+          />
+        </View>
+
+        {/* The safety line governs the two cards above it, so it stays
+            in their band - and keeps the reading cap, because it is a
+            sentence rather than a column. */}
+        <View style={[styles.safetyWrap, {maxWidth: readingCap}]}>
+          <View style={styles.safetyNote}>
+            <Text style={styles.safetyText}>
+              لن يبدأ أي مسح أو كتابة قبل التحقق من الملف واللوحة و Target.
+            </Text>
           </View>
         </View>
-      ) : null}
+      </Band>
 
-      <View style={styles.hero}>
-        <Text style={styles.heroTitle}>اختر ما تريد تنفيذه</Text>
-      </View>
-
-      <View style={desktop ? styles.routeRow : styles.routeColumn} testID="start-route-group">
-      {/* Reading order in an RTL row runs right to left, so the first
-          child is the RIGHTMOST card. The guide leads because it is the
-          only door that answers "what should I even set?" - the other two
-          assume you already know. */}
-      <RouteCard
-        title="دليل أنماط الطيران"
-        description="خمسة أنماط، كل واحد بخطواته وقيمه وصوره."
-        bullets={[
-          'سينمائي · حر · سباق',
-          'وووب داخلي · مدى طويل',
-          'أرقام رسمية بمصادرها',
-        ]}
-        button="فتح دليل أنماط الطيران"
-        testID="start-flight-style-guide"
-        accent="deep"
-        sideBySide={desktop}
+      {/* ------------------------------------------------- 3. guide */}
+      <GuideSection
+        desktop={desktop}
+        cap={readingCap}
         onPress={() => navigation.navigate('FlightStyleGuide')}
       />
 
-      <RouteCard
-        title="تحديث Firmware"
-        description="تثبيت أو تحديث Firmware واختيار Target وإعدادات البناء."
-        bullets={['اختيار اللوحة والإصدار', 'إعدادات البناء الرسمية', 'تفليش عبر DFU مع تحقق كامل']}
-        button="فتح تحديث Firmware"
-        testID="start-firmware"
-        accent="blue"
-        sideBySide={desktop}
-        onPress={() => navigation.navigate('FirmwareFlasher')}
-      />
-
-      <RouteCard
-        title="إعداد الدرون"
-        description="الاتصال باللوحة وضبط إعداداتها."
-        bullets={[
-          'الاتصال باللوحة',
-          'Motors و Receiver و OSD',
-          'GPS و Sensors و CLI',
-        ]}
-        button="فتح إعداد الدرون"
-        testID="start-configure"
-        accent="teal"
-        sideBySide={desktop}
-        onPress={() => navigation.navigate('Setup')}
-      />
-      </View>
-
-      <View style={styles.safetyNote}>
-        <Text style={styles.safetyText}>
-          لن يبدأ أي مسح أو كتابة قبل التحقق من الملف واللوحة و Target.
-        </Text>
-      </View>
-
-      {/* Last on the page, after the doors and after the safety line -
-          so it is reachable but never in the way of either. */}
-      <SupportProjectSection />
+      {/* ----------------------------------------------- 4. support */}
+      <Band tone="page" cap={readingCap}>
+        <SupportProjectSection />
+      </Band>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
-  content: {
+  /* NO padding and NO cap here, deliberately. Both moved into the bands
+     so a band's ground can reach the screen edge while its words stay
+     inside a rail. Capping the scroll container instead is exactly what
+     made the page an island. */
+  page: {width: '100%', paddingBottom: spacing.xxl},
+  band: {width: '100%', alignItems: 'center'},
+  bandRaised: {
+    backgroundColor: colors.backgroundRaised,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  bandSurface: {
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderTopColor: colors.borderSoft,
+    borderBottomColor: colors.borderSoft,
+  },
+  bandInner: {
     width: '100%',
-    // Cap comes from contentEnvelope(), applied inline.
+    // maxWidth is applied inline, per band.
     alignSelf: 'center',
-    padding: spacing.lg,
-    paddingBottom: spacing.xxl,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
     gap: spacing.lg,
   },
-  /* The old hand-drawn placeholder badge (a square core with two rotated
-     arms, standing in for a real mark) is GONE - the official logo asset
-     renders in its place on Android, and the web top chrome carries it
-     persistently there. */
+
+  /* ------------------------------------------------------- identity */
+  /* The old hand-drawn placeholder badge is GONE - the official logo
+     asset renders in its place on Android, and the web top chrome
+     carries it persistently there. */
   brandRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
-  brandCopy: {flex: 1},
-  /* THE GREEN DOT AND "جاهز" ARE GONE. They sat here as though they were
-     connection state, and they were not: both were hardcoded literals with
-     no prop, no state and nothing behind them, so the app reported itself
-     "ready" on a machine with no board attached and would have gone on
-     saying it while a connection failed. A status indicator that cannot be
-     anything but green is decoration wearing the costume of telemetry -
-     worse than absent, because it invites the operator to trust it. Real
-     connection state is shown where it is genuinely known: the Setup
-     surface, driven by the session. */
-  brandName: {
-    ...typography.title,
-    color: colors.textPrimary,
-    letterSpacing: 0.4,
-    writingDirection: 'ltr',
+  brandRule: {
+    width: 3,
+    alignSelf: 'stretch',
+    marginVertical: spacing.xs,
+    borderRadius: 2,
+    backgroundColor: colors.accent,
   },
-  brandTagline: {...typography.caption, color: colors.textSecondary},
-  hero: {paddingVertical: spacing.lg, gap: spacing.sm},
-  /* Peers, laid out in the product's RTL reading order: index 0 (connect)
-     is the RIGHTMOST card, matching src/navigation/tabs.ts's convention.
-     `alignItems: 'stretch'` keeps both cards the same height so the two
-     call-to-action buttons sit on one line.
+  /* NOT `flex: 1` - see BrandTopChrome for the defect that caused: given
+     the whole rail, the block stretches and the Latin name drifts to the
+     far edge, away from the emblem it is locked up with. */
+  brandCopy: {flexShrink: 1, gap: 2},
+  /* THE GREEN DOT AND "جاهز" ARE GONE. They sat here as though they were
+     connection state, and they were not: both were hardcoded literals
+     with no prop, no state and nothing behind them, so the app reported
+     itself "ready" on a machine with no board attached and would have
+     gone on saying it while a connection failed. A status indicator that
+     cannot be anything but green is decoration wearing the costume of
+     telemetry - worse than absent, because it invites the operator to
+     trust it. Real connection state is shown where it is genuinely
+     known: the Setup surface, driven by the session. */
+  brandName: {
+    ...typography.display,
+    color: colors.textPrimary,
+    letterSpacing: 0.6,
+    // A Latin proper noun inside an RTL document: without this it
+    // inherits the paragraph direction and the words reorder.
+    // `textAlign` then puts it on the same edge as the Arabic line
+    // beneath it.
+    writingDirection: 'ltr',
+    textAlign: 'right',
+  },
+  brandTagline: {
+    ...typography.body,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+    textAlign: 'right',
+  },
+  hero: {gap: spacing.sm},
+  heroTitle: {...typography.display, color: colors.textPrimary},
+
+  /* ------------------------------------------------ primary actions */
+  /* Peers, laid out in the product's RTL reading order: index 0 is the
+     RIGHTMOST card. `alignItems: 'stretch'` keeps both the same height
+     so the two calls to action sit on one line.
 
      PLAIN 'row', NOT 'row-reverse'. Measured in a browser: the document
-     carries dir="rtl", so a plain row ALREADY runs right-to-left and puts
-     index 0 on the right. 'row-reverse' flipped it back to left-to-right
-     and put "المسار الأول" on the LEFT — the exact opposite of what the
-     comment above promised. (This was invisible for as long as it went
-     unmeasured, because react-native-web's I18nManager reports LTR while
-     the document lays out RTL.) */
-  routeRow: {flexDirection: 'row', alignItems: 'stretch', gap: spacing.lg},
-  routeColumn: {gap: spacing.lg},
-  heroTitle: {...typography.display, color: colors.textPrimary},
-  heroBody: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
-  routeCard: {
+     carries dir="rtl", so a plain row ALREADY runs right-to-left and
+     puts index 0 on the right. 'row-reverse' flipped it back and put the
+     first card on the LEFT - the opposite of what is intended. (This was
+     invisible for as long as it went unmeasured, because
+     react-native-web's I18nManager reports LTR while the document lays
+     out RTL.) */
+  actionRow: {flexDirection: 'row', alignItems: 'stretch', gap: spacing.lg},
+  actionColumn: {gap: spacing.lg},
+  primaryCard: {
     position: 'relative',
     overflow: 'hidden',
-    padding: spacing.lg,
+    padding: spacing.xl,
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.accentStrong,
     gap: spacing.sm,
   },
   /* EQUAL HALVES OF A ROW - and ONLY of a row.
-     `flexBasis: 0` sizes the MAIN axis. In routeRow the main axis is
+     `flexBasis: 0` sizes the MAIN axis. In actionRow the main axis is
      horizontal, so this is the intended "two equal columns". These
-     properties used to live on routeCard itself, described as "inert
-     inside routeColumn where the parent is not a row" - which is exactly
-     wrong: in a COLUMN the main axis is vertical, so flexBasis 0 gave
-     every stacked card a hypothetical HEIGHT of zero, and `overflow:
-     hidden` then cut the card off mid-title, taking the bullets and the
-     call to action with it. Measured in Chromium against the deployed
-     bundle: at 360/390/412/768 both cards rendered ~50px tall with their
-     own titles sliced in half; at >=1024 (a genuine row) they were
-     correct, which is why a numeric width check never saw it. */
-  routeCardShare: {flexGrow: 1, flexShrink: 1, flexBasis: 0},
-  routeCardBlue: {borderColor: colors.info},
-  routeCardDeep: {borderColor: colors.accentStrong},
-  routeMark: {position: 'absolute', start: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.accent},
-  routeMarkBlue: {backgroundColor: colors.info},
-  routeMarkDeep: {backgroundColor: colors.accentStrong},
-  routeTitle: {...typography.title, color: colors.textPrimary},
-  routeDescription: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
+     properties must NOT live on primaryCard itself: in a COLUMN the main
+     axis is vertical, so flexBasis 0 would give every stacked card a
+     hypothetical HEIGHT of zero and `overflow: hidden` would then cut the
+     card off mid-title. Measured in Chromium against a deployed bundle
+     when that was the case: at 360/390/412/768 the cards rendered ~50px
+     tall with their titles sliced in half; at >=1024 they were correct,
+     which is why a numeric width check never saw it. */
+  primaryCardShare: {flexGrow: 1, flexShrink: 1, flexBasis: 0},
+  primaryCardBlue: {borderColor: colors.info},
+  primaryMark: {
+    position: 'absolute',
+    start: 0,
+    top: 0,
+    bottom: 0,
+    width: 5,
+    backgroundColor: colors.accent,
+  },
+  primaryMarkBlue: {backgroundColor: colors.info},
+  /* A tinted square behind the icon. No border and no `overflow:
+     hidden`, so it can never be mistaken for a card by the structural
+     tests that identify cards by exactly that pair. */
+  /* Beside the title, not stacked above it. Stacked, the badge added
+     ~70px of vertical air to a card whose text is three words wide, and
+     the card read as mostly empty. */
+  primaryHeading: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
+  iconBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: radii.md,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconBadgeBlue: {backgroundColor: colors.infoSoft},
+  primaryTitle: {...typography.title, color: colors.textPrimary},
+  primaryDescription: {
+    ...typography.body,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+  },
   bullets: {gap: 7, paddingVertical: spacing.sm},
   bulletRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   bulletDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent},
   bulletDotBlue: {backgroundColor: colors.info},
-  bulletDotDeep: {backgroundColor: colors.accentStrong},
   bulletText: {
     ...typography.body,
     color: colors.textSecondary,
     flex: 1,
-    /* LOAD-BEARING. Every bullet starts with a Latin technical token
-       ("Ports", "HEX", "BIN", "UF2"), and without an explicit direction
-       the paragraph inherits ITS direction - so an Arabic sentence was
-       laid out left-to-right and the words came out in the wrong order.
+    /* LOAD-BEARING. Several bullets start with a Latin technical token
+       ("Motors", "GPS", "DFU"), and without an explicit direction the
+       paragraph inherits ITS direction - so an Arabic sentence was laid
+       out left-to-right and the words came out in the wrong order.
        Measured in a real browser, not theorised. */
     writingDirection: 'rtl',
     textAlign: 'right',
   },
-  routeButton: {
+
+  /* --------------------------------------------- calls to action */
+  actionButton: {
     // Sized to its label, not stretched across the card. A full-width
-    // bar on a 1156px desktop card read as a banner rather than a
-    // button, and two of them competed with each other instead of
-    // reading as two choices.
+    // bar on a wide desktop card read as a banner rather than a button,
+    // and two of them competed with each other instead of reading as two
+    // choices.
     alignSelf: 'flex-start',
     minHeight: 48,
     borderRadius: radii.md,
     backgroundColor: colors.accent,
+    borderWidth: 1,
+    borderColor: 'transparent',
     paddingHorizontal: spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
   },
-  routeButtonBlue: {backgroundColor: colors.info},
-  routeButtonDeep: {backgroundColor: colors.accentStrong},
-  routeButtonHovered: {opacity: 0.9},
-  routeButtonText: {...typography.sectionTitle, color: colors.accentText},
-  routeButtonTextOnDark: {color: colors.white},
+  actionButtonBlue: {backgroundColor: colors.info},
+  actionButtonHovered: {opacity: 0.9},
+  actionButtonText: {...typography.sectionTitle, color: colors.accentText},
+  actionButtonTextOnDark: {color: colors.white},
+  /* The guide's outlined variant: same geometry and the same 48pt bar,
+     no fill. Rank is carried by weight, not by size, so the control is
+     never harder to hit for being secondary. */
+  actionButtonQuiet: {
+    backgroundColor: colors.surface,
+    borderColor: colors.accentStrong,
+  },
+  actionButtonQuietHovered: {backgroundColor: colors.surfaceHover},
+  actionButtonQuietText: {
+    ...typography.sectionTitle,
+    color: colors.accentStrong,
+  },
   pressed: {opacity: 0.75},
-  safetyNote: {...noticeSurface, backgroundColor: colors.successSoft,
+
+  /* ---------------------------------------------------- safety line */
+  /* maxWidth comes from contentEnvelope() inline - the safety line is a
+     sentence, so it keeps the reading envelope even inside the wider
+     band its cards live in. */
+  safetyWrap: {width: '100%'},
+  safetyNote: {
+    ...noticeSurface,
+    backgroundColor: colors.successSoft,
     borderColor: colors.success,
-    gap: 3},
-  safetyText: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
-  /* A TINTED PANEL, AND STILL NOT A CARD.
-     The footer was an open area under a hairline. It now carries its own
-     fill so it reads as a distinct block rather than as more page - and
-     a fill needs the rest of a panel to be legible: padding on all four
-     sides so the text does not touch the colour's edge, and a radius so
-     the block has a shape. The old top hairline went with it, because a
-     rule drawn across the top of a filled box is a leftover, not a
-     separator.
-     IT IS STILL RANKED BELOW EVERY DOOR, and the shape is what keeps it
-     there: radii.sm where the route cards take radii.lg, a plain neutral
-     border where each of them takes its own accent colour, and no accent
-     rule down its edge. A reader sees three cards and then a quieter
-     block, not a fourth card.
-     THE TONE WAS CHOSEN BY MEASURING CANDIDATES, NOT BY TASTE. Five
-     palette tokens were painted into this panel in Chromium and sampled
-     from the captures, against the page behind it (#FAF8F3) and against
-     the safety note directly above it (successSoft #E8F8F1):
+    gap: 3,
+  },
+  safetyText: {
+    ...typography.body,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+  },
 
-       backgroundRaised #F3F0E8   page d15   note d16   <- chosen
-       surfaceAlt       #F2F0EA   page d14   note d15
-       infoSoft         #E3F1F8   page d25   note d11
-       accentSoft       #DDF8F3   page d29   note d11
-       surfaceRaised    #E9F7F4   page d17   note d3
+  /* ---------------------------------------------------------- guide */
+  eyebrow: {
+    ...typography.eyebrow,
+    color: colors.textMuted,
+    writingDirection: 'rtl',
+    textAlign: 'right',
+  },
+  /* NO `justifyContent: 'space-between'`. With it, the call to action
+     was flung to the opposite end of a 1148px band and read as
+     unrelated to the text it belongs to. Packed to the start with a
+     generous gap, the pair reads as one object and the remaining space
+     is deliberate air rather than a gulf. */
+  guideRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xxl,
+  },
+  guideColumn: {gap: spacing.md},
+  guideCopy: {flexShrink: 1, gap: spacing.xs},
+  guideHeading: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  /* sectionTitle, one step below the action cards' `title`: this heading
+     must never out-rank a primary action. */
+  guideTitle: {...typography.sectionTitle, color: colors.textPrimary},
+  guideDescription: {
+    ...typography.body,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+    textAlign: 'right',
+  },
+  guideMeta: {
+    ...typography.caption,
+    color: colors.textMuted,
+    writingDirection: 'rtl',
+    textAlign: 'right',
+  },
 
-     surfaceRaised is disqualified outright: three points from the safety
-     note is a twin, and the footer would read as a second warning.
-     accentSoft is the most visible of them and still wrong - it is this
-     app's SELECTED state everywhere else (active rail item, chosen chip,
-     picked device row), so a panel that is never selected must not wear
-     it. infoSoft is the firmware door's blue. surfaceAlt is the DISABLED
-     surface (dimmed buttons, inert steppers).
-
-     backgroundRaised is the one token that already means "a container,
-     one step up from the page, claiming nothing" - the chip track, the
-     stepper track, the device-list ground. That is exactly what this is.
-     It is d30 from the white route cards above, which is the contrast
-     that matters for "not white", while staying warm enough that it can
-     never be mistaken for the green note. The border steps up from
-     borderSoft to border so the block has a definite edge, and the white
-     secondary button now reads against a tinted ground instead of
-     against bare page. */
+  /* -------------------------------------------------------- support */
+  /* A TINTED PANEL, AND STILL NOT A CARD. radii.sm where the action
+     cards take radii.lg, a plain neutral border where each of them takes
+     its own accent colour, and no accent rule down its edge. */
   support: {
-    marginTop: spacing.sm,
     backgroundColor: colors.backgroundRaised,
     borderWidth: 1,
     borderColor: colors.border,
@@ -475,19 +740,14 @@ const styles = StyleSheet.create({
        redundant for the button - Button already defaults to
        `alignSelf: 'flex-start'` and sizes itself to its label - and
        actively wrong for the two paragraphs, which would shrink-wrap to
-       their longest line and make their `textAlign: 'right'` inert. The
-       text stretches to the column and aligns inside it; the button
-       stays the width of its own label. */
+       their longest line and make their `textAlign: 'right'` inert. */
   },
-  /* sectionTitle, deliberately a step below the route cards' `title`:
-     this heading must never out-rank a door. */
   supportTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
     /* Ends with the product's Latin name. Without an explicit direction
        the paragraph would take its own from the first strong character
-       and could lay the Arabic out left-to-right - the same defect the
-       route bullets carry this line for. */
+       and could lay the Arabic out left-to-right. */
     writingDirection: 'rtl',
     textAlign: 'right',
   },
@@ -497,9 +757,9 @@ const styles = StyleSheet.create({
     writingDirection: 'rtl',
     textAlign: 'right',
   },
-  /* The smallest type on the screen, and still 12px - the floor the
-     rest of the product holds to. It opens with a bare host name, so it
-     needs the same explicit direction the title does. */
+  /* The smallest type on the screen, and still 12px - the floor the rest
+     of the product holds to. It opens with a bare host name, so it needs
+     the same explicit direction the title does. */
   supportFootnote: {
     ...typography.helper,
     color: colors.textMuted,

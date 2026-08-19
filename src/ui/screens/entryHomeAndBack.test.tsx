@@ -1,5 +1,5 @@
 /**
- * HOME AS THREE DOORS, AND A WAY BACK OUT OF EVERY ONE OF THEM.
+ * HOME'S DESTINATIONS, ITS HIERARCHY, AND A WAY BACK OUT OF EVERY ONE.
  *
  * Two reported defects meet here. The flight-controller workspace could
  * be entered with no visible way back - Home → connect → trapped. And
@@ -8,14 +8,23 @@
  * These tests pin the corrected entry: plain Arabic, compact actions,
  * and a back control wherever there is somewhere to go back to.
  *
- * IT WAS TWO DOORS, AND IS NOW THREE. The flight-style guide became a
- * destination of its own, and it earns the place: the other two doors
- * both assume the operator already knows what to set, and this is the
- * one that answers that question. The count in these tests is not a
- * value in itself - what matters, and what every assertion below still
- * pins, is that each door is present, goes straight to its destination,
- * stays a compact action rather than a banner, and never collapses to
- * zero height when the cards stack.
+ * TWO DOORS, THEN THREE, AND NOW TWO PRIMARIES PLUS A COMPANION. The
+ * flight-style guide used to be a third peer card at the TOP of the
+ * page, which said the guide mattered more than configuring a board.
+ * It does not: it is reference material. So Home now leads with the two
+ * things an operator opens this application to DO - configure and flash
+ * - and the guide follows in a band of its own.
+ *
+ * WHAT CHANGED IN THIS FILE, AND WHAT DID NOT. Only the STRUCTURE the
+ * assertions point at: which group holds which control. Every guarantee
+ * the suite carried is still here, and several are now checked in more
+ * places than before - each destination is still reached directly, every
+ * call to action is still compact and still at least 44pt, a stacked
+ * card still never asks for zero height, the desktop row still splits
+ * equally, the slogan is still gone, the brand name is still the
+ * product's and not the repository's, and there is still no hardcoded
+ * "ready" badge. Added on top: the guide must NOT sit among the
+ * primaries, and it must come after them on the page.
  */
 
 jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
@@ -81,14 +90,24 @@ function flatStyle(value: unknown): Record<string, unknown> {
       : {};
 }
 
-/** The two Home route cards, by the shape only they have: a clipped,
- * rounded, bordered surface inside the route group. */
+/** The Home PRIMARY action cards, by the shape only they have: a
+ * clipped, rounded, bordered surface inside the primary group. The icon
+ * badge inside each card deliberately carries no border, so it cannot be
+ * miscounted here. */
 function routeCards(renderer: Renderer): Array<Record<string, unknown>> {
   return renderer.root
     .findAllByProps({testID: 'start-route-group'})[0]
     .findAllByType(View)
     .map(node => flatStyle(node.props.style))
     .filter(style => style.overflow === 'hidden' && style.borderWidth === 1);
+}
+
+/** Every text line on the screen, in the order it is rendered. */
+function textOrder(renderer: Renderer): readonly string[] {
+  return renderer.root.findAllByType(Text).map(node => {
+    const value = node.props.children;
+    return Array.isArray(value) ? value.join('') : String(value ?? '');
+  });
 }
 
 function renderStart(navigate: jest.Mock, width?: number): Renderer {
@@ -122,22 +141,61 @@ afterEach(() => {
 });
 
 describe('Home offers exactly three destinations', () => {
-  it('has the guide door, the firmware door and the configurator door', () => {
+  it('has the configurator door, the firmware door and the guide', () => {
     const navigate = jest.fn();
     const renderer = renderStart(navigate);
     renderers.push(renderer);
 
-    expect(control(renderer, 'start-flight-style-guide')).toBeDefined();
-    expect(control(renderer, 'start-firmware')).toBeDefined();
     expect(control(renderer, 'start-configure')).toBeDefined();
+    expect(control(renderer, 'start-firmware')).toBeDefined();
+    expect(control(renderer, 'start-flight-style-guide')).toBeDefined();
 
+    // The PRIMARY group holds the two things an operator opens this
+    // application to do, and only those.
     const primaries = renderer.root
       .findAllByProps({testID: 'start-route-group'})[0]
       .findAllByType(Text)
       .map(node => String(node.props.children));
-    expect(primaries).toContain('فتح دليل أنماط الطيران');
-    expect(primaries).toContain('فتح تحديث Firmware');
     expect(primaries).toContain('فتح إعداد الدرون');
+    expect(primaries).toContain('فتح تحديث Firmware');
+  });
+
+  /**
+   * THE HIERARCHY IS THE POINT OF THE REDESIGN, so it is pinned rather
+   * than left to the eye. The guide is reference material: it must not
+   * sit among the primary actions, and it must not be the first thing
+   * on the page.
+   */
+  it('keeps the guide out of the primary group and below it on the page', () => {
+    const renderer = renderStart(jest.fn());
+    renderers.push(renderer);
+
+    const group = renderer.root.findAllByProps({testID: 'start-route-group'})[0];
+    expect(group.findAllByProps({testID: 'start-flight-style-guide'})).toHaveLength(0);
+    // It has a band of its own.
+    expect(
+      renderer.root.findAllByProps({testID: 'start-guide-section'}).length,
+    ).toBeGreaterThan(0);
+
+    const order = textOrder(renderer);
+    const configure = order.indexOf('فتح إعداد الدرون');
+    const firmware = order.indexOf('فتح تحديث Firmware');
+    const guide = order.indexOf('فتح دليل أنماط الطيران');
+    expect(configure).toBeGreaterThanOrEqual(0);
+    expect(firmware).toBeGreaterThanOrEqual(0);
+    expect(guide).toBeGreaterThan(configure);
+    expect(guide).toBeGreaterThan(firmware);
+  });
+
+  it('leads with the board, not with the reading material', () => {
+    const renderer = renderStart(jest.fn());
+    renderers.push(renderer);
+    const order = textOrder(renderer);
+    // The first card title on the page is the configurator's.
+    const configure = order.indexOf('إعداد الدرون');
+    const guideTitle = order.indexOf('دليل أنماط الطيران');
+    expect(configure).toBeGreaterThanOrEqual(0);
+    expect(guideTitle).toBeGreaterThan(configure);
   });
 
   it('the flight-controller card names what the operator will actually do there', () => {
@@ -237,7 +295,7 @@ describe('Home offers exactly three destinations', () => {
       renderers.push(renderer);
 
       const cards = routeCards(renderer);
-      expect(cards).toHaveLength(3);
+      expect(cards).toHaveLength(2);
       for (const style of cards) {
         // Not "0 but overridden" - absent, so the card is content-sized.
         expect(style.flexBasis).toBeUndefined();
@@ -254,7 +312,7 @@ describe('Home offers exactly three destinations', () => {
     expect(flatStyle(group.props.style).flexDirection).toBe('row');
 
     const cards = routeCards(renderer);
-    expect(cards).toHaveLength(3);
+    expect(cards).toHaveLength(2);
     for (const style of cards) {
       // Equal shares of the row - the one place these belong.
       expect(style.flexBasis).toBe(0);
