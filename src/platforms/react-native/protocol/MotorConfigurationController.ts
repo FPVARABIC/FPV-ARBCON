@@ -739,8 +739,13 @@ export class MotorConfigurationController {
         issues: validation.issues,
       };
     }
-    const writes = encodeChangedMotorConfiguration(original, draft);
-    if (writes.length === 0) {
+    // Is there anything at all to do? Answered against the snapshot the
+    // editor is holding, because it must be answered WITHOUT touching the
+    // link - an unchanged save costs nothing and takes no lease.
+    //
+    // The payloads themselves are NOT taken from here. See the re-encode
+    // inside the transaction below for why that distinction matters.
+    if (encodeChangedMotorConfiguration(original, draft).length === 0) {
       return { kind: 'NO_CHANGES', snapshot: original };
     }
 
@@ -797,6 +802,49 @@ export class MotorConfigurationController {
           ) {
             throw new MotorConfigurationPreflightError('STALE_BASE');
           }
+
+          /*
+           * THE PAYLOADS ARE BUILT FROM `current`, NOT FROM `original`.
+           *
+           * Three of the five commands this transaction sends carry fields
+           * the Motors page does not own and cannot show:
+           *
+           *   MSP_SET_FEATURE_CONFIG    ONE 32-bit mask for the whole
+           *                             aircraft. Motors owns 3 bits of it;
+           *                             GPS, Ports, Receiver and General
+           *                             own others.
+           *   MSP_SET_ADVANCED_CONFIG   carries pid_process_denom, the gyro
+           *                             calibration fields, gyro_offset_yaw
+           *                             and debug_mode.
+           *   MSP_SET_MIXER_CONFIG      carries the mixer mode.
+           *
+           * MSP has no way to set one bit of a shared value: the whole
+           * thing goes on the wire every time. So whichever snapshot these
+           * unowned fields are mirrored from is the version of them the
+           * aircraft ends up with.
+           *
+           * Mirroring them from `original` - the snapshot the editor loaded,
+           * possibly minutes and several screens ago - meant a Motors save
+           * quietly reverted anything another screen had changed since. The
+           * stale-base check above cannot catch it: it compares the DRAFT,
+           * which projects 3 bits of a 32-bit mask, so a GPS feature enabled
+           * in between compares equal and is then overwritten. Every signal
+           * says success - the write is acknowledged, the EEPROM commit
+           * lands, the readback of the owned fields matches exactly - and
+           * the aircraft has silently lost its GPS feature.
+           *
+           * `current` was read a few lines above under this transaction's
+           * own exclusive lease, and the owned fields in it have just been
+           * proven equal to the base the operator edited. So it is the same
+           * base for everything Motors owns, and the LIVE value for
+           * everything it does not.
+           *
+           * The set of groups is unchanged by this: for each shared payload
+           * the unowned fields appear on both sides of the changed-or-not
+           * comparison and cancel, so a group is emitted on exactly the
+           * same condition as before.
+           */
+          const writes = encodeChangedMotorConfiguration(current, draft);
 
           const stillOwned = (): boolean =>
             this.isStillOwned(sessionId, client, generation, epoch);

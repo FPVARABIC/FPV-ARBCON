@@ -136,6 +136,107 @@ describe('motor pole count is bounded where the firmware bounds it', () => {
   });
 });
 
+/**
+ * THE 3D DEADBANDS. This is the range mismatch with teeth.
+ *
+ * In 3D mode these three numbers are the motor-stop band, and `neutral3d`
+ * is the DISARMED output pulse itself:
+ *
+ *   drivers/pwm_output.c:38    *disarm = flight3DConfig()->neutral3d;
+ *   drivers/pwm_output.c:41-42 *deadbandMotor3dHigh / *deadbandMotor3dLow
+ *
+ * The bound here was 0..2000 for all three - a number this app invented.
+ * Firmware requires (cli/settings.c):
+ *
+ *   3d_deadband_low   750..1500     3d_deadband_high  1500..2250
+ *   3d_neutral        750..2250
+ *
+ * and MSP does not re-check: MSP_SET_MOTOR_3D_CONFIG is three bare
+ * sbufReadU16 assignments. So the triple below - which satisfies the
+ * ordering rule, encodes cleanly and survives EEPROM - used to be
+ * accepted, and it hands the ESCs a one-microsecond disarm pulse with the
+ * whole throttle stick above the forward deadband.
+ */
+describe('3D deadbands are bounded where the firmware bounds them', () => {
+  it('refuses the ordered-but-impossible triple that used to pass', () => {
+    const result = validateMotorConfigurationDraft(
+      draft({ deadband3dLow: 0, neutral3d: 1, deadband3dHigh: 2 }),
+    );
+    expect(result.valid).toBe(false);
+    expect(result.issues.map(issue => issue.field).sort()).toEqual([
+      'deadband3dHigh',
+      'deadband3dLow',
+      'neutral3d',
+    ]);
+  });
+
+  it.each([
+    ['deadband3dLow', 749],
+    ['deadband3dLow', 1501],
+    ['deadband3dHigh', 1499],
+    ['deadband3dHigh', 2251],
+    ['neutral3d', 749],
+    ['neutral3d', 2251],
+  ] as const)('refuses %s = %i, outside cli/settings.c', (field, value) => {
+    const result = validateMotorConfigurationDraft(draft({ [field]: value }));
+    expect(result.issues).toContainEqual({ field, code: 'OUT_OF_RANGE' });
+  });
+
+  it('accepts the firmware defaults and the exact boundary values', () => {
+    // fc/rc_controls.c PG_RESET_TEMPLATE(flight3DConfig_t): 1406/1514/1460.
+    expect(
+      validateMotorConfigurationDraft(
+        draft({ deadband3dLow: 1406, neutral3d: 1460, deadband3dHigh: 1514 }),
+      ).valid,
+    ).toBe(true);
+    expect(
+      validateMotorConfigurationDraft(
+        draft({ deadband3dLow: 750, neutral3d: 1400, deadband3dHigh: 2250 }),
+      ).valid,
+    ).toBe(true);
+  });
+
+  it('never encodes an out-of-range 3D band', () => {
+    expect(() =>
+      encodeMotor3dConfiguration(
+        draft({ deadband3dLow: 0, neutral3d: 1, deadband3dHigh: 2 }),
+      ),
+    ).toThrow(MotorConfigurationEncodeError);
+  });
+
+  /** The ordering rule is kept as well - it catches triples that are each
+   *  in range but nonsensical together. */
+  it('still refuses an in-range but inverted band', () => {
+    expect(
+      validateMotorConfigurationDraft(
+        draft({ deadband3dLow: 1450, neutral3d: 1400, deadband3dHigh: 1600 }),
+      ).issues,
+    ).toContainEqual({ field: 'neutral3d', code: 'INVALID_3D_BAND' });
+  });
+});
+
+/**
+ * Unsynced PWM frequency. Two sources agree on 200..32000 and this build
+ * agreed with neither, bounding it at 0..65535 - the width of the u16
+ * field rather than the range of the setting:
+ *
+ *   cli/settings.c        motor_pwm_rate   { 200, 32000 }
+ *   src/tabs/motors.html  unsyncedpwmfreq  min="200" max="32000"
+ */
+describe('motor PWM rate is a frequency, not a u16', () => {
+  it.each([0, 1, 199, 32001, 65535])('refuses %i Hz', value => {
+    expect(
+      validateMotorConfigurationDraft(draft({ motorPwmRate: value })).issues,
+    ).toContainEqual({ field: 'motorPwmRate', code: 'OUT_OF_RANGE' });
+  });
+
+  it.each([200, 480, 4000, 32000])('accepts %i Hz', value => {
+    expect(
+      validateMotorConfigurationDraft(draft({ motorPwmRate: value })).valid,
+    ).toBe(true);
+  });
+});
+
 describe('motor configuration API-1.47 payload encoders', () => {
   it('matches the official MSP_SET_MIXER_CONFIG byte order', () => {
     expect(

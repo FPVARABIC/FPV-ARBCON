@@ -89,7 +89,21 @@ export const MOTOR_DSHOT600 = 7;
 export const FEATURE_MOTOR_STOP = 2 ** 4;
 export const FEATURE_GPS = 2 ** 7;
 export const FEATURE_TELEMETRY = 2 ** 10;
-export const FEATURE_OSD = 2 ** 21;
+/**
+ * FIXTURE CORRECTION. This was `2 ** 21`, which is FEATURE_TRANSPONDER.
+ * config/feature.h, unchanged across every reviewed revision:
+ *
+ *   FEATURE_OSD                = 1 << 18
+ *   FEATURE_CHANNEL_FORWARDING = 1 << 20
+ *   FEATURE_TRANSPONDER        = 1 << 21
+ *
+ * Every target feature mask below that says "OSD" was setting a
+ * transponder bit instead - harmless to the transactions being tested,
+ * since nothing here reads the bit back by name, but a fixture that
+ * describes an aircraft wrongly is a fixture that can make a future test
+ * agree with the wrong thing.
+ */
+export const FEATURE_OSD = 2 ** 18;
 
 /** serialPortFunction_e bits, as decodeSerialPorts reads them. */
 export const FUNCTION_MSP = 1 << 0;
@@ -675,6 +689,12 @@ function mspText(type: number, value: string): Uint8Array {
  * THE SPEC, AND THE FIVE DRONES
  * ------------------------------------------------------------------ */
 
+/**
+ * The five original acceptance aircraft. Kept as a named union because it
+ * documents that set; DroneSpec.key is a plain string so a second, larger
+ * fleet can be authored elsewhere (redTeamDroneFixtures.ts) against the
+ * same builders without either list disturbing the other's suite.
+ */
 export type DroneKey =
   | 'LONG_RANGE'
   | 'RACING'
@@ -716,7 +736,7 @@ export interface DroneTarget {
 }
 
 export interface DroneSpec {
-  readonly key: DroneKey;
+  readonly key: string;
   readonly name: string;
   /** Why this build exists, in one line, for the acceptance report. */
   readonly rationale: string;
