@@ -39,6 +39,31 @@ export interface VirtualCliOptions {
   /** Settings this board will refuse, as the real CLI refuses a name its
    *  firmware does not have. */
   readonly unknownSettings?: ReadonlySet<string>;
+  /**
+   * How the reply is broken into transport chunks.
+   *
+   * Chunk boundaries are an artefact of USB and the OS, never of the
+   * protocol, so a reader that behaves differently for different
+   * chunkings is reading the transport instead. Varying this is how that
+   * gets proven rather than assumed.
+   *
+   *   number  fixed size (1 = one byte per delivery)
+   *   'whole' one delivery per reply
+   *   fn      caller-controlled, e.g. a seeded pseudo-random split
+   */
+  readonly chunking?: number | 'whole' | ((remaining: number) => number);
+  /** Line ending the board uses. The firmware emits CRLF; LF exists here
+   *  only to prove the reader does not depend on the CR. */
+  readonly lineEnding?: '\r\n' | '\n';
+  /** Stop answering entirely, to exercise a genuine timeout. */
+  readonly silent?: boolean;
+  /**
+   * Cut the `diff all` reply short after N settings, as a board that
+   * browns out or a link that drops mid-document would. The bytes still
+   * look like a configuration; only the missing terminator says it is
+   * half of one.
+   */
+  readonly truncateDiffAfter?: number;
 }
 
 type DataListener = (event: {sessionId: string; dataBase64: string}) => void;
@@ -68,6 +93,10 @@ export class VirtualCliBoard {
   readonly savedFiles: Array<{filename: string; text: string}> = [];
   private readonly header: readonly string[];
   private readonly unknown: ReadonlySet<string>;
+  private readonly chunking: number | 'whole' | ((remaining: number) => number);
+  private readonly eol: string;
+  private readonly truncateDiffAfter?: number;
+  silent: boolean;
   private listeners = new Set<DataListener>();
   private sessionId = 'virtual-cli-1';
   private pending = '';
@@ -83,6 +112,10 @@ export class VirtualCliBoard {
       'start the command batch',
     ];
     this.unknown = options.unknownSettings ?? new Set();
+    this.chunking = options.chunking ?? 'whole';
+    this.eol = options.lineEnding ?? '\r\n';
+    this.silent = options.silent === true;
+    this.truncateDiffAfter = options.truncateDiffAfter;
   }
 
   /**
@@ -100,13 +133,24 @@ export class VirtualCliBoard {
    * tell them apart will stop in the middle of a backup.
    */
   diffAll(): string {
+    // Built with CRLF; emit() rewrites it if this board speaks LF.
     let out = '';
     for (const heading of this.header) {
       out += `\r\n# ${heading}`;
     }
     out += '\r\nbatch start';
+    let emitted = 0;
     for (const [name, value] of this.settings) {
+      if (
+        this.truncateDiffAfter !== undefined &&
+        emitted >= this.truncateDiffAfter
+      ) {
+        // Stops WITHOUT the batch terminator, which is the only thing
+        // that distinguishes this from a complete document.
+        return out;
+      }
       out += `\r\nset ${name} = ${value}`;
+      emitted += 1;
     }
     out += '\r\n# end the command batch\r\nbatch end';
     return out;
@@ -162,8 +206,29 @@ export class VirtualCliBoard {
   }
 
   private emit(text: string): void {
-    const event = {sessionId: this.sessionId, dataBase64: toBase64(text)};
-    for (const listener of Array.from(this.listeners)) listener(event);
+    if (this.silent) return;
+    const wire = this.eol === '\n' ? text.replace(/\r\n/g, '\n') : text;
+    for (const chunk of this.split(wire)) {
+      const event = {sessionId: this.sessionId, dataBase64: toBase64(chunk)};
+      for (const listener of Array.from(this.listeners)) listener(event);
+    }
+  }
+
+  /** Cuts a reply into transport-sized deliveries. */
+  private split(text: string): string[] {
+    if (this.chunking === 'whole' || text.length === 0) return [text];
+    const chunks: string[] = [];
+    let offset = 0;
+    while (offset < text.length) {
+      const remaining = text.length - offset;
+      const size =
+        typeof this.chunking === 'number'
+          ? this.chunking
+          : Math.max(1, Math.min(remaining, this.chunking(remaining)));
+      chunks.push(text.slice(offset, offset + Math.max(1, size)));
+      offset += Math.max(1, size);
+    }
+    return chunks;
   }
 
   private respond(line: string): string {

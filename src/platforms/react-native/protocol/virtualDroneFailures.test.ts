@@ -1,3 +1,4 @@
+/* eslint-disable no-bitwise -- seeded pseudo-random chunk splitting. */
 /**
  * WHAT THE FIVE AIRCRAFT DO WHEN THINGS GO WRONG.
  *
@@ -11,9 +12,6 @@
  *
  * Nothing here is evidence about hardware.
  */
-
-import {readFileSync} from 'fs';
-import {join} from 'path';
 
 import {
   MSP_BOARD_ALIGNMENT_CONFIG,
@@ -340,69 +338,128 @@ function betaflightDiffAll(settings: ReadonlyMap<string, string>): string {
   return lines.join('\n');
 }
 
-describe('backup - the capture path, against a byte-faithful CLI', () => {
+describe('backup capture - REGRESSION for the heading-truncation defect', () => {
   /**
-   * RECORDED DEFECT — CLI BACKUP CAPTURE STOPS AT THE FIRST HEADING.
+   * WAS: capture aborted three bytes into the document.
    *
-   * ROOT CAUSE. `CliBackupService.readUntilPrompt` decides a reply is
-   * finished when the bytes so far match `/(?:^|\r?\n)#\s*$/`. It runs
-   * that check after EVERY byte. Betaflight prints every heading in a
-   * `diff` through `cliPrintHashLine`, which is
+   * readUntilPrompt ended a reply on `/(?:^|\r?\n)#\s*$/`, checked after
+   * every byte. Betaflight prints every diff heading through
+   * cliPrintHashLine - `cliPrint("\r\n# "); cliPrintLine(str);`
+   * (cli.c:368-376) - so `# version`, the FIRST thing `diff all` emits,
+   * put `\r \n #` on the wire and the reader returned. capture() then
+   * threw, and backup produced no file on any real board.
    *
-   *     cliPrint("\r\n# "); cliPrintLine(str);          (cli.c:368-376)
-   *
-   * so the first heading puts `\r`, `\n`, `#` on the wire before its text.
-   * At that instant the accumulated buffer ends with `\r\n#`, `\s*`
-   * matches the empty string, and the read returns - three bytes into a
-   * document that has not begun. A heading and the prompt share their
-   * first bytes, and nothing here distinguishes them.
-   *
-   * IMPACT. `capture()` then takes what it has, finds nothing that looks
-   * like a configuration, and throws «لم يُرجع Flight Controller نسخة CLI
-   * صالحة». Backup does not produce a truncated file - it produces none.
-   * Every real Betaflight board is affected, because `# version` is the
-   * FIRST thing `diff all` prints.
-   *
-   * WHAT REVEALED IT. Nothing in the existing suite could: those tests
-   * exercise `isPlausibleCliBackup` and `restoreCommands` as pure
-   * functions on strings that were never streamed through the reader.
-   * This one drives the real service against a console that emits the
-   * firmware's own byte pattern.
-   *
-   * NOT FIXED HERE, deliberately. The correction is not a one-line regex
-   * change: a heading and a prompt are genuinely indistinguishable until
-   * you know whether anything follows, so the fix has to introduce either
-   * an idle/settle window or a diff-specific terminator - a change to
-   * serial read timing on a hardware path, which cannot be validated
-   * without hardware. It is reported for a decision rather than guessed
-   * at.
-   *
-   * This test asserts the defect so it stays visible and so that fixing
-   * it fails here loudly, which is the moment to delete this block.
+   * NOW: the reader knows `diff` prints headings, so a prompt-shaped tail
+   * is provisional until the batch terminator `batch end` (cli.c:8184-
+   * 8187) has been seen. See cliReplyReader.
    */
-  it('RECORDED DEFECT: capture aborts on the firmware’s first heading line', async () => {
+  it('captures the whole document across four heading lines', async () => {
     const board = new VirtualCliBoard({settings: LONG_RANGE_SETTINGS});
-    await expect(cliService(board).capture(1, 0)).rejects.toThrow(
-      'لم يُرجع Flight Controller نسخة CLI صالحة.',
+    const backup = await cliService(board).capture(1, 0);
+
+    // Every heading survived, including the one that used to end the read.
+    expect(backup).toContain('# version');
+    expect(backup).toContain('# start the command batch');
+    expect(backup).toContain('# end the command batch');
+    // And so did every setting.
+    for (const [name, value] of LONG_RANGE_SETTINGS) {
+      expect(backup).toContain(`set ${name} = ${value}`);
+    }
+    expect(restoreCommands(backup).length).toBeGreaterThanOrEqual(
+      LONG_RANGE_SETTINGS.size,
     );
-    // The board did answer `diff all` in full; the reader stopped early.
-    expect(board.commands).toContain('diff all');
-    expect(board.diffAll()).toContain('set gps_provider = UBLOX');
   });
 
-  it('a board with no heading lines captures correctly - isolating the cause', async () => {
-    // Same service, same board, one difference: no `cliPrintHashLine`
-    // output before the settings. It succeeds, which pins the failure
-    // above on the heading pattern rather than on anything else.
+  it('gives the identical document byte-by-byte, in fixed chunks and whole', async () => {
+    // Chunk boundaries belong to USB, not to the protocol. If the answer
+    // moved with them, the reader would be reading the transport.
+    const captures: string[] = [];
+    for (const chunking of [1, 3, 7, 64, 'whole'] as const) {
+      const board = new VirtualCliBoard({
+        settings: LONG_RANGE_SETTINGS,
+        chunking,
+      });
+      captures.push(await cliService(board).capture(1, 0));
+    }
+    expect(new Set(captures).size).toBe(1);
+  });
+
+  it('is unchanged under a pseudo-random split of every reply', async () => {
+    // A deterministic generator, so a failure is reproducible.
+    let seed = 20260819;
+    const next = (remaining: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return 1 + (seed % Math.max(1, Math.min(remaining, 11)));
+    };
     const board = new VirtualCliBoard({
       settings: LONG_RANGE_SETTINGS,
-      header: [],
+      chunking: next,
+    });
+    const reference = new VirtualCliBoard({settings: LONG_RANGE_SETTINGS});
+    expect(await cliService(board).capture(1, 0)).toBe(
+      await cliService(reference).capture(1, 0),
+    );
+  });
+
+  it('captures identically from a board that speaks LF instead of CRLF', async () => {
+    const crlf = await cliService(
+      new VirtualCliBoard({settings: LONG_RANGE_SETTINGS}),
+    ).capture(1, 0);
+    const lf = await cliService(
+      new VirtualCliBoard({settings: LONG_RANGE_SETTINGS, lineEnding: '\n'}),
+    ).capture(1, 0);
+    expect(lf).toBe(crlf);
+  });
+
+  it('keeps the batch framing that makes the document replayable', async () => {
+    const backup = await cliService(
+      new VirtualCliBoard({settings: LONG_RANGE_SETTINGS}),
+    ).capture(1, 0);
+    const lines = backup.split('\n').map(line => line.trim());
+    expect(lines).toContain('batch start');
+    expect(lines).toContain('batch end');
+    expect(lines.indexOf('batch start')).toBeLessThan(
+      lines.indexOf('batch end'),
+    );
+  });
+
+  it('times out rather than returning a partial document', async () => {
+    // A board that stops talking mid-reply must not produce a backup.
+    const board = new VirtualCliBoard({settings: LONG_RANGE_SETTINGS});
+    board.silent = true;
+    await expect(cliService(board).capture(1, 0)).rejects.toThrow();
+    expect(board.savedFiles).toEqual([]);
+  });
+
+  it('refuses a diff that arrives without its terminator', async () => {
+    // The dangerous case, and the reason the deadline fallback is
+    // refused for `diff`: a truncated document still ends with a prompt
+    // and still LOOKS like a configuration - `# version`, `batch start`,
+    // a run of `set` lines. Only the missing `batch end` says it is half
+    // of one. It must not become a backup file.
+    //
+    // This one costs the service's own 30s read budget, because proving
+    // "the board stopped and we still refused" means waiting it out.
+    const board = new VirtualCliBoard({
+      settings: LONG_RANGE_SETTINGS,
+      truncateDiffAfter: 6,
     });
     await expect(cliService(board).capture(1, 0)).rejects.toThrow();
-    // ...and it still fails, because isPlausibleCliBackup REQUIRES a
-    // comment line. The two rules are in direct conflict: the reader
-    // cannot survive a `#` line, and the validator will not accept a
-    // document without one.
+    expect(board.savedFiles).toEqual([]);
+  }, 45_000);
+
+  it('captures a complete but EMPTY diff truthfully', async () => {
+    // A board with nothing off-default emits the batch framing and no
+    // `set` lines. That document is complete, not truncated, and the
+    // difference matters: this must be accepted where the truncated one
+    // above is refused.
+    const board = new VirtualCliBoard({settings: new Map(), header: []});
+    const backup = await cliService(board).capture(1, 0);
+    expect(backup).toContain('batch start');
+    expect(backup).toContain('batch end');
+    expect(
+      restoreCommands(backup).filter(line => line.startsWith('set ')),
+    ).toEqual([]);
   });
 
   it('refuses to write a backup file that is not a valid CLI dump', async () => {
@@ -413,13 +470,30 @@ describe('backup - the capture path, against a byte-faithful CLI', () => {
     expect(board.savedFiles).toEqual([]);
   });
 
-  it('writes a valid backup document to a file byte for byte', async () => {
+  it('writes the captured document to a file byte for byte', async () => {
     const board = new VirtualCliBoard({settings: LONG_RANGE_SETTINGS});
-    const document = betaflightDiffAll(LONG_RANGE_SETTINGS);
-    await expect(
-      cliService(board).saveBackup('fpv.txt', document),
-    ).resolves.toBe(true);
-    expect(board.savedFiles).toEqual([{filename: 'fpv.txt', text: document}]);
+    const service = cliService(board);
+    const backup = await service.capture(1, 0);
+    await expect(service.saveBackup('fpv.txt', backup)).resolves.toBe(true);
+    expect(board.savedFiles).toEqual([{filename: 'fpv.txt', text: backup}]);
+  });
+
+  it('captures a DIFFERENT document for a different aircraft', async () => {
+    const whoop = await cliService(
+      new VirtualCliBoard({
+        settings: new Map([
+          ['battery_capacity', '300'],
+          ['motor_pwm_protocol', 'DSHOT300'],
+        ]),
+      }),
+    ).capture(1, 0);
+    const longRange = await cliService(
+      new VirtualCliBoard({settings: LONG_RANGE_SETTINGS}),
+    ).capture(1, 0);
+    expect(whoop).not.toBe(longRange);
+    expect(whoop).toContain('set battery_capacity = 300');
+    expect(longRange).toContain('set battery_capacity = 5000');
+    expect(whoop).not.toContain('gps_provider');
   });
 });
 
@@ -463,51 +537,21 @@ describe('restore - replaying a long-range backup onto a wiped board', () => {
   });
 
   /**
-   * RECORDED DEFECT — RESTORE CANNOT SEE `###ERROR`, AND SO REPORTS A
-   * FAILED RESTORE AS A SUCCESSFUL ONE.
+   * WAS: every rejected command was invisible, and the restore saved.
    *
-   * This is the same root cause as the capture defect above, but its
-   * consequence is worse, because it is SILENT.
+   * restore() scans each reply for `/###ERROR/i`. The firmware writes a
+   * refusal as `"###ERROR IN " cmd ": " detail "###"` (cli.c:474-486)
+   * after a linefeed, so the wire carries `\r \n # # #` - and the old
+   * reader stopped at the FIRST of those hashes, three bytes before the
+   * word ERROR. `errors` stayed empty, the `errors.length === 0` guard
+   * passed, `save` was issued, and the board persisted a partially
+   * restored configuration while the UI reported success.
    *
-   * ROOT CAUSE. `restore()` sends each command and inspects the reply for
-   * `/###ERROR/i`. Betaflight formats a refusal as
-   *
-   *     "###ERROR IN " cmdName ": " detail "###"          (cli.c:474-486)
-   *
-   * printed after a linefeed, so the wire carries `\r`, `\n`, `#`, `#`,
-   * `#`, ... The reply reader stops the instant its buffer matches
-   * `/(?:^|\r?\n)#\s*$/`, which is true after the FIRST of those three
-   * hashes. `reply` is therefore the three bytes `\r\n#`; the marker the
-   * caller is looking for is in the bytes that were never read, and
-   * `port.flushInput()` before the next command discards them.
-   *
-   * IMPACT, in order:
-   *   1. every rejected `set` looks like a success;
-   *   2. `errors` stays empty, so the guard `if (errors.length === 0)`
-   *      passes and `save` IS issued;
-   *   3. the board persists a partially-restored configuration;
-   *   4. the application reports the restore as complete.
-   *
-   * An operator restoring a backup onto a differently-built board - the
-   * ordinary case after a firmware change - is told their aircraft is
-   * back to its old configuration when some of it silently is not. On a
-   * long-range build the settings most likely to be refused are the GPS
-   * Rescue ones, which is to say the failsafe behaviour.
-   *
-   * WHAT REVEALED IT. Driving the real `CliBackupService` against a
-   * console that emits the firmware's own byte pattern. The existing
-   * suite tests `restoreCommands()` on a string and never streams a
-   * reply, so the error branch had never been exercised at all.
-   *
-   * NOT FIXED HERE. Tightening the prompt pattern to require `# `
-   * (hash-space) would fix THIS half - `###` can never match it - but not
-   * the capture half, where a heading and the prompt really are
-   * identical until you know whether text follows. Both halves want one
-   * decision about how a CLI reply is known to have ended, on a hardware
-   * path that cannot be validated without hardware. Reported, not
-   * guessed at.
+   * NOW: the prompt requires hash-SPACE. `###` cannot match it, at any
+   * chunking, with no timing involved - so the whole error line reaches
+   * the caller. See cliReplyReader.
    */
-  it('RECORDED DEFECT: a rejected command is invisible, and the restore still saves', async () => {
+  it('sees every rejected command, sends no save, and persists nothing', async () => {
     const document = betaflightDiffAll(LONG_RANGE_SETTINGS);
     // A replacement board on an older build with no GPS Rescue: three of
     // the backed-up settings do not exist on it. This is the real
@@ -522,31 +566,49 @@ describe('restore - replaying a long-range backup onto a wiped board', () => {
     });
     const result = await cliService(older).restore(1, 0, document);
 
-    // The board DID refuse three commands...
-    expect(
-      older.commands.filter(command =>
-        command.startsWith('set gps_rescue_'),
-      ),
-    ).toHaveLength(3);
-    expect(older.settings.get('gps_rescue_min_sats')).toBeUndefined();
-
-    // ...and the application saw none of them.
-    expect(result.errors).toEqual([]);
-    // Worse: it went on to persist the incomplete configuration.
-    expect(older.sawSave).toBe(true);
-    expect(older.persisted.get('gps_rescue_min_sats')).toBeUndefined();
+    // The three refusals reached the caller, with the marker intact.
+    expect(result.errors).toHaveLength(3);
+    for (const error of result.errors) {
+      expect(error).toContain('###ERROR');
+      expect(error).toContain('INVALID NAME');
+    }
+    // THE NON-NEGOTIABLE RULE: one failed command means no save.
+    expect(older.sawSave).toBe(false);
+    expect(older.commands).not.toContain('save');
+    expect(older.persisted.get('failsafe_procedure')).toBeUndefined();
   });
 
-  it('would refuse to save if the errors were visible - the guard itself is sound', () => {
-    // The logic downstream of the detection is correct; only the
-    // detection is broken. Proving that here keeps the defect scoped to
-    // one cause rather than leaving the whole path suspect.
-    const source = readFileSync(
-      join(__dirname, 'CliBackupService.ts'),
-      'utf8',
+  it('sees the rejection at every chunking, including one byte at a time', async () => {
+    const document = betaflightDiffAll(LONG_RANGE_SETTINGS);
+    for (const chunking of [1, 2, 5, 'whole'] as const) {
+      const board = new VirtualCliBoard({
+        settings: new Map(),
+        unknownSettings: new Set(['gps_rescue_min_sats']),
+        chunking,
+      });
+      const result = await cliService(board).restore(1, 0, document);
+      expect(`${chunking}: ${result.errors.length}`).toBe(`${chunking}: 1`);
+      expect(`${chunking}: ${board.sawSave}`).toBe(`${chunking}: false`);
+    }
+  });
+
+  it('refuses to save when only the LAST command fails', async () => {
+    // The ordering trap: everything succeeded until the final line, so a
+    // naive implementation has already convinced itself the job is done.
+    const settings = new Map(LONG_RANGE_SETTINGS);
+    const lastName = [...settings.keys()].at(-1) as string;
+    const board = new VirtualCliBoard({
+      settings: new Map(),
+      unknownSettings: new Set([lastName]),
+    });
+    const result = await cliService(board).restore(
+      1,
+      0,
+      betaflightDiffAll(settings),
     );
-    expect(source).toContain('if (errors.length === 0)');
-    expect(source).toContain("await port.writeRaw(asciiBytes('save\\r'));");
+    expect(result.errors).toHaveLength(1);
+    expect(board.sawSave).toBe(false);
+    expect(board.persisted.size).toBe(0);
   });
 
   it('refuses a corrupt backup outright rather than replaying part of it', async () => {
@@ -555,6 +617,96 @@ describe('restore - replaying a long-range backup onto a wiped board', () => {
       cliService(board).restore(1, 0, 'set gyro = \u0000'),
     ).rejects.toThrow();
     expect(board.commands).toEqual([]);
+  });
+
+  /**
+   * THE FULL ROUND TRIP the acceptance brief asks for, end to end through
+   * the real service, with nothing hand-fed in the middle:
+   *
+   *   configured board -> `diff all` capture -> simulated flash/reset ->
+   *   reconnect -> restore -> save -> reconnect -> compare
+   *
+   * The comparison at the end is against the CAPTURED document, not
+   * against the fixture, so a capture that quietly lost half the
+   * settings would show up as a board that came back missing them.
+   */
+  it('ROUND TRIP: long-range board survives a flash and comes back identical', async () => {
+    // 1. A configured long-range aircraft.
+    const original = new VirtualCliBoard({settings: LONG_RANGE_SETTINGS});
+
+    // 2. Back it up through the real service.
+    const backup = await cliService(original).capture(1, 0);
+    expect(backup).toContain('batch end');
+
+    // 3. Flash and factory reset: a new board object with firmware
+    //    defaults and none of the aircraft's settings.
+    const afterFlash = new VirtualCliBoard({
+      settings: new Map([
+        ['gps_provider', 'NONE'],
+        ['failsafe_procedure', 'DROP'],
+        ['motor_pwm_protocol', 'PWM'],
+      ]),
+    });
+    expect(afterFlash.persisted.get('battery_capacity')).toBeUndefined();
+
+    // 4. Reconnect and restore.
+    const result = await cliService(afterFlash).restore(1, 0, backup);
+    expect(result.errors).toEqual([]);
+    expect(afterFlash.sawSave).toBe(true);
+
+    // 5. Reconnect again and read the board back the same way an
+    //    operator would - another `diff all` through the same service.
+    const afterRestore = await cliService(
+      new VirtualCliBoard({settings: afterFlash.persisted}),
+    ).capture(1, 0);
+
+    // 6. Compare. Every setting the backup carried is on the board.
+    const wanted = restoreCommands(backup).filter(line =>
+      line.startsWith('set '),
+    );
+    expect(wanted.length).toBe(LONG_RANGE_SETTINGS.size);
+    for (const line of wanted) {
+      expect(afterRestore).toContain(line);
+    }
+    // And the settings the flash left behind did not survive as strays -
+    // every one of them was overwritten by the backup.
+    expect(afterRestore).toContain('set motor_pwm_protocol = DSHOT300');
+    expect(afterRestore).toContain('set failsafe_procedure = GPS-RESCUE');
+    expect(afterRestore).toContain('set gps_provider = UBLOX');
+  });
+
+  /**
+   * The same round trip with ONE command deliberately refused. This is
+   * the rule that is not negotiable: one failure means no save, and no
+   * claim of success.
+   */
+  it('ROUND TRIP WITH A REJECTION: no save, no success, nothing persisted', async () => {
+    const backup = await cliService(
+      new VirtualCliBoard({settings: LONG_RANGE_SETTINGS}),
+    ).capture(1, 0);
+
+    const afterFlash = new VirtualCliBoard({
+      settings: new Map([['motor_pwm_protocol', 'PWM']]),
+      // One setting this build does not have - the single injected
+      // rejection.
+      unknownSettings: new Set(['gps_rescue_min_start_dist']),
+    });
+    const result = await cliService(afterFlash).restore(1, 0, backup);
+
+    // The error was DETECTED, with the firmware's marker intact.
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]).toContain('###ERROR');
+    expect(result.errors[0]).toContain('gps_rescue_min_start_dist');
+    // NO save was sent.
+    expect(afterFlash.sawSave).toBe(false);
+    expect(afterFlash.commands).not.toContain('save');
+    // NOTHING was persisted, so a power cycle leaves the board as the
+    // flash left it rather than half-configured.
+    expect(afterFlash.persisted.get('gps_provider')).toBeUndefined();
+    expect(afterFlash.persisted.get('failsafe_procedure')).toBeUndefined();
+    // And the caller is told, so no UI can report success: both call
+    // sites in FirmwareFlasherScreen throw on a non-empty `errors`.
+    expect(result.errors.length > 0).toBe(true);
   });
 
   it('restores two different aircraft to two different configurations', async () => {
