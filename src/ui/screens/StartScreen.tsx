@@ -34,7 +34,7 @@ type RouteCardProps = {
   readonly bullets: readonly string[];
   readonly button: string;
   readonly testID: string;
-  readonly accent: 'teal' | 'blue';
+  readonly accent: 'teal' | 'blue' | 'deep';
   /** True only where the two cards share a row - see styles.routeCardShare. */
   readonly sideBySide: boolean;
   readonly onPress: () => void;
@@ -56,14 +56,27 @@ function RouteCard({
         styles.routeCard,
         sideBySide && styles.routeCardShare,
         accent === 'blue' && styles.routeCardBlue,
+        accent === 'deep' && styles.routeCardDeep,
       ]}>
-      <View style={[styles.routeMark, accent === 'blue' && styles.routeMarkBlue]} />
+      <View
+        style={[
+          styles.routeMark,
+          accent === 'blue' && styles.routeMarkBlue,
+          accent === 'deep' && styles.routeMarkDeep,
+        ]}
+      />
       <Text style={styles.routeTitle}>{title}</Text>
       <Text style={styles.routeDescription}>{description}</Text>
       <View style={styles.bullets}>
         {bullets.map(item => (
           <View key={item} style={styles.bulletRow}>
-            <View style={[styles.bulletDot, accent === 'blue' && styles.bulletDotBlue]} />
+            <View
+              style={[
+                styles.bulletDot,
+                accent === 'blue' && styles.bulletDotBlue,
+                accent === 'deep' && styles.bulletDotDeep,
+              ]}
+            />
             <Text style={styles.bulletText}>{item}</Text>
           </View>
         ))}
@@ -85,6 +98,7 @@ function RouteCard({
           return [
             styles.routeButton,
             accent === 'blue' && styles.routeButtonBlue,
+            accent === 'deep' && styles.routeButtonDeep,
             hovered && styles.routeButtonHovered,
             pressed && styles.pressed,
           ];
@@ -92,14 +106,14 @@ function RouteCard({
         <Text
           style={[
             styles.routeButtonText,
-            accent === 'blue' && styles.routeButtonTextBlue,
+            accent !== 'teal' && styles.routeButtonTextOnDark,
           ]}>
           {button}
         </Text>
         <Icon
           name="chevron-forward"
           size={22}
-          color={accent === 'blue' ? colors.white : colors.accentText}
+          color={accent === 'teal' ? colors.accentText : colors.white}
         />
       </Pressable>
     </View>
@@ -155,32 +169,49 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
       </View>
 
       <View style={desktop ? styles.routeRow : styles.routeColumn} testID="start-route-group">
+      {/* Reading order in an RTL row runs right to left, so the first
+          child is the RIGHTMOST card. The guide leads because it is the
+          only door that answers "what should I even set?" - the other two
+          assume you already know. */}
       <RouteCard
-        title="إعداد متحكم الطيران"
-        description="الاتصال باللوحة وضبط إعداداتها."
+        title="دليل أنماط الطيران"
+        description="خمسة أنماط، كل واحد بخطواته وقيمه وصوره."
         bullets={[
-          'الاتصال باللوحة',
-          'Setup والإعدادات',
-          'Motors و Receiver',
-          'OSD و GPS و Sensors',
-          'CLI',
+          'سينمائي · حر · سباق',
+          'وووب داخلي · مدى طويل',
+          'أرقام رسمية بمصادرها',
         ]}
-        button="فتح إعدادات متحكم الطيران"
-        testID="start-configure"
-        accent="teal"
+        button="فتح دليل أنماط الطيران"
+        testID="start-flight-style-guide"
+        accent="deep"
         sideBySide={desktop}
-        onPress={() => navigation.navigate('Setup')}
+        onPress={() => navigation.navigate('FlightStyleGuide')}
       />
 
       <RouteCard
-        title="Firmware Flasher"
+        title="تحديث Firmware"
         description="تثبيت أو تحديث Firmware واختيار Target وإعدادات البناء."
         bullets={['اختيار اللوحة والإصدار', 'إعدادات البناء الرسمية', 'تفليش عبر DFU مع تحقق كامل']}
-        button="فتح Firmware Flasher"
+        button="فتح تحديث Firmware"
         testID="start-firmware"
         accent="blue"
         sideBySide={desktop}
         onPress={() => navigation.navigate('FirmwareFlasher')}
+      />
+
+      <RouteCard
+        title="إعداد الدرون"
+        description="الاتصال باللوحة وضبط إعداداتها."
+        bullets={[
+          'الاتصال باللوحة',
+          'Motors و Receiver و OSD',
+          'GPS و Sensors و CLI',
+        ]}
+        button="فتح إعداد الدرون"
+        testID="start-configure"
+        accent="teal"
+        sideBySide={desktop}
+        onPress={() => navigation.navigate('Setup')}
       />
       </View>
 
@@ -266,14 +297,17 @@ const styles = StyleSheet.create({
      correct, which is why a numeric width check never saw it. */
   routeCardShare: {flexGrow: 1, flexShrink: 1, flexBasis: 0},
   routeCardBlue: {borderColor: colors.info},
+  routeCardDeep: {borderColor: colors.accentStrong},
   routeMark: {position: 'absolute', start: 0, top: 0, bottom: 0, width: 4, backgroundColor: colors.accent},
   routeMarkBlue: {backgroundColor: colors.info},
+  routeMarkDeep: {backgroundColor: colors.accentStrong},
   routeTitle: {...typography.title, color: colors.textPrimary},
   routeDescription: {...typography.body, color: colors.textSecondary, writingDirection: 'rtl'},
   bullets: {gap: 7, paddingVertical: spacing.sm},
   bulletRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   bulletDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent},
   bulletDotBlue: {backgroundColor: colors.info},
+  bulletDotDeep: {backgroundColor: colors.accentStrong},
   bulletText: {
     ...typography.body,
     color: colors.textSecondary,
@@ -301,9 +335,10 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   routeButtonBlue: {backgroundColor: colors.info},
+  routeButtonDeep: {backgroundColor: colors.accentStrong},
   routeButtonHovered: {opacity: 0.9},
   routeButtonText: {...typography.sectionTitle, color: colors.accentText},
-  routeButtonTextBlue: {color: colors.white},
+  routeButtonTextOnDark: {color: colors.white},
   pressed: {opacity: 0.75},
   safetyNote: {...noticeSurface, backgroundColor: colors.successSoft,
     borderColor: colors.success,

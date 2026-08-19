@@ -78,14 +78,69 @@ const SCAN = root => {
       tokens.push({run: m[0], left: box.left, y: Math.round(box.top)});
     }
     if (tokens.length < 2) return null;
+    // Compare the SEQUENCE OF TEXT, not object identity: a label like
+    // "25 · 25" holds two identical tokens, and swapping them changes
+    // nothing a reader could see. Reporting that as a defect would be
+    // reporting the comparator's own tie-break.
     const visual = [...tokens].sort((a, b) => a.y - b.y || a.left - b.left);
-    return visual.every((t, i) => t === tokens[i]) ? null : visual.map(t => t.run);
+    const written = tokens.map(t => t.run).join(' ');
+    const painted = visual.map(t => t.run).join(' ');
+    return written === painted ? null : visual.map(t => t.run);
+  };
+
+  /**
+   * A RANGE, wherever it is spelled across several nodes.
+   *
+   * `<Text>{min}-{max}</Text>` is not one string: JSX makes it three
+   * children, and react-native-web renders three text nodes. Inside a
+   * right-to-left box those three lay out right to left, so "0-200"
+   * PAINTS as "200-0" - a bound that now reads backwards. No per-node
+   * check can see it, because each node holds one number and one number
+   * is never out of order. The two ends must therefore be measured
+   * against each other across the whole element.
+   */
+  const ranges = element => {
+    const text = element.textContent ?? '';
+    if (!/\d\s*[\u2013\u2014-]\s*\d/.test(text)) return null;
+    const fragments = [];
+    const walk = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    while (walk.nextNode()) {
+      const node = walk.currentNode;
+      for (const m of (node.nodeValue ?? '').matchAll(/\d[\d.,]*/g)) {
+        const range = document.createRange();
+        range.setStart(node, m.index);
+        range.setEnd(node, m.index + m[0].length);
+        const box = range.getClientRects()[0];
+        if (box === undefined) continue;
+        fragments.push({run: m[0], left: box.left, y: Math.round(box.top)});
+      }
+    }
+    if (fragments.length < 2) return null;
+    const visual = [...fragments].sort((a, b) => a.y - b.y || a.left - b.left);
+    const written = fragments.map(f => f.run).join(' … ');
+    const painted = visual.map(f => f.run).join(' … ');
+    return written === painted ? null : {written, readsAs: painted};
   };
 
   const walker = document.createTreeWalker(root ?? document.body, NodeFilter.SHOW_TEXT);
   const rows = [];
   const ltrRows = [];
+  const rangeRows = [];
   const seen = new Set();
+  const seenRange = new Set();
+
+  const scope = root ?? document.body;
+  for (const element of scope.querySelectorAll('*')) {
+    // Leaf containers only: an ancestor would re-report its child's range.
+    if (element.querySelector('*') !== null) continue;
+    const flipped = ranges(element);
+    if (flipped === null) continue;
+    const text = (element.textContent ?? '').trim().slice(0, 60);
+    if (seenRange.has(text)) continue;
+    seenRange.add(text);
+    rangeRows.push({text, ...flipped});
+  }
+
   while (walker.nextNode()) {
     const node = walker.currentNode;
     const text = node.nodeValue ?? '';
@@ -93,7 +148,11 @@ const SCAN = root => {
 
     if (!ARABIC.test(text)) {
       // No Arabic at all: engineering text that must read left to right.
-      if (!/[A-Za-z]/.test(text) || !/[0-9]/.test(text)) continue;
+      // Digits ALONE count. A bound like "0-200" carries no Latin letter
+      // at all, and inside a right-to-left box its two ends swap into
+      // "200-0" - a range that now reads backwards. Requiring a letter
+      // here is what hid exactly that defect the first time.
+      if (!/[0-9]/.test(text)) continue;
       if (getComputedStyle(node.parentElement).direction !== 'rtl') continue;
       const scrambled = measured(node, text);
       if (scrambled !== null) {
@@ -133,7 +192,7 @@ const SCAN = root => {
       });
     }
   }
-  return {rows, ltrRows};
+  return {rows, ltrRows, rangeRows};
 };
 
 /** The element this step's picture actually contains. */
@@ -151,6 +210,7 @@ const browser = await chromium.launch({executablePath: CHROME, args: ['--no-sand
 const inPicture = new Map();
 const onScreen = new Map();
 const measuredText = new Map();
+const flippedRanges = new Map();
 const directions = new Map();
 
 for (const style of STYLES) {
@@ -168,6 +228,9 @@ for (const style of STYLES) {
     }
     for (const row of all.ltrRows) {
       if (!measuredText.has(row.text)) measuredText.set(row.text, {...row, where});
+    }
+    for (const row of all.rangeRows) {
+      if (!flippedRanges.has(row.text)) flippedRanges.set(row.text, {...row, where});
     }
     const root = await pictureRoot(page, step);
     const inside = await page.evaluate(SCAN, root);
@@ -200,6 +263,21 @@ if (onScreen.size === 0) {
   show('MIXED ARABIC/LATIN - INSIDE A PUBLISHED PICTURE', inPicture);
   show('MIXED ARABIC/LATIN - ELSEWHERE ON THE SAME SCREENS',
        new Map([...onScreen].filter(([t]) => !inPicture.has(t))));
+  process.exitCode = 1;
+}
+
+console.log('');
+if (flippedRanges.size === 0) {
+  console.log('RANGES SPELLED ACROSS NODES: every bound still reads low to high');
+} else {
+  console.log(`RANGES READING BACKWARDS: ${flippedRanges.size}`);
+  for (const row of flippedRanges.values()) {
+    console.log('');
+    console.log(`  ${row.where}`);
+    console.log(`  text     ${row.text}`);
+    console.log(`  written  ${row.written}`);
+    console.log(`  reads as ${row.readsAs}`);
+  }
   process.exitCode = 1;
 }
 

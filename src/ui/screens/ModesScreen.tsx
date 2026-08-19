@@ -148,8 +148,19 @@ const RangeLiveValue = React.memo(function RangeLiveValue({sessionKey, active, c
         as colour, so the bar is readable without relying on hue. */}
     <View style={styles.rangeLegend}>
       <View style={[styles.rangeSwatch, {backgroundColor: colour}]} testID={`modes-range-swatch-${condition.permanentId}`} />
+      {/* ONE STRING, AND THE BOUNDS CARRY A BIDI ISOLATE.
+          Two separate problems met here. `{a}-{b}` in JSX is three text
+          nodes, and inside this right-to-left line the three laid out
+          right to left - "1700-2100" painted as "2100-1700", a range
+          reading backwards. Making it one string fixes the splitting;
+          the isolate fixes the direction. A nested <Text> with
+          writingDirection would NOT have worked, and this was measured:
+          react-native-web renders it as an inline span, and on an inline
+          box `direction` does nothing unless `unicode-bidi` also opens a
+          new embedding level - which no React Native style can express.
+          U+2066/U+2069 do it in the text itself, on both platforms. */}
       <Text style={styles.rangeLegendText} testID="modes-range-bounds">
-        {modeName} · {condition.start}–{condition.end}
+        {`${modeName} · \u2066${condition.start}–${condition.end}\u2069`}
       </Text>
     </View>
     <Text style={[styles.liveRangeText, inside && styles.liveRangeTextInside]}>القيمة الحية: {value ?? '—'}{inside ? ' · داخل النطاق' : ''}</Text>

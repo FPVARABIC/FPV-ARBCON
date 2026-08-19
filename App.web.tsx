@@ -104,6 +104,14 @@ const MainTabsScreen = React.lazy(() => import('./src/ui/screens/MainTabsScreen'
 const FirmwareFlasherScreen = React.lazy(
   () => import('./src/ui/screens/FirmwareFlasherSimpleScreen'),
 );
+// The guide carries every step capture of every corner - megabytes of
+// PNG - so it is its own chunk and downloads only when opened.
+const FlightStyleGuideScreen = React.lazy(
+  () => import('./src/ui/screens/FlightStyleGuideScreen'),
+);
+const FlightStyleCornerScreen = React.lazy(
+  () => import('./src/ui/screens/FlightStyleCornerScreen'),
+);
 
 function ScreenFallback(): React.JSX.Element {
   const {t} = useTranslation();
@@ -155,6 +163,14 @@ function App(): React.JSX.Element {
               <Stack.Screen
                 name="FirmwareFlasher"
                 component={FirmwareFlasherScreen}
+              />
+              <Stack.Screen
+                name="FlightStyleGuide"
+                component={FlightStyleGuideScreen}
+              />
+              <Stack.Screen
+                name="FlightStyleCorner"
+                component={FlightStyleCornerScreen}
               />
             </Stack.Navigator>
           </Suspense>

@@ -530,7 +530,7 @@ export const DECISIONS = {
     {what: 'قراءة جودة الرابط (LQ) و RSSI بوحدة dBm', kind: 'NOT_APPLICABLE',
      detail: '**غير موجودتين في عقد MSP إطلاقًا**، فلا يستطيع أي تطبيق MSP عرضهما حيًّا. تراهما في نظارتك عبر OSD؛ التطبيق يضبط عتبة الإنذار فقط (الخطوة 8).'},
     {what: 'نوع التثبيت (2D/3D) و HDOP/VDOP', kind: 'NOT_APPLICABLE',
-     detail: '`MSP_RAW_GPS` يرسل بت تثبيت واحدًا و PDOP وحده. التطبيق يعرض PDOP بالاسم الصحيح ولا يخترع بديلًا.'},
+     detail: 'بروتوكول الاتصال مع المتحكم يرسل **بت تثبيت واحدًا و PDOP وحده** — لا 2D/3D ولا HDOP/VDOP. التطبيق يعرض PDOP بالاسم الصحيح ولا يخترع بديلًا. اسم الأمر نفسه في `_meta/sources.md` § S2.2.'},
   ],
   firmware: [
     {what: 'إعدادات الطيران', kind: 'NOT_APPLICABLE',

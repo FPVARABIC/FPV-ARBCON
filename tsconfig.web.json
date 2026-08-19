@@ -76,6 +76,11 @@
      * construct this DOM-typed project has no types for. Vite resolves
      * brandLogoSource.web.ts instead (moduleSuffixes above). */
     "src/ui/brand/brandLogoSource.ts",
+    /* Same seam again for the guide's step captures and covers: these
+     * Metro halves use require(), which this DOM-typed project has no
+     * types for. Vite resolves the .web.ts siblings (moduleSuffixes). */
+    "src/ui/flight-guides/guideImages.ts",
+    "src/ui/flight-guides/heroImages.ts",
     "src/platforms/react-native/transport/native/__mocks__/**",
     /* Tests run under Jest against the Android resolution, and are
      * typechecked by tsconfig.json. */

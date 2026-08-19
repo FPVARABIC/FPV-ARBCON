@@ -47,6 +47,18 @@ function getFirmwareFlasherScreen() {
   return require('./src/ui/screens/FirmwareFlasherSimpleScreen').default;
 }
 
+/**
+ * The guide screens carry every step capture of every corner, so they stay
+ * out of the start-up module graph until the operator asks for them.
+ */
+function getFlightStyleGuideScreen() {
+  return require('./src/ui/screens/FlightStyleGuideScreen').default;
+}
+
+function getFlightStyleCornerScreen() {
+  return require('./src/ui/screens/FlightStyleCornerScreen').default;
+}
+
 function App(): React.JSX.Element {
   const { navigationRef, onReady, onStateChange } = useSessionLossRedirect();
 
@@ -64,6 +76,8 @@ function App(): React.JSX.Element {
           <Stack.Screen name="Start" component={StartScreen} />
           <Stack.Screen name="Setup" component={MainTabsScreen} />
           <Stack.Screen name="FirmwareFlasher" getComponent={getFirmwareFlasherScreen} />
+          <Stack.Screen name="FlightStyleGuide" getComponent={getFlightStyleGuideScreen} />
+          <Stack.Screen name="FlightStyleCorner" getComponent={getFlightStyleCornerScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaView>

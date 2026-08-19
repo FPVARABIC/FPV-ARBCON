@@ -1,5 +1,5 @@
 /**
- * The app's entire STACK navigation surface: exactly three routes.
+ * The app's entire STACK navigation surface: five routes.
  *
  * 'Start' is the two-choice home. 'Setup' renders the main TAB SHELL
  * (MainTabsScreen) and is now reachable DIRECTLY from Start with NO
@@ -9,6 +9,16 @@
  * navigation.setParams({sessionKey}) once a session is genuinely ACTIVE.
  * 'FirmwareFlasher' is the standalone flashing tool, also entered
  * directly from Start.
+ *
+ * 'FlightStyleGuide' is the directory of flight styles, and
+ * 'FlightStyleCorner' is ONE style's own guide. They are two routes
+ * rather than one screen with a mode, because they answer different
+ * questions - "which of these am I flying?" and "how do I set this one
+ * up?" - and because the corner must be addressable on its own. The
+ * corner takes the style id as a parameter and renders that style ALONE:
+ * a page that pooled two styles' numbers would be dangerous, not untidy,
+ * since the same field takes opposite correct values on a 1S whoop and a
+ * 6S racer.
  *
  * THE 'Connection' ROUTE IS GONE - deliberately. It was a full-screen
  * stop between Home and the configurator whose only product purpose was
@@ -51,4 +61,11 @@ export type RootStackParamList = {
     | {sessionKey?: SetupUiSessionKey; afterSessionLoss?: true}
     | undefined;
   FirmwareFlasher: undefined;
+  FlightStyleGuide: undefined;
+  /**
+   * `styleId` is a plain string rather than the generated union so a
+   * stale deep link cannot fail to typecheck; the screen resolves it and
+   * says plainly when there is no such corner.
+   */
+  FlightStyleCorner: {styleId: string};
 };

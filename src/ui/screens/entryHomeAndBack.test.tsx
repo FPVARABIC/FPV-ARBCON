@@ -1,13 +1,21 @@
 /**
- * HOME AS TWO DOORS, AND A WAY BACK OUT OF EVERY ONE OF THEM.
+ * HOME AS THREE DOORS, AND A WAY BACK OUT OF EVERY ONE OF THEM.
  *
  * Two reported defects meet here. The flight-controller workspace could
  * be entered with no visible way back - Home → connect → trapped. And
  * the Home screen sold the product with a slogan ("مهمتان، بابان
- * مباشران") instead of naming the two things an operator can actually
- * do. These tests pin the corrected entry: two destinations, plain
- * Arabic, compact actions, and a back control wherever there is
- * somewhere to go back to.
+ * مباشران") instead of naming the things an operator can actually do.
+ * These tests pin the corrected entry: plain Arabic, compact actions,
+ * and a back control wherever there is somewhere to go back to.
+ *
+ * IT WAS TWO DOORS, AND IS NOW THREE. The flight-style guide became a
+ * destination of its own, and it earns the place: the other two doors
+ * both assume the operator already knows what to set, and this is the
+ * one that answers that question. The count in these tests is not a
+ * value in itself - what matters, and what every assertion below still
+ * pins, is that each door is present, goes straight to its destination,
+ * stays a compact action rather than a banner, and never collapses to
+ * zero height when the cards stack.
  */
 
 jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
@@ -113,21 +121,23 @@ afterEach(() => {
   jest.clearAllMocks();
 });
 
-describe('Home offers exactly two destinations', () => {
-  it('has the flight-controller door and the firmware door, and no third primary action', () => {
+describe('Home offers exactly three destinations', () => {
+  it('has the guide door, the firmware door and the configurator door', () => {
     const navigate = jest.fn();
     const renderer = renderStart(navigate);
     renderers.push(renderer);
 
-    expect(control(renderer, 'start-configure')).toBeDefined();
+    expect(control(renderer, 'start-flight-style-guide')).toBeDefined();
     expect(control(renderer, 'start-firmware')).toBeDefined();
+    expect(control(renderer, 'start-configure')).toBeDefined();
 
     const primaries = renderer.root
       .findAllByProps({testID: 'start-route-group'})[0]
       .findAllByType(Text)
       .map(node => String(node.props.children));
-    expect(primaries).toContain('فتح إعدادات متحكم الطيران');
-    expect(primaries).toContain('فتح Firmware Flasher');
+    expect(primaries).toContain('فتح دليل أنماط الطيران');
+    expect(primaries).toContain('فتح تحديث Firmware');
+    expect(primaries).toContain('فتح إعداد الدرون');
   });
 
   it('the flight-controller card names what the operator will actually do there', () => {
@@ -135,11 +145,23 @@ describe('Home offers exactly two destinations', () => {
     renderers.push(renderer);
     const text = screenText(renderer);
 
-    expect(text).toContain('إعداد متحكم الطيران');
+    expect(text).toContain('إعداد الدرون');
     expect(text).toContain('الاتصال باللوحة');
     expect(text).toContain('Motors');
     expect(text).toContain('OSD');
     expect(text).toContain('CLI');
+  });
+
+  it('the guide card says what is inside it, without pretending to be a tune', () => {
+    const renderer = renderStart(jest.fn());
+    renderers.push(renderer);
+    const text = screenText(renderer);
+
+    expect(text).toContain('دليل أنماط الطيران');
+    // Names the styles it holds - and no number, because choosing an
+    // aircraft comes before any value applies to it.
+    expect(text).toContain('سينمائي');
+    expect(text).toContain('مدى طويل');
   });
 
   it('the firmware card is direct and not overloaded', () => {
@@ -147,7 +169,7 @@ describe('Home offers exactly two destinations', () => {
     renderers.push(renderer);
     const text = screenText(renderer);
 
-    expect(text).toContain('Firmware Flasher');
+    expect(text).toContain('تحديث Firmware');
     expect(text).toContain('تثبيت أو تحديث Firmware واختيار Target وإعدادات البناء.');
   });
 
@@ -175,14 +197,19 @@ describe('Home offers exactly two destinations', () => {
       control(renderer, 'start-firmware')?.props.onPress();
     });
     expect(navigate).toHaveBeenCalledWith('FirmwareFlasher');
-    expect(navigate).toHaveBeenCalledTimes(2);
+
+    act(() => {
+      control(renderer, 'start-flight-style-guide')?.props.onPress();
+    });
+    expect(navigate).toHaveBeenCalledWith('FlightStyleGuide');
+    expect(navigate).toHaveBeenCalledTimes(3);
   });
 
   it('the calls to action are compact, not full-width bars', () => {
     const renderer = renderStart(jest.fn());
     renderers.push(renderer);
 
-    for (const testID of ['start-configure', 'start-firmware']) {
+    for (const testID of ['start-configure', 'start-firmware', 'start-flight-style-guide']) {
       const style = styleOf(renderer, testID);
       expect(style.alignSelf).toBe('flex-start');
       // Still a comfortable target.
@@ -210,7 +237,7 @@ describe('Home offers exactly two destinations', () => {
       renderers.push(renderer);
 
       const cards = routeCards(renderer);
-      expect(cards).toHaveLength(2);
+      expect(cards).toHaveLength(3);
       for (const style of cards) {
         // Not "0 but overridden" - absent, so the card is content-sized.
         expect(style.flexBasis).toBeUndefined();
@@ -219,7 +246,7 @@ describe('Home offers exactly two destinations', () => {
     },
   );
 
-  it('side by side on a desktop window, the two cards still share the row equally', () => {
+  it('side by side on a desktop window, the cards still share the row equally', () => {
     const renderer = renderStart(jest.fn(), 1440);
     renderers.push(renderer);
 
@@ -227,9 +254,9 @@ describe('Home offers exactly two destinations', () => {
     expect(flatStyle(group.props.style).flexDirection).toBe('row');
 
     const cards = routeCards(renderer);
-    expect(cards).toHaveLength(2);
+    expect(cards).toHaveLength(3);
     for (const style of cards) {
-      // Equal halves of the row - the one place these belong.
+      // Equal shares of the row - the one place these belong.
       expect(style.flexBasis).toBe(0);
       expect(style.flexGrow).toBe(1);
     }

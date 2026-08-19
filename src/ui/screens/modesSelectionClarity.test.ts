@@ -74,7 +74,15 @@ describe('a range band says where it starts, ends and who owns it', () => {
     // Colour identifies the owner; the words make it readable without
     // relying on hue at all.
     expect(EXECUTABLE).toContain('modes-range-bounds');
-    expect(EXECUTABLE).toContain('{modeName} · {condition.start}–{condition.end}');
+    // ONE template string, and the bounds inside a bidi isolate. Written
+    // as `{a}-{b}` this was three text nodes, and in a right-to-left line
+    // the three laid out right to left - "1700-2100" painted as
+    // "2100-1700", a range reading backwards. Measured, not theorised;
+    // see the comment at the call site for why a nested <Text> with
+    // writingDirection could not have fixed it.
+    expect(EXECUTABLE).toContain(
+      '`${modeName} · \\u2066${condition.start}–${condition.end}\\u2069`',
+    );
     expect(EXECUTABLE).toContain('modes-range-swatch-');
   });
 
