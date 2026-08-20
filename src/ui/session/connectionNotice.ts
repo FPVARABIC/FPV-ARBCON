@@ -15,7 +15,17 @@
 
 import {useSyncExternalStore} from 'react';
 
-export type ConnectionNotice = 'SESSION_LOST' | null;
+export type ConnectionNotice =
+  /** A link died on its own - a cable, a brown-out, a desync. */
+  | 'SESSION_LOST'
+  /**
+   * A reboot the application ASKED for did not come back inside its
+   * deadline. Distinct from SESSION_LOST because the operator pressed
+   * save and is owed a different sentence: not "the link died" but
+   * "it did not come back, try again".
+   */
+  | 'RECONNECT_FAILED'
+  | null;
 
 let current: ConnectionNotice = null;
 const listeners = new Set<() => void>();

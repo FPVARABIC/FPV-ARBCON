@@ -33,7 +33,6 @@ import {
   usbSerialTransportClient,
 } from '../../platforms/react-native/transport';
 import type {
-  SerialConfiguration,
   TransportError,
   UsbSerialTransportClient,
 } from '../../platforms/react-native/transport';
@@ -47,26 +46,13 @@ import {
   getLastConnectionTrace,
 } from '../../core/protocol/msp/identification/connectionTrace';
 import {recordConnectionStage} from '../../platforms/connectionReport';
+import {openBoard} from './openBoard';
 import {
   resolveConnectTarget,
   type ConnectOption,
   type ConnectPhase,
 } from './connectFlow';
 import {useVerifiedFcConnection} from './useVerifiedFcConnection';
-
-/**
- * Owned by the UI, not by the transport defaults: a standard 8N1 with no
- * flow control, the same configuration the connection screen used before
- * it was removed. Unchanged on purpose - this is a rework of WHERE the
- * connection is driven from, not of HOW the port is opened.
- */
-const SERIAL_CONFIGURATION: SerialConfiguration = {
-  baudRate: 115200,
-  dataBits: 8,
-  stopBits: '1',
-  parity: 'none',
-  flowControl: 'off',
-};
 
 /**
  * How long identification may run before Home stops waiting.
@@ -171,31 +157,18 @@ export function useDirectConnect(
     [settle, t],
   );
 
-  /** Open one port and hand the session to the coordinator. */
+  /** Open one port and hand the session to the coordinator. The
+   *  sequence itself is shared with the reboot reconnector so the two
+   *  cannot drift - see openBoard.ts. */
   const openOption = useCallback(
     async (option: ConnectOption) => {
       settle({kind: 'OPENING'});
-      recordConnectionStage('CONNECT_PRESSED', {
-        vendorId: option.device.vendorId,
-        productId: option.device.productId,
-        portIndex: option.portIndex,
-      });
-      const trace = getLastConnectionTrace() ?? beginConnectionTrace();
-      const sessionId = await client.openDevice(
-        option.device.deviceId,
-        option.portIndex,
-        SERIAL_CONFIGURATION,
-      );
-      if (!mountedRef.current) return;
-      /* The only place a sessionId ever becomes known. openSession()
-         commits its entry synchronously and chains identification; the
-         wall watches that, not this call's return. */
-      mspSessionCoordinator.openSession(client, sessionId);
-      recordConnectionStage('MSP_SESSION_ACTIVATED', {sessionId});
-      trace.reached('SERIAL_PORT_OPENED', sessionId);
-      /* A live session exists again. If this was the tail of a reboot
-         the application itself asked for, that lifecycle ends here. */
+      const sessionId = await openBoard(client, option);
+      /* The OPERATOR is driving now, so any reboot recovery that was
+         still running is no longer the thing in charge - and this hook
+         carries its own identification deadline from here. */
       fcRebootRecovery.noteRecovered();
+      if (!mountedRef.current) return;
       awaitingRef.current = sessionId;
       settle({kind: 'IDENTIFYING'});
     },

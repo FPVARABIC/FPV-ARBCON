@@ -63,6 +63,7 @@ import {
 import {boardAlignmentController} from '../../../platforms/react-native/protocol';
 import type {
   BoardAlignmentController,
+  BoardAlignmentLoadOutcome,
   BoardAlignmentSaveOutcome,
   SetupUiSessionKey,
 } from '../../../platforms/react-native/protocol';
@@ -172,7 +173,16 @@ export default function BoardAlignmentCard({
   const load = useCallback(
     async (key: SetupUiSessionKey) => {
       setPhase({kind: 'LOADING'});
-      const outcome = await engine.load(key);
+      /* The callers below used to write `.catch(() => undefined)`, which
+         swallowed a rejected read and left this card on its LOADING
+         spinner with no message and no retry. The failure is handled
+         here instead, as the same MESSAGE a refused read produces. */
+      let outcome: BoardAlignmentLoadOutcome;
+      try {
+        outcome = await engine.load(key);
+      } catch (error) {
+        outcome = {kind: 'FAILED', error};
+      }
       if (
         !mounted.current ||
         liveKey.current.sessionId !== key.sessionId ||
@@ -290,7 +300,16 @@ export default function BoardAlignmentCard({
     }
     const key = sessionKey;
     setPhase({kind: 'SAVING'});
-    const outcome = await engine.save(key, snapshot, draft);
+    let outcome: BoardAlignmentSaveOutcome;
+    try {
+      outcome = await engine.save(key, snapshot, draft);
+    } catch (error) {
+      /* Terminal, and deliberately NOT optimistic: an unexpected throw
+         means the board's stored alignment is unknown, so the card stops
+         claiming to know it (below) rather than showing the draft as if
+         it had been written. */
+      outcome = {kind: 'FAILED', error};
+    }
     if (
       !mounted.current ||
       liveKey.current.sessionId !== key.sessionId ||

@@ -1,4 +1,19 @@
+import {withDeadline} from '../async/deadline';
+
 const BUILD_ORIGIN = 'https://build.betaflight.com';
+
+/**
+ * How long the build server gets to send response headers.
+ *
+ * Not derived from anything on the wire - this is a public HTTPS
+ * service, not the MSP link - so it is chosen and justified: long enough
+ * that a cold cloud-build endpoint on a slow mobile connection still
+ * answers, short enough that an operator watching «جارٍ التحمير» learns
+ * the truth in well under a minute. The cloud-build poll loop checks its
+ * own overall deadline between requests, so this only needs to
+ * guarantee that each request RETURNS.
+ */
+const BUILD_API_RESPONSE_TIMEOUT_MILLIS = 30_000;
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_BINARY_BYTES = 8 * 1024 * 1024;
 const MAX_BUILD_LOG_BYTES = 512 * 1024;
@@ -74,12 +89,58 @@ export class BetaflightBuildApi {
    * AbortController semantics (and the screen's aborted-check) hold.
    */
   private async request(path: string, init?: RequestInit): Promise<Response> {
+    /*
+     * BOUNDED, BECAUSE A SERVER THAT ACCEPTS AND NEVER ANSWERS IS THE
+     * COMMON FAILURE, NOT THE RARE ONE.
+     *
+     * `fetch()` rejects on DNS failure and connection refusal quickly,
+     * but a connection that is established and then goes silent - a
+     * captive portal, a proxy that swallowed the request, a server under
+     * load - leaves this Promise pending with no clock of its own. Every
+     * screen above it then sits on its LoadState, and the cloud-build
+     * poll loop below never reaches the deadline check between its
+     * requests, because it never returns from one.
+     *
+     * WHAT THIS BOUNDS, PRECISELY: the response HEADERS. `fetch()`
+     * settles when they arrive, not when the body has been read, so this
+     * clock covers "the server never answered" and deliberately does NOT
+     * cap how long a firmware binary may take to download - a slow link
+     * is not a defect. The body read's exit is the caller's own cancel.
+     *
+     * On expiry the underlying request is ABORTED rather than merely
+     * abandoned: a half-open connection left behind would hold a
+     * connection slot and could still deliver a body nobody is reading.
+     */
+    const deadlineController = new AbortController();
+    const abortOnDeadline = () => deadlineController.abort();
+    init?.signal?.addEventListener('abort', abortOnDeadline, {once: true});
     try {
-      return await this.fetchImpl(sameOriginUrl(path), {
-        ...init,
-        headers: {'X-CFG-VER': 'FPV-ARBCON/1.0', ...(init?.headers ?? {})},
-      });
+      const outcome = await withDeadline(
+        this.fetchImpl(sameOriginUrl(path), {
+          ...init,
+          signal: deadlineController.signal,
+          headers: {'X-CFG-VER': 'FPV-ARBCON/1.0', ...(init?.headers ?? {})},
+        }),
+        BUILD_API_RESPONSE_TIMEOUT_MILLIS,
+      );
+      if (outcome.status === 'SETTLED') return outcome.value;
+      if (outcome.status === 'TIMED_OUT') {
+        deadlineController.abort();
+        throw new BuildApiError(
+          'لم يستجب خادم البناء خلال المهلة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
+        );
+      }
+      throw outcome.reason;
     } catch (reason) {
+      if (reason instanceof BuildApiError) throw reason;
+      /* The caller's own cancellation reaches here as our linked
+         controller's abort; report it as the abort it is so the screen's
+         aborted-check still holds. */
+      if (init?.signal?.aborted === true) {
+        const aborted = new Error('أُلغيت العملية.');
+        aborted.name = 'AbortError';
+        throw aborted;
+      }
       if (reason instanceof Error && reason.name === 'AbortError') {
         throw reason;
       }
@@ -95,6 +156,8 @@ export class BetaflightBuildApi {
       throw new BuildApiError(
         'تعذّر الوصول إلى خادم البناء من هذه الصفحة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
       );
+    } finally {
+      init?.signal?.removeEventListener('abort', abortOnDeadline);
     }
   }
 

@@ -133,11 +133,12 @@ export function MotorOutputReorderPanel({
       return;
     }
     setPhase('SAVING');
-    const outcome = await controller.saveOutputOrder(
-      sessionId,
-      original,
-      desired,
-    );
+    let outcome: MotorOutputOrderSaveOutcome;
+    try {
+      outcome = await controller.saveOutputOrder(sessionId, original, desired);
+    } catch (error) {
+      outcome = {kind: 'FAILED', error};
+    }
     const message = outcomeMessage(t, outcome);
     setResult(message);
     setPhase(

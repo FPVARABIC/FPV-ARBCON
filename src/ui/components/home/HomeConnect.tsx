@@ -1,19 +1,28 @@
 /**
  * THE CONNECTION, RENDERED WHERE THE OPERATOR PRESSED.
  *
- * Two pieces, and the split is the design:
+ * Three pieces, and the split is the design:
  *
  *   HomeConnectStatus  an INLINE strip under the two Home cards. It is
  *                      what a connection that is going fine looks like -
  *                      one line, no dialog, no navigation. A modal here
  *                      would flash open and shut for a 300ms connect.
+ *                      Under the cards, because that is where the
+ *                      operator just pressed.
+ *
+ *   HomeConnectNotice  the same strip shape, ABOVE the cards, for the
+ *                      opposite situation: the operator did not press
+ *                      anything, they were ejected here by a link that
+ *                      died or a reboot that never came back. Different
+ *                      position because it answers a question they did
+ *                      not ask, and below the fold it answered nothing.
  *
  *   HomeConnectPicker  a small dialog, and ONLY for the one state that
  *                      is a genuine question: more than one board on the
  *                      bench. Asking deserves an interruption; reporting
  *                      progress does not.
  *
- * Neither is a route. Both disappear when the phase does.
+ * None is a route. All disappear when their reason does.
  */
 
 import React from 'react';
@@ -37,6 +46,7 @@ import {
   type ConnectOption,
   type ConnectPhase,
 } from '../../session/connectFlow';
+import type {ConnectionNotice} from '../../session/connectionNotice';
 
 /** The progress phases share one line of copy and one spinner. */
 const PROGRESS_COPY: Record<string, string> = {
@@ -47,13 +57,10 @@ const PROGRESS_COPY: Record<string, string> = {
 
 export function HomeConnectStatus({
   phase,
-  sessionLost,
   onRetry,
   onDismiss,
 }: {
   readonly phase: ConnectPhase;
-  /** A link died and returned the operator here. Shown until they act. */
-  readonly sessionLost: boolean;
   readonly onRetry: () => void;
   readonly onDismiss: () => void;
 }): React.JSX.Element | null {
@@ -98,16 +105,72 @@ export function HomeConnectStatus({
     );
   }
 
-  /* Nothing in flight. The only thing left to say is that a board went
-     away - and only until the operator does something about it. */
-  if (sessionLost) {
+  return null;
+}
+
+/**
+ * WHY THE OPERATOR IS LOOKING AT HOME WHEN THEY DID NOT CHOOSE TO BE.
+ *
+ * =====================================================================
+ * WHY THIS IS A SEPARATE COMPONENT WITH A SEPARATE PLACE ON THE PAGE
+ * =====================================================================
+ *
+ * The strip above answers "what is happening to the thing I just
+ * pressed", so it belongs directly under the card that was pressed -
+ * where the operator is already looking.
+ *
+ * This one answers a question the operator never asked, because they
+ * were EJECTED here: a reboot that did not come back, or a link that
+ * died. Measured at 360, 390, 412 and 768 with the two primary cards
+ * stacked, the old shared position put this message 74 to 118 pixels
+ * BELOW the fold. The escape hatch existed and was invisible - the
+ * operator saw a Home screen with no explanation of why they had left
+ * the workspace, which is the same experience as the hang it replaced.
+ *
+ * So it is rendered ABOVE the cards instead. Precedence is unchanged:
+ * it stays silent while a connection attempt is in flight or has just
+ * failed, because those have their own, newer sentence.
+ */
+export function HomeConnectNotice({
+  phase,
+  notice,
+  onRetry,
+  onDismiss,
+}: {
+  readonly phase: ConnectPhase;
+  readonly notice: ConnectionNotice;
+  readonly onRetry: () => void;
+  readonly onDismiss: () => void;
+}): React.JSX.Element | null {
+  const {t} = useTranslation();
+  // A fresh attempt, or a fresh failure, is the newer news. IDLE is the
+  // only phase that means "nothing of mine is in flight".
+  if (phase.kind !== 'IDLE') return null;
+  if (notice !== null) {
+    const failedReconnect = notice === 'RECONNECT_FAILED';
     return (
-      <View style={[styles.strip, styles.stripLost]} testID="home-session-lost">
+      <View
+        style={[styles.strip, styles.stripLost]}
+        testID={failedReconnect ? 'home-reconnect-failed' : 'home-session-lost'}>
         <Icon name="triangle-alert" size={20} color={colors.warning} />
         <Text style={styles.stripText} testID="home-connect-message">
-          {t('directConnect.sessionLost')}
+          {t(
+            failedReconnect
+              ? 'directConnect.reconnectFailed'
+              : 'directConnect.sessionLost',
+          )}
         </Text>
         <View style={styles.stripActions}>
+          {/* A recovery that timed out is exactly the case where the
+              operator wants to try again without hunting for the door. */}
+          {failedReconnect ? (
+            <Button
+              label={t('directConnect.retry')}
+              onPress={onRetry}
+              variant="secondary"
+              testID="home-reconnect-retry"
+            />
+          ) : null}
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={t('directConnect.cancel')}
@@ -181,6 +244,12 @@ const styles = StyleSheet.create({
   strip: {
     flexDirection: 'row',
     alignItems: 'center',
+    /* WRAPS, because at 360 the icon, a full sentence, a button and a
+       dismiss target do not fit on one line - and when they are forced
+       to, the sentence collapses into a column of two-word fragments
+       that is harder to read than the failure it describes. Wrapping
+       puts the actions on their own line instead. */
+    flexWrap: 'wrap',
     gap: spacing.sm,
     alignSelf: 'stretch',
     paddingHorizontal: spacing.md,
@@ -195,10 +264,19 @@ const styles = StyleSheet.create({
   stripText: {
     ...typography.body,
     flex: 1,
+    /* Enough room that the sentence stays a sentence; below this the
+       row wraps and the text gets the full width to itself. */
+    minWidth: 200,
     color: colors.textPrimary,
     textAlign: 'right',
     writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
-  stripActions: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
+  stripActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    // Trails the text on a wide row; sits under it on a wrapped one.
+    marginRight: 'auto',
+  },
   dismiss: {
     width: MIN_TOUCH_TARGET,
     height: MIN_TOUCH_TARGET,

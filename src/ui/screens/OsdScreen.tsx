@@ -234,6 +234,15 @@ export default function OsdScreen({
         setDraft(undefined);
         setPhase('ERROR');
       }
+    }).catch(error => {
+      /* load() returns an outcome; a rejection is the case nobody
+         planned for, and without this the layout editor stays on its
+         loading text with no message and no way to retry. */
+      if (cancelled) return;
+      setLoadOutcome({kind: 'FAILED', error});
+      setSnapshot(undefined);
+      setDraft(undefined);
+      setPhase('ERROR');
     });
     return () => {
       cancelled = true;
@@ -336,7 +345,12 @@ export default function OsdScreen({
     )
       return;
     setPhase('SAVING');
-    const outcome = await controller.save(sessionKey, snapshot, draft);
+    let outcome: OsdSaveOutcome;
+    try {
+      outcome = await controller.save(sessionKey, snapshot, draft);
+    } catch (error) {
+      outcome = {kind: 'FAILED', error};
+    }
     setSaveOutcome(outcome);
     // The draft is replaced by the flight controller's own read-back, and
     // ONLY when the controller proved the write: every other outcome

@@ -11,6 +11,7 @@ import {
   type MspExclusiveOperation,
 } from '../../../core';
 import { MSP_FC_VERSION } from '../../../core/protocol/msp/commands/mspCommands';
+import { withDeadline } from '../../../core/async/deadline';
 import {
   decodeFcVersion,
   type MspFcVersion,
@@ -33,8 +34,16 @@ type FetchResponse = {
 };
 type Fetcher = (
   url: string,
-  init?: { cache?: 'no-cache' },
+  init?: { cache?: 'no-cache'; signal?: AbortSignal },
 ) => Promise<FetchResponse>;
+
+/**
+ * How long the preset host gets to send response headers before the
+ * Presets screen is told the truth instead of spinning. Same reasoning
+ * and the same figure as buildApi's own bound: a public HTTPS service on
+ * a slow mobile link, not the MSP wire.
+ */
+const PRESET_RESPONSE_TIMEOUT_MILLIS = 30_000;
 
 export interface LoadedFirmwarePreset {
   readonly summary: FirmwarePresetSummary;
@@ -169,10 +178,31 @@ export class FirmwarePresetRepository {
     return result.result;
   }
 
+  /**
+   * BOUNDED. The Presets screen shows a loading state while this runs and
+   * has no other way out of it: an un-timed `fetch` to a host that
+   * accepts the connection and then goes quiet leaves that state
+   * permanent. Aborting on expiry rather than only abandoning the
+   * Promise means the half-open request is actually torn down.
+   *
+   * As in buildApi, this bounds the response HEADERS, not the body: a
+   * slow download of a legitimately large preset file is not a defect.
+   */
   private async loadText(path: string, limit: number): Promise<string> {
-    const response = await this.fetcher(`${this.baseUrl}${path}`, {
-      cache: 'no-cache',
-    });
+    const aborter = new AbortController();
+    const outcome = await withDeadline(
+      this.fetcher(`${this.baseUrl}${path}`, {
+        cache: 'no-cache',
+        signal: aborter.signal,
+      }),
+      PRESET_RESPONSE_TIMEOUT_MILLIS,
+    );
+    if (outcome.status === 'TIMED_OUT') {
+      aborter.abort();
+      throw new Error(`لم يستجب مصدر Presets عند تنزيل ${path}.`);
+    }
+    if (outcome.status === 'REJECTED') throw outcome.reason;
+    const response = outcome.value;
     if (!response.ok)
       throw new Error(`فشل تنزيل ${path} (HTTP ${response.status}).`);
     const text = await response.text();

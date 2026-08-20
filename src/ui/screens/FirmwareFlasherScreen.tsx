@@ -21,6 +21,7 @@ import {
 
 import type {RootStackParamList} from '../../navigation/types';
 import {describeFlightControllerHardware, resolveCatalogTarget} from '../../core';
+import {abortable} from '../../core/async/deadline';
 import {
   CloudBuildCoordinator,
   MAX_UNIFIED_CONFIG_BYTES,
@@ -1131,21 +1132,45 @@ export default function FirmwareFlasherScreen({
     return chosen;
   }, [appendLog, client, selectedPortIndex, selectedSerialId]);
 
+  /**
+   * A FILE-SAVE DIALOG IS PACED BY A PERSON, SO ITS EXIT IS CANCEL.
+   *
+   * `saveFirmwareFile()` resolves when the operator picks a location -
+   * which may legitimately take minutes, so a deadline here would be a
+   * defect. But `saving` makes `isBusy` true, and `isBusy` blocks
+   * navigation, so a dialog whose Promise never settles used to trap the
+   * operator on this screen with no cancel button. It now owns an
+   * AbortController like every other operation, and `saving` is
+   * cancellable.
+   */
   const saveCurrentFirmware = useCallback(async () => {
     if (!firmware) return;
+    const controller = new AbortController();
+    operationController.current = controller;
     setOperation('saving');
     setStatus('اختر مكان حفظ Firmware…');
     try {
-      const saved = await client.saveFirmwareFile(
-        firmwareFilenameLabel(firmware.filename),
-        'application/octet-stream',
-        bytesToBase64(firmware.bytes),
+      const saved = await abortable(
+        client.saveFirmwareFile(
+          firmwareFilenameLabel(firmware.filename),
+          'application/octet-stream',
+          bytesToBase64(firmware.bytes),
+        ),
+        controller.signal,
       );
       setOperation(saved ? 'success' : 'idle');
       setStatus(saved ? 'تم حفظ Firmware بنجاح.' : 'أُلغيَ حفظ Firmware دون تغيير الملف.');
       if (saved) appendLog(`حُفظ ${firmwareFilenameLabel(firmware.filename)}.`);
     } catch (error) {
-      setFailure(error);
+      if (controller.signal.aborted) {
+        // The operator's own cancel is not a failure banner.
+        setOperation('idle');
+        setStatus('أُلغيَ حفظ Firmware.');
+      } else {
+        setFailure(error);
+      }
+    } finally {
+      if (operationController.current === controller) operationController.current = null;
     }
   }, [appendLog, client, firmware, setFailure]);
 
@@ -1159,7 +1184,9 @@ export default function FirmwareFlasherScreen({
     setStatus('إنشاء نسخة CLI بـ diff all قبل المسح…');
     const backup = await cliBackup.capture(device.deviceId, selectedPortIndex, signal);
     const filename = `fpv-arbcon-backup-${selectedTarget || 'fc'}-${Date.now()}.txt`;
-    const saved = await cliBackup.saveBackup(filename, backup);
+    // Same reasoning as saveCurrentFirmware: a save dialog has no honest
+    // deadline, so the flash's own cancel is what ends the wait.
+    const saved = await abortable(cliBackup.saveBackup(filename, backup), signal);
     if (!saved) throw new Error('أُلغيَ حفظ النسخة الاحتياطية؛ لن يبدأ المسح.');
     appendLog(`حُفظت نسخة CLI (${backup.length} حرفاً) قبل التفليش.`);
     return backup;
@@ -1858,7 +1885,7 @@ export default function FirmwareFlasherScreen({
   }, [cliBackup, client, reportProgress, requireOneSerial, selectedPortIndex, setFailure]);
 
   const isBusy = !['idle', 'success', 'error', 'unconfirmed'].includes(operation);
-  const canCancel = ['building', 'detecting', 'backing-up', 'flashing', 'restoring'].includes(operation);
+  const canCancel = ['building', 'detecting', 'saving', 'backing-up', 'flashing', 'restoring'].includes(operation);
   const isDevelopment = selectedReleaseInfo?.channel === 'development';
 
   useEffect(() => {

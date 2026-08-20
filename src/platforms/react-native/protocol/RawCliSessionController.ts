@@ -1,4 +1,5 @@
 import type { MspClient, TelemetryPauseLease } from '../../../core';
+import { withDeadline } from '../../../core/async/deadline';
 import {
   acquireMotorTestLease,
   type MotorTestLease,
@@ -251,7 +252,18 @@ export class RawCliSessionController {
     let ownership: MotorTestLease | undefined;
     scheduler.discardPendingDemands();
     try {
-      await scheduler.waitUntilIdle();
+      /* BOUNDED. `waitUntilIdle()` resolves off the `.finally()` of the
+         polls in flight when it is called - a poll that never settles is
+         a Promise that never settles, and the phase would stay ENTERING
+         with the terminal open and no way back. The catch below is
+         already correct; it just needed something to catch. */
+      const quiet = await withDeadline(
+        scheduler.waitUntilIdle(),
+        CLI_IDLE_TIMEOUT_MS,
+      );
+      if (quiet.status !== 'SETTLED') {
+        throw new Error('لم يهدأ الاتصال بمتحكم الطيران. أعد المحاولة.');
+      }
       const requestedIdentity = this.coordinator.getMotorTestSessionIdentity(
         sessionKey.sessionId,
       );

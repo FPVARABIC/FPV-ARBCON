@@ -17,7 +17,11 @@ import type {IconName} from '../icons';
 import {BrandLogo, BRAND_PRODUCT_NAME, BRAND_PRODUCT_TAGLINE} from '../brand';
 import {Button} from '../components/controls';
 import {readInteraction} from '../components/controls/interaction';
-import {HomeConnectPicker, HomeConnectStatus} from '../components/home/HomeConnect';
+import {
+  HomeConnectNotice,
+  HomeConnectPicker,
+  HomeConnectStatus,
+} from '../components/home/HomeConnect';
 import {
   connectionNotice,
   useConnectionNotice,
@@ -390,7 +394,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
    */
   const connection = useVerifiedFcConnection();
   const {phase, begin, choose, dismiss} = useDirectConnect();
-  const sessionLost = useConnectionNotice() === 'SESSION_LOST';
+  const notice = useConnectionNotice();
 
   const openConfiguration = React.useCallback(() => {
     // A previous loss is not news over a fresh attempt.
@@ -433,6 +437,23 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
         <View style={styles.hero}>
           <Text style={styles.heroTitle}>اختر ما تريد تنفيذه</Text>
         </View>
+      </Band>
+
+      {/* WHY THE OPERATOR IS HERE, IF THEY DID NOT CHOOSE TO BE.
+          Above the cards, not under them: measured at 360-768 with the
+          two cards stacked, this message sat below the fold, so a
+          reconnect that timed out ejected the operator to a Home screen
+          that explained nothing. See HomeConnectNotice. */}
+      <Band tone="page" cap={columnsCap}>
+        <HomeConnectNotice
+          phase={phase}
+          notice={notice}
+          onRetry={openConfiguration}
+          onDismiss={() => {
+            connectionNotice.clear();
+            dismiss();
+          }}
+        />
       </Band>
 
       {/* --------------------------------------- 2. primary actions */}
@@ -483,7 +504,6 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
             nothing to say - which is most of the time. */}
         <HomeConnectStatus
           phase={phase}
-          sessionLost={sessionLost}
           onRetry={openConfiguration}
           onDismiss={() => {
             connectionNotice.clear();

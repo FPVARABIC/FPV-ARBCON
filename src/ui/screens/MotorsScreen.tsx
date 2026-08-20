@@ -70,6 +70,8 @@ import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 import { createMotorTestLifecycleBridge } from '../../platforms/react-native/lifecycle/motorTestLifecycleBridge';
 import { subscribeWindowBlur } from '../../platforms/windowBlur';
 import { evaluateMotorDeparture } from '../../core/state/motorDepartureGate';
+import { REAL_DEADLINE_TIMERS } from '../../core/async/deadline';
+import type { DeadlineTimers } from '../../core/async/deadline';
 import { deriveMotorSessionState } from '../../core/state/motorSessionPresentation';
 import type { MotorDepartureVerdict } from '../../core/state/motorDepartureGate';
 import {
@@ -327,9 +329,37 @@ const endingMotorTestSessions = new WeakMap<
   Promise<MotorTestControllerSnapshot>
 >();
 
+/**
+ * HOW LONG A TEARDOWN MAY TAKE BEFORE IT IS CALLED A FAILED TEARDOWN.
+ *
+ * The Promise below settles on events - a snapshot reaching CLOSED, or
+ * `endSession()` settling. Every one of its guards can legitimately
+ * decline to act (`phase === 'CLOSING'`, not settled for release, no
+ * further notification), so without a clock there is a shape where no
+ * event ever arrives and the "جارٍ إنهاء الجلسة" state is permanent.
+ *
+ * DERIVED, NOT CHOSEN, from the four bounded stages this sequence
+ * actually contains, each bounded by the client's own two-phase contract
+ * (transport write bound + MSP_RESPONSE_TIMEOUT_MILLIS = 3000ms, the
+ * same figure motorTestTelemetryBarrier derives and motorDepartureGate
+ * restates):
+ *
+ *   1. requestStop reaching the flight controller and being acknowledged
+ *   2. the controller settling into a releasable machine state
+ *   3. endSession() acquiring quiescence and tearing the lease down
+ *   4. the CLOSED snapshot with a complete teardown arriving
+ *
+ * FAILING CLOSED IS THE POINT. Expiry REJECTS - it never resolves - so
+ * the caller takes its existing failure path and the operator is told
+ * the session did not close. Nothing here claims a motor stopped;
+ * command authority was already withdrawn before this started.
+ */
+export const MOTOR_TEST_TEARDOWN_BOUND_MILLIS = 4 * 3000;
+
 /** Stop first, wait for lease work to settle, then require complete teardown. */
 export function endMotorTestSessionSafely(
   operator: MotorTestOperatorPort,
+  timers: DeadlineTimers = REAL_DEADLINE_TIMERS,
 ): Promise<MotorTestControllerSnapshot> {
   const existing = endingMotorTestSessions.get(operator);
   if (existing !== undefined) return existing;
@@ -339,9 +369,17 @@ export function endMotorTestSessionSafely(
     let unsubscribe: (() => void) | undefined;
     let closeStarted = false;
     let finished = false;
+    const deadline = timers.setTimer(() => {
+      fail(
+        new Error(
+          'Motor-test teardown did not complete within its bound.',
+        ),
+      );
+    }, MOTOR_TEST_TEARDOWN_BOUND_MILLIS);
     const cleanup = () => {
       unsubscribe?.();
       unsubscribe = undefined;
+      timers.clearTimer(deadline);
     };
     const fail = (reason: unknown) => {
       if (finished) return;

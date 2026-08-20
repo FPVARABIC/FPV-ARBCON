@@ -116,7 +116,41 @@ export interface MspOperationCoordinatorOptions {
   getContext: () => MspOperationContext;
   /** Defaults to RealClock - see clock.ts. */
   clock?: MonotonicClock;
+  /** Overrides WAIT_FOR_IDLE_TIMEOUT_MILLIS. Tests only. */
+  waitForIdleTimeoutMs?: number;
+  /** Injectable timers, so a test can drive the deadline. */
+  setTimer?: (handler: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
 }
+
+/**
+ * HOW LONG THE SCHEDULER GETS TO GO QUIET, and why this exists at all.
+ *
+ * Step 5 below pauses telemetry and then AWAITS the scheduler becoming
+ * idle. `waitUntilIdle()` resolves from the `.finally()` of the polls
+ * that are in flight when it is called - so if a single poll never
+ * settles, that promise never settles either, and there is no drain on
+ * teardown that would release it.
+ *
+ * Every configuration screen's load and save funnels through here. An
+ * unbounded wait at this line is therefore an unbounded LOADING or
+ * SAVING on Modes, OSD, Ports, GPS, PID, Failsafe, Power, VTX,
+ * Receiver, Configurations and Presets simultaneously - one line, ten
+ * spinners that never stop.
+ *
+ * The number: an MSP request is bounded at MSP_RESPONSE_TIMEOUT_MILLIS
+ * (2s), and quiescence may legitimately have to wait for a couple of
+ * requests already on the wire plus the transport's own write bound. 6s
+ * is comfortably longer than any honest quiescence and far shorter than
+ * an operator's patience. Timing out here is not a failure of the
+ * operation - it is a refusal to START one while the link is not quiet,
+ * reported as SESSION_ENDED so the screen shows its ordinary
+ * disconnected posture rather than a spinner.
+ *
+ * The RACE pattern is copied deliberately from
+ * motorTestTelemetryBarrier.awaitQuiescence(), which already had it.
+ */
+export const WAIT_FOR_IDLE_TIMEOUT_MILLIS = 6_000;
 
 /** The default SESSION_ENDED reason for both step 3 (no session at
  * execute()-start) and step 6's ambiguous re-check branch - see this
@@ -151,7 +185,34 @@ class MspOperationCoordinatorImpl implements MspOperationCoordinator {
     private readonly sessionSource: MspOperationSessionSource,
     private readonly getContext: () => MspOperationContext,
     private readonly clock: MonotonicClock,
+    private readonly waitForIdleTimeoutMs: number,
+    private readonly setTimer: (handler: () => void, ms: number) => unknown,
+    private readonly clearTimer: (handle: unknown) => void,
   ) {}
+
+  /**
+   * `waitUntilIdle()` with a deadline. Resolves true if the scheduler
+   * genuinely went idle, false if the deadline won.
+   *
+   * The timer is cleared on BOTH outcomes: a lingering one would fire
+   * into an operation that has already moved on.
+   */
+  private async waitUntilIdleBounded(): Promise<boolean> {
+    let handle: unknown;
+    let timedOut = false;
+    const deadline = new Promise<void>(resolve => {
+      handle = this.setTimer(() => {
+        timedOut = true;
+        resolve();
+      }, this.waitForIdleTimeoutMs);
+    });
+    try {
+      await Promise.race([this.scheduler.waitUntilIdle(), deadline]);
+    } finally {
+      this.clearTimer(handle);
+    }
+    return !timedOut;
+  }
 
   getState(): ExclusiveOperationState {
     return this.state;
@@ -185,7 +246,18 @@ class MspOperationCoordinatorImpl implements MspOperationCoordinator {
     this.phase = 'WAITING_FOR_IDLE';
     const lease = this.scheduler.acquirePauseLease('EXCLUSIVE_OPERATION');
     this.scheduler.discardPendingDemands();
-    await this.scheduler.waitUntilIdle();
+    if (!(await this.waitUntilIdleBounded())) {
+      /* The link would not go quiet. Refusing to start is the honest
+         answer - starting an exclusive write on a link that still has
+         unsettled traffic on it is exactly what the pause lease exists
+         to prevent - and it is reported as a session-level outcome so
+         the screen shows its ordinary disconnected posture instead of a
+         spinner that never stops. */
+      lease.release();
+      this.state = {status: 'IDLE'};
+      this.phase = 'NOT_STARTED';
+      return {status: 'SESSION_ENDED', reason: DEFAULT_SESSION_ENDED_REASON};
+    }
 
     // Step 6.
     const afterIdle = this.sessionSource.captureCurrent();
@@ -249,5 +321,11 @@ export function createMspOperationCoordinator(
     sessionSource,
     options.getContext,
     options.clock ?? new RealClock(),
+    options.waitForIdleTimeoutMs ?? WAIT_FOR_IDLE_TIMEOUT_MILLIS,
+    options.setTimer ?? ((handler, ms) => setTimeout(handler, ms)),
+    options.clearTimer ??
+      (handle => {
+        clearTimeout(handle as ReturnType<typeof setTimeout>);
+      }),
   );
 }

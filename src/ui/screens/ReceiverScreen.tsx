@@ -250,7 +250,7 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
   useEffect(() => {
     if (!active || sessionKey === undefined) return;
     let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); setRebootOutcome(undefined); setModeDraft(undefined);
-    controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createReceiverConfigurationDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } });
+    controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createReceiverConfigurationDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } }).catch(error => { if (cancelled) return; setLoadOutcome({kind: 'FAILED', error}); setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); });
     return () => { cancelled = true; };
   }, [active, controller, reloadToken, sessionKey]);
 
@@ -262,6 +262,12 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
     controller.readRuntime(sessionKey).then(outcome => {
       if (cancelled) return;
       setRuntime(outcome.kind === 'READ' ? outcome.runtime : undefined);
+    }).catch(() => {
+      /* Runtime truth is read-only decoration; losing it must never
+         block the editable configuration this screen already loaded.
+         There is no busy state behind it, so "unknown" is the terminal
+         state and it is already rendered. */
+      if (!cancelled) setRuntime(undefined);
     });
     return () => { cancelled = true; };
   }, [active, controller, reloadToken, runtimeToken, sessionKey]);
@@ -299,7 +305,12 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
     setPhase('SAVING'); setRebootOutcome(undefined);
     // ONE save authority: the mode target rides along with the same call
     // the rest of the configuration already uses.
-    const outcome = await controller.save(sessionKey, snapshot, draft, modeTarget);
+    let outcome: ReceiverSaveOutcome;
+    try {
+      outcome = await controller.save(sessionKey, snapshot, draft, modeTarget);
+    } catch (error) {
+      outcome = {kind: 'FAILED', error};
+    }
     setSaveOutcome(outcome);
     if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES' || outcome.kind === 'SAVED_REBOOT_REQUIRED') {
       setSnapshot(outcome.snapshot);
@@ -312,7 +323,7 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
     }
     setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
   }, [controller, dependencyBlock, draft, issues.length, modeTarget, sessionKey, snapshot]);
-  const requestReboot = useCallback(async () => { if (sessionKey === undefined || controller.requestReboot === undefined) return; setRebootOutcome(await controller.requestReboot(sessionKey)); }, [controller, sessionKey]);
+  const requestReboot = useCallback(async () => { if (sessionKey === undefined || controller.requestReboot === undefined) return; try { setRebootOutcome(await controller.requestReboot(sessionKey)); } catch (error) { setRebootOutcome({kind: 'FAILED', error}); } }, [controller, sessionKey]);
 
   const saveMessage = (outcome: ReceiverSaveOutcome): {text: string; warning: boolean} => {
     switch (outcome.kind) {

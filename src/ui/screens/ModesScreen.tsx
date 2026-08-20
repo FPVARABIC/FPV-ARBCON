@@ -288,6 +288,16 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
         setDraft(undefined);
         setPhase('ERROR');
       }
+    }).catch(error => {
+      /* A rejection here is not supposed to happen - load() returns an
+         outcome - but "not supposed to" is exactly how LOADING became
+         permanent. Without this the screen keeps its loading text with
+         no message and no reload button, forever. */
+      if (cancelled) return;
+      setLoadOutcome({kind: 'FAILED', error});
+      setSnapshot(undefined);
+      setDraft(undefined);
+      setPhase('ERROR');
     });
     return () => { cancelled = true; };
   }, [active, controller, reloadToken, sessionKey]);
@@ -322,7 +332,14 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
   const save = useCallback(async () => {
     if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return;
     setPhase('SAVING');
-    const outcome = await controller.save(sessionKey, snapshot, draft);
+    /* An unexpected throw must land on the same ERROR the screen already
+       renders, not leave the sticky bar spinning "جارٍ حفظ الأوضاع…". */
+    let outcome: ModesSaveOutcome;
+    try {
+      outcome = await controller.save(sessionKey, snapshot, draft);
+    } catch (error) {
+      outcome = {kind: 'FAILED', error};
+    }
     setSaveOutcome(outcome);
     if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') {
       setSnapshot(outcome.snapshot);

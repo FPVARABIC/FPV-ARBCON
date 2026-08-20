@@ -30,6 +30,7 @@ import { useSessionLossRedirect } from './src/navigation/useSessionLossRedirect'
 import {
   configurationWorkspaceUnlocked,
   RebootOverlay,
+  useRebootReconnect,
   useVerifiedFcConnection,
 } from './src/ui/session';
 import type { RootStackParamList } from './src/navigation/types';
@@ -97,6 +98,14 @@ function App(): React.JSX.Element {
    * against a stale APPLICATION.
    */
   const connection = useVerifiedFcConnection();
+  /**
+   * THE WAY OUT OF THE OVERLAY, and it lives here because the overlay
+   * does. A CLI save reboots the board; something has to reopen it, and
+   * whatever owns a blocking state owns ending it. See
+   * useRebootReconnect - every path out is bounded by the lifecycle's
+   * own deadline, including the one where the board never returns.
+   */
+  useRebootReconnect();
   const workspaceUnlocked = configurationWorkspaceUnlocked(connection);
   const sessionKey =
     connection.kind === 'CONNECTED' ? connection.sessionKey : undefined;

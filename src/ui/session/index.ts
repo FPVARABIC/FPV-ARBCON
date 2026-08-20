@@ -31,3 +31,5 @@ export type {ConnectOption, ConnectPhase, ConnectTarget} from './connectFlow';
 export {connectionNotice, useConnectionNotice} from './connectionNotice';
 export type {ConnectionNotice} from './connectionNotice';
 export {RebootOverlay} from './RebootOverlay';
+export {useRebootReconnect} from './useRebootReconnect';
+export {openBoard} from './openBoard';

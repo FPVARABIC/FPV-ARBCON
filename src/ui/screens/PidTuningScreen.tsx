@@ -151,7 +151,7 @@ function RateAxisCard({axisKey, title, value, rates, disabled, update}: {axisKey
 export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDirtyChange, controller = pidTuningController}: PidTuningScreenProps): React.JSX.Element {
   const {t} = useTranslation(); const {width, fontScale} = useWindowDimensions(); const {maxWidth} = useContentEnvelope(true); const wide = width / Math.max(fontScale, 1) >= 1040;
   const [phase, setPhase] = useState<Phase>('IDLE'); const [snapshot, setSnapshot] = useState<MspPidTuningSnapshot>(); const [draft, setDraft] = useState<PidTuningDraft>(); const [loadOutcome, setLoadOutcome] = useState<PidLoadOutcome>(); const [saveOutcome, setSaveOutcome] = useState<PidSaveOutcome>(); const [switchOutcome, setSwitchOutcome] = useState<PidProfileSwitchOutcome>(); const [reloadToken, setReloadToken] = useState(0);
-  useEffect(() => { if (!active || sessionKey === undefined) return; let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } }); return () => { cancelled = true; }; }, [active, controller, reloadToken, sessionKey]);
+  useEffect(() => { if (!active || sessionKey === undefined) return; let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } }).catch(error => { if (cancelled) return; setLoadOutcome({kind: 'FAILED', error}); setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); }); return () => { cancelled = true; }; }, [active, controller, reloadToken, sessionKey]);
   const dirty = snapshot !== undefined && draft !== undefined && !pidTuningDraftsEqual(createPidTuningDraft(snapshot), draft);
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]); useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined ? [] : validatePidTuningDraft(draft, snapshot), [draft, snapshot]);
@@ -167,7 +167,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   const updateThrottle = useCallback((term: keyof Omit<RatesDraft, PidAxisKey | 'type'>, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [term]: value})})); setSaveOutcome(undefined); }, []);
   const updateFilter = useCallback((term: keyof FiltersDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, filters: Object.freeze({...current.filters, [term]: value})})); setSaveOutcome(undefined); }, []);
   const reload = useCallback(() => { const perform = () => setReloadToken(value => value + 1); if (!dirty) return perform(); Alert.alert('تجاهل تغييرات PID؟', 'ستُستبدل القيم الحالية بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]); }, [dirty]);
-  const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); const outcome = await controller.save(sessionKey, snapshot, draft); setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, sessionKey, snapshot]);
+  const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); let outcome: PidSaveOutcome; try { outcome = await controller.save(sessionKey, snapshot, draft); } catch (error) { outcome = {kind: 'FAILED', error}; } setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, sessionKey, snapshot]);
     /**
    * SWITCHES THE ACTIVE PROFILE ON THE BOARD, not in this component.
    *
@@ -184,7 +184,12 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
       return;
     }
     setPhase('SAVING'); setSaveOutcome(undefined);
-    const outcome = await controller.selectProfile(sessionKey, kind, index);
+    let outcome: PidProfileSwitchOutcome;
+    try {
+      outcome = await controller.selectProfile(sessionKey, kind, index);
+    } catch (error) {
+      outcome = {kind: 'FAILED', error};
+    }
     setSwitchOutcome(outcome);
     if (outcome.kind === 'SWITCHED' || outcome.kind === 'NOT_APPLIED') {
       setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot));

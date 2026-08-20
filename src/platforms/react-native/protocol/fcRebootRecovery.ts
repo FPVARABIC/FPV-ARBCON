@@ -51,9 +51,25 @@
  *      +--> FAILED     the deadline passed, or reopening failed. The
  *                      operator is told plainly, and reconnects by hand.
  *
- * WHY A DEADLINE. A board that never comes back must not leave the app
- * waiting forever with a spinner. The wait is bounded and its expiry is
- * an honest FAILED with a reason, not a silent return to IDLE.
+ * WHY A DEADLINE, AND WHY THIS MODULE OWNS THE CLOCK.
+ *
+ * A board that never comes back must not leave the app waiting forever
+ * with a spinner. The wait is bounded and its expiry is an honest FAILED
+ * with a reason, not a silent return to IDLE.
+ *
+ * THE DEADLINE USED TO BE PASSIVE, AND THAT WAS THE BUG. This module
+ * recorded a deadline and left the CHECKING to somebody else:
+ * `evaluateDeadline()` carried a comment saying it was "called on every
+ * tick the shell already performs", and no such tick existed - it had no
+ * production caller at all. So after a CLI save the phase reached
+ * WAITING_FOR_LINK and stopped there, the root overlay rendered off that
+ * phase, and the only way out was reloading the page. Reported from real
+ * hardware, reproduced in rebootRecoveryLiveness.test.tsx.
+ *
+ * A deadline nobody is scheduled to check is not a deadline. So the
+ * timer lives HERE, armed on every transition into a phase that can time
+ * out and cleared on every transition out of one. Nothing has to
+ * remember to poll, because there is nothing to poll.
  *
  * WHAT THIS MODULE DELIBERATELY DOES NOT DO: it never opens a device
  * itself and never touches the coordinator. It owns the DECISION and the
@@ -102,22 +118,44 @@ type Listener = () => void;
  */
 const IDLE: FcRebootRecoveryPhase = Object.freeze({kind: 'IDLE' as const});
 
+/** The scheduler seam, so a test can drive the clock. */
+export interface FcRebootRecoveryScheduler {
+  readonly setTimeout: (handler: () => void, ms: number) => unknown;
+  readonly clearTimeout: (handle: unknown) => void;
+}
+
 export interface FcRebootRecoveryOptions {
   /** Injectable for tests; production uses the real clock. */
   readonly now?: () => number;
   readonly timeoutMs?: number;
+  readonly scheduler?: FcRebootRecoveryScheduler;
+}
+
+/** The phases that can still time out - the ones that arm the clock. */
+function isPending(phase: FcRebootRecoveryPhase): boolean {
+  return (
+    phase.kind === 'EXPECTED' ||
+    phase.kind === 'WAITING_FOR_LINK' ||
+    phase.kind === 'RECONNECTING'
+  );
 }
 
 export class FcRebootRecovery {
   private phase: FcRebootRecoveryPhase = IDLE;
   private deadline: number | undefined;
+  private timer: unknown;
   private readonly listeners = new Set<Listener>();
   private readonly now: () => number;
   private readonly timeoutMs: number;
+  private readonly scheduler: FcRebootRecoveryScheduler;
 
   constructor(options: FcRebootRecoveryOptions = {}) {
     this.now = options.now ?? (() => Date.now());
     this.timeoutMs = options.timeoutMs ?? FC_REBOOT_RECOVERY_TIMEOUT_MS;
+    this.scheduler = options.scheduler ?? {
+      setTimeout: (handler, ms) => setTimeout(handler, ms),
+      clearTimeout: handle => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    };
   }
 
   getPhase(): FcRebootRecoveryPhase {
@@ -138,6 +176,9 @@ export class FcRebootRecovery {
    * a cable being pulled.
    */
   expectReboot(sessionId: string, reason: FcRebootReason): void {
+    /* A second save RE-ARMS rather than stacking: two live timers would
+       mean the first one firing could fail a recovery the second is
+       still legitimately running. */
     this.deadline = this.now() + this.timeoutMs;
     this.set({kind: 'EXPECTED', sessionId, reason});
   }
@@ -202,8 +243,12 @@ export class FcRebootRecovery {
   }
 
   /**
-   * Called on every tick the shell already performs, so a board that
-   * never comes back ends in FAILED rather than in a permanent wait.
+   * Fire the deadline verdict now, if it is due.
+   *
+   * The armed timer calls this; it stays public because a caller that
+   * already knows time has passed (a resumed app, a test) may ask
+   * directly. It is no longer the ONLY way the deadline is noticed,
+   * which is the whole fix.
    */
   evaluateDeadline(): void {
     if (
@@ -233,8 +278,32 @@ export class FcRebootRecovery {
     return this.deadline !== undefined && this.now() >= this.deadline;
   }
 
+  /**
+   * ONE TIMER, ALWAYS MATCHING THE PHASE.
+   *
+   * Re-armed on every entry into a phase that can time out and cleared
+   * on every entry into one that cannot, so a terminal state can never
+   * be revisited by a late firing and a pending state can never be
+   * left without a way out.
+   */
+  private syncTimer(): void {
+    if (this.timer !== undefined) {
+      this.scheduler.clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    if (!isPending(this.phase) || this.deadline === undefined) return;
+    const remaining = Math.max(0, this.deadline - this.now());
+    this.timer = this.scheduler.setTimeout(() => {
+      this.timer = undefined;
+      this.evaluateDeadline();
+    }, remaining);
+  }
+
   private set(phase: FcRebootRecoveryPhase): void {
     this.phase = Object.isFrozen(phase) ? phase : Object.freeze(phase);
+    // Before the listeners run: a subscriber that reads getPhase() must
+    // never see a pending phase with no clock behind it.
+    this.syncTimer();
     for (const listener of Array.from(this.listeners)) {
       try {
         listener();
