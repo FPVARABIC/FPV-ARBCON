@@ -70,6 +70,12 @@ import {
   type MainTabKey,
 } from '../../navigation/tabs';
 import type { RootStackParamList } from '../../navigation/types';
+import {
+  RequiresFlightController,
+  tabRequiresFlightController,
+  useFlightControllerGate,
+  type FlightControllerGate,
+} from '../session';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
@@ -99,24 +105,59 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
  * the two panels involved in a switch re-render because their `active`
  * genuinely changed, and no others do.
  */
+/**
+ * THE ONE PLACE THE CONNECTION GATE IS APPLIED.
+ *
+ * Putting it here rather than inside each screen is the whole point: a
+ * gate repeated fifteen times is fifteen chances to forget one, and the
+ * defect this closes was exactly that - every tab mounted its screen
+ * whether or not a flight controller was attached, and each screen then
+ * improvised. Measured before the gate: the Motors tab with nothing
+ * plugged in rendered 90 labelled nodes over 3.4 screens of scroll with
+ * five controls still enabled.
+ *
+ * A GATED SCREEN IS NOT MOUNTED. `RequiresFlightController` renders its
+ * children only when the session is live, current and identified, so a
+ * screen with no board behind it never runs an effect, never starts a
+ * poll and never opens a lease - it does not exist. Tabs that do not
+ * need a flight controller (SETUP, which HOSTS the connection
+ * workspace) pass `requiresFlightController={false}` and are mounted
+ * exactly as before.
+ */
 const TabPanel = React.memo(function TabPanelContent({
   tabKey,
   active,
   Screen,
   screenProps,
+  gate,
+  onOpenConnection,
 }: {
   readonly tabKey: MainTabKey;
   readonly active: boolean;
   readonly Screen: React.ComponentType<never>;
   readonly screenProps: Record<string, unknown>;
+  /** Undefined for a tab that needs no flight controller. */
+  readonly gate: FlightControllerGate | undefined;
+  readonly onOpenConnection: () => void;
 }): React.JSX.Element {
   const Component = Screen as React.ComponentType<Record<string, unknown>>;
+  const content = <Component {...screenProps} active={active} />;
   return (
     <View
       style={active ? styles.visible : styles.hidden}
       testID={`main-tab-panel-${tabKey}`}
     >
-      <Component {...screenProps} active={active} />
+      {gate === undefined ? (
+        content
+      ) : (
+        <RequiresFlightController
+          gate={gate}
+          onOpenConnection={onOpenConnection}
+          screen={tabKey}
+        >
+          {content}
+        </RequiresFlightController>
+      )}
     </View>
   );
 });
@@ -441,6 +482,27 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
    */
   const sessionKey = props.route.params?.sessionKey;
 
+  /**
+   * THE CONNECTION GATE, evaluated once for the whole shell.
+   *
+   * It reads the coordinator directly rather than trusting the route
+   * parameter, because a navigation parameter survives things the
+   * session does not - browser back/forward, a state restore, a reboot.
+   * See flightControllerGate.ts for the three facts it requires.
+   */
+  const fcGate = useFlightControllerGate(sessionKey);
+  /** SETUP hosts the connection workspace, so it is never gated - that
+   *  is what makes the gate's own button lead somewhere that resolves
+   *  instead of looping. */
+  const gateFor = useCallback(
+    (tab: MainTabKey): FlightControllerGate | undefined =>
+      tabRequiresFlightController(tab) ? fcGate : undefined,
+    [fcGate],
+  );
+  const openConnectionWorkspace = useCallback(() => {
+    selectTab('SETUP');
+  }, [selectTab]);
+
   /* SETUP P2: Setup's summary cards navigate to the screens that OWN the
    * configuration they summarize. The shell supplies plain callbacks, so
    * Setup imports no navigator internals and gains no owner authority. */
@@ -593,6 +655,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'SETUP'}
             Screen={SetupScreen as never}
             screenProps={setupProps}
+            gate={gateFor('SETUP')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('MOTORS') ? (
@@ -601,6 +665,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'MOTORS'}
             Screen={MotorsTab as never}
             screenProps={motorsProps}
+            gate={gateFor('MOTORS')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('PORTS') ? (
@@ -609,6 +675,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'PORTS'}
             Screen={PortsScreen as never}
             screenProps={portsProps}
+            gate={gateFor('PORTS')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('GPS') ? (
@@ -617,6 +685,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'GPS'}
             Screen={GpsScreen as never}
             screenProps={gpsProps}
+            gate={gateFor('GPS')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('CONFIGURATIONS') ? (
@@ -625,6 +695,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'CONFIGURATIONS'}
             Screen={ConfigurationsScreen as never}
             screenProps={configurationsProps}
+            gate={gateFor('CONFIGURATIONS')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('RECEIVER') ? (
@@ -633,6 +705,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'RECEIVER'}
             Screen={ReceiverScreen as never}
             screenProps={receiverProps}
+            gate={gateFor('RECEIVER')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('PID') ? (
@@ -641,6 +715,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'PID'}
             Screen={PidTuningScreen as never}
             screenProps={pidProps}
+            gate={gateFor('PID')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('MODES') ? (
@@ -649,6 +725,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'MODES'}
             Screen={ModesScreen as never}
             screenProps={modesProps}
+            gate={gateFor('MODES')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('FAILSAFE') ? (
@@ -657,6 +735,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'FAILSAFE'}
             Screen={FailsafeScreen as never}
             screenProps={failsafeProps}
+            gate={gateFor('FAILSAFE')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('POWER') ? (
@@ -665,6 +745,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'POWER'}
             Screen={PowerBatteryScreen as never}
             screenProps={powerProps}
+            gate={gateFor('POWER')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('OSD') ? (
@@ -673,6 +755,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'OSD'}
             Screen={OsdScreen as never}
             screenProps={osdProps}
+            gate={gateFor('OSD')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('VTX') ? (
@@ -681,6 +765,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'VTX'}
             Screen={VideoTransmitterScreen as never}
             screenProps={vtxProps}
+            gate={gateFor('VTX')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('SENSORS') ? (
@@ -689,6 +775,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'SENSORS'}
             Screen={SensorsScreen as never}
             screenProps={sensorsProps}
+            gate={gateFor('SENSORS')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('PRESETS') ? (
@@ -697,6 +785,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'PRESETS'}
             Screen={PresetsScreen as never}
             screenProps={presetsProps}
+            gate={gateFor('PRESETS')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
         {mountedTabs.includes('CLI') ? (
@@ -705,6 +795,8 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'CLI'}
             Screen={CliScreen as never}
             screenProps={cliProps}
+            gate={gateFor('CLI')}
+            onOpenConnection={openConnectionWorkspace}
           />
         ) : null}
       </View>

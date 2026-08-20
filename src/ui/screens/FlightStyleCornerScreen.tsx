@@ -131,6 +131,14 @@ export default function FlightStyleCornerScreen({
 }: Props): React.JSX.Element {
   const {width, fontScale} = useWindowDimensions();
   const tier = resolveLayoutTier(width, fontScale);
+  /**
+   * WHERE THE HEADER SPLITS IN TWO. Not isDesktopTier: that starts at
+   * 1024 and left 768 - a tablet, and one of the widths this is judged
+   * at - with the old 407px poster and its first step below the fold.
+   * The reading column at 'wide' is ~700px, which seats a 300px cover
+   * beside ~380px of text comfortably.
+   */
+  const heroSideBySide = tier === 'wide' || isDesktopTier(tier);
   const corner = findCorner(route.params.styleId);
 
   if (corner === undefined) {
@@ -171,25 +179,46 @@ export default function FlightStyleCornerScreen({
             ),
           },
         ]}>
-        <StyleCover
-          source={FLIGHT_STYLE_HERO_IMAGES[corner.id]}
-          fit={FLIGHT_STYLE_HERO_FIT[corner.id]}
-          titleAr={corner.titleAr}
-          titleEn={corner.titleEn}
-          testID={`corner-cover-${corner.id}`}
-        />
+        {/*
+          ONE COMPACT HEADER, not a poster followed by a caption.
 
-        <Text style={styles.description}>{corner.descriptionAr}</Text>
+          The cover used to be a full-column 16:9 band: at every desktop
+          width that is 407px of a 900px viewport for a photograph, and
+          it pushed the first setup step to y=683 - below the fold, on
+          every desktop size. Beside the text instead, the same
+          photograph reads as identification rather than decoration and
+          the steps start where the operator is already looking.
 
-        <View style={styles.metaRow}>
-          <View style={styles.chip}>
-            <Text style={styles.chipText}>{corner.difficultyAr}</Text>
+          On a phone the column is too narrow to sit two things side by
+          side, so it stays stacked - and it was never the problem
+          there: the hero measured 182px of an 844px screen.
+        */}
+        <View style={[styles.hero, heroSideBySide && styles.heroWide]}>
+          <View
+            style={heroSideBySide ? styles.heroCoverWide : styles.heroCover}>
+            <StyleCover
+              source={FLIGHT_STYLE_HERO_IMAGES[corner.id]}
+              fit={FLIGHT_STYLE_HERO_FIT[corner.id]}
+              titleAr={corner.titleAr}
+              titleEn={corner.titleEn}
+              testID={`corner-cover-${corner.id}`}
+            />
           </View>
-          {corner.aircraft.map(aircraft => (
-            <View key={aircraft} style={styles.chipQuiet}>
-              <Text style={styles.chipQuietText}>{aircraft}</Text>
+
+          <View style={styles.heroCopy}>
+            <Text style={styles.description}>{corner.descriptionAr}</Text>
+
+            <View style={styles.metaRow}>
+              <View style={styles.chip}>
+                <Text style={styles.chipText}>{corner.difficultyAr}</Text>
+              </View>
+              {corner.aircraft.map(aircraft => (
+                <View key={aircraft} style={styles.chipQuiet}>
+                  <Text style={styles.chipQuietText}>{aircraft}</Text>
+                </View>
+              ))}
             </View>
-          ))}
+          </View>
         </View>
 
         <View style={styles.sectionHead}>
@@ -272,8 +301,19 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     padding: spacing.lg,
     paddingBottom: spacing.xxl,
-    gap: spacing.md,
+    /* Tightened from spacing.md. Nine of these gaps sit between the
+       reader and the last step; at the old size they alone were most of
+       a screen of nothing. */
+    gap: spacing.sm,
   },
+  /* Stacked on a phone, side by side once there is room for it. */
+  hero: {gap: spacing.sm},
+  heroWide: {flexDirection: 'row', alignItems: 'center', gap: spacing.lg},
+  heroCover: {width: '100%'},
+  /* A fixed, modest column rather than the whole width: 300px at 16:9 is
+     a 169px photograph, against 407px before. */
+  heroCoverWide: {width: 300, flexShrink: 0},
+  heroCopy: {flex: 1, gap: spacing.sm, justifyContent: 'center'},
   description: {
     ...typography.body,
     color: colors.textSecondary,
@@ -295,7 +335,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   chipQuietText: {...typography.caption, color: colors.textMuted},
-  sectionHead: {paddingTop: spacing.lg, gap: 4},
+  /* Was spacing.lg. A section heading needs separation, not a gap
+   the size of a paragraph. */
+  sectionHead: {paddingTop: spacing.md, gap: 2},
   sectionTitle: {...typography.sectionTitle, color: colors.textPrimary, textAlign: 'right'},
   sectionHint: {
     ...typography.caption,
@@ -308,14 +350,16 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: spacing.lg,
-    gap: spacing.sm,
+    /* Was spacing.lg all round with spacing.sm between rows. The card's
+       own text is 108-228px; its padding was adding another 48. */
+    padding: spacing.md,
+    gap: 6,
   },
   stepHead: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   stepBadge: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: colors.accentStrong,
     alignItems: 'center',
     justifyContent: 'center',
@@ -326,7 +370,9 @@ const styles = StyleSheet.create({
     color: colors.white,
     writingDirection: 'ltr',
   },
-  stepTitle: {...typography.heading, color: colors.textPrimary, flex: 1, textAlign: 'right'},
+  /* Was typography.heading - the size a SCREEN title uses. A step
+   inside a numbered list is one level down from that. */
+  stepTitle: {...typography.bodyStrong, color: colors.textPrimary, flex: 1, textAlign: 'right'},
   stepWhere: {
     ...typography.caption,
     color: colors.textMuted,
@@ -336,8 +382,8 @@ const styles = StyleSheet.create({
   recommend: {
     backgroundColor: colors.surfaceRaised,
     borderRadius: radii.md,
-    padding: spacing.md,
-    gap: 6,
+    padding: spacing.sm,
+    gap: 4,
   },
   recommendLabel: {...typography.label, color: colors.accentStrong, textAlign: 'right'},
   recommendValues: {flexDirection: 'row', flexWrap: 'wrap', gap: 6},
@@ -365,6 +411,20 @@ const styles = StyleSheet.create({
   },
   shot: {
     width: '100%',
+    /*
+      A PHONE CAPTURE, SHOWN AT PHONE SIZE.
+      Every step capture is a screenshot of this app on a phone -
+      708-780px of real pixels, taken at 2x, so its true CSS width is
+      ~355-390. The column stretched it to ~700 on every desktop width,
+      which is not extra detail (there is none to reveal) but the same
+      picture at 1.8x, and the height goes up with it: one Long Range
+      capture rendered 5,913px tall inside a 900px viewport.
+      Capped at a real phone's width the whole capture is still there,
+      uncropped and at or above native resolution - it simply stops
+      being enlarged. Nothing is hidden and no caption loses its number.
+    */
+    maxWidth: 420,
+    alignSelf: 'center',
     borderRadius: radii.md,
     borderWidth: 1,
     borderColor: colors.borderSoft,

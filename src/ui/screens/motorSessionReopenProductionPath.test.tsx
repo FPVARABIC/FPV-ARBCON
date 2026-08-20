@@ -96,6 +96,7 @@ import {Text} from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
+import {presentConnectedBoard} from '../session/__testUtils__/connectedBoard';
 import MainTabsScreen from './MainTabsScreen';
 import {
   closeMotorTestCapability,
@@ -138,6 +139,10 @@ function renderShell() {
     name: 'Setup' as const,
     params: {sessionKey: {sessionId: SESSION_ID, generation: 1}},
   } as never;
+  /* The shell's connection gate reads the coordinator, not the route
+     parameter, so a rendered configurator needs a board presented to
+     it. See ui/session/__testUtils__/connectedBoard.ts. */
+  presentConnectedBoard(SESSION_ID);
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   ReactTestRenderer.act(() => {
     renderer = ReactTestRenderer.create(

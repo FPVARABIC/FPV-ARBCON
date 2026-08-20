@@ -5,6 +5,46 @@
 jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
 
 /**
+ * A CONNECTED BOARD, so the connection gate is open.
+ *
+ * MainTabsScreen now refuses to mount a configuration screen unless the
+ * coordinator reports a live, current, identified session
+ * (ui/session/flightControllerGate.ts) - which is the point of that
+ * gate, and is why an unconnected shell renders no panels at all.
+ * This file is about something else entirely, so it presents the shell
+ * with the session an operator would actually have. The REAL gate logic
+ * still runs over these values; only the hardware underneath is faked.
+ */
+jest.mock(
+  '../../platforms/react-native/protocol/useMspSessionState',
+  () => {
+const IDENTIFIED = Object.freeze({
+  status: 'SUCCEEDED',
+  identity: Object.freeze({
+    firmware: Object.freeze({identifier: 'BTFL', knownFamily: 'BETAFLIGHT'}),
+    apiVersion: Object.freeze({
+      mspProtocolVersion: 0,
+      apiVersionMajor: 1,
+      apiVersionMinor: 47,
+    }),
+    board: Object.freeze({}),
+  }),
+});
+  return ({
+    /* ONE FROZEN OBJECT, returned by reference. The real hook caches its
+       identification snapshot for exactly this reason - a fresh object
+       per call makes every useSyncExternalStore consumer re-render, and
+       here it would defeat the tab panels' memoisation and make this
+       file fail while measuring nothing real. */
+    useMspOwnershipState: () => 'ACTIVE',
+    useMspIdentificationState: () => IDENTIFIED,
+    useMspRecoveryState: () => undefined,
+  });
+  },
+);
+
+
+/**
  * THE TAB-SWITCH COST, AS A REGRESSION TEST (PART AB).
  *
  * WHAT WAS MEASURED, AND HOW. Every tab screen was replaced by a counting
@@ -64,7 +104,17 @@ jest.mock('./SensorsScreen', () => mockProbe('SENSORS'));
 jest.mock('./PresetsScreen', () => mockProbe('PRESETS'));
 jest.mock('./CliScreen', () => mockProbe('CLI'));
 
+import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
 import MainTabsScreen from './MainTabsScreen';
+
+/** The coordinator's own answer for "which session is current". */
+jest.spyOn(mspSessionCoordinator, 'getSessionKey').mockImplementation(
+  sessionId =>
+    sessionId === 'session-1'
+      ? {sessionId: 'session-1', generation: 1}
+      : undefined,
+);
+
 
 function renderShell() {
   const navigation = {addListener: () => () => {}, goBack: () => {}} as never;
