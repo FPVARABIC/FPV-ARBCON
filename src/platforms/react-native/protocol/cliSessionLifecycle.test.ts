@@ -703,3 +703,97 @@ describe('a long run through the app leaves nothing behind', () => {
     expect(canOpenMotorTestSession(coordinator)).toBe('CAN_OPEN');
   });
 });
+
+/* ==================================================================== *
+ * THE ZOMBIE: A DEAD BOARD THAT NEVER FIRED A DETACH
+ * ==================================================================== */
+
+describe('a board that reboots WITHOUT a detach event', () => {
+  /**
+   * WHY THIS CASE EXISTS AT ALL.
+   *
+   * On Android the native layer reports the USB device going away, and
+   * everything downstream follows from that event. Web Serial gives no
+   * such guarantee: a port object can stay open across a device
+   * re-enumeration, so a `save` reboot can leave the application holding
+   * a port that is present, writable, and answering nothing.
+   *
+   * That is the worst shape a connection can take, because every check
+   * the app makes says yes. This test does not assume the app handles it
+   * - it MEASURES what the app currently believes while the board is
+   * silent, so the answer is a fact rather than a hope.
+   */
+  it('RECORDED DEFECT: still reports a live session when the board is silent', async () => {
+    const {coordinator, cli, board} = await liveRig();
+    const key = coordinator.getSessionKey(SESSION_ID);
+    if (key === undefined) throw new Error('no session key');
+
+    await cli.begin(key);
+    await cli.execute('set motor_poles = 14');
+
+    // The board reboots and answers nothing more - and, crucially, fires
+    // NO detach. `rebooted` makes writeBytes a silent no-op; the detach
+    // listeners are deliberately not called.
+    board.rebooted = true;
+    board.inCliMode = false;
+    await cli.exitWithoutSave();
+    await flushAsync();
+
+    const believed = {
+      ownership: coordinator.getOwnershipState(SESSION_ID),
+      hasKey: coordinator.getSessionKey(SESSION_ID) !== undefined,
+      recovery: coordinator.getMspRecoveryState(SESSION_ID),
+      motorTest: canOpenMotorTestSession(coordinator),
+    };
+
+    /*
+     * THIS IS A RECORDED DEFECT, NOT AN APPROVED BEHAVIOUR.
+     *
+     * Every one of these four answers is wrong: the board is gone and the
+     * application is telling every screen it is connected, healthy, and
+     * ready to open a motor-test session on it. The expectation is
+     * written down so the defect is visible in the diff the day somebody
+     * fixes it, and so nobody reads a passing suite as this case being
+     * handled.
+     *
+     * WHAT WOULD CLOSE IT: the app has the evidence already - the
+     * telemetry scheduler is polling this link on a fixed cadence and
+     * every one of those polls is failing. A bounded consecutive-failure
+     * verdict, declared ONCE, would route this into the same
+     * deadline-bounded expected-reboot recovery that the CLI save path
+     * already uses (fcRebootRecovery.ts). No new polling and no
+     * reconnect loop are needed to get there.
+     *
+     * WHAT THIS TEST DOES NOT ESTABLISH: whether a REAL Web Serial port
+     * behind a re-enumerated device drives MspClient to a terminal state
+     * on its own. This fake resolves startReading()/stopReading()
+     * cleanly, which is the most forgiving possible transport; a real one
+     * may fail those and reach RECOVERY_FAILED, which the motor-test
+     * invalidation path already treats as a loss. So the WIDTH of this
+     * defect on hardware is unknown - only its existence under a silent,
+     * still-open port is proven here.
+     */
+    expect(believed).toEqual({
+      ownership: 'ACTIVE',
+      hasKey: true,
+      recovery: 'READY',
+      motorTest: 'CAN_OPEN',
+    });
+  });
+
+  /**
+   * AND THE CONSEQUENCE, stated as the thing a user would hit: a screen
+   * asks the silent board for its settings and gets nothing back.
+   *
+   * The app is entitled to fail here - what it must NOT do is report
+   * success, and what it must eventually do is stop claiming the session
+   * is usable.
+   */
+  it('fails a screen read against the silent board rather than faking one', async () => {
+    const {coordinator, board} = await liveRig();
+    board.rebooted = true;
+
+    const outcome = await canScreenRead(coordinator);
+    expect(outcome).not.toBe('LOADED');
+  }, 30_000);
+});
