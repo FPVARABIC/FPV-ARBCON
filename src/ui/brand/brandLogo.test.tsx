@@ -21,7 +21,7 @@
  */
 
 import {createHash} from 'crypto';
-import {readFileSync, readdirSync, statSync} from 'fs';
+import {existsSync, readFileSync, readdirSync, statSync} from 'fs';
 import {join} from 'path';
 
 import React from 'react';
@@ -153,10 +153,11 @@ describe('placement policy', () => {
     // Three placeholders existed before the official logo arrived: the
     // Start screen's hand-drawn badge (core square + rotated arms), the
     // side rail's circled 'F' glyph, and the connection header's 'FPV'
-    // tile. All three renderers must now be lettermark-free - checked in
-    // SOURCE, the same technique operatorVocabulary.test.ts trusts,
-    // because a placeholder that ships is a placeholder wherever the
-    // render tree hides it.
+    // tile. The third is gone with the file that drew it - the whole
+    // connection screen was removed - so the two renderers that still
+    // exist are checked in SOURCE, the same technique
+    // operatorVocabulary.test.ts trusts, because a placeholder that
+    // ships is a placeholder wherever the render tree hides it.
     const railSource = readFileSync(
       join(REPO_ROOT, 'src', 'ui', 'components', 'navigation', 'SideNavigationRail.tsx'),
       'utf8',
@@ -164,12 +165,13 @@ describe('placement policy', () => {
     expect(railSource).not.toMatch(/>F</);
     expect(railSource).not.toContain('brandGlyph');
 
-    const headerSource = readFileSync(
-      join(REPO_ROOT, 'src', 'ui', 'components', 'connection', 'ConnectionHeader.tsx'),
-      'utf8',
-    );
-    expect(headerSource).not.toMatch(/>FPV</);
-    expect(headerSource).not.toContain('brandMarkText');
+    // The connection header carried the third placeholder. Asserting its
+    // ABSENCE is stronger than asserting its contents.
+    expect(
+      existsSync(
+        join(REPO_ROOT, 'src', 'ui', 'components', 'connection', 'ConnectionHeader.tsx'),
+      ),
+    ).toBe(false);
 
     const startSource = readFileSync(
       join(REPO_ROOT, 'src', 'ui', 'screens', 'StartScreen.tsx'),

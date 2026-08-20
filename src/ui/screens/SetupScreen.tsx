@@ -5,22 +5,11 @@
  * ownership stays in the coordinator; this screen only subscribes to its
  * existing stores and dispatches through the established tool controller.
  *
- * ENTRY CLEANUP - the missing-sessionKey branch is now the PRODUCT, not
- * a defensive fallback. Start opens the 'Setup' route directly with no
- * params (see navigation/types.ts); this screen then renders the real
- * USB connection workspace (UsbConnectionScreen, hosted as a child
- * rather than a stack route) and re-parameterizes the route in place -
- * navigation.setParams({sessionKey}) - the moment a session genuinely
- * activates. No connection step is skipped and none is faked: the same
- * scan, the same explicit browser device chooser under a real user
- * gesture, the same MSP activation, the same ownership rules.
- *
- * If a session is ALREADY ACTIVE when the workspace mounts (the operator
- * pressed Back to Start - which deliberately does NOT deactivate - and
- * re-entered), the workspace ADOPTS the coordinator's real session
- * instead of offering a second connect against an already-open port:
- * a pure read of listSessionIds()/getOwnershipState()/getSessionKey(),
- * written straight back into the route params. Truthful both ways.
+ * THIS SCREEN ONLY EXISTS WITH A BOARD BEHIND IT. The 'Setup' route is
+ * registered in the navigator only while a flight controller is
+ * verified, so there is no disconnected posture to render here and no
+ * connection workspace hosted underneath - connecting happens on Home
+ * (ui/session/useDirectConnect), before this route exists at all.
  *
  * SetupUiSessionStore (Pass 7.1) is a PLAIN, non-reactive store (by its
  * own explicit design - "no useSyncExternalStore hook, no subscribe/
@@ -114,17 +103,12 @@ import {
   acquireSetupHiddenAttitudeSuppression,
 } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
-// ENTRY CLEANUP: the disconnected state renders the real connection
-// workspace, and the top bar carries the intentional disconnect. BOTH
-// capabilities live in setupSessionHost.tsx - the connection-lifecycle
-// seam in this same screens layer - because SETUP P1
-// (setupPresentationBoundary.test.ts) fences this file away from the
-// coordinator, clients and transports. This screen consumes a component
-// and a callback; it holds no session authority of its own.
-import {
-  SetupConnectWorkspace,
-  useSetupSessionDisconnect,
-} from './setupSessionHost';
+// The top bar's intentional disconnect lives in setupSessionHost.tsx -
+// the connection-lifecycle seam in this same screens layer - because
+// SETUP P1 (setupPresentationBoundary.test.ts) fences this file away
+// from the coordinator, clients and transports. This screen consumes a
+// callback; it holds no session authority of its own.
+import { useSetupSessionDisconnect } from './setupSessionHost';
 // Checkpoint F - "نسخ تقرير التليمترية". Web-only by the same file
 // extension seam the connection report uses; on Android
 // isTelemetryReportSupported() is false and no button is rendered.
@@ -181,33 +165,19 @@ export default function SetupScreen({
   const sessionKey = route.params?.sessionKey;
 
   /**
-   * The one place a session enters or leaves this route's params.
-   * setParams (never navigate/push): the route is already focused, so
-   * establishing a session is a param handoff - the navigation stack
-   * does not move, Back still leads Home, and the session-loss redirect
-   * (useSessionLossRedirect.ts) picks the new key up from its own
-   * onStateChange, which react-navigation fires for setParams too.
+   * NO SESSION MEANS NO SCREEN, and that is the wall rather than a bug.
+   *
+   * This route is registered in the navigator only while a flight
+   * controller is verified (App.tsx), so arriving here without a key is
+   * not a state the product has - it is the single render between a
+   * board going away and react-navigation unmounting this route. There
+   * used to be a whole connection workspace behind this branch; it was a
+   * second place the application could strand somebody, and it is gone.
+   * Rendering nothing for that one frame is the honest answer: there is
+   * nothing to show about a board that is not there.
    */
-  const handleSessionEstablished = useCallback(
-    (key: SetupUiSessionKey) => {
-      navigation.setParams({ sessionKey: key });
-    },
-    [navigation],
-  );
-
   if (!sessionKey) {
-    return (
-      <SetupConnectWorkspace
-        onSessionEstablished={handleSessionEstablished}
-        /* Arriving by choice is a request to connect; being returned
-           here by the session-loss redirect is not. See the param's own
-           note in navigation/types.ts. */
-        autoConnectOnEntry={route.params?.afterSessionLoss !== true}
-        /* Optional-chained: a host that supplies no navigator at all
-           (tests, embeds) gets no back control rather than a crash. */
-        onBack={navigation?.canGoBack?.() === true ? () => navigation.goBack() : undefined}
-      />
-    );
+    return <View testID="setup-awaiting-unmount" />;
   }
 
   return (

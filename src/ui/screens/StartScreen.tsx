@@ -17,6 +17,13 @@ import type {IconName} from '../icons';
 import {BrandLogo, BRAND_PRODUCT_NAME, BRAND_PRODUCT_TAGLINE} from '../brand';
 import {Button} from '../components/controls';
 import {readInteraction} from '../components/controls/interaction';
+import {HomeConnectPicker, HomeConnectStatus} from '../components/home/HomeConnect';
+import {
+  connectionNotice,
+  useConnectionNotice,
+  useDirectConnect,
+  useVerifiedFcConnection,
+} from '../session';
 import {
   colors,
   contentEnvelope,
@@ -377,6 +384,33 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
   const columnsCap = contentEnvelope(tier, true);
   const readingCap = contentEnvelope(tier, false);
 
+  /**
+   * THE CONFIGURATION DOOR, and there is nothing behind it but the
+   * workspace.
+   *
+   * There is no connection page any more - no route, no screen, nothing
+   * to be stranded on. Pressing this either opens the workspace (a board
+   * is already verified) or STARTS THE CONNECTION HERE, on Home, and the
+   * operator watches it happen next to the card they pressed.
+   *
+   * begin() must be reached from this press without an await in between:
+   * a browser honours requestPort() only inside the gesture that started
+   * it. See useDirectConnect.
+   */
+  const connection = useVerifiedFcConnection();
+  const {phase, begin, choose, dismiss} = useDirectConnect();
+  const sessionLost = useConnectionNotice() === 'SESSION_LOST';
+
+  const openConfiguration = React.useCallback(() => {
+    // A previous loss is not news over a fresh attempt.
+    connectionNotice.clear();
+    if (connection.kind === 'CONNECTED') {
+      navigation.navigate('Setup', {sessionKey: connection.sessionKey});
+      return;
+    }
+    begin();
+  }, [begin, connection, navigation]);
+
   return (
     <ScrollView
       testID="start-screen"
@@ -432,11 +466,7 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
             icon="sliders-horizontal"
             accent="teal"
             sideBySide={desktop}
-            /* 'Connect', not 'Setup': the configuration workspace is not
-   registered in the navigator until a flight controller is
-   verified, so this door opens the connection workspace and
-   App.tsx moves the operator on once the wall comes down. */
-            onPress={() => navigation.navigate('Connect')}
+            onPress={openConfiguration}
           />
 
           <PrimaryCard
@@ -455,6 +485,20 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
             onPress={() => navigation.navigate('FirmwareFlasher')}
           />
         </View>
+
+        {/* THE CONNECTION HAPPENS HERE. Directly under the card that
+            started it, inline, so the operator never leaves the page
+            they pressed on. Renders nothing at all when there is
+            nothing to say - which is most of the time. */}
+        <HomeConnectStatus
+          phase={phase}
+          sessionLost={sessionLost}
+          onRetry={openConfiguration}
+          onDismiss={() => {
+            connectionNotice.clear();
+            dismiss();
+          }}
+        />
 
         {/* The safety line governs the two cards above it, so it stays
             in their band - and keeps the reading cap, because it is a
@@ -479,6 +523,14 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
       <Band tone="page" cap={readingCap}>
         <SupportProjectSection />
       </Band>
+
+      {/* The ONE state that is a question rather than a report: more
+          than one board on the bench. A dialog, not a page. */}
+      <HomeConnectPicker
+        phase={phase}
+        onChoose={choose}
+        onDismiss={dismiss}
+      />
     </ScrollView>
   );
 }

@@ -17,6 +17,12 @@
  * tab change - reaches the one accepted bridge.
  */
 
+/* Home drives the connection itself now (ui/session/useDirectConnect),
+   so importing it reaches the transport module graph. The native module
+   is mocked for the same reason every other suite mocks it: this file is
+   not testing the USB bridge. */
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
@@ -100,13 +106,13 @@ describe('Motors reachability after the single-app merge', () => {
     }
   });
 
-  it('has no development-only motor entry anywhere in the connection screen', () => {
-    const connection = readFileSync(
-      join(__dirname, 'UsbConnectionScreen.tsx'),
-      'utf8',
-    );
-    expect(connection).not.toContain('DevBenchEntry');
-    expect(connection).not.toContain('MotorsDevEntry');
+  it('has no connection screen left to hide a development-only motor entry on', () => {
+    // The seam was a second way into Motors rendered by a standalone
+    // connection screen. Both that screen and the page that replaced it
+    // are gone from the product, which closes the seam more completely
+    // than deleting the render site: there is no host to put it back on.
+    expect(existsSync(join(__dirname, 'UsbConnectionScreen.tsx'))).toBe(false);
+    expect(existsSync(join(__dirname, 'ConnectWorkspaceScreen.tsx'))).toBe(false);
   });
 
   it('leaves no build-variant seam and no hardwareTest source set behind', () => {

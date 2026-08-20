@@ -80,11 +80,10 @@ jest.mock('./VideoTransmitterScreen', () => mockProbe('VTX'));
 jest.mock('./SensorsScreen', () => mockProbe('SENSORS'));
 jest.mock('./PresetsScreen', () => mockProbe('PRESETS'));
 jest.mock('./CliScreen', () => mockProbe('CLI'));
-/** The connection workspace's own content needs no hardware here - what
- *  matters is that this, and only this, is what a disconnected operator
- *  can reach. */
+/* Home drives the connection itself; the transport bridge underneath it
+   is not what this file is testing. */
 jest.mock('./setupSessionHost', () => ({
-  SetupConnectWorkspace: () => null,
+  useSetupSessionDisconnect: () => () => undefined,
   SetupScreenContent: () => null,
 }));
 
@@ -230,11 +229,12 @@ describe('before a flight controller is verified there is no configuration UI', 
     app.unmount();
   });
 
-  it('shows the connection workspace when the configuration door is opened', () => {
+  it('keeps the operator on Home when the configuration door is pressed', () => {
     presentBoard({present: false, ownership: 'INACTIVE'});
     const app = renderApp();
     openConfigurationDoor(app);
-    expect(app.has('connect-workspace-screen')).toBe(true);
+    // Home, not a connection page - there is no such page to go to.
+    expect(app.has('start-screen')).toBe(true);
     // And still nothing from the configuration workspace.
     for (const screen of FC_SCREENS) {
       expect(`${screen}: ${mockMounts[screen] ?? 0}`).toBe(`${screen}: 0`);
@@ -277,7 +277,7 @@ describe('before a flight controller is verified there is no configuration UI', 
       const app = renderApp();
       openConfigurationDoor(app);
       expect(mockMounts.MOTORS ?? 0).toBe(0);
-      expect(app.has('connect-workspace-screen')).toBe(true);
+      expect(app.has('start-screen')).toBe(true);
       app.unmount();
     },
   );
@@ -308,8 +308,8 @@ describe('identification success is what opens the application', () => {
   });
 });
 
-describe('losing the board returns the operator to the connection workspace', () => {
-  it('unmounts the configuration workspace and shows Connect', () => {
+describe('losing the board returns the operator to Home', () => {
+  it('unmounts the configuration workspace and shows Home', () => {
     presentBoard();
     const app = renderApp();
     openConfigurationDoor(app);
@@ -328,7 +328,7 @@ describe('losing the board returns the operator to the connection workspace', ()
     expect(app.has('probe-MOTORS')).toBe(false);
     expect(app.has('main-tab-MOTORS')).toBe(false);
     expect(mockMounts.MOTORS).toBe(mountedBefore);
-    expect(app.has('connect-workspace-screen')).toBe(true);
+    expect(app.has('start-screen')).toBe(true);
     app.unmount();
   });
 
@@ -372,7 +372,6 @@ describe('losing the board returns the operator to the connection workspace', ()
 
     const seen = mockGenerations.SETUP ?? [];
     expect(seen[seen.length - 1]).toBe(4);
-    expect(app.has('connect-workspace-screen')).toBe(false);
     app.unmount();
   });
 });
@@ -389,7 +388,7 @@ describe('an expected reboot is a transitional state, not a disconnection', () =
     presentBoard({present: false, ownership: 'INACTIVE'});
     app.settle();
 
-    expect(app.has('connect-rebooting')).toBe(true);
+    expect(app.has('reboot-overlay')).toBe(true);
     expect(app.has('probe-MOTORS')).toBe(false);
     app.unmount();
   });
@@ -402,7 +401,7 @@ describe('an expected reboot is a transitional state, not a disconnection', () =
     fcRebootRecovery.expectReboot(SESSION_ID, 'CLI_SAVE');
     presentBoard({present: false, ownership: 'INACTIVE'});
     app.settle();
-    expect(app.has('connect-rebooting')).toBe(true);
+    expect(app.has('reboot-overlay')).toBe(true);
 
     fcRebootRecovery.noteSessionLost(SESSION_ID);
     fcRebootRecovery.noteRecovered();
@@ -418,7 +417,7 @@ describe('an expected reboot is a transitional state, not a disconnection', () =
    * in-flight phases on a deadline of its own, so the transitional
    * state cannot become a place the operator is stranded.
    */
-  it('falls back to the ordinary connection workspace on timeout', () => {
+  it('returns the operator to Home on timeout', () => {
     presentBoard();
     const app = renderApp();
     openConfigurationDoor(app);
@@ -426,14 +425,14 @@ describe('an expected reboot is a transitional state, not a disconnection', () =
     fcRebootRecovery.expectReboot(SESSION_ID, 'CLI_SAVE');
     presentBoard({present: false, ownership: 'INACTIVE'});
     app.settle();
-    expect(app.has('connect-rebooting')).toBe(true);
+    expect(app.has('reboot-overlay')).toBe(true);
 
     // The recovery gives up; nothing else about the world changes.
     fcRebootRecovery.noteReopenFailed();
     app.settle();
 
-    expect(app.has('connect-rebooting')).toBe(false);
-    expect(app.has('connect-workspace-screen')).toBe(true);
+    expect(app.has('reboot-overlay')).toBe(false);
+    expect(app.has('start-screen')).toBe(true);
     expect(mockMounts.MOTORS ?? 0).toBe(0);
     app.unmount();
   });

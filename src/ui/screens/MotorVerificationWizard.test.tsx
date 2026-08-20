@@ -357,23 +357,13 @@ describe('Motor flow entry after the single-app merge', () => {
     expect(panelsCode).toContain('__DEV__');
   });
 
-  it('removed the duplicate entry POINT from the connection screen, not just its import', () => {
-    const host = readFileSync(join(__dirname, 'UsbConnectionScreen.tsx'), 'utf8');
-    const code = host
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
-      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
-    // No import, no render site, no navigate() to a motors route.
-    expect(code).not.toContain('DevBenchEntry');
-    expect(code).not.toContain('MotorsDevEntry');
-    expect(code).not.toContain("'Motors'");
-    for (const forbidden of [
-      'createMotorTestSessionBinding',
-      'operatorPort',
-      'pulseMotor',
-    ]) {
-      expect(code).not.toContain(forbidden);
-    }
+  it('removed the duplicate entry POINT WITH the connection screen it lived on', () => {
+    // The seam this guarded was a second way into Motors, rendered by a
+    // standalone connection screen. That screen is gone from the product
+    // entirely, which closes the seam more completely than deleting the
+    // render site did - there is no host left to put it back on.
+    expect(existsSync(join(__dirname, 'UsbConnectionScreen.tsx'))).toBe(false);
+    expect(existsSync(join(__dirname, 'ConnectWorkspaceScreen.tsx'))).toBe(false);
   });
 
   it('keeps the app entry free of any direct motor-flow import', () => {

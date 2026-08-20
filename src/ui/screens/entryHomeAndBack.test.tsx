@@ -36,7 +36,6 @@ import '../../i18n';
 
 import StartScreen from './StartScreen';
 import {BRAND_PRODUCT_NAME} from '../brand';
-import {SetupConnectWorkspace} from './setupSessionHost';
 
 type Renderer = ReactTestRenderer.ReactTestRenderer;
 
@@ -140,7 +139,7 @@ afterEach(() => {
   jest.clearAllMocks();
 });
 
-describe('Home offers exactly three destinations', () => {
+describe('Home offers exactly three doors', () => {
   it('has the configurator door, the firmware door and the guide', () => {
     const navigate = jest.fn();
     const renderer = renderStart(navigate);
@@ -249,11 +248,13 @@ describe('Home offers exactly three destinations', () => {
     act(() => {
       control(renderer, 'start-configure')?.props.onPress();
     });
-    /* 'Connect', not 'Setup': the configuration workspace is not
-       registered in the navigator until a flight controller is
-       verified (App.tsx), so this door opens the connection
-       workspace and the app moves on once the wall comes down. */
-      expect(navigate).toHaveBeenCalledWith('Connect');
+    /*
+     * THE CONFIGURATION DOOR IS NOT A NAVIGATION, and that is the most
+     * direct destination there is: with no verified board it starts the
+     * connection HERE. There is no connection page to route to, so the
+     * "intermediate choice" this test guards against cannot exist.
+     */
+    expect(navigate).not.toHaveBeenCalled();
 
     act(() => {
       control(renderer, 'start-firmware')?.props.onPress();
@@ -264,7 +265,7 @@ describe('Home offers exactly three destinations', () => {
       control(renderer, 'start-flight-style-guide')?.props.onPress();
     });
     expect(navigate).toHaveBeenCalledWith('FlightStyleGuide');
-    expect(navigate).toHaveBeenCalledTimes(3);
+    expect(navigate).toHaveBeenCalledTimes(2);
   });
 
   it('the calls to action are compact, not full-width bars', () => {
@@ -355,52 +356,15 @@ describe('Home offers exactly three destinations', () => {
     renderers.push(renderer);
     expect(screenText(renderer)).not.toContain('جاهز');
   });
-});
-
-describe('the flight-controller workspace is not a dead end', () => {
-  it('renders a back control when the host can go back', () => {
-    const onBack = jest.fn();
-    let renderer!: Renderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(
-        <SetupConnectWorkspace onSessionEstablished={jest.fn()} onBack={onBack} />,
-      );
-    });
-    renderers.push(renderer);
-
-    const back = control(renderer, 'setup-connect-back');
-    expect(back).toBeDefined();
-
-    act(() => {
-      back?.props.onPress();
-    });
-    expect(onBack).toHaveBeenCalledTimes(1);
-  });
-
-  it('omits the control rather than rendering a dead one when there is nowhere to go', () => {
-    let renderer!: Renderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(
-        <SetupConnectWorkspace onSessionEstablished={jest.fn()} />,
-      );
-    });
-    renderers.push(renderer);
-
-    expect(control(renderer, 'setup-connect-back')).toBeUndefined();
-    // The workspace itself still renders - the connection flow is intact.
-    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length)
-      .toBeGreaterThan(0);
-  });
-
-  it('the back control keeps a comfortable touch target', () => {
-    let renderer!: Renderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(
-        <SetupConnectWorkspace onSessionEstablished={jest.fn()} onBack={jest.fn()} />,
-      );
-    });
-    renderers.push(renderer);
-
-    expect(Number(styleOf(renderer, 'setup-connect-back').minHeight)).toBeGreaterThanOrEqual(44);
-  });
-});
+});/**
+ * THE WORKSPACE THAT WAS NOT A DEAD END NO LONGER EXISTS, and that is
+ * the fix rather than a gap in the tests.
+ *
+ * These three tests used to hold a back control on a standalone
+ * connection workspace: a page an operator could arrive at with no way
+ * forward and, before the control was added, no way back either. The
+ * page is gone. There is nowhere to be stranded, so there is nothing to
+ * rescue anybody from - and the contracts that replaced these live in
+ * ui/session/directConnect.test.tsx (what connecting does) and
+ * homeToSetupFlow.test.tsx (that Home never leaves Home to do it).
+ */

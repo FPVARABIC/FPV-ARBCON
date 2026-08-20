@@ -11,6 +11,12 @@
  *   - the chrome logo announces the brand name for assistive tech.
  */
 
+/* Home drives the connection itself now (ui/session/useDirectConnect),
+   so importing it reaches the transport module graph. The native module
+   is mocked for the same reason every other suite mocks it: this file is
+   not testing the USB bridge. */
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 jest.mock('react-native', () => jest.requireActual('react-native-web'));
 
 import React from 'react';

@@ -70,7 +70,7 @@ jest.mock('./CliScreen', () => mockProbe('CLI'));
 jest.mock('./FirmwareFlasherSimpleScreen', () => mockProbe('FLASHER'));
 jest.mock('./FlightStyleGuideScreen', () => mockProbe('GUIDE'));
 jest.mock('./setupSessionHost', () => ({
-  SetupConnectWorkspace: () => null,
+  useSetupSessionDisconnect: () => () => undefined,
   SetupScreenContent: () => null,
 }));
 
@@ -230,40 +230,125 @@ describe('the flight style guide is public educational content', () => {
 });
 
 /**
- * THE STRUCTURAL CLAIM BEHIND BOTH DECISIONS.
+ * THE TREE TEST: A STANDALONE CONNECTION ROUTE MUST NEVER COME BACK.
  *
- * A public screen cannot be a side door into a route it cannot name.
- * The two application roots own that route; nothing else in the product
- * refers to it, so there is no navigate('Setup') anywhere for a public
- * screen - present or future - to reach it through.
+ * This one is here because it already happened. A connection page was
+ * removed, and then reappeared - as a route, under a new name, doing the
+ * same thing: giving the application somewhere to strand an operator who
+ * has no board. So this walks the entire production tree and FAILS on
+ * any of it:
+ *
+ *   - a navigator registering a screen whose name looks like a
+ *     connection destination;
+ *   - a navigate()/replace()/reset() naming one;
+ *   - a route param list declaring one;
+ *   - a file named as one.
+ *
+ * If a future change needs a connection SURFACE, it belongs where this
+ * one does: inside Home, as a component and a service, reachable only
+ * from the press that starts it.
  */
-describe('only the application roots name the configuration route', () => {
-  it('finds no other production reference to it', () => {
+const CONNECTION_ROUTE_NAMES = [
+  'Connect',
+  'Connection',
+  'ConnectWorkspace',
+  'UsbConnection',
+  'Pairing',
+];
+
+function productionSources(): string[] {
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '__testUtils__') {
+          continue;
+        }
+        walk(full);
+        continue;
+      }
+      if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) {
+        continue;
+      }
+      files.push(full);
+    }
+  };
+  walk(path.join(ROOT, 'src'));
+  files.push(path.join(ROOT, 'App.tsx'), path.join(ROOT, 'App.web.tsx'));
+  return files;
+}
+
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+}
+
+describe('no standalone connection route can come back', () => {
+  it('registers no connection screen in any production navigator', () => {
     const offenders: string[] = [];
-    const walk = (dir: string) => {
-      for (const entry of fs.readdirSync(dir, {withFileTypes: true})) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          if (entry.name === 'node_modules' || entry.name === '__testUtils__') {
-            continue;
-          }
-          walk(full);
-          continue;
-        }
-        if (!/\.tsx?$/.test(entry.name) || /\.test\.tsx?$/.test(entry.name)) {
-          continue;
-        }
-        const code = fs
-          .readFileSync(full, 'utf8')
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
-          .replace(/^\s*\/\/.*$/gm, '');
-        if (/navigate\(\s*['"]Setup['"]/.test(code)) {
-          offenders.push(path.relative(ROOT, full));
+    for (const file of productionSources()) {
+      const code = stripComments(fs.readFileSync(file, 'utf8'));
+      for (const name of CONNECTION_ROUTE_NAMES) {
+        if (new RegExp(`<Stack\\.Screen[^>]*name=["']${name}["']`).test(code)) {
+          offenders.push(`${path.relative(ROOT, file)} registers ${name}`);
         }
       }
-    };
-    walk(path.join(ROOT, 'src'));
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('navigates to no connection route from anywhere in production', () => {
+    const offenders: string[] = [];
+    for (const file of productionSources()) {
+      const code = stripComments(fs.readFileSync(file, 'utf8'));
+      for (const name of CONNECTION_ROUTE_NAMES) {
+        const called = new RegExp(
+          `(navigate|replace|push)\\(\\s*["']${name}["']`,
+        );
+        const reset = new RegExp(`name:\\s*["']${name}["']`);
+        if (called.test(code) || reset.test(code)) {
+          offenders.push(`${path.relative(ROOT, file)} targets ${name}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('declares no connection route in the param list', () => {
+    const types = stripComments(readCode('src/navigation/types.ts'));
+    for (const name of CONNECTION_ROUTE_NAMES) {
+      expect(types).not.toMatch(new RegExp(`^\\s*${name}\\s*:`, 'm'));
+    }
+  });
+
+  it('carries no standalone connection screen file', () => {
+    for (const gone of [
+      'src/ui/screens/ConnectWorkspaceScreen.tsx',
+      'src/ui/screens/UsbConnectionScreen.tsx',
+      'src/ui/screens/ConnectionScreen.tsx',
+    ]) {
+      expect(`${gone}: ${fs.existsSync(path.join(ROOT, gone))}`).toBe(
+        `${gone}: false`,
+      );
+    }
+  });
+
+  /**
+   * AND THE FLAG THAT ONLY A CONNECTION PAGE NEEDED. `afterSessionLoss`
+   * existed to tell such a page "you were sent here, do not auto-connect".
+   * With no page to send anyone to, keeping it would be keeping the
+   * shape of the thing that was removed.
+   */
+  it('carries no afterSessionLoss route param anywhere in production', () => {
+    const offenders: string[] = [];
+    for (const file of productionSources()) {
+      if (stripComments(fs.readFileSync(file, 'utf8')).includes('afterSessionLoss')) {
+        offenders.push(path.relative(ROOT, file));
+      }
+    }
     expect(offenders).toEqual([]);
   });
 });
@@ -285,10 +370,11 @@ describe('the wall is identical on both application roots', () => {
       expect(code).toContain(
         'configurationWorkspaceUnlocked(connection)',
       );
-      // The conditional registration itself: Setup in the true branch,
-      // Connect in the false one.
+      // The conditional registration itself: Setup when unlocked, and
+      // NOTHING when locked. A second screen in the false branch would
+      // be a connection page by another name.
       expect(code).toMatch(
-        /\{workspaceUnlocked \? \( <Stack\.Screen name="Setup"[\s\S]*?\) : \( <Stack\.Screen name="Connect"/,
+        /\{workspaceUnlocked \? \( <Stack\.Screen name="Setup"[^>]*\/> \) : null\}/,
       );
     },
   );

@@ -372,12 +372,19 @@ function makeProps(params: RootStackParamList['Setup'] | undefined): Props {
 }
 
 describe('SetupScreen', () => {
-  it('renders the DISCONNECTED configurator - the real embedded connection workspace - when route.params is missing', async () => {
-    // ENTRY CLEANUP: params-less 'Setup' is the product's first-class
-    // disconnected state now (Start opens it directly), not a defensive
-    // dead-end. What must render is the genuine connection workspace;
-    // what must NOT render is any connected content or fabricated
-    // session.
+  it('renders NOTHING when route.params is missing - there is no disconnected posture to draw', async () => {
+    /*
+     * THIS USED TO RENDER A WHOLE CONNECTION WORKSPACE, and that was the
+     * defect rather than the feature. The 'Setup' route is registered in
+     * the navigator only while a flight controller is verified (App.tsx),
+     * so a params-less arrival is not a product state at all - it is the
+     * single render between a board going away and react-navigation
+     * unmounting this route.
+     *
+     * What must NOT appear is any connected content, any fabricated
+     * session, and any connection surface: a second place to be
+     * stranded is exactly what was removed.
+     */
     const props = makeProps(undefined);
     let renderer!: ReactTestRenderer.ReactTestRenderer;
 
@@ -386,8 +393,9 @@ describe('SetupScreen', () => {
       await Promise.resolve();
     });
 
-    expect(findAnyByTestID(renderer, 'setup-connect-workspace')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'usb-refresh-button')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-awaiting-unmount')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-connect-workspace')).toBeNull();
+    expect(findAnyByTestID(renderer, 'usb-refresh-button')).toBeNull();
     expect(findAnyByTestID(renderer, 'setup-screen')).toBeNull();
 
     await act(async () => {

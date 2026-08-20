@@ -1,5 +1,4 @@
 export {
-  UsbConnectionScreen,
   SetupScreen,
   MainTabsScreen,
   StartScreen,

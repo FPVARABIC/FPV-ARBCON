@@ -43,39 +43,41 @@
 import type {SetupUiSessionKey} from '../platforms/react-native/protocol';
 
 export type RootStackParamList = {
+  /**
+   * HOME, AND THE WHOLE DISCONNECTED APPLICATION.
+   *
+   * There is NO connection route in this list, and its absence is a
+   * product decision rather than an omission. A standalone connection
+   * page is somewhere the application can strand an operator: it can be
+   * deep-linked, restored from saved navigation state, walked back into
+   * with the browser's Back button, and left showing "not connected"
+   * with no way forward. So connecting is not a destination at all -
+   * Home DOES it (StartScreen + ui/session/useDirectConnect), inline,
+   * while the operator stays exactly where they pressed.
+   *
+   * It takes no params for the same reason. "You were returned here
+   * because a link died" is a one-shot signal
+   * (ui/session/connectionNotice.ts), not navigation state: a param
+   * would survive a refresh and announce a lost board to somebody who
+   * simply reloaded the page.
+   */
   Start: undefined;
   /**
-   * THE DISCONNECTED APPLICATION, and the only configuration destination
-   * that exists before a flight controller is verified.
+   * THE CONFIGURATION WORKSPACE, and it exists only while a flight
+   * controller is verified.
    *
-   * `Setup` - the configuration workspace - is registered in the
-   * navigator ONLY while ui/session/verifiedConnection.ts reports
-   * CONNECTED. That is the hard wall: before it there is no protected
+   * This route is registered in the navigator ONLY while
+   * ui/session/verifiedConnection.ts reports CONNECTED (App.tsx,
+   * App.web.tsx). That is the hard wall: before it there is no protected
    * route to deep-link into, to restore from a saved navigation state,
-   * or to render for a frame before a guard notices. `Connect` is what
-   * the operator has instead.
+   * or to render for a frame before a guard notices.
    *
-   * `afterSessionLoss` means the same thing it means on Setup: the
-   * operator did not ask to be here, a link died, so this arrival must
-   * not auto-reopen the port.
+   * `sessionKey` is therefore always present in practice - the route
+   * cannot be entered without one - and stays optional in the type only
+   * because react-navigation cannot express "this route exists
+   * conditionally" at the param level.
    */
-  Connect: {afterSessionLoss?: true} | undefined;
-  /**
-   * `afterSessionLoss` says WHY the operator is on the disconnected
-   * configurator, and it exists because the two arrivals mean opposite
-   * things.
-   *
-   * Pressing "فتح إعدادات متحكم الطيران" IS a request to connect, so the
-   * workspace opens an unambiguous board by itself. Being RETURNED here
-   * by the session-loss redirect is the opposite: the link just died.
-   * Auto-connecting on that arrival reopens the port, the dead session
-   * ends again, the redirect fires again - an unbounded reconnect loop
-   * that hammers the port and, on Android, re-raises the permission
-   * dialog every cycle. Only the redirect sets this flag.
-   */
-  Setup:
-    | {sessionKey?: SetupUiSessionKey; afterSessionLoss?: true}
-    | undefined;
+  Setup: {sessionKey?: SetupUiSessionKey} | undefined;
   FirmwareFlasher: undefined;
   FlightStyleGuide: undefined;
   /**

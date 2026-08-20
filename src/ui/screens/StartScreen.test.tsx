@@ -1,5 +1,14 @@
+/* Home drives the connection itself now (ui/session/useDirectConnect),
+   so importing it reaches the transport module graph. The native module
+   is mocked for the same reason every other suite mocks it: this file is
+   not testing the USB bridge. */
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 import React from 'react';
 import ReactTestRenderer, {act} from 'react-test-renderer';
+
+// Home renders real Arabic copy for the connection it now drives.
+import '../../i18n';
 
 import StartScreen from './StartScreen';
 
@@ -18,15 +27,20 @@ describe('StartScreen', () => {
     });
     press(renderer, 'start-configure');
     press(renderer, 'start-firmware');
-    // Straight to the destinations - 'Connection' is not a route this
-    // product has anymore (navigation/types.ts).
-    /* 'Connect', not 'Setup': the configuration workspace is not
-       registered in the navigator until a flight controller is
-       verified (App.tsx), so this door opens the connection
-       workspace and the app moves on once the wall comes down. */
-      expect(navigation.navigate).toHaveBeenNthCalledWith(1, 'Connect');
-    expect(navigation.navigate).toHaveBeenNthCalledWith(2, 'FirmwareFlasher');
-    expect(navigation.navigate).toHaveBeenCalledTimes(2);
+    /*
+     * THE CONFIGURATION DOOR NAVIGATES NOWHERE, and that is the whole
+     * point of it.
+     *
+     * There is no connection route to send anyone to: with no verified
+     * board this press STARTS THE CONNECTION HERE, on Home, and the
+     * operator watches it happen beside the card. The only navigation
+     * this screen performs is to the two public destinations.
+     */
+    expect(navigation.navigate).toHaveBeenNthCalledWith(1, 'FirmwareFlasher');
+    expect(navigation.navigate).toHaveBeenCalledTimes(1);
+    for (const [name] of navigation.navigate.mock.calls) {
+      expect(name).not.toBe('Connect');
+    }
     act(() => renderer.unmount());
   });
 

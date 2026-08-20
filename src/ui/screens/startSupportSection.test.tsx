@@ -17,12 +17,21 @@
  * wired to that constant and to nothing else.
  */
 
+/* Home drives the connection itself now (ui/session/useDirectConnect),
+   so importing it reaches the transport module graph. The native module
+   is mocked for the same reason every other suite mocks it: this file is
+   not testing the USB bridge. */
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 import * as fs from 'fs';
 import * as path from 'path';
 
 import React from 'react';
 import {Linking, Text} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
+
+// Home renders real Arabic copy for the connection it now drives.
+import '../../i18n';
 
 import StartScreen from './StartScreen';
 import {SUPPORT_PROJECT_URL} from '../../platforms/supportUrl';
@@ -182,7 +191,7 @@ describe('the footer stays a footer', () => {
     ).toHaveLength(0);
   });
 
-  it('leaves all three doors working exactly as before', () => {
+  it('leaves the two public doors navigating, and the third connecting in place', () => {
     const navigate = jest.fn();
     const renderer = renderHome(navigate);
 
@@ -198,12 +207,9 @@ describe('the footer stays a footer', () => {
 
     expect(navigate).toHaveBeenNthCalledWith(1, 'FlightStyleGuide');
     expect(navigate).toHaveBeenNthCalledWith(2, 'FirmwareFlasher');
-    /* 'Connect', not 'Setup': the configuration workspace is not
-       registered in the navigator until a flight controller is
-       verified (App.tsx), so this door opens the connection
-       workspace and the app moves on once the wall comes down. */
-      expect(navigate).toHaveBeenNthCalledWith(3, 'Connect');
-    expect(navigate).toHaveBeenCalledTimes(3);
+    // The third door does not navigate: with no verified board it starts
+    // the connection on Home instead of leaving it.
+    expect(navigate).toHaveBeenCalledTimes(2);
   });
 
   it('draws its cup from the icon system, not from an emoji character', () => {

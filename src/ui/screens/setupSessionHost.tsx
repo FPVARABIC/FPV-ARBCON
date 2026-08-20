@@ -1,136 +1,39 @@
 /**
- * THE CONNECTION-LIFECYCLE SEAM for the tab-shell era.
+ * THE INTENTIONAL DISCONNECT, and where session authority is allowed to
+ * live.
  *
- * ENTRY CLEANUP moved the standalone 'Connection' route INSIDE the Setup
- * tab, which raises a boundary question this module answers: SetupScreen
- * and everything under src/ui/components/setup are fenced by SETUP P1
- * (setupPresentationBoundary.test.ts) - they read session truth through
- * the setupPresentation facade and command through fcToolsController,
- * and may not touch the coordinator, a client or a transport. Opening
- * and closing SESSIONS was never Setup's capability; it belonged to
- * UsbConnectionScreen, in this same screens layer. This module keeps
- * that ownership in the same layer, one file over:
+ * SETUP P1 (setupPresentationBoundary.test.ts) fences SetupScreen and
+ * everything under src/ui/components/setup away from the coordinator,
+ * clients and transports: they read session truth through the
+ * setupPresentation facade and command through fcToolsController.
+ * CLOSING a session was never Setup's capability, so it lives here - one
+ * file over, in the same screens layer - and Setup consumes it as a
+ * plain callback, exactly as it receives navigation callbacks from the
+ * shell without importing the navigator.
  *
- *   - SetupConnectWorkspace: the disconnected configurator's content -
- *     hosts the complete, unmodified UsbConnectionScreen and ADOPTS a
- *     session that is already ACTIVE in the coordinator (Back to Start
- *     deliberately never deactivates - see App.test.tsx - so re-entry
- *     must reattach to the live session rather than offer a second
- *     connect against an already-open port).
+ * THE FAILURE ASYMMETRY IS THE POINT: close the transport session first,
+ * and only a CONFIRMED close deactivates MSP ownership. Ownership
+ * flipping INACTIVE is what the session-loss rule watches, so returning
+ * to Home happens through that one shared safety rule rather than
+ * through a second copy of it here. On failure nothing is deactivated -
+ * native cleanup is unconfirmed - and the operator gets the same
+ * localized Arabic error every transport failure uses.
  *
- *   - useSetupSessionDisconnect: the intentional disconnect for the top
- *     bar - the same two calls, in the same order, with the same
- *     failure asymmetry UsbConnectionScreen's own قطع الاتصال uses:
- *     close the transport session first, and only a CONFIRMED close
- *     deactivates MSP ownership. Ownership flipping INACTIVE is what
- *     the session-loss redirect watches, so navigation back to the
- *     disconnected configurator happens through that one shared safety
- *     rule. On failure nothing is deactivated (native cleanup
- *     unconfirmed - DISCONNECT_FAILURE's reasoning); the operator gets
- *     the same localized Arabic error, and the coordinator's own
- *     recovery/detach machinery owns the rest.
- *
- * SetupScreen consumes both as plain React building blocks - a
- * component and a callback - so the fenced file itself names no
- * protocol capability at all, exactly as it receives navigation
- * callbacks from the shell without importing the navigator.
+ * This file used to also host the connection workspace. It does not any
+ * more: there is no connection screen in this application, and
+ * connecting is a service Home drives (ui/session/useDirectConnect).
  */
 
-import React, { useCallback, useEffect } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback } from 'react';
+import { Alert } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, spacing, typography } from '../theme';
-import { Icon } from '../icons';
-import UsbConnectionScreen from './UsbConnectionScreen';
 import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
-import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 import {
   localizeTransportError,
   usbSerialTransportClient,
 } from '../../platforms/react-native/transport';
 import type { TransportError } from '../../platforms/react-native/transport';
-
-export function SetupConnectWorkspace({
-  onSessionEstablished,
-  onBack,
-  autoConnectOnEntry = true,
-}: {
-  readonly onSessionEstablished: (key: SetupUiSessionKey) => void;
-  /** Leaves the configurator. Absent only in hosts with nowhere to go. */
-  readonly onBack?: () => void;
-  /**
-   * Whether this arrival is a request to connect.
-   *
-   * Defaults to true because the ordinary way to reach this workspace is
-   * pressing "فتح إعدادات متحكم الطيران", which already says so. The
-   * session-loss redirect passes false: being returned here by a link
-   * that just died is not a request to reopen it.
-   */
-  readonly autoConnectOnEntry?: boolean;
-}): React.JSX.Element {
-  useEffect(() => {
-    for (const sessionId of mspSessionCoordinator.listSessionIds()) {
-      if (mspSessionCoordinator.getOwnershipState(sessionId) !== 'INACTIVE') {
-        const existingKey = mspSessionCoordinator.getSessionKey(sessionId);
-        /**
-         * A KEY WITHOUT A SESSION ID IDENTIFIES NOTHING, and adopting one
-         * is not a harmless optimism - it is an infinite loop.
-         *
-         * This used to test `if (existingKey)`. A key of `{generation: 1}`
-         * with no `sessionId` passes that, gets written into the route
-         * params, and the session-loss redirect then reads it back, finds
-         * the ownership of `undefined` reported INACTIVE, and resets the
-         * stack right back to this workspace - which mounts, adopts the
-         * same malformed key again, and never stops. Observed doing
-         * exactly that: the render loop allocated until the heap died.
-         *
-         * So the test is now what the field actually means: adopt a
-         * session only when there IS a session to name.
-         */
-        if (
-          typeof existingKey?.sessionId === 'string' &&
-          existingKey.sessionId.length > 0
-        ) {
-          onSessionEstablished(existingKey);
-          return;
-        }
-      }
-    }
-  }, [onSessionEstablished]);
-
-  return (
-    <View style={styles.root} testID="setup-connect-workspace">
-      {/* THE WAY OUT. Before this, opening the configurator without a
-          connected board landed the operator on the connection workspace
-          with no visible way back - the tab shell's own back affordance
-          belongs to the CONNECTED screen, which this state is not. A
-          navigation dead end is a defect regardless of how correct the
-          connection logic underneath it is. */}
-      {onBack !== undefined ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="العودة"
-          onPress={onBack}
-          style={styles.backRow}
-          testID="setup-connect-back">
-          <Icon name="chevron-back" size={22} color={colors.textPrimary} />
-          <Text style={styles.backLabel}>العودة</Text>
-        </Pressable>
-      ) : null}
-      {/* autoConnectOnEntry: reaching this workspace IS the request to
-          connect - the operator pressed "فتح إعدادات متحكم الطيران" to get
-          here. When exactly one authorized board is present it opens by
-          itself and the settings appear; anything ambiguous, unauthorized
-          or absent still waits for them. See the prop's own comment for
-          why this needs no browser gesture. */}
-      <UsbConnectionScreen
-        onSessionEstablished={onSessionEstablished}
-        autoConnectOnEntry={autoConnectOnEntry}
-      />
-    </View>
-  );
-}
 
 export function useSetupSessionDisconnect(sessionId: string): () => void {
   const { t } = useTranslation();
@@ -148,19 +51,3 @@ export function useSetupSessionDisconnect(sessionId: string): () => void {
     })();
   }, [sessionId, t]);
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  backRow: {
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.md,
-  },
-  backLabel: { ...typography.bodyStrong, color: colors.textPrimary },
-});

@@ -427,7 +427,6 @@ const PROTOCOL_ALLOWED: Readonly<Record<string, string>> = {
   // Notice-routing domain and connection-stage ids: code identifiers that
   // are never rendered. Verified by reading every use site.
   'src/ui/components/setup/connectionIndicator.ts': 'notice-routing domain key, never rendered',
-  'src/ui/screens/UsbConnectionScreen.tsx': 'connection-stage telemetry ids, never rendered',
   // The map that REPLACES the raw identifiers; it must name them to
   // translate them.
   'src/ui/presentation/writeStageNames.ts': 'the translation table itself',

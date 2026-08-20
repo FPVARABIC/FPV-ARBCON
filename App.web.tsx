@@ -4,8 +4,8 @@
  * This is the same application as App.tsx, not a web edition of it. It
  * renders the same Arabic screens, drives the same MSP core, and reuses
  * useSessionLossRedirect() - the one shared implementation of the
- * "tracked session died -> return to Connection" safety rule - rather
- * than carrying a second copy of it.
+ * "tracked session died -> return to Home" safety rule - rather than
+ * carrying a second copy of it.
  *
  * THE THREE THINGS THAT LEGITIMATELY DIFFER HERE, and why:
  *
@@ -15,11 +15,11 @@
  *    React.lazy() chunks: opening the app fetches the Start screen and
  *    the shared core, not the entire configurator plus esptool.
  *    `getComponent` cannot express this - it must return a component
- *    synchronously - so these are lazy() + <Suspense>. The USB connection
- *    workspace is its own chunk now, because it is no longer part of the
- *    configurator: a disconnected operator downloads the connection
- *    screen alone, and the fifteen configuration screens arrive only once
- *    there is a board to configure.
+ *    synchronously - so these are lazy() + <Suspense>. There is no
+ *    connection chunk at all: connecting is a service Home drives rather
+ *    than a screen anyone navigates to, so it ships with Home, and the
+ *    fifteen configuration screens arrive only once there is a board to
+ *    configure.
  *
  * 1c. THE HARD CONNECTION WALL IS NOT PLATFORM-SPECIFIC. The `Setup`
  *    route - the configuration workspace and every screen in it - is
@@ -58,14 +58,15 @@ import {useTranslation} from 'react-i18next';
 
 import './src/i18n';
 // Imported from its own module rather than the './src/ui' barrel: that
-// barrel statically re-exports MainTabsScreen and UsbConnectionScreen, so
-// importing through it would pull the entire configurator into the entry
-// chunk and defeat every lazy() boundary below.
+// barrel statically re-exports MainTabsScreen, so importing through it
+// would pull the entire configurator into the entry chunk and defeat
+// every lazy() boundary below.
 import StartScreen from './src/ui/screens/StartScreen';
 import BrandTopChrome from './src/ui/brand/BrandTopChrome';
 import {useSessionLossRedirect} from './src/navigation/useSessionLossRedirect';
 import {
   configurationWorkspaceUnlocked,
+  RebootOverlay,
   useVerifiedFcConnection,
 } from './src/ui/session';
 import type {RootStackParamList} from './src/navigation/types';
@@ -112,11 +113,6 @@ installWebAlert();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const MainTabsScreen = React.lazy(() => import('./src/ui/screens/MainTabsScreen'));
-// The disconnected application: the only configuration destination that
-// exists before a board is verified.
-const ConnectWorkspaceScreen = React.lazy(
-  () => import('./src/ui/screens/ConnectWorkspaceScreen'),
-);
 // The default flasher route is the compact simple workflow; the full
 // legacy surface stays reachable from its own «متقدم» control for recovery
 // and specialist cases (the simple screen renders it embedded).
@@ -211,9 +207,7 @@ function App(): React.JSX.Element {
               <Stack.Screen name="Start" component={StartScreen} />
               {workspaceUnlocked ? (
                 <Stack.Screen name="Setup" component={MainTabsScreen} />
-              ) : (
-                <Stack.Screen name="Connect" component={ConnectWorkspaceScreen} />
-              )}
+              ) : null}
               <Stack.Screen
                 name="FirmwareFlasher"
                 component={FirmwareFlasherScreen}
@@ -230,6 +224,10 @@ function App(): React.JSX.Element {
           </Suspense>
         </NavigationContainer>
       </View>
+      {/* A reboot we asked for is a STATE, not a destination. Outside
+          the navigator on purpose: not a route, not a history entry, and
+          nothing a refresh or Back can bring back. */}
+      <RebootOverlay connection={connection} />
       {/* Last child, so it paints above the navigator without needing a
           portal - a dialog must survive navigation happening underneath. */}
       <WebAlertHost />

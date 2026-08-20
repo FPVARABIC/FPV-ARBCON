@@ -370,8 +370,11 @@ describe('vendor neutrality of the production identification path', () => {
     ].map(file => fs.readFileSync(path.join(__dirname, file), 'utf8'));
 
     const connectionPath = [
-      ['..', '..', '..', '..', 'ui', 'screens', 'UsbConnectionScreen.tsx'],
-      ['..', '..', '..', '..', 'ui', 'components', 'connection', 'UsbDeviceList.tsx'],
+      // The connection path is no longer a screen - it is the service
+      // Home drives - so the vendor gate is hunted where it now lives.
+      ['..', '..', '..', '..', 'ui', 'session', 'connectFlow.ts'],
+      ['..', '..', '..', '..', 'ui', 'session', 'useDirectConnect.ts'],
+      ['..', '..', '..', '..', 'ui', 'components', 'home', 'HomeConnect.tsx'],
       ['..', '..', '..', '..', 'platforms', 'react-native', 'transport', 'UsbSerialTransportClient.ts'],
       ['..', '..', '..', '..', 'platforms', 'react-native', 'transport', 'native', 'NativeUsbSerialTransport.web.ts'],
     ].map(segments => fs.readFileSync(path.join(__dirname, ...segments), 'utf8'));

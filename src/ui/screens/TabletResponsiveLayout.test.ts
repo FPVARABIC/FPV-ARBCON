@@ -14,7 +14,6 @@ import {
  * a metre of screen would trade one bad layout for another.
  */
 const READING_COLUMN_SCREENS = [
-  'UsbConnectionScreen.tsx',
   'FirmwareFlasherScreen.tsx',
 ] as const;
 

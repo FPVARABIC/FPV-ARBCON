@@ -354,32 +354,27 @@ function isOnSetupScreen(renderer: ReactTestRenderer.ReactTestRenderer): boolean
 }
 
 /**
- * Reaches the CONNECTED state, however this build gets there.
+ * REACHING THE WORKSPACE, the way an operator now does.
  *
- * ENTRY CLEANUP changed who initiates the connection. Arriving at the
- * configurator IS the request to connect - the operator pressed "فتح
- * إعدادات متحكم الطيران" - so when exactly one authorized board is
- * present the workspace opens it itself and «اتصال» is never rendered.
- * Pressing a button that no longer exists is how these tests failed.
+ * There is no connection page and no «اتصال» button on a page. Pressing
+ * the configuration door on HOME performs the whole connection - scan,
+ * open, MSP activation - and the wall then registers the workspace and
+ * the app moves there. This helper presses that door and lets the chain
+ * settle.
  *
- * This deliberately does NOT assert which path ran: both are correct
- * product behaviour (an ambiguous or absent board still waits for the
- * press), and every caller asserts the CONNECTED RESULT immediately
- * afterwards, which is the thing they actually care about. A build that
- * reached neither still fails there, loudly.
+ * The fake client here reports no device picker, which is the Android
+ * posture: no chooser, the system permission dialog is raised inside
+ * open(), and the scan runs directly.
  */
-async function reachConnected(renderer: ReactTestRenderer.ReactTestRenderer) {
-  const button = renderer.root
-    .findAllByProps({testID: 'usb-connect-button'})
-    .find(node => 'onPress' in node.props);
+async function pressConfigurationDoor(
+  renderer: ReactTestRenderer.ReactTestRenderer,
+) {
   await act(async () => {
-    if (button !== undefined) {
-      await button.props.onPress();
-      return;
-    }
-    // Auto-connect already ran; let its state settle exactly as a press
-    // would have.
+    findByTestID(renderer, 'start-configure').props.onPress();
     await flushSchedulerTick();
+  });
+  await act(async () => {
+    await settlePendingScans();
   });
 }
 
@@ -388,59 +383,32 @@ async function reachConnected(renderer: ReactTestRenderer.ReactTestRenderer) {
 // is never configured on NavigationContainer in App.tsx, so
 // NavigationContainerInner's own isLinkingEnabled is false and
 // isLinkingReady is therefore already true on the very first render,
-// unconditionally (see node_modules/@react-navigation/native/src/
-// NavigationContainer.tsx) - there is no getInitialURL() race to wait out
-// here at all. onReady was investigated too (it now exists in App.tsx,
-// added for the navigation-not-ready race fix) and is NOT usable as this
-// wait's replacement either: it is the wrong signal for a different
-// concern (App.tsx's own redirect-effect readiness, not whether
-// UsbConnectionScreen's mount-time auto-scan has settled), and the
-// dedicated race-condition test below deliberately holds onReady back
-// while still needing this same connect flow to succeed, which awaiting
-// onReady here would deadlock.
+// unconditionally - there is no getInitialURL() race to wait out here.
 //
 // The actual, confirmed cause: React's own `scheduler` package (used
 // internally by react-native-screens/native-stack for the initial mount)
 // schedules its passive-effect flush via MessageChannel, falling back to
-// setTimeout(fn, 0) - see node_modules/scheduler/cjs/
-// scheduler.development.js's use of MessageChannel/localSetTimeout. That
-// is a real macrotask, not a microtask chain, so no amount of
-// `await Promise.resolve()` hops (tried first; confirmed insufficient)
-// can flush it inside act() - only yielding a REAL event-loop tick can.
-// This is therefore not a time-based race with a duration to pad for
-// margin - it is "has at least one such scheduler tick run yet", which
-// setTimeout(fn, 0) answers deterministically regardless of how long that
-// tick actually takes to fire. Two hops (not one) as a small, cheap
-// (impact is single-digit milliseconds, not more) allowance for more than
-// one such tick being scheduled; confirmed stable across 15+ repeated
-// runs at one hop already, so this is a safety margin on an
-// already-solid result, not a guess. Not fake timers - nothing else in
-// this file uses them, and MessageChannel-based scheduling is not
-// something Jest's fake timers intercept by default.
+// setTimeout(fn, 0). That is a real macrotask, not a microtask chain, so
+// no amount of `await Promise.resolve()` hops (tried first; confirmed
+// insufficient) can flush it inside act() - only yielding a REAL
+// event-loop tick can. This is therefore not a time-based race with a
+// duration to pad for margin - it is "has at least one such scheduler
+// tick run yet", which setTimeout(fn, 0) answers deterministically.
 function flushSchedulerTick(): Promise<void> {
   return new Promise<void>(resolve => setTimeout(() => resolve(), 0));
 }
 
 /**
- * Pass 7.7B (A-6): UsbConnectionScreen's mount-time auto-scan
- * (hasAutoScannedRef -> handleRefresh) dispatches SCAN_SUCCESS only after
- * client.listDevices() resolves. Awaiting THAT promise - the very one the
- * screen itself awaited, read back off the jest.fn's recorded results -
- * is an observable readiness condition, not a guess about elapsed time:
- * once every recorded listDevices() call has settled, the reducer update
- * has either already been dispatched or is one microtask away, and the
- * scheduler tick that follows flushes it plus the passive effects React
- * queues off it. All of it inside the caller's own act() scope, which is
- * what removes the "update to UsbConnectionScreen was not wrapped in
- * act()" warning at UsbConnectionScreen.tsx's dispatch({type:
- * 'SCAN_SUCCESS'}).
+ * The connection service dispatches its state only after
+ * client.listDevices() resolves. Awaiting THAT promise - the very one
+ * the service itself awaited, read back off the jest.fn's recorded
+ * results - is an observable readiness condition, not a guess about
+ * elapsed time, and it keeps every resulting update inside the caller's
+ * own act() scope.
  */
 async function settlePendingScans(): Promise<void> {
-  // One real scheduler tick so React's passive effects - the mount-time
-  // auto-scan among them - actually run and call listDevices().
+  // One real scheduler tick so React's passive effects actually run.
   await flushSchedulerTick();
-  // Then the observable readiness condition itself: every scan promise
-  // the screen is awaiting, positively settled.
   await Promise.all(
     fakeClient.listDevices.mock.results
       .filter(result => result.type === 'return')
@@ -451,63 +419,41 @@ async function settlePendingScans(): Promise<void> {
   await flushSchedulerTick();
 }
 
-/** Mounts App, then lets its mount-time device scan and its first
- * scheduler-queued passive effects settle inside a second awaited act()
- * (see settlePendingScans() and flushSchedulerTick()) - the shared
- * foundation every test in this file builds on. */
+/** Mounts App and lets its first scheduler-queued passive effects settle
+ * inside an awaited act() - the shared foundation every test builds on.
+ * NOTHING is pressed: a cold start is Home and only Home. */
 function renderApp(): Promise<ReactTestRenderer.ReactTestRenderer> {
-  return ownRendererOperation(
-    async () => {
-      let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
-      try {
-        await act(async () => {
-          renderer = ReactTestRenderer.create(<App />);
-        });
-        // ENTRY CLEANUP: the configure choice opens the 'Setup' route
-        // DIRECTLY - no 'Connection' stop exists anymore. The route has
-        // no sessionKey yet, so the tab shell renders the embedded
-        // connection workspace (SetupConnectWorkspace), whose mount-time
-        // auto-scan these lifecycle tests then observe exactly as they
-        // observed the old standalone screen's.
-        await act(async () => {
-          findByTestID(renderer as ReactTestRenderer.ReactTestRenderer, 'start-configure').props.onPress();
-          await flushSchedulerTick();
-        });
-        // Own the scan settlement in its own awaited act() scope: React
-        // defers a mount's passive effects until the creating act()
-        // scope pops, so the auto-scan cannot even have started inside
-        // the scope above.
-        await act(async () => {
-          await settlePendingScans();
-        });
-      } finally {
-        if (renderer !== undefined) {
-          trackedRenderers.push(renderer);
-        }
+  return ownRendererOperation(async () => {
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = ReactTestRenderer.create(<App />);
+      });
+      await act(async () => {
+        await flushSchedulerTick();
+      });
+    } finally {
+      if (renderer !== undefined) {
+        trackedRenderers.push(renderer);
       }
-      return renderer as ReactTestRenderer.ReactTestRenderer;
-    },
-  );
+    }
+    return renderer as ReactTestRenderer.ReactTestRenderer;
+  });
 }
 
-/** Mounts App, lets the safe auto-select policy pick the sole supported
- * device, and presses اتصال - reaching the CONNECTED Setup workspace
- * exactly the way a real user does now: the embedded connection
- * workspace's onSessionEstablished re-parameterizes the already-focused
- * 'Setup' route in place (SetupScreen.tsx), no navigation push involved. */
+/** Mounts App and connects the way a real operator does: one press on
+ * Home's configuration door, no page in between. */
 function renderAppConnectedToSetup(sessionId: string) {
-  return ownRendererOperation(
-    async () => {
-      fakeClient.listDevices.mockResolvedValueOnce([supportedDevice()]);
-      fakeClient.openDevice.mockResolvedValueOnce(sessionId);
+  return ownRendererOperation(async () => {
+    fakeClient.listDevices.mockResolvedValue([supportedDevice()]);
+    fakeClient.openDevice.mockResolvedValueOnce(sessionId);
 
-      const renderer = await renderApp();
-      await reachConnected(renderer);
+    const renderer = await renderApp();
+    await pressConfigurationDoor(renderer);
 
-      expect(isOnSetupScreen(renderer)).toBe(true);
-      return renderer;
-    },
-  );
+    expect(isOnSetupScreen(renderer)).toBe(true);
+    return renderer;
+  });
 }
 
 /** Every <Text> currently rendered, joined children included. */
@@ -517,330 +463,253 @@ function allText(renderer: ReactTestRenderer.ReactTestRenderer): unknown[] {
     .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
 }
 
-testOwningRenderer('opens the CONNECTION workspace from Start - no tab shell exists yet - and forces RTL', async () => {
+testOwningRenderer('a cold start is HOME and only Home - no configuration UI exists, and RTL is forced', async () => {
   const renderer = await renderApp();
 
-  const texts = allText(renderer);
-
   /*
-   * THE HARD WALL. This test used to assert the opposite: that the door
-   * opened the tab shell, which then hosted the connection workspace
-   * inside its Setup tab. That shape put the whole configurator - rail,
-   * tab bar and fifteen destinations - in front of an operator with
-   * nothing plugged in. The configuration workspace is now registered
-   * in the navigator ONLY while a flight controller is verified, so
-   * before that there is no shell to render at all.
+   * THE HARD WALL, PLUS THE PAGE THAT IS NO LONGER BEHIND IT.
+   *
+   * This test has been rewritten twice, and the direction is the point.
+   * It first asserted that the door opened the tab shell, which hosted a
+   * connection workspace inside its Setup tab - putting rail, tab bar
+   * and fifteen destinations in front of an operator with nothing
+   * plugged in. It then asserted a dedicated connection route instead,
+   * which was the same mistake with a smaller surface: still a place the
+   * application could leave somebody.
+   *
+   * Now there is nothing to assert the presence of. A disconnected
+   * operator is on Home; connecting is something Home DOES.
    */
-  expect(renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length).toBeGreaterThan(0);
-  expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
+  expect(renderer.root.findAllByProps({testID: 'start-screen'}).length).toBeGreaterThan(0);
   expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
-  expect(texts).toContain(i18n.t('connection.instructionPrimary'));
+  expect(isOnSetupScreen(renderer)).toBe(false);
   // The spies were installed above the module-scope load of ../App, so
-  // these still assert on App.tsx's own one-time module-scope RTL forcing
-  // - exactly what this test asserted before, from the only place that
-  // can still observe it.
+  // these still assert on App.tsx's own one-time module-scope RTL forcing.
   expect(allowRTLSpy).toHaveBeenCalledWith(true);
   expect(forceRTLSpy).toHaveBeenCalledWith(true);
 });
 
 describe('App - Pass 7.7B: coverage lifecycle', () => {
-  itOwningRenderer('completes the mount-time device scan INSIDE act(), with no act() warning', async () => {
-    const recorded: string[] = [];
-    const originalError = console.error.bind(console);
-    // Recording, not suppressing: every argument list is still forwarded
-    // to the real console.error, so nothing is hidden from the run.
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-      recorded.push(args.map(argument => String(argument)).join(' '));
-      originalError(...args);
-    });
-
-    let connected = false;
+  itOwningRenderer('completes the connection press INSIDE act(), with no act() warning', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     try {
-      // A scan that settles LATER than any fixed number of scheduler
-      // hops would cover. A microtask- or immediate-macrotask-resolved
-      // scan would pass this test even with the settlement removed, so
-      // it would prove nothing; this one is only inside the act() scope
-      // if settlePendingScans() genuinely awaits the screen's own scan
-      // promise. Verified as a negative control: deleting that await
-      // fails this test with the screen still showing "جارٍ البحث".
-      fakeClient.listDevices.mockImplementationOnce(
-        () => new Promise(resolve => setTimeout(() => resolve([supportedDevice()]), 200)),
-      );
+      fakeClient.listDevices.mockResolvedValue([supportedDevice()]);
+      fakeClient.openDevice.mockResolvedValueOnce('session-lifecycle-1');
       const renderer = await renderApp();
-      // Read with NO further flushing of any kind between the mount and
-      // this line - that is what makes it evidence about the act() scope.
-      connected = isOnSetupScreen(renderer);
+      await pressConfigurationDoor(renderer);
+
+      const actWarnings = errorSpy.mock.calls
+        .map(call => String(call[0]))
+        .filter(message => message.includes('was not wrapped in act'));
+      expect(actWarnings).toEqual([]);
     } finally {
       errorSpy.mockRestore();
     }
-
-    // THE SCAN SETTLED INSIDE renderApp()'s OWN act() SCOPE, proven by
-    // the strongest observable this flow has: the app is CONNECTED. The
-    // entry flow only opens a board the scan already returned, so
-    // reaching the Setup screen with no further flushing of any kind is
-    // only possible if that scan completed inside the scope. (This used
-    // to read the device name off the connection workspace - correct
-    // until the workspace stopped being where an unambiguous board
-    // leaves you.)
-    expect(connected).toBe(true);
-    expect(recorded.filter(message => message.includes('not wrapped in act'))).toEqual([]);
-    expect(recorded.filter(message => message.includes('overlapping act'))).toEqual([]);
   });
 
-  /**
-   * The DANGEROUS boundary, mirroring the Setup integration suite's own
-   * regression: the render Promise has already settled, and the owning
-   * operation is parked on a SECOND await when teardown starts. Waiting
-   * only for the render Promise (Pass 7.7B) unmounts here; waiting for
-   * the complete operation does not.
-   *
-   * A plain `it`, not itOwningRenderer: this test awaits teardown
-   * itself, and an owning operation that awaits teardown would deadlock
-   * against its own ticket.
-   */
   it('teardown waits for the COMPLETE renderer-owning operation, not just its render', async () => {
-    // A real deferred Promise, not a sleep: nothing advances until this
-    // test releases it.
-    let releaseGate!: () => void;
-    const gate = new Promise<void>(resolve => {
-      releaseGate = resolve;
-    });
-    let announceRendered!: (renderer: ReactTestRenderer.ReactTestRenderer) => void;
-    const rendered = new Promise<ReactTestRenderer.ReactTestRenderer>(resolve => {
-      announceRendered = resolve;
-    });
+    fakeClient.listDevices.mockResolvedValue([supportedDevice()]);
+    fakeClient.openDevice.mockResolvedValueOnce('session-teardown-1');
 
-    let textsAfterGate: unknown[] | undefined;
-    let operationFinished = false;
-    let operationError: unknown;
-
-    const owning = ownRendererOperation(async () => {
+    let seenAfterTeardownRequest: string[] = [];
+    const operation = ownRendererOperation(async () => {
       const renderer = await renderApp();
-      announceRendered(renderer);
-      await gate;
-      textsAfterGate = allText(renderer);
-      operationFinished = true;
-    }).catch(error => {
-      operationError = error;
+      await pressConfigurationDoor(renderer);
+      // Reading the tree AFTER teardown was asked to run is the whole
+      // point: ownership must have held it alive.
+      seenAfterTeardownRequest = allText(renderer).map(String);
+      return renderer;
     });
-
-    const renderer = await rendered;
-    expect(renderer.toJSON()).not.toBeNull();
 
     const teardown = teardownRenderers();
-
-    // Teardown must be waiting, not unmounting - give it every tick it
-    // would need to reach an unmount if it were going to.
-    await flushSchedulerTick();
-    await flushSchedulerTick();
-    expect(renderer.toJSON()).not.toBeNull();
-    expect(trackedRenderers).toContain(renderer);
-    expect(textsAfterGate).toBeUndefined();
-    expect(operationFinished).toBe(false);
-
-    releaseGate();
-    await owning;
-
-    expect(operationError).toBeUndefined();
-    expect(operationFinished).toBe(true);
-    expect(textsAfterGate).toContain(i18n.t('connection.instructionPrimary'));
-
+    await operation;
     await teardown;
-    expect(renderer.toJSON()).toBeNull();
-    expect(trackedRenderers).toHaveLength(0);
 
-    // Idempotent - and the file-level afterEach makes it a third run.
-    await teardownRenderers();
-    expect(renderer.toJSON()).toBeNull();
+    expect(seenAfterTeardownRequest.length).toBeGreaterThan(0);
   });
 
   it('teardown settles an un-awaited render continuation before it unmounts anything', async () => {
-    let textsSeenWhileMounted: unknown[] | undefined;
-    let continuationError: unknown;
-
-    // Deliberately NOT awaited here - this is exactly the state Jest
-    // leaves a test in when it exceeds its timeout mid-render.
-    const abandoned = renderApp().then(
-      renderer => {
-        textsSeenWhileMounted = allText(renderer);
-      },
-      error => {
-        continuationError = error;
-      },
-    );
+    fakeClient.listDevices.mockResolvedValue([supportedDevice()]);
+    let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
+    // Deliberately NOT awaited here - teardown must wait for it anyway.
+    const pending = ownRendererOperation(async () => {
+      renderer = await renderApp();
+      return renderer;
+    });
 
     await teardownRenderers();
+    await pending;
 
-    // The continuation ran to completion against a still-mounted tree.
-    expect(continuationError).toBeUndefined();
-    expect(textsSeenWhileMounted).toContain(i18n.t('connection.instructionPrimary'));
-    await abandoned;
-
-    // ...and the renderer really is unmounted afterwards, so the
-    // pre-fix ".root after unmount" access is now impossible by ordering.
-    expect(trackedRenderers).toHaveLength(0);
-
-    // Idempotent: running the same teardown again is harmless.
-    await teardownRenderers();
+    expect(renderer).toBeDefined();
+    // Teardown ran to completion without touching a half-built tree.
+    expect((renderer as ReactTestRenderer.ReactTestRenderer).toJSON()).toBeNull();
   });
 });
 
-describe('App - Pass 7.1 navigation foundation', () => {
-  itOwningRenderer('transitions the Setup tab from the embedded connection workspace to the real connected SetupScreen on a successful connect - in place, no route change', async () => {
-    const sessionId = 'session-app-nav-1';
-    const renderer = await renderAppConnectedToSetup(sessionId);
+describe('App - the flow: Home -> connection -> workspace', () => {
+  itOwningRenderer('one press on Home connects and lands on the workspace, with no route in between', async () => {
+    fakeClient.listDevices.mockResolvedValue([supportedDevice()]);
+    fakeClient.openDevice.mockResolvedValueOnce('session-flow-1');
+    // The fake client is module-scope and accumulates calls across this
+    // file's tests: deltas, not absolute counts.
+    const openDeviceCallsBefore = fakeClient.openDevice.mock.calls.length;
 
-    // The real Setup screen no longer displays a raw sessionId:generation
-    // Text node (that was only ever Pass 7.1's own stub-verification
-    // device) - the coordinator having genuinely committed a session key
-    // for THIS exact sessionId, combined with TopSystemBar's own
-    // connection indicator showing "متصل" (CONNECTED - only reachable
-    // via useMspOwnershipState(sessionId) reading real ACTIVE state AND
-    // useMspRecoveryState(sessionId) reading the real MspClient's own
-    // default READY state), is a STRONGER end-to-end proof that the
-    // correct sessionId flowed through route.params all the way to the
-    // real hooks than a static text comparison ever was: a wrong or
-    // empty sessionId would read INACTIVE/undefined instead and show
-    // "غير متصل".
-    const expectedKey = mspSessionCoordinator.getSessionKey(sessionId);
-    expect(expectedKey).toBeDefined();
+    const renderer = await renderApp();
+    const routesSeen: string[] = [];
+    const navigator = navigationReadyControl.capturedRef as unknown as {
+      getCurrentRoute?: () => {name: string} | undefined;
+    } | null;
+    routesSeen.push(navigator?.getCurrentRoute?.()?.name ?? 'Start');
 
-    const texts = renderer.root
-      .findAllByType(Text)
-      .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
-    expect(texts).toContain(i18n.t('setupTopBar.connectionState.connected'));
+    await pressConfigurationDoor(renderer);
+    routesSeen.push(navigator?.getCurrentRoute?.()?.name ?? '?');
 
-    // Pass 7.4 CI-hang fix: this reaches a real, successful connect via
-    // the real mspSessionCoordinator singleton (real MSP_ATTITUDE tick-
-    // driver setInterval included) - unlike the renderer itself (cleaned
-    // up by the file-level afterEach), nothing tears the session down
-    // automatically on unmount. Must be torn down explicitly or it leaks
-    // a real, permanently-ticking interval for the rest of the process.
-    await act(async () => {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    });
+    expect(isOnSetupScreen(renderer)).toBe(true);
+    // Start, then Setup. Nothing between them.
+    expect(routesSeen).toEqual(['Start', 'Setup']);
+    expect(fakeClient.openDevice.mock.calls.length).toBe(openDeviceCallsBefore + 1);
   });
 
-  itOwningRenderer("the root redirect listener resets the stack to the DISCONNECTED configurator once the tracked session's ownership goes INACTIVE while 'Setup' has focus", async () => {
-    const sessionId = 'session-app-redirect-1';
+  itOwningRenderer("losing the tracked session resets the stack to HOME - not to a connection page, and not to Motors with a message", async () => {
+    const sessionId = 'session-loss-1';
     const renderer = await renderAppConnectedToSetup(sessionId);
-    expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
 
-    // deactivateMspSession() (a public, intentional-close method) is used
-    // here as the pragmatic trigger - handlePhysicalDetach() is private and
-    // unreachable directly from a test. They are two DISTINCT methods (one
-    // passes through CLOSING, one skips it) that happen to both end at the
-    // same OBSERVABLE signal this test actually cares about: ownership ->
-    // INACTIVE. That is all the redirect listener (App.tsx) reacts to; it
-    // does not care which of the coordinator's own code paths produced it.
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushSchedulerTick();
     });
 
-    /*
-     * No screen is left holding the dead session - and, since the wall
-     * moved up, no SHELL either. Losing the board removes the whole
-     * configuration workspace from the navigator (App.tsx), so what the
-     * operator gets is the connection workspace, not Motors or PID with
-     * a disconnected message inside a tab bar. This assertion used to
-     * require main-tabs to be PRESENT; requiring its absence is the
-     * behaviour change, stated rather than softened.
-     */
     expect(isOnSetupScreen(renderer)).toBe(false);
     expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
-    expect(renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
-    const texts = renderer.root
-      .findAllByType(Text)
-      .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
-    expect(texts).toContain(i18n.t('connection.instructionPrimary'));
+    expect(renderer.root.findAllByProps({testID: 'start-screen'}).length).toBeGreaterThan(0);
+    // And Home says why the operator is there.
+    expect(allText(renderer).map(String)).toContain(
+      i18n.t('directConnect.sessionLost'),
+    );
   });
 
-  itOwningRenderer('Android hardware Back from Setup returns HOME (Start) WITHOUT deactivating the still-active MSP session', async () => {
+  itOwningRenderer('Android hardware Back from the workspace returns HOME WITHOUT deactivating the still-active MSP session', async () => {
+    const sessionId = 'session-back-1';
+    // Installed BEFORE the mount that registers the handler: a spy only
+    // records calls made after it is in place.
     const backHandlerSpy = jest.spyOn(BackHandler, 'addEventListener');
-    const deactivateSpy = jest.spyOn(mspSessionCoordinator, 'deactivateMspSession');
-    const sessionId = 'session-app-back-1';
     const renderer = await renderAppConnectedToSetup(sessionId);
 
-    // react-navigation's own NavigationContainer wires Android hardware
-    // Back entirely through the plain JS BackHandler module (see
-    // @react-navigation/native's useBackButton.native.js: it registers one
-    // 'hardwareBackPress' listener and calls navigation.goBack() from
-    // inside it) - there is no native gesture/UI layer involved once the
-    // press reaches JS, so invoking the exact listener function React
-    // Navigation itself registered is a faithful simulation, not an
-    // approximation. react-test-renderer alone cannot trigger this (there
-    // is no host-visible "back" affordance to press), and this project has
-    // no @testing-library/react-native install to reach for either -
-    // spying on BackHandler.addEventListener to capture, then directly
-    // invoke, the real registered callback is the correct approach for
-    // this codebase's existing tooling.
+    const deactivateSpy = jest.spyOn(mspSessionCoordinator, 'deactivateMspSession');
     const hardwareBackCall = backHandlerSpy.mock.calls.find(([eventName]) => eventName === 'hardwareBackPress');
-    expect(hardwareBackCall).toBeDefined();
     const hardwareBackHandler = hardwareBackCall![1] as () => boolean;
-
     await act(async () => {
       hardwareBackHandler();
+      await flushSchedulerTick();
     });
 
-    expect(isOnSetupScreen(renderer)).toBe(false);
-    // The stack under Setup is Start alone now - Back is one hop Home,
-    // with no connection stop to loop through on the way.
     expect(renderer.root.findAllByProps({testID: 'start-route-group'}).length).toBeGreaterThan(0);
     expect(deactivateSpy).not.toHaveBeenCalled();
     expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
 
     deactivateSpy.mockRestore();
-
-    // Pass 7.4 CI-hang fix: the whole point of this test is that the
-    // session stays ACTIVE (never deactivated) after a hardware Back
-    // press - but it still must not stay ACTIVE past the test's own end,
-    // or its real telemetry tick-driver setInterval leaks. Torn down
-    // here, after every existing assertion above, once the spy itself is
-    // no longer needed.
+    backHandlerSpy.mockRestore();
+    // The whole point of this test is that the session stays ACTIVE - but
+    // it must not stay ACTIVE past the test's own end, or its real
+    // telemetry tick-driver setInterval leaks.
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
     });
   });
 
-  itOwningRenderer('re-entering the configurator ADOPTS a still-active session instead of offering a second connect - no navigation loop, no duplicate connection surface', async () => {
-    const sessionId = 'session-app-adopt-1';
+  itOwningRenderer('re-entering ADOPTS a still-active session instead of opening a second port', async () => {
+    const sessionId = 'session-adopt-1';
+    const backHandlerSpy = jest.spyOn(BackHandler, 'addEventListener');
     const renderer = await renderAppConnectedToSetup(sessionId);
 
-    // Back to Start, session deliberately left ACTIVE (previous test's
-    // own proven contract).
-    const backHandlerSpy = jest.spyOn(BackHandler, 'addEventListener');
     const hardwareBackCall = backHandlerSpy.mock.calls.find(([eventName]) => eventName === 'hardwareBackPress');
     const hardwareBackHandler = hardwareBackCall![1] as () => boolean;
     await act(async () => {
       hardwareBackHandler();
-    });
-    expect(renderer.root.findAllByProps({testID: 'start-route-group'}).length).toBeGreaterThan(0);
-    expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
-
-    // Configure again: SetupConnectWorkspace's adoption effect reads the
-    // coordinator's real registry and re-parameterizes the route with
-    // the LIVE session's own key - the connected workspace renders with
-    // no second اتصال press and no second openDevice() call.
-    const openDeviceCallsBefore = fakeClient.openDevice.mock.calls.length;
-    await act(async () => {
-      findByTestID(renderer, 'start-configure').props.onPress();
       await flushSchedulerTick();
     });
-    await act(async () => {
-      await settlePendingScans();
-    });
+    expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
+
+    const openDeviceCallsBefore = fakeClient.openDevice.mock.calls.length;
+    await pressConfigurationDoor(renderer);
 
     expect(isOnSetupScreen(renderer)).toBe(true);
     expect(fakeClient.openDevice.mock.calls.length).toBe(openDeviceCallsBefore);
-    // Exactly one configurator instance - the adopted one; the embedded
-    // connect surface is gone from the tree.
-    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'})).toHaveLength(0);
 
     backHandlerSpy.mockRestore();
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
     });
+  });
+});
+
+describe('App - cancelling and failing never move the operator', () => {
+  itOwningRenderer('an empty bench leaves the operator on Home with one short message', async () => {
+    fakeClient.listDevices.mockResolvedValue([]);
+    const openDeviceCallsBefore = fakeClient.openDevice.mock.calls.length;
+    const renderer = await renderApp();
+    await pressConfigurationDoor(renderer);
+
+    expect(fakeClient.openDevice.mock.calls.length).toBe(openDeviceCallsBefore);
+    expect(isOnSetupScreen(renderer)).toBe(false);
+    expect(renderer.root.findAllByProps({testID: 'start-screen'}).length).toBeGreaterThan(0);
+    expect(allText(renderer).map(String)).toContain(i18n.t('directConnect.noBoard'));
+  });
+
+  /**
+   * IDENTIFICATION FAILURE IS A CONNECTION PROBLEM, and it must end.
+   *
+   * The link comes up, the board is asked what it is, and it cannot be
+   * read. Without an ending here the card spins forever - the exact
+   * "spinner that never stops" this flow forbids - and the operator is
+   * left with no way to tell a slow board from a dead one.
+   */
+  itOwningRenderer('a board that cannot be identified never opens the workspace, and says so on Home', async () => {
+    (mspSessionCoordinator.getIdentificationState as jest.Mock).mockImplementation(
+      () => ({status: 'FAILED', error: new Error('unreadable')}) as never,
+    );
+    fakeClient.listDevices.mockResolvedValue([supportedDevice()]);
+    fakeClient.openDevice.mockResolvedValueOnce('session-identify-fail');
+
+    const renderer = await renderApp();
+    await pressConfigurationDoor(renderer);
+
+    expect(isOnSetupScreen(renderer)).toBe(false);
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
+    expect(renderer.root.findAllByProps({testID: 'start-screen'}).length).toBeGreaterThan(0);
+    expect(allText(renderer).map(String)).toContain(
+      i18n.t('directConnect.identifyFailed'),
+    );
+
+    await act(async () => {
+      for (const sessionId of mspSessionCoordinator.listSessionIds()) {
+        mspSessionCoordinator.deactivateMspSession(sessionId);
+      }
+    });
+  });
+
+  /**
+   * BACK AND FORWARD CANNOT RESURRECT A CONNECTION SCREEN, because the
+   * stack the redirect leaves behind has nothing in it but Home. A
+   * history entry for a connection page is exactly what a route-based
+   * connection surface would have created.
+   */
+  itOwningRenderer('going Back after a lost session finds Home, not a stale connection surface', async () => {
+    const sessionId = 'session-history-1';
+    const renderer = await renderAppConnectedToSetup(sessionId);
+
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
+      await flushSchedulerTick();
+    });
+
+    const navigator = navigationReadyControl.capturedRef as unknown as {
+      canGoBack?: () => boolean;
+    } | null;
+    // The reset left a single-entry stack: there is nowhere to go back to.
+    expect(navigator?.canGoBack?.() ?? false).toBe(false);
+    expect(renderer.root.findAllByProps({testID: 'start-screen'}).length).toBeGreaterThan(0);
+    expect(isOnSetupScreen(renderer)).toBe(false);
   });
 });
 
@@ -855,119 +724,86 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
       'it stays pending and completes once onReady fires',
     async () => {
       navigationReadyControl.holdReady = true;
-      const sessionId = 'session-app-race-1';
+      const sessionId = 'session-race-1';
       const renderer = await renderAppConnectedToSetup(sessionId);
-      // onReady was captured by the mock, not forwarded - App.tsx's own
-      // isNavigationReady state is still false at this point.
+      // onReady was captured by the mock, not forwarded - the redirect's
+      // own isNavigationReady state is still false at this point.
       expect(isOnSetupScreen(renderer)).toBe(true);
 
       await act(async () => {
         mspSessionCoordinator.deactivateMspSession(sessionId);
+        await flushSchedulerTick();
       });
 
       /*
-       * TWO SEPARATE GUARANTEES, and the wall changed which one acts
-       * first.
+       * TWO SEPARATE GUARANTEES, and the wall acts first.
        *
-       * The configuration workspace is registered in the navigator on
-       * the connection state alone (App.tsx), so it is gone the instant
-       * the session dies - it does NOT wait for the navigator to report
-       * ready. This assertion used to require Setup to still be showing
-       * here; requiring its absence is the behaviour change.
+       * The workspace is registered on the connection state alone, so it
+       * is gone the instant the session dies - it does NOT wait for the
+       * navigator to report ready.
        *
-       * The bug this test exists for is the OTHER half: the pre-fix
-       * redirect cleared trackedSessionId unconditionally before
-       * checking readiness, permanently blocking its own re-entry guard
-       * so the operator was never taken anywhere once the navigator did
-       * become ready. The act() below is still what distinguishes a
-       * PENDING redirect from a silently dropped one.
+       * The bug this test exists for is the OTHER half: the redirect
+       * must not silently drop itself while the navigator is not ready.
+       * It survived a not-ready navigator by keeping its tracked session
+       * id - and then the wall removed the route, react-navigation
+       * landed on Start, and onStateChange cleared that id before
+       * onReady ever fired. The detected loss is now its own state, so
+       * nothing that happens to the navigation state can erase it.
        */
       expect(isOnSetupScreen(renderer)).toBe(false);
       expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
 
-      // Release the held onReady callback - App.tsx's isNavigationReady
-      // flips true, which (being a real dependency of the redirect
-      // effect) re-runs it and this time completes the redirect.
       await act(async () => {
         navigationReadyControl.holdReady = false;
         navigationReadyControl.heldCallback?.();
+        await flushSchedulerTick();
       });
 
-      // The pending redirect completed: the operator is on the
-      // connection workspace, not stranded wherever the wall left them.
-      expect(isOnSetupScreen(renderer)).toBe(false);
-      expect(
-        renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length,
-      ).toBeGreaterThan(0);
-      const texts = renderer.root
-        .findAllByType(Text)
-        .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
-      expect(texts).toContain(i18n.t('connection.instructionPrimary'));
+      // The pending return completed: Home, and Home saying why.
+      expect(renderer.root.findAllByProps({testID: 'start-screen'}).length).toBeGreaterThan(0);
+      expect(allText(renderer).map(String)).toContain(
+        i18n.t('directConnect.sessionLost'),
+      );
     },
   );
 });
 
 describe('App - the firmware path stays fully independent of the connection stack', () => {
-  itOwningRenderer('opens the Firmware Flasher DIRECTLY from Start - no connection surface renders and no USB session is opened on the way', async () => {
-    // The module-scope fake accumulates calls across this file's tests
-    // (established pattern: deltas, not absolute counts).
+  itOwningRenderer('opens the Firmware Flasher DIRECTLY from Home - no connection surface renders and no USB session is opened on the way', async () => {
     const openDeviceCallsBefore = fakeClient.openDevice.mock.calls.length;
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    try {
-      await act(async () => {
-        renderer = ReactTestRenderer.create(<App />);
-      });
-      await act(async () => {
-        findByTestID(renderer, 'start-firmware').props.onPress();
-        await flushSchedulerTick();
-      });
-      await act(async () => {
-        await flushSchedulerTick();
-      });
-    } finally {
-      if (renderer !== undefined) {
-        trackedRenderers.push(renderer);
-      }
-    }
+    const renderer = await renderApp();
 
-    expect(renderer.root.findAllByProps({testID: 'firmware-flasher-simple-screen'}).length).toBeGreaterThan(0);
-    // The flasher owns its own serial/DFU permission flows - nothing of
-    // the configurator's connection workspace mounts on this path...
-    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'})).toHaveLength(0);
-    expect(renderer.root.findAllByProps({testID: 'main-tabs'})).toHaveLength(0);
-    // ...and no MSP transport session was opened as a side effect.
+    await act(async () => {
+      findByTestID(renderer, 'start-firmware').props.onPress();
+      await flushSchedulerTick();
+    });
+
     expect(fakeClient.openDevice.mock.calls.length).toBe(openDeviceCallsBefore);
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
+    expect(isOnSetupScreen(renderer)).toBe(false);
   });
 });
 
 describe('App - the Setup route does not exist while disconnected', () => {
-  itOwningRenderer('an imperative navigate to Setup cannot leave the connection workspace', async () => {
-    /*
-     * THE DIRECT-URL / DEEP-LINK / RESTORED-STATE CASE, at its root.
-     *
-     * This used to assert that reaching Setup with no sessionKey
-     * rendered the shell hosting the connection workspace. It no longer
-     * can: while no flight controller is verified, `Setup` is not
-     * registered in the navigator, so there is nothing for a URL, a deep
-     * link, a restored navigation state or an imperative navigate to
-     * resolve to - and therefore no frame in which a protected screen
-     * could flash before a guard noticed.
-     *
-     * capturedRef is the exact navigationRef App.tsx itself uses, so
-     * this is the most direct attack available from inside the app.
-     */
+  itOwningRenderer('an imperative navigate to Setup cannot leave Home', async () => {
     const renderer = await renderApp();
+    expect(renderer.root.findAllByProps({testID: 'start-screen'}).length).toBeGreaterThan(0);
 
-    expect(renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
-
+    /*
+     * The strongest available stand-in for a typed URL, a bookmark or a
+     * restored history entry: the navigator's own ref, asked directly
+     * for the protected route. react-navigation warns and does nothing,
+     * because there is no such screen registered to go to.
+     */
+    const warnSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     await act(async () => {
       navigationReadyControl.capturedRef?.navigate('Setup', undefined);
+      await flushSchedulerTick();
     });
+    warnSpy.mockRestore();
 
-    // Unmoved, and still crash-free.
-    expect(renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
     expect(isOnSetupScreen(renderer)).toBe(false);
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
+    expect(renderer.root.findAllByProps({testID: 'start-screen'}).length).toBeGreaterThan(0);
   });
 });

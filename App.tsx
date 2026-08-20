@@ -29,6 +29,7 @@ import {
 import { useSessionLossRedirect } from './src/navigation/useSessionLossRedirect';
 import {
   configurationWorkspaceUnlocked,
+  RebootOverlay,
   useVerifiedFcConnection,
 } from './src/ui/session';
 import type { RootStackParamList } from './src/navigation/types';
@@ -63,15 +64,6 @@ function getFlightStyleCornerScreen() {
   return require('./src/ui/screens/FlightStyleCornerScreen').default;
 }
 
-/**
- * The disconnected application. Lazy for the same reason the others are:
- * it is not needed once the operator is connected, and it is the ONLY
- * configuration destination before that.
- */
-function getConnectWorkspaceScreen() {
-  return require('./src/ui/screens/ConnectWorkspaceScreen').default;
-}
-
 function App(): React.JSX.Element {
   const { navigationRef, onReady, onStateChange } = useSessionLossRedirect();
   /**
@@ -90,9 +82,15 @@ function App(): React.JSX.Element {
    *   - cannot render "for one frame before a guard notices", because
    *     there is no component to mount and no frame to render it in.
    *
-   * And when a board goes away mid-session, this same predicate flips
-   * and react-navigation unmounts the workspace and lands the operator
-   * on `Connect` - not on Motors with a disconnected message.
+   * WHERE A LOCKED APPLICATION LIVES: Home, and nowhere else. There is
+   * no connection route to fall back to and no connection screen to be
+   * stranded on - connecting is something Home DOES (see StartScreen and
+   * useDirectConnect), not a place this navigator can send anybody. So
+   * the locked application is exactly Home plus the two public
+   * destinations, and a board going away mid-session unmounts the
+   * workspace and leaves the operator on Home - not on Motors with a
+   * disconnected message, and not on a page whose only purpose is to
+   * say "not connected".
    *
    * The controller-level guards stay exactly as they are. They are the
    * inner safety layer against a stale operation; this is the outer one
@@ -134,14 +132,16 @@ function App(): React.JSX.Element {
           <Stack.Screen name="Start" component={StartScreen} />
           {workspaceUnlocked ? (
             <Stack.Screen name="Setup" component={MainTabsScreen} />
-          ) : (
-            <Stack.Screen name="Connect" getComponent={getConnectWorkspaceScreen} />
-          )}
+          ) : null}
           <Stack.Screen name="FirmwareFlasher" getComponent={getFirmwareFlasherScreen} />
           <Stack.Screen name="FlightStyleGuide" getComponent={getFlightStyleGuideScreen} />
           <Stack.Screen name="FlightStyleCorner" getComponent={getFlightStyleCornerScreen} />
         </Stack.Navigator>
       </NavigationContainer>
+      {/* A reboot we asked for is a STATE, not a destination - see
+          RebootOverlay. Outside the navigator on purpose: it must not be
+          a route, a history entry, or something a refresh can restore. */}
+      <RebootOverlay connection={connection} />
     </SafeAreaView>
   );
 }

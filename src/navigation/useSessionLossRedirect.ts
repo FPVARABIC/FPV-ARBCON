@@ -10,16 +10,15 @@
  * Android's would leave the operator sitting on a Motors or GPS tab whose
  * session is already gone - exactly the state this rule exists to prevent.
  *
- * WHERE THE REDIRECT LANDS - changed with the entry-flow cleanup. The
- * standalone 'Connection' route is gone; the connection workspace now
- * lives INSIDE the Setup tab whenever the 'Setup' route has no
- * sessionKey params (see SetupScreen.tsx). So a dead tracked session
- * resets the stack to Start -> Setup-with-no-params: the operator stays
- * in the configurator, sees its honest disconnected posture with the
- * real connection workspace, and hardware Back still leads Home. The
- * SAFETY property is unchanged - no screen is ever left holding a
- * sessionKey whose MSP ownership is INACTIVE, because the reset remounts
- * the whole shell without one.
+ * WHERE THE REDIRECT LANDS: HOME. There is no connection screen in this
+ * application - not a route, not a tab, not an embedded workspace. A
+ * dead tracked session resets the stack to exactly [Start], so the
+ * operator is on the front page with the configuration door one press
+ * away, and Home says why they are there (connectionNotice).
+ *
+ * The SAFETY property is unchanged and is the whole point: no screen is
+ * ever left holding a sessionKey whose MSP ownership is INACTIVE,
+ * because the reset unmounts the entire shell.
  *
  * Nothing here is platform-specific: it is react-navigation state plus the
  * existing useMspOwnershipState() hook. Both entries pass the returned
@@ -36,6 +35,7 @@ import {useNavigationContainerRef} from '@react-navigation/native';
 
 import {useMspOwnershipState} from '../platforms/react-native/protocol';
 import {fcRebootRecovery} from '../platforms/react-native/protocol/fcRebootRecovery';
+import {connectionNotice} from '../ui/session/connectionNotice';
 import type {RootStackParamList} from './types';
 
 export type SessionLossRedirect = {
@@ -224,31 +224,22 @@ export function useSessionLossRedirect(): SessionLossRedirect {
     // needed (and deliberately not kept as a second, independent source
     // of truth that could disagree with isNavigationReady).
     //
-    // Two routes, index 1: the operator lands on the connection
-    // workspace with Start underneath, so hardware Back still leads Home
-    // instead of exiting the app. Resetting to a bare [Connect] would
-    // have made Back an app exit; resetting to [Start] alone would have
-    // thrown the operator out of the tool they were using.
+    // HOME, AND ONLY HOME. There is no connection route to land on any
+    // more - see App.tsx. One route, index 0: the stack is exactly Home,
+    // so there is no history behind it for Back to walk into and nothing
+    // for the operator to be stranded on. Losing a board takes them to
+    // the front page of the application, where connecting again is one
+    // press away.
     setPendingReturn(null);
-    navigationRef.reset({
-      index: 1,
-      routes: [
-        {name: 'Start'},
-        // `afterSessionLoss` records that the operator was RETURNED here
-        // rather than arriving by choice, and suppresses auto-connect.
-        // An expected reboot omits it precisely so the workspace does
-        // reconnect on its own.
-        // 'Connect' rather than 'Setup': losing the board removes the
-        // configuration workspace from the navigator entirely (App.tsx),
-        // so there is no Setup route left to return to. The operator
-        // lands on the connection workspace, not on Motors with a
-        // disconnected message.
-        {
-          name: 'Connect',
-          params: pendingReturn.expected ? {} : {afterSessionLoss: true},
-        },
-      ],
-    });
+    // An UNEXPECTED loss is news and Home says so. A reboot the
+    // application itself asked for is not: the recovery lifecycle is
+    // already running and already telling the operator what is
+    // happening, so announcing a lost connection on top of it would be
+    // both wrong and alarming.
+    if (!pendingReturn.expected) {
+      connectionNotice.raise('SESSION_LOST');
+    }
+    navigationRef.reset({index: 0, routes: [{name: 'Start'}]});
   }, [navigationRef, pendingReturn, isNavigationReady]);
 
   return {navigationRef, onReady, onStateChange};
