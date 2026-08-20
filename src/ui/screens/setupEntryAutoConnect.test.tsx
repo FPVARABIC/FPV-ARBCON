@@ -288,7 +288,23 @@ describe('being returned here by a dead link is not a request to reconnect', () 
       .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
       .replace(/^\s*\/\/.*$/gm, '');
 
-  it('the redirect stamps the arrival it caused', () => {
+  /**
+   * THE STAMP IS NOW CONDITIONAL, AND THE CONDITION IS THE WHOLE POINT.
+   *
+   * This used to assert the params literal unconditionally, because every
+   * session loss was treated identically. That was the defect behind the
+   * CLI report: pressing `save` in the CLI makes the flight controller
+   * reboot, the session dies BECAUSE THE APPLICATION ASKED IT TO, and the
+   * operator was then stamped as a fault victim and made to press Connect
+   * - leaving Motors, PID, Ports and the rest holding a session id that
+   * named nothing.
+   *
+   * Both halves are asserted, because dropping either one is a real
+   * regression: a fault must still be stamped (or the loop this whole
+   * describe block exists to prevent comes back), and an expected reboot
+   * must not be (or the original defect comes back).
+   */
+  it('the redirect stamps a FAULT and does not stamp a reboot we caused', () => {
     const redirect = fs
       .readFileSync(
         path.join(__dirname, '..', '..', 'navigation', 'useSessionLossRedirect.ts'),
@@ -296,7 +312,14 @@ describe('being returned here by a dead link is not a request to reconnect', () 
       )
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '');
-    expect(redirect).toContain("{name: 'Setup', params: {afterSessionLoss: true}}");
+    // The decision is asked of the one module that owns it...
+    expect(redirect).toContain(
+      'fcRebootRecovery.noteSessionLost(trackedSessionId)',
+    );
+    // ...and an unexpected loss is still stamped exactly as before.
+    expect(redirect).toContain(
+      "params: expected ? {} : {afterSessionLoss: true}",
+    );
   });
 
   it('a stamped arrival turns auto-connect OFF', () => {

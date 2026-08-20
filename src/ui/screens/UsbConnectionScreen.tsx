@@ -57,6 +57,7 @@ import {
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
+import { fcRebootRecovery } from '../../platforms/react-native/protocol/fcRebootRecovery';
 // Platform seam (same pattern as the USB picker and the map link): real
 // on web, inert on Android. The web build records staged connection
 // evidence and can copy a technical report; Android renders nothing.
@@ -874,6 +875,10 @@ export default function UsbConnectionScreen({
       if (sessionKey) {
         onSessionEstablished?.(sessionKey);
       }
+      // A live session exists again. If this connect was the tail of a
+      // reboot the application itself asked for, that lifecycle ends
+      // here - see fcRebootRecovery.ts. A no-op for an ordinary connect.
+      fcRebootRecovery.noteRecovered();
       openTrace.reached('SERIAL_PORT_OPENED', sessionId);
       dispatch({ type: 'CONNECT_SUCCESS', sessionId });
     } catch (error) {

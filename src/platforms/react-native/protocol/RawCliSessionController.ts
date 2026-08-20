@@ -15,6 +15,7 @@ import {
   type MotorConfigurationInterlockLease,
 } from './motorConfigurationInterlock';
 import { isMotorTestSessionActive } from './motorTestCapability';
+import { fcRebootRecovery, type FcRebootRecovery } from './fcRebootRecovery';
 import {
   setupAppStateTelemetryOwner,
   type SetupAppStatePhase,
@@ -166,6 +167,9 @@ export interface RawCliSessionControllerOptions {
   readonly coordinator?: RawCliCoordinator;
   readonly appStatePhase?: () => SetupAppStatePhase;
   readonly motorTestActive?: (sessionId: string) => boolean;
+  /** The app-wide reboot lifecycle. Injectable so a test can watch the
+   *  hand-off without reaching for the singleton. */
+  readonly rebootRecovery?: FcRebootRecovery;
 }
 
 /**
@@ -177,6 +181,7 @@ export class RawCliSessionController {
   private readonly coordinator: RawCliCoordinator;
   private readonly appStatePhase: () => SetupAppStatePhase;
   private readonly motorTestActive: (sessionId: string) => boolean;
+  private readonly rebootRecovery: FcRebootRecovery;
   private resources: Resources | undefined;
   private phase: RawCliPhase = 'IDLE';
   private receiveBuffer = '';
@@ -190,6 +195,7 @@ export class RawCliSessionController {
     this.appStatePhase =
       options.appStatePhase ?? (() => setupAppStateTelemetryOwner.getPhase());
     this.motorTestActive = options.motorTestActive ?? isMotorTestSessionActive;
+    this.rebootRecovery = options.rebootRecovery ?? fcRebootRecovery;
   }
 
   getPhase(): RawCliPhase {
@@ -337,6 +343,23 @@ export class RawCliSessionController {
     return this.requireResources().transport.saveTextFile(filename, text);
   }
 
+  /**
+   * `save` IS A REBOOT, AND THE APPLICATION HAS TO SAY SO BEFORE IT HAPPENS.
+   *
+   * Betaflight's `save` writes EEPROM and then reboots (cli.c: cliSave ->
+   * writeEEPROM + cliReboot), so the USB device disappears a moment after
+   * this write lands. Every layer above used to learn that the same way it
+   * learns about a cable being pulled out - which is why pressing save
+   * left the operator on a connection screen waiting to be told to press
+   * Connect, with Motors and every other screen holding a session id that
+   * no longer named anything.
+   *
+   * The expectation is recorded BEFORE the bytes go out, not after: the
+   * link can die between the write resolving and the next statement, and
+   * a loss that arrives before the expectation is recorded is
+   * indistinguishable from a fault. See fcRebootRecovery.ts for the
+   * lifecycle this hands off to.
+   */
   async saveAndClose(): Promise<void> {
     this.requireActive();
     if (this.errorCount > 0) {
@@ -344,6 +367,8 @@ export class RawCliSessionController {
         'لن يُرسل save بعد ظهور أخطاء CLI؛ اخرج دون حفظ وراجع الحزمة.',
       );
     }
+    const {sessionKey} = this.requireResources();
+    this.rebootRecovery.expectReboot(sessionKey.sessionId, 'CLI_SAVE');
     this.setPhase('CLOSING');
     try {
       await this.requireResources().transport.writeRawBytes(ascii('save\r'));

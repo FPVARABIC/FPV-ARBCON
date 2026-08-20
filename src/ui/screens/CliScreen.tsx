@@ -298,11 +298,28 @@ export default function CliScreen({
           text: 'حفظ وإعادة تشغيل',
           style: 'destructive',
           onPress: () => {
+            // THE THREE STAGES, SAID OUT LOUD.
+            //
+            // `save` reboots the flight controller, so the link is about
+            // to die on purpose. Before this, the screen simply announced
+            // that the session had closed and told the operator to
+            // reconnect "if USB does not come back" - which read as the
+            // app having thrown them out for no stated reason, and left
+            // every other screen holding a dead session id.
+            //
+            // The reboot is now a declared lifecycle (fcRebootRecovery.ts):
+            // the CLI records the expectation before the bytes go out, the
+            // shell recognises the resulting loss as expected rather than
+            // as a fault, and the connection workspace reconnects on its
+            // own. All this has to do is narrate it honestly.
+            setStatus(
+              'أُرسل save → يُعاد تشغيل Flight Controller → جارٍ إعادة الاتصال…',
+            );
             cli
               .saveAndClose()
               .then(() => {
                 setStatus(
-                  'أُرسل save وأُغلقت الجلسة. أعد الاتصال إذا لم يعد USB تلقائيًا.',
+                  'حُفظت الإعدادات ويُعاد تشغيل Flight Controller. سيعود الاتصال تلقائيًا خلال ثوانٍ.',
                 );
                 setHasCliError(false);
               })

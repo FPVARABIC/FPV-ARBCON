@@ -35,6 +35,7 @@ import {useCallback, useEffect, useState} from 'react';
 import {useNavigationContainerRef} from '@react-navigation/native';
 
 import {useMspOwnershipState} from '../platforms/react-native/protocol';
+import {fcRebootRecovery} from '../platforms/react-native/protocol/fcRebootRecovery';
 import type {RootStackParamList} from './types';
 
 export type SessionLossRedirect = {
@@ -179,15 +180,39 @@ export function useSessionLossRedirect(): SessionLossRedirect {
     // using. Params deliberately ABSENT: this remount is exactly the
     // "no live session" posture, never a fabricated one.
     setTrackedSessionId(null);
-    // `afterSessionLoss` is the ONE param this reset carries, and it is
-    // not a session: it records that the operator was RETURNED here
-    // rather than arriving by choice. The workspace auto-connects on a
-    // chosen arrival and must not on this one - otherwise it reopens the
-    // port, the link dies again, this same reset runs again, and the app
-    // spins in a reconnect loop instead of showing the operator a screen.
+    // WAS THIS LOSS OURS?
+    //
+    // A session can end for two completely different reasons and the
+    // right response is not the same for both:
+    //
+    //   the cable came out, the board browned out, the link desynced
+    //       -> a FAULT. Land the operator on the connection workspace
+    //          and let them decide. Reaching for the hardware here is
+    //          how a reconnect loop starts: reopen the port, the link
+    //          dies again, this reset runs again, forever.
+    //
+    //   WE asked the board to reboot - a CLI `save`
+    //       -> NOT a fault. The application caused it, knows which board
+    //          is coming back, and told the operator it would happen.
+    //          Making them press Connect after pressing Save is the
+    //          defect this branch exists to close: it is what left
+    //          Motors, PID, Ports and every other screen holding a
+    //          session id that no longer named anything.
+    //
+    // The expectation is ONE-SHOT and deadline-bounded (see
+    // fcRebootRecovery.ts), so the loop the comment above warns about
+    // still cannot happen: the second loss in a row is never expected.
+    const expected = fcRebootRecovery.noteSessionLost(trackedSessionId);
     navigationRef.reset({
       index: 1,
-      routes: [{name: 'Start'}, {name: 'Setup', params: {afterSessionLoss: true}}],
+      routes: [
+        {name: 'Start'},
+        // `afterSessionLoss` records that the operator was RETURNED here
+        // rather than arriving by choice, and suppresses auto-connect.
+        // An expected reboot omits it precisely so the workspace does
+        // reconnect on its own.
+        {name: 'Setup', params: expected ? {} : {afterSessionLoss: true}},
+      ],
     });
   }, [
     navigationRef,
