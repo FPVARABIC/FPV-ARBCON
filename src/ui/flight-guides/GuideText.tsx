@@ -20,7 +20,7 @@ import React from 'react';
 import {StyleSheet, Text} from 'react-native';
 import type {TextStyle} from 'react-native';
 
-import {colors, typography} from '../theme';
+import {PROSE_MEASURE, colors, typography} from '../theme';
 
 /** `**bold**` and `` `code` `` split into their own spans. */
 const TOKEN = /(\*\*[^*]+\*\*|`[^`]+`)/g;
@@ -71,8 +71,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   strong: {fontWeight: '700', color: colors.textPrimary},
   /* An identifier the reader will type. Left-to-right because that is
      what it is, and it must not be reordered by the Arabic around it. */

@@ -24,16 +24,7 @@ import {
   useDirectConnect,
   useVerifiedFcConnection,
 } from '../session';
-import {
-  colors,
-  contentEnvelope,
-  isDesktopTier,
-  noticeSurface,
-  radii,
-  resolveLayoutTier,
-  spacing,
-  typography,
-} from '../theme';
+import {PROSE_MEASURE, colors, contentEnvelope, isDesktopTier, noticeSurface, radii, resolveLayoutTier, spacing, typography} from '../theme';
 
 /**
  * HOME, AS BANDS RATHER THAN ONE CENTRED COLUMN.
@@ -604,8 +595,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   hero: {gap: spacing.sm},
   heroTitle: {...typography.display, color: colors.textPrimary},
 
@@ -674,8 +664,7 @@ const styles = StyleSheet.create({
   primaryDescription: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   bullets: {gap: 7, paddingVertical: spacing.sm},
   bulletRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   bulletDot: {width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent},
@@ -690,8 +679,7 @@ const styles = StyleSheet.create({
        out left-to-right and the words came out in the wrong order.
        Measured in a real browser, not theorised. */
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
 
   /* --------------------------------------------- calls to action */
   actionButton: {
@@ -742,16 +730,14 @@ const styles = StyleSheet.create({
   safetyText: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 
   /* ---------------------------------------------------------- guide */
   eyebrow: {
     ...typography.eyebrow,
     color: colors.textMuted,
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right'},
   /* NO `justifyContent: 'space-between'`. With it, the call to action
      was flung to the opposite end of a 1148px band and read as
      unrelated to the text it belongs to. Packed to the start with a
@@ -772,14 +758,12 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   guideMeta: {
     ...typography.caption,
     color: colors.textMuted,
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
 
   /* -------------------------------------------------------- support */
   /* A TINTED PANEL, AND STILL NOT A CARD. radii.sm where the action
@@ -805,14 +789,12 @@ const styles = StyleSheet.create({
        the paragraph would take its own from the first strong character
        and could lay the Arabic out left-to-right. */
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right'},
   supportBody: {
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   /* The smallest type on the screen, and still 12px - the floor the rest
      of the product holds to. It opens with a bare host name, so it needs
      the same explicit direction the title does. */
@@ -820,6 +802,5 @@ const styles = StyleSheet.create({
     ...typography.helper,
     color: colors.textMuted,
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
 });

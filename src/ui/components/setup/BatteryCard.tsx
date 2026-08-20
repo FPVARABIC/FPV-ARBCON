@@ -37,6 +37,7 @@ import type {
 } from '../../../core';
 import { deriveBatterySemantics } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 
 const STALE_OPACITY = 0.45;
 
@@ -295,8 +296,7 @@ const styles = StyleSheet.create({
   captionText: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
+    marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
   reportedText: {
     ...typography.caption,
     color: colors.info,
@@ -305,8 +305,7 @@ const styles = StyleSheet.create({
   messageText: {
     ...typography.body,
     color: colors.textSecondary,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   staleContent: {
     opacity: STALE_OPACITY,
   },

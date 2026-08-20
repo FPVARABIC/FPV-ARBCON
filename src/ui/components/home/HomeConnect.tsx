@@ -30,7 +30,7 @@ import {useTranslation} from 'react-i18next';
 import {Button} from '../controls';
 import {MIN_TOUCH_TARGET} from '../controls/interaction';
 import {Icon} from '../../icons';
-import {colors, radii, spacing, typography} from '../../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../../theme';
 import {
   connectOptionId,
   describeConnectOption,
@@ -197,8 +197,7 @@ const styles = StyleSheet.create({
     flex: 1,
     color: colors.textPrimary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   stripActions: {flexDirection: 'row', alignItems: 'center', gap: spacing.xs},
   dismiss: {
     width: MIN_TOUCH_TARGET,
@@ -227,8 +226,7 @@ const styles = StyleSheet.create({
     ...typography.sectionTitle,
     color: colors.textPrimary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   option: {
     minHeight: MIN_TOUCH_TARGET,
     flexDirection: 'row',
@@ -246,6 +244,5 @@ const styles = StyleSheet.create({
     flex: 1,
     color: colors.textPrimary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
 });

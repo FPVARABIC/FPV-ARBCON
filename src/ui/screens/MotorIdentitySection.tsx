@@ -53,7 +53,7 @@ import type {
   MotorSlotActivity,
 } from './MotorAirframeDiagram';
 import { MotorVerificationWizard } from './MotorVerificationWizard';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, isDesktopTier, radii, spacing, typography} from '../theme';
 import { resolveLayoutTier } from '../theme/layout';
 
 export interface MotorIdentitySectionProps {
@@ -126,8 +126,12 @@ export function MotorIdentitySection({
   const { width, fontScale } = useWindowDimensions();
   const tier = resolveLayoutTier(width, fontScale);
   // Two columns only where the extra width buys parallel information -
-  // the map beside the selected-motor facts - never a stretched phone card.
-  const twoColumn = tier === 'desktop' || tier === 'desktopWide';
+  // the map beside the selected-motor facts - never a stretched phone
+  // card. Asked through the shared predicate rather than by listing tier
+  // names: a NEW desktop tier must not silently collapse this back to
+  // one column, which is exactly what happened when desktopUltra was
+  // added and this read `tier === 'desktop' || tier === 'desktopWide'`.
+  const twoColumn = isDesktopTier(tier);
 
   const [notesOpen, setNotesOpen] = useState(false);
 
@@ -614,23 +618,19 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   referenceNotice: {
     ...typography.caption,
     color: colors.warning,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   summaryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -646,8 +646,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     borderWidth: 1,
     borderColor: colors.borderSoft,
-    backgroundColor: colors.surfaceAlt,
-  },
+    backgroundColor: colors.surfaceAlt, maxWidth: PROSE_MEASURE},
   stack: { gap: spacing.md },
   columns: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
   column: { flex: 1, minWidth: 0 },
@@ -680,8 +679,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontSize: 11,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   slotMarkConfirmed: { color: colors.success, fontWeight: '700' },
   notesToggle: {
     minHeight: 44,
@@ -692,8 +690,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   notesBlock: { gap: spacing.xs },
   activeBlock: { gap: spacing.xs },
   pendingBanner: {
@@ -708,8 +705,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   factsBlock: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -728,8 +724,7 @@ const styles = StyleSheet.create({
   factLabel: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   factValueGroup: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -740,8 +735,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   factValueStrong: {
     ...typography.mono,
     color: colors.textPrimary,
@@ -758,14 +752,12 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   mismatch: {
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   secondaryButton: {
     minHeight: 44,
     alignItems: 'center',
@@ -779,8 +771,7 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     ...typography.label,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   conflictBlock: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -793,25 +784,21 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   conflictBody: {
     ...typography.caption,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   stepsBlock: { gap: 2 },
   stepsTitle: {
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   step: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   unsupported: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -824,6 +811,5 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

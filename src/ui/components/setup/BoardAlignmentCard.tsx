@@ -66,7 +66,7 @@ import type {
   BoardAlignmentSaveOutcome,
   SetupUiSessionKey,
 } from '../../../platforms/react-native/protocol';
-import {colors, radii, spacing, typography} from '../../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../../theme';
 
 /** The mountings a board is physically fitted in. Anything between them
  *  is trim, and the steppers cover that. */
@@ -553,7 +553,7 @@ const styles = StyleSheet.create({
   },
   headingCopy: {flex: 1, minWidth: 0},
   title: {...typography.sectionTitle, color: colors.textPrimary},
-  hint: {...typography.caption, color: colors.textSecondary, marginTop: 2},
+  hint: {...typography.caption, color: colors.textSecondary, marginTop: 2, maxWidth: PROSE_MEASURE},
   statusPill: {
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
@@ -562,11 +562,11 @@ const styles = StyleSheet.create({
   statusPillUnknown: {backgroundColor: colors.warningSoft},
   statusPillNeutral: {backgroundColor: colors.infoSoft},
   statusPillConfigured: {backgroundColor: colors.successSoft},
-  statusText: {...typography.caption, fontWeight: '700'},
+  statusText: {...typography.caption, fontWeight: '700', maxWidth: PROSE_MEASURE},
   statusTextUnknown: {color: colors.warning},
   statusTextNeutral: {color: colors.info},
   statusTextConfigured: {color: colors.success},
-  statusNote: {...typography.caption, color: colors.textSecondary},
+  statusNote: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   valueRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   valueChip: {
     flexGrow: 1,
@@ -605,17 +605,17 @@ const styles = StyleSheet.create({
   axisCell: {flexGrow: 1, flexShrink: 1, flexBasis: 260, minWidth: 0},
   axisCopy: {minWidth: 0, marginBottom: spacing.xs},
   axisTitle: {...typography.body, color: colors.textPrimary, fontWeight: '600'},
-  axisDetail: {...typography.caption, color: colors.textSecondary},
+  axisDetail: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   presetLabel: {...typography.caption, color: colors.textSecondary},
   invalid: {
     ...typography.caption,
     color: colors.error,
     fontWeight: '700',
   },
-  rebootNote: {...typography.caption, color: colors.textSecondary},
+  rebootNote: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   actions: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   busy: {...typography.caption, color: colors.textSecondary},
-  message: {...typography.caption, fontWeight: '600'},
+  message: {...typography.caption, fontWeight: '600', maxWidth: PROSE_MEASURE},
   messageOk: {color: colors.success},
   messageWarn: {color: colors.warning},
   messageBad: {color: colors.error},

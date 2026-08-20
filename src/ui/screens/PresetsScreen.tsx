@@ -22,13 +22,7 @@ import {
   type LoadedFirmwarePreset,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
-import {
-  colors,
-  radii,
-  spacing,
-  typography,
-  useContentEnvelope,
-} from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
 
 export type PresetsRepositoryPort = Pick<
@@ -617,13 +611,11 @@ const styles = StyleSheet.create({
   title: {
     ...typography.title,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   subtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   identityRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -650,8 +642,7 @@ const styles = StyleSheet.create({
     // rendered in the system fallback font. Measured in a browser.
     ...typography.bodyStrong,
     color: colors.error,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   toolbar: { flexDirection: 'row', gap: spacing.sm },
   search: {
     flex: 1,
@@ -703,8 +694,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   preset: {
     padding: spacing.md,
     borderRadius: radii.md,
@@ -731,22 +721,19 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '700',
   },
-  meta: { ...typography.caption, color: colors.textMuted },
+  meta: { ...typography.caption, color: colors.textMuted, maxWidth: PROSE_MEASURE},
   hint: {
     ...typography.body,
     color: colors.textMuted,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   detailTitle: {
     ...typography.sectionTitle,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   description: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   warning: {
     padding: spacing.md,
     borderRadius: radii.md,
@@ -760,8 +747,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   option: {
     minHeight: 48,
     flexDirection: 'row',
@@ -839,8 +825,7 @@ const styles = StyleSheet.create({
   decisionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   cliError: {
     ...typography.caption,
     color: colors.error,
@@ -881,6 +866,5 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.warning,
     textAlign: 'center',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

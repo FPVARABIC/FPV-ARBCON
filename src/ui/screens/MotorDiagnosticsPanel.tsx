@@ -28,7 +28,7 @@ import {
   type MotorDiagnosticsAvailability,
   type MotorDiagnosticsChannelState,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
 const DEFAULT_VISIBLE_MOTOR_COUNT = 4;
 const MAX_VISIBLE_MOTOR_COUNT = 8;
@@ -474,18 +474,15 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   liveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -502,8 +499,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   section: { gap: spacing.sm },
   sectionHeadingRow: {
     flexDirection: 'row',
@@ -514,19 +510,16 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   channelState: {
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   sourceText: {
     ...typography.caption,
     color: colors.textMuted,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   outputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   outputCard: {
     flexGrow: 1,
@@ -582,8 +575,7 @@ const styles = StyleSheet.create({
   metric: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   emptyState: {
     gap: spacing.xs,
     backgroundColor: colors.surfaceAlt,
@@ -594,12 +586,10 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   qualityWarning: {
     ...typography.caption,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

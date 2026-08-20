@@ -57,6 +57,7 @@ import { orientationRenderObserver } from '../../orientation3d/orientationRender
 import type { OrientationViewState } from '../../../core';
 import { describeOrientationForAccessibility } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 import FlightInstruments, { roundHeadingDegrees } from './FlightInstruments';
 import { ORIENTATION_DESKTOP_WORKSPACE_ENABLED } from './orientationHeroDesktopWorkspace';
 
@@ -557,8 +558,7 @@ const styles = StyleSheet.create({
   },
   messageText: {
     ...typography.body,
-    color: colors.textSecondary,
-  },
+    color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   rendererWrapper: {
     marginTop: spacing.sm,
     flexShrink: 0,
@@ -733,8 +733,7 @@ const styles = StyleSheet.create({
   },
   hintText: {
     ...typography.caption,
-    color: colors.textSecondary,
-  },
+    color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   hintDismiss: {
     marginTop: spacing.sm,
     alignSelf: 'flex-end',
@@ -744,6 +743,5 @@ const styles = StyleSheet.create({
   hintDismissText: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '600',
-  },
+    fontWeight: '600', maxWidth: PROSE_MEASURE},
 });

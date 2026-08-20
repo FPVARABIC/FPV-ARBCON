@@ -11,7 +11,7 @@
 import React from 'react';
 import {StyleSheet, Text, View} from 'react-native';
 
-import {colors, spacing, typography} from '../../theme';
+import {PROSE_MEASURE, colors, spacing, typography} from '../../theme';
 
 export interface SettingRowProps {
   title: string;
@@ -85,8 +85,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   controlWide: {
     flexShrink: 0,
     alignItems: 'flex-end',

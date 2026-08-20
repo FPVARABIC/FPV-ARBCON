@@ -13,7 +13,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import type { MotorVectorScope } from '../../core/firmware-adapters/betaflightMotorVectorsV147';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
 const MOTOR_PROTOCOL_NAMES: Readonly<Record<number, string>> = Object.freeze({
   0: 'PWM',
@@ -128,13 +128,11 @@ const styles = StyleSheet.create({
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   readOnlyBadge: {
     borderRadius: radii.pill,
     backgroundColor: colors.accentSoft,
@@ -145,8 +143,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   factRow: { flexDirection: 'row', gap: spacing.sm },
   fact: {
     flex: 1,

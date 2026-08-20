@@ -47,16 +47,7 @@ import {
   findCorner,
 } from '../flight-guides';
 import type {GuideCorner, GuideDecisionKind, GuideStep} from '../flight-guides';
-import {
-  colors,
-  contentEnvelope,
-  isDesktopTier,
-  noticeSurface,
-  radii,
-  resolveLayoutTier,
-  spacing,
-  typography,
-} from '../theme';
+import {PROSE_MEASURE, colors, contentEnvelope, isDesktopTier, noticeSurface, radii, resolveLayoutTier, spacing, typography} from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FlightStyleCorner'>;
 
@@ -318,8 +309,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   metaRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   chip: {
     borderRadius: radii.pill,
@@ -343,8 +333,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   step: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
@@ -377,8 +366,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   recommend: {
     backgroundColor: colors.surfaceRaised,
     borderRadius: radii.md,
@@ -407,8 +395,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   shot: {
     width: '100%',
     /*
@@ -430,7 +417,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
     backgroundColor: colors.white,
   },
-  note: {...typography.caption, color: colors.textSecondary},
+  note: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   decisions: {gap: spacing.sm},
   decision: {
     backgroundColor: colors.surface,
@@ -453,7 +440,7 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   verdictText: {...typography.caption, color: colors.textSecondary, fontWeight: '700'},
-  decisionDetail: {...typography.caption},
+  decisionDetail: {...typography.caption, maxWidth: PROSE_MEASURE},
   warnings: {
     ...noticeSurface,
     backgroundColor: colors.warningSoft,
@@ -464,15 +451,14 @@ const styles = StyleSheet.create({
   warningRow: {flexDirection: 'row', gap: spacing.sm},
   warningBar: {width: 3, borderRadius: 2, backgroundColor: colors.warning},
   warningBody: {flex: 1},
-  warningText: {...typography.caption, color: colors.textSecondary},
+  warningText: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   status: {...noticeSurface, backgroundColor: colors.successSoft, borderColor: colors.success, gap: 4},
   statusTitle: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
   statusText: {
     ...typography.caption,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   missing: {flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl},
   missingText: {
     ...typography.body,

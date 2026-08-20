@@ -40,7 +40,7 @@ import type {
   FcToolOutcome,
   FcToolsController,
 } from '../../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../../theme';
 import { describeFcToolOutcome } from './FcToolsSection';
 
 const MIN_TOUCH_TARGET = 44;
@@ -290,8 +290,7 @@ const styles = StyleSheet.create({
   hint: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
-  },
+    marginTop: 2, maxWidth: PROSE_MEASURE},
   availabilityPill: {
     paddingHorizontal: spacing.sm,
     paddingVertical: 3,
@@ -340,13 +339,11 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.warning,
     marginTop: spacing.xs,
-    fontWeight: '600',
-  },
+    fontWeight: '600', maxWidth: PROSE_MEASURE},
   description: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
+    marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
   confirmation: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -359,8 +356,7 @@ const styles = StyleSheet.create({
   confirmBody: {
     ...typography.body,
     color: colors.textPrimary,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   runningBanner: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -387,8 +383,7 @@ const styles = StyleSheet.create({
   runningBody: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
-  },
+    marginTop: 2, maxWidth: PROSE_MEASURE},
   outcomeCard: {
     marginTop: spacing.md,
     padding: spacing.md,

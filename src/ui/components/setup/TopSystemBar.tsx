@@ -36,6 +36,7 @@ import {
 } from '../../../platforms/react-native/protocol/setupPresentation';
 import type { ArmingReadiness } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 import { Icon } from '../../icons';
 
 const INDICATOR_COLOR: Record<SetupConnectionIndicatorState, string> = {
@@ -383,6 +384,5 @@ const styles = StyleSheet.create({
   noticeMessage: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
+    marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
 });

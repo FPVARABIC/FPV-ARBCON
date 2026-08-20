@@ -30,6 +30,7 @@ import {
   selectTopArmingBlockReasons,
 } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 
 /** Never color-alone (per this pass's own accessibility requirement) -
  * every compact status also carries distinct Arabic text, and every
@@ -195,8 +196,7 @@ const styles = StyleSheet.create({
   },
   statusText: {
     ...typography.body,
-    fontWeight: '600',
-  },
+    fontWeight: '600', maxWidth: PROSE_MEASURE},
   reasonRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -211,8 +211,7 @@ const styles = StyleSheet.create({
   reasonText: {
     ...typography.body,
     color: colors.textPrimary,
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   showAllLink: {
     marginTop: spacing.sm,
     minHeight: MIN_TOUCH_TARGET,

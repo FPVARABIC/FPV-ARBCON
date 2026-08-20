@@ -80,7 +80,7 @@ import {
   sanitizeUserVisibleText,
   usbProductLabel,
 } from '../presentation/brandSafeText';
-import {colors, noticeSurface, radii, spacing, typography} from '../theme';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography} from '../theme';
 import {Icon} from '../icons';
 import {useTranslation} from 'react-i18next';
 import {copyPlainTextToClipboard} from '../../platforms/clipboard';
@@ -2825,8 +2825,7 @@ const styles = StyleSheet.create({
   },
   resultBody: {
     ...typography.caption,
-    color: colors.textPrimary,
-  },
+    color: colors.textPrimary, maxWidth: PROSE_MEASURE},
   stallNotice: {...noticeSurface, marginTop: spacing.sm,
     borderColor: colors.warning,
     backgroundColor: colors.warningSoft,
@@ -2834,13 +2833,11 @@ const styles = StyleSheet.create({
   stallTitle: {
     ...typography.sectionTitle,
     color: colors.warning,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   stallBody: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   root: {flex: 1, backgroundColor: colors.background},
   modalRoot: {
     flex: 1,
@@ -2905,12 +2902,11 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     paddingHorizontal: spacing.md,
     textAlign: 'right',
-    ...typography.body,
-  },
+    ...typography.body, maxWidth: PROSE_MEASURE},
   monoInput: {...typography.mono, textAlign: 'left', writingDirection: 'ltr'},
   selectorButton: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, minHeight: 48, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.borderStrong}, selectorCopy: {flex: 1, gap: 2},
   selectorValue: {...typography.sectionTitle, color: colors.textPrimary},
-  selectorHint: {...typography.caption, color: colors.textMuted},
+  selectorHint: {...typography.caption, color: colors.textMuted, maxWidth: PROSE_MEASURE},
   targetList: {flex: 1, borderRadius: radii.md, backgroundColor: colors.backgroundRaised},
   targetListContent: {paddingBottom: spacing.xl},
   targetRow: {minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft},
@@ -2935,7 +2931,7 @@ const styles = StyleSheet.create({
   deviceName: {...typography.sectionTitle, color: colors.textPrimary},
   deviceMeta: {...typography.caption, color: colors.textMuted},
   commitRow: {padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, gap: 2},
-  commitMessage: {...typography.caption, color: colors.textPrimary, fontWeight: '700'},
+  commitMessage: {...typography.caption, color: colors.textPrimary, fontWeight: '700', maxWidth: PROSE_MEASURE},
   commitSha: {...typography.mono, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr'},
   logBox: {maxHeight: 280, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surfaceAlt, gap: 4},
   /* THE APP'S OWN MESSAGES, and they are Arabic sentences:

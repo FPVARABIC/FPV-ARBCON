@@ -35,7 +35,7 @@ import type {
   MotorRotationDirection,
 } from '../../core/state/motorVerificationModel';
 import { MOTOR_TEST_EXPECTED_CONFIGURATION } from '../../core/state/motorVerificationModel';
-import { colors, radii, spacing, typography, fonts} from '../theme';
+import {PROSE_MEASURE, colors, fonts, radii, spacing, typography} from '../theme';
 import { Icon } from '../icons';
 import { isRtlLayout } from '../icons/layoutDirection';
 import { resolveLayoutTier } from '../theme/layout';
@@ -118,7 +118,12 @@ export function computeAirframeStageWidth(
 ): number {
   const tier = resolveLayoutTier(windowWidth, fontScale);
   const byTier =
-    tier === 'desktopWide'
+    /* desktopUltra shares desktopWide's size on purpose. The diagram is
+       a DIAGRAM, not a poster: past ~460px it stops carrying more
+       information and starts being a large picture of four circles. The
+       extra room on a very large monitor goes to the columns beside it,
+       which is what the wider envelope is for. */
+    tier === 'desktopUltra' || tier === 'desktopWide'
       ? 460
       : tier === 'desktop'
       ? 400
@@ -742,8 +747,7 @@ const styles = StyleSheet.create({
   diagramTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   frontMarker: { alignItems: 'center', gap: 1 },
   frontText: {
     // fontFamily is explicit because the SIZE is applied inline at render
@@ -979,6 +983,5 @@ const styles = StyleSheet.create({
   legendText: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

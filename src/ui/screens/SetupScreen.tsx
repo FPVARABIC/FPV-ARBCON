@@ -42,6 +42,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../navigation/types';
 import {
   CONTENT_MAX_WIDTH,
+  PROSE_MEASURE,
   colors,
   spacing,
   typography,
@@ -852,8 +853,7 @@ const styles = StyleSheet.create({
   telemetryReportHint: {
     ...typography.caption,
     color: colors.textSecondary,
-    textAlign: 'center',
-  },
+    textAlign: 'center', maxWidth: PROSE_MEASURE},
   sectionHeading: {
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -877,8 +877,7 @@ const styles = StyleSheet.create({
   sectionDescription: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
+    marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
   cardCell: {
     width: '50%',
     padding: spacing.xs,

@@ -58,7 +58,7 @@ import {
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
 import type {
   MotorTestActivationBlockReason,
@@ -2187,18 +2187,15 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.display,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   screenSubtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   dangerBanner: {...noticeSurface, flexDirection: 'row',
     gap: spacing.sm,
     backgroundColor: colors.errorSoft,
@@ -2208,14 +2205,12 @@ const styles = StyleSheet.create({
     ...typography.sectionTitle,
     color: colors.error,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1},
   dangerBody: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   safetyNoticeCopy: { gap: spacing.xs },
   faultBanner: {...noticeSurface, flexDirection: 'row',
     gap: spacing.sm,
@@ -2226,8 +2221,7 @@ const styles = StyleSheet.create({
     ...typography.title,
     color: colors.error,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1},
   card: {
     backgroundColor: colors.surface,
     borderColor: colors.borderSoft,
@@ -2279,8 +2273,7 @@ const styles = StyleSheet.create({
   statusHeading: {
     ...typography.caption,
     color: colors.textMuted,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   benchCard: {
     gap: spacing.lg,
     backgroundColor: colors.surface,
@@ -2305,20 +2298,17 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
-  statusText: { ...typography.body, writingDirection: 'rtl', flexShrink: 1 },
+    writingDirection: 'rtl'},
+  statusText: { ...typography.body, writingDirection: 'rtl', flexShrink: 1, maxWidth: PROSE_MEASURE},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   blockList: { gap: spacing.xs },
   diagnosticsToggle: {
     minHeight: MIN_TOUCH_TARGET,
@@ -2327,14 +2317,12 @@ const styles = StyleSheet.create({
   blockHeading: {
     ...typography.caption,
     color: colors.warning,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   blockReason: {
     ...typography.body,
     color: colors.warning,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   /* Rendered INSIDE the hold control, so the reason a locked button is
      locked is read where the operator is already pressing. */
   holdBlocked: {
@@ -2372,8 +2360,7 @@ const styles = StyleSheet.create({
   advancedEmptyTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   checkRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2389,8 +2376,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1},
   slotRow: { flexDirection: 'row', gap: spacing.sm },
   slotCard: {
     flex: 1,
@@ -2431,8 +2417,7 @@ const styles = StyleSheet.create({
   referenceNotice: {
     ...typography.caption,
     color: colors.warning,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   selectedMotorPanel: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2462,8 +2447,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.warning,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   directionNotice: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -2502,13 +2486,11 @@ const styles = StyleSheet.create({
   beginLabel: {
     ...typography.sectionTitle,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   holdStep: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   holdButton: {
     /* A FIXED height, not a minimum: the label legitimately changes
        three times during one gesture (hold-to-test -> counting ->
@@ -2566,8 +2548,7 @@ const styles = StyleSheet.create({
     ...typography.sectionTitle,
     color: colors.accentText,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1},
   holdLabelOff: {
     color: colors.textPrimary,
   },
@@ -2578,7 +2559,7 @@ const styles = StyleSheet.create({
     borderColor: colors.warning,
     backgroundColor: colors.warningSoft},
   prepareButton: { minHeight: MIN_TOUCH_TARGET + spacing.md, alignItems: 'center', justifyContent: 'center', borderColor: colors.accent, borderWidth: 2, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
-  prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'rtl' },
+  prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'rtl'},
   readyBanner: {...noticeSurface, flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,
@@ -2599,13 +2580,11 @@ const styles = StyleSheet.create({
   readyTitle: {
     ...typography.sectionTitle,
     color: colors.success,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   readyBody: {
     ...typography.body,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   pinnedFaultGuidance: {
     ...typography.body,
     color: colors.error,
@@ -2618,8 +2597,7 @@ const styles = StyleSheet.create({
   leaveLabel: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   /**
    * The pinned stop bar. A SIBLING of the scroll view, never an overlay -
    * see the ScrollView's note for why nothing reserves space for it.
@@ -2660,10 +2638,9 @@ const styles = StyleSheet.create({
   stopLabel: {
     ...typography.title,
     color: colors.white,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   endSessionButton: { minHeight: MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', borderColor: colors.warning, borderWidth: 2, borderRadius: radii.md, padding: spacing.sm },
-  endSessionLabel: { ...typography.body, color: colors.warning, fontWeight: '700', writingDirection: 'rtl' },
+  endSessionLabel: { ...typography.body, color: colors.warning, fontWeight: '700', writingDirection: 'rtl'},
   sessionEndedText: { ...typography.caption, color: colors.success, textAlign: 'center', writingDirection: 'rtl' },
   liveStrip: { height: 3, backgroundColor: colors.warning },
 });

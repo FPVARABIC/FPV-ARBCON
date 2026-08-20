@@ -28,6 +28,7 @@ import { useTranslation } from 'react-i18next';
 import type { TelemetryValue } from '../../../core';
 import type { AuxTelemetryChannelState } from '../../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 
 const STALE_OPACITY = 0.45;
 
@@ -155,14 +156,12 @@ export const telemetryCardContentStyles = StyleSheet.create({
   bodyText: {
     ...typography.body,
     color: colors.textPrimary,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   captionText: {
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: spacing.xs,
-    fontVariant: ['tabular-nums'],
-  },
+    fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE},
 });
 
 /**
@@ -201,8 +200,7 @@ const styles = StyleSheet.create({
   messageText: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
-  },
+    marginTop: 2, maxWidth: PROSE_MEASURE},
   staleContent: {
     opacity: STALE_OPACITY,
   },

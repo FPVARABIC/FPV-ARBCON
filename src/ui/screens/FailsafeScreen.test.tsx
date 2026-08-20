@@ -46,6 +46,79 @@ describe('FailsafeScreen', () => {
  * numbers are the board's own, the units are the ones a pilot thinks in,
  * and a control appears only when the board can actually store it.
  */
+/**
+ * THE SPLIT IS THE REASON THIS SCREEN MAY USE THE WIDE ENVELOPE.
+ *
+ * Measured in Chromium before it existed: on a 1920 window Failsafe
+ * painted 1144px of 1712 usable (67%), and on a 2560 window 1144 of 2352
+ * (49%) - roughly 600px of dead ground down each side. It had opted OUT
+ * of the workspace envelope for a good reason, because it was one column
+ * of cards and widening a single column only stretches it.
+ *
+ * So the fix was to make the claim true rather than to widen the cap:
+ * detection and behaviour down one column, live state and the channel
+ * grid down the other. These hold both halves - that the split exists on
+ * a desktop window, and that a phone still gets the single stack it has
+ * always had, because two 400px columns do not fit on a 390px screen.
+ */
+describe('the desktop split', () => {
+  const asStyle = (value: unknown) =>
+    Object.assign({}, ...[value].flat(Infinity).filter(Boolean)) as Record<string, unknown>;
+
+  it('arranges two real columns on a desktop window', async () => {
+    const ReactNative = require('react-native');
+    const spy = jest
+      .spyOn(ReactNative, 'useWindowDimensions')
+      .mockReturnValue({width: 1920, height: 1000, scale: 1, fontScale: 1});
+    const screen = await render(loader(snapshot));
+    // The channel grid and the stage-1 card must not share a parent
+    // that stacks them; a column wrapper sits between.
+    const columns = screen.renderer.root.findAll(
+      node =>
+        typeof node.type !== 'string' &&
+        asStyle(node.props.style).flexDirection === 'row' &&
+        asStyle(node.props.style).alignItems === 'flex-start',
+    );
+    expect(columns.length).toBeGreaterThan(0);
+    screen.unmount();
+    spy.mockRestore();
+  });
+
+  it('stays one stack on a phone, where two columns would not fit', async () => {
+    const ReactNative = require('react-native');
+    const spy = jest
+      .spyOn(ReactNative, 'useWindowDimensions')
+      .mockReturnValue({width: 390, height: 844, scale: 2, fontScale: 1});
+    const screen = await render(loader(snapshot));
+    const columns = screen.renderer.root.findAll(
+      node =>
+        typeof node.type !== 'string' &&
+        asStyle(node.props.style).flexDirection === 'row' &&
+        asStyle(node.props.style).alignItems === 'flex-start',
+    );
+    expect(columns.length).toBe(0);
+    screen.unmount();
+    spy.mockRestore();
+  });
+
+  /**
+   * A COLUMN THAT CANNOT BE READ IS NOT A COLUMN. Each one declares a
+   * minimum width, so the row wraps back to a stack rather than
+   * squeezing two unreadable columns into a window that cannot hold
+   * them - which is what keeps the phone layout unchanged.
+   */
+  it('gives each column a minimum width so a narrow window wraps instead of squeezing', () => {
+    const source = require('fs').readFileSync(
+      require('path').join(__dirname, 'FailsafeScreen.tsx'),
+      'utf8',
+    );
+    expect(source).toMatch(/column: \{[^}]*minWidth: \d{3}/);
+    expect(source).toMatch(/columns: \{[^}]*flexDirection: 'row'/);
+    // And the screen only claims the wide envelope because of that split.
+    expect(source).toContain('useContentEnvelope(');
+  });
+});
+
 describe('the GPS Rescue card', () => {
   it('shows the board’s own values, converted to the units a pilot uses', async () => {
     const screen = await render(loader(snapshot));

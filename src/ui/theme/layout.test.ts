@@ -37,7 +37,11 @@ describe('resolveLayoutTier', () => {
     [1024, 'desktop'],
     [1439, 'desktop'],
     [1440, 'desktopWide'],
-    [1920, 'desktopWide'],
+    [1919, 'desktopWide'],
+    // A genuinely large monitor gets its own tier - see
+    // desktopLayout.test.ts for what that tier is allowed to change.
+    [1920, 'desktopUltra'],
+    [2560, 'desktopUltra'],
   ])('resolves %ipx (fontScale 1) to %s', (width, expected) => {
     expect(resolveLayoutTier(width, 1)).toBe(expected);
   });
@@ -57,7 +61,7 @@ describe('resolveLayoutTier', () => {
     // A zero/absent fontScale must not invert or explode the result.
     expect(effectiveWidth(1000, 0)).toBe(1000);
     expect(effectiveWidth(1000, 0.5)).toBe(1000);
-    expect(resolveLayoutTier(1920, 0)).toBe('desktopWide');
+    expect(resolveLayoutTier(1920, 0)).toBe('desktopUltra');
   });
 
   it('keeps the pre-existing thresholds the shipped screens already use', () => {

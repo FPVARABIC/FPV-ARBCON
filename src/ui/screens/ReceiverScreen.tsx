@@ -23,7 +23,7 @@ import {
   type ReceiverSaveOutcome, type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol/receiverPresentation';
 import {StickyActionBar} from '../components/editing';
-import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, SelectField, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
 import {Icon, type IconName} from '../icons/Icon';
 
@@ -795,7 +795,7 @@ const styles = StyleSheet.create({
   content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md},
   header: {gap: 2},
   title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
-  subtitle: {...typography.caption, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl'},
+  subtitle: {...typography.caption, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 
   workspace: {gap: spacing.sm},
   statusStrip: {flexDirection: 'row', alignItems: 'center', gap: spacing.md, flexWrap: 'wrap', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderSoft, borderRadius: radii.lg, paddingVertical: spacing.sm, paddingHorizontal: spacing.md},
@@ -806,9 +806,9 @@ const styles = StyleSheet.create({
   statusDot: {width: 8, height: 8, borderRadius: 4, backgroundColor: colors.disabled},
   statusDotLive: {backgroundColor: colors.success},
   statusDotStale: {backgroundColor: colors.warning},
-  statusPillText: {...typography.caption, color: colors.textPrimary, fontWeight: '700'},
+  statusPillText: {...typography.caption, color: colors.textPrimary, fontWeight: '700', maxWidth: PROSE_MEASURE},
   statusMetric: {alignItems: 'flex-end', gap: 1},
-  statusMetricLabel: {...typography.caption, color: colors.textMuted},
+  statusMetricLabel: {...typography.caption, color: colors.textMuted, maxWidth: PROSE_MEASURE},
   statusMetricValue: {...typography.label, color: colors.textPrimary, fontWeight: '700', fontVariant: ['tabular-nums']},
 
   workspaceRow: {gap: spacing.md},
@@ -826,7 +826,7 @@ const styles = StyleSheet.create({
   sticksCardWide: {flex: 2},
   sectionHead: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
-  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl'},
+  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   alertHead: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
 
   channelRow: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
@@ -847,7 +847,7 @@ const styles = StyleSheet.create({
   // smallest text on the screen.
   channelValue: {...typography.label, color: colors.textPrimary, width: 52, textAlign: 'right', fontVariant: ['tabular-nums']},
   channelValuePrimary: {...typography.heading, color: colors.textPrimary, width: 52, textAlign: 'right', fontVariant: ['tabular-nums']},
-  emptyText: {...typography.body, color: colors.textMuted, textAlign: 'right'},
+  emptyText: {...typography.body, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
 
   sticksRow: {flexDirection: 'row', justifyContent: 'center', gap: spacing.md, flexWrap: 'wrap'},
   stickWrap: {alignItems: 'center', gap: 5},
@@ -899,12 +899,12 @@ const styles = StyleSheet.create({
   flexOne: {flex: 1},
 
   warning: {...noticeSurface, borderColor: colors.warning, backgroundColor: colors.warningSoft, gap: spacing.sm},
-  warningText: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'rtl'},
+  warningText: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   danger: {...noticeSurface, borderColor: colors.error, backgroundColor: colors.errorSoft, gap: 3},
-  dangerTitle: {...typography.caption, fontWeight: '700', color: colors.error, textAlign: 'right'},
-  dangerText: {...typography.caption, color: colors.error, textAlign: 'right', writingDirection: 'rtl'},
+  dangerTitle: {...typography.caption, fontWeight: '700', color: colors.error, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  dangerText: {...typography.caption, color: colors.error, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   success: {...noticeSurface, borderColor: colors.success, backgroundColor: colors.successSoft},
-  successText: {...typography.caption, color: colors.success, textAlign: 'right'},
+  successText: {...typography.caption, color: colors.success, textAlign: 'right', maxWidth: PROSE_MEASURE},
   inlineAction: {alignSelf: 'flex-start'},
   loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl},
   bottomSpace: {height: spacing.xl},

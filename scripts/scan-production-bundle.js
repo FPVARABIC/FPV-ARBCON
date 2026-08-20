@@ -235,9 +235,11 @@ const REQUIRED_ENGINE_TOKENS = [
   'encodeFeatureConfig',
   // Firmware Flasher and the landing route are product surfaces, not
   // optional debug code. Their protocol owners must ship in Release.
-  // ENTRY CLEANUP: 'start-configure' replaced 'start-connection' - the
-  // Home choice now opens the configurator DIRECTLY, and the connection
-  // workspace ships inside the Setup tab (SetupScreen/setupSessionHost).
+  // THE CONNECTION SHIPS WITH HOME. 'start-configure' is the door, and
+  // there is no connection screen behind it any more - pressing it runs
+  // the connection in place (ui/session/useDirectConnect) and reports it
+  // on Home. So the tokens that must be present are Home's own
+  // connection surface, not a workspace that no longer exists.
   // Board alignment ships as a working transaction, not as a read-only
   // panel: the controller, both codecs, the write command and the card's
   // own surface must all be present together.
@@ -249,7 +251,9 @@ const REQUIRED_ENGINE_TOKENS = [
   'MSP_SET_BOARD_ALIGNMENT_CONFIG',
   'firmware-flasher-screen',
   'start-configure',
-  'setup-connect-workspace',
+  'home-connect-progress',
+  'home-connect-failed',
+  'useDirectConnect',
   'start-firmware',
   'start-safe-flash',
   'CloudBuildCoordinator',

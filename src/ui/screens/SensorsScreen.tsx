@@ -18,7 +18,7 @@ import {
   useTelemetryValue,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
-import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import { Button } from '../components/controls';
 interface Props {
   readonly sessionKey?: SetupUiSessionKey;
@@ -470,8 +470,7 @@ const styles = StyleSheet.create({
   subtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   presence: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   presenceItem: {
     flexGrow: 1,
@@ -522,7 +521,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     textAlign: 'right',
   },
-  hint: { ...typography.caption, color: colors.textMuted, textAlign: 'right' },
+  hint: { ...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
   metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   metric: {
     flexGrow: 1,
@@ -609,8 +608,7 @@ const styles = StyleSheet.create({
   scaleNote: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   unavailablePanel: {
     padding: spacing.md,
     borderRadius: radii.md,
@@ -621,8 +619,7 @@ const styles = StyleSheet.create({
   unavailableText: {
     ...typography.caption,
     color: colors.textMuted,
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   hardware: {
     borderWidth: 1,
     borderColor: colors.accentStrong,
@@ -634,8 +631,7 @@ const styles = StyleSheet.create({
   hardwareText: {
     ...typography.caption,
     color: colors.accentText,
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   calibration: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -657,7 +653,6 @@ const styles = StyleSheet.create({
   warningText: {
     ...typography.body,
     color: colors.warning,
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   bottom: { height: spacing.xl },
 });

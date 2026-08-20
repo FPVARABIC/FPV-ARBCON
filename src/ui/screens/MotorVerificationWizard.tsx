@@ -26,7 +26,7 @@ import React, {useCallback, useMemo, useState} from 'react';
 import {Pressable, StyleSheet, Text, View} from 'react-native';
 import {useTranslation} from 'react-i18next';
 
-import {colors, radii, spacing, typography} from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 import {Icon} from '../icons';
 import type {MotorTestVerificationReceipt} from '../../core/state/motorTestController';
 import {
@@ -547,32 +547,27 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   body: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   disclaimer: {
     ...typography.body,
     color: colors.warning,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   caveat: {
     ...typography.body,
     color: colors.warning,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   evidenceBlock: {
     backgroundColor: colors.surfaceAlt,
     borderColor: colors.border,
@@ -584,8 +579,7 @@ const styles = StyleSheet.create({
   evidenceHeading: {
     ...typography.caption,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   row: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   optionRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   option: {
@@ -627,21 +621,18 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   linkButton: {minHeight: 44, justifyContent: 'center'},
   linkText: {
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   optionLabel: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1},
   confirmButton: {
     minHeight: 44,
     alignItems: 'center',
@@ -655,19 +646,16 @@ const styles = StyleSheet.create({
   confirmLabel: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   lockedText: {
     ...typography.body,
     color: colors.success,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   overall: {
     ...typography.title,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1},
   reportRow: {
     flexDirection: 'row',
     gap: spacing.sm,

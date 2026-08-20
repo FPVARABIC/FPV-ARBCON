@@ -30,7 +30,7 @@ import { useTranslation } from 'react-i18next';
 import type { DshotEscDirection } from '../../core';
 import type { MotorTestEscDirectionOutcome } from '../../core/state/motorTestController';
 import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
 export interface EscDirectionPanelProps {
   readonly selectedMotor: number;
@@ -360,30 +360,25 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   warning: {
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   sectionTitle: {
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   optionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   option: {
     minWidth: 56,
@@ -416,8 +411,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   confirmation: {
     gap: spacing.sm,
     padding: spacing.md,
@@ -440,8 +434,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   primaryButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -455,8 +448,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.background,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   dangerButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -470,18 +462,15 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.background,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   resultDanger: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   resultGood: {
     ...typography.body,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

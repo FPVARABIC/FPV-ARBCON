@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { colors, fonts, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 
 const MIN_INSTRUMENT_SIZE = 112;
 const MAX_INSTRUMENT_SIZE = 156;
@@ -553,8 +554,7 @@ const styles = StyleSheet.create({
   statusText: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '700',
-  },
+    fontWeight: '700', maxWidth: PROSE_MEASURE},
   statusTextWaiting: { color: colors.textMuted },
   statusTextStale: { color: colors.warning },
   statusTextError: { color: colors.error },

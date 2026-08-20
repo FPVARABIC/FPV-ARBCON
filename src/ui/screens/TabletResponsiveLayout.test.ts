@@ -90,9 +90,15 @@ describe('responsive shell', () => {
   );
 
   it('the envelope helper widens ONLY for a screen that has actually split into columns', () => {
-    const desktop = resolveLayoutTier(1920, 1);
+    // 1440, not 1920: a 1920 window is now its own tier with its own
+    // (wider) envelope, which desktopLayout.test.ts covers. The rule
+    // asserted HERE is the one that has not changed - splitting is what
+    // earns the wider envelope, at every desktop tier.
+    const desktop = resolveLayoutTier(1440, 1);
     expect(contentEnvelope(desktop, true)).toBe(WORKSPACE_MAX_WIDTH);
     expect(contentEnvelope(desktop, false)).toBe(CONTENT_MAX_WIDTH);
+    const ultra = resolveLayoutTier(1920, 1);
+    expect(contentEnvelope(ultra, false)).toBe(CONTENT_MAX_WIDTH);
     // Below the desktop tier nothing widens, so Android is untouched.
     const tablet = resolveLayoutTier(800, 1);
     expect(contentEnvelope(tablet, true)).toBe(CONTENT_MAX_WIDTH);

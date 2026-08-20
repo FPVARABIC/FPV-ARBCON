@@ -43,7 +43,7 @@ import type {
   SetupDiagnosticsView,
   SetupSensorState,
 } from '../../../core';
-import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../../theme';
 
 /** The exact translate function useTranslation() hands back - keeps the
  * two pure copy helpers below out of the component without loosening
@@ -357,13 +357,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   sectionSummary: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   togglePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -376,8 +374,7 @@ const styles = StyleSheet.create({
   toggleText: {
     ...typography.label,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   detailsCollapsed: {
     display: 'none',
   },

@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 
 import {colors, radii, spacing, typography} from '../theme';
+import {PROSE_MEASURE} from '../theme';
 import type {TransportError, UsbSerialTransportClient} from '../../platforms/react-native/transport';
 import {mspSessionCoordinator, useMspIdentificationState} from '../../platforms/react-native/protocol';
 import type {MspIdentificationState} from '../../platforms/react-native/protocol';
@@ -604,13 +605,11 @@ const styles = StyleSheet.create({
   mspStatusWarning: {
     ...typography.caption,
     color: colors.warning,
-    marginBottom: spacing.md,
-  },
+    marginBottom: spacing.md, maxWidth: PROSE_MEASURE},
   mspStatusInfo: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginBottom: spacing.md,
-  },
+    marginBottom: spacing.md, maxWidth: PROSE_MEASURE},
   identitySection: {
     marginBottom: spacing.md,
     padding: spacing.sm,
@@ -679,8 +678,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'ltr',
-    marginBottom: spacing.md,
-  },
+    marginBottom: spacing.md, maxWidth: PROSE_MEASURE},
   textInput: {
     flex: 1,
     ...typography.mono,
@@ -712,8 +710,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...typography.caption,
-    color: colors.textSecondary,
-  },
+    color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   log: {
     maxHeight: 260,
     borderWidth: StyleSheet.hairlineWidth,

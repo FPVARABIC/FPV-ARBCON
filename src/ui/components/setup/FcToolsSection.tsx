@@ -42,6 +42,7 @@ import type {
   FcToolsController,
 } from '../../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 
 /** Android's minimum recommended touch target. */
 const MIN_TOUCH_TARGET = 44;
@@ -391,8 +392,7 @@ const styles = StyleSheet.create({
   sectionDescription: {
     ...typography.body,
     color: colors.textSecondary,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   workflow: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -426,7 +426,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '700',
   },
-  workflowBody: { ...typography.caption, color: colors.textSecondary },
+  workflowBody: { ...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   tool: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -504,14 +504,12 @@ const styles = StyleSheet.create({
   toolDescription: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
-  },
+    marginTop: 2, maxWidth: PROSE_MEASURE},
   toolReason: {
     ...typography.caption,
     color: colors.warning,
     marginTop: spacing.xs,
-    fontWeight: '600',
-  },
+    fontWeight: '600', maxWidth: PROSE_MEASURE},
   confirmation: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -527,8 +525,7 @@ const styles = StyleSheet.create({
   confirmBody: {
     ...typography.body,
     color: colors.textPrimary,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   toolButtonActive: { backgroundColor: colors.surfaceHover },
   outcome: {
     ...typography.body,
@@ -574,6 +571,5 @@ const styles = StyleSheet.create({
   runningBody: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
-  },
+    marginTop: 2, maxWidth: PROSE_MEASURE},
 });

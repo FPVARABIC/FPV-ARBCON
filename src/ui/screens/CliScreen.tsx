@@ -17,7 +17,7 @@ import {
   type RawCliPhase,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
-import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
 import {readInteraction} from '../components/controls/interaction';
 import {MIN_TOUCH_TARGET} from '../components/controls';
@@ -183,7 +183,32 @@ export default function CliScreen({
     if (!sessionKey) return 'لا توجد جلسة Flight Controller.';
     const state = cli.getIdentification(sessionKey.sessionId);
     if (state.status === 'SUCCEEDED') {
-      return `${state.identity.firmware.knownFamily} · ${state.identity.firmware.identifier} · MSP ${state.identity.apiVersion.apiVersionMajor}.${state.identity.apiVersion.apiVersionMinor} · ${state.identity.board.boardIdentifier}`;
+      /*
+       * A BOARD THAT DID NOT NAME ITSELF IS NOT NAMED "undefined".
+       *
+       * This template interpolated board.boardIdentifier unconditionally,
+       * and that field is genuinely optional - plenty of boards answer
+       * MSP_BOARD_INFO without one. The screen then printed the literal
+       * string "undefined" as if it were the board's identity. Found by
+       * the width sweep, which reads what is actually on screen.
+       *
+       * The segment is omitted rather than filled with a placeholder:
+       * saying nothing about a board that said nothing is the honest
+       * rendering.
+       */
+      const {firmware, apiVersion, board} = state.identity;
+      const parts = [
+        firmware.knownFamily,
+        firmware.identifier,
+        `MSP ${apiVersion.apiVersionMajor}.${apiVersion.apiVersionMinor}`,
+      ];
+      if (
+        typeof board.boardIdentifier === 'string' &&
+        board.boardIdentifier.length > 0
+      ) {
+        parts.push(board.boardIdentifier);
+      }
+      return parts.join(' · ');
     }
     if (state.status === 'FAILED') return 'فشل تثبيت هوية المتحكم.';
     return state.status === 'RUNNING'
@@ -616,8 +641,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.warningSoft,
     borderRadius: radii.md,
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
+    paddingVertical: spacing.sm, maxWidth: PROSE_MEASURE},
   noSession: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -628,8 +652,7 @@ const styles = StyleSheet.create({
   noSessionText: {
     ...typography.body,
     color: colors.textSecondary,
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   retry: {
     marginTop: spacing.sm,
     minHeight: MIN_TOUCH_TARGET,
@@ -652,7 +675,7 @@ const styles = StyleSheet.create({
   phaseOpen: { color: colors.success, backgroundColor: colors.accentSoft },
   error: {...noticeSurface, backgroundColor: colors.errorSoft,
     borderColor: colors.error},
-  errorText: { ...typography.body, color: colors.error, textAlign: 'right' },
+  errorText: { ...typography.body, color: colors.error, textAlign: 'right', maxWidth: PROSE_MEASURE},
   disabled: { opacity: 0.42 },
   quickCard: {
     backgroundColor: colors.surface,
@@ -667,7 +690,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     textAlign: 'right',
   },
-  hint: { ...typography.caption, color: colors.textMuted, textAlign: 'right' },
+  hint: { ...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
   quickGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   quick: {
     minWidth: 145,
@@ -719,7 +742,7 @@ const styles = StyleSheet.create({
   },
   toolActive: { backgroundColor: 'rgba(94, 234, 212, 0.16)' },
   toolDisabled: { opacity: 0.45 },
-  toolText: { ...typography.label, color: colors.accent },
+  toolText: { ...typography.label, color: colors.accent, maxWidth: PROSE_MEASURE},
   terminal: { height: 360, padding: spacing.md },
   terminalText: {
     ...typography.mono,
@@ -818,11 +841,9 @@ const styles = StyleSheet.create({
   statusText: {
     ...typography.body,
     color: colors.accentText,
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   hardware: {
     ...typography.caption,
     color: colors.warning,
-    textAlign: 'center',
-  },
+    textAlign: 'center', maxWidth: PROSE_MEASURE},
 });

@@ -42,7 +42,7 @@ import {
   MotorOutputReorderPanel,
   type MotorOutputOrderControllerPort,
 } from './MotorOutputReorderPanel';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
 export interface MotorOutputMappingSectionProps {
   readonly sessionId: string | undefined;
@@ -285,18 +285,15 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   rows: { gap: spacing.xs },
   row: {
     flexDirection: 'row',
@@ -317,25 +314,21 @@ const styles = StyleSheet.create({
   rowRelation: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   rowResource: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   error: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   progress: {
     ...typography.body,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   primaryButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -349,8 +342,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.label,
     color: colors.accentText,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   buttonDisabled: { backgroundColor: colors.surfaceAlt },
   secondaryButton: {
     minHeight: 44,
@@ -365,6 +357,5 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     ...typography.label,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
 });

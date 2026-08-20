@@ -50,7 +50,7 @@ import {
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
 import {MIN_TOUCH_TARGET} from '../components/controls/interaction';
-import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {
   Button,
   ChoiceChips,
@@ -827,15 +827,15 @@ const styles = StyleSheet.create({
   hero: {gap: 4},
   eyebrow: {...typography.eyebrow, color: colors.accentStrong},
   title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
-  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right'},
+  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', maxWidth: PROSE_MEASURE},
   flexOne: {flex: 1},
   warning: {...noticeSurface, borderColor: colors.warning,
     backgroundColor: colors.warningSoft,
     gap: spacing.sm},
-  warningText: {...typography.caption, color: colors.warning, textAlign: 'right'},
+  warningText: {...typography.caption, color: colors.warning, textAlign: 'right', maxWidth: PROSE_MEASURE},
   success: {...noticeSurface, borderColor: colors.success,
     backgroundColor: colors.successSoft},
-  successText: {...typography.caption, color: colors.success, textAlign: 'right'},
+  successText: {...typography.caption, color: colors.success, textAlign: 'right', maxWidth: PROSE_MEASURE},
   inlineAction: {alignSelf: 'flex-start'},
   card: {
     backgroundColor: colors.surface,
@@ -852,7 +852,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
-  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
+  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
   positionValue: {
     ...typography.caption,
     color: colors.textPrimary,
@@ -911,7 +911,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
   },
   elementDotOn: {backgroundColor: colors.success, borderColor: colors.success},
-  elementChipText: {...typography.caption, flex: 1, color: colors.textPrimary, textAlign: 'right'},
+  elementChipText: {...typography.caption, flex: 1, color: colors.textPrimary, textAlign: 'right', maxWidth: PROSE_MEASURE},
   elementPosition: {...typography.caption, color: colors.textMuted, fontVariant: ['tabular-nums']},
   switchGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   switchRow: {

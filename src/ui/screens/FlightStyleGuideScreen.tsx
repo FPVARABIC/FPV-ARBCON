@@ -41,16 +41,7 @@ import {
   StyleCover,
 } from '../flight-guides';
 import type {GuideCorner} from '../flight-guides';
-import {
-  colors,
-  contentEnvelope,
-  isDesktopTier,
-  noticeSurface,
-  radii,
-  resolveLayoutTier,
-  spacing,
-  typography,
-} from '../theme';
+import {PROSE_MEASURE, colors, contentEnvelope, isDesktopTier, noticeSurface, radii, resolveLayoutTier, spacing, typography} from '../theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'FlightStyleGuide'>;
 
@@ -198,8 +189,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   /* A real grid: the CELL owns the width (one, two or three per row) and
      the card fills it. Gutters come from cell padding rather than `gap`,
      because a percentage width and a gap cannot both be satisfied - that
@@ -235,8 +225,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   metaRow: {flexDirection: 'row', gap: spacing.sm, paddingTop: spacing.sm},
   chip: {
     borderRadius: radii.pill,
@@ -250,8 +239,7 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textAlign: 'right',
     writingDirection: 'rtl',
-    paddingTop: 2,
-  },
+    paddingTop: 2, maxWidth: PROSE_MEASURE},
   cta: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -265,6 +253,5 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

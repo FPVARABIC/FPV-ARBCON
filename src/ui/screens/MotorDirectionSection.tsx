@@ -40,7 +40,7 @@ import {
 import type { DshotEscDirection } from '../../core';
 import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
 import { EscDirectionPanel } from './EscDirectionPanel';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
 export interface MotorDirectionSectionProps {
   readonly selectedMotor: number;
@@ -386,13 +386,11 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   motor: {
     ...typography.mono,
     color: colors.textPrimary,
@@ -401,8 +399,7 @@ const styles = StyleSheet.create({
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   row: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -413,8 +410,7 @@ const styles = StyleSheet.create({
   rowLabel: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   rowValueGroup: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -425,8 +421,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   rowValueStrong: { fontWeight: '700' },
   badge: {
     paddingHorizontal: spacing.sm,
@@ -441,20 +436,17 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   mismatch: {
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   match: {
     ...typography.caption,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   unavailable: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -467,8 +459,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   authoringBlock: { gap: spacing.xs },
   detailsBlock: { gap: spacing.xs },
   linkButton: { minHeight: 44, justifyContent: 'center', alignItems: 'flex-start' },
@@ -476,8 +467,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   primaryButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -490,8 +480,7 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.label,
     color: colors.accentText,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   secondaryButton: {
     minHeight: 44,
     alignItems: 'center',
@@ -504,24 +493,20 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     ...typography.label,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   resultGood: {
     ...typography.caption,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   resultDanger: {
     ...typography.caption,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   verifyTitle: {
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
 });

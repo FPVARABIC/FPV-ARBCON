@@ -23,7 +23,7 @@ import React from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../../theme';
 import { Icon } from '../../icons';
 import { MIN_TOUCH_TARGET, readInteraction } from '../controls/interaction';
 import { MAIN_TABS, type MainTabKey } from '../../../navigation/tabs';
@@ -155,8 +155,7 @@ const styles = StyleSheet.create({
   brandTagline: {
     ...typography.caption,
     color: colors.accentText,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   header: {
     paddingHorizontal: spacing.xs,
     paddingBottom: spacing.sm,
@@ -200,7 +199,6 @@ const styles = StyleSheet.create({
     flex: 1,
     fontWeight: '700',
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   labelActive: { color: colors.accentStrong },
 });

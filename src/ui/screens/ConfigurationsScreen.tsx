@@ -45,6 +45,7 @@ import {
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import {PROSE_MEASURE} from '../theme';
 import { StickyActionBar } from '../components/editing';
 import {
   Button,
@@ -1013,7 +1014,7 @@ const styles = StyleSheet.create({
   reviewCard: { borderColor: colors.warning },
   cardEyebrow: { ...typography.eyebrow, color: colors.accentStrong },
   cardTitle: { ...typography.sectionTitle, color: colors.textPrimary, marginTop: spacing.xs },
-  cardBody: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs },
+  cardBody: { ...typography.body, color: colors.textSecondary, marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
   columns: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.md },
   singleColumn: { flexDirection: 'column' },
   column: { flex: 1, width: '100%' },
@@ -1027,8 +1028,8 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
     marginTop: spacing.xs,
   },
-  readOnlyNote: { ...typography.helper, color: colors.textMuted, marginTop: spacing.sm },
-  stateText: { ...typography.body, color: colors.textSecondary },
+  readOnlyNote: { ...typography.helper, color: colors.textMuted, marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
+  stateText: { ...typography.body, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   controlRow: {
     minHeight: 66,
     flexDirection: 'row',
@@ -1050,7 +1051,7 @@ const styles = StyleSheet.create({
   },
   controlCopy: { flex: 1, minWidth: 190 },
   controlTitle: { ...typography.bodyStrong, color: colors.textPrimary },
-  controlDetail: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
+  controlDetail: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
   inputLabel: {
     ...typography.label,
     color: colors.textPrimary,
@@ -1071,7 +1072,7 @@ const styles = StyleSheet.create({
     writingDirection: 'ltr',
     textAlign: 'left',
   },
-  limitNote: { ...typography.caption, color: colors.warning, marginTop: spacing.sm },
+  limitNote: { ...typography.caption, color: colors.warning, marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   groupTitle: {
     ...typography.label,
     color: colors.textPrimary,
@@ -1111,11 +1112,11 @@ const styles = StyleSheet.create({
   destinationActive: { backgroundColor: colors.surfaceHover },
   destinationCopy: { flex: 1 },
   destinationTitle: { ...typography.bodyStrong, color: colors.accentStrong },
-  destinationDetail: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs },
+  destinationDetail: { ...typography.caption, color: colors.textSecondary, marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
   actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.lg },
   blockActionSpacing: { marginTop: spacing.md },
   saveGrow: { flexGrow: 1 },
   outcomeText: { ...typography.body, color: colors.success, marginTop: spacing.md },
-  errorText: { ...typography.body, color: colors.error, marginTop: spacing.md },
+  errorText: { ...typography.body, color: colors.error, marginTop: spacing.md, maxWidth: PROSE_MEASURE},
   disabled: { opacity: 0.45 },
 });

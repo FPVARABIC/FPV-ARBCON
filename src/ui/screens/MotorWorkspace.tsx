@@ -44,7 +44,7 @@ import {
 } from '../../core/state/motorSessionPresentation';
 import { ToggleSwitch } from '../components/controls/ToggleSwitch';
 import { Button } from '../components/controls/Button';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
 /* ------------------------------------------------------------------ *
  * The narrow port this workspace may call
@@ -694,8 +694,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     fontWeight: '700',
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   stateChipOn: {
     borderColor: colors.accentStrong,
     backgroundColor: colors.accentSoft,
@@ -709,12 +708,10 @@ const styles = StyleSheet.create({
   },
   safetyLine: {
     ...typography.caption,
-    color: colors.warning,
-  },
+    color: colors.warning, maxWidth: PROSE_MEASURE},
   recoveryText: {
     ...typography.body,
-    color: colors.error,
-  },
+    color: colors.error, maxWidth: PROSE_MEASURE},
   slidersBlock: { gap: spacing.xs },
   masterRow: {
     borderTopWidth: 1,
@@ -726,6 +723,5 @@ const styles = StyleSheet.create({
   unsupportedText: {
     ...typography.body,
     color: colors.textSecondary,
-    lineHeight: 22,
-  },
+    lineHeight: 22, maxWidth: PROSE_MEASURE},
 });

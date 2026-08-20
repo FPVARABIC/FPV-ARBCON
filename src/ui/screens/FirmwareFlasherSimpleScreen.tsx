@@ -112,7 +112,7 @@ import {bytesToBase64} from '../../platforms/react-native/protocol/base64';
 import {getLastConnectionTrace} from '../../core/protocol/msp/identification/connectionTrace';
 import {copyPlainTextToClipboard} from '../../platforms/clipboard';
 import {FirmwareButton, FirmwareNotice, FirmwareProgress} from '../components/firmware';
-import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
 
 /**
@@ -1895,7 +1895,7 @@ const styles = StyleSheet.create({
   backButton: {width: 44, height: 44, alignItems: 'center', justifyContent: 'center'},
   headerCopy: {flex: 1},
   title: {...typography.title, color: colors.textPrimary},
-  subtitle: {...typography.caption, color: colors.textSecondary},
+  subtitle: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   advancedLink: {minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm},
   advancedLinkText: {...typography.caption, color: colors.accentStrong, fontWeight: '700'},
   scroll: {flex: 1},
@@ -1910,7 +1910,7 @@ const styles = StyleSheet.create({
   },
   /** Supporting actions sit on one wrapping row, sized to their labels. */
   actionRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
-  lockedNote: {...typography.caption, color: colors.textSecondary},
+  lockedNote: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   advancedLoading: {paddingVertical: spacing.xl, alignItems: 'center'},
   card: {
     backgroundColor: colors.surface,
@@ -1944,7 +1944,7 @@ const styles = StyleSheet.create({
   selectorLabel: {...typography.caption, color: colors.textMuted},
   selectorValue: {...typography.sectionTitle, color: colors.textPrimary},
   detected: {...typography.caption, color: colors.success},
-  helper: {...typography.caption, color: colors.textSecondary},
+  helper: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   channelToggle: {
     minHeight: 44,
     flexDirection: 'row',

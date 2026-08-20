@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 
 import {colors, noticeSurface, radii, spacing, typography} from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 import {ToggleSwitch} from '../controls';
 
 export function FirmwareSection({
@@ -216,7 +217,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   sectionTitle: {...typography.title, color: colors.textPrimary},
-  sectionCaption: {...typography.caption, color: colors.textSecondary},
+  sectionCaption: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   sectionBody: {gap: spacing.md, paddingTop: spacing.sm},
   button: {
     minHeight: 46,
@@ -260,7 +261,7 @@ const styles = StyleSheet.create({
   toggleWarning: {borderWidth: 1, borderColor: colors.warning},
   toggleCopy: {flex: 1, gap: 2},
   toggleLabel: {...typography.sectionTitle, color: colors.textPrimary},
-  toggleDetail: {...typography.caption, color: colors.textSecondary},
+  toggleDetail: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   choiceWrap: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   choice: {
     minHeight: 39,

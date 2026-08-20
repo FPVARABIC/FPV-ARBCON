@@ -15,8 +15,10 @@ export type {CairoWeight} from './font';
 
 export {
   CONTENT_MAX_WIDTH,
+  PROSE_MEASURE,
   LAYOUT_BREAKPOINTS,
   WORKSPACE_MAX_WIDTH,
+  WORKSPACE_ULTRA_MAX_WIDTH,
   contentEnvelope,
   effectiveWidth,
   isDesktopTier,

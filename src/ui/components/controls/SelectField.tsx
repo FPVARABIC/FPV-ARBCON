@@ -26,7 +26,7 @@ import {
 } from 'react-native';
 
 import {Icon} from '../../icons';
-import {colors, radii, spacing, typography} from '../../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../../theme';
 import {IconButton} from './IconButton';
 import {MIN_TOUCH_TARGET, readInteraction} from './interaction';
 
@@ -229,8 +229,7 @@ const styles = StyleSheet.create({
   helper: {
     ...typography.helper,
     color: colors.textMuted,
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
   backdropLayer: {
     flex: 1,
     alignItems: 'center',

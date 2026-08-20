@@ -24,12 +24,7 @@
 import React from 'react';
 import {StyleSheet, Text, View} from 'react-native';
 
-import {
-  WORKSPACE_MAX_WIDTH,
-  colors,
-  spacing,
-  typography,
-} from '../theme';
+import {PROSE_MEASURE, WORKSPACE_MAX_WIDTH, colors, spacing, typography} from '../theme';
 import BrandLogo, {
   BRAND_PRODUCT_NAME,
   BRAND_PRODUCT_TAGLINE,
@@ -117,6 +112,5 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textSecondary,
     writingDirection: 'rtl',
-    textAlign: 'right',
-  },
+    textAlign: 'right', maxWidth: PROSE_MEASURE},
 });

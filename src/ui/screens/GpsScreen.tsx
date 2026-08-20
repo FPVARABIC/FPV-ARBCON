@@ -46,6 +46,7 @@ import {
 } from '../../platforms/react-native/protocol';
 import { openMapLocation } from '../../platforms/mapLink';
 import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {PROSE_MEASURE} from '../theme';
 import {
   Button,
   MIN_TOUCH_TARGET,
@@ -994,8 +995,7 @@ const styles = StyleSheet.create({
   statusText: {
     ...typography.caption,
     color: colors.textPrimary,
-    fontWeight: '700',
-  },
+    fontWeight: '700', maxWidth: PROSE_MEASURE},
   card: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -1016,8 +1016,7 @@ const styles = StyleSheet.create({
   cardBody: {
     ...typography.body,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
-  },
+    marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
   twoColumn: { flexDirection: 'row', gap: spacing.md },
   oneColumn: { flexDirection: 'column' },
   columnCard: { flex: 1 },
@@ -1067,14 +1066,12 @@ const styles = StyleSheet.create({
   positionHint: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   coordinateRow: { flexDirection: 'row', marginTop: spacing.sm },
   privacyNote: {
     ...typography.caption,
     color: colors.textMuted,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   satelliteGrid: { gap: spacing.sm, marginTop: spacing.md },
   satellite: {
     borderWidth: 1,
@@ -1114,8 +1111,7 @@ const styles = StyleSheet.create({
   emptyText: {
     ...typography.body,
     color: colors.textMuted,
-    marginTop: spacing.md,
-  },
+    marginTop: spacing.md, maxWidth: PROSE_MEASURE},
   toggleRow: {
     minHeight: 68,
     flexDirection: 'row',
@@ -1134,8 +1130,7 @@ const styles = StyleSheet.create({
   controlDetail: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
-  },
+    marginTop: 2, maxWidth: PROSE_MEASURE},
   groupTitle: {
     ...typography.body,
     color: colors.textPrimary,

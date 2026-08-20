@@ -27,6 +27,7 @@ import {StyleSheet, Text, View} from 'react-native';
 import {Icon} from '../../icons';
 import type {IconName} from '../../icons';
 import {colors, noticeSurface, noticeText, noticeTitle, spacing} from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 
 export type NoticeVariant =
   | 'danger'
@@ -140,6 +141,10 @@ const styles = StyleSheet.create({
   textColumn: {
     flex: 1,
     gap: 2,
+    /* A NOTICE IS A SENTENCE, and a sentence keeps its measure however
+       wide the card around it becomes. Measured at 1920 before this:
+       notice bodies ran 1622-1676px on OSD, VTX, Power and Presets. */
+    maxWidth: PROSE_MEASURE,
   },
   bodyText: noticeText,
 });

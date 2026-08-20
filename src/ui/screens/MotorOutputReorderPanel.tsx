@@ -9,7 +9,7 @@ import {
   type MotorOutputOrderLoadOutcome,
   type MotorOutputOrderSaveOutcome,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 import { Icon } from '../icons';
 
 export interface MotorOutputOrderControllerPort {
@@ -257,18 +257,15 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   notice: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -279,8 +276,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   review: { gap: spacing.md },
   mapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   mapCell: {
@@ -303,8 +299,7 @@ const styles = StyleSheet.create({
   mapResource: {
     ...typography.caption,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   primaryButton: {
     minHeight: 48,
     alignSelf: 'flex-start',
@@ -323,20 +318,17 @@ const styles = StyleSheet.create({
        effectively invisible. accentText is the theme's designated
        text-on-accent colour and clears AA. */
     color: colors.accentText,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   resultDanger: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   resultGood: {
     ...typography.body,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   progress: {
     ...typography.body,
     color: colors.accentStrong,

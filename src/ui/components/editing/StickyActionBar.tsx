@@ -27,6 +27,7 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import { CONTENT_MAX_WIDTH, colors, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 import { Button } from '../controls';
 
 export interface StickyActionBarProps {
@@ -181,9 +182,9 @@ const styles = StyleSheet.create({
   summary: { ...typography.bodyStrong, color: colors.textPrimary },
   details: { maxHeight: 84 },
   detailsContent: { gap: 2 },
-  detailLine: { ...typography.caption, color: colors.textSecondary },
-  reason: { ...typography.caption, color: colors.warning, marginTop: 2 },
-  status: { ...typography.caption, color: colors.success, marginTop: 2 },
+  detailLine: { ...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
+  reason: { ...typography.caption, color: colors.warning, marginTop: 2, maxWidth: PROSE_MEASURE},
+  status: { ...typography.caption, color: colors.success, marginTop: 2, maxWidth: PROSE_MEASURE},
   statusWarning: { color: colors.warning },
   buttons: { flexDirection: 'row', gap: spacing.sm },
   // Save keeps twice the discard width — the affirmative action is the

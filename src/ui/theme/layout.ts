@@ -50,15 +50,63 @@ export const LAYOUT_BREAKPOINTS = {
   desktop: 1024,
   /** Enough room for a workspace with a persistent secondary rail. */
   desktopWide: 1440,
+  /**
+   * A genuinely large monitor. Measured, not guessed: at 2560 the
+   * workspaces were painting 1564px of a 2352px content area - 394px of
+   * dead ground down each side - because every one of them stopped at
+   * the 1600 envelope that was sized for a 1920 window.
+   */
+  desktopUltra: 1920,
 } as const;
 
-export type LayoutTier = 'compact' | 'tablet' | 'wide' | 'desktop' | 'desktopWide';
+export type LayoutTier =
+  | 'compact'
+  | 'tablet'
+  | 'wide'
+  | 'desktop'
+  | 'desktopWide'
+  | 'desktopUltra';
 
 /** The reading-column envelope. Unchanged, and deliberately so. */
 export const CONTENT_MAX_WIDTH = 1180;
 
+/**
+ * THE MEASURE - how wide a PARAGRAPH may be, inside any card, at any
+ * window size.
+ *
+ * This exists because widening the workspace envelope has one specific
+ * failure mode, and it was measured rather than imagined: at 1920 the
+ * hero subtitles and safety notes on twelve screens ran 1650-1688px in
+ * a single line, and at 2560 they reached 2016px. A card that is 2000px
+ * wide is a legitimate way to put two things side by side; a SENTENCE
+ * that is 2000px wide is unreadable, and the eye loses the line on the
+ * way back.
+ *
+ * So the container gets the window and the prose keeps its measure.
+ * Applied only to right-aligned paragraph styles: it never bites inside
+ * a card narrower than this, and centred text is deliberately untouched
+ * because capping a centred box moves it off centre.
+ */
+export const PROSE_MEASURE = 760;
+
 /** The envelope for a screen that has actually split into columns. */
 export const WORKSPACE_MAX_WIDTH = 1600;
+
+/**
+ * The same envelope on a genuinely large monitor.
+ *
+ * NOT A SCALING FACTOR, and the distinction is the whole point: nothing
+ * about type, controls, icons or touch targets changes with this. It
+ * only lets a layout that ALREADY arranges content in parallel columns
+ * use the room those columns have, instead of stopping at a number
+ * chosen for a 1920 window and leaving 400px of ground down each side.
+ *
+ * It is not 100% of the viewport either, deliberately. A workspace that
+ * runs edge to edge on a 2560 monitor puts its two ends a head-turn
+ * apart, and the reading cap below still bounds every paragraph inside
+ * it - so widening here buys parallel information, never longer lines.
+ */
+export const WORKSPACE_ULTRA_MAX_WIDTH = 2040;
 
 /**
  * The effective width a layout decision should be made from: raw window
@@ -71,6 +119,9 @@ export function effectiveWidth(width: number, fontScale: number): number {
 
 export function resolveLayoutTier(width: number, fontScale: number): LayoutTier {
   const effective = effectiveWidth(width, fontScale);
+  if (effective >= LAYOUT_BREAKPOINTS.desktopUltra) {
+    return 'desktopUltra';
+  }
   if (effective >= LAYOUT_BREAKPOINTS.desktopWide) {
     return 'desktopWide';
   }
@@ -89,7 +140,9 @@ export function resolveLayoutTier(width: number, fontScale: number): LayoutTier 
 /** True from the desktop tier upward - the tier at which a screen may
  * arrange primary and secondary content in parallel columns. */
 export function isDesktopTier(tier: LayoutTier): boolean {
-  return tier === 'desktop' || tier === 'desktopWide';
+  return (
+    tier === 'desktop' || tier === 'desktopWide' || tier === 'desktopUltra'
+  );
 }
 
 /**
@@ -98,7 +151,10 @@ export function isDesktopTier(tier: LayoutTier): boolean {
  * paragraphs stay readable no matter how wide the window is.
  */
 export function contentEnvelope(tier: LayoutTier, splitsIntoColumns: boolean): number {
-  return splitsIntoColumns && isDesktopTier(tier)
-    ? WORKSPACE_MAX_WIDTH
-    : CONTENT_MAX_WIDTH;
+  if (!splitsIntoColumns || !isDesktopTier(tier)) {
+    return CONTENT_MAX_WIDTH;
+  }
+  return tier === 'desktopUltra'
+    ? WORKSPACE_ULTRA_MAX_WIDTH
+    : WORKSPACE_MAX_WIDTH;
 }
