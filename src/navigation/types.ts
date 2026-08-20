@@ -45,6 +45,22 @@ import type {SetupUiSessionKey} from '../platforms/react-native/protocol';
 export type RootStackParamList = {
   Start: undefined;
   /**
+   * THE DISCONNECTED APPLICATION, and the only configuration destination
+   * that exists before a flight controller is verified.
+   *
+   * `Setup` - the configuration workspace - is registered in the
+   * navigator ONLY while ui/session/verifiedConnection.ts reports
+   * CONNECTED. That is the hard wall: before it there is no protected
+   * route to deep-link into, to restore from a saved navigation state,
+   * or to render for a frame before a guard notices. `Connect` is what
+   * the operator has instead.
+   *
+   * `afterSessionLoss` means the same thing it means on Setup: the
+   * operator did not ask to be here, a link died, so this arrival must
+   * not auto-reopen the port.
+   */
+  Connect: {afterSessionLoss?: true} | undefined;
+  /**
    * `afterSessionLoss` says WHY the operator is on the disconnected
    * configurator, and it exists because the two arrivals mean opposite
    * things.

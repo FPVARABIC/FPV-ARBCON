@@ -249,7 +249,11 @@ describe('Home offers exactly three destinations', () => {
     act(() => {
       control(renderer, 'start-configure')?.props.onPress();
     });
-    expect(navigate).toHaveBeenCalledWith('Setup');
+    /* 'Connect', not 'Setup': the configuration workspace is not
+       registered in the navigator until a flight controller is
+       verified (App.tsx), so this door opens the connection
+       workspace and the app moves on once the wall comes down. */
+      expect(navigate).toHaveBeenCalledWith('Connect');
 
     act(() => {
       control(renderer, 'start-firmware')?.props.onPress();

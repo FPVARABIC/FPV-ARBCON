@@ -278,6 +278,42 @@ async function teardownRenderers(): Promise<void> {
   });
 }
 
+/**
+ * THE BOARD IDENTIFIES ITSELF, because the wall now requires it.
+ *
+ * This file's fake transport client deliberately never settles a read,
+ * so MspSessionCoordinator's own identification never even starts - and
+ * that was fine while the app only cared about ownership reaching
+ * ACTIVE. It is not fine any more: the configuration workspace is
+ * registered in the navigator only when a session is ACTIVE *and*
+ * IDENTIFIED (ui/session/verifiedConnection.ts), so a board that never
+ * says what it is correctly leaves the operator on the connection
+ * workspace.
+ *
+ * These tests are about navigation, not about identification - which has
+ * its own coverage - so the coordinator is asked to report the answer a
+ * real board would give. Everything else, including ownership, is the
+ * real thing.
+ */
+const IDENTIFIED_BOARD = Object.freeze({
+  status: 'SUCCEEDED' as const,
+  identity: Object.freeze({
+    firmware: Object.freeze({identifier: 'BTFL', knownFamily: 'BETAFLIGHT'}),
+    apiVersion: Object.freeze({
+      mspProtocolVersion: 0,
+      apiVersionMajor: 1,
+      apiVersionMinor: 47,
+    }),
+    board: Object.freeze({}),
+  }),
+});
+
+beforeEach(() => {
+  jest
+    .spyOn(mspSessionCoordinator, 'getIdentificationState')
+    .mockImplementation(() => IDENTIFIED_BOARD as never);
+});
+
 afterEach(async () => {
   await teardownRenderers();
   /**
@@ -481,15 +517,23 @@ function allText(renderer: ReactTestRenderer.ReactTestRenderer): unknown[] {
     .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
 }
 
-testOwningRenderer('opens the configurator DIRECTLY from Start, with the connection workspace hosted inside it, and forces RTL', async () => {
+testOwningRenderer('opens the CONNECTION workspace from Start - no tab shell exists yet - and forces RTL', async () => {
   const renderer = await renderApp();
 
   const texts = allText(renderer);
 
-  // The tab shell is the current route (Start -> Setup, one hop)...
-  expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBeGreaterThan(0);
-  // ...hosting the real, embedded connection workspace in its Setup tab.
+  /*
+   * THE HARD WALL. This test used to assert the opposite: that the door
+   * opened the tab shell, which then hosted the connection workspace
+   * inside its Setup tab. That shape put the whole configurator - rail,
+   * tab bar and fifteen destinations - in front of an operator with
+   * nothing plugged in. The configuration workspace is now registered
+   * in the navigator ONLY while a flight controller is verified, so
+   * before that there is no shell to render at all.
+   */
+  expect(renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length).toBeGreaterThan(0);
   expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
+  expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
   expect(texts).toContain(i18n.t('connection.instructionPrimary'));
   // The spies were installed above the module-scope load of ../App, so
   // these still assert on App.tsx's own one-time module-scope RTL forcing
@@ -693,12 +737,18 @@ describe('App - Pass 7.1 navigation foundation', () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
     });
 
-    // No screen is left holding the dead session: the connected content
-    // is gone, and what renders is the configurator's honest
-    // disconnected posture - the tab shell hosting the embedded
-    // connection workspace (Start sits beneath it, so Back leads Home).
+    /*
+     * No screen is left holding the dead session - and, since the wall
+     * moved up, no SHELL either. Losing the board removes the whole
+     * configuration workspace from the navigator (App.tsx), so what the
+     * operator gets is the connection workspace, not Motors or PID with
+     * a disconnected message inside a tab bar. This assertion used to
+     * require main-tabs to be PRESENT; requiring its absence is the
+     * behaviour change, stated rather than softened.
+     */
     expect(isOnSetupScreen(renderer)).toBe(false);
-    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
+    expect(renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length).toBeGreaterThan(0);
     expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
     const texts = renderer.root
       .findAllByType(Text)
@@ -815,16 +865,25 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
         mspSessionCoordinator.deactivateMspSession(sessionId);
       });
 
-      // THE BUG this test guards against: the pre-fix code cleared
-      // trackedSessionId unconditionally here (before checking
-      // readiness), permanently blocking its own re-entry guard from
-      // ever letting this effect complete the redirect once ready - Setup
-      // would incorrectly keep showing forever. With the fix, Setup is
-      // ALSO still showing right here, but only because the redirect is
-      // genuinely PENDING (trackedSessionId deliberately left set), not
-      // because it was silently dropped - the next act() below is what
-      // actually distinguishes the two.
-      expect(isOnSetupScreen(renderer)).toBe(true);
+      /*
+       * TWO SEPARATE GUARANTEES, and the wall changed which one acts
+       * first.
+       *
+       * The configuration workspace is registered in the navigator on
+       * the connection state alone (App.tsx), so it is gone the instant
+       * the session dies - it does NOT wait for the navigator to report
+       * ready. This assertion used to require Setup to still be showing
+       * here; requiring its absence is the behaviour change.
+       *
+       * The bug this test exists for is the OTHER half: the pre-fix
+       * redirect cleared trackedSessionId unconditionally before
+       * checking readiness, permanently blocking its own re-entry guard
+       * so the operator was never taken anywhere once the navigator did
+       * become ready. The act() below is still what distinguishes a
+       * PENDING redirect from a silently dropped one.
+       */
+      expect(isOnSetupScreen(renderer)).toBe(false);
+      expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
 
       // Release the held onReady callback - App.tsx's isNavigationReady
       // flips true, which (being a real dependency of the redirect
@@ -834,7 +893,12 @@ describe('App - Pass 7.1 BUGFIX: navigation-not-ready race', () => {
         navigationReadyControl.heldCallback?.();
       });
 
+      // The pending redirect completed: the operator is on the
+      // connection workspace, not stranded wherever the wall left them.
       expect(isOnSetupScreen(renderer)).toBe(false);
+      expect(
+        renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length,
+      ).toBeGreaterThan(0);
       const texts = renderer.root
         .findAllByType(Text)
         .map(node => (Array.isArray(node.props.children) ? node.props.children.join('') : node.props.children));
@@ -876,27 +940,34 @@ describe('App - the firmware path stays fully independent of the connection stac
   });
 });
 
-describe('App - Setup without params IS the product now, not a malformed fallback', () => {
-  itOwningRenderer('reaching Setup without sessionKey renders the disconnected configurator - the tab shell hosting the real connection workspace', async () => {
-    // renderApp() itself now lands here: Start -> configure -> 'Setup'
-    // with NO params. What used to be a defensive dead-end ("تعذّر فتح
-    // شاشة الإعداد" + a back button) is the first-class disconnected
-    // state: the full shell, the embedded connection workspace, and no
-    // fabricated session anywhere.
+describe('App - the Setup route does not exist while disconnected', () => {
+  itOwningRenderer('an imperative navigate to Setup cannot leave the connection workspace', async () => {
+    /*
+     * THE DIRECT-URL / DEEP-LINK / RESTORED-STATE CASE, at its root.
+     *
+     * This used to assert that reaching Setup with no sessionKey
+     * rendered the shell hosting the connection workspace. It no longer
+     * can: while no flight controller is verified, `Setup` is not
+     * registered in the navigator, so there is nothing for a URL, a deep
+     * link, a restored navigation state or an imperative navigate to
+     * resolve to - and therefore no frame in which a protected screen
+     * could flash before a guard noticed.
+     *
+     * capturedRef is the exact navigationRef App.tsx itself uses, so
+     * this is the most direct attack available from inside the app.
+     */
     const renderer = await renderApp();
 
-    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
-    // The connected content is genuinely absent - nothing pretends a
-    // session exists...
-    expect(isOnSetupScreen(renderer)).toBe(false);
-    // ...and the imperative param-less navigate a future linking config
-    // could produce is the SAME state, still crash-free. capturedRef is
-    // the exact navigationRef App.tsx itself uses (see the mock above).
+    expect(renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
+
     await act(async () => {
       navigationReadyControl.capturedRef?.navigate('Setup', undefined);
     });
-    expect(renderer.root.findAllByProps({testID: 'setup-connect-workspace'}).length).toBeGreaterThan(0);
+
+    // Unmoved, and still crash-free.
+    expect(renderer.root.findAllByProps({testID: 'connect-workspace-screen'}).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({testID: 'main-tabs'}).length).toBe(0);
     expect(isOnSetupScreen(renderer)).toBe(false);
   });
 });

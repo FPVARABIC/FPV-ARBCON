@@ -1,12 +1,17 @@
+/**
+ * THE HARD CONNECTION WALL.
+ *
+ * One question - is there a verified flight controller right now? - and
+ * the application's whole shape hangs off the answer. See
+ * verifiedConnection.ts for what "verified" means and App.tsx for what
+ * it decides.
+ */
 export {
-  FC_DEPENDENT_TABS,
-  resolveFlightControllerGate,
-  tabRequiresFlightController,
-} from './flightControllerGate';
+  configurationWorkspaceUnlocked,
+  resolveVerifiedConnection,
+} from './verifiedConnection';
 export type {
-  FcDependentTab,
-  FlightControllerGate,
-  FlightControllerGateInputs,
-} from './flightControllerGate';
-export {RequiresFlightController} from './RequiresFlightController';
-export {useFlightControllerGate} from './useFlightControllerGate';
+  CandidateSession,
+  VerifiedConnection,
+} from './verifiedConnection';
+export {useVerifiedFcConnection} from './useVerifiedFcConnection';

@@ -198,7 +198,11 @@ describe('the footer stays a footer', () => {
 
     expect(navigate).toHaveBeenNthCalledWith(1, 'FlightStyleGuide');
     expect(navigate).toHaveBeenNthCalledWith(2, 'FirmwareFlasher');
-    expect(navigate).toHaveBeenNthCalledWith(3, 'Setup');
+    /* 'Connect', not 'Setup': the configuration workspace is not
+       registered in the navigator until a flight controller is
+       verified (App.tsx), so this door opens the connection
+       workspace and the app moves on once the wall comes down. */
+      expect(navigate).toHaveBeenNthCalledWith(3, 'Connect');
     expect(navigate).toHaveBeenCalledTimes(3);
   });
 

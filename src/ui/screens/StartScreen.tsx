@@ -432,7 +432,11 @@ export default function StartScreen({navigation}: Props): React.JSX.Element {
             icon="sliders-horizontal"
             accent="teal"
             sideBySide={desktop}
-            onPress={() => navigation.navigate('Setup')}
+            /* 'Connect', not 'Setup': the configuration workspace is not
+   registered in the navigator until a flight controller is
+   verified, so this door opens the connection workspace and
+   App.tsx moves the operator on once the wall comes down. */
+            onPress={() => navigation.navigate('Connect')}
           />
 
           <PrimaryCard

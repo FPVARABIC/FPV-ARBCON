@@ -15,10 +15,20 @@
  *    React.lazy() chunks: opening the app fetches the Start screen and
  *    the shared core, not the entire configurator plus esptool.
  *    `getComponent` cannot express this - it must return a component
- *    synchronously - so these are lazy() + <Suspense>. The USB
- *    connection workspace ships inside the MainTabs chunk now (the Setup
- *    tab hosts it when no session exists - see SetupScreen.tsx), which
- *    is the same download boundary the operator crosses anyway.
+ *    synchronously - so these are lazy() + <Suspense>. The USB connection
+ *    workspace is its own chunk now, because it is no longer part of the
+ *    configurator: a disconnected operator downloads the connection
+ *    screen alone, and the fifteen configuration screens arrive only once
+ *    there is a board to configure.
+ *
+ * 1c. THE HARD CONNECTION WALL IS NOT PLATFORM-SPECIFIC. The `Setup`
+ *    route - the configuration workspace and every screen in it - is
+ *    registered here on exactly the same predicate App.tsx uses, from
+ *    exactly the same hook. A browser is the platform where an
+ *    unregistered route matters MOST: a registered one could be reached
+ *    by a typed URL, a bookmark or a restored history entry. Registering
+ *    it unconditionally here while Android walls it off would have been
+ *    the drift this file's whole preamble exists to prevent.
  *
  * 1b. THE PERSISTENT BRAND CHROME. The official logo lives in a slim
  *    always-visible strip above the navigator - the browser top chrome
@@ -54,6 +64,10 @@ import './src/i18n';
 import StartScreen from './src/ui/screens/StartScreen';
 import BrandTopChrome from './src/ui/brand/BrandTopChrome';
 import {useSessionLossRedirect} from './src/navigation/useSessionLossRedirect';
+import {
+  configurationWorkspaceUnlocked,
+  useVerifiedFcConnection,
+} from './src/ui/session';
 import type {RootStackParamList} from './src/navigation/types';
 import {WebAlertHost, installWebAlert} from './src/platforms/web/webAlert';
 import {WebCompatibilityNotice} from './src/platforms/web/WebCompatibilityNotice';
@@ -98,6 +112,11 @@ installWebAlert();
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const MainTabsScreen = React.lazy(() => import('./src/ui/screens/MainTabsScreen'));
+// The disconnected application: the only configuration destination that
+// exists before a board is verified.
+const ConnectWorkspaceScreen = React.lazy(
+  () => import('./src/ui/screens/ConnectWorkspaceScreen'),
+);
 // The default flasher route is the compact simple workflow; the full
 // legacy surface stays reachable from its own «متقدم» control for recovery
 // and specialist cases (the simple screen renders it embedded).
@@ -130,6 +149,37 @@ function App(): React.JSX.Element {
   // path linking.
   useBrowserBackIntegration(navigationRef);
 
+  /**
+   * THE WALL. See App.tsx for the full reasoning - it is one predicate,
+   * one hook, and deliberately identical on both roots.
+   *
+   * What it buys specifically here: browser Back, a refresh, a typed URL
+   * and a restored history entry all resolve against the navigator's
+   * REGISTERED routes. While this says locked there is no `Setup` route
+   * to resolve to, so none of them can produce a configuration screen -
+   * not even for the single frame a runtime guard would need in order to
+   * notice and redirect.
+   */
+  const connection = useVerifiedFcConnection();
+  const workspaceUnlocked = configurationWorkspaceUnlocked(connection);
+  const sessionKey =
+    connection.kind === 'CONNECTED' ? connection.sessionKey : undefined;
+
+  /**
+   * Opening the workspace is a NAVIGATION, and one place decides it, so
+   * there is no window in which two of them disagree.
+   */
+  React.useEffect(() => {
+    if (!workspaceUnlocked || sessionKey === undefined) return;
+    const navigator = navigationRef.current;
+    if (navigator === null || !navigator.isReady()) return;
+    if (navigator.getCurrentRoute()?.name === 'Setup') return;
+    navigator.reset({
+      index: 1,
+      routes: [{name: 'Start'}, {name: 'Setup', params: {sessionKey}}],
+    });
+  }, [navigationRef, sessionKey, workspaceUnlocked]);
+
   return (
     <View style={styles.container}>
       {/* No build-status strip here. The compatibility notice stays: it
@@ -159,7 +209,11 @@ function App(): React.JSX.Element {
               initialRouteName="Start"
               screenOptions={{headerShown: false}}>
               <Stack.Screen name="Start" component={StartScreen} />
-              <Stack.Screen name="Setup" component={MainTabsScreen} />
+              {workspaceUnlocked ? (
+                <Stack.Screen name="Setup" component={MainTabsScreen} />
+              ) : (
+                <Stack.Screen name="Connect" component={ConnectWorkspaceScreen} />
+              )}
               <Stack.Screen
                 name="FirmwareFlasher"
                 component={FirmwareFlasherScreen}

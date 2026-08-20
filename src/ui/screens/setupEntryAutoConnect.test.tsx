@@ -316,9 +316,13 @@ describe('being returned here by a dead link is not a request to reconnect', () 
     expect(redirect).toContain(
       'fcRebootRecovery.noteSessionLost(trackedSessionId)',
     );
+    // ...it is recorded AT THE MOMENT OF LOSS rather than at the moment
+    // of navigation, so a navigator that is not ready yet cannot make a
+    // fault look like a reboot (or lose the verdict altogether)...
+    expect(redirect).toContain('setPendingReturn({expected})');
     // ...and an unexpected loss is still stamped exactly as before.
-    expect(redirect).toContain(
-      "params: expected ? {} : {afterSessionLoss: true}",
+    expect(redirect.replace(/\s+/g, ' ')).toContain(
+      'params: pendingReturn.expected ? {} : {afterSessionLoss: true}',
     );
   });
 

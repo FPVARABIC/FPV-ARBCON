@@ -27,6 +27,10 @@ import {
 // The full Pass 7.1 investigation notes moved with the code rather than
 // being left behind here - see that file.
 import { useSessionLossRedirect } from './src/navigation/useSessionLossRedirect';
+import {
+  configurationWorkspaceUnlocked,
+  useVerifiedFcConnection,
+} from './src/ui/session';
 import type { RootStackParamList } from './src/navigation/types';
 import { colors } from './src/ui/theme';
 
@@ -59,8 +63,62 @@ function getFlightStyleCornerScreen() {
   return require('./src/ui/screens/FlightStyleCornerScreen').default;
 }
 
+/**
+ * The disconnected application. Lazy for the same reason the others are:
+ * it is not needed once the operator is connected, and it is the ONLY
+ * configuration destination before that.
+ */
+function getConnectWorkspaceScreen() {
+  return require('./src/ui/screens/ConnectWorkspaceScreen').default;
+}
+
 function App(): React.JSX.Element {
   const { navigationRef, onReady, onStateChange } = useSessionLossRedirect();
+  /**
+   * THE HARD WALL, and it is a wall rather than a lock.
+   *
+   * `Setup` - the configuration workspace, its tab shell and all fifteen
+   * screens - is REGISTERED IN THE NAVIGATOR ONLY while a flight
+   * controller is verified. Not disabled, not gated, not wrapped in a
+   * notice: absent. Nothing else in this file needs to defend it,
+   * because a route that is not registered:
+   *
+   *   - cannot be navigated to, by us or by anything else;
+   *   - cannot be entered by a direct URL or a deep link, on web the
+   *     linking layer simply has no match for the path;
+   *   - cannot be restored from a saved navigation state;
+   *   - cannot render "for one frame before a guard notices", because
+   *     there is no component to mount and no frame to render it in.
+   *
+   * And when a board goes away mid-session, this same predicate flips
+   * and react-navigation unmounts the workspace and lands the operator
+   * on `Connect` - not on Motors with a disconnected message.
+   *
+   * The controller-level guards stay exactly as they are. They are the
+   * inner safety layer against a stale operation; this is the outer one
+   * against a stale APPLICATION.
+   */
+  const connection = useVerifiedFcConnection();
+  const workspaceUnlocked = configurationWorkspaceUnlocked(connection);
+  const sessionKey =
+    connection.kind === 'CONNECTED' ? connection.sessionKey : undefined;
+
+  /**
+   * Opening the workspace is a NAVIGATION, and it belongs here rather
+   * than in the connect screen: one place decides that the wall has
+   * come down, so there is no window in which two of them disagree.
+   */
+  React.useEffect(() => {
+    if (!workspaceUnlocked || sessionKey === undefined) return;
+    const navigator = navigationRef.current;
+    if (navigator === null || !navigator.isReady()) return;
+    const current = navigator.getCurrentRoute()?.name;
+    if (current === 'Setup') return;
+    navigator.reset({
+      index: 1,
+      routes: [{ name: 'Start' }, { name: 'Setup', params: { sessionKey } }],
+    });
+  }, [navigationRef, sessionKey, workspaceUnlocked]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -74,7 +132,11 @@ function App(): React.JSX.Element {
         onStateChange={onStateChange}>
         <Stack.Navigator initialRouteName="Start" screenOptions={{ headerShown: false }}>
           <Stack.Screen name="Start" component={StartScreen} />
-          <Stack.Screen name="Setup" component={MainTabsScreen} />
+          {workspaceUnlocked ? (
+            <Stack.Screen name="Setup" component={MainTabsScreen} />
+          ) : (
+            <Stack.Screen name="Connect" getComponent={getConnectWorkspaceScreen} />
+          )}
           <Stack.Screen name="FirmwareFlasher" getComponent={getFirmwareFlasherScreen} />
           <Stack.Screen name="FlightStyleGuide" getComponent={getFlightStyleGuideScreen} />
           <Stack.Screen name="FlightStyleCorner" getComponent={getFlightStyleCornerScreen} />

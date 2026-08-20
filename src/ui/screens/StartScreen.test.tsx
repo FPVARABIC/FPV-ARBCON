@@ -20,7 +20,11 @@ describe('StartScreen', () => {
     press(renderer, 'start-firmware');
     // Straight to the destinations - 'Connection' is not a route this
     // product has anymore (navigation/types.ts).
-    expect(navigation.navigate).toHaveBeenNthCalledWith(1, 'Setup');
+    /* 'Connect', not 'Setup': the configuration workspace is not
+       registered in the navigator until a flight controller is
+       verified (App.tsx), so this door opens the connection
+       workspace and the app moves on once the wall comes down. */
+      expect(navigation.navigate).toHaveBeenNthCalledWith(1, 'Connect');
     expect(navigation.navigate).toHaveBeenNthCalledWith(2, 'FirmwareFlasher');
     expect(navigation.navigate).toHaveBeenCalledTimes(2);
     act(() => renderer.unmount());
