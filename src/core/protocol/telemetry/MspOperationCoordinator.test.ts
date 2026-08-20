@@ -92,6 +92,11 @@ function createFakeScheduler(): MspTelemetryScheduler & {
       fake.requestRefreshCalls.push(ids);
       fake.callOrder.push('requestRefresh');
     },
+    getConsecutiveLinkFailureCount() {
+      // Never consulted by MspOperationCoordinator; present so the fake
+      // satisfies the interface.
+      return 0;
+    },
     describeDiagnostics() {
       // Never called by MspOperationCoordinator - the Checkpoint F
       // read-only surface exists on the interface, so the fake must

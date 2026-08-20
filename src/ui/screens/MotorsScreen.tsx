@@ -2540,6 +2540,21 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surfaceAlt,
     borderColor: colors.disabled,
     opacity: 0.6,
+    /* THE RESERVED BOX IS RELEASED HERE, AND ONLY HERE.
+       holdButton's fixed 132 exists so the surface cannot move under a
+       held pointer. This style is applied on exactly `holdDisabled`,
+       which is exactly when `holdBlockedReason` renders the extra
+       explanation row inside the control - and `holdBlockedReason` is
+       `undefined` whenever `holdOwned` is true, so in this state a press
+       is not merely absent but impossible: `disabled` makes
+       react-native-web's Pressable ignore pointer events entirely.
+       No gesture can exist to be terminated, so the box is free to fit
+       what it now has to say instead of spilling 16px of it onto the
+       section below (measured at 1366 and 1920). The 132 becomes a
+       floor rather than a cap, so the control keeps its size and
+       presence either way. */
+    height: 'auto',
+    minHeight: 132,
   },
   holdButtonPressed: { borderColor: colors.textPrimary, opacity: 0.88 },
   holdButtonLive: {

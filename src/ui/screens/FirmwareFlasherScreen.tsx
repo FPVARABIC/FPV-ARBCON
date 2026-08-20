@@ -2874,7 +2874,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
   },
-  backButton: {width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center'},
+  /* 44, not 42: MIN_TOUCH_TARGET, which the simple flasher's own back
+     button already uses. Measured at 42x42 on every width. */
+  backButton: {width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center'},
   headerCopy: {flex: 1},
   headerEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   headerTitle: {...typography.title, color: colors.textPrimary},

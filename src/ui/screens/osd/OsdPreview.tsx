@@ -239,6 +239,23 @@ export function OsdPreview({
 
   const cell = osdCellSize(box, canvas);
   const fontSize = Math.max(7, Math.min(20, cell.height * 0.74));
+  /**
+   * ONE ELEMENT OCCUPIES EXACTLY ONE ROW.
+   *
+   * Both the item box and its line box used to be floored at 10px. On a
+   * 360px-wide screen the canvas gives each row 9.05px, so every element
+   * was 12px tall (10 plus its 1px borders) in a 9.05px row and each one
+   * painted 3px into the row below - measured, and confirmed by hiding
+   * each node and re-photographing the band, so it was ink and not a box
+   * artifact. A preview whose rows collide is not showing the operator
+   * what the goggles will show.
+   *
+   * The floor only ever applied below ~9.5px of row height, which is
+   * exactly where it did the damage. The fallback here is for the single
+   * frame before onLayout has measured anything, where no element has a
+   * meaningful position yet.
+   */
+  const rowHeight = cell.height > 0 ? cell.height : 10;
   const selectedElement = elements.find(item => item.index === selectedIndex);
   const guideCell = draggingIndex === undefined ? undefined : selectedElement?.cell;
 
@@ -313,14 +330,14 @@ export function OsdPreview({
                 {
                   left: `${fraction.left}%`,
                   top: `${fraction.top}%`,
-                  minHeight: Math.max(10, cell.height),
+                  height: rowHeight,
                 },
                 isSelected && styles.itemSelected,
                 element.index === draggingIndex && styles.itemDragging,
               ]}>
               <Text
                 numberOfLines={1}
-                style={[styles.itemText, {fontSize, lineHeight: Math.max(10, cell.height)}]}>
+                style={[styles.itemText, {fontSize, lineHeight: rowHeight}]}>
                 {osdElementToken(element.index)}
               </Text>
             </View>

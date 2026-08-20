@@ -121,6 +121,48 @@ export const ATTITUDE_TELEMETRY_POLL_ID = 'attitude';
  * building a request backlog. Auxiliary polls can consume one slot, after
  * which the primary-priority rule returns the next slot to attitude.
  */
+/**
+ * HOW MANY DISPATCHES IN A ROW MUST FAIL BEFORE THE LINK IS DECLARED DEAD.
+ *
+ * WHY THIS EXISTS. A session can die without anyone saying so. On Android
+ * the native layer reports the device going away and every teardown flows
+ * from that event; Web Serial gives no such guarantee, so a flight
+ * controller that reboots - a CLI `save`, a brown-out, a firmware crash -
+ * can leave a port that is open, writable, and answering nothing. Before
+ * this, the application reported ownership ACTIVE, handed every screen a
+ * session key, and reported the client READY, over a board that was gone.
+ * Nothing ever concluded otherwise, so nothing ever recovered.
+ *
+ * WHY THREE, AND WHAT THE THREE ACTUALLY COST. Only link-caused failures
+ * count (MspTelemetryScheduler's LINK_EVIDENCE_ERROR_CODES); a refusal
+ * MspClient issues locally while it resynchronizes is not one of them.
+ * On a genuinely dead board the sequence is therefore: one dispatch
+ * occupies the single-flight queue for a full MSP response timeout
+ * (MSP_RESPONSE_TIMEOUT_MILLIS = 2000ms) and fails - that is the first;
+ * that timeout desynchronizes MspClient, whose own recovery probe costs
+ * one more response timeout before it terminally fails; and every
+ * dispatch after that is refused as MSP_RECOVERY_REQUIRED, supplying the
+ * second and third within a tick or two.
+ *
+ * So three is about four seconds of a link that answered nothing at all -
+ * long enough that a single dropped packet, one timeout during a busy
+ * write, or a momentary stall cannot reach it (any of those let MspClient
+ * recover, and the first successful poll clears the count outright), and
+ * short enough to sit well inside the ten-second reboot-recovery deadline
+ * so an expected reboot is still recognised as expected rather than
+ * timing out first.
+ *
+ * WHY A COUNT AND NOT A FLAG. Any success on any poll resets it (see
+ * MspTelemetryScheduler.getConsecutiveLinkFailureCount) - one poll
+ * answering proves the link is alive whatever the others are doing. A
+ * single failed packet is not evidence of anything and must never end a
+ * session.
+ *
+ * NO NEW POLLING. These dispatches were already happening on their own
+ * cadence; this reads their outcome and adds no traffic of its own.
+ */
+export const LINK_DEAD_AFTER_CONSECUTIVE_FAILURES = 3;
+
 const ATTITUDE_POLL_INTERVAL_MS = 50;
 
 /** Ten missed 20Hz samples before a freeze is labelled stale. This keeps
@@ -377,6 +419,9 @@ interface SessionEntry {
    * comment for why calling this during teardown is a deliberate
    * consistency choice, not something GC correctness actually requires. */
   mspClientStateUnsubscribe: () => void;
+  /** Unsubscribes the liveness verdict from this entry's scheduler.
+   *  Undefined until startTelemetry() has run. */
+  healthUnsubscribe?: () => void;
   /** Pass 7.6b: debug-build-only battery observability (batteryDebugLog.ts)
    * - set only when the battery poll actually registers, so teardown can
    * emit its bounded stop line. undefined for every non-Betaflight /
@@ -577,6 +622,7 @@ export class MspSessionCoordinator {
 
       tickIntervalHandle: undefined,
       mspClientStateUnsubscribe,
+      healthUnsubscribe: undefined,
       batteryDebugLog: undefined,
       batteryLatchedValue: undefined,
       auxChannelStates: new Map(),
@@ -990,8 +1036,34 @@ export class MspSessionCoordinator {
     }, TELEMETRY_TICK_INTERVAL_MS);
     unrefIfSupported(tickIntervalHandle);
 
+    /*
+     * THE LIVENESS VERDICT, driven by the dispatches above rather than by
+     * any new traffic.
+     *
+     * The scheduler notifies after every dispatch settles. When enough
+     * have failed in a row with nothing succeeding in between, the link
+     * is gone whether or not the transport ever said so, and the session
+     * has to end exactly as a physical detach ends it.
+     *
+     * ONE-SHOT BY CONSTRUCTION: handlePhysicalDetach() deletes the
+     * session entry and returns early for a session it no longer has, so
+     * a second notification after teardown cannot tear down twice. No
+     * separate guard flag is needed and none is added - a flag could
+     * disagree with the map, and the map is the truth.
+     */
+    const unsubscribeHealth = scheduler.subscribe(() => {
+      if (
+        scheduler.getConsecutiveLinkFailureCount() <
+        LINK_DEAD_AFTER_CONSECUTIVE_FAILURES
+      ) {
+        return;
+      }
+      this.handlePhysicalDetach(sessionId);
+    });
+
     entry.telemetryScheduler = scheduler;
     entry.tickIntervalHandle = tickIntervalHandle;
+    entry.healthUnsubscribe = unsubscribeHealth;
     this.notifyTelemetryAvailability();
   }
 
@@ -1404,6 +1476,10 @@ export class MspSessionCoordinator {
       clearInterval(entry.tickIntervalHandle);
       entry.tickIntervalHandle = undefined;
     }
+    // Dropped before the scheduler reference is, so a settle arriving
+    // during teardown cannot re-enter handlePhysicalDetach().
+    entry.healthUnsubscribe?.();
+    entry.healthUnsubscribe = undefined;
     // Phase 2E (P4): the anchor dies with the scheduler and before the
     // client/transport are disposed, so a detached or replaced client can
     // never leave an anchor usable against a newer one. closeSession()

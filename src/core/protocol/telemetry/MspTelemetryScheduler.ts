@@ -327,6 +327,20 @@ export interface MspTelemetryScheduler {
    * convention already established by subscribeOwnershipState()/
    * subscribeIdentificationState(). */
   subscribe(listener: () => void): () => void;
+  /**
+   * HOW MANY DISPATCHES IN A ROW HAVE FAILED *AT THE LINK*, ACROSS EVERY
+   * POLL. See LINK_EVIDENCE_ERROR_CODES for what that means and, more
+   * importantly, for what it deliberately excludes.
+   *
+   * Reset to zero by ANY success on ANY poll, because one poll answering
+   * proves the link is alive whatever the others are doing. This is the
+   * whole of the health evidence a session-liveness verdict needs, and it
+   * costs nothing: these dispatches were already happening.
+   *
+   * A single failed packet is deliberately NOT a signal - that is what
+   * makes this a count rather than a flag.
+   */
+  getConsecutiveLinkFailureCount(): number;
   /** Checkpoint F: a read-only snapshot for a diagnostics report.
    * Allocates a fresh object every call and is therefore NOT a
    * useSyncExternalStore snapshot source - it is read on demand, at the
@@ -424,6 +438,45 @@ function meanOf(values: readonly number[]): number | undefined {
  * everything else degrades to the constructor name, then to a bare
  * 'UNKNOWN'.
  */
+/**
+ * WHICH DISPATCH FAILURES ARE EVIDENCE ABOUT THE PHYSICAL LINK.
+ *
+ * A liveness verdict may only be built from failures that actually say
+ * something about the flight controller. Most ways a dispatch can fail
+ * say nothing at all, and counting those produces a FALSE session loss on
+ * a board that is answering perfectly well - which is not a hypothetical:
+ * a single unanswered auxiliary poll desynchronizes MspClient, and every
+ * dispatch it refuses while it resynchronizes used to be counted here.
+ *
+ * COUNTED - we asked the hardware and the hardware is the problem:
+ *   MSP_TIMEOUT              bytes went out, nothing came back.
+ *   MSP_WRITE_OUTCOME_UNKNOWN the transport write itself failed.
+ *   MSP_RECOVERY_REQUIRED    MspClient already probed this link on its
+ *                            own and terminally gave up (RECOVERY_FAILED).
+ *                            That verdict IS link evidence, and it is what
+ *                            keeps a genuinely dead board detectable: once
+ *                            recovery fails, no dispatch ever reaches the
+ *                            wire again to time out.
+ *
+ * NOT COUNTED - and each for its own reason:
+ *   MSP_RECOVERING           recovery is still running; the verdict is not
+ *                            in yet. Refusing to ask is not a failure to
+ *                            answer.
+ *   MSP_REMOTE_ERROR         the FC replied. The link is demonstrably
+ *                            alive; this poll is simply unsupported.
+ *   MSP_QUEUE_FULL           local back-pressure, never sent.
+ *   MSP_TRANSPORT_QUEUE_FULL local back-pressure, never sent.
+ *   MSP_ENCODE_FAILED        our own bug, never sent.
+ *   MSP_SESSION_CLOSED       the session is already ending by its own path.
+ *   MSP_DEVICE_DETACHED      the real detach event owns this; see
+ *                            MspSessionCoordinator.handlePhysicalDetach.
+ */
+const LINK_EVIDENCE_ERROR_CODES: ReadonlySet<string> = new Set([
+  'MSP_TIMEOUT',
+  'MSP_WRITE_OUTCOME_UNKNOWN',
+  'MSP_RECOVERY_REQUIRED',
+]);
+
 function describeErrorCode(error: unknown): string {
   if (typeof error === 'object' && error !== null) {
     const code = (error as {code?: unknown}).code;
@@ -480,6 +533,10 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
    * primary service resumes.
    */
   private consecutivePrimaryDispatches = 0;
+  /** Link-caused dispatch failures since the last success on any poll.
+   *  See LINK_EVIDENCE_ERROR_CODES for the classification, and the
+   *  interface method's own comment for why it is session-wide. */
+  private consecutiveLinkFailures = 0;
 
   constructor(
     private readonly requester: MspRequester,
@@ -731,6 +788,10 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
     this.notifyIfDirty();
   }
 
+  getConsecutiveLinkFailureCount(): number {
+    return this.consecutiveLinkFailures;
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => {
@@ -893,12 +954,21 @@ class MspTelemetrySchedulerImpl implements MspTelemetryScheduler {
         poll.deliveredSampleCount += 1;
         poll.cachedValue = {status: 'FRESH', value, updatedAtMs, sampleSeq: this.nextSampleSeq++};
         poll.responseCount += 1;
+        // The link answered. Whatever else is failing, it is not dead.
+        this.consecutiveLinkFailures = 0;
       })
       .catch((error: unknown) => {
         poll.lastOutcome = {type: 'error', error};
         poll.cachedValue = {status: 'ERROR', error, updatedAtMs: poll.lastSuccessAtMs};
         poll.errorCount += 1;
-        poll.lastErrorCode = describeErrorCode(error);
+        const code = describeErrorCode(error);
+        poll.lastErrorCode = code;
+        // Only failures the link itself caused move the liveness count -
+        // a local refusal leaves it exactly where it was, neither raised
+        // nor cleared, because it carries no information either way.
+        if (LINK_EVIDENCE_ERROR_CODES.has(code)) {
+          this.consecutiveLinkFailures += 1;
+        }
       })
       .finally(() => {
         if (poll.dispatchStartedAtMs !== undefined) {

@@ -6,6 +6,7 @@
  */
 
 import {createMspTelemetryScheduler} from './MspTelemetryScheduler';
+import {MspClientError} from '../mspClient';
 import {FakeClock} from './clock';
 import type {MspPollDefinition} from './telemetryTypes';
 import type {MspRequester} from '../msp/identification/MspIdentificationService';
@@ -1240,5 +1241,106 @@ describe('MspTelemetryScheduler - Checkpoint F diagnostics', () => {
     // untouched by anything on this surface.
     expect(scheduler.getValue('attitude')).toBe(valueBefore);
     expect(scheduler.describeDiagnostics().tickCount).toBe(1);
+  });
+});
+
+/**
+ * CONSECUTIVE LINK FAILURES — the health evidence a session-liveness
+ * verdict reads (see LINK_DEAD_AFTER_CONSECUTIVE_FAILURES in
+ * MspSessionCoordinator.ts).
+ *
+ * Three properties. The second keeps a flaky link alive: any success on
+ * any poll resets the count, because one poll answering proves the link
+ * is not dead whatever the others are doing. The third is the one that
+ * makes the count trustworthy at all - a dispatch that never reached the
+ * hardware says nothing about the hardware.
+ */
+describe('consecutive link failures', () => {
+  /** One dispatch that went out and was not answered. */
+  function failAtLink(
+    scheduler: ReturnType<typeof createMspTelemetryScheduler>,
+    clock: FakeClock,
+    requester: ReturnType<typeof createFakeRequester>,
+    code: 'MSP_TIMEOUT' | 'MSP_WRITE_OUTCOME_UNKNOWN' | 'MSP_RECOVERY_REQUIRED' = 'MSP_TIMEOUT',
+  ) {
+    clock.advance(200);
+    scheduler.tick();
+    requester.rejectNext(new MspClientError(code));
+    return scheduler.waitUntilIdle();
+  }
+
+  it('starts at zero and counts failures that follow one another', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 10, 100, 500));
+    expect(scheduler.getConsecutiveLinkFailureCount()).toBe(0);
+
+    for (let round = 1; round <= 3; round += 1) {
+      await failAtLink(scheduler, clock, requester);
+      expect(scheduler.getConsecutiveLinkFailureCount()).toBe(round);
+    }
+  });
+
+  it('is reset to zero by a single success on ANY poll', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 10, 100, 500));
+    scheduler.registerPoll(definition('b', 11, 100, 500));
+
+    await failAtLink(scheduler, clock, requester);
+    await failAtLink(scheduler, clock, requester);
+    expect(scheduler.getConsecutiveLinkFailureCount()).toBe(2);
+
+    // A DIFFERENT poll answers. The link is alive.
+    clock.advance(200);
+    scheduler.tick();
+    requester.resolveNext(makeFrame(11, Uint8Array.from([7])));
+    await scheduler.waitUntilIdle();
+    expect(scheduler.getConsecutiveLinkFailureCount()).toBe(0);
+  });
+
+  /**
+   * THE FALSE-LOSS REGRESSION, and it was a real one.
+   *
+   * A single unanswered auxiliary poll desynchronizes MspClient, which
+   * then refuses every dispatch with MSP_RECOVERING - instantly, without
+   * touching the wire - until its own recovery probe answers. Counting
+   * those refusals killed a live session in milliseconds off ONE dropped
+   * packet, which is exactly the false loss this count exists to avoid.
+   * A refusal is not an answer, so it must move the count neither up
+   * nor down.
+   */
+  it('ignores failures that never reached the link, and does not clear the count either', async () => {
+    const clock = new FakeClock(0);
+    const requester = createFakeRequester();
+    const scheduler = createMspTelemetryScheduler(requester, {clock});
+    scheduler.registerPoll(definition('a', 10, 100, 500));
+
+    await failAtLink(scheduler, clock, requester); // a genuine timeout
+    expect(scheduler.getConsecutiveLinkFailureCount()).toBe(1);
+
+    // Everything MspClient can refuse locally, plus the FC answering with
+    // an error frame - which proves the link is working, not broken.
+    for (const code of [
+      'MSP_RECOVERING',
+      'MSP_QUEUE_FULL',
+      'MSP_TRANSPORT_QUEUE_FULL',
+      'MSP_ENCODE_FAILED',
+      'MSP_REMOTE_ERROR',
+    ] as const) {
+      clock.advance(200);
+      scheduler.tick();
+      requester.rejectNext(new MspClientError(code));
+      await scheduler.waitUntilIdle();
+      expect(scheduler.getConsecutiveLinkFailureCount()).toBe(1);
+    }
+
+    // ...and a terminal RECOVERY_FAILED verdict IS link evidence: it is
+    // what keeps a genuinely dead board detectable once no dispatch can
+    // reach the wire to time out any more.
+    await failAtLink(scheduler, clock, requester, 'MSP_RECOVERY_REQUIRED');
+    expect(scheduler.getConsecutiveLinkFailureCount()).toBe(2);
   });
 });

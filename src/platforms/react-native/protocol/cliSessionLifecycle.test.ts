@@ -42,10 +42,16 @@ import {
   MSP_STATUS_EX,
 } from '../../../core';
 import {MotorConfigurationController} from './MotorConfigurationController';
+import {PidTuningController} from './PidTuningController';
+import {PortsConfigurationController} from './PortsConfigurationController';
+import {ReceiverConfigurationController} from './ReceiverConfigurationController';
 import {acquireMotorTestLease} from '../../../core/protocol/motorTestLease';
 import {buildMspFrameBytes} from '../../../core/protocol/__testUtils__/mspFixtures';
 import {base64ToBytes, bytesToBase64} from './base64';
-import {MspSessionCoordinator} from './MspSessionCoordinator';
+import {
+  LINK_DEAD_AFTER_CONSECUTIVE_FAILURES,
+  MspSessionCoordinator,
+} from './MspSessionCoordinator';
 import type {
   UsbSerialDataEvent,
   UsbSerialSessionDetachedEvent,
@@ -303,6 +309,47 @@ async function liveRig(): Promise<Rig> {
   });
   return {coordinator, board, cli, client, recovery};
 }
+
+
+/**
+ * Drives the session's OWN telemetry dispatches until `count` of them
+ * have failed in a row.
+ *
+ * Deliberately not a fake counter: it calls the real scheduler's tick(),
+ * which dispatches a real request against the fake board and settles it,
+ * so what is being counted here is exactly what would be counted on a
+ * bench. Each failing dispatch costs one MSP response timeout, which is
+ * why these tests carry their own generous jest timeout.
+ */
+async function driveFailedDispatches(
+  coordinator: MspSessionCoordinator,
+  count = LINK_DEAD_AFTER_CONSECUTIVE_FAILURES,
+): Promise<void> {
+  const deadline = Date.now() + 25_000;
+  for (let settled = 0; settled < count; ) {
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    if (scheduler === undefined) return; // the session already ended
+    const before = scheduler.getConsecutiveLinkFailureCount();
+    scheduler.tick();
+    await new Promise(resolve => setTimeout(resolve, 60));
+    await flushAsync();
+    const after =
+      coordinator.getTelemetryScheduler(SESSION_ID)?.getConsecutiveLinkFailureCount() ??
+      before + 1;
+    if (after > before) settled += after - before;
+    if (Date.now() > deadline) throw new Error('dispatches never settled');
+  }
+}
+
+/*
+ * There was a driveUntilSuccess() here, for the other half of the count's
+ * contract - that any success zeroes it. It is gone rather than kept
+ * unused: proving that against a REAL MspClient means driving the client
+ * back out of its own recovery, which measures recovery rather than the
+ * reset rule. The rule is pinned deterministically at the scheduler
+ * instead, in MspTelemetryScheduler.test.ts ("consecutive link
+ * failures"), where a FakeClock and a fake requester make it exact.
+ */
 
 /**
  * CAN A MOTOR-TEST SESSION BE OPENED RIGHT NOW?
@@ -723,7 +770,7 @@ describe('a board that reboots WITHOUT a detach event', () => {
    * - it MEASURES what the app currently believes while the board is
    * silent, so the answer is a fact rather than a hope.
    */
-  it('RECORDED DEFECT: still reports a live session when the board is silent', async () => {
+  it('declares the session dead once the link stops answering', async () => {
     const {coordinator, cli, board} = await liveRig();
     const key = coordinator.getSessionKey(SESSION_ID);
     if (key === undefined) throw new Error('no session key');
@@ -737,49 +784,103 @@ describe('a board that reboots WITHOUT a detach event', () => {
     board.rebooted = true;
     board.inCliMode = false;
     await cli.exitWithoutSave();
-    await flushAsync();
 
-    const believed = {
+    // Enough failed dispatches in a row for the verdict to land. Nothing
+    // new polls here: these are the telemetry dispatches the session was
+    // already making, failing against a board that is gone.
+    await driveFailedDispatches(coordinator);
+
+    expect({
       ownership: coordinator.getOwnershipState(SESSION_ID),
       hasKey: coordinator.getSessionKey(SESSION_ID) !== undefined,
-      recovery: coordinator.getMspRecoveryState(SESSION_ID),
-      motorTest: canOpenMotorTestSession(coordinator),
-    };
+      capability: readMotorTestCapability(SESSION_ID) === undefined,
+    }).toEqual({
+      ownership: 'INACTIVE',
+      hasKey: false,
+      capability: true,
+    });
+  }, 30_000);
 
-    /*
-     * THIS IS A RECORDED DEFECT, NOT AN APPROVED BEHAVIOUR.
-     *
-     * Every one of these four answers is wrong: the board is gone and the
-     * application is telling every screen it is connected, healthy, and
-     * ready to open a motor-test session on it. The expectation is
-     * written down so the defect is visible in the diff the day somebody
-     * fixes it, and so nobody reads a passing suite as this case being
-     * handled.
-     *
-     * WHAT WOULD CLOSE IT: the app has the evidence already - the
-     * telemetry scheduler is polling this link on a fixed cadence and
-     * every one of those polls is failing. A bounded consecutive-failure
-     * verdict, declared ONCE, would route this into the same
-     * deadline-bounded expected-reboot recovery that the CLI save path
-     * already uses (fcRebootRecovery.ts). No new polling and no
-     * reconnect loop are needed to get there.
-     *
-     * WHAT THIS TEST DOES NOT ESTABLISH: whether a REAL Web Serial port
-     * behind a re-enumerated device drives MspClient to a terminal state
-     * on its own. This fake resolves startReading()/stopReading()
-     * cleanly, which is the most forgiving possible transport; a real one
-     * may fail those and reach RECOVERY_FAILED, which the motor-test
-     * invalidation path already treats as a loss. So the WIDTH of this
-     * defect on hardware is unknown - only its existence under a silent,
-     * still-open port is proven here.
-     */
-    expect(believed).toEqual({
+  it('does NOT end the session for a single transient failure', async () => {
+    // The bound exists precisely so one dropped packet cannot end a
+    // flight controller session. This is the half of the contract that a
+    // too-eager verdict would break.
+    const {coordinator} = await liveRig();
+    const scheduler = coordinator.getTelemetryScheduler(SESSION_ID);
+    if (scheduler === undefined) throw new Error('no scheduler');
+
+    await driveFailedDispatches(
+      coordinator,
+      LINK_DEAD_AFTER_CONSECUTIVE_FAILURES - 1,
+    );
+
+    expect({
+      failures: scheduler.getConsecutiveLinkFailureCount(),
+      ownership: coordinator.getOwnershipState(SESSION_ID),
+      hasKey: coordinator.getSessionKey(SESSION_ID) !== undefined,
+    }).toEqual({
+      failures: LINK_DEAD_AFTER_CONSECUTIVE_FAILURES - 1,
       ownership: 'ACTIVE',
       hasKey: true,
-      recovery: 'READY',
-      motorTest: 'CAN_OPEN',
     });
-  });
+  }, 30_000);
+
+  /**
+   * The RESET half of the contract - that any success zeroes the count,
+   * so a flaky link is never mistaken for a dead one - is proven
+   * deterministically at the scheduler, in
+   * MspTelemetryScheduler.test.ts ("consecutive dispatch failures").
+   * Reproducing it here would mean driving a real MspClient back out of
+   * recovery, which measures recovery rather than the reset rule.
+   */
+  it('tears the session down exactly once, however many failures follow', async () => {
+    const {coordinator} = await liveRig();
+    let inactiveNotifications = 0;
+    coordinator.subscribeOwnershipState(() => {
+      if (coordinator.getOwnershipState(SESSION_ID) === 'INACTIVE') {
+        inactiveNotifications += 1;
+      }
+    });
+
+    await driveFailedDispatches(coordinator, LINK_DEAD_AFTER_CONSECUTIVE_FAILURES + 4);
+
+    expect(coordinator.getOwnershipState(SESSION_ID)).toBe('INACTIVE');
+    // One transition to INACTIVE, not one per failed dispatch.
+    expect(inactiveNotifications).toBe(1);
+  }, 30_000);
+
+  it('recovers into a usable session after the zombie is detected', async () => {
+    const {coordinator, cli, board, recovery} = await liveRig();
+    const key = coordinator.getSessionKey(SESSION_ID);
+    if (key === undefined) throw new Error('no session key');
+    const deadGeneration = key.generation;
+
+    await cli.begin(key);
+    recovery.expectReboot(SESSION_ID, 'CLI_SAVE');
+    board.rebooted = true;
+    board.inCliMode = false;
+    await cli.exitWithoutSave();
+    await driveFailedDispatches(coordinator);
+
+    // The loss is recognised as the reboot we asked for, so the shell
+    // reconnects on its own rather than stamping it as a fault.
+    expect(recovery.noteSessionLost(SESSION_ID)).toBe(true);
+    expect(recovery.shouldReconnectAutomatically()).toBe(true);
+
+    const reconnected = new FakeUsbBoard(SESSION_ID);
+    coordinator.openSession(
+      reconnected as unknown as UsbSerialTransportClient,
+      SESSION_ID,
+    );
+    await flushAsync();
+    recovery.noteRecovered();
+
+    expect(coordinator.getSessionKey(SESSION_ID)?.generation).not.toBe(
+      deadGeneration,
+    );
+    expect(await canScreenRead(coordinator)).toBe('LOADED');
+    expect(canOpenMotorTestSession(coordinator)).toBe('CAN_OPEN');
+  }, 30_000);
 
   /**
    * AND THE CONSEQUENCE, stated as the thing a user would hit: a screen
@@ -795,5 +896,144 @@ describe('a board that reboots WITHOUT a detach event', () => {
 
     const outcome = await canScreenRead(coordinator);
     expect(outcome).not.toBe('LOADED');
+  }, 30_000);
+
+  /**
+   * A DIFFERENT BOARD IS A DIFFERENT BOARD.
+   *
+   * The dangerous version of "recovery" is one that hands the new link
+   * the dead session's identity: a lease minted against the board that
+   * vanished would then still be honoured against whatever is plugged in
+   * now, and a Motors screen could spin a motor on hardware it never
+   * opened a session with. So this pins the negative - nothing from the
+   * dead session may be reusable - as well as the positive.
+   */
+  it('does not let a DIFFERENT flight controller inherit the dead session', async () => {
+    const {coordinator, board} = await liveRig();
+    const deadKey = coordinator.getSessionKey(SESSION_ID);
+    const deadIdentity = coordinator.getMotorTestSessionIdentity(SESSION_ID);
+    if (deadKey === undefined || deadIdentity === undefined) {
+      throw new Error('no session to lose');
+    }
+
+    board.rebooted = true;
+    await driveFailedDispatches(coordinator);
+    expect(coordinator.getOwnershipState(SESSION_ID)).toBe('INACTIVE');
+
+    // Something else is plugged in - same transport session id (the OS
+    // reused the port), genuinely different hardware.
+    const otherBoard = new FakeUsbBoard(SESSION_ID);
+    otherBoard.responses.set(
+      MSP_BOARD_INFO,
+      Uint8Array.from([
+        ...ascii('OTHR'),
+        ...u16le(0),
+        0,
+        0,
+        ...pstring('TEST'),
+        ...pstring('OtherBoard'),
+        ...pstring('MTKS'),
+        ...new Array(32).fill(0),
+        0,
+      ]),
+    );
+    coordinator.openSession(
+      otherBoard as unknown as UsbSerialTransportClient,
+      SESSION_ID,
+    );
+    await flushAsync();
+
+    const freshKey = coordinator.getSessionKey(SESSION_ID);
+    const freshIdentity = coordinator.getMotorTestSessionIdentity(SESSION_ID);
+    expect(freshKey?.generation).not.toBe(deadKey.generation);
+    expect(freshIdentity).not.toBe(deadIdentity);
+
+    // The decisive one: a lease asked for under the DEAD identity is
+    // refused against the live client, so nothing minted before the loss
+    // can command the board that is there now.
+    const client = coordinator.getActiveMspClient(SESSION_ID);
+    if (client === undefined) throw new Error('no client after reconnect');
+    const stale = acquireMotorTestLease({
+      client,
+      requestedIdentity: deadIdentity,
+      readCurrentIdentity: () =>
+        coordinator.getMotorTestSessionIdentity(SESSION_ID),
+    });
+    expect(stale.kind).not.toBe('ACQUIRED');
+  }, 30_000);
+
+  /**
+   * RECOVERY IS NOT A MOTORS FEATURE.
+   *
+   * Every configuration screen refuses on the SAME session-level reasons
+   * (DISCONNECTED / LINK_RECOVERING / IDENTIFYING), so those reasons are
+   * exactly the right thing to assert on: while the board is a zombie
+   * each screen must refuse for a session reason, and after the
+   * reconnect none of them may. What each screen then does with the
+   * bytes is its own test's business - the question here is only whether
+   * the session still stands in the way.
+   */
+  it('makes Motors, PID, Ports and Receiver usable again after recovery', async () => {
+    const {coordinator, board} = await liveRig();
+    const key = coordinator.getSessionKey(SESSION_ID);
+    if (key === undefined) throw new Error('no session key');
+
+    const deps = {
+      coordinator: coordinator as never,
+      appStateOwner: {getPhase: () => 'ACTIVE' as const},
+      isMotorOutputEngaged: () => false,
+      isMotorTestActive: () => false,
+    };
+    /** Every screen's own gate, asked in its own controller. */
+    const screenGates = async (sessionKey: {
+      sessionId: string;
+      generation: number;
+    }) => ({
+      motors: await new MotorConfigurationController(deps)
+        .load(sessionKey.sessionId)
+        .then(r => (r.kind === 'REJECTED' ? r.reason : r.kind)),
+      pid: await new PidTuningController(deps)
+        .load(sessionKey)
+        .then(r => (r.kind === 'REJECTED' ? r.reason : r.kind)),
+      ports: await new PortsConfigurationController(deps)
+        .load(sessionKey)
+        .then(r => (r.kind === 'REJECTED' ? r.reason : r.kind)),
+      receiver: await new ReceiverConfigurationController(deps)
+        .load(sessionKey)
+        .then(r => (r.kind === 'REJECTED' ? r.reason : r.kind)),
+    });
+    const SESSION_REASONS = ['DISCONNECTED', 'LINK_RECOVERING', 'IDENTIFYING'];
+
+    board.rebooted = true;
+    await driveFailedDispatches(coordinator);
+    const whileDead = await screenGates(key);
+    for (const [screen, outcome] of Object.entries(whileDead)) {
+      // Which session reason it is depends on how far the teardown has
+      // unwound (the identification state resets too, so IDENTIFYING is
+      // as correct an answer as DISCONNECTED). That it is a SESSION
+      // reason at all is the claim: no screen may be admitted.
+      expect(`${screen}:${SESSION_REASONS.includes(outcome)}`).toBe(
+        `${screen}:true`,
+      );
+    }
+
+    const reconnected = new FakeUsbBoard(SESSION_ID);
+    coordinator.openSession(
+      reconnected as unknown as UsbSerialTransportClient,
+      SESSION_ID,
+    );
+    await flushAsync();
+    const freshKey = coordinator.getSessionKey(SESSION_ID);
+    if (freshKey === undefined) throw new Error('no session after reconnect');
+
+    const afterRecovery = await screenGates(freshKey);
+    for (const [screen, outcome] of Object.entries(afterRecovery)) {
+      expect(`${screen}:${SESSION_REASONS.includes(outcome)}`).toBe(
+        `${screen}:false`,
+      );
+    }
+    // And Motors, whose reads this fixture answers in full, goes all the
+    // way to loaded data rather than merely past the gate.
+    expect(afterRecovery.motors).toBe('LOADED');
   }, 30_000);
 });

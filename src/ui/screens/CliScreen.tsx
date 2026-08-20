@@ -737,6 +737,13 @@ const styles = StyleSheet.create({
   commandInput: {
     ...typography.mono,
     flex: 1,
+    /* A flex item will not shrink below its own intrinsic width unless
+       told it may, and a text input's intrinsic width is generous. At
+       360 that left the input 21px wider than the row could give it and
+       pushed the send button clean off the card's left edge (measured:
+       the card needed 315px of 306). Nothing changes at any width where
+       the row already fits. */
+    minWidth: 0,
     minHeight: 48,
     color: '#F3FFFC',
     backgroundColor: '#111C27',

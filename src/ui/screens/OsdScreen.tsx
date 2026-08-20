@@ -49,6 +49,7 @@ import {
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
+import {MIN_TOUCH_TARGET} from '../components/controls/interaction';
 import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {
   Button,
@@ -549,9 +550,20 @@ export default function OsdScreen({
                         accessibilityRole="switch"
                         accessibilityState={{checked: visible, disabled: !editable}}
                         accessibilityLabel={`إظهار ${osdElementName(index)}`}
-                        style={[styles.elementDot, visible && styles.elementDotOn]}
-                        testID={`osd-element-${index}-toggle`}
-                      />
+                        /* The DOT stays 22px; the TARGET is 44. The dot
+                           was the whole control and measured 22x22 - half
+                           the minimum - which is a real miss on a phone.
+                           react-native-web's Pressable ignores hitSlop
+                           (only the legacy Touchable reads it), so the
+                           touch area has to be a real box rather than a
+                           prop, and the visible dot moves inside it
+                           unchanged. */
+                        style={styles.elementDotHit}
+                        testID={`osd-element-${index}-toggle`}>
+                        <View
+                          style={[styles.elementDot, visible && styles.elementDotOn]}
+                        />
+                      </Pressable>
                       <Text numberOfLines={1} style={styles.elementChipText}>
                         {osdElementName(index)}
                       </Text>
@@ -880,6 +892,16 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
   },
   elementChipSelected: {borderColor: colors.accentStrong, backgroundColor: colors.accentSoft},
+  elementDotHit: {
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    alignItems: 'center',
+    justifyContent: 'center',
+    /* The chip is already MIN_TOUCH_TARGET tall and its label is
+       flex: 1, so claiming a full-size target here costs the row no
+       height and only borrows width the label can spare. */
+    marginHorizontal: -spacing.xs,
+  },
   elementDot: {
     width: 22,
     height: 22,
