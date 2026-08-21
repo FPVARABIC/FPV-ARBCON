@@ -73,14 +73,58 @@ describe('operator-facing copy carries no protocol-version pinning', () => {
     expect(strings.filter(text => FORBIDDEN.some(rule => rule.test(text)))).toEqual([]);
   });
 
-  it('the permanent top bar does not show the wire protocol version', () => {
-    // It is the one surface the operator can never navigate away from, so a
-    // chip they cannot act on costs them on every screen.
-    const bar = fs.readFileSync(
-      path.join(__dirname, '..', 'components', 'setup', 'TopSystemBar.tsx'),
+  /**
+   * THE PERMANENT SURFACE STAYS CLEAN - AND IT CHANGED IDENTITY.
+   *
+   * This assertion used to read TopSystemBar, the 139px bar that held
+   * the top of Setup at every width. SETUP R9 deleted it: what an
+   * operator can never navigate away from is now SetupChromeBar, a 48px
+   * toolbar carrying the way back and the way to disconnect.
+   *
+   * The rule it enforced is unchanged and still enforced HERE: the
+   * permanent surface may not spend its space on a version number the
+   * operator cannot act on.
+   *
+   * WHAT DID CHANGE, deliberately and on the product owner's
+   * instruction: the MSP API version IS now shown - in SetupStatusBar,
+   * which is scrolling CONTENT about the connected board, beside its
+   * name and its firmware. That is a different bargain. It costs nothing
+   * on any other screen, it sits with the facts it belongs to, and it is
+   * the one place an operator checking compatibility looks for it.
+   */
+  it('the permanent chrome does not show the wire protocol version', () => {
+    const chrome = fs.readFileSync(
+      path.join(__dirname, '..', 'components', 'setup', 'SetupChromeBar.tsx'),
       'utf8',
     );
-    expect(bar).not.toContain('apiVersionMajor');
-    expect(bar).not.toContain('apiVersionMinor');
+    expect(chrome).not.toContain('apiVersionMajor');
+    expect(chrome).not.toContain('apiVersionMinor');
+    expect(chrome).not.toContain('mspProtocolVersion');
+
+    // And the bar it replaced is gone outright, not merely unused.
+    expect(
+      fs.existsSync(
+        path.join(__dirname, '..', 'components', 'setup', 'TopSystemBar.tsx'),
+      ),
+    ).toBe(false);
+  });
+
+  it('never shows the MSP PROTOCOL version anywhere - the API version is the actionable one', () => {
+    // mspProtocolVersion is the framing revision. It is identical across
+    // every firmware this application can talk to, so it tells an
+    // operator nothing and must not appear on any Setup surface.
+    for (const file of [
+      'SetupChromeBar.tsx',
+      'SetupStatusBar.tsx',
+      'SetupInfoGrid.tsx',
+    ]) {
+      const source = fs.readFileSync(
+        path.join(__dirname, '..', 'components', 'setup', file),
+        'utf8',
+      );
+      expect(`${file}: ${source.includes('mspProtocolVersion')}`).toBe(
+        `${file}: false`,
+      );
+    }
   });
 });

@@ -772,6 +772,11 @@ export type {
   SetupWarningOwner,
   SetupWarningSeverity,
 } from './state';
+export {
+  deriveSetupBatterySummary,
+  isSetupSafetyStripWarranted,
+} from './state';
+export type { SetupBatterySummary } from './state';
 export { pickTopNotice } from './state';
 export type {
   SetupNotice,

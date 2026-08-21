@@ -2,28 +2,23 @@ export { default as SafetyStrip } from './SafetyStrip';
 export type { SafetyStripProps } from './SafetyStrip';
 export { default as SetupSafetyNotices } from './SetupSafetyNotices';
 export type { SetupSafetyNoticesProps } from './SetupSafetyNotices';
-export { default as SetupSummaryLink } from './SetupSummaryLink';
-export type { SetupSummaryLinkProps } from './SetupSummaryLink';
-export { default as SensorsCard } from './SensorsCard';
-export type { SensorsCardProps } from './SensorsCard';
 
-export { default as BatteryCard } from './BatteryCard';
-export type { BatteryCardProps } from './BatteryCard';
-
-export {
-  default as TelemetryCardFrame,
-  resolveAuxCardGate,
-} from './TelemetryCardFrame';
-export type {
-  TelemetryCardFrameProps,
-  AuxCardGateVariant,
-} from './TelemetryCardFrame';
-export { default as ReceiverCard } from './ReceiverCard';
-export type { ReceiverCardProps } from './ReceiverCard';
-export { default as GpsCard } from './GpsCard';
-export type { GpsCardProps } from './GpsCard';
-export { default as FlightControllerCard } from './FlightControllerCard';
-export type { FlightControllerCardProps } from './FlightControllerCard';
+/**
+ * SETUP R9. BatteryCard / SensorsCard / ReceiverCard / GpsCard /
+ * FlightControllerCard / SetupSummaryLink / TelemetryCardFrame and
+ * TopSystemBar are GONE - not hidden behind a flag, not kept as a
+ * compatibility wrapper, not reachable from any conditional branch. The
+ * information they carried is in SetupStatusBar (connection, board,
+ * firmware, API, arming, battery, sensors) and SetupInfoGrid (status,
+ * GPS, build), which sit above and immediately below the 3D model
+ * respectively. setupNoTopBar.test.tsx fails if any of them returns.
+ */
+export { default as SetupChromeBar } from './SetupChromeBar';
+export type { SetupChromeBarProps } from './SetupChromeBar';
+export { default as SetupStatusBar } from './SetupStatusBar';
+export type { SetupStatusBarProps } from './SetupStatusBar';
+export { default as SetupInfoGrid, resolveSetupInfoColumns } from './SetupInfoGrid';
+export type { SetupInfoGridProps } from './SetupInfoGrid';
 
 export { default as DiagnosticsSection } from './DiagnosticsSection';
 export type { DiagnosticsSectionProps } from './DiagnosticsSection';
@@ -45,8 +40,6 @@ export type {
 export { default as OrientationStabilityPanel } from './OrientationStabilityPanel';
 export type { OrientationStabilityPanelProps } from './OrientationStabilityPanel';
 
-export { default as TopSystemBar } from './TopSystemBar';
-export type { TopSystemBarProps } from './TopSystemBar';
 export {
   deriveConnectionIndicatorState,
   deriveTopBarNotice,

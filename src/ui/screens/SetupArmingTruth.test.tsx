@@ -250,6 +250,39 @@ function has(renderer: ReactTestRenderer.ReactTestRenderer, testID: string) {
   return renderer.root.findAllByProps({testID}).length > 0;
 }
 
+/**
+ * SETUP R9 - WHERE READINESS IS STATED NOW.
+ *
+ * The full-width SafetyStrip used to render in all four readiness
+ * states, so a healthy board permanently displayed a 74px warning
+ * reading "arming state not confirmed". An alert that is always on is
+ * not an alert, so the strip is now gated on ARMED and BLOCKED
+ * (isSetupSafetyStripWarranted) and the steady states read as a chip in
+ * the compact status area above the model.
+ *
+ * NOTHING WAS DOWNGRADED. It is the same ArmingReadiness object driving
+ * the chip, the strip, the FC-tool gate and the diagnostics list - which
+ * is exactly what this suite exists to prove. These helpers just ask the
+ * surface that now carries the answer.
+ */
+function armingChip(renderer: ReactTestRenderer.ReactTestRenderer): string {
+  const node = renderer.root.findAll(
+    n => typeof n.type === 'string' && n.props?.testID === 'setup-status-arming',
+  )[0];
+  return node === undefined ? '' : String(node.props.accessibilityLabel ?? '');
+}
+
+function chipSays(
+  renderer: ReactTestRenderer.ReactTestRenderer,
+  status: 'armed' | 'ready' | 'blocked' | 'unknown',
+): boolean {
+  const text = armingChip(renderer);
+  const label = i18n.t(`setupTopBar.armingBadge.${status}`);
+  /* Exact-segment match, never a substring: BLOCKED reads "غير جاهزة",
+     which CONTAINS the READY word "جاهزة". */
+  return text.split(': ').slice(1).join(': ') === label;
+}
+
 function makeProps(sessionId: string): Props {
   return {
     route: {
@@ -362,7 +395,7 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
 
     // The strip.
     expect(has(renderer, 'safety-strip-armed')).toBe(true);
-    expect(has(renderer, 'safety-strip-unknown')).toBe(false);
+    expect(chipSays(renderer, 'unknown')).toBe(false);
     expect(text).toContain(i18n.t('safetyStrip.armed'));
 
     // The badge - same canonical state, different presentation.
@@ -408,7 +441,10 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
       boxIds: BOXIDS_WITH_ARM,
     });
     const text = allText(renderer).join('|');
-    expect(has(renderer, 'safety-strip-ready')).toBe(true);
+    // READY is a steady state: the chip says so, and no alert strip is
+    // raised for it.
+    expect(chipSays(renderer, 'ready')).toBe(true);
+    expect(has(renderer, 'safety-strip-ready')).toBe(false);
     expect(text).toContain(i18n.t('setupTopBar.armingBadge.ready'));
     await teardown(sessionId, renderer);
   });
@@ -530,8 +566,8 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
     });
     // Armed itself is provable (BOXIDS + flight-mode flags are in the
     // fixed prefix), but the blocker evidence never arrived.
-    expect(has(renderer, 'safety-strip-ready')).toBe(false);
-    expect(has(renderer, 'safety-strip-unknown')).toBe(true);
+    expect(chipSays(renderer, 'ready')).toBe(false);
+    expect(chipSays(renderer, 'unknown')).toBe(true);
     expect(has(renderer, 'setup-safety-notice-REBOOT_REQUIRED')).toBe(false);
     await teardown(sessionId, renderer);
   });
@@ -542,8 +578,8 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
       statusEx: statusExPayload({flightModeFlags: 0, armingDisableFlags: 0}),
       boxIds: BOXIDS_WITHOUT_ARM,
     });
-    expect(has(renderer, 'safety-strip-unknown')).toBe(true);
-    expect(has(renderer, 'safety-strip-ready')).toBe(false);
+    expect(chipSays(renderer, 'unknown')).toBe(true);
+    expect(chipSays(renderer, 'ready')).toBe(false);
     await teardown(sessionId, renderer);
   });
 
@@ -562,8 +598,8 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
       boxIds: BOXIDS_WITH_ARM,
       apiMinor: 46,
     });
-    expect(has(renderer, 'safety-strip-unknown')).toBe(true);
-    expect(has(renderer, 'safety-strip-ready')).toBe(false);
+    expect(chipSays(renderer, 'unknown')).toBe(true);
+    expect(chipSays(renderer, 'ready')).toBe(false);
     await teardown(sessionId, renderer);
   });
 
@@ -578,7 +614,7 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
       boxIds: BOXIDS_WITH_ARM,
       apiMinor: 48,
     });
-    expect(has(renderer, 'safety-strip-unknown')).toBe(false);
+    expect(chipSays(renderer, 'unknown')).toBe(false);
     await teardown(sessionId, renderer);
   });
 
@@ -593,8 +629,8 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
     await act(async () => {
       await flushAsync();
     });
-    expect(has(renderer, 'safety-strip-unknown')).toBe(true);
-    expect(has(renderer, 'safety-strip-ready')).toBe(false);
+    expect(chipSays(renderer, 'unknown')).toBe(true);
+    expect(chipSays(renderer, 'ready')).toBe(false);
     expect(has(renderer, 'safety-strip-armed')).toBe(false);
     act(() => {
       renderer.unmount();
@@ -617,7 +653,7 @@ describe('SETUP P1 - the armed contradiction is impossible', () => {
       statusEx: statusExPayload({flightModeFlags: ARMED_BIT}),
     });
     expect(has(second.renderer, 'safety-strip-armed')).toBe(false);
-    expect(has(second.renderer, 'safety-strip-unknown')).toBe(true);
+    expect(chipSays(second.renderer, 'unknown')).toBe(true);
     await teardown(secondId, second.renderer);
   });
 

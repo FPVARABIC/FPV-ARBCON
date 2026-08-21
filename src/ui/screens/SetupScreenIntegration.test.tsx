@@ -64,6 +64,10 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
 const ARABIC = {
   region1Title: 'إعداد الطائرة',
+  /* SETUP R9 markers: the compact status area's own column/section
+     titles, used as order probes now that the four cards are gone. */
+  orientationTitle: 'حركة متزامنة مع متحكم الطيران',
+  statusColumnTitle: 'الحالة',
   region4Title: 'التشخيص والجاهزية',
   region5Title: 'أدوات وحدة التحكم',
   disconnected: 'غير متصل',
@@ -612,22 +616,18 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const { renderer } = await mount('integration-order');
       const text = allText(renderer);
 
-      // SETUP FINAL UI CORRECTION: the accepted dashboard order puts the
-      // orientation section (model + dials + the accelerometer
-      // calibration beside it) FIRST, the live aircraft summary
-      // immediately after, then deep diagnostics (Region 4) and finally
-      // the remaining maintenance tools (Region 5). Every probe below is
-      // a string the assembled screen actually renders (the old
-      // 'نموذج الاتجاه' probe matched nothing and silently dropped out
-      // of the order check), and every one must be found.
+      /* SETUP R9: the accepted order is the compact status area
+         (connection, board, firmware, API, arming, battery, detected
+         sensors) FIRST, then the 3D model with its calibration action,
+         then the dense Status/GPS/Build grid, then deep diagnostics
+         (Region 4) and finally the remaining maintenance tools
+         (Region 5). Every probe below is a string the assembled screen
+         actually renders, and every one must be found. */
       const orderedProbes = [
-        // NOT ARABIC.region1Title: the top bar never rendered that
-        // string - the old assertion filtered its -1 away silently.
-        // Region 1's presence is proven by the setup-top-bar singleton
-        // check below instead.
-        'اتجاه الطائرة', // orientation section heading - FIRST content
-        'معايرة مقياس التسارع', // calibration card beside the model
-        'ملخص الطائرة الآن', // live summary, immediately after
+        'البطارية', // status chip label - FIRST content
+        ARABIC.orientationTitle, // the model's own title
+        'معايرة مقياس التسارع', // calibration action beside the model
+        ARABIC.statusColumnTitle, // the information grid, after the model
         ARABIC.region4Title,
         ARABIC.region5Title,
       ];
@@ -642,10 +642,11 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       expect([...positions].sort((a, b) => a - b)).toEqual(positions);
 
       for (const testID of [
-        'setup-top-bar',
+        'setup-chrome-bar',
+        'setup-status-bar',
         'orientation-hero',
         'orientation-calibration-card',
-        'telemetry-card-grid',
+        'setup-info-grid',
         'diagnostics-section',
         'fc-tools-section',
       ]) {
@@ -678,11 +679,18 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       // Region 1 identity, Region 3 live cards, Region 4 compatibility,
       // Region 5 enabled controls - all from the same session.
       expect(text).toContain('متوافق مع هذا الإصدار');
-      expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
-      // SETUP P1: sensors are named with their own detection state.
+      /* Region 3's live values now read from the information grid: the
+         FC status counters are its CPU and cycle rows. */
+      expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
+      expect(hasTestID(renderer, 'setup-info-status-cycle')).toBe(true);
+      // SETUP P1: sensors are named with their own detection state, and
+      // R9 moved that naming ABOVE the model into the status chips.
       expect(text).toEqual(
         expect.arrayContaining(['ACC — مكتشف', 'GYRO — مكتشف']),
       );
+      for (const token of ['ACC', 'GYRO']) {
+        expect(hasTestID(renderer, `setup-status-sensor-${token}`)).toBe(true);
+      }
     },
   );
 
@@ -710,7 +718,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     async () => {
       const sessionId = 'integration-generation';
       const { renderer } = await mount(sessionId);
-      expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
+      expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
 
       await act(async () => {
         mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -735,7 +743,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       });
       await settle(2200);
 
-      expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
+      expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
       expect(allText(renderer)).not.toContain(ARABIC.toolDisconnected);
     },
   );
@@ -1204,7 +1212,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
         expect(client.countOf(command)).toBeGreaterThanOrEqual(1);
       }
       // ...the regions that need those answers are populated...
-      expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
+      expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
       expect(hasTestID(renderer, 'diagnostics-section')).toBe(true);
       expect(pressable(renderer, 'fc-tool-REBOOT-button').props.disabled).toBe(
         false,

@@ -213,6 +213,38 @@ function has(renderer: ReactTestRenderer.ReactTestRenderer, testID: string) {
   return renderer.root.findAllByProps({testID}).length > 0;
 }
 
+/** The accessibility label of a grid row - "<label>: <value>", built
+ * from the same strings the row renders, so an assertion reads the fact
+ * the row actually states rather than hunting for a substring on the
+ * page. Empty string when the row is not rendered at all. */
+function labelOf(
+  renderer: ReactTestRenderer.ReactTestRenderer,
+  testID: string,
+): string {
+  const node = renderer.root.findAll(
+    n => typeof n.type === 'string' && n.props?.testID === testID,
+  )[0];
+  return node === undefined
+    ? ''
+    : String(node.props.accessibilityLabel ?? '');
+}
+
+/** The one-line note a grid column shows when it cannot report, or when
+ * its readings have aged. Empty string when there is no note. */
+function noteOf(
+  renderer: ReactTestRenderer.ReactTestRenderer,
+  columnTestID: string,
+): string {
+  const node = renderer.root.findAll(
+    n => typeof n.type === 'string' && n.props?.testID === `${columnTestID}-note`,
+  )[0];
+  if (node === undefined) {
+    return '';
+  }
+  const children = node.props.children;
+  return Array.isArray(children) ? children.join('') : String(children ?? '');
+}
+
 /**
  * HOST nodes only. `findAllByProps({testID})` also matches a COMPOSITE
  * element whose own prop happens to be called testID - so a component
@@ -345,27 +377,34 @@ describe('SETUP P2 - Receiver summary', () => {
   it('shows an authoritative RSSI value prominently', async () => {
     const id = 'p2-rx-rssi';
     const {renderer} = await mount(id);
-    expect(allText(renderer)).toContain(
-      i18n.t('telemetryCards.receiver.rssi', {percent: 79}),
+    expect(labelOf(renderer, 'setup-info-status-rssi')).toBe(
+      `${i18n.t('setupInfo.status.rssi')}: 79%`,
     );
-    expect(has(renderer, 'receiver-card-rssi')).toBe(true);
     await teardown(id, renderer);
   });
 
   it('never renders 0% when the wire value is an unconfigured zero', async () => {
     const id = 'p2-rx-zero';
     const {renderer} = await mount(id, {analog: analogPayload(0)});
-    expect(has(renderer, 'receiver-card-rssi-unavailable')).toBe(true);
-    expect(has(renderer, 'receiver-card-rssi')).toBe(false);
-    expect(allText(renderer).join('|')).not.toContain('RSSI: 0%');
+    // An unconfigured RSSI source and genuine zero signal are
+    // indistinguishable on MSP_ANALOG, so the honest answer is that the
+    // value is not available - never a confident "0%".
+    expect(labelOf(renderer, 'setup-info-status-rssi')).toBe(
+      `${i18n.t('setupInfo.status.rssi')}: ${i18n.t('setupStatusBar.unavailable')}`,
+    );
+    expect(allText(renderer).join('|')).not.toContain('0%');
     await teardown(id, renderer);
   });
 
   it('states the live/stale link condition in words, not only in opacity', async () => {
     const id = 'p2-rx-live-words';
     const {renderer} = await mount(id);
-    expect(allText(renderer)).toContain(i18n.t('telemetryCards.receiver.linkLive'));
-    expect(has(renderer, 'receiver-card-link-state')).toBe(true);
+    expect(has(renderer, 'setup-info-status-link-state')).toBe(true);
+    expect(labelOf(renderer, 'setup-info-status-link-state')).toBe(
+      `${i18n.t('setupInfo.status.linkState')}: ${i18n.t(
+        'telemetryCards.receiver.linkLive',
+      )}`,
+    );
     await teardown(id, renderer);
   });
 
@@ -404,7 +443,11 @@ describe('SETUP P2 - Receiver summary', () => {
     expect(host.props.accessibilityLabel).toBe(
       i18n.t('setupNavigation.openReceiver'),
     );
-    expect(host.props.accessibilityRole).toBe('button');
+    /* SETUP R9: the shortcuts became text links under the grid rather
+       than four card-sized targets, so the role is "link". The
+       destination-naming label is unchanged - a screen reader still
+       hears where it goes, not just "receiver". */
+    expect(host.props.accessibilityRole).toBe('link');
     await teardown(id, renderer);
   });
 });
@@ -425,9 +468,11 @@ describe('SETUP P2 - GPS summary', () => {
     const id = 'p2-gps-zero-sats';
     const {renderer} = await mount(id, {gps: rawGpsPayload({fix: false, sats: 0})});
     // The presence proof comes from the sensor mask, not from the count.
-    expect(has(renderer, 'gps-card-no-presence')).toBe(false);
-    expect(allText(renderer)).toContain(
-      i18n.t('telemetryCards.gps.satellites', {value: 0}),
+    expect(noteOf(renderer, 'setup-info-gps')).not.toBe(
+      i18n.t('setupInfo.gps.noPresence'),
+    );
+    expect(labelOf(renderer, 'setup-info-gps-satellites')).toBe(
+      `${i18n.t('setupInfo.gps.satellites')}: 0`,
     );
     await teardown(id, renderer);
   });
@@ -435,9 +480,11 @@ describe('SETUP P2 - GPS summary', () => {
   it('reports a fix with its satellite count', async () => {
     const id = 'p2-gps-fix';
     const {renderer} = await mount(id, {gps: rawGpsPayload({fix: true, sats: 14})});
-    expect(allText(renderer)).toContain(i18n.t('telemetryCards.gps.fix'));
-    expect(allText(renderer)).toContain(
-      i18n.t('telemetryCards.gps.satellites', {value: 14}),
+    expect(labelOf(renderer, 'setup-info-gps-fix')).toBe(
+      `${i18n.t('setupInfo.gps.fix')}: ${i18n.t('telemetryCards.gps.fix')}`,
+    );
+    expect(labelOf(renderer, 'setup-info-gps-satellites')).toBe(
+      `${i18n.t('setupInfo.gps.satellites')}: 14`,
     );
     await teardown(id, renderer);
   });
@@ -447,7 +494,9 @@ describe('SETUP P2 - GPS summary', () => {
     const {renderer} = await mount(id, {
       statusEx: statusExPayload({sensorMask: 0x21}), // ACC + GYRO only
     });
-    expect(has(renderer, 'gps-card-no-presence')).toBe(true);
+    expect(noteOf(renderer, 'setup-info-gps')).toBe(
+      i18n.t('setupInfo.gps.noPresence'),
+    );
     await teardown(id, renderer);
   });
 
@@ -483,14 +532,22 @@ describe('SETUP P2 - Battery summary', () => {
     const id = 'p2-batt-voltage';
     const {renderer} = await mount(id);
     expect(allText(renderer)).toContain('16.42 V');
-    expect(has(renderer, 'battery-card-voltage')).toBe(true);
+    expect(has(renderer, 'setup-status-battery-live')).toBe(true);
+    expect(labelOf(renderer, 'setup-info-status-voltage')).toBe(
+      `${i18n.t('setupInfo.status.voltage')}: 16.42 V`,
+    );
     await teardown(id, renderer);
   });
 
   it('shows the cell count only when the firmware proved a pack', async () => {
     const id = 'p2-batt-cells';
     const {renderer} = await mount(id);
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.cellCount', {count: 4}));
+    expect(labelOf(renderer, 'setup-info-status-cells')).toBe(
+      `${i18n.t('setupInfo.status.cells')}: 4`,
+    );
+    expect(allText(renderer)).toContain(
+      i18n.t('setupStatusBar.batteryMeasured', {volts: '16.42', cells: 4}),
+    );
     await teardown(id, renderer);
   });
 
@@ -500,12 +557,14 @@ describe('SETUP P2 - Battery summary', () => {
       // cellCount 0 = Betaflight's own "battery not detected".
       battery: batteryPayload({cells: 0, voltageCentivolts: 17}),
     });
-    expect(has(renderer, 'battery-card-no-measurement')).toBe(true);
-    expect(has(renderer, 'battery-card-voltage')).toBe(false);
-    // The real reading is still visible, but explicitly labelled.
-    expect(has(renderer, 'battery-card-raw-voltage')).toBe(true);
+    expect(has(renderer, 'setup-status-battery-no-pack')).toBe(true);
+    expect(has(renderer, 'setup-status-battery-live')).toBe(false);
+    // The real reading is still visible, but explicitly labelled as raw.
+    expect(allText(renderer)).toContain(
+      i18n.t('setupStatusBar.batteryNoPack', {value: '0.17'}),
+    );
     // And no cell count is claimed for a pack the FC did not detect.
-    expect(has(renderer, 'battery-card-cells')).toBe(false);
+    expect(has(renderer, 'setup-info-status-cells')).toBe(false);
     await teardown(id, renderer);
   });
 
@@ -537,8 +596,8 @@ describe('SETUP P2 - Sensors summary', () => {
   it('is visible on the dashboard, not only inside diagnostics', async () => {
     const id = 'p2-sensors-visible';
     const {renderer} = await mount(id);
-    expect(has(renderer, 'sensors-card')).toBe(true);
-    expect(allText(renderer)).toContain(i18n.t('setupSensorsCard.title'));
+    expect(has(renderer, 'setup-status-sensors')).toBe(true);
+    expect(allText(renderer)).toContain(i18n.t('setupStatusBar.sensors'));
     await teardown(id, renderer);
   });
 
@@ -553,8 +612,8 @@ describe('SETUP P2 - Sensors summary', () => {
   ])('renders %s as %s', async (token, mask, expected) => {
     const id = `p2-sensors-${token}`;
     const {renderer} = await mount(id, {statusEx: statusExPayload({sensorMask: mask})});
-    expect(has(renderer, `sensors-card-${token}`)).toBe(true);
-    const chip = renderer.root.findAllByProps({testID: `sensors-card-${token}`})[0];
+    expect(has(renderer, `setup-status-sensor-${token}`)).toBe(true);
+    const chip = renderer.root.findAllByProps({testID: `setup-status-sensor-${token}`})[0];
     const chipText = chip
       .findAllByType(Text)
       .map(n => String(n.props.children))
@@ -574,7 +633,7 @@ describe('SETUP P2 - Sensors summary', () => {
     const {renderer} = await mount(id, {
       statusEx: statusExPayload({sensorMask: 0x01}), // ACC only
     });
-    const chip = renderer.root.findAllByProps({testID: 'sensors-card-GYRO'})[0];
+    const chip = renderer.root.findAllByProps({testID: 'setup-status-sensor-GYRO'})[0];
     const chipText = chip
       .findAllByType(Text)
       .map(n => String(n.props.children))
@@ -630,8 +689,8 @@ describe('SETUP P2 - two surfaces never disagree about one fact', () => {
     const {renderer} = await mount(id, {
       battery: batteryPayload({cells: 0, voltageCentivolts: 17}),
     });
-    expect(has(renderer, 'battery-card-no-measurement')).toBe(true);
-    expect(has(renderer, 'battery-card-voltage')).toBe(false);
+    expect(has(renderer, 'setup-status-battery-no-pack')).toBe(true);
+    expect(has(renderer, 'setup-status-battery-live')).toBe(false);
     await teardown(id, renderer);
   });
 
@@ -640,9 +699,11 @@ describe('SETUP P2 - two surfaces never disagree about one fact', () => {
     const {renderer} = await mount(id, {
       statusEx: statusExPayload({sensorMask: 0x21}),
     });
-    expect(has(renderer, 'gps-card-no-presence')).toBe(true);
-    // The sensor chip agrees with the card, from the same mask.
-    const chip = renderer.root.findAllByProps({testID: 'sensors-card-GPS'})[0];
+    expect(noteOf(renderer, 'setup-info-gps')).toBe(
+      i18n.t('setupInfo.gps.noPresence'),
+    );
+    // The sensor chip agrees with the GPS column, from the same mask.
+    const chip = renderer.root.findAllByProps({testID: 'setup-status-sensor-GPS'})[0];
     expect(
       chip
         .findAllByType(Text)
@@ -708,24 +769,28 @@ describe('SETUP P2 - Setup stays an overview', () => {
     await act(async () => {
       await flushAsync();
     });
-    // Rendered as plain containers: no button role, no chevron, no wash.
+    /* SETUP R9: with no owner-screen callback the shortcut is not
+       rendered at all, rather than rendered as an inert container. A
+       control that cannot act must not be on screen looking like one -
+       and the facts themselves are unaffected, since they live in the
+       grid and the status area, not in the link. */
     for (const target of ['receiver', 'gps', 'power', 'sensors']) {
-      expect(hasHost(renderer, `setup-open-${target}-static`)).toBe(true);
       expect(hasHost(renderer, `setup-open-${target}`)).toBe(false);
     }
-    // And nothing anywhere claims a button role for them.
     expect(
       renderer.root
         .findAll(n => typeof n.props?.testID === 'string')
-        .filter(n => n.props.testID.startsWith('setup-open-'))
-        .some(n => n.props.accessibilityRole === 'button'),
-    ).toBe(false);
+        .filter(n => n.props.testID.startsWith('setup-open-')),
+    ).toEqual([]);
+    // The information is still there, without any way to navigate to it.
+    expect(hasHost(renderer, 'setup-info-grid')).toBe(true);
+    expect(hasHost(renderer, 'setup-status-bar')).toBe(true);
     act(() => {
       renderer.unmount();
     });
   });
 
-  it('pressing every summary card issues no configuration write', async () => {
+  it('pressing every shortcut issues no configuration write', async () => {
     const id = 'p2-no-writes';
     const {renderer, nav} = await mount(id);
     for (const target of ['receiver', 'gps', 'power', 'sensors']) {

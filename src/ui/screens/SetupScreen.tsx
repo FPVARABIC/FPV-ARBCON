@@ -1,9 +1,28 @@
 /**
- * The real Setup screen: connection state, live orientation model and
- * instruments, calibration/maintenance tools, read-only stability check,
- * arming readiness, telemetry summaries and detailed diagnostics. Protocol
- * ownership stays in the coordinator; this screen only subscribes to its
- * existing stores and dispatches through the established tool controller.
+ * The real Setup screen. SETUP R9 rebuilt its information hierarchy:
+ *
+ *   48px chrome            back, title, connection dot, disconnect
+ *   compact status area    connection, board, firmware, MSP API, arming,
+ *                          battery, and every sensor the FC's own
+ *                          presence mask reports
+ *   safety strip           ONLY when ARMED or genuinely BLOCKED
+ *   3D attitude hero       live heading/pitch/roll with the model, and
+ *                          the accelerometer calibration action
+ *   information grid       Status / GPS / Build, three dense columns
+ *   board alignment        a full feature, after the live information
+ *   advanced               notices, stability check, diagnostics, FC
+ *                          tools, telemetry report
+ *
+ * WHAT THAT REPLACED, measured on a 1920px desktop with a populated
+ * board: a 139px teal bar, an 84px section heading, the model at y=186,
+ * and the aircraft's own state scattered from y=1403 (battery) to
+ * y=1849 (sensors) across four elevated cards, over 3353px of scroll.
+ * The same board now measures 2441px with every one of those facts in
+ * the first viewport.
+ *
+ * Protocol ownership stays in the coordinator; this screen only
+ * subscribes to its existing stores and dispatches through the
+ * established tool controller.
  *
  * THIS SCREEN ONLY EXISTS WITH A BOARD BEHIND IT. The 'Setup' route is
  * registered in the navigator only while a flight controller is
@@ -29,13 +48,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
@@ -50,19 +63,15 @@ import {
 } from '../theme';
 import { Button } from '../components/controls';
 import {
-  TopSystemBar,
+  SetupChromeBar,
+  SetupStatusBar,
+  SetupInfoGrid,
   OrientationHero,
   OrientationCalibrationCard,
   BoardAlignmentCard,
   OrientationStabilityPanel,
   SafetyStrip,
   SetupSafetyNotices,
-  SetupSummaryLink,
-  SensorsCard,
-  BatteryCard,
-  ReceiverCard,
-  GpsCard,
-  FlightControllerCard,
   DiagnosticsSection,
   FcToolsSection,
 } from '../components/setup';
@@ -122,11 +131,13 @@ import {
   deriveBatterySemantics,
   deriveOrientationViewState,
   deriveSetupArmingReadiness,
+  deriveSetupBatterySummary,
   deriveSetupSafetyFlags,
   deriveSetupRebootRequired,
   deriveSetupSensorSummary,
   deriveSetupWarnings,
   isGpsPresent,
+  isSetupSafetyStripWarranted,
   deriveSetupDiagnostics,
 } from '../../core';
 import type { OrientationViewOffset } from '../../core';
@@ -137,7 +148,9 @@ import type { OrientationViewOffset } from '../../core';
  * They are plain callbacks supplied by the tab shell (MainTabsScreen), so
  * this screen imports no navigator internals and no owner-screen
  * authority. Undefined means "no owner screen reachable in this host",
- * and the card then renders non-interactive rather than pretending.
+ * and the shortcut is then not rendered at all - never rendered inert.
+ * The information itself is unaffected: it lives in the status area and
+ * the grid, not in the link.
  */
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'> & {
   readonly onOpenGps?: () => void;
@@ -146,13 +159,6 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Setup'> & {
   readonly onOpenSensors?: () => void;
   readonly active?: boolean;
 };
-
-export function shouldUseSingleColumnTelemetryCards(
-  windowWidth: number,
-  fontScale: number,
-): boolean {
-  return windowWidth / Math.max(fontScale, 1) < 360;
-}
 
 export default function SetupScreen({
   route,
@@ -217,11 +223,6 @@ function SetupScreenContent({
 }): React.JSX.Element {
   const { t } = useTranslation();
   const { sessionId } = sessionKey;
-  const { width: windowWidth, fontScale } = useWindowDimensions();
-  const useSingleColumnCards = shouldUseSingleColumnTelemetryCards(
-    windowWidth,
-    fontScale,
-  );
   // Desktop tiers get the wider workspace envelope; narrower tiers keep
   // the 1180px reading cap. See useContentEnvelope.ts.
   const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
@@ -353,9 +354,10 @@ function SetupScreenContent({
 
   // SETUP P1 - THE ONE SAFETY MODEL.
   //
-  // Computed ONCE and threaded to both SafetyStrip and TopSystemBar's
-  // arming badge, so the two surfaces cannot diverge - the same design
-  // Step 4 established, now fed by evidence that actually exists.
+  // Computed ONCE and threaded to the status area's arming chip, the
+  // safety strip, the information grid and the FC-tool gate, so those
+  // four surfaces cannot diverge - the same design Step 4 established,
+  // now fed by evidence that actually exists.
   //
   // ARMED comes from the canonical BOXIDS + STATUS_EX path; the blocker
   // verdict comes from the SAME diagnostics view Region 4 renders, so
@@ -376,8 +378,9 @@ function SetupScreenContent({
     diagnosticsView.dataState,
     freshStatusValue?.readiness.malformedTail === true,
   );
-  // The firmware's own battery enum, via the SAME semantics BatteryCard
-  // renders - no second mapping table. An unrecognised raw value stays
+  // The firmware's own battery enum, via the SAME semantics the status
+  // chip and the grid render - no second mapping table. An unrecognised
+  // raw value stays
   // {kind:'UNKNOWN'} and is deliberately dropped here rather than
   // degrading to a false all-clear or a fabricated warning.
   const batterySemantics =
@@ -390,6 +393,11 @@ function SetupScreenContent({
   // card as well as the diagnostics list below. ONE derivation, two
   // presentations - the chip and the detail line cannot disagree.
   const sensorSummary = deriveSetupSensorSummary(diagnosticsView.sensors);
+  // SETUP R9: the battery, compressed to one chip and one grid column
+  // without losing the HW-002 guard that keeps a residual
+  // voltage-divider reading out of the pack-voltage slot. The rule lives
+  // in core (setupStatusModel.ts) so a chip cannot quietly drop it.
+  const batterySummary = deriveSetupBatterySummary(battery);
   // P1 builds the warning model; P2 owns rendering a warning region.
   // Deriving it here now means the truth is proven and tested before any
   // layout depends on it.
@@ -483,67 +491,77 @@ function SetupScreenContent({
 
   return (
     <View style={styles.root} testID="setup-screen">
-      <TopSystemBar
+      {/* THE ONLY FIXED CHROME: 48px, back + title + connection dot +
+          disconnect. The 139px teal bar that used to sit here is gone,
+          and so is every fact it carried that was not chrome - those are
+          in SetupStatusBar, the first thing inside the scroll below. */}
+      <SetupChromeBar
         sessionId={sessionId}
         onBack={onBack}
-        armingReadiness={armingReadiness}
         onDisconnect={handleDisconnect}
       />
       <ScrollView contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}>
-        {/* SETUP FINAL UI CORRECTION - THE ACCEPTED DASHBOARD ORDER.
-            The product decision reversed P2's "live summary first" call:
-            the orientation tools ARE the primary Setup instrument, so the
-            3D model, the artificial horizon, the relative-direction dial
-            and the accelerometer-calibration action now open the page -
-            reachable without scrolling - with the stability check that
-            calibration auto-starts directly beneath them.
+        {/* ==============================================================
+            SETUP R9 - THE ORDER, AND THE MEASUREMENT BEHIND IT.
 
-            The order below is the accepted one:
-              1. connection + identity (TopSystemBar, above this scroll)
-              2. critical safety notices  - only when something is true
-              3. arming readiness
-              4. orientation: model + horizon + direction + calibration
-              5. orientation stability check
-              6. live aircraft summary    - Battery, Receiver/RSSI, GPS,
-                 Sensors - immediately after the orientation block
-              7. system diagnostics
-              8. FC tools (maintenance: compass calibration + reboot;
-                 the accelerometer action lives beside the model above) */}
+            The previous revision opened with 139px of teal chrome, a
+            52px readiness strip and an 84px section heading, put the 3D
+            model at y=186, and then spent the next 1200px before
+            reaching the aircraft's own state: Battery at y=1403,
+            Sensors at y=1849, on a 1920px desktop with a fully
+            populated board - 3353px of scroll in total. The same board
+            now measures 2441px with the model at y=96.
 
-        {/* THE ORDER CHANGED, AND THIS IS THE POINT OF IT.
-            The page used to open with a stack of warnings and readiness
-            diagnostics, so the first thing an operator saw after
-            connecting was a list of what was wrong - and the aircraft's
-            own state, the reason they connected, was below all of it.
+            The order below puts every fact an operator checks on
+            connecting ABOVE the model, and every measured value
+            immediately BELOW it:
 
-            Aircraft state now comes first: the compact readiness strip,
-            the model, then Battery / Receiver / GPS / Sensors. The
-            warning STACK moved down to Diagnostics, where the detail
-            belongs. Nothing was deleted - see the diagnostics block at
-            the foot of this screen, which now carries it. */}
+              1. compact status  - connection, board, firmware, API,
+                                   arming, battery, detected sensors
+              2. safety strip    - ONLY when armed or genuinely blocked
+              3. 3D attitude hero with live heading/pitch/roll and the
+                 accelerometer calibration action
+              4. dense info grid - Status / GPS / Build, three columns
+              5. board alignment - a feature, kept, but after the live
+                 information rather than between the model and it
+              6. advanced: safety notices, stability check, diagnostics,
+                 FC tools, telemetry report
 
-        {/* 3. Arming readiness. Same canonical P1 truth, same component,
-               same dimensions - only its position changed.
+            Nothing was deleted from the product. Battery, RSSI, GPS and
+            the FC status counters all live in the grid at step 4; the
+            sensor mask lives in the status area at step 1 AND stays in
+            the diagnostics disclosure at step 6, which is the one place
+            the same fact appears twice - deliberately, because the
+            disclosure is the detail view of it, not a second summary.
+            ============================================================== */}
 
-               Its 106px section heading is deliberately gone. Above the
-               fold that heading cost more vertical space than the 52px
-               strip it introduced, to explain a state that reads itself:
-               "مسلّحة" / "✓ جاهزة للتسليح" needs no preamble. The
-               explanatory headings that remain sit further down, where
-               they orient rather than delay. */}
-        <SafetyStrip readiness={armingReadiness} />
-
-        {/* 4. ORIENTATION FIRST. The hero (dominant model + horizon +
-               relative direction) opens the page, and the accelerometer
-               calibration action sits directly under it so the operator
-               levels the aircraft while watching the model - no scroll
-               between seeing and acting. */}
-        <SetupSectionHeading
-          eyebrow={t('setupSections.orientationSection.eyebrow')}
-          title={t('setupSections.orientationSection.title')}
-          description={t('setupSections.orientationSection.description')}
-          testID="setup-orientation-heading"
+        {/* 1. THE COMPACT STATUS AREA. First content, not sticky chrome:
+               on a phone an operator scrolls past it to the model, and
+               on a desktop it never leaves the first viewport. */}
+        <SetupStatusBar
+          sessionId={sessionId}
+          armingReadiness={armingReadiness}
+          battery={batterySummary}
+          sensors={sensorSummary}
+          diagnostics={diagnosticsView}
         />
+
+        {/* 2. THE SAFETY STRIP IS NOW AN ALERT, so it appears only when
+               there is something to alert about (isSetupSafetyStripWarranted:
+               ARMED or BLOCKED). READY and UNKNOWN are steady-state facts
+               and read as a chip in the status area above - a permanent
+               74px warning saying "arming state not confirmed" on a
+               healthy board taught operators to ignore the strip. The
+               readiness object itself is unchanged and still drives the
+               chip, the FC-tool gate and the diagnostics list. */}
+        {isSetupSafetyStripWarranted(armingReadiness) ? (
+          <SafetyStrip readiness={armingReadiness} />
+        ) : null}
+
+        {/* 3. THE MODEL. Its 84px section heading is gone: the hero
+               carries its own eyebrow and title, so the heading restated
+               what the card beneath it already said, at the cost of a
+               tenth of a phone viewport. */}
         <LiveOrientationHero
           sessionKey={sessionKey}
           active={active}
@@ -560,105 +578,44 @@ function SetupScreenContent({
           }
         />
 
-        {/* 5. BOARD ALIGNMENT, between the model and the sensors it
-               governs - which is exactly where the question arises. The
-               model above shows attitude the firmware has ALREADY
-               corrected with these angles, so it can never reveal that
-               they are wrong or unread; this card says so in words and
-               lets the operator fix it without leaving the page. */}
+        {/* 4. THE DENSE GRID, directly under the model - Status, GPS and
+               Build side by side on a desktop, stacking on a phone. This
+               is what the four elevated telemetry cards became. */}
+        <SetupInfoGrid
+          armingReadiness={armingReadiness}
+          battery={batterySummary}
+          connected={connected}
+          receiver={receiver}
+          receiverChannelState={receiverChannelState}
+          gps={gps}
+          gpsChannelState={gpsChannelState}
+          gpsPresent={gpsPresent}
+          fcStatus={fcStatus}
+          fcChannelState={fcChannelState}
+          diagnostics={diagnosticsView}
+          onOpenPower={onOpenPower}
+          onOpenReceiver={onOpenReceiver}
+          onOpenGps={onOpenGps}
+          onOpenSensors={onOpenSensors}
+        />
+
+        {/* 5. BOARD ALIGNMENT stays a full feature and moves BELOW the
+               live information. It used to sit between the model and
+               everything measured, which put a configuration form in the
+               middle of a reading surface. The reasoning that placed it
+               near the model is unchanged - the model shows attitude the
+               firmware has ALREADY corrected with these angles, so it can
+               never reveal that they are wrong - and the card still says
+               so in words; it simply no longer interrupts. */}
         <BoardAlignmentCard sessionKey={sessionKey} active={active} />
 
-        {/* 6. THE LIVE SUMMARY, immediately after the model - the two are
-               one unit now. Battery, Receiver, GPS and Sensors are what
-               an operator checks the instant they connect, so they sit
-               with the aircraft rather than below a page of diagnostics.
-               Every card reads the snapshot this screen already derived;
-               no card acquires telemetry of its own. */}
-        <SetupSectionHeading
-          eyebrow={t('setupSections.live.eyebrow')}
-          title={t('setupSections.live.title')}
-          description={t('setupSections.live.description')}
-          testID="setup-live-heading"
-        />
-        <View style={styles.cardGrid} testID="telemetry-card-grid">
-          {/* Battery and Sensors take the full row. Measured reason, not
-              taste: in a half-width 179px column the seven sensor chips
-              stack vertically into a 534px tower that pushes the whole
-              page down, and the battery's voltage - the number an
-              operator reads first - competes with it for height. Across
-              the row the chips flow horizontally and both cards shrink. */}
-          <View style={[styles.cardCell, styles.cardCellFull]}>
-            <SetupSummaryLink
-              onPress={onOpenPower}
-              accessibilityLabel={t('setupNavigation.openPower')}
-              testID="setup-open-power"
-            >
-              <BatteryCard telemetry={battery} />
-            </SetupSummaryLink>
-          </View>
-          <View
-            style={[styles.cardCell, useSingleColumnCards && styles.cardCellFull]}
-          >
-            <SetupSummaryLink
-              onPress={onOpenReceiver}
-              accessibilityLabel={t('setupNavigation.openReceiver')}
-              testID="setup-open-receiver"
-            >
-              <ReceiverCard
-                connected={connected}
-                channelState={receiverChannelState}
-                telemetry={receiver}
-              />
-            </SetupSummaryLink>
-          </View>
-          <View
-            style={[styles.cardCell, useSingleColumnCards && styles.cardCellFull]}
-          >
-            <SetupSummaryLink
-              onPress={onOpenGps}
-              accessibilityLabel={t('setupNavigation.openGps')}
-              testID="setup-open-gps"
-            >
-              <GpsCard
-                connected={connected}
-                channelState={gpsChannelState}
-                telemetry={gps}
-                gpsPresent={gpsPresent}
-              />
-            </SetupSummaryLink>
-          </View>
-          <View style={[styles.cardCell, styles.cardCellFull]}>
-            <SetupSummaryLink
-              onPress={onOpenSensors}
-              accessibilityLabel={t('setupNavigation.openSensors')}
-              testID="setup-open-sensors"
-            >
-              <SensorsCard summary={sensorSummary} />
-            </SetupSummaryLink>
-          </View>
-        </View>
-
-        {/* 7-8. Maintenance. Deep diagnostics and the remaining protected
-                 tools (compass calibration, reboot) keep their full
-                 surface here; the accelerometer action moved beside the
-                 model above with identical gating and identical flow. */}
+        {/* 6. ADVANCED, from here down. */}
         <SetupSectionHeading
           eyebrow={t('setupSections.maintenance.eyebrow')}
           title={t('setupSections.maintenance.title')}
           description={t('setupSections.maintenance.description')}
           testID="setup-maintenance-heading"
         />
-        <View style={styles.cardGrid} testID="setup-system-grid">
-          <View
-            style={[styles.cardCell, styles.cardCellFull]}
-          >
-            <FlightControllerCard
-              connected={connected}
-              channelState={fcChannelState}
-              telemetry={fcStatus}
-            />
-          </View>
-        </View>
         {/* DIAGNOSTICS, SECOND - not deleted, relocated.
 
             The full warning stack and the stability check used to open
@@ -829,26 +786,10 @@ const styles = StyleSheet.create({
     maxWidth: CONTENT_MAX_WIDTH,
     alignSelf: 'center',
   },
-  cardGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: spacing.xs,
-    paddingHorizontal: spacing.sm,
-  },
   telemetryReportRow: {
     marginTop: spacing.md,
     marginHorizontal: spacing.md,
     gap: spacing.xs,
-  },
-  telemetryReportButton: {
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    borderRadius: 10,
-    backgroundColor: colors.surface,
   },
   telemetryReportHint: {
     ...typography.caption,
@@ -878,11 +819,4 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
-  cardCell: {
-    width: '50%',
-    padding: spacing.xs,
-  },
-  cardCellFull: {
-    width: '100%',
-  },
 });

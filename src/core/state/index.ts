@@ -54,6 +54,12 @@ export type {
   SetupWarningSeverity,
 } from './setupSafetyModel';
 
+export {
+  deriveSetupBatterySummary,
+  isSetupSafetyStripWarranted,
+} from './setupStatusModel';
+export type { SetupBatterySummary } from './setupStatusModel';
+
 export { pickTopNotice } from './setupNotice';
 export type {
   SetupNotice,

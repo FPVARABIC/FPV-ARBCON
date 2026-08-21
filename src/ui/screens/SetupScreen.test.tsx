@@ -33,9 +33,7 @@ import { Text } from 'react-native';
 import ReactTestRenderer, { act } from 'react-test-renderer';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import SetupScreen, {
-  shouldUseSingleColumnTelemetryCards,
-} from './SetupScreen';
+import SetupScreen from './SetupScreen';
 import { OrientationRenderer } from '../orientation3d';
 import '../../i18n';
 import i18n from '../../i18n';
@@ -72,12 +70,20 @@ import type {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
-describe('SetupScreen responsive telemetry layout', () => {
+/* SETUP R9: the four telemetry cards this suite used to lay out are
+   gone, and with them shouldUseSingleColumnTelemetryCards. The column
+   rule that replaced it - resolveSetupInfoColumns - is tested beside the
+   grid it belongs to, in SetupInfoGrid's own suite. */
+import {resolveSetupInfoColumns} from '../components/setup';
+
+describe('SetupScreen responsive information grid', () => {
   it('uses one column only when the effective readable width is narrow', () => {
-    expect(shouldUseSingleColumnTelemetryCards(320, 1)).toBe(true);
-    expect(shouldUseSingleColumnTelemetryCards(390, 1)).toBe(false);
-    expect(shouldUseSingleColumnTelemetryCards(720, 2)).toBe(false);
-    expect(shouldUseSingleColumnTelemetryCards(600, 2)).toBe(true);
+    expect(resolveSetupInfoColumns(390, 1)).toBe(1);
+    expect(resolveSetupInfoColumns(768, 1)).toBe(2);
+    expect(resolveSetupInfoColumns(1366, 1)).toBe(3);
+    // fontScale normalisation: 1200px at 200% text is a phone's worth of
+    // effective room, and must not be given three columns.
+    expect(resolveSetupInfoColumns(1200, 2)).toBe(2);
   });
 });
 
@@ -403,7 +409,7 @@ describe('SetupScreen', () => {
     });
   });
 
-  it('assembles and mounts Regions 1+2 (TopSystemBar + OrientationHero + SafetyStrip) without crashing, for a never-opened session', () => {
+  it('assembles and mounts the chrome, the status area and the hero without crashing, for a never-opened session', () => {
     const props = makeProps({
       sessionKey: { sessionId: 'setup-screen-smoke-session', generation: 1 },
     });
@@ -416,18 +422,23 @@ describe('SetupScreen', () => {
     }).not.toThrow();
 
     expect(findAnyByTestID(renderer, 'setup-screen')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-chrome-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-bar')).not.toBeNull();
     expect(
       findAnyByTestID(renderer, 'orientation-hero-waiting'),
     ).not.toBeNull(); // no telemetry scheduler yet
-    expect(findAnyByTestID(renderer, 'safety-strip-unknown')).not.toBeNull(); // placeholder armed/blockers -> UNAVAILABLE -> UNKNOWN
+    /* SETUP R9: an UNKNOWN readiness is a steady-state fact, so it reads
+       as a chip in the status area rather than occupying a full-width
+       alert strip. The strip is reserved for ARMED and BLOCKED. */
+    expect(findAnyByTestID(renderer, 'setup-status-arming')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'safety-strip-unknown')).toBeNull();
 
     act(() => {
       renderer.unmount();
     });
   });
 
-  it('pressing the top bar back button calls navigation.goBack()', async () => {
+  it('pressing the chrome back button calls navigation.goBack()', async () => {
     const goBack = jest.fn();
     const props = {
       route: {
@@ -443,7 +454,7 @@ describe('SetupScreen', () => {
     });
 
     await act(async () => {
-      findAnyByTestID(renderer, 'setup-top-bar-back')!.props.onPress();
+      findAnyByTestID(renderer, 'setup-chrome-back')!.props.onPress();
     });
 
     expect(goBack).toHaveBeenCalledTimes(1);
@@ -627,7 +638,7 @@ describe('SetupScreen - Step 6: connection-indicator states through the real scr
     expect(allText(renderer)).toContain(
       i18n.t('setupTopBar.connectionState.recovering'),
     );
-    expect(findAnyByTestID(renderer, 'setup-top-bar-notice')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-notice')).not.toBeNull();
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -667,7 +678,7 @@ describe('SetupScreen - Step 6: connection-indicator states through the real scr
     expect(allText(renderer)).toContain(
       i18n.t('setupTopBar.connectionState.recoveryFailed'),
     );
-    expect(findAnyByTestID(renderer, 'setup-top-bar-notice')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-notice')).not.toBeNull();
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -1401,7 +1412,7 @@ describe('SetupScreen - the display-only Heading reset', () => {
  * text alternative actually lives.
  */
 describe('SetupScreen - Step 6: accessibility properties through the real screen', () => {
-  it('TopSystemBar: back button, connection indicator, arming badge all carry their accessibility roles/labels', async () => {
+  it('the chrome back button and the status chips all carry their accessibility roles/labels', async () => {
     const sessionId = 'step6-a11y-topbar-1';
     const client = makeFakeClient(sessionId);
     const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
@@ -1418,7 +1429,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
       await flushAsync();
     });
 
-    const backButton = findAnyByTestID(renderer, 'setup-top-bar-back');
+    const backButton = findAnyByTestID(renderer, 'setup-chrome-back');
     expect(backButton?.props.accessibilityRole).toBe('button');
     expect(backButton?.props.accessibilityLabel).toBe(
       i18n.t('setupTopBar.back'),
@@ -1426,11 +1437,11 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
 
     const indicator = findAnyByTestID(
       renderer,
-      'setup-top-bar-connection-indicator',
+      'setup-status-connection',
     );
     expect(indicator?.props.accessibilityRole).toBe('text');
 
-    const armingBadge = findAnyByTestID(renderer, 'setup-top-bar-arming-badge');
+    const armingBadge = findAnyByTestID(renderer, 'setup-status-arming');
     expect(armingBadge?.props.accessibilityRole).toBe('text');
 
     await act(async () => {
@@ -1441,7 +1452,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
     });
   });
 
-  it('TopSystemBar: the notice banner carries accessibilityRole="alert" when present', () => {
+  it('the status area notice carries accessibilityRole="alert" when present', () => {
     // A never-opened session (DISCONNECTED) always has a notice - no
     // need to drive a real desync for this one.
     const props = makeProps({
@@ -1452,7 +1463,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
       renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
     });
 
-    const notice = findAnyByTestID(renderer, 'setup-top-bar-notice');
+    const notice = findAnyByTestID(renderer, 'setup-status-notice');
     expect(notice?.props.accessibilityRole).toBe('alert');
 
     act(() => {
@@ -1516,18 +1527,37 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
     });
 
     expect(
-      findAnyByTestID(renderer, 'orientation-hero-renderer-wrapper'),
-    ).toBeNull();
-    expect(
       findAnyByTestID(renderer, 'orientation-hero-waiting'),
     ).not.toBeNull();
+
+    /* SETUP R9 unified the hero into ONE tree shape, so the stage frame
+       is now present in every state - it simply holds the waiting
+       message instead of the model. (It had to: separate per-status
+       trees were remounting whatever the host put in the calibration
+       slot, which silently discarded the acknowledgement an operator was
+       reading. See OrientationHero's own header.)
+
+       The GUARANTEE this test exists for is unchanged and asserted
+       directly: with no sample there is nothing to describe, so the
+       frame is not an accessibility node and carries no label. An empty
+       or invented label would be worse than none - a screen reader would
+       announce a pose the aircraft never reported. */
+    const wrapper = findAnyByTestID(
+      renderer,
+      'orientation-hero-renderer-wrapper',
+    );
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.props.accessible).toBe(false);
+    expect(wrapper?.props.accessibilityLabel).toBeUndefined();
+    // And no attitude readout exists at all - not a zero pose.
+    expect(findAnyByTestID(renderer, 'orientation-hero-readouts')).toBeNull();
 
     act(() => {
       renderer.unmount();
     });
   });
 
-  it('SafetyStrip: the compact states carry accessibilityRole="text", BLOCKED carries a "header" title and a "button" show-all link', async () => {
+  it('the arming chip reports an unconfirmed readiness as text, and no alert strip is raised for it', async () => {
     const sessionId = 'step6-a11y-safety-1';
     const client = makeFakeClient(sessionId);
     client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
@@ -1545,9 +1575,17 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
       await flushAsync();
     });
 
-    // Placeholder armed/blockers (Step 3) -> UNAVAILABLE -> UNKNOWN, compact.
-    const unknownStrip = findAnyByTestID(renderer, 'safety-strip-unknown');
-    expect(unknownStrip?.props.accessibilityRole).toBe('text');
+    /* No BOXIDS mapping yet -> armed UNPROVEN -> readiness UNKNOWN.
+       SETUP R9: that is a steady state, not an alert. It reads as a chip
+       with accessibilityRole="text"; the full-width strip is reserved for
+       ARMED and BLOCKED, which SafetyStrip's own suite still covers in
+       every one of its four states. */
+    const armingChip = findAnyByTestID(renderer, 'setup-status-arming');
+    expect(armingChip?.props.accessibilityRole).toBe('text');
+    expect(armingChip?.props.accessibilityLabel).toContain(
+      i18n.t('setupTopBar.armingBadge.unknown'),
+    );
+    expect(findAnyByTestID(renderer, 'safety-strip-unknown')).toBeNull();
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -1612,11 +1650,18 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await flushAsync();
     });
 
-    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.title'));
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.notDetected'));
-    // Regions 1+2 still present around the card.
-    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    /* SETUP R9: the default fixture reports BATTERY_NOT_PRESENT with 0
+       cells, so the honest state is NO_PACK - the measured value is
+       still carried, explicitly labelled as a raw reading, and never
+       occupies the pack-voltage slot. */
+    expect(findAnyByTestID(renderer, 'setup-status-battery-no-pack')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-battery-live')).toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('setupStatusBar.battery'));
+    expect(allText(renderer)).toContain(
+      i18n.t('setupStatusBar.batteryNoPack', {value: '0.00'}),
+    );
+    // The chrome and the hero are still present around the status area.
+    expect(findAnyByTestID(renderer, 'setup-chrome-bar')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
 
     await act(async () => {
@@ -1650,11 +1695,27 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await flushAsync();
     });
 
+    expect(findAnyByTestID(renderer, 'setup-status-battery-live')).not.toBeNull();
+    // The chip carries the voltage AND the cell count the firmware
+    // proved; the grid row carries the firmware's own battery state.
+    expect(allText(renderer)).toContain(
+      i18n.t('setupStatusBar.batteryMeasured', {volts: '16.85', cells: 4}),
+    );
     expect(allText(renderer)).toContain('16.85 V');
     expect(allText(renderer)).toContain(i18n.t('batteryCard.state.OK'));
-    // SETUP P2: the permanent filler line is gone; the refusal to
-    // invent a percentage is asserted directly instead.
-    expect(allText(renderer).join(' ')).not.toMatch(/\d+%/);
+    /* SETUP P2: no state-of-charge percentage is ever invented. RSSI and
+       CPU load are genuine percentages from the wire, so the check is
+       scoped to the battery rows rather than to the whole screen. */
+    const batteryRowText = [
+      'setup-info-status-voltage',
+      'setup-info-status-cells',
+      'setup-info-status-battery-state',
+      'setup-status-battery-live',
+    ]
+      .map(id => String(findAnyByTestID(renderer, id)?.props.accessibilityLabel ?? ''))
+      .join(' ');
+    expect(batteryRowText).toContain('16.85');
+    expect(batteryRowText).not.toMatch(/\d+%/);
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -1686,7 +1747,7 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await jest.advanceTimersByTimeAsync(150);
       await flushAsync();
     });
-    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-battery-live')).not.toBeNull();
 
     // Every later battery WRITE hangs (never settles - no response
     // timeout starts), so the value ages past the 9000ms stale threshold
@@ -1701,11 +1762,14 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await flushAsync();
     });
 
-    expect(findAnyByTestID(renderer, 'battery-card-stale')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-battery-stale')).not.toBeNull();
+    /* NEVER COLOUR-ALONE: the stale reading says so in words, in the chip
+       and in its own grid row. */
+    expect(allText(renderer)).toContain(i18n.t('telemetryCards.state.stale'));
     expect(
-      findAnyByTestID(renderer, 'battery-card-stale-label'),
+      findAnyByTestID(renderer, 'setup-info-status-battery-reading'),
     ).not.toBeNull();
-    expect(allText(renderer)).toContain('16.85 V'); // frozen last real value, dimmed - not blanked
+    expect(allText(renderer)).toContain('16.85 V'); // frozen last real value - not blanked
     expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
 
     await act(async () => {
@@ -1746,7 +1810,7 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await flushAsync();
     });
     expect(
-      findAnyByTestID(renderer, 'battery-card-unavailable'),
+      findAnyByTestID(renderer, 'setup-status-battery-unavailable'),
     ).not.toBeNull();
     expect(allText(renderer)).not.toContain('16.85 V');
 
@@ -1897,45 +1961,62 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     });
   }
 
-  it('renders the complete 2x2 grid with all four cards live, in the approved diagnostic tree order Battery -> Receiver -> GPS -> FC', async () => {
+  it('renders the whole aircraft state in two dense surfaces: the status area above the model and the Status/GPS/Build grid below it', async () => {
     const sessionId = 'pass76c-grid-1';
     const { renderer } = await renderWithLiveAux(sessionId);
 
-    expect(findAnyByTestID(renderer, 'telemetry-card-grid')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'receiver-card-live')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'gps-card-live')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'sensors-card')).not.toBeNull();
-    // SETUP P2: the FC card moved OUT of the live grid and into the
-    // maintenance region - CPU load and cycle time are diagnostics, not
-    // the aircraft's operational state.
-    expect(findAnyByTestID(renderer, 'fc-card-live')).not.toBeNull();
+    // ABOVE the model: connection, board, firmware, API, arming,
+    // battery, and every sensor the FC's own mask reported.
+    expect(findAnyByTestID(renderer, 'setup-status-bar')).not.toBeNull();
+    /* The shared fixture reports BATTERY_NOT_PRESENT with 0 cells, so
+       the honest chip is NO_PACK - a reading exists, and it is labelled
+       as a raw one rather than as a pack voltage. */
+    expect(
+      findAnyByTestID(renderer, 'setup-status-battery-no-pack'),
+    ).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-sensors')).not.toBeNull();
+    for (const token of ['GYRO', 'ACC', 'BARO', 'MAG', 'GPS']) {
+      expect(
+        findAnyByTestID(renderer, `setup-status-sensor-${token}`),
+      ).not.toBeNull();
+    }
 
-    // Tree order = accessibility (reading) order. FINAL UI CORRECTION:
-    // Battery leads the live summary (the number an operator reads
-    // first), then Receiver/RSSI, GPS and Sensors; the FC card stays in
-    // maintenance below.
+    // BELOW the model: the three dense columns.
+    expect(findAnyByTestID(renderer, 'setup-info-grid')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-status')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-gps')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-build')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-status-rssi')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-status-cpu')).not.toBeNull();
+
+    /* Tree order = accessibility (reading) order, and this is the whole
+       point of the round: the battery and the sensors are read BEFORE
+       the model, not two screens after it. */
     const text = allText(renderer);
     const positions = [
-      text.indexOf(i18n.t('batteryCard.title')),
-      text.indexOf(i18n.t('telemetryCards.receiver.title')),
-      text.indexOf(i18n.t('telemetryCards.gps.title')),
-      text.indexOf(i18n.t('setupSensorsCard.title')),
-      text.indexOf(i18n.t('telemetryCards.fc.title')),
+      text.indexOf(i18n.t('setupStatusBar.battery')),
+      text.indexOf(i18n.t('setupStatusBar.sensors')),
+      text.indexOf(i18n.t('orientationHero.title')),
+      text.indexOf(i18n.t('setupInfo.status.title')),
+      /* The GPS COLUMN, matched by a row label rather than by its "GPS"
+         heading: the sensor chips above legitimately contain the token
+         GPS too, so the heading is not a unique marker. */
+      text.indexOf(i18n.t('setupInfo.gps.fix')),
+      text.indexOf(i18n.t('setupInfo.build.title')),
     ];
     for (const position of positions) {
       expect(position).toBeGreaterThanOrEqual(0);
     }
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
 
-    // Regions 1+2 are preserved around the grid.
-    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    // The chrome and the model are preserved around them.
+    expect(findAnyByTestID(renderer, 'setup-chrome-bar')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
 
     await teardown(sessionId, renderer);
   });
 
-  it('feeds every auxiliary card from the REAL decode pipeline: RSSI percentage, GPS fix + satellites (presence via the shared STATUS_EX bit), CPU load + cycle time', async () => {
+  it('feeds every grid row from the REAL decode pipeline: RSSI percentage, GPS fix + satellites (presence via the shared STATUS_EX bit), CPU load + cycle time', async () => {
     const sessionId = 'pass76c-aux-live-1';
     const { renderer } = await renderWithLiveAux(sessionId);
     const text = allText(renderer);
@@ -1943,11 +2024,31 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     // Default fixtures: MSP_ANALOG rssi=540 -> 53%; MSP_RAW_GPS raw fix
     // flag 2 (the real GPS_FIX bit) + 8 sats; MSP_STATUS_EX mask 41
     // (includes GPS bit 8), cycle 312us, cpu 12%.
-    expect(text).toContain('RSSI: 53%');
+    expect(text).toContain('53%');
     expect(text).toContain(i18n.t('telemetryCards.gps.fix'));
-    expect(text).toContain('عدد الأقمار: 8');
-    expect(text).toContain('استخدام المعالج: 12%');
-    expect(text).toContain('زمن الدورة: 312 µs');
+    expect(text).toContain('8');
+    expect(text).toContain('12%');
+    expect(text).toContain('312 µs');
+
+    /* Read through the rows themselves, so the assertion cannot pass on
+       a coincidental digit elsewhere on the screen. */
+    const labelOf = (id: string) =>
+      String(findAnyByTestID(renderer, id)?.props.accessibilityLabel ?? '');
+    expect(labelOf('setup-info-status-rssi')).toBe(
+      `${i18n.t('setupInfo.status.rssi')}: 53%`,
+    );
+    expect(labelOf('setup-info-status-cpu')).toBe(
+      `${i18n.t('setupInfo.status.cpuLoad')}: 12%`,
+    );
+    expect(labelOf('setup-info-status-cycle')).toBe(
+      `${i18n.t('setupInfo.status.cycleTime')}: 312 µs`,
+    );
+    expect(labelOf('setup-info-gps-satellites')).toBe(
+      `${i18n.t('setupInfo.gps.satellites')}: 8`,
+    );
+    expect(labelOf('setup-info-gps-fix')).toBe(
+      `${i18n.t('setupInfo.gps.fix')}: ${i18n.t('telemetryCards.gps.fix')}`,
+    );
 
     await teardown(sessionId, renderer);
   });
@@ -1974,12 +2075,22 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
       await flushAsync();
     });
 
-    expect(findAnyByTestID(renderer, 'receiver-card-waiting')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'gps-card-waiting')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'fc-card-waiting')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('telemetryCards.state.waiting'));
-    // The battery card (its poll is immediately due) is already live.
-    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
+    /* SETUP R9: the rows say WAITING, not "unavailable" and certainly
+       not 0 - "the first reading has not arrived" and "there is no data"
+       are different facts, and auxChannelGate.ts keeps them apart. */
+    const labelOf = (id: string) =>
+      String(findAnyByTestID(renderer, id)?.props.accessibilityLabel ?? '');
+    const waiting = i18n.t('telemetryCards.state.waiting');
+    expect(labelOf('setup-info-status-rssi')).toContain(waiting);
+    expect(labelOf('setup-info-status-cpu')).toContain(waiting);
+    expect(labelOf('setup-info-status-cycle')).toContain(waiting);
+    expect(labelOf('setup-info-gps-satellites')).toContain(waiting);
+    expect(allText(renderer)).toContain(waiting);
+    // The battery poll is immediately due, so its chip already carries a
+    // reading (this fixture's is the honest no-pack one).
+    expect(
+      findAnyByTestID(renderer, 'setup-status-battery-no-pack'),
+    ).not.toBeNull();
 
     await teardown(sessionId, renderer);
   });
@@ -2010,10 +2121,14 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     expect(text.join(' ')).not.toContain('الشحن التقديري');
     // The battery card carries no percent figure at all (the receiver's
     // own RSSI percent lives on a different card and is unrelated).
-    const batteryCard = findAnyByTestID(renderer, 'battery-card-live');
-    expect(JSON.stringify(batteryCard?.props.accessibilityLabel)).not.toContain(
-      '%',
-    );
+    const batteryChip = findAnyByTestID(renderer, 'setup-status-battery-live');
+    expect(String(batteryChip?.props.accessibilityLabel)).not.toContain('%');
+    expect(
+      String(
+        findAnyByTestID(renderer, 'setup-info-status-voltage')?.props
+          .accessibilityLabel,
+      ),
+    ).not.toContain('%');
 
     await teardown(sessionId, renderer);
   });
@@ -2027,19 +2142,20 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
       await flushAsync();
     });
 
+    /* A dead session outranks every cached value: the rows say
+       DISCONNECTED rather than continuing to print the last numbers. */
+    const labelOf = (id: string) =>
+      String(findAnyByTestID(renderer, id)?.props.accessibilityLabel ?? '');
+    const disconnected = i18n.t('telemetryCards.state.disconnected');
+    expect(labelOf('setup-info-status-rssi')).toContain(disconnected);
+    expect(labelOf('setup-info-status-cpu')).toContain(disconnected);
+    expect(labelOf('setup-info-gps-satellites')).toContain(disconnected);
+    expect(allText(renderer)).toContain(disconnected);
+    // And the battery chip drops to its own honest unavailable state.
     expect(
-      findAnyByTestID(renderer, 'receiver-card-disconnected'),
+      findAnyByTestID(renderer, 'setup-status-battery-unavailable'),
     ).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'gps-card-disconnected')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'fc-card-disconnected')).not.toBeNull();
-    expect(allText(renderer)).toContain(
-      i18n.t('telemetryCards.state.disconnected'),
-    );
-    // Pass 7.6b preserved: the battery card's own unavailable copy.
-    expect(
-      findAnyByTestID(renderer, 'battery-card-unavailable'),
-    ).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.unavailable'));
+    expect(allText(renderer)).toContain(i18n.t('setupStatusBar.unavailable'));
 
     act(() => {
       renderer.unmount();
@@ -2078,8 +2194,8 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     // read-timeout ERROR (batteryCard.error) rather than the generic
     // unavailable copy - the timeout really did fail to read, and that is
     // what the card now says.
-    expect(findAnyByTestID(renderer, 'battery-card-error')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.error'));
+    expect(findAnyByTestID(renderer, 'setup-status-battery-error')).not.toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('setupStatusBar.error'));
 
     // Navigate away (unmount) and back (fresh mount, SAME session/
     // generation) - the breaker lives in the coordinator, not the screen.
@@ -2099,12 +2215,14 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
 
     expect(countBatteryWrites()).toBe(1); // STILL exactly the one timed-out request
     // The latch (coordinator-owned, generation-scoped) survives remount.
-    expect(findAnyByTestID(renderer2, 'battery-card-error')).not.toBeNull();
+    expect(findAnyByTestID(renderer2, 'setup-status-battery-error')).not.toBeNull();
     // Never the stale pre-timeout value as live, never a "no LiPo" claim.
-    expect(allText(renderer2)).not.toContain(i18n.t('batteryCard.notDetected'));
+    expect(allText(renderer2)).not.toContain(
+      i18n.t('setupStatusBar.batteryNoPack', {value: '0.00'}),
+    );
     // The rest of the screen is alive.
     expect(findAnyByTestID(renderer2, 'setup-screen')).not.toBeNull();
-    expect(findAnyByTestID(renderer2, 'setup-top-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer2, 'setup-chrome-bar')).not.toBeNull();
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -2215,13 +2333,16 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
 
     expect(findAnyByTestID(renderer, 'diagnostics-section')).not.toBeNull();
     const text = allText(renderer);
-    const gridTitleIndex = text.indexOf(i18n.t('telemetryCards.fc.title'));
+    /* SETUP R9: the FC status counters moved out of their own card and
+       into the Status column of the grid, so the grid's title is what
+       the diagnostics disclosure must follow. */
+    const gridTitleIndex = text.indexOf(i18n.t('setupInfo.status.title'));
     const region4Index = text.indexOf('التشخيص والجاهزية');
     expect(gridTitleIndex).toBeGreaterThanOrEqual(0);
     expect(region4Index).toBeGreaterThan(gridTitleIndex);
     // Regions 1-3 are all still present around it.
-    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'telemetry-card-grid')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-chrome-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-grid')).not.toBeNull();
 
     await teardown(sessionId, renderer);
   });
@@ -2232,9 +2353,14 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
 
     // One phase-staggered dispatch at 2100ms within the 2200ms window.
     expect(countStatusExWrites(client)).toBe(1);
-    // Both regions rendered from it.
-    expect(findAnyByTestID(renderer, 'fc-card-live')).not.toBeNull();
-    expect(allText(renderer)).toContain('استخدام المعالج: 12%');
+    /* Both surfaces rendered from that ONE request: the grid's CPU row
+       and the diagnostics disclosure's sensor list. */
+    expect(
+      String(
+        findAnyByTestID(renderer, 'setup-info-status-cpu')?.props
+          .accessibilityLabel,
+      ),
+    ).toBe(`${i18n.t('setupInfo.status.cpuLoad')}: 12%`);
     expect(findAnyByTestID(renderer, 'diagnostics-sensors')).not.toBeNull();
 
     // A second full FC-status interval adds exactly one more request.
@@ -2530,12 +2656,13 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
   /** One stable marker per major section. SafetyStrip's own testID
    * varies with readiness state, so it is matched by prefix. */
   const SECTION_MARKERS = [
+    'setup-status-bar',
     'safety-strip-',
-    'telemetry-card-grid',
     'orientation-hero',
     'orientation-calibration-card',
+    'setup-info-grid',
+    'board-alignment-card',
     'orientation-stability-panel',
-    'setup-system-grid',
     'diagnostics-section',
     'fc-tools-section',
   ];
@@ -2607,26 +2734,30 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
      * What they came to see - the model, the battery, the receiver, the
      * GPS, which sensors were detected - was below all of it.
      *
-     * The order now runs: compact readiness strip, model with its
-     * calibration, the live summary, the system card - and only then the
-     * warning stack, the stability check and deep diagnostics.
+     * SETUP R9 finished the job. The compact status area now leads -
+     * connection, board, firmware, API, arming, battery and every
+     * detected sensor, above the model rather than below it - then the
+     * model with its calibration, then the dense Status/GPS/Build grid,
+     * then board alignment, and only then the stability check and deep
+     * diagnostics.
      *
-     * NOTHING WAS REMOVED. The readiness strip still leads, so
-     * ARMING_DISABLED is still the first thing stated; it is the
-     * multi-line warning STACK that moved down to sit with the rest of
-     * the analysis. A safety warning that has been relocated is still a
-     * safety warning; one that has been deleted is a defect, which is
-     * why the strip stays at the top and the notices are asserted below.
+     * NOTHING WAS REMOVED. Arming state is the fifth chip in the status
+     * area, so ARMING_DISABLED is still stated before anything else; the
+     * full-width alert STRIP is now reserved for ARMED and BLOCKED (this
+     * fixture is neither), and the multi-line warning stack still sits
+     * with the rest of the analysis below. A safety surface that has
+     * been relocated is still a safety surface; one that has been
+     * deleted is a defect, which is why the notices are asserted below.
      */
     const sessionId = 'p2-hierarchy-order';
     const { renderer } = await renderConnectedScreen(sessionId);
 
     expect(renderedSectionOrder(renderer)).toEqual([
-      'safety-strip-',
+      'setup-status-bar',
       'orientation-hero',
       'orientation-calibration-card',
-      'telemetry-card-grid',
-      'setup-system-grid',
+      'setup-info-grid',
+      'board-alignment-card',
       'orientation-stability-panel',
       'diagnostics-section',
       'fc-tools-section',
@@ -2650,8 +2781,8 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
     expect(tools).toBeGreaterThanOrEqual(0);
     // The exact list P0 found buried underneath 908px of calibration UI.
     for (const operational of [
-      'safety-strip-',
-      'telemetry-card-grid',
+      'setup-status-bar',
+      'setup-info-grid',
       'orientation-hero',
     ]) {
       const at = order.indexOf(operational);
@@ -2664,7 +2795,7 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
     // Deep diagnostics stay secondary - below the live summary, above
     // the tools, and never in front of Receiver/GPS/Battery/Sensors.
     expect(order.indexOf('diagnostics-section')).toBeGreaterThan(
-      order.indexOf('telemetry-card-grid'),
+      order.indexOf('setup-info-grid'),
     );
 
     await act(async () => {
@@ -2690,39 +2821,61 @@ describe('SetupScreen - P2 dashboard hierarchy', () => {
     expect(findAnyByTestID(renderer, 'fc-tool-REBOOT')).not.toBeNull();
     expect(allText(renderer)).toContain('أدوات وحدة التحكم');
 
-    // SETUP P2: the FlightController diagnostics CARD moved out of the
-    // live summary grid into the maintenance region. CPU load and cycle
-    // time are engineering detail, not the aircraft's operational state,
-    // and the live grid is now Receiver / GPS / Battery / Sensors.
-    const liveGrid = renderer.root.findAll(
+    /* SETUP R9: the four elevated cards are gone and their facts live in
+       exactly one place each. The grid carries Status / GPS / Build; the
+       sensor chips and the battery live ABOVE the model, in the status
+       area. Nothing is reported twice. */
+    const gridNodes = renderer.root.findAll(
       n =>
-        typeof n.type === 'string' && n.props.testID === 'telemetry-card-grid',
+        typeof n.type === 'string' && n.props.testID === 'setup-info-grid',
     );
-    expect(liveGrid).toHaveLength(1);
-    const liveIds = liveGrid[0]
+    expect(gridNodes).toHaveLength(1);
+    const gridIds = gridNodes[0]
       .findAll(
         n => typeof n.type === 'string' && typeof n.props.testID === 'string',
       )
       .map(n => n.props.testID as string);
-    expect(liveIds.some(id => id.startsWith('fc-card'))).toBe(false);
-    expect(liveIds.some(id => id.startsWith('receiver-card'))).toBe(true);
-    expect(liveIds.some(id => id.startsWith('gps-card'))).toBe(true);
-    expect(liveIds.some(id => id.startsWith('battery-card'))).toBe(true);
-    expect(liveIds).toContain('sensors-card');
+    for (const expected of [
+      'setup-info-status',
+      'setup-info-status-rssi',
+      'setup-info-status-cpu',
+      'setup-info-status-cycle',
+      'setup-info-gps',
+      'setup-info-gps-satellites',
+      'setup-info-build',
+      'setup-info-build-api',
+    ]) {
+      expect({expected, present: gridIds.includes(expected)}).toEqual({
+        expected,
+        present: true,
+      });
+    }
 
-    // And the FC card is still rendered - moved, never deleted.
-    const systemGrid = renderer.root.findAll(
-      n => typeof n.type === 'string' && n.props.testID === 'setup-system-grid',
+    /* NO DUPLICATION: the grid must not also carry a sensor chip or a
+       second battery chip - those are the status area's, once. */
+    expect(gridIds.filter(id => id.startsWith('setup-status-sensor-'))).toEqual(
+      [],
     );
-    expect(systemGrid).toHaveLength(1);
+    expect(gridIds.filter(id => id.startsWith('setup-status-battery'))).toEqual(
+      [],
+    );
+
+    // And the status area carries them exactly once each.
+    const statusNodes = renderer.root.findAll(
+      n => typeof n.type === 'string' && n.props.testID === 'setup-status-bar',
+    );
+    expect(statusNodes).toHaveLength(1);
+    const statusIds = statusNodes[0]
+      .findAll(
+        n => typeof n.type === 'string' && typeof n.props.testID === 'string',
+      )
+      .map(n => n.props.testID as string);
     expect(
-      systemGrid[0]
-        .findAll(
-          n => typeof n.type === 'string' && typeof n.props.testID === 'string',
-        )
-        .map(n => n.props.testID as string)
-        .some(id => id.startsWith('fc-card')),
-    ).toBe(true);
+      statusIds.filter(id => id.startsWith('setup-status-battery')),
+    ).toHaveLength(1);
+    expect(
+      statusIds.filter(id => id.startsWith('setup-status-sensor-')),
+    ).toHaveLength(7);
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);

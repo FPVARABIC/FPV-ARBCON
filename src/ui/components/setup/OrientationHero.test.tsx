@@ -202,11 +202,16 @@ describe('OrientationHero', () => {
    * sample - which is the part that actually matters, and is asserted
    * below rather than assumed.
    */
-  it('phone: the dominant model leads, the dials sit directly under it, the readouts follow', () => {
-    // FINAL UI CORRECTION: the stage is the full card width (dominant)
-    // and the reading order is model -> instruments -> numbers. Every
-    // one of the three still renders the SAME sample - asserted below,
-    // not assumed.
+  it('phone: the numbers lead, then the dominant model, then the dials', () => {
+    /* SETUP R9 REVERSED THE READING ORDER, and it was a measured
+       decision. The readouts used to sit BELOW the calibration card,
+       roughly 500px under the model they describe, so a pilot levelling
+       an aircraft could not read the number and watch the pose in one
+       glance. They now open the hero, directly under its own title, with
+       the model and its dials beneath.
+
+       All three still render the SAME sample - which is the part that
+       actually matters, and is asserted below rather than assumed. */
     const { renderer } = render({
       status: 'LIVE',
       rollDeg: 8.5,
@@ -223,9 +228,9 @@ describe('OrientationHero', () => {
       )
       .map(node => node.props.testID);
     expect(ordered).toEqual([
+      'orientation-hero-roll',
       'orientation-hero-renderer-wrapper',
       'flight-instruments',
-      'orientation-hero-roll',
     ]);
     expect(
       findByTestID(renderer, 'artificial-horizon')?.props.accessibilityLabel,

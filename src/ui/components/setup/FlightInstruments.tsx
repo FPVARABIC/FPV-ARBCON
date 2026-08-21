@@ -206,11 +206,14 @@ const CompassDialMarks = memo(function RenderCompassDialMarks({
             style={[
               styles.relativeMark,
               {
-                left: center + Math.sin(radians) * labelRadius - 12,
+                /* Half the box, so the label centres on its own tick.
+                   Must track RELATIVE_MARK_BOX_WIDTH below. */
+                left: center + Math.sin(radians) * labelRadius - 15,
                 top: center - Math.cos(radians) * labelRadius - 9,
                 transform: [{ rotate: `${mark}deg` }],
               },
             ]}
+            numberOfLines={1}
           >
             {formatRelativeMark(mark)}
           </Text>
@@ -691,9 +694,22 @@ const styles = StyleSheet.create({
      size/weight/colour and silently inherited the platform default
      family. There is no `cardinalNorth` variant any more: a red north
      needle is exactly the claim this instrument may not make. */
+  /**
+   * 30px, NOT 24 - a clipping defect the R9 geometry sweep measured.
+   *
+   * "180°" and "270°" are four glyphs at 11px bold, which is roughly
+   * 27px wide. In a 24px box they wrapped to a second line inside an
+   * 18px-tall box, so the browser reported content 24x37 in a 24x18
+   * frame: the bottom half of both labels was cut off, on every width.
+   * "0°" and "90°" fit, which is why it survived unnoticed.
+   *
+   * The FONT IS UNCHANGED at 11px - this widens the box the glyphs sit
+   * in, and numberOfLines={1} above makes a future longer label
+   * truncate visibly rather than silently wrap out of view.
+   */
   relativeMark: {
     position: 'absolute',
-    width: 24,
+    width: 30,
     height: 18,
     textAlign: 'center',
     color: colors.white,

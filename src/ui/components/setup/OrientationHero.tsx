@@ -311,72 +311,63 @@ export default function OrientationHero({
       : undefined,
   );
 
-  if (orientationView.status === 'WAITING') {
-    return (
-      <View style={styles.container} testID="orientation-hero-waiting">
-        {renderHeader('WAITING')}
-        <View style={visualsStyle} onLayout={handleVisualsLayout}>
-          <View
-            style={[
-              styles.rendererWrapper,
-              { width: heroSize, height: heroHeight },
-            ]}
-          >
-            <Text style={styles.messageText}>{t('orientationHero.waiting')}</Text>
-          </View>
-          <FlightInstruments
-            status="WAITING"
-            stageWidth={instrumentStageWidth}
-            fontScale={fontScale}
-            layout={instrumentsLayout}
-            sizeScale={sidebar ? 0.8 : 1}
-          />
-        </View>
-        {calibrationSlot}
-      </View>
-    );
-  }
+  /**
+   * ONE RETURN, ONE TREE SHAPE - AND THAT IS A CORRECTNESS REQUIREMENT,
+   * NOT A STYLE PREFERENCE.
+   *
+   * This component used to `return` early for WAITING and for ERROR,
+   * each with its own child list. That made the calibration slot sit at
+   * child index 2 while waiting and at a different index once telemetry
+   * arrived, so every WAITING -> LIVE -> WAITING transition UNMOUNTED
+   * and remounted whatever the host put in that slot.
+   *
+   * The host puts OrientationCalibrationCard there, and that card reads
+   * useFcToolPublication(), which records the controller's publication
+   * sequence in a mount-time ref so an outcome belonging to an EARLIER
+   * mount can never be shown as though it were this one's. A spurious
+   * remount therefore does not merely cost a render: it silently
+   * DISCARDS the acknowledgement the operator was reading, because the
+   * new baseline is already past it. That was observed as a failing
+   * integration assertion, not theorised.
+   *
+   * So the branches below vary CONTENT and never STRUCTURE. Every
+   * conditional child keeps its slot as `null`, which React counts, and
+   * the calibration slot's parent depends only on `workspace.expanded`
+   * (a window-size fact that does not change while a board is talking) -
+   * never on telemetry status.
+   */
+  const status: 'LIVE' | 'STALE' | 'WAITING' | 'ERROR' =
+    orientationView.status === 'WAITING'
+      ? 'WAITING'
+      : orientationView.status === 'ERROR'
+      ? 'ERROR'
+      : orientationView.status === 'STALE'
+      ? 'STALE'
+      : 'LIVE';
+  const hasSample = status === 'LIVE' || status === 'STALE';
+  const isStale = status === 'STALE';
 
-  if (orientationView.status === 'ERROR') {
-    return (
-      <View style={styles.container} testID="orientation-hero-error">
-        {renderHeader('ERROR')}
-        <View style={visualsStyle} onLayout={handleVisualsLayout}>
-          <View
-            style={[
-              styles.rendererWrapper,
-              { width: heroSize, height: heroHeight },
-            ]}
-          >
-            <Text style={[styles.messageText, { color: colors.error }]}>
-              {t('orientationHero.error')}
-            </Text>
-          </View>
-          <FlightInstruments
-            status="ERROR"
-            stageWidth={instrumentStageWidth}
-            fontScale={fontScale}
-            layout={instrumentsLayout}
-            sizeScale={sidebar ? 0.8 : 1}
-          />
-        </View>
-        {calibrationSlot}
-      </View>
-    );
-  }
+  /**
+   * THE displayed sample. One object, built once, handed to the model
+   * and read by the numeric readouts - so "the number and the model
+   * disagree" is not a state this component can even represent.
+   *
+   * `undefined` when there is no genuine sample. There is deliberately
+   * no zero pose and no placeholder: a number can only ever appear on
+   * this screen when the flight controller actually sent one.
+   */
+  const displayed =
+    orientationView.status === 'LIVE' || orientationView.status === 'STALE'
+      ? {
+          rollDeg: orientationView.rollDeg,
+          pitchDeg: orientationView.pitchDeg,
+          yawDeg: orientationView.yawDeg,
+        }
+      : undefined;
 
-  const isStale = orientationView.status === 'STALE';
-  const accessibilityText =
-    describeOrientationForAccessibility(orientationView);
-
-  // THE displayed sample. One object, built once, handed to the model
-  // and read by the numeric readouts below - so "the number and the
-  // model disagree" is not a state this component can even represent.
-  const displayed = {
-    rollDeg: orientationView.rollDeg,
-    pitchDeg: orientationView.pitchDeg,
-    yawDeg: orientationView.yawDeg,
-  };
+  const accessibilityText = hasSample
+    ? describeOrientationForAccessibility(orientationView)
+    : undefined;
 
   // Development-only latency stamp. Deliberately during render rather
   // than in an effect: an effect would measure when React got round to
@@ -387,7 +378,7 @@ export default function OrientationHero({
     sessionToken !== undefined && sampleSeq !== undefined
       ? { sessionToken, sampleSeq }
       : undefined;
-  if (sampleIdentity !== undefined) {
+  if (sampleIdentity !== undefined && displayed !== undefined) {
     orientationLatencyTracker.noteHeroSample(
       sampleIdentity,
       sampleReceivedAt ?? 0,
@@ -396,50 +387,74 @@ export default function OrientationHero({
     );
   }
 
-  /** The three numeric truths, on their own full-width row under the
-   * visuals on every tier. */
-  const renderReadouts = () => (
-    <View style={styles.readoutsRow}>
-      <View style={styles.readout} testID="orientation-hero-roll">
-        <Text style={styles.readoutLabel}>
-          {t('orientationHero.rollLabel')}
-        </Text>
-        <Text style={styles.readoutValue}>
-          {formatTiltDegrees(displayed.rollDeg)}
-        </Text>
+  /**
+   * THE THREE NUMERIC TRUTHS, NOW ABOVE THE MODEL RATHER THAN UNDER IT.
+   *
+   * They render `displayed` - the SAME object handed to
+   * OrientationRenderer below, built from
+   * deriveOrientationViewState(useSetupAttitude(...)), which is the
+   * scheduler's MSP_ATTITUDE value. `displayed` is undefined without a
+   * genuine sample, so this whole row is absent rather than showing a
+   * zero pose.
+   *
+   * Position changed because the readouts used to sit BELOW the
+   * calibration card, roughly 500px under the model they describe. A
+   * pilot levelling an aircraft reads the number and watches the model
+   * in the same glance; separating them by a card made that impossible.
+   */
+  const readouts =
+    displayed === undefined ? null : (
+      <View style={styles.readoutsRow} testID="orientation-hero-readouts">
+        <View style={styles.readout} testID="orientation-hero-roll">
+          <Text style={styles.readoutLabel}>
+            {t('orientationHero.rollLabel')}
+          </Text>
+          <Text style={styles.readoutValue}>
+            {formatTiltDegrees(displayed.rollDeg)}
+          </Text>
+        </View>
+        <View style={styles.readout} testID="orientation-hero-pitch">
+          <Text style={styles.readoutLabel}>
+            {t('orientationHero.pitchLabel')}
+          </Text>
+          <Text style={styles.readoutValue}>
+            {formatTiltDegrees(displayed.pitchDeg)}
+          </Text>
+        </View>
+        <View style={styles.readout} testID="orientation-hero-heading">
+          <Text style={styles.readoutLabel}>
+            {t('orientationHero.headingLabel')}
+          </Text>
+          <Text style={styles.readoutValue}>{`${roundHeadingDegrees(
+            displayed.yawDeg,
+          )}°`}</Text>
+        </View>
       </View>
-      <View style={styles.readout} testID="orientation-hero-pitch">
-        <Text style={styles.readoutLabel}>
-          {t('orientationHero.pitchLabel')}
-        </Text>
-        <Text style={styles.readoutValue}>
-          {formatTiltDegrees(displayed.pitchDeg)}
-        </Text>
-      </View>
-      <View style={styles.readout} testID="orientation-hero-heading">
-        <Text style={styles.readoutLabel}>
-          {t('orientationHero.headingLabel')}
-        </Text>
-        <Text style={styles.readoutValue}>{`${roundHeadingDegrees(
-          displayed.yawDeg,
-        )}°`}</Text>
-      </View>
-    </View>
-  );
+    );
 
-  return (
-    <View style={styles.container} testID="orientation-hero">
-      {renderHeader(isStale ? 'STALE' : 'LIVE')}
-      <View style={visualsStyle} onLayout={handleVisualsLayout}>
-        <View
-          style={[
-            styles.rendererWrapper,
-            { width: heroSize, height: heroHeight },
-          ]}
-          accessible
-          accessibilityLabel={accessibilityText}
-          testID="orientation-hero-renderer-wrapper"
-        >
+  const stage = (
+    <View style={visualsStyle} onLayout={handleVisualsLayout}>
+      <View
+        style={[styles.rendererWrapper, { width: heroSize, height: heroHeight }]}
+        accessible={accessibilityText !== undefined}
+        accessibilityLabel={accessibilityText}
+        testID="orientation-hero-renderer-wrapper"
+      >
+        {displayed === undefined ? (
+          <Text
+            style={
+              status === 'ERROR'
+                ? [styles.messageText, { color: colors.error }]
+                : styles.messageText
+            }
+          >
+            {t(
+              status === 'ERROR'
+                ? 'orientationHero.error'
+                : 'orientationHero.waiting',
+            )}
+          </Text>
+        ) : (
           <OrientationRenderer
             // The latest GENUINE sample, directly. No animation, no
             // queue, no pending target: a newer sample simply replaces
@@ -452,30 +467,41 @@ export default function OrientationHero({
             stale={isStale}
             sampleIdentity={sampleIdentity}
           />
-        </View>
-
-        <FlightInstruments
-          status={isStale ? 'STALE' : 'LIVE'}
-          stageWidth={instrumentStageWidth}
-          fontScale={fontScale}
-          layout={instrumentsLayout}
-          sizeScale={sidebar ? 0.8 : 1}
-          rollDeg={displayed.rollDeg}
-          pitchDeg={displayed.pitchDeg}
-          headingDeg={displayed.yawDeg}
-        />
+        )}
       </View>
 
-      {/* The one action that belongs to this view: level, watch, press. */}
-      {calibrationSlot}
+      <FlightInstruments
+        status={status}
+        stageWidth={instrumentStageWidth}
+        fontScale={fontScale}
+        layout={instrumentsLayout}
+        sizeScale={sidebar ? 0.8 : 1}
+        rollDeg={displayed?.rollDeg}
+        pitchDeg={displayed?.pitchDeg}
+        headingDeg={displayed?.yawDeg}
+      />
+    </View>
+  );
 
+  /**
+   * SETUP R9 - THE CONTROLS BECOME A COLUMN ON A DESKTOP.
+   *
+   * The heading note, the display-only reset and its hint used to stack
+   * vertically under a 430px stage on every tier, so a 1920px window
+   * rendered an ~800px hero while leaving 700px of horizontal room
+   * unused. On the desktop workspace tier they sit beside the stage.
+   *
+   * NOTHING WAS RESIZED TO FILL THAT COLUMN. Same typography tokens,
+   * same 44px reset target, same instrument scale - a layout change, not
+   * a scale change.
+   */
+  const controls = !hasSample ? null : (
+    <>
       {isStale && (
         <Text style={styles.staleLabel} testID="orientation-hero-stale-label">
           {t('orientationHero.staleLabel')}
         </Text>
       )}
-
-      {renderReadouts()}
 
       {/* Heading here is a RELATIVE direction, not magnetic north: this
           app never claims a compass it cannot prove, and after the
@@ -536,6 +562,42 @@ export default function OrientationHero({
           </Pressable>
         </View>
       )}
+    </>
+  );
+
+  /* The container's testID still names the state - three suites read it
+     - but it is the SAME element in every state, so naming it costs no
+     remount. */
+  const containerTestID =
+    status === 'WAITING'
+      ? 'orientation-hero-waiting'
+      : status === 'ERROR'
+      ? 'orientation-hero-error'
+      : 'orientation-hero';
+
+  if (workspace.expanded) {
+    return (
+      <View style={styles.container} testID={containerTestID}>
+        {renderHeader(status)}
+        {readouts}
+        <View style={styles.desktopRow}>
+          <View style={styles.desktopStage}>{stage}</View>
+          <View style={styles.desktopControls}>
+            {calibrationSlot}
+            {controls}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container} testID={containerTestID}>
+      {renderHeader(status)}
+      {readouts}
+      {stage}
+      {calibrationSlot}
+      {controls}
     </View>
   );
 }
@@ -662,12 +724,31 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     fontWeight: '600',
   },
+  /* SETUP R9: the row sits ABOVE the stage now, so its spacing separates
+     it from the header rather than from the calibration card. */
   readoutsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginTop: spacing.lg,
+    marginTop: spacing.sm,
     gap: spacing.sm,
+  },
+  desktopRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.lg,
+  },
+  desktopStage: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  /* Wide enough for the calibration card's own copy at its existing
+     typography - not a scaled-up control, a relocated one. */
+  desktopControls: {
+    width: 320,
+    flexShrink: 0,
   },
   readout: {
     alignItems: 'center',

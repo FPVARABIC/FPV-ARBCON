@@ -1637,5 +1637,79 @@
     "cancel": "إلغاء",
     "sessionLost": "فُقد الاتصال بمتحكم الطيران",
     "reconnectFailed": "تعذرت إعادة الاتصال بمتحكم الطيران. تحقق من كابل USB ثم أعد المحاولة."
+  },
+  "setupStatusBar": {
+    "connection": "الاتصال",
+    "board": "اللوحة",
+    "firmware": "البرنامج الثابت",
+    "api": "واجهة MSP",
+    "arming": "التسليح",
+    "battery": "البطارية",
+    "sensors": "المستشعرات",
+    "unavailable": "غير متاح",
+    "waiting": "بانتظار القراءة",
+    "error": "تعذّرت القراءة",
+    "batteryMeasured": "{{volts}} V · {{cells}}S",
+    "batteryMeasuredStale": "{{volts}} V · {{cells}}S — {{stale}}",
+    "batteryNoPack": "لا توجد بطارية مكتشفة (قراءة خام {{value}} V)"
+  },
+  "setupInfo": {
+    "status": {
+      "title": "الحالة",
+      "arming": "التسليح",
+      "armingReason": "أهم سبب للمنع",
+      "voltage": "الجهد",
+      "cells": "عدد الخلايا",
+      "batteryState": "حالة البطارية",
+      "batteryReading": "حالة قراءة البطارية",
+      "linkState": "حالة الوصلة",
+      "fcReading": "حالة قراءة المتحكم",
+      "current": "التيار",
+      "consumed": "المستهلك",
+      "rssi": "RSSI",
+      "cpuLoad": "حمل المعالج",
+      "cycleTime": "زمن الدورة",
+      "i2cErrors": "أخطاء I2C منذ الإقلاع"
+    },
+    "gps": {
+      "title": "GPS",
+      "fix": "تحديد الموقع",
+      "noPresence": "لا تُثبت قراءة المستشعرات وجود وحدة GPS",
+      "satellites": "عدد الأقمار",
+      "altitude": "الارتفاع المُبلّغ",
+      "speed": "السرعة الأرضية",
+      "course": "مسار الحركة",
+      "positionElsewhere": "الإحداثيات لا تُقرأ في هذه الشاشة؛ افتح شاشة GPS للموقع."
+    },
+    "build": {
+      "title": "اللوحة والبرنامج",
+      "board": "اسم اللوحة",
+      "firmware": "معرّف البرنامج",
+      "family": "العائلة",
+      "api": "نسخة واجهة MSP",
+      "compatibility": "توافق الواجهة",
+      "reading": "تحديث القراءة"
+    },
+    "compatibility": {
+      "IDENTIFYING": "جارٍ التعرّف",
+      "IDENTIFICATION_FAILED": "تعذّر التعرّف",
+      "BETAFLIGHT_API_1_47": "متوافق",
+      "OTHER_FIRMWARE_OR_API": "برنامج أو واجهة غير مثبّتة"
+    },
+    "dataState": {
+      "DISCONNECTED": "غير متصل",
+      "UNSUPPORTED": "غير مدعوم",
+      "UNAVAILABLE": "غير متاح",
+      "WAITING": "بانتظار القراءة",
+      "ERROR": "خطأ في القراءة",
+      "FRESH": "قراءة حيّة",
+      "STALE": "قراءة متأخرة"
+    },
+    "links": {
+      "power": "الطاقة والبطارية",
+      "receiver": "جهاز الاستقبال",
+      "gps": "نظام GPS",
+      "sensors": "المستشعرات"
+    }
   }
 }

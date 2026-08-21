@@ -11,8 +11,8 @@
  * that its own pure getValue() reads; here, the equivalent holder is a
  * ref inside the one hook that owns this concern).
  *
- * STATED TRADEOFF: a useRef does NOT survive TopSystemBar unmounting
- * and remounting (unlike SetupUiSessionStore, Pass 7.1's own session-
+ * STATED TRADEOFF: a useRef does NOT survive the hosting component
+ * unmounting and remounting (unlike SetupUiSessionStore, Pass 7.1's own session-
  * scoped storage, which would survive that). Deliberately NOT used here
  * anyway: the worst case of a remount is a still-active notice's
  * tracked age resetting to "just activated" - it cannot cause a WRONG
@@ -50,10 +50,11 @@ import type {MspClientState, SetupNotice} from '../../../core';
 /**
  * Takes ALREADY-RESOLVED ownership/recovery/identification state, rather
  * than calling useMspOwnershipState()/useMspIdentificationState()/
- * useMspRecoveryState() itself - TopSystemBar.tsx already needs these
- * three for its own rendering (the connection indicator, board name,
- * firmware label) and calls them once; this hook reuses those same
- * values instead of subscribing to the same three axes a second time.
+ * useMspRecoveryState() itself - its host already needs these three for
+ * its own rendering (the connection state, the board name, the firmware
+ * label; SetupStatusBar since SETUP R9, TopSystemBar before it) and
+ * calls them once. This hook reuses those same values instead of
+ * subscribing to the same three axes a second time.
  */
 export function useTopBarNotice(
   ownership: MspSessionOwnershipState,
