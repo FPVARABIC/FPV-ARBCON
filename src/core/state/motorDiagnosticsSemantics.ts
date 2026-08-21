@@ -78,11 +78,95 @@ export interface MotorTelemetryVisibleMetrics {
   readonly consumptionMah: number | undefined;
 }
 
-function dshotExtendedOrUndefined(
+/**
+ * DID A SERIAL ESC FRAME EVER ARRIVE FOR THIS OUTPUT?
+ *
+ * THE DEFECT THIS ANSWERS. A real flight controller with FEATURE_ESC_SENSOR
+ * enabled and no telemetry wire connected reported, on every output:
+ *
+ *     0 RPM · 0°C · 0.00V · 0.00A · 0mAh          - labelled "مباشر"
+ *
+ * Every one of those was a zero-initialised struct field, presented as a
+ * measurement. The firmware KNOWS the difference and does not transmit it:
+ *
+ *   escSensorInit()  sets escSensorData[i].dataAge = ESC_DATA_INVALID (255)
+ *                    for every motor and leaves temperature / voltage /
+ *                    current / consumption / rpm at their static zeros
+ *                    (sensors/esc_sensor.c:222-226).
+ *   escSensorProcess() increments dataAge toward ESC_DATA_INVALID whenever
+ *                    a frame fails to arrive (esc_sensor.c:287-288); only
+ *                    a decoded frame sets dataAge = 0 AND writes the five
+ *                    values together (esc_sensor.c:263-268).
+ *   getEscSensorData() returns that struct WHATEVER dataAge says
+ *                    (esc_sensor.c:156-163), and MSP_MOTOR_TELEMETRY copies
+ *                    the four extended fields out of it with no age check
+ *                    at all (msp/msp.c:1254-1265 on 4.5-maintenance,
+ *                    :1337-1348 on master - byte-identical).
+ *
+ * So `dataAge` never reaches the wire, and an all-zero record is EXACTLY
+ * what "the port was opened and nothing was ever received" produces. The
+ * only evidence available to a configurator is the record itself: the five
+ * fields are written together by one frame decode, so a single non-zero
+ * field proves a frame arrived, and a zero beside it is then a genuine
+ * reading. All five zero proves nothing at all.
+ *
+ * DIRECTION OF THE ERROR. A powered-down ESC that genuinely reports 0V on a
+ * working wire is reported here as "waiting" rather than as five zeros.
+ * That is the safe direction to be wrong in: an operator who reads
+ * "بانتظار بيانات ESC" checks their wiring, while one who reads "0.00V
+ * مباشر" concludes their ESC is measuring and their battery is dead.
+ *
+ * WHY rpm IS EXCLUDED WHEN DSHOT IS ALSO ON. The firmware gives
+ * bidirectional DShot precedence for rpm and only falls back to the serial
+ * record "if (!rpmDataAvailable)" (msp.c, same case). With both sources
+ * enabled the rpm bytes did not come from this record, so they are not
+ * evidence about it.
+ */
+function escSensorRecordProven(
+  entry: MspMotorTelemetryEntry,
+  support: MotorDiagnosticsSupport,
+): boolean {
+  if (!support.escSensorEnabled) return false;
+  const writtenByTheRecord = support.dshotTelemetryEnabled
+    ? [
+        entry.temperatureCelsius,
+        entry.voltageCentivolts,
+        entry.currentCentiamps,
+        entry.consumptionMah,
+      ]
+    : [
+        entry.rpm,
+        entry.temperatureCelsius,
+        entry.voltageCentivolts,
+        entry.currentCentiamps,
+        entry.consumptionMah,
+      ];
+  return writtenByTheRecord.some(value => value !== 0);
+}
+
+/**
+ * One extended field - temperature, voltage or current - under whichever
+ * source actually produced it. The two rules are different and are never
+ * applied to each other's source:
+ *
+ *   ESC_SENSOR      the whole record must be proven (above). Once it is, a
+ *                   zero in one field is a measurement.
+ *   DShot extended  the firmware writes the field ONLY when the matching
+ *                   bit is set in `telemetryTypes` and leaves it at 0
+ *                   otherwise (msp.c, "Provide extended dshot telemetry").
+ *                   The wire carries no presence bit, so a zero is
+ *                   indistinguishable from "this ESC does not send it" and
+ *                   is never shown.
+ */
+function escExtendedOrUndefined(
   value: number,
+  entry: MspMotorTelemetryEntry,
   support: MotorDiagnosticsSupport,
 ): number | undefined {
-  return support.escSensorEnabled || value !== 0 ? value : undefined;
+  if (support.escSensorEnabled) {
+    return escSensorRecordProven(entry, support) ? value : undefined;
+  }
+  return value !== 0 ? value : undefined;
 }
 
 /**
@@ -137,11 +221,25 @@ function rpmOrUndefined(
   entry: MspMotorTelemetryEntry,
   support: MotorDiagnosticsSupport,
 ): number | undefined {
-  if (support.escSensorEnabled) return entry.rpm;
-  if (entry.rpm !== 0) return entry.rpm;
-  return entry.invalidPercentRaw >= DSHOT_TELEMETRY_FULLY_INVALID
-    ? undefined
-    : entry.rpm;
+  // WHICHEVER SOURCE THE FIRMWARE USED, THAT SOURCE'S RULE APPLIES.
+  //
+  // This branch used to be `if (support.escSensorEnabled) return entry.rpm`
+  // FIRST, which had two consequences, both wrong. On an ESC_SENSOR board
+  // with no wire it published the zero-initialised struct's rpm as a
+  // reading; and on a board with BOTH sources it took the DShot rpm bytes
+  // and exempted them from the DShot sentinel, so "not one valid packet
+  // ever arrived" (invalidPct pinned at 10000) was shown as 0 RPM.
+  if (support.dshotTelemetryEnabled) {
+    // msp.c gives bidirectional DShot precedence for rpm whenever it is on.
+    if (entry.rpm !== 0) return entry.rpm;
+    return entry.invalidPercentRaw >= DSHOT_TELEMETRY_FULLY_INVALID
+      ? undefined
+      : entry.rpm;
+  }
+  if (support.escSensorEnabled) {
+    return escSensorRecordProven(entry, support) ? entry.rpm : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -194,8 +292,9 @@ export function visibleMotorTelemetryMetrics(
       accepted.dshotTelemetryEnabled && rpm !== undefined
         ? entry.invalidPercentRaw
         : undefined,
-    temperatureCelsius: dshotExtendedOrUndefined(
+    temperatureCelsius: escExtendedOrUndefined(
       entry.temperatureCelsius,
+      entry,
       accepted,
     ),
     // FEATURE_ESC_SENSOR writes hundredths of a volt/amp. The DShot-only
@@ -203,15 +302,72 @@ export function visibleMotorTelemetryMetrics(
     // volts after the firmware's >>2 conversion, and whole amps. Normalize
     // here so the presentation never assigns one source's units to another.
     voltageVolts: accepted.escSensorEnabled
-      ? entry.voltageCentivolts / 100
-      : dshotExtendedOrUndefined(entry.voltageCentivolts, accepted),
+      ? divideOrUndefined(
+          escExtendedOrUndefined(entry.voltageCentivolts, entry, accepted),
+        )
+      : escExtendedOrUndefined(entry.voltageCentivolts, entry, accepted),
     currentAmps: accepted.escSensorEnabled
-      ? entry.currentCentiamps / 100
-      : dshotExtendedOrUndefined(entry.currentCentiamps, accepted),
-    // Betaflight's DShot branch never writes consumption. Only the serial
-    // ESC sensor branch populates it, so a DShot-only zero is never shown.
+      ? divideOrUndefined(
+          escExtendedOrUndefined(entry.currentCentiamps, entry, accepted),
+        )
+      : escExtendedOrUndefined(entry.currentCentiamps, entry, accepted),
+    // Betaflight's DShot branch never writes consumption at all - the field
+    // is only ever assigned inside the FEATURE_ESC_SENSOR block - so a
+    // DShot-only zero is not a zero reading, it is an absent field.
     consumptionMah: accepted.escSensorEnabled
-      ? entry.consumptionMah
+      ? escExtendedOrUndefined(entry.consumptionMah, entry, accepted)
       : undefined,
   });
+}
+
+const divideOrUndefined = (value: number | undefined): number | undefined =>
+  value === undefined ? undefined : value / 100;
+
+/**
+ * PACKET RECEIVED IS NOT MEASUREMENT AVAILABLE.
+ *
+ * A successful command-139 reply proves the link works and the firmware
+ * answered. It proves nothing about whether any ESC spoke. These two say
+ * so separately, so a presentation can report "the source is configured
+ * and we are still waiting" instead of labelling a frame of zeros LIVE.
+ */
+export function motorTelemetryHasValidMeasurement(
+  entry: MspMotorTelemetryEntry,
+  support: MotorDiagnosticsSupport | undefined,
+): boolean {
+  const metrics = visibleMotorTelemetryMetrics(entry, support);
+  return (
+    metrics.rpm !== undefined ||
+    metrics.temperatureCelsius !== undefined ||
+    metrics.voltageVolts !== undefined ||
+    metrics.currentAmps !== undefined ||
+    metrics.consumptionMah !== undefined
+  );
+}
+
+/** True when at least ONE output carries at least one valid field. */
+export function escTelemetryHasValidMeasurement(
+  motors: readonly MspMotorTelemetryEntry[] | undefined,
+  support: MotorDiagnosticsSupport | undefined,
+): boolean {
+  return (motors ?? []).some(motor =>
+    motorTelemetryHasValidMeasurement(motor, support),
+  );
+}
+
+/**
+ * True when FEATURE_ESC_SENSOR is configured and not one output has a
+ * record that proves a serial frame arrived - the exact state a wired-up
+ * feature with no telemetry wire produces.
+ */
+export function escSensorConfiguredButSilent(
+  motors: readonly MspMotorTelemetryEntry[] | undefined,
+  support: MotorDiagnosticsSupport | undefined,
+): boolean {
+  if (support === undefined || !support.escSensorEnabled) return false;
+  const entries = motors ?? [];
+  return (
+    entries.length > 0 &&
+    entries.every(motor => !escSensorRecordProven(motor, support))
+  );
 }

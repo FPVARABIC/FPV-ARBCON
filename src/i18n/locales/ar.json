@@ -1310,6 +1310,8 @@
     "qualityWarning": "تجاوزت أخطاء تليمترية DShot نسبة 1٪ في قراءة واحدة على الأقل. افحص الإشارة وإعداد Bidirectional DShot، ولا تفسر القراءة وحدها كعطل ميكانيكي.",
     "rpmValue": "{{rpm}} RPM",
     "rpmUnproven": "لا تصل قراءة RPM من هذا المخرج",
+    "awaitingEscData": "المصدر متاح — بانتظار بيانات ESC",
+    "escSensorSilentHint": "حسّاس ESC مفعّل في الإعدادات لكن لم تصل منه أي حزمة على أي مخرج. تحقّق من سلك التليمترية ومن تعيين وظيفة ESC Sensor لمنفذ تسلسلي.",
     "rpmUnprovenHint": "المتحكم يعلن تفعيل Bidirectional DShot لكنه لم يستلم أي حزمة صالحة. تحقّق من دعم ESC للوضع ثنائي الاتجاه ومن إعداد dshot_bidir.",
     "invalidPercent": "أخطاء {{value}}٪",
     "invalidPercentUnavailable": "أخطاء {{value}}",

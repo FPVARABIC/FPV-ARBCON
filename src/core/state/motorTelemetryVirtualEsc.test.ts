@@ -257,11 +257,50 @@ describe('a zero RPM is not the same fact as an absent one', () => {
     expect(rpmIsUnprovenZero(decoded.motors[0], DSHOT_ONLY)).toBe(false);
   });
 
-  it('trusts a serial ESC sensor zero, because that record means at rest', () => {
+  it('does NOT trust a serial ESC sensor record that is zero throughout', () => {
+    /*
+     * CORRECTED AGAINST A REAL FLIGHT CONTROLLER. This case used to assert
+     * that an all-zero record under FEATURE_ESC_SENSOR was a motor at
+     * rest. A real board with the feature enabled and no telemetry wire
+     * attached produced exactly this record on all four outputs, and the
+     * screen showed "0 RPM · 0C · 0.00V · 0.00A · 0mAh · مباشر".
+     *
+     * The firmware distinguishes the two and does not transmit the
+     * distinction: escSensorInit() sets dataAge = ESC_DATA_INVALID and
+     * leaves the five values at static zero (esc_sensor.c:222-226); only a
+     * decoded frame sets dataAge = 0 and writes all five together
+     * (:263-268); getEscSensorData() hands the struct over whatever
+     * dataAge says (:156-163); and MSP_MOTOR_TELEMETRY copies it out with
+     * no age check. An all-zero record is therefore the never-received
+     * state, and it is not a measurement of anything.
+     */
     const decoded = decodeMotorTelemetry(motorTelemetryFrame([silent]));
     expect(
       visibleMotorTelemetryMetrics(decoded.motors[0], ESC_SENSOR).rpm,
-    ).toBe(0);
+    ).toBeUndefined();
+    expect(rpmIsUnprovenZero(decoded.motors[0], ESC_SENSOR)).toBe(true);
+  });
+
+  it('trusts a serial ESC sensor zero once the record proves a frame arrived', () => {
+    /*
+     * THE PROPERTY THE CASE ABOVE USED TO PROTECT, KEPT. A serial ESC that
+     * IS talking reports its pack voltage and temperature in the same
+     * record as its rpm, because one frame decode writes all five fields.
+     * With that proof present, the zero rpm beside them is a genuine
+     * measurement of a stopped motor and is shown as one.
+     */
+    const stoppedButTalking: VirtualEsc = {
+      ...silent,
+      voltageRaw: 1655,
+      temperatureC: 27,
+    };
+    const decoded = decodeMotorTelemetry(
+      motorTelemetryFrame([stoppedButTalking]),
+    );
+    const visible = visibleMotorTelemetryMetrics(decoded.motors[0], ESC_SENSOR);
+    expect(visible.rpm).toBe(0);
+    expect(visible.voltageVolts).toBeCloseTo(16.55, 5);
+    expect(visible.temperatureCelsius).toBe(27);
     expect(rpmIsUnprovenZero(decoded.motors[0], ESC_SENSOR)).toBe(false);
   });
 

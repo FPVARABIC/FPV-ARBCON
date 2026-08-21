@@ -12,6 +12,8 @@ import type {
   MotorTestDiagnosticsSnapshot,
 } from '../../core/state/motorTestController';
 import {
+  escSensorConfiguredButSilent,
+  escTelemetryHasValidMeasurement,
   hasEscTelemetrySource,
   rpmIsUnprovenZero,
   visibleMotorTelemetryMetrics,
@@ -293,6 +295,26 @@ export function MotorDiagnosticsPanel({
    * reading of "the stream is poor". They are never both shown.
    */
   const escMotors = escTelemetry?.motors ?? [];
+  /**
+   * THREE FACTS, KEPT APART.
+   *
+   *   escAvailability   the SOURCE is configured (MSP_MOTOR_CONFIG said so)
+   *   escStatus FRESH   a PACKET arrived (command 139 answered)
+   *   escHasMeasurement a FIELD passed its source's own validity rule
+   *
+   * A real flight controller with FEATURE_ESC_SENSOR enabled and nothing
+   * wired to it satisfies the first two and fails the third, and used to be
+   * labelled "مباشر" beside four rows of zeros. The word now belongs to the
+   * third fact alone.
+   */
+  const escHasMeasurement = escTelemetryHasValidMeasurement(escMotors, support);
+  const escAwaitingData =
+    !sourceProvenUnavailable &&
+    hasEscTelemetrySource(support) &&
+    escMotors.length > 0 &&
+    !escHasMeasurement;
+  /** The serial record proves no frame ever arrived on ANY output. */
+  const escSensorSilent = escSensorConfiguredButSilent(escMotors, support);
   const qualityDegraded =
     support?.dshotTelemetryEnabled === true &&
     escMotors.some(
@@ -388,8 +410,18 @@ export function MotorDiagnosticsPanel({
               {t('motorDiagnostics.escHeading')}
             </Text>
           </View>
-          <Text style={styles.channelState}>
-            {channelText(t, escAvailability, escStatus)}
+          <Text
+            style={styles.channelState}
+            testID="esc-telemetry-channel-state"
+          >
+            {/* "مباشر" is a claim about MEASUREMENTS, not about the poll.
+                While the source is configured and answering but nothing
+                valid has arrived, the state is named for what it is. A
+                STALE or failed channel keeps its own word - this only
+                replaces the FRESH one. */}
+            {escAwaitingData && escStatus === 'FRESH'
+              ? t('motorDiagnostics.awaitingEscData')
+              : channelText(t, escAvailability, escStatus)}
           </Text>
         </View>
 
@@ -463,6 +495,21 @@ export function MotorDiagnosticsPanel({
             {t('motorDiagnostics.rpmUnprovenHint')}
           </Text>
         ) : null}
+        {/* THE SERIAL SENSOR HAS ITS OWN CAUSE AND ITS OWN SENTENCE.
+            FEATURE_ESC_SENSOR is a configuration flag; the frames come
+            down a physical telemetry wire on a port assigned to ESC
+            Sensor. The flag being on says nothing about either, and the
+            firmware's own dataAge - the thing that WOULD say - never
+            reaches the wire. So the app names the two things a person can
+            actually check. */}
+        {escSensorSilent ? (
+          <Text
+            style={styles.qualityWarning}
+            testID="esc-telemetry-sensor-silent"
+          >
+            {t('motorDiagnostics.escSensorSilentHint')}
+          </Text>
+        ) : null}
         {/* SAID ONCE, NOT ONCE PER MOTOR. When the same sentence is true
             of every output, four copies of it are three copies of noise -
             and they are what turned "no telemetry" into a section as tall
@@ -529,16 +576,24 @@ export function MotorDiagnosticsPanel({
              restating the first. */
           <Text style={styles.caption} testID="esc-telemetry-empty">
             {t(
+              /* THREE DIFFERENT REASONS FOR AN EMPTY LIST, AND EACH GETS
+                 THE SENTENCE THAT IS TRUE OF IT.
+
+                 PROVEN OFF     the flight controller said neither source is
+                                enabled, so "turn one on" is real advice.
+                 NOT READ YET   no motor configuration has arrived, so the
+                                app knows nothing about the aircraft and
+                                says so about ITSELF.
+                 CONFIGURED     a source IS enabled and no packet has come
+                                back yet. Telling this operator to "enable
+                                DShot telemetry or an ESC sensor" - which
+                                is what this branch used to do - is advice
+                                against a premise that is already false. */
               sourceProvenUnavailable
                 ? 'motorDiagnostics.enableEscTelemetry'
-                : /* AND WHEN NOTHING HAS BEEN READ, SAY THAT. "Enable DShot
-                     telemetry or an ESC sensor" is advice premised on having
-                     found them switched off. With no motor configuration
-                     read, that premise does not exist, and the honest line
-                     is the one about this app's own state. */
-                  support === undefined
+                : support === undefined
                   ? 'motorDiagnostics.sourceUnknown'
-                  : 'motorDiagnostics.noEscTelemetry',
+                  : 'motorDiagnostics.awaitingEscData',
             )}
           </Text>
         )}

@@ -63,6 +63,8 @@ import {buildMspFrameBytes} from '../../../core/protocol/__testUtils__/mspFixtur
 import {ARMING_DISABLE_FLAG_TOKENS} from '../../../core/state/armingBlockers';
 import {MSP_SET_ARMING_DISABLED} from '../../../core/state/motorArmingRestriction';
 import {
+  escSensorConfiguredButSilent,
+  escTelemetryHasValidMeasurement,
   hasEscTelemetrySource,
   rpmIsUnprovenZero,
   visibleMotorTelemetryMetrics,
@@ -684,6 +686,59 @@ describe('a reading leaving the flight controller reaches the Motors snapshot', 
       // The DShot invalid-packet rate is not an ESC-sensor fact.
       expect(visible.invalidPercentRaw).toBeUndefined();
     }
+    await operator.endSession();
+  });
+
+  it('the real bench: a configured ESC sensor that never sent a frame', async () => {
+    /* THE PHOTOGRAPH, THROUGH THE PRODUCTION PATH.
+     *
+     * Session open, M2 commanded to 1033 and the rest resting at 1000,
+     * FEATURE_ESC_SENSOR enabled, command 139 answering - and every field
+     * of every record zero, which is exactly what escSensorInit() leaves
+     * behind when no telemetry wire is attached (esc_sensor.c:222-226).
+     *
+     * The packet ARRIVES. That is the whole point: the channel is FRESH,
+     * the poll succeeded, the link is fine - and there is still not one
+     * valid measurement in it. */
+    const silent = new Wire().u8(4);
+    for (let index = 0; index < 4; index += 1) {
+      silent.u32(0).u16(0).u8(0).u16(0).u16(0).u16(0);
+    }
+    const {operator, begun} = await openMotorTest({
+      dshotBidir: false,
+      escSensor: true,
+      telemetry: silent.done(),
+    });
+    const support = begun.motorDiagnosticsSupport;
+    expect(support?.escTelemetrySource).toBe('ESC_SENSOR');
+
+    const diagnostics = await operator.refreshDiagnostics();
+    await settle();
+
+    // PACKET_RECEIVED: yes.
+    expect(diagnostics.escTelemetry.state).toBe('FRESH');
+    const motors = diagnostics.escTelemetry.value?.motors ?? [];
+    expect(motors).toHaveLength(4);
+    // VALID_MEASUREMENT_AVAILABLE: no - and not one field escapes.
+    expect(escTelemetryHasValidMeasurement(motors, support)).toBe(false);
+    expect(escSensorConfiguredButSilent(motors, support)).toBe(true);
+    for (const motor of motors) {
+      expect(visibleMotorTelemetryMetrics(motor, support)).toEqual({
+        rpm: undefined,
+        invalidPercentRaw: undefined,
+        temperatureCelsius: undefined,
+        voltageVolts: undefined,
+        currentAmps: undefined,
+        consumptionMah: undefined,
+      });
+    }
+
+    // AND THE COMMANDED OUTPUT IS NOT EVIDENCE. M2 is being driven at 1033
+    // and that changes nothing here: an output value is what the flight
+    // controller is sending, never what an ESC measured.
+    expect(diagnostics.outputs.value?.values.slice(0, 4)).toEqual([
+      1090, 1105, 1078, 1120,
+    ]);
     await operator.endSession();
   });
 
