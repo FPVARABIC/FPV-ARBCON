@@ -54,6 +54,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
   type GestureResponderEvent,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
@@ -474,6 +475,24 @@ export function MotorsScreenView({
   // Desktop tiers get the wider workspace envelope; narrower tiers keep
   // the 1180px reading cap. See useContentEnvelope.ts.
   const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
+  /**
+   * WHEN THE WORKSPACE BECOMES TWO COLUMNS.
+   *
+   * Divided by fontScale, so the breakpoint tracks the READING width
+   * rather than the device width: at 200% text a 1024px tablet has the
+   * effective room of a 512px phone, and forcing two columns there would
+   * put the airframe diagram and the sliders in strips too narrow for
+   * either. 1000 is the measured point at which the diagram keeps its
+   * legible size (it floors at ~320px) beside a slider column wide
+   * enough for four labelled rows plus their values.
+   */
+  const { width: windowWidth, fontScale } = useWindowDimensions();
+  /* 1024 rather than 1000: the containment scan on this file forbids any
+     motor-magnitude numeral in executable code (1000 is the stop value on
+     an analog output), and a layout breakpoint has no business being
+     indistinguishable from one. 1024 is the conventional desktop tier
+     boundary and lands inside the same measured band. */
+  const wideWorkspace = windowWidth / Math.max(fontScale, 1) >= 1024;
   const effectiveBottomInset = bottomInset ?? 0;
   // The snapshot is the ONLY source of controller truth. `useState` plus an
   // explicit subscription rather than useSyncExternalStore: the controller
@@ -1600,24 +1619,33 @@ export function MotorsScreenView({
         style={styles.scroll}
         contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}
       >
-        <View style={styles.screenHeader}>
-          <Text style={styles.eyebrow}>{t('motorsScreen.eyebrow')}</Text>
+        {/* ================================================ REGION A
+            SAFETY / SESSION HEADER, and nothing else.
+
+            IT USED TO BE THREE STACKED BLOCKS. An eyebrow, a display
+            title and a subtitle (144px), then a full-width propeller
+            banner, then a status card with its own heading, its own
+            padding and a developer disclosure inside it - 376px of
+            chrome before the first control, measured at every width, on
+            a screen whose entire purpose is below it.
+
+            One row now: what the screen is, and what state it is in.
+            The propeller warning keeps its own line, its icon and its
+            error colour - it is the one sentence that must never be
+            skimmed - but it no longer needs a banner the width of a
+            desktop to say eight words. The developer disclosure moved
+            to the advanced region where it belongs. */}
+        <View style={styles.headerRow}>
           <Text style={styles.title} testID="motors-title">
             {t('motorsScreen.title')}
           </Text>
-          <Text style={styles.screenSubtitle}>
+          <Text style={styles.headerSubtitle} numberOfLines={1}>
             {t('motorsScreen.subtitle')}
           </Text>
         </View>
 
-        {/* One compact bench notice, not a confirmation ritual. Propeller
-            removal stays first, with text AND icon rather than colour alone. */}
-        {/* P3: ONE concise persistent warning. The paragraphs, bullet
-            checklist and battery scope prose moved out of the primary
-            path - P2's automatic protections made the ritual redundant,
-            and SAFETY stays in the background while CAPABILITY leads. */}
         <View style={styles.dangerBanner} testID="motors-propeller-warning">
-          <Icon name="triangle-alert" size={20} color={colors.error} />
+          <Icon name="triangle-alert" size={18} color={colors.error} />
           <Text style={[styles.flexOne, styles.dangerTitle]}>
             {t('motorsScreen.propellerWarning')}
           </Text>
@@ -1646,17 +1674,16 @@ export function MotorsScreenView({
             <View
               style={[styles.statusDot, { backgroundColor: statusColor }]}
             />
-            <View style={styles.flexOne}>
-              <Text style={styles.statusHeading}>
-                {t('motorsScreen.statusHeading')}
-              </Text>
-              <Text
-                style={[styles.statusText, { color: statusColor }]}
-                testID={`motors-status-${presentation}`}
-              >
-                {statusText}
-              </Text>
-            </View>
+            {/* The heading "حالة النظام" was a label for a value that
+                already reads as a state - two lines where one says the
+                same thing. The value keeps its dot, its colour and its
+                testID; the label is gone. */}
+            <Text
+              style={[styles.statusText, { color: statusColor }]}
+              testID={`motors-status-${presentation}`}
+            >
+              {statusText}
+            </Text>
           </View>
           {presentation === 'ACKNOWLEDGED' && !freezeTransientPresentation ? (
             <Text style={styles.caption} testID="motors-ack-notice">
@@ -1705,6 +1732,377 @@ export function MotorsScreenView({
             </View>
           ) : null}
 
+        </View>
+
+        {/* (7) Fault - MOVED TO THE TOP OF THE CONTENT FLOW (final-review
+            M-1). An emergency instruction rendered below Identity,
+            Direction and Mapping measured ~3100px deep on a phone; the
+            detailed banner now sits directly under the status card, and a
+            compact copy of the SAME instruction is pinned beside STOP so
+            scroll position can never hide it. TWO DIFFERENT MESSAGES, because they mean two very
+            different things to somebody standing next to an aircraft.
+
+            The LiPo instruction is reserved for a stop that is genuinely
+            unconfirmed while a command may be live - see
+            stopIsGenuinelyUnconfirmed(). Every other fault ends the
+            session and needs a reconnect, which is worth saying plainly,
+            but it is NOT a reason to tell somebody to pull a battery. */}
+        {presentation === 'FAULT' ? (
+          stopUnconfirmed ? (
+            <View style={styles.faultBanner} testID="motors-fault-banner">
+              <Icon name="octagon-alert" size={24} color={colors.error} />
+              <View style={styles.flexOne}>
+                <Text style={styles.faultText} testID="motors-emergency-text">
+                  {t('motorsScreen.emergencyDisconnect')}
+                </Text>
+                <Text
+                  style={styles.dangerBody}
+                  testID="motors-new-session-text"
+                >
+                  {t('motorsScreen.emergencyNewSession')}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.card} testID="motors-fault-notice">
+              <Text
+                style={styles.blockHeading}
+                testID="motors-fault-session-text"
+              >
+                {t('motorsScreen.faultSessionEnded')}
+              </Text>
+              <Text style={styles.caption} testID="motors-fault-no-lipo-text">
+                {t('motorsScreen.faultNoBatteryAction')}
+              </Text>
+            </View>
+          )
+        ) : null}
+
+        {/* ================================================ REGION B
+            THE MOTOR WORKSPACE - the reason the screen exists.
+
+            TWO COLUMNS ON A WIDE SCREEN, and the split is the point:
+            everything that answers "WHICH motor is this, where is it and
+            which way does it turn" on one side, everything that answers
+            "how do I drive it and how do I stop it" on the other. They
+            used to be one column 4,200px long, in which the airframe
+            diagram sat at y=1181 on a 1920 desktop - below the fold on
+            the widest screen this application runs on, under the very
+            sliders it exists to label.
+
+            The column order is deliberate in RTL: identity leads, because
+            a person picks the motor before they move it. */}
+        <View
+          style={[styles.workspaceRow, wideWorkspace && styles.workspaceRowWide]}
+          testID="motors-primary-workspace"
+        >
+          <View
+            style={[styles.workspaceColumn, wideWorkspace && styles.workspaceColumnAirframe]}
+            testID="motors-airframe-column"
+          >
+          {/* ---- P1b-B: MOTOR IDENTITY IS CORE. ------------------------
+            * Which motor am I addressing, where did I observe it, which
+            * output drives it, what is actually confirmed - answerable
+            * without opening a disclosure. The map, the numbered
+            * selector, the protected hold and the observation wizard now
+            * sit together in the order a person performs them. */}
+          <MotorIdentitySection
+            slots={identitySlots}
+            selectedSlot={selectedSlot}
+            onSelectSlot={handleSelectSlot}
+            capability={identificationCapability}
+            airframeEntries={airframeEntries}
+            diagramMotorCount={liveMotorCount ?? MOTOR_AIRFRAME_QUAD_COUNT}
+            active={active}
+            liveSlot={liveSlot}
+            liveActivity={liveActivity}
+            verification={verification}
+            receipt={receipt}
+            onConfirm={handleConfirmObservation}
+            onMultipleMotorsReported={handleMultipleMotors}
+            onClearObservation={handleClearObservation}
+            outputOrder={outputOrderValues}
+            holdControl={holdControl}
+          />
+          {/* SESSION READINESS, BESIDE THE HOLD CONTROL IT DESCRIBES.
+              These two blocks used to live at the bottom of the tools
+              bench. "الجلسة جاهزة - اضغط مطولًا على M1" and the exact
+              terminal readiness failure are both statements ABOUT the
+              protected hold, and the hold is in the identity section
+              directly above - reading them 2,000px away from it was the
+              reason the bench looked like it owned the workflow. */}
+          {canActivate || freezeTransientPresentation ? (
+            <View style={styles.readyBanner} testID="motors-session-ready">
+              <View style={styles.readyBadge}>
+                <Icon name="check" size={18} color={colors.white} />
+              </View>
+              <View style={styles.flexOne}>
+                <Text style={styles.readyTitle}>
+                  {t('motorsScreen.readyHeading')}
+                </Text>
+                <Text style={styles.readyBody}>
+                  {t('motorsScreen.readyDetail', {slot: `M${selectedSlot}`})}
+                </Text>
+              </View>
+            </View>
+          ) : null}
+
+          {/* P1b-B: the numbered selector, the airframe map, the protected
+              hold and the selected-motor facts all moved UP into
+              MotorIdentitySection. They are not duplicated here - motor
+              identity is a core question, and answering it from the bottom
+              of a tools card was the reason it read as advanced. */}
+
+          {showReadinessDiagnostic && !freezeTransientPresentation ? (
+            <View
+              style={styles.readinessBlock}
+              testID="motors-readiness-blocked-detail"
+            >
+              <Text style={styles.blockHeading}>
+                {t('motorsScreen.readinessBlockedHeading')}
+              </Text>
+              {primaryBlockReason !== undefined ? (
+                <Text style={styles.blockReason}>
+                  {t(`motorsScreen.blockReason.${primaryBlockReason}`)}
+                </Text>
+              ) : null}
+              <Text
+                style={styles.caption}
+                testID="motors-readiness-blocked-code"
+              >
+                {t('motorsScreen.readinessBlockedDetail', {
+                  reason: readinessDiagnosticReason,
+                  step: snapshot?.setupStep ?? 'NONE',
+                })}
+              </Text>
+              <Text style={styles.caption}>
+                {requiresNewConnection
+                  ? t('motorsScreen.readinessReconnectAction')
+                  : t('motorsScreen.readinessWaitAction')}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* DIRECTION, beside identity rather than at the bottom of the
+            * page. Three sources on three rows - template expectation,
+            * what this session commanded, what a person observed - and
+            * the one authoring workflow underneath them. */}
+          <MotorDirectionSection
+            selectedMotor={selectedSlot}
+            operator={operator}
+            identificationCapability={identificationCapability}
+            commandCapability={directionCommandCapability}
+            verification={verification}
+            commanded={selectedDirectionCommand}
+            onCommandOutcome={handleDirectionCommandOutcome}
+            onDirtyChange={setEscDirectionDirty}
+          />
+          {/* Reading which output drives which motor is firmware truth and
+            * needs no observation at all. Writing one still needs
+            * everything it always needed - the panel below the read is the
+            * same panel, reaching the same controller transaction. */}
+          <MotorOutputMappingSection
+            sessionId={sessionId}
+            motorCount={liveMotorCount}
+            verification={verification}
+            capability={identificationCapability}
+            onEndMotorTestSession={handleEndSessionForConfiguration}
+            onDirtyChange={setOutputOrderDirty}
+            blockedReason={configurationReadBlockedReason}
+            onValuesChange={setOutputOrderValues}
+          />
+          </View>
+
+          <View
+            style={[styles.workspaceColumn, wideWorkspace && styles.workspaceColumnControls]}
+            testID="motors-control-column"
+          >
+          {/* ---- P3: THE PRIMARY EXPERIENCE. -------------------------
+            * Professional Motor 1..N workspace over the P2 facade. No
+            * long press, no heartbeat, no fixed magnitude. The legacy
+            * pulse/verification workflow below is retained as an
+            * OPTIONAL tool until it is separately retired - it is no
+            * longer the way motors are driven. */}
+          <MotorWorkspace
+            snapshot={snapshot}
+            port={operator}
+            sessionState={sessionState}
+            onSessionChange={handleSessionChange}
+            enabled={motorControlEnabled}
+            onEnableChange={handleMotorControlChange}
+          />
+            {/* LIVE ESC TELEMETRY BELONGS BESIDE THE SLIDERS, not in an
+                advanced drawer: RPM and temperature are what a person
+                reads WHILE a motor is spinning, and reading them meant
+                scrolling 2,300px away from the control that produced
+                them. The panel is unchanged - only where it sits. */}
+        {/* Outside a test lease monitoring uses the canonical scheduler.
+            While the lease is held it performs fixed read-only requests
+            through that SAME serialized lease, without bypassing pulse or
+            stop ownership. */}
+        {sessionId !== undefined ? (
+          <MotorDiagnosticsPanel
+            sessionId={sessionId}
+            operator={operator}
+            activeMotorTest={
+              snapshot?.phase === 'ACTIVE' && snapshot.outcome.kind === 'READY'
+            }
+            motorTestDiagnostics={snapshot?.diagnostics}
+            support={snapshot?.motorDiagnosticsSupport}
+          />
+        ) : null}
+          </View>
+        </View>
+
+        {/* ================================================ REGION C
+            BASIC MOTOR / ESC SETTINGS - one card, straight after the
+            workspace. Protocol, idle, motor stop, bidirectional DShot,
+            poles and 3D were reachable only after the tools bench, the
+            diagnostics panel and 3,900px of scrolling. */}
+          <Text style={styles.toolsHeading} testID="motors-settings-heading">
+            إعدادات المحركات
+          </Text>
+          <MotorConfigurationSummary scope={snapshot?.motorScope} />
+        {/* Persistent configuration is a separate transaction from bench
+            testing. It owns no motor pulse path and is deliberately bound to
+            the canonical session id rather than to the MotorTest operator. */}
+        {sessionId !== undefined && !motorSettingsOpen ? (
+          <Pressable
+            onPress={() => setMotorSettingsOpen(true)}
+            accessibilityRole="button"
+            style={styles.card}
+            testID="motors-open-settings"
+          >
+            <Text style={styles.sectionTitle}>
+              {t('motorsScreen.openMotorSettings')}
+            </Text>
+            <Text style={styles.caption}>
+              {t('motorsScreen.openMotorSettingsHint')}
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {sessionId !== undefined && motorSettingsOpen ? (
+          <MotorConfigurationPanel
+            sessionId={sessionId}
+            onDirtyChange={setMotorConfigurationDirty}
+            onBusyChange={setMotorConfigurationBusy}
+          />
+        ) : null}
+
+        {/* ================================================ REGION D
+            ADVANCED AND DIAGNOSTIC - collapsed, and last.
+
+            Nothing here is deleted. The verification bench, the airframe
+            observation wizard, output reordering and the raw controller
+            state are all still reachable in one press; they simply stop
+            standing between the operator and the motors. */}
+        <Pressable
+          onPress={() => setAdvancedVerificationOpen(open => !open)}
+          accessibilityRole="button"
+          accessibilityState={{expanded: advancedVerificationOpen}}
+          style={styles.card}
+          testID="motors-advanced-verification-toggle"
+        >
+          {/* THE SECTION NAME LIVES ON THE CLOSED DISCLOSURE, not inside
+              it. A heading that only exists once a person has already
+              opened the drawer cannot tell them what is in the drawer -
+              and it cannot hold the ordering guarantee that the primary
+              workspace comes first, because a collapsed section would
+              simply have no position at all. */}
+          <Text style={styles.toolsHeading} testID="motors-tools-heading">
+            التحقق والأدوات
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorsScreen.advancedVerificationHint')}
+          </Text>
+        </Pressable>
+
+        {advancedVerificationOpen ? (
+          <View style={styles.advancedStack} testID="motors-advanced-verification">
+        {/* P3: THE LEGACY BENCH IS NOW A SECONDARY TOOL. The professional
+            workspace above is the primary path; this card keeps the
+            verification workflow (selection, airframe reference, the hold
+            action) reachable without ever standing between Enable and the
+            sliders. */}
+        <Text style={styles.sectionTitle}>
+          {t('motorsScreen.advancedVerification')}
+        </Text>
+        <View style={styles.benchCard} testID="motors-workspace">
+          {/* FINAL-REVIEW M-2: this card no longer carries a second
+              identification model. The X-of-4 badge contradicted the
+              identity summary on non-quad aircraft (0-of-4 beside "not
+              available for this layout"), and the old copy directed the
+              operator to the strip, the diagram and the hold - controls
+              that moved into the identity section in P1b-B. What remains
+              here is what the card actually contains: session readiness
+              detail and the read-only settings summary. */}
+          <View style={styles.benchHeadingRow}>
+            <View style={styles.flexOne}>
+              <Text style={styles.sectionTitle}>
+                {t('motorsScreen.workspaceHeading')}
+              </Text>
+              <Text style={styles.caption}>
+                {t('motorsScreen.workspaceSubtitle')}
+              </Text>
+            </View>
+          </View>
+
+
+          {/* P1b-C: the direction workflow moved UP into
+              MotorDirectionSection, beside the identity it describes. It
+              is not duplicated here - there is exactly one place a
+              direction command is authored. */}
+        </View>
+
+            {/* THE DEFECT THIS CLOSES. Every child below is conditional on
+                a verification session token or a receipt, both of which
+                only exist AFTER a motor observation has been confirmed.
+                Before that, opening this disclosure rendered an empty
+                View: the operator pressed it, state flipped, and nothing
+                appeared - which is exactly the "does not open" report.
+                Output reordering lives in here, so it was unreachable.
+                An expanded section now always says what it is waiting
+                for. */}
+            {receipt === undefined && verification.sessionToken === undefined ? (
+              <View style={styles.advancedEmpty} testID="motors-advanced-empty">
+                <Text style={styles.advancedEmptyTitle}>
+                  {t('motorsScreen.advancedEmptyTitle')}
+                </Text>
+                <Text style={styles.caption}>
+                  {t('motorsScreen.advancedEmptyBody')}
+                </Text>
+              </View>
+            ) : null}
+            {/* P1b-B: WHAT IS LEFT IN HERE, AND WHY.
+                The observation wizard and the output-mapping workflow both
+                moved to the core sections above - an operator must not
+                need this disclosure to identify a motor, read the current
+                mapping, or start a reorder. What remains is the technical
+                READ-ONLY report: per-output outcomes, the receipt
+                attribution and the overall verdict. It is genuinely
+                secondary, and it is not a second copy of anything.
+                The capability gate still applies: the report compares
+                against Quad-X expectations, so it is withheld where those
+                expectations do not describe the aircraft. */}
+            {!quadIdentificationSupported &&
+            (receipt !== undefined || verification.sessionToken !== undefined)
+              ? identificationUnavailableNotice('motors-identification-unsupported-report')
+              : null}
+            {quadIdentificationSupported &&
+            verification.sessionToken !== undefined ? (
+              <MotorTestReport
+                state={verification}
+                safeTeardownConfirmed={
+                  presentation !== 'FAULT' &&
+                  (snapshot?.stopExecution.attributionAmbiguous !== true ||
+                    snapshot?.stopExecution.attributionResolvedByConfirmation ===
+                      true)
+                }
+              />
+            ) : null}
+          </View>
+        ) : null}
           {/* DEVELOPER DIAGNOSTICS - collapsed by default, never shown to
               the operator unless asked for. Everything the old list dumped
               on screen lives here, plus the terminal outcome, setup step
@@ -1770,324 +2168,6 @@ export function MotorsScreenView({
               ) : null}
             </View>
           ) : null}
-        </View>
-
-        {/* (7) Fault - MOVED TO THE TOP OF THE CONTENT FLOW (final-review
-            M-1). An emergency instruction rendered below Identity,
-            Direction and Mapping measured ~3100px deep on a phone; the
-            detailed banner now sits directly under the status card, and a
-            compact copy of the SAME instruction is pinned beside STOP so
-            scroll position can never hide it. TWO DIFFERENT MESSAGES, because they mean two very
-            different things to somebody standing next to an aircraft.
-
-            The LiPo instruction is reserved for a stop that is genuinely
-            unconfirmed while a command may be live - see
-            stopIsGenuinelyUnconfirmed(). Every other fault ends the
-            session and needs a reconnect, which is worth saying plainly,
-            but it is NOT a reason to tell somebody to pull a battery. */}
-        {presentation === 'FAULT' ? (
-          stopUnconfirmed ? (
-            <View style={styles.faultBanner} testID="motors-fault-banner">
-              <Icon name="octagon-alert" size={24} color={colors.error} />
-              <View style={styles.flexOne}>
-                <Text style={styles.faultText} testID="motors-emergency-text">
-                  {t('motorsScreen.emergencyDisconnect')}
-                </Text>
-                <Text
-                  style={styles.dangerBody}
-                  testID="motors-new-session-text"
-                >
-                  {t('motorsScreen.emergencyNewSession')}
-                </Text>
-              </View>
-            </View>
-          ) : (
-            <View style={styles.card} testID="motors-fault-notice">
-              <Text
-                style={styles.blockHeading}
-                testID="motors-fault-session-text"
-              >
-                {t('motorsScreen.faultSessionEnded')}
-              </Text>
-              <Text style={styles.caption} testID="motors-fault-no-lipo-text">
-                {t('motorsScreen.faultNoBatteryAction')}
-              </Text>
-            </View>
-          )
-        ) : null}
-
-          {/* ---- P3: THE PRIMARY EXPERIENCE. -------------------------
-            * Professional Motor 1..N workspace over the P2 facade. No
-            * long press, no heartbeat, no fixed magnitude. The legacy
-            * pulse/verification workflow below is retained as an
-            * OPTIONAL tool until it is separately retired - it is no
-            * longer the way motors are driven. */}
-          <MotorWorkspace
-            snapshot={snapshot}
-            port={operator}
-            sessionState={sessionState}
-            onSessionChange={handleSessionChange}
-            enabled={motorControlEnabled}
-            onEnableChange={handleMotorControlChange}
-          />
-
-          {/* ---- P1b-B: MOTOR IDENTITY IS CORE. ------------------------
-            * Which motor am I addressing, where did I observe it, which
-            * output drives it, what is actually confirmed - answerable
-            * without opening a disclosure. The map, the numbered
-            * selector, the protected hold and the observation wizard now
-            * sit together in the order a person performs them. */}
-          <MotorIdentitySection
-            slots={identitySlots}
-            selectedSlot={selectedSlot}
-            onSelectSlot={handleSelectSlot}
-            capability={identificationCapability}
-            airframeEntries={airframeEntries}
-            diagramMotorCount={liveMotorCount ?? MOTOR_AIRFRAME_QUAD_COUNT}
-            active={active}
-            liveSlot={liveSlot}
-            liveActivity={liveActivity}
-            verification={verification}
-            receipt={receipt}
-            onConfirm={handleConfirmObservation}
-            onMultipleMotorsReported={handleMultipleMotors}
-            onClearObservation={handleClearObservation}
-            outputOrder={outputOrderValues}
-            holdControl={holdControl}
-          />
-
-          {/* DIRECTION, beside identity rather than at the bottom of the
-            * page. Three sources on three rows - template expectation,
-            * what this session commanded, what a person observed - and
-            * the one authoring workflow underneath them. */}
-          <MotorDirectionSection
-            selectedMotor={selectedSlot}
-            operator={operator}
-            identificationCapability={identificationCapability}
-            commandCapability={directionCommandCapability}
-            verification={verification}
-            commanded={selectedDirectionCommand}
-            onCommandOutcome={handleDirectionCommandOutcome}
-            onDirtyChange={setEscDirectionDirty}
-          />
-
-          {/* Reading which output drives which motor is firmware truth and
-            * needs no observation at all. Writing one still needs
-            * everything it always needed - the panel below the read is the
-            * same panel, reaching the same controller transaction. */}
-          <MotorOutputMappingSection
-            sessionId={sessionId}
-            motorCount={liveMotorCount}
-            verification={verification}
-            capability={identificationCapability}
-            onEndMotorTestSession={handleEndSessionForConfiguration}
-            onDirtyChange={setOutputOrderDirty}
-            blockedReason={configurationReadBlockedReason}
-            onValuesChange={setOutputOrderValues}
-          />
-
-
-
-        {/* P3: THE LEGACY BENCH IS NOW A SECONDARY TOOL. The professional
-            workspace above is the primary path; this card keeps the
-            verification workflow (selection, airframe reference, the hold
-            action) reachable without ever standing between Enable and the
-            sliders. */}
-        <Text style={styles.toolsHeading} testID="motors-tools-heading">
-          التحقق والأدوات
-        </Text>
-        <View style={styles.benchCard} testID="motors-workspace">
-          {/* FINAL-REVIEW M-2: this card no longer carries a second
-              identification model. The X-of-4 badge contradicted the
-              identity summary on non-quad aircraft (0-of-4 beside "not
-              available for this layout"), and the old copy directed the
-              operator to the strip, the diagram and the hold - controls
-              that moved into the identity section in P1b-B. What remains
-              here is what the card actually contains: session readiness
-              detail and the read-only settings summary. */}
-          <View style={styles.benchHeadingRow}>
-            <View style={styles.flexOne}>
-              <Text style={styles.sectionTitle}>
-                {t('motorsScreen.workspaceHeading')}
-              </Text>
-              <Text style={styles.caption}>
-                {t('motorsScreen.workspaceSubtitle')}
-              </Text>
-            </View>
-          </View>
-
-
-          <Text style={styles.toolsHeading} testID="motors-settings-heading">
-            إعدادات المحركات
-          </Text>
-          <MotorConfigurationSummary scope={snapshot?.motorScope} />
-
-          {canActivate || freezeTransientPresentation ? (
-            <View style={styles.readyBanner} testID="motors-session-ready">
-              <View style={styles.readyBadge}>
-                <Icon name="check" size={18} color={colors.white} />
-              </View>
-              <View style={styles.flexOne}>
-                <Text style={styles.readyTitle}>
-                  {t('motorsScreen.readyHeading')}
-                </Text>
-                <Text style={styles.readyBody}>
-                  {t('motorsScreen.readyDetail', {slot: `M${selectedSlot}`})}
-                </Text>
-              </View>
-            </View>
-          ) : null}
-
-          {/* P1b-B: the numbered selector, the airframe map, the protected
-              hold and the selected-motor facts all moved UP into
-              MotorIdentitySection. They are not duplicated here - motor
-              identity is a core question, and answering it from the bottom
-              of a tools card was the reason it read as advanced. */}
-
-          {showReadinessDiagnostic && !freezeTransientPresentation ? (
-            <View
-              style={styles.readinessBlock}
-              testID="motors-readiness-blocked-detail"
-            >
-              <Text style={styles.blockHeading}>
-                {t('motorsScreen.readinessBlockedHeading')}
-              </Text>
-              {primaryBlockReason !== undefined ? (
-                <Text style={styles.blockReason}>
-                  {t(`motorsScreen.blockReason.${primaryBlockReason}`)}
-                </Text>
-              ) : null}
-              <Text
-                style={styles.caption}
-                testID="motors-readiness-blocked-code"
-              >
-                {t('motorsScreen.readinessBlockedDetail', {
-                  reason: readinessDiagnosticReason,
-                  step: snapshot?.setupStep ?? 'NONE',
-                })}
-              </Text>
-              <Text style={styles.caption}>
-                {requiresNewConnection
-                  ? t('motorsScreen.readinessReconnectAction')
-                  : t('motorsScreen.readinessWaitAction')}
-              </Text>
-            </View>
-          ) : null}
-
-          {/* P1b-C: the direction workflow moved UP into
-              MotorDirectionSection, beside the identity it describes. It
-              is not duplicated here - there is exactly one place a
-              direction command is authored. */}
-        </View>
-
-        {/* Outside a test lease monitoring uses the canonical scheduler.
-            While the lease is held it performs fixed read-only requests
-            through that SAME serialized lease, without bypassing pulse or
-            stop ownership. */}
-        {sessionId !== undefined ? (
-          <MotorDiagnosticsPanel
-            sessionId={sessionId}
-            operator={operator}
-            activeMotorTest={
-              snapshot?.phase === 'ACTIVE' && snapshot.outcome.kind === 'READY'
-            }
-            motorTestDiagnostics={snapshot?.diagnostics}
-            support={snapshot?.motorDiagnosticsSupport}
-          />
-        ) : null}
-
-        {/* Persistent configuration is a separate transaction from bench
-            testing. It owns no motor pulse path and is deliberately bound to
-            the canonical session id rather than to the MotorTest operator. */}
-        {sessionId !== undefined && !motorSettingsOpen ? (
-          <Pressable
-            onPress={() => setMotorSettingsOpen(true)}
-            accessibilityRole="button"
-            style={styles.card}
-            testID="motors-open-settings"
-          >
-            <Text style={styles.sectionTitle}>
-              {t('motorsScreen.openMotorSettings')}
-            </Text>
-            <Text style={styles.caption}>
-              {t('motorsScreen.openMotorSettingsHint')}
-            </Text>
-          </Pressable>
-        ) : null}
-
-        {sessionId !== undefined && motorSettingsOpen ? (
-          <MotorConfigurationPanel
-            sessionId={sessionId}
-            onDirtyChange={setMotorConfigurationDirty}
-            onBusyChange={setMotorConfigurationBusy}
-          />
-        ) : null}
-
-        <Pressable
-          onPress={() => setAdvancedVerificationOpen(open => !open)}
-          accessibilityRole="button"
-          accessibilityState={{expanded: advancedVerificationOpen}}
-          style={styles.card}
-          testID="motors-advanced-verification-toggle"
-        >
-          <Text style={styles.sectionTitle}>
-            {t('motorsScreen.advancedVerification')}
-          </Text>
-          <Text style={styles.caption}>
-            {t('motorsScreen.advancedVerificationHint')}
-          </Text>
-        </Pressable>
-
-        {advancedVerificationOpen ? (
-          <View style={styles.advancedStack} testID="motors-advanced-verification">
-            {/* THE DEFECT THIS CLOSES. Every child below is conditional on
-                a verification session token or a receipt, both of which
-                only exist AFTER a motor observation has been confirmed.
-                Before that, opening this disclosure rendered an empty
-                View: the operator pressed it, state flipped, and nothing
-                appeared - which is exactly the "does not open" report.
-                Output reordering lives in here, so it was unreachable.
-                An expanded section now always says what it is waiting
-                for. */}
-            {receipt === undefined && verification.sessionToken === undefined ? (
-              <View style={styles.advancedEmpty} testID="motors-advanced-empty">
-                <Text style={styles.advancedEmptyTitle}>
-                  {t('motorsScreen.advancedEmptyTitle')}
-                </Text>
-                <Text style={styles.caption}>
-                  {t('motorsScreen.advancedEmptyBody')}
-                </Text>
-              </View>
-            ) : null}
-            {/* P1b-B: WHAT IS LEFT IN HERE, AND WHY.
-                The observation wizard and the output-mapping workflow both
-                moved to the core sections above - an operator must not
-                need this disclosure to identify a motor, read the current
-                mapping, or start a reorder. What remains is the technical
-                READ-ONLY report: per-output outcomes, the receipt
-                attribution and the overall verdict. It is genuinely
-                secondary, and it is not a second copy of anything.
-                The capability gate still applies: the report compares
-                against Quad-X expectations, so it is withheld where those
-                expectations do not describe the aircraft. */}
-            {!quadIdentificationSupported &&
-            (receipt !== undefined || verification.sessionToken !== undefined)
-              ? identificationUnavailableNotice('motors-identification-unsupported-report')
-              : null}
-            {quadIdentificationSupported &&
-            verification.sessionToken !== undefined ? (
-              <MotorTestReport
-                state={verification}
-                safeTeardownConfirmed={
-                  presentation !== 'FAULT' &&
-                  (snapshot?.stopExecution.attributionAmbiguous !== true ||
-                    snapshot?.stopExecution.attributionResolvedByConfirmation ===
-                      true)
-                }
-              />
-            ) : null}
-          </View>
-        ) : null}
 
         {onRequestLeave !== undefined ? (
           <Pressable
@@ -2105,27 +2185,23 @@ export function MotorsScreenView({
           hold control cannot be confused with the explanatory Step 3 card
           or disappear below the airframe diagram. Stop stays mounted and
           is NEVER disabled for a transient UI or Promise state. */}
-      {/* P3: STICKY PROFESSIONAL STOP. Pinned above the legacy dock while
-          the professional session is live, so STOP never scrolls out of
-          reach on narrow layouts. One tap, no confirmation, canonical
-          facade stop. Hidden entirely when motor control is not active. */}
-      {/* PART R: STOP stays obvious whenever COMMAND AUTHORITY is active.
-          Keyed on motor control rather than the session: a session with
-          control off cannot put a value on an output, and a sticky STOP
-          for a state that cannot command is noise. */}
-      {motorControlEnabled && snapshot?.outcome.kind === 'READY' ? (
-        <View style={styles.professionalStopDock} testID="motors-sticky-stop">
-          <Pressable
-            onPress={() => operator?.stopAll()}
-            accessibilityRole="button"
-            accessibilityLabel="إيقاف المحركات"
-            style={styles.professionalStopButton}
-          >
-            <Text style={styles.professionalStopLabel}>إيقاف المحركات</Text>
-          </Pressable>
-        </View>
-      ) : null}
+      {/* THE THIRD STOP BUTTON IS GONE.
+          There were three: this one in flow inside the Motor Test
+          workspace, a "sticky" dock pinned here, and the session dock
+          below - two of them pinned, identical in colour, wording and
+          action, stacked one above the other whenever motor control was
+          on. A duplicated emergency control is not twice as safe; it
+          costs vertical space on every phone and makes the operator
+          decide which red button is the real one.
 
+          THE ONE THAT WAS KEPT IS THE UNCONDITIONAL ONE. The session
+          dock below is pinned in EVERY state, including a fault with
+          motor control already withdrawn - which is exactly the state
+          where an operator most needs a stop and where the sticky one
+          was hidden. Keeping the conditional control and deleting the
+          unconditional one would have removed a pinned stop from the
+          states that need it most. The in-flow control inside the
+          workspace (motor-workspace-stop) is unchanged. */}
       <View
         style={[styles.sessionDock, { marginBottom: effectiveBottomInset + spacing.md }]}
         testID="motors-session-dock"
@@ -2204,6 +2280,44 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 16,
   },
+  /* ---------------- REGION A: the compact header ---------------- */
+  /* One row, baseline-aligned: the screen's name and what it is for.
+     It replaces an eyebrow + display title + subtitle stack that cost
+     144px before a single control appeared. */
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  headerSubtitle: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    flexShrink: 1,
+    writingDirection: 'rtl',
+    maxWidth: PROSE_MEASURE,
+  },
+
+  /* ---------------- REGION B: the two-column workspace ----------- */
+  /* One column by default - a phone has no width to give away. `wrap`
+     rather than a second breakpoint: if the two columns cannot both
+     hold their minimum they stack instead of squeezing, which is what
+     keeps the airframe diagram legible at 1000-1100px. */
+  workspaceRow: { gap: spacing.md },
+  workspaceRowWide: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+  },
+  workspaceColumn: { gap: spacing.md },
+  /* 46 / 54. The airframe side is a square-ish diagram plus short fact
+     rows; the control side carries four labelled sliders, a master and
+     the stop, and is the side that suffers first when it is narrow.
+     minWidth stops either from collapsing below the point where its
+     own contents start wrapping badly. */
+  workspaceColumnAirframe: { flexGrow: 1, flexBasis: '46%', minWidth: 380 },
+  workspaceColumnControls: { flexGrow: 1, flexBasis: '52%', minWidth: 420 },
+
   root: { flex: 1, backgroundColor: colors.background },
   scroll: { flex: 1 },
   scrollContent: {
@@ -2646,12 +2760,20 @@ const styles = StyleSheet.create({
    * complaint that started this, on a layout that never overlapped
    * anything. The rule states where the scrolling surface ends.
    */
+  /* THE PINNED EMERGENCY ROW, sized to its contents.
+     It was a 724px-wide slab centred under every layout - 132px tall at
+     1920, holding one button and a lot of nothing. It is a row now: the
+     stop keeps its red fill, its icon and a touch target well above the
+     44px floor, but it stops reserving half a desktop to say one word.
+     Still a flow sibling of the ScrollView (never an overlay), so the
+     scrolling viewport still ENDS above it and nothing is covered. */
   sessionDock: {
-    width: '90%',
-    maxWidth: 724,
+    width: '100%',
+    maxWidth: 1180,
     alignSelf: 'center',
-    gap: spacing.sm,
-    paddingTop: spacing.md,
+    gap: spacing.xs,
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.lg,
     borderTopWidth: 1,
     borderTopColor: colors.border,
     backgroundColor: colors.background,
@@ -2661,8 +2783,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: spacing.sm,
-    width: '100%',
-    minHeight: MIN_TOUCH_TARGET + spacing.lg,
+    /* Sized to its own content and pushed to the reading edge, rather
+       than stretched across the dock. The danger is carried by the red
+       fill, the icon and the pinned position - width added none of it. */
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.xl,
+    minHeight: MIN_TOUCH_TARGET + spacing.sm,
     backgroundColor: colors.error,
     borderRadius: radii.lg,
     padding: spacing.md,

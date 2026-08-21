@@ -353,6 +353,14 @@ describe('M-2 - the bench card no longer competes with identity truth', () => {
 
   it('describes only what the card still contains', () => {
     const tree = mount(new Port(snapshotFor({})));
+    /* The bench moved INSIDE the advanced disclosure, which is collapsed
+       by default. Its copy is unchanged and so is this contract - the
+       card must still describe only what it contains - so the test opens
+       the drawer the operator would open. */
+    const toggle = tree.root.findAll(
+      node => node.props?.testID === 'motors-advanced-verification-toggle',
+    )[0];
+    act(() => toggle.props.onPress());
     const rendered = textOf(tree);
     expect(rendered).toContain(ar.motorsScreen.workspaceHeading);
     expect(rendered).toContain(ar.motorsScreen.workspaceSubtitle);

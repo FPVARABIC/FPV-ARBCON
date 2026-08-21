@@ -125,13 +125,25 @@ export function MotorIdentitySection({
   const { t } = useTranslation();
   const { width, fontScale } = useWindowDimensions();
   const tier = resolveLayoutTier(width, fontScale);
-  // Two columns only where the extra width buys parallel information -
-  // the map beside the selected-motor facts - never a stretched phone
-  // card. Asked through the shared predicate rather than by listing tier
-  // names: a NEW desktop tier must not silently collapse this back to
-  // one column, which is exactly what happened when desktopUltra was
-  // added and this read `tier === 'desktop' || tier === 'desktopWide'`.
-  const twoColumn = isDesktopTier(tier);
+  /**
+   * Two columns only where the extra width buys parallel information -
+   * the map beside the selected-motor facts - never a stretched phone
+   * card.
+   *
+   * THE WINDOW TIER ALONE IS NOT THE ANSWER ANY MORE. This section now
+   * sits inside the airframe column of the Motors workspace, which is
+   * roughly 46% of the window on a desktop. Splitting a 46% column into
+   * two more columns gave the diagram a strip too narrow to read and
+   * left ~450px of empty surface under the short facts card - measured
+   * at 1920 in Chromium. So the section asks how wide IT is, and the
+   * tier only answers until the first layout pass has happened.
+   *
+   * 760 is the width at which the map and the facts each still clear
+   * their own minimum without either wrapping internally.
+   */
+  const [sectionWidth, setSectionWidth] = useState(0);
+  const twoColumn =
+    sectionWidth > 0 ? sectionWidth >= 760 : isDesktopTier(tier);
 
   const [notesOpen, setNotesOpen] = useState(false);
 
@@ -429,7 +441,11 @@ export function MotorIdentitySection({
   );
 
   return (
-    <View style={styles.card} testID="motors-identity-section">
+    <View
+      style={styles.card}
+      testID="motors-identity-section"
+      onLayout={event => setSectionWidth(event.nativeEvent.layout.width)}
+    >
       <Text style={styles.eyebrow}>{t('motorsScreen.identityEyebrow')}</Text>
       <Text style={styles.title}>{t('motorsScreen.identityTitle')}</Text>
 

@@ -707,8 +707,14 @@ describe('MotorsScreen - activation gating', () => {
     const ids = rendered.tree.root
       .findAll(node => typeof node.props?.testID === 'string')
       .map(node => node.props.testID as string);
-    expect(ids.indexOf('motors-acknowledgements')).toBeLessThan(
-      ids.indexOf('motors-workspace'),
+    // The acknowledgement ritual is gone entirely - it has no index to
+    // compare, and that IS the contract.
+    expect(ids).not.toContain('motors-acknowledgements');
+    // The safety banner still leads the page, and the diagram still
+    // precedes the control that spins the motor it labels.
+    expect(ids.indexOf('motors-propeller-warning')).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf('motors-propeller-warning')).toBeLessThan(
+      ids.indexOf('motors-primary-workspace'),
     );
     expect(ids.indexOf('motors-diagram')).toBeLessThan(
       ids.indexOf('motors-hold-button'),
@@ -1760,7 +1766,7 @@ describe('MotorsScreen - continuous hold survives the activation gate closing', 
 });
 
 describe('P3 - sticky professional STOP', () => {
-  it('is pinned outside the scroll area while the professional session is READY', async () => {
+  it('keeps exactly ONE pinned stop, in every state, and it is outside the scroller', async () => {
     const operator = new FakeOperator(snapshotFor({ machine: 'Ready' }));
     const {tree: renderer} = render(operator);
     // Enable through the workspace toggle.
@@ -1775,16 +1781,43 @@ describe('P3 - sticky professional STOP', () => {
         true,
       );
     });
-    const sticky = renderer.root.findAll(
-      node =>
-        typeof node.type === 'string' &&
-        (node.props as {testID?: string}).testID === 'motors-sticky-stop',
+    /*
+     * THERE USED TO BE THREE STOP CONTROLS, two of them pinned: a
+     * "sticky" dock rendered only while motor control was on, and the
+     * session dock rendered always - identical red, identical wording,
+     * stacked one above the other. The sticky one is gone.
+     *
+     * The one that was KEPT is the unconditional one, deliberately: it
+     * is pinned in every state, including a fault with motor control
+     * already withdrawn, which is exactly the state where a stop matters
+     * most and where the sticky one was hidden.
+     */
+    expect(
+      renderer.root.findAll(
+        node =>
+          typeof node.type === 'string' &&
+          (node.props as {testID?: string}).testID === 'motors-sticky-stop',
+      ),
+    ).toHaveLength(0);
+
+    const pinned = renderer.root.findAll(
+      node => (node.props as {testID?: string}).testID === 'motors-stop-button',
     );
-    expect(sticky).toHaveLength(1);
+    expect(pinned.length).toBeGreaterThan(0);
+    // Pinned means OUTSIDE the scrolling body.
+    const {ScrollView} = require('react-native');
+    for (const scroll of renderer.root.findAllByType(ScrollView)) {
+      expect(
+        scroll.findAll(
+          node =>
+            (node.props as {testID?: string}).testID === 'motors-stop-button',
+        ),
+      ).toHaveLength(0);
+    }
     expect(JSON.stringify(renderer.toJSON())).toContain('إيقاف المحركات');
   });
 
-  it('does NOT appear while motor control is inactive', () => {
+  it('is still pinned with motor control inactive - and is still not duplicated', () => {
     const operator = new FakeOperator(snapshotFor({ machine: 'Ready' }));
     const {tree: renderer} = render(operator);
     expect(
@@ -1794,6 +1827,14 @@ describe('P3 - sticky professional STOP', () => {
           (node.props as {testID?: string}).testID === 'motors-sticky-stop',
       ),
     ).toHaveLength(0);
+    // One pinned host element, not two.
+    expect(
+      renderer.root.findAll(
+        node =>
+          typeof node.type === 'string' &&
+          (node.props as {testID?: string}).testID === 'motors-stop-button',
+      ),
+    ).toHaveLength(1);
   });
 });
 
@@ -1803,13 +1844,16 @@ describe('P3 - final page organization', () => {
     const ids = rendered.tree.root
       .findAll(node => typeof node.props?.testID === 'string')
       .map(node => node.props.testID as string);
+    // The primary workspace still comes first, and the verification
+    // bench still comes after it. What changed is that the bench now
+    // lives INSIDE a collapsed disclosure whose header carries the
+    // section name - so the name has a position even when the card does
+    // not, which is what makes this ordering assertable at all.
     expect(ids.indexOf('motor-workspace')).toBeGreaterThanOrEqual(0);
     expect(ids.indexOf('motor-workspace')).toBeLessThan(
       ids.indexOf('motors-tools-heading'),
     );
-    expect(ids.indexOf('motors-tools-heading')).toBeLessThan(
-      ids.indexOf('motors-workspace'),
-    );
+    expect(ids).not.toContain('motors-workspace');
     rendered.unmount();
   });
 

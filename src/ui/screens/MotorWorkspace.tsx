@@ -412,6 +412,25 @@ export function MotorWorkspace({
   const sessionBusy = motorSessionIsTransitioning(sessionState);
 
   /**
+   * WHEN THE FOUR MOTORS BECOME A GRID.
+   *
+   * Four full-width rows cost 84px each - 336px of a column, with the
+   * master and STOP pushed below them. A 2x2 grid halves that.
+   *
+   * NOT a single row of four, which is what a literal reading of a
+   * desktop configurator would give. These are HORIZONTAL tracks: in a
+   * 950px column, four across leaves each track ~215px, and a 1000-2000
+   * range across 215px is 4.6 units per pixel - a safety control whose
+   * smallest possible movement is five units. Two across keeps ~460px
+   * and ~2.2 units per pixel, which is the precision the single-column
+   * layout already had. The grid is the compaction; the track is not.
+   *
+   * 560 is where two columns plus their gap still clear that width.
+   */
+  const [cardWidth, setCardWidth] = useState(0);
+  const sliderGrid = cardWidth >= 560;
+
+  /**
    * THE SESSION ROW, rendered even when the analog-3D scope makes motor
    * control impossible. The operator still needs to see - and close - a
    * session the app opened; hiding the only OFF control behind an
@@ -462,7 +481,15 @@ export function MotorWorkspace({
   }
 
   return (
-    <View style={styles.card} testID="motor-workspace">
+    <View
+      style={styles.card}
+      testID="motor-workspace"
+      /* MEASURED, NOT ASSUMED. This component is placed inside a column
+         whose width is a fraction of the window, so a window-width
+         breakpoint would put four sliders side by side in a 420px strip.
+         Its own laid-out width is the only honest input. */
+      onLayout={event => setCardWidth(event.nativeEvent.layout.width)}
+    >
       {sessionRow}
 
       {sessionState === 'ERROR' ? (
@@ -531,10 +558,13 @@ export function MotorWorkspace({
 
       {/* Motor sliders - rendered from the REAL motor count, labelled with
           the SAME M-number the diagram prints and pulseMotor receives. */}
-      <View style={styles.slidersBlock}>
+      <View style={[styles.slidersBlock, sliderGrid && styles.slidersGrid]}>
         {Array.from({ length: motorCount }, (_, index) => (
-          <MotorSlider
+          <View
             key={index}
+            style={sliderGrid ? styles.sliderCell : undefined}
+          >
+          <MotorSlider
             label={t('motorsScreen.motorNumber', { number: index + 1 })}
             accessibilityLabel={t('motorsScreen.motorAccessibleName', {
               number: index + 1,
@@ -548,6 +578,7 @@ export function MotorWorkspace({
             onChange={value => applyMotor(index, value)}
             testID={`motor-slider-${index + 1}`}
           />
+          </View>
         ))}
         {motorCount === 0 ? (
           <Text style={styles.phaseText}>—</Text>
@@ -713,6 +744,14 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.error, maxWidth: PROSE_MEASURE},
   slidersBlock: { gap: spacing.xs },
+  slidersGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: spacing.md,
+  },
+  /* Just under half, so two fit per row with the column gap between
+     them and a third can never squeeze onto the same line. */
+  sliderCell: { flexGrow: 1, flexBasis: '47%', minWidth: 240 },
   masterRow: {
     borderTopWidth: 1,
     borderTopColor: colors.border,
