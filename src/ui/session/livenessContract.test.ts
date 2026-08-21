@@ -54,6 +54,19 @@ type Bound =
       readonly dependsOn: string;
       readonly dependsOnFile: string;
       readonly why: string;
+      /**
+       * A SECOND PLACE THE SAME CLAIM HAS TO HOLD.
+       *
+       * Some rows describe one operator-visible wait that two platforms
+       * bound separately - a serial open is bounded by the browser
+       * transport on the web and by the native module on Android, and a
+       * row naming only one of them would leave the other free to lose
+       * its timeout silently. Checked exactly like `dependsOn`.
+       */
+      readonly alsoProvenIn?: readonly {
+        readonly token: string;
+        readonly file: string;
+      }[];
     };
 
 type ContractRow = {
@@ -125,20 +138,110 @@ const CONTRACT: readonly ContractRow[] = [
       'none by design while it runs - the overlay is deliberately ' +
       'blocking - but it ends itself and leaves a retry on Home',
   },
+  /*
+   * HOME'S CONNECT IS THREE WAITS, NOT ONE, AND THEY ARE BOUNDED BY
+   * THREE DIFFERENT THINGS.
+   *
+   * This used to be a single row claiming IDENTIFY_DEADLINE_MS as the
+   * bound for "CHOOSING | OPENING | IDENTIFYING". That constant is real
+   * and it is armed - but only inside the IDENTIFYING branch of the
+   * hook's own effect. It never covered the other two, so a transport
+   * that quietly lost its connect timeout would have left OPENING
+   * unbounded with this table still reading green.
+   *
+   * The production behaviour was and is correct. What was wrong was the
+   * description, and a contract that describes something other than the
+   * code is the thing this file exists to prevent. One row per phase.
+   */
   {
-    operation: 'Home: connecting to a flight controller',
+    operation: 'Home connect, phase 1 of 3: CHOOSING (the browser chooser)',
     file: 'src/ui/session/useDirectConnect.ts',
-    entersBusy: "begin() -> CHOOSING | OPENING | IDENTIFYING",
-    success: 'identification SUCCEEDED opens the workspace',
+    entersBusy:
+      "begin() calls client.requestDevicePermission() inside the " +
+      "operator's own gesture and sets CHOOSING",
+    success:
+      'the operator picks a port; the flow continues into OPENING',
     failure:
-      'a dismissed chooser returns to IDLE; a transport error or a ' +
-      'failed identification shows FAILED with an Arabic sentence',
+      'a dismissed chooser resolves null and returns to IDLE with nothing ' +
+      'to dismiss - a decision, not a failure; a SecurityError becomes ' +
+      'PERMISSION_DENIED and shows FAILED',
+    bound: {
+      kind: 'OWNERSHIP',
+      dependsOn: 'requestSerialDevice',
+      dependsOnFile:
+        'src/platforms/react-native/transport/native/NativeUsbSerialTransport.web.ts',
+      why:
+        'the phase is a rendering of ONE promise and cannot outlive it: ' +
+        'navigator.serial.requestPort() settles when the browser closes ' +
+        'its own dialog - picked, dismissed (NotFoundError -> null) or ' +
+        'errored. A timer would be WRONG here rather than missing: the ' +
+        'wait is a person reading a system dialog, and the application ' +
+        'must not cancel it out from under them. Android never enters ' +
+        'this phase at all - supportsDevicePicker() is false there and ' +
+        'begin() goes straight to openFromScan()',
+    },
+    cancel:
+      'the browser chooser is itself the cancel: closing it returns the ' +
+      'flow to IDLE. Home renders no dismiss control for this phase, and ' +
+      'needs none',
+  },
+  {
+    operation: 'Home connect, phase 2 of 3: OPENING (enumerate, then open)',
+    file: 'src/ui/session/useDirectConnect.ts',
+    entersBusy:
+      'openFromScan() sets OPENING, calls client.listDevices(), then ' +
+      'openBoard() -> client.openDevice()',
+    success:
+      'the port opens, the coordinator adopts the session and the phase ' +
+      'moves to IDENTIFYING',
+    failure:
+      'no board resolves to FAILED with directConnect.noBoard; any ' +
+      'transport rejection is localized by localizeTransportError',
+    bound: {
+      kind: 'OWNERSHIP',
+      dependsOn: 'openWithTimeout',
+      dependsOnFile:
+        'src/platforms/react-native/transport/native/NativeUsbSerialTransport.web.ts',
+      why:
+        'the open is bounded BY THE TRANSPORT on both platforms, not by ' +
+        'this hook: the web driver races port.open() against its own ' +
+        'CONNECT_TIMEOUT, and the Android module runs the whole ' +
+        'open/permission/configure sequence on a throwaway thread bounded ' +
+        'by CONNECT_TIMEOUT_MILLIS - which is also what bounds the system ' +
+        'USB permission dialog. Either way the promise this phase awaits ' +
+        'settles, so a second timer here would only duplicate it',
+      alsoProvenIn: [
+        {
+          token: 'CONNECT_TIMEOUT_MILLIS',
+          file: 'android/app/src/main/java/com/fpvarbcon/transport/UsbSerialTransportModule.kt',
+        },
+      ],
+    },
+    cancel:
+      'none offered, and none needed - the transport timeout ends the ' +
+      'phase either way and leaves a retry plus a dismiss on Home',
+  },
+  {
+    operation: 'Home connect, phase 3 of 3: IDENTIFYING (who is this board?)',
+    file: 'src/ui/session/useDirectConnect.ts',
+    entersBusy:
+      'the session is open and the hook waits for the coordinator to ' +
+      'settle identification for THAT session id',
+    success:
+      'identification SUCCEEDED; the wall opens the workspace and ' +
+      'unmounts Home',
+    failure:
+      'identification FAILED or ownership goes INACTIVE -> FAILED ' +
+      'immediately; otherwise the deadline fires with ' +
+      'directConnect.identifyTimeout',
     bound: {
       kind: 'DEADLINE',
       constant: 'IDENTIFY_DEADLINE_MS',
       file: 'src/ui/session/useDirectConnect.ts',
     },
-    cancel: 'dismiss() returns to IDLE at any point',
+    cancel:
+      'none offered while it runs; the deadline ends it and the FAILED ' +
+      'strip that follows carries both a retry and a dismiss',
   },
   {
     operation: 'Reboot reconnect: re-enumerating and reopening the board',
@@ -290,9 +393,15 @@ const CONTRACT: readonly ContractRow[] = [
       dependsOn: 'IDENTIFY_DEADLINE_MS',
       dependsOnFile: 'src/ui/session/useDirectConnect.ts',
       why:
-        'the type is pure data; the hook that owns it carries the deadline',
+        'the type is pure data and introduces no wait of its own. Each of ' +
+        'its three busy members is bounded SEPARATELY - see the three ' +
+        '"Home connect, phase N of 3" rows above - and this row names the ' +
+        'hook that owns them rather than claiming one constant covers all ' +
+        'three, which is what it used to do',
     },
-    cancel: 'dismiss()',
+    cancel:
+      'dismiss() exists on the hook and is wired to the FAILED strip; the ' +
+      'progress phases end on their own (see the per-phase rows)',
   },
   {
     operation: 'Firmware: serial (STM32) flashing',
@@ -485,6 +594,11 @@ describe('the liveness contract is real, not aspirational', () => {
         expect(read(row.bound.file)).toContain(row.bound.constant);
       } else {
         expect(read(row.bound.dependsOnFile)).toContain(row.bound.dependsOn);
+        for (const proof of row.bound.alsoProvenIn ?? []) {
+          expect(`${proof.file}: ${read(proof.file).includes(proof.token)}`).toBe(
+            `${proof.file}: true`,
+          );
+        }
       }
     },
   );

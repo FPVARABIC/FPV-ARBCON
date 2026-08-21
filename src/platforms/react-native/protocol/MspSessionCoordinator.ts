@@ -1443,6 +1443,25 @@ export class MspSessionCoordinator {
    * ONE ownership notification, for the final INACTIVE state. A physical
    * detach is not a graceful, in-progress close; nothing observing
    * ownership state needs (or should see) a transient CLOSING tick for it.
+   *
+   * AND IT LETS GO OF THE PORT, last of all.
+   *
+   * This method has two callers that mean different things. A transport
+   * detach event means the device is already gone and the transport has
+   * already dropped its session - closing it again is a documented no-op
+   * on both platforms. The LIVENESS VERDICT means something else
+   * entirely: we decided a silent board is dead, and the transport was
+   * never told anything, so its session is still open against a device
+   * that is still enumerated. Nothing else can close it afterwards -
+   * this entry is about to be deleted, so even
+   * releaseApplicationOwnedSessions() cannot see it - and a port left
+   * held by an owner that no longer exists is refused to the next
+   * connect as DEVICE_ALREADY_IN_USE.
+   *
+   * LAST, on purpose. By this point the transport's listeners are
+   * unsubscribed and the entry is out of the map, so a detach event
+   * raised by the close itself cannot re-enter here - the same discipline
+   * stopTelemetry() already applies to the health subscription.
    */
   private handlePhysicalDetach(sessionId: string): void {
     const entry = this.sessions.get(sessionId);
@@ -1460,6 +1479,8 @@ export class MspSessionCoordinator {
     this.sessions.delete(sessionId);
     this.ownershipStates.delete(sessionId);
     this.notifyOwnership();
+
+    entry.transport.releaseSerialSession();
   }
 
   /** Shared by both teardown paths - clears the real tick() interval (if

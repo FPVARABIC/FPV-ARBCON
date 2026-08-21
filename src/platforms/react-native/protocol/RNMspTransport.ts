@@ -297,6 +297,39 @@ export class RNMspTransport implements MspTransport {
   }
 
   /**
+   * HANDS THE PHYSICAL PORT BACK. Fire-and-forget, best effort.
+   *
+   * A serial port admits one owner. Every other teardown path in this
+   * application has somebody to close it: the graceful disconnect closes
+   * it from the screen (setupSessionHost.tsx - closeSession THEN
+   * deactivateMspSession), and a real unplug has a device that is
+   * physically gone. The LIVENESS VERDICT has neither - the coordinator
+   * decides on its own that a silent board is dead, against a device that
+   * is still enumerated and a transport that was never told anything.
+   *
+   * Without this the port stayed open forever, held by a session no layer
+   * still knew about: the coordinator had deleted its entry, so even
+   * releaseApplicationOwnedSessions() could not find it, and the next
+   * connect was refused DEVICE_ALREADY_IN_USE with the operator told that
+   * another application had their board.
+   *
+   * DELIBERATELY NOT GATED ON `disposed`. This is a release, not a use;
+   * the coordinator calls it after teardown has already dropped every
+   * listener, which is exactly what makes re-entry impossible.
+   * `stopReading` before `closeSession` is the proven order (the same one
+   * exclusiveDeviceAccess.ts uses), and both are allowed to fail: a
+   * session the transport has already forgotten rejects here and is not a
+   * problem - closeSession is idempotent on both platforms.
+   */
+  releaseSerialSession(): void {
+    Promise.resolve()
+      .then(() => this.client.stopReading(this.sessionId))
+      .catch(() => undefined)
+      .then(() => this.client.closeSession(this.sessionId))
+      .catch(() => undefined);
+  }
+
+  /**
    * Idempotent. Unsubscribes from the real client's underlying
    * subscriptions (best-effort - swallows an unsubscribe function itself
    * throwing, matching mspClient.ts's dispose() precedent), clears every

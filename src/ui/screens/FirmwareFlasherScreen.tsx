@@ -645,14 +645,31 @@ export default function FirmwareFlasherScreen({
       .catch(setFailure);
   }, [client, refreshDevices, setFailure]);
 
-  useEffect(() => {
-    mounted.current = true;
+  /**
+   * THE BOARDS DOWNLOAD, ON ITS OWN, so a retry can repeat exactly this
+   * and nothing else.
+   *
+   * It used to live inline in the mount effect below, beside USB
+   * discovery and the attach/detach subscriptions. That made the failure
+   * copy - "استخدم الملف المحلي أو أعد المحاولة" - a promise the screen
+   * could not keep: there was no way to run this again without unmounting
+   * the whole screen, and re-running the effect would also have torn down
+   * and rebuilt the USB listeners, which have nothing to do with a failed
+   * HTTP request.
+   *
+   * Its own AbortController, superseding the previous attempt, so a
+   * second press cannot let a slow first answer overwrite a newer one.
+   */
+  const targetsAbortRef = useRef<AbortController | null>(null);
+  const loadTargetCatalog = useCallback(() => {
+    targetsAbortRef.current?.abort();
     const controller = new AbortController();
+    targetsAbortRef.current = controller;
     setTargetsLoadState('loading');
     setTargetsLoadError(null);
     buildApi.loadTargets(controller.signal)
       .then(loadedTargets => {
-        if (!mounted.current) return;
+        if (!mounted.current || controller.signal.aborted) return;
         setTargets(loadedTargets);
         setTargetsLoadState('ready');
         appendLog(`تم تحميل ${loadedTargets.length} Target من المصدر الرسمي.`);
@@ -666,6 +683,11 @@ export default function FirmwareFlasherScreen({
         setStatus(`تعذر تحميل القائمة عبر الإنترنت؛ المسار المحلي ما زال متاحاً. ${message}`);
         appendLog(`تعذر تحديث قائمة Targets: ${message}`);
       });
+  }, [appendLog, buildApi]);
+
+  useEffect(() => {
+    mounted.current = true;
+    loadTargetCatalog();
     refreshDevices().catch(error => {
       if (mounted.current) appendLog(`تعذر اكتشاف USB: ${errorMessage(error)}`);
     });
@@ -677,7 +699,7 @@ export default function FirmwareFlasherScreen({
     });
     return () => {
       mounted.current = false;
-      controller.abort();
+      targetsAbortRef.current?.abort();
       if (operationController.current !== null) {
         operationController.current.abort();
         // Native DFU runs on its own worker. Aborting the JS signal stops
@@ -690,7 +712,7 @@ export default function FirmwareFlasherScreen({
       unsubscribeAttach();
       unsubscribeDetach();
     };
-  }, [appendLog, buildApi, client, refreshDevices]);
+  }, [appendLog, client, loadTargetCatalog, refreshDevices]);
 
   useEffect(() => {
     if (!selectedTarget) {
@@ -1936,11 +1958,24 @@ export default function FirmwareFlasherScreen({
             </View>
           ) : null}
           {targetsLoadState === 'error' ? (
-            <FirmwareNotice
-              title="تعذر تحميل قائمة اللوحات"
-              text={targetsLoadError ?? 'تحقق من الإنترنت أو استخدم ملف Firmware محلياً.'}
-              tone="error"
-            />
+            <View style={styles.catalogRetry}>
+              <FirmwareNotice
+                title="تعذر تحميل قائمة اللوحات"
+                text={targetsLoadError ?? 'تحقق من الإنترنت أو استخدم ملف Firmware محلياً.'}
+                tone="error"
+              />
+              {/* The sentence above offers a retry, so one exists. It
+                  repeats the boards download and NOTHING else - USB
+                  discovery and the attach/detach subscriptions are not
+                  involved in an HTTP failure and are not disturbed. */}
+              <FirmwareButton
+                title="إعادة تحميل القائمة"
+                tone="secondary"
+                size="compact"
+                onPress={loadTargetCatalog}
+                testID="retry-targets-picker"
+              />
+            </View>
           ) : null}
           <FlatList
             data={filteredTargets}
@@ -2115,7 +2150,18 @@ export default function FirmwareFlasherScreen({
                     />
                   ) : null}
                   {targetsLoadState === 'loading' ? <FirmwareNotice title="قائمة اللوحات" text="يجري تحميلها الآن؛ الاختيار المحلي وUSB يبقيان متاحين." /> : null}
-                  {targetsLoadState === 'error' ? <FirmwareNotice title="القائمة غير متاحة" text={targetsLoadError ?? 'استخدم الملف المحلي أو أعد المحاولة.'} tone="error" /> : null}
+                  {targetsLoadState === 'error' ? (
+                    <View style={styles.catalogRetry}>
+                      <FirmwareNotice title="القائمة غير متاحة" text={targetsLoadError ?? 'استخدم الملف المحلي أو أعد المحاولة.'} tone="error" />
+                      <FirmwareButton
+                        title="إعادة تحميل القائمة"
+                        tone="secondary"
+                        size="compact"
+                        onPress={loadTargetCatalog}
+                        testID="retry-targets"
+                      />
+                    </View>
+                  ) : null}
                 </FirmwareSection>
 
                 <FirmwareSection title="إصدار Firmware" caption="اختر القناة أولاً، ثم الإصدار والتاريخ بوضوح. الإصدارات التطويرية تحتاج إقراراً منفصلاً قبل التفليش.">
@@ -2886,6 +2932,9 @@ const styles = StyleSheet.create({
   },
   modalCloseText: {fontSize: 30, lineHeight: 32, color: colors.textPrimary},
   loadingRow: {minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm},
+  /* The notice and its recovery, stacked and left-aligned: the retry
+     trails the sentence rather than stretching across the card. */
+  catalogRetry: {gap: spacing.sm, alignItems: 'flex-start', alignSelf: 'stretch'},
   loadingText: {...typography.body, color: colors.textSecondary},
   header: {
     minHeight: 72,
