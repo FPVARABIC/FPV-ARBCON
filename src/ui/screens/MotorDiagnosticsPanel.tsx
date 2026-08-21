@@ -22,6 +22,7 @@ import type { MotorTestOperatorPort } from '../../platforms/react-native/protoco
 import {
   acquireMotorDiagnosticsTelemetry,
   getMotorDiagnosticsAvailability,
+  getMotorDiagnosticsSupport,
   MOTOR_ESC_TELEMETRY_POLL_ID,
   MOTOR_OUTPUTS_TELEMETRY_POLL_ID,
   subscribeMotorDiagnosticsAvailability,
@@ -48,13 +49,21 @@ export function motorOutputPercent(value: number): number {
   );
 }
 
-function useAvailability(
+interface ObservedDiagnostics {
+  readonly availability: MotorDiagnosticsAvailability;
+  /** Derived from this session's OWN MSP_MOTOR_CONFIG reply, or undefined
+   * when none has arrived yet. Undefined means "not read", never "none". */
+  readonly support: MotorDiagnosticsSupport | undefined;
+}
+
+function useObservedDiagnostics(
   sessionId: string,
   escTelemetryEnabled: boolean,
-): MotorDiagnosticsAvailability {
-  const [availability, setAvailability] = useState(() =>
-    getMotorDiagnosticsAvailability(sessionId),
-  );
+): ObservedDiagnostics {
+  const [observed, setObserved] = useState<ObservedDiagnostics>(() => ({
+    availability: getMotorDiagnosticsAvailability(sessionId),
+    support: getMotorDiagnosticsSupport(sessionId),
+  }));
 
   useEffect(() => {
     const release = acquireMotorDiagnosticsTelemetry(
@@ -62,7 +71,10 @@ function useAvailability(
       escTelemetryEnabled,
     );
     const publish = () =>
-      setAvailability(getMotorDiagnosticsAvailability(sessionId));
+      setObserved({
+        availability: getMotorDiagnosticsAvailability(sessionId),
+        support: getMotorDiagnosticsSupport(sessionId),
+      });
     const unsubscribe = subscribeMotorDiagnosticsAvailability(
       sessionId,
       publish,
@@ -74,7 +86,7 @@ function useAvailability(
     };
   }, [escTelemetryEnabled, sessionId]);
 
-  return availability;
+  return observed;
 }
 
 function channelText(
@@ -87,6 +99,14 @@ function channelText(
   }
   if (channel === 'NOT_ENABLED') {
     return t('motorDiagnostics.notEnabled');
+  }
+  /* NOT THE SAME SENTENCE AS NOT_ENABLED, and the difference is the whole
+     point of this state: "no telemetry source is enabled" is a diagnosis
+     of the operator's aircraft, and it may only be said once this session
+     has actually read MSP_MOTOR_CONFIG. Until then the app says what is
+     true of ITSELF. */
+  if (channel === 'SOURCE_UNKNOWN') {
+    return t('motorDiagnostics.sourceUnknownShort');
   }
   if (channel === 'MALFORMED_RESPONSE') {
     return t('motorDiagnostics.malformed');
@@ -149,13 +169,24 @@ export function MotorDiagnosticsPanel({
   operator,
   activeMotorTest = false,
   motorTestDiagnostics,
-  support,
+  support: sessionSupport,
 }: MotorDiagnosticsPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const [nowMillis, setNowMillis] = useState(() => Date.now());
   const [sourceOpen, setSourceOpen] = useState(false);
-  const escTelemetryEnabled = hasEscTelemetrySource(support);
-  const availability = useAvailability(sessionId, escTelemetryEnabled);
+  /* THE FLAG PASSED TO THE TELEMETRY MODULE STAYS THE SESSION'S OWN.
+     Feeding the module's derived support back in as the acquisition flag
+     would make the reference count oscillate as the derivation arrives
+     and is dropped; the module ORs its own reading in on its side. */
+  const escTelemetryEnabled = hasEscTelemetrySource(sessionSupport);
+  const observed = useObservedDiagnostics(sessionId, escTelemetryEnabled);
+  const availability = observed.availability;
+  /* AN OPEN MOTOR-TEST SESSION IS THE STRONGER EVIDENCE - it read the
+     motor configuration through its own serialized lease - but it is not
+     the ONLY evidence, and outside a session it does not exist at all.
+     Falling back to the module's own read is what lets this panel report
+     a proven source (and poll for it) on a plainly connected aircraft. */
+  const support = sessionSupport ?? observed.support;
   const outputsValue = useTelemetryValue<MspMotorOutputs>(
     sessionId,
     MOTOR_OUTPUTS_TELEMETRY_POLL_ID,
@@ -500,7 +531,14 @@ export function MotorDiagnosticsPanel({
             {t(
               sourceProvenUnavailable
                 ? 'motorDiagnostics.enableEscTelemetry'
-                : 'motorDiagnostics.noEscTelemetry',
+                : /* AND WHEN NOTHING HAS BEEN READ, SAY THAT. "Enable DShot
+                     telemetry or an ESC sensor" is advice premised on having
+                     found them switched off. With no motor configuration
+                     read, that premise does not exist, and the honest line
+                     is the one about this app's own state. */
+                  support === undefined
+                  ? 'motorDiagnostics.sourceUnknown'
+                  : 'motorDiagnostics.noEscTelemetry',
             )}
           </Text>
         )}

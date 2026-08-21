@@ -253,10 +253,12 @@ export type {
 export {
   acquireMotorDiagnosticsTelemetry,
   getMotorDiagnosticsAvailability,
+  getMotorDiagnosticsSupport,
   subscribeMotorDiagnosticsAvailability,
   classifyMotorDiagnosticsFailure,
   MOTOR_OUTPUTS_TELEMETRY_POLL_ID,
   MOTOR_ESC_TELEMETRY_POLL_ID,
+  MOTOR_TELEMETRY_SOURCE_POLL_ID,
 } from './motorDiagnosticsTelemetry';
 export type {
   MotorDiagnosticsAvailability,

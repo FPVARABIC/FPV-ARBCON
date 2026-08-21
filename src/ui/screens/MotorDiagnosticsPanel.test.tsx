@@ -21,6 +21,7 @@ jest.mock('../../platforms/react-native/protocol', () => ({
     outputs: 'ACTIVE',
     escTelemetry: 'ACTIVE',
   })),
+  getMotorDiagnosticsSupport: jest.fn(() => undefined),
   subscribeMotorDiagnosticsAvailability: jest.fn(() => () => undefined),
   MOTOR_OUTPUTS_TELEMETRY_POLL_ID: 'motorOutputs',
   MOTOR_ESC_TELEMETRY_POLL_ID: 'motorEscTelemetry',
@@ -107,6 +108,12 @@ describe('MotorDiagnosticsPanel', () => {
   });
 
   it('does not invent ESC values when the capability is unavailable', async () => {
+    // NO SUPPORT PROP AND NO DERIVED SUPPORT: this session has not read a
+    // motor configuration from anywhere. The panel used to answer that
+    // with "فعّل تليمترية DShot أو حساس ESC" - advice whose premise is
+    // "we looked and they were off", which had never happened. It now
+    // says what is true OF ITSELF, and the no-invented-values property
+    // this test exists for is asserted alongside it rather than replaced.
     mockOutputValue = { status: 'WAITING' };
     mockEscValue = { status: 'UNAVAILABLE' };
     let tree!: ReactTestRenderer.ReactTestRenderer;
@@ -116,10 +123,16 @@ describe('MotorDiagnosticsPanel', () => {
       );
     });
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('لن يعرض التطبيق أرقامًا تقديرية');
+    expect(text).toContain('مصدر البيانات غير مثبت بعد');
+    // AND IT MUST NOT DIAGNOSE THE AIRCRAFT IT HAS NOT READ.
+    expect(text).not.toContain('أثبت متحكم الطيران');
+    expect(text).not.toContain('لا يوجد مصدر تليمترية مفعّل');
+    expect(text).not.toContain('فعّل تليمترية DShot');
+    // The original property, unchanged: no rows, no numbers, no zeros.
     expect(
       tree.root.findAllByProps({ testID: 'esc-telemetry-1' }),
     ).toHaveLength(0);
+    expect(text).not.toContain('RPM');
     act(() => tree.unmount());
   });
 

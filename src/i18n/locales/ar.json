@@ -1297,6 +1297,7 @@
     "noEscTelemetry": "لن يعرض التطبيق أرقامًا تقديرية. فعّل تليمترية DShot أو حساس ESC وتأكد من دعم العتاد، ثم أعد الاتصال.",
     "enableEscTelemetry": "فعّل Bidirectional DShot أو حسّاس ESC إذا كان العتاد يدعمه.",
     "sourceUnknown": "مصدر البيانات غير مثبت بعد؛ لن تُعرض أرقام حتى تُقرأ إعدادات متحكم الطيران.",
+    "sourceUnknownShort": "لم تُقرأ إعدادات التليمترية بعد",
     "source": {
       "NONE": "أثبت متحكم الطيران أن Bidirectional DShot وحساس ESC غير مفعّلين.",
       "BIDIRECTIONAL_DSHOT": "المصدر: Bidirectional DShot — RPM وجودة الحزم، والحقول الممتدة تظهر فقط عند ورود قيمة مثبتة.",

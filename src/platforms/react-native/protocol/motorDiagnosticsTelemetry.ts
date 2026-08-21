@@ -1,10 +1,16 @@
 import {
+  decodeMotorConfig,
   decodeMotorOutputs,
   decodeMotorTelemetry,
+  deriveMotorDiagnosticsSupport,
+  hasEscTelemetrySource,
   MSP_MOTOR,
+  MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
   MspClientError,
   MspPayloadReadError,
+  type MotorDiagnosticsSupport,
+  type MspMotorConfig,
   type MspMotorOutputs,
   type MspMotorTelemetry,
   type MspTelemetryScheduler,
@@ -14,11 +20,36 @@ import { mspSessionCoordinator } from './MspSessionCoordinator';
 
 export const MOTOR_OUTPUTS_TELEMETRY_POLL_ID = 'motorOutputs';
 export const MOTOR_ESC_TELEMETRY_POLL_ID = 'motorEscTelemetry';
+/**
+ * THE POLL THAT ENDS THE GUESS.
+ *
+ * Command 139 cannot report its own availability: Betaflight serializes a
+ * structurally valid, all-zero MSP_MOTOR_TELEMETRY payload when neither
+ * bidirectional DShot nor FEATURE_ESC_SENSOR is enabled. Only
+ * MSP_MOTOR_CONFIG carries the two flags that decide it - `useDshotTelemetry`
+ * and `featureIsEnabled(FEATURE_ESC_SENSOR)` (msp.c, case MSP_MOTOR_CONFIG).
+ *
+ * Before this poll existed, this module learned the source ONLY from an
+ * open motor-test session, and reported the flat sentence "no telemetry
+ * source is enabled" whenever it had not been told otherwise. That is a
+ * statement about the operator's flight controller, and outside a session
+ * this module had never read the byte that decides it. It now reads it,
+ * on its own, for as long as the Motors screen is open - a 7-byte reply
+ * on the lowest priority, paused with every other poll during a motor test.
+ */
+export const MOTOR_TELEMETRY_SOURCE_POLL_ID = 'motorTelemetrySource';
 
 export type MotorDiagnosticsChannelState =
   | 'WAITING_FOR_SESSION'
   | 'ACTIVE'
+  /** PROVEN absent: the flight controller's own motor configuration says
+   * neither bidirectional DShot nor FEATURE_ESC_SENSOR is enabled. */
   | 'NOT_ENABLED'
+  /** NOT YET KNOWN. Never rendered as "not enabled": the difference
+   * between "your ESCs are not configured for telemetry" and "this app
+   * has not read your motor configuration yet" is the difference between
+   * a diagnosis and a guess. */
+  | 'SOURCE_UNKNOWN'
   | 'UNSUPPORTED'
   | 'MALFORMED_RESPONSE'
   | 'LINK_FAILED';
@@ -40,11 +71,16 @@ interface Registration {
   scheduler: MspTelemetryScheduler | undefined;
   unregisterOutputs: (() => void) | undefined;
   unregisterEscTelemetry: (() => void) | undefined;
+  unregisterSource: (() => void) | undefined;
   unsubscribeScheduler: (() => void) | undefined;
   unsubscribeAvailability: () => void;
   unsubscribeOwnership: () => void;
   outputLastValue: TelemetryValue<MspMotorOutputs> | undefined;
   escLastValue: TelemetryValue<MspMotorTelemetry> | undefined;
+  sourceLastValue: TelemetryValue<MspMotorConfig> | undefined;
+  /** Derived from THIS session's own MSP_MOTOR_CONFIG reply. Undefined
+   * until one has actually arrived - never defaulted to "no source". */
+  support: MotorDiagnosticsSupport | undefined;
   outputConsecutiveFailures: number;
   escConsecutiveFailures: number;
   availability: MotorDiagnosticsAvailability;
@@ -54,15 +90,37 @@ interface Registration {
 const registrations = new Map<string, Registration>();
 
 function waitingAvailability(
-  registration: Pick<Registration, 'escTelemetryReferences'>,
+  registration: Pick<
+    Registration,
+    'escTelemetryReferences' | 'support'
+  >,
 ): MotorDiagnosticsAvailability {
   return Object.freeze({
     outputs: 'WAITING_FOR_SESSION',
-    escTelemetry:
-      registration.escTelemetryReferences > 0
-        ? 'WAITING_FOR_SESSION'
-        : 'NOT_ENABLED',
+    escTelemetry: escTelemetryIdleState(registration),
   });
+}
+
+/**
+ * What the ESC channel is when no poll is running: an unproven absence is
+ * SOURCE_UNKNOWN, and only a motor configuration this session actually
+ * read may downgrade it to the definite NOT_ENABLED.
+ */
+function escTelemetryIdleState(
+  registration: Pick<Registration, 'escTelemetryReferences' | 'support'>,
+): MotorDiagnosticsChannelState {
+  if (registration.escTelemetryReferences > 0) {
+    return 'WAITING_FOR_SESSION';
+  }
+  return registration.support === undefined ? 'SOURCE_UNKNOWN' : 'NOT_ENABLED';
+}
+
+/** True when either the caller or this module's own read proves a source. */
+function escTelemetryWanted(registration: Registration): boolean {
+  return (
+    registration.escTelemetryReferences > 0 ||
+    hasEscTelemetrySource(registration.support)
+  );
 }
 
 export function classifyMotorDiagnosticsFailure(
@@ -163,9 +221,16 @@ function detachScheduler(registration: Registration): void {
   registration.unregisterOutputs = undefined;
   registration.unregisterEscTelemetry?.();
   registration.unregisterEscTelemetry = undefined;
+  registration.unregisterSource?.();
+  registration.unregisterSource = undefined;
   registration.scheduler = undefined;
   registration.outputLastValue = undefined;
   registration.escLastValue = undefined;
+  registration.sourceLastValue = undefined;
+  // THE SOURCE BELONGS TO THE SESSION THAT PROVED IT. A replacement cable
+  // is a different aircraft until it says otherwise, so the derived
+  // support is dropped with the scheduler rather than carried across.
+  registration.support = undefined;
   registration.outputConsecutiveFailures = 0;
   registration.escConsecutiveFailures = 0;
   registration.availability = waitingAvailability(registration);
@@ -174,21 +239,15 @@ function detachScheduler(registration: Registration): void {
 function reconcileEscTelemetryPoll(registration: Registration): void {
   const scheduler = registration.scheduler;
   if (scheduler === undefined) {
-    publish(
-      registration,
-      'escTelemetry',
-      registration.escTelemetryReferences > 0
-        ? 'WAITING_FOR_SESSION'
-        : 'NOT_ENABLED',
-    );
+    publish(registration, 'escTelemetry', escTelemetryIdleState(registration));
     return;
   }
-  if (registration.escTelemetryReferences <= 0) {
+  if (!escTelemetryWanted(registration)) {
     registration.unregisterEscTelemetry?.();
     registration.unregisterEscTelemetry = undefined;
     registration.escLastValue = undefined;
     registration.escConsecutiveFailures = 0;
-    publish(registration, 'escTelemetry', 'NOT_ENABLED');
+    publish(registration, 'escTelemetry', escTelemetryIdleState(registration));
     return;
   }
   if (registration.unregisterEscTelemetry !== undefined) {
@@ -228,8 +287,9 @@ function attachCurrentScheduler(registration: Registration): void {
   registration.scheduler = scheduler;
   registration.availability = Object.freeze({
     outputs: 'ACTIVE',
-    escTelemetry:
-      registration.escTelemetryReferences > 0 ? 'ACTIVE' : 'NOT_ENABLED',
+    escTelemetry: escTelemetryWanted(registration)
+      ? 'ACTIVE'
+      : escTelemetryIdleState(registration),
   });
   registration.unregisterOutputs = scheduler.registerPoll<MspMotorOutputs>({
     id: MOTOR_OUTPUTS_TELEMETRY_POLL_ID,
@@ -239,11 +299,52 @@ function attachCurrentScheduler(registration: Registration): void {
     priority: -1,
     decode: decodeMotorOutputs,
   });
+  // The motor configuration is static between writes, so this is the
+  // slowest poll on the scheduler and the lowest priority on it. It exists
+  // to answer ONE question - which telemetry source, if any, this aircraft
+  // has - and it re-answers it after a settings write without any coupling
+  // to the code that performed the write.
+  registration.unregisterSource = scheduler.registerPoll<MspMotorConfig>({
+    id: MOTOR_TELEMETRY_SOURCE_POLL_ID,
+    command: MSP_MOTOR_CONFIG,
+    intervalMs: 5_000,
+    staleAfterMs: 60_000,
+    priority: -3,
+    initialDelayMs: 100,
+    decode: decodeMotorConfig,
+  });
   reconcileEscTelemetryPoll(registration);
 
   registration.unsubscribeScheduler = scheduler.subscribe(() => {
     if (registration.scheduler !== scheduler) {
       return;
+    }
+    if (registration.unregisterSource !== undefined) {
+      const value = scheduler.getValue<MspMotorConfig>(
+        MOTOR_TELEMETRY_SOURCE_POLL_ID,
+      );
+      if (value !== registration.sourceLastValue) {
+        registration.sourceLastValue = value;
+        // ONLY A FRESH READING MAY DECIDE THIS. A stale one is kept
+        // (the flags cannot change without a write) but an error or a
+        // never-answered poll leaves the source unknown rather than
+        // silently reverting to "no source".
+        const support =
+          value.status === 'FRESH' || value.status === 'STALE'
+            ? deriveMotorDiagnosticsSupport(value.value)
+            : registration.support;
+        if (support !== registration.support) {
+          registration.support = support;
+          reconcileEscTelemetryPoll(registration);
+          for (const listener of Array.from(registration.listeners)) {
+            try {
+              listener();
+            } catch {
+              // One presentation listener must never break containment.
+            }
+          }
+        }
+      }
     }
     if (registration.unregisterOutputs !== undefined) {
       const value = scheduler.getValue<MspMotorOutputs>(
@@ -279,6 +380,7 @@ function createRegistration(sessionId: string): Registration {
     scheduler: undefined,
     unregisterOutputs: undefined,
     unregisterEscTelemetry: undefined,
+    unregisterSource: undefined,
     unsubscribeScheduler: undefined,
     unsubscribeAvailability:
       mspSessionCoordinator.subscribeTelemetryAvailability(() =>
@@ -289,6 +391,8 @@ function createRegistration(sessionId: string): Registration {
     ),
     outputLastValue: undefined,
     escLastValue: undefined,
+    sourceLastValue: undefined,
+    support: undefined,
     outputConsecutiveFailures: 0,
     escConsecutiveFailures: 0,
     availability: WAITING_AVAILABILITY,
@@ -349,6 +453,21 @@ export function getMotorDiagnosticsAvailability(
   sessionId: string,
 ): MotorDiagnosticsAvailability {
   return registrations.get(sessionId)?.availability ?? WAITING_AVAILABILITY;
+}
+
+/**
+ * The telemetry source this session's own MSP_MOTOR_CONFIG read proved,
+ * or undefined when no reply has arrived yet.
+ *
+ * `undefined` is a first-class answer here and must be presented as one:
+ * it means "not read yet", NOT "no source". A caller that already holds a
+ * motor-test session's support keeps using that; this is what the screen
+ * has to work with when no session is open.
+ */
+export function getMotorDiagnosticsSupport(
+  sessionId: string,
+): MotorDiagnosticsSupport | undefined {
+  return registrations.get(sessionId)?.support;
 }
 
 export function subscribeMotorDiagnosticsAvailability(
