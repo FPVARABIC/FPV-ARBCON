@@ -370,26 +370,52 @@ const CONTRACT: readonly ContractRow[] = [
   {
     operation: 'Firmware: talking to the cloud build server',
     file: 'src/core/firmware-flasher/buildApi.ts',
-    entersBusy: 'request() awaits response headers from the build service',
-    success: 'the headers arrive and the body is read under its size cap',
+    entersBusy:
+      'request() awaits headers, then the caller reads the body through ' +
+      'readTextBounded / readBytesBounded',
+    success: 'headers arrive AND the body is fully read under its size cap',
     failure:
-      'the deadline fires, the request is aborted, and an Arabic ' +
-      'unreachable-server message is thrown',
+      'either clock fires - headers, or a gap between body chunks - the ' +
+      'request is aborted, and an Arabic message names which',
     bound: {
       kind: 'DEADLINE',
       constant: 'BUILD_API_RESPONSE_TIMEOUT_MILLIS',
       file: 'src/core/firmware-flasher/buildApi.ts',
     },
     cancel:
-      "the flasher's own AbortController is linked into every request, so " +
-      'the Cancel button ends the wait',
+      "the flasher's own AbortController is linked into every request and " +
+      'stays linked until the BODY read is over, so the Cancel button ' +
+      'ends the wait at any point',
+  },
+  {
+    operation: 'Any response body this application downloads',
+    file: 'src/core/async/boundedBody.ts',
+    entersBusy: 'a body read begins after the headers have arrived',
+    success: 'the stream reaches done under the size cap',
+    failure:
+      'STALLED when a gap between chunks exceeds the bound, TOO_LARGE ' +
+      'when the cap is crossed mid-stream, FAILED on a rejected read - ' +
+      'and never a throw, so no caller can leave a branch unhandled',
+    bound: {
+      kind: 'DEADLINE',
+      constant: 'MIN_BODY_THROUGHPUT_BYTES_PER_SECOND',
+      file: 'src/core/async/boundedBody.ts',
+    },
+    cancel:
+      "the caller's abort() is invoked on every non-success outcome, so " +
+      'the transfer is torn down rather than abandoned and late bytes ' +
+      'cannot reach an operation that already reported failure',
   },
   {
     operation: 'Presets: downloading the preset index and files',
     file: 'src/platforms/react-native/protocol/FirmwarePresetRepository.ts',
-    entersBusy: 'loadText() awaits response headers from the preset host',
-    success: 'the headers arrive and the text is read under its size cap',
-    failure: 'the deadline fires, the request is aborted, and it throws',
+    entersBusy:
+      'loadText() awaits headers, then reads the body through ' +
+      'readTextBounded',
+    success: 'headers arrive AND the text is fully read under its size cap',
+    failure:
+      'either clock fires - headers, or a gap between body chunks - the ' +
+      'request is aborted and it throws an Arabic sentence',
     bound: {
       kind: 'DEADLINE',
       constant: 'PRESET_RESPONSE_TIMEOUT_MILLIS',

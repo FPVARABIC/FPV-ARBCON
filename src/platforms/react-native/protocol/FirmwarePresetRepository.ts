@@ -12,6 +12,7 @@ import {
 } from '../../../core';
 import { MSP_FC_VERSION } from '../../../core/protocol/msp/commands/mspCommands';
 import { withDeadline } from '../../../core/async/deadline';
+import { readTextBounded } from '../../../core/async/boundedBody';
 import {
   decodeFcVersion,
   type MspFcVersion,
@@ -30,8 +31,23 @@ const MAX_FILE_CHARACTERS = 1024 * 1024;
 type FetchResponse = {
   readonly ok: boolean;
   readonly status: number;
+  /** Present in browsers, absent under React Native's fetch - which is
+   *  why the body bound has two strategies. See boundedBody.ts. */
+  readonly body?: {
+    getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
+  } | null;
+  readonly headers?: {get(name: string): string | null};
   text(): Promise<string>;
+  arrayBuffer?(): Promise<ArrayBuffer>;
 };
+
+/** The server's own claim about the body size, when it made one. */
+function declaredLength(response: FetchResponse): number | undefined {
+  const raw = response.headers?.get('content-length');
+  if (raw === null || raw === undefined) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
 type Fetcher = (
   url: string,
   init?: { cache?: 'no-cache'; signal?: AbortSignal },
@@ -205,10 +221,28 @@ export class FirmwarePresetRepository {
     const response = outcome.value;
     if (!response.ok)
       throw new Error(`فشل تنزيل ${path} (HTTP ${response.status}).`);
-    const text = await response.text();
-    if (text.length > limit)
+    /*
+     * THE BODY, BOUNDED TOO.
+     *
+     * The clock above covers the HEADERS. A host that answers `200 OK`
+     * and then stops sending bytes used to leave `response.text()`
+     * pending with nothing left running, and the Presets screen on its
+     * loading state permanently. This is a STALL bound - re-armed on
+     * every chunk - so a large preset file on a slow link still
+     * finishes; see boundedBody.ts.
+     */
+    const body = await readTextBounded(response, {
+      limitBytes: limit,
+      stallTimeoutMs: PRESET_RESPONSE_TIMEOUT_MILLIS,
+      expectedBytes: declaredLength(response),
+      abort: () => aborter.abort(),
+    });
+    if (body.status === 'TOO_LARGE')
       throw new Error(`الملف ${path} أكبر من الحد الآمن.`);
-    return text;
+    if (body.status === 'STALLED')
+      throw new Error(`توقّف تنزيل ${path} من مصدر Presets قبل اكتماله.`);
+    if (body.status === 'FAILED') throw body.reason;
+    return body.value;
   }
 }
 
