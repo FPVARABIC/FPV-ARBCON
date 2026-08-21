@@ -85,6 +85,82 @@ function dshotExtendedOrUndefined(
   return support.escSensorEnabled || value !== 0 ? value : undefined;
 }
 
+/**
+ * 100.00%, in the hundredths-of-a-percent unit command 139 carries.
+ *
+ * THE FIRMWARE'S OWN "I HAVE NOTHING" MARKER, not a threshold this file
+ * invented. Betaflight sets invalidPct to exactly this the moment DShot
+ * telemetry is enabled, and replaces it ONLY where the motor's telemetry
+ * is demonstrably active:
+ *
+ *     invalidPct = 10000; // 100.00%
+ *   #ifdef USE_DSHOT_TELEMETRY_STATS
+ *     if (isDshotMotorTelemetryActive(i)) {
+ *         invalidPct = getDshotTelemetryMotorInvalidPercent(i);
+ *     }
+ *   #endif
+ *
+ * (betaflight/betaflight 4.5-maintenance, src/main/msp/msp.c, case
+ * MSP_MOTOR_TELEMETRY.)
+ */
+const DSHOT_TELEMETRY_FULLY_INVALID = 10_000;
+
+/**
+ * WHETHER A ZERO IS A MEASUREMENT OR AN ABSENCE.
+ *
+ * Betaflight writes `rpm = 0` for a motor at rest AND for a motor whose
+ * bidirectional-DShot telemetry never arrived - same four bytes, two
+ * completely different facts. Presenting the second as "0 RPM" is the
+ * fake-live-value this codebase refuses to produce: an operator reading
+ * 0 beside a spinning motor would conclude the motor is stopped.
+ *
+ * The firmware hands over the discriminator itself, in the very next
+ * field. Two rules, and both are deliberately conservative:
+ *
+ *   rpm > 0        the telemetry demonstrably works, whatever the stats
+ *                  flag says. Always shown.
+ *   rpm == 0 and
+ *   invalidPct at  no evidence of an active telemetry stream. Shown as
+ *   the 100% floor  UNAVAILABLE, never as a zero measurement.
+ *
+ * WHY NOT invalidPct ALONE. USE_DSHOT_TELEMETRY_STATS is an optional
+ * compile flag. A build without it leaves invalidPct pinned at 10000
+ * even while telemetry works perfectly, so hiding on that field alone
+ * would blank real readings. Requiring rpm == 0 as well means the only
+ * thing ever hidden is a zero we cannot tell from an absence.
+ *
+ * FEATURE_ESC_SENSOR is exempt: its rpm comes from erpmToRpm(escData->
+ * rpm) on an enabled serial sensor record, where zero genuinely means a
+ * motor at rest.
+ */
+function rpmOrUndefined(
+  entry: MspMotorTelemetryEntry,
+  support: MotorDiagnosticsSupport,
+): number | undefined {
+  if (support.escSensorEnabled) return entry.rpm;
+  if (entry.rpm !== 0) return entry.rpm;
+  return entry.invalidPercentRaw >= DSHOT_TELEMETRY_FULLY_INVALID
+    ? undefined
+    : entry.rpm;
+}
+
+/**
+ * True when this motor is reporting a zero RPM that carries no evidence
+ * of a live telemetry stream - the state a screen should explain rather
+ * than draw a number for. Exported so the presentation can say WHY the
+ * value is missing instead of printing a dash and leaving the operator
+ * to guess.
+ */
+export function rpmIsUnprovenZero(
+  entry: MspMotorTelemetryEntry,
+  support: MotorDiagnosticsSupport | undefined,
+): boolean {
+  return (
+    hasEscTelemetrySource(support) &&
+    rpmOrUndefined(entry, support as MotorDiagnosticsSupport) === undefined
+  );
+}
+
 export function visibleMotorTelemetryMetrics(
   entry: MspMotorTelemetryEntry,
   support: MotorDiagnosticsSupport | undefined,
@@ -100,11 +176,24 @@ export function visibleMotorTelemetryMetrics(
     });
   }
   const accepted = support as MotorDiagnosticsSupport;
+  const rpm = rpmOrUndefined(entry, accepted);
   return Object.freeze({
-    rpm: entry.rpm,
-    invalidPercentRaw: accepted.dshotTelemetryEnabled
-      ? entry.invalidPercentRaw
-      : undefined,
+    rpm,
+    /**
+     * THE SENTINEL IS NOT A MEASUREMENT.
+     *
+     * When `rpm` came back undefined on the DShot path, the reason is
+     * that invalidPct is sitting at exactly its 10000 (100.00%) default
+     * with rpm 0 - the firmware's "no packet ever arrived". Printing
+     * that back as "errors 100.00%" turns the absence of a stream into a
+     * measured error rate, which reads as a signal-quality problem on a
+     * bench whose ESCs never spoke bidirectional DShot at all. The
+     * screen says the true sentence instead, once, in words.
+     */
+    invalidPercentRaw:
+      accepted.dshotTelemetryEnabled && rpm !== undefined
+        ? entry.invalidPercentRaw
+        : undefined,
     temperatureCelsius: dshotExtendedOrUndefined(
       entry.temperatureCelsius,
       accepted,

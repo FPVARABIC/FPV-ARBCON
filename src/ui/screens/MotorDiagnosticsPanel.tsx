@@ -13,6 +13,7 @@ import type {
 } from '../../core/state/motorTestController';
 import {
   hasEscTelemetrySource,
+  rpmIsUnprovenZero,
   visibleMotorTelemetryMetrics,
   type MotorDiagnosticsSupport,
   type MotorTelemetryVisibleMetrics,
@@ -255,6 +256,40 @@ export function MotorDiagnosticsPanel({
       ? Math.min(MAX_VISIBLE_MOTOR_COUNT, support.motorCount)
       : DEFAULT_VISIBLE_MOTOR_COUNT;
 
+  /**
+   * DID ANY BIDIRECTIONAL-DSHOT PACKET EVER ARRIVE?
+   *
+   * `rpmIsUnprovenZero` is the firmware's own discriminator - rpm 0 with
+   * invalidPct still pinned at its 100.00% default - so "every motor is
+   * an unproven zero" is the honest reading of "no telemetry stream", and
+   * "some motor reports errors while its reading is real" is the honest
+   * reading of "the stream is poor". They are never both shown.
+   */
+  const escMotors = escTelemetry?.motors ?? [];
+  const qualityDegraded =
+    support?.dshotTelemetryEnabled === true &&
+    escMotors.some(
+      motor =>
+        !rpmIsUnprovenZero(motor, support) && motor.invalidPercentRaw >= 100,
+    );
+  const noDshotPacketsAtAll =
+    support?.dshotTelemetryEnabled === true &&
+    escMotors.length > 0 &&
+    escMotors.every(motor => rpmIsUnprovenZero(motor, support));
+  /** True when not one output carries a single electrical or thermal value. */
+  const noMetricsAnywhere =
+    escMotors.length > 0 &&
+    escMotors.every(motor => {
+      const m = visibleMotorTelemetryMetrics(motor, support);
+      return (
+        m.invalidPercentRaw === undefined &&
+        m.temperatureCelsius === undefined &&
+        m.voltageVolts === undefined &&
+        m.currentAmps === undefined &&
+        m.consumptionMah === undefined
+      );
+    });
+
   const outputSlots = useMemo(
     () =>
       Array.from({ length: visibleMotorCount }, (_, index) => ({
@@ -342,13 +377,42 @@ export function MotorDiagnosticsPanel({
               )}
         </Text>
 
-        {support?.dshotTelemetryEnabled === true &&
-        escTelemetry?.motors.some(motor => motor.invalidPercentRaw >= 100) ? (
+        {/* TWO DIFFERENT FACTS THAT USED TO SHARE ONE SENTENCE.
+            The warning below claims a QUALITY problem: packets arrive and
+            more than 1% of them are bad. It used to fire on
+            `invalidPercentRaw >= 100` alone - which is also true of
+            Betaflight's 10000 (100.00%) default, the value the firmware
+            writes when NOTHING has ever arrived. So a bench whose ESCs do
+            not speak bidirectional DShot at all was told to "check the
+            signal quality", which is a diagnosis of a stream that does not
+            exist. The unproven-zero test now separates them, and each case
+            gets the sentence that is true of it. */}
+        {qualityDegraded ? (
           <Text
             style={styles.qualityWarning}
             testID="esc-telemetry-quality-warning"
           >
             {t('motorDiagnostics.qualityWarning')}
+          </Text>
+        ) : null}
+        {noDshotPacketsAtAll ? (
+          <Text
+            style={styles.qualityWarning}
+            testID="esc-telemetry-no-packets"
+          >
+            {t('motorDiagnostics.rpmUnprovenHint')}
+          </Text>
+        ) : null}
+        {/* SAID ONCE, NOT ONCE PER MOTOR. When the same sentence is true
+            of every output, four copies of it are three copies of noise -
+            and they are what turned "no telemetry" into a section as tall
+            as one with readings in it. */}
+        {noMetricsAnywhere ? (
+          <Text
+            style={styles.caption}
+            testID="esc-telemetry-metrics-unavailable"
+          >
+            {t('motorDiagnostics.metricsAllUnavailableEverywhere')}
           </Text>
         ) : null}
 
@@ -378,17 +442,37 @@ export function MotorDiagnosticsPanel({
                             })}
                       </Text>
                     </View>
-                    <Meter
-                      percent={
-                        metrics.rpm === undefined
-                          ? 0
-                          : rpmMeterPercent(metrics.rpm)
-                      }
-                      danger={
-                        invalidPercent !== undefined && invalidPercent >= 1
-                      }
-                    />
-                    <EscMetrics metrics={metrics} />
+                    {/* A DASH WITHOUT A REASON IS A RIDDLE. This is the
+                        one case where the firmware told us exactly why
+                        there is no number - rpm 0 with invalidPct still
+                        at its 100% default - so the screen says it
+                        instead of leaving the operator to guess whether
+                        the motor is stopped or the telemetry is absent.
+                        One short line, not a card. */}
+                    {rpmIsUnprovenZero(motor, support) &&
+                    !noDshotPacketsAtAll ? (
+                      <Text
+                        style={styles.caption}
+                        testID={`esc-telemetry-${index + 1}-rpm-unproven`}
+                      >
+                        {t('motorDiagnostics.rpmUnproven')}
+                      </Text>
+                    ) : null}
+                    {/* NO METER FOR A VALUE THAT DOES NOT EXIST. An
+                        empty bar beside a spinning motor reads as "zero
+                        RPM measured", which is the exact claim this file
+                        refuses to make. */}
+                    {metrics.rpm === undefined ? null : (
+                      <Meter
+                        percent={rpmMeterPercent(metrics.rpm)}
+                        danger={
+                          invalidPercent !== undefined && invalidPercent >= 1
+                        }
+                      />
+                    )}
+                    {noMetricsAnywhere ? null : (
+                      <EscMetrics metrics={metrics} />
+                    )}
                   </View>
                 );
               })}
@@ -408,6 +492,14 @@ export function MotorDiagnosticsPanel({
   );
 }
 
+/**
+ * THE PER-MOTOR ELECTRICAL DETAIL - and nothing at all when there is none.
+ *
+ * A grid of five "—" is a large object that says one small thing, and it
+ * says it five times. When the source proves that not one of these fields
+ * carries a value, the grid collapses to a single short line. The claim is
+ * identical; the surface is a fifth of the height.
+ */
 function EscMetrics({
   metrics,
 }: {
@@ -415,6 +507,19 @@ function EscMetrics({
 }): React.JSX.Element {
   const {t} = useTranslation();
   const unavailable = t('motorDiagnostics.metricUnavailable');
+  const nothingToShow =
+    metrics.invalidPercentRaw === undefined &&
+    metrics.temperatureCelsius === undefined &&
+    metrics.voltageVolts === undefined &&
+    metrics.currentAmps === undefined &&
+    metrics.consumptionMah === undefined;
+  if (nothingToShow) {
+    return (
+      <Text style={styles.metric}>
+        {t('motorDiagnostics.metricsAllUnavailable')}
+      </Text>
+    );
+  }
   return (
     <View style={styles.metricGrid}>
       <Text style={styles.metric}>

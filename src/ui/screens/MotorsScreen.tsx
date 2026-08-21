@@ -1524,61 +1524,90 @@ export function MotorsScreenView({
     </View>
   );
 
-  /** The protected hold control only submits a motor pulse after the
-   * separate preparation action has reached an activation-ready state. */
+  /**
+   * THE PROTECTED HOLD CONTROL. It only submits a motor pulse after the
+   * separate preparation action has reached an activation-ready state.
+   *
+   * WHY IT IS A BUTTON AGAIN, AND NOT A PANEL. It used to be a 132px
+   * turquoise slab carrying an eyebrow, a label, a hint and - when
+   * blocked - a whole explanation card, all inside the pressable box. A
+   * safety control has to be easy to hit; it does not have to be the
+   * largest object on the screen, and everything except the label was
+   * text that happened to be standing inside a button.
+   *
+   * WHAT DID NOT CHANGE, AND MUST NOT. The gesture itself: same
+   * `delayLongPress`, same MOTOR_TEST_LONG_PRESS_DELAY_MILLIS, same
+   * press-in/long-press/press-out/pointer-loss seams, same disabled gate,
+   * same release-stops-the-motor contract. The height is still FIXED
+   * rather than a minimum, for the reason the previous round found the
+   * hard way: any size change under a held pointer can scroll-anchor the
+   * document and make react-native-web terminate the press. One line, one
+   * reserved box, three labels inside it.
+   */
   const holdControl = (
-    <Pressable
-      onPressIn={handlePressIn}
-      onLongPress={handleLongPress}
-      delayLongPress={MOTOR_TEST_LONG_PRESS_DELAY_MILLIS}
-      onPressOut={handlePressOut}
-      onPointerLeave={handleHoldPointerLoss}
-      onPointerCancel={handleHoldPointerLoss}
-      /* NATIVE ONLY IN PRACTICE. react-native-web's Pressable spreads its
-         own press handlers AFTER the caller's props and supplies its own
-         onResponderTerminate, so this one is overwritten in the browser -
-         where RNW's internal terminate reaches onPressOut anyway. It stays
-         because on Android it IS the termination hook, and deleting it
-         would remove real native safety to tidy a web no-op. */
-      onResponderTerminate={(_event: GestureResponderEvent) => handlePressOut()}
-      disabled={holdDisabled}
-      accessibilityRole="button"
-      accessibilityState={{
-        disabled: holdDisabled,
-        busy: beginning,
-      }}
-      accessibilityHint={
-        holdBlockedReason ?? t('motorsScreen.holdHint')
-      }
-      style={[
-        styles.holdButton,
-        holdDisabled && styles.holdButtonOff,
-        holdOwned && styles.holdButtonPressed,
-        holdOwned && mayBeLive && styles.holdButtonLive,
-      ]}
-      testID="motors-hold-button"
-    >
-      <Text
-        style={[styles.holdStep, canActivate && styles.holdSupportingActive]}
+    <View style={styles.holdBlock} testID="motors-hold-block">
+      {/* The step name is a caption ABOVE the control, not a first line
+          inside it. */}
+      <Text style={styles.holdStep}>{t('motorsScreen.holdHeading')}</Text>
+      <Pressable
+        onPressIn={handlePressIn}
+        onLongPress={handleLongPress}
+        delayLongPress={MOTOR_TEST_LONG_PRESS_DELAY_MILLIS}
+        onPressOut={handlePressOut}
+        onPointerLeave={handleHoldPointerLoss}
+        onPointerCancel={handleHoldPointerLoss}
+        /* NATIVE ONLY IN PRACTICE. react-native-web's Pressable spreads
+           its own press handlers AFTER the caller's props and supplies
+           its own onResponderTerminate, so this one is overwritten in the
+           browser - where RNW's internal terminate reaches onPressOut
+           anyway. It stays because on Android it IS the termination hook,
+           and deleting it would remove real native safety to tidy a web
+           no-op. */
+        onResponderTerminate={(_event: GestureResponderEvent) =>
+          handlePressOut()
+        }
+        disabled={holdDisabled}
+        accessibilityRole="button"
+        accessibilityState={{
+          disabled: holdDisabled,
+          busy: beginning,
+        }}
+        accessibilityHint={holdBlockedReason ?? t('motorsScreen.holdHint')}
+        style={[
+          styles.holdButton,
+          holdDisabled && styles.holdButtonOff,
+          holdOwned && styles.holdButtonPressed,
+          holdOwned && mayBeLive && styles.holdButtonLive,
+        ]}
+        testID="motors-hold-button"
       >
-        {t('motorsScreen.holdHeading')}
-      </Text>
-      <Text style={[styles.holdLabel, !canActivate && styles.holdLabelOff]}>
-        {holdOwned && mayBeLive
-          ? t('motorsScreen.holdActive', { slot: `M${selectedSlot}` })
-          : holdOwned
-            ? t('motorsScreen.holdCountdown', { slot: `M${selectedSlot}` })
-            : t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
-      </Text>
-      <Text
-        style={[styles.caption, canActivate && styles.holdSupportingActive]}
-      >
+        {/* ONE LINE, AND IT NEVER WRAPS. A second line would change the
+            box height mid-gesture, which is the exact failure the fixed
+            height exists to prevent. */}
+        <Text
+          numberOfLines={1}
+          style={[styles.holdLabel, !canActivate && styles.holdLabelOff]}
+        >
+          {holdOwned && mayBeLive
+            ? t('motorsScreen.holdActive', { slot: `M${selectedSlot}` })
+            : holdOwned
+              ? t('motorsScreen.holdCountdown', { slot: `M${selectedSlot}` })
+              : t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
+        </Text>
+      </Pressable>
+
+      {/* THE HINT IS A HINT, not button furniture. Same words, same
+          truth, one caption line under the control. */}
+      <Text style={styles.holdHint} testID="motors-hold-hint">
         {holdBlockedReason === undefined
           ? t('motorsScreen.holdHint')
           : t('motorsScreen.holdBlockedHint')}
       </Text>
+
       {/* A locked safety control must never look like dead pixels. It
-          issues zero commands either way; it now says why. */}
+          issues zero commands either way; it still says why - beside the
+          control rather than inside it, so a blocked reason can grow
+          without resizing a pressable surface. */}
       {holdBlockedReason !== undefined ? (
         <View style={styles.holdBlocked} testID="motors-hold-blocked">
           <Text style={styles.holdBlockedTitle}>
@@ -1592,7 +1621,7 @@ export function MotorsScreenView({
           </Text>
         </View>
       ) : null}
-    </Pressable>
+    </View>
   );
 
   return (
@@ -2244,6 +2273,14 @@ export function MotorsScreenView({
 
 /** Minimum touch target, matching SafetyStrip's own accessibility note. */
 const MIN_TOUCH_TARGET = 44;
+/**
+ * THE HOLD CONTROL'S RESERVED HEIGHT.
+ *
+ * One integrated control, comfortably above the 44px touch minimum and
+ * nowhere near the 132px panel it replaced. It is a constant because the
+ * height must be identical in every label state - see `holdButton`.
+ */
+const HOLD_CONTROL_HEIGHT = 56;
 
 const styles = StyleSheet.create({
   toolsHeading: {
@@ -2643,54 +2680,58 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  /* The control and the two captions that belong to it. Left-aligned as
+     a group so the button's own width reads as deliberate rather than as
+     a column that failed to fill. */
+  holdBlock: { gap: spacing.xs, alignSelf: 'stretch' },
   holdButton: {
-    /* A FIXED height, not a minimum: the label legitimately changes
+    /* STILL A FIXED height, not a minimum: the label legitimately changes
        three times during one gesture (hold-to-test -> counting ->
        active). While the pointer is down, ANY size change can move this
        surface and terminate the press through scroll anchoring, so the
-       box is reserved once and the text changes inside it. */
-    height: 132,
-    minHeight: MIN_TOUCH_TARGET + spacing.xl,
-    /* THE ONE CONTROL THAT EARNS ITS SIZE, and now says so.
-       This is a press-and-HOLD gesture that spins a motor: it must be
-       easy to hit without looking and impossible to lose mid-press, so
-       filling the column is deliberate rather than accidental. What it
-       must not become is a 1200px slab on a desktop window, so the fill
-       is capped - stated here instead of being inherited silently from
-       the parent's stretch, which is what made every other button in the
-       app full width by accident. */
-    alignSelf: 'stretch',
-    maxWidth: 520,
+       box is reserved once and only the text changes inside it.
+
+       HOLD_CONTROL_HEIGHT, not 132. The old slab was that tall because it
+       carried an eyebrow, a label, a hint and sometimes a whole blocked
+       explanation. Those are text, and they are now text - beside the
+       control, not inside the pressable box. What is left is one line,
+       and one line does not need 132px to be easy to hit: the box is
+       comfortably above the 44px minimum and still the largest button in
+       the region. */
+    height: HOLD_CONTROL_HEIGHT,
+    minHeight: MIN_TOUCH_TARGET,
+    /* A BUTTON-SHAPED BUTTON. It does not stretch to whatever column it
+       lands in - a 520px turquoise panel was reading as a card, not as a
+       thing to press. It is given a floor wide enough for the longest
+       label it shows and a ceiling that keeps it a control. */
+    alignSelf: 'flex-start',
+    minWidth: 208,
+    maxWidth: 340,
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accent,
     borderColor: colors.accent,
     borderWidth: 2,
     borderRadius: radii.md,
-    padding: spacing.md,
-    gap: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs,
+    gap: spacing.sm,
   },
   holdButtonOff: {
     backgroundColor: colors.surfaceAlt,
     borderColor: colors.disabled,
     opacity: 0.6,
-    /* THE RESERVED BOX IS RELEASED HERE, AND ONLY HERE.
-       holdButton's fixed 132 exists so the surface cannot move under a
-       held pointer. This style is applied on exactly `holdDisabled`,
-       which is exactly when `holdBlockedReason` renders the extra
-       explanation row inside the control - and `holdBlockedReason` is
-       `undefined` whenever `holdOwned` is true, so in this state a press
-       is not merely absent but impossible: `disabled` makes
-       react-native-web's Pressable ignore pointer events entirely.
-       No gesture can exist to be terminated, so the box is free to fit
-       what it now has to say instead of spilling 16px of it onto the
-       section below (measured at 1366 and 1920). The 132 becomes a
-       floor rather than a cap, so the control keeps its size and
-       presence either way. */
-    height: 'auto',
-    minHeight: 132,
   },
-  holdButtonPressed: { borderColor: colors.textPrimary, opacity: 0.88 },
+  /* PRESSED MUST BE UNMISTAKABLE. A smaller control has less surface to
+     say "I am held", so the pressed state now changes the fill, not only
+     the border: the pointer is down, the countdown is running, and the
+     operator can see that without reading the label. */
+  holdButtonPressed: {
+    backgroundColor: colors.accentStrong,
+    borderColor: colors.textPrimary,
+    borderWidth: 3,
+  },
   holdButtonLive: {
     backgroundColor: colors.warning,
     borderColor: colors.warning,
@@ -2706,6 +2747,14 @@ const styles = StyleSheet.create({
   },
   holdSupportingActive: {
     color: colors.accentText,
+  },
+  /* The hint that used to live inside the button. Same words, same
+     truth, one caption line under the control. */
+  holdHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+    maxWidth: PROSE_MEASURE,
   },
   readinessBlock: {...noticeSurface, gap: spacing.xs,
     borderColor: colors.warning,

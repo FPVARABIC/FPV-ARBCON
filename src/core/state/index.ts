@@ -286,6 +286,7 @@ export {
 export {
   deriveMotorDiagnosticsSupport,
   hasEscTelemetrySource,
+  rpmIsUnprovenZero,
   visibleMotorTelemetryMetrics,
 } from './motorDiagnosticsSemantics';
 export type {

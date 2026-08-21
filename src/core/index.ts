@@ -788,6 +788,7 @@ export { assembleMotorStaticFacts, bindMotorStaticFacts } from './state';
 export {
   deriveMotorDiagnosticsSupport,
   hasEscTelemetrySource,
+  rpmIsUnprovenZero,
   visibleMotorTelemetryMetrics,
 } from './state';
 export type {

@@ -95,6 +95,31 @@ export interface MotorAirframeDiagramProps {
    * that claims no geometry at all, and says so.
    */
   readonly motorCount?: number;
+  /**
+   * Force a stage size instead of deriving one from the window.
+   *
+   * PRESENTATION ONLY - it changes no geometry, no slot order, no
+   * numbering and no touch semantics; every arm angle and every label is
+   * computed from `scale = stageWidth / 260` exactly as before. It exists
+   * because this diagram is now rendered TWICE on the same screen: full
+   * size where the operator picks a motor, and small again beside the
+   * identification questions so the aircraft is still on screen while
+   * they are answering them. A window-derived size cannot express "the
+   * small one".
+   */
+  readonly stageWidthOverride?: number;
+  /**
+   * THE SECOND COPY, BESIDE THE QUESTIONS. Drops the title, the caption
+   * and the six-item legend - every one of which is already on screen,
+   * unchanged, on the full-size diagram this one accompanies. What it
+   * KEEPS is everything that carries information about THIS aircraft: the
+   * FRONT marker, the frame, and the four selectable nodes with their
+   * M-numbers, direction tokens and state badges.
+   *
+   * PRESENTATION ONLY, like stageWidthOverride. No slot, number, order,
+   * selection or touch semantic differs between the two copies.
+   */
+  readonly compact?: boolean;
 }
 
 /**
@@ -570,11 +595,14 @@ export function MotorAirframeDiagram({
   liveActivity,
   verifiedSlots = [],
   onSelectSlot,
+  stageWidthOverride,
+  compact = false,
   motorCount = MOTOR_AIRFRAME_QUAD_COUNT,
 }: MotorAirframeDiagramProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
-  const stageWidth = computeAirframeStageWidth(windowWidth, fontScale);
+  const stageWidth =
+    stageWidthOverride ?? computeAirframeStageWidth(windowWidth, fontScale);
   // Every internal dimension is a multiple of this, so the whole diagram
   // grows as one drawing instead of a big box around small glyphs.
   const scale = stageWidth / 260;
@@ -633,7 +661,9 @@ export function MotorAirframeDiagram({
 
   return (
     <View style={styles.root} testID="motors-airframe-diagram">
-      <Text style={styles.diagramTitle}>{t('motorsScreen.diagramTitle')}</Text>
+      {compact ? null : (
+        <Text style={styles.diagramTitle}>{t('motorsScreen.diagramTitle')}</Text>
+      )}
 
       <View style={styles.frontMarker} testID="motors-diagram-front">
         <Icon
@@ -695,8 +725,11 @@ export function MotorAirframeDiagram({
         </View>
       </View>
 
-      <Text style={styles.caption}>{t('motorsScreen.diagramCaption')}</Text>
+      {compact ? null : (
+        <Text style={styles.caption}>{t('motorsScreen.diagramCaption')}</Text>
+      )}
 
+      {compact ? null : (
       <View style={styles.legend} testID="motors-diagram-legend">
         <LegendItem
           color={colors.accent}
@@ -723,6 +756,7 @@ export function MotorAirframeDiagram({
           label={t('motorsScreen.legendUnsafe')}
         />
       </View>
+      )}
     </View>
   );
 }

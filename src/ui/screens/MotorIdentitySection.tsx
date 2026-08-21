@@ -87,6 +87,24 @@ export interface MotorIdentitySectionProps {
   readonly holdControl: React.ReactNode;
 }
 
+/**
+ * THE MINI AIRCRAFT'S STAGE WIDTH.
+ *
+ * Deliberately smaller than any window-derived size, because this copy is
+ * a CONTEXT MARKER standing next to the questions, not the picking
+ * surface. It is not below the audited minimum, and it changes no touch
+ * semantics: every motor node inside the diagram carries its own hard
+ * 44x44 minimum, independent of the stage.
+ */
+const MINI_AIRFRAME_STAGE_WIDTH = 176;
+
+/**
+ * How wide this card must be before the context and the questions may sit
+ * beside each other: the mini stage, the gap, and a question column wide
+ * enough for the location buttons to stay on two rows.
+ */
+const VERIFY_SIDE_BY_SIDE_MIN_WIDTH = 560;
+
 /** A restrained provenance mark. Text, never colour alone. */
 function TruthBadge({
   label,
@@ -126,24 +144,26 @@ export function MotorIdentitySection({
   const { width, fontScale } = useWindowDimensions();
   const tier = resolveLayoutTier(width, fontScale);
   /**
-   * Two columns only where the extra width buys parallel information -
-   * the map beside the selected-motor facts - never a stretched phone
-   * card.
+   * SIDE BY SIDE ONLY WHERE BOTH HALVES STILL FIT.
    *
-   * THE WINDOW TIER ALONE IS NOT THE ANSWER ANY MORE. This section now
-   * sits inside the airframe column of the Motors workspace, which is
-   * roughly 46% of the window on a desktop. Splitting a 46% column into
-   * two more columns gave the diagram a strip too narrow to read and
-   * left ~450px of empty surface under the short facts card - measured
-   * at 1920 in Chromium. So the section asks how wide IT is, and the
-   * tier only answers until the first layout pass has happened.
+   * THE WINDOW TIER ALONE IS NOT THE ANSWER. This section sits inside the
+   * airframe column of the Motors workspace, which is roughly 46% of the
+   * window on a desktop - so a 1920 window can still hand this card less
+   * than 900px, and a 1366 window less than 600. The section therefore
+   * asks how wide IT is; the tier only answers until the first layout
+   * pass has happened.
    *
-   * 760 is the width at which the map and the facts each still clear
-   * their own minimum without either wrapping internally.
+   * VERIFY_SIDE_BY_SIDE_MIN_WIDTH is the width at which the mini
+   * aircraft, the compact facts beneath it and the question column each
+   * still clear their own minimum. Below it they stack, which is the
+   * phone case and is not a degradation: stacked still puts the aircraft
+   * DIRECTLY above the first question.
    */
   const [sectionWidth, setSectionWidth] = useState(0);
-  const twoColumn =
-    sectionWidth > 0 ? sectionWidth >= 760 : isDesktopTier(tier);
+  const verifySideBySide =
+    sectionWidth > 0
+      ? sectionWidth >= VERIFY_SIDE_BY_SIDE_MIN_WIDTH
+      : isDesktopTier(tier);
 
   const [notesOpen, setNotesOpen] = useState(false);
 
@@ -163,6 +183,13 @@ export function MotorIdentitySection({
   const confirmedPosition =
     entry?.observation?.kind === 'OBSERVED'
       ? entry.observation.position
+      : undefined;
+  /* Same observation, same gate. An OBSERVED record carries BOTH, so a
+     confirmed direction cannot exist without a confirmed position and
+     neither can be back-filled from the template. */
+  const confirmedDirection =
+    entry?.observation?.kind === 'OBSERVED'
+      ? entry.observation.direction
       : undefined;
   const expected = quadSupported ? expectedFor(selectedSlot) : undefined;
   const mismatch =
@@ -338,33 +365,84 @@ export function MotorIdentitySection({
     </View>
   );
 
+  /**
+   * THE COMPACT MOTOR CONTEXT - four short chips, not a card of rows.
+   *
+   * It answers, in the order a person asks it while standing over the
+   * aircraft: which motor am I addressing, where does the TEMPLATE say it
+   * should be, which way does the TEMPLATE say it should turn, where did
+   * I actually confirm it, and which flight-controller output drives it.
+   *
+   * EVERY EXPECTATION CARRIES ITS BADGE. The two template chips say
+   * "expected" in words on the chip itself, and the confirmed chips say
+   * "unconfirmed" until an observation has been recorded. Nothing here
+   * can present a reference value as an observation, which is the whole
+   * reason this block is not a table of bare values.
+   */
+  const chip = (
+    label: string,
+    value: string,
+    badge: {label: string; tone: 'expected' | 'read' | 'confirmed' | 'unknown'} | undefined,
+    testID: string,
+    badgeTestID?: string,
+    strong = false,
+  ): React.JSX.Element => (
+    <View style={styles.chip}>
+      <Text style={styles.chipLabel}>{label}</Text>
+      <View style={styles.chipValueGroup}>
+        <Text
+          style={strong ? styles.chipValueStrong : styles.chipValue}
+          testID={testID}
+        >
+          {value}
+        </Text>
+        {badge !== undefined ? (
+          <TruthBadge
+            label={badge.label}
+            tone={badge.tone}
+            testID={badgeTestID}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+
   const facts = (
     <View style={styles.factsBlock} testID="motor-identity-selected">
-      <View style={styles.factRow}>
-        <Text style={styles.factLabel}>{t('motorsScreen.identityNumber')}</Text>
-        <Text style={styles.factValueStrong} testID="motor-identity-number">
-          {`M${selectedSlot}`}
-        </Text>
-      </View>
+      {chip(
+        t('motorsScreen.identityNumber'),
+        `M${selectedSlot}`,
+        undefined,
+        'motor-identity-number',
+        undefined,
+        true,
+      )}
 
       {/* EXPECTED - and only where a template legitimately applies. */}
       {quadSupported ? (
-        <View style={styles.factRow}>
-          <Text style={styles.factLabel}>
-            {t('motorsScreen.identityExpectedPosition')}
-          </Text>
-          <View style={styles.factValueGroup}>
-            <Text style={styles.factValue} testID="motor-identity-expected">
-              {expected === undefined
-                ? '—'
-                : t(`motorVerification.position.${expected.position}`)}
-            </Text>
-            <TruthBadge
-              label={t('motorsScreen.truthExpected')}
-              tone="expected"
-            />
-          </View>
-        </View>
+        <>
+          {chip(
+            t('motorsScreen.identityExpectedPosition'),
+            expected === undefined
+              ? '—'
+              : t(`motorVerification.position.${expected.position}`),
+            {label: t('motorsScreen.truthExpected'), tone: 'expected'},
+            'motor-identity-expected',
+          )}
+          {/* THE EXPECTED SPIN DIRECTION, STATED AS AN EXPECTATION.
+              It used to appear only as an arrow on the diagram, where an
+              arrow beside a lit motor reads like a reading. Here it is a
+              word, next to the badge that says the word is a reference. */}
+          {chip(
+            t('motorsScreen.identityExpectedDirection'),
+            expected === undefined
+              ? '—'
+              : t(`motorVerification.direction.${expected.direction}`),
+            {label: t('motorsScreen.truthExpected'), tone: 'expected'},
+            'motor-identity-expected-direction',
+            'motor-identity-expected-direction-badge',
+          )}
+        </>
       ) : (
         <Text
           style={styles.caption}
@@ -375,42 +453,52 @@ export function MotorIdentitySection({
       )}
 
       {/* CONFIRMED - the only position truth, and absent until earned. */}
-      <View style={styles.factRow}>
-        <Text style={styles.factLabel}>
-          {t('motorsScreen.identityConfirmedPosition')}
-        </Text>
-        <View style={styles.factValueGroup}>
-          <Text style={styles.factValue} testID="motor-identity-confirmed">
-            {confirmedPosition === undefined
-              ? t('motorsScreen.identityUnconfirmed')
-              : t(`motorVerification.position.${confirmedPosition}`)}
-          </Text>
-          <TruthBadge
-            label={
-              confirmedPosition === undefined
-                ? t('motorsScreen.truthUnconfirmed')
-                : t('motorsScreen.truthConfirmed')
-            }
-            tone={confirmedPosition === undefined ? 'unknown' : 'confirmed'}
-            testID="motor-identity-confirmed-badge"
-          />
-        </View>
-      </View>
+      {chip(
+        t('motorsScreen.identityConfirmedPosition'),
+        confirmedPosition === undefined
+          ? t('motorsScreen.identityUnconfirmed')
+          : t(`motorVerification.position.${confirmedPosition}`),
+        {
+          label:
+            confirmedPosition === undefined
+              ? t('motorsScreen.truthUnconfirmed')
+              : t('motorsScreen.truthConfirmed'),
+          tone: confirmedPosition === undefined ? 'unknown' : 'confirmed',
+        },
+        'motor-identity-confirmed',
+        'motor-identity-confirmed-badge',
+      )}
+
+      {/* THE OBSERVED SPIN DIRECTION. Read from the SAME observation as
+          the confirmed position, so it can never be filled in from the
+          template while the position is still unconfirmed. */}
+      {chip(
+        t('motorsScreen.identityConfirmedDirection'),
+        confirmedDirection === undefined
+          ? t('motorsScreen.identityUnconfirmed')
+          : t(`motorVerification.direction.${confirmedDirection}`),
+        {
+          label:
+            confirmedDirection === undefined
+              ? t('motorsScreen.truthUnconfirmed')
+              : t('motorsScreen.truthConfirmed'),
+          tone: confirmedDirection === undefined ? 'unknown' : 'confirmed',
+        },
+        'motor-identity-confirmed-direction',
+        'motor-identity-confirmed-direction-badge',
+      )}
 
       {/* FC OUTPUT - firmware truth or nothing. */}
-      <View style={styles.factRow}>
-        <Text style={styles.factLabel}>{t('motorsScreen.identityOutput')}</Text>
-        <View style={styles.factValueGroup}>
-          <Text style={styles.factValue} testID="motor-identity-output">
-            {selectedOutput === undefined
-              ? t('motorsScreen.identityOutputUnavailable')
-              : t('motorOutputReorder.resource', { value: selectedOutput + 1 })}
-          </Text>
-          {selectedOutput !== undefined ? (
-            <TruthBadge label={t('motorsScreen.truthRead')} tone="read" />
-          ) : null}
-        </View>
-      </View>
+      {chip(
+        t('motorsScreen.identityOutput'),
+        selectedOutput === undefined
+          ? t('motorsScreen.identityOutputUnavailable')
+          : t('motorOutputReorder.resource', { value: selectedOutput + 1 }),
+        selectedOutput === undefined
+          ? undefined
+          : {label: t('motorsScreen.truthRead'), tone: 'read'},
+        'motor-identity-output',
+      )}
 
       {mismatch ? (
         <Text style={styles.mismatch} testID="motor-identity-mismatch">
@@ -440,66 +528,33 @@ export function MotorIdentitySection({
     </View>
   );
 
-  return (
-    <View
-      style={styles.card}
-      testID="motors-identity-section"
-      onLayout={event => setSectionWidth(event.nativeEvent.layout.width)}
-    >
-      <Text style={styles.eyebrow}>{t('motorsScreen.identityEyebrow')}</Text>
-      <Text style={styles.title}>{t('motorsScreen.identityTitle')}</Text>
-
-      {/* HONEST COUNTS ONLY. No percentages, no "system verified". */}
-      <View style={styles.summaryRow} testID="motors-identity-summary">
-        <Text style={styles.summaryItem} testID="motors-identity-summary-count">
-          {t('motorsScreen.summaryMotors', { count: slots.length })}
-        </Text>
-        <Text
-          style={styles.summaryItem}
-          testID="motors-identity-summary-confirmed"
-        >
-          {quadSupported
-            ? t('motorsScreen.summaryConfirmed', {
-                done: confirmed,
-                total: verification.entries.length,
-              })
-            : t('motorsScreen.summaryConfirmedUnavailable')}
-        </Text>
-        <Text
-          style={styles.summaryItem}
-          testID="motors-identity-summary-outputs"
-        >
-          {outputOrder === undefined
-            ? t('motorsScreen.summaryOutputsUnread')
-            : t('motorsScreen.summaryOutputsRead')}
-        </Text>
+  /** The context marker: the same aircraft, small, beside the questions. */
+  const verifyMiniAircraft =
+    active && quadSupported ? (
+      <View style={styles.miniStage} testID="motor-verification-mini-diagram">
+        <MotorAirframeDiagram
+          entries={airframeEntries}
+          selectedSlot={selectedSlot}
+          liveSlot={liveSlot}
+          liveActivity={liveActivity}
+          verifiedSlots={verifiedSlots}
+          onSelectSlot={onSelectSlot}
+          motorCount={diagramMotorCount}
+          stageWidthOverride={MINI_AIRFRAME_STAGE_WIDTH}
+          compact
+        />
       </View>
+    ) : null;
 
-      <View style={twoColumn ? styles.columns : styles.stack}>
-        <View style={twoColumn ? styles.column : undefined}>{map}</View>
-        <View style={twoColumn ? styles.column : undefined}>{facts}</View>
-      </View>
-
-      {conflicts.length > 0 ? (
-        <View style={styles.conflictBlock} testID="motor-identity-conflicts">
-          <Text style={styles.conflictTitle}>
-            {t('motorsScreen.identityConflictTitle')}
-          </Text>
-          {conflicts.map(conflict => (
-            <Text
-              key={conflict.position}
-              style={styles.conflictBody}
-              testID={`motor-identity-conflict-${conflict.position}`}
-            >
-              {t('motorsScreen.identityConflictBody', {
-                position: t(`motorVerification.position.${conflict.position}`),
-                motors: conflict.motorNumbers.map(n => `M${n}`).join('، '),
-              })}
-            </Text>
-          ))}
-        </View>
-      ) : null}
-
+  /**
+   * WHAT COMES BEFORE THE QUESTIONS: which step this is, and the control
+   * that produces something to answer about. Extracted so the narrow
+   * layout can put it ABOVE the aircraft context and the wide layout can
+   * put it beside it, without either copy of the tree differing in
+   * behaviour.
+   */
+  const verifyPrelude = (
+    <>
       {/* ONE INSTRUCTION, FOR THE STEP ACTUALLY IN FRONT OF THE OPERATOR.
           Listing all four steps meant three of them were always noise. The
           wording follows the same evidence state the wizard reads, so the
@@ -544,70 +599,201 @@ export function MotorIdentitySection({
       ) : (
         <View testID="motor-identification-start">{holdControl}</View>
       )}
+    </>
+  );
 
-      {/* EXACTLY ONE ACTIVE OBSERVATION FORM, and it belongs to the motor
-          the RECEIPT names - never to whatever happens to be selected.
-          That binding is the reason a pending answer cannot drift onto
-          another motor, so when the two differ the screen says so out loud
-          instead of letting the form look like it describes the selection. */}
-      {quadSupported ? (
+  /**
+   * EXACTLY ONE ACTIVE OBSERVATION FORM, and it belongs to the motor the
+   * RECEIPT names - never to whatever happens to be selected. That binding
+   * is the reason a pending answer cannot drift onto another motor, so
+   * when the two differ the screen says so out loud instead of letting the
+   * form look like it describes the selection.
+   */
+  const verifyQuestions = quadSupported ? (
+    <View
+      style={styles.activeBlock}
+      testID={
+        receipt === undefined
+          ? 'motor-identification-active'
+          : `motor-identification-active-M${receipt.motorNumber}`
+      }
+    >
+      {receipt !== undefined && receipt.motorNumber !== selectedSlot ? (
         <View
-          style={styles.activeBlock}
-          testID={
-            receipt === undefined
-              ? 'motor-identification-active'
-              : `motor-identification-active-M${receipt.motorNumber}`
-          }
+          style={styles.pendingBanner}
+          testID="motor-identification-pending-elsewhere"
         >
-          {receipt !== undefined && receipt.motorNumber !== selectedSlot ? (
-            <View
-              style={styles.pendingBanner}
-              testID="motor-identification-pending-elsewhere"
+          <Text style={styles.pendingText}>
+            {t('motorsScreen.identifyPendingElsewhere', {
+              pending: `M${receipt.motorNumber}`,
+              selected: `M${selectedSlot}`,
+            })}
+          </Text>
+          <Pressable
+            onPress={() => onSelectSlot(receipt.motorNumber)}
+            accessibilityRole="button"
+            style={styles.secondaryButton}
+            testID="motor-identification-go-pending"
+          >
+            <Text style={styles.secondaryButtonText}>
+              {t('motorsScreen.identifyGoToPending', {
+                motor: `M${receipt.motorNumber}`,
+              })}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
+      <MotorVerificationWizard
+        receipt={receipt}
+        state={verification}
+        onConfirm={onConfirm}
+        onMultipleMotorsReported={onMultipleMotorsReported}
+      />
+    </View>
+  ) : (
+    <View style={styles.unsupported} testID="motors-identification-unsupported">
+      <Text style={styles.unsupportedTitle}>
+        {t('motorsScreen.identificationQuadOnlyTitle')}
+      </Text>
+      <Text style={styles.caption}>
+        {identificationOutOfScope
+          ? t('motorsScreen.identificationQuadOnlyBody', {
+              count: capability.motorCount,
+            })
+          : t('motorsScreen.identificationCountUnknownBody')}
+      </Text>
+    </View>
+  );
+
+  return (
+    <View
+      style={styles.card}
+      testID="motors-identity-section"
+      onLayout={event => setSectionWidth(event.nativeEvent.layout.width)}
+    >
+      <Text style={styles.eyebrow}>{t('motorsScreen.identityEyebrow')}</Text>
+      <Text style={styles.title}>{t('motorsScreen.identityTitle')}</Text>
+
+      {/* HONEST COUNTS ONLY. No percentages, no "system verified". */}
+      <View style={styles.summaryRow} testID="motors-identity-summary">
+        <Text style={styles.summaryItem} testID="motors-identity-summary-count">
+          {t('motorsScreen.summaryMotors', { count: slots.length })}
+        </Text>
+        <Text
+          style={styles.summaryItem}
+          testID="motors-identity-summary-confirmed"
+        >
+          {quadSupported
+            ? t('motorsScreen.summaryConfirmed', {
+                done: confirmed,
+                total: verification.entries.length,
+              })
+            : t('motorsScreen.summaryConfirmedUnavailable')}
+        </Text>
+        <Text
+          style={styles.summaryItem}
+          testID="motors-identity-summary-outputs"
+        >
+          {outputOrder === undefined
+            ? t('motorsScreen.summaryOutputsUnread')
+            : t('motorsScreen.summaryOutputsRead')}
+        </Text>
+      </View>
+
+      {map}
+
+      {conflicts.length > 0 ? (
+        <View style={styles.conflictBlock} testID="motor-identity-conflicts">
+          <Text style={styles.conflictTitle}>
+            {t('motorsScreen.identityConflictTitle')}
+          </Text>
+          {conflicts.map(conflict => (
+            <Text
+              key={conflict.position}
+              style={styles.conflictBody}
+              testID={`motor-identity-conflict-${conflict.position}`}
             >
-              <Text style={styles.pendingText}>
-                {t('motorsScreen.identifyPendingElsewhere', {
-                  pending: `M${receipt.motorNumber}`,
-                  selected: `M${selectedSlot}`,
-                })}
-              </Text>
-              <Pressable
-                onPress={() => onSelectSlot(receipt.motorNumber)}
-                accessibilityRole="button"
-                style={styles.secondaryButton}
-                testID="motor-identification-go-pending"
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {t('motorsScreen.identifyGoToPending', {
-                    motor: `M${receipt.motorNumber}`,
-                  })}
-                </Text>
-              </Pressable>
-            </View>
-          ) : null}
-          <MotorVerificationWizard
-            receipt={receipt}
-            state={verification}
-            onConfirm={onConfirm}
-            onMultipleMotorsReported={onMultipleMotorsReported}
-          />
+              {t('motorsScreen.identityConflictBody', {
+                position: t(`motorVerification.position.${conflict.position}`),
+                motors: conflict.motorNumbers.map(n => `M${n}`).join('، '),
+              })}
+            </Text>
+          ))}
         </View>
-      ) : (
+      ) : null}
+
+      {/* ================================================================
+          THE VERIFICATION AREA, WITH THE AIRCRAFT STILL IN IT.
+
+          THE DEFECT THIS CLOSES, reported from a real bench. A person taps
+          M2 on the diagram, holds to spin it, then scrolls down to answer
+          "where is it?" and "which way did it turn?" - and by the time
+          they arrive the diagram is off screen. They are being asked a
+          question about a picture they can no longer see, and the only
+          thing still holding "M2" is their memory. MEASURED before this
+          change, with M2 addressed and a receipt outstanding: at 390, 768
+          and 1366 no airframe drawing of any kind shared the viewport with
+          the location question.
+
+          So the aircraft travels WITH the questions. Not the full diagram
+          twice - a compact one, the selected motor lit, next to the short
+          facts that name it.
+
+          THE TWO ORDERS ARE DIFFERENT ON PURPOSE.
+
+            wide    [ mini aircraft + facts ] | [ instruction, hold,
+                                                 questions ]
+                    the context sits beside the questions and stays put
+                    while they are answered.
+
+            narrow  instruction -> hold -> mini aircraft -> facts ->
+                    questions
+                    stacked, the context has to be the LAST thing before
+                    the first question or the scroll puts it off screen
+                    again. Putting the hold control above it is what makes
+                    that possible: it is pressed BEFORE the questions
+                    exist, so it does not need to be next to them.
+
+          The mini diagram is a real selector, not a picture: changing
+          motor mid-workflow no longer means scrolling back up. It carries
+          the same expected/confirmed marks as the full one, so nothing
+          here can present a template expectation as an observation. */}
+      <View
+        style={[styles.verifyArea, verifySideBySide && styles.verifyAreaWide]}
+        testID="motor-verification-area"
+      >
+        {verifySideBySide ? null : verifyPrelude}
+
         <View
-          style={styles.unsupported}
-          testID="motors-identification-unsupported"
+          style={[
+            styles.verifyContext,
+            verifySideBySide && styles.verifyContextWide,
+          ]}
+          testID="motor-verification-context"
         >
-          <Text style={styles.unsupportedTitle}>
-            {t('motorsScreen.identificationQuadOnlyTitle')}
-          </Text>
-          <Text style={styles.caption}>
-            {identificationOutOfScope
-              ? t('motorsScreen.identificationQuadOnlyBody', {
-                  count: capability.motorCount,
-                })
-              : t('motorsScreen.identificationCountUnknownBody')}
-          </Text>
+          {/* THE AIRCRAFT IS THE LAST THING BEFORE THE FIRST QUESTION.
+              Stacked, whatever sits between the drawing and the question
+              is exactly how far off screen the drawing goes - so the short
+              facts go ABOVE it and the drawing goes directly against the
+              questions. Side by side the pair is a block and reads better
+              drawing-first. MEASURED at 390: facts-then-drawing puts the
+              aircraft in the viewport with the question; drawing-then-
+              facts does not. */}
+          {verifySideBySide ? verifyMiniAircraft : facts}
+          {verifySideBySide ? facts : verifyMiniAircraft}
         </View>
-      )}
+
+        <View
+          style={[
+            styles.verifyControls,
+            verifySideBySide && styles.verifyControlsWide,
+          ]}
+          testID="motor-verification-controls"
+        >
+          {verifySideBySide ? verifyPrelude : null}
+          {verifyQuestions}
+        </View>
+      </View>
     </View>
   );
 }
@@ -663,9 +849,27 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.borderSoft,
     backgroundColor: colors.surfaceAlt, maxWidth: PROSE_MEASURE},
-  stack: { gap: spacing.md },
-  columns: { flexDirection: 'row', gap: spacing.md, alignItems: 'flex-start' },
-  column: { flex: 1, minWidth: 0 },
+  /* THE VERIFICATION AREA. One card region, two halves: the aircraft
+     context and the questions about it. `alignItems: flex-start` in the
+     wide case keeps the short context block from stretching to the
+     height of the wizard. */
+  verifyArea: { gap: spacing.sm },
+  verifyAreaWide: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    alignItems: 'flex-start',
+  },
+  verifyContext: { gap: spacing.xs },
+  verifyContextWide: {
+    flexGrow: 0,
+    flexShrink: 0,
+    flexBasis: MINI_AIRFRAME_STAGE_WIDTH + spacing.md,
+  },
+  verifyControls: { gap: spacing.sm },
+  verifyControlsWide: { flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  /* The mini stage is centred in its own column so the aircraft reads as
+     a drawing rather than as a left-aligned block of shapes. */
+  miniStage: { alignItems: 'center' },
   mapBlock: { gap: spacing.xs },
   slotRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   slotCard: {
@@ -722,37 +926,46 @@ const styles = StyleSheet.create({
     color: colors.warning,
     fontWeight: '700',
     writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
-  factsBlock: {
-    gap: spacing.xs,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    backgroundColor: colors.surfaceAlt,
-  },
-  factRow: {
+  /* NOT A CARD ANY MORE. The selected-motor facts used to be a bordered
+     panel with `space-between` rows, which in a 190px context column put
+     the label and its value at opposite ends of a line too short to hold
+     both. They are chips now: no outer border, a thin rule between them,
+     and the label sits directly above its own value. */
+  factsBlock: { gap: 2 },
+  /* ONE LINE PER FACT WHERE IT FITS. Label, value and provenance badge
+     on the same row, wrapping only when the column is genuinely too
+     narrow to hold them - which is how five facts occupy roughly one
+     fact's worth of the height a bordered row-per-line card needed. */
+  chip: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: spacing.xs,
+    paddingVertical: 3,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft,
   },
-  factLabel: {
+  chipLabel: {
     ...typography.caption,
+    fontSize: 11,
     color: colors.textSecondary,
-    writingDirection: 'rtl'},
-  factValueGroup: {
+    writingDirection: 'rtl',
+  },
+  chipValueGroup: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
     gap: spacing.xs,
     flexShrink: 1,
   },
-  factValue: {
+  chipValue: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1, maxWidth: PROSE_MEASURE},
-  factValueStrong: {
+    flexShrink: 1,
+    maxWidth: PROSE_MEASURE,
+  },
+  chipValueStrong: {
     ...typography.mono,
     color: colors.textPrimary,
     fontWeight: '700',
