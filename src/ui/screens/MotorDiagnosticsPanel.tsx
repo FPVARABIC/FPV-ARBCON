@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import type {
@@ -153,6 +153,7 @@ export function MotorDiagnosticsPanel({
 }: MotorDiagnosticsPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const [nowMillis, setNowMillis] = useState(() => Date.now());
+  const [sourceOpen, setSourceOpen] = useState(false);
   const escTelemetryEnabled = hasEscTelemetrySource(support);
   const availability = useAvailability(sessionId, escTelemetryEnabled);
   const outputsValue = useTelemetryValue<MspMotorOutputs>(
@@ -355,29 +356,55 @@ export function MotorDiagnosticsPanel({
             <Text style={styles.sectionTitle}>
               {t('motorDiagnostics.escHeading')}
             </Text>
-            {/* WHEN THE SOURCE IS OFF, "this appears only when firmware
-                and ESC support it and telemetry is enabled" is a third
-                sentence saying what the state line and the source line
-                already say. The section collapses to what is off and
-                what to turn on. */}
-            {sourceProvenUnavailable ? null : (
-              <Text style={styles.caption}>
-                {t('motorDiagnostics.escDetail')}
-              </Text>
-            )}
           </View>
           <Text style={styles.channelState}>
             {channelText(t, escAvailability, escStatus)}
           </Text>
         </View>
 
-        <Text style={styles.sourceText} testID="esc-telemetry-source">
-          {support === undefined
-            ? t('motorDiagnostics.sourceUnknown')
-            : t(
-                `motorDiagnostics.source.${support.escTelemetrySource}`,
-              )}
-        </Text>
+        {/* THE SOURCE, WHERE THE SOURCE MATTERS.
+            When the controller PROVED there is no source, that sentence
+            is the whole answer and stays in place. When readings are
+            arriving, which of the two sources produced them - and which
+            extended fields that source can carry - is provenance for a
+            reader who wants it, not a standing paragraph above four
+            numbers. It moves behind one disclosure, with the "appears
+            only when firmware and ESC support it" caption that used to
+            sit under the heading. Nothing is deleted. */}
+        {sourceProvenUnavailable ? (
+          <Text style={styles.sourceText} testID="esc-telemetry-source">
+            {support === undefined
+              ? t('motorDiagnostics.sourceUnknown')
+              : t(`motorDiagnostics.source.${support.escTelemetrySource}`)}
+          </Text>
+        ) : (
+          <>
+            <Pressable
+              onPress={() => setSourceOpen(open => !open)}
+              accessibilityRole="button"
+              accessibilityState={{expanded: sourceOpen}}
+              accessibilityLabel={t('motorDiagnostics.escHeading')}
+              style={styles.sourceToggle}
+              testID="esc-telemetry-source-toggle"
+            >
+              <Text style={styles.sourceToggleText}>
+                {t('motorsScreen.detailsToggle')}
+              </Text>
+            </Pressable>
+            {sourceOpen ? (
+              <View style={styles.sourceDetails}>
+                <Text style={styles.sourceText} testID="esc-telemetry-source">
+                  {support === undefined
+                    ? t('motorDiagnostics.sourceUnknown')
+                    : t(`motorDiagnostics.source.${support.escTelemetrySource}`)}
+                </Text>
+                <Text style={styles.caption}>
+                  {t('motorDiagnostics.escDetail')}
+                </Text>
+              </View>
+            ) : null}
+          </>
+        )}
 
         {/* TWO DIFFERENT FACTS THAT USED TO SHARE ONE SENTENCE.
             The warning below claims a QUALITY problem: packets arrive and
@@ -595,6 +622,18 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  sourceToggle: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  sourceToggleText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  sourceDetails: {gap: spacing.xs},
   outputGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   outputCard: {
     flexGrow: 1,

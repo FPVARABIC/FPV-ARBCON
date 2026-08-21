@@ -20,7 +20,7 @@
  * text badge on the node itself and a matching legend entry.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Pressable,
   StyleSheet,
@@ -601,8 +601,34 @@ export function MotorAirframeDiagram({
 }: MotorAirframeDiagramProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
-  const stageWidth =
+  /**
+   * THE DRAWING IS SIZED BY ITS CONTAINER, NOT BY THE WINDOW.
+   *
+   * THE DEFECT THIS CLOSES. `computeAirframeStageWidth` reads the WINDOW,
+   * so on a 1366 desktop it returned a 400px stage - and then the stage
+   * was mounted in a 188px column, centred, and spilled 106px out of each
+   * side straight across the verification controls beside it. Measured in
+   * Chromium: `stage rect 1041,120 400x400` inside `diagram rect
+   * 1147,-3 188x717`. Five interactive controls had a non-zero
+   * intersection with the drawing at 1280, 1366, 1440 and 1920.
+   *
+   * A window breakpoint cannot know this. Only the container can. So the
+   * stage is now the SMALLER of what the viewport tier allows and what
+   * the box it actually landed in can hold, and `maxWidth: '100%'` on the
+   * stage is the second lock: even before the first layout pass, and even
+   * if a future parent shrinks without remounting, the drawing cannot be
+   * wider than the space it was given.
+   */
+  const [containerWidth, setContainerWidth] = useState(0);
+  const byViewport =
     stageWidthOverride ?? computeAirframeStageWidth(windowWidth, fontScale);
+  const stageWidth =
+    containerWidth > 0
+      ? Math.max(
+          MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
+          Math.min(byViewport, Math.floor(containerWidth)),
+        )
+      : byViewport;
   // Every internal dimension is a multiple of this, so the whole diagram
   // grows as one drawing instead of a big box around small glyphs.
   const scale = stageWidth / 260;
@@ -657,10 +683,50 @@ export function MotorAirframeDiagram({
     />
   );
 
+  /**
+   * WHICH LEGEND ENTRIES DESCRIBE SOMETHING THAT IS ACTUALLY DRAWN.
+   * Derived from the same props the nodes are drawn from, so the key can
+   * never describe a colour the map is not using.
+   */
+  const presentLegend: readonly {key: string; color: string}[] = [
+    {key: 'motorsScreen.legendSelected', color: colors.accent, present: true},
+    {
+      key: 'motorsScreen.legendSubmitted',
+      color: colors.warning,
+      present: liveActivity === 'SUBMITTED',
+    },
+    {
+      key: 'motorsScreen.legendAcknowledged',
+      color: colors.warning,
+      present: liveActivity === 'ACKNOWLEDGED',
+    },
+    {
+      key: 'motorsScreen.legendStopping',
+      color: colors.info,
+      present: liveActivity === 'STOPPING',
+    },
+    {
+      key: 'motorsScreen.legendObserved',
+      color: colors.success,
+      present: verifiedSlots.length > 0,
+    },
+    {
+      key: 'motorsScreen.legendUnsafe',
+      color: colors.error,
+      present: liveActivity === 'UNSAFE',
+    },
+  ]
+    .filter(item => item.present)
+    .map(({key, color}) => ({key, color}));
+
   const armThickness = Math.max(6, Math.round(stageWidth * 0.045));
 
   return (
-    <View style={styles.root} testID="motors-airframe-diagram">
+    <View
+      style={styles.root}
+      testID="motors-airframe-diagram"
+      onLayout={event => setContainerWidth(event.nativeEvent.layout.width)}
+    >
       {compact ? null : (
         <Text style={styles.diagramTitle}>{t('motorsScreen.diagramTitle')}</Text>
       )}
@@ -729,33 +795,19 @@ export function MotorAirframeDiagram({
         <Text style={styles.caption}>{t('motorsScreen.diagramCaption')}</Text>
       )}
 
-      {compact ? null : (
-      <View style={styles.legend} testID="motors-diagram-legend">
-        <LegendItem
-          color={colors.accent}
-          label={t('motorsScreen.legendSelected')}
-        />
-        <LegendItem
-          color={colors.warning}
-          label={t('motorsScreen.legendSubmitted')}
-        />
-        <LegendItem
-          color={colors.warning}
-          label={t('motorsScreen.legendAcknowledged')}
-        />
-        <LegendItem
-          color={colors.info}
-          label={t('motorsScreen.legendStopping')}
-        />
-        <LegendItem
-          color={colors.success}
-          label={t('motorsScreen.legendObserved')}
-        />
-        <LegendItem
-          color={colors.error}
-          label={t('motorsScreen.legendUnsafe')}
-        />
-      </View>
+      {/* THE KEY DESCRIBES WHAT IS ON THE MAP, NOT EVERY MAP THERE COULD
+          BE. Six states were printed at all times - selected, command
+          sent, controller acknowledged, stopping, observed, unsafe - so
+          before touching anything an operator read five keys for colours
+          that were not on the drawing. Only the states actually present
+          are listed now; the complete key stays one tap away under the
+          reference notes below the map, where nothing is lost. */}
+      {compact || presentLegend.length === 0 ? null : (
+        <View style={styles.legend} testID="motors-diagram-legend">
+          {presentLegend.map(item => (
+            <LegendItem key={item.key} color={item.color} label={t(item.key)} />
+          ))}
+        </View>
       )}
     </View>
   );
@@ -794,6 +846,11 @@ const styles = StyleSheet.create({
   },
   stage: {
     alignSelf: 'center',
+    /* THE SECOND LOCK. The measured clamp above sets the real size; this
+       guarantees the drawing can never paint outside the box it was
+       given, including on the very first frame before onLayout has
+       fired. */
+    maxWidth: '100%',
     position: 'relative',
     overflow: 'hidden',
     backgroundColor: '#F7FAF9',

@@ -222,10 +222,18 @@ describe('20 - one active form, every motor still represented', () => {
     expect(port.stopCalls).toEqual([]);
   });
 
-  it('shows a status word for each motor rather than four forms', () => {
+  it('shows a per-motor state for each motor rather than four forms', () => {
+    // COMPACT, NOT SILENT. Every state that says something keeps its
+    // word; the resting default - which the summary line under the chips
+    // already states for the addressed motor - is a mark, so four copies
+    // of "unconfirmed" no longer stand above a line saying "unconfirmed".
     expect(
       first(tree, 'motor-identification-summary-M2').props.children,
-    ).toBe(ar.motorsScreen.identityStatus.UNCONFIRMED);
+    ).toBe('—');
+    // ...and the full state is still SPOKEN, unchanged.
+    expect(first(tree, 'motor-identity-M2').props.accessibilityLabel).toContain(
+      ar.motorsScreen.identityStatus.UNCONFIRMED,
+    );
     // The motor whose receipt is pending reads as being identified now.
     expect(
       first(tree, 'motor-identification-summary-M1').props.children,
@@ -262,7 +270,11 @@ describe('20 - observations survive switching between motors', () => {
     act(() => first(tree, 'motor-identity-M3').props.onPress());
     expect(
       first(tree, 'motor-identification-summary-M3').props.children,
-    ).toBe(ar.motorsScreen.identityStatus.UNCONFIRMED);
+    ).toBe('—')
+    // The word itself is still spoken to assistive technology.
+    expect(
+      first(tree, 'motor-identity-M3').props.accessibilityLabel,
+    ).toContain(ar.motorsScreen.identityStatus.UNCONFIRMED);
     // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
     // nothing was observed - it is never borrowed from the template row
     // above it - and the badge on the same line still says so in words.
@@ -354,7 +366,11 @@ describe('21 - a receipt never migrates to another motor', () => {
     ).toBe(ar.motorsScreen.identityStatus.CONFIRMED);
     expect(
       first(tree, 'motor-identification-summary-M2').props.children,
-    ).toBe(ar.motorsScreen.identityStatus.UNCONFIRMED);
+    ).toBe('—')
+    // The word itself is still spoken to assistive technology.
+    expect(
+      first(tree, 'motor-identity-M2').props.accessibilityLabel,
+    ).toContain(ar.motorsScreen.identityStatus.UNCONFIRMED);
   });
 
   it('offers a way back to the motor the answer belongs to', () => {

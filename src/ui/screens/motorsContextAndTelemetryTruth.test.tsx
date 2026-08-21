@@ -328,17 +328,19 @@ describe('the aircraft travels with the identification questions', () => {
     ).toEqual(['motors-airframe-slot-3']);
   });
 
-  it('reads aircraft -> summary -> hold -> questions, in that order', () => {
-    // The order of the actual job. Whatever sits between the drawing and
-    // the first question is exactly how far off screen the drawing goes,
-    // so everything between them is one summary and one control.
-    const aircraft = r.at('motors-diagram');
+  it('reads summary -> aircraft -> hold -> questions, in that order', () => {
+    // The order of the actual job: what is addressed, where it sits, the
+    // control that spins it, the questions about what happened. The
+    // AIRCRAFT is the last thing before the control on purpose - nothing
+    // wordy stands between the picture of a motor and the button that
+    // turns it.
     const facts = r.at('motor-identity-selected');
+    const aircraft = r.at('motors-airframe-stage');
     const hold = r.at('motors-hold-button');
     const questions = r.at('verification-wizard');
-    expect(aircraft).toBeGreaterThanOrEqual(0);
-    expect(facts).toBeGreaterThan(aircraft);
-    expect(hold).toBeGreaterThan(facts);
+    expect(facts).toBeGreaterThanOrEqual(0);
+    expect(aircraft).toBeGreaterThan(facts);
+    expect(hold).toBeGreaterThan(aircraft);
     expect(questions).toBeGreaterThan(hold);
   });
 });

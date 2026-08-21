@@ -96,14 +96,23 @@ export interface MotorIdentitySectionProps {
  * semantics: every motor node inside the diagram carries its own hard
  * 44x44 minimum, independent of the stage.
  */
-const MINI_AIRFRAME_STAGE_WIDTH = 176;
-
 /**
- * How wide this card must be before the context and the questions may sit
- * beside each other: the mini stage, the gap, and a question column wide
- * enough for the location buttons to stay on two rows.
+ * THE TWO HALVES' REAL MINIMUMS, and the width at which both fit.
+ *
+ * `VERIFY_CONTEXT_MIN_WIDTH` is what the aircraft needs to still read as
+ * a Quad X rather than as four circles in a strip.
+ * `VERIFY_CONTROLS_MIN_WIDTH` is what the questions need to keep two
+ * location buttons on a row.
+ *
+ * The threshold is their sum plus the gap between them, so the decision
+ * is arithmetic on the space actually available rather than a viewport
+ * breakpoint that cannot see this card's column at all. Below it the two
+ * halves stack, at any viewport width.
  */
-const VERIFY_SIDE_BY_SIDE_MIN_WIDTH = 560;
+const VERIFY_CONTEXT_MIN_WIDTH = 240;
+const VERIFY_CONTROLS_MIN_WIDTH = 320;
+const VERIFY_SIDE_BY_SIDE_MIN_WIDTH =
+  VERIFY_CONTEXT_MIN_WIDTH + VERIFY_CONTROLS_MIN_WIDTH + spacing.md;
 
 /** A restrained provenance mark. Text, never colour alone. */
 function TruthBadge({
@@ -153,11 +162,12 @@ export function MotorIdentitySection({
    * asks how wide IT is; the tier only answers until the first layout
    * pass has happened.
    *
-   * VERIFY_SIDE_BY_SIDE_MIN_WIDTH is the width at which the mini
-   * aircraft, the compact facts beneath it and the question column each
-   * still clear their own minimum. Below it they stack, which is the
-   * phone case and is not a degradation: stacked still puts the aircraft
-   * DIRECTLY above the first question.
+   * VERIFY_SIDE_BY_SIDE_MIN_WIDTH is the arithmetic sum of what the two
+   * halves genuinely need plus the gap between them - not a viewport
+   * breakpoint. A 1920 window can hand this card less than that, and when
+   * it does the halves stack, which is the phone case and is not a
+   * degradation: stacked still puts the aircraft directly above the
+   * summary and the control that follows it.
    */
   const [sectionWidth, setSectionWidth] = useState(0);
   const verifySideBySide =
@@ -257,6 +267,22 @@ export function MotorIdentitySection({
     return t(`motorsScreen.identityStatus.${status}`);
   };
 
+  /**
+   * THE SELECTOR - FOUR CHIPS, NOT FOUR CARDS.
+   *
+   * Every chip used to print its own status underneath: "M1 unconfirmed,
+   * M2 unconfirmed, M3 unconfirmed, M4 unconfirmed", four times, directly
+   * above a summary line that says the addressed motor is unconfirmed.
+   * The status is still HERE - it is just no longer four copies of a word
+   * the summary already carries.
+   *
+   * WHAT IS NOT LOST. Every state that SAYS something keeps its word:
+   * confirmed, being identified now, answered without a position, not
+   * applicable. Only the resting default - the one the summary line
+   * beneath already states for the addressed motor - becomes a mark. And
+   * every chip's accessibilityLabel still spells the full state out, so a
+   * screen-reader user hears exactly what they heard before.
+   */
   const selectionRow = (
     <View style={styles.slotRow} testID="motor-identification-summary">
       {summaryRows.map(row => (
@@ -275,6 +301,10 @@ export function MotorIdentitySection({
           testID={`motor-identity-M${row.motorNumber}`}
         >
           <Text style={styles.slotLabel}>{`M${row.motorNumber}`}</Text>
+          {/* The visible mark is carried only where it says something the
+              summary does not: this output is already confirmed. The
+              testID stays on the node that carries the state, so the
+              existing status contracts still read it. */}
           <Text
             style={[
               styles.slotMark,
@@ -282,7 +312,10 @@ export function MotorIdentitySection({
             ]}
             testID={`motor-identification-summary-M${row.motorNumber}`}
           >
-            {statusLabel(row.motorNumber, row.status)}
+            {row.status === 'UNCONFIRMED' &&
+            !(receipt !== undefined && receipt.motorNumber === row.motorNumber)
+              ? '—'
+              : statusLabel(row.motorNumber, row.status)}
           </Text>
         </Pressable>
       ))}
@@ -293,20 +326,10 @@ export function MotorIdentitySection({
     /* testID kept from the bench card this block moved out of: the
        diagram's geometry contract is asserted through it. */
     <View style={styles.mapBlock} testID="motors-diagram">
-      {active ? (
-        <MotorAirframeDiagram
-          entries={airframeEntries}
-          selectedSlot={selectedSlot}
-          liveSlot={liveSlot}
-          liveActivity={liveActivity}
-          verifiedSlots={verifiedSlots}
-          onSelectSlot={onSelectSlot}
-          motorCount={diagramMotorCount}
-        />
-      ) : null}
       {/* The numbered list is the only selector that is always correct,
           whatever the airframe, so it is present alongside the map rather
-          than instead of it. */}
+          than instead of it. It sits ABOVE the drawing so that the last
+          thing before the protected hold is the aircraft itself. */}
       {selectionRow}
       {/* CONCISE TRUTH, ALWAYS VISIBLE. The full paragraph says the same
           thing at four times the height and now lives under the single
@@ -349,6 +372,20 @@ export function MotorIdentitySection({
           </Pressable>
           {notesOpen ? (
             <View style={styles.notesBlock} testID="motors-diagram-notes">
+              {/* THE COMPLETE MAP KEY, one tap away. The drawing itself
+                  now lists only the states it is actually using, so the
+                  five colours that are not on screen live here instead of
+                  standing above the aircraft at all times. */}
+              <Text style={styles.caption} testID="motors-diagram-legend-full">
+                {[
+                  t('motorsScreen.legendSelected'),
+                  t('motorsScreen.legendSubmitted'),
+                  t('motorsScreen.legendAcknowledged'),
+                  t('motorsScreen.legendStopping'),
+                  t('motorsScreen.legendObserved'),
+                  t('motorsScreen.legendUnsafe'),
+                ].join(' · ')}
+              </Text>
               <Text style={styles.caption} testID="motors-numbering-detail">
                 {t('motorsScreen.numberingNotice')}
               </Text>
@@ -361,6 +398,19 @@ export function MotorIdentitySection({
             </View>
           ) : null}
         </>
+      ) : null}
+      {/* THE DRAWING IS LAST IN THIS BLOCK, so the control that spins a
+          motor is the very next thing after the picture of it. */}
+      {active ? (
+        <MotorAirframeDiagram
+          entries={airframeEntries}
+          selectedSlot={selectedSlot}
+          liveSlot={liveSlot}
+          liveActivity={liveActivity}
+          verifiedSlots={verifiedSlots}
+          onSelectSlot={onSelectSlot}
+          motorCount={diagramMotorCount}
+        />
       ) : null}
     </View>
   );
@@ -747,17 +797,21 @@ export function MotorIdentitySection({
           ]}
           testID="motor-verification-context"
         >
-          {/* ONE AIRCRAFT PER WORKFLOW.
-              The previous round put a second, smaller copy next to the
-              questions because the full one scrolled away. Compacting the
-              questions removed the reason: the whole verification now fits
-              close enough to the drawing that a duplicate would only make
-              the operator ask which of the two they are looking at. So
-              THIS is the drawing - the same selectable one, in the same
-              place the questions are - and the compact summary sits under
-              it naming what is addressed. */}
-          {map}
+          {/* SUMMARY FIRST, THEN THE DRAWING, THEN THE ACTION.
+              The two-line summary names what is addressed and what is
+              only expected about it; the drawing shows where that motor
+              sits; the protected hold comes straight after the drawing.
+              Nothing wordy stands between the aircraft and the control
+              that spins it - the selector and the reference notes are
+              above the drawing, with the summary they belong to.
+
+              ONE AIRCRAFT PER WORKFLOW. The round before last put a
+              second, smaller copy next to the questions because the full
+              one scrolled away. Compacting the questions removed the
+              reason, and a duplicate only made the operator ask which of
+              the two they were looking at. */}
           {facts}
+          {map}
         </View>
 
         <View
@@ -837,13 +891,35 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   verifyContext: { gap: spacing.xs },
+  /**
+   * THE SUB-GRID, IN SHARES OF THE CARD - NOT IN A FIXED NUMBER.
+   *
+   * This basis used to be `MINI_AIRFRAME_STAGE_WIDTH + spacing.md`, a
+   * literal 188px sized for the small second aircraft that the previous
+   * round deleted. The full drawing then landed in it, was centred, and
+   * spilled out of both sides across the verification controls. Measured
+   * before this fix: 5-6 interactive controls intersecting the drawing at
+   * 1280, 1366, 1440 and 1920.
+   *
+   * Shares, with real minimums on both halves, so neither can be squeezed
+   * into a strip: the drawing keeps enough to read as a Quad X and the
+   * question column keeps enough for two location buttons per row. If the
+   * card cannot give both, `verifySideBySide` is false and they stack -
+   * which is the primary hierarchy anyway.
+   */
   verifyContextWide: {
     flexGrow: 0,
-    flexShrink: 0,
-    flexBasis: MINI_AIRFRAME_STAGE_WIDTH + spacing.md,
+    flexShrink: 1,
+    flexBasis: '44%',
+    minWidth: VERIFY_CONTEXT_MIN_WIDTH,
   },
   verifyControls: { gap: spacing.sm },
-  verifyControlsWide: { flexGrow: 1, flexShrink: 1, minWidth: 0 },
+  verifyControlsWide: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '52%',
+    minWidth: VERIFY_CONTROLS_MIN_WIDTH,
+  },
   /* The mini stage is centred in its own column so the aircraft reads as
      a drawing rather than as a left-aligned block of shapes. */
   miniStage: { alignItems: 'center' },

@@ -165,11 +165,66 @@ describe('MotorAirframeDiagram', () => {
     }
     expect(json).toContain('CW');
     expect(json).toContain('CCW');
-    // The legend names every state it can show.
-    expect(json).toContain(i18n.t('motorsScreen.legendSubmitted'));
-    expect(json).toContain(i18n.t('motorsScreen.legendAcknowledged'));
-    expect(json).toContain(i18n.t('motorsScreen.legendStopping'));
-    expect(json).toContain(i18n.t('motorsScreen.legendUnsafe'));
+    // THE KEY DESCRIBES THIS MAP, NOT EVERY MAP THERE COULD BE.
+    // Six state names used to be printed at all times, so before touching
+    // anything an operator read five keys for colours that were not on
+    // the drawing. The property that MATTERS - no state is ever conveyed
+    // by colour alone - is unchanged and is proven per state below: the
+    // key lists exactly what is drawn, and nothing that is not.
+    expect(json).toContain(i18n.t('motorsScreen.legendSelected'));
+    for (const absent of [
+      'motorsScreen.legendSubmitted',
+      'motorsScreen.legendAcknowledged',
+      'motorsScreen.legendStopping',
+      'motorsScreen.legendUnsafe',
+      'motorsScreen.legendObserved',
+    ]) {
+      expect([absent, json.includes(i18n.t(absent))]).toEqual([absent, false]);
+    }
+    act(() => tree.unmount());
+  });
+
+  it.each([
+    ['SUBMITTED', 'motorsScreen.legendSubmitted'],
+    ['ACKNOWLEDGED', 'motorsScreen.legendAcknowledged'],
+    ['STOPPING', 'motorsScreen.legendStopping'],
+    ['UNSAFE', 'motorsScreen.legendUnsafe'],
+  ] as const)(
+    'names the %s state in the key exactly when that state is drawn',
+    (activity, key) => {
+      let tree!: ReactTestRenderer.ReactTestRenderer;
+      act(() => {
+        tree = ReactTestRenderer.create(
+          <MotorAirframeDiagram
+            entries={ENTRIES}
+            selectedSlot={1}
+            liveSlot={1}
+            liveActivity={activity}
+            verifiedSlots={[]}
+            onSelectSlot={() => undefined}
+          />,
+        );
+      });
+      expect(JSON.stringify(tree.toJSON())).toContain(i18n.t(key));
+      act(() => tree.unmount());
+    },
+  );
+
+  it('names the observed state in the key once an output is confirmed', () => {
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      tree = ReactTestRenderer.create(
+        <MotorAirframeDiagram
+          entries={ENTRIES}
+          selectedSlot={1}
+          verifiedSlots={[2]}
+          onSelectSlot={() => undefined}
+        />,
+      );
+    });
+    expect(JSON.stringify(tree.toJSON())).toContain(
+      i18n.t('motorsScreen.legendObserved'),
+    );
     act(() => tree.unmount());
   });
 
