@@ -239,9 +239,15 @@ describe('26 - selecting a motor is addressing, and nothing else', () => {
       hold.props.onLongPress();
     });
     act(() => port.publish(snapshotFor({motorCount: 4, receipt: receiptFor(1, 1)})));
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(
-      ar.motorsScreen.identityUnconfirmed,
-    );
+    // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
+    // nothing was observed - it is never borrowed from the template row
+    // above it - and the badge on the same line still says so in words.
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(
+      first(tree, 'motor-identity-confirmed-badge').findAll(
+        node => typeof node.props?.children === 'string',
+      )[0].props.children,
+    ).toBe(ar.motorsScreen.truthUnconfirmed);
     expect(textOf(tree)).toContain(ar.motorsScreen.truthUnconfirmed);
   });
 
@@ -323,9 +329,15 @@ describe('26 - correcting a mistaken observation', () => {
 
   it('clears that observation and nothing else', () => {
     act(() => first(tree, 'motor-identity-clear').props.onPress());
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(
-      ar.motorsScreen.identityUnconfirmed,
-    );
+    // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
+    // nothing was observed - it is never borrowed from the template row
+    // above it - and the badge on the same line still says so in words.
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(
+      first(tree, 'motor-identity-confirmed-badge').findAll(
+        node => typeof node.props?.children === 'string',
+      )[0].props.children,
+    ).toBe(ar.motorsScreen.truthUnconfirmed);
     // The mismatch it produced goes with it.
     expect(has(tree, 'motor-identity-mismatch')).toBe(false);
     // And the correction control retires, because there is nothing to fix.
@@ -346,7 +358,9 @@ describe('26 - correcting a mistaken observation', () => {
     const before = first(tree, 'motor-identity-output').props.children;
     act(() => first(tree, 'motor-identity-clear').props.onPress());
     expect(first(tree, 'motor-identity-output').props.children).toBe(before);
-    expect(before).toBe(ar.motorsScreen.identityOutputUnavailable);
+    expect(before).toBe(
+      `${ar.motorsScreen.identityOutput}: ${ar.motorsScreen.identityOutputUnavailable}`,
+    );
   });
 });
 
@@ -743,8 +757,10 @@ describe('the identity section names an output only when one was read', () => {
 
   it('says unavailable when nothing has been read', () => {
     const tree = mountIdentity(undefined);
+    // The output line now carries its own label, because it is a caption
+    // rather than a labelled row. The value it reports is unchanged.
     expect(first(tree, 'motor-identity-output').props.children).toBe(
-      ar.motorsScreen.identityOutputUnavailable,
+      `${ar.motorsScreen.identityOutput}: ${ar.motorsScreen.identityOutputUnavailable}`,
     );
     expect(textOf(tree)).toContain(ar.motorsScreen.summaryOutputsUnread);
     act(() => tree.unmount());

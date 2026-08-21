@@ -10,7 +10,6 @@ import { acquireMotorDiagnosticsTelemetry } from '../../platforms/react-native/p
 import {
   MotorDiagnosticsPanel,
   motorOutputPercent,
-  rpmMeterPercent,
 } from './MotorDiagnosticsPanel';
 
 let mockOutputValue: TelemetryValue<unknown> = { status: 'UNAVAILABLE' };
@@ -43,12 +42,10 @@ describe('MotorDiagnosticsPanel', () => {
     jest.mocked(acquireMotorDiagnosticsTelemetry).mockClear();
   });
 
-  it('uses stable absolute scales for FC output and RPM meters', () => {
+  it('uses a stable absolute scale for the FC output meter', () => {
     expect(motorOutputPercent(1000)).toBe(0);
     expect(motorOutputPercent(1500)).toBe(50);
     expect(motorOutputPercent(2500)).toBe(100);
-    expect(rpmMeterPercent(25_000)).toBe(50);
-    expect(rpmMeterPercent(60_000)).toBe(100);
   });
 
   it('renders real FC output values and every available ESC metric', async () => {

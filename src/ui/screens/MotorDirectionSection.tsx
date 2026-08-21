@@ -185,10 +185,12 @@ export function MotorDirectionSection({
 
   return (
     <View style={styles.card} testID="motor-direction-section">
-      <Text style={styles.eyebrow}>{t('motorsScreen.directionEyebrow')}</Text>
-      <Text style={styles.title}>{t('motorsScreen.directionTitle')}</Text>
-      <Text style={styles.motor} testID="motor-direction-motor">
-        {`M${selectedMotor}`}
+      {/* ONE HEADING THAT NAMES THE MOTOR. It used to be three stacked
+          lines - an eyebrow, a title, and the motor number on its own -
+          all saying the same thing the identification summary a few
+          pixels above already says. */}
+      <Text style={styles.title} testID="motor-direction-motor">
+        {t('motorsScreen.directionTitleFor', {motor: `M${selectedMotor}`})}
       </Text>
 
       {/* THREE ROWS, THREE SOURCES. Each names where it came from. */}
@@ -249,7 +251,15 @@ export function MotorDirectionSection({
           The first is why COMMANDED can never become a current-state
           reading; the second is why COMMANDED and OBSERVED are never
           compared. Their longer explanations sit under the single details
-          toggle below - the claims themselves do not. */}
+          toggle below - the claims themselves do not.
+
+          THIS ROUND TRIED TO SHOW THEM ONLY ALONGSIDE A COMMANDED VALUE,
+          on the reasoning that a caveat about an absent reading explains
+          nothing. `motorsDirectionTruth.test.tsx` refused it, by name:
+          "the resting state is truth only - shows both safety truths with
+          nothing opened". The claim an operator needs BEFORE sending a
+          command is exactly the claim that the thing they are about to
+          send can never be read back. It stays visible at rest. */}
       <Text style={styles.caption} testID="motor-direction-no-readback">
         {t('motorsScreen.directionNoReadback')}
       </Text>
@@ -383,19 +393,10 @@ const styles = StyleSheet.create({
     borderRadius: radii.lg,
     padding: spacing.md,
   },
-  eyebrow: {
-    ...typography.eyebrow,
-    color: colors.accentStrong,
-    writingDirection: 'rtl'},
   title: {
-    ...typography.sectionTitle,
+    ...typography.bodyStrong,
     color: colors.textPrimary,
     writingDirection: 'rtl'},
-  motor: {
-    ...typography.mono,
-    color: colors.textPrimary,
-    fontWeight: '700',
-  },
   caption: {
     ...typography.caption,
     color: colors.textSecondary,

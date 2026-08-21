@@ -263,17 +263,29 @@ describe('20 - observations survive switching between motors', () => {
     expect(
       first(tree, 'motor-identification-summary-M3').props.children,
     ).toBe(ar.motorsScreen.identityStatus.UNCONFIRMED);
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(
-      ar.motorsScreen.identityUnconfirmed,
-    );
+    // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
+    // nothing was observed - it is never borrowed from the template row
+    // above it - and the badge on the same line still says so in words.
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(
+      first(tree, 'motor-identity-confirmed-badge').findAll(
+        node => typeof node.props?.children === 'string',
+      )[0].props.children,
+    ).toBe(ar.motorsScreen.truthUnconfirmed);
   });
 
   it('updates the summary immediately when M2 is corrected', () => {
     act(() => first(tree, 'motor-identity-clear').props.onPress());
     // The confirmed position is gone...
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(
-      ar.motorsScreen.identityUnconfirmed,
-    );
+    // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
+    // nothing was observed - it is never borrowed from the template row
+    // above it - and the badge on the same line still says so in words.
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(
+      first(tree, 'motor-identity-confirmed-badge').findAll(
+        node => typeof node.props?.children === 'string',
+      )[0].props.children,
+    ).toBe(ar.motorsScreen.truthUnconfirmed);
     // ...and M2 reads as pending again rather than confirmed, because the
     // M2 receipt is still the outstanding one and may be answered afresh.
     expect(
@@ -458,9 +470,15 @@ describe('23 - a quad keeps the whole identification workflow', () => {
       hold.props.onLongPress();
     });
     act(() => port.publish(snapshotFor(4, receiptFor(1))));
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(
-      ar.motorsScreen.identityUnconfirmed,
-    );
+    // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
+    // nothing was observed - it is never borrowed from the template row
+    // above it - and the badge on the same line still says so in words.
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(
+      first(tree, 'motor-identity-confirmed-badge').findAll(
+        node => typeof node.props?.children === 'string',
+      )[0].props.children,
+    ).toBe(ar.motorsScreen.truthUnconfirmed);
   });
 
   it('keeps the reference notes reachable in place, not in Advanced', () => {
@@ -583,9 +601,15 @@ describe('18 - every exceptional answer stays reachable', () => {
     expect(
       first(tree, 'motor-identification-summary-M1').props.children,
     ).toBe(ar.motorsScreen.identityStatus.ANSWERED_WITHOUT_POSITION);
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(
-      ar.motorsScreen.identityUnconfirmed,
-    );
+    // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
+    // nothing was observed - it is never borrowed from the template row
+    // above it - and the badge on the same line still says so in words.
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(
+      first(tree, 'motor-identity-confirmed-badge').findAll(
+        node => typeof node.props?.children === 'string',
+      )[0].props.children,
+    ).toBe(ar.motorsScreen.truthUnconfirmed);
   });
 
   it('issues no motor command from any exceptional answer', () => {

@@ -366,139 +366,140 @@ export function MotorIdentitySection({
   );
 
   /**
-   * THE COMPACT MOTOR CONTEXT - four short chips, not a card of rows.
+   * THE COMPACT MOTOR CONTEXT - two lines, not six rows.
    *
-   * It answers, in the order a person asks it while standing over the
-   * aircraft: which motor am I addressing, where does the TEMPLATE say it
-   * should be, which way does the TEMPLATE say it should turn, where did
-   * I actually confirm it, and which flight-controller output drives it.
+   * IT USED TO BE A LIST OF FACTS. Motor number, expected position,
+   * expected direction, confirmed position, confirmed direction, output:
+   * six labelled rows, each with its own label, value and badge, each on
+   * its own line, for a total that dominated the space above the
+   * questions. Every one of those facts is still here.
    *
-   * EVERY EXPECTATION CARRIES ITS BADGE. The two template chips say
-   * "expected" in words on the chip itself, and the confirmed chips say
-   * "unconfirmed" until an observation has been recorded. Nothing here
-   * can present a reference value as an observation, which is the whole
-   * reason this block is not a table of bare values.
+   * THE SEMANTIC SPLIT IS UNTOUCHED, AND IT IS THE REASON FOR THE SHAPE.
+   * Line one is the TEMPLATE: what a Quad X says M2 should be. Line two
+   * is the OBSERVATION: what a person actually confirmed. They are two
+   * different kinds of statement, so they are two different lines, each
+   * carrying its own provenance badge - never merged, never inferred from
+   * one another, and an em-dash where nothing has been observed rather
+   * than a value borrowed from the row above.
+   *
+   * Screen readers get the long form: each line's accessibilityLabel
+   * spells out "expected position ... expected direction ...", so the
+   * compression is visual only.
    */
-  const chip = (
-    label: string,
-    value: string,
-    badge: {label: string; tone: 'expected' | 'read' | 'confirmed' | 'unknown'} | undefined,
-    testID: string,
-    badgeTestID?: string,
-    strong = false,
-  ): React.JSX.Element => (
-    <View style={styles.chip}>
-      <Text style={styles.chipLabel}>{label}</Text>
-      <View style={styles.chipValueGroup}>
-        <Text
-          style={strong ? styles.chipValueStrong : styles.chipValue}
-          testID={testID}
-        >
-          {value}
-        </Text>
-        {badge !== undefined ? (
-          <TruthBadge
-            label={badge.label}
-            tone={badge.tone}
-            testID={badgeTestID}
-          />
-        ) : null}
-      </View>
-    </View>
-  );
+  const expectedPositionText =
+    expected === undefined
+      ? '—'
+      : t(`motorVerification.position.${expected.position}`);
+  const expectedDirectionText =
+    expected === undefined
+      ? '—'
+      : t(`motorVerification.direction.${expected.direction}`);
+  const confirmedPositionText =
+    confirmedPosition === undefined
+      ? '—'
+      : t(`motorVerification.position.${confirmedPosition}`);
+  const confirmedDirectionText =
+    confirmedDirection === undefined
+      ? '—'
+      : t(`motorVerification.direction.${confirmedDirection}`);
 
   const facts = (
     <View style={styles.factsBlock} testID="motor-identity-selected">
-      {chip(
-        t('motorsScreen.identityNumber'),
-        `M${selectedSlot}`,
-        undefined,
-        'motor-identity-number',
-        undefined,
-        true,
-      )}
-
-      {/* EXPECTED - and only where a template legitimately applies. */}
+      {/* LINE 1 - THE TEMPLATE. Marked "expected" on the line itself. */}
       {quadSupported ? (
-        <>
-          {chip(
-            t('motorsScreen.identityExpectedPosition'),
-            expected === undefined
-              ? '—'
-              : t(`motorVerification.position.${expected.position}`),
-            {label: t('motorsScreen.truthExpected'), tone: 'expected'},
-            'motor-identity-expected',
-          )}
-          {/* THE EXPECTED SPIN DIRECTION, STATED AS AN EXPECTATION.
-              It used to appear only as an arrow on the diagram, where an
-              arrow beside a lit motor reads like a reading. Here it is a
-              word, next to the badge that says the word is a reference. */}
-          {chip(
-            t('motorsScreen.identityExpectedDirection'),
-            expected === undefined
-              ? '—'
-              : t(`motorVerification.direction.${expected.direction}`),
-            {label: t('motorsScreen.truthExpected'), tone: 'expected'},
-            'motor-identity-expected-direction',
-            'motor-identity-expected-direction-badge',
-          )}
-        </>
-      ) : (
-        <Text
-          style={styles.caption}
-          testID="motors-selected-expected-unavailable"
+        <View
+          style={styles.identityLine}
+          accessibilityLabel={`${t('motorsScreen.motorAccessibleName', {
+            number: selectedSlot,
+          })}. ${t('motorsScreen.identityExpectedPosition')}: ${
+            expectedPositionText
+          }. ${t('motorsScreen.identityExpectedDirection')}: ${
+            expectedDirectionText
+          }`}
         >
-          {t('motorsScreen.selectedMotorExpectedUnavailable')}
-        </Text>
+          <Text style={styles.identityMotor} testID="motor-identity-number">
+            {`M${selectedSlot}`}
+          </Text>
+          <Text style={styles.identitySeparator}>·</Text>
+          <Text style={styles.identityValue} testID="motor-identity-expected">
+            {expectedPositionText}
+          </Text>
+          <Text style={styles.identitySeparator}>·</Text>
+          <Text
+            style={styles.identityValue}
+            testID="motor-identity-expected-direction"
+          >
+            {expectedDirectionText}
+          </Text>
+          <TruthBadge
+            label={t('motorsScreen.truthExpected')}
+            tone="expected"
+            testID="motor-identity-expected-direction-badge"
+          />
+        </View>
+      ) : (
+        <View style={styles.identityLine}>
+          <Text style={styles.identityMotor} testID="motor-identity-number">
+            {`M${selectedSlot}`}
+          </Text>
+          <Text
+            style={styles.caption}
+            testID="motors-selected-expected-unavailable"
+          >
+            {t('motorsScreen.selectedMotorExpectedUnavailable')}
+          </Text>
+        </View>
       )}
 
-      {/* CONFIRMED - the only position truth, and absent until earned. */}
-      {chip(
-        t('motorsScreen.identityConfirmedPosition'),
-        confirmedPosition === undefined
-          ? t('motorsScreen.identityUnconfirmed')
-          : t(`motorVerification.position.${confirmedPosition}`),
-        {
-          label:
+      {/* LINE 2 - THE OBSERVATION, and only what was actually observed. */}
+      <View
+        style={styles.identityLine}
+        accessibilityLabel={`${t('motorsScreen.identityConfirmedPosition')}: ${
+          confirmedPosition === undefined
+            ? t('motorsScreen.identityUnconfirmed')
+            : confirmedPositionText
+        }. ${t('motorsScreen.identityConfirmedDirection')}: ${
+          confirmedDirection === undefined
+            ? t('motorsScreen.identityUnconfirmed')
+            : confirmedDirectionText
+        }`}
+      >
+        <Text style={styles.identityLabel}>
+          {t('motorsScreen.identityActualLabel')}
+        </Text>
+        <Text style={styles.identityValue} testID="motor-identity-confirmed">
+          {confirmedPositionText}
+        </Text>
+        <Text style={styles.identitySeparator}>·</Text>
+        <Text
+          style={styles.identityValue}
+          testID="motor-identity-confirmed-direction"
+        >
+          {confirmedDirectionText}
+        </Text>
+        <TruthBadge
+          label={
             confirmedPosition === undefined
               ? t('motorsScreen.truthUnconfirmed')
-              : t('motorsScreen.truthConfirmed'),
-          tone: confirmedPosition === undefined ? 'unknown' : 'confirmed',
-        },
-        'motor-identity-confirmed',
-        'motor-identity-confirmed-badge',
-      )}
+              : t('motorsScreen.truthConfirmed')
+          }
+          tone={confirmedPosition === undefined ? 'unknown' : 'confirmed'}
+          testID="motor-identity-confirmed-badge"
+        />
+      </View>
 
-      {/* THE OBSERVED SPIN DIRECTION. Read from the SAME observation as
-          the confirmed position, so it can never be filled in from the
-          template while the position is still unconfirmed. */}
-      {chip(
-        t('motorsScreen.identityConfirmedDirection'),
-        confirmedDirection === undefined
-          ? t('motorsScreen.identityUnconfirmed')
-          : t(`motorVerification.direction.${confirmedDirection}`),
-        {
-          label:
-            confirmedDirection === undefined
-              ? t('motorsScreen.truthUnconfirmed')
-              : t('motorsScreen.truthConfirmed'),
-          tone: confirmedDirection === undefined ? 'unknown' : 'confirmed',
-        },
-        'motor-identity-confirmed-direction',
-        'motor-identity-confirmed-direction-badge',
-      )}
-
-      {/* FC OUTPUT - firmware truth or nothing. */}
-      {chip(
-        t('motorsScreen.identityOutput'),
-        selectedOutput === undefined
-          ? t('motorsScreen.identityOutputUnavailable')
-          : t('motorOutputReorder.resource', { value: selectedOutput + 1 }),
-        selectedOutput === undefined
-          ? undefined
-          : {label: t('motorsScreen.truthRead'), tone: 'read'},
-        'motor-identity-output',
-      )}
+      {/* THE FLIGHT-CONTROLLER OUTPUT, on the one line it needs. Read or
+          absent - never inferred from the logical number. */}
+      <Text style={styles.identityOutput} testID="motor-identity-output">
+        {selectedOutput === undefined
+          ? `${t('motorsScreen.identityOutput')}: ${t(
+              'motorsScreen.identityOutputUnavailable',
+            )}`
+          : `${t('motorsScreen.identityOutput')}: ${t(
+              'motorOutputReorder.resource',
+              {value: selectedOutput + 1},
+            )} · ${t('motorsScreen.truthRead')}`}
+      </Text>
 
       {mismatch ? (
         <Text style={styles.mismatch} testID="motor-identity-mismatch">
@@ -512,6 +513,7 @@ export function MotorIdentitySection({
         <Pressable
           onPress={() => onClearObservation(selectedSlot)}
           accessibilityRole="button"
+          accessibilityHint={t('motorsScreen.identityClearNote')}
           style={styles.secondaryButton}
           testID="motor-identity-clear"
         >
@@ -520,31 +522,8 @@ export function MotorIdentitySection({
           </Text>
         </Pressable>
       ) : null}
-      {entry !== undefined && entry.outcome !== 'UNTESTED' ? (
-        <Text style={styles.caption} testID="motor-identity-clear-note">
-          {t('motorsScreen.identityClearNote')}
-        </Text>
-      ) : null}
     </View>
   );
-
-  /** The context marker: the same aircraft, small, beside the questions. */
-  const verifyMiniAircraft =
-    active && quadSupported ? (
-      <View style={styles.miniStage} testID="motor-verification-mini-diagram">
-        <MotorAirframeDiagram
-          entries={airframeEntries}
-          selectedSlot={selectedSlot}
-          liveSlot={liveSlot}
-          liveActivity={liveActivity}
-          verifiedSlots={verifiedSlots}
-          onSelectSlot={onSelectSlot}
-          motorCount={diagramMotorCount}
-          stageWidthOverride={MINI_AIRFRAME_STAGE_WIDTH}
-          compact
-        />
-      </View>
-    ) : null;
 
   /**
    * WHAT COMES BEFORE THE QUESTIONS: which step this is, and the control
@@ -700,8 +679,6 @@ export function MotorIdentitySection({
         </Text>
       </View>
 
-      {map}
-
       {conflicts.length > 0 ? (
         <View style={styles.conflictBlock} testID="motor-identity-conflicts">
           <Text style={styles.conflictTitle}>
@@ -739,20 +716,21 @@ export function MotorIdentitySection({
           twice - a compact one, the selected motor lit, next to the short
           facts that name it.
 
-          THE TWO ORDERS ARE DIFFERENT ON PURPOSE.
+          ONE ORDER, TWO SHAPES.
 
-            wide    [ mini aircraft + facts ] | [ instruction, hold,
-                                                 questions ]
+            wide    [ aircraft + summary ] | [ instruction, hold,
+                                               questions ]
                     the context sits beside the questions and stays put
                     while they are answered.
 
-            narrow  instruction -> hold -> mini aircraft -> facts ->
+            narrow  aircraft -> summary -> instruction -> hold ->
                     questions
-                    stacked, the context has to be the LAST thing before
-                    the first question or the scroll puts it off screen
-                    again. Putting the hold control above it is what makes
-                    that possible: it is pressed BEFORE the questions
-                    exist, so it does not need to be next to them.
+                    the reading order of the actual job: see which motor,
+                    read what is claimed about it, spin it, answer. The
+                    previous round had to hoist the hold control above the
+                    drawing to keep a SECOND, smaller drawing next to the
+                    questions; compacting the questions removed both the
+                    need and the duplicate.
 
           The mini diagram is a real selector, not a picture: changing
           motor mid-workflow no longer means scrolling back up. It carries
@@ -762,8 +740,6 @@ export function MotorIdentitySection({
         style={[styles.verifyArea, verifySideBySide && styles.verifyAreaWide]}
         testID="motor-verification-area"
       >
-        {verifySideBySide ? null : verifyPrelude}
-
         <View
           style={[
             styles.verifyContext,
@@ -771,16 +747,17 @@ export function MotorIdentitySection({
           ]}
           testID="motor-verification-context"
         >
-          {/* THE AIRCRAFT IS THE LAST THING BEFORE THE FIRST QUESTION.
-              Stacked, whatever sits between the drawing and the question
-              is exactly how far off screen the drawing goes - so the short
-              facts go ABOVE it and the drawing goes directly against the
-              questions. Side by side the pair is a block and reads better
-              drawing-first. MEASURED at 390: facts-then-drawing puts the
-              aircraft in the viewport with the question; drawing-then-
-              facts does not. */}
-          {verifySideBySide ? verifyMiniAircraft : facts}
-          {verifySideBySide ? facts : verifyMiniAircraft}
+          {/* ONE AIRCRAFT PER WORKFLOW.
+              The previous round put a second, smaller copy next to the
+              questions because the full one scrolled away. Compacting the
+              questions removed the reason: the whole verification now fits
+              close enough to the drawing that a duplicate would only make
+              the operator ask which of the two they are looking at. So
+              THIS is the drawing - the same selectable one, in the same
+              place the questions are - and the compact summary sits under
+              it naming what is addressed. */}
+          {map}
+          {facts}
         </View>
 
         <View
@@ -790,7 +767,7 @@ export function MotorIdentitySection({
           ]}
           testID="motor-verification-controls"
         >
-          {verifySideBySide ? verifyPrelude : null}
+          {verifyPrelude}
           {verifyQuestions}
         </View>
       </View>
@@ -926,49 +903,45 @@ const styles = StyleSheet.create({
     color: colors.warning,
     fontWeight: '700',
     writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
-  /* NOT A CARD ANY MORE. The selected-motor facts used to be a bordered
-     panel with `space-between` rows, which in a 190px context column put
-     the label and its value at opposite ends of a line too short to hold
-     both. They are chips now: no outer border, a thin rule between them,
-     and the label sits directly above its own value. */
-  factsBlock: { gap: 2 },
-  /* ONE LINE PER FACT WHERE IT FITS. Label, value and provenance badge
-     on the same row, wrapping only when the column is genuinely too
-     narrow to hold them - which is how five facts occupy roughly one
-     fact's worth of the height a bordered row-per-line card needed. */
-  chip: {
+  /* TWO LINES AND A CAPTION. No border, no fill, no per-row rule: this
+     block sits inside the identification card and directly under the
+     aircraft, and framing three lines was framing for its own sake. The
+     six labelled rows it replaced are all still here - line one is the
+     template, line two is the observation, and the caption is the
+     flight-controller output. */
+  factsBlock: { gap: spacing.xs },
+  identityLine: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     alignItems: 'center',
     gap: spacing.xs,
-    paddingVertical: 3,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderSoft,
   },
-  chipLabel: {
+  identityMotor: {
+    ...typography.mono,
+    color: colors.textPrimary,
+    fontWeight: '700',
+  },
+  identityLabel: {
     ...typography.caption,
-    fontSize: 11,
     color: colors.textSecondary,
     writingDirection: 'rtl',
   },
-  chipValueGroup: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: spacing.xs,
-    flexShrink: 1,
+  identitySeparator: {
+    ...typography.caption,
+    color: colors.textMuted,
   },
-  chipValue: {
+  identityValue: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
     flexShrink: 1,
     maxWidth: PROSE_MEASURE,
   },
-  chipValueStrong: {
-    ...typography.mono,
-    color: colors.textPrimary,
-    fontWeight: '700',
+  identityOutput: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+    maxWidth: PROSE_MEASURE,
   },
   badge: {
     paddingHorizontal: spacing.sm,

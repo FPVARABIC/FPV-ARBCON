@@ -557,9 +557,12 @@ describe('35 - a command acknowledgement creates no physical evidence', () => {
     expect(valueOf(tree, 'motor-direction-observed')).toBe(
       ar.motorsScreen.directionObservedNone,
     );
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(
-      ar.motorsScreen.identityUnconfirmed,
-    );
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(
+      first(tree, 'motor-identity-confirmed-badge').findAll(
+        node => typeof node.props?.children === 'string',
+      )[0].props.children,
+    ).toBe(ar.motorsScreen.truthUnconfirmed);
   });
 
   it('spins no motor and requests no stop', () => {
@@ -691,7 +694,9 @@ describe('38 - a hex is told the command-path reason, not the template one', () 
 
   it('still lets every motor be addressed', () => {
     act(() => first(tree, 'motor-identity-M6').props.onPress());
-    expect(first(tree, 'motor-direction-motor').props.children).toBe('M6');
+    // The heading names the motor now, instead of a bare number on its
+    // own line under a title and an eyebrow saying the same thing.
+    expect(first(tree, 'motor-direction-motor').props.children).toContain('M6');
   });
 
   it('fabricates no observation', () => {

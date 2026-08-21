@@ -35,7 +35,6 @@ const DEFAULT_VISIBLE_MOTOR_COUNT = 4;
 const MAX_VISIBLE_MOTOR_COUNT = 8;
 const OUTPUT_STOP_VALUE = 1000;
 const OUTPUT_FULL_VALUE = 2000;
-const RPM_METER_MAX = 50_000;
 const LEASED_DIAGNOSTICS_STALE_AFTER_MILLIS = 2_000;
 
 export function motorOutputPercent(value: number): number {
@@ -47,10 +46,6 @@ export function motorOutputPercent(value: number): number {
         100,
     ),
   );
-}
-
-export function rpmMeterPercent(rpm: number): number {
-  return Math.max(0, Math.min(100, (rpm / RPM_METER_MAX) * 100));
 }
 
 function useAvailability(
@@ -360,9 +355,16 @@ export function MotorDiagnosticsPanel({
             <Text style={styles.sectionTitle}>
               {t('motorDiagnostics.escHeading')}
             </Text>
-            <Text style={styles.caption}>
-              {t('motorDiagnostics.escDetail')}
-            </Text>
+            {/* WHEN THE SOURCE IS OFF, "this appears only when firmware
+                and ESC support it and telemetry is enabled" is a third
+                sentence saying what the state line and the source line
+                already say. The section collapses to what is off and
+                what to turn on. */}
+            {sourceProvenUnavailable ? null : (
+              <Text style={styles.caption}>
+                {t('motorDiagnostics.escDetail')}
+              </Text>
+            )}
           </View>
           <Text style={styles.channelState}>
             {channelText(t, escAvailability, escStatus)}
@@ -422,33 +424,33 @@ export function MotorDiagnosticsPanel({
               .slice(0, visibleMotorCount)
               .map((motor, index) => {
                 const metrics = visibleMotorTelemetryMetrics(motor, support);
-                const invalidPercent =
-                  metrics.invalidPercentRaw === undefined
-                    ? undefined
-                    : metrics.invalidPercentRaw / 100;
                 return (
+                  /* ONE ROW PER OUTPUT.
+                     Each reading used to be a filled card holding a value
+                     row, a progress bar and a five-cell metric grid - four
+                     of them, stacked. The bar is gone: RPM has no
+                     operator-meaningful full scale (the old one was a flat
+                     50,000 constant this file invented), so a bar computed
+                     against it could not help anyone decide anything. The
+                     NUMBERS are all still here, and none of them changed. */
                   <View
                     key={index}
-                    style={styles.escCard}
+                    style={styles.escRow}
                     testID={`esc-telemetry-${index + 1}`}
                   >
-                    <View style={styles.valueRow}>
-                      <Text style={styles.slotName}>{`M${index + 1}`}</Text>
-                      <Text style={styles.rpmValue}>
-                        {metrics.rpm === undefined
-                          ? '— RPM'
-                          : t('motorDiagnostics.rpmValue', {
-                              rpm: metrics.rpm,
-                            })}
-                      </Text>
-                    </View>
-                    {/* A DASH WITHOUT A REASON IS A RIDDLE. This is the
-                        one case where the firmware told us exactly why
-                        there is no number - rpm 0 with invalidPct still
-                        at its 100% default - so the screen says it
-                        instead of leaving the operator to guess whether
-                        the motor is stopped or the telemetry is absent.
-                        One short line, not a card. */}
+                    <Text style={styles.slotName}>{`M${index + 1}`}</Text>
+                    <Text style={styles.escReading}>
+                      {metrics.rpm === undefined
+                        ? '— RPM'
+                        : t('motorDiagnostics.rpmValue', {rpm: metrics.rpm})}
+                    </Text>
+                    {noMetricsAnywhere ? null : (
+                      <EscMetrics metrics={metrics} />
+                    )}
+                    {/* A DASH WITHOUT A REASON IS A RIDDLE - but the
+                        reason is said once for the section when it is
+                        true of every output, and only here when it is
+                        true of this one alone. */}
                     {rpmIsUnprovenZero(motor, support) &&
                     !noDshotPacketsAtAll ? (
                       <Text
@@ -458,34 +460,22 @@ export function MotorDiagnosticsPanel({
                         {t('motorDiagnostics.rpmUnproven')}
                       </Text>
                     ) : null}
-                    {/* NO METER FOR A VALUE THAT DOES NOT EXIST. An
-                        empty bar beside a spinning motor reads as "zero
-                        RPM measured", which is the exact claim this file
-                        refuses to make. */}
-                    {metrics.rpm === undefined ? null : (
-                      <Meter
-                        percent={rpmMeterPercent(metrics.rpm)}
-                        danger={
-                          invalidPercent !== undefined && invalidPercent >= 1
-                        }
-                      />
-                    )}
-                    {noMetricsAnywhere ? null : (
-                      <EscMetrics metrics={metrics} />
-                    )}
                   </View>
                 );
               })}
           </View>
         ) : (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>
-              {channelText(t, escAvailability, escStatus)}
-            </Text>
-            <Text style={styles.caption}>
-              {t('motorDiagnostics.noEscTelemetry')}
-            </Text>
-          </View>
+          /* NOT ENABLED IS A KNOWN ANSWER, NOT AN AMBIGUITY, so it gets
+             the smallest surface on the screen: what is off, and what to
+             turn on. No empty rows, no empty meters, no second paragraph
+             restating the first. */
+          <Text style={styles.caption} testID="esc-telemetry-empty">
+            {t(
+              sourceProvenUnavailable
+                ? 'motorDiagnostics.enableEscTelemetry'
+                : 'motorDiagnostics.noEscTelemetry',
+            )}
+          </Text>
         )}
       </View>
     </View>
@@ -504,61 +494,41 @@ function EscMetrics({
   metrics,
 }: {
   readonly metrics: MotorTelemetryVisibleMetrics;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const {t} = useTranslation();
-  const unavailable = t('motorDiagnostics.metricUnavailable');
-  const nothingToShow =
-    metrics.invalidPercentRaw === undefined &&
-    metrics.temperatureCelsius === undefined &&
-    metrics.voltageVolts === undefined &&
-    metrics.currentAmps === undefined &&
-    metrics.consumptionMah === undefined;
-  if (nothingToShow) {
+  /* ONE LINE, AND ONLY THE PARTS THAT EXIST.
+     A grid of five cells - four of them "—" on a DShot-only bench - is a
+     large object saying one small thing five times. Each metric is
+     joined only when it carries a value, so an absent field takes no
+     space at all and a present one reads exactly as before. */
+  const parts = [
+    metrics.invalidPercentRaw === undefined
+      ? undefined
+      : t('motorDiagnostics.invalidPercent', {
+          value: (metrics.invalidPercentRaw / 100).toFixed(2),
+        }),
+    metrics.temperatureCelsius === undefined
+      ? undefined
+      : t('motorDiagnostics.temperature', {value: metrics.temperatureCelsius}),
+    metrics.voltageVolts === undefined
+      ? undefined
+      : t('motorDiagnostics.voltage', {value: metrics.voltageVolts.toFixed(2)}),
+    metrics.currentAmps === undefined
+      ? undefined
+      : t('motorDiagnostics.current', {value: metrics.currentAmps.toFixed(2)}),
+    metrics.consumptionMah === undefined
+      ? undefined
+      : t('motorDiagnostics.consumption', {value: metrics.consumptionMah}),
+  ].filter((part): part is string => part !== undefined);
+
+  if (parts.length === 0) {
     return (
       <Text style={styles.metric}>
         {t('motorDiagnostics.metricsAllUnavailable')}
       </Text>
     );
   }
-  return (
-    <View style={styles.metricGrid}>
-      <Text style={styles.metric}>
-        {metrics.invalidPercentRaw === undefined
-          ? t('motorDiagnostics.invalidPercentUnavailable', {
-              value: unavailable,
-            })
-          : t('motorDiagnostics.invalidPercent', {
-              value: (metrics.invalidPercentRaw / 100).toFixed(2),
-            })}
-      </Text>
-      <Text style={styles.metric}>
-        {t('motorDiagnostics.temperature', {
-          value: metrics.temperatureCelsius ?? unavailable,
-        })}
-      </Text>
-      <Text style={styles.metric}>
-        {t('motorDiagnostics.voltage', {
-          value:
-            metrics.voltageVolts === undefined
-              ? unavailable
-              : metrics.voltageVolts.toFixed(2),
-        })}
-      </Text>
-      <Text style={styles.metric}>
-        {t('motorDiagnostics.current', {
-          value:
-            metrics.currentAmps === undefined
-              ? unavailable
-              : metrics.currentAmps.toFixed(2),
-        })}
-      </Text>
-      <Text style={styles.metric}>
-        {t('motorDiagnostics.consumption', {
-          value: metrics.consumptionMah ?? unavailable,
-        })}
-      </Text>
-    </View>
-  );
+  return <Text style={styles.metric}>{parts.join(' · ')}</Text>;
 }
 
 const styles = StyleSheet.create({
@@ -664,33 +634,28 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   meterFillDanger: { backgroundColor: colors.warning },
-  escList: { gap: spacing.sm },
-  escCard: {
+  /* FOUR ROWS, NOT FOUR CARDS. A thin rule between outputs is all the
+     separation a list of four readings needs; the filled, rounded,
+     padded card per motor was carrying a bar and a five-cell grid that
+     no longer exist. */
+  escList: { gap: 0 },
+  escRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
     gap: spacing.sm,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: radii.md,
-    padding: spacing.md,
+    paddingVertical: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderSoft,
   },
-  rpmValue: {
+  escReading: {
     ...typography.mono,
     color: colors.textPrimary,
     writingDirection: 'ltr',
   },
-  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   metric: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
-  emptyState: {
-    gap: spacing.xs,
-    backgroundColor: colors.surfaceAlt,
-    borderRadius: radii.md,
-    padding: spacing.md,
-  },
-  emptyTitle: {
-    ...typography.body,
-    color: colors.textPrimary,
-    fontWeight: '700',
     writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   qualityWarning: {
     ...typography.caption,

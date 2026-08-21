@@ -1546,9 +1546,14 @@ export function MotorsScreenView({
    */
   const holdControl = (
     <View style={styles.holdBlock} testID="motors-hold-block">
-      {/* The step name is a caption ABOVE the control, not a first line
-          inside it. */}
-      <Text style={styles.holdStep}>{t('motorsScreen.holdHeading')}</Text>
+      {/* NOTHING ABOVE THE BUTTON THAT THE BUTTON ALREADY SAYS.
+          There used to be an eyebrow here reading "test the selected
+          motor" - immediately under a heading reading "identify the motor
+          physically" and immediately above a button reading "press and
+          hold - M2". Three labels for one control. The heading names the
+          step, the button names the action and the motor, and the single
+          line below states the one thing neither of them can: what
+          letting go does. */}
       <Pressable
         onPressIn={handlePressIn}
         onLongPress={handleLongPress}
@@ -1860,19 +1865,29 @@ export function MotorsScreenView({
               protected hold, and the hold is in the identity section
               directly above - reading them 2,000px away from it was the
               reason the bench looked like it owned the workflow. */}
+          {/* A NORMAL STATE IS A STATUS, NOT AN ANNOUNCEMENT.
+              "Ready" was a full notice card - a 38px check disc, a
+              section-title heading and a sentence - occupying ~99px at
+              390 to say the thing that is true almost all of the time. It
+              is a strip now: one dot, the state, the addressed motor.
+              The FAILURE states below are untouched and still expand,
+              because a failure is the case that has something to say. */}
           {canActivate || freezeTransientPresentation ? (
-            <View style={styles.readyBanner} testID="motors-session-ready">
-              <View style={styles.readyBadge}>
-                <Icon name="check" size={18} color={colors.white} />
-              </View>
-              <View style={styles.flexOne}>
-                <Text style={styles.readyTitle}>
-                  {t('motorsScreen.readyHeading')}
-                </Text>
-                <Text style={styles.readyBody}>
-                  {t('motorsScreen.readyDetail', {slot: `M${selectedSlot}`})}
-                </Text>
-              </View>
+            <View
+              style={styles.readyStrip}
+              testID="motors-session-ready"
+              accessibilityLabel={`${t('motorsScreen.readyHeading')}. ${t(
+                'motorsScreen.readyDetail',
+                {slot: `M${selectedSlot}`},
+              )}`}
+            >
+              <View style={styles.readyDot} />
+              <Text style={styles.readyStripText}>
+                {t('motorsScreen.readyHeading')}
+              </Text>
+              <Text style={styles.readyStripMotor}>
+                {`M${selectedSlot}`}
+              </Text>
             </View>
           ) : null}
 
@@ -1999,13 +2014,18 @@ export function MotorsScreenView({
           <Pressable
             onPress={() => setMotorSettingsOpen(true)}
             accessibilityRole="button"
-            style={styles.card}
+            style={styles.disclosure}
             testID="motors-open-settings"
           >
-            <Text style={styles.sectionTitle}>
+            {/* A DISCLOSURE IS A ROW, NOT A CARD. This one was a 141px
+                full-width panel at 390 because a whole paragraph about
+                when to open it lived inside the tappable surface. The
+                title says what is inside; the caption beside it says it
+                in four words. */}
+            <Text style={styles.disclosureTitle}>
               {t('motorsScreen.openMotorSettings')}
             </Text>
-            <Text style={styles.caption}>
+            <Text style={styles.disclosureHint}>
               {t('motorsScreen.openMotorSettingsHint')}
             </Text>
           </Pressable>
@@ -2030,7 +2050,7 @@ export function MotorsScreenView({
           onPress={() => setAdvancedVerificationOpen(open => !open)}
           accessibilityRole="button"
           accessibilityState={{expanded: advancedVerificationOpen}}
-          style={styles.card}
+          style={styles.disclosure}
           testID="motors-advanced-verification-toggle"
         >
           {/* THE SECTION NAME LIVES ON THE CLOSED DISCLOSURE, not inside
@@ -2039,10 +2059,10 @@ export function MotorsScreenView({
               and it cannot hold the ordering guarantee that the primary
               workspace comes first, because a collapsed section would
               simply have no position at all. */}
-          <Text style={styles.toolsHeading} testID="motors-tools-heading">
+          <Text style={styles.disclosureTitle} testID="motors-tools-heading">
             التحقق والأدوات
           </Text>
-          <Text style={styles.caption}>
+          <Text style={styles.disclosureHint}>
             {t('motorsScreen.advancedVerificationHint')}
           </Text>
         </Pressable>
@@ -2411,6 +2431,37 @@ const styles = StyleSheet.create({
     color: colors.error,
     writingDirection: 'rtl',
     flexShrink: 1},
+  /* A COLLAPSED SECTION IS A ROW YOU PRESS, not a page-width panel.
+     Both disclosures used the full card style - shadow, 18px padding,
+     a section-title heading and an explanatory paragraph, stacked - and
+     measured 141px and 127px at 390 for two controls that do one thing
+     each. They are rows now: name, then what is inside, on one line
+     where the width allows. Comfortably over the 44px touch minimum. */
+  disclosure: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: MIN_TOUCH_TARGET + spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
+    borderColor: colors.borderSoft,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+  },
+  disclosureTitle: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  disclosureHint: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+    flexShrink: 1,
+    maxWidth: PROSE_MEASURE,
+  },
   card: {
     backgroundColor: colors.surface,
     borderColor: colors.borderSoft,
@@ -2676,10 +2727,6 @@ const styles = StyleSheet.create({
     ...typography.sectionTitle,
     color: colors.accentStrong,
     writingDirection: 'rtl'},
-  holdStep: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   /* The control and the two captions that belong to it. Left-aligned as
      a group so the button's own width reads as deliberate rather than as
      a column that failed to fill. */
@@ -2761,31 +2808,38 @@ const styles = StyleSheet.create({
     backgroundColor: colors.warningSoft},
   prepareButton: { minHeight: MIN_TOUCH_TARGET + spacing.md, alignItems: 'center', justifyContent: 'center', borderColor: colors.accent, borderWidth: 2, borderRadius: radii.md, padding: spacing.md, gap: spacing.xs },
   prepareLabel: { ...typography.sectionTitle, color: colors.accentStrong, writingDirection: 'rtl'},
-  readyBanner: {...noticeSurface, flexDirection: 'row',
+  /* THE QUIET STATE, AS A STRIP. Same words, same colour meaning, one
+     line. The full accessibility sentence is on the container, so a
+     screen reader still hears which motor is addressed. */
+  readyStrip: {
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: spacing.md,
+    alignSelf: 'flex-start',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    borderRadius: radii.pill,
+    borderWidth: 1,
     borderColor: '#A9D8CB',
-    backgroundColor: colors.successSoft},
-  readyBadge: {
-    width: 38,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: colors.successSoft,
+  },
+  readyDot: {
+    width: 10,
+    height: 10,
     borderRadius: radii.pill,
     backgroundColor: colors.success,
   },
-  readyBadgeText: {
-    ...typography.sectionTitle,
-    color: colors.white,
-  },
-  readyTitle: {
-    ...typography.sectionTitle,
+  readyStripText: {
+    ...typography.caption,
     color: colors.success,
-    writingDirection: 'rtl'},
-  readyBody: {
-    ...typography.body,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  readyStripMotor: {
+    ...typography.mono,
     color: colors.textPrimary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    fontWeight: '700',
+  },
   pinnedFaultGuidance: {
     ...typography.body,
     color: colors.error,

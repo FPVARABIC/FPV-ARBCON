@@ -164,41 +164,28 @@ export function MotorVerificationWizard({
   const canConfirm = position !== undefined && direction !== undefined;
 
   return (
-    <View style={styles.card} testID="verification-wizard">
-      <Text style={styles.sectionTitle}>{t('motorVerification.title')}</Text>
-
-      {/* THE ONE TRUTH LINE THAT MUST NEVER BE A TAP AWAY: what confirms a
-          position is a person, not the flight controller. Everything that
-          merely EXPLAINS that - the acknowledgement wording, the
-          no-auto-advance rule, the longer disclaimer - is one disclosure
-          below, because repeating four paragraphs of it above the question
-          is what made this form as tall as a phone screen. */}
-      <Text style={styles.disclaimer} testID="verification-disclaimer">
-        {t('motorVerification.truthObservation')}
+    /* ONE SURFACE, NOT A CARD INSIDE A CARD INSIDE A CARD.
+       This block used to open with a title, a gold warning, a bordered
+       "software evidence" box, an expected-configuration line, a details
+       link, and THEN a bordered stage box holding a heading and the
+       question - six framed objects before the first thing to tap. It is
+       a panel now: a heading, one claim, one disclosure, and the question.
+       Nothing was deleted; the elaboration moved behind the disclosure it
+       always had. */
+    <View style={styles.panel} testID="verification-wizard">
+      {/* THE HEADING NAMES THE MOTOR. That is what the separate expected
+          line was for - "so the form always names the motor it belongs
+          to" - and a heading does it in no extra height. */}
+      <Text style={styles.panelTitle} testID="verification-title">
+        {t('motorVerification.titleFor', {motor: `M${receipt.motorNumber}`})}
       </Text>
 
-      {/* Evidence source (2): SOFTWARE, in one row. It records that an
-          attributable attempt exists; it claims nothing physical. */}
-      <View style={styles.compactEvidence} testID="verification-software-evidence">
-        <Text style={styles.caption}>
-          {t('motorVerification.softwareCompact')}
-        </Text>
-      </View>
-
-      {/* Evidence source (1): EXPECTED, on one line. The full comparison
-          against the observation lives in the identity facts above; this
-          exists so the form itself always names the motor it belongs to. */}
-      <Text
-        style={styles.caption}
-        testID="verification-expected"
-        accessibilityLabel={`${t('motorVerification.expectedHeading')}: ${t(
-          `motorVerification.position.${expected?.position}`,
-        )}`}>
-        {t('motorVerification.expectedCompact', {
-          motor: receipt.motorNumber,
-          position: t(`motorVerification.position.${expected?.position}`),
-          direction: t(`motorVerification.direction.${expected?.direction}`),
-        })}
+      {/* THE ONE TRUTH LINE THAT MUST NEVER BE A TAP AWAY: what confirms a
+          position is a person, not the flight controller. It appears ONCE
+          for the whole panel - not once per step - because a warning
+          repeated at every stage stops being read at any of them. */}
+      <Text style={styles.disclaimer} testID="verification-disclaimer">
+        {t('motorVerification.truthObservation')}
       </Text>
 
       <Pressable
@@ -214,6 +201,27 @@ export function MotorVerificationWizard({
       </Pressable>
       {detailsOpen ? (
         <View style={styles.compactEvidence} testID="verification-details">
+          {/* Evidence source (1): EXPECTED. It is a REFERENCE, and the
+              compact identity summary above the aircraft already states
+              it beside its "expected" badge - so here it is elaboration,
+              not a second claim. */}
+          <Text
+            style={styles.caption}
+            testID="verification-expected"
+            accessibilityLabel={`${t('motorVerification.expectedHeading')}: ${t(
+              `motorVerification.position.${expected?.position}`,
+            )}`}>
+            {t('motorVerification.expectedCompact', {
+              motor: receipt.motorNumber,
+              position: t(`motorVerification.position.${expected?.position}`),
+              direction: t(`motorVerification.direction.${expected?.direction}`),
+            })}
+          </Text>
+          {/* Evidence source (2): SOFTWARE. An attributable attempt
+              exists; it claims nothing physical. */}
+          <Text style={styles.caption} testID="verification-software-evidence">
+            {t('motorVerification.softwareCompact')}
+          </Text>
           <Text style={styles.caption} testID="verification-progress">
             {t('motorVerification.progress', {
               done: confirmedCount(state),
@@ -242,18 +250,21 @@ export function MotorVerificationWizard({
         </Text>
       ) : (
         <View
-          style={styles.evidenceBlock}
+          style={styles.questions}
           testID="verification-questions"
           accessibilityLabel={t('motorVerification.observedHeading')}>
-          <Text style={styles.evidenceHeading} testID="verification-stage">
-            {t(
-              stage === 'POSITION'
-                ? 'motorVerification.stagePosition'
-                : stage === 'DIRECTION'
-                  ? 'motorVerification.stageDirection'
-                  : 'motorVerification.stageReview',
-            )}
-          </Text>
+          {/* TWO QUESTIONS, COUNTED. The review stage carries its own
+              heading immediately below, so printing a third "step" line
+              above it was one heading describing another heading. */}
+          {stage === 'REVIEW' ? null : (
+            <Text style={styles.evidenceHeading} testID="verification-stage">
+              {t(
+                stage === 'POSITION'
+                  ? 'motorVerification.stagePosition'
+                  : 'motorVerification.stageDirection',
+              )}
+            </Text>
+          )}
 
           {/* STAGE 1 - WHERE. Only the question being answered right now is
               on screen. The evidence model is untouched: `position` and
@@ -568,6 +579,24 @@ const styles = StyleSheet.create({
     color: colors.warning,
     writingDirection: 'rtl',
     flexShrink: 1, maxWidth: PROSE_MEASURE},
+  /* THE ACTIVE PANEL. No border and no fill of its own: it already sits
+     inside the identification card, and a frame inside a frame inside a
+     frame is what this round exists to remove. Separation comes from
+     spacing and from the single rule above the questions. */
+  panel: {gap: spacing.xs},
+  panelTitle: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  /* One rule, where the reading genuinely changes from "what this is" to
+     "what to answer". */
+  questions: {
+    gap: spacing.xs,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
+  },
   evidenceBlock: {
     backgroundColor: colors.surfaceAlt,
     borderColor: colors.border,
