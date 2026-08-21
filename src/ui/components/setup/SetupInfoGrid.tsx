@@ -66,8 +66,12 @@
  * MSP_BOARD_INFO. The build version is MSP_FC_VERSION and the build date
  * is MSP_BUILD_INFO; neither is requested by this screen, and adding a
  * command to the connection sequence is not a layout change. What the
- * board actually told us - its firmware identifier, its family and its
- * MSP API version - is what is shown.
+ * board actually told us is what is shown: its board name, whether its
+ * MSP dialect is one this application verifies, and its API version.
+ *
+ * NO PROJECT NAME REACHES THIS GRID. The decoded firmware family is a
+ * third party's name, so it is reported as the capability an operator
+ * can act on instead - see ui/presentation/brandSafeText.ts.
  */
 
 import React from 'react';
@@ -89,6 +93,7 @@ import {
   rankArmingBlockReasons,
 } from '../../../core';
 import type {AuxTelemetryChannelState} from '../../../platforms/react-native/protocol';
+import {firmwareFamilyLabel} from '../../presentation/brandSafeText';
 import {resolveAuxCardGate} from './auxChannelGate';
 import {colors, radii, spacing, typography} from '../../theme';
 import {PROSE_MEASURE} from '../../theme';
@@ -469,23 +474,18 @@ export default function SetupInfoGrid({
       ltr: true,
     },
     {
+      /* NO PROJECT NAME, AND NO WIRE IDENTIFIER EITHER. The build column
+         used to carry "معرّف البرنامج: BTFL" and "العائلة: BETAFLIGHT" -
+         a third party's name, twice, on this application's own screen.
+         What an operator can act on is whether their board's MSP dialect
+         is one this application verifies against, and that is what the
+         row now says. See brandSafeText.ts. */
       key: 'firmware',
       label: t('setupInfo.build.firmware'),
       value:
-        typeof identity?.firmwareIdentifier === 'string' &&
-        identity.firmwareIdentifier.length > 0
-          ? identity.firmwareIdentifier
-          : undefined,
-      ltr: true,
-    },
-    {
-      key: 'family',
-      label: t('setupInfo.build.family'),
-      value:
-        identity?.family === undefined || identity.family === 'UNKNOWN'
+        identity?.family === undefined
           ? undefined
-          : identity.family,
-      ltr: true,
+          : firmwareFamilyLabel(identity.family),
     },
     {
       key: 'api',

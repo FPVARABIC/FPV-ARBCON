@@ -38,7 +38,7 @@ const AXES: readonly {key: PidAxisKey; title: string; subtitle: string}[] = Obje
   {key: 'yaw', title: 'Yaw', subtitle: 'محور الاتجاه'},
 ]);
 const RATE_TYPES = Object.freeze([
-  Object.freeze({name: 'Betaflight', rcMax: 255, superMax: 100, rcScale: 0.01, superScale: 0.01, expoScale: 0.01}),
+  Object.freeze({name: 'قياسي', rcMax: 255, superMax: 100, rcScale: 0.01, superScale: 0.01, expoScale: 0.01}),
   Object.freeze({name: 'Raceflight', rcMax: 200, superMax: 255, rcScale: 10, superScale: 1, expoScale: 1}),
   Object.freeze({name: 'KISS', rcMax: 255, superMax: 99, rcScale: 0.01, superScale: 0.01, expoScale: 0.01}),
   Object.freeze({name: 'Actual', rcMax: 200, superMax: 200, rcScale: 10, superScale: 10, expoScale: 0.01}),
@@ -100,7 +100,7 @@ function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]):
     RATES_TYPE_CHANGE_UNSUPPORTED: 'تبديل خوارزمية Rates غير متاح في هذه المرحلة الآمنة',
     RATE_VALUE_INVALID: 'إحدى قيم Rates خارج حدود الخوارزمية الحالية',
     THROTTLE_CURVE_INVALID: 'منحنى أو حد الخانق خارج المدى المسموح',
-    FILTER_VALUE_INVALID: 'إحدى قيم الفلاتر خارج حدود Betaflight',
+    FILTER_VALUE_INVALID: 'إحدى قيم الفلاتر خارج حدود البرنامج الثابت',
     FILTER_ORDER_INVALID: 'حدود Min/Max للفلاتر غير متناسقة',
     FILTER_CAPABILITY_UNPROVEN: 'لا يمكن تفعيل أو تعطيل وضع فلتر لم تثبته القراءة الحالية',
     FILTER_RATE_UNKNOWN: 'لا يمكن تعديل الفلاتر دون معرفة Gyro وPID loop rate',
@@ -151,7 +151,25 @@ function RateAxisCard({axisKey, title, value, rates, disabled, update}: {axisKey
 export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDirtyChange, controller = pidTuningController}: PidTuningScreenProps): React.JSX.Element {
   const {t} = useTranslation(); const {width, fontScale} = useWindowDimensions(); const {maxWidth} = useContentEnvelope(true); const wide = width / Math.max(fontScale, 1) >= 1040;
   const [phase, setPhase] = useState<Phase>('IDLE'); const [snapshot, setSnapshot] = useState<MspPidTuningSnapshot>(); const [draft, setDraft] = useState<PidTuningDraft>(); const [loadOutcome, setLoadOutcome] = useState<PidLoadOutcome>(); const [saveOutcome, setSaveOutcome] = useState<PidSaveOutcome>(); const [switchOutcome, setSwitchOutcome] = useState<PidProfileSwitchOutcome>(); const [reloadToken, setReloadToken] = useState(0);
-  useEffect(() => { if (!active || sessionKey === undefined) return; let cancelled = false; setPhase('LOADING'); setSaveOutcome(undefined); controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } }).catch(error => { if (cancelled) return; setLoadOutcome({kind: 'FAILED', error}); setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); }); return () => { cancelled = true; }; }, [active, controller, reloadToken, sessionKey]);
+  /**
+   * A NEW ACTION RETIRES THE PREVIOUS ONE'S RESULT - BOTH OF THEM.
+   *
+   * The status line reads saveOutcome first and switchOutcome second, so
+   * clearing only the save result did not clear the line: it UNCOVERED
+   * the older profile-switch message underneath. Switch profile, edit,
+   * save, edit again - and the screen went back to announcing the
+   * profile switch from three actions ago as if it had just happened.
+   *
+   * The two slots describe two different past events, and the status
+   * line can only be about one thing: whatever the operator did last. An
+   * edit invalidates both, and so does starting a save.
+   */
+  const retireOutcomes = useCallback(() => {
+    setSaveOutcome(undefined);
+    setSwitchOutcome(undefined);
+  }, []);
+
+  useEffect(() => { if (!active || sessionKey === undefined) return; let cancelled = false; setPhase('LOADING'); retireOutcomes(); controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } }).catch(error => { if (cancelled) return; setLoadOutcome({kind: 'FAILED', error}); setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); }); return () => { cancelled = true; }; }, [active, controller, reloadToken, retireOutcomes, sessionKey]);
   const dirty = snapshot !== undefined && draft !== undefined && !pidTuningDraftsEqual(createPidTuningDraft(snapshot), draft);
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]); useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined ? [] : validatePidTuningDraft(draft, snapshot), [draft, snapshot]);
@@ -160,14 +178,14 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
    * name on a screen where precision matters. */
   const updateFeel = useCallback((key: 'feedforwardAveraging' | 'feedforwardBoost' | 'feedforwardJitterFactor', value: number) => {
     setDraft(current => current === undefined ? current : Object.freeze({...current, [key]: value}));
-    setSaveOutcome(undefined);
-  }, []);
-  const update = useCallback((axis: PidAxisKey, term: keyof PidAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [axis]: Object.freeze({...current[axis], [term]: value})})); setSaveOutcome(undefined); }, []);
-  const updateRate = useCallback((axis: PidAxisKey, term: keyof RateAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [axis]: Object.freeze({...current.rates[axis], [term]: value})})})); setSaveOutcome(undefined); }, []);
-  const updateThrottle = useCallback((term: keyof Omit<RatesDraft, PidAxisKey | 'type'>, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [term]: value})})); setSaveOutcome(undefined); }, []);
-  const updateFilter = useCallback((term: keyof FiltersDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, filters: Object.freeze({...current.filters, [term]: value})})); setSaveOutcome(undefined); }, []);
+    retireOutcomes();
+  }, [retireOutcomes]);
+  const update = useCallback((axis: PidAxisKey, term: keyof PidAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [axis]: Object.freeze({...current[axis], [term]: value})})); retireOutcomes(); }, [retireOutcomes]);
+  const updateRate = useCallback((axis: PidAxisKey, term: keyof RateAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [axis]: Object.freeze({...current.rates[axis], [term]: value})})})); retireOutcomes(); }, [retireOutcomes]);
+  const updateThrottle = useCallback((term: keyof Omit<RatesDraft, PidAxisKey | 'type'>, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [term]: value})})); retireOutcomes(); }, [retireOutcomes]);
+  const updateFilter = useCallback((term: keyof FiltersDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, filters: Object.freeze({...current.filters, [term]: value})})); retireOutcomes(); }, [retireOutcomes]);
   const reload = useCallback(() => { const perform = () => setReloadToken(value => value + 1); if (!dirty) return perform(); Alert.alert('تجاهل تغييرات PID؟', 'ستُستبدل القيم الحالية بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]); }, [dirty]);
-  const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); let outcome: PidSaveOutcome; try { outcome = await controller.save(sessionKey, snapshot, draft); } catch (error) { outcome = {kind: 'FAILED', error}; } setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, sessionKey, snapshot]);
+  const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); retireOutcomes(); let outcome: PidSaveOutcome; try { outcome = await controller.save(sessionKey, snapshot, draft); } catch (error) { outcome = {kind: 'FAILED', error}; } setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, retireOutcomes, sessionKey, snapshot]);
     /**
    * SWITCHES THE ACTIVE PROFILE ON THE BOARD, not in this component.
    *
@@ -183,7 +201,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
       Alert.alert('لديك تغييرات غير محفوظة', 'تبديل الملف سيستبدل القيم المعروضة بقيم الملف الجديد. احفظ أولًا أو تجاهل التغييرات.', [{text: 'حسنًا', style: 'cancel'}]);
       return;
     }
-    setPhase('SAVING'); setSaveOutcome(undefined);
+    setPhase('SAVING'); retireOutcomes();
     let outcome: PidProfileSwitchOutcome;
     try {
       outcome = await controller.selectProfile(sessionKey, kind, index);
@@ -195,7 +213,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
       setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot));
     }
     setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
-  }, [controller, dirty, sessionKey]);
+  }, [controller, dirty, retireOutcomes, sessionKey]);
   const statusCopy = saveOutcome !== undefined ? saveMessage(saveOutcome) : switchOutcome !== undefined ? profileSwitchMessage(switchOutcome) : undefined; const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? 'تعذرت قراءة إعدادات PID من متحكم الطيران.' : loadOutcome?.kind === 'SESSION_ENDED' ? 'انتهت جلسة الاتصال.' : undefined;
   const gyroNyquist = snapshot?.gyroSampleRateHz === undefined ? undefined : snapshot.gyroSampleRateHz / 2;
   const pidNyquist = snapshot?.gyroSampleRateHz === undefined || snapshot.pidProcessDenom === undefined || snapshot.pidProcessDenom < 1 ? undefined : snapshot.gyroSampleRateHz / snapshot.pidProcessDenom / 2;
@@ -207,7 +225,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
     <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>الترميز والقراءة الراجعة مختبران آليًا، لكن النتيجة الديناميكية لا يمكن اعتمادها دون Flight Controller وطائرة حقيقية واختبار متدرج آمن.</Text></View>
     {loadingMessage !== undefined ? <View style={styles.warning} testID="pid-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} />}</View> : null}
     {draft !== undefined ? <>
-      <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>المعاملات الأساسية</Text><Text style={styles.sectionHint}>P للتصحيح الحالي، I للخطأ المتراكم، D لتخميد التغير، وF لتتبع الأمر. الحدود من Betaflight 2025.12.2.</Text></View>
+      <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>المعاملات الأساسية</Text><Text style={styles.sectionHint}>P للتصحيح الحالي، I للخطأ المتراكم، D لتخميد التغير، وF لتتبع الأمر. الحدود من البرنامج الثابت 2025.12.2.</Text></View>
       <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <AxisCard key={axis.key} axisKey={axis.key} title={axis.title} subtitle={axis.subtitle} value={draft[axis.key]} disabled={phase !== 'READY'} update={update} />)}</View>
       <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Rates</Text><Text style={styles.sectionHint}>الخوارزمية الحالية: {RATE_TYPES[draft.rates.type]?.name ?? `غير معروفة (${draft.rates.type})`}. لا نبدّل نوع الخوارزمية تلقائيًا لأن المعاني والمدى يتغيران جذريًا بين الأنواع.</Text></View>
       <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <RateAxisCard key={axis.key} axisKey={axis.key} title={axis.title} value={draft.rates[axis.key]} rates={draft.rates} disabled={phase !== 'READY'} update={updateRate} />)}</View>

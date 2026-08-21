@@ -30,6 +30,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from '../../icons';
 import { readInteraction } from '../controls/interaction';
+import { firmwareFamilyLabel } from '../../presentation/brandSafeText';
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -102,8 +103,16 @@ export default function DiagnosticsSection({
       // The wire protocol version was here too. It is developer information -
       // the operator cannot change it and it is printed on no hardware - so it
       // stays in the diagnostics EXPORT and out of the always-visible panel.
+      //
+      // The RAW WIRE IDENTIFIER used to be what this line printed, so the
+      // panel read "البرنامج الثابت: BTFL". Four characters, but they are an
+      // external project's name in shorthand and an operator reads them as
+      // one - the same claim of association a full spelling would make. What
+      // the line reports now is the capability those characters imply, via
+      // the one function that owns that vocabulary. `firmwareIdentifier` is
+      // untouched in the model and still goes out in the diagnostics export.
       t('diagnostics.identityFirmware', {
-        identifier: view.identity.firmwareIdentifier,
+        value: firmwareFamilyLabel(view.identity.family),
       }),
     );
   }

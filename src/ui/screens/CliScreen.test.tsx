@@ -109,8 +109,10 @@ describe('CliScreen', () => {
         .findByProps({ testID: 'cli-download-output' })
         .props.onPress();
     });
+    // A file this application hands the operator carries OUR name, not
+    // the name of the firmware project whose protocol it speaks.
     expect(cli.saveTextFile).toHaveBeenCalledWith(
-      expect.stringMatching(/^betaflight-cli-\d+\.txt$/),
+      expect.stringMatching(/^fpv-arbcon-cli-\d+\.txt$/),
       expect.stringContaining('status'),
     );
 

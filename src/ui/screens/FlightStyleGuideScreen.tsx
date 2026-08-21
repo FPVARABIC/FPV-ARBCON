@@ -165,7 +165,7 @@ export default function FlightStyleGuideScreen({
         <View style={styles.verification}>
           <Text style={styles.verificationTitle}>ما تعنيه أرقام هذا الدليل</Text>
           <Text style={styles.verificationText}>
-            كل رقم مأخوذ من مصادر Betaflight الرسمية ومذكور مصدره بجانبه،
+            كل رقم مأخوذ من مصادر البرنامج الثابت الرسمية ومذكور مصدره بجانبه،
             وقدرة التطبيق على ضبطه مثبتة باختبارات. ليست قيمًا مجرّبة في
             رحلة، ولا مُثبتة على عتاد. كلها نقاط بداية.
           </Text>

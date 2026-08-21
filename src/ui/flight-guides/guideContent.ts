@@ -525,7 +525,7 @@ export const GUIDE_CORNERS: readonly GuideCorner[] = [
     titleEn: 'Firmware',
     descriptionAr: 'ما يجب أن يكون صحيحًا في متحكم طيرانك قبل أن يعني أي دليل نمط شيئًا.',
     difficultyAr: 'متوسط',
-    aircraft: ['أي طائرة تعمل ببرنامج Betaflight'],
+    aircraft: ['أي طائرة تعمل ببرنامج ثابت متوافق مع MSP'],
     verification: 'SOFTWARE VERIFIED',
     hardwareStatus: 'NOT VERIFIED — DEFERRED',
     steps: [

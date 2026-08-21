@@ -2454,7 +2454,10 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const sessionId = 'pass77-region4-compat';
     const { renderer } = await renderSession(sessionId);
     const text = allText(renderer);
-    expect(text).toContain('البرنامج الثابت: BTFL');
+    // The identity is still read and still gates compatibility; what the
+    // DIAGNOSTICS PANEL prints is the capability, not the project name.
+    expect(text).toContain('نوع البرنامج الثابت: MSP متوافق');
+    expect(text.join(' ')).not.toMatch(/BTFL|betaflight/i);
     expect(text).toContain('متوافق مع هذا الإصدار');
     expect(text).not.toContain(
       'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',

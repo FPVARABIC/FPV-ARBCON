@@ -160,14 +160,19 @@ describe('DiagnosticsSection - Region 4 structure', () => {
 });
 
 describe('DiagnosticsSection - identity and compatibility copy', () => {
-  it('shows the board and the raw firmware identifier with the reported API version', () => {
+  it('reports the board by name and the firmware by capability, never by brand', () => {
     const renderer = render(view());
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
         'اللوحة: SPEEDYBEEF405V3',
-        'البرنامج الثابت: BTFL',
+        // WAS 'البرنامج الثابت: BTFL'. The four-character wire identifier
+        // is an external project's name in shorthand, and this panel is
+        // this application's own chrome. What an operator can act on is
+        // whether the dialect their board speaks has been verified here.
+        'نوع البرنامج الثابت: MSP متوافق',
       ]),
     );
+    expect(texts(renderer).join(' ')).not.toMatch(/BTFL|betaflight/i);
     expect(texts(renderer)).toContain('متوافق مع هذا الإصدار');
     unmount(renderer);
   });

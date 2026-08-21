@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactTestRenderer, {act} from 'react-test-renderer';
+import {Text} from 'react-native';
 import '../../i18n';
 import {decodePidTuningSnapshot, type MspPidTuningSnapshot} from '../../core';
 import PidTuningScreen, {type PidControllerPort} from './PidTuningScreen';
@@ -92,6 +93,65 @@ describe('PidTuningScreen', () => {
     expect(save.mock.calls[0]?.[2].filters.gyroLpf1StaticHz).toBe(300);
     act(() => renderer.unmount());
   });
+  it('never brings an older result back to the status line', async () => {
+    /*
+     * THE STALE BANNER, IN THE ORDER THAT PRODUCED IT.
+     *
+     * The status line reads saveOutcome first and switchOutcome second.
+     * An edit used to clear only the save result, which did not clear
+     * the line - it UNCOVERED the profile-switch message underneath. So
+     * after switch -> edit -> save -> edit, the screen went back to
+     * announcing a profile switch from three actions ago as the current
+     * state of the board.
+     */
+    const original = snapshot();
+    const selectProfile = jest.fn(async () => ({kind: 'SWITCHED' as const, snapshot: original}));
+    const save = jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: original}));
+    const renderer = await render({
+      load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})),
+      save,
+      selectProfile,
+    });
+    const text = () =>
+      renderer.root
+        .findAllByType(Text)
+        .map(item => {
+          const value = item.props.children;
+          return Array.isArray(value) ? value.join('') : String(value ?? '');
+        })
+        .join('\n');
+    const SWITCH_LINE = 'تم تفعيل الملف المطلوب، وأعيدت قراءة قيمه من متحكم الطيران.';
+    const edit = (value: string) => {
+      const input = renderer.root
+        .findAllByProps({testID: 'pid-roll-p'})
+        .find(item => typeof item.props.onChangeText === 'function');
+      if (input === undefined) throw new Error('roll P input not found');
+      act(() => input.props.onChangeText(value));
+    };
+
+    // 1. switch profiles - the switch result is the current news.
+    const target = renderer.root
+      .findAllByProps({testID: 'pid-active-profile-1'})
+      .find(item => typeof item.props?.onPress === 'function');
+    await act(async () => { await target?.props.onPress(); });
+    expect(text()).toContain(SWITCH_LINE);
+
+    // 2. an edit retires it: this result is no longer what just happened.
+    edit('44');
+    expect(text()).not.toContain(SWITCH_LINE);
+
+    // 3. save - now the save result is the news.
+    await act(async () => {
+      await renderer.root.findByProps({testID: 'pid-save-bar-save'}).props.onPress();
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    // 4. edit again. THE DEFECT: the switch line used to reappear here.
+    edit('46');
+    expect(text()).not.toContain(SWITCH_LINE);
+    act(() => renderer.unmount());
+  });
+
   it('explains the motor-test interlock and opens Motors', async () => {
     const onOpenMotors = jest.fn(); const renderer = await render({load: jest.fn(async () => ({kind: 'REJECTED' as const, reason: 'MOTOR_TEST_ACTIVE' as const})), save: jest.fn()}, onOpenMotors); const message = renderer.root.findByProps({testID: 'pid-load-message'}); const button = message.findAll(node => node.props.onPress === onOpenMotors)[0]; act(() => button.props.onPress()); expect(onOpenMotors).toHaveBeenCalledTimes(1); act(() => renderer.unmount());
   });

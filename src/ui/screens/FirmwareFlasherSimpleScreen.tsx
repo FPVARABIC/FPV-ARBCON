@@ -37,7 +37,6 @@ import {
   Alert,
   FlatList,
   Modal,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -97,6 +96,11 @@ import type {
   UsbSerialTransportClient,
 } from '../../platforms/react-native/transport';
 import {useTranslation} from 'react-i18next';
+/* operatorDetail() is a PURE exported function with its own suite, so it
+ * cannot take a hook's `t`. The singleton is the same catalogue the hook
+ * reads; importing it here keeps the coded-error sentences reachable
+ * from a non-component context. */
+import i18n from '../../i18n';
 import {
   classifyFlashRejection,
   flashNextActionLabelKey,
@@ -110,7 +114,6 @@ import {
 } from '../../platforms/react-native/protocol/FirmwareBootloaderController';
 import {bytesToBase64} from '../../platforms/react-native/protocol/base64';
 import {getLastConnectionTrace} from '../../core/protocol/msp/identification/connectionTrace';
-import {copyPlainTextToClipboard} from '../../platforms/clipboard';
 import {FirmwareButton, FirmwareNotice, FirmwareProgress} from '../components/firmware';
 import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
@@ -174,20 +177,46 @@ export type FlasherProblemCategory =
   | 'DFU_ENTRY';
 
 /**
- * What the operator reads under a problem heading. A message the app
- * itself wrote in Arabic is shown as-is; anything else (a browser's
- * "Failed to fetch", a DOMException name, a transport sentence) is
- * replaced by the category's own Arabic explanation, because an
- * untranslated English fragment tells an Arabic operator nothing and
- * reads as a defect in the product.
+ * The Arabic operator copy for a transport failure that CARRIES A CODE.
+ *
+ * The transports reject with structured codes - DEVICE_ALREADY_IN_USE,
+ * PERMISSION_DENIED, DEVICE_CHANGED_DURING_OPEN, CONNECT_TIMEOUT - and
+ * src/i18n already holds a precise Arabic sentence for every one of
+ * them. Reading the CODE is what makes each of those sentences
+ * reachable; the previous implementation looked only at the message
+ * TEXT, found English, and replaced all of them with one category
+ * fallback.
+ *
+ * That mattered most for the exact failure this round fixes: a port held
+ * by another tab reported "This port already has an open session", which
+ * became "أعد توصيل الكابل" - advice that cannot work, on a cable that
+ * was never the problem.
+ */
+function codedTransportDetail(reason: unknown): string | undefined {
+  const code = (reason as {code?: unknown} | null)?.code;
+  if (typeof code !== 'string' || code.length === 0) return undefined;
+  const sentence = i18n.t(`errors.${code}`, {defaultValue: ''});
+  return typeof sentence === 'string' && sentence.length > 0 ? sentence : undefined;
+}
+
+/**
+ * What the operator reads under a problem heading, in priority order:
+ *
+ *   1. a message the app itself wrote in Arabic - shown as-is
+ *   2. the Arabic sentence for the transport's own error code
+ *   3. the category's Arabic explanation
+ *
+ * An untranslated English fragment never reaches the operator: it tells
+ * an Arabic reader nothing and reads as a defect in the product.
  */
 export function operatorDetail(reason: unknown, category: FlasherProblemCategory): string {
   const raw = errorText(reason);
-  return /[\u0600-\u06FF]/.test(raw) ? raw : PROBLEM_FALLBACKS[category];
+  if (/[\u0600-\u06FF]/.test(raw)) return raw;
+  return codedTransportDetail(reason) ?? PROBLEM_FALLBACKS[category];
 }
 
 export const PROBLEM_FALLBACKS: Readonly<Record<FlasherProblemCategory, string>> = {
-  CATALOGUE: 'تعذّر الوصول إلى خادم Betaflight. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
+  CATALOGUE: 'تعذّر الوصول إلى خادم البناء. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
   RELEASES: 'تعذّر جلب إصدارات هذه اللوحة. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
   BUILD: 'تعذّر جلب خيارات البناء لهذا الإصدار.',
   PREPARE: 'تعذّر بناء أو تنزيل Firmware. تحقّق من الاتصال بالإنترنت ثم أعد المحاولة.',
@@ -195,6 +224,16 @@ export const PROBLEM_FALLBACKS: Readonly<Record<FlasherProblemCategory, string>>
   DFU_ACCESS: 'تعذّر الوصول إلى جهاز DFU. أعد توصيل اللوحة في وضع DFU ثم اخترها من جديد.',
   DFU_ENTRY: 'تعذّر تجهيز وضع DFU. أعد توصيل اللوحة ثم أعد المحاولة.',
 };
+
+/**
+ * The failures whose recovery is a REPEAT OF THE SAME DOWNLOAD, and so
+ * the only ones this screen can offer a retry for. A serial or DFU
+ * failure is retried by the operator with the buttons that already sit
+ * in steps ١ and ٥ - offering a second one beside the notice would put
+ * two controls on the page for one action.
+ */
+export const RETRYABLE_PROBLEM_CATEGORIES: readonly FlasherProblemCategory[] =
+  Object.freeze(['CATALOGUE', 'RELEASES', 'BUILD']);
 
 export const PROBLEM_TITLES: Readonly<Record<FlasherProblemCategory, string>> = {
   CATALOGUE: 'تعذّر تحميل قائمة اللوحات',
@@ -690,12 +729,27 @@ export default function FirmwareFlasherSimpleScreen({
     [],
   );
 
-  /** WEB ONLY, and only after a failed detection - see clipboard.ts on why
-   * Android returns false here rather than pretending. */
-  const [reportCopied, setReportCopied] = useState<boolean | null>(null);
-  const copyConnectionTrace = useCallback(() => {
-    const report = getLastConnectionTrace()?.toText() ?? '';
-    copyPlainTextToClipboard(report).then(setReportCopied, () => setReportCopied(false));
+  /**
+   * "أعد المحاولة" USED TO BE ADVICE WITH NOTHING BEHIND IT.
+   *
+   * The three catalogue reads - boards, releases, build options - each
+   * run from a useEffect, and their failure copy ends "تحقّق من الاتصال
+   * بالإنترنت ثم أعد المحاولة". But the boards effect had no dependency
+   * that could ever change, so on a dropped connection the screen sat
+   * there telling the operator to retry something the screen offered no
+   * way to retry. Leaving the flasher and coming back was the only cure,
+   * and nothing on the page said so.
+   *
+   * Bumping this re-runs whichever of the three reads is stale, which is
+   * what the sentence already promised. It is not a poll: nothing
+   * changes it but an operator pressing the button.
+   */
+  const [catalogueAttempt, setCatalogueAttempt] = useState(0);
+  const retryCatalogue = useCallback(() => {
+    setProblem(null);
+    setPhase('idle');
+    setStatus('إعادة المحاولة…');
+    setCatalogueAttempt(current => current + 1);
   }, []);
 
   /* ---- Catalogue: the official dataset, unfiltered ---- */
@@ -713,7 +767,7 @@ export default function FirmwareFlasherSimpleScreen({
         if (!controller.signal.aborted) setTargetsLoading(false);
       });
     return () => controller.abort();
-  }, [failOperation]);
+  }, [catalogueAttempt, failOperation]);
 
   /* ---- Releases for the chosen board ---- */
   useEffect(() => {
@@ -721,6 +775,10 @@ export default function FirmwareFlasherSimpleScreen({
       setReleases([]);
       setSelectedRelease('');
       setFirmware(null);
+      // Nothing is in flight on this path, so nothing may claim to be.
+      // See the note on the build-options effect below for the sequence
+      // that made the sibling flag stick.
+      setReleasesLoading(false);
       return;
     }
     const controller = new AbortController();
@@ -746,7 +804,7 @@ export default function FirmwareFlasherSimpleScreen({
         if (!controller.signal.aborted) setReleasesLoading(false);
       });
     return () => controller.abort();
-  }, [failOperation, selectedTarget]);
+  }, [catalogueAttempt, failOperation, selectedTarget]);
 
   /* ---- The official build document and its options ----
    *
@@ -761,6 +819,31 @@ export default function FirmwareFlasherSimpleScreen({
       setBuildOptions(null);
       setChoices(null);
       setBuildOptionsError(null);
+      /*
+       * A SPINNER THAT NEVER STOPPED, and the sequence that produced it.
+       *
+       * The flag was cleared only in `.finally()`, and that clause skips
+       * the reset when the request was aborted - correct on unmount, but
+       * this effect also aborts on every dependency change, and one of
+       * those changes lands HERE, in the early return:
+       *
+       *   1. board A, release R: the effect starts a load and sets the
+       *      flag true;
+       *   2. the operator picks board B. The releases effect re-runs, and
+       *      B publishes nothing in any channel, so
+       *      defaultReleaseForChannel returns '' and selectedRelease
+       *      becomes empty;
+       *   3. this effect re-runs, aborts step 1 - whose `.finally` now
+       *      declines to clear the flag - and returns right here, without
+       *      clearing it either.
+       *
+       * Nothing was loading and nothing ever would, but the options card
+       * kept its ActivityIndicator spinning for the rest of the session.
+       *
+       * Clearing it on the way out makes the flag mean what it says: it
+       * is true only while THIS effect has a request outstanding.
+       */
+      setBuildOptionsLoading(false);
       return;
     }
     const controller = new AbortController();
@@ -805,7 +888,7 @@ export default function FirmwareFlasherSimpleScreen({
       if (!controller.signal.aborted) setBuildOptionsLoading(false);
     });
     return () => controller.abort();
-  }, [selectedRelease, selectedTarget]);
+  }, [catalogueAttempt, selectedRelease, selectedTarget]);
 
   /* ---- Live flash progress ---- */
   useEffect(() => client.onDfuFlashProgress(update => {
@@ -850,6 +933,17 @@ export default function FirmwareFlasherSimpleScreen({
     setTargetPickerOpen(false);
     setDetectedTarget(null);
     setPendingFlash(null);
+    /*
+     * THE NOTE THAT OUTLIVED ITS OWN INSTRUCTION.
+     *
+     * A detection that reads a board the catalogue does not list leaves
+     * "…اسم اللوحة غير موجود في قائمة Targets الرسمية. اختر Target يدويًا"
+     * on screen. It was cleared only when a NEW detection started - so
+     * the operator who did exactly what it asked, and picked a target by
+     * hand, was still being told to pick a target by hand. Advice that
+     * has already been followed is not advice any more.
+     */
+    setDetectionNote(null);
     // DELIBERATELY KEPT: dfuReady and verifiedIdentity. The board being
     // in DFU is a physical fact a catalogue choice cannot change, and
     // the frozen identity stays what the board said - whether it MATCHES
@@ -1194,7 +1288,7 @@ export default function FirmwareFlasherSimpleScreen({
       // It is a capability limit, not a flash failure.
       failOperation(
         'PREPARE',
-        new Error('الوضع القياسي مخصص لـ Betaflight HEX. استخدم «متقدم» للأنواع الأخرى.'),
+        new Error('الوضع القياسي مخصص لملفات HEX الرسمية. استخدم «متقدم» للأنواع الأخرى.'),
       );
       return;
     }
@@ -1438,6 +1532,10 @@ export default function FirmwareFlasherSimpleScreen({
           <Pressable
             accessibilityRole="button"
             accessibilityLabel="العودة"
+            /* Dimmed AND announced. A control that is visually dim but
+               reports itself enabled tells a screen-reader user nothing
+               about why pressing it does nothing. */
+            accessibilityState={{disabled: navigationLocked}}
             onPress={() => navigation.goBack()}
             disabled={navigationLocked}
             style={[styles.backButton, navigationLocked && styles.dimmed]}
@@ -1451,6 +1549,7 @@ export default function FirmwareFlasherSimpleScreen({
         </View>
         <Pressable
           accessibilityRole="button"
+          accessibilityState={{disabled: navigationLocked}}
           onPress={() => setAdvanced(true)}
           disabled={navigationLocked}
           style={[styles.advancedLink, navigationLocked && styles.dimmed]}
@@ -1467,30 +1566,38 @@ export default function FirmwareFlasherSimpleScreen({
             permission, a build, a detection. The board was never written
             to, and this notice never claims otherwise. */}
         {phase === 'problem' && problem !== null ? (
+          /* THE CONNECTION REPORT IS NOT A USER-FACING CONTROL.
+             It used to sit here as a "نسخ تقرير الاتصال" button after a
+             failed detection: an engineering trace, offered to an
+             operator who has no use for it, at the exact moment they are
+             already looking at a problem. It gave them a second thing to
+             fail at and told them nothing about their board.
+
+             The TRACE ITSELF IS KEPT and still written on every failed
+             detection - failOperation() emits it to the console
+             (DevTools on the web, adb logcat on Android), where a
+             developer investigating a hardware report can read it. What
+             is gone is the button, not the diagnostics. */
           <View testID="simple-problem-notice">
             <FirmwareNotice
               title={PROBLEM_TITLES[problem.category]}
               text={problem.text}
               tone="warning"
             />
-            {/* Developer diagnostics. Deliberately NOT part of the normal
-                flow: it appears only after a failed detection, only where
-                a clipboard exists, and it copies an engineering report
-                that is never rendered on screen. */}
-            {problem.category === 'SERIAL' && Platform.OS === 'web' ? (
-              <View style={styles.actionRow}>
+            {/* ONE control, and only where the sentence above promises
+                one. A catalogue, release or build-options download is
+                the only failure whose retry has no home elsewhere on the
+                page; a serial or DFU failure is retried with the buttons
+                in steps ١ and ٥, and a second copy of those here would
+                be the clutter this notice is trying not to be. */}
+            {RETRYABLE_PROBLEM_CATEGORIES.includes(problem.category) ? (
+              <View style={styles.problemActionRow}>
                 <FirmwareButton
-                  title={
-                    reportCopied === true
-                      ? 'تم نسخ تقرير الاتصال'
-                      : reportCopied === false
-                        ? 'تعذّر النسخ'
-                        : 'نسخ تقرير الاتصال'
-                  }
+                  title="أعد المحاولة"
                   tone="secondary"
                   size="compact"
-                  onPress={copyConnectionTrace}
-                  testID="simple-copy-connection-report"
+                  onPress={retryCatalogue}
+                  testID="simple-retry-catalogue"
                 />
               </View>
             ) : null}
@@ -1588,6 +1695,20 @@ export default function FirmwareFlasherSimpleScreen({
           {noStableForTarget ? (
             <Text style={styles.helper} testID="simple-no-stable">
               لا يوجد إصدار مستقر لهذه اللوحة. القناة المعروضة هي {CHANNEL_TITLES[channel]}.
+            </Text>
+          ) : null}
+          {/* A NUMBERED STEP WITH NOTHING UNDER IT IS NOT A STEP.
+              Before a board is chosen - and after a catalogue download
+              fails - this card rendered its heading and an empty box:
+              no releases, no channel toggle, no sentence. Every other
+              step on this screen says what it is waiting for; this one
+              silently looked broken. Measured in Chromium at 390 and
+              1366 with the build server unreachable. */}
+          {channelReleases.length === 0 && !releasesLoading ? (
+            <Text style={styles.helper} testID="simple-release-placeholder">
+              {selectedTarget
+                ? 'لا توجد إصدارات معروضة لهذه اللوحة في القناة الحالية.'
+                : 'اختر اللوحة أولًا لعرض الإصدارات المتاحة.'}
             </Text>
           ) : null}
           <View style={styles.releaseWrap}>
@@ -1910,6 +2031,13 @@ const styles = StyleSheet.create({
   },
   /** Supporting actions sit on one wrapping row, sized to their labels. */
   actionRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  /* Trails the notice rather than stretching under it: this is a
+     secondary recovery, not the page's main action. */
+  problemActionRow: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    paddingTop: spacing.sm,
+  },
   lockedNote: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   advancedLoading: {paddingVertical: spacing.xl, alignItems: 'center'},
   card: {

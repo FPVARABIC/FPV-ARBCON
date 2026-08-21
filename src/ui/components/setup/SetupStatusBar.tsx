@@ -79,6 +79,7 @@ import type {
   SetupSensorSummary,
 } from '../../../core';
 import type {SetupDiagnosticsView} from '../../../core';
+import {firmwareFamilyLabel} from '../../presentation/brandSafeText';
 import {deriveConnectionIndicatorState} from './connectionIndicator';
 import type {SetupConnectionIndicatorState} from './connectionIndicator';
 import {useTopBarNotice} from './useTopBarNotice';
@@ -243,17 +244,21 @@ export default function SetupStatusBar({
     typeof identity?.boardName === 'string' && identity.boardName.length > 0
       ? identity.boardName
       : undefined;
-  const firmwareId =
-    typeof identity?.firmwareIdentifier === 'string' &&
-    identity.firmwareIdentifier.length > 0
-      ? identity.firmwareIdentifier
-      : undefined;
+  /**
+   * THE FIRMWARE CHIP NAMES NO PROJECT.
+   *
+   * It used to read "BTFL · BETAFLIGHT" - the wire identifier and the
+   * decoded family, both rendered raw. That is a third party's name on
+   * this application's status bar, which reads as an affiliation this
+   * application does not have. firmwareFamilyLabel reports the
+   * CAPABILITY instead: whether the board's MSP dialect is one this
+   * application verifies against. The family value itself is untouched
+   * and still gates every capability check - see brandSafeText.ts.
+   */
   const firmwareText =
-    firmwareId === undefined
+    identity?.family === undefined
       ? undefined
-      : identity?.family === undefined || identity.family === 'UNKNOWN'
-      ? firmwareId
-      : `${firmwareId} · ${identity.family}`;
+      : firmwareFamilyLabel(identity.family);
   const apiText =
     typeof identity?.apiVersionMajor === 'number' &&
     typeof identity.apiVersionMinor === 'number'

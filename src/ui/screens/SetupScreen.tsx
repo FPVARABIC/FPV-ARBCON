@@ -61,7 +61,6 @@ import {
   typography,
   useContentEnvelope,
 } from '../theme';
-import { Button } from '../components/controls';
 import {
   SetupChromeBar,
   SetupStatusBar,
@@ -95,10 +94,6 @@ import {
   useSetupAppStatePhase,
   useSetupArmedState,
   readSetupFreshAttitude,
-  readSetupOwnershipState,
-  readSetupIdentificationStatus,
-  readSetupTelemetryDiagnostics,
-  readSetupAppStatePhase,
   startSetupTelemetryOwnership,
   ensureSetupArmedStateAvailable,
 } from '../../platforms/react-native/protocol/setupPresentation';
@@ -119,13 +114,6 @@ import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 // from the coordinator, clients and transports. This screen consumes a
 // callback; it holds no session authority of its own.
 import { useSetupSessionDisconnect } from './setupSessionHost';
-// Checkpoint F - "نسخ تقرير التليمترية". Web-only by the same file
-// extension seam the connection report uses; on Android
-// isTelemetryReportSupported() is false and no button is rendered.
-import {
-  copyTelemetryReportToClipboard,
-  isTelemetryReportSupported,
-} from '../../platforms/telemetryReport';
 import { orientationRenderObserver } from '../orientation3d/orientationRenderObserver';
 import {
   deriveBatterySemantics,
@@ -434,37 +422,6 @@ function SetupScreenContent({
     setUiState(setupUiSessionStore.getState(sessionKey));
   }, [sessionKey, sessionId]);
 
-  /**
-   * Checkpoint F - "نسخ تقرير التليمترية".
-   *
-   * Everything is read AT PRESS TIME from the authoritative sources
-   * (the coordinator, that session's real scheduler, the render
-   * observer), never from this closure's render snapshot: a report is
-   * evidence about the moment the user asked for it. A session with no
-   * scheduler yields `scheduler: undefined`, which the report prints as
-   * a stated fact rather than as zeros - "telemetry never started" and
-   * "telemetry started and sent nothing" are different findings and must
-   * not be collapsed.
-   */
-  const [telemetryReportCopied, setTelemetryReportCopied] = useState<
-    'idle' | 'copied' | 'failed'
-  >('idle');
-  const handleCopyTelemetryReport = useCallback(() => {
-    copyTelemetryReportToClipboard({
-      sessionId,
-      generation: sessionKey.generation,
-      ownershipState: readSetupOwnershipState(sessionId),
-      identificationStatus: readSetupIdentificationStatus(sessionId),
-      appStatePhase: readSetupAppStatePhase(),
-      setupActive: active,
-      scheduler: readSetupTelemetryDiagnostics(sessionId),
-      render: orientationRenderObserver.read(),
-      wallClockMs: Date.now(),
-    })
-      .then(copied => setTelemetryReportCopied(copied ? 'copied' : 'failed'))
-      .catch(() => setTelemetryReportCopied('failed'));
-  }, [active, sessionId, sessionKey.generation]);
-
   const handleResetHintShown = useCallback(() => {
     setupUiSessionStore.update(sessionKey, {
       hasSeenOrientationResetHint: true,
@@ -636,32 +593,16 @@ function SetupScreenContent({
           gate={fcToolGate}
           tools={['MAG_CALIBRATION', 'REBOOT']}
         />
-        {isTelemetryReportSupported() ? (
-          <View style={styles.telemetryReportRow}>
-            <Button
-              label={t('diagnostics.copyTelemetryReport')}
-              onPress={handleCopyTelemetryReport}
-              variant="secondary"
-              icon="copy"
-              testID="copy-telemetry-report"
-            />
-            <Text style={styles.telemetryReportHint}>
-              {t('diagnostics.copyTelemetryReportHint')}
-            </Text>
-            {telemetryReportCopied !== 'idle' ? (
-              <Text
-                style={styles.telemetryReportHint}
-                testID="copy-telemetry-report-result"
-              >
-                {t(
-                  telemetryReportCopied === 'copied'
-                    ? 'diagnostics.copyTelemetryReportDone'
-                    : 'diagnostics.copyTelemetryReportFailed',
-                )}
-              </Text>
-            ) : null}
-          </View>
-        ) : null}
+        {/* THE TELEMETRY REPORT IS NOT AN OPERATOR CONTROL, and it is
+            gone from this screen. It copied an engineering snapshot -
+            poll ids, scheduler counters, render statistics - onto the
+            clipboard of somebody flying a quadcopter. Nothing on it is
+            actionable to them, and it occupied the foot of the one
+            screen they use most.
+
+            The REPORT ITSELF IS KEPT (platforms/telemetryReport.ts) for
+            diagnostics and for the suites that assert its contents; what
+            is gone is the button. */}
       </ScrollView>
     </View>
   );
@@ -786,15 +727,6 @@ const styles = StyleSheet.create({
     maxWidth: CONTENT_MAX_WIDTH,
     alignSelf: 'center',
   },
-  telemetryReportRow: {
-    marginTop: spacing.md,
-    marginHorizontal: spacing.md,
-    gap: spacing.xs,
-  },
-  telemetryReportHint: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textAlign: 'center', maxWidth: PROSE_MEASURE},
   sectionHeading: {
     flexDirection: 'row',
     alignItems: 'stretch',

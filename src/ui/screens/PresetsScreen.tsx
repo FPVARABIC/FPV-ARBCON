@@ -235,7 +235,7 @@ export default function PresetsScreen({
       await cli.begin(sessionKey);
       const backup = await cli.captureDiffAll();
       const saved = await cli.saveTextFile(
-        `betaflight-backup-${firmwareVersion ?? 'unknown'}.txt`,
+        `fpv-arbcon-backup-${firmwareVersion ?? 'unknown'}.txt`,
         backup,
       );
       if (!saved)
@@ -325,13 +325,13 @@ export default function PresetsScreen({
         <View style={styles.hero}>
           <Text style={styles.title}>الحزم الجاهزة</Text>
           <Text style={styles.subtitle}>
-            حزم Betaflight الرسمية، مع معاينة الأوامر ونسخة احتياطية قبل الحفظ.
+            حزم الإعدادات الرسمية، مع معاينة الأوامر ونسخة احتياطية قبل الحفظ.
           </Text>
           <View style={styles.identityRow}>
             <Text style={styles.identity}>
               Firmware: {firmwareVersion ?? '—'}
             </Text>
-            <Text style={styles.identity}>المصدر: presets.betaflight.com</Text>
+            <Text style={styles.identity}>المصدر: مستودع الحزم الرسمي</Text>
           </View>
         </View>
         {failure ? (
@@ -410,7 +410,7 @@ export default function PresetsScreen({
                 </View>
                 <Text style={styles.presetTitle}>{preset.title}</Text>
                 <Text style={styles.meta}>
-                  {preset.author ?? 'Betaflight community'} ·{' '}
+                  {preset.author ?? 'مجتمع الحزم'} ·{' '}
                   {preset.firmwareVersions.join(', ')}
                 </Text>
               </Pressable>

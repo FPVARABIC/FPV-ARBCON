@@ -19,6 +19,7 @@ import {
 } from '../../platforms/react-native/protocol';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Icon} from '../icons';
+import {firmwareFamilyLabel} from '../presentation/brandSafeText';
 import {readInteraction} from '../components/controls/interaction';
 import {MIN_TOUCH_TARGET} from '../components/controls';
 
@@ -195,11 +196,25 @@ export default function CliScreen({
        * The segment is omitted rather than filled with a placeholder:
        * saying nothing about a board that said nothing is the honest
        * rendering.
+       *
+       * AND THIS LINE USED TO BE THE LOUDEST BRAND CLAIM IN THE APP.
+       *
+       * It read `firmware.knownFamily` and `firmware.identifier` straight
+       * out of the decoded identity, so the CLI header printed
+       * "BETAFLIGHT · BTFL · MSP 1.47 · SPBEF405V5" - the project's name
+       * twice, in the app's own chrome, above the app's own terminal.
+       *
+       * Both fields say the same thing to an operator, and neither is
+       * something they can act on. What they CAN act on is whether this
+       * application has verified the dialect their board speaks, which is
+       * what firmwareFamilyLabel reports. The decoded values are
+       * untouched; only this rendering changed - and the terminal below
+       * still prints whatever the board itself answers to `version`,
+       * because that text is the board speaking, not this application.
        */
       const {firmware, apiVersion, board} = state.identity;
       const parts = [
-        firmware.knownFamily,
-        firmware.identifier,
+        firmwareFamilyLabel(firmware.knownFamily),
         `MSP ${apiVersion.apiVersionMajor}.${apiVersion.apiVersionMinor}`,
       ];
       if (
@@ -290,7 +305,7 @@ export default function CliScreen({
     setFailure(undefined);
     try {
       const saved = await cli.saveTextFile(
-        `betaflight-cli-${Date.now()}.txt`,
+        `fpv-arbcon-cli-${Date.now()}.txt`,
         output,
       );
       if (!saved) throw new Error('لم يكتمل حفظ سجل CLI على الجهاز.');

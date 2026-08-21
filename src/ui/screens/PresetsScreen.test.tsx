@@ -123,8 +123,9 @@ describe('PresetsScreen', () => {
         .props.onPress();
     });
     expect(cli.captureDiffAll).toHaveBeenCalledTimes(1);
+    // Our own name on our own backup - see brandSafeText.ts.
     expect(cli.saveTextFile).toHaveBeenCalledWith(
-      'betaflight-backup-2025.12.5.txt',
+      'fpv-arbcon-backup-2025.12.5.txt',
       '# diff all\n',
     );
 
