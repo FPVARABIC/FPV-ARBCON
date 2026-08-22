@@ -408,32 +408,60 @@ const ENGINE_BOUNDARIES = [
       'src/core/state/motorControlCommandEngine.ts',
     ],
   },
-  // The four sensor WRITE commands, declared by Sensors B-1 with no
-  // runtime caller. Same reasoning as the motor primitives above: an
-  // EMPTY importer list is the point. B-1 builds wire codecs only; the
-  // pass that first sends one of these has to add its module here and say
-  // so, rather than acquiring the ability to change a flight controller's
-  // sensor selection, orientation, trim or declination by writing an
-  // import line.
+  /* The four sensor WRITE commands. B-1 declared them with an EMPTY
+     importer list, before any runtime caller existed; B-3 is the pass that
+     first sends them, and this is where it had to say so. Exactly one
+     module may reach any of them, and it is the guarded Sensors
+     transaction - which pauses telemetry, proves the board is disarmed
+     where that matters, re-reads inside its own operation, and refuses to
+     persist anything a readback did not confirm. */
   {
     token: 'MSP_SET_SENSOR_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: [],
+    importers: [
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_SENSOR_ALIGNMENT',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: [],
+    importers: [
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_ACC_TRIM',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: [],
+    importers: [
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_COMPASS_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
-    importers: [],
+    importers: [
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'encodeChangedMotorConfiguration',
@@ -462,6 +490,10 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/VtxConfigurationController.ts',
       'src/platforms/react-native/protocol/BoardAlignmentController.ts',
       'src/platforms/react-native/protocol/BlackboxConfigurationController.ts',
+      /* Sensors B-3. Every persist it performs is preceded by a readback
+         that proved the value actually changed; a mismatch stops the
+         sequence before this command is ever sent. */
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
     ],
     reExporters: [
       'src/core/index.ts',

@@ -363,10 +363,19 @@ describe('loading blackbox state', () => {
     ]) {
       expect([command, fc.requested.includes(command)]).toEqual([command, true]);
     }
-    // Phase A proved the reference client loads MSP_SENSOR_CONFIG (55) here
-    // and never reads it, and that MSP2_SENSOR_CONFIG_ACTIVE serves only the
-    // virtual device we do not support. Neither is requested.
+    /* Phase A proved the reference client loads a serial-configuration
+       command here and never reads the answer, and that
+       MSP2_SENSOR_CONFIG_ACTIVE serves only the virtual device we do not
+       support. Neither is requested.
+
+       COMMENT CORRECTION (Sensors B-3): an earlier version of this comment
+       named 55 as MSP_SENSOR_CONFIG. It is not - msp_protocol.h has
+       `#define MSP_SET_CF_SERIAL_CONFIG 55` and MSP_SENSOR_CONFIG is 96.
+       The assertion itself was always right; only the name was wrong. Both
+       codes are checked now so the correction is visible rather than
+       silent. */
     expect(fc.requested).not.toContain(55);
+    expect(fc.requested).not.toContain(96);
     /* MSP_FEATURE_CONFIG WAS THE FIFTH, and it is gone. Bit 19 was read as
        FEATURE_BLACKBOX; no such feature exists in `features_e` at either
        pinned revision, so the read produced a value that could only be

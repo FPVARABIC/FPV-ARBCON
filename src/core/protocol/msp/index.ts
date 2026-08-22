@@ -65,7 +65,103 @@ export {
   MSP_VTX_CONFIG,
   MSP2_COMMON_SERIAL_CONFIG,
   MSP2_COMMON_SET_SERIAL_CONFIG,
+  MSP_SENSOR_CONFIG,
+  MSP_SET_SENSOR_CONFIG,
+  MSP_SENSOR_ALIGNMENT,
+  MSP_SET_SENSOR_ALIGNMENT,
+  MSP_COMPASS_CONFIG,
+  MSP_SET_COMPASS_CONFIG,
+  MSP_ACC_TRIM,
+  MSP_SET_ACC_TRIM,
+  MSP2_SENSOR_CONFIG_ACTIVE,
+  MSP2_GYRO_SENSOR_ACTIVE,
+  MSP_SONAR_ALTITUDE,
 } from './commands/mspCommands';
+
+/* SENSORS - the B-1 wire layer. Semantics live in
+ * src/core/state/sensorTruthSemantics.ts and are imported from there
+ * directly, exactly as the blackbox storage semantics are. */
+export {
+  modelSensorHardware,
+  sensorHardwareDefaultIndex,
+  sensorHardwareIndices,
+  sensorHardwareNoneIndex,
+} from './decoding/sensorHardwareCatalog';
+export type {
+  SensorHardwareFamily,
+  SensorHardwareKind,
+  SensorHardwareValue,
+} from './decoding/sensorHardwareCatalog';
+export {
+  decodeSensorConfig,
+  NOT_AVAILABLE_IN_THIS_CONTRACT,
+  SENSOR_CONFIG_CONTRACT_BYTES,
+  SENSOR_CONFIG_MIN_BYTES,
+} from './decoding/decodeSensorConfig';
+export type {
+  NotAvailableInThisContract,
+  SensorConfig,
+  SensorConfigContract,
+} from './decoding/decodeSensorConfig';
+export {
+  decodeSensorAlignment,
+  gyroIndicesFromBitmask,
+  modelSensorAlignment,
+  ALIGN_CUSTOM_RAW,
+  ALIGN_DEFAULT_RAW,
+  SENSOR_ALIGNMENT_PAYLOAD_BYTES,
+} from './decoding/decodeSensorAlignment';
+export type {
+  CustomAlignmentDecidegrees,
+  SensorAlignment,
+  SensorAlignmentKind,
+  SensorAlignmentValue,
+} from './decoding/decodeSensorAlignment';
+export {
+  decodeSensorConfigActive,
+  SENSOR_CONFIG_ACTIVE_BYTES,
+  SENSOR_NOT_AVAILABLE,
+  SENSOR_NOT_AVAILABLE_RAW,
+} from './decoding/decodeSensorConfigActive';
+export type {
+  DetectedSensor,
+  SensorConfigActive,
+  SensorNotAvailable,
+} from './decoding/decodeSensorConfigActive';
+export {decodeGyroSensorActive} from './decoding/decodeGyroSensorActive';
+export type {GyroSensorActive} from './decoding/decodeGyroSensorActive';
+export {decodeAccTrim, ACC_TRIM_PAYLOAD_BYTES} from './decoding/decodeAccTrim';
+export type {AccTrim} from './decoding/decodeAccTrim';
+export {
+  decodeCompassConfig,
+  COMPASS_CONFIG_PAYLOAD_BYTES,
+} from './decoding/decodeCompassConfig';
+export type {CompassConfig} from './decoding/decodeCompassConfig';
+export {
+  encodeSensorConfig,
+  sensorConfigContractFor,
+  sensorConfigWriteFrom,
+} from './encoding/encodeSensorConfig';
+export type {SensorConfigWrite} from './encoding/encodeSensorConfig';
+export {
+  encodeSensorAlignment,
+  CUSTOM_ALIGNMENT_DECIDEGREE_LIMIT,
+  SENSOR_ALIGNMENT_WRITE_BASE_BYTES,
+  SENSOR_ALIGNMENT_WRITE_FULL_BYTES,
+} from './encoding/encodeSensorAlignment';
+export type {SensorAlignmentWrite} from './encoding/encodeSensorAlignment';
+export {
+  encodeAccTrim,
+  ACC_TRIM_LIMIT,
+  ACC_TRIM_WRITE_BYTES,
+} from './encoding/encodeAccTrim';
+export type {AccTrimWrite} from './encoding/encodeAccTrim';
+export {
+  encodeCompassConfig,
+  COMPASS_CONFIG_WRITE_BYTES,
+  MAG_DECLINATION_DECIDEGREE_LIMIT,
+} from './encoding/encodeCompassConfig';
+export type {CompassConfigWrite} from './encoding/encodeCompassConfig';
 
 export { decodeDetailedGps } from './decoding/decodeDetailedGps';
 export type { MspDetailedGps } from './decoding/decodeDetailedGps';
