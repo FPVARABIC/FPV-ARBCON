@@ -408,6 +408,33 @@ const ENGINE_BOUNDARIES = [
       'src/core/state/motorControlCommandEngine.ts',
     ],
   },
+  // The four sensor WRITE commands, declared by Sensors B-1 with no
+  // runtime caller. Same reasoning as the motor primitives above: an
+  // EMPTY importer list is the point. B-1 builds wire codecs only; the
+  // pass that first sends one of these has to add its module here and say
+  // so, rather than acquiring the ability to change a flight controller's
+  // sensor selection, orientation, trim or declination by writing an
+  // import line.
+  {
+    token: 'MSP_SET_SENSOR_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [],
+  },
+  {
+    token: 'MSP_SET_SENSOR_ALIGNMENT',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [],
+  },
+  {
+    token: 'MSP_SET_ACC_TRIM',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [],
+  },
+  {
+    token: 'MSP_SET_COMPASS_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [],
+  },
   {
     token: 'encodeChangedMotorConfiguration',
     from: 'src/core/protocol/msp/encoding/encodeMotorConfiguration.ts',

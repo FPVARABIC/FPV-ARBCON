@@ -314,10 +314,15 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'MSP2_SET_MOTOR_OUTPUT_REORDERING',
       'MSP2_SET_TEXT',
       'MSP_EEPROM_WRITE',
+      // Sensors B-1: the four sensor WRITE commands, declared with an
+      // empty importer list for the same reason as the motor primitives
+      // below - the boundary exists before the first runtime caller does.
+      'MSP_SET_ACC_TRIM',
       'MSP_SET_ADVANCED_CONFIG',
       'MSP_SET_ARMING_CONFIG',
       'MSP_SET_BEEPER_CONFIG',
       'MSP_SET_BOARD_ALIGNMENT_CONFIG',
+      'MSP_SET_COMPASS_CONFIG',
       'MSP_SET_FEATURE_CONFIG',
       'MSP_SET_FILTER_CONFIG',
       'MSP_SET_GPS_CONFIG',
@@ -332,6 +337,8 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'MSP_SET_RSSI_CONFIG',
       'MSP_SET_RX_CONFIG',
       'MSP_SET_RX_MAP',
+      'MSP_SET_SENSOR_ALIGNMENT',
+      'MSP_SET_SENSOR_CONFIG',
       'buildAllStopVector',
       // P1-C/P1-D: general motor-command primitives, declared with an
       // empty importer list so the boundary exists before the first

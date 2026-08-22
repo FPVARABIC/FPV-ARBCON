@@ -256,10 +256,9 @@ export const MSP_FEATURE_CONFIG = 36;
  *
  * NOT to be confused with MSP_SENSOR_ALIGNMENT (126) /
  * MSP_SET_SENSOR_ALIGNMENT (220), which carry per-sensor orientation
- * ENUMS and branch on API 1.47. Those are a separate feature and are
- * deliberately not declared here - declaring a command this app does not
- * implement would invite exactly the confusion the two names already
- * cause.
+ * ENUMS rather than whole-board angles. Those are declared in the sensor
+ * block at the foot of this file; the two names have caused confusion
+ * before, so each block names the other explicitly.
  */
 export const MSP_BOARD_ALIGNMENT_CONFIG = 38;
 export const MSP_SET_BOARD_ALIGNMENT_CONFIG = 39;
@@ -405,6 +404,103 @@ export const MSP_VTX_CONFIG = 88;
 /** Betaflight's versioned MSP v2 serial-port read and write commands. */
 export const MSP2_COMMON_SERIAL_CONFIG = 0x1009;
 export const MSP2_COMMON_SET_SERIAL_CONFIG = 0x100a;
+
+/* ------------------------------------------------------------------ *
+ * SENSORS.
+ *
+ * Every value below was read out of src/main/msp/msp_protocol.h and
+ * src/main/msp/msp_protocol_v2_betaflight.h at the pinned API-1.47
+ * firmware revision 7348054f268f0058574719c134e9f149565bb8ea, not copied
+ * from a client. Where the reference configurator uses a shortened name
+ * for the same opcode, the FIRMWARE name wins here and the divergence is
+ * written down beside it, so a future reader never has to guess which of
+ * two spellings is the real one.
+ *
+ * Declaring a constant is not a write path. The SET opcodes below have no
+ * caller in this pass: B-1 builds wire codecs only, and the controller
+ * that would be allowed to send them does not exist yet.
+ * ------------------------------------------------------------------ */
+
+/**
+ * CONFIGURED sensor hardware - what the operator asked the board to use.
+ *
+ * `#define MSP_SENSOR_CONFIG 96` / `MSP_SET_SENSOR_CONFIG 97`.
+ *
+ * THERE IS NO GYRO BYTE. The firmware's own comment above the handler
+ * claims "0:GyroHardware, 1:AccHardware, ..." and the executable code
+ * immediately below it writes `accelerometerConfig()->acc_hardware`
+ * first. The code is the contract; the comment is stale. Byte 0 is ACC.
+ */
+export const MSP_SENSOR_CONFIG = 96;
+export const MSP_SET_SENSOR_CONFIG = 97;
+
+/**
+ * PER-SENSOR ORIENTATION - not the board angles (those are 38/39 above).
+ *
+ * `#define MSP_SENSOR_ALIGNMENT 126` / `MSP_SET_SENSOR_ALIGNMENT 220`.
+ *
+ * THE READ AND THE WRITE ARE DIFFERENT SHAPES, and byte 3 changes meaning
+ * between them - see decodeSensorAlignment.ts / encodeSensorAlignment.ts.
+ * Echoing a read payload back as a write corrupts the gyro enable mask.
+ */
+export const MSP_SENSOR_ALIGNMENT = 126;
+export const MSP_SET_SENSOR_ALIGNMENT = 220;
+
+/**
+ * MAGNETIC DECLINATION, and nothing else.
+ *
+ * `#define MSP_COMPASS_CONFIG 133` / `#define MSP_SET_COMPASS_CONFIG 224`.
+ * A single value each way, in tenths of a degree.
+ */
+export const MSP_COMPASS_CONFIG = 133;
+export const MSP_SET_COMPASS_CONFIG = 224;
+
+/**
+ * ACCELEROMETER ANGLE TRIM. Note the opcode ordering: the SET is the
+ * LOWER number.
+ *
+ * `#define MSP_SET_ACC_TRIM 239` / `#define MSP_ACC_TRIM 240`.
+ */
+export const MSP_SET_ACC_TRIM = 239;
+export const MSP_ACC_TRIM = 240;
+
+/**
+ * DETECTED sensor hardware - what the board actually found at boot. A
+ * different question from MSP_SENSOR_CONFIG, and the two disagree often
+ * enough that the semantic layer keeps them apart permanently.
+ *
+ * `#define MSP2_SENSOR_CONFIG_ACTIVE 0x300A`.
+ */
+export const MSP2_SENSOR_CONFIG_ACTIVE = 0x300a;
+
+/**
+ * PER-GYRO detection results on a multi-gyro board.
+ *
+ * `#define MSP2_GYRO_SENSOR_ACTIVE 0x300D`.
+ *
+ * NAME DIVERGENCE, deliberate: betaflight-configurator calls this opcode
+ * `MSP2_GYRO_SENSOR` (src/js/msp/MSPCodes.js). The firmware name carries
+ * the "_ACTIVE" that distinguishes detection from configuration, which is
+ * the whole distinction this layer exists to keep, so the firmware name is
+ * the one used here.
+ */
+export const MSP2_GYRO_SENSOR_ACTIVE = 0x300d;
+
+/**
+ * `#define MSP_SONAR_ALTITUDE 58   // out message: Get sonar altitude [cm]`
+ *
+ * NAME DIVERGENCE, deliberate: betaflight-configurator calls this
+ * `MSP_SONAR` and annotates it "notice, in firmware named as
+ * MSP_SONAR_ALTITUDE" (src/js/msp/MSPCodes.js). The firmware name is used
+ * here.
+ *
+ * DECLARED, NOT DECODED. A rangefinder-free build answers this with a
+ * hard-coded `sbufWriteU32(dst, 0)`, so the number alone cannot tell a
+ * real zero-centimetre reading from "there is no rangefinder". Reading it
+ * without the presence and capability facts beside it would manufacture a
+ * measurement, so no decoder is offered for it in this pass.
+ */
+export const MSP_SONAR_ALTITUDE = 58;
 
 /**
  * THE ONLY MOTOR *WRITE* COMMAND IN THIS REPOSITORY, AND A CONSTANT ONLY.
