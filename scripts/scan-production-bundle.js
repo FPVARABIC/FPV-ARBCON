@@ -434,6 +434,7 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/OsdConfigurationController.ts',
       'src/platforms/react-native/protocol/VtxConfigurationController.ts',
       'src/platforms/react-native/protocol/BoardAlignmentController.ts',
+      'src/platforms/react-native/protocol/BlackboxConfigurationController.ts',
     ],
     reExporters: [
       'src/core/index.ts',
@@ -584,6 +585,7 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      'src/platforms/react-native/protocol/BlackboxConfigurationController.ts',
     ],
     reExporters: [
       'src/core/index.ts',

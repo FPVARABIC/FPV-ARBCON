@@ -226,6 +226,8 @@ export {
   SDCARD_FLAG_CONFIGURED,
   SDCARD_SUMMARY_PAYLOAD_BYTES,
   encodeBlackboxConfig,
+  encodeAdvancedConfigDebugMode,
+  ADVANCED_CONFIG_WRITE_BYTES,
   BLACKBOX_CONFIG_WRITE_BYTES,
   decodeMotor3dConfig,
   decodeMotorOutputs,

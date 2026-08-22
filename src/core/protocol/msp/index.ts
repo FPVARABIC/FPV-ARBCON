@@ -165,6 +165,10 @@ export {
   encodeBlackboxConfig,
   BLACKBOX_CONFIG_WRITE_BYTES,
 } from './encoding/encodeBlackboxConfig';
+export {
+  encodeAdvancedConfigDebugMode,
+  ADVANCED_CONFIG_WRITE_BYTES,
+} from './encoding/encodeAdvancedConfigDebugMode';
 export type { BlackboxConfigWrite } from './encoding/encodeBlackboxConfig';
 export { decodeMotor3dConfig } from './decoding/decodeMotor3dConfig';
 export type { MspMotor3dConfig } from './decoding/decodeMotor3dConfig';
