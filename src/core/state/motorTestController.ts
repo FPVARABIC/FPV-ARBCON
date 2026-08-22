@@ -254,11 +254,12 @@ import {
 // than four, then any raw protocol outside the reviewed DShot-family
 // values at the pinned tag.
 import {
-  assertSupportedMotorScope,
   buildSingleOutputVectorForDomain,
-  MOTOR_VECTOR_MOTOR_COUNT,
   type MotorVectorScope,
 } from '../firmware-adapters/betaflightMotorVectorsV147';
+// M-C: the canonical wire width, and the only bound on how many logical
+// motors any airframe may expose. Both come from MAX_SUPPORTED_MOTORS.
+import {MOTOR_TEST_COMMAND_VECTOR_SLOTS} from './motorTestCommandVector';
 import {
   readMotorArmedStateEvidence,
   type MotorTestArmedStateEvidence,
@@ -742,9 +743,10 @@ export type MotorTestSetupBlockedReason =
   | 'BOX_EVIDENCE_UNAVAILABLE'
   | 'MOTOR_CONFIG_REQUEST_FAILED'
   | 'MOTOR_CONFIG_MALFORMED'
-  /** FEATURE_3D enabled, a motor count other than four, or a raw motor
-   * protocol the encoder is not scoped for. Complete evidence, refused. */
-  | 'MOTOR_SCOPE_UNSUPPORTED'
+  /** M-C: the configuration cannot be commanded at all - see
+   * MotorCommandScopeRefusal. Complete decoded evidence, refused, and
+   * nothing written. */
+  | MotorCommandScopeRefusal
   /** The first production observation never completed usably. */
   | 'FIRST_OBSERVATION_UNAVAILABLE'
   /** The first production observation completed and proved ARMED. */
@@ -897,11 +899,38 @@ export type MotorTestStopExecutionOutcome =
  */
 export const MOTOR_TEST_FIXED_PULSE_VALUE = 1050;
 
-/** Operator-facing motor numbers. These are MSP OUTPUT SLOTS, never
- * airframe positions and never rotation directions. */
-export const MOTOR_TEST_PULSE_MOTOR_NUMBERS: readonly number[] = Object.freeze(
-  [1, 2, 3, 4],
-);
+/**
+ * Operator-facing motor numbers for a given runtime motor count.
+ *
+ * M-C REPLACED A CONSTANT WITH A FUNCTION. This used to be the frozen
+ * literal `[1, 2, 3, 4]` - a fixed truth that was wrong for every airframe
+ * that is not a quad, and that silently offered a tricopter a fourth motor
+ * it does not have. The list is now derived from the ONLY authority for
+ * how many motor outputs exist: MSP_MOTOR_CONFIG's own count.
+ *
+ * These are MSP OUTPUT SLOTS, never airframe positions and never rotation
+ * directions. Motor N is always firmware output index N-1, on every
+ * airframe and in every text direction - no right-to-left reversal is
+ * applied here or anywhere below this line.
+ *
+ * An unusable count yields an EMPTY list rather than a quad: a missing or
+ * corrupt figure is not four motors.
+ */
+export function motorTestPulseMotorNumbers(
+  runtimeMotorCount: number | undefined,
+): readonly number[] {
+  if (
+    runtimeMotorCount === undefined ||
+    !Number.isInteger(runtimeMotorCount) ||
+    runtimeMotorCount < 1 ||
+    runtimeMotorCount > MOTOR_TEST_COMMAND_VECTOR_SLOTS
+  ) {
+    return Object.freeze([]);
+  }
+  return Object.freeze(
+    Array.from({length: runtimeMotorCount}, (_, index) => index + 1),
+  );
+}
 
 export type MotorTestPulseRequestResult =
   | 'ACCEPTED'
@@ -958,7 +987,54 @@ export type MotorTestPulseRequestResult =
  * which internal condition folds into which reason, and the full internal
  * state stays available behind the screen's collapsed diagnostics.
  */
+/**
+ * M-C - WHY A CONFIGURATION CANNOT BE COMMANDED AT ALL.
+ *
+ * Shared verbatim between bring-up and the activation gate, because the
+ * two used to run different rules and could therefore disagree: a session
+ * could open on a configuration its own pulse path would refuse. There is
+ * one evaluator (`evaluateMotorCommandScope`) and one vocabulary.
+ *
+ * NONE of these names an airframe. There is no "unsupported airframe" and
+ * no mixer in the set - a tricopter, a hexacopter and an octocopter all
+ * pass, and what fails is a count outside the firmware's own bound, a
+ * protocol with no resolvable conversion, or a 3D configuration whose
+ * active endpoints MSP does not carry.
+ */
+export type MotorCommandScopeRefusal =
+  /**
+   * MSP_MOTOR_CONFIG reported a motor count of zero: this configuration
+   * drives no motor outputs at all, so there is nothing a motor test
+   * could command. Distinct from an unsupported one - the aircraft is
+   * fine, it simply has no motors on this mixer.
+   */
+  | 'NO_RUNTIME_MOTORS'
+  /**
+   * The reported motor count is not a usable 1..MAX_SUPPORTED_MOTORS
+   * figure. mixerConfigureOutput() clamps to that bound on both of its
+   * branches, so a count outside it is a corrupt or unrecognised runtime
+   * result rather than an airframe this app declines to support.
+   */
+  | 'MOTOR_COUNT_OUT_OF_RANGE'
+  /**
+   * The configured motor protocol has no external-value conversion this
+   * app can resolve - MOTOR_PROTOCOL_DISABLED, or a raw byte outside the
+   * pinned enum. Nothing is guessed: an unknown protocol is refused, not
+   * assumed to be PWM or DShot.
+   */
+  | 'UNSUPPORTED_PROTOCOL_DOMAIN'
+  /**
+   * FEATURE_3D is on and the active endpoints are NOT observable over MSP
+   * at this API version, so forward and reverse cannot be told apart.
+   * This is the ANALOG 3D case specifically: `limit3d_low`/`limit3d_high`
+   * exist in the firmware struct but are not on the wire at 1.47 or 1.49.
+   * DIGITAL 3D is NOT refused - its neutral is the protocol constant
+   * PWM_RANGE_MIDDLE and the split is the firmware's own branch.
+   */
+  | 'ANALOG_3D_ENDPOINTS_UNKNOWN';
+
 export type MotorTestActivationBlockReason =
+  | MotorCommandScopeRefusal
   /**
    * There is no live, current, writable session: not started, still
    * preparing, closing, closed, invalidated, replaced, barrier not held,
@@ -978,13 +1054,14 @@ export type MotorTestActivationBlockReason =
   /** No reviewed motor-write adapter matches the identified firmware/API. */
   | 'FIRMWARE_UNSUPPORTED'
   /**
-   * FEATURE_3D is enabled. Called out separately from the general scope
-   * refusal because it is the one configuration whose effect INVERTS: with
-   * 3D on, stop is external 1500 and 1000 is FULL REVERSE.
+   * The configuration this session was opened against is no longer the
+   * configuration the flight controller reports: the motor count, the
+   * mixer identity, the protocol or the 3D domain moved underneath an
+   * active session. Fails closed rather than silently re-scoping - a
+   * session opened for four motors must never quietly start commanding a
+   * fifth.
    */
-  | 'MOTOR_3D_ENABLED'
-  /** Motor count or raw motor protocol outside the one supported scope. */
-  | 'MOTOR_SCOPE_UNSUPPORTED'
+  | 'MOTOR_CONFIGURATION_DRIFTED'
   /** A pulse or a stop is already running. */
   | 'PULSE_OR_STOP_IN_PROGRESS'
   /**
@@ -1120,8 +1197,11 @@ function mapActivationBlockToPulseResult(
     case 'ARMED_STATE_UNKNOWN_OR_STALE':
     case 'FIRMWARE_IDENTITY_UNAVAILABLE':
     case 'FIRMWARE_UNSUPPORTED':
-    case 'MOTOR_3D_ENABLED':
-    case 'MOTOR_SCOPE_UNSUPPORTED':
+    case 'NO_RUNTIME_MOTORS':
+    case 'MOTOR_COUNT_OUT_OF_RANGE':
+    case 'UNSUPPORTED_PROTOCOL_DOMAIN':
+    case 'ANALOG_3D_ENDPOINTS_UNKNOWN':
+    case 'MOTOR_CONFIGURATION_DRIFTED':
       return 'GATES_NOT_SATISFIED';
     case undefined:
       // Unreachable: only called when at least one reason exists. Fails
@@ -1482,21 +1562,157 @@ export interface MotorTestController {
  * ------------------------------------------------------------------ */
 
 /**
- * P2-ii-A. Whether the legacy scope guard is about to refuse this
- * configuration, asked WITHOUT sending anything.
+ * M-C - THE ONE MOTOR-COMMAND SCOPE RULE, generic over 1..8 motors.
  *
- * It delegates to the same accepted guard the bring-up and both vector
- * builders use, so it can never drift into a second, weaker copy of the
- * rule. Used only to decide whether an extra evidence read is worth
- * sending on a session that is about to be refused anyway.
+ * WHAT REPLACED WHAT. Until M-C this controller ran the legacy quad rule:
+ * `assertSupportedMotorScope` refused FEATURE_3D outright and then refused
+ * any motor count other than four. Both refusals were wrong for different
+ * reasons and both are gone:
+ *
+ *  - THE COUNT. Nothing in the firmware makes four special. The mixer
+ *    table carries counts from 0 to 8, MSP_SET_MOTOR is a plain vector
+ *    write bounded by getMotorCount(), and MAX_SUPPORTED_MOTORS is 8. The
+ *    rule is now the firmware's own bound.
+ *
+ *  - THE 3D BLANKET. Refusing every 3D configuration also refused DIGITAL
+ *    3D, whose neutral is the protocol constant PWM_RANGE_MIDDLE and whose
+ *    forward/reverse split is the firmware's own branch in
+ *    dshotConvertFromExternal(). That is fully knowable. The case that is
+ *    genuinely unknowable is ANALOG 3D, where `limit3d_low`/`limit3d_high`
+ *    live in the firmware struct but are not on the wire at API 1.47 or
+ *    1.49 - and `motorControlRuntimeScope` already refuses exactly that,
+ *    by name. So there is now ONE owner of the 3D question instead of two
+ *    that could disagree, and the strict half of the old rule is kept
+ *    while the over-broad half is dropped.
+ *
+ * NO AIRFRAME BRANCHES. There is no `if TRI`, no `if HEX`, no `if OCTO`
+ * and no mixer-mode test anywhere in this function or in anything it
+ * calls. A tricopter and an octocopter reach the same three checks.
+ *
+ * Returns every reason that applies, so a caller sees the whole picture
+ * rather than the first thing that happened to fail.
  */
-function scopeWouldBeRefused(scope: MotorVectorScope): boolean {
-  try {
-    assertSupportedMotorScope(scope);
+/**
+ * The fallback for a runtime-scope refusal this function does not name.
+ *
+ * The `never` parameter is the whole point: adding a refusal kind to
+ * `MotorControlRuntimeScope` without handling it here FAILS TO COMPILE,
+ * rather than silently producing no reason at all - which would be
+ * fail-OPEN on a safety gate. At runtime it still refuses.
+ */
+function refusalForUnhandledScope(_unhandled: never): MotorCommandScopeRefusal {
+  return 'UNSUPPORTED_PROTOCOL_DOMAIN';
+}
+
+function evaluateMotorCommandScope(
+  scope: MotorVectorScope,
+  runtimeScope: MotorControlRuntimeScope | undefined,
+): readonly MotorCommandScopeRefusal[] {
+  const reasons: MotorCommandScopeRefusal[] = [];
+
+  // (1) THE RUNTIME COUNT, from MSP_MOTOR_CONFIG offset 6 and nothing
+  // else. Never the mixer's expected count, never the telemetry frame's
+  // count, never the first zero in MSP_MOTOR, and never a fallback of 4.
+  const count = scope.motorCount;
+  if (!Number.isInteger(count) || count < 0) {
+    reasons.push('MOTOR_COUNT_OUT_OF_RANGE');
+  } else if (count === 0) {
+    reasons.push('NO_RUNTIME_MOTORS');
+  } else if (count > MOTOR_TEST_COMMAND_VECTOR_SLOTS) {
+    reasons.push('MOTOR_COUNT_OUT_OF_RANGE');
+  }
+
+  // (2) THE COMMAND DOMAIN, owned entirely by motorControlRuntimeScope.
+  // An undefined runtime scope means the domain resolver refused this
+  // configuration outright - an unknown protocol raw, or a 3D setup whose
+  // required fields never arrived.
+  if (runtimeScope === undefined) {
+    reasons.push('UNSUPPORTED_PROTOCOL_DOMAIN');
+  } else if (!runtimeScope.eligible) {
+    switch (runtimeScope.refusal) {
+      case 'ANALOG_3D_ACTIVE_ENDPOINTS_UNKNOWN':
+      case 'THREE_D_ACTIVE_REGIONS_UNPROVEN':
+      case 'THREE_D_NEUTRAL_UNRESOLVED':
+        reasons.push('ANALOG_3D_ENDPOINTS_UNKNOWN');
+        break;
+      case 'PROTOCOL_FAMILY_UNKNOWN':
+        reasons.push('UNSUPPORTED_PROTOCOL_DOMAIN');
+        break;
+      default:
+        reasons.push(refusalForUnhandledScope(runtimeScope.refusal));
+        break;
+    }
+  }
+
+  return reasons;
+}
+
+/**
+ * M-C - THE CONFIGURATION IDENTITY A SESSION IS BOUND TO.
+ *
+ * Captured once, when bring-up first resolves a usable configuration, and
+ * compared on every activation evaluation afterwards. Every field is one
+ * this controller would have to re-derive its command semantics from if it
+ * changed:
+ *
+ *  - `motorCount` decides how many logical motors are commandable. A
+ *    session opened for four must never quietly start commanding a fifth
+ *    because a later read said six; that is a new session's decision, not
+ *    a silent widening of this one.
+ *  - `motorProtocolRaw` and `feature3dEnabled` decide the external-value
+ *    conversion. A stale conversion is how 1000 stops one aircraft and
+ *    drives another one backwards at full throttle.
+ *  - `stopValue` is carried explicitly so a drift in the resolved stop is
+ *    caught even if the three inputs above somehow matched.
+ */
+export interface MotorTestTopologyBinding {
+  readonly motorCount: number;
+  readonly motorProtocolRaw: number;
+  readonly feature3dEnabled: boolean;
+  readonly stopValue: number;
+}
+
+/**
+ * Whether an observed configuration has moved away from the one a session
+ * was bound to.
+ *
+ * EXPORTED, AND PURE, DELIBERATELY. The controller's own field-comparison
+ * used to be a private method, and a mutation that deleted the comparison
+ * outright survived every test in this repository - not because the tests
+ * were weak, but because NO CURRENT CODE PATH RE-READS THE MOTOR SCOPE
+ * DURING A LIVE SESSION. `runBenchSteps` reads it once at bring-up, the
+ * diagnostics poller reads MSP_MOTOR and MSP_MOTOR_TELEMETRY only, and a
+ * reconnect builds a whole new controller. So the guard cannot fire today.
+ *
+ * That is stated here rather than hidden, and the rule is tested directly
+ * instead of being asserted through a path that cannot reach it. The guard
+ * is a PRECONDITION for the migration that adds a mid-session refresh -
+ * it exists so that refresh cannot be added without a decision - not a
+ * claim that drift is currently detected in flight.
+ *
+ * Returns false when there is no binding: a session that never resolved a
+ * configuration has nothing to have drifted FROM, and that case is already
+ * reported as link unavailability.
+ */
+export function motorTopologyBindingHasDrifted(
+  binding: MotorTestTopologyBinding | undefined,
+  scope: MotorVectorScope | undefined,
+  stopValue: number | undefined,
+): boolean {
+  if (binding === undefined || scope === undefined) {
     return false;
-  } catch {
+  }
+  if (
+    scope.motorCount !== binding.motorCount ||
+    scope.motorProtocolRaw !== binding.motorProtocolRaw ||
+    scope.feature3dEnabled !== binding.feature3dEnabled
+  ) {
     return true;
   }
+  // The resolved stop is compared separately: two configurations can agree
+  // on all three inputs above and still resolve different stops if the
+  // endpoints behind them moved.
+  return stopValue !== undefined && stopValue !== binding.stopValue;
 }
 
 /** P2-ii. Whether the professional runtime path may command this domain. */
@@ -1686,6 +1902,12 @@ class MotorTestControllerImpl {
    * domain, and if not, exactly what the pinned firmware could not tell
    * us. Analog 3D is refused here rather than guessed. */
   private motorRuntimeScope: MotorControlRuntimeScope | undefined;
+  /**
+   * M-C. The configuration identity this session was opened against.
+   * Captured once at bring-up and never rewritten while the session
+   * lives; see MotorTestTopologyBinding for what each field protects.
+   */
+  private topologyBinding: MotorTestTopologyBinding | undefined;
   /**
    * P2-ii. THE ONE session-scoped professional command authority.
    *
@@ -2139,11 +2361,11 @@ class MotorTestControllerImpl {
     if (this.phase === 'CLOSED' || this.phase === 'CLOSING' || this.closing) {
       return 'CONTROLLER_CLOSED';
     }
-    if (
-      !Number.isInteger(motorNumber) ||
-      motorNumber < 1 ||
-      motorNumber > MOTOR_VECTOR_MOTOR_COUNT
-    ) {
+    // M-C: 1..runtimeMotorCount, from MSP_MOTOR_CONFIG and nothing else.
+    // A tricopter offers three, an octocopter eight, and a configuration
+    // whose count was never read offers none - `commandableMotorCount()`
+    // returns undefined rather than assuming four.
+    if (!this.isCommandableMotorNumber(motorNumber)) {
       return 'INVALID_MOTOR';
     }
 
@@ -2370,11 +2592,7 @@ class MotorTestControllerImpl {
     motorNumber: number,
     direction: DshotEscDirection,
   ): Promise<MotorTestEscDirectionOutcome> {
-    if (
-      !Number.isInteger(motorNumber) ||
-      motorNumber < 1 ||
-      motorNumber > MOTOR_VECTOR_MOTOR_COUNT
-    ) {
+    if (!this.isCommandableMotorNumber(motorNumber)) {
       return {kind: 'REJECTED', reason: 'INVALID_MOTOR'};
     }
     if (
@@ -2395,7 +2613,17 @@ class MotorTestControllerImpl {
 
     let payload: Uint8Array;
     try {
-      assertSupportedMotorScope(this.motorScope as MotorVectorScope);
+      // M-C: the same generic scope rule the activation gate runs. A
+      // direction command is a DShot command, so it is refused for exactly
+      // the configurations that cannot resolve a command domain - never
+      // because the aircraft has a motor count this app used to dislike.
+      const scope = this.motorScope;
+      if (
+        scope === undefined ||
+        evaluateMotorCommandScope(scope, this.motorRuntimeScope).length > 0
+      ) {
+        return {kind: 'REJECTED', reason: 'UNSUPPORTED'};
+      }
       payload = encodeDshotEscDirection(motorNumber - 1, direction);
     } catch {
       return {kind: 'REJECTED', reason: 'UNSUPPORTED'};
@@ -2685,14 +2913,20 @@ class MotorTestControllerImpl {
       if (!reasons.includes('CONTROLLER_LINK_UNAVAILABLE')) {
         reasons.push('CONTROLLER_LINK_UNAVAILABLE');
       }
-    } else if (scope.feature3dEnabled) {
-      // Called out on its own because 3D INVERTS stop semantics.
-      reasons.push('MOTOR_3D_ENABLED');
     } else {
-      try {
-        assertSupportedMotorScope(scope);
-      } catch {
-        reasons.push('MOTOR_SCOPE_UNSUPPORTED');
+      for (const reason of evaluateMotorCommandScope(
+        scope,
+        this.motorRuntimeScope,
+      )) {
+        reasons.push(reason);
+      }
+      // M-C: the configuration this session was opened against must still
+      // be the one the flight controller reports. Checked HERE, on every
+      // evaluation, rather than only at bring-up - a binding that is only
+      // proved once is a snapshot, and a snapshot is what this guard
+      // exists to refuse.
+      if (this.topologyBindingHasDrifted()) {
+        reasons.push('MOTOR_CONFIGURATION_DRIFTED');
       }
     }
 
@@ -2710,6 +2944,63 @@ class MotorTestControllerImpl {
       return ACTIVATION_ALLOWED;
     }
     return Object.freeze({allowed: false, reasons: Object.freeze(reasons)});
+  }
+
+  /**
+   * M-C. How many logical motors this session may command, or undefined
+   * when no count has been read.
+   *
+   * THE ONE AUTHORITY IS MSP_MOTOR_CONFIG offset 6. Deliberately NOT the
+   * mixer's expected count (which is a compile-time constant that the
+   * running firmware may disagree with, and which does not exist at all
+   * for a custom mixer), NOT MSP_MOTOR_TELEMETRY's frame count, NOT the
+   * first zero in MSP_MOTOR's eight slots, and never a fallback of four.
+   */
+  private commandableMotorCount(): number | undefined {
+    const count = this.motorScope?.motorCount;
+    if (
+      count === undefined ||
+      !Number.isInteger(count) ||
+      count < 1 ||
+      count > MOTOR_TEST_COMMAND_VECTOR_SLOTS
+    ) {
+      return undefined;
+    }
+    return count;
+  }
+
+  /**
+   * Whether an operator-facing motor number addresses a motor this
+   * session may command: 1..runtimeMotorCount, and nothing else.
+   *
+   * Motor N is firmware output index N-1 on every airframe. No right-to-
+   * left reversal is applied - mirroring is a drawing decision and
+   * renumbering a machine's motors to suit a layout would be a defect.
+   */
+  private isCommandableMotorNumber(motorNumber: number): boolean {
+    const count = this.commandableMotorCount();
+    return (
+      count !== undefined &&
+      Number.isInteger(motorNumber) &&
+      motorNumber >= 1 &&
+      motorNumber <= count
+    );
+  }
+
+  /**
+   * M-C. Whether the flight controller's configuration has moved away
+   * from the one this session was opened against.
+   *
+   * Returns false when no binding has been captured yet - a session that
+   * has not resolved a configuration has nothing to have drifted FROM,
+   * and that case is already reported as link unavailability.
+   */
+  private topologyBindingHasDrifted(): boolean {
+    return motorTopologyBindingHasDrifted(
+      this.topologyBinding,
+      this.motorScope,
+      this.motorDomain?.stopValue,
+    );
   }
 
   /**
@@ -3456,31 +3747,41 @@ class MotorTestControllerImpl {
       });
     }
     this.publish();
-    /* ---- P2 CLOSURE: TWO ELIGIBILITIES, SEPARATED. -------------------
+    /* ---- M-C: ONE ELIGIBILITY, NOT TWO. ------------------------------
      *
-     * A. PROFESSIONAL RUNTIME ELIGIBILITY - the P1 domain resolved from
-     *    this session's own reads, classified by motorControlRuntimeScope.
-     *    Digital non-3D, digital 3D and analog non-3D are eligible;
-     *    analog 3D is refused because its active endpoints are not
-     *    knowable from MSP at API 1.47.
+     * P2 ran two rules at once: a professional one driven by the resolved
+     * domain, and a legacy one that demanded exactly four motors, the
+     * DShot family and no 3D. The session proceeded if EITHER passed,
+     * while `pulseMotor` was governed by the legacy rule alone - so a hex
+     * could open a session it could never use, and a digital-3D quad was
+     * refused a pulse the professional path could prove safe.
      *
-     * B. LEGACY MOTORSSCREEN COMPATIBILITY - the old pulse UI's stricter
-     *    rule (exactly four motors, DShot family, non-3D). It still
-     *    governs `pulseMotor` through `evaluateActivation`, which re-runs
-     *    the identical guard on every evaluation - so the OLD screen's
-     *    workflow stays exactly as restricted as before.
-     *
-     * The session proceeds when EITHER path can use it. It is refused
-     * outright only when NEITHER can - analog 3D, or an unrecognised
-     * protocol - with complete decoded evidence and nothing written, so
-     * it LOCKS rather than claiming the ambiguity a fault would assert.
-     * The legacy rule stopped being allowed to prevent the professional
-     * controller from existing; it never stopped governing the legacy UI.
+     * There is now ONE rule, `evaluateMotorCommandScope`, and it is the
+     * same object the activation gate re-runs on every evaluation. The
+     * strict half of the old rule survives intact: analog 3D is still
+     * refused by name, an unresolvable protocol is still refused, and the
+     * refusal still LOCKS with complete decoded evidence and nothing
+     * written rather than claiming the ambiguity a fault would assert.
+     * What is gone is the count restriction, which was never a firmware
+     * fact, and the 3D blanket, which refused a case that is fully
+     * knowable.
      */
-    const legacyUiCompatible = !scopeWouldBeRefused(scopeRead.scope);
-    if (!legacyUiCompatible && !runtimeScopeEligible(scopeRead.runtimeScope)) {
-      return failure('MOTOR_SCOPE_UNSUPPORTED', LOCK);
+    const scopeRefusals = evaluateMotorCommandScope(
+      scopeRead.scope,
+      scopeRead.runtimeScope,
+    );
+    if (scopeRefusals.length > 0) {
+      return failure(scopeRefusals[0], LOCK);
     }
+    // The configuration this session is bound to, captured the instant it
+    // is first proven usable. From here on a disagreeing read fails the
+    // activation gate rather than silently re-scoping the session.
+    this.topologyBinding = Object.freeze({
+      motorCount: scopeRead.scope.motorCount,
+      motorProtocolRaw: scopeRead.scope.motorProtocolRaw,
+      feature3dEnabled: scopeRead.scope.feature3dEnabled,
+      stopValue: scopeRead.domain?.stopValue ?? Number.NaN,
+    });
 
     // ---- (8) Only the BOX evidence armed state needs. ----------------
     this.setupStep = 'ARMED_STATE_EVIDENCE';

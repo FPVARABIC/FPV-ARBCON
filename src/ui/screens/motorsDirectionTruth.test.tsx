@@ -451,8 +451,12 @@ describe('34 - a blocked command says why, and offers no control', () => {
       reason: 'THREE_D_ENABLED',
     },
     {
-      name: 'non-quad scope',
-      snapshot: snapshotFor({motorCount: 6}),
+      // M-C: a HEXACOPTER is no longer blocked - the four-motor limit was
+      // never a firmware fact. What is still out of scope is a count
+      // outside 1..MAX_SUPPORTED_MOTORS, which is a corrupt runtime
+      // result rather than an airframe.
+      name: 'motor count outside the firmware bound',
+      snapshot: snapshotFor({motorCount: 9}),
       reason: 'MOTOR_COUNT_OUT_OF_SCOPE',
     },
     {
@@ -511,7 +515,8 @@ describe('34 - the capability rule mirrors the gates that actually run', () => {
     ['NO_SESSION', {...base, hasSession: false}],
     ['SCOPE_UNKNOWN', {...base, scope: undefined}],
     ['THREE_D_ENABLED', {...base, scope: {...scope, feature3dEnabled: true}}],
-    ['MOTOR_COUNT_OUT_OF_SCOPE', {...base, scope: {...scope, motorCount: 6}}],
+    ['MOTOR_COUNT_OUT_OF_SCOPE', {...base, scope: {...scope, motorCount: 9}}],
+    ['MOTOR_COUNT_OUT_OF_SCOPE', {...base, scope: {...scope, motorCount: 0}}],
     ['PROTOCOL_UNSUPPORTED', {...base, scope: {...scope, motorProtocolRaw: 0}}],
     ['MOTOR_OUT_OF_RANGE', {...base, motorNumber: 5}],
     ['NOT_READY', {...base, activationAllowed: false}],
@@ -522,11 +527,27 @@ describe('34 - the capability rule mirrors the gates that actually run', () => {
     });
   });
 
+  it('admits a HEXACOPTER, and bounds the motor number by ITS count', () => {
+    // M-C: the direction command widened with the rest of the motor path.
+    const hex = {...scope, motorCount: 6};
+    expect(
+      evaluateMotorDirectionCommandCapability({...base, scope: hex, motorNumber: 6}),
+    ).toEqual({kind: 'AVAILABLE'});
+    // Output seven is out of range on a hexacopter even though eight
+    // outputs are theoretically addressable - the bound is THIS aircraft's
+    // count, not the firmware maximum.
+    expect(
+      evaluateMotorDirectionCommandCapability({...base, scope: hex, motorNumber: 7}),
+    ).toEqual({kind: 'UNAVAILABLE', reason: 'MOTOR_OUT_OF_RANGE'});
+  });
+
   it('takes its motor bound from the command path, not from a literal', () => {
-    expect(MOTOR_DIRECTION_COMMAND_MAX_MOTORS).toBe(4);
+    // MAX_SUPPORTED_MOTORS, not the shipping product's old quad scope.
+    expect(MOTOR_DIRECTION_COMMAND_MAX_MOTORS).toBe(8);
     expect(
       evaluateMotorDirectionCommandCapability({
         ...base,
+        scope: {...scope, motorCount: MOTOR_DIRECTION_COMMAND_MAX_MOTORS},
         motorNumber: MOTOR_DIRECTION_COMMAND_MAX_MOTORS,
       }),
     ).toEqual({kind: 'AVAILABLE'});
@@ -667,7 +688,7 @@ describe('36/37 - expected versus observed, and nothing else', () => {
  * 38. NON-QUAD - THE RIGHT REASON, NOT A BORROWED ONE
  * ================================================================== */
 
-describe('38 - a hex is told the command-path reason, not the template one', () => {
+describe('38 - a hex keeps numbered control while the POSITION model stays quad', () => {
   let tree: ReactTestRenderer.ReactTestRenderer;
 
   beforeEach(() => {
@@ -682,14 +703,19 @@ describe('38 - a hex is told the command-path reason, not the template one', () 
     expect(has(tree, 'motor-direction-expected-badge')).toBe(false);
   });
 
-  it('blames the command path, which is the actual limit', () => {
-    expect(valueOf(tree, 'motor-direction-unavailable-reason')).toBe(
-      ar.motorsScreen.directionBlocked.MOTOR_COUNT_OUT_OF_SCOPE,
-    );
-    // Explicitly NOT the identification/template explanation.
-    expect(valueOf(tree, 'motor-direction-unavailable-reason')).not.toBe(
-      ar.motorsScreen.identificationQuadOnlyBody,
-    );
+  it('is NOT blocked from commanding direction any more', () => {
+    // M-C: the command path used to refuse any count but four, and this
+    // test asserted that a hexacopter was told so. That limit was never a
+    // firmware fact - a DShot ESC on output six takes a direction command
+    // exactly as one on output two does - and it is gone.
+    //
+    // The separation this block exists to protect is UNCHANGED and is now
+    // proven the strong way round: the POSITION model did not widen (the
+    // test above still gets no expected direction), while numbered CONTROL
+    // did. Neither limitation borrows the other's explanation, because
+    // only one limitation is left.
+    expect(has(tree, 'motor-direction-unavailable')).toBe(false);
+    expect(has(tree, 'motor-direction-unavailable-reason')).toBe(false);
   });
 
   it('still lets every motor be addressed', () => {

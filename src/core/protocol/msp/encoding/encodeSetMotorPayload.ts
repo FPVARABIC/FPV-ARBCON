@@ -88,16 +88,17 @@ export const MSP_SET_MOTOR_MIN_MOTOR_COUNT = 1;
  */
 export const MSP_SET_MOTOR_MAX_MOTOR_COUNT = 8;
 
-/**
- * LEGACY SCOPE CONSTANT, retained unchanged for the shipping single-pulse
- * path in motorTestController.ts. It is the approved scope of that older
- * pass (Quad X, four motors) and has never been a firmware limit - the
- * firmware limit is MSP_SET_MOTOR_MAX_MOTOR_COUNT above.
+/* M-C: `MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT` (4) and
+ * `MSP_SET_MOTOR_PAYLOAD_BYTES` (8) were REMOVED here.
+ *
+ * The first was the shipping product's scope rather than a firmware
+ * limit, and its last consumer left with the quad-only activation gate.
+ * The second was worse than unused - it named eight bytes as "the"
+ * payload size, and the canonical payload is now SIXTEEN, because the
+ * width of an MSP_SET_MOTOR body is a property of the command rather than
+ * of the airframe. A constant that states a wrong size is a defect
+ * waiting for a caller. See motorTestCommandVector.ts.
  */
-export const MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT = 4;
-
-/** Four u16 values, little-endian - the legacy scope's payload size. */
-export const MSP_SET_MOTOR_PAYLOAD_BYTES = MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT * 2;
 
 /** Exact payload byte length for a vector of `motorCount` u16 values. */
 export function mspSetMotorPayloadByteLength(motorCount: number): number {

@@ -195,9 +195,18 @@ export type MotorsScreenPresentation =
  *   Firmware identity/compatibility next. A decoded configuration cannot
  *     authorize writes until its firmware family and API adapter match.
  *
- *   MOTOR_3D_ENABLED before MOTOR_SCOPE_UNSUPPORTED, because 3D is a
- *     single named setting the operator can turn off, while "unsupported
- *     scope" covers motor count and protocol.
+ *   The four M-C scope refusals next, most-actionable first.
+ *     ANALOG_3D_ENDPOINTS_UNKNOWN leads, because 3D is a single named
+ *     setting the operator can turn off. NO_RUNTIME_MOTORS follows: the
+ *     aircraft is fine and simply has no motor outputs on this mixer,
+ *     which is a statement about the configuration rather than a fault.
+ *     UNSUPPORTED_PROTOCOL_DOMAIN and MOTOR_COUNT_OUT_OF_RANGE last -
+ *     both mean the flight controller reported something this app will
+ *     not guess at, and neither is something a slider can fix.
+ *
+ *   MOTOR_CONFIGURATION_DRIFTED alongside them: the configuration moved
+ *     under an active session, so the actionable instruction is to open
+ *     the session again rather than to change anything on the aircraft.
  *
  *   REQUIRES_NEW_CONNECTION before CONTROLLER_LINK_UNAVAILABLE, because a
  *     terminal fault always drags a dead link along with it and the fault
@@ -212,8 +221,11 @@ export const CAUSAL_BLOCK_REASON_ORDER: readonly MotorTestActivationBlockReason[
     'ARMED_STATE_UNKNOWN_OR_STALE',
     'FIRMWARE_IDENTITY_UNAVAILABLE',
     'FIRMWARE_UNSUPPORTED',
-    'MOTOR_3D_ENABLED',
-    'MOTOR_SCOPE_UNSUPPORTED',
+    'ANALOG_3D_ENDPOINTS_UNKNOWN',
+    'NO_RUNTIME_MOTORS',
+    'UNSUPPORTED_PROTOCOL_DOMAIN',
+    'MOTOR_COUNT_OUT_OF_RANGE',
+    'MOTOR_CONFIGURATION_DRIFTED',
     'PULSE_OR_STOP_IN_PROGRESS',
     'REQUIRES_NEW_CONNECTION',
     'CONTROLLER_LINK_UNAVAILABLE',

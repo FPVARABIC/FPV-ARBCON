@@ -45,12 +45,10 @@
  * airframe corner an index sits at, and it never remaps outputs.
  */
 
-import {MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48} from '../protocol/msp/decoding/decodeAdvancedConfig';
 import type {MotorTestValueDomain} from './betaflightMotorDomainV147';
 import {
   MSP_SET_MOTOR_EXTERNAL_MAX_VALUE,
   MSP_SET_MOTOR_EXTERNAL_MIN_VALUE,
-  MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
 } from '../protocol/msp/encoding/encodeSetMotorPayload';
 
 /** External value that means STOP in non-3D DShot (drivers/dshot.c:90).
@@ -74,9 +72,6 @@ export const MOTOR_EXTERNAL_PROTOCOL_FLOOR_VALUE = MSP_SET_MOTOR_EXTERNAL_MIN_VA
 /** Highest legal external value (drivers/dshot.c:79 constrains to this
  * firmware-side; this module rejects rather than relies on that). */
 export const MOTOR_EXTERNAL_MAX_VALUE = MSP_SET_MOTOR_EXTERNAL_MAX_VALUE;
-
-/** Approved scope: Quad X, four motors. */
-export const MOTOR_VECTOR_MOTOR_COUNT = MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT;
 
 /**
  * The already-decoded FC facts this module needs. Deliberately a narrow
@@ -109,96 +104,23 @@ export class MotorVectorValueError extends Error {
   }
 }
 
-/**
- * Throws unless the decoded configuration is inside the reviewed
- * scope. 3D is checked FIRST because it inverts stop semantics; a caller
- * that ignored the ordering could otherwise build a "stop" vector for a
- * 3D aircraft.
- */
-export function assertSupportedMotorScope(scope: MotorVectorScope): void {
-  if (scope.feature3dEnabled) {
-    throw new MotorVectorScopeError(
-      'Motor vectors are refused while FEATURE_3D is enabled: with 3D on, stop is external 1500 and ' +
-        '1000 is FULL REVERSE (drivers/dshot.c:81-88). This pass supports non-3D only.',
-    );
-  }
-  if (!Number.isInteger(scope.motorCount) || scope.motorCount !== MOTOR_VECTOR_MOTOR_COUNT) {
-    throw new MotorVectorScopeError(
-      `Motor vectors are refused: only motorCount ${MOTOR_VECTOR_MOTOR_COUNT} is in scope, received ${String(scope.motorCount)}. ` +
-        'Motor count must come from MSP_MOTOR_CONFIG offset 6.',
-    );
-  }
-  if (
-    !MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48.includes(
-      scope.motorProtocolRaw,
-    )
-  ) {
-    throw new MotorVectorScopeError(
-      'Motor vectors are refused: only the reviewed Betaflight API-1.46..1.48 DShot-family raw protocols ' +
-        `[${MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48.join(', ')}] are in scope, received ${String(scope.motorProtocolRaw)}. ` +
-        'The raw MSP_ADVANCED_CONFIG byte is compared, never a display-adjusted value.',
-    );
-  }
-}
-
-/**
- * The all-stop vector: every motor at the non-3D stop value. Returns a
- * fresh frozen array on every call.
- */
-export function buildAllStopVector(scope: MotorVectorScope): readonly number[] {
-  assertSupportedMotorScope(scope);
-  const values: number[] = [];
-  for (let index = 0; index < MOTOR_VECTOR_MOTOR_COUNT; index++) {
-    values.push(MOTOR_EXTERNAL_STOP_VALUE);
-  }
-  return Object.freeze(values);
-}
-
-/**
- * A vector with exactly ONE output above stop and the rest at stop.
+/* M-C: `assertSupportedMotorScope`, `buildAllStopVector` and
+ * `buildSingleMotorVector` were REMOVED here.
  *
- * `externalActiveValue` is REQUIRED and has no default. It must be an
- * integer strictly above stop and at most the maximum. Supplying it is
- * the caller's explicit decision; this function neither suggests nor
- * validates physical suitability.
+ * They were the shipping single-pulse scope: exactly four motors, the
+ * DShot family, and FEATURE_3D refused outright. Two of those three
+ * refusals were not firmware facts. Nothing in the mixer table makes four
+ * special, and digital 3D is fully knowable - its neutral is the protocol
+ * constant PWM_RANGE_MIDDLE and dshotConvertFromExternal() splits forward
+ * from reverse in the firmware's own branch.
  *
- * `motorIndex` selects an OUTPUT INDEX only - no airframe position and
- * no rotation direction is implied.
+ * Their replacements were already here, below, and are what the
+ * controller now uses: the domain-driven primitives, with the count from
+ * MSP_MOTOR_CONFIG and the 3D question owned by exactly one module,
+ * motorControlRuntimeScope. The strict half of the old rule survives
+ * there by name - ANALOG 3D is still refused, because `limit3d_low` and
+ * `limit3d_high` are not on the wire at API 1.47 or 1.49.
  */
-export function buildSingleMotorVector(
-  scope: MotorVectorScope,
-  motorIndex: number,
-  externalActiveValue: number,
-): readonly number[] {
-  assertSupportedMotorScope(scope);
-
-  if (!Number.isInteger(motorIndex) || motorIndex < 0 || motorIndex >= MOTOR_VECTOR_MOTOR_COUNT) {
-    throw new MotorVectorValueError(
-      `motorIndex must be an integer in 0..${MOTOR_VECTOR_MOTOR_COUNT - 1}, received ${String(motorIndex)}.`,
-    );
-  }
-  if (typeof externalActiveValue !== 'number' || !Number.isInteger(externalActiveValue)) {
-    throw new MotorVectorValueError(
-      `externalActiveValue must be an integer, received ${String(externalActiveValue)}. ` +
-        'There is deliberately no default: pulse magnitude is an undecided safety question.',
-    );
-  }
-  if (
-    externalActiveValue <= MOTOR_EXTERNAL_STOP_VALUE ||
-    externalActiveValue > MOTOR_EXTERNAL_MAX_VALUE
-  ) {
-    throw new MotorVectorValueError(
-      `externalActiveValue must be within ${MOTOR_EXTERNAL_PROTOCOL_FLOOR_VALUE}..${MOTOR_EXTERNAL_MAX_VALUE}, ` +
-        `received ${externalActiveValue}. ${MOTOR_EXTERNAL_STOP_VALUE} is stop, not an active value.`,
-    );
-  }
-
-  const values: number[] = [];
-  for (let index = 0; index < MOTOR_VECTOR_MOTOR_COUNT; index++) {
-    values.push(index === motorIndex ? externalActiveValue : MOTOR_EXTERNAL_STOP_VALUE);
-  }
-  return Object.freeze(values);
-}
 
 /* ===================================================================== *
  * P1-C - THE GENERAL MOTOR VECTOR PRIMITIVES.

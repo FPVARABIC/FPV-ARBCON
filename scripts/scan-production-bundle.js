@@ -123,8 +123,15 @@ const REQUIRED_ENGINE_TOKENS = [
   'pulseMotor',
   'createMotorTestSessionBinding',
   'operatorPort',
-  'buildSingleMotorVector',
-  'buildAllStopVector',
+  // M-C: `buildSingleMotorVector` and `buildAllStopVector` were the
+  // QUAD-ONLY vector helpers and no longer exist. Their replacements are
+  // required here in their place, so the bundle still has to contain a
+  // reachable way to build a motor command - the property this list
+  // exists to hold - and now that way is airframe-independent.
+  'buildSingleOutputVectorForDomain',
+  'buildAllStopCommandVector',
+  'buildCommandVectorFromValues',
+  'encodeMotorTestCommandVector',
   'encodeSetMotorPayload',
   'emergencyStopWithMotorTestLease',
   'requestWithMotorTestLease',
@@ -348,16 +355,40 @@ const POSITIVE_CONTROLS = ['diagnostics-section', 'fc-tools-section'];
  */
 const ENGINE_BOUNDARIES = [
   {
+    // M-C MOVED THIS BOUNDARY, and moving it is the point. The engine used
+    // to encode its own payloads at `motorCount * 2` bytes. It now hands
+    // its per-motor vector to motorTestCommandVector, which is the single
+    // place the canonical eight-slot width is decided - so the encoder has
+    // exactly ONE importer again, and it is the module whose whole job is
+    // that width.
     token: 'encodeSetMotorPayload',
     from: 'src/core/protocol/msp/encoding/encodeSetMotorPayload.ts',
+    importers: [
+      'src/core/state/motorTestCommandVector.ts',
+    ],
+  },
+  {
+    // The canonical command builders. The engine is their only importer;
+    // a second one would mean a second place deciding payload width.
+    token: 'encodeMotorTestCommandVector',
+    from: 'src/core/state/motorTestCommandVector.ts',
     importers: [
       'src/core/state/motorControlCommandEngine.ts',
     ],
   },
   {
-    token: 'buildSingleMotorVector',
-    from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: [],
+    token: 'buildCommandVectorFromValues',
+    from: 'src/core/state/motorTestCommandVector.ts',
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
+  },
+  {
+    token: 'buildAllStopCommandVector',
+    from: 'src/core/state/motorTestCommandVector.ts',
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
   },
   // P1-C/P1-D declared these general motor-command primitives without a
   // runtime caller. An EMPTY importer list is the point: the boundary is
@@ -395,11 +426,6 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/core/state/motorControlCommandEngine.ts',
     ],
-  },
-  {
-    token: 'buildAllStopVector',
-    from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: [],
   },
   {
     token: 'MSP_SET_MOTOR',

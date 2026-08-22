@@ -1,12 +1,11 @@
 /**
- * M-B - THE CANONICAL MOTOR-TEST COMMAND VECTOR: exactly eight external
- * slots, always, for every airframe.
+ * THE CANONICAL MOTOR-TEST COMMAND VECTOR: exactly eight external slots,
+ * always, for every airframe.
  *
- * NOT WIRED TO ANYTHING. This module has no caller in this repository.
- * The shipping motor-test path (motorTestController.ts) is untouched by
- * M-B and continues to use its own vectors; connecting this one is M-C's
- * work and is not authorised here. Building bytes is inert until
- * something sends them, and nothing sends these.
+ * M-B built this module inert. M-C WIRED IT: every MSP_SET_MOTOR payload
+ * the motor-control command engine puts on the wire is now built and
+ * encoded here, so there is exactly one shape for a motor command and it
+ * does not vary with the airframe.
  *
  * ============================ SOURCE PIN ============================
  * Betaflight firmware commit 7348054f268f0058574719c134e9f149565bb8ea
@@ -84,7 +83,11 @@
  * this module has been run against real hardware.
  */
 
-import type {MotorTestValueDomain} from '../firmware-adapters/betaflightMotorDomainV147';
+import {
+  motorCommandDomainBounds,
+  type MotorTestValueDomain,
+} from '../firmware-adapters/betaflightMotorDomainV147';
+import {encodeSetMotorPayload} from '../protocol/msp/encoding/encodeSetMotorPayload';
 
 /**
  * The number of external slots an MSP_SET_MOTOR payload carries in this
@@ -230,4 +233,78 @@ export function buildSingleOutputCommandVector(
     stopValue: domain.stopValue,
     commandedSlotIndex: slotIndex,
   });
+}
+
+/**
+ * Widens a caller's per-motor vector to the canonical eight slots.
+ *
+ * `values` carries exactly `domain.motorCount` external values, in
+ * logical firmware output order - the shape the command engine keeps as
+ * its own intent, and the shape the operator's sliders produce. The
+ * slots beyond the motor count are filled with the resolved stop value
+ * for the reason in this module's header; they are never zero and never
+ * a copy of a commanded value.
+ *
+ * Every element is validated against the resolved command domain. It
+ * never clamps, rounds, pads with a guess, or truncates.
+ */
+export function buildCommandVectorFromValues(
+  domain: MotorTestValueDomain,
+  values: readonly number[],
+): MotorTestCommandVector {
+  requireUsableRuntimeMotorCount(domain.motorCount);
+  if (!Array.isArray(values)) {
+    throw new MotorTestCommandVectorError(
+      `motorTestCommandVector: values must be an array, received ${typeof values}.`,
+    );
+  }
+  if (values.length !== domain.motorCount) {
+    throw new MotorTestCommandVectorError(
+      `motorTestCommandVector: expected exactly ${domain.motorCount} values - the count ` +
+        `MSP_MOTOR_CONFIG reported - received ${values.length}. This builder widens a ` +
+        'per-motor vector to the eight-slot wire form; it does not decide how many motors exist.',
+    );
+  }
+  const slots = filledWithStop(domain);
+  for (let index = 0; index < values.length; index++) {
+    // A hole is not an own property; reading it would yield undefined and
+    // a numeric check might coerce it.
+    if (!Object.prototype.hasOwnProperty.call(values, index)) {
+      throw new MotorTestCommandVectorError(
+        `motorTestCommandVector: values[${index}] is a hole; a sparse array is not a valid motor vector.`,
+      );
+    }
+    requireCommandableValue(values[index], domain);
+    slots[index] = values[index];
+  }
+  return Object.freeze({
+    slots: Object.freeze(slots),
+    runtimeMotorCount: domain.motorCount,
+    stopValue: domain.stopValue,
+  });
+}
+
+/**
+ * The MSP_SET_MOTOR payload for a command vector: ALWAYS
+ * MOTOR_TEST_COMMAND_VECTOR_BYTES, whatever the airframe.
+ *
+ * The width is fixed here rather than at the call sites so that no future
+ * caller can reintroduce a `motorCount * 2` payload by accident - the
+ * short-payload hazard this module's header traces to msp.c:2927 @ 1.47
+ * has exactly one place left where it could be reintroduced, and a test
+ * watches it.
+ *
+ * Delegates the per-value and structural checks to the accepted encoder
+ * rather than duplicating them; this function contributes the WIDTH and
+ * nothing else.
+ */
+export function encodeMotorTestCommandVector(
+  vector: MotorTestCommandVector,
+  domain: MotorTestValueDomain,
+): Uint8Array {
+  return encodeSetMotorPayload(
+    vector.slots,
+    MOTOR_TEST_COMMAND_VECTOR_SLOTS,
+    motorCommandDomainBounds(domain),
+  );
 }

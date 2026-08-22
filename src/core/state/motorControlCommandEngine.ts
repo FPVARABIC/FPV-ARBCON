@@ -82,10 +82,17 @@ import {
   buildMotorVector,
 } from '../firmware-adapters/betaflightMotorVectorsV147';
 import type {MotorTestValueDomain} from '../firmware-adapters/betaflightMotorDomainV147';
+// M-C: every MSP_SET_MOTOR payload this engine puts on the wire is built
+// and encoded HERE, at the canonical eight-slot width. The engine keeps
+// its per-motor intent `motorCount` long - that is the operator's mental
+// model and the shape the sliders produce - and widens it at exactly the
+// two dispatch sites below. See motorTestCommandVector.ts for why a
+// short payload is the dangerous direction on API 1.47.
 import {
-  encodeSetMotorPayload,
-  type MspSetMotorExternalDomain,
-} from '../protocol/msp/encoding/encodeSetMotorPayload';
+  buildAllStopCommandVector,
+  buildCommandVectorFromValues,
+  encodeMotorTestCommandVector,
+} from './motorTestCommandVector';
 import {encodeDshotMotorStopCommand} from '../protocol/msp/encoding/encodeDshotEscDirection';
 import {MSP_SET_MOTOR} from '../protocol/msp/commands/motorTestCommands';
 import {MSP2_SEND_DSHOT_COMMAND} from '../protocol/msp/commands/mspCommands';
@@ -330,7 +337,6 @@ export interface MotorControlEngineSnapshot {
 export class MotorControlCommandEngine {
   private readonly port: MotorControlEnginePort;
   private readonly domain: MotorTestValueDomain;
-  private readonly externalDomain: MspSetMotorExternalDomain;
 
   private state: MotorControlState;
 
@@ -371,10 +377,6 @@ export class MotorControlCommandEngine {
   constructor(port: MotorControlEnginePort) {
     this.port = port;
     this.domain = port.domain;
-    this.externalDomain = Object.freeze({
-      externalMin: port.domain.commandDomainMin,
-      externalMax: port.domain.commandDomainMax,
-    });
     this.state = initialMotorControlState(port.authority);
     this.desiredValues = buildAllStopVectorForDomain(port.domain);
   }
@@ -697,10 +699,9 @@ export class MotorControlCommandEngine {
     const generation = this.commandGeneration;
     let payload: Uint8Array;
     try {
-      payload = encodeSetMotorPayload(
-        vector,
-        this.domain.motorCount,
-        this.externalDomain,
+      payload = encodeMotorTestCommandVector(
+        buildCommandVectorFromValues(this.domain, vector),
+        this.domain,
       );
     } catch {
       // Zero transport traffic on an encoding refusal.
@@ -841,10 +842,13 @@ export class MotorControlCommandEngine {
 
     let payload: Uint8Array;
     try {
-      payload = encodeSetMotorPayload(
-        buildAllStopVectorForDomain(this.domain),
-        this.domain.motorCount,
-        this.externalDomain,
+      // The canonical stop: all eight slots at the resolved stop value.
+      // It needs NO topology read of its own - the domain was captured at
+      // activation - which is what lets a teardown stop the aircraft after
+      // a mixer or motor-config read has already started failing.
+      payload = encodeMotorTestCommandVector(
+        buildAllStopCommandVector(this.domain),
+        this.domain,
       );
     } catch {
       return {kind: 'SCOPE_REJECTED', attribution: attribution()};

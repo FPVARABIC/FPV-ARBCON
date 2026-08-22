@@ -164,6 +164,26 @@ function decodeVector(payload: Uint8Array): number[] {
   return values;
 }
 
+/**
+ * M-C: THE WIRE IS ALWAYS EIGHT SLOTS, WHATEVER THE MOTOR COUNT.
+ *
+ * The engine keeps its intent `motorCount` long, because that is what an
+ * operator drives and what the sliders produce. What reaches the wire is
+ * the canonical eight-slot MSP_SET_MOTOR body, with every slot past the
+ * motor count carrying the resolved STOP value - never zero, and never a
+ * copy of a commanded value.
+ *
+ * Expressed as a helper rather than by hand at each call site so that the
+ * padding rule is stated once and a change to it fails everywhere at
+ * once. See motorTestCommandVector.ts for the msp.c reading behind it.
+ */
+function wire(active: readonly number[], stopValue: number): number[] {
+  return [
+    ...active,
+    ...new Array<number>(8 - active.length).fill(stopValue),
+  ];
+}
+
 const DIGITAL: MotorTestDomainInput = {
   motorCount: 4,
   motorProtocolRaw: 7, // DSHOT600
@@ -239,7 +259,7 @@ describe('P2-ii-H - A in flight, B coalesced, STOP, A acknowledges late', () => 
       kind: 'ACCEPTED',
       coalesced: false,
     });
-    expect(h.lease.activeVectors()).toEqual([[1100, 1100, 1100, 1100]]);
+    expect(h.lease.activeVectors()).toEqual([wire([1100, 1100, 1100, 1100], 1000)]);
 
     // B is coalesced behind it - nothing new on the wire.
     expect(h.engine.setMotorValues([1200, 1200, 1200, 1200])).toEqual({
@@ -256,14 +276,14 @@ describe('P2-ii-H - A in flight, B coalesced, STOP, A acknowledges late', () => 
     expect(h.engine.snapshot().pendingCoalescedVector).toBe(false);
     expect(h.engine.snapshot().desiredValues).toEqual([1000, 1000, 1000, 1000]);
     // The stop is REGISTERED, not merely planned.
-    expect(h.lease.stopVectors()).toEqual([[1000, 1000, 1000, 1000]]);
+    expect(h.lease.stopVectors()).toEqual([wire([1000, 1000, 1000, 1000], 1000)]);
 
     // A's acknowledgement arrives LATE - after the stop began.
     h.lease.settle(0);
     await flush();
 
     // B NEVER went on the wire.
-    expect(h.lease.activeVectors()).toEqual([[1100, 1100, 1100, 1100]]);
+    expect(h.lease.activeVectors()).toEqual([wire([1100, 1100, 1100, 1100], 1000)]);
     // The late ACK could not restore commanding.
     expect(h.engine.phase).toBe('Stopping');
     expect(h.engine.isCommandable()).toBe(false);
@@ -309,15 +329,15 @@ describe('P2-ii-F - last-value-wins coalescing', () => {
     h.engine.setMaster(1130);
 
     // One write in flight, one vector waiting. Never a backlog.
-    expect(h.lease.activeVectors()).toEqual([[1100, 1100, 1100, 1100]]);
+    expect(h.lease.activeVectors()).toEqual([wire([1100, 1100, 1100, 1100], 1000)]);
     expect(h.engine.snapshot().pendingCoalescedVector).toBe(true);
 
     h.lease.settle(0);
     await flush();
 
     expect(h.lease.activeVectors()).toEqual([
-      [1100, 1100, 1100, 1100],
-      [1130, 1130, 1130, 1130],
+      wire([1100, 1100, 1100, 1100], 1000),
+      wire([1130, 1130, 1130, 1130], 1000),
     ]);
     expect(h.engine.snapshot().pendingCoalescedVector).toBe(false);
   });
@@ -332,7 +352,7 @@ describe('P2-ii-F - last-value-wins coalescing', () => {
     await flush();
     // Exactly one more: the last value. 20 updates -> 2 frames.
     expect(h.lease.activeVectors()).toHaveLength(2);
-    expect(h.lease.activeVectors()[1]).toEqual([1119, 1119, 1119, 1119]);
+    expect(h.lease.activeVectors()[1]).toEqual(wire([1119, 1119, 1119, 1119], 1000));
   });
 
   it('holds no timer: nothing is resent when nothing changes', async () => {
@@ -407,7 +427,7 @@ describe('stop variants', () => {
   it('STOP with no request in flight still puts an all-stop on the wire', () => {
     const h = harness();
     h.engine.stopAll('OPERATOR_STOP');
-    expect(h.lease.stopVectors()).toEqual([[1000, 1000, 1000, 1000]]);
+    expect(h.lease.stopVectors()).toEqual([wire([1000, 1000, 1000, 1000], 1000)]);
   });
 
   it('STOP twice joins one episode rather than queueing a second', async () => {
@@ -599,15 +619,20 @@ describe('P2-ii-C/D/E - the professional vector API', () => {
       const h = harness({motorCount});
       h.engine.setMaster(1234);
       const sent = h.lease.activeVectors()[0];
-      expect(sent).toHaveLength(motorCount);
-      expect(sent.every(value => value === 1234)).toBe(true);
+      // The WIRE is always eight slots; the master value reaches exactly
+      // the motorCount logical motors, and the rest sit at stop.
+      expect(sent).toHaveLength(8);
+      expect(sent.slice(0, motorCount).every(value => value === 1234)).toBe(true);
+      expect(sent.slice(motorCount).every(value => value === h.domain.stopValue)).toBe(
+        true,
+      );
     }
   });
 
   it('multiple motors may hold different non-stop values simultaneously', () => {
     const h = harness();
     h.engine.setMotorValues([1100, 1200, 1300, 1400]);
-    expect(h.lease.activeVectors()[0]).toEqual([1100, 1200, 1300, 1400]);
+    expect(h.lease.activeVectors()[0]).toEqual(wire([1100, 1200, 1300, 1400], 1000));
   });
 
   it('accepts the exact command-domain bounds', () => {
@@ -653,7 +678,7 @@ describe('P2-ii-C/D/E - the professional vector API', () => {
     expect(h.engine.setMotorValues([1111, 1222, 1333, 1000]).kind).toBe(
       'ACCEPTED',
     );
-    expect(h.lease.activeVectors()[0]).toEqual([1111, 1222, 1333, 1000]);
+    expect(h.lease.activeVectors()[0]).toEqual(wire([1111, 1222, 1333, 1000], 1000));
   });
 
   it('needs no long press and no heartbeat to keep a value live', async () => {
@@ -719,7 +744,7 @@ describe('P2-ii-P - runtime domain semantics', () => {
     expect(h.domain.stopValue).toBe(1500);
     h.engine.stopAll('OPERATOR_STOP');
     // 1000 here would be FULL REVERSE.
-    expect(h.lease.stopVectors()).toEqual([[1500, 1500, 1500, 1500]]);
+    expect(h.lease.stopVectors()).toEqual([wire([1500, 1500, 1500, 1500], 1500)]);
   });
 
   it('analog non-3D commands inside its CONFIGURATION_POLICY domain', () => {
@@ -733,7 +758,7 @@ describe('P2-ii-P - runtime domain semantics', () => {
   it('analog non-3D stops at mincommand, not at a literal', () => {
     const h = harness({motorProtocolRaw: 3, minCommand: 900, maxThrottle: 1900});
     h.engine.stopAll('OPERATOR_STOP');
-    expect(h.lease.stopVectors()).toEqual([[900, 900, 900, 900]]);
+    expect(h.lease.stopVectors()).toEqual([wire([900, 900, 900, 900], 900)]);
   });
 
   it('setValuesToStop uses the domain stop value as an ORDINARY command', async () => {
@@ -743,7 +768,7 @@ describe('P2-ii-P - runtime domain semantics', () => {
     });
     expect(h.engine.setValuesToStop().kind).toBe('ACCEPTED');
     // Ordinary route, not the priority stop route.
-    expect(h.lease.activeVectors()).toEqual([[1500, 1500, 1500, 1500]]);
+    expect(h.lease.activeVectors()).toEqual([wire([1500, 1500, 1500, 1500], 1500)]);
     expect(h.lease.stopVectors()).toHaveLength(0);
   });
 });

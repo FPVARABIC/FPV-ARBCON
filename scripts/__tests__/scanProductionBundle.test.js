@@ -224,8 +224,12 @@ describe('scanner - the engine boundary is the remaining structural containment'
 
   it('fails when a second module imports the vector builders or the command id', () => {
     for (const token of [
-      'buildSingleMotorVector',
-      'buildAllStopVector',
+      // M-C: the quad-only helpers are gone; their replacements carry the
+      // boundary now, and MSP_SET_MOTOR itself is unchanged.
+      'buildSingleOutputVectorForDomain',
+      'buildAllStopCommandVector',
+      'buildCommandVectorFromValues',
+      'encodeMotorTestCommandVector',
       'MSP_SET_MOTOR',
     ]) {
       const sources = readSourceTree();
@@ -280,12 +284,13 @@ describe('scanner - the engine boundary is the remaining structural containment'
 
   it('fails when an allowance goes stale rather than silently testing nothing', () => {
     const sources = readSourceTree();
-    // P2-ii: the encoder's importer moved to the command engine, so the
-    // stale-detection fixture mutates THAT file now. The property under
-    // test is unchanged: an allowance whose module no longer exercises the
-    // token must fail, not silently test nothing.
-    sources['src/core/state/motorControlCommandEngine.ts'] = sources[
-      'src/core/state/motorControlCommandEngine.ts'
+    // M-C: the encoder's importer moved again, from the command engine to
+    // the canonical command-vector module - the one place that decides
+    // payload width - so the stale-detection fixture mutates THAT file
+    // now. The property under test is unchanged: an allowance whose module
+    // no longer exercises the token must fail, not silently test nothing.
+    sources['src/core/state/motorTestCommandVector.ts'] = sources[
+      'src/core/state/motorTestCommandVector.ts'
     ].replace(/\bencodeSetMotorPayload\b/g, 'somethingElse');
     const result = analyzeEngineBoundaries(sources);
     expect(result.ok).toBe(false);
@@ -339,13 +344,14 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'MSP_SET_RX_MAP',
       'MSP_SET_SENSOR_ALIGNMENT',
       'MSP_SET_SENSOR_CONFIG',
-      'buildAllStopVector',
-      // P1-C/P1-D: general motor-command primitives, declared with an
-      // empty importer list so the boundary exists before the first
-      // runtime caller does.
+      // M-C: `buildAllStopVector` and `buildSingleMotorVector` left this
+      // set with the quad-only helpers they guarded. Three M-C boundaries
+      // arrived in their place, around the ONE module that decides the
+      // canonical eight-slot payload width.
+      'buildAllStopCommandVector',
       'buildAllStopVectorForDomain',
+      'buildCommandVectorFromValues',
       'buildMotorVector',
-      'buildSingleMotorVector',
       'buildSingleOutputVectorForDomain',
       'encodeChangedBoardAlignment',
       'encodeChangedGeneralConfiguration',
@@ -356,6 +362,7 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'encodeDshotEscDirection',
       'encodeDshotMotorStopCommand',
       'encodeMotorOutputOrder',
+      'encodeMotorTestCommandVector',
       'encodeSetMotorPayload',
     ]);
   });

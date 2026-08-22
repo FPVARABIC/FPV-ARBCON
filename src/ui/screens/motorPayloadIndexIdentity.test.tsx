@@ -629,12 +629,15 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
       expect(motorWrites.length).toBeGreaterThan(0);
 
       const commanded = motorWrites[0].payload;
-      // Four u16 values - the approved Quad X scope and nothing wider.
-      expect(commanded).toHaveLength(8);
+      // M-C: EIGHT u16 values, the canonical MSP_SET_MOTOR width, on every
+      // airframe. The identity this test exists to pin is unchanged and is
+      // now checked across the whole frame rather than its first half.
+      expect(commanded).toHaveLength(16);
       // EXACTLY ONE output above stop, and it is at index slot-1.
       expect(activeIndices(commanded)).toEqual([slot - 1]);
-      // Every other output is explicitly at stop, not merely "not active".
-      for (let index = 0; index < 4; index++) {
+      // Every other output is explicitly at stop, not merely "not active"
+      // - including the four padding slots past this quad's motor count.
+      for (let index = 0; index < 8; index++) {
         if (index !== slot - 1) {
           expect(readU16(commanded, index)).toBe(STOP_VALUE);
         }

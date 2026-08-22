@@ -17,8 +17,8 @@ import {
   MspSetMotorEncodeError,
   MSP_SET_MOTOR_EXTERNAL_MAX_VALUE,
   MSP_SET_MOTOR_EXTERNAL_MIN_VALUE,
-  MSP_SET_MOTOR_PAYLOAD_BYTES,
-  MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
+  MSP_SET_MOTOR_MAX_MOTOR_COUNT,
+  MSP_SET_MOTOR_MIN_MOTOR_COUNT,
 } from './encodeSetMotorPayload';
 
 const STOP = MSP_SET_MOTOR_EXTERNAL_MIN_VALUE;
@@ -29,11 +29,24 @@ const ALL_STOP = [STOP, STOP, STOP, STOP];
 const bytes = (payload: Uint8Array): number[] => Array.from(payload);
 
 describe('encodeSetMotorPayload - constants', () => {
-  it('pins the approved scope and the external range to the verified values', () => {
-    expect(MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT).toBe(4);
-    expect(MSP_SET_MOTOR_PAYLOAD_BYTES).toBe(8);
+  it('pins the firmware bounds and the external range to the verified values', () => {
+    // M-C: the two QUAD-ONLY constants that used to be pinned here -
+    // MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT (4) and
+    // MSP_SET_MOTOR_PAYLOAD_BYTES (8) - are GONE. The first was a product
+    // scope rather than a firmware limit; the second named eight bytes as
+    // "the" payload size when the canonical body is sixteen. What remains
+    // is what the firmware actually says.
+    expect(MSP_SET_MOTOR_MIN_MOTOR_COUNT).toBe(1);
+    expect(MSP_SET_MOTOR_MAX_MOTOR_COUNT).toBe(8);
     expect(MSP_SET_MOTOR_EXTERNAL_MIN_VALUE).toBe(1000);
     expect(MSP_SET_MOTOR_EXTERNAL_MAX_VALUE).toBe(2000);
+  });
+
+  it('encodes the CANONICAL sixteen-byte body when asked for eight slots', () => {
+    // The width the motor-test path now always uses. Proven here, at the
+    // encoder, so the property survives even if a caller changes.
+    const eightStops = new Array<number>(8).fill(1000);
+    expect(encodeSetMotorPayload(eightStops, 8)).toHaveLength(16);
   });
 });
 
@@ -41,7 +54,7 @@ describe('encodeSetMotorPayload - accepted vectors', () => {
   it('encodes the all-stop vector as exactly eight bytes', () => {
     const payload = encodeSetMotorPayload(ALL_STOP, 4);
     expect(payload).toBeInstanceOf(Uint8Array);
-    expect(payload.length).toBe(MSP_SET_MOTOR_PAYLOAD_BYTES);
+    expect(payload.length).toBe(8);
     expect(bytes(payload)).toEqual([0xe8, 0x03, 0xe8, 0x03, 0xe8, 0x03, 0xe8, 0x03]);
   });
 
@@ -320,8 +333,8 @@ describe('encodeSetMotorPayload - containment', () => {
       MspSetMotorEncodeError,
       MSP_SET_MOTOR_EXTERNAL_MAX_VALUE,
       MSP_SET_MOTOR_EXTERNAL_MIN_VALUE,
-      MSP_SET_MOTOR_PAYLOAD_BYTES,
-      MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
+      MSP_SET_MOTOR_MAX_MOTOR_COUNT,
+      MSP_SET_MOTOR_MIN_MOTOR_COUNT,
     };
     for (const key of Object.keys(module)) {
       expect(key).not.toMatch(/transport|client|send|write|request|frame|usb|timer|interval/i);

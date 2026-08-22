@@ -544,7 +544,7 @@ describe('MotorsScreen - state presentation', () => {
             'CONTROLLER_LINK_UNAVAILABLE',
             'REQUIRES_NEW_CONNECTION',
             'PULSE_OR_STOP_IN_PROGRESS',
-            'MOTOR_SCOPE_UNSUPPORTED',
+            'UNSUPPORTED_PROTOCOL_DOMAIN',
           ],
         }),
       ),
@@ -552,7 +552,7 @@ describe('MotorsScreen - state presentation', () => {
     // The real cause wins over every consequence regardless of the order
     // the controller happened to emit them in.
     expect(
-      rendered.query('motors-block-MOTOR_SCOPE_UNSUPPORTED'),
+      rendered.query('motors-block-UNSUPPORTED_PROTOCOL_DOMAIN'),
     ).toBeDefined();
     for (const consequence of [
       'CONTROLLER_LINK_UNAVAILABLE',
@@ -672,18 +672,24 @@ describe('MotorsScreen - state presentation', () => {
     rendered.unmount();
   });
 
-  it('names 3D specifically rather than as a generic scope refusal', () => {
+  it('names ANALOG 3D specifically, and says what MSP could not tell it', () => {
     const rendered = render(
       new FakeOperator(
         snapshotFor({
           machine: 'Locked',
           allowed: false,
-          reasons: ['MOTOR_3D_ENABLED'],
+          reasons: ['ANALOG_3D_ENDPOINTS_UNKNOWN'],
         }),
       ),
     );
-    expect(rendered.query('motors-block-MOTOR_3D_ENABLED')).toBeDefined();
-    expect(texts(rendered)).toContain('إعداد 3D غير مدعوم.');
+    expect(
+      rendered.query('motors-block-ANALOG_3D_ENDPOINTS_UNKNOWN'),
+    ).toBeDefined();
+    // The sentence says WHAT IS MISSING - the two active endpoints - not
+    // that "3D is unsupported", which was never true of digital 3D.
+    expect(texts(rendered)).toContain(
+      'وضع 3D التماثلي: حدود الاتجاهين غير متاحة عبر MSP، فلا يمكن تمييز الأمام من الخلف.',
+    );
     rendered.unmount();
   });
 
@@ -1134,8 +1140,12 @@ describe('MotorsScreen - safety dominance', () => {
     'CONTROLLER_LINK_UNAVAILABLE',
     'FC_ARMED',
     'ARMED_STATE_UNKNOWN_OR_STALE',
-    'MOTOR_3D_ENABLED',
-    'MOTOR_SCOPE_UNSUPPORTED',
+    // M-C: the four scope refusals and the drift guard, each on its own.
+    'ANALOG_3D_ENDPOINTS_UNKNOWN',
+    'NO_RUNTIME_MOTORS',
+    'MOTOR_COUNT_OUT_OF_RANGE',
+    'UNSUPPORTED_PROTOCOL_DOMAIN',
+    'MOTOR_CONFIGURATION_DRIFTED',
     'PULSE_OR_STOP_IN_PROGRESS',
   ] as const)('lets %s dominate UI interaction', reason => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));

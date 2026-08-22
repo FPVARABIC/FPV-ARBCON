@@ -60,6 +60,8 @@ import {
   classifyBoxIdsFailure,
   classifyLeaseFailure,
   createMotorTestController,
+  motorTestPulseMotorNumbers,
+  motorTopologyBindingHasDrifted,
   EMPTY_MOTOR_TEST_EFFECT_RECORD,
   MOTOR_TEST_CONTROLLER_STOP_TRIGGERS,
   MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS,
@@ -136,8 +138,20 @@ const MOTOR_3D_CONFIG_PAYLOAD = Uint8Array.from([126, 5, 234, 5, 180, 5]);
 /** Phase 2F: the stop command the controller now dispatches during
  * teardown. A real FC acknowledges it, so the fixture does too. */
 const MSP_SET_MOTOR_FIXTURE = 214;
-/** The only payload this package may ever put on the wire for it. */
-const EXPECTED_STOP_PAYLOAD = [0xe8, 0x03, 0xe8, 0x03, 0xe8, 0x03, 0xe8, 0x03];
+/**
+ * The only payload this package may ever put on the wire for it.
+ *
+ * M-C: EIGHT slots, sixteen bytes, whatever the airframe. Until M-C this
+ * was four slots - the quad's motor count - which meant a tricopter would
+ * have sent six bytes and left the API-1.47 handler reading two bytes
+ * past its own buffer. Eight is the longest legal MSP_SET_MOTOR body, so
+ * it can never under-run 1.47 and always satisfies the length guard 1.49
+ * added. See motorTestCommandVector.ts for the msp.c reading.
+ */
+const EXPECTED_STOP_PAYLOAD = [
+  0xe8, 0x03, 0xe8, 0x03, 0xe8, 0x03, 0xe8, 0x03,
+  0xe8, 0x03, 0xe8, 0x03, 0xe8, 0x03, 0xe8, 0x03,
+];
 
 /* ------------------------------------------------------------------ *
  * Byte helpers - arithmetic, never bitwise, so a high bit survives
@@ -1790,7 +1804,7 @@ describe('MotorTestController - teardown', () => {
  * ------------------------------------------------------------------ */
 
 describe('Phase 2F - stop execution', () => {
-  it('dispatches command 214 with exactly E8 03 E8 03 E8 03 E8 03', async () => {
+  it('dispatches command 214 with eight little-endian stop slots', async () => {
     const harness = createHarness();
     await runSetup(harness);
     expect(harness.commands).not.toContain(MSP_SET_MOTOR_FIXTURE);
@@ -1802,7 +1816,7 @@ describe('Phase 2F - stop execution', () => {
     );
     expect(stopWrites).toHaveLength(1);
     expect(stopWrites[0].payload).toEqual(EXPECTED_STOP_PAYLOAD);
-    expect(stopWrites[0].payload).toHaveLength(8);
+    expect(stopWrites[0].payload).toHaveLength(16);
     expect(closed.stopExecution.outcome).toEqual({kind: 'ACKNOWLEDGED'});
   });
 
@@ -2423,12 +2437,20 @@ describe('MotorTestController - public surface', () => {
       // none of them is a function.
       'MOTOR_TEST_FIXED_PULSE_VALUE',
       'MOTOR_TEST_HOLD_HEARTBEAT_TIMEOUT_MILLIS',
-      'MOTOR_TEST_PULSE_MOTOR_NUMBERS',
       'applyMotorTestEffects',
       'classifyArmedStateObservationFailure',
       'classifyBoxIdsFailure',
       'classifyLeaseFailure',
       'createMotorTestController',
+      // M-C: was the frozen literal MOTOR_TEST_PULSE_MOTOR_NUMBERS
+      // ([1,2,3,4]). A fixed list of motor numbers is a claim about the
+      // airframe, and it was wrong for every airframe that is not a quad.
+      'motorTestPulseMotorNumbers',
+      // M-C: the session-binding comparison, exported so it can be tested
+      // where it lives - no current path re-reads the motor scope during a
+      // live session, so driving it through the lifecycle would prove
+      // nothing. See the function's own doc comment.
+      'motorTopologyBindingHasDrifted',
     ]);
   });
 
@@ -2843,11 +2865,17 @@ describe('the versioned motor firmware gate', () => {
 
 describe('the motor scope gate', () => {
   /**
-   * REWRITTEN FOR THE P2 CLOSURE. These three used to assert that ONE gate
-   * refused the whole session. There are now two consumers with two
-   * truthful eligibilities: the professional runtime (P1 domain + runtime
-   * scope) and the legacy pulse UI (exactly four DShot motors, non-3D).
-   * The session refuses outright only when NEITHER can use it.
+   * REWRITTEN AGAIN FOR M-C. P2 ran TWO rules at once - a professional one
+   * driven by the resolved domain and a legacy one demanding exactly four
+   * DShot motors and no 3D - and the session opened if either passed while
+   * `pulseMotor` obeyed the legacy rule alone. A hexacopter could therefore
+   * open a session it could never use.
+   *
+   * There is one rule now, `evaluateMotorCommandScope`, and the same object
+   * governs bring-up and every activation evaluation. The strict half of
+   * the old rule survives verbatim: analog 3D refused by name, an
+   * unresolvable protocol refused, nothing written on either. What is gone
+   * is the four-motor restriction, which was never a firmware fact.
    */
   it('blocks and never writes when the motor protocol is unrecognized', async () => {
     const harness = createHarness([
@@ -2855,31 +2883,54 @@ describe('the motor scope gate', () => {
     ]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome.kind).toBe('BLOCKED');
-    expect(snapshot.outcome).toMatchObject({reason: 'MOTOR_SCOPE_UNSUPPORTED'});
+    expect(snapshot.outcome).toMatchObject({
+      reason: 'UNSUPPORTED_PROTOCOL_DOMAIN',
+    });
     expect(harness.commands).not.toContain(MSP_SET_MOTOR_FIXTURE);
   });
 
-  it('motor count 6: session proceeds professionally, legacy gate still refuses', async () => {
+  it('motor count 6: the session opens AND may be commanded, 1..6', async () => {
     const harness = createHarness([[MSP_MOTOR_CONFIG, reply(motorConfigPayload(6))]]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome).toEqual({kind: 'READY'});
     expect(snapshot.motorScope?.motorCount).toBe(6);
-    expect(snapshot.activation.allowed).toBe(false);
-    expect(snapshot.activation.reasons).toContain('MOTOR_SCOPE_UNSUPPORTED');
-    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+    // M-C: no count refusal survives. A hexacopter is commandable.
+    expect(snapshot.activation.allowed).toBe(true);
+    expect(harness.controller.pulseMotor(6)).toBe('ACCEPTED');
+    harness.controller.requestStop('STOP_BUTTON_PRESSED');
+    await flush();
   });
 
-  it('digital 3D: session proceeds, legacy 3D reason still bars the old UI', async () => {
+  it('motor count 6: motor 7 is refused and puts nothing on the wire', async () => {
+    const harness = createHarness([[MSP_MOTOR_CONFIG, reply(motorConfigPayload(6))]]);
+    await runSetup(harness);
+    const before = harness.transport.writeLog.length;
+    expect(harness.controller.pulseMotor(7)).toBe('INVALID_MOTOR');
+    expect(harness.transport.writeLog).toHaveLength(before);
+  });
+
+  it('motor count 0: a motorless mixer opens no motor test', async () => {
+    const harness = createHarness([[MSP_MOTOR_CONFIG, reply(motorConfigPayload(0))]]);
+    const snapshot = await runSetup(harness);
+    expect(snapshot.outcome).toMatchObject({reason: 'NO_RUNTIME_MOTORS'});
+    expect(harness.commands).not.toContain(MSP_SET_MOTOR_FIXTURE);
+  });
+
+  it('digital 3D: commandable, because its neutral is a protocol constant', async () => {
     const harness = createHarness([
       [MSP_FEATURE_CONFIG, reply(Uint8Array.from(u32(FEATURE_3D_BIT)))],
     ]);
     const snapshot = await runSetup(harness);
     expect(snapshot.outcome).toEqual({kind: 'READY'});
-    // The scope is RETAINED so the gate can name 3D specifically.
     expect(snapshot.motorScope?.feature3dEnabled).toBe(true);
-    expect(snapshot.activation.allowed).toBe(false);
-    expect(snapshot.activation.reasons).toContain('MOTOR_3D_ENABLED');
-    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+    // M-C: the blanket 3D refusal is gone. dshotConvertFromExternal()
+    // makes PWM_RANGE_MIDDLE exactly stop and splits forward from reverse
+    // in the firmware's own branch, so a digital 3D domain is fully
+    // knowable. What remains refused is ANALOG 3D, whose active endpoints
+    // are not on the wire - and `motorControlRuntimeScope` owns that
+    // refusal alone, so two layers can no longer disagree about 3D.
+    expect(snapshot.activation.allowed).toBe(true);
+    expect(snapshot.motorDomain?.stopValue).toBe(1500);
   });
 
   it('reads exactly the three configuration commands the encoder needs', async () => {
@@ -3058,13 +3109,21 @@ describe('containment', () => {
     // is handed to the engine rather than encoded here.
     expect(code).toContain('buildSingleOutputVectorForDomain');
     expect(code).toContain('MotorControlCommandEngine');
-    // FINAL P2-ii STATE: the encode symbols left this file with the
-    // dispatches - the engine imports them now, under the boundary scan's
-    // allowlist. The legacy scope guard alone remains, because refusing a
-    // configuration is still this controller's job.
+    // The encode symbols left this file with the dispatches - the engine
+    // imports them now, under the boundary scan's allowlist.
     expect(code).not.toContain('buildAllStopVector');
     expect(code).not.toContain('encodeSetMotorPayload');
-    expect(code).toContain('assertSupportedMotorScope');
+    // M-C: the LEGACY quad guard is gone from this file entirely.
+    // `assertSupportedMotorScope` refused FEATURE_3D outright and then any
+    // motor count other than four; refusing a configuration is still this
+    // controller's job, but the rule that does it is now
+    // `evaluateMotorCommandScope` - generic over 1..8, with the 3D
+    // question delegated to its single owner, motorControlRuntimeScope.
+    expect(code).not.toContain('assertSupportedMotorScope');
+    expect(code).toContain('evaluateMotorCommandScope');
+    expect(code).toContain('motorControlRuntimeScope');
+    // No airframe branch reached the controller with the generalisation.
+    expect(code).not.toMatch(/MIXER_(TRI|HEX|OCTO|QUAD)/);
   });
 
   it('constructs exactly the three accepted activation events, and never fabricates a stop acknowledgement', () => {
@@ -3163,10 +3222,13 @@ const STOP_BYTES = [0xe8, 0x03]; // 1000, little-endian
 
 const EXPECTED_PULSE_PAYLOADS: Readonly<Record<number, number[]>> = Object.freeze(
   {
-    1: [...PULSE_BYTES, ...STOP_BYTES, ...STOP_BYTES, ...STOP_BYTES],
-    2: [...STOP_BYTES, ...PULSE_BYTES, ...STOP_BYTES, ...STOP_BYTES],
-    3: [...STOP_BYTES, ...STOP_BYTES, ...PULSE_BYTES, ...STOP_BYTES],
-    4: [...STOP_BYTES, ...STOP_BYTES, ...STOP_BYTES, ...PULSE_BYTES],
+    // M-C: eight slots. The pulse sits at the addressed logical output
+    // and EVERY other slot - including the four past a quad's motor count
+    // - carries the resolved stop value, never zero.
+    1: [...PULSE_BYTES, ...Array(7).fill(STOP_BYTES).flat()],
+    2: [...STOP_BYTES, ...PULSE_BYTES, ...Array(6).fill(STOP_BYTES).flat()],
+    3: [...Array(2).fill(STOP_BYTES).flat(), ...PULSE_BYTES, ...Array(5).fill(STOP_BYTES).flat()],
+    4: [...Array(3).fill(STOP_BYTES).flat(), ...PULSE_BYTES, ...Array(4).fill(STOP_BYTES).flat()],
   },
 );
 
@@ -3219,15 +3281,17 @@ describe('Phase 2G - pulse vectors are byte-exact', () => {
       const payloads = submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE);
       expect(payloads).toHaveLength(1);
       expect(payloads[0]).toEqual(EXPECTED_PULSE_PAYLOADS[motor]);
-      expect(payloads[0]).toHaveLength(8);
+      expect(payloads[0]).toHaveLength(16);
 
       // Decoded back: exactly one value above stop, and it is 1050.
       const values: number[] = [];
-      for (let i = 0; i < 8; i += 2) {
+      for (let i = 0; i < 16; i += 2) {
         values.push(payloads[0][i] + payloads[0][i + 1] * 256);
       }
       expect(values.filter(v => v > 1000)).toEqual([1050]);
-      expect(values.filter(v => v === 1000)).toHaveLength(3);
+      // Seven stopped slots, not three: the four logical motors this quad
+      // is not driving PLUS the four padding slots past its motor count.
+      expect(values.filter(v => v === 1000)).toHaveLength(7);
       // Little-endian: low byte first.
       expect(PULSE_BYTES[0]).toBe(1050 % 256);
       expect(PULSE_BYTES[1]).toBe(Math.floor(1050 / 256));
@@ -3250,7 +3314,7 @@ describe('Phase 2G - pulse vectors are byte-exact', () => {
       harness.controller.pulseMotor(motor);
       await flush();
       const payload = submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE)[0];
-      const above = [0, 2, 4, 6]
+      const above = [0, 2, 4, 6, 8, 10, 12, 14]
         .map(i => payload[i] + payload[i + 1] * 256)
         .filter(v => v > 1000);
       expect(above).toHaveLength(1);
@@ -3261,18 +3325,15 @@ describe('Phase 2G - pulse vectors are byte-exact', () => {
     }
   });
 
-  it('encodes the stop as all four slots at 1000', async () => {
+  it('encodes the stop as all EIGHT slots at 1000', async () => {
     const harness = createHarness();
     await pulseAwaitingAck(harness);
     harness.controller.requestStop('TOUCH_RELEASED');
     await flush();
     const payloads = submittedPayloads(harness, MSP_SET_MOTOR_FIXTURE);
-    expect(payloads[payloads.length - 1]).toEqual([
-      ...STOP_BYTES,
-      ...STOP_BYTES,
-      ...STOP_BYTES,
-      ...STOP_BYTES,
-    ]);
+    expect(payloads[payloads.length - 1]).toEqual(
+      Array(8).fill(STOP_BYTES).flat(),
+    );
   });
 });
 
@@ -4532,6 +4593,20 @@ const activeMotorWrites = (harness: Harness): number[][] =>
       return false;
     });
 
+/**
+ * M-C: the exact sixteen bytes an MSP_SET_MOTOR frame carries for a given
+ * per-motor vector - the leading values, then the resolved stop in every
+ * remaining slot. Stated once so the padding rule cannot be restated
+ * differently at two call sites.
+ */
+function wireBytes(active: readonly number[], stopValue: number): number[] {
+  const slots = [
+    ...active,
+    ...new Array<number>(8 - active.length).fill(stopValue),
+  ];
+  return slots.flatMap(value => [value % 256, Math.floor(value / 256)]);
+}
+
 const armingWrites = (harness: Harness): number[][] =>
   harness.writes
     .filter(write => write.command === MSP_SET_ARMING_DISABLED_FIXTURE)
@@ -4556,11 +4631,7 @@ describe('P2-ii facade - professional command API through the controller', () =>
     expect(accepted).toEqual({kind: 'ACCEPTED', coalesced: false});
     await settleWire(harness);
     // Multiple independent non-stop values in ONE frame; 1050 nowhere.
-    expect(activeMotorWrites(harness)).toEqual([
-      [
-        ...[1100, 1200, 1300, 1400].flatMap(v => [v % 256, Math.floor(v / 256)]),
-      ],
-    ]);
+    expect(activeMotorWrites(harness)).toEqual([wireBytes([1100, 1200, 1300, 1400], 1000)]);
   });
 
   it('setMotorValue mutates one desired entry and sends the full vector', async () => {
@@ -4572,7 +4643,7 @@ describe('P2-ii facade - professional command API through the controller', () =>
     await settleWire(harness);
     const writes = activeMotorWrites(harness);
     expect(writes[writes.length - 1]).toEqual(
-      [1100, 1200, 1300, 1000].flatMap(v => [v % 256, Math.floor(v / 256)]),
+      wireBytes([1100, 1200, 1300, 1000], 1000),
     );
   });
 
@@ -4585,21 +4656,22 @@ describe('P2-ii facade - professional command API through the controller', () =>
     await settleWire(harness);
     const writes = activeMotorWrites(harness);
     expect(writes).toHaveLength(1);
-    expect(writes[0]).toHaveLength(8);
-    for (let index = 0; index < 4; index++) {
-      expect(writes[0][index * 2] + writes[0][index * 2 + 1] * 256).toBe(1234);
-    }
+    // M-C: the wire is sixteen bytes. The master value reaches the four
+    // logical motors; the four padding slots sit at the resolved stop.
+    expect(writes[0]).toHaveLength(16);
+    expect(writes[0]).toEqual(wireBytes([1234, 1234, 1234, 1234], 1000));
   });
 
   /**
-   * P2 CLOSURE: the limitation that used to be pinned here is REMOVED.
-   * Professional eligibility now comes from the P1 domain + runtime scope,
-   * so every firmware-supported motor count commands through the LIVE
-   * controller - while the legacy pulse UI stays four-motor-only through
-   * its own unchanged activation gate, asserted separately below.
+   * M-C: the payload no longer varies with the airframe. Every count from
+   * one to eight produces the SAME sixteen-byte body - the values differ,
+   * the width never does - and the legacy four-motor activation gate that
+   * used to be asserted at the end of this block is gone, so a tricopter
+   * and an octocopter are both commandable through the identification
+   * path as well as the vector API.
    */
-  it.each([1, 2, 6, 8])(
-    'motorCount %i: professional vector reaches the lease with N*2 bytes',
+  it.each([1, 2, 3, 5, 6, 8])(
+    'motorCount %i: the vector reaches the lease as sixteen bytes, always',
     async motorCount => {
       const harness = createHarness([
         [MSP_MOTOR_CONFIG, reply(motorConfigPayload(motorCount))],
@@ -4620,15 +4692,20 @@ describe('P2-ii facade - professional command API through the controller', () =>
       await settleWire(harness);
       const writes = activeMotorWrites(harness);
       expect(writes).toHaveLength(1);
-      expect(writes[0]).toHaveLength(motorCount * 2);
-      for (let index = 0; index < motorCount; index++) {
-        expect(writes[0][index * 2] + writes[0][index * 2 + 1] * 256).toBe(
-          1100 + index * 10,
-        );
-      }
-      // THE LEGACY UI DID NOT WIDEN: its gate still refuses this count.
-      expect(harness.controller.getSnapshot().activation.allowed).toBe(false);
-      expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+      // FIXED WIDTH. Not motorCount * 2 - that is the short payload the
+      // API-1.47 handler would read past.
+      expect(writes[0]).toHaveLength(16);
+      expect(writes[0]).toEqual(wireBytes(values, 1000));
+
+      // THE IDENTIFICATION PATH WIDENED WITH IT. Every logical motor this
+      // airframe has is addressable, and the one past it is not.
+      expect(harness.controller.getSnapshot().activation.allowed).toBe(true);
+      expect(harness.controller.pulseMotor(motorCount)).toBe('ACCEPTED');
+      harness.controller.requestStop('STOP_BUTTON_PRESSED');
+      await settleWire(harness);
+      expect(harness.controller.pulseMotor(motorCount + 1)).toBe(
+        'INVALID_MOTOR',
+      );
     },
   );
 
@@ -4657,8 +4734,14 @@ describe('P2-ii facade - professional command API through the controller', () =>
         ),
       );
     expect(stops.length).toBeGreaterThan(0);
-    // The legacy 3D bar never moved.
-    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+    // M-C: THE 3D BAR MOVED, and only for the case that is knowable. The
+    // digital 3D neutral is the protocol constant PWM_RANGE_MIDDLE and the
+    // firmware's own branch splits forward from reverse, so identification
+    // is available here too - and it stops at 1500, never at 1000, which
+    // on this aircraft is full reverse.
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    harness.controller.requestStop('STOP_BUTTON_PRESSED');
+    await settleWire(harness);
   });
 
   it('analog non-3D: professional session commands inside CONFIGURATION_POLICY bounds', async () => {
@@ -4672,19 +4755,28 @@ describe('P2-ii facade - professional command API through the controller', () =>
     await settleWire(harness);
     // Out of the configured domain: refused as PRODUCT POLICY, zero write.
     expect(harness.controller.setMaster(2001).kind).toBe('REFUSED');
-    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
+    // M-C: analog non-3D is commandable through the identification path
+    // too. Its stop is `mincommand`, proven by analogInitEndpoints().
+    expect(harness.controller.pulseMotor(1)).toBe('ACCEPTED');
+    harness.controller.requestStop('STOP_BUTTON_PRESSED');
+    await settleWire(harness);
   });
 
-  it('analog 3D: refused for BOTH paths - the professional runtime does not guess', async () => {
+  it('analog 3D: still refused - M-C did NOT weaken the one 3D guard that matters', async () => {
     const harness = createHarness([
       [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload(3))],
       [MSP_FEATURE_CONFIG, reply(Uint8Array.from(u32(FEATURE_3D_BIT)))],
     ]);
     const snapshot = await runSetup(harness);
+    // `limit3d_low`/`limit3d_high` are in the firmware struct but not on
+    // the wire at API 1.47 or 1.49, so forward and reverse cannot be told
+    // apart. Refused BY NAME, with complete decoded evidence and nothing
+    // written - the strict half of the old rule, kept exactly.
     expect(snapshot.outcome).toMatchObject({
       kind: 'BLOCKED',
-      reason: 'MOTOR_SCOPE_UNSUPPORTED',
+      reason: 'ANALOG_3D_ENDPOINTS_UNKNOWN',
     });
+    expect(harness.controller.pulseMotor(1)).not.toBe('ACCEPTED');
     expect(harness.controller.setMaster(1500).kind).toBe('REFUSED');
     await settleWire(harness);
     expect(activeMotorWrites(harness)).toHaveLength(0);
@@ -4854,5 +4946,131 @@ describe('P2-ii convergence - arming restriction release contract', () => {
     expect(closed.teardown?.armingRestrictionRelease).toBe('RELEASE_FAILED');
     // NOT ordinary clean teardown: the report says recovery is required.
     expect(closed.teardown?.complete).toBe(false);
+  });
+});
+
+/* ===================================================================== *
+ * M-C. THE TWO PURE RULES, TESTED WHERE THEY LIVE.
+ *
+ * Both were found by mutation: a mutation that turned the motor-number
+ * list back into a fixed [1,2,3,4], and three that deleted parts of the
+ * session-binding comparison, all survived every suite in this
+ * repository. Neither was a weak assertion - they were UNREACHED rules,
+ * and reaching them through the lifecycle would have proven nothing about
+ * the rule itself.
+ * ===================================================================== */
+
+describe('M-C - motorTestPulseMotorNumbers', () => {
+  it.each([
+    [1, [1]],
+    [2, [1, 2]],
+    [3, [1, 2, 3]],
+    [4, [1, 2, 3, 4]],
+    [6, [1, 2, 3, 4, 5, 6]],
+    [8, [1, 2, 3, 4, 5, 6, 7, 8]],
+  ] as const)('offers exactly %i motor numbers, in order', (count, expected) => {
+    expect(motorTestPulseMotorNumbers(count)).toEqual(expected);
+  });
+
+  it('offers NOTHING for a count it cannot use - never a quad by default', () => {
+    // The exact regression this replaced a constant to prevent: an
+    // unusable count must not fall back to four motors that may not exist.
+    for (const unusable of [
+      undefined,
+      0,
+      -1,
+      9,
+      2.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+    ]) {
+      expect(motorTestPulseMotorNumbers(unusable as number)).toEqual([]);
+    }
+  });
+
+  it('numbers motors from 1 with no right-to-left reversal', () => {
+    // Motor N is firmware output index N-1 on every airframe. Mirroring is
+    // a drawing decision; renumbering here would rename the machine's
+    // motors.
+    const hex = motorTestPulseMotorNumbers(6);
+    expect(hex[0]).toBe(1);
+    expect(hex[hex.length - 1]).toBe(6);
+    expect([...hex].sort((a, b) => a - b)).toEqual(hex);
+  });
+
+  it('returns a frozen list a caller cannot edit in place', () => {
+    expect(Object.isFrozen(motorTestPulseMotorNumbers(6))).toBe(true);
+  });
+});
+
+describe('M-C - the session topology binding', () => {
+  const BINDING = Object.freeze({
+    motorCount: 4,
+    motorProtocolRaw: 7,
+    feature3dEnabled: false,
+    stopValue: 1000,
+  });
+  const SCOPE = Object.freeze({
+    motorCount: 4,
+    motorProtocolRaw: 7,
+    feature3dEnabled: false,
+  });
+
+  it('reports no drift when the configuration is the one it was bound to', () => {
+    expect(motorTopologyBindingHasDrifted(BINDING, SCOPE, 1000)).toBe(false);
+  });
+
+  it('reports no drift when there is nothing to have drifted from', () => {
+    expect(motorTopologyBindingHasDrifted(undefined, SCOPE, 1000)).toBe(false);
+    expect(motorTopologyBindingHasDrifted(BINDING, undefined, 1000)).toBe(false);
+  });
+
+  it('reports drift when the MOTOR COUNT moves', () => {
+    // The case the guard exists for: a session opened for four motors must
+    // never quietly start commanding a fifth.
+    expect(
+      motorTopologyBindingHasDrifted(BINDING, {...SCOPE, motorCount: 6}, 1000),
+    ).toBe(true);
+    expect(
+      motorTopologyBindingHasDrifted(BINDING, {...SCOPE, motorCount: 3}, 1000),
+    ).toBe(true);
+  });
+
+  it('reports drift when the PROTOCOL moves', () => {
+    // A stale external-value conversion is how 1000 stops one aircraft and
+    // drives another one backwards at full throttle.
+    expect(
+      motorTopologyBindingHasDrifted(
+        BINDING,
+        {...SCOPE, motorProtocolRaw: 1},
+        1000,
+      ),
+    ).toBe(true);
+  });
+
+  it('reports drift when FEATURE_3D moves', () => {
+    expect(
+      motorTopologyBindingHasDrifted(
+        BINDING,
+        {...SCOPE, feature3dEnabled: true},
+        1000,
+      ),
+    ).toBe(true);
+  });
+
+  it('reports drift when only the RESOLVED STOP moves', () => {
+    // Two configurations can agree on all three inputs and still resolve
+    // different stops if the endpoints behind them moved, so the stop is
+    // compared on its own rather than trusted to follow from the rest.
+    expect(motorTopologyBindingHasDrifted(BINDING, SCOPE, 900)).toBe(true);
+  });
+
+  it('does not invent drift from an unresolved stop', () => {
+    // A domain the resolver refused leaves no stop value. That is not
+    // evidence the configuration changed, and treating it as drift would
+    // block a session for the wrong reason.
+    expect(motorTopologyBindingHasDrifted(BINDING, SCOPE, undefined)).toBe(
+      false,
+    );
   });
 });
