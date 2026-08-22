@@ -118,8 +118,27 @@ function makeFakeController() {
         return published?.outcome as FcToolOutcome;
       }
       sequence += 1;
+      /* SENSORS B-5: mirrors the migrated production controller. A
+         calibration is delegated to the verified lifecycle and settles
+         as an OBSERVATION - an acknowledgement is no longer an outcome
+         this tool can publish at all, so the stand-in must not pretend
+         it is. */
       published = {
-        outcome: { kind: 'ACCEPTED', tool: phase.tool },
+        outcome:
+          phase.tool === 'ACC_CALIBRATION' || phase.tool === 'MAG_CALIBRATION'
+            ? {
+                kind: 'CALIBRATION_OBSERVED',
+                tool: phase.tool,
+                outcome: {
+                  kind: 'SUCCEEDED',
+                  evidence: {
+                    observedCalibratingEdge: true,
+                    accBlockerCleared: false,
+                    elapsedMs: 1200,
+                  },
+                },
+              }
+            : { kind: 'ACCEPTED', tool: phase.tool },
         sessionId: phase.sessionId,
         sequence,
       };
@@ -263,12 +282,14 @@ it('press -> explicit confirmation -> confirm dispatches exactly once; cancel se
     'request:ACC_CALIBRATION',
     'confirm',
   ]);
-  // ACCEPTED: the truthful acknowledgement plus the auto-verification
-  // note - the same strings the maintenance section would announce.
-  expect(textOf(renderer)).toContain(i18n.t('fcTools.outcomeAccepted'));
+  /* The card announces the OBSERVED completion - the same sentence the
+     Sensors screen shows for the same observation - and never an
+     acknowledgement, because the migrated controller no longer produces
+     one for a calibration. */
   expect(textOf(renderer)).toContain(
-    i18n.t('fcTools.accVerificationStarted'),
+    i18n.t('sensorsScreen.calibration.outcome.SUCCEEDED.ACCELEROMETER'),
   );
+  expect(textOf(renderer)).not.toContain(i18n.t('fcTools.outcomeAccepted'));
   act(() => {
     renderer.unmount();
   });

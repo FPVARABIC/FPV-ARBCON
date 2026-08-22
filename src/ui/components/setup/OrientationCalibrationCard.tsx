@@ -244,11 +244,9 @@ export default function OrientationCalibrationCard({
           >
             {describeFcToolOutcome(outcome, t)}
           </Text>
-          {outcome.kind === 'ACCEPTED' && (
-            <Text style={styles.nextStepText}>
-              {t('fcTools.accVerificationStarted')}
-            </Text>
-          )}
+          {/* An accelerometer calibration is now WATCHED to completion, so
+              there is no "verification has started" follow-up to print:
+              the outcome above already says whether it finished. */}
         </View>
       )}
     </View>

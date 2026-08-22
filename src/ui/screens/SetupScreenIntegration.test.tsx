@@ -585,6 +585,49 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
   }
 
   /**
+   * SENSORS B-5: SETUP NO LONGER SETTLES A CALIBRATION ON ITS
+   * ACKNOWLEDGEMENT.
+   *
+   * Both calibration tools are delegated to the Sensors verified
+   * lifecycle, which watches the arming-disable flags until the board
+   * itself says the run ended. So driving one to a result now means
+   * driving the BOARD: the CALIBRATING blocker (bit 12 of the
+   * arming-disable tail) has to rise and then fall. An ack alone leaves
+   * the tool running, and the regression below pins exactly that.
+   */
+  const CALIBRATING_BLOCKER = 1 << 12;
+
+  function startAccCalibration(
+    renderer: ReactTestRenderer.ReactTestRenderer,
+  ): void {
+    act(() => {
+      pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
+    });
+    act(() => {
+      pressable(renderer, 'fc-tools-confirm').props.onPress();
+    });
+  }
+
+  /** Rising then falling CALIBRATING edge - the only evidence that ends
+   *  an accelerometer run as a success. */
+  async function observeCalibrationCompleting(
+    client: ReturnType<typeof makeFakeClient>,
+  ): Promise<void> {
+    await settle(200); // baseline read, the command, the first poll
+    client.setResponse(
+      MSP_STATUS_EX,
+      statusExPayload({ blockerMask: CALIBRATING_BLOCKER }),
+    );
+    await settle(400); // the board reports it is calibrating
+    client.setResponse(MSP_STATUS_EX, statusExPayload());
+    await settle(400); // and stops, which is what completion means
+  }
+
+  /** The observed-completion copy the migrated Setup shows for the
+   *  accelerometer. Not an acknowledgement - a result. */
+  const ACC_CALIBRATION_COMPLETED = 'اكتملت معايرة مقياس التسارع.';
+
+  /**
    * A-6, per the PASS 7.7B.1R causal audit: this test carries an explicit
    * 15 s budget, and it is the ONLY test in this file that does.
    *
@@ -846,21 +889,70 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const { client, renderer } = await mount(sessionId);
 
       const statusBefore = client.countOf(MSP_STATUS_EX);
-      act(() => {
-        pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
-      });
-      act(() => {
-        pressable(renderer, 'fc-tools-confirm').props.onPress();
-      });
+      const firstOfThisAction = client.commands.length;
+      startAccCalibration(renderer);
       await settle(200);
 
       expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
       expect(client.countOf(MSP_STATUS_EX)).toBeGreaterThan(statusBefore);
-      // The preflight read happened BEFORE the write, in the same session.
-      const order = client.commands;
-      const writeIndex = order.lastIndexOf(MSP_ACC_CALIBRATION);
-      const statusIndex = order.lastIndexOf(MSP_STATUS_EX);
+      /**
+       * The preflight read happened BEFORE the write, in the same
+       * session - measured over the commands THIS action issued.
+       *
+       * `lastIndexOf` over the whole log used to say the same thing and
+       * no longer can: the verified lifecycle keeps reading STATUS_EX
+       * after the write, because that is how it observes the calibration
+       * ending. Those later reads are the migration working, so the
+       * window is what narrowed here, never the requirement - a write
+       * with no fresh status ahead of it inside its own action still
+       * fails.
+       */
+      const action = client.commands.slice(firstOfThisAction);
+      const writeIndex = action.indexOf(MSP_ACC_CALIBRATION);
+      expect(writeIndex).toBeGreaterThanOrEqual(0);
+      const statusIndex = action.lastIndexOf(MSP_STATUS_EX, writeIndex);
+      expect(statusIndex).toBeGreaterThanOrEqual(0);
       expect(statusIndex).toBeLessThan(writeIndex);
+    },
+  );
+
+  /**
+   * SENSORS B-5 §44. The migration's whole point, pinned as its own
+   * regression: the board acknowledges the command and STAYS calibrating,
+   * and Setup must show no success while that is true.
+   */
+  itOwningRenderer(
+    'an acknowledged calibration that is still running shows NO success in Setup',
+    async () => {
+      const sessionId = 'integration-ack-not-success';
+      const { client, renderer } = await mount(sessionId);
+
+      startAccCalibration(renderer);
+      await settle(200);
+      // Acknowledged - the command went out and was answered.
+      expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+
+      // ...and the board is still inside the calibration.
+      client.setResponse(
+        MSP_STATUS_EX,
+        statusExPayload({ blockerMask: CALIBRATING_BLOCKER }),
+      );
+      await settle(1500);
+
+      const text = allText(renderer);
+      expect(text).not.toContain(ACC_CALIBRATION_COMPLETED);
+      expect(text).not.toContain(TRUTHFUL_ACK);
+      expect(fcToolsController.getPhase()).toEqual({
+        kind: 'RUNNING',
+        tool: 'ACC_CALIBRATION',
+        sessionId,
+      });
+
+      // Only the falling edge ends it, and only then is it a success.
+      client.setResponse(MSP_STATUS_EX, statusExPayload());
+      await settle(400);
+      expect(allText(renderer)).toContain(ACC_CALIBRATION_COMPLETED);
+      expect(fcToolsController.getPhase()).toEqual({ kind: 'IDLE' });
     },
   );
 
@@ -1066,23 +1158,18 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const sessionId = 'integration-outcome-scope';
       const { client, renderer } = await mount(sessionId);
 
-      act(() => {
-        pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
-      });
-      act(() => {
-        pressable(renderer, 'fc-tools-confirm').props.onPress();
-      });
-      await settle(300);
+      startAccCalibration(renderer);
+      await observeCalibrationCompleting(client);
       expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
-      expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+      expect(allText(renderer)).toContain(ACC_CALIBRATION_COMPLETED);
 
       // Transient detach with NO replacement: the same mounted screen keeps
-      // the acknowledgement it legitimately received.
+      // the result it legitimately observed.
       await act(async () => {
         mspSessionCoordinator.deactivateMspSession(sessionId);
         await flushAsync();
       });
-      expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+      expect(allText(renderer)).toContain(ACC_CALIBRATION_COMPLETED);
 
       // A replacement generation becomes current: revoked immediately.
       const replacement = makeFakeClient(sessionId);
@@ -1094,7 +1181,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
         await flushAsync();
       });
       await settle(2200);
-      expect(allText(renderer)).not.toContain(TRUTHFUL_ACK);
+      expect(allText(renderer)).not.toContain(ACC_CALIBRATION_COMPLETED);
       expect(
         renderer.root.findAll(n => n.props.testID === 'fc-tools-outcome'),
       ).toEqual([]);
@@ -1105,15 +1192,10 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     'a REMOUNT does not replay the previous outcome or re-announce it as an alert',
     async () => {
       const sessionId = 'integration-outcome-remount';
-      const { renderer } = await mount(sessionId);
-      act(() => {
-        pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
-      });
-      act(() => {
-        pressable(renderer, 'fc-tools-confirm').props.onPress();
-      });
-      await settle(300);
-      expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+      const { client, renderer } = await mount(sessionId);
+      startAccCalibration(renderer);
+      await observeCalibrationCompleting(client);
+      expect(allText(renderer)).toContain(ACC_CALIBRATION_COMPLETED);
 
       act(() => {
         renderer.unmount();
@@ -1126,7 +1208,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       });
       await settle(300);
 
-      expect(allText(remounted)).not.toContain(TRUTHFUL_ACK);
+      expect(allText(remounted)).not.toContain(ACC_CALIBRATION_COMPLETED);
       expect(
         remounted.root.findAll(n => n.props.testID === 'fc-tools-outcome'),
       ).toEqual([]);
@@ -1137,24 +1219,29 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
   );
 
   itOwningRenderer(
-    'a detach BEFORE the response keeps the conservative unconfirmed result, not an acknowledgement',
+    'an unanswered calibration command is reported as an unconfirmed START, never as a failure',
     async () => {
       const sessionId = 'integration-outcome-detach-first';
       const { client, renderer } = await mount(sessionId, c => {
-        c.hold(MSP_ACC_CALIBRATION);
+        c.hold(MSP_ACC_CALIBRATION); // never answered -> the real 2000ms timeout
       });
-      act(() => {
-        pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
-      });
-      act(() => {
-        pressable(renderer, 'fc-tools-confirm').props.onPress();
-      });
+      startAccCalibration(renderer);
       await settle(2500);
 
       const text = allText(renderer);
-      expect(text).toContain('تعذّر تأكيد النتيجة. لم يُعَد الإرسال تلقائيًا.');
+      /**
+       * The bytes may have reached the board and it may be calibrating
+       * right now, so "تعذّر إتمام المعايرة" would claim more than was
+       * observed and "اكتملت" would claim the opposite. The only fact is
+       * that the start was never confirmed.
+       */
+      expect(text).toContain('لم نتمكن من تأكيد بدء المعايرة.');
+      expect(text).not.toContain('تعذّر إتمام المعايرة.');
+      expect(text).not.toContain(ACC_CALIBRATION_COMPLETED);
       expect(text).not.toContain(TRUTHFUL_ACK);
       expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+      // ...and the tool is free again: no eternal busy state.
+      expect(fcToolsController.getPhase()).toEqual({ kind: 'IDLE' });
     },
   );
 

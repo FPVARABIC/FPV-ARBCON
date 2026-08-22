@@ -618,6 +618,7 @@ const SCREEN_PHASE_FILES: readonly string[] = [
   'src/ui/screens/VideoTransmitterScreen.tsx',
   'src/ui/screens/MotorOutputMappingSection.tsx',
   'src/ui/screens/MotorOutputReorderPanel.tsx',
+  'src/ui/screens/SensorsScreen.tsx',
 ];
 
 describe('the liveness contract is real, not aspirational', () => {

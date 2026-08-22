@@ -73,10 +73,29 @@ class FakeClock implements SensorsClock {
 
 let sessionSeq = 0;
 
+/**
+ * THE BOARD THIS SUITE CALIBRATES HAS BOTH SENSORS.
+ *
+ * The virtual FC's own default is ACC | BARO | GYRO with the magnetometer
+ * configured to NONE - a board with no compass at all, which is a
+ * perfectly good fixture for the refusal tests and a nonsense one for a
+ * magnetometer calibration. The preflight now refuses a run on a sensor
+ * the board does not report, so every LIFECYCLE test states the premise
+ * it always relied on: this aircraft has a magnetometer, and the board
+ * says so in the same status frame the preflight reads.
+ *
+ * 0b0100111 is ACC | BARO | MAG | GYRO in the firmware's own packing.
+ */
+const BOARD_WITH_BOTH_SENSORS: SensorsFcBehaviour = {
+  sensorMask: 0b0100111,
+  mag: 2,
+  detectedMag: 2,
+};
+
 async function connect(behaviour: SensorsFcBehaviour = {}) {
   sessionSeq += 1;
   const sessionId = `sensors-cal-${sessionSeq}`;
-  const fc = new VirtualSensorsFc(sessionId, behaviour);
+  const fc = new VirtualSensorsFc(sessionId, {...BOARD_WITH_BOTH_SENSORS, ...behaviour});
   const coordinator = new MspSessionCoordinator();
   coordinator.openSession(fc.client, sessionId);
   await sleep(400);
@@ -127,6 +146,50 @@ describe('before any calibration command is sent', () => {
     const outcome = await controller.calibrateMagnetometer(key).result;
     expect(outcome).toEqual({kind: 'ARM_STATE_UNKNOWN'});
     expect(fc.requested).not.toContain(MSP_MAG_CALIBRATION);
+  });
+
+  /**
+   * PRESENCE IS PART OF THE PREFLIGHT (B-5 §41).
+   *
+   * `mspProcessCommand` runs `compassStartCalibration()` inside `#ifdef
+   * USE_MAG` and `accStartCalibration()` inside `#ifdef USE_ACC`, and both
+   * acknowledge whether or not the sensor exists. Without this refusal the
+   * app would send a command that does nothing and then watch flags that
+   * will never move - eventually reporting an unconfirmed run on a board
+   * that has no such sensor at all.
+   */
+  it('refuses a magnetometer run on a board whose fresh status reports no magnetometer', async () => {
+    // 0b0100011 is ACC | BARO | GYRO: the magnetometer bit is clear.
+    const {fc, coordinator, key} = await connect({sensorMask: 0b0100011});
+    const controller = controllerFor(coordinator, new FakeClock());
+    const outcome = await controller.calibrateMagnetometer(key).result;
+    expect(outcome).toEqual({kind: 'REJECTED', reason: 'SENSOR_NOT_PRESENT'});
+    expect(fc.requested).not.toContain(MSP_MAG_CALIBRATION);
+  });
+
+  it('refuses an accelerometer run on a board whose fresh status reports no accelerometer', async () => {
+    // 0b0100110 is BARO | MAG | GYRO: the accelerometer bit is clear.
+    const {fc, coordinator, key} = await connect({sensorMask: 0b0100110});
+    const controller = controllerFor(coordinator, new FakeClock());
+    const outcome = await controller.calibrateAccelerometer(key).result;
+    expect(outcome).toEqual({kind: 'REJECTED', reason: 'SENSOR_NOT_PRESENT'});
+    expect(fc.requested).not.toContain(MSP_ACC_CALIBRATION);
+  });
+
+  it('decides presence from the FRESH frame, not from anything a caller held', async () => {
+    // The board reports the magnetometer present in this very read, so the
+    // run proceeds - the same code path that refused above.
+    const {fc, coordinator, key} = await connect({
+      sensorMask: 0b0100111,
+      armingDisableFlags: 0,
+    });
+    fc.scriptedArmingFlags.push(...new Array(4).fill(CALIBRATING));
+    const controller = controllerFor(coordinator, new FakeClock());
+    const observation = controller.calibrateMagnetometer(key);
+    await sleep(30);
+    observation.cancel();
+    await observation.result;
+    expect(fc.requested).toContain(MSP_MAG_CALIBRATION);
   });
 });
 

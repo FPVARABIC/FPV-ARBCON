@@ -31,6 +31,10 @@ import { Button } from '../controls';
 import { readInteraction } from '../controls/interaction';
 
 import { FC_TOOL_IDS, resolveFcToolAvailability } from '../../../core';
+import {
+  describeCalibrationOutcome,
+  type SensorCalibrationOutcomeId,
+} from '../../../core/state/sensorPresentation';
 import type { FcToolGateInput, FcToolId } from '../../../core';
 import {
   fcToolsController,
@@ -308,12 +312,6 @@ export default function FcToolsSection({
           >
             {describeFcToolOutcome(outcome, t)}
           </Text>
-          {outcome.kind === 'ACCEPTED' &&
-            outcome.tool === 'ACC_CALIBRATION' && (
-              <Text style={styles.nextStepText}>
-                {t('fcTools.accVerificationStarted')}
-              </Text>
-            )}
         </View>
       )}
     </View>
@@ -330,6 +328,22 @@ export function describeFcToolOutcome(
   t: Translate,
 ): string {
   switch (outcome.kind) {
+    /**
+     * A WATCHED CALIBRATION REPORTS WHAT WAS WATCHED. The wording comes
+     * from the Sensors presentation layer, so this surface and the
+     * Sensors screen say the same sentence for the same observation -
+     * there is one definition of "calibrated" in this application and
+     * both screens read it from the same place.
+     */
+    case 'CALIBRATION_OBSERVED': {
+      const target =
+        outcome.tool === 'ACC_CALIBRATION' ? 'ACCELEROMETER' : 'MAGNETOMETER';
+      const phrase = describeCalibrationOutcome(
+        target,
+        outcome.outcome.kind as SensorCalibrationOutcomeId,
+      );
+      return t(phrase.key, phrase.params ?? {});
+    }
     case 'ACCEPTED':
       return t('fcTools.outcomeAccepted');
     case 'REBOOT_REQUESTED':

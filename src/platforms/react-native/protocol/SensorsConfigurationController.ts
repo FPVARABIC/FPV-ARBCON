@@ -114,6 +114,7 @@ import {
 } from '../../../core';
 import {
   deriveSensorTruthSet,
+  sensorPresenceBitIndex,
   sensorsWithContradictions,
   type SensorTruth,
   type SensorTruthSet,
@@ -208,6 +209,33 @@ function isBitSet(mask: number, index: number): boolean {
   return Math.floor(mask / Math.pow(2, index)) % 2 === 1;
 }
 
+/**
+ * Dispatch failures where the command PROVABLY started nothing - the FC
+ * answered with an error frame, or the request never reached the wire at
+ * all. Everything else (a timeout above all) may have arrived, and is
+ * classified as unconfirmed rather than as a definite failure.
+ *
+ * The list mirrors FcToolsController's, deliberately: both describe the
+ * same MspClient error surface, and the two must not drift into two
+ * different ideas of what "provably not sent" means.
+ */
+const DEFINITELY_NOT_STARTED_CODES: readonly string[] = Object.freeze([
+  'MSP_REMOTE_ERROR',
+  'MSP_ENCODE_FAILED',
+  'MSP_QUEUE_FULL',
+  'MSP_TRANSPORT_QUEUE_FULL',
+  'MSP_RECOVERY_REQUIRED',
+  'MSP_RECOVERING',
+]);
+
+function isDefiniteDispatchFailure(error: unknown): boolean {
+  const code =
+    error !== null && typeof error === 'object' && 'code' in error
+      ? String((error as {code: unknown}).code)
+      : undefined;
+  return code !== undefined && DEFINITELY_NOT_STARTED_CODES.includes(code);
+}
+
 /* ================================================================== *
  * PORTS
  * ================================================================== */
@@ -275,7 +303,17 @@ export type SensorsBlockReason =
    *  three-byte MSP_SENSOR_CONFIG has no rangefinder byte to write. */
   | 'UNSUPPORTED_CONTRACT_FIELD'
   /** This firmware build does not answer the command at all. */
-  | 'CAPABILITY_ABSENT';
+  | 'CAPABILITY_ABSENT'
+  /**
+   * The fresh status frame does not report this sensor as present, so
+   * there is nothing to calibrate. Firmware-backed, not a health
+   * judgement: `mspProcessCommand` runs `accStartCalibration()` inside
+   * `#ifdef USE_ACC` and `compassStartCalibration()` inside `#ifdef
+   * USE_MAG`, and both acknowledge regardless - so on a board without
+   * the sensor the command is answered cheerfully and does nothing at
+   * all. Refusing is what keeps the app from reporting that as a run.
+   */
+  | 'SENSOR_NOT_PRESENT';
 
 /**
  * A read that a legitimate build may simply not answer.
@@ -1313,6 +1351,26 @@ export class SensorsConfigurationController {
             return {kind: 'ARM_STATE_UNKNOWN' as const};
           }
 
+          /**
+           * PRESENCE IS PART OF THE PREFLIGHT, decided from the SAME
+           * fresh frame that decided the armed state - never from a
+           * snapshot the caller was holding, which could be minutes old
+           * and describe a magnetometer that has since been unplugged.
+           *
+           * Both firmware handlers acknowledge whether or not the sensor
+           * exists, so without this the app would send a command that
+           * does nothing and then watch flags that will never move -
+           * reporting, eventually, an unconfirmed run on a board that
+           * has no such sensor at all. The refusal is the honest answer,
+           * and it says only what the board reported.
+           */
+          const presenceBit = sensorPresenceBitIndex(
+            target === 'ACCELEROMETER' ? 'ACC' : 'MAG',
+          );
+          if (!isBitSet(baseline.sensorPresenceMask, presenceBit)) {
+            throw new SensorsPreflightError('SENSOR_NOT_PRESENT');
+          }
+
           const baselineFlags = baseline.readiness.armingDisableFlags;
           const accBlockerWasSet =
             baselineFlags !== undefined &&
@@ -1321,13 +1379,63 @@ export class SensorsConfigurationController {
           // The command. Its acknowledgement is not a result.
           onProgress?.('REQUESTED');
           this.assertLive(key, client, epoch);
-          await requester.request(
-            target === 'ACCELEROMETER'
-              ? MSP_ACC_CALIBRATION
-              : MSP_MAG_CALIBRATION,
-            EMPTY,
-            V1,
-          );
+          try {
+            await requester.request(
+              target === 'ACCELEROMETER'
+                ? MSP_ACC_CALIBRATION
+                : MSP_MAG_CALIBRATION,
+              EMPTY,
+              V1,
+            );
+          } catch (error) {
+            /**
+             * AN UNANSWERED START COMMAND IS NOT A FAILED CALIBRATION.
+             *
+             * Letting this reject classifies it as FAILED - "the
+             * calibration could not be completed" - which claims far
+             * more than was observed: the bytes may well have reached
+             * the board, and it may be calibrating right now. The one
+             * thing actually observed is that the start was never
+             * confirmed, and START_NOT_OBSERVED says exactly that and
+             * nothing else.
+             *
+             * The two facts that outrank it keep their precedence:
+             *
+             *  - We stopped watching, or the app lost the ability to.
+             *    Held locally and with certainty, so it decides.
+             *  - The SESSION died - a new generation, or ownership gone.
+             *    Re-thrown so the operation coordinator classifies it and
+             *    LINK_LOST decides, exactly as before.
+             *
+             * A moved MSP epoch is deliberately NOT in that list. This
+             * very request timing out is what moves it: the link
+             * recovering underneath us is an internal detail of this
+             * app, not evidence about what the board did.
+             */
+            if (signal.cancelled || this.appStateOwner.getPhase() !== 'ACTIVE') {
+              return {
+                kind: 'OBSERVATION_CANCELLED' as const,
+                boardMayStillBeCalibrating: true as const,
+              };
+            }
+            /**
+             * The FC ANSWERED, with an error frame or a refusal to
+             * encode: the command provably did not start anything, and
+             * calling that "unconfirmed" would be weaker than the
+             * evidence. It is a definite failure and stays one.
+             */
+            if (isDefiniteDispatchFailure(error)) {
+              throw error;
+            }
+            if (
+              this.coordinator.getOwnershipState(key.sessionId) !== 'ACTIVE' ||
+              this.coordinator.getSessionKey(key.sessionId)?.generation !==
+                key.generation
+            ) {
+              throw error;
+            }
+            return {kind: 'START_NOT_OBSERVED' as const};
+          }
 
           return this.watchCalibration(target, key, client, epoch, requester, {
             signal,

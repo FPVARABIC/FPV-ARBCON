@@ -58,6 +58,17 @@ import type {
   SdcardState,
 } from '../core/state/blackboxStorageSemantics';
 import { BLACKBOX_FIELD_BITS } from '../core/state/blackboxPresentation';
+import type {
+  SensorCalibrationBlock,
+  SensorCalibrationOutcomeId,
+  SensorHardwareSaveStageId,
+  SensorSaveOutcomeId,
+} from '../core/state/sensorPresentation';
+import type {
+  SensorContradiction,
+  SensorTruthFamily,
+} from '../core/state/sensorTruthSemantics';
+import type { SensorsBlockReason } from '../platforms/react-native/protocol';
 
 const REPO_ROOT = join(__dirname, '..', '..');
 const SCAN_ROOTS = [join(REPO_ROOT, 'src'), join(REPO_ROOT, 'App.tsx')];
@@ -344,10 +355,163 @@ const BLACKBOX_SD_STATES: Record<SdcardState, true> = {
 };
 
 /** Families whose members are produced by a template at runtime. */
+/**
+ * SENSORS B-4. Every one of these keys is built inside
+ * `sensorPresentation.ts` and handed to the screen as a value, so no
+ * literal and no template prefix appears at a `t()` call site and the
+ * scanner above cannot see them. Registered here instead, and typed
+ * `Record<Union, true>` so `tsc` refuses a member somebody forgot.
+ */
+const SENSOR_FAMILIES: Record<SensorTruthFamily, true> = {
+  GYRO: true,
+  ACC: true,
+  BARO: true,
+  MAG: true,
+  GPS: true,
+  RANGEFINDER: true,
+  OPTICALFLOW: true,
+};
+
+const SENSOR_CONTRADICTIONS: Record<SensorContradiction, true> = {
+  CONFIGURED_OFF_BUT_REPORTED_PRESENT: true,
+  CONFIGURED_ON_BUT_NONE_DETECTED: true,
+  DETECTED_BUT_NOT_REPORTED_PRESENT: true,
+  REPORTED_PRESENT_BUT_FIRMWARE_HAS_NO_SUPPORT: true,
+  CONFIGURED_DEVICE_DIFFERS_FROM_DETECTED: true,
+  DETECTION_REPORTED_A_DEFAULT_VALUE: true,
+};
+
+const SENSOR_CALIBRATION_OUTCOMES: Record<SensorCalibrationOutcomeId, true> = {
+  SUCCEEDED: true,
+  NO_MOVEMENT_DETECTED: true,
+  START_NOT_OBSERVED: true,
+  COMPLETION_UNCONFIRMED: true,
+  TIMED_OUT: true,
+  LINK_LOST: true,
+  OBSERVATION_CANCELLED: true,
+  REFUSED_ARMED: true,
+  ARM_STATE_UNKNOWN: true,
+  REJECTED: true,
+  FAILED: true,
+};
+
+const SENSOR_CALIBRATION_BLOCKS: Record<SensorCalibrationBlock, true> = {
+  SENSOR_NOT_PRESENT: true,
+  DISABLED_BY_CONFIGURATION: true,
+  NOT_READ: true,
+  BUSY: true,
+};
+
+const SENSOR_SAVE_OUTCOMES: Record<SensorSaveOutcomeId, true> = {
+  NO_CHANGES: true,
+  AWAITING_REBOOT_VERIFICATION: true,
+  SUCCEEDED: true,
+  READBACK_MISMATCH: true,
+  PERSISTENCE_MISMATCH: true,
+  STALE_SESSION: true,
+  UNCONFIRMED: true,
+  SESSION_ENDED: true,
+  REJECTED: true,
+  FAILED: true,
+};
+
+const SENSOR_SAVE_BLOCKS: Record<SensorsBlockReason, true> = {
+  DISCONNECTED: true,
+  IDENTIFYING: true,
+  UNSUPPORTED_FIRMWARE: true,
+  APP_BACKGROUNDED: true,
+  LINK_RECOVERING: true,
+  OPERATION_IN_PROGRESS: true,
+  NOT_READY_TO_EDIT: true,
+  UNSUPPORTED_VALUE: true,
+  UNSUPPORTED_CONTRACT_FIELD: true,
+  CAPABILITY_ABSENT: true,
+  SENSOR_NOT_PRESENT: true,
+};
+
+const SENSOR_SAVE_STAGES: Record<SensorHardwareSaveStageId, true> = {
+  READING: true,
+  SENDING: true,
+  VERIFYING_APPLY: true,
+  PERSISTING: true,
+  VERIFYING_AFTER_REBOOT: true,
+};
+
 const ENUMERATED_FAMILIES: readonly {
   readonly prefix: string;
   readonly members: readonly string[];
 }[] = [
+  {prefix: 'sensorsScreen.family', members: Object.keys(SENSOR_FAMILIES)},
+  {
+    prefix: 'sensorsScreen.contradiction',
+    members: Object.keys(SENSOR_CONTRADICTIONS),
+  },
+  {
+    /* SUCCEEDED is deliberately absent from the flat list: it is the one
+       outcome whose wording differs per sensor, so
+       describeCalibrationOutcome() emits `...SUCCEEDED.<TARGET>` and the
+       two leaves are registered on the next entry. */
+    prefix: 'sensorsScreen.calibration.outcome',
+    members: Object.keys(SENSOR_CALIBRATION_OUTCOMES).filter(
+      member => member !== 'SUCCEEDED',
+    ),
+  },
+  {
+    prefix: 'sensorsScreen.calibration.outcome.SUCCEEDED',
+    members: ['ACCELEROMETER', 'MAGNETOMETER'],
+  },
+  {
+    prefix: 'sensorsScreen.calibration.blocked',
+    members: Object.keys(SENSOR_CALIBRATION_BLOCKS),
+  },
+  {
+    prefix: 'sensorsScreen.calibration.stage',
+    members: ['REQUESTED', 'WAITING_FOR_MOVEMENT', 'CALIBRATING', 'VERIFYING'],
+  },
+  {prefix: 'sensorsScreen.save.outcome', members: Object.keys(SENSOR_SAVE_OUTCOMES)},
+  {prefix: 'sensorsScreen.save.blocked', members: Object.keys(SENSOR_SAVE_BLOCKS)},
+  {prefix: 'sensorsScreen.save.stage', members: Object.keys(SENSOR_SAVE_STAGES)},
+  {
+    prefix: 'sensorsScreen.configured',
+    members: ['notRead', 'notInProtocol', 'default', 'disabled'],
+  },
+  {
+    prefix: 'sensorsScreen.detected',
+    members: ['notRead', 'notInProtocol', 'notInFirmware', 'none', 'reportedDefault'],
+  },
+  {prefix: 'sensorsScreen.present', members: ['notRead', 'yes', 'no']},
+  {
+    prefix: 'sensorsScreen.headline',
+    members: [
+      'present',
+      'absent',
+      'disabled',
+      'detectedNotPresent',
+      'presentUnknownHardware',
+      'notRead',
+    ],
+  },
+  {
+    prefix: 'sensorsScreen.hardware',
+    members: ['part', 'default', 'none', 'unknown', 'unnamed'],
+  },
+  {prefix: 'sensorsScreen.unit', members: ['degreesPerSecond', 'rawCounts']},
+  {
+    prefix: 'sensorsScreen.alignmentOption',
+    members: [
+      'ALIGN_DEFAULT',
+      'CW0_DEG',
+      'CW90_DEG',
+      'CW180_DEG',
+      'CW270_DEG',
+      'CW0_DEG_FLIP',
+      'CW90_DEG_FLIP',
+      'CW180_DEG_FLIP',
+      'CW270_DEG_FLIP',
+      'ALIGN_CUSTOM',
+      'UNKNOWN',
+    ],
+  },
   { prefix: 'motorsScreen.blockReason', members: Object.keys(BLOCK_REASONS) },
   { prefix: 'motorVerification.position', members: Object.keys(POSITIONS) },
   { prefix: 'motorVerification.direction', members: Object.keys(DIRECTIONS) },

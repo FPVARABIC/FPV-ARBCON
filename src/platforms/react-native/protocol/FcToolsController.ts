@@ -65,7 +65,18 @@ import type {
 } from '../../../core';
 import {isSupportedConfigurationApi} from './betaflightApiSupport';
 import {mspSessionCoordinator} from './MspSessionCoordinator';
-import type {MspSessionCoordinator} from './MspSessionCoordinator';
+import type {
+  MspSessionCoordinator,
+  SetupUiSessionKey,
+} from './MspSessionCoordinator';
+import {
+  SensorsConfigurationController,
+  sensorsConfigurationController,
+} from './SensorsConfigurationController';
+import type {
+  SensorsCalibrationObservation,
+  SensorsCalibrationOutcome,
+} from './SensorsConfigurationController';
 import {setupAppStateTelemetryOwner} from './setupAppStateTelemetryOwner';
 import type {SetupAppStateTelemetryOwner} from './setupAppStateTelemetryOwner';
 
@@ -128,8 +139,23 @@ export interface FcToolPublication {
 
 export type FcToolOutcome =
   /** The FC acknowledged the command. For a calibration this means
-   * ACCEPTED/STARTED - never completed. */
+   * ACCEPTED/STARTED - never completed.
+   *
+   * NO LONGER REACHABLE FOR A CALIBRATION. The two calibration tools now
+   * run the verified lifecycle and settle as CALIBRATION_OBSERVED; this
+   * variant survives for REBOOT and for any tool added later that
+   * genuinely has nothing to observe. */
   | {readonly kind: 'ACCEPTED'; readonly tool: FcToolId}
+  /**
+   * A calibration that was WATCHED, carrying whatever the board actually
+   * showed. The inner outcome is the Sensors controller's own, so Setup
+   * and Sensors report the same fact in the same words.
+   */
+  | {
+      readonly kind: 'CALIBRATION_OBSERVED';
+      readonly tool: FcToolId;
+      readonly outcome: SensorsCalibrationOutcome;
+    }
   /** Reboot was acknowledged; the link is expected to drop. Reconnection
    * is a separate, observed fact - never assumed here. */
   | {readonly kind: 'REBOOT_REQUESTED'}
@@ -184,14 +210,43 @@ function errorCodeOf(error: unknown): string | undefined {
     : undefined;
 }
 
+/**
+ * THE VERIFIED CALIBRATION LIFECYCLE, SHARED RATHER THAN COPIED.
+ *
+ * Setup used to send MSP_ACC_CALIBRATION / MSP_MAG_CALIBRATION itself and
+ * report ACCEPTED on the acknowledgement - which is all an ack proves,
+ * and was honest as far as it went, but it meant Setup stopped watching
+ * exactly where the interesting part begins. Both firmware handlers are
+ * `if (!ARMING_FLAG(ARMED)) { start... }` and acknowledge either way, so
+ * an armed board answered cheerfully and calibrated nothing.
+ *
+ * Sensors B-3 built the lifecycle that observes completion through the
+ * arming-disable flags. Setup now uses THAT ONE. Not a copy of it - the
+ * same object, behind this port, so the two surfaces cannot drift into
+ * two different ideas of what "calibrated" means.
+ */
+export interface SensorsCalibrationLifecycle {
+  calibrateAccelerometer(key: SetupUiSessionKey): SensorsCalibrationObservation;
+  calibrateMagnetometer(key: SetupUiSessionKey): SensorsCalibrationObservation;
+}
+
 export interface FcToolsControllerOptions {
   coordinator?: MspSessionCoordinator;
   appStateOwner?: SetupAppStateTelemetryOwner;
+  calibration?: SensorsCalibrationLifecycle;
 }
 
 export class FcToolsController {
   private readonly coordinator: MspSessionCoordinator;
   private readonly appStateOwner: SetupAppStateTelemetryOwner;
+  private readonly calibration: SensorsCalibrationLifecycle;
+  /** So `cancel()` can stop a calibration that is already being watched,
+   *  rather than only closing an unopened confirmation. */
+  private runningCalibration: SensorsCalibrationObservation | undefined;
+  /** The provenance confirm() captured for the run in progress, so a
+   *  cancel settles under the generation that STARTED it - never under a
+   *  replacement that became current while it was being watched. */
+  private runningOrigin: FcToolOutcomeOrigin | undefined;
   private phase: FcToolPhase = {kind: 'IDLE'};
   /** The ONE stored publication, with provenance and sequence (A-1). */
   private publication: FcToolPublication | undefined;
@@ -209,6 +264,30 @@ export class FcToolsController {
   constructor(options: FcToolsControllerOptions = {}) {
     this.coordinator = options.coordinator ?? mspSessionCoordinator;
     this.appStateOwner = options.appStateOwner ?? setupAppStateTelemetryOwner;
+    /**
+     * THE LIFECYCLE HAS TO BE POINTED AT THE SAME SESSIONS THIS
+     * CONTROLLER IS.
+     *
+     * With nothing injected, the shared singleton is used deliberately:
+     * it holds the per-session busy set, so a calibration started from
+     * Setup and one started from the Sensors screen are the SAME
+     * exclusive operation and the second is refused rather than racing
+     * the first.
+     *
+     * With a coordinator injected, the singleton would be talking to a
+     * different set of sessions entirely - it would look up the session
+     * id in the global coordinator, find nothing, and refuse everything
+     * while reporting a disconnection that is not true. So an injected
+     * coordinator gets a lifecycle bound to it.
+     */
+    this.calibration =
+      options.calibration ??
+      (options.coordinator === undefined && options.appStateOwner === undefined
+        ? sensorsConfigurationController
+        : new SensorsConfigurationController({
+            coordinator: this.coordinator,
+            appStateOwner: this.appStateOwner,
+          }));
   }
 
   getPhase(): FcToolPhase {
@@ -315,6 +394,48 @@ export class FcToolsController {
 
   /** Releases the mutex without sending anything. */
   cancel(): void {
+    /**
+     * A CALIBRATION ALREADY BEING WATCHED CAN BE STOPPED - the WATCHING,
+     * that is. The firmware has no command that ends a calibration, so
+     * this stops the app's observation and nothing else; the lifecycle
+     * settles as OBSERVATION_CANCELLED and says so. Without this, a
+     * magnetometer run would hold Setup's mutex for up to a minute with
+     * no way out.
+     */
+    if (this.phase.kind === 'RUNNING' && this.runningCalibration !== undefined) {
+      const {tool} = this.phase;
+      const observation = this.runningCalibration;
+      /**
+       * THE RELEASE IS SYNCHRONOUS, NOT "WHEN THE WATCHER NOTICES".
+       *
+       * The observation only learns it was cancelled at its next poll
+       * boundary - up to half a second for the magnetometer, and never
+       * at all if the app is suspended before that sleep resolves.
+       * Handing the mutex back on that condition would make Setup's
+       * "cancel" a request rather than a guarantee, which is exactly the
+       * eternal busy state the liveness rule forbids.
+       *
+       * So the phase is settled here, with the SAME outcome the
+       * observation is now certain to produce and the origin captured
+       * when the run started. The watcher's own OBSERVATION_CANCELLED
+       * arrives later into an already-IDLE phase and settle() drops it.
+       */
+      observation.cancel();
+      this.settle(
+        {
+          kind: 'CALIBRATION_OBSERVED',
+          tool,
+          outcome: {kind: 'OBSERVATION_CANCELLED', boardMayStillBeCalibrating: true},
+        },
+        this.runningOrigin ?? {
+          sessionId: this.phase.sessionId,
+          physicalGeneration: -1,
+          mspEpoch: -1,
+          settledMspEpoch: -1,
+        },
+      );
+      return;
+    }
     if (this.phase.kind !== 'CONFIRMING') {
       return;
     }
@@ -363,6 +484,7 @@ export class FcToolsController {
       // Provenance is captured BEFORE the transaction, so a detach or a
       // replacement during it cannot rewrite who the outcome belonged to.
       origin = this.captureOrigin(sessionId);
+      this.runningOrigin = origin;
       outcome = await this.runTransaction(sessionId, tool);
     } catch {
       outcome = {kind: 'UNCONFIRMED', tool};
@@ -370,12 +492,35 @@ export class FcToolsController {
       // settle() is idempotent per action (it refuses once the phase is
       // no longer RUNNING), so this cannot double-publish.
       this.settle(outcome, origin);
+      // Identity-guarded: a cancel that settled this run may already have
+      // let the NEXT one start, and clearing unconditionally would erase
+      // its provenance instead of this one's.
+      if (this.runningOrigin === origin) {
+        this.runningOrigin = undefined;
+      }
     }
     return outcome;
   }
 
   private async runTransaction(sessionId: string, tool: FcToolId): Promise<FcToolOutcome> {
     this.pruneObsoleteSessions();
+    /**
+     * A CALIBRATION IS NOT DISPATCHED HERE ANY MORE.
+     *
+     * The verified lifecycle does its own preflight - it proves the board
+     * is disarmed from the BOXIDS mapping and a fresh status frame, takes
+     * the scheduler's pause lease for the whole observation, and watches
+     * the arming-disable flags until the calibration provably ends. That
+     * is strictly more than the transaction below ever did, and running
+     * both would mean two exclusive operations fighting over one link.
+     *
+     * So Setup delegates, whole. What comes back is an OBSERVATION, and
+     * the ack that used to be reported as ACCEPTED is now just the first
+     * thing that happens inside it.
+     */
+    if (tool === 'ACC_CALIBRATION' || tool === 'MAG_CALIBRATION') {
+      return this.runVerifiedCalibration(sessionId, tool);
+    }
     const sessionKey = this.coordinator.getSessionKey(sessionId);
     const client = this.coordinator.getActiveMspClient(sessionId);
     const scheduler = this.coordinator.getTelemetryScheduler(sessionId);
@@ -536,6 +681,32 @@ export class FcToolsController {
         return result.error instanceof FcToolPreflightRejection
           ? {kind: 'REJECTED', tool, reason: result.error.reason}
           : {kind: 'FAILED', tool, error: result.error};
+    }
+  }
+
+  private async runVerifiedCalibration(
+    sessionId: string,
+    tool: 'ACC_CALIBRATION' | 'MAG_CALIBRATION',
+  ): Promise<FcToolOutcome> {
+    const sessionKey = this.coordinator.getSessionKey(sessionId);
+    if (sessionKey === undefined) {
+      return {kind: 'SESSION_ENDED', tool};
+    }
+    const observation =
+      tool === 'ACC_CALIBRATION'
+        ? this.calibration.calibrateAccelerometer(sessionKey)
+        : this.calibration.calibrateMagnetometer(sessionKey);
+    this.runningCalibration = observation;
+    try {
+      const outcome = await observation.result;
+      return {kind: 'CALIBRATION_OBSERVED', tool, outcome};
+    } finally {
+      // Identity-guarded for the same reason confirm()'s origin is: a
+      // cancelled watch can outlive the phase it belonged to, and must
+      // never take the NEXT run's cancellation handle down with it.
+      if (this.runningCalibration === observation) {
+        this.runningCalibration = undefined;
+      }
     }
   }
 
