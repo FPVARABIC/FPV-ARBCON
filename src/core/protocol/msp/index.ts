@@ -47,6 +47,10 @@ export {
   MSP_RC_DEADBAND,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
+  MSP_BLACKBOX_CONFIG,
+  MSP_SET_BLACKBOX_CONFIG,
+  MSP_DATAFLASH_SUMMARY,
+  MSP_SDCARD_SUMMARY,
   MSP2_MOTOR_OUTPUT_REORDERING,
   MSP2_SET_MOTOR_OUTPUT_REORDERING,
   MSP2_SEND_DSHOT_COMMAND,
@@ -139,6 +143,29 @@ export {
 export type { MspAdvancedConfig } from './decoding/decodeAdvancedConfig';
 export { decodeMotorConfig } from './decoding/decodeMotorConfig';
 export type { MspMotorConfig } from './decoding/decodeMotorConfig';
+export {
+  decodeBlackboxConfig,
+  BLACKBOX_CONFIG_PAYLOAD_BYTES,
+} from './decoding/decodeBlackboxConfig';
+export type { MspBlackboxConfig } from './decoding/decodeBlackboxConfig';
+export {
+  decodeDataflashSummary,
+  DATAFLASH_FLAG_READY,
+  DATAFLASH_FLAG_SUPPORTED,
+  DATAFLASH_SUMMARY_PAYLOAD_BYTES,
+} from './decoding/decodeDataflashSummary';
+export type { MspDataflashSummary } from './decoding/decodeDataflashSummary';
+export {
+  decodeSdcardSummary,
+  SDCARD_FLAG_CONFIGURED,
+  SDCARD_SUMMARY_PAYLOAD_BYTES,
+} from './decoding/decodeSdcardSummary';
+export type { MspSdcardSummary } from './decoding/decodeSdcardSummary';
+export {
+  encodeBlackboxConfig,
+  BLACKBOX_CONFIG_WRITE_BYTES,
+} from './encoding/encodeBlackboxConfig';
+export type { BlackboxConfigWrite } from './encoding/encodeBlackboxConfig';
 export { decodeMotor3dConfig } from './decoding/decodeMotor3dConfig';
 export type { MspMotor3dConfig } from './decoding/decodeMotor3dConfig';
 export {

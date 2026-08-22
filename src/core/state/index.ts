@@ -313,3 +313,37 @@ export type {
 } from './motorStaticFacts';
 export {classifyGpsPositionQuality, isGpsPositionTrustworthyForRescue, GPS_PDOP_BANDS} from './gpsPositionQuality';
 export type {GpsPositionQuality} from './gpsPositionQuality';
+
+export {
+  classifyBlackboxConfig,
+  classifyBlackboxDevice,
+  classifyBlackboxSampleRate,
+  classifyDataflash,
+  classifySdcard,
+  dataflashEraseWouldApply,
+  isBlackboxFieldDisabled,
+  setBlackboxFieldDisabled,
+  BLACKBOX_DEVICE_NONE,
+  BLACKBOX_DEVICE_FLASH,
+  BLACKBOX_DEVICE_SDCARD,
+  BLACKBOX_DEVICE_SERIAL,
+  BLACKBOX_SAMPLE_RATE_MIN,
+  BLACKBOX_SAMPLE_RATE_MAX,
+  BLACKBOX_FIELD_BIT_MIN,
+  BLACKBOX_FIELD_BIT_MAX,
+  SDCARD_STATE_NOT_PRESENT,
+  SDCARD_STATE_FATAL,
+  SDCARD_STATE_CARD_INITIALIZING,
+  SDCARD_STATE_FILESYSTEM_INITIALIZING,
+  SDCARD_STATE_READY,
+} from './blackboxStorageSemantics';
+export type {
+  BlackboxConfiguration,
+  BlackboxDeviceSelection,
+  BlackboxLoggingDevice,
+  BlackboxSampleRateSelection,
+  DataflashState,
+  DataflashStorage,
+  SdcardState,
+  SdcardStorage,
+} from './blackboxStorageSemantics';

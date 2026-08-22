@@ -140,6 +140,24 @@ export const MSP_SET_VOLTAGE_METER_CONFIG = 57;
 export const MSP_VOLTAGE_METERS = 128;
 export const MSP_CURRENT_METERS = 129;
 
+/**
+ * Blackbox / onboard-logging reads and the one configuration write.
+ *
+ * Command ids and payload shapes verified at the pinned Betaflight commit
+ * 7348054f268f0058574719c134e9f149565bb8ea (API 1.47) and re-checked
+ * byte-for-byte against master (API 1.49). API 1.48 has no reachable
+ * source and is NOT VERIFIED for this group.
+ *
+ * MSP_DATAFLASH_ERASE (72) is DELIBERATELY ABSENT. It is a destructive
+ * asynchronous operation whose completion is only observable by polling
+ * MSP_DATAFLASH_SUMMARY, and it will be declared alongside the controller
+ * that owns its lifecycle - not ahead of it, where anything could send it.
+ */
+export const MSP_DATAFLASH_SUMMARY = 70;
+export const MSP_SDCARD_SUMMARY = 79;
+export const MSP_BLACKBOX_CONFIG = 80;
+export const MSP_SET_BLACKBOX_CONFIG = 81;
+
 /** Betaflight 2025.12.2 / MSP API 1.47 on-screen-display configuration.
  * MSP_OSD_CONFIG returns the complete layout/settings snapshot,
  * MSP_SET_OSD_CONFIG writes one changed group, and MSP_OSD_CANVAS reports
