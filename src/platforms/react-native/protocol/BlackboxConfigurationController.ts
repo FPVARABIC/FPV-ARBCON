@@ -43,7 +43,6 @@ import {
   decodeAdvancedConfig,
   decodeBlackboxConfig,
   decodeDataflashSummary,
-  decodeFeatureConfig,
   decodeSdcardSummary,
   encodeAdvancedConfigDebugMode,
   encodeBlackboxConfig,
@@ -51,7 +50,6 @@ import {
   MSP_BLACKBOX_CONFIG,
   MSP_DATAFLASH_SUMMARY,
   MSP_EEPROM_WRITE,
-  MSP_FEATURE_CONFIG,
   MSP_SDCARD_SUMMARY,
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_BLACKBOX_CONFIG,
@@ -175,8 +173,23 @@ export interface BlackboxSnapshot {
   readonly configuration: BlackboxConfiguration;
   readonly dataflash: DataflashStorage;
   readonly sdcard: SdcardStorage;
-  /** FEATURE_BLACKBOX, which is NOT the same as the build supporting it. */
-  readonly blackboxFeatureEnabled: boolean;
+  /**
+   * THERE IS NO `blackboxFeatureEnabled` HERE, AND THAT IS THE FIX.
+   *
+   * An earlier version of this snapshot read MSP_FEATURE_CONFIG and
+   * reported bit 19 as FEATURE_BLACKBOX. No such feature exists:
+   * `features_e` (src/main/config/feature.h) runs
+   * ... FEATURE_OSD = 1 << 18, FEATURE_CHANNEL_FORWARDING = 1 << 20 ...
+   * at BOTH pinned revisions, bit 19 is an unused gap, and no member of
+   * that enum mentions blackbox. blackbox.c consults exactly one feature,
+   * FEATURE_GPS, and that is for the GPS field.
+   *
+   * The firmware gates logging on the CONFIGURED DEVICE alone - NONE
+   * means nothing is written, anything else means it is - so that is the
+   * only question worth asking, and `configuration.device` already
+   * answers it. Reading a meaningless bit produced a confident, false
+   * "logging is switched off" on every real board.
+   */
   readonly debugMode: number;
   readonly debugModeCount: number;
   /** Needed later to label logging rates; carried, never interpreted here. */
@@ -197,6 +210,34 @@ export interface BlackboxOwnedDraft {
   readonly disabledFieldsMask: number;
   readonly debugMode: number;
 }
+
+/**
+ * WHERE A SAVE HAS ACTUALLY GOT TO, published as it happens.
+ *
+ * The screen has to name the current step, and it must name the REAL one.
+ * Without this it could only show a single spinner for the whole sequence,
+ * or - far worse - animate through four invented captions on a timer while
+ * the board was still on the first. Only the controller knows, so only the
+ * controller says.
+ *
+ * This is an observation seam and nothing else: no step can be skipped,
+ * reordered or refused through it, and a caller that passes no observer
+ * changes the sequence not at all.
+ */
+export type BlackboxSaveProgress =
+  /** The SET frame is on the wire. */
+  | 'SENDING'
+  /** Reading the configuration back, before anything is persisted. */
+  | 'VERIFYING_APPLY'
+  /** The readback matched; EEPROM write and reboot request. */
+  | 'PERSISTING';
+
+/** Likewise for the erase, whose two phases look identical from outside. */
+export type BlackboxEraseProgress =
+  /** The destructive command is out; nothing is known about it yet. */
+  | 'REQUESTED'
+  /** It was acknowledged and the volume is being watched. */
+  | 'OBSERVING';
 
 /** The stage a save stopped at, for a message that names the real step. */
 export type BlackboxSaveStage =
@@ -407,6 +448,7 @@ export class BlackboxConfigurationController {
     key: SetupUiSessionKey,
     observed: BlackboxSnapshot,
     draft: BlackboxOwnedDraft,
+    onProgress?: (progress: BlackboxSaveProgress) => void,
   ): Promise<BlackboxSaveOutcome> {
     if (!observed.config.supported) {
       return {kind: 'REJECTED', reason: 'BLACKBOX_UNSUPPORTED'};
@@ -468,6 +510,7 @@ export class BlackboxConfigurationController {
           );
 
           // (2) WRITE, carrying the unowned fields back unchanged.
+          onProgress?.('SENDING');
           await this.writeOnce(
             requester,
             MSP_SET_BLACKBOX_CONFIG,
@@ -484,6 +527,7 @@ export class BlackboxConfigurationController {
 
           // (3) MANDATORY READBACK. This is the only thing that separates
           //     "the frame was accepted" from "the value changed".
+          onProgress?.('VERIFYING_APPLY');
           this.assertLive(key, client, epoch);
           const afterWrite = decodeBlackboxConfig(
             (await requester.request(MSP_BLACKBOX_CONFIG, EMPTY, V1)).payload,
@@ -525,6 +569,7 @@ export class BlackboxConfigurationController {
           }
 
           // (5) Only now may anything be persisted.
+          onProgress?.('PERSISTING');
           this.assertLive(key, client, epoch);
           await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
 
@@ -610,9 +655,10 @@ export class BlackboxConfigurationController {
   eraseDataflash(
     key: SetupUiSessionKey,
     observed: BlackboxSnapshot,
+    onProgress?: (progress: BlackboxEraseProgress) => void,
   ): BlackboxEraseObservation {
     const signal = {cancelled: false};
-    const result = this.runErase(key, observed, signal);
+    const result = this.runErase(key, observed, signal, onProgress);
     return {
       result,
       cancel: () => {
@@ -625,6 +671,7 @@ export class BlackboxConfigurationController {
     key: SetupUiSessionKey,
     observed: BlackboxSnapshot,
     signal: {cancelled: boolean},
+    onProgress?: (progress: BlackboxEraseProgress) => void,
   ): Promise<BlackboxEraseOutcome> {
     /**
      * PRECONDITIONS ARE CHECKED AGAINST THE PERSISTED CONFIGURATION, never
@@ -679,7 +726,11 @@ export class BlackboxConfigurationController {
           this.assertLive(key, client, epoch);
           // The command starts an asynchronous sector erase and returns.
           // Its acknowledgement is not a result.
+          onProgress?.('REQUESTED');
           await requester.request(MSP_DATAFLASH_ERASE, EMPTY, V1);
+          // Acknowledged. From here the only thing that can end this is an
+          // observation of the volume itself.
+          onProgress?.('OBSERVING');
           return this.pollUntilErased(key, client, epoch, requester, {
             signal,
             startedAt,
@@ -687,11 +738,32 @@ export class BlackboxConfigurationController {
         },
       });
       if (outcome.status === 'SUCCEEDED') return outcome.result;
-      if (outcome.status === 'SESSION_ENDED') return {kind: 'LINK_LOST'};
-      if (outcome.status === 'OUTCOME_UNKNOWN') {
-        // The erase command itself may or may not have reached the board.
-        // Either way the local watch is over and the board owns the rest.
-        return {kind: 'OBSERVATION_CANCELLED', boardMayStillBeErasing: true};
+      /**
+       * WHO STOPPED THIS - us, or the link? The two answers get different
+       * sentences on screen ("we stopped watching, the board may still be
+       * erasing" versus "the connection was lost, we cannot confirm
+       * anything"), so they must not be decided by which internal error
+       * happened to surface.
+       *
+       * Cancellation is the one fact held LOCALLY and with certainty: the
+       * caller either set the signal or did not, and no transport failure
+       * can change that. So it decides, and the link is what is left.
+       *
+       * PRECEDENCE, stated rather than left to a race: an explicit
+       * cancellation wins even if the link also died in the same turn.
+       * That direction is deliberate - "the app stopped watching, the
+       * board may still be erasing" stays true whatever the link did,
+       * while "the connection was lost" would be a claim about hardware
+       * we did not observe. The reverse precedence can assert something
+       * false; this one cannot.
+       */
+      if (
+        outcome.status === 'SESSION_ENDED' ||
+        outcome.status === 'OUTCOME_UNKNOWN'
+      ) {
+        return signal.cancelled
+          ? {kind: 'OBSERVATION_CANCELLED', boardMayStillBeErasing: true}
+          : {kind: 'LINK_LOST'};
       }
       return outcome.error instanceof BlackboxPreflightError
         ? {kind: 'REJECTED', reason: outcome.error.reason}
@@ -728,9 +800,20 @@ export class BlackboxConfigurationController {
       try {
         this.assertLive(key, client, epoch);
       } catch (error) {
+        /**
+         * THE SAME QUESTION AGAIN: did WE stop, or did the LINK?
+         *
+         * APP_BACKGROUNDED is the app losing the ability to watch while
+         * the cable, the port and the board may all be perfectly fine.
+         * Reporting that as a lost connection would state something about
+         * the hardware that was never observed, so it takes the sentence
+         * that is actually true - we stopped, the board may still be
+         * erasing. DISCONNECTED and LINK_RECOVERING both mean the board
+         * is out of sight, which is what LINK_LOST says.
+         */
         return error instanceof BlackboxPreflightError &&
-          error.reason === 'DISCONNECTED'
-          ? {kind: 'LINK_LOST'}
+          error.reason === 'APP_BACKGROUNDED'
+          ? {kind: 'OBSERVATION_CANCELLED', boardMayStillBeErasing: true}
           : {kind: 'LINK_LOST'};
       }
       let flash: DataflashStorage;
@@ -768,9 +851,6 @@ export class BlackboxConfigurationController {
   private async readSnapshot(
     requester: MspRequester,
   ): Promise<BlackboxSnapshot> {
-    const feature = decodeFeatureConfig(
-      (await requester.request(MSP_FEATURE_CONFIG, EMPTY, V1)).payload,
-    );
     const config = decodeBlackboxConfig(
       (await requester.request(MSP_BLACKBOX_CONFIG, EMPTY, V1)).payload,
     );
@@ -788,10 +868,6 @@ export class BlackboxConfigurationController {
       configuration: classifyBlackboxConfig(config),
       dataflash: classifyDataflash(dataflash),
       sdcard: classifySdcard(sdcard),
-      blackboxFeatureEnabled: featureEnabled(
-        feature.enabledFeaturesRaw,
-        FEATURE_BLACKBOX_BIT,
-      ),
       debugMode: advanced.debugMode,
       debugModeCount: advanced.debugModeCount,
       pidProcessDenom: advanced.pidProcessDenom,
@@ -887,14 +963,6 @@ export class BlackboxConfigurationController {
       },
     );
   }
-}
-
-/** FEATURE_BLACKBOX - bit 19 of the feature mask at the pinned authority. */
-const FEATURE_BLACKBOX_BIT = 19;
-
-function featureEnabled(mask: number, bit: number): boolean {
-  // eslint-disable-next-line no-bitwise -- a feature mask IS a bit field.
-  return ((mask >>> bit) & 1) === 1;
 }
 
 export const blackboxConfigurationController =

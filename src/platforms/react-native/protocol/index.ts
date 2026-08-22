@@ -160,6 +160,31 @@ export type {
   FailsafeConfigurationControllerOptions,
 } from './FailsafeConfigurationController';
 export {
+  BlackboxConfigurationController,
+  blackboxConfigurationController,
+  BLACKBOX_ERASE_ABSOLUTE_DEADLINE_MS,
+  BLACKBOX_ERASE_POLL_INTERVAL_MS,
+} from './BlackboxConfigurationController';
+export type {
+  BlackboxBlockReason,
+  BlackboxClock,
+  BlackboxEraseObservation,
+  BlackboxEraseOutcome,
+  BlackboxEraseProgress,
+  BlackboxEraseRefusal,
+  BlackboxLoadOutcome,
+  BlackboxOwnedDraft,
+  BlackboxPendingPersistence,
+  BlackboxPersistenceOutcome,
+  BlackboxSaveOutcome,
+  BlackboxSaveProgress,
+  BlackboxSaveStage,
+  BlackboxSnapshot,
+  BlackboxConfigurationControllerOptions,
+  BlackboxSessionCoordinator,
+  BlackboxAppStateOwner,
+} from './BlackboxConfigurationController';
+export {
   PowerConfigurationController,
   powerConfigurationController,
 } from './PowerConfigurationController';

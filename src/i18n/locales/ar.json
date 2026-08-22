@@ -972,7 +972,8 @@
     "presets": "الحزم الجاهزة",
     "cli": "سطر الأوامر",
     "unavailable": "غير متاح بعد",
-    "barAccessibilityLabel": "شريط التنقل الرئيسي"
+    "barAccessibilityLabel": "شريط التنقل الرئيسي",
+    "blackbox": "تسجيل الرحلات"
   },
   "motorsScreen": {
     "eyebrow": "مختبر العتاد",
@@ -1713,6 +1714,152 @@
       "receiver": "جهاز الاستقبال",
       "gps": "نظام GPS",
       "sensors": "المستشعرات"
+    }
+  },
+  "blackbox": {
+    "title": "تسجيل الرحلات",
+    "subtitle": "تسجيل الرحلات (Blackbox) يكتب بيانات الطيران على ذاكرة الطائرة لتحليلها بعد الهبوط.",
+    "loading": "جارٍ قراءة إعدادات التسجيل والتخزين…",
+    "loadFailedTitle": "تعذرت قراءة حالة التسجيل",
+    "loadFailedBody": "لم تصل قراءة كاملة من متحكم الطيران.",
+    "reread": "إعادة القراءة",
+    "unsupportedTitle": "هذا الـFirmware لا يدعم تسجيل الرحلات.",
+    "unsupportedBody": "لا توجد إعدادات تسجيل على هذه اللوحة. لتفعيلها تحتاج إصدار برنامج ثابت مبنيًا مع دعم التسجيل.",
+    "featureDisabled": "لا توجد وجهة تسجيل محددة، فلن يكتب المتحكم أي سجل. اختر وجهة من إعدادات التسجيل بالأسفل.",
+    "statusTitle": "حالة التسجيل",
+    "destinationLabel": "وجهة التسجيل",
+    "destinationAccessible": "وجهة التسجيل الحالية: {{value}}",
+    "rateLabel": "معدّل التسجيل",
+    "rateAccessible": "معدّل التسجيل الحالي: {{value}}",
+    "draftPending": "سيتم استخدام {{value}} بعد الحفظ وإعادة التشغيل.",
+    "storageTitle": "التخزين",
+    "serialOnly": "التسجيل متاح عبر المنفذ التسلسلي فقط.",
+    "flashTitle": "الذاكرة الداخلية",
+    "sdTitle": "كرت SD",
+    "usedOfTotal": "{{used}} مستخدم من {{total}}",
+    "freeOfTotal": "متاح للتسجيل {{free}} من {{total}}",
+    "sdFreeIsContiguous": "المساحة المتاحة هي أكبر مساحة متصلة يمكن لملف تسجيل جديد أن يشغلها.",
+    "sdDiagnostic": "تشخيص: حالة {{state}} · خطأ نظام الملفات {{error}}",
+    "settingsTitle": "إعدادات التسجيل",
+    "settingsHint": "تُكتب هذه القيم إلى المتحكم ثم تُقرأ للتأكد، وبعدها يُعاد تشغيله.",
+    "deviceField": "وجهة التسجيل",
+    "rateField": "معدّل التسجيل",
+    "rateHelper": "كسر من دورة التحكم. لا يعرض التطبيق تردّدًا بالكيلوهرتز لأن معدل الجايرو غير متاح في هذه القراءة.",
+    "debugModeField": "وضع التشخيص",
+    "debugModeHelper": "يحدد الحقول الإضافية التي يسجلها المتحكم تحت debug.",
+    "debugModeUnknown": "وضع غير معروف (raw {{raw}})",
+    "advancedTitle": "خيارات متقدمة",
+    "fieldsHint": "حقول التشخيص المضمّنة في كل سجل. إيقاف حقل يصغّر حجم الملف ويحذف بياناته من التحليل.",
+    "fieldAccessible": "تضمين الحقل {{name}}",
+    "pendingSummary": "تغيّرت إعدادات التسجيل",
+    "pendingDetail": "يُكتب التغيير، ثم يُقرأ للتأكد، ثم يُحفظ ويُعاد تشغيل المتحكم",
+    "saveAction": "حفظ وإعادة تشغيل",
+    "discardAction": "تجاهل",
+    "eraseAction": "مسح الذاكرة",
+    "eraseAccessible": "مسح جميع سجلات الذاكرة الداخلية",
+    "eraseNeedsSavedDevice": "احفظ اختيار الذاكرة الداخلية أولًا قبل أن تتمكن من مسحها.",
+    "eraseStarting": "جارٍ بدء المسح…",
+    "eraseRunning": "جارٍ مسح الذاكرة…",
+    "eraseConfirmTitle": "مسح جميع سجلات الذاكرة الداخلية؟",
+    "eraseConfirmBody": "سيتم حذف جميع سجلات Blackbox من الذاكرة الداخلية نهائيًا.",
+    "eraseConfirmHint": "تأكد أنك لا تحتاج السجلات الحالية قبل المتابعة.",
+    "eraseConfirmCancel": "إلغاء",
+    "eraseConfirmAccept": "مسح الذاكرة",
+    "chipFeatureOn": "التسجيل مهيّأ",
+    "chipFeatureOff": "لا يوجد تسجيل",
+    "units": {
+      "bytes": "بايت",
+      "kibibytes": "KiB",
+      "mebibytes": "MiB",
+      "gibibytes": "GiB",
+      "tebibytes": "TiB"
+    },
+    "device": {
+      "NONE": "بدون تسجيل",
+      "FLASH": "الذاكرة الداخلية",
+      "SDCARD": "كرت SD",
+      "SERIAL": "منفذ تسلسلي",
+      "UNKNOWN": "وجهة غير معروفة لهذا الإصدار (raw {{raw}})"
+    },
+    "rate": {
+      "full": "كامل",
+      "fraction": "1/{{divider}}",
+      "unknown": "معدّل غير معروف (raw {{raw}})"
+    },
+    "flashState": {
+      "UNSUPPORTED": "لا توجد ذاكرة داخلية على هذه اللوحة.",
+      "BUSY_OR_NOT_READY": "الذاكرة الداخلية مشغولة الآن.",
+      "READY_EMPTY": "فارغة",
+      "READY_WITH_DATA": "تحتوي سجلات",
+      "READY_FULL": "ممتلئة — لا مساحة لتسجيل جديد.",
+      "INCONSISTENT": "تعذر التحقق من حالة الذاكرة."
+    },
+    "sdState": {
+      "NOT_PRESENT": "لا يوجد كرت SD",
+      "FATAL": "عطل في كرت SD — أعد تشغيل المتحكم.",
+      "CARD_INITIALIZING": "جارٍ تهيئة الكرت…",
+      "FILESYSTEM_INITIALIZING": "جارٍ تهيئة نظام الملفات…",
+      "READY": "جاهز",
+      "UNKNOWN": "حالة كرت SD غير معروفة."
+    },
+    "saveStage": {
+      "SENDING": "جارٍ إرسال الإعدادات…",
+      "VERIFYING_APPLY": "جارٍ التحقق من تطبيقها…",
+      "PERSISTING": "جارٍ الحفظ وإعادة التشغيل…",
+      "VERIFYING_AFTER_REBOOT": "جارٍ التحقق بعد إعادة التشغيل…"
+    },
+    "outcome": {
+      "noChanges": "لا توجد تغييرات للحفظ.",
+      "saved": "تم الحفظ، وتطابقت القراءة بعد إعادة التشغيل.",
+      "readbackMismatch": "لم يطبّق المتحكم التغيير. لم يتم الحفظ. قد يحدث هذا إذا كان Blackbox يسجّل حاليًا.",
+      "persistenceMismatch": "عاد المتحكم للعمل، لكن الإعدادات لا تطابق ما طلبته.",
+      "staleSession": "لم تبدأ جلسة جديدة بعد؛ لا يمكن التحقق من الحفظ على الجلسة نفسها.",
+      "unconfirmed": "انقطع التأكيد أثناء الكتابة. أعد القراءة قبل أي تعديل آخر.",
+      "sessionEnded": "انتهت الجلسة أثناء العملية.",
+      "failed": "فشلت العملية قبل التحقق."
+    },
+    "erase": {
+      "succeeded": "الذاكرة فارغة.",
+      "timedOut": "لم نتمكن من تأكيد انتهاء المسح خلال المهلة. قد يظل المتحكم يعمل على العملية.",
+      "linkLost": "فُقد الاتصال أثناء المسح. لا يمكننا تأكيد النتيجة الآن.",
+      "observationCancelled": "توقفت متابعة العملية في التطبيق. قد يستمر المتحكم في مسح الذاكرة.",
+      "failed": "تعذر تنفيذ المسح."
+    },
+    "eraseRefusal": {
+      "BLACKBOX_UNSUPPORTED": "هذا الـFirmware لا يدعم تسجيل الرحلات.",
+      "DEVICE_NOT_FLASH": "وجهة التسجيل المحفوظة ليست الذاكرة الداخلية، فلن يمسح المتحكم شيئًا.",
+      "DATAFLASH_UNSUPPORTED": "لا توجد ذاكرة داخلية على هذه اللوحة.",
+      "DATAFLASH_NOT_READY": "الذاكرة الداخلية ليست جاهزة الآن.",
+      "ALREADY_EMPTY": "الذاكرة فارغة بالفعل."
+    },
+    "blockReason": {
+      "DISCONNECTED": "انتهى الاتصال. أعد الاتصال ثم أعد القراءة.",
+      "IDENTIFYING": "ما زال التطبيق يتحقق من هوية متحكم الطيران.",
+      "UNSUPPORTED_FIRMWARE": "إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لهذه الشاشة.",
+      "APP_BACKGROUNDED": "أعد التطبيق إلى الواجهة.",
+      "LINK_RECOVERING": "الرابط يتعافى. انتظر ثم أعد القراءة.",
+      "OPERATION_IN_PROGRESS": "توجد عملية تسجيل أخرى قيد التنفيذ.",
+      "BLACKBOX_UNSUPPORTED": "هذا الـFirmware لا يدعم تسجيل الرحلات.",
+      "NOT_READY_TO_EDIT": "لم تكتمل القراءة اللازمة للتعديل.",
+      "UNSUPPORTED_VALUE": "القيمة المختارة غير معروفة لهذا الإصدار."
+    },
+    "field": {
+      "PID": "PID",
+      "RC_COMMANDS": "أوامر الراديو",
+      "SETPOINT": "الهدف (Setpoint)",
+      "BATTERY": "البطارية",
+      "MAG": "البوصلة",
+      "ALTITUDE": "الارتفاع",
+      "RSSI": "قوة الإشارة",
+      "GYRO": "الجايرو المرشّح",
+      "ATTITUDE": "الاتجاه",
+      "ACC": "التسارع",
+      "DEBUG_LOG": "حقول التشخيص",
+      "MOTOR": "المحركات",
+      "GPS": "GPS",
+      "RPM": "دورات المحركات",
+      "GYROUNFILT": "الجايرو غير المرشّح",
+      "SERVO": "السيرفو"
     }
   }
 }

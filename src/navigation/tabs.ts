@@ -20,6 +20,7 @@ export type MainTabKey =
   | 'OSD'
   | 'VTX'
   | 'SENSORS'
+  | 'BLACKBOX'
   | 'PRESETS'
   | 'CLI';
 
@@ -109,6 +110,28 @@ export const MAIN_TABS: readonly MainTabDefinition[] = Object.freeze([
   Object.freeze({
     key: 'SENSORS' as const,
     labelKey: 'tabs.sensors',
+    implemented: true,
+  }),
+  /**
+   * WHY تسجيل الرحلات SITS HERE, between Sensors and Presets.
+   *
+   * It is a DIAGNOSTIC screen, and this end of the strip is where the
+   * diagnostic screens already are. Sensors answers "what is the aircraft
+   * measuring right now"; onboard logging answers "what did it measure
+   * while I was flying". Putting the live one and the recorded one next to
+   * each other is the grouping a pilot already has in their head, and it
+   * keeps logging out of the configuration run (Ports → Configurations →
+   * Receiver → PID → Modes → Failsafe → Power) where nothing depends on it.
+   *
+   * It is deliberately NOT near the front. A first-time operator sets the
+   * aircraft up before they have anything to log, and a destination that
+   * offers a destructive erase does not belong in front of them on the way
+   * to their first flight. It is equally deliberately BEFORE Presets and
+   * CLI, which are the expert/bulk end.
+   */
+  Object.freeze({
+    key: 'BLACKBOX' as const,
+    labelKey: 'tabs.blackbox',
     implemented: true,
   }),
   Object.freeze({

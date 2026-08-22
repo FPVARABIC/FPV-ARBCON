@@ -43,12 +43,21 @@ import type {
   SerialRoleKey,
 } from '../core/state/serialPortsModel';
 import type {
+  BlackboxBlockReason,
+  BlackboxEraseRefusal,
+  BlackboxSaveProgress,
   BoardAlignmentBlockReason,
   BoardAlignmentSaveStage,
   GpsBlockReason,
   PortsBlockReason,
 } from '../platforms/react-native/protocol';
 import type { BoardAlignmentAxis } from '../core/state/boardAlignmentModel';
+import type {
+  BlackboxLoggingDevice,
+  DataflashState,
+  SdcardState,
+} from '../core/state/blackboxStorageSemantics';
+import { BLACKBOX_FIELD_BITS } from '../core/state/blackboxPresentation';
 
 const REPO_ROOT = join(__dirname, '..', '..');
 const SCAN_ROOTS = [join(REPO_ROOT, 'src'), join(REPO_ROOT, 'App.tsx')];
@@ -263,6 +272,77 @@ const PORT_VALIDATION: Record<SerialPortsValidationCode, true> = {
   DUPLICATE_PORT_IDENTIFIER: true,
 };
 
+/* ------------------------------------------------------------------ *
+ * BLACKBOX / تسجيل الرحلات.
+ *
+ * Every one of these unions reaches the catalogue through a template, so
+ * a member added to the union without a string would render as its own
+ * key on a real board - the exact defect this whole gate exists for. The
+ * `Record<Union, true>` typing means `tsc` refuses the missing member and
+ * the test below refuses the missing translation.
+ * ------------------------------------------------------------------ */
+
+const BLACKBOX_BLOCK_REASONS: Record<BlackboxBlockReason, true> = {
+  DISCONNECTED: true,
+  IDENTIFYING: true,
+  UNSUPPORTED_FIRMWARE: true,
+  APP_BACKGROUNDED: true,
+  LINK_RECOVERING: true,
+  OPERATION_IN_PROGRESS: true,
+  BLACKBOX_UNSUPPORTED: true,
+  NOT_READY_TO_EDIT: true,
+  UNSUPPORTED_VALUE: true,
+};
+
+const BLACKBOX_ERASE_REFUSALS: Record<BlackboxEraseRefusal, true> = {
+  BLACKBOX_UNSUPPORTED: true,
+  DEVICE_NOT_FLASH: true,
+  DATAFLASH_UNSUPPORTED: true,
+  DATAFLASH_NOT_READY: true,
+  ALREADY_EMPTY: true,
+};
+
+/**
+ * The controller's three published stages plus the ONE the screen owns -
+ * the post-reboot readback, which no controller can report because it
+ * happens on a session the controller was never handed.
+ */
+const BLACKBOX_SAVE_STAGES: Record<
+  BlackboxSaveProgress | 'VERIFYING_AFTER_REBOOT',
+  true
+> = {
+  SENDING: true,
+  VERIFYING_APPLY: true,
+  PERSISTING: true,
+  VERIFYING_AFTER_REBOOT: true,
+};
+
+const BLACKBOX_DEVICES: Record<BlackboxLoggingDevice, true> = {
+  NONE: true,
+  FLASH: true,
+  SDCARD: true,
+  SERIAL: true,
+  UNKNOWN: true,
+};
+
+const BLACKBOX_FLASH_STATES: Record<DataflashState, true> = {
+  UNSUPPORTED: true,
+  BUSY_OR_NOT_READY: true,
+  READY_EMPTY: true,
+  READY_WITH_DATA: true,
+  READY_FULL: true,
+  INCONSISTENT: true,
+};
+
+const BLACKBOX_SD_STATES: Record<SdcardState, true> = {
+  NOT_PRESENT: true,
+  FATAL: true,
+  CARD_INITIALIZING: true,
+  FILESYSTEM_INITIALIZING: true,
+  READY: true,
+  UNKNOWN: true,
+};
+
 /** Families whose members are produced by a template at runtime. */
 const ENUMERATED_FAMILIES: readonly {
   readonly prefix: string;
@@ -302,6 +382,50 @@ const ENUMERATED_FAMILIES: readonly {
   {
     prefix: 'portsConfiguration.validation',
     members: Object.keys(PORT_VALIDATION),
+  },
+  {
+    prefix: 'blackbox.blockReason',
+    members: Object.keys(BLACKBOX_BLOCK_REASONS),
+  },
+  {
+    prefix: 'blackbox.eraseRefusal',
+    members: Object.keys(BLACKBOX_ERASE_REFUSALS),
+  },
+  { prefix: 'blackbox.saveStage', members: Object.keys(BLACKBOX_SAVE_STAGES) },
+  { prefix: 'blackbox.device', members: Object.keys(BLACKBOX_DEVICES) },
+  { prefix: 'blackbox.flashState', members: Object.keys(BLACKBOX_FLASH_STATES) },
+  { prefix: 'blackbox.sdState', members: Object.keys(BLACKBOX_SD_STATES) },
+  /* The sixteen flightLogFieldSelect_e names, straight from the module
+     that mirrors the firmware enum - so a field added there without a
+     label fails here rather than rendering as `blackbox.field.X`. */
+  { prefix: 'blackbox.field', members: [...BLACKBOX_FIELD_BITS] },
+  { prefix: 'blackbox.rate', members: ['full', 'fraction', 'unknown'] },
+  {
+    prefix: 'blackbox.units',
+    members: ['bytes', 'kibibytes', 'mebibytes', 'gibibytes', 'tebibytes'],
+  },
+  {
+    prefix: 'blackbox.outcome',
+    members: [
+      'noChanges',
+      'saved',
+      'readbackMismatch',
+      'persistenceMismatch',
+      'staleSession',
+      'unconfirmed',
+      'sessionEnded',
+      'failed',
+    ],
+  },
+  {
+    prefix: 'blackbox.erase',
+    members: [
+      'succeeded',
+      'timedOut',
+      'linkLost',
+      'observationCancelled',
+      'failed',
+    ],
   },
   {
     prefix: 'portsConfiguration.outcome',

@@ -553,6 +553,42 @@ const CONTRACT: readonly ContractRow[] = [
       "the Cancel button - 'saving' is in canCancel precisely because " +
       'isBusy also blocks navigation off this screen',
   },
+  /**
+   * THE ONE BUSY PHASE IN THIS APPLICATION THAT IS NOT ONE REQUEST.
+   *
+   * Every other row waits on a single promise and is bounded by whatever
+   * bounds that promise. Erasing the onboard flash is not like that:
+   * MSP_DATAFLASH_ERASE starts an asynchronous sector erase and returns
+   * immediately, and completion is observable ONLY by re-reading
+   * MSP_DATAFLASH_SUMMARY until the volume says READY with nothing
+   * stored. The response deadline that bounds every other row bounds one
+   * poll here, not the operation - so the operation carries an absolute
+   * deadline of its own, and the screen renders whatever the controller
+   * decides rather than running a timer.
+   */
+  {
+    operation: 'Blackbox erase: ERASING (poll until the volume reports empty)',
+    file: 'src/ui/screens/BlackboxScreen.tsx',
+    entersBusy:
+      "beginErase() sets phase 'ERASING' after the operator confirms, and " +
+      'renders the controller-published step plus real elapsed time',
+    success:
+      'the controller returns SUCCEEDED, which it can only do on a ' +
+      'READY_EMPTY reading of the volume itself',
+    failure:
+      'TIMED_OUT, LINK_LOST, OBSERVATION_CANCELLED, REFUSED and REJECTED ' +
+      'are all terminal and each gets its own sentence - none of them is ' +
+      'reported as a plain failed erase',
+    bound: {
+      kind: 'DEADLINE',
+      file: 'src/platforms/react-native/protocol/BlackboxConfigurationController.ts',
+      constant: 'BLACKBOX_ERASE_ABSOLUTE_DEADLINE_MS',
+    },
+    cancel:
+      'leaving the screen releases the observation and sends nothing - ' +
+      'the firmware has no stop command, so the board may still be ' +
+      'erasing and the copy says exactly that',
+  },
 ];
 
 /**
@@ -560,8 +596,16 @@ const CONTRACT: readonly ContractRow[] = [
  * Listed explicitly rather than matched by pattern: each one is a
  * DECISION that the screen has no timer of its own because it does not
  * need one, and a new screen must make that decision deliberately.
+ *
+ * BlackboxScreen is here for its SAVING/VERIFYING phases, which are
+ * ordinary awaited controller calls. Its ERASING phase is different
+ * enough to have a row of its own in CONTRACT above - it is the only
+ * screen phase in this application that waits on a REPEATED observation
+ * rather than a single request, and the thing that ends it is an
+ * absolute deadline rather than one response.
  */
 const SCREEN_PHASE_FILES: readonly string[] = [
+  'src/ui/screens/BlackboxScreen.tsx',
   'src/ui/screens/ModesScreen.tsx',
   'src/ui/screens/OsdScreen.tsx',
   'src/ui/screens/PortsScreen.tsx',

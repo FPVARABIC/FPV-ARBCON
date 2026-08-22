@@ -23,6 +23,7 @@ import type {MainTabKey} from '../../../navigation/tabs';
  *   monitor            OSD — the pilot's screen
  *   antenna            VTX — video transmitter
  *   activity           Sensors — live waveforms
+ *   hard-drive         Blackbox — the storage the flight is written to
  *   package            Presets
  *   square-terminal    CLI
  */
@@ -40,6 +41,7 @@ export const TAB_ICONS: Record<MainTabKey, IconName> = {
   OSD: 'monitor',
   VTX: 'antenna',
   SENSORS: 'activity',
+  BLACKBOX: 'hard-drive',
   PRESETS: 'package',
   CLI: 'square-terminal',
 };

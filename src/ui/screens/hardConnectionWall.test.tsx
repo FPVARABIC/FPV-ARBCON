@@ -78,6 +78,7 @@ jest.mock('./PowerBatteryScreen', () => mockProbe('POWER'));
 jest.mock('./OsdScreen', () => mockProbe('OSD'));
 jest.mock('./VideoTransmitterScreen', () => mockProbe('VTX'));
 jest.mock('./SensorsScreen', () => mockProbe('SENSORS'));
+jest.mock('./BlackboxScreen', () => mockProbe('BLACKBOX'));
 jest.mock('./PresetsScreen', () => mockProbe('PRESETS'));
 jest.mock('./CliScreen', () => mockProbe('CLI'));
 /* Home drives the connection itself; the transport bridge underneath it
@@ -106,6 +107,7 @@ const FC_SCREENS = [
   'OSD',
   'VTX',
   'SENSORS',
+  'BLACKBOX',
   'PRESETS',
   'CLI',
 ] as const;

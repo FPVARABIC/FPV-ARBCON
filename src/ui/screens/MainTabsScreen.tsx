@@ -62,6 +62,7 @@ import PowerBatteryScreen from './PowerBatteryScreen';
 import OsdScreen from './OsdScreen';
 import VideoTransmitterScreen from './VideoTransmitterScreen';
 import SensorsScreen from './SensorsScreen';
+import BlackboxScreen from './BlackboxScreen';
 import PresetsScreen from './PresetsScreen';
 import CliScreen from './CliScreen';
 import {
@@ -216,6 +217,10 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
   );
   const reportVtxDirty = useCallback(
     (dirty: boolean) => reportDirty('VTX', dirty),
+    [reportDirty],
+  );
+  const reportBlackboxDirty = useCallback(
+    (dirty: boolean) => reportDirty('BLACKBOX', dirty),
     [reportDirty],
   );
 
@@ -571,6 +576,13 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     }),
     [selectTab, sessionKey],
   );
+  const blackboxProps = useMemo(
+    () => ({
+      sessionKey,
+      onDirtyChange: reportBlackboxDirty,
+    }),
+    [reportBlackboxDirty, sessionKey],
+  );
   const presetsProps = useMemo(
     () => ({
       sessionKey,
@@ -701,6 +713,14 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'SENSORS'}
             Screen={SensorsScreen as never}
             screenProps={sensorsProps}
+          />
+        ) : null}
+        {mountedTabs.includes('BLACKBOX') ? (
+          <TabPanel
+            tabKey="BLACKBOX"
+            active={activeTab === 'BLACKBOX'}
+            Screen={BlackboxScreen as never}
+            screenProps={blackboxProps}
           />
         ) : null}
         {mountedTabs.includes('PRESETS') ? (

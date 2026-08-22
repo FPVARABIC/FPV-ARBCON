@@ -319,11 +319,13 @@ function controllerFor(
   options: {
     readonly clock?: BlackboxClock;
     readonly reboots?: {sessionId: string; reason: string}[];
+    /** Drives the APP_BACKGROUNDED path - see the erase cause tests. */
+    readonly appState?: {getPhase: () => 'ACTIVE' | 'APP_BACKGROUND'};
   } = {},
 ) {
   return new BlackboxConfigurationController({
     coordinator,
-    appStateOwner: {getPhase: () => 'ACTIVE'},
+    appStateOwner: options.appState ?? {getPhase: () => 'ACTIVE'},
     rebootLifecycle: {
       expectReboot: (sessionId, reason) => {
         options.reboots?.push({sessionId, reason});
@@ -349,12 +351,11 @@ const draftFrom = (
  * ================================================================== */
 
 describe('loading blackbox state', () => {
-  it('reads the five commands it needs and nothing it does not', async () => {
+  it('reads the four commands it needs and nothing it does not', async () => {
     const {fc, coordinator, key} = await connect();
     const loaded = await controllerFor(coordinator).load(key);
     expect(loaded.kind).toBe('LOADED');
     for (const command of [
-      MSP_FEATURE_CONFIG,
       MSP_BLACKBOX_CONFIG,
       MSP_DATAFLASH_SUMMARY,
       MSP_SDCARD_SUMMARY,
@@ -366,19 +367,41 @@ describe('loading blackbox state', () => {
     // and never reads it, and that MSP2_SENSOR_CONFIG_ACTIVE serves only the
     // virtual device we do not support. Neither is requested.
     expect(fc.requested).not.toContain(55);
+    /* MSP_FEATURE_CONFIG WAS THE FIFTH, and it is gone. Bit 19 was read as
+       FEATURE_BLACKBOX; no such feature exists in `features_e` at either
+       pinned revision, so the read produced a value that could only be
+       reported falsely. A command whose answer cannot be interpreted is a
+       command not worth sending. */
+    expect(fc.requested).not.toContain(MSP_FEATURE_CONFIG);
   });
 
-  it('separates firmware support, the feature flag and the storage states', async () => {
-    const {coordinator, key} = await connect();
+  /**
+   * THREE FACTS, NOT FOUR - AND THE MISSING ONE IS THE CORRECTION.
+   *
+   * This test used to assert a fourth: `blackboxFeatureEnabled`, taken
+   * from bit 19 of MSP_FEATURE_CONFIG and labelled FEATURE_BLACKBOX.
+   * There is no such feature. `features_e` in src/main/config/feature.h
+   * at both pinned revisions runs ... FEATURE_OSD = 1 << 18,
+   * FEATURE_CHANNEL_FORWARDING = 1 << 20 ...; bit 19 is an unused gap and
+   * no member of the enum mentions blackbox. The firmware gates logging
+   * on the configured DEVICE, which is the third assertion below.
+   *
+   * Dropping the assertion is not a relaxation: a claim that was never
+   * true stopped being made, and the production path suite proves the
+   * screen no longer tells a logging board that logging is off.
+   */
+  it('separates firmware support, the destination and the storage states', async () => {
+    const {fc, coordinator, key} = await connect();
     const loaded = await controllerFor(coordinator).load(key);
     if (loaded.kind !== 'LOADED') throw new Error(loaded.kind);
     const s = loaded.snapshot;
     expect(s.config.supported).toBe(true); // the BUILD has Blackbox
-    expect(s.blackboxFeatureEnabled).toBe(true); // FEATURE_BLACKBOX is on
     expect(s.configuration.device.device).toBe('FLASH'); // persisted device
     expect(s.dataflash.state).toBe('READY_WITH_DATA'); // storage truth
     expect(s.sdcard.configured).toBe(false); // no SD slot configured
     expect(s.sdcard.measurementsValid).toBe(false);
+    // And the feature mask is not consulted at all any more.
+    expect(fc.requested).not.toContain(MSP_FEATURE_CONFIG);
   });
 
   it('reports an unsupported build as a capability, not an error', async () => {
@@ -774,7 +797,21 @@ describe('erasing the onboard flash', () => {
     expect(settled.kind).toBe('OBSERVATION_CANCELLED');
   });
 
-  it('reports a lost link as a lost link, not as a finished erase', async () => {
+  /**
+   * WHY THESE FOUR TESTS EXIST, and what they replaced.
+   *
+   * The link-loss test used to accept EITHER 'LINK_LOST' OR
+   * 'OBSERVATION_CANCELLED', which meant it proved only that the erase had
+   * not claimed success. That is not enough, because the two outcomes get
+   * different sentences on screen: one tells the operator the connection
+   * went away, the other tells them the app stopped watching a board that
+   * may still be erasing. An assertion that accepts both cannot tell you
+   * whether the screen is about to say something false.
+   *
+   * The rule now under test: CANCELLATION IS A LOCAL FACT and decides;
+   * everything else that ends a watch without success is the link.
+   */
+  it('reports a lost link as a lost link, not as a stopped watch', async () => {
     const clock = new FakeClock();
     const {fc, coordinator, key, sessionId} = await connect({
       dataflashAfterErase: [dataflashFrame(0x02, SIXTEEN_MIB, EIGHT_MIB)],
@@ -787,8 +824,129 @@ describe('erasing the onboard flash', () => {
     fc.silent = true;
     await coordinator.deactivateMspSession?.(sessionId);
     const outcome = await observation.result;
-    expect(['LINK_LOST', 'OBSERVATION_CANCELLED']).toContain(outcome.kind);
-    expect(outcome.kind).not.toBe('SUCCEEDED');
+    // Nobody cancelled anything, so the app must not say it stopped.
+    expect(outcome.kind).toBe('LINK_LOST');
+  });
+
+  it('reports an explicit cancellation as a stopped watch, not a lost link', async () => {
+    const clock = new FakeClock();
+    const {coordinator, key} = await connect({dataflashAfterErase: []});
+    const controller = controllerFor(coordinator, {clock});
+    const loaded = await controller.load(key);
+    if (loaded.kind !== 'LOADED') throw new Error(loaded.kind);
+    const observation = controller.eraseDataflash(key, loaded.snapshot);
+    await sleep(20);
+    observation.cancel();
+    const outcome = await observation.result;
+    // The link was never touched. Saying it was lost would be false.
+    expect(outcome).toEqual({
+      kind: 'OBSERVATION_CANCELLED',
+      boardMayStillBeErasing: true,
+    });
+  });
+
+  /**
+   * THE ONE RACE THAT CANNOT BE SEPARATED, and its stated precedence.
+   *
+   * A cancellation and a dying link can become observable in the same
+   * event-loop turn; there is no ordering the controller can recover after
+   * the fact. So the precedence is decided rather than discovered:
+   * cancellation wins. That direction is chosen because
+   * OBSERVATION_CANCELLED's claim - the app stopped watching, the board may
+   * still be erasing - stays TRUE whatever the link did, while LINK_LOST
+   * asserts something about hardware that may not have happened. The
+   * reverse precedence can state a falsehood; this one cannot.
+   */
+  it('lets an explicit cancellation win a cancel-and-link-loss race', async () => {
+    const clock = new FakeClock();
+    const {fc, coordinator, key, sessionId} = await connect({
+      dataflashAfterErase: [dataflashFrame(0x02, SIXTEEN_MIB, EIGHT_MIB)],
+    });
+    const controller = controllerFor(coordinator, {clock});
+    const loaded = await controller.load(key);
+    if (loaded.kind !== 'LOADED') throw new Error(loaded.kind);
+    const observation = controller.eraseDataflash(key, loaded.snapshot);
+    await sleep(20);
+    // Both in the same turn, cancellation first.
+    observation.cancel();
+    fc.silent = true;
+    await coordinator.deactivateMspSession?.(sessionId);
+    const outcome = await observation.result;
+    expect(outcome.kind).toBe('OBSERVATION_CANCELLED');
+  });
+
+  /**
+   * BACKGROUNDING IS NOT A LOST LINK. The cable, the port and the board can
+   * all be fine while the app simply stops being able to watch. Reporting
+   * that as a lost connection would state something about the hardware that
+   * was never observed.
+   */
+  /**
+   * THE OTHER EXIT, and the reason it needs its own tests.
+   *
+   * Everything above leaves through the poll loop, which knows why it
+   * stopped. A link that dies BEFORE the poll starts - between taking
+   * ownership and the erase command landing - leaves through the operation
+   * coordinator instead, as SESSION_ENDED or OUTCOME_UNKNOWN, and those
+   * statuses carry no cause of their own. That mapping used to answer
+   * OBSERVATION_CANCELLED unconditionally, which told an operator the app
+   * had stopped watching when in fact the board had gone.
+   *
+   * Killing the session before the operation body runs lands exactly there.
+   */
+  it('reports a link that dies before the erase starts as a lost link', async () => {
+    const clock = new FakeClock();
+    const {fc, coordinator, key, sessionId} = await connect({
+      dataflashAfterErase: [],
+    });
+    const controller = controllerFor(coordinator, {clock});
+    const loaded = await controller.load(key);
+    if (loaded.kind !== 'LOADED') throw new Error(loaded.kind);
+    const observation = controller.eraseDataflash(key, loaded.snapshot);
+    // No await: the link dies while the operation is still being set up,
+    // so the failure surfaces at the coordinator rather than the poll.
+    fc.silent = true;
+    await coordinator.deactivateMspSession?.(sessionId);
+    const outcome = await observation.result;
+    expect(outcome.kind).toBe('LINK_LOST');
+    // And the destructive command never went out on a dead link.
+    expect(fc.requested).not.toContain(MSP_DATAFLASH_ERASE);
+  });
+
+  it('still says cancelled when the caller cancelled before the erase started', async () => {
+    const clock = new FakeClock();
+    const {fc, coordinator, key, sessionId} = await connect({
+      dataflashAfterErase: [],
+    });
+    const controller = controllerFor(coordinator, {clock});
+    const loaded = await controller.load(key);
+    if (loaded.kind !== 'LOADED') throw new Error(loaded.kind);
+    const observation = controller.eraseDataflash(key, loaded.snapshot);
+    observation.cancel();
+    fc.silent = true;
+    await coordinator.deactivateMspSession?.(sessionId);
+    const outcome = await observation.result;
+    expect(outcome.kind).toBe('OBSERVATION_CANCELLED');
+  });
+
+  it('reports backgrounding as a stopped watch, not a lost link', async () => {
+    const clock = new FakeClock();
+    const {coordinator, key} = await connect({dataflashAfterErase: []});
+    let phase: 'ACTIVE' | 'APP_BACKGROUND' = 'ACTIVE';
+    const controller = controllerFor(coordinator, {
+      clock,
+      appState: {getPhase: () => phase},
+    });
+    const loaded = await controller.load(key);
+    if (loaded.kind !== 'LOADED') throw new Error(loaded.kind);
+    const observation = controller.eraseDataflash(key, loaded.snapshot);
+    await sleep(20);
+    phase = 'APP_BACKGROUND';
+    const outcome = await observation.result;
+    expect(outcome).toEqual({
+      kind: 'OBSERVATION_CANCELLED',
+      boardMayStillBeErasing: true,
+    });
   });
 
   it('refuses a second operation while one is running', async () => {

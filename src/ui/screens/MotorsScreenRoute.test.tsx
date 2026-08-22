@@ -79,6 +79,7 @@ describe('Motors reachability after the single-app merge', () => {
       'OSD',
       'VTX',
       'SENSORS',
+      'BLACKBOX',
       'PRESETS',
       'CLI',
     ]);
