@@ -869,8 +869,9 @@ describe('MotorTestController - supported profile', () => {
     const harness = createHarness();
     await runSetup(harness);
 
-    // FOUR READS, AND NOT ONE MORE. The whole simplified chain is three
-    // configuration reads plus the box mapping. The safety monitor's own
+    // FIVE READS, AND NOT ONE MORE. The chain is three configuration
+    // reads the encoder needs, the mixer read the VIEW needs (M-D), and
+    // the box mapping. The safety monitor's own
     // MSP_STATUS_EX does not appear here because this suite injects a
     // controlled monitor stand-in; the real read is proven end to end in
     // motorTestBenchGate.test.ts.
@@ -884,6 +885,9 @@ describe('MotorTestController - supported profile', () => {
       MSP_MOTOR_CONFIG,
       MSP_ADVANCED_CONFIG,
       MSP_FEATURE_CONFIG,
+      // (7b) M-D: which airframe, so the view may draw the right one.
+      // A read. Presentation only. The motor COUNT is still 131's alone.
+      MSP_MIXER_CONFIG,
       // (8) only what armed state needs
       MSP_BOXIDS,
       // (10b) P2-ii: the restriction, plus its own verification re-read.
@@ -2953,11 +2957,40 @@ describe('the motor scope gate', () => {
       MSP_FC_VARIANT,
       MSP_FC_VERSION,
       MSP_BOARD_INFO,
-      MSP_MIXER_CONFIG,
       MSP_BATTERY_STATE,
     ]) {
       expect(harness.commands).not.toContain(removed);
     }
+  });
+
+  /**
+   * M-D ADDED A FOURTH READ, AND IT IS NOT ONE OF THE THREE ABOVE.
+   *
+   * MSP_MIXER_CONFIG used to be in the "removed" list, because at the time
+   * nothing needed the airframe. The Motors view does: a drawing may only
+   * be shown for a mixer this project has authored a layout for, and
+   * without the mixer byte the screen was guessing from the motor count -
+   * which drew QUADP, Y4, VTAIL4 and ATAIL4 as Quad X frames.
+   *
+   * It is deliberately asserted SEPARATELY from the encoder's three, so
+   * the two roles cannot blur. The encoder reads three commands; the view
+   * reads a fourth; the motor COUNT still comes from command 131 alone.
+   */
+  it('reads the mixer once, for presentation, and encodes nothing from it', async () => {
+    const harness = createHarness();
+    const snapshot = await runSetup(harness);
+    expect(
+      harness.commands.filter(command => command === MSP_MIXER_CONFIG),
+    ).toHaveLength(1);
+    // Published for the view...
+    expect(snapshot.mixerModeRaw).toBe(3);
+    // ...and absent from the command-safety contract, which is what the
+    // encoder is actually scoped against.
+    expect(Object.keys(snapshot.motorScope ?? {})).not.toContain(
+      'mixerModeRaw',
+    );
+    // The write is still never issued.
+    expect(harness.commands).not.toContain(43);
   });
 
   /**

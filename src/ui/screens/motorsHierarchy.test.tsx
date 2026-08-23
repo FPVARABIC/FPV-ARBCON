@@ -35,6 +35,8 @@ function snapshot(): MotorTestControllerSnapshot {
     outcome: {kind: 'READY'},
     firmwareCompatibility: undefined,
     motorScope: {motorCount: 4, motorProtocolRaw: 6, feature3dEnabled: false},
+    mixerModeRaw: 3, // MIXER_QUADX
+
     motorDiagnosticsSupport: {
       motorCount: 4,
       dshotTelemetryEnabled: true,

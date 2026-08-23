@@ -238,6 +238,7 @@ import {
 import {
   MSP_ADVANCED_CONFIG,
   MSP_FEATURE_CONFIG,
+  MSP_MIXER_CONFIG,
   MSP_MOTOR,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
@@ -274,6 +275,7 @@ import {
 import type {MotorArmedStateObservationFailure} from './motorArmedStateObservation';
 import {decodeAdvancedConfig} from '../protocol/msp/decoding/decodeAdvancedConfig';
 import {decodeFeatureConfig} from '../protocol/msp/decoding/decodeFeatureConfig';
+import {decodeMixerConfig} from '../protocol/msp/decoding/decodeMixerConfig';
 import {decodeMotorConfig} from '../protocol/msp/decoding/decodeMotorConfig';
 import {
   decodeMotorOutputs,
@@ -1376,6 +1378,16 @@ export interface MotorTestControllerSnapshot {
    * unattemptable and a pre-evidence pulse is unencodable.
    */
   readonly motorScope: MotorVectorScope | undefined;
+  /**
+   * MSP_MIXER_CONFIG offset 0, raw - WHICH AIRFRAME, for PRESENTATION.
+   *
+   * Undefined before step 7. Deliberately NOT part of MotorVectorScope:
+   * that type is the narrow command-safety contract, and the mixer is not
+   * in it because nothing the encoder does depends on the mixer. A view
+   * uses this to decide whether it may DRAW an aircraft; it is never a
+   * motor count and never a gate.
+   */
+  readonly mixerModeRaw: number | undefined;
   /** Truthful source model for command-139 fields, derived from the same
    * MSP_MOTOR_CONFIG response as motorScope. */
   readonly motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
@@ -1894,6 +1906,9 @@ class MotorTestControllerImpl {
    * than "no link".
    */
   private motorScope: MotorVectorScope | undefined;
+  /** M-D. The airframe the FC reported, raw, for PRESENTATION only. No
+   * gate, scope or command reads it. */
+  private mixerModeRaw: number | undefined;
   private motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
   /** P2-ii-A. The P1-resolved domain for this configuration, or undefined
    * when the resolver refused it. Never approximated. */
@@ -2024,6 +2039,7 @@ class MotorTestControllerImpl {
       outcome: this.outcome,
       firmwareCompatibility: this.firmwareCompatibility,
       motorScope: this.motorScope,
+      mixerModeRaw: this.mixerModeRaw,
       motorDiagnosticsSupport: this.motorDiagnosticsSupport,
       telemetryHeld: this.barrier?.isHeld() ?? false,
       warnings: this.effectRecord.warnings,
@@ -3729,6 +3745,7 @@ class MotorTestControllerImpl {
     // Retained BEFORE the guard runs, so a refusal can still say which
     // configuration was refused. See the field's own comment.
     this.motorScope = scopeRead.scope;
+    this.mixerModeRaw = scopeRead.mixerModeRaw;
     this.motorDiagnosticsSupport = scopeRead.diagnosticsSupport;
     // P2-ii-A. Retained whatever the legacy guard decides below: a
     // configuration the shipping pulse path refuses may still be one the
@@ -4004,11 +4021,33 @@ class MotorTestControllerImpl {
   }
 
   /**
-   * Step 7 - the three reads the command encoder actually depends on.
+   * Step 7 - the reads the command encoder and the airframe view depend on.
    *
    * MSP_MOTOR_CONFIG    offset 6  -> motor count, the ONLY authority for it
    * MSP_ADVANCED_CONFIG offset 3  -> raw motorProtocolTypes_e
    * MSP_FEATURE_CONFIG  bit 12    -> FEATURE_3D, the ONLY authority for it
+   * MSP_MIXER_CONFIG    offset 0  -> raw mixerMode_e, for PRESENTATION only
+   *
+   * M-D: THE MIXER READ IS NEW, AND IT COMMANDS NOTHING.
+   *
+   * It was added because a UI production-path test found that the Motors
+   * screen could not tell a QUAD X from a V-TAIL 4. The airframe drawing
+   * may only be shown for a mixer this project has authored a layout for,
+   * and the only component reading the mixer was the collapsed Motor
+   * Settings panel - which the motor-test flow never opens. So the
+   * drawing was withheld from the one workflow it exists to serve.
+   *
+   * WHAT IT DOES NOT DO. It is not an authority over anything the encoder
+   * uses. The motor COUNT still comes from MSP_MOTOR_CONFIG offset 6 and
+   * nothing else; the mixer's own expected count is never substituted for
+   * it, and a mixer this table does not recognise changes no gate, no
+   * scope and no command. It is carried to the view and stops there.
+   *
+   * 42 IS THE READ. The write, MSP_SET_MIXER_CONFIG = 43, is not issued
+   * from this controller and never has been - see
+   * motorsMixerCommandBoundary.test.ts and the command allowlist in
+   * motorTestBenchGate.test.ts, which pins the complete set this path
+   * puts on the wire.
    *
    * Every one travels the lease and therefore the canonical FIFO. A
    * REJECTED REQUEST and a MALFORMED RESPONSE are separated deliberately:
@@ -4021,6 +4060,9 @@ class MotorTestControllerImpl {
   ): Promise<
     | {
         readonly scope: MotorVectorScope;
+        /** MSP_MIXER_CONFIG offset 0, raw. PRESENTATION ONLY - see the
+         * method's own comment. Nothing downstream commands from it. */
+        readonly mixerModeRaw: number;
         readonly diagnosticsSupport: MotorDiagnosticsSupport;
         /** P2-ii-A: the P1 domain, resolved from these same reads. */
         readonly domain: MotorTestValueDomain | undefined;
@@ -4054,6 +4096,15 @@ class MotorTestControllerImpl {
     );
     if (isFailure(feature)) {
       return feature;
+    }
+    const mixer = await this.readDecoded(
+      generation,
+      lease,
+      MSP_MIXER_CONFIG,
+      decodeMixerConfig,
+    );
+    if (isFailure(mixer)) {
+      return mixer;
     }
 
     // ---- P2-ii-A: MSP_MOTOR_3D_CONFIG, read only where it is USED. ----
@@ -4131,6 +4182,7 @@ class MotorTestControllerImpl {
 
     return {
       scope,
+      mixerModeRaw: mixer.value.mixerModeRaw,
       diagnosticsSupport: deriveMotorDiagnosticsSupport(motor.value),
       domain,
       runtimeScope,

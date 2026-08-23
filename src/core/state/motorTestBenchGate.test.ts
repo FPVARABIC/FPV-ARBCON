@@ -201,6 +201,12 @@ function supportedScript(): Map<number, ScriptedReply> {
     [MSP_MOTOR_CONFIG, reply(motorConfigPayload())],
     [MSP_ADVANCED_CONFIG, reply(advancedConfigPayload())],
     [MSP_FEATURE_CONFIG, reply(featureConfigPayload())],
+    // M-D: the setup now also reads WHICH AIRFRAME, so the view can tell
+    // a QUAD X from a V-TAIL 4 rather than guessing from the motor count.
+    // MIXER_QUADX (3), yaw not reversed - the default fixture, matching
+    // the four-motor configuration the rest of this script describes.
+    // Presentation only: no gate, scope or command reads it.
+    [MSP_MIXER_CONFIG, reply(mixerConfigPayload(3))],
     [MSP_BOXIDS, reply(BOX_IDS_PAYLOAD)],
     [MSP_STATUS_EX, reply(statusPayload())],
     [MSP_SET_MOTOR_FIXTURE, reply(EMPTY)],
@@ -534,6 +540,11 @@ describe('the bench gate, with the real observation path', () => {
       MSP_MOTOR_CONFIG,
       MSP_ADVANCED_CONFIG,
       MSP_FEATURE_CONFIG,
+      // M-D: WHICH AIRFRAME. Added so the view can draw the aircraft it
+      // actually has instead of guessing from the motor count. A READ,
+      // presentation-only - the motor COUNT still comes from command 131
+      // above and nothing else.
+      MSP_MIXER_CONFIG,
       MSP_BOXIDS,
       // The monitor's own first observation, AWAITED before READY.
       MSP_STATUS_EX,
@@ -590,15 +601,19 @@ describe('the bench gate, with the real observation path', () => {
       return value;
     });
 
-    // Serve everything EXCEPT the observation: the four evidence reads,
+    // Serve everything EXCEPT the observation: the FIVE evidence reads,
     // then stop. Bounded by the command COUNT, never by loop iterations -
     // a write may not be pending on the first turn.
-    for (let step = 0; step < 60 && harness.commands.length < 4; step++) {
+    //
+    // It was four before M-D added the mixer read (command 42) so the
+    // view could name the airframe. The count moved; the property this
+    // test is named for did not.
+    for (let step = 0; step < 60 && harness.commands.length < 5; step++) {
       await flush(3);
       await serveOne(harness);
     }
     await flush(20);
-    expect(harness.commands).toHaveLength(4);
+    expect(harness.commands).toHaveLength(5);
 
     // The observation is on the wire and unanswered. Setup is parked on
     // it, and the snapshot says so rather than claiming readiness.
@@ -2075,6 +2090,34 @@ describe('M-C - every airframe reaches a commandable session', () => {
     },
   );
 
+  /**
+   * M-D. THIS EXISTS BECAUSE A MUTATION SURVIVED WITHOUT IT.
+   *
+   * Replacing the mixer read's result with the literal 3 - a hard-coded
+   * QUADX - passed every test in the repository, because every fixture
+   * happened to BE a quad. Nothing proved the byte the flight controller
+   * sent was the byte that reached the view, which is the entire point of
+   * reading it.
+   *
+   * The airframe matrix already varies the mixer mode per case, so it is
+   * the right place to say so: eight different mixer bytes, each expected
+   * back unchanged.
+   */
+  it.each(AIRFRAMES.map(a => [a.name, a] as const))(
+    '%s: carries its own mixer byte through to the snapshot, unchanged',
+    async (_name, airframe) => {
+      const harness = airframeHarness(airframe);
+      await runSetup(harness);
+      expect(harness.controller.getSnapshot().mixerModeRaw).toBe(
+        airframe.mixerMode,
+      );
+      // ...and it did not become a motor count on the way.
+      expect(harness.controller.getSnapshot().motorScope?.motorCount).toBe(
+        airframe.motorCount,
+      );
+    },
+  );
+
   it.each(AIRFRAMES.map(a => [a.name, a] as const))(
     '%s: puts exactly this command set on the wire, and nothing else',
     async (_name, airframe) => {
@@ -2098,15 +2141,21 @@ describe('M-C - every airframe reaches a commandable session', () => {
       //
       // Replaced by an ALLOWLIST, which cannot be vacuous: any command
       // that appears - a mixer write, a servo write, a stray read, a
-      // retry storm - breaks the equality. What the absence of 42 below
-      // records is a real fact about this path: the motor-test controller
-      // reads the motor COUNT (131), never the mixer MODE.
+      // retry storm - breaks the equality.
+      //
+      // 42 IS IN THE LIST, AND WAS ADDED DELIBERATELY. M-D needed the
+      // airframe so the view could tell a QUAD X from a V-TAIL 4 instead
+      // of guessing from the motor count. It is a READ, it is
+      // presentation-only, and the motor COUNT still comes from 131 and
+      // nothing else. 43 remains absent, which is the invariant that
+      // actually matters and is asserted separately below.
       const commands = [
         ...new Set(harness.transport.writeLog.map(writtenCommand)),
       ].sort((left, right) => left - right);
       expect(commands).toEqual([
         3, //   MSP_FC_VERSION            read - firmware identity gate
         36, //  MSP_FEATURE_CONFIG        read - 3D feature bit
+        42, //  MSP_MIXER_CONFIG          read - WHICH AIRFRAME, for the view
         90, //  MSP_ADVANCED_CONFIG       read - protocol + idle
         99, //  MSP_SET_ARMING_DISABLED   write - the safety gate itself
         119, // MSP_BOXIDS                read - arming box discovery

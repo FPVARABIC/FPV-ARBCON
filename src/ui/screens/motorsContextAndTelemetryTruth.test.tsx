@@ -75,6 +75,9 @@ function snapshot(
     outcome: {kind: 'READY'},
     firmwareCompatibility: undefined,
     motorScope: {motorCount: 4, motorProtocolRaw: 6, feature3dEnabled: false},
+    // M-D: MIXER_QUADX (3). Stated rather than inferred from the count -
+    // four motors is not four corners, so the airframe is now named.
+    mixerModeRaw: 3,
     motorDiagnosticsSupport: {
       motorCount: 4,
       dshotTelemetryEnabled: true,

@@ -492,6 +492,16 @@ function readySnapshot(): MotorTestControllerSnapshot {
     pulse: {mayHaveReachedFc: false, motorNumber: undefined},
     stopExecution: {attributionAmbiguous: false},
     telemetryHeld: true,
+    // M-D: THE FIXTURE NOW STATES THE AIRCRAFT IT DESCRIBES.
+    //
+    // It used to carry no motor count at all and relied on the screen's
+    // four-slot placeholder to produce four cells. That placeholder is
+    // gone - an unread count now renders no motors rather than four - so
+    // the quad this test has always been about is written down. Both
+    // fields are the real authorities: the count from MSP_MOTOR_CONFIG,
+    // the mixer from MSP_MIXER_CONFIG (3 = QUADX).
+    motorScope: {motorCount: 4, motorProtocolRaw: 7, feature3dEnabled: false},
+    mixerModeRaw: 3,
   } as unknown as MotorTestControllerSnapshot;
 }
 

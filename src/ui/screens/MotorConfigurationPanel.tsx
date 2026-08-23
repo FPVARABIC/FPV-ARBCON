@@ -57,18 +57,6 @@ export interface MotorConfigurationPanelProps {
   readonly sessionId: string;
   readonly controller?: MotorConfigurationControllerPort;
   readonly onDirtyChange?: (dirty: boolean) => void;
-  /**
-   * Reports MSP_MIXER_CONFIG offset 0 as the flight controller sent it,
-   * or undefined when nothing has been loaded.
-   *
-   * WHY THE SCREEN NEEDS IT. The airframe drawing may only be shown for a
-   * mixer this project has authored a layout for, and this panel performs
-   * the only mixer READ on the Motors surface. Lifting the raw byte is
-   * what lets the diagram tell a QUAD X from a V-TAIL 4 instead of
-   * guessing from the motor count. It is a READ, reported upward - nothing
-   * above may write it back (see motorsMixerCommandBoundary.test.ts).
-   */
-  readonly onMixerModeRawChange?: (mixerModeRaw: number | undefined) => void;
   /** Reports the panel's exclusive MSP transaction so the motor-test
    * session action cannot race its automatic read or a save. */
   readonly onBusyChange?: (busy: boolean) => void;
@@ -269,7 +257,6 @@ export function MotorConfigurationPanel({
   controller = motorConfigurationController,
   onDirtyChange,
   onBusyChange,
-  onMixerModeRawChange,
 }: MotorConfigurationPanelProps): React.JSX.Element {
   const { t } = useTranslation();
   const [phase, setPhase] = useState<'LOADING' | 'IDLE' | 'SAVING'>('LOADING');
@@ -349,13 +336,6 @@ export function MotorConfigurationPanel({
     onDirtyChange?.(changed);
     return () => onDirtyChange?.(false);
   }, [changed, onDirtyChange]);
-  // The mixer the FC reported, not the draft: the drawing describes the
-  // aircraft as it is running, and a mixer change does not take effect
-  // until a reboot anyway (mixerInit() is called only from fc/init.c:512).
-  React.useEffect(() => {
-    onMixerModeRawChange?.(original?.mixer.mixerModeRaw);
-    return () => onMixerModeRawChange?.(undefined);
-  }, [original, onMixerModeRawChange]);
   const canReview =
     phase === 'IDLE' &&
     changed &&

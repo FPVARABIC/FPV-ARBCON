@@ -49,7 +49,6 @@ import {
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
 import { MotorAirframeDiagram } from './MotorAirframeDiagram';
 import type {
-  MotorAirframeEntry,
   MotorSlotActivity,
 } from './MotorAirframeDiagram';
 import { MotorVerificationWizard } from './MotorVerificationWizard';

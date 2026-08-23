@@ -109,6 +109,9 @@ function snapshotFor(options: {
     outcome: { kind: 'READY' },
     firmwareCompatibility: undefined,
     motorScope: { motorCount: 4, motorProtocolRaw: 7, feature3dEnabled: false },
+    // MIXER_QUADX. These fixtures have always described a Quad X; the
+    // mixer byte is now stated rather than assumed from the count.
+    mixerModeRaw: 3,
     motorDiagnosticsSupport: {
       motorCount: 4,
       dshotTelemetryEnabled: true,

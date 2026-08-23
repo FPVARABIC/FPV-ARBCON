@@ -92,7 +92,6 @@ import {
   confirmObservation,
   EMPTY_VERIFICATION_STATE,
   finalizeVerification,
-  MOTOR_TEST_EXPECTED_CONFIGURATION,
   type MotorObservation,
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
@@ -547,16 +546,6 @@ export function MotorsScreenView({
   const [advancedVerificationOpen, setAdvancedVerificationOpen] =
     useState(false);
   const [motorSettingsOpen, setMotorSettingsOpen] = useState(false);
-  /**
-   * WHICH AIRFRAME THE FLIGHT CONTROLLER REPORTED, raw.
-   *
-   * Supplied by MotorConfigurationPanel, which performs the only mixer
-   * READ on this surface (MSP_MIXER_CONFIG = 42; the WRITE, 43, is not
-   * issued from here - see motorsMixerCommandBoundary.test.ts). Undefined
-   * until that read lands, and undefined means the airframe drawing is
-   * withheld in favour of a numbered list.
-   */
-  const [liveMixerModeRaw, setLiveMixerModeRaw] = useState<number>();
   const [motorConfigurationDirty, setMotorConfigurationDirty] = useState(false);
   const [motorConfigurationBusy, setMotorConfigurationBusy] = useState(false);
   const [outputOrderDirty, setOutputOrderDirty] = useState(false);
@@ -1486,6 +1475,18 @@ export function MotorsScreenView({
    */
   const liveMotorCount =
     snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount;
+  /**
+   * WHICH AIRFRAME THE FLIGHT CONTROLLER REPORTED, raw.
+   *
+   * From the SAME snapshot as the motor count, read by the motor-test
+   * setup itself (MSP_MIXER_CONFIG = 42). Undefined before that read
+   * lands, and undefined means the airframe drawing is withheld in favour
+   * of a numbered list - never a placeholder quad.
+   *
+   * PRESENTATION ONLY. It decides whether an authored layout may be
+   * DRAWN. It is not a motor count, and it gates no command.
+   */
+  const liveMixerModeRaw = snapshot?.mixerModeRaw;
   const identitySlots: readonly number[] =
     liveMotorCount !== undefined &&
     Number.isInteger(liveMotorCount) &&
@@ -2056,7 +2057,6 @@ export function MotorsScreenView({
             sessionId={sessionId}
             onDirtyChange={setMotorConfigurationDirty}
             onBusyChange={setMotorConfigurationBusy}
-            onMixerModeRawChange={setLiveMixerModeRaw}
           />
         ) : null}
 

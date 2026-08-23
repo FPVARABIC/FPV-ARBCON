@@ -15,6 +15,7 @@ import {
   MSP_BOXIDS,
   MSP_FC_VARIANT,
   MSP_FEATURE_CONFIG,
+  MSP_MIXER_CONFIG,
   MSP_MOTOR_CONFIG,
   MSP_STATUS_EX,
 } from '../../core';
@@ -86,6 +87,10 @@ function makeTransport(): UsbSerialTransportClient {
     [MSP_MOTOR_CONFIG, motorConfig()],
     [MSP_ADVANCED_CONFIG, advancedConfig()],
     [MSP_FEATURE_CONFIG, Uint8Array.from(u32(0))],
+    // M-D: MIXER_QUADX (3), yaw not reversed. The setup reads which
+    // airframe it is so the view can draw the right one; presentation
+    // only - the motor COUNT still comes from MSP_MOTOR_CONFIG alone.
+    [MSP_MIXER_CONFIG, Uint8Array.from([3, 0])],
     [MSP_BOXIDS, Uint8Array.from([0, 1, 2, 13])],
     [MSP_STATUS_EX, disarmedStatus()],
     // P2-ii: command 99 is acknowledged with an empty payload.

@@ -180,6 +180,7 @@ class ReducerBackedController implements MotorTestController {
       outcome: {kind: 'READY'},
       firmwareCompatibility: undefined,
       motorScope: undefined,
+      mixerModeRaw: undefined,
       motorDiagnosticsSupport: undefined,
       telemetryHeld: true,
       warnings: [],

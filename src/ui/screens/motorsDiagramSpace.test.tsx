@@ -48,7 +48,6 @@ import {MotorsScreenView} from './MotorsScreen';
 import {
   MotorAirframeDiagram,
   MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
-  type MotorAirframeEntry,
 } from './MotorAirframeDiagram';
 
 const AUTHORITY = {sessionId: 'diagram-space', generation: 1} as const;
@@ -74,6 +73,8 @@ function snapshot(): MotorTestControllerSnapshot {
     outcome: {kind: 'READY'},
     firmwareCompatibility: undefined,
     motorScope: {motorCount: 4, motorProtocolRaw: 6, feature3dEnabled: false},
+    mixerModeRaw: 3, // MIXER_QUADX
+
     motorDiagnosticsSupport: {
       motorCount: 4,
       dshotTelemetryEnabled: true,
@@ -179,12 +180,6 @@ class Port implements Partial<MotorTestOperatorPort> {
   }
 }
 
-const ENTRIES: readonly MotorAirframeEntry[] = Object.freeze([
-  {slot: 1, position: 'REAR_RIGHT', direction: 'CCW'},
-  {slot: 2, position: 'FRONT_RIGHT', direction: 'CW'},
-  {slot: 3, position: 'REAR_LEFT', direction: 'CW'},
-  {slot: 4, position: 'FRONT_LEFT', direction: 'CCW'},
-] as MotorAirframeEntry[]);
 
 const flatten = (style: unknown): Record<string, unknown> =>
   Array.isArray(style)

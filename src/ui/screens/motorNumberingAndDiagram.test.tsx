@@ -20,17 +20,9 @@ import {
   MotorAirframeDiagram,
   computeMotorGlyphLayout,
 } from './MotorAirframeDiagram';
-import type {MotorAirframeEntry} from './MotorAirframeDiagram';
 import {MOTOR_TEST_EXPECTED_CONFIGURATION} from '../../core/state/motorVerificationModel';
 import {isRtlLayout} from '../icons/layoutDirection';
 
-const QUAD: readonly MotorAirframeEntry[] = MOTOR_TEST_EXPECTED_CONFIGURATION.map(
-  entry => ({
-    slot: entry.motorNumber,
-    position: entry.position,
-    direction: entry.direction,
-  }),
-);
 
 function render(element: React.ReactElement) {
   let tree!: ReactTestRenderer.ReactTestRenderer;

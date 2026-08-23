@@ -12,7 +12,11 @@ function snapshot(machine: 'Ready' | 'Pulsing', allowed: boolean, live = false):
   return {
     phase: 'ACTIVE', setupStep: 'READY',
     machine: machine === 'Ready' ? ({name: 'Ready', authority: {}} as never) : ({name: 'Pulsing', authority: {}, pulseDeadlineArmed: true, startAcknowledged: false} as never),
-    outcome: {kind: 'READY'}, firmwareCompatibility: undefined, motorScope: undefined,
+    outcome: {kind: 'READY'}, firmwareCompatibility: undefined,
+    // M-D: a real quad, stated. It used to carry no count and lean on the
+    // screen's four-slot placeholder, which no longer exists.
+    motorScope: {motorCount: 4, motorProtocolRaw: 6, feature3dEnabled: false},
+    mixerModeRaw: 3,
     motorDiagnosticsSupport: undefined, telemetryHeld: true, warnings: [], stopDescriptors: [], teardown: undefined,
     outputMayBeLive: false,
     stopExecution: {attempts: 0, commandDispatched: false, commandAcknowledged: false, physicalStopConfirmed: false, deferredBehindActiveWrite: false, attributionAmbiguous: false, attributionResolvedByConfirmation: false, wirePreemptionClaimed: false, submittedNextOnTransport: false, episodeId: 0, outcome: undefined},
