@@ -638,11 +638,17 @@ describe('MotorsScreen - state presentation', () => {
     } satisfies MotorTestControllerSnapshot;
     const rendered = render(new FakeOperator(blocked));
 
+    // The HOLD is disabled in the primary flow, where the operator is -
+    // that part is unchanged and is the safety-bearing half. The exact
+    // diagnostic code moved under the technical details disclosure with
+    // the rest of the internal state (M-E §44), in full.
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    expect(rendered.query('motors-readiness-blocked-detail')).toBeUndefined();
+    rendered.press('motors-advanced-verification-toggle');
     expect(rendered.query('motors-readiness-blocked-detail')).toBeDefined();
     expect(texts(rendered)).toContain(
       'توقف فحص الجاهزية عند FIRST_OBSERVATION (رمز التشخيص: FIRST_OBSERVATION_UNAVAILABLE). لم يُرسل التطبيق أمر تشغيل للمحرك.',
     );
-    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
     rendered.unmount();
   });
 
@@ -665,6 +671,13 @@ describe('MotorsScreen - state presentation', () => {
     } satisfies MotorTestControllerSnapshot;
     const rendered = render(new FakeOperator(barredReady));
 
+    // M-E §44: the exact diagnostic code is technical detail and now
+    // lives under the disclosure. It is not weaker - the same sentence,
+    // the same code - it simply stopped standing between the operator and
+    // the motors. The assertion first proves it is NOT in the primary
+    // flow, then opens the section and proves it is all still there.
+    expect(rendered.query('motors-readiness-blocked-detail')).toBeUndefined();
+    rendered.press('motors-advanced-verification-toggle');
     expect(rendered.query('motors-readiness-blocked-detail')).toBeDefined();
     expect(texts(rendered)).toContain(
       'توقف فحص الجاهزية عند READY (رمز التشخيص: ARMED_STATE_UNKNOWN_OR_STALE). لم يُرسل التطبيق أمر تشغيل للمحرك.',
@@ -931,7 +944,7 @@ describe('MotorsScreen - long-press contract', () => {
 
   it('activates exactly the selected output, exactly once per hold', () => {
     const { operator, rendered } = readyRendered();
-    rendered.press('motor-identity-M3');
+    rendered.press('motors-airframe-slot-3');
     longPress(rendered);
     act(() => {
       const hold = rendered.find('motors-hold-button');
@@ -1029,7 +1042,7 @@ describe('MotorsScreen - long-press contract', () => {
 
   it('stops the live episode on a motor switch and never auto-starts the second output', () => {
     const { operator, rendered } = readyRendered();
-    rendered.press('motor-identity-M1');
+    rendered.press('motors-airframe-slot-1');
     longPress(rendered);
     act(() => {
       operator.publish(
@@ -1041,7 +1054,7 @@ describe('MotorsScreen - long-press contract', () => {
       );
     });
 
-    rendered.press('motor-identity-M2');
+    rendered.press('motors-airframe-slot-2');
     expect(operator.stopCalls).toEqual(['MOTOR_SELECTION_CHANGED']);
     // Motor 2 was NOT started. Only the original activation happened.
     expect(operator.pulseCalls).toEqual([1]);
@@ -1267,13 +1280,19 @@ describe('MotorsScreen - expected reference is labelled as expected', () => {
     for (const slot of MOTOR_TEST_OUTPUT_SLOTS) {
       expect(rendered.query(`motors-diagram-slot-${slot}`)).toBeDefined();
     }
-    // Explicitly labelled EXPECTED, not confirmed. This test asserts the
-    // label only; it establishes NOTHING about real wiring, physical frame
-    // position or rotation direction - that is Phase 2I plus the
+    // Explicitly labelled as a REFERENCE, not a measurement. This test
+    // asserts the label only; it establishes NOTHING about real wiring,
+    // physical frame position or rotation direction - that is the
     // operator's own physical observation.
-    const notice = rendered.find('motors-diagram-notice');
-    expect(notice.props.children).toContain('المتوقع');
-    expect(notice.props.children).toContain('وليس نتيجة مؤكدة');
+    //
+    // M-E moved the claim from a paragraph above the drawing into the
+    // drawing's own caption, in one sentence, and made it name the source
+    // the positions actually come from. The property is unchanged and the
+    // wording is keyed to the catalogue rather than copied.
+    const notice = rendered.find('motors-diagram-caption');
+    expect(notice.props.children).toBe(ar.motorsScreen.diagramCaption);
+    expect(ar.motorsScreen.diagramCaption).toContain('جدول المازج');
+    expect(ar.motorsScreen.diagramCaption).toContain('لا يُقرأ');
     rendered.unmount();
   });
 
@@ -1622,7 +1641,7 @@ describe('MotorsScreen - the four-motor flow', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
-    rendered.press(`motor-identity-M${slot}`);
+    rendered.press(`motors-airframe-slot-${slot}`);
     longPress(rendered);
     // The number on the card IS the number handed to the controller.
     expect(operator.pulseCalls).toEqual([slot]);
@@ -1635,7 +1654,7 @@ describe('MotorsScreen - the four-motor flow', () => {
     acknowledgeAll(rendered);
 
     for (const slot of [3, 1, 4, 2, 3]) {
-      rendered.press(`motor-identity-M${slot}`);
+      rendered.press(`motors-airframe-slot-${slot}`);
       longPress(rendered);
       pressOut(rendered);
       // The release round trip the controller really performs.
@@ -1667,6 +1686,12 @@ describe('MotorsScreen - direction handling', () => {
     // P1b-C put the authoring panel inside the core direction section;
     // P1b-C.1 collapsed it behind an explicit action, so the resting
     // state offers the entry and the form appears only when asked for.
+    // M-E §18 / §44: authoring a persistent ESC direction is a
+    // verification task, not part of spinning a motor, so it moved under
+    // the technical details disclosure with the rest of the workflow. The
+    // panel, its review step and its apply gate are unchanged.
+    expect(rendered.query('motor-direction-section')).toBeUndefined();
+    rendered.press('motors-advanced-verification-toggle');
     expect(rendered.query('motor-direction-section')).toBeDefined();
     expect(rendered.query('esc-direction-panel')).toBeUndefined();
     rendered.press('motor-direction-authoring-open');
@@ -1695,9 +1720,12 @@ describe('MotorsScreen - direction handling', () => {
     // Keyed to the catalogue rather than a copied string. The previous
     // version of this test held its own copy of the Arabic, so a wording
     // change failed it for the wrong reason.
-    expect(rendered.query('motors-diagram-direction-source')).toBeDefined();
+    // M-E folded the standalone direction-source line into the drawing's
+    // single caption: one sentence stating where the positions come from
+    // AND that rotation is not read. Same claim, one line instead of two.
+    expect(rendered.query('motors-diagram-caption')).toBeDefined();
     const visible = texts(rendered);
-    expect(visible).toContain(ar.motorsScreen.diagramDirectionSourceShort);
+    expect(visible).toContain(ar.motorsScreen.diagramCaption);
     // And nothing anywhere on the screen prints a rotation token.
     expect(String(visible)).not.toMatch(/\bCW\b|\bCCW\b/);
     rendered.unmount();

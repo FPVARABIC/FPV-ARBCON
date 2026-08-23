@@ -13,6 +13,7 @@
  *   Nothing in this file pretends a label can move a motor.
  */
 import React from 'react';
+import {StyleSheet} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
@@ -201,7 +202,8 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
   const VTAIL4 = 17;
   const ATAIL4 = 22;
   const QUADX_1234 = 26;
-  const HEX6X = 10;
+  /** mixerHex6H[] - the one hex whose own table places nothing. */
+  const HEX6H = 18;
   const four = [1, 2, 3, 4];
 
   it('draws QUAD X, which this project has authored', () => {
@@ -216,22 +218,45 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
   });
 
   /**
-   * THE DEFECT THE OLD GATE COULD NOT SEE.
+   * THE DEFECT THE OLD GATE COULD NOT SEE, AND WHAT M-E DID ABOUT IT.
    *
-   * It asked `motorCount !== 4`, so every one of these got the Quad X
-   * drawing - four motors, four corners, wrong aircraft. From
+   * The gate asked `motorCount !== 4`, so every one of these got the Quad
+   * X drawing - four motors, four corners, wrong aircraft. From
    * mixer_init.c @ 7348054f: QUADP is a plus frame, Y4 has a coaxial tail
    * pair, and VTAIL4/ATAIL4 angle their rear arms. None is an X.
+   *
+   * M-D answered that with a numbered list. M-E authored each of them a
+   * layout from its own table, so the property is asserted in the
+   * strongest available form: each is DRAWN, and drawn differently from a
+   * Quad X. A regression to the old behaviour would put motor 1 in the
+   * same place on all of them, which the comparison below rejects.
    */
+  const motorOneOffset = (mixerModeRaw: number): number => {
+    const r = diagram({mixerModeRaw, motorNumbers: four});
+    const node = r.tree.root.findAll(
+      candidate => candidate.props?.testID === 'motors-airframe-slot-1',
+    )[0];
+    const style = StyleSheet.flatten(node.props.style) as {
+      top: number;
+      left: number;
+    };
+    return Math.round(style.top) * 1000 + Math.round(style.left);
+  };
+
   it.each([
     ['QUADP', QUADP],
     ['Y4', Y4],
     ['VTAIL4', VTAIL4],
     ['ATAIL4', ATAIL4],
-  ])('refuses to lend the Quad X drawing to %s', (_name, mixerModeRaw) => {
+  ])('draws %s from its own table, never the Quad X one', (_name, mixerModeRaw) => {
     const r = diagram({mixerModeRaw, motorNumbers: four});
-    expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
-    expect(r.hosts('motors-generic-outputs')).toHaveLength(1);
+    expect(r.hosts('motors-airframe-stage')).toHaveLength(1);
+    expect(r.hosts('motors-generic-outputs')).toHaveLength(0);
+    // QUADP puts motor 1 on the centreline and Y4 on a coaxial tail arm;
+    // neither may land where the Quad X drawing puts it.
+    if (mixerModeRaw === QUADP || mixerModeRaw === Y4) {
+      expect(motorOneOffset(mixerModeRaw)).not.toBe(motorOneOffset(QUADX));
+    }
   });
 
   it('withholds the drawing when the mixer has not been read', () => {
@@ -266,7 +291,11 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
     ['6 motors', [1, 2, 3, 4, 5, 6]],
     ['8 motors', [1, 2, 3, 4, 5, 6, 7, 8]],
   ])('draws no aircraft and offers no second selector for %s', (_name, motorNumbers) => {
-    const r = diagram({mixerModeRaw: HEX6X, motorNumbers});
+    // HEX6X is authored now, so an unauthored mixer is needed to reach
+    // the fallback. HEX6H is the honest one: its own table gives the
+    // RIGHT and LEFT motors { roll 0, pitch 0 } - two motors at the
+    // origin, no arm, no position.
+    const r = diagram({mixerModeRaw: HEX6H, motorNumbers});
     expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
     expect(r.hosts('motors-generic-outputs')).toHaveLength(1);
     for (const slot of motorNumbers) {
@@ -284,17 +313,18 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
   });
 
   it('says WHY there is no aircraft, rather than leaving a bare list', () => {
-    const r = diagram({mixerModeRaw: HEX6X, motorNumbers: [1, 2, 3, 4, 5, 6]});
+    const r = diagram({mixerModeRaw: HEX6H, motorNumbers: [1, 2, 3, 4, 5, 6]});
     expect(r.hosts('motors-generic-outputs-caption')).toHaveLength(1);
-    // The reason is the AIRFRAME, not the count: four motors is not four
-    // corners, and a V-tail reporting four gets this same caption.
+    // The reason is the MIXER, not the count. M-E shortened the sentence
+    // to the one an operator can act on: no reliable drawing exists for
+    // this mixer, so the motors are shown by number.
     expect(r.text()).toContain(ar.motorsScreen.layoutGenericCaption);
-    expect(ar.motorsScreen.layoutGenericCaption).toContain('الهيكل');
+    expect(ar.motorsScreen.layoutGenericCaption).toContain('Mixer');
   });
 
   it('makes no positional claim in the fallback', () => {
     const body = diagram({
-      mixerModeRaw: HEX6X,
+      mixerModeRaw: HEX6H,
       motorNumbers: [1, 2, 3, 4, 5, 6],
     }).text();
     for (const phrase of ['أمامي يمين', 'أمامي يسار', 'خلفي يمين', 'خلفي يسار']) {
@@ -306,7 +336,7 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
     const taken: number[] = [];
     const r = render(
       <MotorAirframeDiagram
-        mixerModeRaw={HEX6X}
+        mixerModeRaw={HEX6H}
         motorNumbers={[1, 2, 3, 4, 5, 6]}
         selectedSlot={1}
         onSelectSlot={slot => taken.push(slot)}

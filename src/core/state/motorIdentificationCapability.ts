@@ -38,18 +38,32 @@
  *   screen contradicted itself about the same motor, and an operator
  *   following the words would have reached for the wrong arm.
  *
- * THE QUESTION IT ASKS NOW. Does this aircraft's authored layout place
- * every motor exactly where the identification model expects it? That is
- * asked of `motorAirframeLayout.ts` - the ONE place that knows where an
- * airframe's motors are - and compared against the model itself, so:
+ * THE QUESTION IT ASKS NOW. Is this aircraft the one the model was written
+ * for, and does its authored layout still place every motor where the model
+ * expects it? The placement half is asked of `motorAirframeLayout.ts` - the
+ * ONE place that knows where an airframe's motors are - so:
  *
  *   - an airframe with no authored layout is unsupported (a hex, a V-tail);
  *   - an airframe whose authored layout DIFFERS from the model is
  *     unsupported (QUADX_1234), rather than being described with the wrong
  *     table;
  *   - QUADX is supported, exactly as before;
- *   - and if a future layout is authored that matches the model, this
- *     follows automatically. There is no mixer id written here to forget.
+ *   - a V-tail or A-tail quad, whose four motors sit at the same four
+ *     corners in the same output order but do NOT share the props-out
+ *     rotations this model carries, is unsupported. M-E authored their
+ *     layouts and that is exactly when the corner comparison stopped being
+ *     sufficient on its own; see MOTOR_TEST_EXPECTED_MIXER_MODE.
+ *
+ * WHAT THIS IS NOT, SINCE M-E. It is not the gate on whether an operator
+ * may spin one motor to see which propeller moves. That action needs no
+ * position model at all - the operator is looking at the aircraft, not at
+ * the screen - and it is available wherever a motor is commandable, on
+ * every airframe, drawn or numbered. What this gate governs is the SHIPPED
+ * QUAD X EXPECTATION: the expected position and rotation shown beside a
+ * motor, the wizard's four-corner questions, and the output-reorder
+ * proposal derived from the answers to them. Widening those to other
+ * airframes would mean authoring their own expectations, not relaxing a
+ * condition here.
  *
  * UNKNOWN IS NOT SUPPORTED. A missing mixer or a missing count is not a
  * Quad X until proven otherwise; treating either as one would restore the
@@ -64,8 +78,11 @@
  * being applied where it does not hold.
  */
 
-import {authoredAirframeLayout} from './motorAirframeLayout';
-import {MOTOR_TEST_EXPECTED_CONFIGURATION} from './motorVerificationModel';
+import {authoredAirframeLayout, verificationPositionOf} from './motorAirframeLayout';
+import {
+  MOTOR_TEST_EXPECTED_CONFIGURATION,
+  MOTOR_TEST_EXPECTED_MIXER_MODE,
+} from './motorVerificationModel';
 
 /** How many outputs the shipped physical-identification model describes. */
 export const MOTOR_IDENTIFICATION_MODEL_OUTPUT_COUNT =
@@ -141,7 +158,23 @@ export function evaluateMotorIdentificationCapability(
     });
   }
   const layout = authoredAirframeLayout(mixerModeRaw, motorNumbers);
-  if (layout === undefined || placementSignature(layout) !== MODEL_SIGNATURE) {
+  // Both conditions are load-bearing and neither implies the other. The
+  // mixer must be the one the model was written for, because a V-tail
+  // occupies the same four corners with different rotations; and the
+  // authored layout must still agree with the model, so that editing one
+  // table without the other closes this gate rather than mis-claiming.
+  const placed =
+    layout === undefined
+      ? undefined
+      : layout.placements.map(placement => ({
+          motorNumber: placement.motorNumber,
+          position: verificationPositionOf(placement) ?? 'NOT_A_CORNER',
+        }));
+  if (
+    placed === undefined ||
+    mixerModeRaw !== MOTOR_TEST_EXPECTED_MIXER_MODE ||
+    placementSignature(placed) !== MODEL_SIGNATURE
+  ) {
     return Object.freeze({
       kind: 'UNSUPPORTED' as const,
       reason: 'AIRFRAME_NOT_THE_MODEL' as const,

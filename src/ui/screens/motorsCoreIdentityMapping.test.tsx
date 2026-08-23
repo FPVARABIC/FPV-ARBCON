@@ -54,6 +54,7 @@ import type {
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 import {MotorOutputMappingSection} from './MotorOutputMappingSection';
 import {MotorIdentitySection} from './MotorIdentitySection';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 /* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
    These assertions read `.toBe('—')`. The property each one is named for
@@ -220,13 +221,21 @@ function mountScreen(port: ScreenPort): ReactTestRenderer.ReactTestRenderer {
  * 26. IDENTITY - THROUGH THE REAL SCREEN, ADVANCED NEVER OPENED
  * ================================================================== */
 
+/** The screen with the technical details section open - M-E §44 put the
+ *  verification workflow there, and these describes exercise it. */
+function mountVerification(port: ScreenPort): ReactTestRenderer.ReactTestRenderer {
+  const tree = mountScreen(port);
+  openMotorsTechnicalDetails(tree);
+  return tree;
+}
+
 describe('26 - selecting a motor is addressing, and nothing else', () => {
   let port: ScreenPort;
   let tree: ReactTestRenderer.ReactTestRenderer;
 
   beforeEach(() => {
     port = new ScreenPort(snapshotFor({motorCount: 4}));
-    tree = mountScreen(port);
+    tree = mountVerification(port);
   });
   afterEach(() => act(() => tree.unmount()));
 
@@ -291,7 +300,7 @@ describe('26 - only an operator observation confirms a position', () => {
 
   beforeEach(() => {
     port = new ScreenPort(snapshotFor({motorCount: 4, receipt: receiptFor(1, 1)}));
-    tree = mountScreen(port);
+    tree = mountVerification(port);
   });
   afterEach(() => act(() => tree.unmount()));
 
@@ -336,7 +345,7 @@ describe('26 - correcting a mistaken observation', () => {
 
   beforeEach(() => {
     port = new ScreenPort(snapshotFor({motorCount: 4, receipt: receiptFor(1, 1)}));
-    tree = mountScreen(port);
+    tree = mountVerification(port);
     act(() => first(tree, 'verification-position-FRONT_LEFT').props.onPress());
     act(() => first(tree, 'verification-direction-CCW').props.onPress());
     act(() => first(tree, 'verification-confirm').props.onPress());
@@ -466,7 +475,7 @@ describe('27 - a six-motor aircraft is addressed truthfully', () => {
 
   beforeEach(() => {
     port = new ScreenPort(snapshotFor({motorCount: 6, receipt: receiptFor(1, 1)}));
-    tree = mountScreen(port);
+    tree = mountVerification(port);
   });
   afterEach(() => act(() => tree.unmount()));
 
@@ -517,12 +526,22 @@ describe('27 - a six-motor aircraft is addressed truthfully', () => {
     expect(has(tree, 'motor-workspace-stop')).toBe(true);
   });
 
-  it('offers no protected identify action it cannot honour', () => {
-    // P1b-B.1: the hold used to render here on a hex, looking actionable
-    // for a workflow this airframe has no model for. It is withdrawn, and
-    // replaced by a statement of what is and is not available.
+  it('offers the identify action, and withholds every claim it cannot make', () => {
+    // P1b-B.1 withdrew the hold on a hex, because it stood inside a
+    // workflow this airframe has no model for. M-E §17 separated the two:
+    //
+    //   SPINNING ONE MOTOR needs no model. The operator watches the
+    //   aircraft, not the screen, and the command is the same fixed
+    //   eight-slot write the sliders on this very page already send on a
+    //   hexacopter. The hold now lives with those sliders.
+    //
+    //   CLAIMING WHERE THE MOTOR IS needs a model, and there is none for
+    //   a hex. The wizard, the expected position and rotation, and the
+    //   observation-derived reorder are all still withheld, and the
+    //   screen still says so and says what remains available.
+    expect(has(tree, 'motors-hold-button')).toBe(true);
     expect(has(tree, 'motor-identification-start')).toBe(false);
-    expect(has(tree, 'motors-hold-button')).toBe(false);
+    expect(has(tree, 'verification-wizard')).toBe(false);
     expect(has(tree, 'motor-identification-unavailable')).toBe(true);
     expect(textOf(tree)).toContain(
       ar.motorsScreen.identifyUnavailableRemains,
@@ -709,10 +728,26 @@ describe('29 - the write path is reached from core, and is the same path', () =>
 });
 
 /* ================================================================== *
- * 30. ADVANCED IS NO LONGER ON THE PATH
+ * 30. WHAT THE FIRST VIEWPORT HOLDS, AND WHAT IS ONE PRESS AWAY
+ *
+ * M-D put the verification wizard and the output-order transaction in the
+ * core column and pinned that with "neither workflow needs the advanced
+ * disclosure". M-E MEASURED the result: on a 390px phone the column those
+ * two workflows lived in was 1,880px tall, and because it renders before
+ * the control column when the two stack, the first control that starts a
+ * motor test sat 1,288px down the page - a screen and a half below the
+ * fold, on a screen whose entire purpose is below it.
+ *
+ * So the contract is reversed, deliberately and with the measurement in
+ * hand. What the first viewport holds is what an operator needs in order
+ * to spin a motor: the aircraft, the motor they have selected, the Motor
+ * Test controls and the identify action. What moved is the VERIFICATION
+ * work - answering where a motor turned out to be, comparing that against
+ * a Quad X expectation, and writing an output order derived from the
+ * answers. That is a separate task, and it is one press away, whole.
  * ================================================================== */
 
-describe('30 - neither workflow needs the advanced disclosure', () => {
+describe('30 - the first viewport holds the tool, the paperwork is one press away', () => {
   let tree: ReactTestRenderer.ReactTestRenderer;
 
   beforeEach(() => {
@@ -722,26 +757,31 @@ describe('30 - neither workflow needs the advanced disclosure', () => {
   });
   afterEach(() => act(() => tree.unmount()));
 
-  it('reaches physical identification with advanced CLOSED', () => {
+  it('reaches the aircraft, the selected motor and the identify action with nothing opened', () => {
     expect(has(tree, 'motors-advanced-verification')).toBe(false);
-    expect(has(tree, 'motors-identity-section')).toBe(true);
-    expect(has(tree, 'verification-wizard')).toBe(true);
-    expect(has(tree, 'motor-identification-start')).toBe(true);
+    expect(has(tree, 'motors-identity-map')).toBe(true);
+    expect(has(tree, 'motors-airframe-diagram')).toBe(true);
+    expect(has(tree, 'motor-identity-selected-brief')).toBe(true);
+    expect(has(tree, 'motors-identify-action')).toBe(true);
+    expect(has(tree, 'motors-hold-button')).toBe(true);
   });
 
-  it('reaches the output mapping and its edit entry with advanced CLOSED', () => {
-    expect(has(tree, 'motors-advanced-verification')).toBe(false);
-    expect(has(tree, 'motor-output-mapping-section')).toBe(true);
-    expect(has(tree, 'motor-output-mapping-read')).toBe(true);
-    expect(has(tree, 'motor-output-edit')).toBe(true);
+  it('keeps the verification wizard and the output mapping out of the first viewport', () => {
+    expect(has(tree, 'verification-wizard')).toBe(false);
+    expect(has(tree, 'motor-output-mapping-section')).toBe(false);
   });
 
-  it('still opens, and does not open onto nothing', () => {
+  it('opens onto the whole of both workflows, not a summary of them', () => {
     act(() =>
       first(tree, 'motors-advanced-verification-toggle').props.onPress(),
     );
     expect(has(tree, 'motors-advanced-verification')).toBe(true);
-    // Something meaningful is inside: the read-only technical report.
+    expect(has(tree, 'motors-identity-section')).toBe(true);
+    expect(has(tree, 'verification-wizard')).toBe(true);
+    expect(has(tree, 'motor-output-mapping-section')).toBe(true);
+    expect(has(tree, 'motor-output-mapping-read')).toBe(true);
+    expect(has(tree, 'motor-output-edit')).toBe(true);
+    expect(has(tree, 'motor-direction-section')).toBe(true);
     expect(has(tree, 'motor-test-report')).toBe(true);
   });
 

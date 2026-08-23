@@ -46,6 +46,7 @@ import type {
 } from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 import {EscDirectionPanel} from './EscDirectionPanel';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 /** Betaflight `mixerMode_e`, re-stated here rather than imported so this
  *  file and the module under test do not share one typo. */
@@ -458,11 +459,11 @@ function mountScreen(motorCount: number): ReactTestRenderer.ReactTestRenderer {
       <MotorsScreenView operator={port} sessionId="fc-session" />,
     );
   });
-  act(() =>
-    tree.root
-      .findAllByProps({testID: 'motors-advanced-verification-toggle'})[0]
-      .props.onPress(),
-  );
+  // M-E §44: the workflow this suite exercises now lives under the
+  // technical details disclosure. One press, as an operator would - this
+  // suite already opened it for the report card, and now opens it for the
+  // whole workflow.
+  openMotorsTechnicalDetails(tree);
   return tree;
 }
 
@@ -571,9 +572,13 @@ describe('J - numbered motor control survives an unsupported airframe', () => {
     // workflow that cannot run. The screen is NOT disabled: the numbered
     // sliders, master and STOP are all still here, and the withdrawal is
     // explained rather than silent.
+    // M-E §17: the hold stays. Spinning one motor to see which propeller
+    // moves needs no Quad X model - it is the same fixed eight-slot write
+    // the sliders beside it already send on this airframe. What stays
+    // withdrawn is every POSITION CLAIM, which is the assertion below.
     expect(
       tree.root.findAllByProps({testID: 'motors-hold-button'}).length,
-    ).toBe(0);
+    ).toBeGreaterThan(0);
     expect(
       tree.root.findAllByProps({testID: 'motor-identification-unavailable'})
         .length,

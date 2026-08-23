@@ -169,6 +169,28 @@ describe('decodeMixerConfig (MSP_MIXER_CONFIG, 2 bytes)', () => {
     expect(decodeMixerConfig(Uint8Array.from([26, 0])).mixerModeRaw).not.toBe(MIXER_MODE_QUADX);
   });
 
+  /**
+   * M-E §8 - AN UNKNOWN MIXER VALUE IS NEVER NORMALISED SILENTLY.
+   *
+   * M-E gave the Motors screen a mixer selector, which makes the byte in
+   * this frame the thing that decides which aircraft the app draws.
+   * Mutation testing then found the gap: nothing here rejected a decoder
+   * that clamped an out-of-range byte into the known enum, so a board
+   * reporting 250 would have been drawn - confidently - as a Quad X.
+   *
+   * Every value the byte can hold passes through unchanged. Deciding what
+   * an unrecognised mixer MEANS is a job for the layers above; inventing
+   * a value it does not have is not a job for anyone.
+   */
+  it('passes every possible mixer byte through untouched, known or not', () => {
+    for (let raw = 0; raw <= 255; raw += 1) {
+      expect([raw, decodeMixerConfig(Uint8Array.from([raw, 0])).mixerModeRaw]).toEqual([
+        raw,
+        raw,
+      ]);
+    }
+  });
+
   it('treats yawMotorsReversedConfigured 0 as false and preserves any non-0/1 raw byte', () => {
     expect(decodeMixerConfig(Uint8Array.from([3, 0])).yawMotorsReversedConfigured).toBe(false);
     const odd = decodeMixerConfig(Uint8Array.from([3, 7]));

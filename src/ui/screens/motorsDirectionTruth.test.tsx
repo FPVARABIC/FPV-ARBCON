@@ -46,6 +46,7 @@ import type {
   MotorTestVerificationReceipt,
 } from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 /* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
    These assertions read `.toBe('—')`. The property each one is named for
@@ -197,6 +198,9 @@ function mount(port: Port): ReactTestRenderer.ReactTestRenderer {
       <MotorsScreenView operator={port} sessionId="fc-session" />,
     );
   });
+// M-E §44: the workflow this suite exercises now lives under the
+// technical details disclosure. One press, as an operator would.
+openMotorsTechnicalDetails(tree);
   return tree;
 }
 

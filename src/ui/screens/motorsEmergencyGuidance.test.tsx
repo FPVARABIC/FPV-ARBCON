@@ -36,6 +36,7 @@ import i18n from '../../i18n';
 import ar from '../../i18n/locales/ar.json';
 import type {MotorTestControllerSnapshot} from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 beforeAll(async () => {
   if (!i18n.isInitialized) {
@@ -293,10 +294,13 @@ describe('M-1 D - a plain fault keeps the calmer message', () => {
     expect(has(tree, 'motors-fault-banner')).toBe(false);
     expect(has(tree, 'motors-pinned-fault-guidance')).toBe(false);
     expect(textOf(tree)).not.toContain(ar.motorsScreen.emergencyDisconnect);
-    // The notice also moved to the top slot - same placement rule.
+    // The notice also sits in the top slot - same placement rule. M-E
+    // moved the identity WORKFLOW under the technical details disclosure,
+    // so the thing the notice must precede in the primary flow is the
+    // aircraft, which is what an operator meets first.
     const order = renderOrder(tree);
     expect(order.indexOf('motors-fault-notice')).toBeLessThan(
-      order.indexOf('motors-identity-section'),
+      order.indexOf('motors-identity-map'),
     );
     act(() => tree.unmount());
   });
@@ -311,7 +315,10 @@ describe('M-2 - the bench card no longer competes with identity truth', () => {
     const tree = mount(new Port(snapshotFor({})));
     expect(has(tree, 'motors-progress')).toBe(false);
     expect(textOf(tree)).not.toContain('من أصل');
-    // The authoritative count still exists, once, in the identity summary.
+    // The authoritative count still exists, once, in the identity
+    // summary - which M-E moved under the technical details disclosure
+    // with the rest of the verification workflow it belongs to.
+    openMotorsTechnicalDetails(tree);
     expect(has(tree, 'motors-identity-summary-confirmed')).toBe(true);
     act(() => tree.unmount());
   });
@@ -319,9 +326,12 @@ describe('M-2 - the bench card no longer competes with identity truth', () => {
   it('renders no 0-of-4 contradiction on a hex', () => {
     const tree = mount(new Port(snapshotFor({motorCount: 6})));
     expect(has(tree, 'motors-progress')).toBe(false);
+    expect(textOf(tree)).not.toContain('من أصل');
+    // The honest capability statement stands alone, in the verification
+    // section where the count it replaces also lives.
+    openMotorsTechnicalDetails(tree);
     const rendered = textOf(tree);
     expect(rendered).not.toContain('من أصل');
-    // The honest capability statement stands alone.
     expect(rendered).toContain(ar.motorsScreen.summaryConfirmedUnavailable);
     act(() => tree.unmount());
   });
@@ -369,10 +379,14 @@ describe('M-2 - the bench card no longer competes with identity truth', () => {
     act(() => tree.unmount());
   });
 
-  it('keeps the identity workflow exactly where P1b put it', () => {
+  it('keeps the whole identity workflow reachable, in its M-E place', () => {
     const tree = mount(new Port(snapshotFor({})));
-    expect(has(tree, 'motors-identity-section')).toBe(true);
+    // The aircraft and the action that spins a motor are in the primary
+    // flow; the verification workflow is one press away, entire.
+    expect(has(tree, 'motors-identity-map')).toBe(true);
     expect(has(tree, 'motors-hold-button')).toBe(true);
+    openMotorsTechnicalDetails(tree);
+    expect(has(tree, 'motors-identity-section')).toBe(true);
     expect(has(tree, 'motor-direction-section')).toBe(true);
     expect(has(tree, 'motor-output-mapping-section')).toBe(true);
     act(() => tree.unmount());

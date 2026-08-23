@@ -123,6 +123,8 @@ import type {
 import {MspClient} from '../../core/protocol/mspClient';
 import {ARMING_DISABLE_FLAGS_COUNT} from '../../core/state/armingBlockers';
 import {ARMING_DISABLED_MSP_BIT_INDEX} from '../../core/state/motorArmingRestriction';
+import {StyleSheet} from 'react-native';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 import {FakeMspTransport} from '../../core/protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../../core/protocol/__testUtils__/mspFixtures';
 import {betaflightApi147Identity} from '../../core/protocol/__testUtils__/motorFirmwareFixtures';
@@ -518,6 +520,9 @@ function render(operator: FakeOperator): Rendered {
       <MotorsScreenView operator={operator as unknown as MotorTestOperatorPort} />,
     );
   });
+  // M-E §44: the workflow this suite exercises now lives under the
+  // technical details disclosure. One press, as an operator would.
+  openMotorsTechnicalDetails(renderer);
   return {
     renderer,
     find: (testID: string) => {
@@ -595,16 +600,16 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
       // The number the screen submitted is the number on the cell.
       expect(operator.pulsed).toEqual([slot]);
 
-      // And that number is what the diagram cell for this slot displays,
-      // in the geometrically correct place.
+      // And that number is what the diagram node for this slot displays,
+      // in the geometrically correct place. M-E replaced the four-cell
+      // grid with a coordinate-driven drawing, so the node itself is the
+      // handle; the glyph layout it is checked against is unchanged.
       const cell = computeMotorGlyphLayout().find(entry => entry.slot === slot);
       expect(cell).toBeDefined();
-      const glyph = rendered.find(
-        `motors-diagram-cell-${cell!.row}-${cell!.side}`,
-      );
+      const glyph = rendered.find(`motors-airframe-slot-${slot}`);
       expect(textsWithin(glyph)).toContain(`M${slot}`);
 
-      // The cell's claimed airframe position is the accepted mapping's,
+      // The node's claimed airframe position is the accepted mapping's,
       // never a second copy of it.
       const expectedMapping = MOTOR_TEST_EXPECTED_CONFIGURATION.find(
         entry => entry.motorNumber === slot,
@@ -679,36 +684,32 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
 
   it('renders the FRONT row above the REAR row, with a front-of-aircraft indicator', () => {
     const rendered = render(new FakeOperator(readySnapshot()));
-    const diagram = rendered.find('motors-diagram');
-    const order = diagram
-      .findAllByProps({}, {deep: true})
-      .map(node => node.props.testID)
-      .filter(
-        (testID: unknown): testID is string =>
-          typeof testID === 'string' &&
-          (testID.startsWith('motors-diagram-cell-') ||
-            testID === 'motors-diagram-front'),
-      );
-    const first = (needle: string) => order.indexOf(needle);
-    // The front indicator comes before every cell, and the front row
-    // before the rear row - top to bottom is nose to tail.
-    expect(first('motors-diagram-front')).toBe(0);
-    expect(first('motors-diagram-cell-FRONT-RIGHT')).toBeLessThan(
-      first('motors-diagram-cell-REAR-RIGHT'),
-    );
-    expect(first('motors-diagram-cell-FRONT-LEFT')).toBeLessThan(
-      first('motors-diagram-cell-REAR-LEFT'),
-    );
-    // Within a row, the cell emitted FIRST is the one at the reading-start
-    // edge. This suite runs under the Jest preset, where I18nManager
-    // reports LTR, so the LEFT cell comes first here. The direction-aware
-    // guarantee - the same motor always lands on the same PHYSICAL side -
-    // is proved in motorAirframeGeometry.test.tsx, which injects both
-    // directions instead of trusting a global that two platform stubs
-    // refuse to move.
-    expect(first('motors-diagram-cell-FRONT-LEFT')).toBeLessThan(
-      first('motors-diagram-cell-FRONT-RIGHT'),
-    );
+    // The front-of-aircraft indicator is on screen, above the drawing.
+    expect(rendered.find('motors-diagram-front')).toBeDefined();
+
+    // M-E: the four-cell grid became a coordinate-driven drawing, so
+    // "front row above rear row" is now a claim about PIXELS rather than
+    // about emission order - and is asserted as one. The offsets come
+    // from the node's own absolute position, which is computed from the
+    // layout table's coordinates and from nothing else.
+    const topOf = (slot: number): number => {
+      const style = StyleSheet.flatten(
+        rendered.find(`motors-airframe-slot-${slot}`).props.style,
+      ) as {top: number; left: number};
+      return style.top;
+    };
+    const leftOf = (slot: number): number => {
+      const style = StyleSheet.flatten(
+        rendered.find(`motors-airframe-slot-${slot}`).props.style,
+      ) as {top: number; left: number};
+      return style.left;
+    };
+    // QUADX: motors 2 and 4 are at the front, 1 and 3 at the rear.
+    expect(topOf(2)).toBeLessThan(topOf(1));
+    expect(topOf(4)).toBeLessThan(topOf(3));
+    // ...and 1 and 2 are on the right-hand side, 3 and 4 on the left.
+    expect(leftOf(2)).toBeGreaterThan(leftOf(4));
+    expect(leftOf(1)).toBeGreaterThan(leftOf(3));
     rendered.unmount();
   });
 

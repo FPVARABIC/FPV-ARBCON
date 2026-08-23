@@ -430,23 +430,32 @@ describe('§30 - every airframe keeps numbered motor control and STOP', () => {
     motorCount,
   ) => {
     const shell = await liveSession(mixerMode, motorCount);
+    // M-E: all three of these airframes are DRAWN now, so the selector an
+    // operator meets is the aircraft itself - one node per reported
+    // output, and no node for an output the board did not report.
     for (let motor = 1; motor <= motorCount; motor += 1) {
-      expect(shell.has(`motor-identity-M${motor}`)).toBe(true);
+      expect(shell.has(`motors-diagram-slot-${motor}`)).toBe(true);
     }
-    expect(shell.has(`motor-identity-M${motorCount + 1}`)).toBe(false);
-    // And no second selector anywhere on the screen offering the same
-    // numbers again.
+    expect(shell.has(`motors-diagram-slot-${motorCount + 1}`)).toBe(false);
+    // And no SECOND selector in the first viewport offering the same
+    // numbers again: neither the numbered chips nor a generic list.
+    expect(shell.has('motor-identity-M1')).toBe(false);
     expect(shell.has('motors-generic-slot-1')).toBe(false);
   });
 
-  it('a tricopter has no identification call to action, and still commands motors', async () => {
-    // THE SPLIT, STATED. Identification is withheld because a V-tail or a
-    // tricopter is not the airframe the shipped model describes. Motor
-    // control is NOT withheld, and this is the assertion that keeps those
-    // two decisions from being merged by a later change.
+  it('a tricopter gets the identify action and commands motors, and still makes no Quad X claim', async () => {
+    // THE SPLIT, STATED - and M-E moved the line, deliberately.
+    //
+    // WITHHELD: the shipped Quad X EXPECTATION and its wizard, because a
+    // tricopter is not the airframe that model describes.
+    // NOT WITHHELD: spinning one motor to see which propeller moves. It
+    // needs no model, and it is the same fixed eight-slot write the
+    // sliders below already send on this aircraft.
+    // This is the assertion that keeps the two from being merged again.
     const shell = await commandableSession(MIXER_TRI, 3);
-    expect(shell.has('motors-hold-button')).toBe(false);
-    expect(shell.has('motor-identification-unavailable')).toBe(true);
+    expect(shell.has('motors-hold-button')).toBe(true);
+    expect(shell.has('verification-wizard')).toBe(false);
+    expect(shell.has('motor-identity-expected')).toBe(false);
 
     const before = motorWrites().length;
     shell.slide('motor-slider-2', 1200);

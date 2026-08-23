@@ -254,23 +254,41 @@ describe('the Motors screen leads with the workspace, not with its paperwork', (
     r.unmount();
   });
 
-  it('motor identity direction and reorder stay with the airframe', () => {
+  it('the airframe column holds the aircraft, and only the aircraft', () => {
+    /*
+     * M-D PUT THREE WORKFLOWS IN THIS COLUMN AND PINNED THEM HERE.
+     * M-E MEASURED THE RESULT AND MOVED TWO OF THEM.
+     *
+     * The column renders BEFORE the control column when the two stack, so
+     * on a 390px phone it was 1,880px of verification paperwork standing
+     * between the operator and the first control that starts a motor
+     * test - which sat at 1,288px, a screen and a half below the fold.
+     *
+     * What stays is the aircraft and the line naming the selected motor:
+     * what an operator needs in order to point at a motor. What moved is
+     * the work of PROVING where a motor is - the wizard, the direction
+     * authoring and the output-order transaction - which is a separate
+     * task and is one press away, entire.
+     */
     const r = render({sessionId: 'hierarchy'});
+    expect(within(r, 'motors-airframe-column', 'motors-identity-map')).toBe(true);
     for (const id of [
       'motors-identity-section',
       'motor-direction-section',
       'motor-output-mapping-section',
     ]) {
-      expect(within(r, 'motors-airframe-column', id)).toBe(true);
+      expect(within(r, 'motors-airframe-column', id)).toBe(false);
     }
-    // "Which motor, where, which way, which output" is ONE group: none of
-    // them may drift into the advanced drawer.
+    // ...and all three are together in the technical details section,
+    // which is where "which motor, where, which way, which output" is now
+    // ONE group.
+    r.press('motors-advanced-verification-toggle');
     for (const id of [
       'motors-identity-section',
       'motor-direction-section',
       'motor-output-mapping-section',
     ]) {
-      expect(within(r, 'motors-advanced-verification', id)).toBe(false);
+      expect(within(r, 'motors-advanced-verification', id)).toBe(true);
     }
     r.unmount();
   });

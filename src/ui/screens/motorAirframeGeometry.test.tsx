@@ -18,7 +18,6 @@
  * that inverted the drawing. See motorRow in MotorAirframeDiagram.tsx.
  */
 import React from 'react';
-import {View} from 'react-native';
 import renderer, {act} from 'react-test-renderer';
 
 /**
@@ -41,18 +40,7 @@ import {
   MotorAirframeDiagram,
   computeMotorGlyphLayout,
   motorGlyphRows,
-  orderAirframeEntries,
 } from './MotorAirframeDiagram';
-import type {MotorAirframeEntry} from './MotorAirframeDiagram';
-
-/** The canonical wiring: slot N sits at a fixed physical corner. No
- *  direction - the drawing's entry type carries none, by design. */
-const ENTRIES: readonly MotorAirframeEntry[] = Object.freeze([
-  {slot: 1, position: 'REAR_RIGHT'},
-  {slot: 2, position: 'FRONT_RIGHT'},
-  {slot: 3, position: 'REAR_LEFT'},
-  {slot: 4, position: 'FRONT_LEFT'},
-] as MotorAirframeEntry[]);
 
 function flattenStyle(style: unknown): Record<string, unknown> {
   if (Array.isArray(style)) {
@@ -91,27 +79,31 @@ describe('motor airframe geometry', () => {
     expect(underLtr).toContain('4:FRONT:LEFT');
   });
 
-  it('orders entries right-then-left, and never drops or invents a motor', () => {
-    const ordered = orderAirframeEntries(ENTRIES);
-    expect(ordered.map(entry => entry.position)).toEqual([
-      'FRONT_RIGHT',
-      'FRONT_LEFT',
-      'REAR_RIGHT',
-      'REAR_LEFT',
-    ]);
-    // Same set of slots in, same set out: rendering reorders for PAINT
-    // only and can never renumber an output.
-    expect([...ordered.map(entry => entry.slot)].sort()).toEqual([1, 2, 3, 4]);
+  it('never drops or invents a motor', () => {
+    const cells = computeMotorGlyphLayout();
+    // Same set of slots the shipped expectation names, no more and no
+    // fewer: rendering can never renumber an output.
+    expect([...cells.map(cell => cell.slot)].sort()).toEqual([1, 2, 3, 4]);
+    expect(new Set(cells.map(cell => `${cell.row}:${cell.side}`)).size).toBe(4);
   });
 
-  it('paints FRONT_RIGHT on the right and FRONT_LEFT on the left in BOTH directions', () => {
-    // The defect this replaces: the row relied on `direction: 'ltr'`,
-    // which react-native-web DROPS, so the aircraft rendered mirrored in
-    // the browser while a style-object assertion still passed. Assert the
-    // paint ORDER of the real rows instead - index 0 of a plain flex row
-    // is the reading-start edge, which is the right under RTL and the
-    // left under LTR.
-    const sideOfFirstChild = (rtl: boolean): {front: string; rear: string} => {
+  it('places a motor from its coordinate, and never from the writing direction', () => {
+    /*
+     * THE DEFECT THIS REPLACES, and why the assertion changed shape.
+     *
+     * The old drawing was two flex rows, so "which side is this motor on"
+     * was a question about PAINT ORDER, and paint order under RTL is the
+     * reverse of paint order under LTR. The test therefore had to expect
+     * a different first child in each direction and reason about which
+     * edge "first" meant.
+     *
+     * M-E's drawing positions every node absolutely from the layout
+     * table's own x coordinate. `left` is a PHYSICAL CSS offset - it is
+     * measured from the left edge under `direction: rtl` exactly as under
+     * ltr - so the same motor lands on the same pixel in both, and the
+     * assertion is now simply that the two runs agree.
+     */
+    const offsets = (rtl: boolean): Record<number, number> => {
       mockRtl = rtl;
       let tree: renderer.ReactTestRenderer;
       act(() => {
@@ -124,29 +116,24 @@ describe('motor airframe geometry', () => {
           />,
         );
       });
-      const stage = tree!.root.findByProps({testID: 'motors-airframe-stage'});
-      const rows = stage
-        .findAllByType(View)
-        .filter(node => flattenStyle(node.props.style).justifyContent === 'space-between');
-      const firstSlotOf = (row: (typeof rows)[number]): string => {
-        const slotNode = row
-          .findAllByProps({})
-          .map(node => String(node.props.testID ?? ''))
-          .find(id => id.startsWith('motors-diagram-slot-'));
-        return (slotNode ?? '').replace('motors-diagram-slot-', '');
-      };
-      const result = {front: firstSlotOf(rows[0]), rear: firstSlotOf(rows[1])};
+      const out: Record<number, number> = {};
+      for (const slot of [1, 2, 3, 4]) {
+        const node = tree!.root.findAll(
+          candidate => candidate.props?.testID === `motors-airframe-slot-${slot}`,
+        )[0];
+        out[slot] = flattenStyle(node.props.style).left as number;
+      }
       act(() => tree!.unmount());
-      return result;
+      return out;
     };
 
-    // Slot 2 is FRONT_RIGHT and slot 1 is REAR_RIGHT (see ENTRIES).
-    // Under RTL the reading-start edge is the RIGHT, so the right-hand
-    // motor must be painted first...
-    expect(sideOfFirstChild(true)).toEqual({front: '2', rear: '1'});
-    // ...and under LTR the start edge is the LEFT, so the LEFT-hand
-    // motors (4 = FRONT_LEFT, 3 = REAR_LEFT) come first. Either way the
-    // same motor ends up on the same physical side of the aircraft.
-    expect(sideOfFirstChild(false)).toEqual({front: '4', rear: '3'});
+    const underRtl = offsets(true);
+    const underLtr = offsets(false);
+    mockRtl = true;
+    expect(underRtl).toEqual(underLtr);
+    // And the real wiring, not an accidental identity: on a QUADX motors
+    // 1 and 2 are the right-hand pair, 3 and 4 the left-hand pair.
+    expect(underLtr[1]).toBeGreaterThan(underLtr[3]);
+    expect(underLtr[2]).toBeGreaterThan(underLtr[4]);
   });
 });

@@ -41,6 +41,7 @@ import type {
   MotorTestVerificationReceipt,
 } from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 /* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
    These assertions read `.toBe('—')`. The property each one is named for
@@ -162,6 +163,10 @@ function mount(port: Port): ReactTestRenderer.ReactTestRenderer {
       <MotorsScreenView operator={port} sessionId="fc-session" />,
     );
   });
+  // M-E §44: the identification workflow this suite exercises now lives
+  // under the technical details disclosure. One press, as an operator
+  // would; every assertion below is unchanged.
+  openMotorsTechnicalDetails(tree);
   return tree;
 }
 
@@ -433,8 +438,21 @@ describe('22 - a six-motor aircraft is told the truth before it acts', () => {
 
   it('offers no identify action, before the operator can try one', () => {
     act(() => first(tree, 'motor-identity-M5').props.onPress());
+    // M-E §17 CHANGED THIS, DELIBERATELY, AND ONLY THIS.
+    //
+    // Spinning one motor to see which propeller moves needs no Quad X
+    // expectation: the operator is looking at the aircraft, not at the
+    // screen, and the command is the same fixed eight-slot write the
+    // sliders on this very screen already send on a hexacopter. Withholding
+    // it left a six-motor operator with sliders that spin motors and no
+    // way to identify one - which was a worse answer, not a safer one.
+    //
+    // WHAT IS STILL WITHHELD is everything that would make a CLAIM this
+    // application cannot support on this airframe: the wizard's
+    // four-corner questions, the expected position and rotation, and the
+    // output-reorder proposal derived from the answers.
+    expect(has(tree, 'motors-hold-button')).toBe(true);
     expect(has(tree, 'motor-identification-start')).toBe(false);
-    expect(has(tree, 'motors-hold-button')).toBe(false);
     expect(has(tree, 'verification-wizard')).toBe(false);
   });
 
@@ -505,9 +523,15 @@ describe('23 - a quad keeps the whole identification workflow', () => {
   });
   afterEach(() => act(() => tree.unmount()));
 
-  it('still offers the protected hold', () => {
-    expect(has(tree, 'motor-identification-start')).toBe(true);
+  it('still offers the protected hold, now with the controls it shares a command path with', () => {
+    // M-E §32: the hold moved out of the verification wizard and into the
+    // Motor Test workspace, beside the sliders that use the same fixed
+    // eight-slot write. The gesture, its 800ms threshold and its
+    // release-stops contract are untouched - only where it is rendered.
+    expect(has(tree, 'motors-identify-action')).toBe(true);
     expect(has(tree, 'motors-hold-button')).toBe(true);
+    // ...and it is no longer a second copy inside the wizard.
+    expect(has(tree, 'motor-identification-start')).toBe(false);
   });
 
   it('activates exactly once per hold, on the selected motor', () => {

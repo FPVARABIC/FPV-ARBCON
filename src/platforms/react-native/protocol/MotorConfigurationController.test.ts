@@ -12,6 +12,7 @@ import {
   MSP_MOTOR_3D_CONFIG,
   MSP_MOTOR_CONFIG,
   MSP_SET_ADVANCED_CONFIG,
+  MSP_SET_FEATURE_CONFIG,
   MSP_SET_MIXER_CONFIG,
   MSP_STATUS_EX,
 } from '../../../core/protocol/msp/commands/mspCommands';
@@ -438,6 +439,138 @@ describe('MotorConfigurationController', () => {
       MSP_MOTOR_3D_CONFIG,
       MSP_ADVANCED_CONFIG,
     ]);
+  });
+
+  /**
+   * M-E §8 - NO SUCCESS BEFORE VERIFICATION, PROVED.
+   *
+   * M-E gave the Motors screen a mixer selector, so the byte this
+   * transaction writes now changes which aircraft the flight controller
+   * believes it is. Mutation testing then found that nothing asserted the
+   * readback comparison at all: deleting it left every test green while
+   * the app reported a mixer change as saved that the board had not
+   * taken.
+   *
+   * The flight controller here acknowledges the write and the EEPROM
+   * commit, and then reports the OLD mixer. That is the case the operator
+   * must never be told is a success.
+   */
+  it('reports a mixer that did not take as SAVED_UNVERIFIED, not as saved', async () => {
+    const harness = makeHarness();
+    const original = await loadOriginal(harness);
+    enqueueSnapshot(harness.client);
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    harness.client.enqueue(MSP_SET_MIXER_CONFIG, {
+      payload: Uint8Array.from([]),
+    });
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: Uint8Array.from([]) });
+    // The readback: the SAME mixer byte the board started with.
+    enqueueSnapshot(harness.client);
+
+    const result = await harness.controller.save('fc-1', original, {
+      ...createMotorConfigurationDraft(original),
+      mixerModeRaw: 10,
+    });
+
+    expect(result).toMatchObject({
+      kind: 'SAVED_UNVERIFIED',
+      rebootRequired: true,
+      changedGroups: ['MIXER'],
+    });
+    // The write and the persist both happened - the transaction is not
+    // being described as a failure either.
+    const commands = harness.client.calls.map(call => call.command);
+    expect(commands).toContain(MSP_SET_MIXER_CONFIG);
+    expect(commands).toContain(MSP_EEPROM_WRITE);
+  });
+
+  it('reports a mixer the board DID take as verified', async () => {
+    const harness = makeHarness();
+    const original = await loadOriginal(harness);
+    enqueueSnapshot(harness.client);
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    harness.client.enqueue(MSP_SET_MIXER_CONFIG, {
+      payload: Uint8Array.from([]),
+    });
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: Uint8Array.from([]) });
+    // The readback: the mixer the operator asked for.
+    harness.client.enqueue(MSP_FEATURE_CONFIG, { payload: FEATURE });
+    harness.client.enqueue(MSP_MIXER_CONFIG, {
+      payload: Uint8Array.from([10, MIXER[1]]),
+    });
+    harness.client.enqueue(MSP_MOTOR_CONFIG, { payload: MOTOR });
+    harness.client.enqueue(MSP_MOTOR_3D_CONFIG, { payload: MOTOR_3D });
+    harness.client.enqueue(MSP_ADVANCED_CONFIG, {
+      payload: advancedPayload(550, 7),
+    });
+
+    const result = await harness.controller.save('fc-1', original, {
+      ...createMotorConfigurationDraft(original),
+      mixerModeRaw: 10,
+    });
+
+    expect(result).toMatchObject({
+      kind: 'SAVED_VERIFIED',
+      rebootRequired: true,
+      changedGroups: ['MIXER'],
+    });
+  });
+
+  /**
+   * M-E: THE UNOWNED FIELDS COME FROM THE LIVE BOARD, NOT FROM THE BASE.
+   *
+   * MSP_SET_FEATURE_CONFIG carries ONE 32-bit mask for the whole
+   * aircraft. Motors owns three bits of it; GPS, Ports, Receiver and
+   * General own others. There is no way to set one bit, so whichever
+   * snapshot the mask is mirrored from is the mask the aircraft ends up
+   * with - and mirroring it from the snapshot this editor loaded means a
+   * Motors save silently reverts whatever another screen changed since.
+   *
+   * The stale-base check cannot catch it: it compares the DRAFT, which
+   * projects only the three owned bits, so an unowned bit set in between
+   * compares equal and is then overwritten. Every signal says success.
+   *
+   * Mutation testing found that nothing asserted which snapshot the mask
+   * came from. Here bit 5 - not one of the three Motors owns - is set on
+   * the live board after this editor loaded, the operator toggles
+   * MOTOR_STOP, and the mask that goes on the wire must still carry it.
+   */
+  it('mirrors unowned feature bits from the live board, not from the stale base', async () => {
+    const harness = makeHarness();
+    const original = await loadOriginal(harness);
+
+    // The live board, read under the transaction's own lease.
+    const OTHER_SCREENS_BIT = 1 << 5;
+    harness.client.enqueue(MSP_FEATURE_CONFIG, {
+      payload: Uint8Array.from([OTHER_SCREENS_BIT, 0, 0, 0]),
+    });
+    harness.client.enqueue(MSP_MIXER_CONFIG, {payload: MIXER});
+    harness.client.enqueue(MSP_MOTOR_CONFIG, {payload: MOTOR});
+    harness.client.enqueue(MSP_MOTOR_3D_CONFIG, {payload: MOTOR_3D});
+    harness.client.enqueue(MSP_ADVANCED_CONFIG, {
+      payload: advancedPayload(550, 7),
+    });
+    harness.client.enqueue(MSP_BOXIDS, {payload: Uint8Array.from([0])});
+    harness.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)});
+    harness.client.enqueue(MSP_SET_FEATURE_CONFIG, {
+      payload: Uint8Array.from([]),
+    });
+    harness.client.enqueue(MSP_EEPROM_WRITE, {payload: Uint8Array.from([])});
+    enqueueSnapshot(harness.client);
+
+    await harness.controller.save('fc-1', original, {
+      ...createMotorConfigurationDraft(original),
+      motorStopEnabled: true,
+    });
+
+    const write = harness.client.calls.find(
+      call => call.command === MSP_SET_FEATURE_CONFIG,
+    );
+    expect(write).toBeDefined();
+    // The other screen's bit survives the Motors save.
+    expect(write!.payload[0] & OTHER_SCREENS_BIT).toBe(OTHER_SCREENS_BIT);
   });
 
   it('reports a definite first-write rejection without persistence', async () => {

@@ -58,6 +58,20 @@ export interface MotorExpectedMapping {
  * the rotation direction. Confirming it is precisely what the user's own
  * physical observation is for.
  */
+/**
+ * THE MIXER THE TABLE BELOW DESCRIBES - mixerMode_e MIXER_QUADX.
+ *
+ * M-E: the four corner positions are NOT enough to identify the subject.
+ * MIXER_VTAIL4 and MIXER_ATAIL4 put their four motors at the same four
+ * corners in the same output order (mixer_init.c:216-228), so a check on
+ * position alone admits them - and would then attach this table's props-out
+ * ROTATIONS, which those two mixers do not share, to a V-tail. Naming the
+ * subject keeps the expectation attached to the aircraft it was written
+ * for. The position comparison is kept as well, so that editing either
+ * table without the other closes the gate instead of quietly mis-claiming.
+ */
+export const MOTOR_TEST_EXPECTED_MIXER_MODE = 3;
+
 export const MOTOR_TEST_EXPECTED_CONFIGURATION: readonly MotorExpectedMapping[] =
   Object.freeze([
     Object.freeze({motorNumber: 1, position: 'REAR_RIGHT' as const, direction: 'CCW' as const}),

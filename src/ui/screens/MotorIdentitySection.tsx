@@ -47,7 +47,11 @@ import {
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
-import { MotorAirframeDiagram } from './MotorAirframeDiagram';
+import {
+  authoredAirframeLayout,
+  stationOf,
+} from '../../core/state/motorAirframeLayout';
+import { MotorAirframeDiagram, stationKey } from './MotorAirframeDiagram';
 import type {
   MotorSlotActivity,
 } from './MotorAirframeDiagram';
@@ -86,8 +90,31 @@ export interface MotorIdentitySectionProps {
    * "not read", which is rendered as unavailable rather than as identity.
    */
   readonly outputOrder: readonly number[] | undefined;
-  /** The protected hold control, owned by the screen. */
-  readonly holdControl: React.ReactNode;
+  /**
+   * The protected hold control, owned by the screen.
+   *
+   * OPTIONAL SINCE M-E, AND USUALLY ABSENT. The identification action now
+   * lives in the Motor Test workspace, beside the sliders that share its
+   * command path, so this section renders the instruction and the
+   * questions but no second copy of the button. Two hold controls on one
+   * screen would only raise the question of which one is armed.
+   */
+  readonly holdControl?: React.ReactNode;
+  /**
+   * WHICH HALF OF THIS SECTION TO RENDER.
+   *
+   * M-E §11 / §44 split what used to be one card into the two different
+   * jobs it was doing. 'MAP' is the aircraft an operator needs in the
+   * FIRST VIEWPORT to pick a motor - the drawing, and the two lines that
+   * name what is expected of the selected motor and what has actually
+   * been observed about it. 'DETAIL' is the verification workflow: the
+   * questions, the conflict report and the counts, which belong under the
+   * technical details disclosure because they are a separate task.
+   *
+   * Both read the SAME selectedSlot and the same verification state -
+   * this is a rendering split, not a second copy of anything.
+   */
+  readonly variant?: 'MAP' | 'DETAIL';
 }
 
 /**
@@ -151,6 +178,7 @@ export function MotorIdentitySection({
   onClearObservation,
   outputOrder,
   holdControl,
+  variant = 'DETAIL',
 }: MotorIdentitySectionProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width, fontScale } = useWindowDimensions();
@@ -178,9 +206,23 @@ export function MotorIdentitySection({
       ? sectionWidth >= VERIFY_SIDE_BY_SIDE_MIN_WIDTH
       : isDesktopTier(tier);
 
-  const [notesOpen, setNotesOpen] = useState(false);
 
+  const [notesOpen, setNotesOpen] = useState(false);
   const quadSupported = capability.kind === 'SUPPORTED';
+  /**
+   * IS AN AIRCRAFT ACTUALLY BEING DRAWN?
+   *
+   * A DIFFERENT QUESTION FROM `quadSupported`, and M-E is the reason the
+   * two had to separate. `quadSupported` asks whether the shipped Quad X
+   * expectation describes this airframe - true for one mixer. This asks
+   * whether there is a picture on screen with tappable motors on it -
+   * true for seventeen. The numbered chip row is the selector exactly
+   * when there is no picture to select from.
+   */
+  const drawnLayout = active
+    ? authoredAirframeLayout(mixerModeRaw, diagramMotorNumbers)
+    : undefined;
+  const layoutDrawn = drawnLayout !== undefined;
   /**
    * THE AIRCRAFT WAS READ AND IT IS NOT THE MODEL'S AIRFRAME. This is the
    * case where an identify action would be a lie, so the call to action is
@@ -341,85 +383,86 @@ export function MotorIdentitySection({
     </View>
   );
 
-  const map = (
-    /* testID kept from the bench card this block moved out of: the
-       diagram's geometry contract is asserted through it. */
-    <View style={styles.mapBlock} testID="motors-diagram">
-      {/* The numbered list is the only selector that is always correct,
-          whatever the airframe, so it is present alongside the map rather
-          than instead of it. It sits ABOVE the drawing so that the last
-          thing before the protected hold is the aircraft itself. */}
-      {selectionRow}
-      {/* CONCISE TRUTH, ALWAYS VISIBLE. The full paragraph says the same
-          thing at four times the height and now lives under the single
-          details toggle below - the CLAIM is never disclosed, only its
-          elaboration. */}
+  /**
+   * THE AIRCRAFT, AND - WHERE THERE IS NO AIRCRAFT - THE NUMBERS.
+   *
+   * M-E §16: ONE SELECTOR PER AIRFRAME. The numbered chip row used to
+   * render ABOVE the drawing on every airframe, so a Quad X operator was
+   * offered four chips and four motor nodes that did exactly the same
+   * thing, 140px apart. Where a layout is authored the drawing IS the
+   * selector - each node is a real 44px target with a radio role - and
+   * where none is, the chips are, unchanged. Never both.
+   *
+   * M-E §12: the four explanatory lines that used to stand between the
+   * chips and the drawing are gone. They said, in our vocabulary, that
+   * M-numbers are logical, that positions are expected rather than
+   * measured, that rotation is not read, and offered a toggle to a
+   * six-colour key. The drawing now states the one claim that matters in
+   * its own caption, in one sentence, and the rest is in the technical
+   * details section where an operator can go looking for it.
+   */
+  /**
+   * THE REFERENCE CLAIMS, AND THE LONGER FORM BEHIND ONE TOGGLE.
+   *
+   * M-E §12 took these out of the FIRST VIEWPORT, where four explanatory
+   * lines stood between the numbered chips and the drawing on a screen
+   * whose job is to spin a motor. §44 is the other half of that
+   * sentence: they are not deleted. Every claim is here, in the technical
+   * details section, with the same short/long split it always had - the
+   * CLAIM visible, its elaboration one press away.
+   *
+   * The one claim that never moved is the one an operator reads WHILE a
+   * motor turns: that the positions are a reference from the mixer table
+   * and that rotation is not read. That is the drawing's own caption, on
+   * every airframe, with nothing opened.
+   */
+  const referenceNotes = (
+    <View style={styles.notesArea} testID="motors-diagram-reference">
       <Text style={styles.caption} testID="motors-numbering-notice">
         {t('motorsScreen.numberingNoticeShort')}
       </Text>
       {quadSupported ? (
         <>
-          {/* The "expected, not confirmed" statement stays visible: it is
-              the claim the whole template rests on. The longer reference
-              prose sits behind a toggle IN PLACE - progressive disclosure
-              inside the core section, not a move into Advanced. */}
           <Text style={styles.referenceNotice} testID="motors-diagram-notice">
             {t('motorsScreen.diagramNotice')}
           </Text>
-          {/* STAYS VISIBLE, in its short form. The CLAIM - these arrows are
-              expected, not read from the aircraft - is never behind a tap.
-              What moves is the paragraph explaining which MSP field does
-              not exist, which is elaboration, not the claim. */}
-          <Text
-            style={styles.caption}
-            testID="motors-diagram-direction-source"
-          >
+          <Text style={styles.caption} testID="motors-diagram-direction-source">
             {t('motorsScreen.diagramDirectionSourceShort')}
           </Text>
-          {/* ONE disclosure for this section, not one per paragraph. */}
-          <Pressable
-            onPress={() => setNotesOpen(open => !open)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: notesOpen }}
-            accessibilityLabel={t('motorsScreen.diagramNotes')}
-            style={styles.notesToggle}
-            testID="motors-diagram-notes-toggle"
-          >
-            <Text style={styles.notesToggleText}>
-              {t('motorsScreen.detailsToggle')}
-            </Text>
-          </Pressable>
-          {notesOpen ? (
-            <View style={styles.notesBlock} testID="motors-diagram-notes">
-              {/* THE COMPLETE MAP KEY, one tap away. The drawing itself
-                  now lists only the states it is actually using, so the
-                  five colours that are not on screen live here instead of
-                  standing above the aircraft at all times. */}
-              <Text style={styles.caption} testID="motors-diagram-legend-full">
-                {[
-                  t('motorsScreen.legendSelected'),
-                  t('motorsScreen.legendSubmitted'),
-                  t('motorsScreen.legendAcknowledged'),
-                  t('motorsScreen.legendStopping'),
-                  t('motorsScreen.legendObserved'),
-                  t('motorsScreen.legendUnsafe'),
-                ].join(' · ')}
-              </Text>
-              <Text style={styles.caption} testID="motors-numbering-detail">
-                {t('motorsScreen.numberingNotice')}
-              </Text>
-              <Text style={styles.caption} testID="motors-direction-detail">
-                {t('motorsScreen.diagramDirectionSource')}
-              </Text>
-              <Text style={styles.caption} testID="motors-diagram-front-hint">
-                {t('motorsScreen.diagramFrontHint')}
-              </Text>
-            </View>
-          ) : null}
         </>
       ) : null}
-      {/* THE DRAWING IS LAST IN THIS BLOCK, so the control that spins a
-          motor is the very next thing after the picture of it. */}
+      <Pressable
+        onPress={() => setNotesOpen(open => !open)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: notesOpen }}
+        accessibilityLabel={t('motorsScreen.diagramNotes')}
+        style={styles.notesToggle}
+        testID="motors-diagram-notes-toggle"
+      >
+        <Text style={styles.notesToggleText}>
+          {t('motorsScreen.detailsToggle')}
+        </Text>
+      </Pressable>
+      {notesOpen ? (
+        <View style={styles.notesBlock} testID="motors-diagram-notes">
+          <Text style={styles.caption} testID="motors-numbering-detail">
+            {t('motorsScreen.numberingNotice')}
+          </Text>
+          <Text style={styles.caption} testID="motors-direction-detail">
+            {t('motorsScreen.diagramDirectionSource')}
+          </Text>
+          <Text style={styles.caption} testID="motors-diagram-front-hint">
+            {t('motorsScreen.diagramFrontHint')}
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+
+  const map = (
+    /* testID kept from the bench card this block moved out of: the
+       diagram's geometry contract is asserted through it. */
+    <View style={styles.mapBlock} testID="motors-diagram">
       {active ? (
         <MotorAirframeDiagram
           selectedSlot={selectedSlot}
@@ -431,6 +474,16 @@ export function MotorIdentitySection({
           motorNumbers={diagramMotorNumbers}
         />
       ) : null}
+      {/* M-E §16: ONE SELECTOR IN THE FIRST VIEWPORT. Where an aircraft
+          is drawn, its nodes are the selector - each a 44px target with a
+          radio role - so the numbered chips would be a second row asking
+          the same question 140px below the first. Where nothing is drawn,
+          the chips ARE the selector. Never both.
+          The chips are unconditional in the DETAIL variant below: the
+          verification workflow needs to move between motors while
+          answering, and by then the drawing is in a different section of
+          the page. */}
+      {layoutDrawn ? null : selectionRow}
     </View>
   );
 
@@ -476,6 +529,62 @@ export function MotorIdentitySection({
     confirmedDirection === undefined
       ? t('motorsScreen.valueNotObserved')
       : t(`motorVerification.direction.${confirmedDirection}`);
+
+  /**
+   * THE ONE LINE THE MAP NEEDS - M-E §12.
+   *
+   * WHAT IT REPLACED, measured from a 390px screenshot of a hexacopter:
+   * three lines under the drawing reading "M1 has no expected position
+   * for this airframe", "actual: not observed yet - not observed yet"
+   * with an "unconfirmed" badge, and "output: unavailable - not read
+   * yet". Every one is true. Together they are our verification model
+   * describing itself to somebody who wanted to spin a motor.
+   *
+   * WHERE THE POSITION COMES FROM NOW. The authored layout - the same
+   * firmware mixer table the drawing beside it is placing motors from -
+   * so a hexacopter reads "M1 - rear right" instead of "no expected
+   * position". That is not a new claim: it is the claim the picture is
+   * already making, in words, for the operator who wants it confirmed
+   * and for the screen reader that cannot see the picture.
+   *
+   * The observation line appears only once there IS an observation. An
+   * empty one said "not observed yet" on a screen where nothing had been
+   * asked yet. The full six-fact form, the output line, the mismatch
+   * notice and the correction control are all unchanged in the DETAIL
+   * variant under technical details.
+   */
+  const drawnStation =
+    drawnLayout?.placements.find(
+      placement => placement.motorNumber === selectedSlot,
+    );
+  const mapFacts = (
+    <View style={styles.mapFacts} testID="motor-identity-selected-brief">
+      <Text style={styles.identityMotor} testID="motor-identity-number">
+        {`M${selectedSlot}`}
+      </Text>
+      {drawnStation === undefined ? null : (
+        <>
+          <Text style={styles.identitySeparator}>·</Text>
+          <Text style={styles.identityValue} testID="motor-identity-station">
+            {t(`motorsScreen.${stationKey(stationOf(drawnStation))}`)}
+          </Text>
+        </>
+      )}
+      {confirmedPosition === undefined ? null : (
+        <>
+          <Text style={styles.identitySeparator}>·</Text>
+          <Text style={styles.identityValue} testID="motor-identity-confirmed-brief">
+            {confirmedPositionText}
+          </Text>
+          <TruthBadge
+            label={t('motorsScreen.truthConfirmed')}
+            tone="confirmed"
+            testID="motor-identity-confirmed-brief-badge"
+          />
+        </>
+      )}
+    </View>
+  );
 
   const facts = (
     <View style={styles.factsBlock} testID="motor-identity-selected">
@@ -658,7 +767,7 @@ export function MotorIdentitySection({
             {t('motorsScreen.identifyUnavailableRemains')}
           </Text>
         </View>
-      ) : (
+      ) : holdControl === undefined ? null : (
         <View testID="motor-identification-start">{holdControl}</View>
       )}
     </>
@@ -746,6 +855,24 @@ export function MotorIdentitySection({
       </Text>
     </View>
   );
+
+  /**
+   * THE MAP VARIANT - what the first viewport gets.
+   *
+   * No card chrome, no eyebrow, no heading, no counts: the aircraft, and
+   * the two lines naming what is expected of the selected motor and what
+   * has been observed about it. Measured before this split, the card
+   * around these two blocks cost 1,880px on a 390px phone and put the
+   * Motor Test controls a screen and a half below the fold.
+   */
+  if (variant === 'MAP') {
+    return (
+      <View style={styles.mapVariant} testID="motors-identity-map">
+        {map}
+        {mapFacts}
+      </View>
+    );
+  }
 
   return (
     <View
@@ -863,8 +990,20 @@ export function MotorIdentitySection({
               one scrolled away. Compacting the questions removed the
               reason, and a duplicate only made the operator ask which of
               the two they were looking at. */}
+          {/* THE AIRCRAFT IS NOT REPEATED HERE.
+              It used to be, because the verification questions lived at
+              the bottom of a 4,000px column and the drawing had scrolled
+              away by the time an operator reached them. M-E moved the map
+              into the first viewport and moved these questions under the
+              technical details disclosure, so the two are no longer
+              separated by the page - and a second aircraft would only
+              raise the question of which one is being looked at.
+              What IS here is the numbered row: this workflow's own
+              selector, carrying each motor's evidence state, so an
+              operator can move between motors without leaving it. */}
           {facts}
-          {map}
+          {selectionRow}
+          {referenceNotes}
         </View>
 
         <View
@@ -893,6 +1032,19 @@ const badgeTone = StyleSheet.create({
 });
 
 const styles = StyleSheet.create({
+  notesArea: {
+    gap: 3,
+  },
+  mapFacts: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  mapVariant: {
+    gap: spacing.xs,
+  },
   card: {
     gap: spacing.sm,
     backgroundColor: colors.surface,

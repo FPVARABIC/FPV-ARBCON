@@ -23,7 +23,8 @@ import {
   type MotorConfigurationSaveOutcome,
 } from '../../platforms/react-native/protocol/MotorConfigurationController';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography} from '../theme';
-import { ToggleSwitch } from '../components/controls';
+import { SelectField, ToggleSwitch } from '../components/controls';
+import { BETAFLIGHT_MIXER_REFERENCE_V147 } from '../../core/firmware-adapters/betaflightMixerReferenceV147';
 import { formatMotorProtocol } from './MotorConfigurationSummary';
 
 const MIN_TOUCH_TARGET = 44;
@@ -343,8 +344,70 @@ export function MotorConfigurationPanel({
     loadError === undefined;
   const disabled = phase !== 'IDLE' || original === undefined;
 
+  /**
+   * THE AIRFRAMES THIS PANEL WILL OFFER TO WRITE.
+   *
+   * SOURCE OWNERSHIP, RESOLVED FOR M-E §7. Betaflight Configurator
+   * 2026.6.1 (14a057ff) puts the mixer selector on the MOTORS tab -
+   * MotorsTab.vue:13-14, a select bound to `fcStore.mixerConfig.mixer` -
+   * and its save sends MSP_SET_MIXER_CONFIG at MotorsTab.vue:1388,
+   * followed by an EEPROM write and a reboot. Our earlier design decision
+   * that Motors may never change the mixer was therefore wrong about the
+   * reference implementation, and M-E §7 says source truth wins.
+   *
+   * WE ARE STRICTER THAN THE REFERENCE IN ONE WAY, DELIBERATELY. The
+   * reference sends the write and reports success on the acknowledgement.
+   * This panel's save re-reads the whole configuration after the EEPROM
+   * commit and compares it field by field against the draft, so a mixer
+   * that did not take reports SAVED_UNVERIFIED rather than success. That
+   * transaction is unchanged by M-E: the mixer byte was always in the
+   * draft and always in the readback comparison; what was missing was a
+   * control to change it.
+   *
+   * THREE MODES ARE NOT OFFERED, AND IT IS NOT A JUDGEMENT ABOUT THEM.
+   * validateAndFixConfig() (config.c:200-218 @ 7348054f) REWRITES
+   * HELI_90_DEG, PPM_TO_SERVO and SINGLECOPTER to a custom mode inside
+   * readEEPROM(), before anything can observe the value. Offering them
+   * would mean writing a byte that is guaranteed to read back as a
+   * different byte, which our own verification would then - correctly -
+   * report as unverified. The reference table records that rewrite per
+   * mode, so this list is derived from it rather than hand-maintained.
+   *
+   * AN UNKNOWN MIXER IS NEVER NORMALISED. If the flight controller
+   * reports an id this table does not know, `selectedKey` below is simply
+   * not in the list: the field shows the raw value and offers no
+   * substitute. Silently snapping it to a neighbouring mixer would be the
+   * exact failure this whole subsystem exists to prevent.
+   */
+  const mixerOptions = useMemo(
+    () =>
+      BETAFLIGHT_MIXER_REFERENCE_V147.filter(
+        row => row.configValidationRewrite === undefined,
+      ).map(row => ({
+        key: String(row.mixerId),
+        label: t(`motorsScreen.topology.airframe.${row.firmwareName}`),
+      })),
+    [t],
+  );
+
   const setBoolean = useCallback(
     (field: keyof MotorConfigurationDraft, value: boolean) => {
+      setDraft(current =>
+        current === undefined
+          ? current
+          : Object.freeze({ ...current, [field]: value }),
+      );
+      setSaveOutcome(undefined);
+      setConfirming(false);
+    },
+    [],
+  );
+
+  /** Sets a numeric draft field from a value rather than from typed
+   *  text. The text setters exist because a partially-typed number is not
+   *  a number; a chosen option always is. */
+  const setNumberValue = useCallback(
+    (field: keyof MotorConfigurationDraft, value: number) => {
       setDraft(current =>
         current === undefined
           ? current
@@ -581,6 +644,24 @@ export function MotorConfigurationPanel({
               disabled={disabled}
               onValueChange={value => setBoolean('motorStopEnabled', value)}
               testID="motor-config-motor-stop"
+            />
+            {/* M-E §7 / §8 / §10: CHOOSING THE AIRCRAFT.
+                It sits directly above the propeller-direction switch
+                because the two are the same MSP command - byte 0 and
+                byte 1 of MSP_SET_MIXER_CONFIG - and a save that changes
+                either sends both. Changing it does not redraw the
+                aircraft on its own: the drawing follows the RUNTIME motor
+                count, and that only changes once the flight controller
+                has rebooted and run mixerInit() again. The save's own
+                reboot notice is what carries that, and it is unchanged. */}
+            <SelectField
+              label={t('motorConfiguration.mixerLabel')}
+              helper={t('motorConfiguration.mixerDetail')}
+              options={mixerOptions}
+              selectedKey={String(draft.mixerModeRaw)}
+              disabled={disabled}
+              onSelect={value => setNumberValue('mixerModeRaw', Number(value))}
+              testID="motor-config-mixer"
             />
             <ToggleRow
               label={t('motorConfiguration.propsDirection')}

@@ -29,6 +29,7 @@ import type {
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 import {MotorsScreenView} from './MotorsScreen';
 import i18n from '../../i18n';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 /* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
    These assertions read `.toBe('—')`. The property each one is named for
@@ -195,6 +196,9 @@ function render(port: Port, sessionId: string | undefined = 'fc-1'): Rendered {
       />,
     );
   });
+// M-E §44: the workflow this suite exercises now lives under the
+// technical details disclosure. One press, as an operator would.
+openMotorsTechnicalDetails(tree);
   const collect = () =>
     tree.root
       .findAll(node => typeof node.props?.testID === 'string')

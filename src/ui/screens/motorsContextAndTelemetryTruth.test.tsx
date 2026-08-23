@@ -38,6 +38,7 @@ import {
 import type {MspMotorTelemetryEntry} from '../../core/protocol/msp/decoding/decodeMotorTelemetry';
 import {MotorsScreenView} from './MotorsScreen';
 import i18n from '../../i18n';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 /* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
    These assertions read `.toBe('—')`. The property each one is named for
@@ -224,6 +225,9 @@ function render(port: Port, sessionId = 'fc-1'): Rendered {
       />,
     );
   });
+  // M-E §44: the workflow this suite exercises now lives under the
+  // technical details disclosure. One press, as an operator would.
+  openMotorsTechnicalDetails(tree);
   const collect = () =>
     tree.root
       .findAll(node => typeof node.props?.testID === 'string')
@@ -342,19 +346,23 @@ describe('the aircraft travels with the identification questions', () => {
     ).toEqual(['motors-airframe-slot-3']);
   });
 
-  it('reads summary -> aircraft -> hold -> questions, in that order', () => {
-    // The order of the actual job: what is addressed, where it sits, the
-    // control that spins it, the questions about what happened. The
-    // AIRCRAFT is the last thing before the control on purpose - nothing
-    // wordy stands between the picture of a motor and the button that
-    // turns it.
-    const facts = r.at('motor-identity-selected');
+  it('reads aircraft -> addressed motor -> hold -> questions, in that order', () => {
+    // The order of the actual job, unchanged in substance: where the
+    // motor sits, which one is addressed, the control that spins it, then
+    // the questions about what happened.
+    //
+    // M-E moved the first three into the FIRST VIEWPORT and the questions
+    // under the technical details disclosure, which is why the summary
+    // that used to lead is now the compact line under the drawing rather
+    // than a six-row block above it. Nothing wordy still stands between
+    // the picture of a motor and the button that turns it.
     const aircraft = r.at('motors-airframe-stage');
+    const addressed = r.at('motor-identity-selected-brief');
     const hold = r.at('motors-hold-button');
     const questions = r.at('verification-wizard');
-    expect(facts).toBeGreaterThanOrEqual(0);
-    expect(aircraft).toBeGreaterThan(facts);
-    expect(hold).toBeGreaterThan(aircraft);
+    expect(aircraft).toBeGreaterThanOrEqual(0);
+    expect(addressed).toBeGreaterThan(aircraft);
+    expect(hold).toBeGreaterThan(addressed);
     expect(questions).toBeGreaterThan(hold);
   });
 });

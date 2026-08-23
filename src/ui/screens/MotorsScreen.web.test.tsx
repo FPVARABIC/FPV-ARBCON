@@ -150,24 +150,29 @@ describe('PART AD: Motors web parity', () => {
   });
 
   it('does NOT mirror the physical airframe under RTL', () => {
-    // The rendered boxes, not the style object. FRONT_RIGHT must sit to
-    // the right of FRONT_LEFT on screen whatever the writing direction is.
-    const right = q('motors-diagram-cell-FRONT-RIGHT');
-    const left = q('motors-diagram-cell-FRONT-LEFT');
-    expect(right).not.toBeNull();
-    expect(left).not.toBeNull();
-    // jsdom reports zero-size boxes, so compare DOCUMENT ORDER against the
-    // computed direction instead: under RTL the first painted child is the
-    // rightmost one. MotorAirframeDiagram computes this itself precisely
-    // because react-native-web drops the `direction` style.
-    const row = right!.parentElement!;
-    const order = [...row.children];
-    const rtl = document.documentElement.getAttribute('dir') === 'rtl';
-    const rightIndex = order.indexOf(right!);
-    const leftIndex = order.indexOf(left!);
-    expect(rightIndex).toBeGreaterThanOrEqual(0);
-    expect(leftIndex).toBeGreaterThanOrEqual(0);
-    expect(rtl ? rightIndex < leftIndex : rightIndex > leftIndex).toBe(true);
+    // M-E: the drawing places each motor by absolute offset rather than by
+    // document order in a flex row, which makes this stronger than it was.
+    // `left` is a PHYSICAL CSS offset - it is measured from the left edge
+    // of the box under `direction: rtl` exactly as it is under ltr - so
+    // comparing the two offsets asks the real question: on a QUADX, does
+    // the front-right motor (M2) sit to the right of the front-left one
+    // (M4) in an Arabic interface?
+    // The offsets below hold whichever direction the host reports, which
+    // is the point: the aircraft is not a function of the writing system.
+    const frontRight = q('motors-airframe-slot-2');
+    const frontLeft = q('motors-airframe-slot-4');
+    expect(frontRight).not.toBeNull();
+    expect(frontLeft).not.toBeNull();
+    const offset = (element: Element): number =>
+      Number.parseFloat((element as HTMLElement).style.left);
+    expect(Number.isFinite(offset(frontRight!))).toBe(true);
+    expect(Number.isFinite(offset(frontLeft!))).toBe(true);
+    expect(offset(frontRight!)).toBeGreaterThan(offset(frontLeft!));
+    // ...and the rear pair keeps the same handedness, so the aircraft has
+    // not simply been rotated.
+    expect(offset(q('motors-airframe-slot-1')!)).toBeGreaterThan(
+      offset(q('motors-airframe-slot-3')!),
+    );
   });
 
   /** Was "exactly one per motor" - correct while a CW/CCW/؟ token was

@@ -919,6 +919,18 @@ export function MotorsScreenView({
   // terminated the responder and stopped a held motor in the field.
   const holdDisabled = holdGateBlocked && !holdOwned;
   /**
+   * IS THERE ANYTHING TO STOP RIGHT NOW?
+   *
+   * Every one of these means a command can reach a motor, or already
+   * has: control has been enabled in the workspace, a pulse may be live,
+   * a protected hold is owned, or the session is in a fault whose stop
+   * this application could not confirm. Outside them the screen is a
+   * read-only view of an aircraft that cannot move.
+   *
+   * IT GOVERNS APPEARANCE ONLY. The stop control is present, enabled and
+   * wired identically in both states - see its own note at the dock.
+   */
+  /**
    * PRESENTATION IS FROZEN WHILE A HOLD IS OWNED - THE MEASURED FIX.
    *
    * Forensic trace (Chromium, mouse physically stationary): accepting the
@@ -1658,6 +1670,9 @@ export function MotorsScreenView({
     </View>
   );
 
+  const stopIsUrgent =
+    motorControlEnabled || mayBeLive || holdOwned || presentation === 'FAULT';
+
   return (
     <View
       style={[styles.root, { paddingBottom: effectiveBottomInset }]}
@@ -1890,7 +1905,21 @@ export function MotorsScreenView({
             * without opening a disclosure. The map, the numbered
             * selector, the protected hold and the observation wizard now
             * sit together in the order a person performs them. */}
+          {/* M-E §11 / §13: THE AIRCRAFT, AND NOTHING ELSE.
+              This column used to carry the whole identity section - the
+              verification wizard, its counts, the direction authoring
+              workflow and the output-order transaction - and on a 390px
+              phone it was 1,880px tall. Because it renders BEFORE the
+              control column when the two stack, the first control that
+              starts a motor test sat 1,288px down the page on a Quad X
+              and 1,910px down on an airframe with no drawing.
+              What is left is what an operator needs in order to point at
+              a motor: the aircraft, and the two lines naming what is
+              expected of the selected motor and what has been observed.
+              Everything removed is in the technical details section, in
+              full, reachable in one press. */}
           <MotorIdentitySection
+            variant="MAP"
             slots={identitySlots}
             selectedSlot={selectedSlot}
             onSelectSlot={handleSelectSlot}
@@ -1906,7 +1935,6 @@ export function MotorsScreenView({
             onMultipleMotorsReported={handleMultipleMotors}
             onClearObservation={handleClearObservation}
             outputOrder={outputOrderValues}
-            holdControl={holdControl}
           />
           {/* SESSION READINESS, BESIDE THE HOLD CONTROL IT DESCRIBES.
               These two blocks used to live at the bottom of the tools
@@ -1947,64 +1975,7 @@ export function MotorsScreenView({
               identity is a core question, and answering it from the bottom
               of a tools card was the reason it read as advanced. */}
 
-          {showReadinessDiagnostic && !freezeTransientPresentation ? (
-            <View
-              style={styles.readinessBlock}
-              testID="motors-readiness-blocked-detail"
-            >
-              <Text style={styles.blockHeading}>
-                {t('motorsScreen.readinessBlockedHeading')}
-              </Text>
-              {primaryBlockReason !== undefined ? (
-                <Text style={styles.blockReason}>
-                  {t(`motorsScreen.blockReason.${primaryBlockReason}`)}
-                </Text>
-              ) : null}
-              <Text
-                style={styles.caption}
-                testID="motors-readiness-blocked-code"
-              >
-                {t('motorsScreen.readinessBlockedDetail', {
-                  reason: readinessDiagnosticReason,
-                  step: snapshot?.setupStep ?? 'NONE',
-                })}
-              </Text>
-              <Text style={styles.caption}>
-                {requiresNewConnection
-                  ? t('motorsScreen.readinessReconnectAction')
-                  : t('motorsScreen.readinessWaitAction')}
-              </Text>
-            </View>
-          ) : null}
 
-          {/* DIRECTION, beside identity rather than at the bottom of the
-            * page. Three sources on three rows - template expectation,
-            * what this session commanded, what a person observed - and
-            * the one authoring workflow underneath them. */}
-          <MotorDirectionSection
-            selectedMotor={selectedSlot}
-            operator={operator}
-            identificationCapability={identificationCapability}
-            commandCapability={directionCommandCapability}
-            verification={verification}
-            commanded={selectedDirectionCommand}
-            onCommandOutcome={handleDirectionCommandOutcome}
-            onDirtyChange={setEscDirectionDirty}
-          />
-          {/* Reading which output drives which motor is firmware truth and
-            * needs no observation at all. Writing one still needs
-            * everything it always needed - the panel below the read is the
-            * same panel, reaching the same controller transaction. */}
-          <MotorOutputMappingSection
-            sessionId={sessionId}
-            motorCount={liveMotorCount}
-            verification={verification}
-            capability={identificationCapability}
-            onEndMotorTestSession={handleEndSessionForConfiguration}
-            onDirtyChange={setOutputOrderDirty}
-            blockedReason={configurationReadBlockedReason}
-            onValuesChange={setOutputOrderValues}
-          />
           </View>
 
           <View
@@ -2025,6 +1996,19 @@ export function MotorsScreenView({
             enabled={motorControlEnabled}
             onEnableChange={handleMotorControlChange}
           />
+          {/* M-E §17 / §32: THE IDENTIFICATION ACTION, WITH THE CONTROLS.
+              It used to live inside the verification wizard, which is a
+              different job: the wizard asks where a motor turned out to
+              be and compares that against a Quad X expectation, and it
+              therefore withheld the hold on every airframe that
+              expectation does not describe. Spinning one motor to see
+              which propeller moves needs no expectation at all - the
+              operator is looking at the aircraft, not at the screen - and
+              the command path it uses is the same fixed eight-slot write
+              the sliders beside it already use on every airframe.
+              The gate is unchanged: operator present, no reconnection
+              required, activation allowed. */}
+          <View testID="motors-identify-action">{holdControl}</View>
             {/* LIVE ESC TELEMETRY BELONGS BESIDE THE SLIDERS, not in an
                 advanced drawer: RPM and temperature are what a person
                 reads WHILE a motor is spinning, and reading them meant
@@ -2119,6 +2103,85 @@ export function MotorsScreenView({
 
         {advancedVerificationOpen ? (
           <View style={styles.advancedStack} testID="motors-advanced-verification">
+        {/* M-E §44: THE TECHNICAL TRUTH, IN FULL, ONE PRESS AWAY.
+            Nothing here was deleted or weakened when the first viewport
+            was cleared - the verification wizard with its counts and its
+            conflict report, the three-source direction workflow, and the
+            output-order transaction are the same components reading the
+            same state. They stopped standing between the operator and the
+            motors, which is a different thing from being hidden. */}
+        <MotorIdentitySection
+          slots={identitySlots}
+          selectedSlot={selectedSlot}
+          onSelectSlot={handleSelectSlot}
+          capability={identificationCapability}
+          mixerModeRaw={liveMixerModeRaw}
+          diagramMotorNumbers={identitySlots}
+          active={active}
+          liveSlot={liveSlot}
+          liveActivity={liveActivity}
+          verification={verification}
+          receipt={receipt}
+          onConfirm={handleConfirmObservation}
+          onMultipleMotorsReported={handleMultipleMotors}
+          onClearObservation={handleClearObservation}
+          outputOrder={outputOrderValues}
+        />
+          {/* DIRECTION, beside identity rather than at the bottom of the
+            * page. Three sources on three rows - template expectation,
+            * what this session commanded, what a person observed - and
+            * the one authoring workflow underneath them. */}
+          <MotorDirectionSection
+            selectedMotor={selectedSlot}
+            operator={operator}
+            identificationCapability={identificationCapability}
+            commandCapability={directionCommandCapability}
+            verification={verification}
+            commanded={selectedDirectionCommand}
+            onCommandOutcome={handleDirectionCommandOutcome}
+            onDirtyChange={setEscDirectionDirty}
+          />
+          {/* Reading which output drives which motor is firmware truth and
+            * needs no observation at all. Writing one still needs
+            * everything it always needed - the panel below the read is the
+            * same panel, reaching the same controller transaction. */}
+          <MotorOutputMappingSection
+            sessionId={sessionId}
+            motorCount={liveMotorCount}
+            verification={verification}
+            capability={identificationCapability}
+            onEndMotorTestSession={handleEndSessionForConfiguration}
+            onDirtyChange={setOutputOrderDirty}
+            blockedReason={configurationReadBlockedReason}
+            onValuesChange={setOutputOrderValues}
+          />
+        {showReadinessDiagnostic && !freezeTransientPresentation ? (
+          <View
+            style={styles.readinessBlock}
+            testID="motors-readiness-blocked-detail"
+          >
+            <Text style={styles.blockHeading}>
+              {t('motorsScreen.readinessBlockedHeading')}
+            </Text>
+            {primaryBlockReason !== undefined ? (
+              <Text style={styles.blockReason}>
+                {t(`motorsScreen.blockReason.${primaryBlockReason}`)}
+              </Text>
+            ) : null}
+            <Text style={styles.caption} testID="motors-readiness-blocked-code">
+              {t('motorsScreen.readinessBlockedDetail', {
+                reason: readinessDiagnosticReason,
+                step: snapshot?.setupStep ?? 'NONE',
+              })}
+            </Text>
+            <Text style={styles.caption}>
+              {requiresNewConnection
+                ? t('motorsScreen.readinessReconnectAction')
+                : t('motorsScreen.readinessWaitAction')}
+            </Text>
+          </View>
+        ) : null}
+
         {/* P3: THE LEGACY BENCH IS NOW A SECONDARY TOOL. The professional
             workspace above is the primary path; this card keeps the
             verification workflow (selection, airframe reference, the hold
@@ -2326,9 +2389,31 @@ export function MotorsScreenView({
             {t('motorsScreen.pulseRejected')}
           </Text>
         ) : null}
-        <Pressable onPress={handleStopPress} accessibilityRole="button" accessibilityState={{ disabled: false }} style={styles.stopButton} testID="motors-stop-button">
-          <Icon name="square" size={26} color={colors.white} />
-          <Text style={styles.stopLabel}>{t('motorsScreen.stop')}</Text>
+        {/* M-E §35: THE WEIGHT IS PROPORTIONAL TO THE DANGER, THE
+            FUNCTION IS NOT.
+            MEASURED at 390: a 69px red bar with a 26px icon and a
+            title-sized label, pinned across the bottom of the first
+            viewport, on a screen where the session was not even open and
+            nothing could spin. It read as the loudest thing on the page
+            in exactly the state where there was nothing to stop.
+            It is now compact until a command can actually reach a motor -
+            when control is enabled, while a pulse may be live, while a
+            hold is owned, or in a fault - and full weight from that
+            moment on. WHAT DOES NOT CHANGE IN EITHER STATE: it is never
+            disabled, never conditional, never scrolled away, and always
+            at least a 44pt target. The handler and its stop path are
+            untouched. */}
+        <Pressable
+          onPress={handleStopPress}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: false }}
+          style={[styles.stopButton, !stopIsUrgent && styles.stopButtonCalm]}
+          testID="motors-stop-button"
+        >
+          <Icon name="square" size={stopIsUrgent ? 26 : 18} color={colors.white} />
+          <Text style={[styles.stopLabel, !stopIsUrgent && styles.stopLabelCalm]}>
+            {t('motorsScreen.stop')}
+          </Text>
         </Pressable>
         {endSessionFailed || sessionCloseFailed ? <Text style={styles.inlineError} testID="motors-end-session-failed">{t('motorsScreen.endSessionFailed')}</Text> : null}
         {sessionHasEnded ? <Text style={styles.sessionEndedText} testID="motors-end-session-done">{t('motorsScreen.endSessionDone')}</Text> : null}
@@ -2950,6 +3035,21 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.22,
     shadowRadius: 12,
     elevation: 4,
+  },
+  /* The calm state: same colour, same handler, same 44pt floor, a
+     quarter of the ink. */
+  stopButtonCalm: {
+    minHeight: MIN_TOUCH_TARGET,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radii.md,
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  stopLabelCalm: {
+    ...typography.label,
+    color: colors.white,
+    writingDirection: 'rtl',
   },
   stopIcon: { fontSize: 22, color: colors.white },
   stopLabel: {

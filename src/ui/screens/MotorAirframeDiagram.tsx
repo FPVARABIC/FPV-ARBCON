@@ -3,20 +3,39 @@
  *
  * WHAT IT DRAWS, AND FOR WHICH AIRCRAFT. It asks
  * `authoredAirframeLayout(mixerModeRaw, motorNumbers)` where this
- * aircraft's motors sit. When this project has authored and checked a
- * layout for that mixer, it draws the frame with each motor in its place.
- * When it has not - a hex, a V-tail, an unread mixer - it draws a
- * NUMBERED LIST instead and says why. That is a correct answer, not a
- * degraded one: a picture of the wrong aircraft is worse than no picture.
+ * aircraft's motors sit, and draws the frame with each motor in its place.
+ * M-E authored seventeen layouts, so the hex, octo, Y and tail families
+ * now get an aircraft instead of a paragraph. Where no layout exists - a
+ * custom mixer, an unread one, a hex whose own table puts two motors at
+ * the origin - it draws a NUMBERED LIST and says so in one sentence. That
+ * is a correct answer, not a degraded one: a picture of the wrong aircraft
+ * is worse than no picture.
+ *
+ * IT IS A TOOL, NOT AN ILLUSTRATION. M-E measured the previous version at
+ * 462px on a 900px desktop viewport and 401px on a 390px phone - half the
+ * screen, for four circles - which pushed the Motor Test controls 1288px
+ * down the phone page. The stage is now DERIVED from the geometry it has
+ * to show: `computeAirframeStageWidth` returns the smallest square in
+ * which every motor node keeps a 44px touch target and 46px of clearance
+ * from its neighbours, bounded to 180px. A quad needs 128px, an octo 168px,
+ * and nothing needs more. Growing it further adds no information.
  *
  * WHAT IT NEVER DRAWS: A ROTATION. There is no MSP field at API 1.47 that
  * reports which way a motor actually spins, and a mixer mode does not
- * determine it. Authored layouts therefore carry no direction field, this
- * component cannot be handed one, and the caption says so once in words.
- * The expected props-out reference still exists in the VERIFICATION
- * wizard, where comparing it against what a person actually saw is the
- * whole point - but the operational map, which an operator reads WHILE a
- * motor is turning, claims nothing about rotation.
+ * determine it. Authored layouts carry no direction field, this component
+ * cannot be handed one, and the caption says so once in words. The
+ * expected props-out reference still exists in the VERIFICATION wizard,
+ * where comparing it against what a person actually saw is the whole
+ * point - but the operational map, which an operator reads WHILE a motor
+ * is turning, claims nothing about rotation.
+ *
+ * COAXIAL AIRCRAFT ARE DRAWN AS COAXIAL. A Y6 is not a flat hexacopter
+ * and an X8 is not a flat octocopter; they carry two rotors per arm. Those
+ * arms render as ONE node bearing both motor numbers with an upper/lower
+ * mark, because eight independently-tappable 44px targets do not fit in a
+ * compact stage and spreading them around a circle would draw an aircraft
+ * that does not exist. Pressing the node moves between the two motors on
+ * that arm, and both are also selectable from the numbered rows.
  *
  * A view-only geometry layer: the slot handed to onSelectSlot is the same
  * number printed on the node, and no value here can reach a motor command
@@ -24,60 +43,33 @@
  * from the firmware mixer table, never a measurement from the aircraft -
  * an MSP acknowledgement proves reception, not rotation.
  *
- * SIZING. The stage used to be capped at 156px on every screen, which a
- * real operator reported as unreadable: not recognisably an X frame,
- * front unclear, M1-M4 unclear. It now scales with the viewport through
- * the shared layout tiers, and every internal dimension derives from the
- * stage size rather than being hard-coded, so the frame, the rotors and
- * the numbers grow together. MOTOR_AIRFRAME_STAGE_MIN_WIDTH keeps the
- * narrowest phone case at the previously-audited touch-target size.
- *
- * MEANING NEVER DEPENDS ON COLOUR: every state also carries an Arabic
- * text badge on the node itself and a matching legend entry.
+ * MEANING NEVER DEPENDS ON COLOUR. The node carries a coloured dot so the
+ * eye can find the live motor; WHAT is happening to it is stated in Arabic
+ * words on the line below the stage, naming the motor. That line replaced
+ * a six-entry colour key printed on every render whether or not any state
+ * was active.
  */
 
-import React, { useState } from 'react';
+import React, {useState} from 'react';
+import {Pressable, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
+import {useTranslation} from 'react-i18next';
+
+import {colors, radii, spacing, typography} from '../theme';
 import {
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from 'react-native';
-import { useTranslation } from 'react-i18next';
-
+  authoredAirframeLayout,
+  stationOf,
+  verificationPositionOf,
+} from '../../core/state/motorAirframeLayout';
 import type {
-  MotorPhysicalPosition,
-  MotorRotationDirection,
+  AirframeLayout,
+  AirframeStation,
+  MotorAirframePlacement,
+} from '../../core/state/motorAirframeLayout';
+import {
+  MOTOR_TEST_EXPECTED_CONFIGURATION,
+  MOTOR_TEST_EXPECTED_MIXER_MODE,
 } from '../../core/state/motorVerificationModel';
-import { MOTOR_TEST_EXPECTED_CONFIGURATION } from '../../core/state/motorVerificationModel';
-import {PROSE_MEASURE, colors, fonts, radii, spacing, typography} from '../theme';
-import { Icon } from '../icons';
-import { isRtlLayout } from '../icons/layoutDirection';
-import { resolveLayoutTier } from '../theme/layout';
-import { authoredAirframeLayout } from '../../core/state/motorAirframeLayout';
-
-export interface MotorAirframeEntry {
-  readonly slot: number;
-  readonly position: MotorPhysicalPosition;
-  /**
-   * THERE IS NO DIRECTION FIELD, AND THAT IS THE POINT.
-   *
-   * There is no MSP field at API 1.47 that reports which way a motor
-   * actually spins; auditing the pinned firmware again for M-D did not
-   * turn one up. This interface used to carry an optional direction so a
-   * caller without one could pass undefined and get an explicit unknown
-   * mark - but every caller is now an authored layout, authored layouts
-   * carry no direction (motorAirframeLayout.ts), and the "unknown mark"
-   * had become a question mark under all four motors of every aircraft.
-   *
-   * Removing the field makes §25 STRUCTURAL rather than a matter of
-   * caller discipline: this component cannot be handed a rotation to
-   * draw, so it cannot draw one. The expected props-out reference still
-   * exists in the verification wizard, where comparing it against what a
-   * human actually saw is the entire purpose.
-   */
-}
+import type {MotorPhysicalPosition} from '../../core/state/motorVerificationModel';
 
 /**
  * What the diagram may say about one output right now. SUBMITTED /
@@ -85,11 +77,7 @@ export interface MotorAirframeEntry {
  * record. UNSAFE means the app cannot describe the output truthfully (a
  * fault, or a stop it could not confirm).
  */
-export type MotorSlotActivity =
-  | 'SUBMITTED'
-  | 'ACKNOWLEDGED'
-  | 'STOPPING'
-  | 'UNSAFE';
+export type MotorSlotActivity = 'SUBMITTED' | 'ACKNOWLEDGED' | 'STOPPING' | 'UNSAFE';
 
 export interface MotorAirframeDiagramProps {
   readonly selectedSlot: number;
@@ -101,129 +89,147 @@ export interface MotorAirframeDiagramProps {
   /**
    * MSP_MIXER_CONFIG offset 0, raw - WHICH AIRFRAME THIS IS.
    *
-   * PART Q found that this file drew its one Quad X aircraft for every
-   * build, so a hex or octo was shown four motors with M1-M4 on positions
-   * the frame does not have. That was answered by gating on the motor
-   * COUNT, which fixed the hex and left a subtler version behind: four
-   * motors is not four corners. QUADP, Y4, VTAIL4 and ATAIL4 all report
-   * four and are not X frames, and QUADX_1234 is an X whose motor 1 sits
-   * where the Quad X drawing puts motor 4.
-   *
-   * The airframe is therefore asked for directly. `undefined` means the
-   * mixer has not been read, and an unread mixer is drawn as a numbered
-   * list - see motorAirframeLayout.ts for which mixers have artwork.
+   * `undefined` means the mixer has not been read, and an unread mixer is
+   * drawn as a numbered list - see motorAirframeLayout.ts for which
+   * mixers have artwork and which are deliberately without it.
    */
   readonly mixerModeRaw: number | undefined;
   /**
    * The motor numbers the flight controller actually reported, 1..N.
    *
-   * REQUIRED, AND WITH NO DEFAULT ON PURPOSE. This prop replaced
-   * `motorCount?: number`, whose default value was four - so a caller that
-   * simply had not read the count yet got a four-motor aircraft rather
-   * than an error or an empty state. An empty array here means "nothing
-   * has been read", and renders as nothing.
+   * REQUIRED, AND WITH NO DEFAULT ON PURPOSE. An empty array means
+   * "nothing has been read", and renders as nothing.
    */
   readonly motorNumbers: readonly number[];
   /**
-   * Force a stage size instead of deriving one from the window.
+   * Force a stage size instead of deriving one from the geometry.
    *
    * PRESENTATION ONLY - it changes no geometry, no slot order, no
-   * numbering and no touch semantics; every arm angle and every label is
-   * computed from `scale = stageWidth / 260` exactly as before. It exists
-   * because this diagram is now rendered TWICE on the same screen: full
-   * size where the operator picks a motor, and small again beside the
-   * identification questions so the aircraft is still on screen while
-   * they are answering them. A window-derived size cannot express "the
-   * small one".
+   * numbering and no touch semantics. It exists because this diagram can
+   * be rendered twice on one screen, and a derived size cannot express
+   * "the small one".
    */
   readonly stageWidthOverride?: number;
   /**
-   * THE SECOND COPY, BESIDE THE QUESTIONS. Drops the title, the caption
-   * and the six-item legend - every one of which is already on screen,
-   * unchanged, on the full-size diagram this one accompanies. What it
-   * KEEPS is everything that carries information about THIS aircraft: the
-   * FRONT marker, the frame, and the four selectable nodes with their
-   * M-numbers, direction tokens and state badges.
-   *
-   * PRESENTATION ONLY, like stageWidthOverride. No slot, number, order,
-   * selection or touch semantic differs between the two copies.
+   * THE SECOND COPY. Drops the title, the caption and the legend - each of
+   * which is already on screen, unchanged, on the diagram this one
+   * accompanies. What it KEEPS is everything that carries information
+   * about THIS aircraft: the FRONT marker, the frame, and the selectable
+   * nodes with their M-numbers and state badges.
    */
   readonly compact?: boolean;
 }
 
+/** Every node is a real touch target on every device. */
+const NODE_SIZE = 44;
+/** Clearance demanded between two node centres, over and above nothing:
+ *  two 44px targets whose centres are 46px apart do not overlap enough to
+ *  mis-hit at a glance. */
+const NODE_CLEARANCE = 46;
 /**
- * The smallest stage, kept from the previously-audited phone layout so a
- * narrow device still gets real 44dp touch targets.
+ * The smallest and largest square the stage may occupy.
+ *
+ * The ceiling is the whole point of M-E §0-§3: past this the drawing stops
+ * carrying more information and starts being a large picture of some
+ * circles, and the controls it exists to serve go below the fold.
  */
-export const MOTOR_AIRFRAME_STAGE_MIN_WIDTH = 156;
-/** Back-compatible alias for the historical constant name. */
-export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = MOTOR_AIRFRAME_STAGE_MIN_WIDTH;
+export const MOTOR_AIRFRAME_STAGE_MIN_WIDTH = 132;
+export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = 180;
 export const MOTOR_AIRFRAME_STAGE_ASPECT_RATIO = 1;
 
-/**
- * How wide the stage may be for a given viewport. A Quad X only reads as
- * a Quad X when the arms are long enough to separate the rotors, so the
- * desktop tiers get a genuinely large diagram rather than a phone glyph
- * centred in a monitor.
- */
-export function computeAirframeStageWidth(
-  windowWidth: number,
-  fontScale = 1,
-): number {
-  const tier = resolveLayoutTier(windowWidth, fontScale);
-  const byTier =
-    /* desktopUltra shares desktopWide's size on purpose. The diagram is
-       a DIAGRAM, not a poster: past ~460px it stops carrying more
-       information and starts being a large picture of four circles. The
-       extra room on a very large monitor goes to the columns beside it,
-       which is what the wider envelope is for. */
-    tier === 'desktopUltra' || tier === 'desktopWide'
-      ? 460
-      : tier === 'desktop'
-      ? 400
-      : tier === 'wide'
-      ? 330
-      : tier === 'tablet'
-      ? 280
-      : 210;
-  const available = Number.isFinite(windowWidth)
-    ? Math.max(0, windowWidth - 48)
-    : byTier;
-  return Math.max(
-    MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
-    Math.min(byTier, Math.max(MOTOR_AIRFRAME_STAGE_MIN_WIDTH, available)),
-  );
+/** One motor node's place in the stage, in normalised -1..1 space. */
+interface DiagramNode {
+  /** The motors this node stands for. More than one means a coaxial arm. */
+  readonly slots: readonly number[];
+  readonly x: number;
+  readonly y: number;
+  readonly station: AirframeStation;
 }
 
-// Emission order is explicit and mirrors the accepted identity test: right
-// first, left second. The row itself has an explicit RTL direction, so right
-// remains on the physical right regardless of the host device's locale.
-const VISUAL_POSITION_ORDER: readonly MotorPhysicalPosition[] = Object.freeze([
-  'FRONT_RIGHT',
-  'FRONT_LEFT',
-  'REAR_RIGHT',
-  'REAR_LEFT',
-]);
-
-export function orderAirframeEntries(
-  entries: readonly MotorAirframeEntry[],
-): readonly MotorAirframeEntry[] {
+/**
+ * Collapses a layout into the nodes that will actually be drawn, with the
+ * coordinates normalised so the outermost motor touches the stage edge.
+ *
+ * Motors sharing a station are one node: see the coaxial note in the file
+ * header. Slot order within a node is ascending, so pressing it walks the
+ * arm from the upper rotor down.
+ */
+export function computeDiagramNodes(layout: AirframeLayout): readonly DiagramNode[] {
+  const extent = layout.placements.reduce(
+    (widest, placement) =>
+      Math.max(widest, Math.abs(placement.x), Math.abs(placement.y)),
+    0,
+  );
+  const scale = extent === 0 ? 1 : 1 / extent;
+  const byStation = new Map<string, MotorAirframePlacement[]>();
+  for (const placement of layout.placements) {
+    const key = `${placement.x.toFixed(4)},${placement.y.toFixed(4)}`;
+    const bucket = byStation.get(key);
+    if (bucket === undefined) {
+      byStation.set(key, [placement]);
+    } else {
+      bucket.push(placement);
+    }
+  }
   return Object.freeze(
-    VISUAL_POSITION_ORDER.map(position => {
-      const entry = entries.find(candidate => candidate.position === position);
-      if (entry === undefined) {
-        throw new Error(`Missing motor reference for ${position}`);
-      }
-      return entry;
+    [...byStation.values()].map(bucket => {
+      const [first] = bucket;
+      return Object.freeze({
+        slots: Object.freeze(
+          [...bucket]
+            .sort((left, right) => left.motorNumber - right.motorNumber)
+            .map(placement => placement.motorNumber),
+        ),
+        x: first.x * scale,
+        y: first.y * scale,
+        station: stationOf(first),
+      });
     }),
   );
 }
+
+/**
+ * The smallest stage in which this layout's nodes keep their touch targets
+ * and their clearance, bounded to the compact ceiling.
+ *
+ * A node at normalised (x, y) is drawn at pixel offset (x, y) * (stage -
+ * NODE_SIZE) / 2 from the centre, so two nodes a normalised distance `d`
+ * apart are `d * (stage - NODE_SIZE) / 2` pixels apart. Requiring that to
+ * be at least NODE_CLEARANCE gives the stage directly. A single-node
+ * layout - a wing, an aeroplane - has no pair to separate and takes the
+ * floor.
+ */
+export function computeAirframeStageWidth(layout: AirframeLayout): number {
+  const nodes = computeDiagramNodes(layout);
+  let closest = Number.POSITIVE_INFINITY;
+  for (let left = 0; left < nodes.length; left += 1) {
+    for (let right = left + 1; right < nodes.length; right += 1) {
+      const dx = nodes[left].x - nodes[right].x;
+      const dy = nodes[left].y - nodes[right].y;
+      closest = Math.min(closest, Math.hypot(dx, dy));
+    }
+  }
+  if (!Number.isFinite(closest) || closest === 0) {
+    return MOTOR_AIRFRAME_STAGE_MIN_WIDTH;
+  }
+  const required = NODE_SIZE + (2 * NODE_CLEARANCE) / closest;
+  return Math.round(
+    Math.min(
+      MOTOR_AIRFRAME_STAGE_MAX_WIDTH,
+      Math.max(MOTOR_AIRFRAME_STAGE_MIN_WIDTH, required),
+    ),
+  );
+}
+
+/* ---------------------------------------------------------------- *
+ * The Quad X glyph layout, still used by the payload-identity suite.
+ * ---------------------------------------------------------------- */
 
 export type MotorGlyphRow = 'FRONT' | 'REAR';
 export type MotorGlyphSide = 'RIGHT' | 'LEFT';
 
 export interface MotorGlyphCell {
-  /** MSP output slot, 1..4 - the same number pulseMotor receives. */
+  /** MSP output slot - the same number pulseMotor receives. */
   readonly slot: number;
   readonly row: MotorGlyphRow;
   readonly side: MotorGlyphSide;
@@ -233,60 +239,24 @@ export interface MotorGlyphCell {
 
 const POSITION_GEOMETRY: Record<
   MotorPhysicalPosition,
-  { row: MotorGlyphRow; side: MotorGlyphSide }
+  {row: MotorGlyphRow; side: MotorGlyphSide}
 > = {
-  FRONT_RIGHT: { row: 'FRONT', side: 'RIGHT' },
-  FRONT_LEFT: { row: 'FRONT', side: 'LEFT' },
-  REAR_RIGHT: { row: 'REAR', side: 'RIGHT' },
-  REAR_LEFT: { row: 'REAR', side: 'LEFT' },
+  FRONT_RIGHT: {row: 'FRONT', side: 'RIGHT'},
+  FRONT_LEFT: {row: 'FRONT', side: 'LEFT'},
+  REAR_RIGHT: {row: 'REAR', side: 'RIGHT'},
+  REAR_LEFT: {row: 'REAR', side: 'LEFT'},
 };
 
-/**
- * The tested label geometry used by both the rendered diagram and the
- * payload-identity suite. It derives from the accepted configuration and
- * the same visual order as the component; there is no second slot mapping.
- */
-export function computeMotorGlyphLayout(): readonly MotorGlyphCell[] {
-  const entries = orderAirframeEntries(
-    MOTOR_TEST_EXPECTED_CONFIGURATION.map(entry => ({
-      slot: entry.motorNumber,
-      position: entry.position,
-    })),
-  );
-  return Object.freeze(
-    entries.map(entry => {
-      const geometry = POSITION_GEOMETRY[entry.position];
-      // The direction comes from the EXPECTED CONFIGURATION directly, not
-      // through MotorAirframeEntry - the drawing's entry type carries no
-      // direction at all (see §25 above), and this identity helper
-      // describes the verification model rather than the drawing. Every
-      // entry in that constant has one, so the lookup cannot miss.
-      const expected = MOTOR_TEST_EXPECTED_CONFIGURATION.find(
-        candidate => candidate.motorNumber === entry.slot,
-      );
-      if (expected === undefined) {
-        throw new Error(`No expected mapping for motor ${entry.slot}`);
-      }
-      return Object.freeze({
-        slot: entry.slot,
-        row: geometry.row,
-        side: geometry.side,
-        positionKey: positionKey(entry.position),
-        directionKey: directionKey(expected.direction),
-      });
-    }),
-  );
-}
+// Emission order is explicit and mirrors the accepted identity test: right
+// first, left second.
+const VISUAL_POSITION_ORDER: readonly MotorPhysicalPosition[] = Object.freeze([
+  'FRONT_RIGHT',
+  'FRONT_LEFT',
+  'REAR_RIGHT',
+  'REAR_LEFT',
+]);
 
-export function motorGlyphRows(): readonly (readonly MotorGlyphCell[])[] {
-  const cells = computeMotorGlyphLayout();
-  return Object.freeze([
-    cells.filter(cell => cell.row === 'FRONT'),
-    cells.filter(cell => cell.row === 'REAR'),
-  ]);
-}
-
-function positionKey(position: MotorPhysicalPosition): string {
+export function positionKey(position: MotorPhysicalPosition): string {
   switch (position) {
     case 'FRONT_LEFT':
       return 'positionFrontLeft';
@@ -294,14 +264,60 @@ function positionKey(position: MotorPhysicalPosition): string {
       return 'positionFrontRight';
     case 'REAR_LEFT':
       return 'positionRearLeft';
-    case 'REAR_RIGHT':
+    default:
       return 'positionRearRight';
   }
 }
 
-function directionKey(direction: MotorRotationDirection): string {
+function directionKey(direction: 'CW' | 'CCW'): string {
   return direction === 'CW' ? 'directionCw' : 'directionCcw';
 }
+
+/**
+ * The tested label geometry used by the payload-identity suite. It derives
+ * from the shipped Quad X expectation and the visual order above; there is
+ * no second slot mapping anywhere.
+ */
+export function computeMotorGlyphLayout(): readonly MotorGlyphCell[] {
+  return Object.freeze(
+    VISUAL_POSITION_ORDER.map(position => {
+      const expected = MOTOR_TEST_EXPECTED_CONFIGURATION.find(
+        candidate => candidate.position === position,
+      );
+      if (expected === undefined) {
+        throw new Error(`No expected mapping for ${position}`);
+      }
+      const geometry = POSITION_GEOMETRY[position];
+      return Object.freeze({
+        slot: expected.motorNumber,
+        row: geometry.row,
+        side: geometry.side,
+        positionKey: positionKey(position),
+        directionKey: directionKey(expected.direction),
+      });
+    }),
+  );
+}
+
+/**
+ * The Quad X glyph cells grouped into their two physical rows.
+ *
+ * PHYSICAL, NOT TEXTUAL. Right comes before left in each row because that
+ * is the emission order, and the value returned does not consult the
+ * layout direction - which is the property its test asserts: an Arabic
+ * interface must not move motor 1 to the other side of the aircraft.
+ */
+export function motorGlyphRows(): readonly (readonly MotorGlyphCell[])[] {
+  const cells = computeMotorGlyphLayout();
+  return Object.freeze([
+    Object.freeze(cells.filter(cell => cell.row === 'FRONT')),
+    Object.freeze(cells.filter(cell => cell.row === 'REAR')),
+  ]);
+}
+
+/* ---------------------------------------------------------------- *
+ * Rendering
+ * ---------------------------------------------------------------- */
 
 function activityLabelKey(activity: MotorSlotActivity): string {
   switch (activity) {
@@ -311,7 +327,7 @@ function activityLabelKey(activity: MotorSlotActivity): string {
       return 'motorsScreen.slotStateAcknowledged';
     case 'STOPPING':
       return 'motorsScreen.slotStateStopping';
-    case 'UNSAFE':
+    default:
       return 'motorsScreen.slotStateUnsafe';
   }
 }
@@ -319,222 +335,312 @@ function activityLabelKey(activity: MotorSlotActivity): string {
 function activityColor(activity: MotorSlotActivity): string {
   switch (activity) {
     case 'SUBMITTED':
+      return colors.accentStrong;
     case 'ACKNOWLEDGED':
-      return colors.warning;
+      return colors.success;
     case 'STOPPING':
-      return colors.info;
-    case 'UNSAFE':
+      return colors.warning;
+    default:
       return colors.error;
   }
 }
 
-function cellTestId(position: MotorPhysicalPosition): string {
-  return `motors-diagram-cell-${position.replace('_', '-')}`;
+/** The i18n key naming a station, exhaustively. Exported so the words
+ *  under the aircraft and the words spoken by a node cannot drift apart. */
+export function stationKey(station: AirframeStation): string {
+  switch (station) {
+    case 'FRONT':
+      return 'stationFront';
+    case 'FRONT_LEFT':
+      return 'stationFrontLeft';
+    case 'FRONT_RIGHT':
+      return 'stationFrontRight';
+    case 'MIDFRONT_LEFT':
+      return 'stationMidFrontLeft';
+    case 'MIDFRONT_RIGHT':
+      return 'stationMidFrontRight';
+    case 'LEFT':
+      return 'stationLeft';
+    case 'RIGHT':
+      return 'stationRight';
+    case 'MIDREAR_LEFT':
+      return 'stationMidRearLeft';
+    case 'MIDREAR_RIGHT':
+      return 'stationMidRearRight';
+    case 'REAR':
+      return 'stationRear';
+    case 'REAR_LEFT':
+      return 'stationRearLeft';
+    case 'REAR_RIGHT':
+      return 'stationRearRight';
+    default:
+      return 'stationCentre';
+  }
+}
+
+/** A rotor: a hub and two blades, and deliberately nothing that turns. */
+function RotorGlyph({size, active}: {size: number; active: boolean}): React.JSX.Element {
+  const blade = Math.round(size * 0.86);
+  const thickness = Math.max(2, Math.round(size * 0.16));
+  const hub = Math.max(4, Math.round(size * 0.3));
+  return (
+    <View style={[styles.rotor, {width: size, height: size}, active && styles.rotorActive]}>
+      <View
+        style={[
+          styles.blade,
+          {width: blade, height: thickness, transform: [{rotate: '32deg'}]},
+        ]}
+      />
+      <View
+        style={[
+          styles.blade,
+          {width: blade, height: thickness, transform: [{rotate: '-32deg'}]},
+        ]}
+      />
+      <View style={[styles.hub, {width: hub, height: hub, borderRadius: hub / 2}]} />
+    </View>
+  );
 }
 
 /**
- * ONE motor: a disc with two blades and a hub. That is the whole glyph.
+ * The body under the motors.
  *
- * WHAT WAS HERE BEFORE, AND WHY IT LEFT. A rotation arrow sat on a ring
- * outside the disc, and where no direction was supplied a
- * `circle-question-mark` icon took its place. Since M-D no caller can
- * supply a direction at all - authored layouts carry motor number and
- * position, nothing else - so the question-mark branch was the ONLY
- * branch: four question marks orbiting every aircraft, on every airframe,
- * for ever. That is not a disclosure, it is decoration that reads as an
- * error state.
- *
- * The fact those marks stood for is now stated once, in words, in the
- * caption under the map: rotation direction is not reported by the flight
- * controller and is not shown here.
- *
- * The ring VIEW stays. It reserves the same box the arrow used to need, so
- * removing the arrow does not resize a node and re-open the measured
- * row-collision this drawing was tuned to avoid.
+ * ROTARY draws one arm per node from the hub outwards, so a Y reads as a Y
+ * and a plus reads as a plus. WING and PLANE draw a silhouette instead,
+ * because a single centre motor with no arms would otherwise be a dot in
+ * an empty square and say nothing about the aircraft.
  */
-function RotorGlyph({
-  scale,
-  active,
+function Silhouette({
+  layout,
+  nodes,
+  stage,
 }: {
-  scale: number;
-  active: boolean;
+  layout: AirframeLayout;
+  nodes: readonly DiagramNode[];
+  stage: number;
 }): React.JSX.Element {
-  const size = Math.round(30 * scale);
-  const bladeLength = Math.round(size * 0.86);
-  const bladeThickness = Math.max(3, Math.round(size * 0.13));
-  const hub = Math.max(6, Math.round(size * 0.26));
-  /** The reserved ring. 1.55x the disc; see the note above on why it
-   *  outlived the arrow it was sized for. */
-  const ring = Math.round(size * 1.55);
-  return (
-    <View style={[styles.rotorRing, { width: ring, height: ring }]}>
-      <View
-        style={[
-          styles.rotor,
-          {
-            width: size,
-            height: size,
-            borderRadius: size / 2,
-            borderWidth: Math.max(1, Math.round(size * 0.06)),
-          },
-          active && styles.rotorActive,
-        ]}
-      >
+  const reach = (stage - NODE_SIZE) / 2;
+  const hub = Math.round(stage * 0.17);
+  if (layout.silhouette === 'ROTARY') {
+    return (
+      <View pointerEvents="none" style={StyleSheet.absoluteFill} testID="motors-diagram-body">
+        {nodes.map(node => {
+          const length = Math.hypot(node.x, node.y) * reach;
+          if (length < 1) {
+            return null;
+          }
+          const angle = (Math.atan2(node.y, node.x) * 180) / Math.PI;
+          return (
+            <View
+              key={`arm-${node.slots.join('-')}`}
+              style={[
+                styles.arm,
+                {
+                  width: length,
+                  left: stage / 2,
+                  top: stage / 2 - 1.5,
+                  transform: [{rotate: `${angle}deg`}],
+                },
+              ]}
+            />
+          );
+        })}
         <View
           style={[
-            styles.blade,
-            { width: bladeLength, height: bladeThickness, transform: [{ rotate: '32deg' }] },
+            styles.hubBody,
+            {
+              width: hub,
+              height: hub,
+              borderRadius: Math.round(hub / 3),
+              left: (stage - hub) / 2,
+              top: (stage - hub) / 2,
+            },
           ]}
-        />
-        <View
-          style={[
-            styles.blade,
-            { width: bladeLength, height: bladeThickness, transform: [{ rotate: '-32deg' }] },
-          ]}
-        />
-        <View
-          style={[styles.hub, { width: hub, height: hub, borderRadius: hub / 2 }]}
         />
       </View>
+    );
+  }
+  /*
+   * FIXED-WING SILHOUETTES.
+   *
+   * A single-motor mixer table gives { roll 0, pitch 0, yaw 0 }: the motor
+   * has NO MOMENT ARM, which is all the firmware says about it. It does
+   * not say where the propeller is, so the node stays at the origin and
+   * the airframe is drawn AROUND it - nose forward of the node, wing and
+   * tail behind it. That reads as an aircraft without claiming a
+   * placement the source does not contain.
+   */
+  const bar = (
+    key: string,
+    width: number,
+    height: number,
+    top: number,
+    rotate?: string,
+    left?: number,
+  ): React.JSX.Element => (
+    <View
+      key={key}
+      style={[
+        styles.wing,
+        {
+          width,
+          height,
+          top,
+          left: left ?? (stage - width) / 2,
+          ...(rotate === undefined
+            ? {}
+            : {transform: [{rotate}], transformOrigin: 'left center'}),
+        },
+      ]}
+    />
+  );
+
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill} testID="motors-diagram-body">
+      {layout.silhouette === 'WING'
+        ? [
+            /* Two swept panels from a nose apex, closed by a trailing
+               edge: a delta, not a rectangle. */
+            bar('wing-r', stage * 0.5, stage * 0.13, stage * 0.2, '38deg', stage / 2),
+            bar('wing-l', stage * 0.5, stage * 0.13, stage * 0.2, '142deg', stage / 2),
+            bar('wing-te', stage * 0.66, stage * 0.11, stage * 0.72),
+          ]
+        : [
+            /* Fuselage running BACK from the node, then the main wing and
+               the tailplane behind it. */
+            bar('fuselage', stage * 0.1, stage * 0.44, stage * 0.5),
+            bar('wing-main', stage * 0.72, stage * 0.11, stage * 0.62),
+            bar('tailplane', stage * 0.3, stage * 0.08, stage * 0.86),
+          ]}
     </View>
   );
 }
 
 function MotorNode({
-  entry,
-  selected,
-  activity,
-  verified,
-  scale,
-  onSelect,
+  node,
+  stage,
+  selectedSlot,
+  liveSlot,
+  liveActivity,
+  verifiedSlots,
+  onSelectSlot,
 }: {
-  entry: MotorAirframeEntry;
-  selected: boolean;
-  activity: MotorSlotActivity | undefined;
-  verified: boolean;
-  scale: number;
-  onSelect: () => void;
+  node: DiagramNode;
+  stage: number;
+  selectedSlot: number;
+  liveSlot: number | undefined;
+  liveActivity: MotorSlotActivity | undefined;
+  verifiedSlots: readonly number[];
+  onSelectSlot: (slot: number) => void;
 }): React.JSX.Element {
-  const { t } = useTranslation();
-  const slotFont = Math.max(14, Math.round(17 * scale));
-  const tokenFont = Math.max(11, Math.round(12 * scale));
+  const {t} = useTranslation();
+  const reach = (stage - NODE_SIZE) / 2;
+  const left = stage / 2 + node.x * reach - NODE_SIZE / 2;
+  const top = stage / 2 + node.y * reach - NODE_SIZE / 2;
+  const selectedHere = node.slots.includes(selectedSlot);
+  const liveHere = liveSlot !== undefined && node.slots.includes(liveSlot);
+  const verifiedHere = node.slots.some(slot => verifiedSlots.includes(slot));
+  const activity = liveHere ? liveActivity : undefined;
   const badge =
     activity !== undefined
-      ? { text: t(activityLabelKey(activity)), color: activityColor(activity) }
-      : verified
-      ? { text: t('motorsScreen.slotStateObserved'), color: colors.success }
-      : selected
-      ? { text: t('motorsScreen.slotStateSelected'), color: colors.accentStrong }
+      ? {text: t(activityLabelKey(activity)), color: activityColor(activity)}
+      : verifiedHere
+      ? {text: t('motorsScreen.slotStateObserved'), color: colors.success}
       : undefined;
+
+  /* Pressing a coaxial arm walks to the next motor on it, so both rotors
+   * are reachable from the drawing without either needing its own target.
+   * A single-motor node simply selects that motor. */
+  const nextSlot = (): number => {
+    if (node.slots.length === 1) {
+      return node.slots[0];
+    }
+    const at = node.slots.indexOf(selectedSlot);
+    return node.slots[(at + 1) % node.slots.length];
+  };
+
+  const spokenStation = t(`motorsScreen.${stationKey(node.station)}`);
+  const spokenSlots = node.slots
+    .map((slot, index) =>
+      node.slots.length === 1
+        ? `M${slot}`
+        : `M${slot} ${t(
+            index === 0 ? 'motorsScreen.deckUpper' : 'motorsScreen.deckLower',
+          )}`,
+    )
+    .join('، ');
+
   return (
-    <View style={styles.motorCell} testID={cellTestId(entry.position)}>
-      <Pressable
-        onPress={onSelect}
-        accessibilityRole="radio"
-        accessibilityState={{ selected }}
-        // The position IS spoken, even though it left the visible node: a
-        // screen-reader user cannot see where the mark sits on the frame.
-        // The position IS spoken. The ROTATION is not - not even as
-        // "unknown". Nothing supplies one, so speaking its absence four
-        // times per screen is noise, and the map's own caption says once
-        // that rotation is not reported.
-        accessibilityLabel={`${`M${entry.slot}`}، ${t(
-          `motorsScreen.${positionKey(entry.position)}`,
-        )}${badge !== undefined ? `، ${badge.text}` : ''}`}
-        style={[
-          styles.motorNode,
-          { padding: Math.round(5 * scale) },
-          selected && styles.motorNodeSelected,
-          verified && styles.motorNodeVerified,
-          activity !== undefined && {
-            borderColor: activityColor(activity),
-            borderWidth: 2,
-          },
-        ]}
-        testID={`motors-airframe-slot-${entry.slot}`}
-      >
-        <RotorGlyph scale={scale} active={activity !== undefined} />
-        {/* ONE label row, and now ONE thing in it: the M-number.
-            The Arabic position phrase left this row earlier - it was the
-            widest and tallest thing in the node and repeated what the
-            node's own place on the frame already says, and it is still
-            spoken by the accessibility label above.
-            THE ROTATION TOKEN LEFT IT IN M-D. Authored layouts carry no
-            direction (see motorAirframeLayout.ts), so the token had
-            exactly one value left - a bare "؟" printed under every motor
-            on every airframe. A question mark standing where a value
-            belongs is not a disclosure, it is four pieces of furniture
-            that say nothing. The claim it stood for is made once, in
-            words, in the caption below the map. */}
-        <View style={styles.labelRow}>
+    <Pressable
+      onPress={() => onSelectSlot(nextSlot())}
+      accessibilityRole="radio"
+      accessibilityState={{selected: selectedHere}}
+      // The station IS spoken: a screen-reader user cannot see where the
+      // node sits on the frame. The ROTATION is not - not even as
+      // "unknown". Nothing supplies one, and the caption says once, in
+      // words, that rotation is not read.
+      accessibilityLabel={`${spokenSlots}، ${spokenStation}${
+        badge === undefined ? '' : `، ${badge.text}`
+      }`}
+      style={[
+        styles.motorNode,
+        {left, top, width: NODE_SIZE, height: NODE_SIZE},
+        selectedHere && styles.motorNodeSelected,
+        verifiedHere && styles.motorNodeVerified,
+        activity !== undefined && styles.motorNodeLive,
+        activity !== undefined && {borderColor: activityColor(activity)},
+      ]}
+      testID={`motors-airframe-slot-${node.slots[0]}`}
+    >
+      {/* A COAXIAL ARM LOOKS LIKE TWO DISCS, because it is two rotors.
+          The numbers already say "M1 /5" and the caption says it in
+          words; this is the third channel, for the operator who reads the
+          shape before either. */}
+      {node.slots.length > 1 ? (
+        <View pointerEvents="none" style={styles.stackRing} />
+      ) : null}
+      <RotorGlyph size={Math.round(NODE_SIZE * 0.42)} active={activity !== undefined} />
+      {/* ONE Text, with the numbers nested inside it.
+          A row of two Texts was laid out right-to-left by the Arabic
+          interface, so a coaxial arm carrying motors 1 and 5 printed
+          "/5M1". Motor NUMBERING is not a writing system: the composite
+          is forced left-to-right here, exactly as the node's position is
+          computed from its coordinate and not from the locale. */}
+      <Text style={styles.slotRow} numberOfLines={1}>
+        {node.slots.map((slot, index) => (
           <Text
-            style={[styles.slot, { fontSize: slotFont, lineHeight: slotFont + 2 }]}
-            testID={`motors-diagram-slot-${entry.slot}`}
+            key={slot}
+            style={[
+              node.slots.length > 1 ? styles.slotStacked : styles.slot,
+              slot === selectedSlot && styles.slotSelected,
+            ]}
+            testID={`motors-diagram-slot-${slot}`}
           >
-            {`M${entry.slot}`}
+            {index === 0 ? `M${slot}` : `\u2009/${slot}`}
           </Text>
-        </View>
-        {/* A RESERVED badge row, always present.
-            Measured before this pass: the selected node grew from 95px to
-            124px at 390px because the badge appeared inside it, and the
-            two rows then overlapped by 19.31px - an overlap that came and
-            went as the operator selected different motors. A fixed slot
-            makes every node the same height in every state. */}
+        ))}
+      </Text>
+      {badge === undefined ? null : (
         <View
-          style={[
-            styles.badgeSlot,
-            { height: Math.max(16, Math.round(18 * scale)) },
-          ]}
-        >
-          {badge !== undefined ? (
-            <View
-              style={[styles.stateBadge, { borderColor: badge.color }]}
-              testID={`motors-diagram-state-${entry.slot}`}
-            >
-              <Text
-                style={[
-                  styles.stateBadgeText,
-                  { color: badge.color, fontSize: tokenFont },
-                ]}
-                numberOfLines={1}
-              >
-                {badge.text}
-              </Text>
-            </View>
-          ) : null}
-        </View>
-      </Pressable>
-    </View>
+          style={[styles.stateDot, {backgroundColor: badge.color}]}
+          testID={`motors-diagram-state-${node.slots[0]}`}
+        />
+      )}
+    </Pressable>
   );
 }
 
 /**
  * NOT A DEGRADED MODE, AND NOT A SECOND SELECTOR.
  *
- * WHERE THERE IS NO AUTHORED LAYOUT, THIS BLOCK SAYS SO. No aircraft, no
- * claimed positions, no rotation - and it names the reason rather than
- * leaving a silent gap. For every airframe this project has not authored
- * artwork for, saying so IS the right answer; a picture of the wrong
- * aircraft is worse than no picture.
- *
- * IT USED TO REPEAT THE MOTOR SELECTOR, AND THAT WAS THE DEFECT.
- * MEASURED FROM A 1366 SCREENSHOT on a three-motor build: the identity
- * section's chip row printed M1 M2 M3, and 140px below it this block
- * printed M1 M2 M3 again - six interactive chips for three motors, both
- * rows doing exactly the same thing. The identity section's selector is
- * unconditional and is deliberately "the only selector that is always
- * correct, whatever the airframe", so this one was the copy.
- *
- * The component therefore renders a MAP or an EXPLANATION, never a
- * selector. Selection belongs to the row above it, on every airframe.
+ * Where there is no authored layout, this block says so in one sentence
+ * and draws no aircraft. It renders an EXPLANATION, never a selector:
+ * selection belongs to the numbered motor rows, on every airframe.
  */
 function GenericMotorOutputs(): React.JSX.Element {
-  const { t } = useTranslation();
+  const {t} = useTranslation();
   return (
-    <View style={styles.root} testID="motors-generic-outputs">
-      <Text style={styles.diagramTitle}>
-        {t('motorsScreen.layoutGenericHeading')}
-      </Text>
+    <View style={styles.genericRoot} testID="motors-generic-outputs">
       <Text style={styles.caption} testID="motors-generic-outputs-caption">
         {t('motorsScreen.layoutGenericCaption')}
       </Text>
@@ -548,500 +654,323 @@ export function MotorAirframeDiagram({
   liveActivity,
   verifiedSlots = [],
   onSelectSlot,
-  stageWidthOverride,
-  compact = false,
   mixerModeRaw,
   motorNumbers,
-}: MotorAirframeDiagramProps): React.JSX.Element {
-  const { t } = useTranslation();
-  const { width: windowWidth, fontScale } = useWindowDimensions();
+  stageWidthOverride,
+  compact = false,
+}: MotorAirframeDiagramProps): React.JSX.Element | null {
+  const {t} = useTranslation();
+  const {width: windowWidth} = useWindowDimensions();
   /**
-   * THE DRAWING IS SIZED BY ITS CONTAINER, NOT BY THE WINDOW.
+   * THE BOX THIS DRAWING IS ACTUALLY IN, not the window it is on.
    *
-   * THE DEFECT THIS CLOSES. `computeAirframeStageWidth` reads the WINDOW,
-   * so on a 1366 desktop it returned a 400px stage - and then the stage
-   * was mounted in a 188px column, centred, and spilled 106px out of each
-   * side straight across the verification controls beside it. Measured in
-   * Chromium: `stage rect 1041,120 400x400` inside `diagram rect
-   * 1147,-3 188x717`. Five interactive controls had a non-zero
-   * intersection with the drawing at 1280, 1366, 1440 and 1920.
-   *
-   * A window breakpoint cannot know this. Only the container can. So the
-   * stage is now the SMALLER of what the viewport tier allows and what
-   * the box it actually landed in can hold, and `maxWidth: '100%'` on the
-   * stage is the second lock: even before the first layout pass, and even
-   * if a future parent shrinks without remounting, the drawing cannot be
-   * wider than the space it was given.
+   * The defect this measurement exists for: the stage used to be sized
+   * from the window tier, and the column it lives in on a desktop is
+   * roughly 40% of that - so a 1366 window asked for a 400px drawing and
+   * handed it a 188px column to paint in. The window is still consulted
+   * as a second ceiling, because a container can be measured as wider
+   * than the viewport before the first layout pass settles.
    */
-  const [containerWidth, setContainerWidth] = useState(0);
-  const byViewport =
-    stageWidthOverride ?? computeAirframeStageWidth(windowWidth, fontScale);
-  const stageWidth =
-    containerWidth > 0
-      ? Math.max(
-          MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
-          Math.min(byViewport, Math.floor(containerWidth)),
-        )
-      : byViewport;
-  // Every internal dimension is a multiple of this, so the whole diagram
-  // grows as one drawing instead of a big box around small glyphs.
-  const scale = stageWidth / 260;
-
-  /**
-   * M-D §20 / §21 / §22 - THE GATE USED TO BE THE MOTOR COUNT.
-   *
-   * `motorCount !== 4` sent everything except a four-motor aircraft to the
-   * numbered list, and drew everything WITH four motors as a Quad X. Five
-   * mixers were being drawn wrong: QUADP is a plus frame, Y4 has a coaxial
-   * tail, VTAIL4 and ATAIL4 have angled rear arms, and QUADX_1234 is a
-   * real X whose motor NUMBERING differs - its motor 1 is at the front
-   * left where the Quad X drawing puts motor 4.
-   *
-   * The question is not how many motors there are. It is whether this
-   * project has authored and checked a layout for THIS mixer, at THIS
-   * motor count. authoredAirframeLayout answers exactly that, and answers
-   * undefined generously - an unknown mixer, an unread count, or a count
-   * that disagrees with the layout all fall through to the numbered list.
-   */
+  const [boxWidth, setBoxWidth] = useState(0);
   const layout = authoredAirframeLayout(mixerModeRaw, motorNumbers);
   if (layout === undefined) {
     return <GenericMotorOutputs />;
   }
-
-  /**
-   * NO DIRECTION IS SUPPLIED, AND THAT IS THE POINT (M-D §25).
-   *
-   * The layout maps a motor number to a place on the frame and carries no
-   * rotation at all, so every node renders its explicit unknown mark
-   * rather than an arrow. M-A established that actual propeller rotation
-   * is not readable as authoritative truth over MSP; an arrow here would
-   * be a guess drawn in the same ink as a measurement.
-   */
-  const ordered = orderAirframeEntries(
-    layout.map(placement => ({
-      slot: placement.motorNumber,
-      position: placement.position,
-    })),
-  );
-  /**
-   * PHYSICAL PLACEMENT, COMPUTED - not delegated to a style property.
-   *
-   * orderAirframeEntries emits RIGHT-then-LEFT (its own contract, tested,
-   * untouched). A plain flex row paints index 0 at the reading-start
-   * edge: the RIGHT edge under RTL, the LEFT edge under LTR. So the
-   * paint order is simply reversed for LTR, and FRONT_RIGHT lands on the
-   * operator's right either way.
-   *
-   * WHY NOT `direction: 'ltr'` + row-reverse, which this file tried
-   * first: react-native-web SILENTLY DROPS the React Native `direction`
-   * style. Measured in a real browser - the rendered row still computed
-   * `direction: rtl`, row-reverse inverted it, and the aircraft was drawn
-   * MIRRORED (M2 "أمامي يمين" appeared on the left). A style the platform
-   * ignores cannot carry a safety guarantee, and a unit test that asserts
-   * the style OBJECT rather than the rendered box will not catch it.
-   *
-   * This changes no motor data: same entries, same slots, same mapping.
-   */
-  const paintOrder = (pair: readonly MotorAirframeEntry[]) =>
-    isRtlLayout() ? pair : [...pair].reverse();
-  const front = paintOrder(ordered.slice(0, 2));
-  const rear = paintOrder(ordered.slice(2, 4));
-
-  const renderNode = (entry: MotorAirframeEntry) => (
-    <MotorNode
-      key={entry.slot}
-      entry={entry}
-      selected={entry.slot === selectedSlot}
-      activity={entry.slot === liveSlot ? liveActivity : undefined}
-      verified={verifiedSlots.includes(entry.slot)}
-      scale={scale}
-      onSelect={() => onSelectSlot(entry.slot)}
-    />
+  const nodes = computeDiagramNodes(layout);
+  const derived = computeAirframeStageWidth(layout);
+  /* The only reason the window is consulted at all: a very narrow device
+     must not be given a stage wider than its content column. It can shrink
+     the compact stage; it can never grow it. */
+  const roomy = Number.isFinite(windowWidth)
+    ? Math.max(MOTOR_AIRFRAME_STAGE_MIN_WIDTH, windowWidth - 96)
+    : derived;
+  const inBox = boxWidth > 0 ? boxWidth : Number.POSITIVE_INFINITY;
+  const stage = Math.round(
+    Math.max(
+      MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
+      Math.min(stageWidthOverride ?? derived, roomy, inBox),
+    ),
   );
 
-  /**
-   * WHICH LEGEND ENTRIES DESCRIBE SOMETHING THAT IS ACTUALLY DRAWN.
-   * Derived from the same props the nodes are drawn from, so the key can
-   * never describe a colour the map is not using.
-   */
-  const presentLegend: readonly {key: string; color: string}[] = [
-    {key: 'motorsScreen.legendSelected', color: colors.accent, present: true},
-    {
-      key: 'motorsScreen.legendSubmitted',
-      color: colors.warning,
-      present: liveActivity === 'SUBMITTED',
-    },
-    {
-      key: 'motorsScreen.legendAcknowledged',
-      color: colors.warning,
-      present: liveActivity === 'ACKNOWLEDGED',
-    },
-    {
-      key: 'motorsScreen.legendStopping',
-      color: colors.info,
-      present: liveActivity === 'STOPPING',
-    },
-    {
-      key: 'motorsScreen.legendObserved',
-      color: colors.success,
-      present: verifiedSlots.length > 0,
-    },
-    {
-      key: 'motorsScreen.legendUnsafe',
-      color: colors.error,
-      present: liveActivity === 'UNSAFE',
-    },
-  ]
-    .filter(item => item.present)
-    .map(({key, color}) => ({key, color}));
-
-  const armThickness = Math.max(6, Math.round(stageWidth * 0.045));
+  /* The one live or observed motor, named in words. Computed here rather
+     than inside a node so it reads "M3: مُرسل" once instead of once per
+     rotor. */
+  const liveText =
+    liveSlot !== undefined && liveActivity !== undefined
+      ? `M${liveSlot} · ${t(activityLabelKey(liveActivity))}`
+      : verifiedSlots.length > 0
+      ? `${verifiedSlots.map(slot => `M${slot}`).join('، ')} · ${t(
+          'motorsScreen.slotStateObserved',
+        )}`
+      : undefined;
 
   return (
     <View
       style={styles.root}
       testID="motors-airframe-diagram"
-      onLayout={event => setContainerWidth(event.nativeEvent.layout.width)}
+      onLayout={event => setBoxWidth(event.nativeEvent.layout.width)}
     >
       {compact ? null : (
-        <Text style={styles.diagramTitle}>{t('motorsScreen.diagramTitle')}</Text>
-      )}
-
-      <View style={styles.frontMarker} testID="motors-diagram-front">
-        <Icon
-          name="chevron-up"
-          size={Math.round(22 * scale)}
-          color={colors.accentStrong}
-          strokeWidth={2.5}
-        />
-        <Text
-          style={[
-            styles.frontText,
-            { fontSize: Math.max(12, Math.round(15 * scale)) },
-          ]}
-        >
-          {t('motorsScreen.diagramFront')}
+        <Text style={styles.title} testID="motors-diagram-title">
+          {t('motorsScreen.diagramTitle')}
         </Text>
+      )}
+      {/* THE FRONT MARKER IS NOT OPTIONAL. Every layout gets it, above the
+          stage where it cannot be mistaken for a motor, and it stays the
+          same size on every device so it is still readable at 390px. */}
+      <View style={styles.frontMarker} testID="motors-diagram-front">
+        <Text style={styles.frontArrow}>↑</Text>
+        <Text style={styles.frontText}>{t('motorsScreen.diagramFront')}</Text>
       </View>
-
       <View
-        style={[styles.stage, { width: stageWidth, height: stageWidth }]}
+        style={[styles.stage, {width: stage, height: stage}]}
         testID="motors-airframe-stage"
       >
-        <View
-          style={[
-            styles.arm,
-            { height: armThickness, marginTop: -armThickness / 2 },
-            styles.armForward,
-          ]}
-        />
-        <View
-          style={[
-            styles.arm,
-            { height: armThickness, marginTop: -armThickness / 2 },
-            styles.armBackward,
-          ]}
-        />
-        <View style={styles.body}>
-          <View
-            style={[
-              styles.bodyNose,
-              {
-                top: -Math.round(12 * scale),
-                borderLeftWidth: Math.round(10 * scale),
-                borderRightWidth: Math.round(10 * scale),
-                borderBottomWidth: Math.round(14 * scale),
-              },
-            ]}
+        <Silhouette layout={layout} nodes={nodes} stage={stage} />
+        {nodes.map(node => (
+          <MotorNode
+            key={node.slots.join('-')}
+            node={node}
+            stage={stage}
+            selectedSlot={selectedSlot}
+            liveSlot={liveSlot}
+            liveActivity={liveActivity}
+            verifiedSlots={verifiedSlots}
+            onSelectSlot={onSelectSlot}
           />
-          <View style={styles.bodyPlate} />
-          <View style={styles.bodyCore} />
-          <View style={styles.tailMark} />
-        </View>
-
-        <View style={[styles.motorRow, styles.frontRow]}>
-          {front.map(renderNode)}
-        </View>
-        <View style={[styles.motorRow, styles.rearRow]}>
-          {rear.map(renderNode)}
-        </View>
+        ))}
       </View>
-
-      {compact ? null : (
-        <Text style={styles.caption}>{t('motorsScreen.diagramCaption')}</Text>
-      )}
-
-      {/* THE KEY DESCRIBES WHAT IS ON THE MAP, NOT EVERY MAP THERE COULD
-          BE. Six states were printed at all times - selected, command
-          sent, controller acknowledged, stopping, observed, unsafe - so
-          before touching anything an operator read five keys for colours
-          that were not on the drawing. Only the states actually present
-          are listed now; the complete key stays one tap away under the
-          reference notes below the map, where nothing is lost. */}
-      {compact || presentLegend.length === 0 ? null : (
-        <View style={styles.legend} testID="motors-diagram-legend">
-          {presentLegend.map(item => (
-            <LegendItem key={item.key} color={item.color} label={t(item.key)} />
-          ))}
+      {/* THE AIRFRAME'S SERVOS, NAMED AND NEVER OFFERED.
+          It used to be a badge pinned inside the stage at the tail, which
+          on a tricopter is exactly where motor 1 is - the two overlapped
+          and the badge lost. It is a chip under the aircraft now, with a
+          square glyph rather than a rotor, so a servo cannot be mistaken
+          for a motor at a glance. It is informational: this application
+          never writes a servo, and no servo appears in the motor list. */}
+      {layout.servoRole === undefined ? null : (
+        <View style={styles.servoMark} testID="motors-diagram-servo">
+          <View style={styles.servoGlyph} />
+          <Text style={styles.servoText}>
+            {t(`motorsScreen.servoRole.${layout.servoRole}`)}
+          </Text>
         </View>
       )}
+      {/* MEANING NEVER DEPENDS ON COLOUR.
+          The node carries a coloured dot so the eye can find WHICH motor
+          is live at a glance; WHAT is happening to it is stated here, in
+          Arabic words, naming the motor. This replaced a six-entry colour
+          legend that was printed on every render whether or not any state
+          was active - furniture that explained the palette instead of
+          reporting the aircraft. One line, always about a real motor. */}
+      {liveText === undefined ? null : (
+        <Text style={styles.liveState} testID="motors-diagram-live-state">
+          {liveText}
+        </Text>
+      )}
+      {compact || layout.servoRole === undefined ? null : (
+        <Text style={styles.caption} testID="motors-diagram-servo-note">
+          {t(`motorsScreen.servoNote.${layout.servoRole}`)}
+        </Text>
+      )}
+      {compact ? null : (
+        <Text style={styles.caption} testID="motors-diagram-caption">
+          {t(
+            layout.coaxial
+              ? 'motorsScreen.diagramCaptionCoaxial'
+              : 'motorsScreen.diagramCaption',
+          )}
+        </Text>
+      )}
     </View>
   );
 }
 
-function LegendItem({
-  color,
-  label,
-}: {
-  color: string;
-  label: string;
-}): React.JSX.Element {
-  return (
-    <View style={styles.legendItem}>
-      <View style={[styles.legendDot, { backgroundColor: color }]} />
-      <Text style={styles.legendText}>{label}</Text>
-    </View>
-  );
+/** Whether the shipped Quad X expectation describes this mixer. Exported
+ *  so callers can ask without importing the verification model. */
+export function isVerificationModelAirframe(mixerModeRaw: number | undefined): boolean {
+  return mixerModeRaw === MOTOR_TEST_EXPECTED_MIXER_MODE;
 }
+
+/** Re-exported so a caller with a placement can name its corner without
+ *  reaching past this module into core. */
+export {verificationPositionOf};
 
 const styles = StyleSheet.create({
-  root: { gap: spacing.sm, alignItems: 'center' },
-  diagramTitle: {
-    ...typography.sectionTitle,
+  root: {
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  genericRoot: {
+    paddingVertical: spacing.xs,
+  },
+  title: {
+    ...typography.label,
     color: colors.textPrimary,
-    writingDirection: 'rtl'},
-  frontMarker: { alignItems: 'center', gap: 1 },
-  frontText: {
-    // fontFamily is explicit because the SIZE is applied inline at render
-    // time; spreading a token would be overridden, and omitting the family
-    // dropped this label to the system font (measured in a browser).
-    fontFamily: fonts.family,
+    fontWeight: '600',
+  },
+  frontMarker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  frontArrow: {
+    ...typography.label,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
+    fontSize: 15,
+    lineHeight: 17,
+  },
+  frontText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '600',
+    fontSize: 12,
+    lineHeight: 16,
   },
   stage: {
-    alignSelf: 'center',
-    /* THE SECOND LOCK. The measured clamp above sets the real size; this
-       guarantees the drawing can never paint outside the box it was
-       given, including on the very first frame before onLayout has
-       fired. */
-    maxWidth: '100%',
     position: 'relative',
-    overflow: 'hidden',
-    backgroundColor: '#F7FAF9',
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.lg,
+    alignSelf: 'center',
+    /* The floor above can exceed a very narrow container for one frame,
+       before onLayout has reported it. This keeps the drawing inside its
+       box in that frame rather than painting over its neighbours. */
+    maxWidth: '100%',
   },
   arm: {
     position: 'absolute',
-    left: '12%',
-    top: '50%',
-    width: '76%',
-    borderRadius: radii.pill,
-    backgroundColor: '#BBD8D4',
-    borderColor: colors.border,
-    borderWidth: 1,
-  },
-  armForward: { transform: [{ rotate: '45deg' }] },
-  armBackward: { transform: [{ rotate: '-45deg' }] },
-  body: {
-    position: 'absolute',
-    left: '36%',
-    top: '36%',
-    width: '28%',
-    height: '28%',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: radii.sm,
-    borderColor: colors.accent,
-    borderWidth: 1,
-    backgroundColor: '#D9EFEB',
-  },
-  bodyNose: {
-    position: 'absolute',
-    width: 0,
-    height: 0,
-    borderLeftColor: 'transparent',
-    borderRightColor: 'transparent',
-    borderBottomColor: colors.accent,
-  },
-  bodyPlate: {
-    position: 'absolute',
-    left: '12%',
-    right: '12%',
-    top: '16%',
-    bottom: '14%',
-    borderRadius: radii.sm,
-    backgroundColor: colors.surfaceRaised,
-    borderColor: colors.border,
-    borderWidth: 1,
-  },
-  bodyCore: {
-    width: '40%',
-    height: '44%',
-    borderRadius: radii.pill,
-    backgroundColor: colors.accentSoft,
-    borderColor: colors.accentStrong,
-    borderWidth: 1,
-  },
-  tailMark: {
-    position: 'absolute',
-    bottom: 3,
-    width: '30%',
     height: 3,
-    borderRadius: radii.pill,
-    backgroundColor: colors.textMuted,
+    backgroundColor: colors.borderStrong,
+    borderRadius: 2,
+    transformOrigin: 'left center',
   },
-  motorRow: {
+  hubBody: {
     position: 'absolute',
-    /* PART M - BREATHING ROOM, sized from the measurement rather than
-       guessed. Pulling the rows in from 2% to 6% moves each node ~8px off
-       the stage edge at 390px and, with the node now ~40px shorter and
-       height-stable, leaves a real gap between the front and rear rows
-       instead of the measured 19.31px overlap. */
-    left: '6%',
-    right: '6%',
-    /**
-     * A plain row. The PHYSICAL placement is decided in the component
-     * (see paintOrder), not by this style: react-native-web drops the
-     * React Native `direction` property, so no style here can pin the
-     * aircraft's left and right.
-     */
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
   },
-  frontRow: { top: '3%' },
-  rearRow: { bottom: '3%' },
-  motorCell: { alignItems: 'center' },
+  wing: {
+    position: 'absolute',
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: radii.sm,
+  },
+  fuselage: {
+    position: 'absolute',
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: radii.pill,
+  },
   motorNode: {
-    minWidth: 44,
-    minHeight: 44,
+    position: 'absolute',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.white,
-    borderColor: colors.border,
+    gap: 1,
+    borderRadius: radii.pill,
     borderWidth: 1,
-    borderRadius: radii.md,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
   },
-  /* The arrow's own radius. `justifyContent: flex-start` puts the arrow at
-     the top of the ring and the disc is centred inside by the absolute
-     rule below, so the two never share pixels. */
-  rotorRing: {
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-  },
-  labelRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    gap: spacing.xs,
-    /* A technical row: M-number then CW/CCW, in that order, in every
-       locale. Physical identity is not a reading direction. */
-    direction: 'ltr',
-  },
-  /* Reserved whether or not a badge exists - see MotorNode. */
-  badgeSlot: { justifyContent: 'center', alignItems: 'center' },
   motorNodeSelected: {
-    borderColor: colors.accent,
+    borderColor: colors.accentStrong,
     borderWidth: 2,
     backgroundColor: colors.accentSoft,
   },
-  motorNodeVerified: { borderColor: colors.success },
-  rotor: {
+  motorNodeVerified: {
+    borderColor: colors.success,
+  },
+  motorNodeLive: {
+    borderWidth: 2,
+  },
+  stackRing: {
     position: 'absolute',
+    top: -4,
+    bottom: -4,
+    left: -4,
+    right: -4,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  rotor: {
     alignItems: 'center',
     justifyContent: 'center',
-    borderColor: colors.textSecondary,
-    backgroundColor: colors.backgroundRaised,
   },
-  rotorActive: { borderColor: colors.warning, backgroundColor: colors.warningSoft },
+  rotorActive: {
+    opacity: 1,
+  },
   blade: {
     position: 'absolute',
-    borderRadius: radii.pill,
     backgroundColor: colors.textMuted,
+    borderRadius: 2,
   },
   hub: {
-    backgroundColor: colors.textPrimary,
-    borderColor: colors.background,
-    borderWidth: 1,
+    backgroundColor: colors.textSecondary,
   },
-  slot: {
-    ...typography.mono,
+  slotRow: {
+    ...typography.caption,
     color: colors.textPrimary,
     fontWeight: '700',
+    fontSize: 12,
+    lineHeight: 14,
     writingDirection: 'ltr',
-  },
-  position: {
-    // Arabic prose ("أمامي يمين"), sized inline - so the family must be
-    // named here or it falls back to the system font.
-    fontFamily: fonts.family,
-    color: colors.textSecondary,
     textAlign: 'center',
-    writingDirection: 'rtl',
   },
-  stateBadge: {
-    paddingHorizontal: spacing.xs,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    backgroundColor: colors.background,
-  },
-  stateBadgeText: {
-    fontFamily: fonts.family,
+  slot: {
+    ...typography.caption,
+    color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
+    fontSize: 12,
+    lineHeight: 14,
+  },
+  slotStacked: {
+    fontSize: 10,
+    lineHeight: 12,
+  },
+  slotSelected: {
+    color: colors.accentStrong,
+  },
+  stateDot: {
+    position: 'absolute',
+    top: 3,
+    insetInlineEnd: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+  },
+  servoMark: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  servoGlyph: {
+    width: 12,
+    height: 5,
+    borderRadius: 1,
+    backgroundColor: colors.textSecondary,
+  },
+  servoText: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    fontSize: 10,
+    lineHeight: 13,
   },
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
     textAlign: 'center',
-    writingDirection: 'rtl',
-    maxWidth: 460,
   },
-  legend: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  genericGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  genericCellActive: { borderWidth: 2 },
-  genericSlotText: {
-    ...typography.mono,
-    color: colors.textPrimary,
-    fontWeight: '700',
-    writingDirection: 'ltr',
-    fontSize: 16,
-    lineHeight: 20,
-  },
-  genericBadgeText: {
-    fontFamily: fonts.family,
-    fontWeight: '700',
-    writingDirection: 'rtl',
-    fontSize: 11,
-  },
-  genericCell: {
-    minWidth: 64,
-    minHeight: 56,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 2,
-    backgroundColor: colors.white,
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.md,
-  },
-  legendItem: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
-  legendDot: { width: 10, height: 10, borderRadius: 5 },
-  legendText: {
+  liveState: {
     ...typography.caption,
-    color: colors.textSecondary,
-    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+    color: colors.textPrimary,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
 });
