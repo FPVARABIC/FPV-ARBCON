@@ -99,6 +99,10 @@ import {
   evaluateMotorIdentificationCapability,
   type MotorIdentificationCapability,
 } from '../../core/state/motorIdentificationCapability';
+/* The SAME lookup the drawing itself performs. The workspace asks it so
+   that "is there a column" and "is there a picture" can never be two
+   different answers - see hasUsableAuthoredAirframeVisual below. */
+import { authoredAirframeLayout } from '../../core/state/motorAirframeLayout';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
 import type { MotorSlotActivity } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
@@ -509,7 +513,7 @@ export function MotorsScreenView({
      an analog output), and a layout breakpoint has no business being
      indistinguishable from one. 1024 is the conventional desktop tier
      boundary and lands inside the same measured band. */
-  const wideWorkspace = windowWidth / Math.max(fontScale, 1) >= 1024;
+  const wideViewport = windowWidth / Math.max(fontScale, 1) >= 1024;
   const effectiveBottomInset = bottomInset ?? 0;
   // The snapshot is the ONLY source of controller truth. `useState` plus an
   // explicit subscription rather than useSyncExternalStore: the controller
@@ -1508,6 +1512,27 @@ export function MotorsScreenView({
    */
   const identificationCapability: MotorIdentificationCapability =
     evaluateMotorIdentificationCapability(liveMixerModeRaw, identitySlots);
+
+  /**
+   * IS THERE AN AIRCRAFT TO PUT IN AN AIRCRAFT COLUMN? - M-E2.
+   *
+   * THE DEFECT THIS CLOSES, measured on a real screenshot at 1366px: the
+   * workspace split into two columns because the VIEWPORT was wide, and
+   * handed 619px (879px at 1920) to a column holding one sentence and a
+   * floating "M1" - 46% of the page, 104px tall, for an aircraft this
+   * application had no data to draw. The Motor Test controls it exists to
+   * label were compressed into the remaining 699px, and every section
+   * below inherited the same half-width grid.
+   *
+   * A column is now allocated for a DRAWING, not for a breakpoint. The
+   * question is asked of the same function the drawing itself asks - the
+   * authored layout for THIS mixer and THIS motor list - so the workspace
+   * structure and the picture can never disagree about whether a picture
+   * exists. Where there is none, the operational workspace is the page.
+   */
+  const hasUsableAuthoredAirframeVisual =
+    active && authoredAirframeLayout(liveMixerModeRaw, identitySlots) !== undefined;
+  const wideWorkspace = wideViewport && hasUsableAuthoredAirframeVisual;
   const quadIdentificationSupported =
     identificationCapability.kind === 'SUPPORTED';
 

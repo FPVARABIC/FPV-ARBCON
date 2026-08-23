@@ -672,6 +672,23 @@ export function MotorAirframeDiagram({
    * than the viewport before the first layout pass settles.
    */
   const [boxWidth, setBoxWidth] = useState(0);
+  /*
+   * NOTHING READ IS NOT THE SAME AS NOTHING DRAWABLE - M-E2.
+   *
+   * `motorNumbers` is documented above as "an empty array means nothing
+   * has been read, and renders as nothing", and for a long time it did
+   * not: the layout lookup ran first, missed, and answered with the
+   * generic caption - a sentence about "this Mixer" on a screen where no
+   * mixer had been read either. On a desktop that paragraph then held a
+   * 619px column open on its own.
+   *
+   * An empty list is the absence of a question, not the answer to one.
+   * The session and arming notices above already explain why nothing has
+   * been read; this component adds nothing and says nothing.
+   */
+  if (motorNumbers.length === 0) {
+    return null;
+  }
   const layout = authoredAirframeLayout(mixerModeRaw, motorNumbers);
   if (layout === undefined) {
     return <GenericMotorOutputs />;

@@ -179,7 +179,7 @@ export function MotorIdentitySection({
   outputOrder,
   holdControl,
   variant = 'DETAIL',
-}: MotorIdentitySectionProps): React.JSX.Element {
+}: MotorIdentitySectionProps): React.JSX.Element | null {
   const { t } = useTranslation();
   const { width, fontScale } = useWindowDimensions();
   const tier = resolveLayoutTier(width, fontScale);
@@ -557,7 +557,37 @@ export function MotorIdentitySection({
     drawnLayout?.placements.find(
       placement => placement.motorNumber === selectedSlot,
     );
-  const mapFacts = (
+  /*
+   * A SELECTED MOTOR IS ONLY A FACT ONCE MOTORS ARE - M-E2.
+   *
+   * This line printed `M1` unconditionally, including when the board had
+   * reported no motor count at all. On the reported screenshot that left
+   * a single floating "M1" in an otherwise blank 619px column: an
+   * identity for a motor nothing had said existed, beside no aircraft and
+   * no selector. Where the list is empty there is nothing to be selected
+   * and nothing to say about it.
+   *
+   * AND A BARE M-NUMBER IS STILL NOT A FACT WHEN THE MOTORS DO EXIST.
+   *
+   * FOUND BY READING THE AFTER SCREENSHOTS, not by any assertion: on a
+   * CUSTOM mixer and on an unrecognised one - five motors and three
+   * motors, both read, both fine - this line rendered a lone centred "M1"
+   * between the numbered selector and the readiness strip. The station is
+   * absent because no layout is authored for those mixers, and nothing
+   * has been observed yet, so the two optional halves both collapse and
+   * the block degrades to its own anchor. The chip directly above it is
+   * already drawn as selected and already spells its full state to a
+   * screen reader; repeating the number underneath adds no fact and reads
+   * as the floating identity this phase exists to remove.
+   *
+   * So the line renders when it CARRIES something: where the motor sits
+   * on an aircraft we actually drew, or what a person confirmed about it.
+   * The number is the label on those facts, never the whole statement.
+   */
+  const mapFactsCarryAFact =
+    slots.includes(selectedSlot) &&
+    (drawnStation !== undefined || confirmedPosition !== undefined);
+  const mapFacts = !mapFactsCarryAFact ? null : (
     <View style={styles.mapFacts} testID="motor-identity-selected-brief">
       <Text style={styles.identityMotor} testID="motor-identity-number">
         {`M${selectedSlot}`}
@@ -866,6 +896,12 @@ export function MotorIdentitySection({
    * Motor Test controls a screen and a half below the fold.
    */
   if (variant === 'MAP') {
+    /* With no motors read there is no aircraft, no selector and no
+       selected motor - so the block itself does not exist. Rendering an
+       empty container is what reserved the desktop column. */
+    if (slots.length === 0 && !layoutDrawn) {
+      return null;
+    }
     return (
       <View style={styles.mapVariant} testID="motors-identity-map">
         {map}
