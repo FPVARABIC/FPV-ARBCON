@@ -38,8 +38,12 @@ export type NormalisationRule =
   | 'FILTER_LIMIT_RESET'
   | 'NOTCH_DISABLED_BY_CUTOFF'
   | 'DYNAMIC_MIN_ABOVE_MAX'
-  | 'SIMPLIFIED_REGENERATED'
-  | 'RC_TUNING_PITCH_FOLLOWED_ROLL';
+  | 'SIMPLIFIED_REGENERATED';
+// RC_TUNING_PITCH_FOLLOWED_ROLL used to be here. It was removed once the
+// firmware's read order was traced properly: the explicit pitch bytes at
+// offsets 12 and 13 overwrite the legacy link on every full-length write, so
+// no production write can ever produce that normalisation. Naming a rule that
+// cannot fire invites a classifier to accept a value it should refuse.
 
 /**
  * Classify one field.
@@ -59,6 +63,21 @@ export function classifyField(
   if (observed === requested) return Object.freeze({kind: 'EXACT'});
   if (observed === expected) return Object.freeze({kind: 'NORMALISED', requested, observed, rule});
   return Object.freeze({kind: 'MISMATCH', requested, expected, observed});
+}
+
+/**
+ * Classify a field NO firmware rule can touch.
+ *
+ * Most of the values this app writes come back verbatim or not at all: the
+ * PID gains, the rate curve, the simplified sliders. Passing `classifyField`
+ * a rule name for those fields would be inventing a firmware behaviour to
+ * excuse a difference that nothing excuses, so they use this instead and can
+ * only ever be EXACT or MISMATCH.
+ */
+export function classifyExactField(requested: number, observed: number): FieldVerdict {
+  return observed === requested
+    ? Object.freeze({kind: 'EXACT'})
+    : Object.freeze({kind: 'MISMATCH', requested, expected: requested, observed});
 }
 
 export interface FieldComparison {

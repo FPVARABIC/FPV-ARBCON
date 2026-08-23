@@ -63,6 +63,8 @@ function blockMessage(reason: PidBlockReason): string {
     DIRECT_EDIT_CONFLICTS_WITH_ACTIVE_SIMPLIFIED: 'الضبط المبسّط نشط ويملك هذه القيم؛ تعديلها يدويًا سيُلغى فورًا. لم يُرسل شيء.',
     ACTIVE_DESTINATION_COPY_UNSAFE: 'لا ننسخ فوق الملف النشط، لأن المتحكم لا يعيد تهيئة نفسه بعد النسخ.',
     SIMPLIFIED_TUNING_UNSUPPORTED: 'هذا البناء من البرنامج الثابت لا يتضمّن الضبط المبسّط.',
+    SIMPLIFIED_PROJECTION_ORACLE_DISAGREES: 'حساب المتحكم لنتيجة الشرائح لا يطابق حسابنا، فلم نكتب شيئًا.',
+    UNKNOWN_RATES_TYPE: 'نوع المعدلات المطلوب ليس من الأنواع الخمسة التي تحققنا منها من المصدر.',
   })[reason];
 }
 function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} {
@@ -73,6 +75,7 @@ function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} 
     case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: 'طُبّقت القيم وأكدتها القراءة، لكن لم يثبت حفظها في ذاكرة المتحكم. لا تعتمد عليها بعد إعادة التشغيل.', warning: true};
     case 'READBACK_MISMATCH': return {text: 'أعادت اللوحة قيمًا لا تطابق ما طُلب ولا ما يتوقعه المصدر. لم يُدّع نجاح.', warning: true};
     case 'UNEXPECTED_CROSS_SUBSYSTEM_CHANGE': return {text: 'غيّر المتحكم إعدادًا خارج هذه الشاشة بطريقة لا يفسّرها المصدر. أعد قراءة إعدادات المحركات.', warning: true};
+    case 'SIDE_EFFECT_PREDICTION_NOT_PROVEN': return {text: 'غيّر المتحكم إعدادًا خارج هذه الشاشة، ولا يمكننا حساب القيمة المتوقعة له من بيانات MSP وحدها. لم يُحفظ التغيير؛ أعد قراءة إعدادات المحركات.', warning: true};
     case 'UNCONFIRMED': return {text: unconfirmedWriteMessage(outcome.stage), warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
     case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء العملية.', warning: true};

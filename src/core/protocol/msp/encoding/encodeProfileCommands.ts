@@ -221,22 +221,60 @@ export function encodeGetProfileName(kind: 'PID' | 'RATE'): Uint8Array {
 }
 
 /**
- * `[selector, length, ...ascii]`. The firmware stores at most eight
- * characters; anything longer is a caller error rather than something to
- * silently truncate, because a truncated name is a different name.
+ * ASCII-ONLY IS OUR RULE, NOT THE FIRMWARE'S. THIS SAYS SO.
+ *
+ * `MSP2_SET_TEXT` does `textLength = MIN(textSpace, sbufReadU8(src))` and
+ * then `sbufReadData(src, textVar, textLength)` (msp.c:4097-4099). It copies
+ * RAW BYTES into a `char[MAX_PROFILE_NAME_LENGTH + 1]` and NUL-terminates
+ * them. There is no character-set check anywhere on that path, and
+ * `MSP2_GET_TEXT` hands the same bytes back with `sbufWritePString`. A
+ * flight controller would therefore store UTF-8 quite happily.
+ *
+ * So this restriction is a PRODUCT POLICY, adopted deliberately:
+ *
+ *   - the limit is EIGHT BYTES, not eight characters, so a multi-byte
+ *     encoding would let a name that looks short overrun the buffer and be
+ *     truncated MID-CHARACTER by the firmware's byte-count MIN;
+ *   - a name cut in half through a code point comes back as mojibake, and
+ *     the operator would see the board disagree with what they typed;
+ *   - and the OSD, the CLI and the other tools a pilot uses do not agree on
+ *     how to render non-ASCII in these fields.
+ *
+ * Restricting to ASCII makes eight bytes and eight characters the same
+ * number, which is why the length check below can be written once. If this
+ * app ever supports UTF-8 here it must measure BYTES and refuse a truncation
+ * that would split a code point - it must not simply raise this limit.
+ */
+export const PROFILE_NAME_CHARACTER_POLICY = 'PRODUCT_POLICY_ASCII_ONLY' as const;
+/** The firmware's own limit, in BYTES: `sizeof(profileName) - 1`. */
+export const MAX_PROFILE_NAME_BYTES = 8;
+
+/** How many bytes this name would occupy in the firmware's buffer. */
+export function profileNameByteLength(name: string): number {
+  return new TextEncoder().encode(name).length;
+}
+
+/**
+ * `[selector, length, ...ascii]`. The firmware truncates silently at eight
+ * BYTES and acknowledges; refusing here means a name is never quietly
+ * shortened into a different name.
  */
 export function encodeSetProfileName(kind: 'PID' | 'RATE', name: string): Uint8Array {
   const bytes: number[] = [];
   for (const character of name) {
     const code = character.codePointAt(0) ?? 0;
     if (code > 0x7f) {
-      throw new RangeError('Profile names are stored as single-byte characters by the flight controller.');
+      throw new RangeError(
+        'Profile names are restricted to ASCII by this app; the firmware itself stores raw bytes.',
+      );
     }
     bytes.push(code);
   }
-  if (bytes.length > MAX_PROFILE_NAME_LENGTH) {
+  // Measured in BYTES, which under the ASCII policy equals the character
+  // count - and stays correct if that policy is ever revisited.
+  if (profileNameByteLength(name) > MAX_PROFILE_NAME_BYTES) {
     throw new RangeError(
-      `Profile names hold at most ${MAX_PROFILE_NAME_LENGTH} characters; got ${bytes.length}.`,
+      `Profile names hold at most ${MAX_PROFILE_NAME_BYTES} bytes; got ${profileNameByteLength(name)}.`,
     );
   }
   return Uint8Array.from([

@@ -47,9 +47,11 @@ import {
   MSP_SET_PID,
   MSP_SET_PID_ADVANCED,
   MSP_SET_RC_TUNING,
+  MSP_MOTOR_CONFIG,
   MSP_STATUS_EX,
 } from '../../../../core/protocol/msp/commands/mspCommands';
 import {
+  MSP_CALCULATE_SIMPLIFIED_PID,
   MSP_COPY_PROFILE,
   MSP_SET_RESET_CURR_PID,
   MSP_SET_SIMPLIFIED_TUNING,
@@ -68,6 +70,17 @@ import {
   SIMPLIFIED_FILTER_BLOCK_BYTES,
   SIMPLIFIED_PID_BLOCK_BYTES,
 } from '../../../../core/protocol/msp/decoding/decodeSimplifiedTuning';
+import {
+  MAX_PID_PROCESS_DENOM,
+  PID_DENOM_FORCE_SAMPLE_RATE_HZ,
+  motorUpdateRestrictionSeconds,
+} from '../../../../core/state/filterSideEffectProjection';
+import {
+  MOTOR_PROTOCOL_RAW_DSHOT150_AT_2025_12_2,
+  MOTOR_PROTOCOL_RAW_DSHOT300_AT_2025_12_2,
+  MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2,
+  MOTOR_PROTOCOL_RAW_PROSHOT1000_AT_2025_12_2,
+} from '../../../../core/protocol/msp/decoding/decodeAdvancedConfig';
 import {
   generateSimplifiedDtermFilters,
   generateSimplifiedGyroFilters,
@@ -167,12 +180,20 @@ export interface VirtualPidBoardQuirks {
   readonly copyProfile?: 'FULL' | 'PARTIAL';
   /** A generator whose output differs from our reimplementation. */
   readonly simplifiedGenerator?: 'FIRMWARE' | 'DRIFTED';
-  /** A reset that does not produce the firmware defaults. */
-  readonly resetProduces?: 'FIRMWARE_DEFAULTS' | 'SOMETHING_ELSE';
+  /**
+   * A reset that does not produce the firmware defaults. WRONG_LEVEL_ITEM
+   * misses one of the two PID items this screen never edits, which is the
+   * case a three-axis check would sail straight past.
+   */
+  readonly resetProduces?: 'FIRMWARE_DEFAULTS' | 'SOMETHING_ELSE' | 'WRONG_LEVEL_ITEM';
+  /** A rates-type write that also rescales a number it had no business touching. */
+  readonly ratesTypeWrite?: 'FAITHFUL' | 'ALSO_RESCALES';
   /** A name buffer shorter than MAX_PROFILE_NAME_LENGTH. */
   readonly profileNameCapacity?: number;
   /** A GET_TEXT reply that echoes a selector nobody asked for. */
   readonly textSelectorEcho?: 'REQUESTED' | 'WRONG';
+  /** A board whose CALCULATE RPC disagrees with our own generator. */
+  readonly calculateOracle?: 'AGREES' | 'DISAGREES';
 }
 
 export interface VirtualPidBoardOptions {
@@ -184,37 +205,69 @@ export interface VirtualPidBoardOptions {
   readonly globals?: Partial<VirtualPidGlobals>;
   readonly armed?: boolean;
   readonly boxIds?: readonly number[];
+  /** `gyro.sampleRateHz`. Drives the whole gyro-validation block. */
+  readonly gyroSampleRateHz?: number;
+  /** `motorConfig()->dev.useDshotTelemetry`, answered on MSP_MOTOR_CONFIG. */
+  readonly useDshotTelemetry?: boolean;
   /**
-   * Lets a scenario reproduce the firmware's cross-subsystem behaviour: a
-   * filter write raises pid_process_denom and downgrades the motor protocol
-   * exactly as the gyro validation does when bidirectional DShot is on.
+   * Whether this TARGET compiles in `USE_PID_DENOM_CHECK` and passes the
+   * `cpu_overclock` test. No client can observe either, which is the whole
+   * reason the controller must refuse to predict what this flag controls.
    */
-  readonly filterWriteSideEffects?: 'NONE' | 'SOURCE_PREDICTED' | 'UNPREDICTED_EXTRA';
+  readonly targetHasPidDenomCheck?: boolean;
+  /** A board that also does something no documented rule explains. */
+  readonly unpredictedExtraSideEffect?: boolean;
   /** Commands the board does not implement at all - a build without them. */
   readonly unsupportedCommands?: readonly number[];
 }
 
+const DSHOT_PROTOCOL_RAWS: ReadonlySet<number> = new Set([
+  MOTOR_PROTOCOL_RAW_DSHOT150_AT_2025_12_2,
+  MOTOR_PROTOCOL_RAW_DSHOT300_AT_2025_12_2,
+  MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2,
+  MOTOR_PROTOCOL_RAW_PROSHOT1000_AT_2025_12_2,
+]);
+
 const clone = (bytes: Uint8Array): Uint8Array => Uint8Array.from(bytes);
 
-function defaultPidProfile(filterBytes: number): VirtualPidProfile {
+/**
+ * `resetPidProfile()`'s template, for the fields this app can observe.
+ *
+ * `RESET_CONFIG` memcpys a static const over the whole struct, so every value
+ * here is the firmware's own default and every field not listed is zero.
+ * Read from `src/main/flight/pid.c:129-250` at the pinned commit.
+ */
+function firmwareResetPidProfile(filterBytes: number): VirtualPidProfile {
   const advanced = new Uint8Array(61);
   const view = new DataView(advanced.buffer);
+  // The `F` element of PID_ROLL/PITCH/YAW_DEFAULT.
   view.setUint16(PID_ADVANCED_OFFSETS.feedforwardRoll, 120, true);
   view.setUint16(PID_ADVANCED_OFFSETS.feedforwardPitch, 125, true);
   view.setUint16(PID_ADVANCED_OFFSETS.feedforwardYaw, 120, true);
-  advanced[PID_ADVANCED_OFFSETS.dMaxRoll] = 40;
+  advanced[PID_ADVANCED_OFFSETS.dMaxRoll] = 40;      // D_MAX_DEFAULT
   advanced[PID_ADVANCED_OFFSETS.dMaxPitch] = 46;
   advanced[PID_ADVANCED_OFFSETS.dMaxYaw] = 0;
-  advanced[PID_ADVANCED_OFFSETS.dMaxGain] = 37;
-  advanced[PID_ADVANCED_OFFSETS.tpaRate] = 65;
+  advanced[PID_ADVANCED_OFFSETS.dMaxGain] = 37;      // .d_max_gain
+  advanced[PID_ADVANCED_OFFSETS.tpaRate] = 65;       // .tpa_rate
+  view.setUint16(PID_ADVANCED_OFFSETS.tpaBreakpoint, 1350, true);
+  advanced[PID_ADVANCED_OFFSETS.tpaMode] = 0;        // TPA_MODE_D
+  view.setUint16(PID_ADVANCED_OFFSETS.dynIdleMinRpm, 0, true);
+  advanced[PID_ADVANCED_OFFSETS.feedforwardAveraging] = 1;  // 2_POINT
+  advanced[PID_ADVANCED_OFFSETS.feedforwardBoost] = 15;
+  advanced[PID_ADVANCED_OFFSETS.feedforwardJitterFactor] = 7;
+
   const filterProfile = new Uint8Array(filterBytes);
   const fp = new DataView(filterProfile.buffer);
   fp.setUint16(FILTER_CONFIG_OFFSETS.dtermLpf1StaticHz, 75, true);
   fp.setUint16(FILTER_CONFIG_OFFSETS.dtermLpf2StaticHz, 150, true);
   fp.setUint16(FILTER_CONFIG_OFFSETS.dtermLpf1DynMinHz, 75, true);
   fp.setUint16(FILTER_CONFIG_OFFSETS.dtermLpf1DynMaxHz, 150, true);
+  fp.setUint16(FILTER_CONFIG_OFFSETS.yawLowpassHz, 100, true);
+
+  // `.simplified_pids_mode = PID_SIMPLIFIED_TUNING_RPY` - a reset turns the
+  // generator back ON, which is itself a behaviour worth reproducing.
   const simplifiedPids = Uint8Array.from([
-    0, 100, 100, 100, 100, 100, 100, 100, 100, 0, 0, 0, 0, 0, 0, 0, 0,
+    2, 100, 100, 100, 100, 100, 100, 100, 100, 0, 0, 0, 0, 0, 0, 0, 0,
   ]);
   const simplifiedDterm = new Uint8Array(SIMPLIFIED_FILTER_BLOCK_BYTES);
   simplifiedDterm[1] = 100;
@@ -224,13 +277,30 @@ function defaultPidProfile(filterBytes: number): VirtualPidProfile {
   sd.setUint16(6, 75, true);
   sd.setUint16(8, 150, true);
   return {
-    pid: Uint8Array.from([45, 80, 30, 47, 84, 34, 45, 80, 0, 50, 50, 75, 40, 0, 0]),
+    // ROLL/PITCH/YAW defaults, then PID_LEVEL {50,75,75} and PID_MAG {40,0,0}.
+    pid: Uint8Array.from([45, 80, 30, 47, 84, 34, 45, 80, 0, 50, 75, 75, 40, 0, 0]),
     advanced,
     filterProfile,
     simplifiedPids,
     simplifiedDterm,
     name: '',
   };
+}
+
+/**
+ * The profile a freshly-constructed board starts from.
+ *
+ * Identical to the firmware reset template EXCEPT that the simplified
+ * generator is OFF. A factory-reset Betaflight profile really does have
+ * `simplified_pids_mode = RPY`, but a board somebody has actually tuned by
+ * hand has turned it off - and that is the state most scenarios here are
+ * about. The reset command still produces the true template, which is how
+ * the difference stays visible.
+ */
+function defaultPidProfile(filterBytes: number): VirtualPidProfile {
+  const profile = firmwareResetPidProfile(filterBytes);
+  profile.simplifiedPids[0] = 0;
+  return profile;
 }
 
 function defaultRateProfile(): VirtualRateProfile {
@@ -317,7 +387,10 @@ export class VirtualPidBoard {
   private readonly seen = new Map<number, number>();
   private readonly apiMinor: number;
   private readonly filterBytes: number;
-  private readonly sideEffects: 'NONE' | 'SOURCE_PREDICTED' | 'UNPREDICTED_EXTRA';
+  private readonly gyroSampleRateHz: number;
+  private readonly useDshotTelemetry: boolean;
+  private readonly targetHasPidDenomCheck: boolean;
+  private readonly unpredictedExtraSideEffect: boolean;
   private readonly unsupported: ReadonlySet<number>;
   private readonly quirks: VirtualPidBoardQuirks;
   readonly requests: Array<{command: number; payload: Uint8Array}> = [];
@@ -328,7 +401,10 @@ export class VirtualPidBoard {
     this.filterBytes = options.filterBytes;
     this.armedState = options.armed === true;
     this.boxIds = options.boxIds ?? [0];
-    this.sideEffects = options.filterWriteSideEffects ?? 'NONE';
+    this.gyroSampleRateHz = options.gyroSampleRateHz ?? 8000;
+    this.useDshotTelemetry = options.useDshotTelemetry === true;
+    this.targetHasPidDenomCheck = options.targetHasPidDenomCheck === true;
+    this.unpredictedExtraSideEffect = options.unpredictedExtraSideEffect === true;
     this.unsupported = new Set(options.unsupportedCommands ?? []);
     this.quirks = options.quirks ?? {};
     const pidProfiles = Array.from({length: PID_PROFILE_SLOTS}, (_unused, index) => ({
@@ -407,6 +483,24 @@ export class VirtualPidBoard {
     return bytes;
   }
 
+  /**
+   * MSP_MOTOR_CONFIG. Only offset 8 matters to the PID page: it is the
+   * `useDshotTelemetry` flag that decides whether the unobservable branch of
+   * the gyro validation can fire.
+   */
+  private motorConfig(): Uint8Array {
+    const bytes = new Uint8Array(10);
+    const view = new DataView(bytes.buffer);
+    view.setUint16(0, 0, true);      // was minthrottle
+    view.setUint16(2, 2000, true);   // maxthrottle
+    view.setUint16(4, 1000, true);   // mincommand
+    bytes[6] = 4;                    // motor count
+    bytes[7] = 14;                   // motor pole count
+    bytes[8] = this.useDshotTelemetry ? 1 : 0;
+    bytes[9] = 0;                    // ESC sensor feature
+    return bytes;
+  }
+
   private statusEx(): Uint8Array {
     const bytes = new Uint8Array(24);
     bytes[6] = this.armedState ? 1 : 0;
@@ -459,8 +553,10 @@ export class VirtualPidBoard {
       case MSP_RC_TUNING: return this.rcTuningResponse();
       case MSP_FILTER_CONFIG: return this.composedFilterConfig();
       case MSP_ADVANCED_CONFIG: return clone(this.state.globals.advancedConfig);
+      case MSP_MOTOR_CONFIG: return this.motorConfig();
       case MSP_SIMPLIFIED_TUNING: return this.composedSimplified();
       case MSP_VALIDATE_SIMPLIFIED_TUNING: return this.validateSimplified();
+      case MSP_CALCULATE_SIMPLIFIED_PID: return this.calculateSimplifiedPid(payload);
       case MSP2_GET_TEXT: return this.getText(payload);
       case MSP2_SET_TEXT: this.setText(payload); return empty;
       case MSP_EEPROM_WRITE: this.commit(); return empty;
@@ -561,9 +657,14 @@ export class VirtualPidBoard {
     out.setUint16(o.rateLimitPitch, src.getUint16(o.rateLimitPitch, true), true);
     out.setUint16(o.rateLimitYaw, src.getUint16(o.rateLimitYaw, true), true);
     if (payload.length <= o.ratesType) return;
+    const ratesTypeChanged = stored[o.ratesType] !== payload[o.ratesType];
     stored[o.ratesType] = payload[o.ratesType];
     if (payload.length <= o.throttleHover) return;
     stored[o.throttleHover] = payload[o.throttleHover];
+    if (this.quirks.ratesTypeWrite === 'ALSO_RESCALES' && ratesTypeChanged) {
+      // A board that "helpfully" rescales a rate when the formula changes.
+      stored[o.rcRateRoll] = (stored[o.rcRateRoll] + 7) % 251;
+    }
   }
 
   private setFilterConfig(payload: Uint8Array): void {
@@ -593,18 +694,58 @@ export class VirtualPidBoard {
     if (view.getUint16(o.gyroLpf1DynMinHz, true) > view.getUint16(o.gyroLpf1DynMaxHz, true)) {
       view.setUint16(o.gyroLpf1DynMinHz, 0, true);
     }
-    if (this.sideEffects !== 'NONE') {
-      const advanced = this.state.globals.advancedConfig;
-      advanced[1] = Math.max(2, advanced[1]); // pid_process_denom
-      if (advanced[3] === 6) advanced[3] = 5; // DSHOT600 -> DSHOT300
-      if (this.sideEffects === 'UNPREDICTED_EXTRA') {
-        // Something the source projection does NOT predict. The DIRECTION is
-        // what makes it unpredicted: the gyro validation can only LOWER the
-        // motor PWM rate, so a rate that ROSE is a change no documented rule
-        // explains. Lowering it here would have been an expected side effect
-        // wearing the wrong label, and the test would have proved nothing.
-        new DataView(advanced.buffer).setUint16(4, 960, true);
+    this.validateAndFixGyroConfigTail();
+  }
+
+  /**
+   * The rest of `validateAndFixGyroConfig` (config.c:579-649), reproduced in
+   * the firmware's own order and with its own arithmetic.
+   *
+   * The earlier version of this board applied a crude "denom goes up, DShot
+   * goes down" caricature that did not match any real rule - and the
+   * classifier it was paired with accepted any change in those directions.
+   * Both are now exact.
+   */
+  private validateAndFixGyroConfigTail(): void {
+    const advanced = this.state.globals.advancedConfig;
+    const view = new DataView(advanced.buffer);
+    const rate = this.gyroSampleRateHz;
+    if (rate <= 0) return;
+
+    // The target-gated branch. `targetHasPidDenomCheck` stands in for
+    // USE_PID_DENOM_CHECK plus the cpu_overclock test - a build fact no
+    // client can observe, which is exactly why the app must not predict it.
+    if (this.targetHasPidDenomCheck && this.useDshotTelemetry) {
+      if (advanced[3] === MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2) {
+        advanced[3] = MOTOR_PROTOCOL_RAW_DSHOT300_AT_2025_12_2;
       }
+      if (rate > PID_DENOM_FORCE_SAMPLE_RATE_HZ) advanced[1] = Math.max(2, advanced[1]);
+    }
+
+    const samplingTime = 1 / rate;
+    let restriction = motorUpdateRestrictionSeconds(advanced[3]);
+
+    if (advanced[2] !== 0) {
+      const isDshot = DSHOT_PROTOCOL_RAWS.has(advanced[3]);
+      if (!isDshot && advanced[3] !== 0) {
+        const maxEscRate = Math.round(1 / restriction);
+        view.setUint16(4, Math.min(view.getUint16(4, true), maxEscRate), true);
+      }
+    } else {
+      if (this.useDshotTelemetry) restriction *= 2;
+      const pidLooptime = samplingTime * advanced[1];
+      if (pidLooptime < restriction) {
+        const ratio = restriction / samplingTime;
+        let minimum = Math.trunc(ratio) % 256;
+        if (ratio > minimum) minimum += 1;
+        minimum = Math.min(Math.max(minimum, 1), MAX_PID_PROCESS_DENOM);
+        advanced[1] = Math.max(advanced[1], minimum);
+      }
+    }
+
+    if (this.unpredictedExtraSideEffect) {
+      // A board doing something no documented rule explains at all.
+      view.setUint16(4, view.getUint16(4, true) + 1, true);
     }
   }
 
@@ -693,6 +834,45 @@ export class VirtualPidBoard {
     }
   }
 
+  /**
+   * MSP_CALCULATE_SIMPLIFIED_PID: the generator run against a TEMPORARY copy
+   * of the profile, serialised as three axes of
+   * `{u8 P, u8 I, u8 D, u8 dMax, u16 F}`. Nothing is stored - which is
+   * exactly why a client must not treat this as applied state.
+   */
+  private calculateSimplifiedPid(payload: Uint8Array): Uint8Array {
+    // `pidProfile_t tempPidProfile = *currentPidProfile;` then
+    // `readSimplifiedPids(&tempPidProfile, src)` - the sliders come from the
+    // REQUEST, not from what the board is storing.
+    const inputs = payload.length >= SIMPLIFIED_PID_BLOCK_BYTES
+      ? payload
+      : this.state.pidProfiles[this.state.activePid].simplifiedPids;
+    const mode = inputs[0] === 1 || inputs[0] === 2 ? (inputs[0] as 1 | 2) : 0;
+    const generated = generateSimplifiedPids({
+      mode,
+      masterMultiplier: inputs[1],
+      rollPitchRatio: inputs[2],
+      iGain: inputs[3],
+      dGain: inputs[4],
+      piGain: inputs[5],
+      dMaxGain: inputs[6],
+      feedforwardGain: inputs[7],
+      pitchPiGain: inputs[8],
+    }, simplifiedDefaultsFor('API_1_47'));
+    const bytes = new Uint8Array(18);
+    const view = new DataView(bytes.buffer);
+    generated.axes.forEach((axis, index) => {
+      const base = index * 6;
+      bytes[base] = axis.p;
+      bytes[base + 1] = axis.i;
+      bytes[base + 2] = axis.d;
+      bytes[base + 3] = axis.dMax;
+      view.setUint16(base + 4, axis.f, true);
+      if (this.quirks.calculateOracle === 'DISAGREES') bytes[base] = (axis.p + 1) % 251;
+    });
+    return bytes;
+  }
+
   /** The firmware's own opinion: PIDs, then GYRO, then DTERM. */
   private validateSimplified(): Uint8Array {
     const active = this.state.pidProfiles[this.state.activePid];
@@ -721,9 +901,15 @@ export class VirtualPidBoard {
     // No re-initialisation follows the memcpy in the firmware.
   }
 
+  /**
+   * `resetPidProfile(currentPidProfile)` is `RESET_CONFIG`, which memcpys a
+   * static const template over the WHOLE struct - so the name and the
+   * simplified sliders go back to their defaults too, not just the gains.
+   */
   private resetCurrentPidProfile(): void {
-    const fresh = defaultPidProfile(this.filterBytes);
+    const fresh = firmwareResetPidProfile(this.filterBytes);
     if (this.quirks.resetProduces === 'SOMETHING_ELSE') fresh.pid[0] = 44;
+    if (this.quirks.resetProduces === 'WRONG_LEVEL_ITEM') fresh.pid[9] = 33;
     this.state.pidProfiles[this.state.activePid] = fresh;
   }
 

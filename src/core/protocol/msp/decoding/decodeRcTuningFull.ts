@@ -15,14 +15,30 @@ import {MSP_RC_TUNING_BYTES} from './pidWireContracts';
  * still calls these bytes TPA would be reading a constant and calling it a
  * setting.
  *
- * WRITING ROLL CAN WRITE PITCH. The setter's first two bytes carry roll's RC
- * rate and expo, and before storing each one it checks whether pitch
- * currently equals roll; if it does, pitch is given the new value too. It is
- * a legacy convenience for pilots who keep the two axes linked, and it is
- * state-dependent: the same payload has different effects on two boards whose
- * stored pitch differs. `projectRcTuningWrite` below reproduces it so that a
- * readback can tell "pitch followed roll, as designed" apart from "pitch is
- * not what we asked for".
+ * THE LEGACY PITCH LINK IS NOT OBSERVABLE ON A MODERN WRITE, AND THIS
+ * MODULE NO LONGER PRETENDS IT IS.
+ *
+ * The setter's first two bytes carry roll's RC rate and expo, and before
+ * storing each one the firmware checks whether pitch currently equals roll;
+ * if it does, pitch is given the new value too (msp.c:2781-2791). That is a
+ * legacy convenience for pilots who kept the two axes linked.
+ *
+ * But the SAME handler then reads explicit pitch bytes later in the payload
+ * and assigns them unconditionally:
+ *
+ *     if (sbufBytesRemaining(src) >= 1) rcRates[FD_PITCH] = sbufReadU8(src);  // offset 12
+ *     if (sbufBytesRemaining(src) >= 1) rcExpo[FD_PITCH]  = sbufReadU8(src);  // offset 13
+ *
+ * so on any payload long enough to reach those offsets the linkage is
+ * overwritten before the handler returns. Our encoder always sends the full
+ * 24 bytes. THEREFORE THERE IS NO PITCH-FOLLOWS-ROLL NORMALISATION FOR A
+ * PRODUCTION WRITE: the explicit pitch bytes are authoritative, and a
+ * readback that shows pitch tracking roll when the request did not ask for
+ * it is a MISMATCH, not a firmware rule doing its job.
+ *
+ * The link survives here only as `legacyPitchLinkObservable`, which records
+ * the partial-payload lengths at which the firmware would still expose it.
+ * Nothing in production produces such a payload.
  */
 
 export const RC_TUNING_OFFSETS = Object.freeze({
@@ -114,45 +130,50 @@ export interface RcTuningWriteRequest {
 export interface RcTuningWriteProjection {
   readonly rcRate: readonly [number, number, number];
   readonly expo: readonly [number, number, number];
-  /** True when pitch was dragged along by roll rather than by the request. */
-  readonly pitchFollowedRollRcRate: boolean;
-  readonly pitchFollowedRollExpo: boolean;
 }
 
 /**
- * What the firmware will hold after MSP_SET_RC_TUNING.
+ * The payload lengths at which the legacy pitch link would still be visible.
  *
- * The rule, verbatim in behaviour: byte 0 is roll's RC rate; if the STORED
- * pitch RC rate equals the STORED roll RC rate at the moment of the write,
- * pitch takes the new roll value too. Then roll is stored. Expo, byte 1,
- * follows the same rule. Pitch's own bytes arrive later in the payload and
- * overwrite the linkage if the caller sent a different pitch - so the linkage
- * only actually shows when the request leaves pitch alone.
+ * `rcRates[FD_PITCH]` is read at offset 12 and `rcExpo[FD_PITCH]` at 13, each
+ * behind `sbufBytesRemaining(src) >= 1`. A payload of 12 bytes therefore
+ * stops before the RC-rate overwrite; one of 13 bytes stops before the expo
+ * overwrite. Anything longer buries the link entirely.
  *
- * Pure: `observed` is never modified.
+ * HISTORICAL / PARTIAL-PAYLOAD ONLY. Our encoder sends 24 bytes, so both
+ * answers are false for every write this app makes.
+ */
+export function legacyPitchLinkObservable(payloadLength: number): {
+  readonly rcRate: boolean;
+  readonly expo: boolean;
+} {
+  return Object.freeze({
+    rcRate: payloadLength <= RC_TUNING_OFFSETS.rcRatePitch,
+    expo: payloadLength <= RC_TUNING_OFFSETS.expoPitch,
+  });
+}
+
+/**
+ * What the firmware will hold after a FULL 24-byte MSP_SET_RC_TUNING.
+ *
+ * Every axis takes the requested value, pitch included. The legacy link fires
+ * on byte 0 and byte 1 and is then overwritten by the explicit pitch bytes at
+ * offsets 12 and 13, so it contributes nothing to the final state and the
+ * board's stored values before the write do not change the answer.
+ *
+ * The parameter is kept for the reader's sake - it is what makes the absence
+ * of any dependence on it visible - and is deliberately unused.
  */
 export function projectRcTuningWrite(
-  observed: MspRcTuningFull,
+  _observedBeforeWrite: MspRcTuningFull,
   requested: RcTuningWriteRequest,
 ): RcTuningWriteProjection {
-  const rcRateLinked = observed.rcRate[1] === observed.rcRate[0];
-  const expoLinked = observed.expo[1] === observed.expo[0];
-
-  // The linkage fires first, then the explicit pitch byte lands on top.
-  const linkedPitchRcRate = rcRateLinked ? requested.rcRate[0] : observed.rcRate[1];
-  const linkedPitchExpo = expoLinked ? requested.expo[0] : observed.expo[1];
-
-  const finalPitchRcRate = requested.rcRate[1];
-  const finalPitchExpo = requested.expo[1];
-
   return Object.freeze({
     rcRate: Object.freeze([
-      requested.rcRate[0], finalPitchRcRate, requested.rcRate[2],
+      requested.rcRate[0], requested.rcRate[1], requested.rcRate[2],
     ]) as readonly [number, number, number],
     expo: Object.freeze([
-      requested.expo[0], finalPitchExpo, requested.expo[2],
+      requested.expo[0], requested.expo[1], requested.expo[2],
     ]) as readonly [number, number, number],
-    pitchFollowedRollRcRate: rcRateLinked && linkedPitchRcRate !== observed.rcRate[1],
-    pitchFollowedRollExpo: expoLinked && linkedPitchExpo !== observed.expo[1],
   });
 }

@@ -11,6 +11,7 @@ import {
 import {MSP2_GET_TEXT, MSP2_SET_TEXT, MSP_SELECT_SETTING} from '../../../core/protocol/msp/commands/mspCommands';
 import {decodeMspText} from '../../../core/protocol/msp/decoding/decodeMspText';
 import {
+  MSP_CALCULATE_SIMPLIFIED_PID,
   MSP_COPY_PROFILE,
   MSP_SET_RESET_CURR_PID,
   MSP_SET_SIMPLIFIED_TUNING,
@@ -36,27 +37,44 @@ import {
   type PidApiContract,
 } from '../../../core/protocol/msp/decoding/pidWireContracts';
 import {decodePidAdvancedFull} from '../../../core/protocol/msp/decoding/decodePidAdvancedFull';
+import {
+  RC_TUNING_OFFSETS,
+  RC_TUNING_RETIRED_OFFSETS,
+} from '../../../core/protocol/msp/decoding/decodeRcTuningFull';
+import {MSP_RC_TUNING_BYTES} from '../../../core/protocol/msp/decoding/pidWireContracts';
+import {
+  encodeRcTuningRatesType,
+  isEncodableRatesType,
+} from '../../../core/protocol/msp/encoding/encodeRatesType';
 import {decodeFilterConfigFull} from '../../../core/protocol/msp/decoding/decodeFilterConfigFull';
 import {decodeRcTuningFull} from '../../../core/protocol/msp/decoding/decodeRcTuningFull';
 import {
+  SIMPLIFIED_PID_BLOCK_BYTES,
+  decodeCalculatedPidfs,
   decodeSimplifiedTuning,
   decodeSimplifiedTuningValidity,
+  type CalculatedPidfAxis,
   type MspSimplifiedTuning,
   type SimplifiedTuningValidity,
 } from '../../../core/protocol/msp/decoding/decodeSimplifiedTuning';
 import {
-  classifyAdvancedConfigSideEffects,
   classifyAdvancedReadback,
   classifyFilterReadback,
   classifyPidReadback,
   classifyRcTuningReadback,
   classifySimplifiedReadback,
   detectSimplifiedConflict,
+  classifyGyroValidationSideEffects,
   ownedAdvancedFields,
   ownedFilterFields,
+  projectGyroValidation,
+  projectSimplifiedWrite,
+  type AdvancedConfigWitness,
   type CrossSubsystemReport,
   type SimplifiedConflict,
 } from '../../../core/state/pidWriteVerification';
+import {MSP_MOTOR_CONFIG} from '../../../core/protocol/msp/commands/mspCommands';
+import {decodeMotorConfig} from '../../../core/protocol/msp/decoding/decodeMotorConfig';
 import type {FieldComparison, GroupVerdict} from '../../../core/state/pidNormalizationModel';
 import {
   pidProfileIdentity,
@@ -105,7 +123,12 @@ export type PidBlockReason =
   | 'ACTIVE_DESTINATION_COPY_UNSAFE'
   /** The board answered nothing for the simplified command family, which is
    *  real evidence the feature is not built in. */
-  | 'SIMPLIFIED_TUNING_UNSUPPORTED';
+  | 'SIMPLIFIED_TUNING_UNSUPPORTED'
+  /** The board's own CALCULATE result disagrees with our generator, so we
+   *  cannot claim the projection is source-equivalent for these inputs. */
+  | 'SIMPLIFIED_PROJECTION_ORACLE_DISAGREES'
+  /** The requested rates type is not one of the five formulas we have read. */
+  | 'UNKNOWN_RATES_TYPE';
 /**
  * Switching the ACTIVE profile is not a settings write, so it gets its
  * own outcome rather than being squeezed into PidSaveOutcome.
@@ -144,7 +167,30 @@ export interface PidWriteEvidence {
   readonly normalisations: readonly FieldComparison[];
   readonly sideEffects?: CrossSubsystemReport;
   readonly simplifiedValidity?: SimplifiedTuningValidity;
+  /**
+   * What the board's own CALCULATE RPCs said our generator should produce.
+   * A SECONDARY oracle: it runs on a temporary copy of the profile and
+   * stores nothing, so it can corroborate our reimplementation but can
+   * never stand in for the post-write readback.
+   */
+  readonly projectionOracle?: SimplifiedProjectionOracle;
 }
+
+/**
+ * MSP_CALCULATE_SIMPLIFIED_PID (142) run as a cross-check.
+ *
+ *   ORACLE_AGREES      the board's temporary-copy result matches the tune our
+ *                      own generator predicts, field for field
+ *   ORACLE_DISAGREES   it does not - so our reimplementation is not proven
+ *                      source-equivalent for these inputs, and the write is
+ *                      abandoned BEFORE anything is stored
+ *   ORACLE_UNAVAILABLE the command family is absent from this build; not an
+ *                      error, and emphatically not an agreement
+ */
+export type SimplifiedProjectionOracle =
+  | {readonly kind: 'ORACLE_AGREES'}
+  | {readonly kind: 'ORACLE_DISAGREES'; readonly fields: readonly FieldComparison[]}
+  | {readonly kind: 'ORACLE_UNAVAILABLE'};
 
 /**
  * Every stage a PID-page write can be in doubt at.
@@ -173,6 +219,12 @@ export type PidSaveOutcome =
   | {readonly kind: 'READBACK_MISMATCH'; readonly group: PidTuningWriteGroup; readonly fields: readonly FieldComparison[]}
   /** An unowned truth moved in a way the source does not explain. */
   | {readonly kind: 'UNEXPECTED_CROSS_SUBSYSTEM_CHANGE'; readonly sideEffects: CrossSubsystemReport}
+  /**
+   * A truth outside this screen moved, and the firmware rule that would
+   * explain it is gated on a build-time target macro MSP never reports. We
+   * decline to call that a normalisation, and decline to commit.
+   */
+  | {readonly kind: 'SIDE_EFFECT_PREDICTION_NOT_PROVEN'; readonly sideEffects: CrossSubsystemReport}
   | {readonly kind: 'SAVED_UNVERIFIED'; readonly error: unknown}
   | {readonly kind: 'REJECTED'; readonly reason: PidBlockReason; readonly conflict?: SimplifiedConflict}
   | {readonly kind: 'UNCONFIRMED'; readonly stage: PidWriteStage}
@@ -215,7 +267,29 @@ export type PidProfileCopyOutcome =
  * discover on the next power cycle.
  */
 export type PidProfileResetOutcome =
-  | {readonly kind: 'RESET_APPLIED_NOT_PERSISTED'; readonly snapshot: MspPidTuningSnapshot; readonly persists: false}
+  /**
+   * PARTIALLY, because `RESET_CONFIG` rewrites the entire `pidProfile_t` and
+   * this screen can only read part of it. `verifiedScope` names exactly what
+   * was checked; the rest is untested rather than assumed correct.
+   */
+  | {readonly kind: 'RESET_APPLIED_PARTIALLY_VERIFIED'; readonly snapshot: MspPidTuningSnapshot; readonly persists: false; readonly verifiedScope: readonly string[]}
+  | {readonly kind: 'READBACK_MISMATCH'; readonly fields: readonly FieldComparison[]}
+  | {readonly kind: 'REJECTED'; readonly reason: PidBlockReason}
+  | {readonly kind: 'UNCONFIRMED'}
+  | {readonly kind: 'SESSION_ENDED'}
+  | {readonly kind: 'FAILED'; readonly error: unknown};
+
+/**
+ * WHAT A RATES-TYPE WRITE ANSWERS.
+ *
+ * Deliberately separate from PidSaveOutcome: this changes which FORMULA
+ * interprets the stored numbers, which is a different kind of act from
+ * editing a value, and a pilot deserves to be told which one happened.
+ */
+export type PidRatesTypeOutcome =
+  | {readonly kind: 'NO_CHANGES'; readonly snapshot: MspPidTuningSnapshot}
+  | {readonly kind: 'PERSISTED_VERIFIED'; readonly snapshot: MspPidTuningSnapshot; readonly ratesTypeRaw: number}
+  | {readonly kind: 'APPLIED_PERSISTENCE_UNVERIFIED'; readonly snapshot: MspPidTuningSnapshot; readonly error: unknown}
   | {readonly kind: 'READBACK_MISMATCH'; readonly fields: readonly FieldComparison[]}
   | {readonly kind: 'REJECTED'; readonly reason: PidBlockReason}
   | {readonly kind: 'UNCONFIRMED'}
@@ -307,7 +381,7 @@ function editedFilterFields(original: MspPidTuningSnapshot, draft: PidTuningDraf
 }
 
 /** The three MSP_ADVANCED_CONFIG fields a filter write can disturb. */
-function advancedWitness(snapshot: MspPidTuningSnapshot): {pidProcessDenom: number; motorProtocolRaw: number; motorPwmRate: number} {
+function advancedWitness(snapshot: MspPidTuningSnapshot): AdvancedConfigWitness {
   return {
     pidProcessDenom: snapshot.pidProcessDenom ?? 0,
     motorProtocolRaw: snapshot.motorProtocolRaw ?? 0,
@@ -374,13 +448,50 @@ type SaveInternal =
   | {readonly saved: {readonly snapshot: MspPidTuningSnapshot; readonly evidence: PidWriteEvidence}}
   | {readonly appliedOnly: {readonly snapshot: MspPidTuningSnapshot; readonly evidence: PidWriteEvidence; readonly error: unknown}}
   | {readonly mismatch: {readonly group: PidTuningWriteGroup; readonly fields: readonly FieldComparison[]}}
-  | {readonly unexpected: CrossSubsystemReport};
+  | {readonly unexpected: CrossSubsystemReport}
+  | {readonly notProven: CrossSubsystemReport};
 
 type SimplifiedInternal =
   | {readonly unchanged: MspPidTuningSnapshot}
   | {readonly saved: {readonly snapshot: MspPidTuningSnapshot; readonly evidence: PidWriteEvidence}}
   | {readonly appliedOnly: {readonly snapshot: MspPidTuningSnapshot; readonly evidence: PidWriteEvidence; readonly error: unknown}}
   | {readonly mismatch: {readonly fields: readonly FieldComparison[]}};
+
+type RatesTypeInternal =
+  | {readonly unchanged: MspPidTuningSnapshot}
+  | {readonly persisted: {readonly snapshot: MspPidTuningSnapshot; readonly ratesTypeRaw: number}}
+  | {readonly appliedOnly: {readonly snapshot: MspPidTuningSnapshot; readonly error: unknown}}
+  | {readonly mismatch: {readonly fields: readonly FieldComparison[]}};
+
+/**
+ * A rates-type write owns ONE byte. Every other byte of MSP_RC_TUNING must
+ * come back exactly as it went out - including the ones this app never
+ * edits - because a board that rescaled a rate while changing its formula
+ * would have changed how the aircraft flies twice over.
+ *
+ * The three retired offsets are skipped: the firmware answers literal zeros
+ * there whatever was written, so comparing them would fail every write.
+ */
+function ratesTypeWriteDifferences(
+  before: MspPidTuningSnapshot,
+  after: MspPidTuningSnapshot,
+  ratesTypeRaw: number,
+): readonly FieldComparison[] {
+  const out: FieldComparison[] = [];
+  const retired = new Set(RC_TUNING_RETIRED_OFFSETS);
+  for (let offset = 0; offset < MSP_RC_TUNING_BYTES; offset += 1) {
+    if (retired.has(offset)) continue;
+    const want = offset === RC_TUNING_OFFSETS.ratesType ? ratesTypeRaw : (before.ratesRaw[offset] ?? 0);
+    const got = after.ratesRaw[offset] ?? 0;
+    if (want !== got) {
+      out.push({
+        field: offset === RC_TUNING_OFFSETS.ratesType ? 'ratesType' : `RC_TUNING[${offset}]`,
+        verdict: {kind: 'MISMATCH', requested: want, expected: want, observed: got},
+      });
+    }
+  }
+  return out;
+}
 
 type CopyInternal =
   | {readonly copied: {readonly snapshot: MspPidTuningSnapshot; readonly sourceIndex: number; readonly destinationIndex: number}}
@@ -428,43 +539,114 @@ function copiedProfileDifferences(
 }
 
 /**
- * `pid.h` PID_ROLL_DEFAULT / PID_PITCH_DEFAULT / PID_YAW_DEFAULT, which are
- * `{P, I, D, F, unused}` per axis, and D_MAX_DEFAULT.
+ * WHAT `resetPidProfile()` PRODUCES, AND HOW MUCH OF IT WE CAN SEE.
  *
- * Read from the pinned firmware header, not from a board and not from our own
- * generator. They are what MSP_SET_RESET_CURR_PID must produce, so a reset
- * that answers with anything else is a mismatch rather than a success.
+ * The command is `RESET_CONFIG(pidProfile_t, ...)`, which memcpys a static
+ * const template over the WHOLE struct (config_reset.h:31-36). So it resets
+ * far more than the gains: the D Max pair, TPA, the feedforward feel
+ * settings, the D-term filter frequencies, the profile NAME, and the
+ * simplified sliders - which it turns back ON in the RPY mode.
+ *
+ * We can observe a large part of that through MSP_PID, MSP_PID_ADVANCED,
+ * MSP_FILTER_CONFIG, MSP2_GET_TEXT and MSP_SIMPLIFIED_TUNING, and that part
+ * is checked below. We cannot observe the rest - iterm relax, anti-gravity,
+ * the level-angle limits, the TPA curve parameters and more - because this
+ * screen never reads those commands. So the outcome is named
+ * RESET_APPLIED_PARTIALLY_VERIFIED and carries the scope it actually
+ * checked, rather than claiming the whole profile was proven.
  */
-const FIRMWARE_PID_DEFAULTS: readonly {readonly p: number; readonly i: number; readonly d: number; readonly f: number; readonly dMax: number}[] = Object.freeze([
-  Object.freeze({p: 45, i: 80, d: 30, f: 120, dMax: 40}),
-  Object.freeze({p: 47, i: 84, d: 34, f: 125, dMax: 46}),
-  Object.freeze({p: 45, i: 80, d: 0, f: 120, dMax: 0}),
+const FIRMWARE_PID_DEFAULTS: readonly {readonly p: number; readonly i: number; readonly d: number}[] = Object.freeze([
+  Object.freeze({p: 45, i: 80, d: 30}),   // PID_ROLL_DEFAULT
+  Object.freeze({p: 47, i: 84, d: 34}),   // PID_PITCH_DEFAULT
+  Object.freeze({p: 45, i: 80, d: 0}),    // PID_YAW_DEFAULT
+  Object.freeze({p: 50, i: 75, d: 75}),   // [PID_LEVEL] = {50, 75, 75, 50, 0}
+  Object.freeze({p: 40, i: 0, d: 0}),     // [PID_MAG] = {40, 0, 0, 0, 0}
+]);
+/** The `F` element of each PID_*_DEFAULT, which travels on MSP_PID_ADVANCED. */
+const FIRMWARE_FEEDFORWARD_DEFAULTS: readonly number[] = Object.freeze([120, 125, 120]);
+/** `.d_max = D_MAX_DEFAULT` and `.d_max_gain = 37`. */
+const FIRMWARE_D_MAX_DEFAULTS: readonly number[] = Object.freeze([40, 46, 0]);
+const FIRMWARE_D_MAX_GAIN_DEFAULT = 37;
+/** `.tpa_rate = 65`, `.tpa_breakpoint = 1350`, `.dyn_idle_min_rpm = 0`. */
+const FIRMWARE_TPA_RATE_DEFAULT = 65;
+const FIRMWARE_TPA_BREAKPOINT_DEFAULT = 1350;
+const FIRMWARE_DYN_IDLE_MIN_RPM_DEFAULT = 0;
+/** `.feedforward_averaging = FEEDFORWARD_AVERAGING_2_POINT` (1), boost 15,
+ *  jitter 7. */
+const FIRMWARE_FEEDFORWARD_AVERAGING_DEFAULT = 1;
+const FIRMWARE_FEEDFORWARD_BOOST_DEFAULT = 15;
+const FIRMWARE_FEEDFORWARD_JITTER_DEFAULT = 7;
+/** `.dterm_lpf1_static_hz = 75`, `lpf2 150`, `dyn min 75`, `dyn max 150`,
+ *  `.yaw_lowpass_hz = 100`. */
+const FIRMWARE_DTERM_LPF1_STATIC_DEFAULT = 75;
+const FIRMWARE_DTERM_LPF2_STATIC_DEFAULT = 150;
+const FIRMWARE_DTERM_LPF1_DYN_MIN_DEFAULT = 75;
+const FIRMWARE_DTERM_LPF1_DYN_MAX_DEFAULT = 150;
+const FIRMWARE_YAW_LOWPASS_DEFAULT = 100;
+/** `.simplified_pids_mode = PID_SIMPLIFIED_TUNING_RPY`. */
+const FIRMWARE_SIMPLIFIED_PIDS_MODE_DEFAULT = 2;
+
+/** Exactly what this build checks after a reset, and nothing more. */
+export const OBSERVABLE_RESET_SCOPE: readonly string[] = Object.freeze([
+  'MSP_PID: all five items, P/I/D',
+  'MSP_PID_ADVANCED: feedforward, D Max, D Max gain, TPA rate/breakpoint, dynamic idle, feedforward feel',
+  'MSP_FILTER_CONFIG: the PID-profile D-term frequencies and the yaw lowpass',
+  'MSP2_GET_TEXT: the profile name',
+  'MSP_SIMPLIFIED_TUNING: the generator mode',
 ]);
 
+interface ResetObservation {
+  readonly snapshot: MspPidTuningSnapshot;
+  readonly name: string | undefined;
+  readonly simplified: MspSimplifiedTuning | undefined;
+}
+
 function pidProfileDefaultDifferences(
-  snapshot: MspPidTuningSnapshot,
+  observation: ResetObservation,
   contract: PidApiContract,
 ): readonly FieldComparison[] {
+  const {snapshot} = observation;
   const advanced = decodePidAdvancedFull(snapshot.advancedRaw, contract);
-  const axes = ['ROLL', 'PITCH', 'YAW'] as const;
+  const filters = decodeFilterConfigFull(snapshot.filtersRaw, contract);
   const comparisons: FieldComparison[] = [];
+  const expect = (field: string, want: number, got: number): void => {
+    if (want !== got) comparisons.push({field, verdict: {kind: 'MISMATCH', requested: want, expected: want, observed: got}});
+  };
+
+  const items = ['ROLL', 'PITCH', 'YAW', 'LEVEL', 'MAG'] as const;
   FIRMWARE_PID_DEFAULTS.forEach((want, index) => {
-    const observed = {
-      p: snapshot.pidRaw[index * 3],
-      i: snapshot.pidRaw[index * 3 + 1],
-      d: snapshot.pidRaw[index * 3 + 2],
-      f: advanced.feedforward[index],
-      dMax: advanced.dMax[index],
-    };
-    (['p', 'i', 'd', 'f', 'dMax'] as const).forEach(term => {
-      if (observed[term] !== want[term]) {
-        comparisons.push({
-          field: `${axes[index]}.${term.toUpperCase()}`,
-          verdict: {kind: 'MISMATCH', requested: want[term], expected: want[term], observed: observed[term]},
-        });
-      }
-    });
+    expect(`${items[index]}.P`, want.p, snapshot.pidRaw[index * 3]);
+    expect(`${items[index]}.I`, want.i, snapshot.pidRaw[index * 3 + 1]);
+    expect(`${items[index]}.D`, want.d, snapshot.pidRaw[index * 3 + 2]);
   });
+  const axes = ['ROLL', 'PITCH', 'YAW'] as const;
+  FIRMWARE_FEEDFORWARD_DEFAULTS.forEach((want, index) => {
+    expect(`${axes[index]}.F`, want, advanced.feedforward[index]);
+  });
+  FIRMWARE_D_MAX_DEFAULTS.forEach((want, index) => {
+    expect(`${axes[index]}.D_MAX`, want, advanced.dMax[index]);
+  });
+  expect('dMaxGain', FIRMWARE_D_MAX_GAIN_DEFAULT, advanced.dMaxGain);
+  expect('tpaRate', FIRMWARE_TPA_RATE_DEFAULT, advanced.tpaRate);
+  expect('tpaBreakpoint', FIRMWARE_TPA_BREAKPOINT_DEFAULT, advanced.tpaBreakpoint);
+  expect('dynIdleMinRpm', FIRMWARE_DYN_IDLE_MIN_RPM_DEFAULT, advanced.dynIdleMinRpm);
+  expect('feedforwardAveraging', FIRMWARE_FEEDFORWARD_AVERAGING_DEFAULT, advanced.feedforwardAveraging);
+  expect('feedforwardBoost', FIRMWARE_FEEDFORWARD_BOOST_DEFAULT, advanced.feedforwardBoost);
+  expect('feedforwardJitterFactor', FIRMWARE_FEEDFORWARD_JITTER_DEFAULT, advanced.feedforwardJitterFactor);
+  expect('dtermLpf1StaticHz', FIRMWARE_DTERM_LPF1_STATIC_DEFAULT, filters.dtermLpf1StaticHz);
+  expect('dtermLpf2StaticHz', FIRMWARE_DTERM_LPF2_STATIC_DEFAULT, filters.dtermLpf2StaticHz);
+  expect('dtermLpf1DynMinHz', FIRMWARE_DTERM_LPF1_DYN_MIN_DEFAULT, filters.dtermLpf1DynMinHz);
+  expect('dtermLpf1DynMaxHz', FIRMWARE_DTERM_LPF1_DYN_MAX_DEFAULT, filters.dtermLpf1DynMaxHz);
+  expect('yawLowpassHz', FIRMWARE_YAW_LOWPASS_DEFAULT, filters.yawLowpassHz);
+  if (observation.simplified !== undefined) {
+    expect('simplifiedPidsMode', FIRMWARE_SIMPLIFIED_PIDS_MODE_DEFAULT, observation.simplified.pids.modeRaw);
+  }
+  if (observation.name !== undefined && observation.name !== '') {
+    comparisons.push({
+      field: 'profileName',
+      verdict: {kind: 'MISMATCH', requested: 0, expected: 0, observed: observation.name.length},
+    });
+  }
   return comparisons;
 }
 
@@ -472,6 +654,7 @@ function saveOutcomeFrom(internal: SaveInternal): PidSaveOutcome {
   if ('saved' in internal) return {kind: 'SAVED_VERIFIED', ...internal.saved};
   if ('appliedOnly' in internal) return {kind: 'APPLIED_PERSISTENCE_UNVERIFIED', ...internal.appliedOnly};
   if ('mismatch' in internal) return {kind: 'READBACK_MISMATCH', ...internal.mismatch};
+  if ('notProven' in internal) return {kind: 'SIDE_EFFECT_PREDICTION_NOT_PROVEN', sideEffects: internal.notProven};
   return {kind: 'UNEXPECTED_CROSS_SUBSYSTEM_CHANGE', sideEffects: internal.unexpected};
 }
 
@@ -548,7 +731,22 @@ export class PidTuningController {
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
           const writes = encodeChangedPidTuning(original, draft);
           const wroteFilters = writes.some(write => write.group === 'FILTER_CONFIG');
+          // A filter write runs validateAndFixGyroConfig, which can move
+          // truths outside this screen. Predicting them EXACTLY needs
+          // useDshotTelemetry, which lives on MSP_MOTOR_CONFIG and nothing
+          // else here reads - so it is read once, here, and only when a
+          // filter write is actually about to happen.
           const advancedBefore = wroteFilters ? advancedWitness(fresh) : undefined;
+          const sideEffectProjection = wroteFilters
+            ? projectGyroValidation({
+              gyroSampleRateHz,
+              pidProcessDenom: fresh.pidProcessDenom ?? 0,
+              useContinuousUpdate: (fresh.useContinuousUpdate ?? 0) !== 0,
+              motorProtocolRaw: fresh.motorProtocolRaw ?? 0,
+              motorPwmRate: fresh.motorPwmRate ?? 0,
+              useDshotTelemetry: await this.readDshotTelemetry(requester),
+            })
+            : undefined;
           for (const write of writes) await this.writeOnce(requester, COMMAND_FOR_GROUP[write.group], write.payload, write.group);
 
           // APPLIED proof, per group, per field.
@@ -559,11 +757,17 @@ export class PidTuningController {
             return {mismatch: {group: failed.group, fields: failed.verdict.fields}};
           }
 
-          // A filter write can move truths this screen does not own.
+          // A filter write can move truths this screen does not own. Every
+          // one of them is compared against the EXACT projected value; a
+          // change nothing predicts stops the save, and a change MSP cannot
+          // let us predict stops it too rather than being blessed.
           let sideEffects: CrossSubsystemReport | undefined;
-          if (wroteFilters && advancedBefore !== undefined) {
-            sideEffects = classifyAdvancedConfigSideEffects(advancedBefore, advancedWitness(applied));
+          if (advancedBefore !== undefined && sideEffectProjection !== undefined) {
+            sideEffects = classifyGyroValidationSideEffects(
+              advancedBefore, sideEffectProjection, advancedWitness(applied),
+            );
             if (sideEffects.unexpected.length > 0) return {unexpected: sideEffects};
+            if (sideEffects.notProven.length > 0) return {notProven: sideEffects};
           }
 
           const normalisations = verdicts.flatMap(entry =>
@@ -633,15 +837,23 @@ export class PidTuningController {
           if (payload.every((byte, index) => byte === observed.raw[index])) return {unchanged: fresh};
 
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
+
+          // The board's own calculator, consulted BEFORE anything is stored.
+          // If it disagrees with our generator we have no business writing a
+          // tune we cannot predict, so the transaction ends here.
+          const requested = decodeSimplifiedTuning(payload);
+          const oracle = await this.consultProjectionOracle(requester, requested, payload);
+          if (oracle.kind === 'ORACLE_DISAGREES') throw new PidPreflightError('SIMPLIFIED_PROJECTION_ORACLE_DISAGREES');
+
           await this.writeOnce(requester, MSP_SET_SIMPLIFIED_TUNING, payload, 'SIMPLIFIED');
 
-          const requested = decodeSimplifiedTuning(payload);
           const applied = await this.observeSimplified(requester, gyroSampleRateHz, contract, requested);
           if (applied.verdict.kind === 'MISMATCH') return {mismatch: {fields: applied.verdict.fields}};
           const validity = await this.readSimplifiedValidity(requester);
           const evidence: PidWriteEvidence = {
             normalisations: applied.verdict.kind === 'NORMALISED' ? applied.verdict.fields : [],
             ...(validity === undefined ? {} : {simplifiedValidity: validity}),
+            projectionOracle: oracle,
           };
 
           await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
@@ -667,6 +879,114 @@ export class PidTuningController {
       if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
       return result.error instanceof PidPreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
     } finally { interlock.release(); }
+  }
+
+  /**
+   * CHANGES WHICH RATE FORMULA THE ACTIVE RATE PROFILE USES.
+   *
+   * `rates_type` selects between the five formulas in `fc/rc.c`. It converts
+   * nothing: the RC rate, super rate, expo and limits already stored keep
+   * their numbers and acquire a new meaning. So this writes ONE byte of the
+   * twenty-four and proves that the other twenty-three came back untouched -
+   * a controller that "helpfully" rescaled them would be choosing a pilot's
+   * rates for them, and no firmware behaviour asks for that.
+   *
+   * A type outside the five is refused before the wire. There is no
+   * normalisation: an unknown formula is not a formula.
+   */
+  async setRatesType(key: SetupUiSessionKey, original: MspPidTuningSnapshot, ratesTypeRaw: number): Promise<PidRatesTypeOutcome> {
+    if (!isEncodableRatesType(ratesTypeRaw)) return {kind: 'REJECTED', reason: 'UNKNOWN_RATES_TYPE'};
+    const captured = this.capture(key, 'WRITE'); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
+    const {client, scheduler, epoch, gyroSampleRateHz} = captured; let interlock;
+    try { interlock = acquireMotorConfigurationInterlock(client); }
+    catch (error) { return error instanceof MotorConfigurationTransactionInProgressError ? {kind: 'REJECTED', reason: 'CONFIGURATION_BUSY'} : {kind: 'FAILED', error}; }
+    try {
+      const acquisition = this.boxIdsFor(key.sessionId, client); const identity: BoxIdsOwnerIdentity = {physicalGeneration: key.generation, mspEpoch: epoch};
+      const result = await this.operations(key.sessionId, client, scheduler).execute<RatesTypeInternal>({
+        id: `pid:ratesType:${key.sessionId}:${key.generation}`, sessionEffect: 'KEEP_SESSION',
+        validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
+        execute: async requester => {
+          this.assertLive(key, client, epoch);
+          const fresh = await this.readSnapshot(requester, gyroSampleRateHz);
+          assertSameProfile(original, fresh);
+          if (fresh.ratesRaw[RC_TUNING_OFFSETS.ratesType] === ratesTypeRaw) return {unchanged: fresh};
+
+          await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
+          const payload = encodeRcTuningRatesType(fresh.ratesRaw, ratesTypeRaw);
+          await this.writeOnce(requester, MSP_SET_RC_TUNING, payload, 'RC_TUNING');
+
+          const applied = await this.readSnapshot(requester, gyroSampleRateHz);
+          const drift = ratesTypeWriteDifferences(fresh, applied, ratesTypeRaw);
+          if (drift.length > 0) return {mismatch: {fields: drift}};
+
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
+          try {
+            const persisted = await this.readSnapshot(requester, gyroSampleRateHz);
+            const persistedDrift = ratesTypeWriteDifferences(fresh, persisted, ratesTypeRaw);
+            if (persistedDrift.length > 0) {
+              return {appliedOnly: {snapshot: applied, error: new Error('Persisted rates type does not match the applied state.')}};
+            }
+            return {persisted: {snapshot: persisted, ratesTypeRaw}};
+          } catch (error) {
+            return {appliedOnly: {snapshot: applied, error}};
+          }
+        },
+      });
+      if (result.status === 'SUCCEEDED') {
+        const internal = result.result;
+        if ('unchanged' in internal) return {kind: 'NO_CHANGES', snapshot: internal.unchanged};
+        if ('persisted' in internal) return {kind: 'PERSISTED_VERIFIED', ...internal.persisted};
+        if ('appliedOnly' in internal) return {kind: 'APPLIED_PERSISTENCE_UNVERIFIED', ...internal.appliedOnly};
+        return {kind: 'READBACK_MISMATCH', fields: internal.mismatch.fields};
+      }
+      if (result.status === 'OUTCOME_UNKNOWN') return {kind: 'UNCONFIRMED'};
+      if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
+      return result.error instanceof PidPreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
+    } finally { interlock.release(); }
+  }
+
+  /**
+   * Ask the board what OUR generator's inputs would produce, on its own
+   * temporary copy of the profile.
+   *
+   * MSP_CALCULATE_SIMPLIFIED_PID stores nothing - `simplified_tuning.c` runs
+   * the generator against a scratch profile and serialises the result - so
+   * this can corroborate the reimplementation and can never substitute for
+   * reading back what was actually stored.
+   */
+  private async consultProjectionOracle(
+    requester: MspRequester,
+    requested: MspSimplifiedTuning,
+    requestedPayload: Uint8Array,
+  ): Promise<SimplifiedProjectionOracle> {
+    let calculated: readonly CalculatedPidfAxis[];
+    try {
+      // `readSimplifiedPids(&tempPidProfile, src)` - the sliders travel in
+      // the REQUEST, so the board answers about the tune we are proposing
+      // rather than the one it already holds.
+      const frame = await requester.request(
+        MSP_CALCULATE_SIMPLIFIED_PID,
+        requestedPayload.slice(0, SIMPLIFIED_PID_BLOCK_BYTES),
+        {wireFormat: 'v1'},
+      );
+      calculated = decodeCalculatedPidfs(frame.payload);
+    } catch { return {kind: 'ORACLE_UNAVAILABLE'}; }
+    const ours = projectSimplifiedWrite(requested);
+    const axes = ['ROLL', 'PITCH', 'YAW'] as const;
+    const fields: FieldComparison[] = [];
+    ours.axes.forEach((axis, index) => {
+      const board = calculated[index];
+      if (board === undefined) return;
+      const compare = (name: string, want: number, got: number): void => {
+        if (want !== got) fields.push({field: `${axes[index]}.${name}`, verdict: {kind: 'MISMATCH', requested: want, expected: want, observed: got}});
+      };
+      compare('P', axis.p, board.p);
+      compare('I', axis.i, board.i);
+      compare('D', axis.d, board.d);
+      compare('D_MAX', axis.dMax, board.dMax);
+      compare('F', axis.f, board.f);
+    });
+    return fields.length === 0 ? {kind: 'ORACLE_AGREES'} : {kind: 'ORACLE_DISAGREES', fields};
   }
 
   /** One read of everything a simplified write touches, already classified. */
@@ -842,14 +1162,23 @@ export class PidTuningController {
           this.assertLive(key, client, epoch);
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
           await this.writeOnce(requester, MSP_SET_RESET_CURR_PID, encodePidProfileReset(), 'RESET_PID_PROFILE');
+          // The reset rewrites the name and the simplified sliders too, so
+          // both are read back rather than left to an assumption.
           const snapshot = await this.readSnapshot(requester, gyroSampleRateHz);
-          return {snapshot, fields: pidProfileDefaultDifferences(snapshot, contract)};
+          const name = await this.readName(requester, 'PID').catch(() => undefined);
+          const simplified = await this.readSimplifiedIfSupported(requester);
+          return {snapshot, fields: pidProfileDefaultDifferences({snapshot, name, simplified}, contract)};
         },
       });
       if (result.status === 'SUCCEEDED') {
         return result.result.fields.length > 0
           ? {kind: 'READBACK_MISMATCH', fields: result.result.fields}
-          : {kind: 'RESET_APPLIED_NOT_PERSISTED', snapshot: result.result.snapshot, persists: request.persists};
+          : {
+            kind: 'RESET_APPLIED_PARTIALLY_VERIFIED',
+            snapshot: result.result.snapshot,
+            persists: request.persists,
+            verifiedScope: OBSERVABLE_RESET_SCOPE,
+          };
       }
       if (result.status === 'OUTCOME_UNKNOWN') return {kind: 'UNCONFIRMED'};
       if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
@@ -929,6 +1258,22 @@ export class PidTuningController {
       throw new Error(`MSP2_GET_TEXT answered for selector ${decoded.type}, expected ${selector}.`);
     }
     return decoded.value;
+  }
+
+  /**
+   * `useDshotTelemetry`, from MSP_MOTOR_CONFIG.
+   *
+   * The PID page owns none of that command, and reads exactly one byte of
+   * it: the flag that decides whether the unpredictable branch of
+   * `validateAndFixGyroConfig` can fire at all. A board that will not answer
+   * is treated as TELEMETRY ON, which is the conservative reading - it makes
+   * the side effects unprovable rather than confidently predicted.
+   */
+  private async readDshotTelemetry(requester: MspRequester): Promise<boolean> {
+    try {
+      const frame = await requester.request(MSP_MOTOR_CONFIG, EMPTY, {wireFormat: 'v1'});
+      return decodeMotorConfig(frame.payload).dshotTelemetryRaw !== 0;
+    } catch { return true; }
   }
 
   /**
@@ -1103,6 +1448,7 @@ export class PidTuningController {
       pidProcessDenom: generalAdvanced.pidProcessDenom,
       motorProtocolRaw: generalAdvanced.motorProtocolRaw,
       motorPwmRate: generalAdvanced.motorPwmRate,
+      useContinuousUpdate: generalAdvanced.useContinuousUpdate,
       pidProfileIndex,
       pidProfileCount,
       rateProfileCount: status.readiness.rateProfileCount,

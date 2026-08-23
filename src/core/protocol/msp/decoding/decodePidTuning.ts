@@ -81,6 +81,13 @@ export interface MspPidTuningSnapshot {
    */
   readonly motorProtocolRaw?: number;
   readonly motorPwmRate?: number;
+  /**
+   * `dev.useContinuousUpdate`, raw. It decides WHICH of the gyro
+   * validation's two corrections can fire - the PWM-rate clamp or the
+   * denominator floor - so a filter save cannot predict its own side
+   * effects without it.
+   */
+  readonly useContinuousUpdate?: number;
   /** Zero-based active profiles from the same MSP_STATUS_EX snapshot. */
   readonly pidProfileIndex: number;
   readonly pidProfileCount: number;
@@ -182,6 +189,7 @@ export function decodePidTuningSnapshot(input: {
   readonly pidProcessDenom?: number;
   readonly motorProtocolRaw?: number;
   readonly motorPwmRate?: number;
+  readonly useContinuousUpdate?: number;
   readonly pidProfileIndex: number;
   readonly pidProfileCount: number;
   readonly controlRateProfileIndex: number;
@@ -222,6 +230,7 @@ export function decodePidTuningSnapshot(input: {
     ...(input.pidProcessDenom !== undefined ? {pidProcessDenom: input.pidProcessDenom} : {}),
     ...(input.motorProtocolRaw !== undefined ? {motorProtocolRaw: input.motorProtocolRaw} : {}),
     ...(input.motorPwmRate !== undefined ? {motorPwmRate: input.motorPwmRate} : {}),
+    ...(input.useContinuousUpdate !== undefined ? {useContinuousUpdate: input.useContinuousUpdate} : {}),
     pidProfileIndex: input.pidProfileIndex,
     pidProfileCount: input.pidProfileCount,
     controlRateProfileIndex: input.controlRateProfileIndex,

@@ -1,4 +1,5 @@
 import {
+  classifyExactField,
   classifyField,
   classifyGroup,
   projectDynamicLowpass,
@@ -66,9 +67,9 @@ export function classifyPidReadback(
     const value = requested[index];
     comparisons.push({
       field: `${labels[Math.floor(index / 3)]}.${terms[index % 3]}`,
-      // No rule can fire here, so `expected` is the request itself and any
-      // difference is a mismatch by construction.
-      verdict: classifyField(value, value, observed[index], 'SIMPLIFIED_REGENERATED'),
+      // No firmware rule touches these bytes, so any difference at all is
+      // a mismatch. Naming a rule here would have been fiction.
+      verdict: classifyExactField(value, observed[index]),
     });
   }
   return classifyGroup(comparisons);
@@ -119,7 +120,7 @@ export function classifyAdvancedReadback(
 ): GroupVerdict {
   const comparisons: FieldComparison[] = [];
   const plain = (field: string, want: number, got: number): void => {
-    comparisons.push({field, verdict: classifyField(want, want, got, 'SIMPLIFIED_REGENERATED')});
+    comparisons.push({field, verdict: classifyExactField(want, got)});
   };
   (['ROLL', 'PITCH', 'YAW'] as const).forEach((axis, index) => {
     plain(`${axis}.F`, requested.feedforward[index], observed.feedforward[index]);
@@ -169,35 +170,25 @@ export function classifyRcTuningReadback(
   axes.forEach((axis, index) => {
     comparisons.push({
       field: `${axis}.rcRate`,
-      verdict: classifyField(
-        requested.rcRate[index],
-        projection.rcRate[index],
-        observed.rcRate[index],
-        'RC_TUNING_PITCH_FOLLOWED_ROLL',
-      ),
+      verdict: classifyExactField(projection.rcRate[index], observed.rcRate[index]),
     });
     comparisons.push({
       field: `${axis}.expo`,
-      verdict: classifyField(
-        requested.expo[index],
-        projection.expo[index],
-        observed.expo[index],
-        'RC_TUNING_PITCH_FOLLOWED_ROLL',
-      ),
+      verdict: classifyExactField(projection.expo[index], observed.expo[index]),
     });
     const superRate = requested.superRate[index];
     comparisons.push({
       field: `${axis}.superRate`,
-      verdict: classifyField(superRate, superRate, observed.superRate[index], 'RC_TUNING_PITCH_FOLLOWED_ROLL'),
+      verdict: classifyExactField(superRate, observed.superRate[index]),
     });
     const limit = requested.rateLimit[index];
     comparisons.push({
       field: `${axis}.rateLimit`,
-      verdict: classifyField(limit, limit, observed.rateLimit[index], 'RC_TUNING_PITCH_FOLLOWED_ROLL'),
+      verdict: classifyExactField(limit, observed.rateLimit[index]),
     });
   });
   const plain = (field: string, want: number, got: number): void => {
-    comparisons.push({field, verdict: classifyField(want, want, got, 'RC_TUNING_PITCH_FOLLOWED_ROLL')});
+    comparisons.push({field, verdict: classifyExactField(want, got)});
   };
   plain('ratesType', requested.ratesTypeRaw, observed.ratesTypeRaw);
   plain('throttleMid', requested.throttleMid, observed.throttleMid);
@@ -309,80 +300,35 @@ export function classifyFilterReadback(
 /* Cross-subsystem side effects                                        */
 /* ------------------------------------------------------------------ */
 
-/** The three MSP_ADVANCED_CONFIG fields a filter write can move. */
-export interface AdvancedConfigWitness {
-  readonly pidProcessDenom: number;
-  readonly motorProtocolRaw: number;
-  readonly motorPwmRate: number;
-}
-
-export type CrossSubsystemTruth = 'PID_PROCESS_DENOM' | 'MOTOR_PROTOCOL' | 'MOTOR_PWM_RATE';
-
-export interface CrossSubsystemChange {
-  readonly truth: CrossSubsystemTruth;
-  readonly before: number;
-  readonly after: number;
-  /** True when the firmware's own documented validation explains it. */
-  readonly expected: boolean;
-}
-
-export interface CrossSubsystemReport {
-  readonly changes: readonly CrossSubsystemChange[];
-  readonly unexpected: readonly CrossSubsystemChange[];
-  /** Truths a caller must treat as stale, whether expected or not. */
-  readonly requiresReobserve: readonly CrossSubsystemTruth[];
-}
-
-/** Betaflight's motorProtocolTypes_e: DSHOT300 = 5, DSHOT600 = 6. */
-export const MOTOR_PROTOCOL_DSHOT300 = 5;
-export const MOTOR_PROTOCOL_DSHOT600 = 6;
-
 /**
- * Compare the advanced configuration either side of a filter write.
+ * THE CROSS-SUBSYSTEM MODEL LIVES IN ITS OWN MODULE NOW.
  *
- * The firmware's gyro validation may RAISE pid_process_denom, downgrade
- * DSHOT600 to DSHOT300, and LOWER the motor PWM rate. Those three directions
- * are what "expected" means here - a denom that fell, a protocol that
- * changed to anything else, or a PWM rate that rose is not something the
- * source predicts, and a caller must not report it as success.
+ * It used to live here and classified by DIRECTION: any denominator that
+ * rose, any PWM rate that fell, any change to DSHOT300 was called
+ * "expected". That is not a readback verification - a board answering
+ * `pid_process_denom = 8` where the rule predicts 2 would have passed - so it
+ * was replaced by an exact value projection computed before the write.
+ *
+ * Re-exported so callers keep one import site for write verification.
  */
-export function classifyAdvancedConfigSideEffects(
-  before: AdvancedConfigWitness,
-  after: AdvancedConfigWitness,
-): CrossSubsystemReport {
-  const changes: CrossSubsystemChange[] = [];
-  if (after.pidProcessDenom !== before.pidProcessDenom) {
-    changes.push({
-      truth: 'PID_PROCESS_DENOM',
-      before: before.pidProcessDenom,
-      after: after.pidProcessDenom,
-      expected: after.pidProcessDenom > before.pidProcessDenom,
-    });
-  }
-  if (after.motorProtocolRaw !== before.motorProtocolRaw) {
-    changes.push({
-      truth: 'MOTOR_PROTOCOL',
-      before: before.motorProtocolRaw,
-      after: after.motorProtocolRaw,
-      expected:
-        before.motorProtocolRaw === MOTOR_PROTOCOL_DSHOT600 &&
-        after.motorProtocolRaw === MOTOR_PROTOCOL_DSHOT300,
-    });
-  }
-  if (after.motorPwmRate !== before.motorPwmRate) {
-    changes.push({
-      truth: 'MOTOR_PWM_RATE',
-      before: before.motorPwmRate,
-      after: after.motorPwmRate,
-      expected: after.motorPwmRate < before.motorPwmRate,
-    });
-  }
-  return Object.freeze({
-    changes: Object.freeze(changes),
-    unexpected: Object.freeze(changes.filter(change => !change.expected)),
-    requiresReobserve: Object.freeze(changes.map(change => change.truth)),
-  });
-}
+export {
+  classifyGyroValidationSideEffects,
+  motorUpdateRestrictionSeconds,
+  profileIndexRepairPossible,
+  projectGyroValidation,
+  BRUSHLESS_MOTORS_PWM_RATE,
+  MAX_PID_PROCESS_DENOM,
+  PID_DENOM_FORCE_SAMPLE_RATE_HZ,
+  type AdvancedConfigWitness,
+  type CrossSubsystemEntry,
+  type CrossSubsystemReport,
+  type CrossSubsystemTruth,
+  type CrossSubsystemVerdict,
+  type GyroValidationInputs,
+  type GyroValidationProjection,
+  type SideEffectPrediction,
+  type SideEffectUnknownReason,
+} from './filterSideEffectProjection';
 
 /* ------------------------------------------------------------------ */
 /* Simplified tuning                                                   */
@@ -524,7 +470,7 @@ export function classifySimplifiedReadback(input: SimplifiedReadbackInput): Grou
   const projection = projectSimplifiedWrite(input.requested);
   const comparisons: FieldComparison[] = [];
   const echo = (field: string, want: number, got: number): void => {
-    comparisons.push({field, verdict: classifyField(want, want, got, 'SIMPLIFIED_REGENERATED')});
+    comparisons.push({field, verdict: classifyExactField(want, got)});
   };
   const wantPids = input.requested.pids;
   const gotPids = input.observedSimplified.pids;
@@ -550,30 +496,30 @@ export function classifySimplifiedReadback(input: SimplifiedReadbackInput): Grou
     const observedP = input.observedPid[index * 3];
     const observedI = input.observedPid[index * 3 + 1];
     const observedD = input.observedPid[index * 3 + 2];
-    comparisons.push({field: `${axes[index]}.P`, verdict: classifyField(axis.p, axis.p, observedP, 'SIMPLIFIED_REGENERATED')});
-    comparisons.push({field: `${axes[index]}.I`, verdict: classifyField(axis.i, axis.i, observedI, 'SIMPLIFIED_REGENERATED')});
-    comparisons.push({field: `${axes[index]}.D`, verdict: classifyField(axis.d, axis.d, observedD, 'SIMPLIFIED_REGENERATED')});
+    comparisons.push({field: `${axes[index]}.P`, verdict: classifyExactField(axis.p, observedP)});
+    comparisons.push({field: `${axes[index]}.I`, verdict: classifyExactField(axis.i, observedI)});
+    comparisons.push({field: `${axes[index]}.D`, verdict: classifyExactField(axis.d, observedD)});
     comparisons.push({
       field: `${axes[index]}.F`,
-      verdict: classifyField(axis.f, axis.f, input.observedAdvanced.feedforward[index], 'SIMPLIFIED_REGENERATED'),
+      verdict: classifyExactField(axis.f, input.observedAdvanced.feedforward[index]),
     });
     comparisons.push({
       field: `${axes[index]}.D_MAX`,
-      verdict: classifyField(axis.dMax, axis.dMax, input.observedAdvanced.dMax[index], 'SIMPLIFIED_REGENERATED'),
+      verdict: classifyExactField(axis.dMax, input.observedAdvanced.dMax[index]),
     });
   });
 
   if (input.requested.gyro.enabled) {
     const want = projection.gyroHz;
-    comparisons.push({field: 'gyroLpf1StaticHz', verdict: classifyField(want.lpf1StaticHz, want.lpf1StaticHz, input.observedFilters.gyroLpf1StaticHz, 'SIMPLIFIED_REGENERATED')});
-    comparisons.push({field: 'gyroLpf1DynMinHz', verdict: classifyField(want.lpf1DynMinHz, want.lpf1DynMinHz, input.observedFilters.gyroLpf1DynMinHz, 'SIMPLIFIED_REGENERATED')});
-    comparisons.push({field: 'gyroLpf1DynMaxHz', verdict: classifyField(want.lpf1DynMaxHz, want.lpf1DynMaxHz, input.observedFilters.gyroLpf1DynMaxHz, 'SIMPLIFIED_REGENERATED')});
+    comparisons.push({field: 'gyroLpf1StaticHz', verdict: classifyExactField(want.lpf1StaticHz, input.observedFilters.gyroLpf1StaticHz)});
+    comparisons.push({field: 'gyroLpf1DynMinHz', verdict: classifyExactField(want.lpf1DynMinHz, input.observedFilters.gyroLpf1DynMinHz)});
+    comparisons.push({field: 'gyroLpf1DynMaxHz', verdict: classifyExactField(want.lpf1DynMaxHz, input.observedFilters.gyroLpf1DynMaxHz)});
   }
   if (input.requested.dterm.enabled) {
     const want = projection.dtermHz;
-    comparisons.push({field: 'dtermLpf1StaticHz', verdict: classifyField(want.lpf1StaticHz, want.lpf1StaticHz, input.observedFilters.dtermLpf1StaticHz, 'SIMPLIFIED_REGENERATED')});
-    comparisons.push({field: 'dtermLpf1DynMinHz', verdict: classifyField(want.lpf1DynMinHz, want.lpf1DynMinHz, input.observedFilters.dtermLpf1DynMinHz, 'SIMPLIFIED_REGENERATED')});
-    comparisons.push({field: 'dtermLpf1DynMaxHz', verdict: classifyField(want.lpf1DynMaxHz, want.lpf1DynMaxHz, input.observedFilters.dtermLpf1DynMaxHz, 'SIMPLIFIED_REGENERATED')});
+    comparisons.push({field: 'dtermLpf1StaticHz', verdict: classifyExactField(want.lpf1StaticHz, input.observedFilters.dtermLpf1StaticHz)});
+    comparisons.push({field: 'dtermLpf1DynMinHz', verdict: classifyExactField(want.lpf1DynMinHz, input.observedFilters.dtermLpf1DynMinHz)});
+    comparisons.push({field: 'dtermLpf1DynMaxHz', verdict: classifyExactField(want.lpf1DynMaxHz, input.observedFilters.dtermLpf1DynMaxHz)});
   }
   return classifyGroup(comparisons);
 }

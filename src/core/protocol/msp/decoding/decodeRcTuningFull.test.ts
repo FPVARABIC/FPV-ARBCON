@@ -2,8 +2,10 @@ import {
   RC_TUNING_OFFSETS,
   RC_TUNING_RETIRED_OFFSETS,
   decodeRcTuningFull,
+  legacyPitchLinkObservable,
   projectRcTuningWrite,
 } from './decodeRcTuningFull';
+import {MSP_RC_TUNING_BYTES} from './pidWireContracts';
 import {MspPayloadReadError} from './MspPayloadReader';
 import {RC_TUNING_FIXTURE} from '../../__testUtils__/pidWireFixtures';
 
@@ -63,25 +65,42 @@ describe('P-B - writing roll can move pitch', () => {
     expect(unlinked.rcRate[0]).not.toBe(unlinked.rcRate[1]);
   });
 
-  it('reports the linkage when the stored axes matched and pitch was left alone', () => {
-    // Change roll only; pitch and yaw are re-sent unchanged.
-    const projection = projectRcTuningWrite(linked, {
-      rcRate: [150, linked.rcRate[1], linked.rcRate[2]],
-      expo: [60, linked.expo[1], linked.expo[2]],
+  /**
+   * P-B GOT THIS WRONG AND THIS IS THE CORRECTION.
+   *
+   * The old expectation was that changing roll on a LINKED board drags pitch
+   * along, and that the same request on an UNLINKED board does not - a
+   * state-dependent normalisation the readback classifier then had to
+   * tolerate.
+   *
+   * Re-reading msp.c:2779-2816 shows why that is wrong for anything this app
+   * sends: the linkage fires on bytes 0 and 1, and offsets 12 and 13 assign
+   * the explicit pitch bytes unconditionally afterwards. On a 24-byte write
+   * the linkage is dead before the handler returns, so the SAME request
+   * produces the SAME pitch on both boards - and a board that answered with
+   * pitch tracking roll would be disagreeing with us, not obeying a rule.
+   */
+  it('gives the same answer on a linked and an unlinked board', () => {
+    const request = (board: typeof linked) => ({
+      rcRate: [150, board.rcRate[1], board.rcRate[2]] as [number, number, number],
+      expo: [60, board.expo[1], board.expo[2]] as [number, number, number],
     });
-    expect(projection.pitchFollowedRollRcRate).toBe(true);
-    expect(projection.pitchFollowedRollExpo).toBe(true);
+    const onLinked = projectRcTuningWrite(linked, request(linked));
+    expect(onLinked.rcRate[1]).toBe(linked.rcRate[1]);
+    expect(onLinked.expo[1]).toBe(linked.expo[1]);
+
+    const onUnlinked = projectRcTuningWrite(unlinked, request(unlinked));
+    expect(onUnlinked.rcRate[1]).toBe(unlinked.rcRate[1]);
+    expect(onUnlinked.expo[1]).toBe(unlinked.expo[1]);
   });
 
-  it('reports no linkage on a board whose axes already differed', () => {
-    const projection = projectRcTuningWrite(unlinked, {
-      rcRate: [150, unlinked.rcRate[1], unlinked.rcRate[2]],
-      expo: [60, unlinked.expo[1], unlinked.expo[2]],
-    });
-    // Same request, different board state, different answer. That is the
-    // whole point: the side effect is state-dependent.
-    expect(projection.pitchFollowedRollRcRate).toBe(false);
-    expect(projection.pitchFollowedRollExpo).toBe(false);
+  it('records the legacy link as partial-payload behaviour only', () => {
+    // rcRates[FD_PITCH] is read at offset 12 and rcExpo[FD_PITCH] at 13.
+    expect(legacyPitchLinkObservable(12)).toEqual({rcRate: true, expo: true});
+    expect(legacyPitchLinkObservable(13)).toEqual({rcRate: false, expo: true});
+    expect(legacyPitchLinkObservable(14)).toEqual({rcRate: false, expo: false});
+    // Which is what matters: our encoder always sends the whole thing.
+    expect(legacyPitchLinkObservable(MSP_RC_TUNING_BYTES)).toEqual({rcRate: false, expo: false});
   });
 
   it('lets an explicit pitch value win over the linkage', () => {
