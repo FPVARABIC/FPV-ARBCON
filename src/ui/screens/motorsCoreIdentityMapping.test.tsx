@@ -740,8 +740,8 @@ describe('the identity section names an output only when one was read', () => {
           selectedSlot={2}
           onSelectSlot={() => {}}
           capability={evaluateMotorIdentificationCapability(4)}
-          airframeEntries={[]}
-          diagramMotorCount={4}
+          mixerModeRaw={undefined}
+          diagramMotorNumbers={[1, 2, 3, 4]}
           active={false}
           verification={EMPTY_VERIFICATION_STATE}
           receipt={undefined}

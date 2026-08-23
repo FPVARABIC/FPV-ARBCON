@@ -203,11 +203,27 @@ describe('M-D §0 - the Motors surface offers no mixer selector', () => {
   ];
 
   it.each(MOTORS_SURFACE)('%s writes no mixerModeRaw', file => {
-    // A selector would have to assign the field. Reading it to LABEL the
-    // airframe is not only allowed, it is what M-D asks for.
-    expect(code(file)).not.toMatch(/setNumber\(\s*'mixerModeRaw'/);
-    expect(code(file)).not.toMatch(/mixerModeRaw\s*[:=]\s*(?!.*readonly)/);
-    expect(code(file)).not.toMatch(/onValueChange.*mixerMode/i);
+    // A selector would have to ASSIGN the field. Reading it - to label the
+    // airframe, or to decide whether a layout may be drawn - is not only
+    // allowed, it is what M-D asks for.
+    //
+    // THIS PATTERN USED TO BE `mixerModeRaw\s*[:=]`, WHICH WAS TOO BLUNT.
+    // It matched a prop TYPE declaration (`mixerModeRaw: number`) and a
+    // read being reported upward (`onMixerModeRawChange?.(original?.mixer
+    // .mixerModeRaw)`) - both of which are reads. A test that cannot tell
+    // a read from a write is not enforcing the rule it is named after, so
+    // the shapes below name the write specifically.
+    const source = code(file);
+    // The draft-editing helpers this surface actually uses.
+    expect(source).not.toMatch(/set(?:Number|Boolean|Value)\(\s*'mixerModeRaw'/);
+    // Direct mutation of a draft or snapshot field.
+    expect(source).not.toMatch(/\.mixerModeRaw\s*=[^=]/);
+    // A draft literal that supplies its own mixer instead of carrying the
+    // reported one through.
+    expect(source).not.toMatch(/mixerModeRaw:\s*(?!.*mixerModeRaw)[\w.]+\s*[,}]/);
+    // Any control bound to the mixer.
+    expect(source).not.toMatch(/onValueChange.*mixerMode/i);
+    expect(source).not.toMatch(/onPress.*setMixerMode/i);
   });
 
   it.each(MOTORS_SURFACE)('%s names no mixer SET command', file => {

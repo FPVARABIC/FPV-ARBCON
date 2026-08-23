@@ -206,9 +206,25 @@ describe('nothing interactive lives inside the airframe drawing', () => {
   });
   afterEach(() => act(() => tree.unmount()));
 
-  it('contains only the four motor nodes as pressables', () => {
+  /**
+   * M-D §22 - THE MOTOR NODES, WHICHEVER REPRESENTATION IS DRAWN.
+   *
+   * This used to name the four `motors-airframe-slot-N` nodes, which
+   * assumed the positional Quad X drawing was always rendered. It is not:
+   * a drawing is shown only for an airframe this project has authored a
+   * layout for, and only once the mixer read has landed. Before that -
+   * and on every other airframe - the numbered list is what is on screen.
+   *
+   * The property under test is unchanged and is the one that matters: the
+   * ONLY interactive things inside the diagram container are motor nodes.
+   * No slider, no long-press, no verification control leaks in.
+   */
+  it('contains only motor nodes as pressables', () => {
+    // Either representation is legitimate; the container id differs.
     const diagram = tree.root.findAll(
-      n => n.props?.testID === 'motors-airframe-diagram',
+      n =>
+        n.props?.testID === 'motors-airframe-diagram' ||
+        n.props?.testID === 'motors-generic-outputs',
     )[0];
     expect(diagram).toBeDefined();
     const pressables = [
@@ -223,18 +239,19 @@ describe('nothing interactive lives inside the airframe drawing', () => {
           .map(n => (n.props?.testID as string) ?? '(unnamed)'),
       ),
     ].sort();
-    expect(pressables).toEqual([
-      'motors-airframe-slot-1',
-      'motors-airframe-slot-2',
-      'motors-airframe-slot-3',
-      'motors-airframe-slot-4',
-    ]);
+    expect(pressables.length).toBeGreaterThan(0);
+    for (const testID of pressables) {
+      expect(testID).toMatch(/^motors-(airframe|generic)-slot-\d+$/);
+    }
   });
 
   it('keeps the long press and every verification control outside it', () => {
     const diagram = tree.root.findAll(
-      n => n.props?.testID === 'motors-airframe-diagram',
+      n =>
+        n.props?.testID === 'motors-airframe-diagram' ||
+        n.props?.testID === 'motors-generic-outputs',
     )[0];
+    expect(diagram).toBeDefined();
     const inside = (testID: string) =>
       diagram.findAll(n => n.props?.testID === testID).length > 0;
     for (const control of [
@@ -264,10 +281,10 @@ describe('the stage is sized by its container, not by the window', () => {
     act(() => {
       tree = ReactTestRenderer.create(
         <MotorAirframeDiagram
-          entries={ENTRIES}
+          mixerModeRaw={3}
           selectedSlot={2}
           onSelectSlot={() => undefined}
-          motorCount={4}
+          motorNumbers={[1, 2, 3, 4]}
         />,
       );
     });
@@ -309,10 +326,10 @@ describe('the stage is sized by its container, not by the window', () => {
     act(() => {
       tree = ReactTestRenderer.create(
         <MotorAirframeDiagram
-          entries={ENTRIES}
+          mixerModeRaw={3}
           selectedSlot={2}
           onSelectSlot={() => undefined}
-          motorCount={4}
+          motorNumbers={[1, 2, 3, 4]}
         />,
       );
     });
@@ -341,10 +358,10 @@ describe('the stage is sized by its container, not by the window', () => {
     act(() => {
       tree = ReactTestRenderer.create(
         <MotorAirframeDiagram
-          entries={ENTRIES}
+          mixerModeRaw={3}
           selectedSlot={2}
           onSelectSlot={() => undefined}
-          motorCount={4}
+          motorNumbers={[1, 2, 3, 4]}
         />,
       );
     });

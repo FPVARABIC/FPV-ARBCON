@@ -63,8 +63,12 @@ export interface MotorIdentitySectionProps {
   readonly onSelectSlot: (slot: number) => void;
   /** Whether the shipped Quad-X template may be applied at all. */
   readonly capability: MotorIdentificationCapability;
-  readonly airframeEntries: readonly MotorAirframeEntry[];
-  readonly diagramMotorCount: number;
+  /** MSP_MIXER_CONFIG offset 0, raw, or undefined when unread. Decides
+   *  whether an authored layout may be drawn at all. */
+  readonly mixerModeRaw: number | undefined;
+  /** The motor numbers the flight controller reported, 1..N. Empty when
+   *  nothing has been read - never a placeholder quad. */
+  readonly diagramMotorNumbers: readonly number[];
   /** True once a session exists; the diagram does no work otherwise. */
   readonly active: boolean;
   readonly liveSlot?: number;
@@ -136,8 +140,8 @@ export function MotorIdentitySection({
   selectedSlot,
   onSelectSlot,
   capability,
-  airframeEntries,
-  diagramMotorCount,
+  mixerModeRaw,
+  diagramMotorNumbers,
   active,
   liveSlot,
   liveActivity,
@@ -403,13 +407,13 @@ export function MotorIdentitySection({
           motor is the very next thing after the picture of it. */}
       {active ? (
         <MotorAirframeDiagram
-          entries={airframeEntries}
           selectedSlot={selectedSlot}
           liveSlot={liveSlot}
           liveActivity={liveActivity}
           verifiedSlots={verifiedSlots}
           onSelectSlot={onSelectSlot}
-          motorCount={diagramMotorCount}
+          mixerModeRaw={mixerModeRaw}
+          motorNumbers={diagramMotorNumbers}
         />
       ) : null}
     </View>

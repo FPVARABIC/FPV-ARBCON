@@ -116,7 +116,8 @@ describe('motor airframe geometry', () => {
       act(() => {
         tree = renderer.create(
           <MotorAirframeDiagram
-            entries={ENTRIES}
+            mixerModeRaw={3}
+            motorNumbers={[1, 2, 3, 4]}
             selectedSlot={1}
             onSelectSlot={() => {}}
           />,

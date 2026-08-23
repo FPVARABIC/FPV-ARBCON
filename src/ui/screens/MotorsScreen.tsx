@@ -101,7 +101,6 @@ import {
   type MotorIdentificationCapability,
 } from '../../core/state/motorIdentificationCapability';
 import type { MotorTestVerificationReceipt } from '../../core/state/motorTestController';
-import { MOTOR_AIRFRAME_QUAD_COUNT } from './MotorAirframeDiagram';
 import type { MotorSlotActivity } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
 // P3: the professional workspace - the PRIMARY motor experience.
@@ -137,10 +136,16 @@ export {
 export const MOTOR_TEST_LONG_PRESS_DELAY_MILLIS = 800;
 export const MOTOR_TEST_HOLD_HEARTBEAT_INTERVAL_MILLIS = 300;
 
-/** MSP OUTPUT SLOTS. Not airframe positions, not rotation directions. */
-export const MOTOR_TEST_OUTPUT_SLOTS: readonly number[] = Object.freeze([
-  1, 2, 3, 4,
-]);
+/**
+ * M-D §4 - THIS USED TO BE `[1, 2, 3, 4]`.
+ *
+ * It was described as "the honest placeholder" for a motor list that had
+ * not been read yet. It is not honest: it is four motors, shown to an
+ * operator whose aircraft may have three, six or eight, at the one moment
+ * nothing is known. The empty list is what "nothing has been read" looks
+ * like, and it renders as nothing.
+ */
+export const MOTOR_TEST_OUTPUT_SLOTS: readonly number[] = Object.freeze([]);
 
 /**
  * How the screen presents the controller. Derived ONLY from the snapshot -
@@ -542,6 +547,16 @@ export function MotorsScreenView({
   const [advancedVerificationOpen, setAdvancedVerificationOpen] =
     useState(false);
   const [motorSettingsOpen, setMotorSettingsOpen] = useState(false);
+  /**
+   * WHICH AIRFRAME THE FLIGHT CONTROLLER REPORTED, raw.
+   *
+   * Supplied by MotorConfigurationPanel, which performs the only mixer
+   * READ on this surface (MSP_MIXER_CONFIG = 42; the WRITE, 43, is not
+   * issued from here - see motorsMixerCommandBoundary.test.ts). Undefined
+   * until that read lands, and undefined means the airframe drawing is
+   * withheld in favour of a numbered list.
+   */
+  const [liveMixerModeRaw, setLiveMixerModeRaw] = useState<number>();
   const [motorConfigurationDirty, setMotorConfigurationDirty] = useState(false);
   const [motorConfigurationBusy, setMotorConfigurationBusy] = useState(false);
   const [outputOrderDirty, setOutputOrderDirty] = useState(false);
@@ -1445,12 +1460,6 @@ export function MotorsScreenView({
       : presentation === 'FAULT'
       ? 'UNSAFE'
       : undefined;
-  const airframeEntries = MOTOR_TEST_EXPECTED_CONFIGURATION.map(entry => ({
-    slot: entry.motorNumber,
-    position: entry.position,
-    direction: entry.direction,
-  }));
-
   /**
    * MAY THE QUAD-X PHYSICAL MODEL BE APPLIED TO THIS AIRCRAFT?
    *
@@ -1472,9 +1481,8 @@ export function MotorsScreenView({
    *
    * Derived from the same live count the workspace sliders use, so the
    * selector cannot list four motors on a hex or hide two on one. Before
-   * anything has been read there is no count to derive from, and the
-   * shipped four-slot constant is the honest placeholder - it is what the
-   * legacy pulse path is scoped to anyway.
+   * anything has been read there is no count to derive from and the list
+   * is EMPTY - see MOTOR_TEST_OUTPUT_SLOTS for why it is no longer four.
    */
   const liveMotorCount =
     snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount;
@@ -1857,8 +1865,8 @@ export function MotorsScreenView({
             selectedSlot={selectedSlot}
             onSelectSlot={handleSelectSlot}
             capability={identificationCapability}
-            airframeEntries={airframeEntries}
-            diagramMotorCount={liveMotorCount ?? MOTOR_AIRFRAME_QUAD_COUNT}
+            mixerModeRaw={liveMixerModeRaw}
+            diagramMotorNumbers={identitySlots}
             active={active}
             liveSlot={liveSlot}
             liveActivity={liveActivity}
@@ -2048,6 +2056,7 @@ export function MotorsScreenView({
             sessionId={sessionId}
             onDirtyChange={setMotorConfigurationDirty}
             onBusyChange={setMotorConfigurationBusy}
+            onMixerModeRawChange={setLiveMixerModeRaw}
           />
         ) : null}
 

@@ -39,7 +39,8 @@ describe('MotorAirframeDiagram', () => {
     act(() => {
       tree = ReactTestRenderer.create(
         <MotorAirframeDiagram
-          entries={ENTRIES}
+          mixerModeRaw={3}
+          motorNumbers={[1, 2, 3, 4]}
           selectedSlot={2}
           liveSlot={3}
           verifiedSlots={[1, 4]}
@@ -130,7 +131,8 @@ describe('MotorAirframeDiagram', () => {
     act(() => {
       tree = ReactTestRenderer.create(
         <MotorAirframeDiagram
-          entries={ENTRIES}
+          mixerModeRaw={3}
+          motorNumbers={[1, 2, 3, 4]}
           selectedSlot={1}
           verifiedSlots={[]}
           onSelectSlot={() => undefined}
@@ -146,12 +148,13 @@ describe('MotorAirframeDiagram', () => {
     act(() => tree.unmount());
   });
 
-  it('states the aircraft front, every motor number and both rotation directions in TEXT, not colour', () => {
+  it('states the aircraft front and every motor number in TEXT, not colour', () => {
     let tree!: ReactTestRenderer.ReactTestRenderer;
     act(() => {
       tree = ReactTestRenderer.create(
         <MotorAirframeDiagram
-          entries={ENTRIES}
+          mixerModeRaw={3}
+          motorNumbers={[1, 2, 3, 4]}
           selectedSlot={1}
           verifiedSlots={[]}
           onSelectSlot={() => undefined}
@@ -163,8 +166,10 @@ describe('MotorAirframeDiagram', () => {
     for (const slot of [1, 2, 3, 4]) {
       expect(json).toContain(`M${slot}`);
     }
-    expect(json).toContain('CW');
-    expect(json).toContain('CCW');
+    // M-D §25: and states NO rotation. An authored layout carries no
+    // direction field, so there is nothing here to draw an arrow from.
+    expect(json).not.toContain('"CW"');
+    expect(json).not.toContain('"CCW"');
     // THE KEY DESCRIBES THIS MAP, NOT EVERY MAP THERE COULD BE.
     // Six state names used to be printed at all times, so before touching
     // anything an operator read five keys for colours that were not on
@@ -196,7 +201,8 @@ describe('MotorAirframeDiagram', () => {
       act(() => {
         tree = ReactTestRenderer.create(
           <MotorAirframeDiagram
-            entries={ENTRIES}
+            mixerModeRaw={3}
+          motorNumbers={[1, 2, 3, 4]}
             selectedSlot={1}
             liveSlot={1}
             liveActivity={activity}
@@ -215,7 +221,8 @@ describe('MotorAirframeDiagram', () => {
     act(() => {
       tree = ReactTestRenderer.create(
         <MotorAirframeDiagram
-          entries={ENTRIES}
+          mixerModeRaw={3}
+          motorNumbers={[1, 2, 3, 4]}
           selectedSlot={1}
           verifiedSlots={[2]}
           onSelectSlot={() => undefined}
@@ -238,7 +245,8 @@ describe('MotorAirframeDiagram', () => {
     act(() => {
       tree = ReactTestRenderer.create(
         <MotorAirframeDiagram
-          entries={ENTRIES}
+          mixerModeRaw={3}
+          motorNumbers={[1, 2, 3, 4]}
           selectedSlot={1}
           liveSlot={3}
           liveActivity={activity}

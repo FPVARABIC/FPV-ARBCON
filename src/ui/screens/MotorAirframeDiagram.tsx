@@ -39,6 +39,7 @@ import {PROSE_MEASURE, colors, fonts, radii, spacing, typography} from '../theme
 import { Icon } from '../icons';
 import { isRtlLayout } from '../icons/layoutDirection';
 import { resolveLayoutTier } from '../theme/layout';
+import { authoredAirframeLayout } from './motorAirframeLayout';
 
 export interface MotorAirframeEntry {
   readonly slot: number;
@@ -72,7 +73,6 @@ export type MotorSlotActivity =
   | 'UNSAFE';
 
 export interface MotorAirframeDiagramProps {
-  readonly entries: readonly MotorAirframeEntry[];
   readonly selectedSlot: number;
   readonly liveSlot?: number;
   /** The controller's current verdict for `liveSlot`. */
@@ -80,21 +80,31 @@ export interface MotorAirframeDiagramProps {
   readonly verifiedSlots?: readonly number[];
   readonly onSelectSlot: (slot: number) => void;
   /**
-   * The REAL output count from the flight controller.
+   * MSP_MIXER_CONFIG offset 0, raw - WHICH AIRFRAME THIS IS.
    *
-   * PART Q, and an honesty problem rather than a layout one. This file has
-   * authoritative geometry for exactly one airframe: Quad X. It was being
-   * rendered unconditionally, so a hex or octo build was shown a
-   * four-motor aircraft with M1-M4 on it - measured on the `motors-p3-hex`
-   * scene, which produced an identical quad at all three widths. Outputs
-   * 5-8 simply were not on the drawing, and the four that were carried
-   * positions the frame does not have.
+   * PART Q found that this file drew its one Quad X aircraft for every
+   * build, so a hex or octo was shown four motors with M1-M4 on positions
+   * the frame does not have. That was answered by gating on the motor
+   * COUNT, which fixed the hex and left a subtler version behind: four
+   * motors is not four corners. QUADP, Y4, VTAIL4 and ATAIL4 all report
+   * four and are not X frames, and QUADX_1234 is an X whose motor 1 sits
+   * where the Quad X drawing puts motor 4.
    *
-   * Inventing arm angles for a frame this app cannot identify would be
-   * worse. Any count other than four therefore gets a numbered output list
-   * that claims no geometry at all, and says so.
+   * The airframe is therefore asked for directly. `undefined` means the
+   * mixer has not been read, and an unread mixer is drawn as a numbered
+   * list - see motorAirframeLayout.ts for which mixers have artwork.
    */
-  readonly motorCount?: number;
+  readonly mixerModeRaw: number | undefined;
+  /**
+   * The motor numbers the flight controller actually reported, 1..N.
+   *
+   * REQUIRED, AND WITH NO DEFAULT ON PURPOSE. This prop replaced
+   * `motorCount?: number`, whose default value was four - so a caller that
+   * simply had not read the count yet got a four-motor aircraft rather
+   * than an error or an empty state. An empty array here means "nothing
+   * has been read", and renders as nothing.
+   */
+  readonly motorNumbers: readonly number[];
   /**
    * Force a stage size instead of deriving one from the window.
    *
@@ -507,22 +517,25 @@ function MotorNode({
   );
 }
 
-/** The one airframe this file can draw truthfully. */
-export const MOTOR_AIRFRAME_QUAD_COUNT = 4;
-
 /**
- * The honest fallback: numbered outputs, no aircraft, no claimed
- * positions, no rotation arrows. It says what it is in the caption.
+ * NOT A DEGRADED MODE. Numbered outputs, no aircraft, no claimed
+ * positions, no rotation arrows - and it says what it is in the caption.
+ * A correct list beats a misleading picture, and for every airframe this
+ * project has not authored artwork for, this IS the right answer.
+ *
+ * It renders the motor numbers it was GIVEN. It does not count them up
+ * from a length, so an empty list renders an empty grid rather than
+ * inventing a first motor.
  */
 function GenericMotorOutputs({
-  motorCount,
+  motorNumbers,
   selectedSlot,
   liveSlot,
   liveActivity,
   verifiedSlots,
   onSelectSlot,
 }: {
-  motorCount: number;
+  motorNumbers: readonly number[];
   selectedSlot: number;
   liveSlot?: number;
   liveActivity?: MotorSlotActivity;
@@ -536,8 +549,7 @@ function GenericMotorOutputs({
         {t('motorsScreen.layoutGenericHeading')}
       </Text>
       <View style={styles.genericGrid}>
-        {Array.from({ length: motorCount }, (_, index) => {
-          const slot = index + 1;
+        {motorNumbers.map(slot => {
           const activity = slot === liveSlot ? liveActivity : undefined;
           const verified = verifiedSlots.includes(slot);
           const badge =
@@ -589,7 +601,6 @@ function GenericMotorOutputs({
 }
 
 export function MotorAirframeDiagram({
-  entries,
   selectedSlot,
   liveSlot,
   liveActivity,
@@ -597,7 +608,8 @@ export function MotorAirframeDiagram({
   onSelectSlot,
   stageWidthOverride,
   compact = false,
-  motorCount = MOTOR_AIRFRAME_QUAD_COUNT,
+  mixerModeRaw,
+  motorNumbers,
 }: MotorAirframeDiagramProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
@@ -633,10 +645,27 @@ export function MotorAirframeDiagram({
   // grows as one drawing instead of a big box around small glyphs.
   const scale = stageWidth / 260;
 
-  if (motorCount !== MOTOR_AIRFRAME_QUAD_COUNT) {
+  /**
+   * M-D §20 / §21 / §22 - THE GATE USED TO BE THE MOTOR COUNT.
+   *
+   * `motorCount !== 4` sent everything except a four-motor aircraft to the
+   * numbered list, and drew everything WITH four motors as a Quad X. Five
+   * mixers were being drawn wrong: QUADP is a plus frame, Y4 has a coaxial
+   * tail, VTAIL4 and ATAIL4 have angled rear arms, and QUADX_1234 is a
+   * real X whose motor NUMBERING differs - its motor 1 is at the front
+   * left where the Quad X drawing puts motor 4.
+   *
+   * The question is not how many motors there are. It is whether this
+   * project has authored and checked a layout for THIS mixer, at THIS
+   * motor count. authoredAirframeLayout answers exactly that, and answers
+   * undefined generously - an unknown mixer, an unread count, or a count
+   * that disagrees with the layout all fall through to the numbered list.
+   */
+  const layout = authoredAirframeLayout(mixerModeRaw, motorNumbers);
+  if (layout === undefined) {
     return (
       <GenericMotorOutputs
-        motorCount={motorCount}
+        motorNumbers={motorNumbers}
         selectedSlot={selectedSlot}
         liveSlot={liveSlot}
         liveActivity={liveActivity}
@@ -646,7 +675,21 @@ export function MotorAirframeDiagram({
     );
   }
 
-  const ordered = orderAirframeEntries(entries);
+  /**
+   * NO DIRECTION IS SUPPLIED, AND THAT IS THE POINT (M-D §25).
+   *
+   * The layout maps a motor number to a place on the frame and carries no
+   * rotation at all, so every node renders its explicit unknown mark
+   * rather than an arrow. M-A established that actual propeller rotation
+   * is not readable as authoritative truth over MSP; an arrow here would
+   * be a guess drawn in the same ink as a measurement.
+   */
+  const ordered = orderAirframeEntries(
+    layout.map(placement => ({
+      slot: placement.motorNumber,
+      position: placement.position,
+    })),
+  );
   /**
    * PHYSICAL PLACEMENT, COMPUTED - not delegated to a style property.
    *

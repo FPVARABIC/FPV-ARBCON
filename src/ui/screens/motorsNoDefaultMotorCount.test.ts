@@ -96,13 +96,26 @@ describe('M-D §4 - no Motors module defaults a motor count', () => {
     const source = executable(fs.readFileSync(path.join(ROOT, file), 'utf8'));
 
     // `x ?? 4`, `x || 4`, `: 4` in a ternary tail, and a named default.
+    //
+    // THE FIRST VERSION OF THIS TEST ONLY LOOKED FOR THE LITERAL 4, and
+    // it missed two live defects because both wore a constant's name:
+    //
+    //   MotorAirframeDiagram.tsx  motorCount = MOTOR_AIRFRAME_QUAD_COUNT
+    //   MotorsScreen.tsx          liveMotorCount ?? MOTOR_AIRFRAME_QUAD_COUNT
+    //
+    // A default named QUAD is still a default of four, so the patterns
+    // below match the NAME as well as the number.
+    const QUADISH = String.raw`(?:4|[A-Z_]*QUAD[A-Z_]*)`;
     const FALLBACKS: readonly RegExp[] = [
-      /\?\?\s*4\b/,
-      /\|\|\s*4\b/,
+      new RegExp(String.raw`\?\?\s*${QUADISH}\b`),
+      new RegExp(String.raw`\|\|\s*${QUADISH}\b`),
+      // A default parameter value, which is a fallback that fires on
+      // every call the caller did not think about.
+      new RegExp(String.raw`\b(?:motorCount|count)\s*=\s*${QUADISH}\b`),
       /\bDEFAULT[_A-Z]*(?:MOTOR|COUNT)[_A-Z]*\s*=\s*4\b/,
       /\bFALLBACK[_A-Z]*\s*=\s*4\b/,
-      // The specific shape the real defect had: a ternary whose else-arm
-      // is a bare 4 following a motorCount test.
+      // The specific shape the first real defect had: a ternary whose
+      // else-arm is a bare 4 following a motorCount test.
       /motorCount[\s\S]{0,160}?:\s*4\s*[;,)]/,
     ];
     for (const pattern of FALLBACKS) {
@@ -123,7 +136,18 @@ describe('M-D §4 - no Motors module defaults a motor count', () => {
     const source = executable(fs.readFileSync(path.join(ROOT, file), 'utf8'));
     // The literal M-C deleted from the controller. It must not come back
     // anywhere, under any name.
-    expect(source).not.toMatch(/\[\s*1\s*,\s*2\s*,\s*3\s*,\s*4\s*\]/);
+    //
+    // THE TRAILING COMMA MATTERED. The first version of this pattern
+    // ended `4\s*\]` and so walked straight past
+    //
+    //     Object.freeze([
+    //       1, 2, 3, 4,
+    //     ])
+    //
+    // which is how MOTOR_TEST_OUTPUT_SLOTS was actually written - a
+    // prettier-formatted list the regex could not see. The optional comma
+    // below is the whole fix.
+    expect(source).not.toMatch(/\[\s*1\s*,\s*2\s*,\s*3\s*,\s*4\s*,?\s*\]/);
     // Trimming any collection to four is the same assumption wearing a
     // different hat.
     expect(source).not.toMatch(/\.slice\(\s*0\s*,\s*4\s*\)/);

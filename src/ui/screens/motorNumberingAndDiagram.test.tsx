@@ -19,7 +19,6 @@ import '../../i18n';
 import {
   MotorAirframeDiagram,
   computeMotorGlyphLayout,
-  MOTOR_AIRFRAME_QUAD_COUNT,
 } from './MotorAirframeDiagram';
 import type {MotorAirframeEntry} from './MotorAirframeDiagram';
 import {MOTOR_TEST_EXPECTED_CONFIGURATION} from '../../core/state/motorVerificationModel';
@@ -48,7 +47,8 @@ function render(element: React.ReactElement) {
 function diagram(over: Partial<React.ComponentProps<typeof MotorAirframeDiagram>> = {}) {
   return render(
     <MotorAirframeDiagram
-      entries={QUAD}
+      mixerModeRaw={3}
+        motorNumbers={[1, 2, 3, 4]}
       selectedSlot={1}
       onSelectSlot={() => {}}
       {...over}
@@ -86,7 +86,8 @@ describe('PART Z: the M number IS the payload index, everywhere', () => {
     const taken: number[] = [];
     const r = render(
       <MotorAirframeDiagram
-        entries={QUAD}
+        mixerModeRaw={3}
+        motorNumbers={[1, 2, 3, 4]}
         selectedSlot={1}
         onSelectSlot={slot => taken.push(slot)}
       />,
@@ -134,26 +135,37 @@ describe('PART AA: the diagram is readable, and honest about what it knows', () 
     }
   });
 
-  it('an UNKNOWN direction shows no CW/CCW claim at all', () => {
-    const unknown = QUAD.map(entry => ({...entry, direction: undefined}));
-    const r = render(
-      <MotorAirframeDiagram
-        entries={unknown}
-        selectedSlot={1}
-        onSelectSlot={() => {}}
-      />,
-    );
-    const body = r.text();
-    expect(body).not.toContain('"CW"');
-    expect(body).not.toContain('"CCW"');
-    // ...and says so instead of drawing an arrow that might be wrong.
-    expect(body).toContain('؟');
-  });
-
-  it('a KNOWN direction still writes the token out, so the arrow is never alone', () => {
-    const body = diagram().text();
-    expect(body).toContain('CW');
-    expect(body).toContain('CCW');
+  /**
+   * M-D §25 - THE OPERATIONAL DIAGRAM CLAIMS NO ROTATION AT ALL.
+   *
+   * This replaces two tests: one that checked an UNKNOWN direction drew
+   * no arrow, and one that checked a KNOWN direction printed its token.
+   * The second no longer has a subject. Authored layouts map a motor
+   * number to a place on the frame and carry no direction field, so
+   * there is no way to hand this component a rotation to draw.
+   *
+   * That is deliberate rather than incidental. M-A established that
+   * actual propeller rotation is not readable as authoritative truth over
+   * MSP, and the operational drawing is exactly where an expectation gets
+   * mistaken for a measurement - the operator is looking at it WHILE a
+   * motor spins. The expected props-out reference still exists, in the
+   * verification wizard, where comparing it against what a human saw is
+   * the entire purpose.
+   */
+  it('never prints a rotation direction, on any airframe', () => {
+    for (const mixerModeRaw of [3, 26, undefined]) {
+      const body = render(
+        <MotorAirframeDiagram
+          mixerModeRaw={mixerModeRaw}
+          motorNumbers={[1, 2, 3, 4]}
+          selectedSlot={1}
+          onSelectSlot={() => {}}
+        />,
+      ).text();
+      expect(body).not.toContain('"CW"');
+      expect(body).not.toContain('"CCW"');
+      expect(body).not.toMatch(/clockwise/i);
+    }
   });
 
   it('reserves the badge row, so selecting a motor cannot resize its node', () => {
@@ -173,36 +185,95 @@ describe('PART AA: the diagram is readable, and honest about what it knows', () 
   });
 });
 
-/* ==================================== PART Q: NON-QUAD MOTOR COUNTS */
-describe('PART Q: a frame this file cannot draw is not drawn', () => {
-  it('renders the Quad X airframe for exactly four outputs', () => {
-    const r = diagram({motorCount: MOTOR_AIRFRAME_QUAD_COUNT});
+/* ============================ M-D: WHICH AIRFRAMES MAY BE DRAWN AT ALL */
+describe('M-D: a frame this project has not authored is not drawn', () => {
+  const QUADX = 3;
+  const QUADP = 2;
+  const Y4 = 9;
+  const VTAIL4 = 17;
+  const ATAIL4 = 22;
+  const QUADX_1234 = 26;
+  const HEX6X = 10;
+  const four = [1, 2, 3, 4];
+
+  it('draws QUAD X, which this project has authored', () => {
+    const r = diagram({mixerModeRaw: QUADX, motorNumbers: four});
     expect(r.hosts('motors-airframe-stage')).toHaveLength(1);
     expect(r.hosts('motors-generic-outputs')).toHaveLength(0);
   });
 
-  it.each([1, 2, 3, 5, 6, 8])(
-    'refuses to borrow the quad airframe for %i outputs',
-    motorCount => {
-      const r = diagram({motorCount});
-      expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
-      expect(r.hosts('motors-generic-outputs')).toHaveLength(1);
-      // Every output is numbered, and only the real ones exist.
-      for (let slot = 1; slot <= motorCount; slot++) {
-        expect(r.hosts(`motors-generic-slot-${slot}`)).toHaveLength(1);
-      }
-      expect(r.hosts(`motors-generic-slot-${motorCount + 1}`)).toHaveLength(0);
-    },
-  );
+  it('draws QUAD X 1234, which is authored SEPARATELY', () => {
+    const r = diagram({mixerModeRaw: QUADX_1234, motorNumbers: four});
+    expect(r.hosts('motors-airframe-stage')).toHaveLength(1);
+  });
+
+  /**
+   * THE DEFECT THE OLD GATE COULD NOT SEE.
+   *
+   * It asked `motorCount !== 4`, so every one of these got the Quad X
+   * drawing - four motors, four corners, wrong aircraft. From
+   * mixer_init.c @ 7348054f: QUADP is a plus frame, Y4 has a coaxial tail
+   * pair, and VTAIL4/ATAIL4 angle their rear arms. None is an X.
+   */
+  it.each([
+    ['QUADP', QUADP],
+    ['Y4', Y4],
+    ['VTAIL4', VTAIL4],
+    ['ATAIL4', ATAIL4],
+  ])('refuses to lend the Quad X drawing to %s', (_name, mixerModeRaw) => {
+    const r = diagram({mixerModeRaw, motorNumbers: four});
+    expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
+    expect(r.hosts('motors-generic-outputs')).toHaveLength(1);
+  });
+
+  it('withholds the drawing when the mixer has not been read', () => {
+    const r = diagram({mixerModeRaw: undefined, motorNumbers: four});
+    expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
+    expect(r.hosts('motors-generic-outputs')).toHaveLength(1);
+  });
+
+  it('withholds the drawing when the count contradicts the mixer', () => {
+    // A QUADX byte with six reported motors: the mixer changed without
+    // the reboot mixerInit() needs. The count is the authority, and a
+    // four-place drawing cannot represent six motors.
+    const r = diagram({mixerModeRaw: QUADX, motorNumbers: [1, 2, 3, 4, 5, 6]});
+    expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
+  });
+
+  it.each([
+    ['1 motor', [1]],
+    ['3 motors', [1, 2, 3]],
+    ['6 motors', [1, 2, 3, 4, 5, 6]],
+    ['8 motors', [1, 2, 3, 4, 5, 6, 7, 8]],
+  ])('numbers every real output and no others for %s', (_name, motorNumbers) => {
+    const r = diagram({mixerModeRaw: HEX6X, motorNumbers});
+    expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
+    for (const slot of motorNumbers) {
+      expect(r.hosts(`motors-generic-slot-${slot}`)).toHaveLength(1);
+    }
+    expect(
+      r.hosts(`motors-generic-slot-${motorNumbers.length + 1}`),
+    ).toHaveLength(0);
+  });
+
+  it('renders NO outputs at all when nothing has been read', () => {
+    // M-D §4: an empty list is what "unread" looks like. Not four.
+    const r = diagram({mixerModeRaw: undefined, motorNumbers: []});
+    expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
+    expect(r.hosts('motors-generic-slot-1')).toHaveLength(0);
+  });
 
   it('says WHY there is no aircraft, rather than leaving a bare list', () => {
-    const r = diagram({motorCount: 6});
+    const r = diagram({mixerModeRaw: HEX6X, motorNumbers: [1, 2, 3, 4, 5, 6]});
     expect(r.hosts('motors-generic-outputs-caption')).toHaveLength(1);
     expect(r.text()).toContain('لا تتوفر هندسة إطار مؤكدة');
   });
 
   it('makes no positional claim in the fallback', () => {
-    const body = diagram({motorCount: 6}).text();
+    const body = diagram({
+      mixerModeRaw: HEX6X,
+      motorNumbers: [1, 2, 3, 4, 5, 6],
+    }).text();
     for (const phrase of ['أمامي يمين', 'أمامي يسار', 'خلفي يمين', 'خلفي يسار']) {
       expect(body).not.toContain(phrase);
     }
@@ -212,8 +283,8 @@ describe('PART Q: a frame this file cannot draw is not drawn', () => {
     const taken: number[] = [];
     const r = render(
       <MotorAirframeDiagram
-        entries={QUAD}
-        motorCount={6}
+        mixerModeRaw={HEX6X}
+        motorNumbers={[1, 2, 3, 4, 5, 6]}
         selectedSlot={1}
         onSelectSlot={slot => taken.push(slot)}
       />,
