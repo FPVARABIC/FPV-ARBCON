@@ -34,7 +34,6 @@ import {
 } from '../../platforms/react-native/protocol';
 import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
-const DEFAULT_VISIBLE_MOTOR_COUNT = 4;
 const MAX_VISIBLE_MOTOR_COUNT = 8;
 const OUTPUT_STOP_VALUE = 1000;
 const OUTPUT_FULL_VALUE = 2000;
@@ -278,12 +277,26 @@ export function MotorDiagnosticsPanel({
               : 'ERROR'
         : escValue.status;
 
-  const visibleMotorCount =
+  /**
+   * M-D §4 - THIS USED TO FALL BACK TO FOUR.
+   *
+   * When the motor count had not been read - a pending load, a dropped
+   * link, a board still identifying - this expression produced 4 and the
+   * panel drew four output rows. On a hexacopter that is not a neutral
+   * placeholder: it tells the operator their aircraft has four outputs,
+   * and it does so most often at exactly the moment they are still working
+   * out whether the connection is healthy.
+   *
+   * `undefined` now means what it says. MSP_MOTOR_CONFIG offset 6 is the
+   * only authority for this number, and when it has not answered, this
+   * panel shows no output rows rather than four invented ones.
+   */
+  const visibleMotorCount: number | undefined =
     support !== undefined &&
     Number.isInteger(support.motorCount) &&
     support.motorCount > 0
       ? Math.min(MAX_VISIBLE_MOTOR_COUNT, support.motorCount)
-      : DEFAULT_VISIBLE_MOTOR_COUNT;
+      : undefined;
 
   /**
    * DID ANY BIDIRECTIONAL-DSHOT PACKET EVER ARRIVE?
@@ -341,10 +354,12 @@ export function MotorDiagnosticsPanel({
 
   const outputSlots = useMemo(
     () =>
-      Array.from({ length: visibleMotorCount }, (_, index) => ({
-        slot: index + 1,
-        value: outputs?.values[index],
-      })),
+      visibleMotorCount === undefined
+        ? []
+        : Array.from({ length: visibleMotorCount }, (_, index) => ({
+            slot: index + 1,
+            value: outputs?.values[index],
+          })),
     [outputs, visibleMotorCount],
   );
 
@@ -525,9 +540,14 @@ export function MotorDiagnosticsPanel({
 
         {escTelemetry !== undefined && escTelemetry.motors.length > 0 ? (
           <View style={styles.escList}>
-            {escTelemetry.motors
-              .slice(0, visibleMotorCount)
-              .map((motor, index) => {
+            {(visibleMotorCount === undefined
+              ? // Each record is an OBSERVED telemetry reading. With no
+                // runtime count to bound them by, showing what actually
+                // arrived is the honest answer; trimming to a guess would
+                // hide real data.
+                escTelemetry.motors
+              : escTelemetry.motors.slice(0, visibleMotorCount)
+            ).map((motor, index) => {
                 const metrics = visibleMotorTelemetryMetrics(motor, support);
                 return (
                   /* ONE ROW PER OUTPUT.

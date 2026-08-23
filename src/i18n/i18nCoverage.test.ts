@@ -68,6 +68,14 @@ import type {
   SensorContradiction,
   SensorTruthFamily,
 } from '../core/state/sensorTruthSemantics';
+import type {
+  CommandableMotorScope,
+  TopologyNoticeId,
+} from '../core/state/motorTopologyPresentation';
+import {
+  BETAFLIGHT_MIXER_REFERENCE_V147,
+  type MotorCountStrategy,
+} from '../core/firmware-adapters/betaflightMixerReferenceV147';
 import type { SensorsBlockReason } from '../platforms/react-native/protocol';
 
 const REPO_ROOT = join(__dirname, '..', '..');
@@ -440,10 +448,79 @@ const SENSOR_SAVE_STAGES: Record<SensorHardwareSaveStageId, true> = {
   VERIFYING_AFTER_REBOOT: true,
 };
 
+/**
+ * M-D TOPOLOGY PRESENTATION.
+ *
+ * motorTopologyPresentation.ts emits every key through `phrase()`, not
+ * `t()`, so neither the literal nor the template-prefix scanner sees any
+ * of them. These declarations are the only thing standing between a new
+ * airframe and a screen that renders `motorsScreen.topology.airframe.Y6`
+ * to an operator.
+ *
+ * The airframe and servo member lists are DERIVED FROM THE PINNED MIXER
+ * TABLE rather than typed out. A hand-written list would be a second
+ * source of truth about which mixers exist, and it would fall behind the
+ * first one silently - which is the whole failure mode this file exists
+ * to prevent.
+ */
+const TOPOLOGY_NOTICES: Record<TopologyNoticeId, true> = {
+  CUSTOM_TOPOLOGY_NOT_OBSERVABLE_OVER_MSP: true,
+  MIXER_MODE_NOT_IN_PINNED_TABLE: true,
+  RUNTIME_COUNT_EXCEEDS_FIRMWARE_MAXIMUM: true,
+  RUNTIME_COUNT_DISAGREES_WITH_MIXER_TABLE: true,
+  RUNTIME_COUNT_NONZERO_FOR_MOTORLESS_MIXER: true,
+  OBSERVED_ENABLED_SLOTS_EXCEED_RUNTIME_COUNT: true,
+  OBSERVED_ENABLED_SLOTS_NOT_CONTIGUOUS: true,
+  TELEMETRY_FRAME_COUNT_DISAGREES_WITH_RUNTIME_COUNT: true,
+};
+
+/** The suffix each CommandableMotorScope kind resolves to. Typed as a
+ *  total Record so a new kind cannot be added without a translation. */
+const TOPOLOGY_RUNTIME_COUNT: Record<CommandableMotorScope['kind'], string> = {
+  COMMANDABLE: 'reported',
+  NO_MOTORS_REPORTED: 'none',
+  RUNTIME_COUNT_NOT_READ: 'notRead',
+  RUNTIME_COUNT_UNUSABLE: 'unusable',
+};
+
+/** Likewise for the mixer table's own expectation. */
+const TOPOLOGY_EXPECTED_COUNT: Record<MotorCountStrategy['kind'], string> = {
+  TABLE_FIXED: 'fixed',
+  CUSTOM_RUNTIME_DERIVED: 'customRuntimeDerived',
+  NO_MOTORS: 'none',
+  UNKNOWN: 'unknown',
+};
+
+const TOPOLOGY_AIRFRAMES: readonly string[] = [
+  ...BETAFLIGHT_MIXER_REFERENCE_V147.map(entry => entry.firmwareName),
+  // The mixer id outside the pinned table. Its own leaf, because it
+  // interpolates the raw number rather than naming an airframe.
+  'unknownRaw',
+];
+
+const TOPOLOGY_SERVO_MIXERS: readonly string[] = [
+  ...BETAFLIGHT_MIXER_REFERENCE_V147.filter(
+    entry => entry.baseServoOutputs.kind === 'TABLE_FIXED',
+  ).map(entry => entry.firmwareName),
+  // Reached only when servos are modelled for a mixer we cannot name.
+  'generic',
+];
+
 const ENUMERATED_FAMILIES: readonly {
   readonly prefix: string;
   readonly members: readonly string[];
 }[] = [
+  {prefix: 'motorsScreen.topology.airframe', members: TOPOLOGY_AIRFRAMES},
+  {prefix: 'motorsScreen.topology.servo', members: TOPOLOGY_SERVO_MIXERS},
+  {prefix: 'motorsScreen.topology.notice', members: Object.keys(TOPOLOGY_NOTICES)},
+  {
+    prefix: 'motorsScreen.topology.runtimeCount',
+    members: Object.values(TOPOLOGY_RUNTIME_COUNT),
+  },
+  {
+    prefix: 'motorsScreen.topology.expectedCount',
+    members: Object.values(TOPOLOGY_EXPECTED_COUNT),
+  },
   {prefix: 'sensorsScreen.family', members: Object.keys(SENSOR_FAMILIES)},
   {
     prefix: 'sensorsScreen.contradiction',

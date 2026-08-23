@@ -258,7 +258,21 @@ describe('MotorDiagnosticsPanel', () => {
     expect(text).toContain('قراءة قديمة');
     expect(text).not.toContain('54321 RPM');
     expect(text).not.toContain('2000');
-    expect(text.match(/—/g)?.length).toBeGreaterThanOrEqual(4);
+    // M-D §4. This used to assert `>= 4` em-dashes, which was a proxy for
+    // "the four output rows each show a placeholder". There is no motor
+    // count in this fixture, so those four rows were invented - the panel
+    // defaulted to a quad. They are gone, and the count of dashes with
+    // them.
+    //
+    // The safety property the test is named for is unchanged and is now
+    // asserted directly rather than through the scaffolding: not one of
+    // the stale figures reaches the screen as a value.
+    for (const staleFigure of ['54321', '2000', '0 °C', '0.00 V']) {
+      expect(text).not.toContain(staleFigure);
+    }
+    // And the stronger statement the fix makes available: with no motor
+    // count read, no output row exists at all.
+    expect(text).not.toContain('motor-output-slot');
     act(() => tree.unmount());
   });
 

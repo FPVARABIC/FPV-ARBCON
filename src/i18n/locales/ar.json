@@ -1212,7 +1212,74 @@
     "layoutGenericHeading": "مخارج المحركات",
     "layoutGenericCaption": "لا تتوفر هندسة إطار مؤكدة لعدد المخارج هذا، لذلك تُعرض قائمة مخارج مرقّمة بدل رسم طائرة قد يكون خاطئًا.",
     "mappingBlockedNoSession": "افتح جلسة المحركات أولًا؛ قراءة ترتيب المخارج تحتاج جلسة إعداد حقيقية مع متحكم الطيران.",
-    "mappingReading": "جارٍ قراءة ترتيب المخارج من متحكم الطيران…"
+    "mappingReading": "جارٍ قراءة ترتيب المخارج من متحكم الطيران…",
+    "topology": {
+      "airframe": {
+        "TRI": "TRI — ثلاثي المحركات",
+        "QUADP": "QUAD + — رباعي +",
+        "QUADX": "QUAD X — رباعي X",
+        "BICOPTER": "BICOPTER — ثنائي المحركات",
+        "GIMBAL": "GIMBAL — حامل كاميرا (سيرفو فقط)",
+        "Y6": "Y6 — سداسي Y",
+        "HEX6": "HEX6 — سداسي",
+        "FLYING_WING": "FLYING WING — جناح طائر",
+        "Y4": "Y4 — رباعي Y",
+        "HEX6X": "HEX6X — سداسي X",
+        "OCTOX8": "OCTO X8 — ثماني X8",
+        "OCTOFLATP": "OCTO FLAT + — ثماني مسطح +",
+        "OCTOFLATX": "OCTO FLAT X — ثماني مسطح X",
+        "AIRPLANE": "AIRPLANE — طائرة",
+        "HELI_120_CCPM": "HELI 120 CCPM — مروحية",
+        "HELI_90_DEG": "HELI 90° — مروحية",
+        "VTAIL4": "V-TAIL 4 — رباعي بذيل V",
+        "HEX6H": "HEX6H — سداسي H",
+        "PPM_TO_SERVO": "PPM → SERVO — تمرير إلى السيرفو",
+        "DUALCOPTER": "DUALCOPTER — ثنائي عمودي",
+        "SINGLECOPTER": "SINGLECOPTER — أحادي المحرك",
+        "ATAIL4": "A-TAIL 4 — رباعي بذيل A",
+        "CUSTOM": "Mixer مخصص",
+        "CUSTOM_AIRPLANE": "Mixer مخصص — طائرة",
+        "CUSTOM_TRI": "Mixer مخصص — ثلاثي",
+        "QUADX_1234": "QUAD X 1234 — رباعي X بترتيب 1234",
+        "OCTOX8P": "OCTO X8+ — ثماني X8",
+        "unknownRaw": "Mixer غير معروف ({{raw}})"
+      },
+      "runtimeCount": {
+        "reported": "{{count}} محرك",
+        "none": "لم يُبلّغ المتحكم عن مخارج محركات",
+        "notRead": "لم تُقرأ إعدادات المحركات بعد",
+        "unusable": "عدد محركات غير صالح أبلغ عنه المتحكم ({{reported}})"
+      },
+      "expectedCount": {
+        "fixed": "المتوقع لهذا الـMixer: {{count}}",
+        "customRuntimeDerived": "الـMixer المخصص يحدد عدد محركاته عبر CLI، ولا يمكن قراءته عبر MSP",
+        "none": "هذا الـMixer لا يقود محركات",
+        "unknown": "العدد المتوقع غير معروف لهذا الـMixer"
+      },
+      "servo": {
+        "TRI": "سيرفو واحد للتحكم بالانحراف في الذيل — ليس جزءًا من اختبار المحركات",
+        "CUSTOM_TRI": "سيرفو واحد للتحكم بالانحراف في الذيل — ليس جزءًا من اختبار المحركات",
+        "BICOPTER": "سيرفوان لإمالة المحركين — ليسا جزءًا من اختبار المحركات",
+        "DUALCOPTER": "سيرفوان للتحكم بالاتجاه — ليسا جزءًا من اختبار المحركات",
+        "SINGLECOPTER": "أربعة سيرفوهات للتحكم بأسطح العادم — ليست جزءًا من اختبار المحركات",
+        "GIMBAL": "سيرفوان لحامل الكاميرا — ليسا جزءًا من اختبار المحركات",
+        "FLYING_WING": "سطحا تحكم يعملان بالسيرفو — ليسا جزءًا من اختبار المحركات",
+        "AIRPLANE": "أسطح التحكم تستخدم السيرفو — ليست جزءًا من اختبار المحركات",
+        "CUSTOM_AIRPLANE": "أسطح التحكم تستخدم السيرفو — ليست جزءًا من اختبار المحركات",
+        "HELI_120_CCPM": "أربعة سيرفوهات للوحة السواشبليت — ليست جزءًا من اختبار المحركات",
+        "generic": "{{count}} سيرفو في هذا الهيكل — ليست جزءًا من اختبار المحركات"
+      },
+      "notice": {
+        "CUSTOM_TOPOLOGY_NOT_OBSERVABLE_OVER_MSP": "هذا Mixer مخصص: شكل الهيكل غير قابل للقراءة عبر MSP، والتحكم يعتمد على العدد الذي أبلغ عنه المتحكم.",
+        "MIXER_MODE_NOT_IN_PINNED_TABLE": "رقم الـMixer ({{raw}}) غير معروف لهذا الإصدار. يمكن التحكم في المحركات التي أبلغ عنها المتحكم، لكن شكل الهيكل غير معروف.",
+        "RUNTIME_COUNT_EXCEEDS_FIRMWARE_MAXIMUM": "عدد المحركات المبلّغ عنه يتجاوز الحد الأقصى الذي يدعمه الفيرموير.",
+        "RUNTIME_COUNT_DISAGREES_WITH_MIXER_TABLE": "عدد المحركات الذي أبلغ عنه المتحكم يختلف عن العدد المتوقع لهذا الـMixer.",
+        "RUNTIME_COUNT_NONZERO_FOR_MOTORLESS_MIXER": "هذا الـMixer لا يقود محركات، لكن المتحكم أبلغ عن مخارج محركات.",
+        "OBSERVED_ENABLED_SLOTS_EXCEED_RUNTIME_COUNT": "عدد المخارج النشطة في إطار MSP_MOTOR يتجاوز عدد المحركات المبلّغ عنه.",
+        "OBSERVED_ENABLED_SLOTS_NOT_CONTIGUOUS": "المخارج النشطة في إطار MSP_MOTOR غير متتالية من البداية.",
+        "TELEMETRY_FRAME_COUNT_DISAGREES_WITH_RUNTIME_COUNT": "بيانات ESC وصلت لعدد ({{telemetry}}) يختلف عن عدد المحركات المبلّغ عنه ({{runtime}})."
+      }
+    }
   },
   "motorConfiguration": {
     "eyebrow": "إعدادات مستقلة",

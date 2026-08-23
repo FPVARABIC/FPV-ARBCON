@@ -52,6 +52,19 @@
  * flight controller reported, and no control in the Motors surface edits
  * it. That is asserted below three different ways, so a regression cannot
  * slip through one of them.
+ *
+ * THE PRODUCT DECISION, TAKEN DELIBERATELY. The yaw-reversed toggle stays.
+ * MotorConfigurationPanel is the only place in the app where
+ * yaw_motors_reversed can be edited, so removing it would put the setting
+ * out of reach outside the CLI, and the reference Configurator keeps this
+ * same control on its own Motors tab. The M-D §49 requirement is therefore
+ * held in its provable form - Motors never changes the mixer MODE - and
+ * not in its literal one.
+ *
+ * The end-to-end measurement of what the save transaction really puts on
+ * the wire lives with the harness that can drive it:
+ * MotorConfigurationController.test.ts, "M-D §0 - what the Motors screen
+ * really does with command 43".
  */
 
 import fs from 'fs';
