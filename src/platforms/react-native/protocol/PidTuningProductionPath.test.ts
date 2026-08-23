@@ -238,6 +238,26 @@ describe('P-C production path - what a save proves, and what it reports', () => 
     expect(h.board.rateProfile(0).rcTuning[12]).toBe(100);
   });
 
+  it('a rate save survives the three bytes the firmware reads and throws away', async () => {
+    // tpa_rate at 5 and tpa_breakpoint at 8..9 moved to the PID profile; the
+    // responder writes literal zeros in their place. A verification that
+    // compared those offsets would fail every rate save on every board.
+    const h = harness();
+    const original = await load(h);
+    const base = createPidTuningDraft(original);
+
+    const outcome = await h.controller.save(h.key, original, {
+      ...base,
+      rates: {...base.rates, throttleMid: 55},
+    });
+
+    expect(outcome.kind).toBe('SAVED_VERIFIED');
+    const written = h.board.requests.find(entry => entry.command === MSP_SET_RC_TUNING);
+    if (written === undefined) throw new Error('no MSP_SET_RC_TUNING was sent');
+    expect(written.payload).toHaveLength(24);
+    expect([5, 8, 9].map(offset => h.board.rateProfile(0).rcTuning[offset])).toEqual([0, 0, 0]);
+  });
+
   it('reports the cross-subsystem truths a filter write moved, and still saves', async () => {
     const h = harness({filterWriteSideEffects: 'SOURCE_PREDICTED'});
     const original = await load(h);
