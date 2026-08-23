@@ -12,6 +12,7 @@ import {
   MSP_MOTOR_3D_CONFIG,
   MSP_MOTOR_CONFIG,
   MSP_SET_ADVANCED_CONFIG,
+  MSP_SET_MIXER_CONFIG,
   MSP_STATUS_EX,
 } from '../../../core/protocol/msp/commands/mspCommands';
 import { MSP_BOXIDS } from '../../../core/protocol/msp/commands/mspCommands';
@@ -724,5 +725,104 @@ describe('MotorConfigurationController', () => {
         call => call.command === MSP2_SEND_DSHOT_COMMAND,
       ),
     ).toHaveLength(1);
+  });
+});
+
+/**
+ * M-D §0. The M-C report claimed the Motors screen sends no mixer write.
+ * These two tests establish, through the production controller and against
+ * the recorded wire traffic, what it actually does - because a claim about
+ * the wire that was never measured on the wire is not evidence.
+ *
+ * msp_protocol.h:114-115 @ 7348054f
+ *   MSP_MIXER_CONFIG      42   out message: GET
+ *   MSP_SET_MIXER_CONFIG  43   in  message: SET   <- msp.c:3734-3743
+ *                                    byte 0 mixerMode, byte 1 yaw_motors_reversed
+ */
+describe('M-D §0 - what the Motors screen really does with command 43', () => {
+  /** HEX6X, yaw not reversed. Deliberately not a quad: a mixer byte that
+   * came back as 3 would then be a normalisation bug, not a coincidence. */
+  const HEX_MIXER = Uint8Array.from([10, 0]);
+  /** The same hexacopter after the yaw sign flip took effect. */
+  const HEX_MIXER_REVERSED = Uint8Array.from([10, 1]);
+
+  /** One full five-group read, as the FC would answer it. The controller
+   * performs three of these per save: the load, the pre-write re-read that
+   * guards against a stale base, and the post-write verification. */
+  function enqueueHexSnapshot(
+    harness: ReturnType<typeof makeHarness>,
+    mixer: Uint8Array = HEX_MIXER,
+    protocol = 7,
+  ): void {
+    harness.client.enqueue(MSP_FEATURE_CONFIG, { payload: FEATURE });
+    harness.client.enqueue(MSP_MIXER_CONFIG, { payload: mixer });
+    harness.client.enqueue(MSP_MOTOR_CONFIG, { payload: MOTOR });
+    harness.client.enqueue(MSP_MOTOR_3D_CONFIG, { payload: MOTOR_3D });
+    harness.client.enqueue(MSP_ADVANCED_CONFIG, {
+      payload: advancedPayload(550, protocol),
+    });
+  }
+
+  async function loadHexacopter(harness: ReturnType<typeof makeHarness>) {
+    enqueueHexSnapshot(harness);
+    const loaded = await harness.controller.load('fc-1');
+    if (loaded.kind !== 'LOADED') {
+      throw new Error(`Expected LOADED, received ${loaded.kind}`);
+    }
+    expect(loaded.snapshot.mixer.mixerModeRaw).toBe(10);
+    return loaded.snapshot;
+  }
+
+  it('DOES put command 43 on the wire when the yaw sign flip is saved', async () => {
+    // The finding that corrects M-C. `motor-config-yaw-reversed` in
+    // MotorConfigurationPanel is bound to draft.yawMotorsReversed, which is
+    // byte 1 of this command. Betaflight's own Motors tab owns this same
+    // write; the value of stating it here is that it is now measured.
+    const harness = makeHarness();
+    const original = await loadHexacopter(harness);
+    enqueueHexSnapshot(harness); // the pre-write re-read
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload() });
+    harness.client.enqueue(MSP_SET_MIXER_CONFIG, { payload: new Uint8Array(0) });
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
+    enqueueHexSnapshot(harness, HEX_MIXER_REVERSED); // the verification read
+
+    const outcome = await harness.controller.save('fc-1', original, {
+      ...createMotorConfigurationDraft(original),
+      yawMotorsReversed: true,
+    });
+    expect(outcome.kind).toBe('SAVED_VERIFIED');
+
+    const mixerWrites = harness.client.calls.filter(
+      call => call.command === MSP_SET_MIXER_CONFIG,
+    );
+    expect(mixerWrites).toHaveLength(1);
+    // Byte 0 is the airframe the FC reported, byte-identical. Byte 1 is the
+    // only thing the user changed.
+    expect(Array.from(mixerWrites[0].payload)).toEqual([10, 1]);
+  });
+
+  it('sends NO mixer write when only a non-mixer field is saved', async () => {
+    // A protocol change must not drag the airframe byte onto the wire with
+    // it. This is the assertion M-C thought it was making.
+    const harness = makeHarness();
+    const original = await loadHexacopter(harness);
+    enqueueHexSnapshot(harness); // the pre-write re-read
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload() });
+    harness.client.enqueue(MSP_SET_ADVANCED_CONFIG, {
+      payload: new Uint8Array(0),
+    });
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
+    enqueueHexSnapshot(harness, HEX_MIXER, 6); // the verification read
+
+    const outcome = await harness.controller.save('fc-1', original, {
+      ...createMotorConfigurationDraft(original),
+      motorProtocolRaw: 6,
+    });
+    expect(outcome.kind).toBe('SAVED_VERIFIED');
+    expect(harness.client.calls.map(call => call.command)).not.toContain(
+      MSP_SET_MIXER_CONFIG,
+    );
   });
 });

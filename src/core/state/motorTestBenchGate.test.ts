@@ -2076,7 +2076,7 @@ describe('M-C - every airframe reaches a commandable session', () => {
   );
 
   it.each(AIRFRAMES.map(a => [a.name, a] as const))(
-    '%s: sends no servo write and no mixer write, ever',
+    '%s: puts exactly this command set on the wire, and nothing else',
     async (_name, airframe) => {
       const harness = airframeHarness(airframe);
       await runSetup(harness);
@@ -2084,14 +2084,42 @@ describe('M-C - every airframe reaches a commandable session', () => {
       await flush(10);
       await drive(harness, harness.controller.close());
 
-      // MSP_SET_SERVO_CONFIGURATION (212), MSP_SET_SERVO_MIX_RULE (242)
-      // and MSP_SET_MIXER_CONFIG (42) at the pinned firmware. Motors
-      // OBSERVES the mixer; it does not own it, and it drives no servo -
-      // not even on a tricopter, whose yaw comes from a tail servo.
-      const commands = harness.transport.writeLog.map(writtenCommand);
-      expect(commands).not.toContain(212);
-      expect(commands).not.toContain(242);
-      expect(commands).not.toContain(42);
+      // M-D §0 CORRECTION. This assertion used to be a denylist that
+      // named 42 as "MSP_SET_MIXER_CONFIG". Two errors:
+      //
+      //   msp_protocol.h:114-115 @ 7348054f
+      //     MSP_MIXER_CONFIG      42   // out message: GET
+      //     MSP_SET_MIXER_CONFIG  43   // in  message: SET
+      //
+      //   1. 42 is the READ. Forbidding it forbade the wrong thing -
+      //      observing the mixer is exactly what a Motors screen should do.
+      //   2. It passed VACUOUSLY. A denylist over commands this path has
+      //      no code to emit can never fail, so it proved nothing.
+      //
+      // Replaced by an ALLOWLIST, which cannot be vacuous: any command
+      // that appears - a mixer write, a servo write, a stray read, a
+      // retry storm - breaks the equality. What the absence of 42 below
+      // records is a real fact about this path: the motor-test controller
+      // reads the motor COUNT (131), never the mixer MODE.
+      const commands = [
+        ...new Set(harness.transport.writeLog.map(writtenCommand)),
+      ].sort((left, right) => left - right);
+      expect(commands).toEqual([
+        3, //   MSP_FC_VERSION            read - firmware identity gate
+        36, //  MSP_FEATURE_CONFIG        read - 3D feature bit
+        90, //  MSP_ADVANCED_CONFIG       read - protocol + idle
+        99, //  MSP_SET_ARMING_DISABLED   write - the safety gate itself
+        119, // MSP_BOXIDS                read - arming box discovery
+        131, // MSP_MOTOR_CONFIG          read - THE motor count authority
+        150, // MSP_STATUS_EX             read - live armed state
+        214, // MSP_SET_MOTOR             write - the 8-slot command vector
+      ]);
+      // Named explicitly so a future reader sees the intent, not just the
+      // numbers: no servo is ever driven - not even on a tricopter, whose
+      // yaw comes from a tail servo - and the mixer is never WRITTEN.
+      expect(commands).not.toContain(212); // MSP_SET_SERVO_CONFIGURATION
+      expect(commands).not.toContain(242); // MSP_SET_SERVO_MIX_RULE
+      expect(commands).not.toContain(43); //  MSP_SET_MIXER_CONFIG
     },
   );
 });
