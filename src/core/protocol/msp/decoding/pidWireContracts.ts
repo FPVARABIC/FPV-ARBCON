@@ -54,13 +54,70 @@ export const FILTER_CONFIG_RPM_TAIL_BYTES = 2 + 2 + RPM_FILTER_HARMONICS_MAX;
  * read, and the decoders below preserve unrecognised trailing bytes rather
  * than rejecting them.
  */
-export function resolvePidApiContract(version: PidApiVersion): PidApiContract | undefined {
-  if (!Number.isInteger(version.major) || !Number.isInteger(version.minor)) return undefined;
-  if (version.major !== 1) return undefined;
-  if (version.minor < 47) return undefined;
-  if (version.minor === 47) return 'API_1_47';
-  if (version.minor === 48) return 'API_1_48';
-  return 'API_1_49';
+export type PidApiResolution =
+  | {readonly kind: 'SOURCE_VERIFIED'; readonly contract: PidApiContract}
+  /**
+   * A firmware newer than anything we have read. It is NOT 1.49 with extra
+   * bytes - it is a layout nobody here has seen. P-B originally folded this
+   * into 1.49, and that was wrong as a WRITE authority: it would have let
+   * this app patch a 61-byte structure whose field meanings it cannot know,
+   * and send a FILTER_CONFIG whose length it is only guessing.
+   */
+  | {readonly kind: 'UNVERIFIED_FUTURE_API'; readonly minor: number; readonly newestVerified: PidApiContract}
+  | {readonly kind: 'BELOW_SUPPORTED_FLOOR'; readonly minor: number}
+  | {readonly kind: 'NOT_A_BETAFLIGHT_API'};
+
+/** The newest layout this build has actually read from firmware source. */
+export const NEWEST_SOURCE_VERIFIED_CONTRACT: PidApiContract = 'API_1_49';
+export const NEWEST_SOURCE_VERIFIED_MINOR = 49;
+export const OLDEST_SUPPORTED_MINOR = 47;
+
+export function resolvePidApi(version: PidApiVersion): PidApiResolution {
+  if (!Number.isInteger(version.major) || !Number.isInteger(version.minor)) {
+    return Object.freeze({kind: 'NOT_A_BETAFLIGHT_API'});
+  }
+  if (version.major !== 1) return Object.freeze({kind: 'NOT_A_BETAFLIGHT_API'});
+  if (version.minor < OLDEST_SUPPORTED_MINOR) {
+    return Object.freeze({kind: 'BELOW_SUPPORTED_FLOOR', minor: version.minor});
+  }
+  if (version.minor === 47) return Object.freeze({kind: 'SOURCE_VERIFIED', contract: 'API_1_47'});
+  if (version.minor === 48) return Object.freeze({kind: 'SOURCE_VERIFIED', contract: 'API_1_48'});
+  if (version.minor === 49) return Object.freeze({kind: 'SOURCE_VERIFIED', contract: 'API_1_49'});
+  return Object.freeze({
+    kind: 'UNVERIFIED_FUTURE_API',
+    minor: version.minor,
+    newestVerified: NEWEST_SOURCE_VERIFIED_CONTRACT,
+  });
+}
+
+/**
+ * The contract to decode with, or nothing.
+ *
+ * Deliberately returns `undefined` for an unverified future API rather than
+ * the newest one we know. A caller that wants to attempt a best-effort READ
+ * of a known prefix must ask for `newestVerified` by name, so that choice is
+ * visible at the call site instead of hidden in a fallback.
+ */
+export function sourceVerifiedContract(resolution: PidApiResolution): PidApiContract | undefined {
+  return resolution.kind === 'SOURCE_VERIFIED' ? resolution.contract : undefined;
+}
+
+/**
+ * WHETHER THIS APP MAY WRITE TUNING TO THIS BOARD AT ALL.
+ *
+ * Fail-closed, and the only `ALLOWED` is a layout read from pinned firmware
+ * source. Everything else refuses: a board older than the floor, a board
+ * newer than anything studied, and anything that is not a Betaflight API
+ * version. There is no "probably compatible".
+ */
+export type PidWriteAuthority =
+  | {readonly kind: 'ALLOWED'; readonly contract: PidApiContract}
+  | {readonly kind: 'REFUSED'; readonly reason: 'UNVERIFIED_FUTURE_API' | 'BELOW_SUPPORTED_FLOOR' | 'NOT_A_BETAFLIGHT_API'};
+
+export function pidWriteAuthority(resolution: PidApiResolution): PidWriteAuthority {
+  return resolution.kind === 'SOURCE_VERIFIED'
+    ? Object.freeze({kind: 'ALLOWED', contract: resolution.contract})
+    : Object.freeze({kind: 'REFUSED', reason: resolution.kind});
 }
 
 /** How many bytes MSP_FILTER_CONFIG carries under a given contract. */

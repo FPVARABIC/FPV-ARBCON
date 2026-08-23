@@ -17,7 +17,7 @@ async function render(controller: PidControllerPort, onOpenMotors = jest.fn()) {
 
 describe('PidTuningScreen', () => {
   it('renders real editable axis controls and no bitmap substitute', async () => {
-    const original = snapshot(); const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: original}))});
+    const original = snapshot(); const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save: jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: original, evidence: {normalisations: []}}))});
     expect(renderer.root.findAllByProps({testID: 'pid-screen'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-axis-roll'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-roll-p'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-yaw-f'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-rate-roll-rc'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByProps({testID: 'pid-gyro-static'}).length).toBeGreaterThan(0); expect(renderer.root.findAllByType('Image' as never)).toHaveLength(0); act(() => renderer.unmount());
   });
   it('marks the active PID and Rates profiles read from STATUS_EX', async () => {
@@ -67,7 +67,7 @@ describe('PidTuningScreen', () => {
     const save = jest.fn<
       ReturnType<PidControllerPort['save']>,
       Parameters<PidControllerPort['save']>
-    >(async () => ({kind: 'SAVED_VERIFIED', snapshot: saved}));
+    >(async () => ({kind: 'SAVED_VERIFIED', evidence: {normalisations: []}, snapshot: saved}));
     const renderer = await render({
       load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})),
       save,
@@ -81,7 +81,7 @@ describe('PidTuningScreen', () => {
   it('sends editable Rates and Filters through the same verified transaction', async () => {
     const original = snapshot();
     const saved = snapshot(42, 120, 300);
-    const save = jest.fn<ReturnType<PidControllerPort['save']>, Parameters<PidControllerPort['save']>>(async () => ({kind: 'SAVED_VERIFIED', snapshot: saved}));
+    const save = jest.fn<ReturnType<PidControllerPort['save']>, Parameters<PidControllerPort['save']>>(async () => ({kind: 'SAVED_VERIFIED', evidence: {normalisations: []}, snapshot: saved}));
     const renderer = await render({load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})), save});
     const rateInput = renderer.root.findAllByProps({testID: 'pid-rate-roll-rc'}).find(node => typeof node.props.onChangeText === 'function');
     const filterInput = renderer.root.findAllByProps({testID: 'pid-gyro-static'}).find(node => typeof node.props.onChangeText === 'function');
@@ -106,7 +106,7 @@ describe('PidTuningScreen', () => {
      */
     const original = snapshot();
     const selectProfile = jest.fn(async () => ({kind: 'SWITCHED' as const, snapshot: original}));
-    const save = jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: original}));
+    const save = jest.fn(async () => ({kind: 'SAVED_VERIFIED' as const, snapshot: original, evidence: {normalisations: []}}));
     const renderer = await render({
       load: jest.fn(async () => ({kind: 'LOADED' as const, snapshot: original})),
       save,

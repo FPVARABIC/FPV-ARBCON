@@ -51,6 +51,11 @@ export type WriteStageName =
   | 'PID_ADVANCED'
   | 'RC_TUNING'
   | 'FILTER_CONFIG'
+  | 'SIMPLIFIED'
+  | 'COPY_PROFILE'
+  | 'SELECT_PROFILE'
+  | 'RESET_PID_PROFILE'
+  | 'PROFILE_NAME'
   // The persist step every screen shares.
   | 'EEPROM';
 
@@ -82,6 +87,11 @@ const STAGE_TEXT: Readonly<Record<WriteStageName, string>> = {
   PID_ADVANCED: 'إعدادات PID المتقدمة',
   RC_TUNING: 'معدلات الحركة ومنحنى الخانق',
   FILTER_CONFIG: 'الفلاتر',
+  SIMPLIFIED: 'شرائح الضبط المبسط',
+  COPY_PROFILE: 'نسخ ملف الضبط',
+  SELECT_PROFILE: 'تبديل الملف النشط',
+  RESET_PID_PROFILE: 'إعادة ملف PID إلى قيم المصنع',
+  PROFILE_NAME: 'اسم الملف',
 
   EEPROM: 'حفظ الإعدادات في ذاكرة المتحكم',
 };

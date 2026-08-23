@@ -58,6 +58,11 @@ function blockMessage(reason: PidBlockReason): string {
     CONFIGURATION_BUSY: 'هناك معاملة إعدادات أخرى جارية. انتظر ثم أعد المحاولة.',
     STALE_BASE: 'تغيّرت قيم PID على متحكم الطيران منذ آخر قراءة. أعد القراءة قبل الحفظ.',
     INVALID_CONFIGURATION: 'هناك قيمة PID أو Rates أو Filters خارج الحدود الرسمية أو حد Nyquist الآمن.',
+    UNVERIFIED_FUTURE_API: 'إصدار البرنامج الثابت أحدث من أي تخطيط تحقّقنا منه من المصدر، لذلك لا نكتب أي ضبط إليه.',
+    PROFILE_CHANGED: 'تغيّر الملف النشط على متحكم الطيران بعد قراءة القيم. لم يُرسل أي تعديل؛ أعد القراءة أولًا.',
+    DIRECT_EDIT_CONFLICTS_WITH_ACTIVE_SIMPLIFIED: 'الضبط المبسّط نشط ويملك هذه القيم؛ تعديلها يدويًا سيُلغى فورًا. لم يُرسل شيء.',
+    ACTIVE_DESTINATION_COPY_UNSAFE: 'لا ننسخ فوق الملف النشط، لأن المتحكم لا يعيد تهيئة نفسه بعد النسخ.',
+    SIMPLIFIED_TUNING_UNSUPPORTED: 'هذا البناء من البرنامج الثابت لا يتضمّن الضبط المبسّط.',
   })[reason];
 }
 function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} {
@@ -65,6 +70,9 @@ function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} 
     case 'SAVED_VERIFIED': return {text: 'حُفظت إعدادات PID وRates وFilters المتغيرة، وأكدت القراءة الراجعة تطابقها.', warning: false};
     case 'NO_CHANGES': return {text: 'لا توجد تغييرات جديدة.', warning: false};
     case 'SAVED_UNVERIFIED': return {text: 'أُقر الحفظ، لكن تعذرت القراءة الراجعة. أعد القراءة قبل الطيران.', warning: true};
+    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: 'طُبّقت القيم وأكدتها القراءة، لكن لم يثبت حفظها في ذاكرة المتحكم. لا تعتمد عليها بعد إعادة التشغيل.', warning: true};
+    case 'READBACK_MISMATCH': return {text: 'أعادت اللوحة قيمًا لا تطابق ما طُلب ولا ما يتوقعه المصدر. لم يُدّع نجاح.', warning: true};
+    case 'UNEXPECTED_CROSS_SUBSYSTEM_CHANGE': return {text: 'غيّر المتحكم إعدادًا خارج هذه الشاشة بطريقة لا يفسّرها المصدر. أعد قراءة إعدادات المحركات.', warning: true};
     case 'UNCONFIRMED': return {text: unconfirmedWriteMessage(outcome.stage), warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
     case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء العملية.', warning: true};

@@ -73,6 +73,14 @@ export interface MspPidTuningSnapshot {
   readonly filterConfig: MspFilterConfiguration;
   readonly gyroSampleRateHz?: number;
   readonly pidProcessDenom?: number;
+  /**
+   * The two MSP_ADVANCED_CONFIG fields a FILTER write can move that belong
+   * to another screen. Carried here so a save can prove whether the
+   * firmware's gyro validation disturbed them, without Motors being
+   * involved in the transaction at all.
+   */
+  readonly motorProtocolRaw?: number;
+  readonly motorPwmRate?: number;
   /** Zero-based active profiles from the same MSP_STATUS_EX snapshot. */
   readonly pidProfileIndex: number;
   readonly pidProfileCount: number;
@@ -172,6 +180,8 @@ export function decodePidTuningSnapshot(input: {
   readonly filters: Uint8Array;
   readonly gyroSampleRateHz?: number;
   readonly pidProcessDenom?: number;
+  readonly motorProtocolRaw?: number;
+  readonly motorPwmRate?: number;
   readonly pidProfileIndex: number;
   readonly pidProfileCount: number;
   readonly controlRateProfileIndex: number;
@@ -210,6 +220,8 @@ export function decodePidTuningSnapshot(input: {
     filterConfig: decodeFilterConfiguration(input.filters),
     ...(input.gyroSampleRateHz !== undefined ? {gyroSampleRateHz: input.gyroSampleRateHz} : {}),
     ...(input.pidProcessDenom !== undefined ? {pidProcessDenom: input.pidProcessDenom} : {}),
+    ...(input.motorProtocolRaw !== undefined ? {motorProtocolRaw: input.motorProtocolRaw} : {}),
+    ...(input.motorPwmRate !== undefined ? {motorPwmRate: input.motorPwmRate} : {}),
     pidProfileIndex: input.pidProfileIndex,
     pidProfileCount: input.pidProfileCount,
     controlRateProfileIndex: input.controlRateProfileIndex,

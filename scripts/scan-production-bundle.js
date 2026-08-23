@@ -780,6 +780,12 @@ const ENGINE_BOUNDARIES = [
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      // The PID page names PID and rate PROFILES through the same command,
+      // with selectors 3 and 4. Reviewed and added deliberately: the two
+      // controllers write different text types and neither can reach the
+      // other's - GeneralConfigurationController uses the craft and pilot
+      // selectors, PidTuningController only the two profile selectors.
+      'src/platforms/react-native/protocol/PidTuningController.ts',
     ],
     reExporters: [
       'src/core/index.ts',

@@ -38,12 +38,24 @@ function ratesPayload(rollRcRate = 100): Uint8Array { const bytes = new Uint8Arr
 function filterPayload(gyroStaticHz = 0): Uint8Array { const bytes = new Uint8Array(49); new DataView(bytes.buffer).setUint16(20, gyroStaticHz, true); return bytes; }
 function enqueueSnapshot(client: FakeClient, rollP = 42, yawF = 140, rollRcRate = 100, gyroStaticHz = 0, pidProfileIndex = 0, controlRateProfileIndex = 0) { client.enqueue(MSP_PID, {payload: pidPayload(rollP)}); client.enqueue(MSP_PID_ADVANCED, {payload: advancedPayload(yawF)}); client.enqueue(MSP_RC_TUNING, {payload: ratesPayload(rollRcRate)}); client.enqueue(MSP_FILTER_CONFIG, {payload: filterPayload(gyroStaticHz)}); client.enqueue(MSP_ADVANCED_CONFIG, {payload: generalAdvancedPayload()}); client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false, pidProfileIndex, controlRateProfileIndex)}); }
 async function loadOriginal(h: ReturnType<typeof harness>): Promise<MspPidTuningSnapshot> { enqueueSnapshot(h.client); const outcome = await h.controller.load(key); if (outcome.kind !== 'LOADED') throw new Error(outcome.kind); return outcome.snapshot; }
+/**
+ * A save now reads the board THREE times, not twice.
+ *
+ *   1. before any write, to re-check the baseline AND the active profile;
+ *   2. after the writes, to prove what the runtime actually APPLIED;
+ *   3. after MSP_EEPROM_WRITE, to prove what was actually PERSISTED.
+ *
+ * The third read is the point: an EEPROM acknowledgement is a reply, not
+ * evidence that anything survived. So the post-write state is scripted
+ * twice - once as the applied answer, once as the persisted answer.
+ */
+function enqueueReadbackTwice(client: FakeClient, rollP = 42, yawF = 140, rollRcRate = 100, gyroStaticHz = 0) { enqueueSnapshot(client, rollP, yawF, rollRcRate, gyroStaticHz); enqueueSnapshot(client, rollP, yawF, rollRcRate, gyroStaticHz); }
 
 describe('PidTuningController', () => {
   it('loads PID, advanced, rates and filters under one exclusive telemetry pause', async () => { const h = harness(); const snapshot = await loadOriginal(h); expect(snapshot.terms[0].p).toBe(42); expect(snapshot.feedforward).toEqual([120, 130, 140]); expect(h.telemetry.acquirePauseLease).toHaveBeenCalledTimes(1); });
   it('fails closed before I/O for unsupported API and motor-test activity', async () => { const unsupported = harness(); unsupported.state.identification = identification('BTFL', 46); await expect(unsupported.controller.load(key)).resolves.toEqual({kind: 'REJECTED', reason: 'UNSUPPORTED_FIRMWARE'}); expect(unsupported.client.calls).toEqual([]); const motors = harness({motorTest: true}); await expect(motors.controller.load(key)).resolves.toEqual({kind: 'REJECTED', reason: 'MOTOR_TEST_ACTIVE'}); expect(motors.client.calls).toEqual([]); });
   it('rejects ARMED before any PID write', async () => { const h = harness(); const original = await loadOriginal(h); enqueueSnapshot(h.client); h.client.enqueue(MSP_BOXIDS, {payload: Uint8Array.from([0])}); h.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(true)}); const base = createPidTuningDraft(original); const draft = {...base, roll: {...base.roll, p: 50}}; await expect(h.controller.save(key, original, draft)).resolves.toEqual({kind: 'REJECTED', reason: 'FC_ARMED'}); expect(h.client.calls.map(call => call.command)).not.toContain(MSP_SET_PID); });
-  it('writes each changed group once, persists once, and accepts matching readback only', async () => { const h = harness(); const original = await loadOriginal(h); enqueueSnapshot(h.client); h.client.enqueue(MSP_BOXIDS, {payload: Uint8Array.from([0])}); h.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)}); h.client.enqueue(MSP_SET_PID, {payload: EMPTY}); h.client.enqueue(MSP_SET_PID_ADVANCED, {payload: EMPTY}); h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY}); enqueueSnapshot(h.client, 50, 222); const base = createPidTuningDraft(original); const draft = {...base, roll: {...base.roll, p: 50}, yaw: {...base.yaw, f: 222}}; await expect(h.controller.save(key, original, draft)).resolves.toEqual(expect.objectContaining({kind: 'SAVED_VERIFIED'})); expect(h.client.calls.filter(call => call.command === MSP_SET_PID)).toHaveLength(1); expect(h.client.calls.filter(call => call.command === MSP_SET_PID_ADVANCED)).toHaveLength(1); expect(h.client.calls.filter(call => call.command === MSP_EEPROM_WRITE)).toHaveLength(1); });
+  it('writes each changed group once, persists once, and accepts matching readback only', async () => { const h = harness(); const original = await loadOriginal(h); enqueueSnapshot(h.client); h.client.enqueue(MSP_BOXIDS, {payload: Uint8Array.from([0])}); h.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)}); h.client.enqueue(MSP_SET_PID, {payload: EMPTY}); h.client.enqueue(MSP_SET_PID_ADVANCED, {payload: EMPTY}); h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY}); enqueueReadbackTwice(h.client, 50, 222); const base = createPidTuningDraft(original); const draft = {...base, roll: {...base.roll, p: 50}, yaw: {...base.yaw, f: 222}}; await expect(h.controller.save(key, original, draft)).resolves.toEqual(expect.objectContaining({kind: 'SAVED_VERIFIED'})); expect(h.client.calls.filter(call => call.command === MSP_SET_PID)).toHaveLength(1); expect(h.client.calls.filter(call => call.command === MSP_SET_PID_ADVANCED)).toHaveLength(1); expect(h.client.calls.filter(call => call.command === MSP_EEPROM_WRITE)).toHaveLength(1); });
 
   it('writes changed Rates and Filters once each and verifies their readback', async () => {
     const h = harness(); const original = await loadOriginal(h);
@@ -53,7 +65,7 @@ describe('PidTuningController', () => {
     h.client.enqueue(MSP_SET_RC_TUNING, {payload: EMPTY});
     h.client.enqueue(MSP_SET_FILTER_CONFIG, {payload: EMPTY});
     h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
-    enqueueSnapshot(h.client, 42, 140, 120, 300);
+    enqueueReadbackTwice(h.client, 42, 140, 120, 300);
     const base = createPidTuningDraft(original);
     const draft = {
       ...base,
@@ -97,6 +109,18 @@ describe('PidTuningController', () => {
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_SET_PID);
   });
 
+  /**
+   * A MOVED PROFILE IS NOT A STALE VALUE, AND NO LONGER REPORTS AS ONE.
+   *
+   * This case used to answer STALE_BASE, which was true but imprecise:
+   * every byte of the tune here is IDENTICAL, and the only thing that
+   * moved is which profile those bytes belong to. A pilot flipping a
+   * radio switch mid-edit would have been told their values went stale.
+   *
+   * The refusal itself is unchanged - still before MSP_BOXIDS, still
+   * before any SET - so nothing here was weakened to obtain a reason
+   * code; the reason code simply stopped conflating two different facts.
+   */
   it('rejects a PID or Rates profile switch before armed-state acquisition or writes', async () => {
     const h = harness();
     const original = await loadOriginal(h);
@@ -104,7 +128,7 @@ describe('PidTuningController', () => {
     const base = createPidTuningDraft(original);
     const draft = {...base, roll: {...base.roll, p: 50}};
 
-    await expect(h.controller.save(key, original, draft)).resolves.toEqual({kind: 'REJECTED', reason: 'STALE_BASE'});
+    await expect(h.controller.save(key, original, draft)).resolves.toEqual({kind: 'REJECTED', reason: 'PROFILE_CHANGED'});
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_BOXIDS);
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_SET_PID);
   });
@@ -127,6 +151,23 @@ describe('PidTuningController', () => {
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_EEPROM_WRITE);
   });
 
+  /**
+   * A BOARD HOLDING 49 WHERE 50 WAS WRITTEN IS NOT A SAVE, AND IS NOT
+   * PERSISTED EITHER.
+   *
+   * Two things changed here and both are stricter than before.
+   *
+   * The verdict is now READBACK_MISMATCH with the offending field named,
+   * rather than a general SAVED_UNVERIFIED, because 49 is not one of the
+   * corrections the firmware's own rules predict - no clamp, no link, no
+   * limit produces it - so it is a genuine disagreement rather than a
+   * normalisation.
+   *
+   * And the EEPROM write no longer happens at all. Committing a state
+   * that already failed its runtime check would write the disagreement
+   * to permanent storage, so the mismatch is detected first and the save
+   * stops there.
+   */
   it('does not claim verified success when readback differs from the saved draft', async () => {
     const h = harness();
     const original = await loadOriginal(h);
@@ -139,9 +180,11 @@ describe('PidTuningController', () => {
     const base = createPidTuningDraft(original);
     const draft = {...base, roll: {...base.roll, p: 50}};
 
-    await expect(h.controller.save(key, original, draft)).resolves.toEqual(
-      expect.objectContaining({kind: 'SAVED_UNVERIFIED'}),
-    );
+    const outcome = await h.controller.save(key, original, draft);
+    expect(outcome).toEqual(expect.objectContaining({kind: 'READBACK_MISMATCH', group: 'PID'}));
+    if (outcome.kind !== 'READBACK_MISMATCH') throw new Error(outcome.kind);
+    expect(outcome.fields.map(field => field.field)).toContain('ROLL.P');
+    expect(h.client.calls.map(call => call.command)).not.toContain(MSP_EEPROM_WRITE);
   });
 });
 
@@ -166,7 +209,7 @@ describe.each([47, 48, 49])('a complete PID save on API 1.%s', minor => {
     h.client.enqueue(MSP_SET_PID, {payload: EMPTY});
     h.client.enqueue(MSP_SET_PID_ADVANCED, {payload: EMPTY});
     h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
-    enqueueSnapshot(h.client, 50, 222);
+    enqueueReadbackTwice(h.client, 50, 222);
     const base = createPidTuningDraft(original);
     const draft = {...base, roll: {...base.roll, p: 50}, yaw: {...base.yaw, f: 222}};
 
