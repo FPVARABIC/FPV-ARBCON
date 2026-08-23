@@ -16,6 +16,7 @@ import React from 'react';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
+import ar from '../../i18n/locales/ar.json';
 import {
   MotorAirframeDiagram,
   computeMotorGlyphLayout,
@@ -120,11 +121,26 @@ describe('PART Z: the M number IS the payload index, everywhere', () => {
 
 /* ================================= PART AA: THE VISUALIZATION ITSELF */
 describe('PART AA: the diagram is readable, and honest about what it knows', () => {
-  it('gives every motor exactly ONE rotation indicator', () => {
+  /**
+   * WAS "exactly ONE rotation indicator per motor", which was the right
+   * assertion while the node printed a CW/CCW/؟ token: the defect it
+   * guarded was several rotation glyphs stacked in one 30px box.
+   *
+   * NONE is the stronger statement, and it is now the true one. Authored
+   * layouts carry no direction field, so the token had exactly one value
+   * left - a bare "؟" under every motor on every airframe. A question
+   * mark standing where a value belongs is furniture, not a disclosure.
+   * The claim it stood for is made once, in words, in the caption.
+   */
+  it('gives every motor NO rotation indicator, because it has no rotation to show', () => {
     const r = diagram();
     for (const slot of [1, 2, 3, 4]) {
-      expect(r.hosts(`motors-diagram-direction-${slot}`)).toHaveLength(1);
+      // The motor itself is still there - this is not an empty diagram.
+      expect(r.hosts(`motors-diagram-slot-${slot}`)).toHaveLength(1);
+      expect(r.hosts(`motors-diagram-direction-${slot}`)).toHaveLength(0);
     }
+    // And the reason is stated, rather than silently omitted.
+    expect(r.text()).toContain(ar.motorsScreen.diagramCaption);
   });
 
   /**
@@ -232,20 +248,32 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
     expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
   });
 
+  /**
+   * WAS: this block asserted the fallback listed one chip per reported
+   * output. MEASURED FROM A 1366 SCREENSHOT, that list was a SECOND copy
+   * of the identity section's selector, 140px below it - six interactive
+   * chips for three motors. The fallback now explains and does not
+   * select, so the property moved rather than disappearing: "exactly N
+   * controls and no more" is asserted through the REAL SCREEN, per
+   * airframe, in motorsProductionPathUiMatrix.test.tsx, which is a
+   * stronger place for it than a component rendered alone.
+   *
+   * What stays here is what this component still owns.
+   */
   it.each([
     ['1 motor', [1]],
     ['3 motors', [1, 2, 3]],
     ['6 motors', [1, 2, 3, 4, 5, 6]],
     ['8 motors', [1, 2, 3, 4, 5, 6, 7, 8]],
-  ])('numbers every real output and no others for %s', (_name, motorNumbers) => {
+  ])('draws no aircraft and offers no second selector for %s', (_name, motorNumbers) => {
     const r = diagram({mixerModeRaw: HEX6X, motorNumbers});
     expect(r.hosts('motors-airframe-stage')).toHaveLength(0);
+    expect(r.hosts('motors-generic-outputs')).toHaveLength(1);
     for (const slot of motorNumbers) {
-      expect(r.hosts(`motors-generic-slot-${slot}`)).toHaveLength(1);
+      expect(r.hosts(`motors-generic-slot-${slot}`)).toHaveLength(0);
     }
-    expect(
-      r.hosts(`motors-generic-slot-${motorNumbers.length + 1}`),
-    ).toHaveLength(0);
+    // And it still says WHY, which is the whole reason it renders at all.
+    expect(r.hosts('motors-generic-outputs-caption')).toHaveLength(1);
   });
 
   it('renders NO outputs at all when nothing has been read', () => {
@@ -258,7 +286,10 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
   it('says WHY there is no aircraft, rather than leaving a bare list', () => {
     const r = diagram({mixerModeRaw: HEX6X, motorNumbers: [1, 2, 3, 4, 5, 6]});
     expect(r.hosts('motors-generic-outputs-caption')).toHaveLength(1);
-    expect(r.text()).toContain('لا تتوفر هندسة إطار مؤكدة');
+    // The reason is the AIRFRAME, not the count: four motors is not four
+    // corners, and a V-tail reporting four gets this same caption.
+    expect(r.text()).toContain(ar.motorsScreen.layoutGenericCaption);
+    expect(ar.motorsScreen.layoutGenericCaption).toContain('الهيكل');
   });
 
   it('makes no positional claim in the fallback', () => {
@@ -271,7 +302,7 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
     }
   });
 
-  it('the fallback still selects the same slot number it prints', () => {
+  it('the fallback cannot select anything, because it is not a selector', () => {
     const taken: number[] = [];
     const r = render(
       <MotorAirframeDiagram
@@ -281,12 +312,13 @@ describe('M-D: a frame this project has not authored is not drawn', () => {
         onSelectSlot={slot => taken.push(slot)}
       />,
     );
-    for (const slot of [1, 5, 6]) {
-      const node = r.tree.root
-        .findAll(n => n.props?.testID === `motors-generic-slot-${slot}`)
-        .find(n => typeof n.props?.onPress === 'function');
-      act(() => node!.props.onPress());
-    }
-    expect(taken).toEqual([1, 5, 6]);
+    // Nothing in the fallback is pressable. Selection is the identity
+    // section's row, which is present on every airframe - see the note
+    // above GenericMotorOutputs for the duplication this removed.
+    const pressables = r.tree.root.findAll(
+      node => typeof node.props?.onPress === 'function',
+    );
+    expect(pressables).toHaveLength(0);
+    expect(taken).toEqual([]);
   });
 });

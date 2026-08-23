@@ -47,6 +47,16 @@ import type {
 } from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 
+/* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
+   These assertions read `.toBe('—')`. The property each one is named for
+   is unchanged: nothing has been observed, and the screen must not borrow
+   a value from the expected row above. What changed is that an unobserved
+   value now SAYS it is unobserved instead of drawing a dash, which reads
+   as zero, or broken, or still loading. Keyed rather than quoted so the
+   test and the catalogue cannot drift apart. */
+const NOT_OBSERVED = String(i18n.t('motorsScreen.valueNotObserved'));
+
+
 beforeAll(async () => {
   if (!i18n.isInitialized) {
     await i18n.init();
@@ -72,12 +82,20 @@ function receiptFor(motorNumber: number): MotorTestVerificationReceipt {
   } as unknown as MotorTestVerificationReceipt;
 }
 
+/** Betaflight `mixerMode_e`. */
+const MIXER_QUADX = 3;
+const MIXER_HEX6X = 10;
+
 function snapshotFor(options: {
   readonly motorCount?: number;
   readonly protocolRaw?: number;
   readonly feature3d?: boolean;
   readonly allowed?: boolean;
   readonly receipt?: MotorTestVerificationReceipt;
+  /** MSP_MIXER_CONFIG offset 0. A READY snapshot always carries one -
+   *  setup reads command 42 before publishing READY - so a fixture
+   *  without it describes a state the controller cannot produce. */
+  readonly mixerModeRaw?: number;
 }): MotorTestControllerSnapshot {
   const motorCount = options.motorCount ?? 4;
   const allowed = options.allowed ?? true;
@@ -92,6 +110,7 @@ function snapshotFor(options: {
       motorProtocolRaw: options.protocolRaw ?? 7,
       feature3dEnabled: options.feature3d ?? false,
     },
+    mixerModeRaw: options.mixerModeRaw ?? MIXER_QUADX,
     motorDiagnosticsSupport: {
       motorCount,
       dshotTelemetryEnabled: true,
@@ -456,7 +475,7 @@ describe('34 - a blocked command says why, and offers no control', () => {
       // outside 1..MAX_SUPPORTED_MOTORS, which is a corrupt runtime
       // result rather than an airframe.
       name: 'motor count outside the firmware bound',
-      snapshot: snapshotFor({motorCount: 9}),
+      snapshot: snapshotFor({motorCount: 9, mixerModeRaw: MIXER_HEX6X}),
       reason: 'MOTOR_COUNT_OUT_OF_SCOPE',
     },
     {
@@ -578,7 +597,7 @@ describe('35 - a command acknowledgement creates no physical evidence', () => {
     expect(valueOf(tree, 'motor-direction-observed')).toBe(
       ar.motorsScreen.directionObservedNone,
     );
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(NOT_OBSERVED);
     expect(
       first(tree, 'motor-identity-confirmed-badge').findAll(
         node => typeof node.props?.children === 'string',
@@ -692,7 +711,7 @@ describe('38 - a hex keeps numbered control while the POSITION model stays quad'
   let tree: ReactTestRenderer.ReactTestRenderer;
 
   beforeEach(() => {
-    tree = mount(new Port(snapshotFor({motorCount: 6})));
+    tree = mount(new Port(snapshotFor({motorCount: 6, mixerModeRaw: MIXER_HEX6X})));
   });
   afterEach(() => act(() => tree.unmount()));
 

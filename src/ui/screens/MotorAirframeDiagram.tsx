@@ -1,20 +1,36 @@
 /**
- * Purpose-built Quad X airframe reference for the Motors workspace.
+ * The airframe map for the Motors workspace.
+ *
+ * WHAT IT DRAWS, AND FOR WHICH AIRCRAFT. It asks
+ * `authoredAirframeLayout(mixerModeRaw, motorNumbers)` where this
+ * aircraft's motors sit. When this project has authored and checked a
+ * layout for that mixer, it draws the frame with each motor in its place.
+ * When it has not - a hex, a V-tail, an unread mixer - it draws a
+ * NUMBERED LIST instead and says why. That is a correct answer, not a
+ * degraded one: a picture of the wrong aircraft is worse than no picture.
+ *
+ * WHAT IT NEVER DRAWS: A ROTATION. There is no MSP field at API 1.47 that
+ * reports which way a motor actually spins, and a mixer mode does not
+ * determine it. Authored layouts therefore carry no direction field, this
+ * component cannot be handed one, and the caption says so once in words.
+ * The expected props-out reference still exists in the VERIFICATION
+ * wizard, where comparing it against what a person actually saw is the
+ * whole point - but the operational map, which an operator reads WHILE a
+ * motor is turning, claims nothing about rotation.
  *
  * A view-only geometry layer: the slot handed to onSelectSlot is the same
  * number printed on the node, and no value here can reach a motor command
- * or relax a safety gate. Position and direction are an EXPECTED
- * reference for a Quad X frame, never a measurement from the aircraft -
+ * or relax a safety gate. Position is an EXPECTED reference transcribed
+ * from the firmware mixer table, never a measurement from the aircraft -
  * an MSP acknowledgement proves reception, not rotation.
  *
  * SIZING. The stage used to be capped at 156px on every screen, which a
- * real operator reported as unreadable: not recognisably a Quad X, front
- * unclear, M1-M4 unclear, CW/CCW unclear. It now scales with the viewport
- * through the shared layout tiers, and every internal dimension derives
- * from the stage size rather than being hard-coded, so the frame, the
- * rotors, the numbers and the rotation arrows grow together.
- * MOTOR_AIRFRAME_STAGE_MIN_WIDTH keeps the narrowest phone case at the
- * previously-audited touch-target size.
+ * real operator reported as unreadable: not recognisably an X frame,
+ * front unclear, M1-M4 unclear. It now scales with the viewport through
+ * the shared layout tiers, and every internal dimension derives from the
+ * stage size rather than being hard-coded, so the frame, the rotors and
+ * the numbers grow together. MOTOR_AIRFRAME_STAGE_MIN_WIDTH keeps the
+ * narrowest phone case at the previously-audited touch-target size.
  *
  * MEANING NEVER DEPENDS ON COLOUR: every state also carries an Arabic
  * text badge on the node itself and a matching legend entry.
@@ -39,25 +55,28 @@ import {PROSE_MEASURE, colors, fonts, radii, spacing, typography} from '../theme
 import { Icon } from '../icons';
 import { isRtlLayout } from '../icons/layoutDirection';
 import { resolveLayoutTier } from '../theme/layout';
-import { authoredAirframeLayout } from './motorAirframeLayout';
+import { authoredAirframeLayout } from '../../core/state/motorAirframeLayout';
 
 export interface MotorAirframeEntry {
   readonly slot: number;
   readonly position: MotorPhysicalPosition;
   /**
-   * UNDEFINED MEANS UNKNOWN, AND UNKNOWN IS RENDERED AS UNKNOWN.
+   * THERE IS NO DIRECTION FIELD, AND THAT IS THE POINT.
    *
    * There is no MSP field at API 1.47 that reports which way a motor
-   * actually spins - `motorsScreen.diagramDirectionSource` has said so in
-   * Arabic since P3, and auditing the pinned firmware again for this pass
-   * did not turn one up. What the screen supplies today is therefore the
-   * EXPECTED Quad-X reference, not a measurement.
+   * actually spins; auditing the pinned firmware again for M-D did not
+   * turn one up. This interface used to carry an optional direction so a
+   * caller without one could pass undefined and get an explicit unknown
+   * mark - but every caller is now an authored layout, authored layouts
+   * carry no direction (motorAirframeLayout.ts), and the "unknown mark"
+   * had become a question mark under all four motors of every aircraft.
    *
-   * This field exists so that distinction is structural rather than a
-   * caption: a caller with no direction truth passes undefined and gets an
-   * explicit unknown mark, never a confident arrow pointing the wrong way.
+   * Removing the field makes §25 STRUCTURAL rather than a matter of
+   * caller discipline: this component cannot be handed a rotation to
+   * draw, so it cannot draw one. The expected props-out reference still
+   * exists in the verification wizard, where comparing it against what a
+   * human actually saw is the entire purpose.
    */
-  readonly direction?: MotorRotationDirection;
 }
 
 /**
@@ -232,24 +251,28 @@ export function computeMotorGlyphLayout(): readonly MotorGlyphCell[] {
     MOTOR_TEST_EXPECTED_CONFIGURATION.map(entry => ({
       slot: entry.motorNumber,
       position: entry.position,
-      direction: entry.direction,
     })),
   );
   return Object.freeze(
     entries.map(entry => {
       const geometry = POSITION_GEOMETRY[entry.position];
+      // The direction comes from the EXPECTED CONFIGURATION directly, not
+      // through MotorAirframeEntry - the drawing's entry type carries no
+      // direction at all (see §25 above), and this identity helper
+      // describes the verification model rather than the drawing. Every
+      // entry in that constant has one, so the lookup cannot miss.
+      const expected = MOTOR_TEST_EXPECTED_CONFIGURATION.find(
+        candidate => candidate.motorNumber === entry.slot,
+      );
+      if (expected === undefined) {
+        throw new Error(`No expected mapping for motor ${entry.slot}`);
+      }
       return Object.freeze({
         slot: entry.slot,
         row: geometry.row,
         side: geometry.side,
         positionKey: positionKey(entry.position),
-        // computeMotorGlyphLayout builds from MOTOR_TEST_EXPECTED_CONFIGURATION,
-        // where every entry carries a direction. An unknown-direction entry
-        // reaches the RENDERED diagram, never this identity helper.
-        directionKey:
-          entry.direction === undefined
-            ? 'directionUnknown'
-            : directionKey(entry.direction),
+        directionKey: directionKey(expected.direction),
       });
     }),
   );
@@ -310,30 +333,29 @@ function cellTestId(position: MotorPhysicalPosition): string {
 }
 
 /**
- * ONE motor: a disc with two blades and a hub, and ONE rotation arrow
- * placed on a ring OUTSIDE that disc.
+ * ONE motor: a disc with two blades and a hub. That is the whole glyph.
  *
- * WHAT WAS WRONG, measured at 390px before this pass. The arrow was an
- * icon rendered INSIDE the 30px rotor circle, on top of the blades and the
- * hub, at roughly 19px - three glyphs stacked in the same 30px box. The
- * operator reported it as "arrows overlap" and "arrows can appear
- * distorted", which is exactly what a rotation arrow drawn over a
- * two-bladed propeller looks like. The CW/CCW text sat directly beneath,
- * making the node tall enough to collide with the node in the other row.
+ * WHAT WAS HERE BEFORE, AND WHY IT LEFT. A rotation arrow sat on a ring
+ * outside the disc, and where no direction was supplied a
+ * `circle-question-mark` icon took its place. Since M-D no caller can
+ * supply a direction at all - authored layouts carry motor number and
+ * position, nothing else - so the question-mark branch was the ONLY
+ * branch: four question marks orbiting every aircraft, on every airframe,
+ * for ever. That is not a disclosure, it is decoration that reads as an
+ * error state.
  *
- * NOW: the disc keeps the blades, the arrow gets its own radius outside
- * it, and the CW/CCW token moves up beside the M-number where it reads as
- * a label rather than a caption. Nothing is stacked on anything.
+ * The fact those marks stood for is now stated once, in words, in the
+ * caption under the map: rotation direction is not reported by the flight
+ * controller and is not shown here.
  *
- * MEANING IS NEVER THE ARROW ALONE - the written CW / CCW / ؟ token in the
- * label row carries the same fact for anyone the arrow does not reach.
+ * The ring VIEW stays. It reserves the same box the arrow used to need, so
+ * removing the arrow does not resize a node and re-open the measured
+ * row-collision this drawing was tuned to avoid.
  */
 function RotorGlyph({
-  direction,
   scale,
   active,
 }: {
-  direction: MotorRotationDirection | undefined;
   scale: number;
   active: boolean;
 }): React.JSX.Element {
@@ -341,9 +363,9 @@ function RotorGlyph({
   const bladeLength = Math.round(size * 0.86);
   const bladeThickness = Math.max(3, Math.round(size * 0.13));
   const hub = Math.max(6, Math.round(size * 0.26));
-  /** The arrow's own ring. 1.55x the disc keeps a real gap at every tier. */
+  /** The reserved ring. 1.55x the disc; see the note above on why it
+   *  outlived the arrow it was sized for. */
   const ring = Math.round(size * 1.55);
-  const arrow = Math.max(15, Math.round(size * 0.55));
   return (
     <View style={[styles.rotorRing, { width: ring, height: ring }]}>
       <View
@@ -374,22 +396,6 @@ function RotorGlyph({
           style={[styles.hub, { width: hub, height: hub, borderRadius: hub / 2 }]}
         />
       </View>
-      {direction !== undefined ? (
-        <Icon
-          // Absolutely positioned on the ring, clear of the disc entirely.
-          name={direction === 'CW' ? 'rotate-cw' : 'rotate-ccw'}
-          size={arrow}
-          color={active ? colors.warning : colors.accentStrong}
-          strokeWidth={2.5}
-        />
-      ) : (
-        <Icon
-          name="circle-question-mark"
-          size={arrow}
-          color={colors.textMuted}
-          strokeWidth={2.5}
-        />
-      )}
     </View>
   );
 }
@@ -420,19 +426,6 @@ function MotorNode({
       : selected
       ? { text: t('motorsScreen.slotStateSelected'), color: colors.accentStrong }
       : undefined;
-  const directionToken =
-    entry.direction === undefined
-      ? t('motorsScreen.directionUnknownShort')
-      : t(
-          entry.direction === 'CW'
-            ? 'motorsScreen.diagramCw'
-            : 'motorsScreen.diagramCcw',
-        );
-  const directionSpoken =
-    entry.direction === undefined
-      ? t('motorsScreen.directionUnknown')
-      : t(`motorsScreen.${directionKey(entry.direction)}`);
-
   return (
     <View style={styles.motorCell} testID={cellTestId(entry.position)}>
       <Pressable
@@ -441,9 +434,13 @@ function MotorNode({
         accessibilityState={{ selected }}
         // The position IS spoken, even though it left the visible node: a
         // screen-reader user cannot see where the mark sits on the frame.
+        // The position IS spoken. The ROTATION is not - not even as
+        // "unknown". Nothing supplies one, so speaking its absence four
+        // times per screen is noise, and the map's own caption says once
+        // that rotation is not reported.
         accessibilityLabel={`${`M${entry.slot}`}، ${t(
           `motorsScreen.${positionKey(entry.position)}`,
-        )}، ${directionSpoken}${badge !== undefined ? `، ${badge.text}` : ''}`}
+        )}${badge !== undefined ? `، ${badge.text}` : ''}`}
         style={[
           styles.motorNode,
           { padding: Math.round(5 * scale) },
@@ -456,31 +453,25 @@ function MotorNode({
         ]}
         testID={`motors-airframe-slot-${entry.slot}`}
       >
-        <RotorGlyph
-          direction={entry.direction}
-          scale={scale}
-          active={activity !== undefined}
-        />
-        {/* ONE label row: the M-number and the direction token side by
-            side. The Arabic position phrase that used to sit here is gone
-            - it was the widest and tallest thing in the node, it repeated
-            what the node's own place on the frame already says, and it is
-            still spoken by the accessibility label above. */}
+        <RotorGlyph scale={scale} active={activity !== undefined} />
+        {/* ONE label row, and now ONE thing in it: the M-number.
+            The Arabic position phrase left this row earlier - it was the
+            widest and tallest thing in the node and repeated what the
+            node's own place on the frame already says, and it is still
+            spoken by the accessibility label above.
+            THE ROTATION TOKEN LEFT IT IN M-D. Authored layouts carry no
+            direction (see motorAirframeLayout.ts), so the token had
+            exactly one value left - a bare "؟" printed under every motor
+            on every airframe. A question mark standing where a value
+            belongs is not a disclosure, it is four pieces of furniture
+            that say nothing. The claim it stood for is made once, in
+            words, in the caption below the map. */}
         <View style={styles.labelRow}>
           <Text
             style={[styles.slot, { fontSize: slotFont, lineHeight: slotFont + 2 }]}
             testID={`motors-diagram-slot-${entry.slot}`}
           >
             {`M${entry.slot}`}
-          </Text>
-          <Text
-            style={[
-              styles.directionText,
-              { fontSize: tokenFont, lineHeight: tokenFont + 3 },
-            ]}
-            testID={`motors-diagram-direction-${entry.slot}`}
-          >
-            {directionToken}
           </Text>
         </View>
         {/* A RESERVED badge row, always present.
@@ -518,81 +509,32 @@ function MotorNode({
 }
 
 /**
- * NOT A DEGRADED MODE. Numbered outputs, no aircraft, no claimed
- * positions, no rotation arrows - and it says what it is in the caption.
- * A correct list beats a misleading picture, and for every airframe this
- * project has not authored artwork for, this IS the right answer.
+ * NOT A DEGRADED MODE, AND NOT A SECOND SELECTOR.
  *
- * It renders the motor numbers it was GIVEN. It does not count them up
- * from a length, so an empty list renders an empty grid rather than
- * inventing a first motor.
+ * WHERE THERE IS NO AUTHORED LAYOUT, THIS BLOCK SAYS SO. No aircraft, no
+ * claimed positions, no rotation - and it names the reason rather than
+ * leaving a silent gap. For every airframe this project has not authored
+ * artwork for, saying so IS the right answer; a picture of the wrong
+ * aircraft is worse than no picture.
+ *
+ * IT USED TO REPEAT THE MOTOR SELECTOR, AND THAT WAS THE DEFECT.
+ * MEASURED FROM A 1366 SCREENSHOT on a three-motor build: the identity
+ * section's chip row printed M1 M2 M3, and 140px below it this block
+ * printed M1 M2 M3 again - six interactive chips for three motors, both
+ * rows doing exactly the same thing. The identity section's selector is
+ * unconditional and is deliberately "the only selector that is always
+ * correct, whatever the airframe", so this one was the copy.
+ *
+ * The component therefore renders a MAP or an EXPLANATION, never a
+ * selector. Selection belongs to the row above it, on every airframe.
  */
-function GenericMotorOutputs({
-  motorNumbers,
-  selectedSlot,
-  liveSlot,
-  liveActivity,
-  verifiedSlots,
-  onSelectSlot,
-}: {
-  motorNumbers: readonly number[];
-  selectedSlot: number;
-  liveSlot?: number;
-  liveActivity?: MotorSlotActivity;
-  verifiedSlots: readonly number[];
-  onSelectSlot: (slot: number) => void;
-}): React.JSX.Element {
+function GenericMotorOutputs(): React.JSX.Element {
   const { t } = useTranslation();
   return (
     <View style={styles.root} testID="motors-generic-outputs">
       <Text style={styles.diagramTitle}>
         {t('motorsScreen.layoutGenericHeading')}
       </Text>
-      <View style={styles.genericGrid}>
-        {motorNumbers.map(slot => {
-          const activity = slot === liveSlot ? liveActivity : undefined;
-          const verified = verifiedSlots.includes(slot);
-          const badge =
-            activity !== undefined
-              ? { text: t(activityLabelKey(activity)), color: activityColor(activity) }
-              : verified
-              ? { text: t('motorsScreen.slotStateObserved'), color: colors.success }
-              : slot === selectedSlot
-              ? { text: t('motorsScreen.slotStateSelected'), color: colors.accentStrong }
-              : undefined;
-          return (
-            <Pressable
-              key={slot}
-              onPress={() => onSelectSlot(slot)}
-              accessibilityRole="radio"
-              accessibilityState={{ selected: slot === selectedSlot }}
-              accessibilityLabel={`M${slot}${
-                badge !== undefined ? `، ${badge.text}` : ''
-              }`}
-              style={[
-                styles.genericCell,
-                slot === selectedSlot && styles.motorNodeSelected,
-                verified && styles.motorNodeVerified,
-                // Only the COLOUR is dynamic; the weight is a constant and
-                // belongs in the stylesheet, not inline.
-                activity !== undefined && styles.genericCellActive,
-                activity !== undefined && { borderColor: activityColor(activity) },
-              ]}
-              testID={`motors-generic-slot-${slot}`}
-            >
-              <Text style={styles.genericSlotText}>{`M${slot}`}</Text>
-              {badge !== undefined ? (
-                <Text
-                  style={[styles.genericBadgeText, { color: badge.color }]}
-                  numberOfLines={1}
-                >
-                  {badge.text}
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
-      </View>
       <Text style={styles.caption} testID="motors-generic-outputs-caption">
         {t('motorsScreen.layoutGenericCaption')}
       </Text>
@@ -663,16 +605,7 @@ export function MotorAirframeDiagram({
    */
   const layout = authoredAirframeLayout(mixerModeRaw, motorNumbers);
   if (layout === undefined) {
-    return (
-      <GenericMotorOutputs
-        motorNumbers={motorNumbers}
-        selectedSlot={selectedSlot}
-        liveSlot={liveSlot}
-        liveActivity={liveActivity}
-        verifiedSlots={verifiedSlots}
-        onSelectSlot={onSelectSlot}
-      />
-    );
+    return <GenericMotorOutputs />;
   }
 
   /**
@@ -1032,13 +965,6 @@ const styles = StyleSheet.create({
     backgroundColor: colors.textPrimary,
     borderColor: colors.background,
     borderWidth: 1,
-  },
-  directionText: {
-    /* MONO on purpose: CW/CCW is a technical identifier, not prose. */
-    ...typography.mono,
-    color: colors.accentStrong,
-    fontWeight: '700',
-    writingDirection: 'ltr',
   },
   slot: {
     ...typography.mono,

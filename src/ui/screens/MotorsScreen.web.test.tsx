@@ -170,11 +170,19 @@ describe('PART AD: Motors web parity', () => {
     expect(rtl ? rightIndex < leftIndex : rightIndex > leftIndex).toBe(true);
   });
 
-  it('shows exactly one rotation indicator per motor', () => {
+  /** Was "exactly one per motor" - correct while a CW/CCW/؟ token was
+   *  printed, and now stronger: an authored layout carries no direction,
+   *  so the browser build shows no rotation glyph at all. The motor node
+   *  itself is still asserted present, so this cannot pass on an empty
+   *  diagram. */
+  it('shows NO rotation indicator per motor, and still shows the motor', () => {
     for (const slot of [1, 2, 3, 4]) {
       expect(
-        host.querySelectorAll(`[data-testid="motors-diagram-direction-${slot}"]`),
+        host.querySelectorAll(`[data-testid="motors-diagram-slot-${slot}"]`),
       ).toHaveLength(1);
+      expect(
+        host.querySelectorAll(`[data-testid="motors-diagram-direction-${slot}"]`),
+      ).toHaveLength(0);
     }
   });
 

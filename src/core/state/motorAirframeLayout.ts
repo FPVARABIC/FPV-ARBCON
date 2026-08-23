@@ -49,8 +49,8 @@
 import {
   MIXER_MODE_QUADX,
   MIXER_MODE_QUADX_1234,
-} from '../../core/protocol/msp/decoding/decodeMixerConfig';
-import type {MotorPhysicalPosition} from '../../core/state/motorVerificationModel';
+} from '../protocol/msp/decoding/decodeMixerConfig';
+import type {MotorPhysicalPosition} from './motorVerificationModel';
 
 /** One motor's place on the frame. Deliberately not named a "node": it is
  *  a claim about an aircraft, not about a drawing. */

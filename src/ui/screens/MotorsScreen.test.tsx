@@ -28,6 +28,7 @@ import {
   endMotorTestSessionSafely,
 } from './MotorsScreen';
 import '../../i18n';
+import ar from '../../i18n/locales/ar.json';
 import i18n from '../../i18n';
 import type {
   MotorTestActivationBlockReason,
@@ -1683,15 +1684,22 @@ describe('MotorsScreen - direction handling', () => {
     rendered.unmount();
   });
 
-  it('never presents the displayed directions as read from the aircraft', () => {
+  it('never presents a rotation direction as read from the aircraft', () => {
     const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
     // P1b-B.2 shortened the visible line and moved the longer explanation
-    // under a details toggle. The CLAIM is unchanged and still requires no
-    // interaction to read: expected, not read from the flight controller.
+    // under a details toggle. M-D §25 went further: the operational map
+    // shows no rotation AT ALL, so the visible line no longer says the
+    // arrows are expected - it says there are none and why. The claim is
+    // strictly stronger, and it still requires no interaction to read.
+    //
+    // Keyed to the catalogue rather than a copied string. The previous
+    // version of this test held its own copy of the Arabic, so a wording
+    // change failed it for the wrong reason.
     expect(rendered.query('motors-diagram-direction-source')).toBeDefined();
-    expect(texts(rendered)).toContain(
-      'اتجاهات المخطط متوقعة، وليست مقروءة من متحكم الطيران.',
-    );
+    const visible = texts(rendered);
+    expect(visible).toContain(ar.motorsScreen.diagramDirectionSourceShort);
+    // And nothing anywhere on the screen prints a rotation token.
+    expect(String(visible)).not.toMatch(/\bCW\b|\bCCW\b/);
     rendered.unmount();
   });
 });

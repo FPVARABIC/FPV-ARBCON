@@ -43,6 +43,10 @@ import {
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
 import {evaluateMotorIdentificationCapability} from '../../core/state/motorIdentificationCapability';
+
+/** Betaflight `mixerMode_e` QUADX - the airframe the shipped
+ *  identification model describes. */
+const MIXER_QUADX = 3;
 import type {
   MotorTestControllerSnapshot,
   MotorTestVerificationReceipt,
@@ -50,6 +54,16 @@ import type {
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 import {MotorOutputMappingSection} from './MotorOutputMappingSection';
 import {MotorIdentitySection} from './MotorIdentitySection';
+
+/* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
+   These assertions read `.toBe('—')`. The property each one is named for
+   is unchanged: nothing has been observed, and the screen must not borrow
+   a value from the expected row above. What changed is that an unobserved
+   value now SAYS it is unobserved instead of drawing a dash, which reads
+   as zero, or broken, or still loading. Keyed rather than quoted so the
+   test and the catalogue cannot drift apart. */
+const NOT_OBSERVED = String(i18n.t('motorsScreen.valueNotObserved'));
+
 
 beforeAll(async () => {
   if (!i18n.isInitialized) {
@@ -126,6 +140,12 @@ function snapshotFor(options: {
       motorProtocolRaw: 7,
       feature3dEnabled: false,
     },
+    // A READY snapshot always carries the mixer byte - the motor-test
+    // setup reads MSP_MIXER_CONFIG (42) before it publishes READY - and
+    // these fixtures have always described a Quad X. It is stated here
+    // rather than inferred from the count, because four motors is not
+    // four corners.
+    mixerModeRaw: MIXER_QUADX,
     motorDiagnosticsSupport: {
       motorCount: options.motorCount,
       dshotTelemetryEnabled: true,
@@ -242,7 +262,7 @@ describe('26 - selecting a motor is addressing, and nothing else', () => {
     // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
     // nothing was observed - it is never borrowed from the template row
     // above it - and the badge on the same line still says so in words.
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(NOT_OBSERVED);
     expect(
       first(tree, 'motor-identity-confirmed-badge').findAll(
         node => typeof node.props?.children === 'string',
@@ -332,7 +352,7 @@ describe('26 - correcting a mistaken observation', () => {
     // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
     // nothing was observed - it is never borrowed from the template row
     // above it - and the badge on the same line still says so in words.
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(NOT_OBSERVED);
     expect(
       first(tree, 'motor-identity-confirmed-badge').findAll(
         node => typeof node.props?.children === 'string',
@@ -474,12 +494,22 @@ describe('27 - a six-motor aircraft is addressed truthfully', () => {
     expect(has(tree, 'verification-wizard')).toBe(false);
   });
 
+  /**
+   * The reason and the count are still stated, in ONE block rather than
+   * two. `motors-identification-unsupported` used to repeat, title and
+   * body, what `motor-identification-unavailable` had already said
+   * directly above it; the duplicate is gone and the count folded into
+   * the survivor.
+   */
   it('says why physical identification is unavailable, naming the count', () => {
-    expect(has(tree, 'motors-identification-unsupported')).toBe(true);
-    expect(textOf(tree)).toContain(
-      ar.motorsScreen.identificationQuadOnlyTitle,
-    );
-    expect(textOf(tree)).toContain('6');
+    expect(has(tree, 'motor-identification-unavailable')).toBe(true);
+    const rendered = textOf(tree);
+    expect(rendered).toContain(ar.motorsScreen.identifyUnavailableTitle);
+    expect(rendered).toContain('6');
+    // What still works is named in the same block.
+    expect(rendered).toContain(ar.motorsScreen.identifyUnavailableRemains);
+    // And the block that used to repeat it is not rendered twice.
+    expect(has(tree, 'motors-identification-unsupported')).toBe(false);
   });
 
   it('keeps numbered motor control and STOP available', () => {
@@ -543,7 +573,10 @@ async function mountMapping(
         sessionId="fc-session"
         motorCount={motorCount}
         verification={options.verification ?? EMPTY_VERIFICATION_STATE}
-        capability={evaluateMotorIdentificationCapability(motorCount)}
+        capability={evaluateMotorIdentificationCapability(
+          MIXER_QUADX,
+          Array.from({length: motorCount}, (_, index) => index + 1),
+        )}
         onEndMotorTestSession={async () => {}}
         controller={controller as never}
       />,
@@ -739,7 +772,7 @@ describe('the identity section names an output only when one was read', () => {
           slots={[1, 2, 3, 4]}
           selectedSlot={2}
           onSelectSlot={() => {}}
-          capability={evaluateMotorIdentificationCapability(4)}
+          capability={evaluateMotorIdentificationCapability(MIXER_QUADX, [1, 2, 3, 4])}
           mixerModeRaw={undefined}
           diagramMotorNumbers={[1, 2, 3, 4]}
           active={false}

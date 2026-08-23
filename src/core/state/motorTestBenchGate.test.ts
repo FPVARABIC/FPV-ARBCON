@@ -593,6 +593,54 @@ describe('the bench gate, with the real observation path', () => {
     });
   });
 
+  /**
+   * M-D §49 - THE MIXER READ IS PART OF THE SETUP CONTRACT, SO IT FAILS
+   * CLOSED LIKE EVERY OTHER READ.
+   *
+   * FOUND BY MUTATION. Deleting the early return after the MSP_MIXER_CONFIG
+   * read - so a failed read fell through instead of aborting setup -
+   * changed no test result. Every fixture in this file answered command 42,
+   * so nothing here had ever seen it fail. That is a coverage hole rather
+   * than a defect: the production code was already correct, and now
+   * something says so.
+   *
+   * WHY IT MUST FAIL CLOSED RATHER THAN CONTINUE WITHOUT AN AIRFRAME. A
+   * session that reached READY with the mixer unread would put the screen
+   * back in the state M-D exists to remove: motors commandable, and the
+   * airframe a guess. Refusing the session is the honest answer, and it
+   * matches how the other four evidence reads already behave.
+   */
+  it('refuses to publish READY when the airframe read is rejected', async () => {
+    const harness = harnessFor([[MSP_MIXER_CONFIG, REJECT]]);
+    const snapshot = await runSetup(harness);
+
+    expect(snapshot.outcome.kind).not.toBe('READY');
+    expect(snapshot.activation.allowed).toBe(false);
+    // And nothing invented an airframe on the way down.
+    expect(snapshot.mixerModeRaw).toBeUndefined();
+    // NAMED, not merely non-READY. The correct path returns the failing
+    // read's OWN result, so the session reports a configuration-read
+    // failure that requires a new session. Deleting the early return
+    // instead reaches `mixer.value.mixerModeRaw` on a failure object,
+    // throws, and lands in the generic catch - which also refuses the
+    // session, so an assertion on "not READY" alone cannot tell the two
+    // apart. This one can.
+    expect(snapshot.outcome).toMatchObject({
+      kind: 'FAILED_CLOSED',
+      reason: 'MOTOR_CONFIG_REQUEST_FAILED',
+      requiresNewSession: true,
+    });
+  });
+
+  it('does not command a motor after an airframe read failure', async () => {
+    // The gate that matters. A refused setup must leave the command path
+    // shut, not merely unlabelled.
+    const harness = harnessFor([[MSP_MIXER_CONFIG, REJECT]]);
+    await runSetup(harness);
+    const commands = new Set(harness.commands);
+    expect(commands.has(MSP_SET_MOTOR_FIXTURE)).toBe(false);
+  });
+
   it('cannot publish READY before the first observation is served', async () => {
     const harness = harnessFor();
     let settled = false;
@@ -2103,6 +2151,99 @@ describe('M-C - every airframe reaches a commandable session', () => {
    * the right place to say so: eight different mixer bytes, each expected
    * back unchanged.
    */
+  /**
+   * M-D §34 - N+1 IS REFUSED BEFORE ANYTHING IS ENCODED, ON EVERY
+   * AIRFRAME.
+   *
+   * The existing six-motor case proved the rule once. Per airframe is
+   * what M-D asks for, because the number that must be refused is
+   * different on each one - and a clamp to N would pass a spot check on
+   * the quad while quietly commanding motor 6 on a hexacopter whenever
+   * the UI asked for 7.
+   *
+   * REFUSED BEFORE THE WIRE, not sent and ignored: the frame count does
+   * not move.
+   */
+  it.each(AIRFRAMES.map(a => [a.name, a] as const))(
+    '%s: refuses motor N+1 without putting a frame on the wire',
+    async (_name, airframe) => {
+      const harness = airframeHarness(airframe);
+      await runSetup(harness);
+      const before = motorFrames(harness).length;
+
+      expect(harness.controller.pulseMotor(airframe.motorCount + 1)).toBe(
+        'INVALID_MOTOR',
+      );
+      await flush(10);
+
+      expect(motorFrames(harness)).toHaveLength(before);
+    },
+  );
+
+  /**
+   * M-D §24 - THE LAST MOTOR IS AS REAL AS THE FIRST.
+   *
+   * Motor 6 on a hexacopter and motor 8 on an octocopter are exactly the
+   * ones a quad-shaped assumption loses, so they are commanded explicitly
+   * rather than left to the 1..N loop above.
+   */
+  it.each(AIRFRAMES.map(a => [a.name, a] as const))(
+    '%s: motor N itself commands, and lands in ITS own slot',
+    async (_name, airframe) => {
+      const harness = airframeHarness(airframe);
+      await runSetup(harness);
+      const last = airframe.motorCount;
+
+      expect(harness.controller.pulseMotor(last)).toBe('ACCEPTED');
+      await flush(10);
+
+      const frame = motorFrames(harness)[0];
+      const values: number[] = [];
+      for (let index = 0; index < 8; index++) {
+        values.push(frame[index * 2] + frame[index * 2 + 1] * 256);
+      }
+      // Slot last-1 is the commanded one. Every other slot, including the
+      // padding, is the stop value.
+      expect(values[last - 1]).toBe(1050);
+      for (let index = 0; index < 8; index++) {
+        if (index !== last - 1) {
+          expect(values[index]).toBe(1000);
+        }
+      }
+    },
+  );
+
+  /**
+   * M-D §38 - TEARDOWN IS DETERMINISTIC ON A NON-QUAD.
+   *
+   * The teardown guarantee was proven on a quad. The airframes that could
+   * plausibly break it are the ones whose motor count is not four, so the
+   * whole matrix runs it: a live pulse, then close, and the LAST thing on
+   * the wire is a full-width all-stop.
+   */
+  it.each(AIRFRAMES.map(a => [a.name, a] as const))(
+    '%s: closing a live session ends with a full-width all-stop',
+    async (_name, airframe) => {
+      const harness = airframeHarness(airframe);
+      await runSetup(harness);
+      expect(harness.controller.pulseMotor(airframe.motorCount)).toBe(
+        'ACCEPTED',
+      );
+      await flush(10);
+
+      await drive(harness, harness.controller.close());
+
+      const frames = motorFrames(harness);
+      const final = frames[frames.length - 1];
+      expect(final).toHaveLength(16);
+      const values: number[] = [];
+      for (let index = 0; index < 8; index++) {
+        values.push(final[index * 2] + final[index * 2 + 1] * 256);
+      }
+      expect(values).toEqual(new Array(8).fill(1000));
+    },
+  );
+
   it.each(AIRFRAMES.map(a => [a.name, a] as const))(
     '%s: carries its own mixer byte through to the snapshot, unchanged',
     async (_name, airframe) => {

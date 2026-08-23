@@ -11,7 +11,7 @@
 import {
   MIXERS_WITH_AUTHORED_POSITIONAL_LAYOUT,
   mixerHasAuthoredPositionalLayout,
-} from '../../core/firmware-adapters/betaflightMixerReferenceV147';
+} from '../firmware-adapters/betaflightMixerReferenceV147';
 import {
   authoredAirframeLayout,
   mixerHasAuthoredLayout,

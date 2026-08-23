@@ -42,6 +42,21 @@ import type {
 } from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 
+/* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
+   These assertions read `.toBe('—')`. The property each one is named for
+   is unchanged: nothing has been observed, and the screen must not borrow
+   a value from the expected row above. What changed is that an unobserved
+   value now SAYS it is unobserved instead of drawing a dash, which reads
+   as zero, or broken, or still loading. Keyed rather than quoted so the
+   test and the catalogue cannot drift apart. */
+const NOT_OBSERVED = String(i18n.t('motorsScreen.valueNotObserved'));
+/* The COMPACT CHIP carries no mark at all. It is ~40px wide and the row's
+   height is reserved either way, so an unconfirmed motor simply shows
+   nothing - and its accessibilityLabel still speaks the full state, which
+   is asserted on the very next line of each case below. */
+const EMPTY_MARK = '';
+
+
 beforeAll(async () => {
   if (!i18n.isInitialized) {
     await i18n.init();
@@ -74,6 +89,12 @@ function snapshotFor(
     outcome: {kind: 'READY'},
     firmwareCompatibility: undefined,
     motorScope: {motorCount, motorProtocolRaw: 7, feature3dEnabled: false},
+    // MIXER_QUADX. A READY snapshot always carries the mixer byte - the
+    // motor-test setup reads MSP_MIXER_CONFIG (42) before it publishes
+    // READY - and these fixtures have always described a Quad X. It is
+    // stated here rather than inferred from the count, because four
+    // motors is not four corners.
+    mixerModeRaw: 3,
     motorDiagnosticsSupport: {
       motorCount,
       dshotTelemetryEnabled: true,
@@ -229,7 +250,7 @@ describe('20 - one active form, every motor still represented', () => {
     // of "unconfirmed" no longer stand above a line saying "unconfirmed".
     expect(
       first(tree, 'motor-identification-summary-M2').props.children,
-    ).toBe('—');
+    ).toBe(EMPTY_MARK);
     // ...and the full state is still SPOKEN, unchanged.
     expect(first(tree, 'motor-identity-M2').props.accessibilityLabel).toContain(
       ar.motorsScreen.identityStatus.UNCONFIRMED,
@@ -270,7 +291,7 @@ describe('20 - observations survive switching between motors', () => {
     act(() => first(tree, 'motor-identity-M3').props.onPress());
     expect(
       first(tree, 'motor-identification-summary-M3').props.children,
-    ).toBe('—')
+    ).toBe(EMPTY_MARK)
     // The word itself is still spoken to assistive technology.
     expect(
       first(tree, 'motor-identity-M3').props.accessibilityLabel,
@@ -278,7 +299,7 @@ describe('20 - observations survive switching between motors', () => {
     // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
     // nothing was observed - it is never borrowed from the template row
     // above it - and the badge on the same line still says so in words.
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(NOT_OBSERVED);
     expect(
       first(tree, 'motor-identity-confirmed-badge').findAll(
         node => typeof node.props?.children === 'string',
@@ -292,7 +313,7 @@ describe('20 - observations survive switching between motors', () => {
     // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
     // nothing was observed - it is never borrowed from the template row
     // above it - and the badge on the same line still says so in words.
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(NOT_OBSERVED);
     expect(
       first(tree, 'motor-identity-confirmed-badge').findAll(
         node => typeof node.props?.children === 'string',
@@ -366,7 +387,7 @@ describe('21 - a receipt never migrates to another motor', () => {
     ).toBe(ar.motorsScreen.identityStatus.CONFIRMED);
     expect(
       first(tree, 'motor-identification-summary-M2').props.children,
-    ).toBe('—')
+    ).toBe(EMPTY_MARK)
     // The word itself is still spoken to assistive technology.
     expect(
       first(tree, 'motor-identity-M2').props.accessibilityLabel,
@@ -424,16 +445,36 @@ describe('22 - a six-motor aircraft is told the truth before it acts', () => {
     expect(rendered).toContain(ar.motorsScreen.identifyUnavailableRemains);
   });
 
-  it('marks every motor NOT_APPLICABLE rather than outstanding', () => {
+  /**
+   * WAS: every chip printed "identification unavailable" as a visible
+   * mark. MEASURED ON AN OCTO SCREENSHOT, that is the same sentence eight
+   * times under eight identical chips, immediately below a card that has
+   * just said it once - the state is a property of the AIRFRAME, so it
+   * cannot distinguish one chip from another.
+   *
+   * The STATE is unchanged and still asserted; it is read from the chip's
+   * accessibility label, which is where it now lives and where a screen
+   * reader has always found it. The visible mark being blank is asserted
+   * too, so the noise cannot come back unnoticed.
+   */
+  it('carries NOT_APPLICABLE as state, without printing it under every chip', () => {
     for (const slot of [1, 5, 6]) {
       expect(
+        first(tree, `motor-identity-M${slot}`).props.accessibilityLabel,
+      ).toContain(ar.motorsScreen.identityStatus.NOT_APPLICABLE);
+      expect(
         first(tree, `motor-identification-summary-M${slot}`).props.children,
-      ).toBe(ar.motorsScreen.identityStatus.NOT_APPLICABLE);
+      ).toBe('');
     }
     // And no misleading "2 of 6" physical-verification metric.
     expect(textOf(tree)).toContain(
       ar.motorsScreen.summaryConfirmedUnavailable,
     );
+    // Said once in the section, not once per motor.
+    const occurrences = textOf(tree).split(
+      ar.motorsScreen.identityStatus.NOT_APPLICABLE,
+    ).length - 1;
+    expect(occurrences).toBeLessThanOrEqual(1);
   });
 
   it('shows no Quad-X expected position for M5', () => {
@@ -489,7 +530,7 @@ describe('23 - a quad keeps the whole identification workflow', () => {
     // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
     // nothing was observed - it is never borrowed from the template row
     // above it - and the badge on the same line still says so in words.
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(NOT_OBSERVED);
     expect(
       first(tree, 'motor-identity-confirmed-badge').findAll(
         node => typeof node.props?.children === 'string',
@@ -620,7 +661,7 @@ describe('18 - every exceptional answer stays reachable', () => {
     // COMPACT, NOT WEAKER. The confirmed VALUE is an em-dash because
     // nothing was observed - it is never borrowed from the template row
     // above it - and the badge on the same line still says so in words.
-    expect(first(tree, 'motor-identity-confirmed').props.children).toBe('—');
+    expect(first(tree, 'motor-identity-confirmed').props.children).toBe(NOT_OBSERVED);
     expect(
       first(tree, 'motor-identity-confirmed-badge').findAll(
         node => typeof node.props?.children === 'string',

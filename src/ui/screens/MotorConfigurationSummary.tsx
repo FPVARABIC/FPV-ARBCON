@@ -28,10 +28,16 @@ const MOTOR_PROTOCOL_NAMES: Readonly<Record<number, string>> = Object.freeze({
   9: 'DISABLED',
 });
 
-/** Version-scoped display helper. Unknown raw values remain explicit. */
+/**
+ * Version-scoped display helper. Unknown raw values remain explicit.
+ *
+ * M-D §46: an unread protocol returns an empty string rather than a dash,
+ * and every caller decides what to say instead - MotorAirframeSummary
+ * says "not read yet", which is the fact.
+ */
 export function formatMotorProtocol(raw: number | undefined): string {
   if (raw === undefined) {
-    return '—';
+    return '';
   }
   return MOTOR_PROTOCOL_NAMES[raw] ?? `RAW ${raw}`;
 }
@@ -49,7 +55,10 @@ export function MotorConfigurationSummary({
     {
       id: 'count',
       label: t('motorsScreen.configMotorCount'),
-      value: scope === undefined ? '—' : String(scope.motorCount),
+      value:
+        scope === undefined
+          ? t('motorsScreen.valueNotRead')
+          : String(scope.motorCount),
       tone: styles.factValue,
     },
     {
@@ -63,7 +72,7 @@ export function MotorConfigurationSummary({
       label: t('motorsScreen.config3d'),
       value:
         scope === undefined
-          ? '—'
+          ? t('motorsScreen.valueNotRead')
           : scope.feature3dEnabled
           ? t('motorsScreen.configEnabled')
           : t('motorsScreen.configDisabled'),

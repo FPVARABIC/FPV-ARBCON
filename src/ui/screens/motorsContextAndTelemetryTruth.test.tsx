@@ -37,6 +37,17 @@ import {
 } from '../../core/state/motorDiagnosticsSemantics';
 import type {MspMotorTelemetryEntry} from '../../core/protocol/msp/decoding/decodeMotorTelemetry';
 import {MotorsScreenView} from './MotorsScreen';
+import i18n from '../../i18n';
+
+/* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
+   These assertions read `.toBe('—')`. The property each one is named for
+   is unchanged: nothing has been observed, and the screen must not borrow
+   a value from the expected row above. What changed is that an unobserved
+   value now SAYS it is unobserved instead of drawing a dash, which reads
+   as zero, or broken, or still loading. Keyed rather than quoted so the
+   test and the catalogue cannot drift apart. */
+const NOT_OBSERVED = String(i18n.t('motorsScreen.valueNotObserved'));
+
 
 const AUTHORITY = {sessionId: 'context-truth', generation: 1} as const;
 
@@ -487,7 +498,7 @@ describe('confirmation is bound to one motor', () => {
     // Nothing has been observed, so the CONFIRMED direction says so - it
     // is not back-filled from the template.
     expect(r.node('motor-identity-confirmed-direction')?.props.children).toBe(
-      '—',
+      NOT_OBSERVED,
     );
     // The line carries ONE badge for the observation it reports, and it
     // still says "unconfirmed" in words rather than leaving a bare dash.

@@ -403,7 +403,10 @@ export function MotorDiagnosticsPanel({
               <View style={styles.valueRow}>
                 <Text style={styles.slotName}>{`M${output.slot}`}</Text>
                 <Text style={styles.numericValue}>
-                  {output.value === undefined ? '—' : output.value}
+                  {/* M-D §46: a slot with no reading says so. */}
+                  {output.value === undefined
+                    ? t('motorsScreen.valueNotRead')
+                    : output.value}
                 </Text>
               </View>
               <Meter

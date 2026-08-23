@@ -182,15 +182,16 @@ export function MotorIdentitySection({
 
   const quadSupported = capability.kind === 'SUPPORTED';
   /**
-   * A COUNT WAS READ AND IT IS NOT THE MODEL'S. This is the case where an
-   * identify action would be a lie, so the call to action is withdrawn.
-   * A merely UNKNOWN count is NOT this case: nothing has been read yet,
-   * the protected control explains its own blocked state, and hiding it
-   * there would remove the surface that does the explaining.
+   * THE AIRCRAFT WAS READ AND IT IS NOT THE MODEL'S AIRFRAME. This is the
+   * case where an identify action would be a lie, so the call to action is
+   * withdrawn. A merely UNREAD airframe or count is NOT this case: nothing
+   * has been read yet, the protected control explains its own blocked
+   * state, and hiding it there would remove the surface that does the
+   * explaining.
    */
   const identificationOutOfScope =
     capability.kind === 'UNSUPPORTED' &&
-    capability.reason === 'MOTOR_COUNT_MISMATCH';
+    capability.reason === 'AIRFRAME_NOT_THE_MODEL';
 
   const entry = verification.entries.find(e => e.motorNumber === selectedSlot);
   const confirmedPosition =
@@ -315,9 +316,24 @@ export function MotorIdentitySection({
             ]}
             testID={`motor-identification-summary-M${row.motorNumber}`}
           >
-            {row.status === 'UNCONFIRMED' &&
-            !(receipt !== undefined && receipt.motorNumber === row.motorNumber)
-              ? '—'
+            {/* M-D §46: an unconfirmed slot shows NOTHING rather than a
+                dash. The badge row's height is reserved either way, so
+                the layout does not move - and an empty mark says "no
+                result yet" without pretending to be a reading.
+                NOT_APPLICABLE is blank for the same reason the rule at the
+                top of this block already gives: it says nothing the block
+                above does not. It is a property of the AIRFRAME, identical
+                on every chip, so on an octo it printed the same sentence
+                eight times under eight identical chips. The state itself
+                is unchanged and is still spoken by the chip's
+                accessibilityLabel. */}
+            {(row.status === 'NOT_APPLICABLE' ||
+              (row.status === 'UNCONFIRMED' &&
+                !(
+                  receipt !== undefined &&
+                  receipt.motorNumber === row.motorNumber
+                )))
+              ? ''
               : statusLabel(row.motorNumber, row.status)}
           </Text>
         </Pressable>
@@ -439,21 +455,26 @@ export function MotorIdentitySection({
    * spells out "expected position ... expected direction ...", so the
    * compression is visual only.
    */
+  /* M-D §46 - NO DASH SWEEP. These four were em dashes. A dash in a
+     value slot reads as zero, or broken, or still loading, and is none
+     of those: the expected pair is UNAVAILABLE for an airframe the
+     Quad-X verification model does not describe, and the confirmed pair
+     is simply NOT OBSERVED YET. Two different absences, now said. */
   const expectedPositionText =
     expected === undefined
-      ? '—'
+      ? t('motorsScreen.valueNotAvailable')
       : t(`motorVerification.position.${expected.position}`);
   const expectedDirectionText =
     expected === undefined
-      ? '—'
+      ? t('motorsScreen.valueNotAvailable')
       : t(`motorVerification.direction.${expected.direction}`);
   const confirmedPositionText =
     confirmedPosition === undefined
-      ? '—'
+      ? t('motorsScreen.valueNotObserved')
       : t(`motorVerification.position.${confirmedPosition}`);
   const confirmedDirectionText =
     confirmedDirection === undefined
-      ? '—'
+      ? t('motorsScreen.valueNotObserved')
       : t(`motorVerification.direction.${confirmedDirection}`);
 
   const facts = (
@@ -622,6 +643,15 @@ export function MotorIdentitySection({
           <Text style={styles.caption}>
             {t('motorsScreen.identifyUnavailableBody', {
               motor: `M${selectedSlot}`,
+              // The count that was actually READ. It used to live in a
+              // second card below this one, which said the same thing
+              // twice; folding it in here keeps every fact and leaves one
+              // block instead of two.
+              count:
+                capability.kind === 'UNSUPPORTED' &&
+                capability.reason === 'AIRFRAME_NOT_THE_MODEL'
+                  ? capability.motorCount
+                  : slots.length,
             })}
           </Text>
           <Text style={styles.caption}>
@@ -682,16 +712,36 @@ export function MotorIdentitySection({
         onMultipleMotorsReported={onMultipleMotorsReported}
       />
     </View>
+  ) : identificationOutOfScope ? (
+    /* SAID ONCE, NOT TWICE.
+     *
+     * MEASURED FROM A SCREENSHOT at 1366 on an unknown-mixer build: this
+     * one column stated "identification does not apply to this airframe"
+     * EIGHT times - a chip badge, a line beside the selected motor, three
+     * per-chip marks, and two full cards whose titles and bodies said the
+     * same thing one after the other. An operator on a hex or a V-tail met
+     * a wall of apology where a hex or a V-tail should simply be a normal
+     * aircraft with numbered motor control.
+     *
+     * The prelude above already renders the capability card - title, why,
+     * and what remains available - exactly where the identify action would
+     * have been, which is where the eye goes. The wizard's own copy of it
+     * is the duplicate, so it is gone.
+     *
+     * THE OTHER unsupported reasons still land in the branch below: when
+     * the airframe or the count has simply not been READ yet, the prelude
+     * still shows the protected hold rather than a card, so this is the
+     * only place that says anything. */
+    null
   ) : (
     <View style={styles.unsupported} testID="motors-identification-unsupported">
       <Text style={styles.unsupportedTitle}>
         {t('motorsScreen.identificationQuadOnlyTitle')}
       </Text>
       <Text style={styles.caption}>
-        {identificationOutOfScope
-          ? t('motorsScreen.identificationQuadOnlyBody', {
-              count: capability.motorCount,
-            })
+        {capability.kind === 'UNSUPPORTED' &&
+        capability.reason === 'AIRFRAME_UNKNOWN'
+          ? t('motorsScreen.identificationAirframeUnknownBody')
           : t('motorsScreen.identificationCountUnknownBody')}
       </Text>
     </View>

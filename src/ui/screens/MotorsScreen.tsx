@@ -104,6 +104,7 @@ import type { MotorSlotActivity } from './MotorAirframeDiagram';
 import { MotorConfigurationSummary } from './MotorConfigurationSummary';
 // P3: the professional workspace - the PRIMARY motor experience.
 import { MotorWorkspace } from './MotorWorkspace';
+import { MotorAirframeSummary } from './MotorAirframeSummary';
 import { MotorConfigurationPanel } from './MotorConfigurationPanel';
 import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
 import { MotorDirectionSection } from './MotorDirectionSection';
@@ -1450,22 +1451,6 @@ export function MotorsScreenView({
       ? 'UNSAFE'
       : undefined;
   /**
-   * MAY THE QUAD-X PHYSICAL MODEL BE APPLIED TO THIS AIRCRAFT?
-   *
-   * Read from the SAME live count the workspace uses for its sliders, so
-   * control and identification can never disagree about how many motors
-   * exist. An unsupported answer withdraws POSITION CLAIMS ONLY - the
-   * numbered controls, the hold path and STOP are untouched, because a
-   * numbered output is addressable without knowing which arm it drives.
-   */
-  const identificationCapability: MotorIdentificationCapability =
-    evaluateMotorIdentificationCapability(
-      snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount,
-    );
-  const quadIdentificationSupported =
-    identificationCapability.kind === 'SUPPORTED';
-
-  /**
    * THE LOGICAL MOTORS THIS AIRCRAFT ACTUALLY HAS.
    *
    * Derived from the same live count the workspace sliders use, so the
@@ -1493,6 +1478,26 @@ export function MotorsScreenView({
     liveMotorCount > 0
       ? Array.from({length: liveMotorCount}, (_, index) => index + 1)
       : MOTOR_TEST_OUTPUT_SLOTS;
+
+  /**
+   * MAY THE SHIPPED PHYSICAL-IDENTIFICATION MODEL BE APPLIED HERE?
+   *
+   * Asked of the AIRFRAME and the SAME motor list the workspace renders
+   * sliders for, so control and identification can never disagree about
+   * how many motors exist - and so the words beside the drawing can never
+   * describe a different aircraft from the drawing itself. It used to be
+   * asked of the count alone, which offered Quad X corners to a V-tail and
+   * put QUADX_1234's motor 1 on the opposite arm from where the same
+   * screen drew it.
+   *
+   * An unsupported answer withdraws POSITION CLAIMS ONLY - the numbered
+   * controls, the hold path and STOP are untouched, because a numbered
+   * output is addressable without knowing which arm it drives.
+   */
+  const identificationCapability: MotorIdentificationCapability =
+    evaluateMotorIdentificationCapability(liveMixerModeRaw, identitySlots);
+  const quadIdentificationSupported =
+    identificationCapability.kind === 'SUPPORTED';
 
   /**
    * MAY A DIRECTION COMMAND BE SENT FOR THE SELECTED MOTOR? A DIFFERENT
@@ -1536,10 +1541,13 @@ export function MotorsScreenView({
       </Text>
       <Text style={styles.caption}>
         {identificationCapability.kind === 'UNSUPPORTED' &&
-        identificationCapability.reason === 'MOTOR_COUNT_MISMATCH'
+        identificationCapability.reason === 'AIRFRAME_NOT_THE_MODEL'
           ? t('motorsScreen.identificationQuadOnlyBody', {
               count: identificationCapability.motorCount,
             })
+          : identificationCapability.kind === 'UNSUPPORTED' &&
+            identificationCapability.reason === 'AIRFRAME_UNKNOWN'
+          ? t('motorsScreen.identificationAirframeUnknownBody')
           : t('motorsScreen.identificationCountUnknownBody')}
       </Text>
     </View>
@@ -1832,6 +1840,27 @@ export function MotorsScreenView({
             </View>
           )
         ) : null}
+
+        {/* ============================================ REGION A2
+            AIRFRAME AND OPERATIONAL TRUTH, BEFORE ANY CONTROL.
+
+            M-D §2 ① ② and §3. The screen used to open on a safety header
+            and then go straight to the workspace - a selector, a drawing
+            and sliders - so the questions an operator actually arrives
+            with went unanswered until they read a diagram that, before
+            M-D, was a quad whatever the aircraft was.
+
+            Six answers first: which airframe, how many motors the board
+            reported, whether the test is available, which protocol, any
+            topology disagreement, and whether servos are involved. It is
+            a compact card on purpose; §3 asks for status before geometry,
+            not for a larger picture. */}
+        <MotorAirframeSummary
+          mixerModeRaw={liveMixerModeRaw}
+          runtimeMotorCount={liveMotorCount}
+          scope={snapshot?.motorScope}
+          motorTestAvailable={snapshot?.activation?.allowed === true}
+        />
 
         {/* ================================================ REGION B
             THE MOTOR WORKSPACE - the reason the screen exists.

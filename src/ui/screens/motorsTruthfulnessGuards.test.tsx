@@ -47,6 +47,11 @@ import type {
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
 import {EscDirectionPanel} from './EscDirectionPanel';
 
+/** Betaflight `mixerMode_e`, re-stated here rather than imported so this
+ *  file and the module under test do not share one typo. */
+const QUADX = 3;
+const FOUR = Object.freeze([1, 2, 3, 4]);
+
 beforeAll(async () => {
   if (!i18n.isInitialized) {
     await i18n.init();
@@ -302,33 +307,68 @@ describe('the identification capability rule', () => {
   });
 
   it('treats a missing count as UNKNOWN, never as a quad', () => {
-    expect(evaluateMotorIdentificationCapability(undefined)).toEqual({
+    expect(evaluateMotorIdentificationCapability(QUADX, [])).toEqual({
       kind: 'UNSUPPORTED',
       reason: 'MOTOR_COUNT_UNKNOWN',
     });
   });
 
-  it.each([0, -1, 4.5, Number.NaN])(
-    'treats %p as UNKNOWN rather than coercing it',
-    value => {
-      expect(evaluateMotorIdentificationCapability(value).kind).toBe(
-        'UNSUPPORTED',
-      );
-    },
-  );
+  it('treats a missing AIRFRAME as UNKNOWN, never as a quad', () => {
+    // The count alone used to be enough, and four motors is not four
+    // corners. An unread mixer is now its own refusal.
+    expect(evaluateMotorIdentificationCapability(undefined, FOUR)).toEqual({
+      kind: 'UNSUPPORTED',
+      reason: 'AIRFRAME_UNKNOWN',
+    });
+  });
 
-  it('supports exactly four', () => {
-    expect(evaluateMotorIdentificationCapability(4)).toEqual({
+  it('supports Quad X with four motors', () => {
+    expect(evaluateMotorIdentificationCapability(QUADX, FOUR)).toEqual({
       kind: 'SUPPORTED',
     });
   });
 
-  it.each([1, 2, 3, 5, 6, 8])('reports %i as a mismatch, with the count', n => {
-    expect(evaluateMotorIdentificationCapability(n)).toEqual({
+  /**
+   * THE CASE THE COUNT GATE COULD NOT SEE. Every mixer here reports four
+   * motors. None of them is the airframe the shipped model describes:
+   * QUADP is a plus frame, Y4 has a coaxial tail pair, VTAIL4 and ATAIL4
+   * put their rear pair elsewhere, and QUADX_1234 is a genuine X whose
+   * motor 1 sits where Quad X puts motor 4.
+   */
+  it.each([
+    ['QUADP', 2],
+    ['Y4', 9],
+    ['VTAIL4', 17],
+    ['ATAIL4', 22],
+    ['QUADX_1234', 26],
+  ])('refuses %s even though it reports four motors', (_name, mixer) => {
+    expect(evaluateMotorIdentificationCapability(mixer, FOUR)).toEqual({
       kind: 'UNSUPPORTED',
-      reason: 'MOTOR_COUNT_MISMATCH',
-      motorCount: n,
+      reason: 'AIRFRAME_NOT_THE_MODEL',
+      mixerModeRaw: mixer,
+      motorCount: 4,
     });
+  });
+
+  it.each([1, 2, 3, 5, 6, 8])(
+    'refuses a %i-motor aircraft, and carries the count for the message',
+    n => {
+      const motorNumbers = Array.from({length: n}, (_, index) => index + 1);
+      expect(
+        evaluateMotorIdentificationCapability(QUADX, motorNumbers),
+      ).toEqual({
+        kind: 'UNSUPPORTED',
+        reason: 'AIRFRAME_NOT_THE_MODEL',
+        mixerModeRaw: QUADX,
+        motorCount: n,
+      });
+    },
+  );
+
+  it('refuses an unknown mixer id outright', () => {
+    expect(evaluateMotorIdentificationCapability(250, FOUR).kind).toBe(
+      'UNSUPPORTED',
+    );
   });
 });
 
@@ -357,6 +397,12 @@ function snapshotWithMotors(motorCount: number): MotorTestControllerSnapshot {
     outcome: {kind: 'READY'},
     firmwareCompatibility: undefined,
     motorScope: {motorCount, motorProtocolRaw: 7, feature3dEnabled: false},
+    // MIXER_QUADX. A READY snapshot always carries the mixer byte - the
+    // motor-test setup reads MSP_MIXER_CONFIG (42) before it publishes
+    // READY - and these fixtures have always described a Quad X. It is
+    // stated here rather than inferred from the count, because four
+    // motors is not four corners.
+    mixerModeRaw: 3,
     motorDiagnosticsSupport: {
       motorCount,
       dshotTelemetryEnabled: true,
@@ -462,15 +508,21 @@ describe('I - a non-quad aircraft is not asked about Quad-X arms', () => {
     ).toBe(0);
   });
 
-  it('explains why, rather than rendering nothing', () => {
+  it('explains why, once, rather than rendering nothing or repeating itself', () => {
     expect(
-      tree.root.findAllByProps({testID: 'motors-identification-unsupported'})
+      tree.root.findAllByProps({testID: 'motor-identification-unavailable'})
         .length,
     ).toBeGreaterThan(0);
     const rendered = textOf(tree);
-    expect(rendered).toContain(ar.motorsScreen.identificationQuadOnlyTitle);
+    expect(rendered).toContain(ar.motorsScreen.identifyUnavailableTitle);
     // The reason names the count that was actually read.
     expect(rendered).toContain('6');
+    // ONE block. The second card that restated it is gone - see the note
+    // on the null branch in MotorIdentitySection.
+    expect(
+      tree.root.findAllByProps({testID: 'motors-identification-unsupported'})
+        .length,
+    ).toBe(0);
   });
 
   it('withholds the expected Quad-X position for the selected output', () => {

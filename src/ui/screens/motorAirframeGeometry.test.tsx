@@ -45,12 +45,13 @@ import {
 } from './MotorAirframeDiagram';
 import type {MotorAirframeEntry} from './MotorAirframeDiagram';
 
-/** The canonical wiring: slot N sits at a fixed physical corner. */
+/** The canonical wiring: slot N sits at a fixed physical corner. No
+ *  direction - the drawing's entry type carries none, by design. */
 const ENTRIES: readonly MotorAirframeEntry[] = Object.freeze([
-  {slot: 1, position: 'REAR_RIGHT', direction: 'CW'},
-  {slot: 2, position: 'FRONT_RIGHT', direction: 'CCW'},
-  {slot: 3, position: 'REAR_LEFT', direction: 'CCW'},
-  {slot: 4, position: 'FRONT_LEFT', direction: 'CW'},
+  {slot: 1, position: 'REAR_RIGHT'},
+  {slot: 2, position: 'FRONT_RIGHT'},
+  {slot: 3, position: 'REAR_LEFT'},
+  {slot: 4, position: 'FRONT_LEFT'},
 ] as MotorAirframeEntry[]);
 
 function flattenStyle(style: unknown): Record<string, unknown> {
