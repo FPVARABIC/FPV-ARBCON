@@ -113,12 +113,20 @@ export {
 export type {
   PidBlockReason,
   PidLoadOutcome,
+  PidProfileCopyOutcome,
   PidProfileKind,
+  PidProfileNameOutcome,
+  PidProfileResetOutcome,
   PidProfileSwitchOutcome,
+  PidRatesTypeOutcome,
   PidSaveOutcome,
+  PidSimplifiedLoadOutcome,
+  PidSimplifiedSaveOutcome,
   PidSessionCoordinator,
   PidAppStateOwner,
   PidTuningControllerOptions,
+  PidWriteEvidence,
+  PidWriteStage,
 } from './PidTuningController';
 export {
   ModesConfigurationController,

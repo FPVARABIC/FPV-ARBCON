@@ -296,6 +296,21 @@ export type PidRatesTypeOutcome =
   | {readonly kind: 'SESSION_ENDED'}
   | {readonly kind: 'FAILED'; readonly error: unknown};
 
+/**
+ * The simplified state, or an honest statement that it could not be read.
+ *
+ * UNSUPPORTED is real evidence: the command family is absent without
+ * USE_SIMPLIFIED_TUNING, so a refusal proves something about the build.
+ * A zero in a field proves nothing, which is why there is no third state
+ * that quietly means "probably off".
+ */
+export type PidSimplifiedLoadOutcome =
+  | {readonly kind: 'LOADED'; readonly simplified: MspSimplifiedTuning; readonly validity?: SimplifiedTuningValidity}
+  | {readonly kind: 'UNSUPPORTED'}
+  | {readonly kind: 'REJECTED'; readonly reason: PidBlockReason}
+  | {readonly kind: 'SESSION_ENDED'}
+  | {readonly kind: 'FAILED'; readonly error: unknown};
+
 export type PidProfileNameOutcome =
   | {readonly kind: 'NAME'; readonly profile: PidProfileKind; readonly name: string}
   | {readonly kind: 'NAMED_VERIFIED'; readonly profile: PidProfileKind; readonly name: string}
@@ -879,6 +894,32 @@ export class PidTuningController {
       if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
       return result.error instanceof PidPreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
     } finally { interlock.release(); }
+  }
+
+  /**
+   * READS THE SIMPLIFIED STATE OF THE ACTIVE PID PROFILE.
+   *
+   * A plain read, so it takes the READ intent and works on a future API.
+   * The board's own VALIDATE opinion travels alongside as evidence, never
+   * as the answer to whether the sliders match what is stored.
+   */
+  async loadSimplified(key: SetupUiSessionKey): Promise<PidSimplifiedLoadOutcome> {
+    const captured = this.capture(key); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
+    const {client, scheduler, epoch} = captured;
+    const result = await this.operations(key.sessionId, client, scheduler).execute<PidSimplifiedLoadOutcome>({
+      id: `pid:simplified:read:${key.sessionId}:${key.generation}`, sessionEffect: 'KEEP_SESSION',
+      validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
+      execute: async requester => {
+        this.assertLive(key, client, epoch);
+        const simplified = await this.readSimplifiedIfSupported(requester);
+        if (simplified === undefined) return {kind: 'UNSUPPORTED'};
+        const validity = await this.readSimplifiedValidity(requester);
+        return {kind: 'LOADED', simplified, ...(validity === undefined ? {} : {validity})};
+      },
+    });
+    if (result.status === 'SUCCEEDED') return result.result;
+    if (result.status === 'OUTCOME_UNKNOWN' || result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
+    return result.error instanceof PidPreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
   }
 
   /**

@@ -1,3 +1,37 @@
+/**
+ * THE TUNING PAGE, ORGANISED AROUND THE QUESTION A PILOT ACTUALLY ASKS.
+ *
+ * The previous version opened with three cards of P/I/D/F bytes. That is a
+ * struct editor: it presents the hardest, most dangerous numbers in the
+ * subsystem first, to a person whose question is "how do I make it fly the
+ * way I want?". The order here answers that question instead -
+ *
+ *   who am I tuning        the profile bar
+ *   how strong             Simplified Tuning, the generator the firmware
+ *                          itself offers
+ *   how fast               Rates, with a bounded picture of the curve
+ *   commit                 one save bar that names what it will write
+ *   everything else        behind «الإعدادات المتقدمة»
+ *
+ * NOTHING WAS DELETED. Every direct PID, feel, throttle, Dynamic Idle and
+ * filter control that worked before still works; they moved under the
+ * disclosure, and they open automatically whenever the simplified workspace
+ * cannot function, because then they ARE the workspace.
+ *
+ * THREE INDEPENDENT DIRTY SCOPES, NOT ONE FLAG. Values, the rates formula
+ * and the simplified sliders travel to the board through three different
+ * transactions with three different failure modes, so the screen tracks and
+ * reports them separately and saves them in a fixed order (formula, then
+ * values, then generator) with each step rebased on the snapshot the
+ * previous one returned.
+ *
+ * NO PRESENTATION LOGIC OF ITS OWN. Rate names, field labels, display
+ * scales, curve sampling and every sentence about what the simplified
+ * sliders do live in `src/ui/presentation`; the mathematics behind them
+ * lives in `rateFormulaEngine` and `simplifiedTuningGenerator`. The inline
+ * `RATE_TYPES` table this file used to carry was a second opinion about a
+ * subsystem already pinned to firmware source, and it is gone.
+ */
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {Alert, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
 import {useTranslation} from 'react-i18next';
@@ -8,21 +42,57 @@ import {
 } from '../../core';
 import {
   pidTuningController, type PidBlockReason, type PidLoadOutcome,
-  type PidProfileKind, type PidProfileSwitchOutcome, type PidSaveOutcome,
-  type SetupUiSessionKey,
+  type PidProfileKind, type PidProfileNameOutcome, type PidProfileSwitchOutcome,
+  type PidRatesTypeOutcome, type PidSaveOutcome, type PidSimplifiedLoadOutcome,
+  type PidSimplifiedSaveOutcome, type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
 import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
-import {Button, Stepper as SharedStepper} from '../components/controls';
+import {Button, ChoiceChips, NoticeBox, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
+import {Icon} from '../icons';
+import RateResponsePreview from '../components/pid/RateResponsePreview';
 import {unconfirmedWriteMessage} from '../presentation/writeStageNames';
+import {
+  formatRateField, rateAxisPresentation, ratesTypeName,
+  type RateAxisPresentation,
+} from '../presentation/ratesPresentation';
+import {
+  GENERATOR_OWNED_NOTE, SIMPLIFIED_DTERM_FILTER, SIMPLIFIED_EXPLANATION,
+  SIMPLIFIED_GYRO_FILTER, SIMPLIFIED_MORE_SLIDERS, SIMPLIFIED_OFF_CONSEQUENCE,
+  SIMPLIFIED_PRIMARY_SLIDERS, SIMPLIFIED_SUMMARY, SIMPLIFIED_ZERO_FILTER_NOTE,
+  formatEffectiveRange, formatMultiplier, generatorOwnedDirectFields,
+  overwriteSummary, simplifiedModeCopy,
+  type SimplifiedSliderCopy, type SimplifiedSliderKey,
+} from '../presentation/simplifiedTuningPresentation';
 import {FEEDFORWARD_BOOST_MAX, FEEDFORWARD_JITTER_FACTOR_MAX} from '../../core/state/pidTuningModel';
+import {classifyRatesType, type RateAxisSettings} from '../../core/state/rateFormulaEngine';
+import {
+  SIMPLIFIED_TUNING_FILTERS_MIN, SIMPLIFIED_TUNING_MAX, SIMPLIFIED_TUNING_PIDS_MIN,
+  decodeSimplifiedTuning, type MspSimplifiedTuning,
+} from '../../core/protocol/msp/decoding/decodeSimplifiedTuning';
+import {
+  encodeSimplifiedTuning,
+  type SimplifiedFilterPatch, type SimplifiedPidInputPatch, type SimplifiedTuningPatch,
+} from '../../core/protocol/msp/encoding/encodeSimplifiedTuning';
+import {
+  generateSimplifiedDtermFilters, generateSimplifiedGyroFilters, simplifiedDefaultsFor,
+  type GeneratedFilterFrequencies, type ObservedFilterFrequencies,
+} from '../../core/state/simplifiedTuningGenerator';
 
+/**
+ * Everything after `save` is OPTIONAL so that a host - or a test double -
+ * that only knows how to read and write values stays valid. A capability the
+ * host does not supply is not drawn as a working control and is never
+ * described to the pilot as a firmware limitation.
+ */
 export interface PidControllerPort {
   load(key: SetupUiSessionKey): Promise<PidLoadOutcome>;
   save(key: SetupUiSessionKey, original: MspPidTuningSnapshot, draft: PidTuningDraft): Promise<PidSaveOutcome>;
-  /** Optional so an existing test double stays valid; the selector is
-   * simply not rendered when a host supplies no implementation. */
   selectProfile?(key: SetupUiSessionKey, kind: PidProfileKind, index: number): Promise<PidProfileSwitchOutcome>;
+  loadSimplified?(key: SetupUiSessionKey): Promise<PidSimplifiedLoadOutcome>;
+  saveSimplified?(key: SetupUiSessionKey, original: MspPidTuningSnapshot, patch: SimplifiedTuningPatch): Promise<PidSimplifiedSaveOutcome>;
+  setRatesType?(key: SetupUiSessionKey, original: MspPidTuningSnapshot, ratesTypeRaw: number): Promise<PidRatesTypeOutcome>;
+  readProfileName?(key: SetupUiSessionKey, kind: PidProfileKind): Promise<PidProfileNameOutcome>;
 }
 export interface PidTuningScreenProps {
   readonly sessionKey?: SetupUiSessionKey;
@@ -32,18 +102,26 @@ export interface PidTuningScreenProps {
   readonly controller?: PidControllerPort;
 }
 type Phase = 'IDLE' | 'LOADING' | 'READY' | 'SAVING' | 'ERROR';
+
+/**
+ * `PORT_ABSENT` is deliberately NOT `UNSUPPORTED`.
+ *
+ * UNSUPPORTED is a claim about the flight controller - the command family is
+ * missing from its build. "This host has no implementation" is a claim about
+ * US, and printing our own gap as the board's would be inventing evidence.
+ */
+type SimplifiedState = {readonly kind: 'READING'} | {readonly kind: 'PORT_ABSENT'} | PidSimplifiedLoadOutcome;
+
 const AXES: readonly {key: PidAxisKey; title: string; subtitle: string}[] = Object.freeze([
   {key: 'roll', title: 'Roll', subtitle: 'المحور الجانبي'},
   {key: 'pitch', title: 'Pitch', subtitle: 'المحور الطولي'},
   {key: 'yaw', title: 'Yaw', subtitle: 'محور الاتجاه'},
 ]);
-const RATE_TYPES = Object.freeze([
-  Object.freeze({name: 'قياسي', rcMax: 255, superMax: 100, rcScale: 0.01, superScale: 0.01, expoScale: 0.01}),
-  Object.freeze({name: 'Raceflight', rcMax: 200, superMax: 255, rcScale: 10, superScale: 1, expoScale: 1}),
-  Object.freeze({name: 'KISS', rcMax: 255, superMax: 99, rcScale: 0.01, superScale: 0.01, expoScale: 0.01}),
-  Object.freeze({name: 'Actual', rcMax: 200, superMax: 200, rcScale: 10, superScale: 10, expoScale: 0.01}),
-  Object.freeze({name: 'Quick', rcMax: 255, superMax: 200, rcScale: 0.01, superScale: 10, expoScale: 0.01}),
-]);
+const EMPTY_PATCH: SimplifiedTuningPatch = Object.freeze({});
+const GENERATOR_DEFAULTS = simplifiedDefaultsFor('API_1_47');
+/** Percentage points per press. One-by-one would take forty presses to
+ * cross the range; five keeps a deliberate change deliberate. */
+const MULTIPLIER_STEP = 5;
 
 function blockMessage(reason: PidBlockReason): string {
   return ({
@@ -69,7 +147,7 @@ function blockMessage(reason: PidBlockReason): string {
 }
 function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
-    case 'SAVED_VERIFIED': return {text: 'حُفظت إعدادات PID وRates وFilters المتغيرة، وأكدت القراءة الراجعة تطابقها.', warning: false};
+    case 'SAVED_VERIFIED': return {text: 'حُفظت القيم المتغيرة، وأكدت القراءة الراجعة تطابقها.', warning: false};
     case 'NO_CHANGES': return {text: 'لا توجد تغييرات جديدة.', warning: false};
     case 'SAVED_UNVERIFIED': return {text: 'أُقر الحفظ، لكن تعذرت القراءة الراجعة. أعد القراءة قبل الطيران.', warning: true};
     case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: 'طُبّقت القيم وأكدتها القراءة، لكن لم يثبت حفظها في ذاكرة المتحكم. لا تعتمد عليها بعد إعادة التشغيل.', warning: true};
@@ -99,6 +177,50 @@ function profileSwitchMessage(outcome: PidProfileSwitchOutcome): {text: string; 
     case 'FAILED': return {text: 'فشل تبديل الملف قبل أن يصل إلى المتحكم.', warning: true};
   }
 }
+/**
+ * Changing the FORMULA is a different act from changing a value, and the
+ * success line says the one thing a pilot must not misunderstand: the stored
+ * numbers were not converted.
+ */
+function ratesTypeMessage(outcome: PidRatesTypeOutcome): {text: string; warning: boolean} {
+  switch (outcome.kind) {
+    case 'NO_CHANGES': return {text: 'خوارزمية Rates المطلوبة هي المفعّلة أصلًا على المتحكم.', warning: false};
+    case 'PERSISTED_VERIFIED': return {text: 'بُدّلت خوارزمية Rates وحُفظت. الأرقام المخزّنة لم تُحوّل؛ صارت تُقرأ بمعادلة أخرى.', warning: false};
+    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: 'طُبّقت الخوارزمية الجديدة لكن لم يثبت حفظها في ذاكرة المتحكم. لا تعتمد عليها بعد إعادة التشغيل.', warning: true};
+    case 'READBACK_MISMATCH': return {text: 'بعد كتابة نوع الخوارزمية أعادت اللوحة قيم Rates مختلفة عمّا كان مخزّنًا. توقفنا قبل إكمال الحفظ.', warning: true};
+    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة تبديل خوارزمية Rates. أعد القراءة قبل الطيران.', warning: true};
+    case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
+    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء تبديل خوارزمية Rates.', warning: true};
+    case 'FAILED': return {text: 'فشل تبديل خوارزمية Rates قبل أن يصل إلى المتحكم.', warning: true};
+  }
+}
+/**
+ * A simplified save is reported as a REGENERATION, because that is what the
+ * firmware did. "حُفظت الإعدادات" would describe a preference being stored;
+ * what actually happened is that the board recomputed a tune.
+ */
+function simplifiedSaveMessage(outcome: PidSimplifiedSaveOutcome): {text: string; warning: boolean} {
+  switch (outcome.kind) {
+    case 'NO_CHANGES': return {text: 'لا تغييرات في الضبط المبسّط.', warning: false};
+    case 'SAVED_VERIFIED': return {text: 'أعاد المتحكم حساب القيم من الشرائح وحفظها، وطابقت القراءة الراجعة ما توقّعناه.', warning: false};
+    case 'APPLIED_PERSISTENCE_UNVERIFIED': return {text: 'أعاد المتحكم الحساب وأكدته القراءة، لكن لم يثبت حفظه في الذاكرة. لا تعتمد عليه بعد إعادة التشغيل.', warning: true};
+    case 'READBACK_MISMATCH': return {text: 'القيم التي ولّدها المتحكم لا تطابق ما يحسبه المصدر. لم يُدّع نجاح؛ أعد القراءة.', warning: true};
+    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة الضبط المبسّط. أعد القراءة قبل الطيران.', warning: true};
+    case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
+    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء الضبط المبسّط.', warning: true};
+    case 'FAILED': return {text: 'فشل الضبط المبسّط قبل أن يصل إلى المتحكم.', warning: true};
+  }
+}
+function simplifiedLoadMessage(state: SimplifiedState): string | undefined {
+  switch (state.kind) {
+    case 'READING': case 'LOADED': return undefined;
+    case 'PORT_ABSENT': return 'لا يقرأ هذا الإصدار من التطبيق الضبط المبسّط. هذه حدود التطبيق، لا حدود المتحكم.';
+    case 'UNSUPPORTED': return 'بناء البرنامج الثابت في هذه اللوحة لا يتضمّن الضبط المبسّط، فاستخدم الإعدادات المتقدمة أدناه.';
+    case 'REJECTED': return blockMessage(state.reason);
+    case 'SESSION_ENDED': return 'انتهت جلسة الاتصال قبل قراءة الضبط المبسّط.';
+    case 'FAILED': return 'تعذّرت قراءة الضبط المبسّط من متحكم الطيران.';
+  }
+}
 function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]): string {
   return ({
     PID_GAIN_INVALID: 'إحدى قيم P/I/D خارج 0–250',
@@ -108,7 +230,10 @@ function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]):
     FEEDFORWARD_BOOST_INVALID: 'قيمة Feedforward boost خارج 0–50',
     FEEDFORWARD_JITTER_INVALID: 'قيمة تجاهل ارتجاف العصا خارج 0–20',
     RATES_TYPE_INVALID: 'نوع Rates المقروء غير مدعوم للتحرير الآمن',
-    RATES_TYPE_CHANGE_UNSUPPORTED: 'تبديل خوارزمية Rates غير متاح في هذه المرحلة الآمنة',
+    /* Reachable only if the draft's type drifts from the board's. The
+       selector keeps them equal and routes a real change through the
+       separate rates-type transaction, so this reads as the defect it is. */
+    RATES_TYPE_CHANGE_UNSUPPORTED: 'نوع Rates في المسودة لا يطابق ما على المتحكم؛ أعد القراءة',
     RATE_VALUE_INVALID: 'إحدى قيم Rates خارج حدود الخوارزمية الحالية',
     THROTTLE_CURVE_INVALID: 'منحنى أو حد الخانق خارج المدى المسموح',
     FILTER_VALUE_INVALID: 'إحدى قيم الفلاتر خارج حدود البرنامج الثابت',
@@ -118,162 +243,655 @@ function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]):
     FILTER_EXCEEDS_NYQUIST: 'أحد ترددات الفلاتر يبلغ أو يتجاوز حد Nyquist',
   })[issue];
 }
-function NumericField({label, value, min = 0, max, disabled, onChange, testID}: {label: string; value: number; min?: number; max: number; disabled: boolean; onChange: (value: number) => void; testID: string}) {
-  const apply = (next: number) => onChange(Math.min(max, Math.max(min, Math.round(next))));
-  return <View style={styles.numericField}><Text style={styles.fieldLabel}>{label}</Text><SharedStepper value={String(value)} onDecrement={() => apply(value - 1)} onIncrement={() => apply(value + 1)} decrementDisabled={value <= min} incrementDisabled={value >= max} disabled={disabled} onChangeText={text => { const parsed = Number.parseInt(text, 10); if (Number.isFinite(parsed)) apply(parsed); }} accessibilityLabel={label} testID={testID} /><Text style={styles.rangeHint}>{min}–{max}</Text></View>;
+
+/* ------------------------------------------------------------------ */
+/* Primitives                                                          */
+/* ------------------------------------------------------------------ */
+
+/** A section that can be folded away. Used for explanations, the secondary
+ * sliders and the whole advanced block, so the main page stays short. */
+function Disclosure({label, open, onToggle, testID, tone = 'plain', children}: {label: string; open: boolean; onToggle: () => void; testID: string; tone?: 'plain' | 'card'; children: React.ReactNode}) {
+  return <View style={tone === 'card' ? styles.disclosureCard : undefined} testID={testID}>
+    <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{expanded: open}} accessibilityLabel={label} style={styles.disclosureHeader} testID={`${testID}-toggle`}>
+      <Text style={styles.disclosureLabel}>{label}</Text>
+      <Icon name={open ? 'chevron-up' : 'chevron-down'} size={18} color={colors.accentStrong} />
+    </Pressable>
+    {open ? <View style={styles.disclosureBody} testID={`${testID}-body`}>{children}</View> : null}
+  </View>;
 }
-function ScaledNumericField({label, rawValue, rawMin, rawMax, scale, disabled, onChange, testID}: {label: string; rawValue: number; rawMin: number; rawMax: number; scale: number; disabled: boolean; onChange: (value: number) => void; testID: string}) {
-  const decimals = scale < 1 ? 2 : 0;
-  const apply = (next: number) => onChange(Math.min(rawMax, Math.max(rawMin, Math.round(next))));
-  return <View style={styles.numericField}><Text style={styles.fieldLabel}>{label}</Text><SharedStepper value={(rawValue * scale).toFixed(decimals)} onDecrement={() => apply(rawValue - 1)} onIncrement={() => apply(rawValue + 1)} decrementDisabled={rawValue <= rawMin} incrementDisabled={rawValue >= rawMax} disabled={disabled} keyboardType="decimal-pad" onChangeText={text => { const parsed = Number.parseFloat(text.replace(',', '.')); if (Number.isFinite(parsed)) apply(parsed / scale); }} accessibilityLabel={label} testID={testID} /><Text style={styles.rangeHint}>{(rawMin * scale).toFixed(decimals)}–{(rawMax * scale).toFixed(decimals)}</Text></View>;
+
+function NumericField({label, value, min = 0, max, disabled, note, onChange, testID}: {label: string; value: number; min?: number; max: number; disabled: boolean; note?: string; onChange: (value: number) => void; testID: string}) {
+  const apply = (next: number) => onChange(Math.min(max, Math.max(min, Math.round(next))));
+  return <View style={styles.numericField}><Text style={styles.fieldLabel}>{label}</Text><SharedStepper value={String(value)} onDecrement={() => apply(value - 1)} onIncrement={() => apply(value + 1)} decrementDisabled={value <= min} incrementDisabled={value >= max} disabled={disabled} onChangeText={text => { const parsed = Number.parseInt(text, 10); if (Number.isFinite(parsed)) apply(parsed); }} accessibilityLabel={label} testID={testID} /><Text style={styles.rangeHint}>{`${min} – ${max}`}</Text>{note === undefined ? null : <Text style={styles.fieldNote}>{note}</Text>}</View>;
+}
+
+/**
+ * One rate field, told entirely by `ratesPresentation`.
+ *
+ * The label, the display scale, the bounds and the unit all arrive as data,
+ * because all four change meaning when the formula changes and the screen
+ * has no business holding a second copy of that table.
+ */
+function RateField({field, rawValue, disabled, onChange, testID}: {field: RateAxisPresentation[keyof RateAxisPresentation]; rawValue: number; disabled: boolean; onChange: (value: number) => void; testID: string}) {
+  const apply = (next: number) => onChange(Math.min(field.max, Math.max(field.min, Math.round(next))));
+  const label = field.unit === undefined ? field.label : `${field.label} ${field.unit}`;
+  const decimals = field.scale < 1 ? 2 : 0;
+  return <View style={styles.numericField}>
+    <Text style={styles.fieldLabel}>{label}</Text>
+    <SharedStepper value={(rawValue * field.scale).toFixed(decimals)} onDecrement={() => apply(rawValue - 1)} onIncrement={() => apply(rawValue + 1)} decrementDisabled={rawValue <= field.min} incrementDisabled={rawValue >= field.max} disabled={disabled} keyboardType="decimal-pad" onChangeText={text => { const parsed = Number.parseFloat(text.replace(',', '.')); if (Number.isFinite(parsed)) apply(parsed / field.scale); }} accessibilityLabel={label} testID={testID} />
+    <Text style={styles.rangeHint}>{`${formatRateField(field, field.min)} – ${formatRateField(field, field.max)}`}</Text>
+  </View>;
+}
+
+/**
+ * A generator input, shown as the multiplier it is.
+ *
+ * The centre is READ-ONLY on purpose. `1.13×` is a rendering of the stored
+ * byte 113, and letting the pilot type into a rendering invites the two to
+ * disagree - the ambiguity that `formatMultiplier` exists to remove.
+ */
+function MultiplierStepper({label, raw, min, disabled, onChange, testID}: {label: string; raw: number; min: number; disabled: boolean; onChange: (raw: number) => void; testID: string}) {
+  const apply = (next: number) => onChange(Math.min(SIMPLIFIED_TUNING_MAX, Math.max(min, next)));
+  return <SharedStepper value={formatMultiplier(raw)} onDecrement={() => apply(raw - MULTIPLIER_STEP)} onIncrement={() => apply(raw + MULTIPLIER_STEP)} decrementDisabled={raw <= min} incrementDisabled={raw >= SIMPLIFIED_TUNING_MAX} disabled={disabled} accessibilityLabel={label} testID={testID} />;
 }
 
 /**
  * The active profile, and the way to change it.
  *
- * It renders the BOARD's reported index, never a local selection: a
- * press asks the flight controller to switch and the component only
- * moves once the re-read says it did. Disabled while anything is in
- * flight, and absent entirely when the host supplies no switch
- * implementation - a control that cannot act must not be drawn.
+ * It renders the BOARD's reported index, never a local selection: a press
+ * asks the flight controller to switch and the component only moves once the
+ * re-read says it did. The name beside the number comes from the board too -
+ * when it sends none, the row shows none rather than inventing one, which is
+ * still better than the bare `1 | 1` this bar used to be.
  */
-function ProfileSelector({label, count, active, disabled, onSelect, testID}: {label: string; count?: number; active?: number; disabled: boolean; onSelect: (index: number) => void; testID: string}) {
+function ProfileSelector({label, hint, name, count, active, disabled, onSelect, testID}: {label: string; hint: string; name?: string; count?: number; active?: number; disabled: boolean; onSelect: (index: number) => void; testID: string}) {
   const total = count ?? 0;
   return <View style={styles.profileBadge} testID={testID}>
     <Text style={styles.profileLabel}>{label}</Text>
+    {name === undefined || name.length === 0 ? null : <Text style={styles.profileName} testID={`${testID}-name`}>{name}</Text>}
     {active === undefined || total < 1
       ? <Text style={styles.profileValue}>—</Text>
       : <View style={styles.choiceRow}>{Array.from({length: total}, (_, index) => <Pressable key={index} accessibilityRole="button" accessibilityState={{selected: index === active, disabled}} accessibilityLabel={`${label} ${index + 1}`} disabled={disabled || index === active} onPress={() => onSelect(index)} style={[styles.profileChoice, index === active && styles.choiceSelected]} testID={`${testID}-${index + 1}`}><Text style={[styles.choiceText, index === active && styles.choiceTextSelected]}>{index + 1}</Text></Pressable>)}</View>}
+    <Text style={styles.profileHint}>{hint}</Text>
   </View>;
 }
 
-function AxisCard({axisKey, title, subtitle, value, disabled, update}: {axisKey: PidAxisKey; title: string; subtitle: string; value: PidAxisDraft; disabled: boolean; update: (axis: PidAxisKey, term: keyof PidAxisDraft, value: number) => void}) {
-  return <View style={styles.axisCard} testID={`pid-axis-${axisKey}`}><View><Text style={styles.axisTitle}>{title}</Text><Text style={styles.axisSubtitle}>{subtitle}</Text></View><View style={styles.fieldsRow}><NumericField label="P" value={value.p} max={250} disabled={disabled} onChange={next => update(axisKey, 'p', next)} testID={`pid-${axisKey}-p`} /><NumericField label="I" value={value.i} max={250} disabled={disabled} onChange={next => update(axisKey, 'i', next)} testID={`pid-${axisKey}-i`} /><NumericField label="D" value={value.d} max={250} disabled={disabled} onChange={next => update(axisKey, 'd', next)} testID={`pid-${axisKey}-d`} /><NumericField label="F" value={value.f} max={1000} disabled={disabled} onChange={next => update(axisKey, 'f', next)} testID={`pid-${axisKey}-f`} /></View></View>;
+function AxisCard({axisKey, title, subtitle, value, disabled, ownedFields, update}: {axisKey: PidAxisKey; title: string; subtitle: string; value: PidAxisDraft; disabled: boolean; ownedFields: ReadonlySet<string>; update: (axis: PidAxisKey, term: keyof PidAxisDraft, value: number) => void}) {
+  const owned = (term: 'P' | 'I' | 'D' | 'F') => ownedFields.has(`${axisKey.toUpperCase()}.${term}`);
+  const field = (term: 'p' | 'i' | 'd' | 'f', upper: 'P' | 'I' | 'D' | 'F', max: number) =>
+    <NumericField key={term} label={upper} value={value[term]} max={max} disabled={disabled || owned(upper)} note={owned(upper) ? GENERATOR_OWNED_NOTE : undefined} onChange={next => update(axisKey, term, next)} testID={`pid-${axisKey}-${term}`} />;
+  return <View style={styles.axisCard} testID={`pid-axis-${axisKey}`}><View><Text style={styles.axisTitle}>{title}</Text><Text style={styles.axisSubtitle}>{subtitle}</Text></View><View style={styles.fieldsRow}>{field('p', 'P', 250)}{field('i', 'I', 250)}{field('d', 'D', 250)}{field('f', 'F', 1000)}</View></View>;
 }
 
-function RateAxisCard({axisKey, title, value, rates, disabled, update}: {axisKey: PidAxisKey; title: string; value: RateAxisDraft; rates: RatesDraft; disabled: boolean; update: (axis: PidAxisKey, term: keyof RateAxisDraft, value: number) => void}) {
-  const definition = RATE_TYPES[rates.type];
-  if (definition === undefined) return null;
-  const actualLike = rates.type === 1 || rates.type === 3;
-  const maxRateLike = rates.type === 3 || rates.type === 4;
-  return <View style={styles.axisCard} testID={`pid-rate-axis-${axisKey}`}><Text style={styles.axisTitle}>{title}</Text><View style={styles.fieldsRow}><ScaledNumericField label={actualLike ? 'حساسية المركز °/s' : 'RC Rate'} rawValue={value.rcRate} rawMin={1} rawMax={definition.rcMax} scale={definition.rcScale} disabled={disabled} onChange={next => update(axisKey, 'rcRate', next)} testID={`pid-rate-${axisKey}-rc`} /><ScaledNumericField label={maxRateLike ? 'أقصى معدل °/s' : 'Rate'} rawValue={value.superRate} rawMin={0} rawMax={definition.superMax} scale={definition.superScale} disabled={disabled} onChange={next => update(axisKey, 'superRate', next)} testID={`pid-rate-${axisKey}-super`} /><ScaledNumericField label={rates.type === 1 ? 'Expo %' : 'Expo'} rawValue={value.expo} rawMin={0} rawMax={100} scale={definition.expoScale} disabled={disabled} onChange={next => update(axisKey, 'expo', next)} testID={`pid-rate-${axisKey}-expo`} /><NumericField label="Rate limit °/s" value={value.limit} min={200} max={1998} disabled={disabled} onChange={next => update(axisKey, 'limit', next)} testID={`pid-rate-${axisKey}-limit`} /></View></View>;
+function RateAxisCard({axisKey, title, value, presentation, disabled, update}: {axisKey: PidAxisKey; title: string; value: RateAxisDraft; presentation: RateAxisPresentation; disabled: boolean; update: (axis: PidAxisKey, term: keyof RateAxisDraft, value: number) => void}) {
+  return <View style={styles.axisCard} testID={`pid-rate-axis-${axisKey}`}><Text style={styles.axisTitle}>{title}</Text><View style={styles.fieldsRow}>
+    <RateField field={presentation.rcRate} rawValue={value.rcRate} disabled={disabled} onChange={next => update(axisKey, 'rcRate', next)} testID={`pid-rate-${axisKey}-rc`} />
+    <RateField field={presentation.superRate} rawValue={value.superRate} disabled={disabled} onChange={next => update(axisKey, 'superRate', next)} testID={`pid-rate-${axisKey}-super`} />
+    <RateField field={presentation.expo} rawValue={value.expo} disabled={disabled} onChange={next => update(axisKey, 'expo', next)} testID={`pid-rate-${axisKey}-expo`} />
+    <RateField field={presentation.rateLimit} rawValue={value.limit} disabled={disabled} onChange={next => update(axisKey, 'limit', next)} testID={`pid-rate-${axisKey}-limit`} />
+  </View></View>;
+}
+
+/**
+ * A simplified filter block: the switch, the multiplier, and the frequencies
+ * those two would actually produce.
+ *
+ * The range is projected by `simplifiedTuningGenerator` - the same code the
+ * controller's verification uses - so the number on screen and the number the
+ * write expects can never come from two different opinions. A block whose
+ * stored frequency is zero says so instead of pretending the multiplier will
+ * switch it on.
+ */
+function SimplifiedFilterCard({copy, block, observed, disabled, onToggle, onMultiplier, testID}: {copy: {title: string; help: string}; block: {enabled: boolean; multiplier: number}; observed: ObservedFilterFrequencies; disabled: boolean; onToggle: (next: boolean) => void; onMultiplier: (raw: number) => void; testID: string}) {
+  const generated: GeneratedFilterFrequencies = testID.includes('gyro')
+    ? generateSimplifiedGyroFilters(block.enabled, block.multiplier, observed, GENERATOR_DEFAULTS)
+    : generateSimplifiedDtermFilters(block.enabled, block.multiplier, observed, GENERATOR_DEFAULTS);
+  const lpf1 = generated.lpf1DynMinHz > 0
+    ? formatEffectiveRange(generated.lpf1DynMinHz, generated.lpf1DynMaxHz)
+    : generated.lpf1StaticHz > 0 ? formatEffectiveRange(generated.lpf1StaticHz, generated.lpf1StaticHz) : undefined;
+  return <View style={styles.filterCard} testID={testID}>
+    <View style={styles.filterHead}>
+      <View style={styles.filterCopy}><Text style={styles.fieldLabel}>{copy.title}</Text><Text style={styles.sectionHint}>{copy.help}</Text></View>
+      <ToggleSwitch value={block.enabled} onValueChange={onToggle} disabled={disabled} accessibilityLabel={copy.title} testID={`${testID}-toggle`} />
+    </View>
+    {block.enabled ? <>
+      <MultiplierStepper label={`${copy.title}: قوة الفلترة`} raw={block.multiplier} min={SIMPLIFIED_TUNING_FILTERS_MIN} disabled={disabled} onChange={onMultiplier} testID={`${testID}-multiplier`} />
+      {lpf1 === undefined
+        ? <Text style={styles.fieldNote} testID={`${testID}-zero`}>{SIMPLIFIED_ZERO_FILTER_NOTE}</Text>
+        : <Text style={styles.effectiveRange} testID={`${testID}-range`}>{`التردد الفعّال: ${lpf1}`}</Text>}
+      {generated.lpf2StaticHz > 0 ? <Text style={styles.fieldNote} testID={`${testID}-lpf2`}>{`المرحلة الثانية: ${formatEffectiveRange(generated.lpf2StaticHz, generated.lpf2StaticHz)}`}</Text> : null}
+    </> : null}
+  </View>;
 }
 
 export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDirtyChange, controller = pidTuningController}: PidTuningScreenProps): React.JSX.Element {
   const {t} = useTranslation(); const {width, fontScale} = useWindowDimensions(); const {maxWidth} = useContentEnvelope(true); const wide = width / Math.max(fontScale, 1) >= 1040;
-  const [phase, setPhase] = useState<Phase>('IDLE'); const [snapshot, setSnapshot] = useState<MspPidTuningSnapshot>(); const [draft, setDraft] = useState<PidTuningDraft>(); const [loadOutcome, setLoadOutcome] = useState<PidLoadOutcome>(); const [saveOutcome, setSaveOutcome] = useState<PidSaveOutcome>(); const [switchOutcome, setSwitchOutcome] = useState<PidProfileSwitchOutcome>(); const [reloadToken, setReloadToken] = useState(0);
+  const [phase, setPhase] = useState<Phase>('IDLE');
+  const [snapshot, setSnapshot] = useState<MspPidTuningSnapshot>();
+  const [draft, setDraft] = useState<PidTuningDraft>();
+  const [loadOutcome, setLoadOutcome] = useState<PidLoadOutcome>();
+  const [simplifiedState, setSimplifiedState] = useState<SimplifiedState>({kind: 'READING'});
+  const [simplifiedPatch, setSimplifiedPatch] = useState<SimplifiedTuningPatch>(EMPTY_PATCH);
+  const [pendingRatesType, setPendingRatesType] = useState<number>();
+  const [profileNames, setProfileNames] = useState<{pid?: string; rate?: string}>({});
+  const [reloadToken, setReloadToken] = useState(0);
+  const [previewAxis, setPreviewAxis] = useState<'roll' | 'pitch' | 'yaw'>('roll');
+  const [moreSlidersOpen, setMoreSlidersOpen] = useState(false);
+  const [explanationOpen, setExplanationOpen] = useState(false);
+  const [overwriteDetailOpen, setOverwriteDetailOpen] = useState(false);
+  const [advancedChoice, setAdvancedChoice] = useState<boolean>();
   /**
-   * A NEW ACTION RETIRES THE PREVIOUS ONE'S RESULT - BOTH OF THEM.
+   * ONE STATUS SLOT, NOT ONE PER OPERATION.
    *
-   * The status line reads saveOutcome first and switchOutcome second, so
-   * clearing only the save result did not clear the line: it UNCOVERED
-   * the older profile-switch message underneath. Switch profile, edit,
-   * save, edit again - and the screen went back to announcing the
-   * profile switch from three actions ago as if it had just happened.
-   *
-   * The two slots describe two different past events, and the status
-   * line can only be about one thing: whatever the operator did last. An
-   * edit invalidates both, and so does starting a save.
+   * The screen used to keep a save result and a switch result side by side
+   * and render whichever it found first, so retiring the newer one UNCOVERED
+   * the older: switch, edit, save, edit - and the profile-switch message from
+   * three actions ago came back as if it had just happened. The status line
+   * can only ever be about one thing, whatever the operator did last, so
+   * there is exactly one place to put it and any edit clears it.
    */
-  const retireOutcomes = useCallback(() => {
-    setSaveOutcome(undefined);
-    setSwitchOutcome(undefined);
-  }, []);
+  const [status, setStatus] = useState<{text: string; warning: boolean}>();
+  const retireStatus = useCallback(() => setStatus(undefined), []);
 
-  useEffect(() => { if (!active || sessionKey === undefined) return; let cancelled = false; setPhase('LOADING'); retireOutcomes(); controller.load(sessionKey).then(outcome => { if (cancelled) return; setLoadOutcome(outcome); if (outcome.kind === 'LOADED') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); setPhase('READY'); } else { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); } }).catch(error => { if (cancelled) return; setLoadOutcome({kind: 'FAILED', error}); setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); }); return () => { cancelled = true; }; }, [active, controller, reloadToken, retireOutcomes, sessionKey]);
-  const dirty = snapshot !== undefined && draft !== undefined && !pidTuningDraftsEqual(createPidTuningDraft(snapshot), draft);
-  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]); useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  /**
+   * The reads that belong to the ACTIVE PROFILE rather than to the session.
+   *
+   * Both the simplified block and the profile name move when the board
+   * switches profile, so a switch has to refresh them - but NOT by re-running
+   * the whole load, which clears the status line and would erase the very
+   * message explaining what just happened.
+   */
+  const refreshProfileScoped = useCallback(async (key: SetupUiSessionKey, alive: () => boolean): Promise<void> => {
+    if (controller.loadSimplified === undefined) { setSimplifiedState({kind: 'PORT_ABSENT'}); }
+    else {
+      let simplified: PidSimplifiedLoadOutcome;
+      try { simplified = await controller.loadSimplified(key); } catch (error) { simplified = {kind: 'FAILED', error}; }
+      if (!alive()) return;
+      setSimplifiedState(simplified);
+    }
+    // Names are decoration: a failure to read one must never disturb the
+    // page, and an absent name is left absent rather than filled in.
+    if (controller.readProfileName === undefined) return;
+    for (const kind of ['PID', 'RATE'] as const) {
+      try {
+        const named = await controller.readProfileName(key, kind);
+        if (!alive()) return;
+        if (named.kind === 'NAME') setProfileNames(current => ({...current, [kind === 'PID' ? 'pid' : 'rate']: named.name}));
+      } catch { /* an unreadable name is simply not shown */ }
+    }
+  }, [controller]);
+
+  useEffect(() => {
+    if (!active || sessionKey === undefined) return;
+    let cancelled = false;
+    setPhase('LOADING'); retireStatus();
+    setSimplifiedState({kind: 'READING'}); setSimplifiedPatch(EMPTY_PATCH); setPendingRatesType(undefined); setProfileNames({});
+    const run = async (): Promise<void> => {
+      let outcome: PidLoadOutcome;
+      try { outcome = await controller.load(sessionKey); } catch (error) { outcome = {kind: 'FAILED', error}; }
+      if (cancelled) return;
+      setLoadOutcome(outcome);
+      if (outcome.kind !== 'LOADED') { setSnapshot(undefined); setDraft(undefined); setPhase('ERROR'); setSimplifiedState({kind: 'READING'}); return; }
+      setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); setPhase('READY');
+      await refreshProfileScoped(sessionKey, () => !cancelled);
+    };
+    // Every step above converts its own failure into a rendered outcome, so
+    // the only thing that can reach here is a defect in this component.
+    run().catch(error => { if (!cancelled) { setLoadOutcome({kind: 'FAILED', error}); setPhase('ERROR'); } });
+    return () => { cancelled = true; };
+  }, [active, controller, refreshProfileScoped, reloadToken, retireStatus, sessionKey]);
+
+  /* ---------------------------------------------------------------- */
+  /* Derived state                                                     */
+  /* ---------------------------------------------------------------- */
+
+  const observedSimplified: MspSimplifiedTuning | undefined = simplifiedState.kind === 'LOADED' ? simplifiedState.simplified : undefined;
+  /**
+   * The draft simplified block, built by ENCODING the patch and DECODING it
+   * back - the exact round trip the controller will perform. Deriving it any
+   * other way would create a second interpretation of the same 53 bytes.
+   */
+  const draftSimplified = useMemo(() => {
+    if (observedSimplified === undefined) return undefined;
+    try { return decodeSimplifiedTuning(encodeSimplifiedTuning(observedSimplified, simplifiedPatch)); }
+    catch { return undefined; }
+  }, [observedSimplified, simplifiedPatch]);
+  const simplifiedDirty = draftSimplified !== undefined && observedSimplified !== undefined
+    && !draftSimplified.raw.every((byte, index) => byte === observedSimplified.raw[index]);
+  const simplifiedMode = draftSimplified === undefined ? undefined : simplifiedModeCopy(draftSimplified.pids.mode);
+  const simplifiedGenerating = draftSimplified !== undefined && (draftSimplified.pids.mode.kind === 'RP' || draftSimplified.pids.mode.kind === 'RPY');
+  const ownedDirectFields = useMemo(() => generatorOwnedDirectFields(draftSimplified), [draftSimplified]);
+
+  const boardRatesTypeRaw = snapshot?.rcTuning.ratesType;
+  const effectiveRatesTypeRaw = pendingRatesType ?? boardRatesTypeRaw;
+  const effectiveRatesType = effectiveRatesTypeRaw === undefined ? undefined : classifyRatesType(effectiveRatesTypeRaw);
+  const ratePresentation = effectiveRatesType === undefined ? undefined : rateAxisPresentation(effectiveRatesType);
+  const ratesTypeDirty = pendingRatesType !== undefined && boardRatesTypeRaw !== undefined && pendingRatesType !== boardRatesTypeRaw;
+  /**
+   * A value that is legal under the current formula can be illegal under the
+   * one being selected - the bounds table differs per type. Caught here so
+   * the pilot fixes it before the write, instead of the controller refusing
+   * a transaction it already started.
+   */
+  const pendingRangeIssue = useMemo(() => {
+    if (!ratesTypeDirty || draft === undefined || ratePresentation === undefined) return false;
+    return AXES.some(axis => {
+      const value = draft.rates[axis.key];
+      return value.rcRate < ratePresentation.rcRate.min || value.rcRate > ratePresentation.rcRate.max
+        || value.superRate < ratePresentation.superRate.min || value.superRate > ratePresentation.superRate.max
+        || value.expo < ratePresentation.expo.min || value.expo > ratePresentation.expo.max;
+    });
+  }, [draft, ratePresentation, ratesTypeDirty]);
+
+  const valuesDirty = snapshot !== undefined && draft !== undefined && !pidTuningDraftsEqual(createPidTuningDraft(snapshot), draft);
+  const dirty = valuesDirty || simplifiedDirty || ratesTypeDirty;
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined ? [] : validatePidTuningDraft(draft, snapshot), [draft, snapshot]);
-  /** Top-level draft fields. Separate from `update`, which sets one term
-   * of one AXIS - overloading it would make two different things share a
-   * name on a screen where precision matters. */
+  const blocked = issues.length > 0 || pendingRangeIssue;
+
+  /**
+   * ADVANCED OPENS ITSELF WHEN THE SIMPLIFIED WORKSPACE CANNOT WORK.
+   *
+   * Not a convenience: with no readable generator - or a mode no pinned tree
+   * defines - the direct controls are the only tuning surface left, and a
+   * page whose main section is an apology with everything else folded away
+   * reads as broken. The operator's own choice always wins once made.
+   */
+  const advancedDefaultOpen = simplifiedState.kind !== 'READING'
+    && (simplifiedState.kind !== 'LOADED' || simplifiedMode?.known === false);
+  const advancedOpen = advancedChoice ?? advancedDefaultOpen;
+
+  /* ---------------------------------------------------------------- */
+  /* Edits                                                             */
+  /* ---------------------------------------------------------------- */
+
   const updateFeel = useCallback((key: 'feedforwardAveraging' | 'feedforwardBoost' | 'feedforwardJitterFactor', value: number) => {
     setDraft(current => current === undefined ? current : Object.freeze({...current, [key]: value}));
-    retireOutcomes();
-  }, [retireOutcomes]);
-  const update = useCallback((axis: PidAxisKey, term: keyof PidAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [axis]: Object.freeze({...current[axis], [term]: value})})); retireOutcomes(); }, [retireOutcomes]);
-  const updateRate = useCallback((axis: PidAxisKey, term: keyof RateAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [axis]: Object.freeze({...current.rates[axis], [term]: value})})})); retireOutcomes(); }, [retireOutcomes]);
-  const updateThrottle = useCallback((term: keyof Omit<RatesDraft, PidAxisKey | 'type'>, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [term]: value})})); retireOutcomes(); }, [retireOutcomes]);
-  const updateFilter = useCallback((term: keyof FiltersDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, filters: Object.freeze({...current.filters, [term]: value})})); retireOutcomes(); }, [retireOutcomes]);
-  const reload = useCallback(() => { const perform = () => setReloadToken(value => value + 1); if (!dirty) return perform(); Alert.alert('تجاهل تغييرات PID؟', 'ستُستبدل القيم الحالية بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]); }, [dirty]);
-  const save = useCallback(async () => { if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return; setPhase('SAVING'); retireOutcomes(); let outcome: PidSaveOutcome; try { outcome = await controller.save(sessionKey, snapshot, draft); } catch (error) { outcome = {kind: 'FAILED', error}; } setSaveOutcome(outcome); if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot)); } setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY'); }, [controller, draft, issues.length, retireOutcomes, sessionKey, snapshot]);
-    /**
+    retireStatus();
+  }, [retireStatus]);
+  const update = useCallback((axis: PidAxisKey, term: keyof PidAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [axis]: Object.freeze({...current[axis], [term]: value})})); retireStatus(); }, [retireStatus]);
+  const updateRate = useCallback((axis: PidAxisKey, term: keyof RateAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [axis]: Object.freeze({...current.rates[axis], [term]: value})})})); retireStatus(); }, [retireStatus]);
+  const updateThrottle = useCallback((term: keyof Omit<RatesDraft, PidAxisKey | 'type'>, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [term]: value})})); retireStatus(); }, [retireStatus]);
+  const updateFilter = useCallback((term: keyof FiltersDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, filters: Object.freeze({...current.filters, [term]: value})})); retireStatus(); }, [retireStatus]);
+  const patchPids = useCallback((patch: SimplifiedPidInputPatch) => { setSimplifiedPatch(current => Object.freeze({...current, pids: {...current.pids, ...patch}})); retireStatus(); }, [retireStatus]);
+  const patchBlock = useCallback((block: 'gyro' | 'dterm', patch: SimplifiedFilterPatch) => { setSimplifiedPatch(current => Object.freeze({...current, [block]: {...current[block], ...patch}})); retireStatus(); }, [retireStatus]);
+
+  const discard = useCallback(() => {
+    if (snapshot !== undefined) setDraft(createPidTuningDraft(snapshot));
+    setSimplifiedPatch(EMPTY_PATCH); setPendingRatesType(undefined); retireStatus();
+  }, [retireStatus, snapshot]);
+  const reload = useCallback(() => { const perform = () => setReloadToken(value => value + 1); if (!dirty) return perform(); Alert.alert('تجاهل تغييرات الضبط؟', 'ستُستبدل القيم الحالية بقراءة جديدة من متحكم الطيران.', [{text: 'إلغاء', style: 'cancel'}, {text: 'إعادة القراءة', style: 'destructive', onPress: perform}]); }, [dirty]);
+
+  /* ---------------------------------------------------------------- */
+  /* The save chain                                                    */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * THREE WRITES, IN ONE ORDER, EACH REBASED ON THE LAST.
+   *
+   * 1. The rates FORMULA, because the value validator refuses a draft whose
+   *    type differs from the board's - the type has to land before the
+   *    numbers under it can be checked at all.
+   * 2. The values, against the snapshot step 1 returned.
+   * 3. The simplified sliders LAST, because a simplified write makes the
+   *    flight controller REGENERATE the very PID values step 2 just wrote.
+   *    Running it first would leave step 2 sending stale numbers back over
+   *    the generation and silently undoing it.
+   *
+   * Any step that does not clearly succeed ends the chain: a half-applied
+   * tune reported as success is the failure mode this ordering exists to
+   * prevent.
+   */
+  const save = useCallback(async () => {
+    if (sessionKey === undefined || snapshot === undefined || draft === undefined || blocked) return;
+    setPhase('SAVING'); retireStatus();
+    let base = snapshot;
+    let working = draft;
+    let last: {text: string; warning: boolean} | undefined;
+    let halted = false;
+    /** Only a dead link or a thrown error leaves the SCREEN in an error
+     * phase; a refusal or a mismatch is a rendered result, not a broken page. */
+    let terminal = false;
+
+    if (ratesTypeDirty && pendingRatesType !== undefined && controller.setRatesType !== undefined) {
+      let outcome: PidRatesTypeOutcome;
+      try { outcome = await controller.setRatesType(sessionKey, base, pendingRatesType); }
+      catch (error) { outcome = {kind: 'FAILED', error}; }
+      last = ratesTypeMessage(outcome);
+      if (outcome.kind === 'PERSISTED_VERIFIED' || outcome.kind === 'NO_CHANGES') {
+        base = outcome.snapshot;
+        working = Object.freeze({...working, rates: Object.freeze({...working.rates, type: base.rcTuning.ratesType})});
+        setSnapshot(base); setPendingRatesType(undefined);
+      } else { halted = true; terminal = outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED'; }
+    }
+
+    if (!halted && !pidTuningDraftsEqual(createPidTuningDraft(base), working)) {
+      let outcome: PidSaveOutcome;
+      try { outcome = await controller.save(sessionKey, base, working); }
+      catch (error) { outcome = {kind: 'FAILED', error}; }
+      last = saveMessage(outcome);
+      if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') { base = outcome.snapshot; setSnapshot(base); }
+      else { halted = true; terminal = outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED'; }
+    }
+
+    if (!halted && simplifiedDirty && controller.saveSimplified !== undefined) {
+      let outcome: PidSimplifiedSaveOutcome;
+      try { outcome = await controller.saveSimplified(sessionKey, base, simplifiedPatch); }
+      catch (error) { outcome = {kind: 'FAILED', error}; }
+      last = simplifiedSaveMessage(outcome);
+      if (outcome.kind === 'SAVED_VERIFIED' || outcome.kind === 'NO_CHANGES') {
+        base = outcome.snapshot; setSnapshot(base); setSimplifiedPatch(EMPTY_PATCH);
+        // The generator rewrote the effective filter frequencies, so the
+        // block on screen is now stale. Re-read it rather than display our
+        // own projection as if the board had confirmed it.
+        if (controller.loadSimplified !== undefined) {
+          try { setSimplifiedState(await controller.loadSimplified(sessionKey)); }
+          catch (error) { setSimplifiedState({kind: 'FAILED', error}); }
+        }
+      } else { halted = true; terminal = outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED'; }
+    }
+
+    setDraft(createPidTuningDraft(base));
+    setStatus(last ?? {text: 'لا توجد تغييرات جديدة.', warning: false});
+    setPhase(terminal ? 'ERROR' : 'READY');
+  }, [blocked, controller, draft, pendingRatesType, ratesTypeDirty, retireStatus, sessionKey, simplifiedDirty, simplifiedPatch, snapshot]);
+
+  /**
    * SWITCHES THE ACTIVE PROFILE ON THE BOARD, not in this component.
    *
-   * The snapshot that comes back is the board's own re-read, so the
-   * screen renders what is ACTUALLY active - including the case where
-   * the board acknowledged and did not move (NOT_APPLIED), which must
-   * never look like success. Unsaved edits are refused rather than
-   * silently discarded: switching profiles replaces every value shown.
+   * The snapshot that comes back is the board's own re-read, so the screen
+   * renders what is ACTUALLY active - including the case where the board
+   * acknowledged and did not move (NOT_APPLIED), which must never look like
+   * success. Unsaved edits are refused rather than silently discarded:
+   * switching profiles replaces every value shown, and pretending an edit
+   * followed the pilot to the new profile would be a lie about which tune
+   * is flying.
    */
   const selectProfile = useCallback(async (kind: PidProfileKind, index: number) => {
     if (sessionKey === undefined || controller.selectProfile === undefined) return;
     if (dirty) {
-      Alert.alert('لديك تغييرات غير محفوظة', 'تبديل الملف سيستبدل القيم المعروضة بقيم الملف الجديد. احفظ أولًا أو تجاهل التغييرات.', [{text: 'حسنًا', style: 'cancel'}]);
+      Alert.alert('لديك تغييرات غير محفوظة', 'تبديل الملف سيستبدل كل ما هو معروض بقيم الملف الجديد، ولن تنتقل تعديلاتك معه. احفظ أولًا أو تجاهل التغييرات.', [{text: 'حسنًا', style: 'cancel'}]);
       return;
     }
-    setPhase('SAVING'); retireOutcomes();
+    setPhase('SAVING'); retireStatus();
     let outcome: PidProfileSwitchOutcome;
-    try {
-      outcome = await controller.selectProfile(sessionKey, kind, index);
-    } catch (error) {
-      outcome = {kind: 'FAILED', error};
-    }
-    setSwitchOutcome(outcome);
+    try { outcome = await controller.selectProfile(sessionKey, kind, index); }
+    catch (error) { outcome = {kind: 'FAILED', error}; }
+    setStatus(profileSwitchMessage(outcome));
     if (outcome.kind === 'SWITCHED' || outcome.kind === 'NOT_APPLIED') {
       setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot));
+      setSimplifiedPatch(EMPTY_PATCH); setPendingRatesType(undefined);
+      // The simplified block and the profile name belong to the profile that
+      // just moved underneath us, so they are re-read HERE rather than by
+      // re-running the whole load - which would clear the status line and
+      // erase the very message describing what just happened.
+      setPhase('READY');
+      await refreshProfileScoped(sessionKey, () => true);
+      return;
     }
     setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
-  }, [controller, dirty, retireOutcomes, sessionKey]);
-  const statusCopy = saveOutcome !== undefined ? saveMessage(saveOutcome) : switchOutcome !== undefined ? profileSwitchMessage(switchOutcome) : undefined; const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? 'تعذرت قراءة إعدادات PID من متحكم الطيران.' : loadOutcome?.kind === 'SESSION_ENDED' ? 'انتهت جلسة الاتصال.' : undefined;
+  }, [controller, dirty, refreshProfileScoped, retireStatus, sessionKey]);
+
+  const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? 'تعذرت قراءة إعدادات PID من متحكم الطيران.' : loadOutcome?.kind === 'SESSION_ENDED' ? 'انتهت جلسة الاتصال.' : undefined;
   const gyroNyquist = snapshot?.gyroSampleRateHz === undefined ? undefined : snapshot.gyroSampleRateHz / 2;
   const pidNyquist = snapshot?.gyroSampleRateHz === undefined || snapshot.pidProcessDenom === undefined || snapshot.pidProcessDenom < 1 ? undefined : snapshot.gyroSampleRateHz / snapshot.pidProcessDenom / 2;
   const filtersEditable = gyroNyquist !== undefined && pidNyquist !== undefined;
+  const busy = phase !== 'READY';
+  const simplifiedNotice = simplifiedLoadMessage(simplifiedState);
+  const overwrite = draftSimplified !== undefined && simplifiedDirty ? overwriteSummary(draftSimplified) : undefined;
+  const axisSettings = (axis: RateAxisDraft): RateAxisSettings => ({rcRate: axis.rcRate, superRate: axis.superRate, expo: axis.expo, rateLimit: axis.limit});
+  const dirtyScopes = [
+    ...(simplifiedDirty ? ['الضبط المبسّط'] : []),
+    ...(ratesTypeDirty ? ['خوارزمية Rates'] : []),
+    ...(valuesDirty ? ['القيم'] : []),
+  ];
+
+  const sliderRow = (slider: SimplifiedSliderCopy) => {
+    if (draftSimplified === undefined) return null;
+    const raw = draftSimplified.pids[slider.key as Exclude<SimplifiedSliderKey, never>];
+    return <View key={slider.key} style={styles.sliderRow} testID={`pid-simplified-${slider.key}`}>
+      <View style={styles.sliderCopy}><Text style={styles.fieldLabel}>{slider.label}</Text><Text style={styles.sectionHint}>{slider.help}</Text></View>
+      <MultiplierStepper label={slider.label} raw={raw} min={SIMPLIFIED_TUNING_PIDS_MIN} disabled={busy} onChange={next => patchPids({[slider.key]: next})} testID={`pid-simplified-${slider.key}-value`} />
+    </View>;
+  };
 
   return <View style={styles.root} testID="pid-screen"><ScrollView contentContainerStyle={[styles.content, {maxWidth}]}>
-    <View style={styles.hero}><View style={styles.heroCopy}><Text style={styles.title}>ضبط PID وRates والفلاتر</Text><Text style={styles.subtitle}>اضبط استجابة المحاور ومعدلات الحركة والفلاتر الفعالة. الحفظ لا يبدأ إلا بعد إثبات DISARMED، ثم تُحفظ المجموعات المتغيرة فقط في ذاكرة المتحكم وتُقرأ مجددًا للتحقق.</Text></View><View style={styles.profileBadges}><ProfileSelector label="ملف PID النشط" testID="pid-active-profile" count={snapshot?.pidProfileCount} active={snapshot?.pidProfileIndex} disabled={phase !== 'READY' || controller.selectProfile === undefined} onSelect={index => selectProfile('PID', index)} /><ProfileSelector label="ملف Rates النشط" testID="pid-active-rates-profile" count={snapshot?.rateProfileCount} active={snapshot?.controlRateProfileIndex} disabled={phase !== 'READY' || controller.selectProfile === undefined} onSelect={index => selectProfile('RATE', index)} /></View></View>
-    <View style={styles.danger}><Text style={styles.dangerTitle}>تغيير PID قد يجعل الطائرة غير مستقرة</Text><Text style={styles.dangerText}>احفظ القيم الأصلية، غيّر تدريجيًا، وانزع المراوح أثناء الإعداد. لا يثبت نجاح MSP أن الضبط مناسب للطيران.</Text></View>
-    <View style={styles.hardwareNotice}><Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text><Text style={styles.hardwareText}>الترميز والقراءة الراجعة مختبران آليًا، لكن النتيجة الديناميكية لا يمكن اعتمادها دون Flight Controller وطائرة حقيقية واختبار متدرج آمن.</Text></View>
+    {/* 1. WHAT THIS PAGE IS. One line, not a paragraph - the safety notice
+        below carries the warning, and repeating it in the header would just
+        push the first control further down. */}
+    <View style={styles.hero}><Text style={styles.title}>ضبط PID</Text><Text style={styles.subtitle}>اضبط قوة تصحيح المتحكم وسرعة استجابة الطائرة. لا يُرسل أي تعديل قبل إثبات أن المتحكم DISARMED، وتُقرأ كل كتابة مرة أخرى للتحقق.</Text></View>
+
+    <NoticeBox variant="danger" title="تغيير الضبط قد يجعل الطائرة غير مستقرة" testID="pid-danger">
+      <Text style={styles.dangerText}>انزع المراوح أثناء الإعداد، وغيّر تدريجيًا، واحتفظ بنسخة من القيم الأصلية. نجاح أمر MSP لا يعني أن الضبط مناسب للطيران.</Text>
+    </NoticeBox>
+
+    {/* THE HARDWARE-VERIFICATION NOTICE STAYS AT PAGE LEVEL.
+        It was briefly moved inside «الإعدادات المتقدمة» while the hierarchy
+        was rebuilt, and `hardwareVerificationNotice.test.tsx` - the app-wide
+        wall that requires every screen to carry it - failed immediately.
+        Rightly: a disclosure a pilot never opens is the same as not saying
+        it. The statement is about the WHOLE page, so it sits with the other
+        page-level warning and is never folded away. */}
+    <View style={styles.hardwareNotice} testID="pid-hardware-notice">
+      <Text style={styles.hardwareTitle}>{t('hardwareVerification.behaviourTitle')}</Text>
+      <Text style={styles.hardwareText}>الترميز والقراءة الراجعة مختبران آليًا، لكن النتيجة الديناميكية لا يمكن اعتمادها دون Flight Controller وطائرة حقيقية واختبار متدرج آمن.</Text>
+    </View>
+
     {loadingMessage !== undefined ? <View style={styles.warning} testID="pid-load-message"><Text style={styles.warningText}>{loadingMessage}</Text>{loadOutcome?.kind === 'REJECTED' && loadOutcome.reason === 'MOTOR_TEST_ACTIVE' ? <Button label="فتح شاشة المحركات" onPress={onOpenMotors} variant="secondary" icon="fan" style={styles.inlineAction} /> : <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} />}</View> : null}
+
     {draft !== undefined ? <>
-      <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>المعاملات الأساسية</Text><Text style={styles.sectionHint}>P للتصحيح الحالي، I للخطأ المتراكم، D لتخميد التغير، وF لتتبع الأمر. الحدود من البرنامج الثابت 2025.12.2.</Text></View>
-      <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <AxisCard key={axis.key} axisKey={axis.key} title={axis.title} subtitle={axis.subtitle} value={draft[axis.key]} disabled={phase !== 'READY'} update={update} />)}</View>
-      <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Rates</Text><Text style={styles.sectionHint}>الخوارزمية الحالية: {RATE_TYPES[draft.rates.type]?.name ?? `غير معروفة (${draft.rates.type})`}. لا نبدّل نوع الخوارزمية تلقائيًا لأن المعاني والمدى يتغيران جذريًا بين الأنواع.</Text></View>
-      <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <RateAxisCard key={axis.key} axisKey={axis.key} title={axis.title} value={draft.rates[axis.key]} rates={draft.rates} disabled={phase !== 'READY'} update={updateRate} />)}</View>
-      {/* THE FEEL CARD. These three bytes are what Betaflight's own
-          official presets change to turn one aircraft into a cinematic
-          rig and another into a race quad - not the P/I/D gains above.
-          Grouped and labelled by EFFECT, because "feedforward jitter
-          factor" means nothing to a pilot deciding how smooth they want
-          the sticks to feel. */}
-      <View style={styles.card} testID="pid-feel"><Text style={styles.sectionTitle}>إحساس العصا</Text><Text style={styles.sectionHint}>تتحكم في نعومة الاستجابة لا في قوتها. ارفع التنعيم للتصوير، واخفضه للسباق.</Text><View style={styles.fieldsRow}><NumericField label="تجاهل ارتجاف العصا" value={draft.feedforwardJitterFactor} max={FEEDFORWARD_JITTER_FACTOR_MAX} disabled={phase !== 'READY'} onChange={next => updateFeel('feedforwardJitterFactor', next)} testID="pid-ff-jitter" /><NumericField label="دفعة الاستجابة" value={draft.feedforwardBoost} max={FEEDFORWARD_BOOST_MAX} disabled={phase !== 'READY'} onChange={next => updateFeel('feedforwardBoost', next)} testID="pid-ff-boost" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'بلا تنعيم'}, {value: 1, label: 'نقطتان'}, {value: 2, label: '3 نقاط'}, {value: 3, label: '4 نقاط'}].map(option => <Pressable key={option.value} disabled={phase !== 'READY'} onPress={() => updateFeel('feedforwardAveraging', option.value)} style={[styles.choice, draft.feedforwardAveraging === option.value && styles.choiceSelected]} testID={`pid-ff-averaging-${option.value}`} accessibilityState={{selected: draft.feedforwardAveraging === option.value}}><Text style={[styles.choiceText, draft.feedforwardAveraging === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
-      <View style={styles.card} testID="pid-throttle-rates"><Text style={styles.sectionTitle}>منحنى وحدّ الخانق</Text><Text style={styles.sectionHint}>القيم نسب مئوية كما يخزّنها متحكم الطيران. تغيير حد الخانق قد يقلل الدفع الأقصى.</Text><View style={styles.fieldsRow}><NumericField label="Throttle mid %" value={draft.rates.throttleMid} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleMid', next)} testID="pid-throttle-mid" /><NumericField label="Throttle expo %" value={draft.rates.throttleExpo} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleExpo', next)} testID="pid-throttle-expo" /><NumericField label="Hover %" value={draft.rates.throttleHover} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleHover', next)} testID="pid-throttle-hover" /><NumericField label="Limit %" value={draft.rates.throttleLimitPercent} min={25} max={100} disabled={phase !== 'READY'} onChange={next => updateThrottle('throttleLimitPercent', next)} testID="pid-throttle-limit-percent" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'إيقاف'}, {value: 1, label: 'Scale'}, {value: 2, label: 'Clip'}].map(option => <Pressable key={option.value} disabled={phase !== 'READY'} onPress={() => updateThrottle('throttleLimitType', option.value)} style={[styles.choice, draft.rates.throttleLimitType === option.value && styles.choiceSelected]} testID={`pid-throttle-limit-${option.value}`}><Text style={[styles.choiceText, draft.rates.throttleLimitType === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
-
-      {/* DYNAMIC IDLE. Betaflight edits idle_min_rpm here, on the PID tab -
-          its own Motors tab shows the very same value `readonly`
-          (src/tabs/motors.html) and its label key is `pidTuningIdleMinRpm`.
-          The value rides in MSP_PID_ADVANCED, whose sole writer in this app
-          is this screen's transaction, so editing it anywhere else would
-          mean two writers for one payload and a way to clobber tuning. */}
-      <View style={styles.card} testID="pid-dynamic-idle"><Text style={styles.sectionTitle}>Dynamic Idle</Text><Text style={styles.sectionHint}>أدنى دوران يحافظ عليه المتحكم بوحدة 100 دورة/دقيقة. يتطلب تفعيل Bidirectional DShot من شاشة المحركات؛ بدون قياس RPM لا يملك المتحكم قراءة يحافظ عليها. القيمة 0 تعني تعطيل الميزة.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic Idle (×100 rpm)" value={draft.idleMinRpm} min={0} max={200} disabled={phase !== 'READY'} onChange={next => setDraft(current => current === undefined ? current : {...current, idleMinRpm: next})} testID="pid-idle-min-rpm" /></View></View>
-
-      <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Filters</Text><Text style={styles.sectionHint}>تُعدّل فقط أوضاع الفلاتر النشطة التي أثبتتها القراءة. لا يفعّل التطبيق ميزة غير مثبتة في بناء الـFC ولا يغيّر نوع الفلتر.</Text></View>
-      {!filtersEditable ? <View style={styles.warning}><Text style={styles.warningText}>تعذرت معرفة Gyro/PID loop rate؛ الفلاتر معروضة للقراءة فقط ولن يُسمح بكتابتها دون حد Nyquist موثوق.</Text></View> : <View style={styles.rateEvidence}><Text style={styles.readout}>Gyro Nyquist: {gyroNyquist} Hz</Text><Text style={styles.readout}>D-term Nyquist: {pidNyquist} Hz</Text></View>}
-      <View style={[styles.readOnlyGrid, wide && styles.readOnlyGridWide]}>
-        <View style={styles.card} testID="pid-gyro-filter"><Text style={styles.sectionTitle}>Gyro LPF1</Text>{snapshot?.filterConfig.gyroLpf1DynamicMinHz !== undefined && snapshot.filterConfig.gyroLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ Min يجب أن يبقى أصغر من Max وحد Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.gyroLpf1DynamicMinHz} min={1} max={1000} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMinHz', next)} testID="pid-gyro-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.gyroLpf1DynamicMaxHz} min={1} max={1000} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMaxHz', next)} testID="pid-gyro-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.gyroLpf1StaticHz} max={1000} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('gyroLpf1StaticHz', next)} testID="pid-gyro-static" /></>}</View>
-        <View style={styles.card} testID="pid-dterm-filter"><Text style={styles.sectionTitle}>D-term LPF1</Text>{snapshot?.filterConfig.dtermLpf1DynamicMinHz !== undefined && snapshot.filterConfig.dtermLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ يحكمه PID loop Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.dtermLpf1DynamicMinHz} min={1} max={1000} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMinHz', next)} testID="pid-dterm-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.dtermLpf1DynamicMaxHz} min={1} max={1000} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMaxHz', next)} testID="pid-dterm-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.dtermLpf1StaticHz} max={1000} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('dtermLpf1StaticHz', next)} testID="pid-dterm-static" /></>}</View>
+      {/* 2. WHO AM I TUNING. Two selectors that used to read `1 | 1`; each
+          now carries what it governs and, when the board sends one, its
+          name. */}
+      <View style={styles.profileBadges}>
+        <ProfileSelector label="ملف PID" hint="يحكم قوة التصحيح والفلاتر" name={profileNames.pid} testID="pid-active-profile" count={snapshot?.pidProfileCount} active={snapshot?.pidProfileIndex} disabled={busy || controller.selectProfile === undefined} onSelect={index => selectProfile('PID', index)} />
+        <ProfileSelector label="ملف Rates" hint="يحكم سرعة الدوران واستجابة العصا" name={profileNames.rate} testID="pid-active-rates-profile" count={snapshot?.rateProfileCount} active={snapshot?.controlRateProfileIndex} disabled={busy || controller.selectProfile === undefined} onSelect={index => selectProfile('RATE', index)} />
       </View>
-      <View style={styles.card} testID="pid-dynamic-notch"><Text style={styles.sectionTitle}>Dynamic Notch</Text>{snapshot?.filterConfig.dynamicNotchCount !== undefined && snapshot.filterConfig.dynamicNotchCount > 0 ? <><Text style={styles.sectionHint}>الميزة نشطة ومثبتة من القراءة. لا تسمح هذه المرحلة بتعطيلها أو تفعيلها على بناء لم يثبت دعمه.</Text><View style={styles.fieldsRow}><NumericField label="عدد الفلاتر" value={draft.filters.dynamicNotchCount} min={1} max={7} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('dynamicNotchCount', next)} testID="pid-notch-count" /><NumericField label="Q ×100" value={draft.filters.dynamicNotchQ} min={1} max={1000} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('dynamicNotchQ', next)} testID="pid-notch-q" /><NumericField label="Min Hz" value={draft.filters.dynamicNotchMinHz} min={20} max={250} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('dynamicNotchMinHz', next)} testID="pid-notch-min" /><NumericField label="Max Hz" value={draft.filters.dynamicNotchMaxHz} min={200} max={1000} disabled={phase !== 'READY' || !filtersEditable} onChange={next => updateFilter('dynamicNotchMaxHz', next)} testID="pid-notch-max" /></View></> : <Text style={styles.sectionHint}>القراءة الحالية لا تثبت أن Dynamic Notch نشط؛ لذلك لن نخمن دعم البناء أو نرسِل قيم تفعيل.</Text>}</View>
-      {issues.length > 0 ? <View style={styles.danger}><Text style={styles.dangerTitle}>راجع القيم قبل الحفظ</Text><Text style={styles.dangerText}>{issues.map(issueMessage).join(' · ')}</Text></View> : null}
-      {statusCopy !== undefined ? <View style={statusCopy.warning ? styles.warning : styles.success}><Text style={statusCopy.warning ? styles.warningText : styles.successText}>{statusCopy.text}</Text></View> : null}
-    </> : phase === 'LOADING' ? <Text style={styles.loading}>جارٍ قراءة PID والـrates والفلاتر…</Text> : null}<View style={styles.bottomSpace} />
-  </ScrollView><StickyActionBar visible={dirty} summary="تغيّرت إعدادات الضبط" details={['PID · Rates · Filters — تُكتب المجموعات المتغيرة فقط ثم تُقرأ للتحقق']} saveLabel="حفظ والتحقق" discardLabel="تجاهل" onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createPidTuningDraft(snapshot))} disabledReason={issues.length > 0 ? 'صحح القيم أو حدود Nyquist أولًا.' : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel="جارٍ حفظ إعدادات الضبط…" testID="pid-save-bar" /></View>;
+
+      {/* 3. THE MAIN WORKSPACE. */}
+      <View style={styles.section} testID="pid-simplified">
+        <Text style={styles.sectionTitle}>الضبط المبسّط</Text>
+        <Text style={styles.sectionHint}>{SIMPLIFIED_SUMMARY}</Text>
+        <Disclosure label="كيف يعمل الضبط المبسّط؟" open={explanationOpen} onToggle={() => setExplanationOpen(value => !value)} testID="pid-simplified-explanation">
+          <Text style={styles.bodyText}>{SIMPLIFIED_EXPLANATION}</Text>
+        </Disclosure>
+
+        {simplifiedNotice !== undefined ? <NoticeBox variant="warning" testID="pid-simplified-unavailable"><Text style={styles.warningText}>{simplifiedNotice}</Text></NoticeBox> : null}
+
+        {draftSimplified !== undefined && simplifiedMode !== undefined ? <>
+          {simplifiedMode.known ? <>
+            <ChoiceChips
+              options={[{key: 'OFF', label: 'موقوف'}, {key: 'RP', label: 'Roll + Pitch'}, {key: 'RPY', label: 'Roll + Pitch + Yaw'}]}
+              selectedKey={draftSimplified.pids.mode.kind === 'OFF' ? 'OFF' : draftSimplified.pids.mode.kind === 'RP' ? 'RP' : 'RPY'}
+              onSelect={key => patchPids({modeRaw: key === 'OFF' ? 0 : key === 'RP' ? 1 : 2})}
+              disabled={busy}
+              accessibilityLabel="المحاور التي يولّدها الضبط المبسّط"
+              testID="pid-simplified-mode"
+            />
+            {draftSimplified.pids.mode.kind === 'OFF' && observedSimplified?.pids.mode.kind !== 'OFF'
+              ? <NoticeBox variant="warning" testID="pid-simplified-off-consequence"><Text style={styles.warningText}>{SIMPLIFIED_OFF_CONSEQUENCE}</Text></NoticeBox>
+              : null}
+            {simplifiedGenerating ? <>
+              {SIMPLIFIED_PRIMARY_SLIDERS.map(sliderRow)}
+              <Disclosure label="مؤثرات إضافية" open={moreSlidersOpen} onToggle={() => setMoreSlidersOpen(value => !value)} testID="pid-simplified-more">
+                {SIMPLIFIED_MORE_SLIDERS.map(sliderRow)}
+              </Disclosure>
+            </> : null}
+          </> : <NoticeBox variant="warning" title={simplifiedMode.label} testID="pid-simplified-unknown-mode">
+            <Text style={styles.warningText}>لا نعرف ما الذي يولّده هذا الوضع، فلن نعرضه كـ«موقوف» ولن نعدّله. استخدم الإعدادات المتقدمة أدناه.</Text>
+          </NoticeBox>}
+
+          {simplifiedMode.known ? <View style={[styles.filterGrid, wide && styles.filterGridWide]}>
+            <SimplifiedFilterCard copy={SIMPLIFIED_GYRO_FILTER} block={draftSimplified.gyro} observed={observedSimplified?.gyro.effectiveHz ?? draftSimplified.gyro.effectiveHz} disabled={busy} onToggle={next => patchBlock('gyro', {enabled: next})} onMultiplier={next => patchBlock('gyro', {multiplier: next})} testID="pid-simplified-gyro" />
+            <SimplifiedFilterCard copy={SIMPLIFIED_DTERM_FILTER} block={draftSimplified.dterm} observed={observedSimplified?.dterm.effectiveHz ?? draftSimplified.dterm.effectiveHz} disabled={busy} onToggle={next => patchBlock('dterm', {enabled: next})} onMultiplier={next => patchBlock('dterm', {multiplier: next})} testID="pid-simplified-dterm" />
+          </View> : null}
+
+          {overwrite !== undefined ? <View style={styles.overwrite} testID="pid-simplified-overwrite">
+            <Text style={styles.overwriteTitle}>{overwrite.categories.length === 0 ? 'سيغيّر الحفظ إعدادات الضبط المبسّط فقط.' : `سيعيد الحفظ حساب: ${overwrite.categories.join(' · ')}`}</Text>
+            {overwrite.fields.length === 0 ? null : <Disclosure label={`القيم التي ستُستبدل (${overwrite.fields.length})`} open={overwriteDetailOpen} onToggle={() => setOverwriteDetailOpen(value => !value)} testID="pid-simplified-overwrite-detail">
+              <Text style={styles.overwriteFields}>{overwrite.fields.join(' · ')}</Text>
+            </Disclosure>}
+          </View> : null}
+        </> : null}
+      </View>
+
+      {/* 4. RATES. The formula selector is a DRAFT: selecting it writes
+          nothing until the save bar is used, and the notice says plainly
+          that the stored numbers are not converted. */}
+      <View style={styles.section} testID="pid-rates">
+        <Text style={styles.sectionTitle}>سرعة الدوران (Rates)</Text>
+        <Text style={styles.sectionHint}>تحدّد كم درجة في الثانية تدور الطائرة عند دفع العصا بالكامل، وكيف تتوزع الاستجابة بين المركز والطرف.</Text>
+        <ChoiceChips
+          options={[{key: '0', label: ratesTypeName(classifyRatesType(0))}, {key: '1', label: ratesTypeName(classifyRatesType(1))}, {key: '2', label: ratesTypeName(classifyRatesType(2))}, {key: '3', label: ratesTypeName(classifyRatesType(3))}, {key: '4', label: ratesTypeName(classifyRatesType(4))}]}
+          selectedKey={effectiveRatesTypeRaw === undefined || effectiveRatesTypeRaw > 4 ? null : String(effectiveRatesTypeRaw)}
+          onSelect={key => { setPendingRatesType(Number.parseInt(key, 10)); retireStatus(); }}
+          disabled={busy || controller.setRatesType === undefined}
+          accessibilityLabel="خوارزمية Rates"
+          testID="pid-rates-type"
+        />
+        {effectiveRatesType?.kind === 'UNKNOWN' ? <NoticeBox variant="warning" testID="pid-rates-type-unknown"><Text style={styles.warningText}>{`المتحكم يستخدم خوارزمية Rates لا نعرفها (${effectiveRatesType.raw}). لن نعدّل قيم Rates بمعادلة لا نملكها.`}</Text></NoticeBox> : null}
+        {ratesTypeDirty ? <NoticeBox variant="warning" testID="pid-rates-type-pending">
+          <Text style={styles.warningText}>سيُكتب هذا التغيير عند الحفظ. الأرقام المخزّنة لا تُحوَّل: تبقى كما هي وتُفسَّر بالمعادلة الجديدة، فراجع القيم والمعاينة قبل الطيران.</Text>
+        </NoticeBox> : null}
+        {pendingRangeIssue ? <NoticeBox variant="danger" testID="pid-rates-range-issue">
+          <Text style={styles.dangerText}>إحدى القيم الحالية خارج حدود الخوارزمية المختارة. صحّحها أولًا؛ لن نغيّرها نيابةً عنك.</Text>
+        </NoticeBox> : null}
+
+        {ratePresentation !== undefined ? <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <RateAxisCard key={axis.key} axisKey={axis.key} title={axis.title} value={draft.rates[axis.key]} presentation={ratePresentation} disabled={busy} update={updateRate} />)}</View> : null}
+
+        {/* THE CURVE COMES AFTER THE FIELDS IT DESCRIBES.
+            Measured, not assumed: with the preview above them, the first
+            editable rate field on a 390px phone started 630px below the
+            section heading - and 842px once a formula-change notice was up,
+            within two pixels of the whole viewport. The visual has a height
+            budget precisely so it never costs the controls their place, and
+            putting it first spent that budget anyway. */}
+        {effectiveRatesType !== undefined ? <RateResponsePreview
+          type={effectiveRatesType}
+          axes={{roll: axisSettings(draft.rates.roll), pitch: axisSettings(draft.rates.pitch), yaw: axisSettings(draft.rates.yaw)}}
+          baseline={snapshot === undefined ? undefined : (() => { const stored = createPidTuningDraft(snapshot).rates; return {roll: axisSettings(stored.roll), pitch: axisSettings(stored.pitch), yaw: axisSettings(stored.yaw)}; })()}
+          selectedAxis={previewAxis}
+          onSelectAxis={setPreviewAxis}
+        /> : null}
+      </View>
+
+      {issues.length > 0 ? <NoticeBox variant="danger" title="راجع القيم قبل الحفظ" testID="pid-issues"><Text style={styles.dangerText}>{issues.map(issueMessage).join(' · ')}</Text></NoticeBox> : null}
+      {/* A terminal failure freezes every control until the values are read
+          again - so the way OUT of that state has to be on the page. Without
+          it the pilot is left with a disabled screen and no next step. */}
+      {status !== undefined ? <NoticeBox variant={status.warning ? 'warning' : 'success'} testID="pid-status">
+        <Text style={status.warning ? styles.warningText : styles.successText}>{status.text}</Text>
+        {phase === 'ERROR' ? <Button label="إعادة القراءة" onPress={reload} variant="secondary" icon="refresh-cw" style={styles.inlineAction} testID="pid-status-reload" /> : null}
+      </NoticeBox> : null}
+
+      {/* 6. EVERYTHING ELSE. Nothing here was removed when the page was
+          reorganised; it simply stopped being the first thing a beginner
+          meets. */}
+      <Disclosure label="الإعدادات المتقدمة" open={advancedOpen} onToggle={() => setAdvancedChoice(!advancedOpen)} tone="card" testID="pid-advanced">
+        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>المعاملات الأساسية</Text><Text style={styles.sectionHint}>P للتصحيح الحالي، I للخطأ المتراكم، D لتخميد التغير، وF لتتبع الأمر. الحدود من البرنامج الثابت 2025.12.2.</Text></View>
+        {simplifiedGenerating ? <NoticeBox variant="info" testID="pid-generator-owns"><Text style={styles.bodyText}>الضبط المبسّط نشط ويولّد بعض هذه القيم؛ الحقول التي يملكها معطّلة هنا لأن تعديلها سيُلغى عند الحفظ.</Text></NoticeBox> : null}
+        <View style={[styles.axisGrid, wide && styles.axisGridWide]}>{AXES.map(axis => <AxisCard key={axis.key} axisKey={axis.key} title={axis.title} subtitle={axis.subtitle} value={draft[axis.key]} disabled={busy} ownedFields={ownedDirectFields} update={update} />)}</View>
+
+        {/* THE FEEL CARD. These three bytes are what the official presets
+            change to turn one aircraft into a cinematic rig and another into
+            a race quad - not the P/I/D gains above. Grouped and labelled by
+            EFFECT, because "feedforward jitter factor" means nothing to a
+            pilot deciding how smooth they want the sticks to feel. */}
+        <View style={styles.card} testID="pid-feel"><Text style={styles.sectionTitle}>إحساس العصا</Text><Text style={styles.sectionHint}>تتحكم في نعومة الاستجابة لا في قوتها. ارفع التنعيم للتصوير، واخفضه للسباق.</Text><View style={styles.fieldsRow}><NumericField label="تجاهل ارتجاف العصا" value={draft.feedforwardJitterFactor} max={FEEDFORWARD_JITTER_FACTOR_MAX} disabled={busy} onChange={next => updateFeel('feedforwardJitterFactor', next)} testID="pid-ff-jitter" /><NumericField label="دفعة الاستجابة" value={draft.feedforwardBoost} max={FEEDFORWARD_BOOST_MAX} disabled={busy} onChange={next => updateFeel('feedforwardBoost', next)} testID="pid-ff-boost" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'بلا تنعيم'}, {value: 1, label: 'نقطتان'}, {value: 2, label: '3 نقاط'}, {value: 3, label: '4 نقاط'}].map(option => <Pressable key={option.value} disabled={busy} onPress={() => updateFeel('feedforwardAveraging', option.value)} style={[styles.choice, draft.feedforwardAveraging === option.value && styles.choiceSelected]} testID={`pid-ff-averaging-${option.value}`} accessibilityState={{selected: draft.feedforwardAveraging === option.value}}><Text style={[styles.choiceText, draft.feedforwardAveraging === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
+
+        <View style={styles.card} testID="pid-throttle-rates"><Text style={styles.sectionTitle}>منحنى وحدّ الخانق</Text><Text style={styles.sectionHint}>القيم نسب مئوية كما يخزّنها متحكم الطيران. تغيير حد الخانق قد يقلل الدفع الأقصى.</Text><View style={styles.fieldsRow}><NumericField label="Throttle mid %" value={draft.rates.throttleMid} max={100} disabled={busy} onChange={next => updateThrottle('throttleMid', next)} testID="pid-throttle-mid" /><NumericField label="Throttle expo %" value={draft.rates.throttleExpo} max={100} disabled={busy} onChange={next => updateThrottle('throttleExpo', next)} testID="pid-throttle-expo" /><NumericField label="Hover %" value={draft.rates.throttleHover} max={100} disabled={busy} onChange={next => updateThrottle('throttleHover', next)} testID="pid-throttle-hover" /><NumericField label="Limit %" value={draft.rates.throttleLimitPercent} min={25} max={100} disabled={busy} onChange={next => updateThrottle('throttleLimitPercent', next)} testID="pid-throttle-limit-percent" /></View><View style={styles.choiceRow}>{[{value: 0, label: 'إيقاف'}, {value: 1, label: 'Scale'}, {value: 2, label: 'Clip'}].map(option => <Pressable key={option.value} disabled={busy} onPress={() => updateThrottle('throttleLimitType', option.value)} style={[styles.choice, draft.rates.throttleLimitType === option.value && styles.choiceSelected]} testID={`pid-throttle-limit-${option.value}`}><Text style={[styles.choiceText, draft.rates.throttleLimitType === option.value && styles.choiceTextSelected]}>{option.label}</Text></Pressable>)}</View></View>
+
+        {/* DYNAMIC IDLE lives on this page because the value rides in
+            MSP_PID_ADVANCED, whose sole writer in this app is this screen's
+            transaction. Editing it anywhere else would mean two writers for
+            one payload and a way to clobber tuning. */}
+        <View style={styles.card} testID="pid-dynamic-idle"><Text style={styles.sectionTitle}>Dynamic Idle</Text><Text style={styles.sectionHint}>أدنى دوران يحافظ عليه المتحكم بوحدة 100 دورة/دقيقة. يتطلب تفعيل Bidirectional DShot من شاشة المحركات؛ بدون قياس RPM لا يملك المتحكم قراءة يحافظ عليها. القيمة 0 تعني تعطيل الميزة.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic Idle (×100 rpm)" value={draft.idleMinRpm} min={0} max={200} disabled={busy} onChange={next => setDraft(current => current === undefined ? current : {...current, idleMinRpm: next})} testID="pid-idle-min-rpm" /></View></View>
+
+        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Filters</Text><Text style={styles.sectionHint}>تُعدّل فقط أوضاع الفلاتر النشطة التي أثبتتها القراءة. لا يفعّل التطبيق ميزة غير مثبتة في بناء الـFC ولا يغيّر نوع الفلتر.</Text></View>
+        {!filtersEditable ? <View style={styles.warning}><Text style={styles.warningText}>تعذرت معرفة Gyro/PID loop rate؛ الفلاتر معروضة للقراءة فقط ولن يُسمح بكتابتها دون حد Nyquist موثوق.</Text></View> : <View style={styles.rateEvidence}><Text style={styles.readout}>Gyro Nyquist: {gyroNyquist} Hz</Text><Text style={styles.readout}>D-term Nyquist: {pidNyquist} Hz</Text></View>}
+        <View style={[styles.readOnlyGrid, wide && styles.readOnlyGridWide]}>
+          <View style={styles.card} testID="pid-gyro-filter"><Text style={styles.sectionTitle}>Gyro LPF1</Text>{snapshot?.filterConfig.gyroLpf1DynamicMinHz !== undefined && snapshot.filterConfig.gyroLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ Min يجب أن يبقى أصغر من Max وحد Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.gyroLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMinHz', next)} testID="pid-gyro-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.gyroLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMaxHz', next)} testID="pid-gyro-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.gyroLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1StaticHz', next)} testID="pid-gyro-static" /></>}</View>
+          <View style={styles.card} testID="pid-dterm-filter"><Text style={styles.sectionTitle}>D-term LPF1</Text>{snapshot?.filterConfig.dtermLpf1DynamicMinHz !== undefined && snapshot.filterConfig.dtermLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ يحكمه PID loop Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.dtermLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMinHz', next)} testID="pid-dterm-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.dtermLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMaxHz', next)} testID="pid-dterm-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.dtermLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1StaticHz', next)} testID="pid-dterm-static" /></>}</View>
+        </View>
+        <View style={styles.card} testID="pid-dynamic-notch"><Text style={styles.sectionTitle}>Dynamic Notch</Text>{snapshot?.filterConfig.dynamicNotchCount !== undefined && snapshot.filterConfig.dynamicNotchCount > 0 ? <><Text style={styles.sectionHint}>الميزة نشطة ومثبتة من القراءة. لا تسمح هذه المرحلة بتعطيلها أو تفعيلها على بناء لم يثبت دعمه.</Text><View style={styles.fieldsRow}><NumericField label="عدد الفلاتر" value={draft.filters.dynamicNotchCount} min={1} max={7} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchCount', next)} testID="pid-notch-count" /><NumericField label="Q ×100" value={draft.filters.dynamicNotchQ} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchQ', next)} testID="pid-notch-q" /><NumericField label="Min Hz" value={draft.filters.dynamicNotchMinHz} min={20} max={250} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchMinHz', next)} testID="pid-notch-min" /><NumericField label="Max Hz" value={draft.filters.dynamicNotchMaxHz} min={200} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchMaxHz', next)} testID="pid-notch-max" /></View></> : <Text style={styles.sectionHint}>القراءة الحالية لا تثبت أن Dynamic Notch نشط؛ لذلك لن نخمن دعم البناء أو نرسِل قيم تفعيل.</Text>}</View>
+      </Disclosure>
+    </> : phase === 'LOADING' ? <Text style={styles.loading}>جارٍ قراءة الضبط من متحكم الطيران…</Text> : null}<View style={styles.bottomSpace} />
+  </ScrollView>
+  {/* 5. COMMIT. The bar names the scopes that changed, so a pilot who edited
+      one thing is not told "الإعدادات تغيّرت" and left to guess which. */}
+  <StickyActionBar visible={dirty} summary={dirtyScopes.length === 0 ? 'تغيّرت إعدادات الضبط' : `تغيّر: ${dirtyScopes.join(' · ')}`} details={['تُكتب المجموعات المتغيرة فقط، بالترتيب: خوارزمية Rates ثم القيم ثم الضبط المبسّط، وتُقرأ كل خطوة للتحقق']} saveLabel="حفظ والتحقق" discardLabel="تجاهل" onSave={save} onDiscard={discard} disabledReason={blocked ? 'صحح القيم أو حدود Nyquist أولًا.' : undefined} statusMessage={status?.text} statusTone={status?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel="جارٍ حفظ إعدادات الضبط…" testID="pid-save-bar" /></View>;
 }
 
 const styles = StyleSheet.create({
-  root: {flex: 1, backgroundColor: colors.background}, content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md}, hero: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.lg, flexWrap: 'wrap'}, heroCopy: {flex: 1, minWidth: 280, gap: 4}, eyebrow: {...typography.eyebrow, color: colors.accentStrong}, title: {...typography.title, color: colors.textPrimary, textAlign: 'right'}, subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE}, profileBadges: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm}, profileBadge: {borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, borderRadius: radii.lg, padding: spacing.md, minWidth: 150}, profileLabel: {...typography.caption, color: colors.textMuted, textAlign: 'right'}, profileValue: {...typography.heading, color: colors.accentStrong, textAlign: 'right'}, profileChoice: {minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.sm}, danger: {borderRadius: radii.sm, borderWidth: 1, borderColor: colors.error, backgroundColor: colors.errorSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 3}, dangerTitle: {...typography.heading, color: colors.error, textAlign: 'right'}, dangerText: {...typography.body, color: colors.error, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE}, hardwareNotice: {borderRadius: radii.lg, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, padding: spacing.md, gap: 3}, hardwareTitle: {...typography.eyebrow, color: colors.accentStrong}, hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE}, sectionHeading: {gap: 3}, sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'}, sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE}, axisGrid: {gap: spacing.md}, axisGridWide: {flexDirection: 'row'}, axisCard: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md}, axisTitle: {...typography.title, color: colors.accentStrong, textAlign: 'right'}, axisSubtitle: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE}, fieldsRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm}, numericField: {flexGrow: 1, flexBasis: 156, minWidth: 156, gap: 5}, fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'center'}, rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center', /* `{min}-{max}` is THREE nodes, not one string, and inside a
-     right-to-left box the three lay out right to left - so "0-200"
-     painted as "200-0" and the bound read backwards. A range is
-     left-to-right by nature; it says so here. */
-  writingDirection: 'ltr'}, readOnlyGrid: {gap: spacing.md}, readOnlyGridWide: {flexDirection: 'row'}, card: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.sm}, readout: {...typography.body, color: colors.textSecondary, textAlign: 'right', fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE}, choiceRow: {flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap'}, choice: {minHeight: 44, minWidth: 88, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md}, choiceSelected: {borderColor: colors.accentStrong, backgroundColor: colors.accentSoft}, choiceText: {...typography.label, color: colors.textSecondary}, choiceTextSelected: {color: colors.accentStrong}, rateEvidence: {flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.lg, flexWrap: 'wrap', borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, padding: spacing.sm}, warning: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm}, warningText: {...typography.body, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE}, success: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm}, successText: {...typography.body, color: colors.success, textAlign: 'right', maxWidth: PROSE_MEASURE}, inlineAction: {alignSelf: 'flex-start'}, loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl}, bottomSpace: {height: spacing.xl},
+  root: {flex: 1, backgroundColor: colors.background},
+  content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md},
+  hero: {gap: 4},
+  title: {...typography.title, color: colors.textPrimary, textAlign: 'right'},
+  subtitle: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  profileBadges: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  profileBadge: {flexGrow: 1, flexBasis: 240, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, borderRadius: radii.lg, padding: spacing.md, gap: 4},
+  profileLabel: {...typography.label, color: colors.accentText, textAlign: 'right'},
+  profileName: {...typography.caption, color: colors.textPrimary, textAlign: 'right'},
+  profileHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  profileValue: {...typography.heading, color: colors.accentStrong, textAlign: 'right'},
+  profileChoice: {minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.sm},
+  section: {gap: spacing.sm},
+  sectionHeading: {gap: 3},
+  sectionTitle: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
+  sectionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  bodyText: {...typography.body, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  hardwareNotice: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.accentStrong, backgroundColor: colors.accentSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2},
+  hardwareTitle: {...typography.eyebrow, color: colors.accentStrong, textAlign: 'right'},
+  hardwareText: {...typography.caption, color: colors.accentText, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  dangerText: {...typography.body, color: colors.error, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  disclosureCard: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, paddingHorizontal: spacing.md},
+  disclosureHeader: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, minHeight: 44},
+  disclosureLabel: {...typography.label, color: colors.accentStrong, textAlign: 'right', flexShrink: 1},
+  disclosureBody: {gap: spacing.md, paddingBottom: spacing.md},
+  sliderRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md, flexWrap: 'wrap', borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md},
+  sliderCopy: {flexGrow: 1, flexBasis: 200, gap: 2},
+  filterGrid: {gap: spacing.sm},
+  filterGridWide: {flexDirection: 'row'},
+  filterCard: {flex: 1, gap: spacing.sm, borderRadius: radii.md, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md},
+  filterHead: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md},
+  filterCopy: {flexShrink: 1, gap: 2},
+  effectiveRange: {...typography.label, color: colors.accentStrong, textAlign: 'right', fontVariant: ['tabular-nums']},
+  overwrite: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: 2},
+  overwriteTitle: {...typography.label, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  overwriteFields: {...typography.caption, color: colors.warning, textAlign: 'right', writingDirection: 'ltr'},
+  axisGrid: {gap: spacing.md},
+  axisGridWide: {flexDirection: 'row'},
+  axisCard: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.md},
+  axisTitle: {...typography.title, color: colors.accentStrong, textAlign: 'right'},
+  axisSubtitle: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  fieldsRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  numericField: {flexGrow: 1, flexBasis: 156, minWidth: 156, gap: 5},
+  fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
+  fieldNote: {...typography.caption, color: colors.textMuted, textAlign: 'right', writingDirection: 'rtl'},
+  /* A range is left-to-right by nature. It is ONE string node here for the
+     same reason: as three nodes inside a right-to-left box the parts laid
+     out right to left and "0 - 200" painted as "200 - 0". */
+  rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center', writingDirection: 'ltr'},
+  readOnlyGrid: {gap: spacing.md},
+  readOnlyGridWide: {flexDirection: 'row'},
+  card: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.sm},
+  readout: {...typography.body, color: colors.textSecondary, textAlign: 'right', fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE},
+  choiceRow: {flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap'},
+  choice: {minHeight: 44, minWidth: 88, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md},
+  choiceSelected: {borderColor: colors.accentStrong, backgroundColor: colors.accentSoft},
+  choiceText: {...typography.label, color: colors.textSecondary},
+  choiceTextSelected: {color: colors.accentStrong},
+  rateEvidence: {flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.lg, flexWrap: 'wrap', borderRadius: radii.md, borderWidth: 1, borderColor: colors.success, backgroundColor: colors.successSoft, padding: spacing.sm},
+  warning: {borderRadius: radii.md, borderWidth: 1, borderColor: colors.warning, backgroundColor: colors.warningSoft, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, gap: spacing.sm},
+  warningText: {...typography.body, color: colors.warning, textAlign: 'right', writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  successText: {...typography.body, color: colors.success, textAlign: 'right', maxWidth: PROSE_MEASURE},
+  inlineAction: {alignSelf: 'flex-start'},
+  loading: {...typography.body, color: colors.textSecondary, textAlign: 'center', padding: spacing.xl},
+  /* No extra room is reserved for the save bar, and that is deliberate:
+     `StickyActionBar` is a flex SIBLING of the ScrollView inside a
+     `flex: 1` root, not an overlay, so raising it shrinks the scroll
+     viewport instead of covering it. The geometry sweep confirms the last
+     control clears the bar at maximum scroll at all five widths. */
+  bottomSpace: {height: spacing.xl},
 });
