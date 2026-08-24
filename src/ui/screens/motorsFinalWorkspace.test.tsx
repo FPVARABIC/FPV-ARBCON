@@ -80,7 +80,11 @@ import type {
 } from '../../core/state/motorConfigurationModel';
 import type {MotorTestControllerSnapshot} from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
-import type {MotorAirframeControlsPort} from './MotorAirframeControls';
+import {
+  resetPendingMixerActivation,
+  type MotorAirframeControlsPort,
+} from './MotorAirframeControls';
+import {fcRebootRecovery} from '../../platforms/react-native/protocol/fcRebootRecovery';
 
 const SESSION_ID = 'final-workspace-session';
 
@@ -187,6 +191,12 @@ afterEach(() => {
     }
   });
   closeMotorTestCapability(SESSION_ID);
+  /* M-F3F: the mixer activation deliberately outlives the component - it
+     has to survive the session change that IS the reboot - so it is
+     module state, and a case that starts one must hand the next case a
+     clean slate. Same for the app-wide reboot lifecycle it arms. */
+  resetPendingMixerActivation();
+  fcRebootRecovery.reset();
   jest.restoreAllMocks();
 });
 
@@ -453,6 +463,11 @@ function mountView(port: MotorAirframeControlsPort) {
     renderer,
     all,
     has: (testID: string) => all(testID).length > 0,
+    text: () =>
+      renderer.root
+        .findAllByType(Text)
+        .map(node => String(node.props.children ?? ''))
+        .join(' | '),
     press: (testID: string) => {
       const node = all(testID).find(
         candidate => typeof candidate.props?.onPress === 'function',
@@ -512,9 +527,16 @@ describe('M-F3 §3-§7/§56 - a tap is a visible draft, ONE save transaction, co
     expect(draft.yawMotorsReversed).toBe(false);
     expect(draft.motorProtocolRaw).toBe(6);
     expect(draft.motorPoleCount).toBe(14);
-    // Saved and verified: the bar is gone and the reboot step is offered.
+    /* Saved and verified: the bar is gone - and M-F3F §6 CHANGED WHAT
+       HAPPENS NEXT. This test used to require a manual «إعادة تشغيل
+       المتحكم لتفعيلها» button here, which was the defect: one press of
+       Save produced a second button the operator had to find. The
+       application owns the restart now, so the manual control is ABSENT
+       and the strip has already entered the restart phase by itself. */
     expect(view.has('motors-airframe-savebar')).toBe(false);
-    expect(view.has('motors-airframe-reboot')).toBe(true);
+    expect(view.has('motors-airframe-reboot')).toBe(false);
+    expect(view.has('motors-airframe-restarting')).toBe(true);
+    expect(view.text()).toContain(ar.motorsScreen.quickRestarting);
   });
 
   it('a props tap moves the chip IMMEDIATELY, and the save carries the CURRENT mixer', async () => {

@@ -44,6 +44,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { OrientationRenderer } from '../../orientation3d';
+import type { DroneSceneAirframe } from '../../orientation3d';
 // Imported from its own module, not the orientation3d barrel: several
 // screen-level suites jest.mock() that barrel down to OrientationRenderer
 // alone (the Skia component cannot mount under Jest), and the
@@ -195,6 +196,20 @@ export interface OrientationHeroProps {
    * flows.
    */
   calibrationSlot?: React.ReactNode;
+  /**
+   * WHICH AIRCRAFT THE BOARD REPORTED - M-F3F P0-B.
+   *
+   * The model used to be a hard-coded X quad for every board, on the one
+   * screen whose whole purpose is answering a physical question about
+   * the aircraft in front of the operator. It follows the observed
+   * airframe now.
+   *
+   * `undefined` is a real answer and it is drawn as one: the orientation
+   * model with no rotors. It NEVER falls back to a quadcopter (§17).
+   * This component decides nothing about it - the screen supplies it, so
+   * the hero stays presentational.
+   */
+  airframe?: DroneSceneAirframe;
 }
 
 export default function OrientationHero({
@@ -207,6 +222,7 @@ export default function OrientationHero({
   onResetView,
   onResetHintShown,
   calibrationSlot,
+  airframe,
 }: OrientationHeroProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
@@ -466,6 +482,7 @@ export default function OrientationHero({
             presentationScale={workspace.presentationScale}
             stale={isStale}
             sampleIdentity={sampleIdentity}
+            airframe={airframe}
           />
         )}
       </View>

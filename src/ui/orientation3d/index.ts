@@ -2,12 +2,16 @@ export {computeDroneScene, computeMotorFrame, rotateBodyPoint} from './droneScen
 export type {
   DroneOrientationDeg,
   DroneScene,
+  DroneSceneAirframe,
   DroneScenePrimitive,
   DroneSceneMaterial,
+  DroneSceneRotor,
+  DroneSceneSilhouette,
   MotorFrameInfo,
   Vec2,
   Vec3,
 } from './droneSceneGeometry';
+export {sceneAirframeFor, sceneAirframeFromLayout} from './airframeSceneModel';
 
 export {OrientationRenderer} from './OrientationRenderer';
 export type {OrientationRendererProps} from './OrientationRenderer';

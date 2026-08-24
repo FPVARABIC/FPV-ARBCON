@@ -33,7 +33,11 @@ import React, {useMemo} from 'react';
 import {View} from 'react-native';
 
 import {computeDroneScene} from './droneSceneGeometry';
-import type {DroneOrientationDeg, DroneScenePrimitive} from './droneSceneGeometry';
+import type {
+  DroneOrientationDeg,
+  DroneSceneAirframe,
+  DroneScenePrimitive,
+} from './droneSceneGeometry';
 import {orientationLatencyTracker} from './orientationLatencyDebugLog';
 import type {OrientationLatencySampleIdentity} from './orientationLatencyDebugLog';
 import {orientationRenderObserver} from './orientationRenderObserver';
@@ -58,6 +62,16 @@ export type OrientationRendererProps = {
    * from. Never affects what is drawn - the pose alone decides that. */
   sampleIdentity?: OrientationLatencySampleIdentity;
   presentationScale?: number;
+  /**
+   * THE AIRCRAFT THIS BOARD ACTUALLY IS - M-F3F P0-B.
+   *
+   * Passed in, never assumed. `undefined` renders the orientation model
+   * with NO rotors rather than a stand-in quadcopter (§17), which is the
+   * defect this prop exists to end: a Y6, a tricopter and a flying wing
+   * were all drawn as an X quad on the screen an operator uses to decide
+   * how the flight controller is mounted.
+   */
+  airframe?: DroneSceneAirframe;
 };
 
 /**
@@ -71,8 +85,9 @@ function buildDrawables(
   width: number,
   height: number,
   presentationScale: number,
+  airframe: DroneSceneAirframe | undefined,
 ) {
-  const scene = computeDroneScene(orientation, {width, height}, presentationScale);
+  const scene = computeDroneScene(orientation, {width, height}, presentationScale, airframe);
   return scene.primitives.map(primitive => ({
     points: toPointsAttribute(primitive.points),
     ...appearanceFor(primitive.material),
@@ -86,6 +101,7 @@ export function OrientationRenderer({
   stale = false,
   sampleIdentity,
   presentationScale = 1,
+  airframe,
 }: OrientationRendererProps): React.JSX.Element {
   const {rollDeg, pitchDeg, yawDeg} = orientation;
   const sessionToken = sampleIdentity?.sessionToken;
@@ -95,8 +111,9 @@ export function OrientationRenderer({
   // samples reporting an identical attitude must reuse the built scene
   // rather than rebuild an identical one. Same rule as Android.
   const drawables = useMemo(
-    () => buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height, presentationScale),
-    [rollDeg, pitchDeg, yawDeg, width, height, presentationScale],
+    () =>
+      buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height, presentationScale, airframe),
+    [rollDeg, pitchDeg, yawDeg, width, height, presentationScale, airframe],
   );
 
   // Checkpoint F: the pose THIS renderer was handed, recorded before any

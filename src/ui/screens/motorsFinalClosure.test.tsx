@@ -64,7 +64,11 @@ import type {
 } from '../../core/state/motorConfigurationModel';
 import type {MotorTestControllerSnapshot} from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
-import type {MotorAirframeControlsPort} from './MotorAirframeControls';
+import {
+  resetPendingMixerActivation,
+  type MotorAirframeControlsPort,
+} from './MotorAirframeControls';
+import {fcRebootRecovery} from '../../platforms/react-native/protocol/fcRebootRecovery';
 
 const SESSION_ID = 'final-closure-session';
 const MIXER_QUADX = 3;
@@ -204,6 +208,11 @@ afterEach(() => {
     const renderer = renderers.pop();
     ReactTestRenderer.act(() => renderer?.unmount());
   }
+  /* M-F3F: a mixer activation outlives its component on purpose (it has
+     to survive the reboot's session change), so it is module state and
+     each case must hand the next one a clean slate. */
+  resetPendingMixerActivation();
+  fcRebootRecovery.reset();
 });
 
 function mountView(
@@ -324,7 +333,7 @@ describe('M-F3 §34/§35 - motor test refuses a drafted or un-rebooted topology'
     expect(after?.props.value).toBe(false);
   });
 
-  it('a mixer saved but NOT rebooted still blocks, with the §35 sentence and the reboot offer', async () => {
+  it('a mixer saved but NOT rebooted still blocks, with the §35 sentence and a RECOVERY activation offer', async () => {
     // The live session read HEX6X-less truth (QUADX); the stored config
     // read returns HEX6X: exactly the saved-awaiting-reboot state.
     const port: MotorAirframeControlsPort = {
@@ -351,7 +360,16 @@ describe('M-F3 §34/§35 - motor test refuses a drafted or un-rebooted topology'
     expect(view.text()).toContain(
       ar.motorsScreen.holdBlockedTopologyPendingReboot,
     );
-    expect(view.has('motors-airframe-reboot')).toBe(true);
+    /* M-F3F §6 CHANGED THE CONTROL, NOT THE SAFETY. The interlock above
+       is untouched. What used to be the ordinary «إعادة تشغيل المتحكم
+       لتفعيلها» button is gone from the save flow entirely; a mixer left
+       stored-but-not-running by something OTHER than this strip's own
+       save is a recovery case, and it is the recovery control that
+       appears - the one that also registers the restart so what comes
+       back is verified instead of assumed. */
+    expect(view.has('motors-airframe-reboot')).toBe(false);
+    expect(view.has('motors-airframe-activation-retry')).toBe(true);
+    expect(view.text()).toContain(ar.motorsScreen.quickActivateNow);
   });
 
   it('with no draft and no pending reboot, the interlock is silent and enabling works', async () => {

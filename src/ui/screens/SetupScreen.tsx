@@ -115,6 +115,8 @@ import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
 // callback; it holds no session authority of its own.
 import { useSetupSessionDisconnect } from './setupSessionHost';
 import { orientationRenderObserver } from '../orientation3d/orientationRenderObserver';
+import { sceneAirframeFor } from '../orientation3d/airframeSceneModel';
+import { useObservedAirframe } from '../session/useObservedAirframe';
 import {
   deriveBatterySemantics,
   deriveOrientationViewState,
@@ -659,6 +661,15 @@ function LiveOrientationHero({
 }): React.JSX.Element {
   const attitude = useSetupAttitude(sessionKey.sessionId, active);
   const connected = useSetupConnected(sessionKey.sessionId);
+  /* M-F3F P0-B/§15 - THE AIRCRAFT, READ HERE.
+     Setup does not go through Motors for this and does not import
+     anything from it: it mounts the shared reader, which publishes into
+     the one observed-airframe record and issues a read only if nobody
+     has read this session yet. An operator who opens Setup first and
+     never visits Motors still sees their own aircraft. */
+  const observedAirframe = useObservedAirframe(
+    connected ? sessionKey.sessionId : undefined,
+  );
   const orientationView = deriveOrientationViewState(
     attitude,
     orientationViewOffset,
@@ -682,6 +693,7 @@ function LiveOrientationHero({
       onResetView={onResetView}
       onResetHintShown={onResetHintShown}
       calibrationSlot={calibrationSlot}
+      airframe={sceneAirframeFor(observedAirframe)}
     />
   );
 }

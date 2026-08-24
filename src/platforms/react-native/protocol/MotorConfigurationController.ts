@@ -423,6 +423,61 @@ export class MotorConfigurationController {
     }
   }
 
+  /**
+   * THE AIRFRAME ALONE - M-F3F §15, and it costs the link almost nothing.
+   *
+   * =====================================================================
+   * WHY THIS IS NOT `load()`
+   * =====================================================================
+   *
+   * A screen that only DRAWS the aircraft needs two numbers: the mixer
+   * mode and the runtime motor count. `load()` gives it those and four
+   * other groups, and - far more expensively - it runs the full FC-tool
+   * operation: an exclusive configuration interlock, a fresh capability
+   * scope (which re-reads the box-id mapping), and a telemetry pause.
+   *
+   * That is exactly right for the settings editor, which is about to
+   * WRITE. It is wrong for Setup, and measurably so: adding a `load()` at
+   * connect time cost Setup a third box-id acquisition and starved its
+   * attitude poll long enough that three of its own integration
+   * assertions failed. A screen asking "which aircraft is this?" must not
+   * degrade the screen it is asking on.
+   *
+   * So this is TWO READ-ONLY REQUESTS on the session's existing client.
+   * No interlock - nothing is being written and nothing needs excluding.
+   * No scope acquisition - no capability is being exercised. No telemetry
+   * pause - the scheduler keeps running. It cannot change the board, and
+   * it cannot make another operation fail: at worst it returns undefined.
+   *
+   * `undefined` means "not answered", never a guessed airframe.
+   */
+  async readObservedAirframe(sessionId: string): Promise<
+    | {readonly mixerModeRaw: number; readonly motorCount: number | undefined}
+    | undefined
+  > {
+    const preflight = this.captureSession(sessionId, 'MOTOR_CONFIGURATION_READ');
+    if ('reason' in preflight) {
+      return undefined;
+    }
+    const {client, generation, epoch} = preflight;
+    try {
+      this.assertLivePreflight(sessionId, client, generation, epoch);
+      const [mixer, motor] = await Promise.all([
+        this.read(client, MSP_MIXER_CONFIG, decodeMixerConfig),
+        this.read(client, MSP_MOTOR_CONFIG, decodeMotorConfig),
+      ]);
+      /* Re-checked AFTER the reads: a session that ended underneath them
+         would make these bytes describe a board that is no longer there. */
+      this.assertLivePreflight(sessionId, client, generation, epoch);
+      return Object.freeze({
+        mixerModeRaw: mixer.mixerModeRaw,
+        motorCount: motor.motorCount,
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
   async loadOutputOrder(
     sessionId: string,
   ): Promise<MotorOutputOrderLoadOutcome> {

@@ -43,7 +43,11 @@ import {Canvas, Path, Skia} from '@shopify/react-native-skia';
 import type {SkPath} from '@shopify/react-native-skia';
 
 import {computeDroneScene} from './droneSceneGeometry';
-import type {DroneOrientationDeg, DroneScenePrimitive} from './droneSceneGeometry';
+import type {
+  DroneOrientationDeg,
+  DroneSceneAirframe,
+  DroneScenePrimitive,
+} from './droneSceneGeometry';
 import {orientationLatencyTracker} from './orientationLatencyDebugLog';
 import type {OrientationLatencySampleIdentity} from './orientationLatencyDebugLog';
 // The colour/opacity/outline table is SHARED with the browser's SVG
@@ -82,6 +86,16 @@ export type OrientationRendererProps = {
    * from. Never affects what is drawn - the pose alone decides that. */
   sampleIdentity?: OrientationLatencySampleIdentity;
   presentationScale?: number;
+  /**
+   * THE AIRCRAFT THIS BOARD ACTUALLY IS - M-F3F P0-B.
+   *
+   * Passed in, never assumed. `undefined` renders the orientation model
+   * with NO rotors rather than a stand-in quadcopter (§17), which is the
+   * defect this prop exists to end: a Y6, a tricopter and a flying wing
+   * were all drawn as an X quad on the screen an operator uses to decide
+   * how the flight controller is mounted.
+   */
+  airframe?: DroneSceneAirframe;
 };
 
 /** One build per genuine pose, and the SkPaths built with it.
@@ -93,8 +107,14 @@ export type OrientationRendererProps = {
  * with the retired animation-frame loop - which re-rendered this
  * component at frame rate - that was ~2,280 SkPath allocations per
  * second for data arriving 4.5 times per second. */
-function buildDrawables(orientation: DroneOrientationDeg, width: number, height: number, presentationScale: number) {
-  const scene = computeDroneScene(orientation, {width, height}, presentationScale);
+function buildDrawables(
+  orientation: DroneOrientationDeg,
+  width: number,
+  height: number,
+  presentationScale: number,
+  airframe: DroneSceneAirframe | undefined,
+) {
+  const scene = computeDroneScene(orientation, {width, height}, presentationScale, airframe);
   return scene.primitives.map(primitive => ({
     path: toSkPath(primitive.points),
     ...appearanceFor(primitive.material),
@@ -108,6 +128,7 @@ export function OrientationRenderer({
   stale = false,
   sampleIdentity,
   presentationScale = 1,
+  airframe,
 }: OrientationRendererProps): React.JSX.Element {
   const {rollDeg, pitchDeg, yawDeg} = orientation;
   const sessionToken = sampleIdentity?.sessionToken;
@@ -119,8 +140,9 @@ export function OrientationRenderer({
   // stamp below is therefore taken on the render that first shows a
   // sample, whether or not that render had to build a new scene.
   const drawables = useMemo(
-    () => buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height, presentationScale),
-    [rollDeg, pitchDeg, yawDeg, width, height, presentationScale],
+    () =>
+      buildDrawables({rollDeg, pitchDeg, yawDeg}, width, height, presentationScale, airframe),
+    [rollDeg, pitchDeg, yawDeg, width, height, presentationScale, airframe],
   );
 
   if (sessionToken !== undefined && sampleSeq !== undefined) {

@@ -27,12 +27,19 @@
  * THE SAVE LIFECYCLE SPEAKS §53's VOCABULARY, truthfully: a dirty draft
  * is DIRTY; while the transaction runs it is APPLYING; SAVED_VERIFIED
  * (write + EEPROM + readback match) is PERSISTED_VERIFIED; a readback
- * that fails or disagrees is READBACK_MISMATCH, never success. A saved
- * mixer is STILL NOT the active mixer - mixerInit() runs at boot - so
- * after a verified save the strip offers the explicit REBOOT step
- * (MSP_REBOOT through the same controller, disarmed re-verified first)
- * and the pending-reboot notes keep naming the live value until a
- * reconnect actually reads the new one. No ACK is ever called "applied".
+ * that fails or disagrees is READBACK_MISMATCH, never success. No ACK is
+ * ever called "applied".
+ *
+ * M-F3F P0-A - ONE CLICK, THE WHOLE WAY. A saved mixer is still not the
+ * ACTIVE mixer, because mixerInit() runs at boot. The strip used to stop
+ * there and hand the operator a second button; it does not any more. A
+ * verified mixer save continues by itself: restart -> the link drops as
+ * predicted -> the app's one reboot lifecycle brings the board back ->
+ * the strip re-reads it -> and only if BOTH the mixer and the runtime
+ * motor count come back as the ones asked for does it say «تم تفعيل …».
+ * A manual control exists solely for recovery, when one of those steps
+ * actually failed. A props-only save keeps the old offer, because the
+ * firmware does not need a restart for it (§9).
  *
  * NOTHING HERE IS A PHYSICAL CLAIM. The props control edits the stored
  * yaw_motors_reversed flag; whether any propeller is actually mounted
@@ -51,6 +58,9 @@ import {
   type MotorConfigurationDraft,
   type MotorConfigurationSnapshot,
 } from '../../core/state/motorConfigurationModel';
+import {fcRebootRecovery} from '../../platforms/react-native/protocol/fcRebootRecovery';
+import {observedAirframeTruth} from '../../core/state/observedAirframeTruth';
+import {connectionNotice} from '../session/connectionNotice';
 import {
   motorConfigurationController,
   type MotorConfigurationLoadOutcome,
@@ -104,6 +114,21 @@ export interface AirframeEditState {
    * saved, verified, and waiting for the reboot to govern. */
   readonly mixerPendingReboot: boolean;
   readonly propsPendingReboot: boolean;
+  /**
+   * M-F3F §8 - A MIXER ACTIVATION IS IN FLIGHT.
+   *
+   * True from the moment a mixer save is committed until the board has
+   * come back and BOTH post-restart facts have been re-read and checked:
+   * the mixer it now reports, and the runtime motor count it now reports.
+   * It spans the restart, the dropped link and the reconnect, none of
+   * which `mixerPendingReboot` can see - that flag compares against a
+   * live session's read, and during those seconds there is no session.
+   *
+   * The motor-test interlock consumes it, so «تشغيل المحركات» cannot be
+   * enabled anywhere inside the window where the aircraft on screen and
+   * the aircraft the firmware is mixing for may differ.
+   */
+  readonly mixerActivationInFlight: boolean;
 }
 
 export interface MotorAirframeControlsProps {
@@ -134,7 +159,62 @@ interface AirframeDraft {
   readonly yawMotorsReversed?: boolean;
 }
 
-type EditPhase = 'IDLE' | 'SAVING' | 'REBOOTING';
+/**
+ * M-F3F: the mixer save now owns the whole restart.
+ *
+ * RESTARTING  the reboot command has gone out and the link is expected
+ *             to drop.
+ * RECONNECTING the app is re-enumerating and reopening the board - driven
+ *             by the root's useRebootReconnect, not by this component.
+ * VERIFYING   a new session exists and the board is being re-read.
+ *
+ * SAVING and REBOOTING remain what they were, so a props-only save (which
+ * the source does not require a reboot for) is unchanged.
+ */
+type EditPhase =
+  | 'IDLE'
+  | 'SAVING'
+  | 'REBOOTING'
+  | 'RESTARTING'
+  | 'RECONNECTING'
+  | 'VERIFYING';
+
+/**
+ * A MIXER ACTIVATION THAT IS STILL IN FLIGHT ACROSS A REBOOT.
+ *
+ * MODULE SCOPE ON PURPOSE. The restart destroys the session, and this
+ * component resets all of its state when the sessionId changes - which is
+ * correct for every other purpose and fatal for this one. The requested
+ * mixer has to outlive that reset to be checked against what the board
+ * reports when it comes back, so it lives beside the component rather
+ * than inside it. One record: a second activation replaces the first.
+ */
+interface PendingMixerActivation {
+  readonly requestedMixerModeRaw: number;
+  /** The session the write happened on. A readback on THAT session proves
+   *  nothing about the restart, so verification requires a different one. */
+  readonly writtenOnSessionId: string;
+}
+let pendingMixerActivation: PendingMixerActivation | undefined;
+
+/** Test seam: clears the cross-session record between cases. */
+export function resetPendingMixerActivation(): void {
+  pendingMixerActivation = undefined;
+}
+
+/**
+ * WHAT THE OPERATOR MAY RETRY - AND ONLY AS RECOVERY (§6).
+ *
+ * RESTART   the board REFUSED the restart (armed, busy, unsupported), so
+ *           the configuration is on the board and not governing. Nothing
+ *           dropped; asking again is the whole recovery.
+ * RECONNECT the restart happened and the link did not come back inside
+ *           the lifecycle's deadline. The retry looks for the board
+ *           again. IT NEVER RESENDS THE MIXER WRITE (§7).
+ *
+ * `undefined` is the normal case, and the normal case has no button.
+ */
+type ActivationRecovery = 'RESTART' | 'RECONNECT';
 
 type Outcome = {readonly text: string; readonly danger: boolean};
 
@@ -156,6 +236,19 @@ export function MotorAirframeControls({
 }: MotorAirframeControlsProps): React.JSX.Element {
   const {t} = useTranslation();
   const [snapshot, setSnapshot] = useState<MotorConfigurationSnapshot>();
+  /**
+   * WHICH SESSION THE SNAPSHOT ON SCREEN WAS READ ON.
+   *
+   * A snapshot does not stop existing when the session does - React holds
+   * the last one through the re-render that carries the new session id,
+   * and the read for the new session has not returned yet. Judging a
+   * post-restart activation against that snapshot would be judging the
+   * board BEFORE it restarted, and would call an activation verified on
+   * the strength of the very value that was written pre-restart. So the
+   * snapshot carries the session it came from and the verification
+   * refuses to run until those agree.
+   */
+  const [snapshotSessionId, setSnapshotSessionId] = useState<string>();
   const [loadState, setLoadState] = useState<'LOADING' | 'READY' | 'UNAVAILABLE'>(
     'LOADING',
   );
@@ -166,6 +259,22 @@ export function MotorAirframeControls({
    * the reboot offer's memory for the session-off case, where there is
    * no live value to compare against. */
   const [savedNeedsReboot, setSavedNeedsReboot] = useState(false);
+  /**
+   * §8 - THE INTERLOCK'S OWN MEMORY OF THE ACTIVATION WINDOW.
+   *
+   * DELIBERATELY NOT RESET ON A SESSION CHANGE. Every other piece of this
+   * component's state is, and must be: a new connection is a new
+   * aircraft. This one exists precisely to survive the session change,
+   * because the session change IS the reboot. It is cleared only where
+   * the activation actually concludes - verified, contradicted, refused
+   * by the board, or given up on.
+   */
+  const [activationInFlight, setActivationInFlight] = useState(false);
+  /** Set only when an automatic step failed and a human retry is the way
+   *  out. Drives the ONLY manual restart/reconnect control this strip
+   *  still has (§6). */
+  const [activationRecovery, setActivationRecovery] =
+    useState<ActivationRecovery>();
   const mounted = useRef(true);
   useEffect(() => {
     mounted.current = true;
@@ -184,6 +293,7 @@ export function MotorAirframeControls({
   const applySnapshot = useCallback(
     (next: MotorConfigurationSnapshot | undefined) => {
       setSnapshot(next);
+      setSnapshotSessionId(next === undefined ? undefined : sessionId);
       if (next === undefined) {
         onTopology(undefined);
         return;
@@ -195,8 +305,21 @@ export function MotorAirframeControls({
           motorCount: next.motor.motorCount,
         }),
       );
+      /* M-F3F §10/§11 - THE ONE ANSWER, PUBLISHED ONCE.
+         This is the only place in the app that has just read the mixer
+         and the runtime motor count off the board together, so it is the
+         place that tells everyone else. Setup's aircraft model subscribes
+         to this; it draws no airframe of its own invention. Only READ
+         values reach here - a draft never does. */
+      if (sessionId !== undefined) {
+        observedAirframeTruth.publish({
+          mixerModeRaw: next.mixer.mixerModeRaw,
+          motorCount: next.motor.motorCount,
+          sessionId,
+        });
+      }
     },
-    [onTopology],
+    [onTopology, sessionId],
   );
 
   const load = useCallback(async () => {
@@ -282,9 +405,11 @@ export function MotorAirframeControls({
         draftYawMotorsReversed: dirtyProps ? draft.yawMotorsReversed : undefined,
         mixerPendingReboot,
         propsPendingReboot,
+        mixerActivationInFlight: activationInFlight,
       }),
     );
   }, [
+    activationInFlight,
     dirtyMixer,
     dirtyProps,
     draft.mixerModeRaw,
@@ -304,17 +429,23 @@ export function MotorAirframeControls({
     label: t(`motorsScreen.topology.airframe.${row.firmwareName}`),
   }));
 
-  const mixerValueLabel = (mixerId: number | undefined): string => {
-    if (mixerId === undefined) {
-      return t('motorsScreen.mixerUnreadValue');
-    }
-    const row = BETAFLIGHT_MIXER_REFERENCE_V147.find(
-      candidate => candidate.mixerId === mixerId,
-    );
-    return row === undefined
-      ? t('motorsScreen.mixerUnknownValue', {id: mixerId})
-      : t(`motorsScreen.topology.airframe.${row.firmwareName}`);
-  };
+  /* Memoised because the post-restart verification effect names the
+     activated airframe with it, and an effect dependency that changed
+     identity on every render would re-run the verification. */
+  const mixerValueLabel = useCallback(
+    (mixerId: number | undefined): string => {
+      if (mixerId === undefined) {
+        return t('motorsScreen.mixerUnreadValue');
+      }
+      const row = BETAFLIGHT_MIXER_REFERENCE_V147.find(
+        candidate => candidate.mixerId === mixerId,
+      );
+      return row === undefined
+        ? t('motorsScreen.mixerUnknownValue', {id: mixerId})
+        : t(`motorsScreen.topology.airframe.${row.firmwareName}`);
+    },
+    [t],
+  );
 
   const editingLocked =
     writesLocked || phase !== 'IDLE' || loadState !== 'READY' || snapshot === undefined;
@@ -334,6 +465,64 @@ export function MotorAirframeControls({
     setOutcome(undefined);
   }, []);
 
+  /**
+   * ISSUES THE RESTART AND HANDS THE RECONNECT TO THE APP'S ONE
+   * LIFECYCLE.
+   *
+   * `fcRebootRecovery.expectReboot` is recorded BEFORE the command goes
+   * out, exactly as that module's own contract demands: a link that dies
+   * between the write and the next statement must still read as expected
+   * rather than as a cable being pulled. From there the root-mounted
+   * `useRebootReconnect` owns the rescan, the reopen and the new verified
+   * session - this component starts the lifecycle and then watches it. No
+   * second reconnect driver is created here (§3).
+   */
+  const restartForActivation = useCallback(
+    async (activeSessionId: string) => {
+      setPhase('RESTARTING');
+      setActivationRecovery(undefined);
+      setOutcome({text: t('motorsScreen.quickRestarting'), danger: false});
+      fcRebootRecovery.expectReboot(activeSessionId, 'MIXER_SAVE');
+      try {
+        const result = await controller.requestReboot(activeSessionId);
+        if (
+          result.kind !== 'REBOOT_REQUESTED' &&
+          result.kind !== 'SESSION_ENDED' &&
+          result.kind !== 'UNCONFIRMED'
+        ) {
+          /* A REFUSAL IS NOT A RESTART. The board said no - armed, busy,
+             unsupported - so nothing is going to drop and nothing is
+             going to come back. Stand the expectation down rather than
+             leaving the app waiting for a reconnect that cannot happen,
+             and keep the saved configuration: it IS on the board, it is
+             simply not active yet.
+
+             THE ACTIVATION IS STILL IN FLIGHT. The stored mixer and the
+             running mixer disagree until something restarts the board,
+             so the §8 interlock stays shut and the pending record stays
+             set - a retry, or a restart from anywhere else, still has to
+             be verified when the board comes back. */
+          fcRebootRecovery.reset();
+          if (mounted.current) {
+            setPhase('IDLE');
+            setSavedNeedsReboot(false);
+            setActivationRecovery('RESTART');
+            setOutcome({
+              text: t('motorsScreen.quickRestartRejected'),
+              danger: true,
+            });
+          }
+          return;
+        }
+      } catch {
+        /* The throw itself is the expected shape when the link dies
+           mid-command: the reboot was almost certainly delivered. The
+           lifecycle's own deadline decides, not a guess here. */
+      }
+    },
+    [controller, t],
+  );
+
   const saveDraft = useCallback(async () => {
     if (!dirty || snapshot === undefined || sessionId === undefined) {
       return;
@@ -347,8 +536,14 @@ export function MotorAirframeControls({
       ...(dirtyProps ? {yawMotorsReversed: draft.yawMotorsReversed} : {}),
     });
     setPhase('SAVING');
+    setActivationRecovery(undefined);
     setOutcome(undefined);
     reportBusy(true);
+    /* THE RESTART OUTLIVES THIS FUNCTION. When the save hands over to the
+       activation lifecycle, the phase belongs to that lifecycle - the
+       `finally` below must not drop it back to IDLE and blank «جارٍ
+       إعادة تشغيل متحكم الطيران…» the instant it is shown. */
+    let handedToActivation = false;
     try {
       const result = await controller.save(sessionId, snapshot, payload);
       if (!mounted.current) {
@@ -358,8 +553,33 @@ export function MotorAirframeControls({
         case 'SAVED_VERIFIED':
           applySnapshot(result.snapshot);
           setDraft(NO_DRAFT);
-          setSavedNeedsReboot(true);
-          setOutcome({text: t('motorsScreen.quickSavedVerified'), danger: false});
+          if (dirtyMixer && draft.mixerModeRaw !== undefined) {
+            /* M-F3F P0-A - ONE CLICK COMPLETES THE WHOLE LIFECYCLE.
+               The pinned Configurator's own Motors tab defaults to
+               rebooting (MotorsTab.vue `handleSave(reboot = true)` ->
+               saveAndReboot -> reinitializeConnection), so the
+               application owns the restart and the reconnect. The
+               operator pressed Save; they do not press anything else. */
+            pendingMixerActivation = {
+              requestedMixerModeRaw: draft.mixerModeRaw,
+              writtenOnSessionId: sessionId,
+            };
+            setSavedNeedsReboot(false);
+            setActivationInFlight(true);
+            handedToActivation = true;
+            await restartForActivation(sessionId);
+          } else {
+            /* §9 - A PROPS CHANGE IS NOT A TOPOLOGY CHANGE. The stored
+               yaw flag is read by the mixer at run time and the source
+               requires no restart to make it take effect, so this path
+               keeps the honest pending-reboot note rather than power
+               cycling an aircraft for no reason. */
+            setSavedNeedsReboot(true);
+            setOutcome({
+              text: t('motorsScreen.quickSavedVerified'),
+              danger: false,
+            });
+          }
           break;
         case 'NO_CHANGES':
           applySnapshot(result.snapshot);
@@ -397,7 +617,9 @@ export function MotorAirframeControls({
       }
     } finally {
       if (mounted.current) {
-        setPhase('IDLE');
+        if (!handedToActivation) {
+          setPhase('IDLE');
+        }
         reportBusy(false);
       }
     }
@@ -411,10 +633,216 @@ export function MotorAirframeControls({
     draft.yawMotorsReversed,
     load,
     reportBusy,
+    restartForActivation,
     sessionId,
     snapshot,
     t,
   ]);
+
+  /* ------------------------------------------------------------------ *
+   * WATCHING THE RESTART, AND VERIFYING WHAT CAME BACK
+   * ------------------------------------------------------------------ */
+
+  /**
+   * Mirrors the app-wide reboot lifecycle into this strip's own phase, so
+   * the operator sees «جارٍ إعادة تشغيل متحكم الطيران…» and then «جارٍ
+   * إعادة الاتصال…» from the SAME state machine that is actually doing
+   * the work - not from a timer imitating it.
+   *
+   * Only while an activation of OURS is pending: a CLI save reboot must
+   * not repaint the airframe strip.
+   */
+  useEffect(() => {
+    /* The phase is passed IN because a subscriber woken after another
+       subscriber has already moved the lifecycle on must still be told
+       what it was woken for - see the note on the store's Listener type.
+       The default covers a caller that supplies nothing (the mount call
+       below, and test doubles): the current phase is then the only
+       answer there is. */
+    const apply = (lifecycle = fcRebootRecovery.getPhase()) => {
+      if (pendingMixerActivation === undefined) return;
+      switch (lifecycle.kind) {
+        case 'EXPECTED':
+          setPhase('RESTARTING');
+          setOutcome({text: t('motorsScreen.quickRestarting'), danger: false});
+          break;
+        case 'WAITING_FOR_LINK':
+        case 'RECONNECTING':
+          setPhase('RECONNECTING');
+          setActivationRecovery(undefined);
+          setOutcome({text: t('motorsScreen.quickReconnecting'), danger: false});
+          break;
+        case 'FAILED':
+          /* §7 - THE CONFIGURATION IS SAVED; THE LINK IS NOT BACK. Say
+             both, offer a reconnect retry, and never resend the mixer
+             write: a second EEPROM commit for a save that already
+             succeeded is a bug, not a recovery.
+             NO INDEFINITE SPINNER: this is a terminal, worded state.
+             The pending record is KEPT - if the board does come back,
+             whether by retry or by hand, the activation still has to be
+             verified before anything calls it active. */
+          setPhase('IDLE');
+          setActivationRecovery('RECONNECT');
+          setOutcome({
+            text: t('motorsScreen.quickActivationNoLink'),
+            danger: true,
+          });
+          break;
+        default:
+          break;
+      }
+    };
+    apply();
+    return fcRebootRecovery.subscribe(apply);
+  }, [t]);
+
+  /**
+   * A MIXER IS ON THE BOARD AND IS NOT THE ONE RUNNING - and no activation
+   * of ours is in flight.
+   *
+   * This is not the save path. It is the state a board is left in when a
+   * mixer was written somewhere else (the CLI, an earlier session) and
+   * nothing restarted it. The strip's own note already says which value is
+   * live; the operator still needs a way to make the stored one govern,
+   * and §6 allows exactly one shape for that - a recovery action.
+   */
+  const strandedMixer =
+    mixerPendingReboot &&
+    !activationInFlight &&
+    !dirty &&
+    phase === 'IDLE' &&
+    sessionId !== undefined;
+
+  /** What the recovery control would do, explicit failures first. */
+  const recoveryKind: ActivationRecovery | undefined =
+    activationRecovery ?? (strandedMixer ? 'RESTART' : undefined);
+
+  /**
+   * THE RECOVERY ACTION - THE ONLY MANUAL RESTART LEFT ON THE MIXER PATH.
+   *
+   * RESTART   ask the board again. It refused the first time (or nobody
+   *           ever asked), nothing was lost, and NOTHING IS REWRITTEN -
+   *           the configuration is already committed. The restart is
+   *           registered as an activation so that what comes back is
+   *           verified rather than assumed.
+   * RECONNECT re-enter the SAME reboot lifecycle at WAITING_FOR_LINK with
+   *           a fresh deadline, which is what the root's reconnect driver
+   *           already watches for. No device is opened here, and no
+   *           configuration is written here - §7.
+   */
+  const retryActivation = useCallback(() => {
+    if (recoveryKind === 'RESTART') {
+      if (sessionId === undefined) return;
+      const requested =
+        pendingMixerActivation?.requestedMixerModeRaw ?? configuredMixer;
+      if (requested === undefined) return;
+      pendingMixerActivation = {
+        requestedMixerModeRaw: requested,
+        writtenOnSessionId: sessionId,
+      };
+      setActivationInFlight(true);
+      setActivationRecovery(undefined);
+      restartForActivation(sessionId).catch(() => undefined);
+      return;
+    }
+    const pending = pendingMixerActivation;
+    if (pending === undefined) return;
+    /* A previous attempt already announced itself on Home; a new attempt
+       is not the place to keep showing the old one's verdict. */
+    connectionNotice.clear();
+    setActivationRecovery(undefined);
+    setPhase('RECONNECTING');
+    setOutcome({text: t('motorsScreen.quickReconnecting'), danger: false});
+    if (!fcRebootRecovery.retryReconnect(pending.writtenOnSessionId, 'MIXER_SAVE')) {
+      // The lifecycle is busy with something else - say nothing false and
+      // leave the retry available rather than pretending it ran.
+      setPhase('IDLE');
+      setActivationRecovery('RECONNECT');
+    }
+  }, [configuredMixer, recoveryKind, restartForActivation, sessionId, t]);
+
+  /**
+   * THE ONLY PATH TO «تم تفعيل …».
+   *
+   * A new session exists and this strip has re-read the board on it. The
+   * activation is judged HERE, against two facts that both had to survive
+   * the power cycle: the mixer the board now reports, and the runtime
+   * motor count it now reports. An acknowledgement, an EEPROM commit and
+   * even a completed reboot are all insufficient on their own (§5).
+   */
+  useEffect(() => {
+    const pending = pendingMixerActivation;
+    if (pending === undefined) return;
+    if (sessionId === undefined || sessionId === pending.writtenOnSessionId) {
+      // Still the session the write happened on: nothing has restarted
+      // yet, so there is nothing to verify.
+      return;
+    }
+    if (loadState === 'UNAVAILABLE') {
+      /* The board is back and will not tell us what it is. That is not a
+         mismatch - we do not know - and it is certainly not an
+         activation. Say exactly that, and leave the interlock shut. */
+      pendingMixerActivation = undefined;
+      fcRebootRecovery.reset();
+      setPhase('IDLE');
+      setActivationRecovery(undefined);
+      setOutcome({
+        text: t('motorsScreen.quickActivationUnreadable'),
+        danger: true,
+      });
+      return;
+    }
+    if (
+      loadState !== 'READY' ||
+      snapshot === undefined ||
+      snapshotSessionId !== sessionId
+    ) {
+      /* Either the read is still running, or the snapshot on screen is
+         the one from before the restart. Both are "not yet". */
+      setPhase('VERIFYING');
+      setOutcome({text: t('motorsScreen.quickVerifying'), danger: false});
+      return;
+    }
+    pendingMixerActivation = undefined;
+    fcRebootRecovery.reset();
+    setPhase('IDLE');
+    setActivationRecovery(undefined);
+    const activeMixer = snapshot.mixer.mixerModeRaw;
+    const runtimeCount = snapshot.motor.motorCount;
+    if (activeMixer !== pending.requestedMixerModeRaw) {
+      /* The board came back reporting the OLD airframe. Whatever
+         happened, the requested topology is not what is running.
+         THE INTERLOCK RELEASES HERE, and that is not a concession: this
+         strip has just re-read the board, so the aircraft on screen IS
+         the aircraft being mixed for. The requested one is simply not
+         it, and the sentence says so. */
+      setActivationInFlight(false);
+      setOutcome({
+        text: t('motorsScreen.quickActivationMismatch'),
+        danger: true,
+      });
+      return;
+    }
+    if (runtimeCount === undefined) {
+      /* The mixer matches but the board did not report a motor count, so
+         the count this screen would command with is unknown. §8: motor
+         test stays shut until it is not - the activation is NOT settled
+         while half of what had to survive the restart is missing. */
+      setOutcome({
+        text: t('motorsScreen.quickActivationCountUnknown'),
+        danger: true,
+      });
+      return;
+    }
+    setActivationInFlight(false);
+    setSavedNeedsReboot(false);
+    setOutcome({
+      text: t('motorsScreen.quickActivated', {
+        name: mixerValueLabel(activeMixer),
+      }),
+      danger: false,
+    });
+  }, [loadState, mixerValueLabel, sessionId, snapshot, snapshotSessionId, t]);
 
   const requestReboot = useCallback(async () => {
     if (sessionId === undefined) {
@@ -456,15 +884,43 @@ export function MotorAirframeControls({
     }
   }, [controller, reportBusy, sessionId, t]);
 
-  /* The reboot offer: a persisted save is waiting for its restart. Shown
-   * when the live comparison says so, or - with no session to compare
-   * against - when this strip itself verified a save this connection. */
+  /**
+   * M-F3F §6 - THE MIXER SAVE NO LONGER ASKS FOR A SECOND PRESS.
+   *
+   * `mixerPendingReboot` USED TO APPEAR HERE, and that was the defect:
+   * one click on «حفظ التغييرات» produced a verified save and then a
+   * second button the operator had to find and press before the aircraft
+   * they had just chosen was the aircraft the firmware was mixing for.
+   * The application owns that restart now - the pinned Configurator's own
+   * Motors tab does the same by default - so the mixer path reaches
+   * «تم تفعيل …» with no further input, and this control is simply not
+   * part of it.
+   *
+   * WHAT IS LEFT HERE IS NOT THE MIXER PATH:
+   *  - `savedNeedsReboot`, set by the props save (§9 - the source does
+   *    not restart for a props change, so this stays an offer) and by
+   *    SAVED_UNVERIFIED;
+   *  - `propsPendingReboot`, the same fact seen against a live session.
+   *
+   * And it is suppressed entirely while an activation is in flight, so a
+   * restart can never be requested underneath one that is already
+   * running.
+   */
   const offerReboot =
     !dirty &&
     phase === 'IDLE' &&
     loadState === 'READY' &&
     sessionId !== undefined &&
-    (savedNeedsReboot || mixerPendingReboot || propsPendingReboot);
+    !activationInFlight &&
+    recoveryKind === undefined &&
+    (savedNeedsReboot || propsPendingReboot);
+
+  /** §6/§7 - RECOVERY ONLY. Present when an automatic step actually
+   *  failed, or when a stored mixer was left stranded by something that
+   *  never restarted the board. Never as a normal second step. */
+  const offerActivationRecovery =
+    recoveryKind !== undefined &&
+    (recoveryKind === 'RECONNECT' || sessionId !== undefined);
 
   const propsChip = (
     reversed: boolean,
@@ -640,6 +1096,19 @@ export function MotorAirframeControls({
           {t('motorsScreen.quickRebooting')}
         </Text>
       ) : null}
+      {/* The activation phases carry their words in the outcome line
+          below - one sentence at a time, each naming the step that is
+          actually running. These markers exist so a test can assert the
+          phase itself rather than the string it produced. */}
+      {phase === 'RESTARTING' ? (
+        <View testID="motors-airframe-restarting" />
+      ) : null}
+      {phase === 'RECONNECTING' ? (
+        <View testID="motors-airframe-reconnecting" />
+      ) : null}
+      {phase === 'VERIFYING' ? (
+        <View testID="motors-airframe-verifying" />
+      ) : null}
       {outcome !== undefined ? (
         <Text
           style={[styles.outcome, outcome.danger && styles.outcomeDanger]}
@@ -661,6 +1130,28 @@ export function MotorAirframeControls({
           <Icon name="power" size={16} color={colors.textPrimary} />
           <Text style={styles.rebootText}>
             {t('motorsScreen.quickRebootNow')}
+          </Text>
+        </Pressable>
+      ) : null}
+      {offerActivationRecovery ? (
+        <Pressable
+          onPress={retryActivation}
+          disabled={writesLocked}
+          accessibilityRole="button"
+          style={[styles.rebootButton, writesLocked && styles.propsChipDisabled]}
+          testID="motors-airframe-activation-retry"
+        >
+          <Icon name="refresh-cw" size={16} color={colors.textPrimary} />
+          <Text style={styles.rebootText}>
+            {t(
+              recoveryKind === 'RECONNECT'
+                ? 'motorsScreen.quickActivationRetry'
+                : activationRecovery === 'RESTART'
+                ? // The board refused a restart we asked for: try again.
+                  'motorsScreen.quickRetry'
+                : // Nobody ever asked: activate what is already stored.
+                  'motorsScreen.quickActivateNow',
+            )}
           </Text>
         </Pressable>
       ) : null}

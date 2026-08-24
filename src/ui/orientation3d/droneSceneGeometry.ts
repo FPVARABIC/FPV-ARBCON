@@ -71,7 +71,7 @@ export type DroneSceneMaterial =
 /** Every shape in this scene - hub plates, standoffs, arms, motor
  * circles, prop rings/discs, the arrow's two pieces - is built and
  * projected as a flat polygon (circles included, approximated as
- * CIRCLE_SEGMENT_COUNT-sided regular polygons - see circleLocalPoints()/
+ * CIRCLE_SEGMENT_COUNT-sided regular polygons - see circleAt()/
  * ringAroundOrigin() below). Deliberately a single-variant type rather
  * than a POLYGON/CIRCLE/LINE union: no primitive needs a dedicated
  * circle or line renderer this pass, and a union with branches nothing
@@ -116,15 +116,74 @@ const ARROW_SHAFT_HALF_WIDTH = 0.07;
 const ARROW_HEAD_LENGTH = 0.4;
 const ARROW_HEAD_HALF_WIDTH = 0.22;
 
-/** X-frame quad motor layout: angles measured from +X (forward), toward
- * +Z (right). front = local X > 0, rear = local X < 0 - a property of
- * the physical airframe, unaffected by the live rotation applied below. */
-const MOTOR_LAYOUT: Array<{angleDeg: number; isFront: boolean}> = [
-  {angleDeg: 45, isFront: true}, // front-right
-  {angleDeg: 135, isFront: false}, // rear-right
-  {angleDeg: 225, isFront: false}, // rear-left
-  {angleDeg: 315, isFront: true}, // front-left
-];
+/**
+ * =====================================================================
+ * M-F3F P0-B - THE MODEL IS THE AIRCRAFT THE BOARD REPORTED.
+ * =====================================================================
+ *
+ * WHAT USED TO BE HERE. A literal four-entry array at 45/135/225/315
+ * degrees, named MOTOR_LAYOUT: an X-frame quadcopter, hard-coded. Every
+ * board got it. A Y6 got it, a tricopter got it, a flying wing got it -
+ * on the screen an operator opens FIRST and uses to decide which way the
+ * flight controller is mounted. Two screens describing the same aircraft
+ * differently is not cosmetic; the Setup model is the orientation
+ * reference for a physical question.
+ *
+ * WHAT IS HERE NOW. Nothing. The rotors, the arms and the body shape are
+ * PASSED IN, derived from what the board actually reported, and this
+ * module still owns no opinion about what any mixer id means - see
+ * airframeSceneModel.ts, which is the only place that reads the authored
+ * layout table, and which the Motors diagram reads from too.
+ *
+ * AND WHEN NOTHING IS KNOWN, NOTHING IS DRAWN. `computeDroneScene` with
+ * no airframe renders the hub, the nose arrow and the level grid, and no
+ * rotors at all. An unrecognised aircraft NEVER becomes a quad (§17):
+ * the orientation is still readable, and the shape claims nothing.
+ */
+
+/** One rotor's place on the aircraft, in the SAME planform coordinates
+ *  the authored layout uses: x = -1 left .. +1 right, y = -1 nose .. +1
+ *  tail. Not angles: a tricopter's tail arm is longer than its front
+ *  pair, and an angle-plus-fixed-radius model cannot say so. */
+export type DroneSceneRotor = {
+  readonly x: number;
+  readonly y: number;
+  /** SINGLE, or which rotor of a coaxial pair. A Y6 has THREE arms and
+   *  six motors; drawing six arms would be a lie about the aircraft. */
+  readonly deck: 'SINGLE' | 'UPPER' | 'LOWER';
+};
+
+/** How to draw the body under the rotors. Same vocabulary as the Motors
+ *  diagram's silhouette, for the same reason: one interpretation. */
+export type DroneSceneSilhouette = 'ROTARY' | 'WING' | 'PLANE';
+
+export type DroneSceneAirframe = {
+  readonly rotors: readonly DroneSceneRotor[];
+  readonly silhouette: DroneSceneSilhouette;
+};
+
+/** Vertical separation between the two rotors of a coaxial station -
+ *  half above the arm, half below, so an X8 reads as four arms carrying
+ *  eight motors rather than as eight arms. */
+const COAXIAL_DECK_LIFT = 0.17;
+
+/** Fixed-wing planform, sized to the same half-span as a rotary frame so
+ *  one aircraft does not appear twice the size of another (§38/§39). */
+const WING_HALF_SPAN = 1.55;
+const WING_NOSE_X = 0.95;
+const WING_TAIL_X = -0.85;
+const WING_TIP_TAIL_X = -1.0;
+const WING_ROOT_TAIL_X = -0.35;
+const PLANE_FUSELAGE_NOSE_X = 1.5;
+const PLANE_FUSELAGE_TAIL_X = -1.5;
+const PLANE_FUSELAGE_HALF_WIDTH = 0.14;
+const PLANE_WING_HALF_SPAN = 1.5;
+const PLANE_WING_LEADING_X = 0.45;
+const PLANE_WING_TRAILING_X = -0.05;
+const PLANE_TAILPLANE_HALF_SPAN = 0.6;
+const PLANE_TAILPLANE_LEADING_X = -1.05;
+const PLANE_TAILPLANE_TRAILING_X = -1.35;
+const PLANE_FIN_HEIGHT = 0.42;
 
 // ---- Camera ----
 //
@@ -204,34 +263,91 @@ export function rotateBodyPoint(p: Vec3, orientation: DroneOrientationDeg): Vec3
 }
 
 export type MotorFrameInfo = {
+  /** Bearing from the nose, positive toward the right-hand side, in the
+   * scene's own +X-forward/+Z-right frame. Derived from the placement,
+   * not stored, so a bearing and the point it names cannot disagree. */
   angleDeg: number;
+  /** FRONT OF THE AIRCRAFT, FROM ITS GEOMETRY (§23). local X > 0 is
+   * forward - a property of the airframe, unaffected by the live
+   * rotation applied later and by the interface's text direction. A
+   * rotor exactly on the lateral axis, or at the centre, is neither. */
   isFront: boolean;
   /** Local (pre-rotation, unrotated body space), where the arm starts -
-   * exactly on the hub's own outer edge. */
+   * exactly on the hub's own outer edge, along the direction of this
+   * rotor. Equals the rotor centre for a centre-mounted rotor, which is
+   * how a single-prop aircraft ends up with no arm. */
   hubEdgeLocal: Vec3;
   /** Local (pre-rotation), the motor's own center - exactly where the
    * arm ends. */
   motorCenterLocal: Vec3;
-  /** = motorRadius - hubEdgeRadius, per the approved prototype spec:
-   * arms span EXACTLY from the hub's outer edge to the motor center,
-   * nothing more, nothing less. */
+  /** = |motorCenter - hubEdge| in the planform, per the approved
+   * prototype spec: arms span EXACTLY from the hub's outer edge to the
+   * motor center, nothing more, nothing less. Zero where there is no
+   * arm to draw. */
   armLength: number;
+  /** Which rotor of a coaxial station, carried through so the renderer
+   *  can stack them and still draw ONE arm. */
+  deck: DroneSceneRotor['deck'];
+  /** The station's planform position, ROUNDED FOR IDENTITY, so the two
+   *  rotors of a coaxial pair are recognisably the same station. */
+  stationKey: string;
 };
 
-/** Orientation-independent (local/body space, pre-rotation) motor layout
- * - exported specifically so this geometric invariant (and the exact
- * unit-direction alignment between hubEdgeLocal and motorCenterLocal) can
- * be verified directly, and separately from camera/projection concerns. */
-export function computeMotorFrame(): MotorFrameInfo[] {
-  return MOTOR_LAYOUT.map(motor => {
-    const angle = degToRad(motor.angleDeg);
-    const dir: Vec3 = {x: Math.cos(angle), y: 0, z: Math.sin(angle)};
+/**
+ * The aircraft in body space, pre-rotation - the geometric invariants,
+ * separated from camera and projection concerns so they can be checked
+ * directly.
+ *
+ * THE OUTERMOST ROTOR ALWAYS LANDS AT THE SAME RADIUS. The authored
+ * layout's coordinates are firmware mixer proportions, not millimetres,
+ * so they are scaled as a set: every aircraft then occupies the same
+ * footprint on screen and none appears twice the size of another
+ * (§38/§39), while the RELATIVE geometry - a tricopter's longer tail
+ * arm, a hex's sixty-degree spacing - is preserved exactly.
+ */
+export function computeMotorFrame(
+  airframe: DroneSceneAirframe | undefined,
+): MotorFrameInfo[] {
+  if (airframe === undefined) return [];
+  const rotors = airframe.rotors;
+  const furthest = rotors.reduce(
+    (largest, rotor) => Math.max(largest, Math.hypot(rotor.x, rotor.y)),
+    0,
+  );
+  // A single centre-mounted rotor has no radius to normalise against.
+  const scale = furthest === 0 ? 0 : MOTOR_RADIUS_FROM_CENTER / furthest;
+  return rotors.map(rotor => {
+    /* The planform's y is measured from the NOSE (-1) to the TAIL (+1);
+       the scene's +X is forward. Hence the sign flip, and hence a front
+       rotor genuinely has local X > 0. */
+    const forward = -rotor.y * scale;
+    const right = rotor.x * scale;
+    const distance = Math.hypot(forward, right);
+    const deckY =
+      rotor.deck === 'UPPER'
+        ? ARM_Y + COAXIAL_DECK_LIFT
+        : rotor.deck === 'LOWER'
+          ? ARM_Y - COAXIAL_DECK_LIFT
+          : ARM_Y;
+    const motorCenterLocal: Vec3 = {x: forward, y: deckY, z: right};
+    const direction: Vec3 =
+      distance === 0
+        ? {x: 0, y: 0, z: 0}
+        : {x: forward / distance, y: 0, z: right / distance};
+    /* An arm exists only where the rotor is outside the hub. A rotor at
+       or inside the hub edge gets no arm rather than a negative one. */
+    const hasArm = distance > HUB_EDGE_RADIUS;
+    const hubEdgeLocal: Vec3 = hasArm
+      ? {x: direction.x * HUB_EDGE_RADIUS, y: deckY, z: direction.z * HUB_EDGE_RADIUS}
+      : motorCenterLocal;
     return {
-      angleDeg: motor.angleDeg,
-      isFront: motor.isFront,
-      hubEdgeLocal: vecScale(dir, HUB_EDGE_RADIUS),
-      motorCenterLocal: vecScale(dir, MOTOR_RADIUS_FROM_CENTER),
-      armLength: MOTOR_RADIUS_FROM_CENTER - HUB_EDGE_RADIUS,
+      angleDeg: (Math.atan2(right, forward) * 180) / Math.PI,
+      isFront: forward > 0,
+      hubEdgeLocal,
+      motorCenterLocal,
+      armLength: hasArm ? distance - HUB_EDGE_RADIUS : 0,
+      deck: rotor.deck,
+      stationKey: `${rotor.x.toFixed(4)}:${rotor.y.toFixed(4)}`,
     };
   });
 }
@@ -298,16 +414,84 @@ function toViewport(p: Vec2, viewportWidth: number, viewportHeight: number): Vec
   return {x: viewportWidth / 2 + p.x, y: viewportHeight / 2 + p.y};
 }
 
-function circleLocalPoints(centerAngleDeg: number, radiusFromCenter: number, ringRadius: number, y: number): Vec3[] {
-  const centerAngle = degToRad(centerAngleDeg);
-  const centerX = Math.cos(centerAngle) * radiusFromCenter;
-  const centerZ = Math.sin(centerAngle) * radiusFromCenter;
+/** A circle in the horizontal plane, centred on an arbitrary point.
+ *  Replaces the angle-plus-fixed-radius helper, which could only place a
+ *  circle on a ring of one radius - true for a quad, false for every
+ *  airframe whose arms are not all the same length. */
+function circleAt(centre: Vec3, ringRadius: number, y: number): Vec3[] {
   const points: Vec3[] = [];
   for (let i = 0; i < CIRCLE_SEGMENT_COUNT; i++) {
     const t = (i / CIRCLE_SEGMENT_COUNT) * Math.PI * 2;
-    points.push({x: centerX + Math.cos(t) * ringRadius, y, z: centerZ + Math.sin(t) * ringRadius});
+    points.push({
+      x: centre.x + Math.cos(t) * ringRadius,
+      y,
+      z: centre.z + Math.sin(t) * ringRadius,
+    });
   }
   return points;
+}
+
+/**
+ * THE FIXED-WING BODIES.
+ *
+ * Original geometry, drawn from what the firmware's own mixer tables say
+ * these aircraft are: mixerSingleProp with elevons (mixers[8], FLYING
+ * WING) and mixerSingleProp with six control-surface channels
+ * (mixers[14], AIRPLANE). Nothing here is traced from any other
+ * application's artwork; they are the smallest set of flat panels that
+ * read as a swept wing and as an aeroplane from this camera.
+ *
+ * NO CONTROL SURFACE IS ANIMATED and no rotation is implied (§28): the
+ * panels are the airframe, not a claim about what it is doing.
+ */
+function fixedWingPanels(silhouette: DroneSceneSilhouette): Vec3[][] {
+  if (silhouette === 'WING') {
+    return [
+      // One swept delta, nose forward, trailing edge cut back at the
+      // tips - a single panel, because a flying wing is a single panel.
+      [
+        {x: WING_NOSE_X, y: ARM_Y, z: 0},
+        {x: WING_TIP_TAIL_X, y: ARM_Y, z: WING_HALF_SPAN},
+        {x: WING_ROOT_TAIL_X, y: ARM_Y, z: 0.28},
+        {x: WING_TAIL_X, y: ARM_Y, z: 0},
+        {x: WING_ROOT_TAIL_X, y: ARM_Y, z: -0.28},
+        {x: WING_TIP_TAIL_X, y: ARM_Y, z: -WING_HALF_SPAN},
+      ],
+    ];
+  }
+  return [
+    // Fuselage, nose to tail.
+    [
+      {x: PLANE_FUSELAGE_NOSE_X, y: ARM_Y, z: 0},
+      {x: PLANE_FUSELAGE_NOSE_X - 0.35, y: ARM_Y, z: PLANE_FUSELAGE_HALF_WIDTH},
+      {x: PLANE_FUSELAGE_TAIL_X, y: ARM_Y, z: PLANE_FUSELAGE_HALF_WIDTH * 0.5},
+      {x: PLANE_FUSELAGE_TAIL_X, y: ARM_Y, z: -PLANE_FUSELAGE_HALF_WIDTH * 0.5},
+      {x: PLANE_FUSELAGE_NOSE_X - 0.35, y: ARM_Y, z: -PLANE_FUSELAGE_HALF_WIDTH},
+    ],
+    // Main wing, slightly swept.
+    [
+      {x: PLANE_WING_LEADING_X, y: ARM_Y, z: -PLANE_WING_HALF_SPAN},
+      {x: PLANE_WING_LEADING_X, y: ARM_Y, z: PLANE_WING_HALF_SPAN},
+      {x: PLANE_WING_TRAILING_X - 0.12, y: ARM_Y, z: PLANE_WING_HALF_SPAN},
+      {x: PLANE_WING_TRAILING_X, y: ARM_Y, z: 0},
+      {x: PLANE_WING_TRAILING_X - 0.12, y: ARM_Y, z: -PLANE_WING_HALF_SPAN},
+    ],
+    // Tailplane.
+    [
+      {x: PLANE_TAILPLANE_LEADING_X, y: ARM_Y, z: -PLANE_TAILPLANE_HALF_SPAN},
+      {x: PLANE_TAILPLANE_LEADING_X, y: ARM_Y, z: PLANE_TAILPLANE_HALF_SPAN},
+      {x: PLANE_TAILPLANE_TRAILING_X, y: ARM_Y, z: PLANE_TAILPLANE_HALF_SPAN * 0.8},
+      {x: PLANE_TAILPLANE_TRAILING_X, y: ARM_Y, z: -PLANE_TAILPLANE_HALF_SPAN * 0.8},
+    ],
+    // Vertical fin - the one panel standing OUT of the wing plane, which
+    // is what makes roll unmistakable on an aeroplane.
+    [
+      {x: PLANE_TAILPLANE_LEADING_X + 0.1, y: ARM_Y, z: 0},
+      {x: PLANE_TAILPLANE_TRAILING_X, y: ARM_Y, z: 0},
+      {x: PLANE_TAILPLANE_TRAILING_X, y: ARM_Y + PLANE_FIN_HEIGHT, z: 0},
+      {x: PLANE_TAILPLANE_LEADING_X + 0.45, y: ARM_Y + PLANE_FIN_HEIGHT, z: 0},
+    ],
+  ];
 }
 
 function ringAroundOrigin(radius: number, y: number): Vec3[] {
@@ -330,6 +514,14 @@ export function computeDroneScene(
   orientation: DroneOrientationDeg,
   viewportSize: {width: number; height: number},
   presentationScale = 1,
+  /**
+   * THE AIRCRAFT THE BOARD REPORTED, or nothing.
+   *
+   * `undefined` is a real answer and it is drawn as one: hub, nose arrow
+   * and level grid, with NO rotors and NO arms. Nothing is invented to
+   * fill the gap, and in particular nothing becomes a quadcopter (§17).
+   */
+  airframe?: DroneSceneAirframe,
 ): DroneScene {
   const camera = buildCamera();
   const viewportMinDimension = Math.min(viewportSize.width, viewportSize.height);
@@ -383,49 +575,71 @@ export function computeDroneScene(
     }
   }
 
-  // Hub bottom plate (wider).
-  {
-    const {points, depth} = projectPolygon(ringAroundOrigin(HUB_BOTTOM_RADIUS, HUB_BOTTOM_Y));
-    primitives.push({kind: 'POLYGON', material: 'HUB', points, depth});
-  }
-  // Hub top plate (narrower).
-  {
-    const {points, depth} = projectPolygon(ringAroundOrigin(HUB_TOP_RADIUS, HUB_TOP_Y));
-    primitives.push({kind: 'POLYGON', material: 'HUB', points, depth});
-  }
-  // 4 small standoffs between the plates.
-  for (let i = 0; i < 4; i++) {
-    const angle = degToRad(i * 90 + 45);
-    const cx = Math.cos(angle) * STANDOFF_RADIUS;
-    const cz = Math.sin(angle) * STANDOFF_RADIUS;
-    const localQuad: Vec3[] = [
-      {x: cx - STANDOFF_HALF_WIDTH, y: HUB_BOTTOM_Y, z: cz},
-      {x: cx + STANDOFF_HALF_WIDTH, y: HUB_BOTTOM_Y, z: cz},
-      {x: cx + STANDOFF_HALF_WIDTH, y: HUB_TOP_Y, z: cz},
-      {x: cx - STANDOFF_HALF_WIDTH, y: HUB_TOP_Y, z: cz},
-    ];
-    const {points, depth} = projectPolygon(localQuad);
-    primitives.push({kind: 'POLYGON', material: 'STANDOFF', points, depth});
+  const silhouette = airframe?.silhouette ?? 'ROTARY';
+
+  if (silhouette === 'ROTARY') {
+    // Hub bottom plate (wider).
+    {
+      const {points, depth} = projectPolygon(ringAroundOrigin(HUB_BOTTOM_RADIUS, HUB_BOTTOM_Y));
+      primitives.push({kind: 'POLYGON', material: 'HUB', points, depth});
+    }
+    // Hub top plate (narrower).
+    {
+      const {points, depth} = projectPolygon(ringAroundOrigin(HUB_TOP_RADIUS, HUB_TOP_Y));
+      primitives.push({kind: 'POLYGON', material: 'HUB', points, depth});
+    }
+    // 4 small standoffs between the plates.
+    for (let i = 0; i < 4; i++) {
+      const angle = degToRad(i * 90 + 45);
+      const cx = Math.cos(angle) * STANDOFF_RADIUS;
+      const cz = Math.sin(angle) * STANDOFF_RADIUS;
+      const localQuad: Vec3[] = [
+        {x: cx - STANDOFF_HALF_WIDTH, y: HUB_BOTTOM_Y, z: cz},
+        {x: cx + STANDOFF_HALF_WIDTH, y: HUB_BOTTOM_Y, z: cz},
+        {x: cx + STANDOFF_HALF_WIDTH, y: HUB_TOP_Y, z: cz},
+        {x: cx - STANDOFF_HALF_WIDTH, y: HUB_TOP_Y, z: cz},
+      ];
+      const {points, depth} = projectPolygon(localQuad);
+      primitives.push({kind: 'POLYGON', material: 'STANDOFF', points, depth});
+    }
+  } else {
+    /* A FIXED WING IS NOT A HUB WITH ARMS (§14/§21). A flying wing gets
+       a swept planform; an aeroplane gets a fuselage, a main wing, a
+       tailplane and a fin. Both read as themselves at a glance, which is
+       the entire point of the model on this screen, and neither is a
+       renamed quadcopter. */
+    for (const panel of fixedWingPanels(silhouette)) {
+      const {points, depth} = projectPolygon(panel);
+      primitives.push({kind: 'POLYGON', material: 'HUB', points, depth});
+    }
   }
 
-  for (const motor of computeMotorFrame()) {
-    const angle = degToRad(motor.angleDeg);
-    const dir: Vec3 = {x: Math.cos(angle), y: 0, z: Math.sin(angle)};
+  const frame = computeMotorFrame(airframe);
+  /* ONE ARM PER STATION. A Y6 carries two rotors on each of three arms;
+     drawing an arm per rotor would claim six. */
+  const armsDrawn = new Set<string>();
 
-    // Arm: spans EXACTLY from the hub's outer edge to the motor center,
-    // armLength = motorRadius - hubEdgeRadius (per the approved
-    // prototype spec), along the exact unit direction toward this motor.
-    const armStart = vecAdd(motor.hubEdgeLocal, {x: 0, y: ARM_Y, z: 0});
-    const armEnd = vecAdd(motor.motorCenterLocal, {x: 0, y: ARM_Y, z: 0});
-    const perpendicular: Vec3 = {x: -dir.z, y: 0, z: dir.x};
-    const armQuad: Vec3[] = [
-      vecAdd(armStart, vecScale(perpendicular, ARM_HALF_WIDTH)),
-      vecAdd(armEnd, vecScale(perpendicular, ARM_HALF_WIDTH)),
-      vecAdd(armEnd, vecScale(perpendicular, -ARM_HALF_WIDTH)),
-      vecAdd(armStart, vecScale(perpendicular, -ARM_HALF_WIDTH)),
-    ];
-    const arm = projectPolygon(armQuad);
-    primitives.push({kind: 'POLYGON', material: 'ARM', points: arm.points, depth: arm.depth});
+  for (const motor of frame) {
+    if (motor.armLength > 0 && !armsDrawn.has(motor.stationKey)) {
+      armsDrawn.add(motor.stationKey);
+      const span = vecSub(motor.motorCenterLocal, motor.hubEdgeLocal);
+      const length = Math.hypot(span.x, span.z);
+      const dir: Vec3 =
+        length === 0 ? {x: 1, y: 0, z: 0} : {x: span.x / length, y: 0, z: span.z / length};
+      // The arm is a single member at the airframe's own arm height,
+      // whatever deck the rotors on it sit at.
+      const armStart: Vec3 = {x: motor.hubEdgeLocal.x, y: ARM_Y, z: motor.hubEdgeLocal.z};
+      const armEnd: Vec3 = {x: motor.motorCenterLocal.x, y: ARM_Y, z: motor.motorCenterLocal.z};
+      const perpendicular: Vec3 = {x: -dir.z, y: 0, z: dir.x};
+      const armQuad: Vec3[] = [
+        vecAdd(armStart, vecScale(perpendicular, ARM_HALF_WIDTH)),
+        vecAdd(armEnd, vecScale(perpendicular, ARM_HALF_WIDTH)),
+        vecAdd(armEnd, vecScale(perpendicular, -ARM_HALF_WIDTH)),
+        vecAdd(armStart, vecScale(perpendicular, -ARM_HALF_WIDTH)),
+      ];
+      const arm = projectPolygon(armQuad);
+      primitives.push({kind: 'POLYGON', material: 'ARM', points: arm.points, depth: arm.depth});
+    }
 
     const motorMaterial: DroneSceneMaterial = motor.isFront ? 'MOTOR_FRONT' : 'MOTOR_REAR';
     const propRingMaterial: DroneSceneMaterial = motor.isFront ? 'PROP_RING_FRONT' : 'PROP_RING_REAR';
@@ -433,16 +647,24 @@ export function computeDroneScene(
 
     // Motor base + bell-cap - two stacked circles, the bell smaller and
     // slightly higher, per the approved prototype spec's "small bell-caps".
+    // Both sit at the rotor's OWN deck height, which is what makes a
+    // coaxial pair visibly a pair.
+    const centre = motor.motorCenterLocal;
+    const deckOffset = centre.y - ARM_Y;
     {
-      const base = projectPolygon(circleLocalPoints(motor.angleDeg, MOTOR_RADIUS_FROM_CENTER, MOTOR_BASE_RADIUS, MOTOR_BASE_Y));
+      const base = projectPolygon(
+        circleAt(centre, MOTOR_BASE_RADIUS, MOTOR_BASE_Y + deckOffset),
+      );
       primitives.push({kind: 'POLYGON', material: motorMaterial, points: base.points, depth: base.depth});
-      const bell = projectPolygon(circleLocalPoints(motor.angleDeg, MOTOR_RADIUS_FROM_CENTER, MOTOR_BELL_RADIUS, MOTOR_BELL_Y));
+      const bell = projectPolygon(
+        circleAt(centre, MOTOR_BELL_RADIUS, MOTOR_BELL_Y + deckOffset),
+      );
       primitives.push({kind: 'POLYGON', material: motorMaterial, points: bell.points, depth: bell.depth});
     }
 
     // Propeller ring (outline) + faint translucent disc, per spec.
     {
-      const ring = projectPolygon(circleLocalPoints(motor.angleDeg, MOTOR_RADIUS_FROM_CENTER, PROP_RADIUS, PROP_Y));
+      const ring = projectPolygon(circleAt(centre, PROP_RADIUS, PROP_Y + deckOffset));
       primitives.push({kind: 'POLYGON', material: propRingMaterial, points: ring.points, depth: ring.depth});
       primitives.push({kind: 'POLYGON', material: propDiscMaterial, points: ring.points, depth: ring.depth});
     }

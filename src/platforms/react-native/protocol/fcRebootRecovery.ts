@@ -82,7 +82,19 @@
  *  without being an unbounded wait. */
 export const FC_REBOOT_RECOVERY_TIMEOUT_MS = 10_000;
 
-export type FcRebootReason = 'CLI_SAVE';
+/**
+ * WHY THE APP ASKED THE BOARD TO RESTART.
+ *
+ * CLI_SAVE   the operator's own `save` in the CLI, where the FIRMWARE
+ *            reboots and the app only records the expectation.
+ * MIXER_SAVE a mixer/topology change from Motors. The pinned Betaflight
+ *            Configurator does the same thing by default - MotorsTab.vue
+ *            `const handleSave = (reboot = true)` then `saveAndReboot()`
+ *            -> useReboot.js -> reinitializeConnection() - so the
+ *            application owns the restart and the reconnect, and the
+ *            operator never presses a second button.
+ */
+export type FcRebootReason = 'CLI_SAVE' | 'MIXER_SAVE';
 
 export type FcRebootRecoveryPhase =
   /** Nothing is expected; a session loss now is a genuine fault. */
@@ -110,7 +122,23 @@ export type FcRebootRecoveryPhase =
       readonly detail: 'TIMED_OUT' | 'REOPEN_FAILED';
     };
 
-type Listener = () => void;
+/**
+ * A subscriber, given the phase THAT NOTIFICATION IS ABOUT.
+ *
+ * WHY THE ARGUMENT EXISTS. Subscribers used to read `getPhase()` back,
+ * and that is not always the phase they were woken for: the root's
+ * `useRebootReconnect` handles FAILED by announcing it and immediately
+ * calling `reset()`, which re-enters `set()` from inside the notify loop.
+ * Every subscriber that had not run yet then read IDLE and never learned
+ * that the recovery had failed - so Motors could not say «تم حفظ
+ * الإعداد، لكن تعذر إعادة الاتصال بالمتحكم.» because, as far as it could
+ * see, nothing had gone wrong.
+ *
+ * Passing the phase makes each notification self-describing and
+ * order-independent. Callbacks that do not care may still be plain
+ * `() => void`.
+ */
+type Listener = (phase: FcRebootRecoveryPhase) => void;
 
 /**
  * A single frozen IDLE instance, so a subscriber comparing snapshots by
@@ -200,6 +228,29 @@ export class FcRebootRecovery {
       sessionId,
       reason: this.phase.reason,
     });
+    return true;
+  }
+
+  /**
+   * "LOOK FOR THE BOARD AGAIN" - the operator's own retry after a
+   * recovery that ran out of time.
+   *
+   * This is the SAME lifecycle re-entered, not a second one: it lands in
+   * WAITING_FOR_LINK with a fresh deadline, which is precisely the state
+   * the root's `useRebootReconnect` already knows how to drive. Nothing
+   * here opens a device, and NOTHING HERE RESENDS ANY CONFIGURATION -
+   * the board was asked to reboot once and the write was committed once.
+   *
+   * Refused unless the lifecycle is IDLE or FAILED, so a retry pressed
+   * while a recovery is still legitimately running cannot restart its
+   * clock and hide a genuine timeout.
+   */
+  retryReconnect(sessionId: string, reason: FcRebootReason): boolean {
+    if (this.phase.kind !== 'IDLE' && this.phase.kind !== 'FAILED') {
+      return false;
+    }
+    this.deadline = this.now() + this.timeoutMs;
+    this.set({kind: 'WAITING_FOR_LINK', sessionId, reason});
     return true;
   }
 
@@ -304,9 +355,14 @@ export class FcRebootRecovery {
     // Before the listeners run: a subscriber that reads getPhase() must
     // never see a pending phase with no clock behind it.
     this.syncTimer();
+    const notified = this.phase;
     for (const listener of Array.from(this.listeners)) {
       try {
-        listener();
+        /* `notified`, not `this.phase`: a listener earlier in this loop
+           may already have moved the lifecycle on (reset() after FAILED
+           does exactly that), and every subscriber is owed the transition
+           it was actually woken for. */
+        listener(notified);
       } catch {
         /* subscriber isolation, same convention as the other stores */
       }

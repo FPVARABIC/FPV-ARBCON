@@ -174,7 +174,15 @@ function captureSubscriptions() {
   jest
     .spyOn(mspSessionCoordinator, 'subscribeIdentificationState')
     .mockImplementation(remember as never);
-  jest.spyOn(fcRebootRecovery, 'subscribe').mockImplementation(remember);
+  /* `as never` for the same reason as the two above: this capture stores
+     every subscriber in one list and wakes them all with no arguments,
+     which is narrower than the reboot lifecycle's own listener shape
+     (it hands each subscriber the phase it was woken for). Subscribers
+     that need the phase default to reading it back, so a no-argument
+     wake is still correct here. */
+  jest
+    .spyOn(fcRebootRecovery, 'subscribe')
+    .mockImplementation(remember as never);
 }
 
 function renderApp() {

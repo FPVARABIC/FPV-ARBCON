@@ -1044,7 +1044,21 @@ export function MotorsScreenView({
    */
   const topologyDirty = airframeEditState?.dirtyMixer === true;
   const topologyPendingReboot = airframeEditState?.mixerPendingReboot === true;
-  const topologyInterlocked = topologyDirty || topologyPendingReboot;
+  /*
+   * M-F3F §8 - AND THROUGH THE RESTART ITSELF.
+   *
+   * `mixerPendingReboot` compares the strip's read against a LIVE
+   * SESSION's read, so during the seconds that matter most - the board
+   * restarting, the link gone, a new session being opened - it is false
+   * for want of anything to compare against, and the interlock it feeds
+   * would have opened exactly there. The strip reports the activation
+   * window explicitly instead, and it stays shut until the board is back
+   * and both post-restart facts have been re-read and checked.
+   */
+  const topologyActivating =
+    airframeEditState?.mixerActivationInFlight === true;
+  const topologyInterlocked =
+    topologyDirty || topologyPendingReboot || topologyActivating;
   const holdGateBlocked =
     operator === undefined ||
     requiresNewConnection ||
@@ -2411,9 +2425,16 @@ export function MotorsScreenView({
             enableBlockedReason={
               topologyDirty
                 ? t('motorsScreen.holdBlockedTopologyDirty')
-                : topologyPendingReboot
-                  ? t('motorsScreen.holdBlockedTopologyPendingReboot')
-                  : undefined
+                : /* M-F3F §8: the activation window has its OWN sentence.
+                     Blocking without one would be a control that refuses
+                     and does not say why - and the pending-reboot
+                     sentence would be wrong here, because the restart is
+                     not something the operator has been left to do. */
+                  topologyActivating
+                  ? t('motorsScreen.holdBlockedTopologyActivating')
+                  : topologyPendingReboot
+                    ? t('motorsScreen.holdBlockedTopologyPendingReboot')
+                    : undefined
             }
           />
           {/* M-E §17 / §32: THE IDENTIFICATION ACTION, WITH THE CONTROLS.

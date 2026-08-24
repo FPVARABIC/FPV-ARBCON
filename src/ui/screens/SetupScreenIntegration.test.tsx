@@ -43,6 +43,8 @@ import {
   MSP_BATTERY_STATE,
   MSP_BOARD_INFO,
   MSP_BOXIDS,
+  MSP_MIXER_CONFIG,
+  MSP_MOTOR_CONFIG,
   MSP_FC_VARIANT,
   MSP_MAG_CALIBRATION,
   MSP_RAW_GPS,
@@ -204,6 +206,29 @@ function makeFakeClient(sessionId: string) {
   fake.setResponse(MSP_FC_VARIANT, Uint8Array.from(ascii('BTFL')));
   fake.setResponse(MSP_BOARD_INFO, boardInfoPayload());
   fake.setResponse(MSP_ATTITUDE, Uint8Array.from([0, 0, 0, 0, 0, 0]));
+  /* M-F3F P0-B - THE BOARD ANSWERS WHAT AIRCRAFT IT IS.
+     Setup draws the orientation model from the airframe the board
+     reports, so this model now answers the two read-only commands every
+     Betaflight board answers: MSP_MIXER_CONFIG (mixer mode + the yaw
+     flag) and MSP_MOTOR_CONFIG. Adding them completes a board that was
+     silent on questions nothing used to ask - a board that answers
+     nothing is not a more realistic board, and an UNANSWERED command
+     occupies the client's in-flight slot until it times out, which is a
+     property of the harness and not of the product. No assertion in this
+     file is relaxed. */
+  fake.setResponse(MSP_MIXER_CONFIG, Uint8Array.from([3, 0])); // QUAD X, props in
+  fake.setResponse(
+    MSP_MOTOR_CONFIG,
+    Uint8Array.from([
+      ...u16le(1070), // minthrottle (deprecated)
+      ...u16le(2000), // maxthrottle
+      ...u16le(1000), // mincommand
+      4, // motor count
+      14, // motor pole count
+      0, // dshot telemetry disabled
+      0, // esc sensor disabled
+    ]),
+  );
   fake.setResponse(
     MSP_BATTERY_STATE,
     Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]),
