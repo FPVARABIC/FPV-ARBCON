@@ -31,7 +31,9 @@ import '../../i18n';
 import i18n from '../../i18n';
 import {authoredAirframeLayout} from '../../core/state/motorAirframeLayout';
 import {
+  MOTOR_AIRFRAME_PHONE_WINDOW_WIDTH,
   MOTOR_AIRFRAME_STAGE_MAX_WIDTH,
+  MOTOR_AIRFRAME_STAGE_MAX_WIDTH_COMPACT,
   MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
   MotorAirframeDiagram,
   computeAirframeStageWidth,
@@ -170,13 +172,67 @@ describe('MotorAirframeDiagram', () => {
       /* THE CEILING IS PINNED TO A NUMBER, NOT TO ITSELF.
          Mutation testing found this: comparing against the exported
          constant means raising the constant raises the bound with it, so
-         a change that made the drawing 520px wide passed. 200 is the
-         number M-E is willing to spend on a compact orientation tool - a
-         fifth of a 1000px viewport - and moving past it is a decision
-         that has to be argued for here. */
-      expect(stage).toBeLessThanOrEqual(200);
+         a change that made the drawing 520px wide passed. M-F2 argued
+         the number UP from 200: the review judged the M-E model "too
+         small and almost useless", and set the desktop band at 180-240
+         with the floor of the derived need here staying geometric. 240
+         is the new argued maximum; past it the drawing is decoration
+         again and the M-E measurements apply unchanged. */
+      expect(stage).toBeLessThanOrEqual(240);
     }
-    expect(MOTOR_AIRFRAME_STAGE_MAX_WIDTH).toBeLessThanOrEqual(200);
+    // The same rule against the constant itself: 240 is the argued M-F2
+    // ceiling, and the phone ceiling stays under 190.
+    expect(MOTOR_AIRFRAME_STAGE_MAX_WIDTH).toBeLessThanOrEqual(240);
+  });
+
+  /* ---------------- M-F2 §53: the model may not shrink back ---------------- */
+
+  it('§53: the size band is pinned - shrinking the model back fails here first', () => {
+    /*
+     * TWO REVIEWS, TWO FAILURE MODES. The pre-M-E model filled its column
+     * and pushed the session control below the fold; the M-E model
+     * minimised itself to its geometric floor - "microscopic, almost
+     * useless" on a desktop. M-F2 fixed the band: 150 is the floor the
+     * touch targets need, 240 the desktop ceiling, 190 the phone ceiling
+     * under a 600px window. EVERY number here is exact on purpose: any
+     * future change to the band is a product decision that must edit this
+     * test knowingly, not drift through a refactor.
+     */
+    expect(MOTOR_AIRFRAME_STAGE_MIN_WIDTH).toBe(150);
+    expect(MOTOR_AIRFRAME_STAGE_MAX_WIDTH).toBe(240);
+    expect(MOTOR_AIRFRAME_STAGE_MAX_WIDTH_COMPACT).toBe(190);
+    expect(MOTOR_AIRFRAME_PHONE_WINDOW_WIDTH).toBe(600);
+
+    // RENDERED, NOT JUST DECLARED. In this test environment the window is
+    // wider than the phone threshold, so the default QUAD X must GROW to
+    // the desktop ceiling - the M-E behaviour (settle at the geometric
+    // minimum and leave the column empty) renders ~128px and fails here.
+    const desktop = render();
+    const desktopStyle = StyleSheet.flatten(
+      desktop.root.find(node => node.props?.testID === 'motors-airframe-stage')
+        .props.style,
+    );
+    expect(desktopStyle.width).toBeGreaterThanOrEqual(180);
+    expect(desktopStyle.width).toBeLessThanOrEqual(240);
+    act(() => desktop.unmount());
+
+    // A 390px phone window: grown to ITS ceiling, never past it, never
+    // under the floor.
+    const spy = jest
+      .spyOn(require('react-native'), 'useWindowDimensions')
+      .mockReturnValue({width: 390, height: 844, scale: 2, fontScale: 1});
+    try {
+      const phone = render();
+      const phoneStyle = StyleSheet.flatten(
+        phone.root.find(node => node.props?.testID === 'motors-airframe-stage')
+          .props.style,
+      );
+      expect(phoneStyle.width).toBeGreaterThanOrEqual(150);
+      expect(phoneStyle.width).toBeLessThanOrEqual(190);
+      act(() => phone.unmount());
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('derives the stage from the geometry, so a denser aircraft gets a little more room', () => {

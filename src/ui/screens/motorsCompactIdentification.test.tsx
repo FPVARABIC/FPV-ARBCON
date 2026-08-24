@@ -36,12 +36,16 @@ import {
   EMPTY_VERIFICATION_STATE,
   summarizeMotorIdentification,
 } from '../../core/state/motorVerificationModel';
+import {expectedMotorRotation} from '../../core/state/motorExpectedRotation';
 import type {
   MotorTestControllerSnapshot,
   MotorTestVerificationReceipt,
 } from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
-import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
+import {
+  openMotorsReorderTool,
+  openMotorsTechnicalDetails,
+} from './__testUtils__/motorsTechnicalDetails';
 
 /* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
    These assertions read `.toBe('—')`. The property each one is named for
@@ -204,6 +208,11 @@ function textOf(tree: ReactTestRenderer.ReactTestRenderer): string {
 /* ================================================================== *
  * 20. THE COMPACT WORKFLOW
  * ================================================================== */
+
+/* The observation fixtures below describe the shipped PROPS-OUT Quad X
+   build; the derivation reproduces exactly those expectations. */
+const propsOutExpected = (motorNumber: number) =>
+  expectedMotorRotation(3, motorNumber, true);
 
 describe('20 - one active form, every motor still represented', () => {
   let port: Port;
@@ -504,6 +513,9 @@ describe('22 - a six-motor aircraft is told the truth before it acts', () => {
   it('keeps the numbered workspace, STOP and the mapping read', () => {
     expect(has(tree, 'motor-workspace')).toBe(true);
     expect(has(tree, 'motor-workspace-stop')).toBe(true);
+    // M-F2 §24: the output-order transaction is a primary tool now - its
+    // own one-press entry beside the aircraft, not part of the disclosure.
+    openMotorsReorderTool(tree);
     expect(has(tree, 'motor-output-mapping-read')).toBe(true);
     expect(has(tree, 'motor-output-edit')).toBe(false);
   });
@@ -804,12 +816,12 @@ describe('the identification summary selector', () => {
       kind: 'OBSERVED',
       position: 'REAR_RIGHT',
       direction: 'CCW',
-    });
+    }, propsOutExpected(1));
     if (observed.kind !== 'ACCEPTED') throw new Error('setup failed');
     state = observed.state;
     const uncertain = confirmObservation(state, receiptFor(2), {
       kind: 'POSITION_UNCERTAIN',
-    });
+    }, propsOutExpected(2));
     if (uncertain.kind !== 'ACCEPTED') throw new Error('setup failed');
 
     expect(summarizeMotorIdentification(uncertain.state, [1, 2, 3])).toEqual([
@@ -826,7 +838,7 @@ describe('the identification summary selector', () => {
       kind: 'OBSERVED',
       position: 'FRONT_LEFT',
       direction: 'CCW',
-    });
+    }, propsOutExpected(1));
     if (result.kind !== 'ACCEPTED') throw new Error('setup failed');
     expect(summarizeMotorIdentification(result.state, [1])).toEqual([
       {motorNumber: 1, status: 'CONFIRMED'},

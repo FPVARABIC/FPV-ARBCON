@@ -42,6 +42,7 @@ import {
   beginVerification,
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
+import {expectedMotorRotation} from '../../core/state/motorExpectedRotation';
 import {evaluateMotorIdentificationCapability} from '../../core/state/motorIdentificationCapability';
 
 /** Betaflight `mixerMode_e` QUADX - the airframe the shipped
@@ -229,6 +230,11 @@ function mountVerification(port: ScreenPort): ReactTestRenderer.ReactTestRendere
   return tree;
 }
 
+/* The observation fixtures below describe the shipped PROPS-OUT Quad X
+   build; the derivation reproduces exactly those expectations. */
+const propsOutExpected = (motorNumber: number) =>
+  expectedMotorRotation(3, motorNumber, true);
+
 describe('26 - selecting a motor is addressing, and nothing else', () => {
   let port: ScreenPort;
   let tree: ReactTestRenderer.ReactTestRenderer;
@@ -400,7 +406,7 @@ describe('26 - the correction transition, at the domain level', () => {
       kind: 'OBSERVED',
       position: 'REAR_RIGHT',
       direction: 'CCW',
-    });
+    }, propsOutExpected(1));
     if (result.kind !== 'ACCEPTED') {
       throw new Error('setup failed');
     }
@@ -454,7 +460,7 @@ describe('26 - the correction transition, at the domain level', () => {
         kind: 'OBSERVED',
         position: 'FRONT_LEFT',
         direction: 'CCW',
-      });
+      }, propsOutExpected(motorNumber));
       if (result.kind !== 'ACCEPTED') throw new Error('setup failed');
       state = result.state;
     }
@@ -549,11 +555,14 @@ describe('27 - a six-motor aircraft is addressed truthfully', () => {
   });
 
   it('still offers to READ the flight controller output mapping', () => {
+    // M-F2: the mapping tool sits behind its own primary button now.
+    act(() => first(tree, 'motors-open-reorder').props.onPress());
     expect(has(tree, 'motor-output-mapping-section')).toBe(true);
     expect(has(tree, 'motor-output-mapping-read')).toBe(true);
   });
 
   it('offers no observation-derived write, and explains that too', () => {
+    act(() => first(tree, 'motors-open-reorder').props.onPress());
     expect(has(tree, 'motor-output-edit')).toBe(false);
     expect(has(tree, 'motor-output-reorder-panel')).toBe(false);
     expect(has(tree, 'motor-output-edit-unavailable')).toBe(true);
@@ -772,23 +781,35 @@ describe('30 - the first viewport holds the tool, the paperwork is one press awa
   });
 
   it('opens onto the whole of both workflows, not a summary of them', () => {
+    /* M-F2: direction and reorder are PRIMARY tools now - each behind its
+       own labelled button beside the airframe, not inside the disclosure.
+       The disclosure still opens onto the whole verification layer. Every
+       workflow below is the SAME component it always was; only the mount
+       moved, and each is still whole rather than summarised. */
     act(() =>
       first(tree, 'motors-advanced-verification-toggle').props.onPress(),
     );
     expect(has(tree, 'motors-advanced-verification')).toBe(true);
     expect(has(tree, 'motors-identity-section')).toBe(true);
     expect(has(tree, 'verification-wizard')).toBe(true);
+    expect(has(tree, 'motor-test-report')).toBe(true);
+    act(() => first(tree, 'motors-open-direction').props.onPress());
+    expect(has(tree, 'motor-direction-section')).toBe(true);
+    act(() => first(tree, 'motors-open-reorder').props.onPress());
     expect(has(tree, 'motor-output-mapping-section')).toBe(true);
     expect(has(tree, 'motor-output-mapping-read')).toBe(true);
     expect(has(tree, 'motor-output-edit')).toBe(true);
-    expect(has(tree, 'motor-direction-section')).toBe(true);
-    expect(has(tree, 'motor-test-report')).toBe(true);
   });
 
   it('holds no second copy of either core workflow', () => {
     act(() =>
       first(tree, 'motors-advanced-verification-toggle').props.onPress(),
     );
+    // With BOTH the disclosure and both primary tools open at once,
+    // still exactly one of each workflow anywhere on the page.
+    act(() => first(tree, 'motors-open-direction').props.onPress());
+    act(() => first(tree, 'motors-open-reorder').props.onPress());
+    expect(hostCount(tree, 'motor-direction-section')).toBe(1);
     // Exactly one wizard and one mapping section on the screen - the ones
     // in the core sections. Counted over HOST nodes only: the test
     // renderer reports a composite and its host element separately, and

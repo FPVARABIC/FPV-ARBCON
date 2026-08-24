@@ -95,6 +95,14 @@ export interface MotorVerificationWizardProps {
   /** Raised when the user reports more than one motor moving: the host
    * must abort verification and run the accepted safe teardown route. */
   readonly onMultipleMotorsReported?: () => void;
+  /** M-F2 §14/§16 - the configuration-derived expected direction for one
+   * motor: mixer yaw column + stored props flag, the same source as the
+   * airframe drawing. The shipped table below keeps POSITIONS only; its
+   * directions describe a single props-out build and are no longer
+   * printed as this aircraft's expectation. Undefined = no source. */
+  readonly expectedDirectionFor: (
+    motorNumber: number,
+  ) => MotorRotationDirection | undefined;
 }
 
 export function MotorVerificationWizard({
@@ -102,6 +110,7 @@ export function MotorVerificationWizard({
   state,
   onConfirm,
   onMultipleMotorsReported,
+  expectedDirectionFor,
 }: MotorVerificationWizardProps): React.JSX.Element {
   const {t} = useTranslation();
   // Pre-confirmation selections are freely correctable. They become
@@ -214,7 +223,16 @@ export function MotorVerificationWizard({
             {t('motorVerification.expectedCompact', {
               motor: receipt.motorNumber,
               position: t(`motorVerification.position.${expected?.position}`),
-              direction: t(`motorVerification.direction.${expected?.direction}`),
+              /* M-F2 §14: direction from the mixer + stored props flag,
+                 never from the props-out template above. */
+              direction:
+                expectedDirectionFor(receipt.motorNumber) === undefined
+                  ? t('motorsScreen.directionExpectedUnavailable')
+                  : t(
+                      `motorVerification.direction.${expectedDirectionFor(
+                        receipt.motorNumber,
+                      )}`,
+                    ),
             })}
           </Text>
           {/* Evidence source (2): SOFTWARE. An attributable attempt
@@ -467,11 +485,16 @@ export interface MotorTestReportProps {
    * never shown - the host keeps its fault presentation instead.
    */
   readonly safeTeardownConfirmed: boolean;
+  /** Same contract as MotorVerificationWizardProps.expectedDirectionFor. */
+  readonly expectedDirectionFor: (
+    motorNumber: number,
+  ) => MotorRotationDirection | undefined;
 }
 
 export function MotorTestReport({
   state,
   safeTeardownConfirmed,
+  expectedDirectionFor,
 }: MotorTestReportProps): React.JSX.Element {
   const {t} = useTranslation();
   const overall = deriveOverall(state);
@@ -528,7 +551,13 @@ export function MotorTestReport({
                 accessibilityLabel={t('motorVerification.expectedHeading')}>
                 {t('motorVerification.expectedHeading')}:{' '}
                 {t(`motorVerification.position.${expected?.position}`)} ·{' '}
-                {t(`motorVerification.direction.${expected?.direction}`)}
+                {expectedDirectionFor(entry.motorNumber) === undefined
+                  ? t('motorsScreen.directionExpectedUnavailable')
+                  : t(
+                      `motorVerification.direction.${expectedDirectionFor(
+                        entry.motorNumber,
+                      )}`,
+                    )}
               </Text>
               <Text
                 style={styles.body}

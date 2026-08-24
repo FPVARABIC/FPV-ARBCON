@@ -68,6 +68,9 @@ import type {
 /* THE COMMANDABLE SET, from the controller's own rule rather than a
    second copy of it - see identitySlots below. */
 import { motorTestPulseMotorNumbers } from '../../core/state/motorTestController';
+/* M-F2 §14 - ONE expected-rotation source for the whole screen: the
+   transcribed mixer yaw column under the stored props flag. */
+import { expectedMotorRotation } from '../../core/state/motorExpectedRotation';
 import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
 import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
@@ -113,6 +116,11 @@ import { MotorConfigurationSummary } from './MotorConfigurationSummary';
 import { MotorWorkspace } from './MotorWorkspace';
 import { MotorAirframeSummary } from './MotorAirframeSummary';
 import { MotorConfigurationPanel } from './MotorConfigurationPanel';
+import {
+  MotorAirframeControls,
+  type AirframeConfigTopology,
+  type MotorAirframeControlsPort,
+} from './MotorAirframeControls';
 import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
 import { MotorDirectionSection } from './MotorDirectionSection';
 import {
@@ -484,6 +492,10 @@ export interface MotorsScreenViewProps {
   readonly onConfigurationDirtyChange?: (dirty: boolean) => void;
   /** See MotorsTabProps.active - presentation only, never safety. */
   readonly active?: boolean;
+  /** Test/preview injection for the airframe control strip's
+   * configuration port. Production leaves it undefined and the strip
+   * uses the real MotorConfigurationController. */
+  readonly airframeConfigPort?: MotorAirframeControlsPort;
 }
 
 export function MotorsScreenView({
@@ -494,6 +506,7 @@ export function MotorsScreenView({
   sessionId,
   onConfigurationDirtyChange,
   active = true,
+  airframeConfigPort,
 }: MotorsScreenViewProps): React.JSX.Element {
   const { t } = useTranslation();
   // Desktop tiers get the wider workspace envelope; narrower tiers keep
@@ -813,18 +826,31 @@ export function MotorsScreenView({
       confirmedReceipt: MotorTestVerificationReceipt,
       observation: MotorObservation,
     ) => {
+      /* M-F2 §14/§16 - the direction half of the verdict is judged
+         against THIS aircraft's configuration: the session-read mixer's
+         yaw column under the session-read props flag. Observations are
+         session acts, so the SESSION values are used - never the
+         config-read display fallback. No flag read -> no direction
+         expectation -> the model classifies conservatively (UNCERTAIN),
+         it does not guess. */
+      const expectedDirection = expectedMotorRotation(
+        snapshot?.mixerModeRaw,
+        confirmedReceipt.motorNumber,
+        snapshot?.yawMotorsReversedConfigured,
+      );
       setVerification(current => {
         const result = confirmObservation(
           current,
           confirmedReceipt,
           observation,
+          expectedDirection,
         );
         // A rejected confirmation - stale session, finalized, aborted, or
         // an output already confirmed - changes nothing at all.
         return result.kind === 'ACCEPTED' ? result.state : current;
       });
     },
-    [],
+    [snapshot?.mixerModeRaw, snapshot?.yawMotorsReversedConfigured],
   );
 
   /**
@@ -920,6 +946,16 @@ export function MotorsScreenView({
    * the FC session, then each intentional long press submits a pulse.
    */
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  /* M-F2: the two primary motor tools, opened from the airframe strip.
+     One click each - never behind the advanced disclosure. */
+  const [directionOpen, setDirectionOpen] = useState(false);
+  const [reorderOpen, setReorderOpen] = useState(false);
+  /** The configuration read the airframe strip performed - the stored
+   * mixer, props flag and motor count, available BEFORE any motor-test
+   * session exists. Display fallback only: every command gate keeps
+   * reading the session's own scope. */
+  const [configTopology, setConfigTopology] = useState<AirframeConfigTopology>();
+  const [quickConfigBusy, setQuickConfigBusy] = useState(false);
   const holdGateBlocked =
     operator === undefined || requiresNewConnection || !canActivate;
   // See holdOwned's own declaration: disabling mid-gesture is what
@@ -1079,7 +1115,7 @@ export function MotorsScreenView({
           ? t('motorsScreen.holdBlockedCountUnread')
         : !motorControlEnabled
           ? t('motorsScreen.holdBlockedControlOff')
-          : motorConfigurationBusy
+          : motorConfigurationBusy || quickConfigBusy
             ? t('motorsScreen.holdBlockedBusy')
             : primaryBlockReason !== undefined
               ? t(`motorsScreen.blockReason.${primaryBlockReason}`)
@@ -1537,6 +1573,35 @@ export function MotorsScreenView({
    * DRAWN. It is not a motor count, and it gates no command.
    */
   const liveMixerModeRaw = snapshot?.mixerModeRaw;
+  /** MSP_MIXER_CONFIG offset 1 from the same session read - presentation
+   * only, exactly like the mixer byte above. */
+  const liveYawMotorsReversed = snapshot?.yawMotorsReversedConfigured;
+  /*
+   * M-F2 §4 - THE MODEL FOLLOWS TOPOLOGY KNOWLEDGE, NOT THE SESSION.
+   *
+   * The session's own reads win the moment they exist (they are what the
+   * running firmware reported to THIS session, and the drift guard is
+   * anchored to them). Before a session has read anything, the airframe
+   * strip's configuration read - the same verified transaction the
+   * settings editor uses - supplies the stored mixer, props flag and
+   * motor count, so the aircraft is on screen from the first glance and
+   * stays on screen when the session closes.
+   *
+   * DISPLAY ONLY, BY CONSTRUCTION. Command scope still comes exclusively
+   * from the session snapshot: identitySlots below keeps feeding every
+   * M-E3 wording guard, and the controller's own commandableMotorCount
+   * never sees these values.
+   */
+  const effectiveMixerModeRaw = liveMixerModeRaw ?? configTopology?.mixerModeRaw;
+  const effectiveYawMotorsReversed =
+    liveYawMotorsReversed ?? configTopology?.yawMotorsReversed;
+  const displaySlots: readonly number[] =
+    snapshot?.motorScope?.motorCount !== undefined ||
+    snapshot?.motorDomain?.motorCount !== undefined
+      ? motorTestPulseMotorNumbers(
+          snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount,
+        )
+      : motorTestPulseMotorNumbers(configTopology?.motorCount);
 
   /**
    * MAY THE SHIPPED PHYSICAL-IDENTIFICATION MODEL BE APPLIED HERE?
@@ -1574,8 +1639,21 @@ export function MotorsScreenView({
    * exists. Where there is none, the operational workspace is the page.
    */
   const hasUsableAuthoredAirframeVisual =
-    active && authoredAirframeLayout(liveMixerModeRaw, identitySlots) !== undefined;
-  const wideWorkspace = wideViewport && hasUsableAuthoredAirframeVisual;
+    active && authoredAirframeLayout(effectiveMixerModeRaw, displaySlots) !== undefined;
+  /*
+   * M-F2 §29/§30 - A COLUMN EXISTS WHEN IT HAS CONTENT, NOT A BREAKPOINT.
+   *
+   * M-E2's rule stands: no column may be reserved for nothing. What
+   * changed is what the column HOLDS: the mixer selector, the props
+   * control and the two primary tools now live beside the model, so a
+   * known-count aircraft with unknown geometry (CUSTOM, an unrecognised
+   * mixer) has a real airframe column - selector, tools and numbered
+   * chips - rather than an empty stage. The nothing-read state still
+   * collapses to one full-width column: its strip would be a spinner and
+   * its selector a dash, which is M-E2's dead region wearing new clothes.
+   */
+  const wideWorkspace =
+    wideViewport && (hasUsableAuthoredAirframeVisual || displaySlots.length > 0);
   const quadIdentificationSupported =
     identificationCapability.kind === 'SUPPORTED';
 
@@ -1997,14 +2075,33 @@ export function MotorsScreenView({
               expected of the selected motor and what has been observed.
               Everything removed is in the technical details section, in
               full, reachable in one press. */}
+          {/* M-F2 §3/§7/§16/§19/§24 - THE AIRFRAME'S OWN CONTROLS.
+              Mixer, props direction and the two primary tools, beside the
+              aircraft they describe. Reads and writes go through the same
+              verified configuration transaction as the settings editor -
+              see the strip's own header. */}
+          <MotorAirframeControls
+            sessionId={sessionId}
+            liveMixerModeRaw={liveMixerModeRaw}
+            liveYawMotorsReversed={liveYawMotorsReversed}
+            writesLocked={holdOwned || mayBeLive || motorControlEnabled}
+            onTopology={setConfigTopology}
+            onBusyChange={setQuickConfigBusy}
+            directionOpen={directionOpen}
+            reorderOpen={reorderOpen}
+            onToggleDirection={() => setDirectionOpen(open => !open)}
+            onToggleReorder={() => setReorderOpen(open => !open)}
+            controller={airframeConfigPort}
+          />
           <MotorIdentitySection
             variant="MAP"
-            slots={identitySlots}
+            slots={displaySlots}
             selectedSlot={selectedSlot}
             onSelectSlot={handleSelectSlot}
             capability={identificationCapability}
-            mixerModeRaw={liveMixerModeRaw}
-            diagramMotorNumbers={identitySlots}
+            mixerModeRaw={effectiveMixerModeRaw}
+            yawMotorsReversed={effectiveYawMotorsReversed}
+            diagramMotorNumbers={displaySlots}
             active={active}
             liveSlot={liveSlot}
             liveActivity={liveActivity}
@@ -2111,6 +2208,51 @@ export function MotorsScreenView({
           </View>
         </View>
 
+        {/* ================================================ M-F2 PRIMARY
+            MOTOR TOOLS - opened from the airframe strip, one click, and
+            rendered full-width straight under the workspace so the model
+            stays on screen above them while they are used.
+
+            THE SAME COMPONENTS the advanced disclosure used to hold: the
+            three-truths direction workflow (expected / commanded /
+            observed, never merged, an acknowledgement never physical)
+            and the read-then-transact output reorder. Moving a mount
+            point changes no semantics - and the suites that proved those
+            semantics now run against this placement. */}
+        {directionOpen ? (
+          <View style={styles.primaryToolPanel} testID="motors-direction-tool">
+            <MotorDirectionSection
+              selectedMotor={selectedSlot}
+              operator={operator}
+              identificationCapability={identificationCapability}
+              commandCapability={directionCommandCapability}
+              expectedRotation={expectedMotorRotation(
+                effectiveMixerModeRaw,
+                selectedSlot,
+                effectiveYawMotorsReversed,
+              )}
+              verification={verification}
+              commanded={selectedDirectionCommand}
+              onCommandOutcome={handleDirectionCommandOutcome}
+              onDirtyChange={setEscDirectionDirty}
+            />
+          </View>
+        ) : null}
+        {reorderOpen ? (
+          <View style={styles.primaryToolPanel} testID="motors-reorder-tool">
+            <MotorOutputMappingSection
+              sessionId={sessionId}
+              motorCount={liveMotorCount}
+              verification={verification}
+              capability={identificationCapability}
+              onEndMotorTestSession={handleEndSessionForConfiguration}
+              onDirtyChange={setOutputOrderDirty}
+              blockedReason={configurationReadBlockedReason}
+              onValuesChange={setOutputOrderValues}
+            />
+          </View>
+        ) : null}
+
         {/* ================================================ REGION C
             BASIC MOTOR / ESC SETTINGS - one card, straight after the
             workspace. Protocol, idle, motor stop, bidirectional DShot,
@@ -2206,34 +2348,10 @@ export function MotorsScreenView({
           onClearObservation={handleClearObservation}
           outputOrder={outputOrderValues}
         />
-          {/* DIRECTION, beside identity rather than at the bottom of the
-            * page. Three sources on three rows - template expectation,
-            * what this session commanded, what a person observed - and
-            * the one authoring workflow underneath them. */}
-          <MotorDirectionSection
-            selectedMotor={selectedSlot}
-            operator={operator}
-            identificationCapability={identificationCapability}
-            commandCapability={directionCommandCapability}
-            verification={verification}
-            commanded={selectedDirectionCommand}
-            onCommandOutcome={handleDirectionCommandOutcome}
-            onDirtyChange={setEscDirectionDirty}
-          />
-          {/* Reading which output drives which motor is firmware truth and
-            * needs no observation at all. Writing one still needs
-            * everything it always needed - the panel below the read is the
-            * same panel, reaching the same controller transaction. */}
-          <MotorOutputMappingSection
-            sessionId={sessionId}
-            motorCount={liveMotorCount}
-            verification={verification}
-            capability={identificationCapability}
-            onEndMotorTestSession={handleEndSessionForConfiguration}
-            onDirtyChange={setOutputOrderDirty}
-            blockedReason={configurationReadBlockedReason}
-            onValuesChange={setOutputOrderValues}
-          />
+          {/* M-F2 §18/§24: the direction and reorder workflows moved OUT of
+            * this disclosure to their primary entries beside the airframe.
+            * Nothing else here changed: the verification wizard and the
+            * diagnostics remain the technical layer. */}
         {showReadinessDiagnostic && !freezeTransientPresentation ? (
           <View
             style={styles.readinessBlock}
@@ -2339,6 +2457,13 @@ export function MotorsScreenView({
                   (snapshot?.stopExecution.attributionAmbiguous !== true ||
                     snapshot?.stopExecution.attributionResolvedByConfirmation ===
                       true)
+                }
+                expectedDirectionFor={motorNumber =>
+                  expectedMotorRotation(
+                    effectiveMixerModeRaw,
+                    motorNumber,
+                    effectiveYawMotorsReversed,
+                  )
                 }
               />
             ) : null}
@@ -2575,6 +2700,7 @@ const styles = StyleSheet.create({
      hold their minimum they stack instead of squeezing, which is what
      keeps the airframe diagram legible at 1000-1100px. */
   workspaceRow: { gap: spacing.md },
+  primaryToolPanel: { gap: spacing.sm },
   workspaceRowWide: {
     flexDirection: 'row',
     alignItems: 'flex-start',

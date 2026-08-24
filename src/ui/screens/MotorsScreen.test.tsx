@@ -1686,12 +1686,13 @@ describe('MotorsScreen - direction handling', () => {
     // P1b-C put the authoring panel inside the core direction section;
     // P1b-C.1 collapsed it behind an explicit action, so the resting
     // state offers the entry and the form appears only when asked for.
-    // M-E §18 / §44: authoring a persistent ESC direction is a
-    // verification task, not part of spinning a motor, so it moved under
-    // the technical details disclosure with the rest of the workflow. The
+    // M-E §18 / §44 moved the workflow under the technical details
+    // disclosure; M-F2 §18 promoted it back to a PRIMARY one-press entry
+    // (`اتجاه المحركات`) beside the aircraft - hiding the direction
+    // workflow behind the advanced toggle was judged over-hiding. The
     // panel, its review step and its apply gate are unchanged.
     expect(rendered.query('motor-direction-section')).toBeUndefined();
-    rendered.press('motors-advanced-verification-toggle');
+    rendered.press('motors-open-direction');
     expect(rendered.query('motor-direction-section')).toBeDefined();
     expect(rendered.query('esc-direction-panel')).toBeUndefined();
     rendered.press('motor-direction-authoring-open');

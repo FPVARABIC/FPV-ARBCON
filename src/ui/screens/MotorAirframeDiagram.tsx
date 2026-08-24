@@ -20,14 +20,16 @@
  * from its neighbours, bounded to 180px. A quad needs 128px, an octo 168px,
  * and nothing needs more. Growing it further adds no information.
  *
- * WHAT IT NEVER DRAWS: A ROTATION. There is no MSP field at API 1.47 that
- * reports which way a motor actually spins, and a mixer mode does not
- * determine it. Authored layouts carry no direction field, this component
- * cannot be handed one, and the caption says so once in words. The
- * expected props-out reference still exists in the VERIFICATION wizard,
- * where comparing it against what a person actually saw is the whole
- * point - but the operational map, which an operator reads WHILE a motor
- * is turning, claims nothing about rotation.
+ * WHAT IT DRAWS ABOUT ROTATION, AND WHAT IT NEVER CLAIMS - M-F2. Each
+ * single-rotor node may carry an EXPECTED rotation arrow, derived in
+ * motorExpectedRotation.ts from the firmware mixer table's yaw column and
+ * the stored yaw_motors_reversed flag. That is a statement about the
+ * CONFIGURATION - the same kind the positions make - and the caption says
+ * so in words. The ACTUAL rotation of a propeller is still not readable
+ * over MSP at API 1.47, is never claimed here, and is established only by
+ * a person watching the aircraft in the verification workflow. Where the
+ * mixer does not determine a direction (a tricopter's motors, a custom
+ * mixer) or the flag is unread, no arrow renders - absence, not a guess.
  *
  * COAXIAL AIRCRAFT ARE DRAWN AS COAXIAL. A Y6 is not a flat hexacopter
  * and an X8 is not a flat octocopter; they carry two rotors per arm. Those
@@ -55,6 +57,8 @@ import {Pressable, StyleSheet, Text, View, useWindowDimensions} from 'react-nati
 import {useTranslation} from 'react-i18next';
 
 import {colors, radii, spacing, typography} from '../theme';
+import {Icon} from '../icons';
+import {expectedMotorRotation} from '../../core/state/motorExpectedRotation';
 import {
   authoredAirframeLayout,
   stationOf,
@@ -95,6 +99,12 @@ export interface MotorAirframeDiagramProps {
    */
   readonly mixerModeRaw: number | undefined;
   /**
+   * MSP_MIXER_CONFIG offset 1 - the stored props-in / props-out flag.
+   * Half of the expected-rotation answer: with it unread the arrows are
+   * withheld entirely, because the flag flips every one of them.
+   */
+  readonly yawMotorsReversed?: boolean;
+  /**
    * The motor numbers the flight controller actually reported, 1..N.
    *
    * REQUIRED, AND WITH NO DEFAULT ON PURPOSE. An empty array means
@@ -125,7 +135,7 @@ const NODE_SIZE = 44;
 /** Clearance demanded between two node centres, over and above nothing:
  *  two 44px targets whose centres are 46px apart do not overlap enough to
  *  mis-hit at a glance. */
-const NODE_CLEARANCE = 46;
+const NODE_CLEARANCE = 56;
 /**
  * The smallest and largest square the stage may occupy.
  *
@@ -133,8 +143,14 @@ const NODE_CLEARANCE = 46;
  * carrying more information and starts being a large picture of some
  * circles, and the controls it exists to serve go below the fold.
  */
-export const MOTOR_AIRFRAME_STAGE_MIN_WIDTH = 132;
-export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = 180;
+export const MOTOR_AIRFRAME_STAGE_MIN_WIDTH = 150;
+export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH = 240;
+/** The phone ceiling. A 240px square on a 390px page is a third of the
+ *  height above the controls; 190 keeps the model readable and the Motor
+ *  Test reachable - the M-F2 §6 middle ground, measured not asserted. */
+export const MOTOR_AIRFRAME_STAGE_MAX_WIDTH_COMPACT = 190;
+/** Below this window width the compact ceiling applies. */
+export const MOTOR_AIRFRAME_PHONE_WINDOW_WIDTH = 600;
 export const MOTOR_AIRFRAME_STAGE_ASPECT_RATIO = 1;
 
 /** One motor node's place in the stage, in normalised -1..1 space. */
@@ -420,7 +436,10 @@ function Silhouette({
   stage: number;
 }): React.JSX.Element {
   const reach = (stage - NODE_SIZE) / 2;
-  const hub = Math.round(stage * 0.17);
+  /* M-F2 §5/§52: the body reads as a flight controller plate, not a dot.
+     Sized from the stage so the 240px desktop model and the 190px phone
+     model keep the same proportions. */
+  const hub = Math.round(stage * 0.24);
   if (layout.silhouette === 'ROTARY') {
     return (
       <View pointerEvents="none" style={StyleSheet.absoluteFill} testID="motors-diagram-body">
@@ -438,7 +457,7 @@ function Silhouette({
                 {
                   width: length,
                   left: stage / 2,
-                  top: stage / 2 - 1.5,
+                  top: stage / 2 - 3,
                   transform: [{rotate: `${angle}deg`}],
                 },
               ]}
@@ -524,6 +543,7 @@ function MotorNode({
   liveActivity,
   verifiedSlots,
   onSelectSlot,
+  expectedRotation,
 }: {
   node: DiagramNode;
   stage: number;
@@ -532,6 +552,12 @@ function MotorNode({
   liveActivity: MotorSlotActivity | undefined;
   verifiedSlots: readonly number[];
   onSelectSlot: (slot: number) => void;
+  /** The EXPECTED rotation for this node's single rotor, if the mixer
+   * determines one. Coaxial nodes are handed undefined - their two
+   * rotors counter-rotate, so one arrow on the shared node would be
+   * wrong for one of them; the selected-motor line and the direction
+   * tool speak for each rotor there. */
+  expectedRotation: 'CW' | 'CCW' | undefined;
 }): React.JSX.Element {
   const {t} = useTranslation();
   const reach = (stage - NODE_SIZE) / 2;
@@ -560,6 +586,14 @@ function MotorNode({
   };
 
   const spokenStation = t(`motorsScreen.${stationKey(node.station)}`);
+  const spokenRotation =
+    expectedRotation === undefined
+      ? ''
+      : `، ${t('motorsScreen.expectedRotationLabel')}: ${t(
+          expectedRotation === 'CW'
+            ? 'motorsScreen.expectedRotationCw'
+            : 'motorsScreen.expectedRotationCcw',
+        )}`;
   const spokenSlots = node.slots
     .map((slot, index) =>
       node.slots.length === 1
@@ -579,7 +613,7 @@ function MotorNode({
       // node sits on the frame. The ROTATION is not - not even as
       // "unknown". Nothing supplies one, and the caption says once, in
       // words, that rotation is not read.
-      accessibilityLabel={`${spokenSlots}، ${spokenStation}${
+      accessibilityLabel={`${spokenSlots}، ${spokenStation}${spokenRotation}${
         badge === undefined ? '' : `، ${badge.text}`
       }`}
       style={[
@@ -599,7 +633,7 @@ function MotorNode({
       {node.slots.length > 1 ? (
         <View pointerEvents="none" style={styles.stackRing} />
       ) : null}
-      <RotorGlyph size={Math.round(NODE_SIZE * 0.42)} active={activity !== undefined} />
+      <RotorGlyph size={Math.round(NODE_SIZE * 0.5)} active={activity !== undefined} />
       {/* ONE Text, with the numbers nested inside it.
           A row of two Texts was laid out right-to-left by the Arabic
           interface, so a coaxial arm carrying motors 1 and 5 printed
@@ -625,6 +659,27 @@ function MotorNode({
           style={[styles.stateDot, {backgroundColor: badge.color}]}
           testID={`motors-diagram-state-${node.slots[0]}`}
         />
+      )}
+      {/* THE EXPECTED-ROTATION MARK - M-F2 §17.
+          A physical claim about geometry, so it is positioned with
+          physical offsets and its glyph is a raw (never RTL-aliased)
+          icon: a clockwise arrow must render clockwise in an Arabic
+          interface exactly as in any other. It states the CONFIGURED
+          expectation; the caption under the stage says so in words. */}
+      {expectedRotation === undefined ? null : (
+        <View
+          pointerEvents="none"
+          style={styles.rotationMark}
+          testID={`motors-expected-rotation-${node.slots[0]}`}
+          accessibilityElementsHidden
+        >
+          <Icon
+            name={expectedRotation === 'CW' ? 'rotate-cw' : 'rotate-ccw'}
+            size={14}
+            strokeWidth={2.25}
+            color={selectedHere ? colors.accentStrong : colors.textSecondary}
+          />
+        </View>
       )}
     </Pressable>
   );
@@ -655,6 +710,7 @@ export function MotorAirframeDiagram({
   verifiedSlots = [],
   onSelectSlot,
   mixerModeRaw,
+  yawMotorsReversed,
   motorNumbers,
   stageWidthOverride,
   compact = false,
@@ -702,10 +758,29 @@ export function MotorAirframeDiagram({
     ? Math.max(MOTOR_AIRFRAME_STAGE_MIN_WIDTH, windowWidth - 96)
     : derived;
   const inBox = boxWidth > 0 ? boxWidth : Number.POSITIVE_INFINITY;
+  /*
+   * M-F2 §6/§29 - THE MODEL GROWS INTO ITS COLUMN, TO A CEILING.
+   *
+   * The M-E sizing took the smallest stage the geometry allowed, which on
+   * a 1366 desktop put a 128px drawing in a 600px column - a model "too
+   * small and almost useless", in the review's words. The two failure
+   * modes bracket the rule: the OLD model filled the column and pushed
+   * the controls below the fold; the M-E model minimised itself into
+   * decoration. So the stage now FILLS the width it is actually given,
+   * bounded by a ceiling per device class (240 desktop, 190 phone), and
+   * never below the geometric minimum the touch targets need. The
+   * override still pins a deliberate second copy small.
+   */
+  const ceiling =
+    Number.isFinite(windowWidth) && windowWidth < MOTOR_AIRFRAME_PHONE_WINDOW_WIDTH
+      ? MOTOR_AIRFRAME_STAGE_MAX_WIDTH_COMPACT
+      : MOTOR_AIRFRAME_STAGE_MAX_WIDTH;
+  const grown = Math.min(ceiling, roomy, inBox);
   const stage = Math.round(
     Math.max(
       MOTOR_AIRFRAME_STAGE_MIN_WIDTH,
-      Math.min(stageWidthOverride ?? derived, roomy, inBox),
+      derived,
+      Math.min(stageWidthOverride ?? grown, roomy, inBox),
     ),
   );
 
@@ -754,6 +829,15 @@ export function MotorAirframeDiagram({
             liveActivity={liveActivity}
             verifiedSlots={verifiedSlots}
             onSelectSlot={onSelectSlot}
+            expectedRotation={
+              node.slots.length === 1
+                ? expectedMotorRotation(
+                    mixerModeRaw,
+                    node.slots[0],
+                    yawMotorsReversed,
+                  )
+                : undefined
+            }
           />
         ))}
       </View>
@@ -854,9 +938,9 @@ const styles = StyleSheet.create({
   },
   arm: {
     position: 'absolute',
-    height: 3,
+    height: 6,
     backgroundColor: colors.borderStrong,
-    borderRadius: 2,
+    borderRadius: 3,
     transformOrigin: 'left center',
   },
   hubBody: {
@@ -885,9 +969,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 1,
     borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderWidth: 1.5,
+    borderColor: colors.borderStrong,
     backgroundColor: colors.surface,
+  },
+  rotationMark: {
+    position: 'absolute',
+    top: -8,
+    right: -8,
+    backgroundColor: colors.surface,
+    borderRadius: radii.pill,
+    padding: 1,
   },
   motorNodeSelected: {
     borderColor: colors.accentStrong,
@@ -938,8 +1030,8 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textPrimary,
     fontWeight: '700',
-    fontSize: 12,
-    lineHeight: 14,
+    fontSize: 13,
+    lineHeight: 15,
   },
   slotStacked: {
     fontSize: 10,

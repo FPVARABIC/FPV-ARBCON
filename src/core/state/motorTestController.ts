@@ -1388,6 +1388,12 @@ export interface MotorTestControllerSnapshot {
    * motor count and never a gate.
    */
   readonly mixerModeRaw: number | undefined;
+  /** MSP_MIXER_CONFIG offset 1, as stored by the flight controller.
+   * PRESENTATION ONLY, exactly like mixerModeRaw above: it feeds the
+   * expected-rotation arrows and the props-direction control's display,
+   * and it gates no command. It is the FC's CONFIGURATION flag, never a
+   * statement about how any propeller is physically mounted. */
+  readonly yawMotorsReversedConfigured?: boolean | undefined;
   /** Truthful source model for command-139 fields, derived from the same
    * MSP_MOTOR_CONFIG response as motorScope. */
   readonly motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
@@ -1909,6 +1915,7 @@ class MotorTestControllerImpl {
   /** M-D. The airframe the FC reported, raw, for PRESENTATION only. No
    * gate, scope or command reads it. */
   private mixerModeRaw: number | undefined;
+  private yawMotorsReversedConfigured: boolean | undefined;
   private motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
   /** P2-ii-A. The P1-resolved domain for this configuration, or undefined
    * when the resolver refused it. Never approximated. */
@@ -2040,6 +2047,7 @@ class MotorTestControllerImpl {
       firmwareCompatibility: this.firmwareCompatibility,
       motorScope: this.motorScope,
       mixerModeRaw: this.mixerModeRaw,
+      yawMotorsReversedConfigured: this.yawMotorsReversedConfigured,
       motorDiagnosticsSupport: this.motorDiagnosticsSupport,
       telemetryHeld: this.barrier?.isHeld() ?? false,
       warnings: this.effectRecord.warnings,
@@ -3746,6 +3754,7 @@ class MotorTestControllerImpl {
     // configuration was refused. See the field's own comment.
     this.motorScope = scopeRead.scope;
     this.mixerModeRaw = scopeRead.mixerModeRaw;
+    this.yawMotorsReversedConfigured = scopeRead.yawMotorsReversedConfigured;
     this.motorDiagnosticsSupport = scopeRead.diagnosticsSupport;
     // P2-ii-A. Retained whatever the legacy guard decides below: a
     // configuration the shipping pulse path refuses may still be one the
@@ -4063,6 +4072,8 @@ class MotorTestControllerImpl {
         /** MSP_MIXER_CONFIG offset 0, raw. PRESENTATION ONLY - see the
          * method's own comment. Nothing downstream commands from it. */
         readonly mixerModeRaw: number;
+        /** MSP_MIXER_CONFIG offset 1, presentation only - see snapshot. */
+        readonly yawMotorsReversedConfigured: boolean;
         readonly diagnosticsSupport: MotorDiagnosticsSupport;
         /** P2-ii-A: the P1 domain, resolved from these same reads. */
         readonly domain: MotorTestValueDomain | undefined;
@@ -4183,6 +4194,7 @@ class MotorTestControllerImpl {
     return {
       scope,
       mixerModeRaw: mixer.value.mixerModeRaw,
+      yawMotorsReversedConfigured: mixer.value.yawMotorsReversedConfigured,
       diagnosticsSupport: deriveMotorDiagnosticsSupport(motor.value),
       domain,
       runtimeScope,

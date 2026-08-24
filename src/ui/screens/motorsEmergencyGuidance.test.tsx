@@ -36,7 +36,7 @@ import i18n from '../../i18n';
 import ar from '../../i18n/locales/ar.json';
 import type {MotorTestControllerSnapshot} from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
-import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
+import {openMotorsDirectionTool, openMotorsReorderTool, openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 beforeAll(async () => {
   if (!i18n.isInitialized) {
@@ -387,7 +387,12 @@ describe('M-2 - the bench card no longer competes with identity truth', () => {
     expect(has(tree, 'motors-hold-button')).toBe(true);
     openMotorsTechnicalDetails(tree);
     expect(has(tree, 'motors-identity-section')).toBe(true);
+    // M-F2: direction and reorder are PRIMARY tools with their own
+    // one-press entries beside the airframe - closer than before, and
+    // still whole.
+    openMotorsDirectionTool(tree);
     expect(has(tree, 'motor-direction-section')).toBe(true);
+    openMotorsReorderTool(tree);
     expect(has(tree, 'motor-output-mapping-section')).toBe(true);
     act(() => tree.unmount());
   });

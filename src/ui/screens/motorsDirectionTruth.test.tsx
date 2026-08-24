@@ -46,7 +46,7 @@ import type {
   MotorTestVerificationReceipt,
 } from '../../core/state/motorTestController';
 import type {MotorTestOperatorPort} from '../../platforms/react-native/protocol';
-import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
+import {openMotorsDirectionTool, openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 
 /* M-D §46 - `NOT_OBSERVED` REPLACED THE EM DASH.
    These assertions read `.toBe('—')`. The property each one is named for
@@ -112,6 +112,13 @@ function snapshotFor(options: {
       feature3dEnabled: options.feature3d ?? false,
     },
     mixerModeRaw: options.mixerModeRaw ?? MIXER_QUADX,
+    /* M-F2 §14: the direction expectations this suite has always asserted
+     * (M3 CW, M1 CCW, ...) are the shipped PROPS-OUT reference build. The
+     * expectation is now derived from mixer + this flag rather than a
+     * fixed table, so the fixture declares the build it always described.
+     * A READY snapshot always carries the byte - MSP_MIXER_CONFIG offset 1
+     * arrives with offset 0 in the same read. */
+    yawMotorsReversedConfigured: true,
     motorDiagnosticsSupport: {
       motorCount,
       dshotTelemetryEnabled: true,
@@ -198,8 +205,10 @@ function mount(port: Port): ReactTestRenderer.ReactTestRenderer {
       <MotorsScreenView operator={port} sessionId="fc-session" />,
     );
   });
-// M-E §44: the workflow this suite exercises now lives under the
-// technical details disclosure. One press, as an operator would.
+// M-F2 §19: the direction workflow is PRIMARY - one labelled button
+// beside the airframe opens it. The numbered evidence chips this suite
+// also drives still live in the technical layer, so both open.
+openMotorsDirectionTool(tree);
 openMotorsTechnicalDetails(tree);
   return tree;
 }
@@ -719,11 +728,30 @@ describe('38 - a hex keeps numbered control while the POSITION model stays quad'
   });
   afterEach(() => act(() => tree.unmount()));
 
-  it('invents no expected direction for an airframe it cannot describe', () => {
+  it('derives the hex expectation from its own mixer column - and invents none where there is no column', () => {
+    /* This assertion used to demand "unavailable" for every non-quad,
+     * because the expectation came from a Quad-X-only table. M-F2 §14
+     * replaced the table with the transcribed yaw columns, and HEX6X's
+     * IS transcribed (mixer_init.c @7348054f: +1,+1,-1,-1,-1,+1), so the
+     * selected M1 on this props-out fixture has a SOURCED expectation:
+     * +1 under yaw_motors_reversed -> CW. Showing "unavailable" for a
+     * mixer the source describes would now be the invention - of an
+     * absence. */
     expect(valueOf(tree, 'motor-direction-expected')).toBe(
+      ar.motorVerification.direction.CW,
+    );
+    expect(has(tree, 'motor-direction-expected-badge')).toBe(true);
+  });
+
+  it('still invents nothing for a mixer with no transcribed column', () => {
+    const custom = mount(
+      new Port(snapshotFor({motorCount: 6, mixerModeRaw: 23 /* CUSTOM */})),
+    );
+    expect(valueOf(custom, 'motor-direction-expected')).toBe(
       ar.motorsScreen.directionExpectedUnavailable,
     );
-    expect(has(tree, 'motor-direction-expected-badge')).toBe(false);
+    expect(has(custom, 'motor-direction-expected-badge')).toBe(false);
+    act(() => custom.unmount());
   });
 
   it('is NOT blocked from commanding direction any more', () => {
@@ -732,11 +760,11 @@ describe('38 - a hex keeps numbered control while the POSITION model stays quad'
     // firmware fact - a DShot ESC on output six takes a direction command
     // exactly as one on output two does - and it is gone.
     //
-    // The separation this block exists to protect is UNCHANGED and is now
-    // proven the strong way round: the POSITION model did not widen (the
-    // test above still gets no expected direction), while numbered CONTROL
-    // did. Neither limitation borrows the other's explanation, because
-    // only one limitation is left.
+    // The separation this block exists to protect is UNCHANGED: numbered
+    // CONTROL is airframe-wide, the POSITION template stays quad, and
+    // since M-F2 the direction EXPECTATION follows the transcribed mixer
+    // column (present for HEX6X, absent for CUSTOM - the tests above).
+    // Neither limitation borrows the other's explanation.
     expect(has(tree, 'motor-direction-unavailable')).toBe(false);
     expect(has(tree, 'motor-direction-unavailable-reason')).toBe(false);
   });

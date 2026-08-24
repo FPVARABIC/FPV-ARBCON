@@ -267,19 +267,24 @@ describe('M-E §11 / §57 - the first viewport is the tool', () => {
     const shell = await liveSession(MIXER_QUADX, 4);
     shell.press('motors-advanced-verification-toggle');
     // The wizard itself renders only once there is an observation to
-    // answer, so what is asserted here is that the whole workflow is
+    // answer, so what is asserted here is that the identity workflow is
     // present in its resting state: the identity section with its
-    // instruction, the direction workflow and the output transaction.
+    // instruction and its summary.
     for (const id of [
       'motors-identity-section',
       'motor-identification-steps',
-      'motor-direction-section',
-      'motor-output-mapping-section',
       'motor-identification-summary',
       'motors-diagram-reference',
     ]) {
       expect([id, shell.has(id)]).toEqual([id, true]);
     }
+    // M-F2 §18/§24: the direction workflow and the output transaction are
+    // PRIMARY tools now - each one press away beside the aircraft, no
+    // longer buried behind the same advanced toggle. Still one press.
+    shell.press('motors-open-direction');
+    expect(shell.has('motor-direction-section')).toBe(true);
+    shell.press('motors-open-reorder');
+    expect(shell.has('motor-output-mapping-section')).toBe(true);
   });
 });
 

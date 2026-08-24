@@ -475,6 +475,8 @@ describe('confirmation is bound to one motor', () => {
     const port = new Port();
     const r = render(port);
     r.press('motor-identity-M3');
+    // M-F2: the direction tool is primary - its own button opens it.
+    r.press('motors-open-direction');
     r.press('motor-direction-authoring-open');
     r.press('esc-direction-reversed');
     r.press('esc-direction-review');

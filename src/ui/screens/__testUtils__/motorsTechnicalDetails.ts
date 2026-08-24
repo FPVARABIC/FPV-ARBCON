@@ -20,16 +20,36 @@ import {act, type ReactTestRenderer} from 'react-test-renderer';
 
 export const MOTORS_TECHNICAL_DETAILS_TOGGLE = 'motors-advanced-verification-toggle';
 
-export function openMotorsTechnicalDetails(tree: ReactTestRenderer): void {
+function pressByTestId(tree: ReactTestRenderer, testID: string): void {
   const toggle = tree.root
-    .findAllByProps({testID: MOTORS_TECHNICAL_DETAILS_TOGGLE})
+    .findAllByProps({testID})
     .find(node => typeof node.props?.onPress === 'function');
   if (toggle === undefined) {
-    throw new Error(
-      `no pressable "${MOTORS_TECHNICAL_DETAILS_TOGGLE}" on the Motors screen`,
-    );
+    throw new Error(`no pressable "${testID}" on the Motors screen`);
   }
   act(() => {
     toggle.props.onPress();
   });
+}
+
+export function openMotorsTechnicalDetails(tree: ReactTestRenderer): void {
+  pressByTestId(tree, MOTORS_TECHNICAL_DETAILS_TOGGLE);
+}
+
+/**
+ * M-F2 §19/§24: the direction and reorder workflows are PRIMARY now -
+ * one labelled button each, beside the airframe, not inside the
+ * technical-details disclosure. Suites that exercise them open them the
+ * way an operator does. The helpers fail loudly if the entry ever
+ * disappears, which is exactly the §54 visibility contract.
+ */
+export const MOTORS_DIRECTION_TOOL_TOGGLE = 'motors-open-direction';
+export const MOTORS_REORDER_TOOL_TOGGLE = 'motors-open-reorder';
+
+export function openMotorsDirectionTool(tree: ReactTestRenderer): void {
+  pressByTestId(tree, MOTORS_DIRECTION_TOOL_TOGGLE);
+}
+
+export function openMotorsReorderTool(tree: ReactTestRenderer): void {
+  pressByTestId(tree, MOTORS_REORDER_TOOL_TOGGLE);
 }

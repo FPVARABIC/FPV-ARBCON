@@ -148,10 +148,22 @@ export interface MotorVerificationEntry {
  * Classifies ONE output. Total, pure, and deliberately conservative:
  * every path that is not an unambiguous match returns something that is
  * not `MATCH`.
+ *
+ * M-F2 §14/§16 - THE EXPECTED DIRECTION IS AN INPUT, NOT THE TABLE'S.
+ * The shipped table above is written for ONE build (Quad X, props-out).
+ * Its POSITIONS hold for every Quad X; its DIRECTIONS hold only for that
+ * props flag, and comparing a props-in aircraft against them called a
+ * physically correct motor a mismatch. The caller derives the expected
+ * direction from the mixer yaw column and the stored yaw_motors_reversed
+ * flag (motorExpectedRotation - imported HERE it would be a cycle, since
+ * that module takes its direction vocabulary from this one) and hands it
+ * in. `undefined` means the direction expectation has no source, and a
+ * comparison with no source is not a match - it is UNCERTAIN.
  */
 export function classifyObservation(
   motorNumber: number,
   observation: MotorObservation,
+  expectedDirection: MotorRotationDirection | undefined,
 ): MotorVerificationOutcome {
   switch (observation.kind) {
     case 'NO_MOVEMENT':
@@ -168,8 +180,13 @@ export function classifyObservation(
         // An output outside the supported four cannot be compared at all.
         return 'UNCERTAIN';
       }
+      if (expectedDirection === undefined) {
+        // No direction expectation exists for this configuration, so the
+        // observation cannot be judged in full. Incomplete, never a match.
+        return 'UNCERTAIN';
+      }
       const positionOk = observation.position === expected.position;
-      const directionOk = observation.direction === expected.direction;
+      const directionOk = observation.direction === expectedDirection;
       if (positionOk && directionOk) {
         return 'MATCH';
       }
@@ -278,6 +295,9 @@ export function confirmObservation(
   state: MotorVerificationState,
   receipt: MotorTestVerificationReceipt,
   observation: MotorObservation,
+  /** See classifyObservation: derived by the caller from the mixer yaw
+   * column and the stored props flag. Undefined = no source = UNCERTAIN. */
+  expectedDirection: MotorRotationDirection | undefined,
 ): MotorVerificationResult {
   if (state.finalized) {
     return {kind: 'REJECTED', reason: 'FINALIZED'};
@@ -303,7 +323,11 @@ export function confirmObservation(
     return {kind: 'REJECTED', reason: 'ALREADY_CONFIRMED'};
   }
 
-  const outcome = classifyObservation(receipt.motorNumber, observation);
+  const outcome = classifyObservation(
+    receipt.motorNumber,
+    observation,
+    expectedDirection,
+  );
   const entries = state.entries.map((entry, position) =>
     position === index
       ? Object.freeze({
@@ -451,10 +475,24 @@ export function summarizeMotorIdentification(
           return Object.freeze({motorNumber, status: 'UNSAFE' as const});
         case 'NO_MOVEMENT':
         case 'MULTIPLE_MOTORS':
-        case 'UNCERTAIN':
           return Object.freeze({
             motorNumber,
             status: 'ANSWERED_WITHOUT_POSITION' as const,
+          });
+        case 'UNCERTAIN':
+          /* Two states share this outcome: an answer that gave no
+           * determinate position (POSITION/DIRECTION_UNCERTAIN), and -
+           * since M-F2 made the direction expectation an input - a FULL
+           * observation whose expectation had no source to judge it
+           * against. The second one DID confirm a position; only the
+           * comparison is unavailable. The discriminator is the
+           * observation itself, never the verdict. */
+          return Object.freeze({
+            motorNumber,
+            status:
+              entry.observation?.kind === 'OBSERVED'
+                ? ('CONFIRMED' as const)
+                : ('ANSWERED_WITHOUT_POSITION' as const),
           });
         default:
           // MATCH and every mismatch variant all rest on a confirmed

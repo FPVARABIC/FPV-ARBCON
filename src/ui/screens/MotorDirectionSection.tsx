@@ -1,9 +1,12 @@
 /**
  * MOTOR DIRECTION - THREE SOURCES, THREE SENTENCES, NEVER MERGED.
  *
- *   EXPECTED   the airframe template's clockwise/anticlockwise for this
- *              motor. An app constant, shown only where the template
- *              applies, and never a claim about this aircraft.
+ *   EXPECTED   which way the CONFIGURATION requires this motor to spin:
+ *              derived from the verified mixer's yaw column and the
+ *              stored yaw_motors_reversed flag (M-F2 §14 - the same
+ *              derivation the airframe drawing uses, so one screen can
+ *              never carry two different expectations). Never a claim
+ *              about what any propeller physically does.
  *   COMMANDED  the ESC setting this session asked for and the flight
  *              controller accepted. Not a readback: the audited MSP
  *              surface has no command that reports ESC spin direction.
@@ -33,9 +36,9 @@ import { useTranslation } from 'react-i18next';
 import type { MotorIdentificationCapability } from '../../core/state/motorIdentificationCapability';
 import type { MotorDirectionCommandCapability } from '../../core/state/motorDirectionCapability';
 import type { MotorDirectionCommandRecord } from '../../core/state/motorDirectionCommandRecord';
-import {
-  expectedFor,
-  type MotorVerificationState,
+import type {
+  MotorRotationDirection,
+  MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
 import type { DshotEscDirection } from '../../core';
 import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
@@ -49,6 +52,10 @@ export interface MotorDirectionSectionProps {
   readonly identificationCapability: MotorIdentificationCapability;
   /** Whether a direction COMMAND may be sent - a different question. */
   readonly commandCapability: MotorDirectionCommandCapability;
+  /** The configuration-derived expectation for the selected motor - the
+   * mixer yaw column plus the stored props flag, computed by the screen
+   * with motorExpectedRotation. Undefined = no source = no claim. */
+  readonly expectedRotation: MotorRotationDirection | undefined;
   readonly verification: MotorVerificationState;
   /** The last command this session sent for the selected motor. */
   readonly commanded: MotorDirectionCommandRecord | undefined;
@@ -96,8 +103,8 @@ function SourceRow({
 export function MotorDirectionSection({
   selectedMotor,
   operator,
-  identificationCapability,
   commandCapability,
+  expectedRotation,
   verification,
   commanded,
   onCommandOutcome,
@@ -155,8 +162,12 @@ export function MotorDirectionSection({
     [onCommandOutcome],
   );
 
-  const templateApplies = identificationCapability.kind === 'SUPPORTED';
-  const expected = templateApplies ? expectedFor(selectedMotor) : undefined;
+  /* M-F2 §14/§16: the expectation is handed in, derived from the mixer
+     yaw column and the stored props flag - the SAME derivation the
+     airframe drawing uses. It used to come from the shipped props-out
+     template here, which on a props-in aircraft put the OPPOSITE
+     expectation on this row from the one beside the drawing. */
+  const expected = expectedRotation;
 
   const entry = verification.entries.find(e => e.motorNumber === selectedMotor);
   const observedDirection =
@@ -175,11 +186,11 @@ export function MotorDirectionSection({
   const directionMismatch =
     expected !== undefined &&
     observedDirection !== undefined &&
-    observedDirection !== expected.direction;
+    observedDirection !== expected;
   const directionMatch =
     expected !== undefined &&
     observedDirection !== undefined &&
-    observedDirection === expected.direction;
+    observedDirection === expected;
 
   const commandAvailable = commandCapability.kind === 'AVAILABLE';
 
@@ -199,7 +210,7 @@ export function MotorDirectionSection({
         value={
           expected === undefined
             ? t('motorsScreen.directionExpectedUnavailable')
-            : t(`motorVerification.direction.${expected.direction}`)
+            : t(`motorVerification.direction.${expected}`)
         }
         badge={expected === undefined ? undefined : t('motorsScreen.truthExpected')}
         testID="motor-direction-expected"

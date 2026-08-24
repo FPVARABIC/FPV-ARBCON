@@ -307,8 +307,20 @@ describe('M-E2 - a workspace with no aircraft reserves no aircraft column', () =
     async (_name, mixer, count) => {
       const shell = await liveMotorsScreen(mixer, count);
 
-      // No empty visual workspace, and no invented geometry.
-      expect(reservesAirframeColumn(shell)).toBe(false);
+      /*
+       * M-F2 REVISION OF THIS ASSERTION, deliberate and argued. M-E2's
+       * rule was never "no column for unauthored mixers" - it was "no
+       * EMPTY column". At the time the column held nothing for these
+       * mixers, so absence was the only honest layout. M-F2 moved the
+       * mixer selector, the props control and the two primary motor
+       * tools INTO the airframe column, so a known-count aircraft with
+       * unknown geometry now has a real column: selector, tools and the
+       * numbered chips. What remains forbidden is unchanged - no stage,
+       * no front marker, no invented geometry, no fake quad.
+       */
+      expect(reservesAirframeColumn(shell)).toBe(true);
+      expect(shell.has('motors-airframe-controls')).toBe(true);
+      expect(shell.has('motors-mixer-select')).toBe(true);
       expect(shell.has('motors-airframe-stage')).toBe(false);
       expect(shell.has('motors-diagram-front')).toBe(false);
 

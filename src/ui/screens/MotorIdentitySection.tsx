@@ -51,6 +51,7 @@ import {
   authoredAirframeLayout,
   stationOf,
 } from '../../core/state/motorAirframeLayout';
+import {expectedMotorRotation} from '../../core/state/motorExpectedRotation';
 import { MotorAirframeDiagram, stationKey } from './MotorAirframeDiagram';
 import type {
   MotorSlotActivity,
@@ -69,6 +70,9 @@ export interface MotorIdentitySectionProps {
   /** MSP_MIXER_CONFIG offset 0, raw, or undefined when unread. Decides
    *  whether an authored layout may be drawn at all. */
   readonly mixerModeRaw: number | undefined;
+  /** MSP_MIXER_CONFIG offset 1 - the stored props flag, threaded to the
+   *  diagram's expected-rotation marks. Undefined withholds them. */
+  readonly yawMotorsReversed?: boolean;
   /** The motor numbers the flight controller reported, 1..N. Empty when
    *  nothing has been read - never a placeholder quad. */
   readonly diagramMotorNumbers: readonly number[];
@@ -167,6 +171,7 @@ export function MotorIdentitySection({
   onSelectSlot,
   capability,
   mixerModeRaw,
+  yawMotorsReversed,
   diagramMotorNumbers,
   active,
   liveSlot,
@@ -471,6 +476,7 @@ export function MotorIdentitySection({
           verifiedSlots={verifiedSlots}
           onSelectSlot={onSelectSlot}
           mixerModeRaw={mixerModeRaw}
+          yawMotorsReversed={yawMotorsReversed}
           motorNumbers={diagramMotorNumbers}
         />
       ) : null}
@@ -584,9 +590,16 @@ export function MotorIdentitySection({
    * on an aircraft we actually drew, or what a person confirmed about it.
    * The number is the label on those facts, never the whole statement.
    */
+  const selectedExpectedRotation = expectedMotorRotation(
+    mixerModeRaw,
+    selectedSlot,
+    yawMotorsReversed,
+  );
   const mapFactsCarryAFact =
     slots.includes(selectedSlot) &&
-    (drawnStation !== undefined || confirmedPosition !== undefined);
+    (drawnStation !== undefined ||
+      confirmedPosition !== undefined ||
+      selectedExpectedRotation !== undefined);
   const mapFacts = !mapFactsCarryAFact ? null : (
     <View style={styles.mapFacts} testID="motor-identity-selected-brief">
       <Text style={styles.identityMotor} testID="motor-identity-number">
@@ -597,6 +610,18 @@ export function MotorIdentitySection({
           <Text style={styles.identitySeparator}>·</Text>
           <Text style={styles.identityValue} testID="motor-identity-station">
             {t(`motorsScreen.${stationKey(stationOf(drawnStation))}`)}
+          </Text>
+        </>
+      )}
+      {selectedExpectedRotation === undefined ? null : (
+        <>
+          <Text style={styles.identitySeparator}>·</Text>
+          <Text style={styles.identityValue} testID="motor-identity-expected-rotation">
+            {`${t('motorsScreen.expectedRotationLabel')}: ${t(
+              selectedExpectedRotation === 'CW'
+                ? 'motorsScreen.expectedRotationCw'
+                : 'motorsScreen.expectedRotationCcw',
+            )}`}
           </Text>
         </>
       )}
@@ -849,6 +874,9 @@ export function MotorIdentitySection({
         state={verification}
         onConfirm={onConfirm}
         onMultipleMotorsReported={onMultipleMotorsReported}
+        expectedDirectionFor={motorNumber =>
+          expectedMotorRotation(mixerModeRaw, motorNumber, yawMotorsReversed)
+        }
       />
     </View>
   ) : identificationOutOfScope ? (
