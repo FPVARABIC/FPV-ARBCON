@@ -42,10 +42,18 @@ import {
 } from '../../core';
 import {
   pidTuningController, type PidBlockReason, type PidLoadOutcome,
-  type PidProfileKind, type PidProfileNameOutcome, type PidProfileSwitchOutcome,
+  type PidProfileCopyOutcome, type PidProfileKind, type PidProfileNameOutcome,
+  type PidProfileResetOutcome, type PidProfileSwitchOutcome,
   type PidRatesTypeOutcome, type PidSaveOutcome, type PidSimplifiedLoadOutcome,
   type PidSimplifiedSaveOutcome, type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
+import type {AdvancedPidFieldKey} from '../../core/state/advancedPidFields';
+import type {AdvancedFilterFieldKey} from '../../core/state/advancedFilterFields';
+import type {CopyProfileRequest} from '../../core/protocol/msp/encoding/encodeProfileCommands';
+import {FILTER_CONFIG_OFFSETS} from '../../core/protocol/msp/decoding/decodeFilterConfigFull';
+import {RPM_FILTER_COPY} from '../presentation/advancedTuningPresentation';
+import AdvancedTuningGroups from '../components/pid/AdvancedTuningGroups';
+import ProfileManagementCard from '../components/pid/ProfileManagementCard';
 import {StickyActionBar} from '../components/editing';
 import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, ChoiceChips, NoticeBox, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
@@ -93,6 +101,9 @@ export interface PidControllerPort {
   saveSimplified?(key: SetupUiSessionKey, original: MspPidTuningSnapshot, patch: SimplifiedTuningPatch): Promise<PidSimplifiedSaveOutcome>;
   setRatesType?(key: SetupUiSessionKey, original: MspPidTuningSnapshot, ratesTypeRaw: number): Promise<PidRatesTypeOutcome>;
   readProfileName?(key: SetupUiSessionKey, kind: PidProfileKind): Promise<PidProfileNameOutcome>;
+  setProfileName?(key: SetupUiSessionKey, kind: PidProfileKind, name: string): Promise<PidProfileNameOutcome>;
+  copyProfile?(key: SetupUiSessionKey, request: CopyProfileRequest): Promise<PidProfileCopyOutcome>;
+  resetPidProfile?(key: SetupUiSessionKey): Promise<PidProfileResetOutcome>;
 }
 export interface PidTuningScreenProps {
   readonly sessionKey?: SetupUiSessionKey;
@@ -221,6 +232,63 @@ function simplifiedLoadMessage(state: SimplifiedState): string | undefined {
     case 'FAILED': return 'تعذّرت قراءة الضبط المبسّط من متحكم الطيران.';
   }
 }
+/**
+ * A rename is reported on the READBACK, never on the acknowledgement.
+ *
+ * The firmware truncates a long name silently and acknowledges, so "it
+ * said OK" proves nothing about what is stored. NAME_MISMATCH names both
+ * strings rather than telling the operator it worked.
+ */
+function profileNameMessage(outcome: PidProfileNameOutcome): {text: string; warning: boolean} {
+  switch (outcome.kind) {
+    case 'NAMED_VERIFIED': return {text: `حُفظ الاسم «${outcome.name}» وطابقته القراءة الراجعة.`, warning: false};
+    case 'NAME': return {text: `الاسم الحالي: «${outcome.name}».`, warning: false};
+    case 'NAME_MISMATCH': return {text: `طلبنا «${outcome.requested}» فأعاد المتحكم «${outcome.observed}». لم يُحفظ الاسم كما طُلب.`, warning: true};
+    case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
+    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة تسمية الملف. أعد القراءة قبل الاعتماد عليها.', warning: true};
+    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء تسمية الملف.', warning: true};
+    case 'FAILED': return {text: 'فشلت تسمية الملف قبل أن تصل إلى المتحكم.', warning: true};
+  }
+}
+
+/**
+ * A copy is reported field by field, and a board left on the wrong profile
+ * is never silent - that is the outcome the copy lifecycle re-reads
+ * MSP_STATUS_EX after every selection in order to catch.
+ */
+function profileCopyMessage(outcome: PidProfileCopyOutcome): {text: string; warning: boolean} {
+  switch (outcome.kind) {
+    case 'COPIED_VERIFIED': return {text: `نُسخ الملف ${outcome.sourceIndex + 1} إلى الملف ${outcome.destinationIndex + 1}، وطابقت القراءة الراجعة المصدر.`, warning: false};
+    case 'COPY_MISMATCH': return {text: `الملف ${outcome.destinationIndex + 1} لا يطابق المصدر بعد النسخ (${outcome.fields.length} حقلًا). لم يُدّع نجاح.`, warning: true};
+    case 'LEFT_ON_ANOTHER_PROFILE': return {text: `المتحكم يعمل الآن على الملف ${outcome.activeIndex + 1} بدل الملف ${outcome.requestedIndex + 1} الذي طلبناه. أعد اختيار الملف قبل الطيران.`, warning: true};
+    case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
+    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة النسخ. أعد القراءة قبل الاعتماد عليها.', warning: true};
+    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء النسخ.', warning: true};
+    case 'FAILED': return {text: 'فشل النسخ قبل أن يصل إلى المتحكم.', warning: true};
+  }
+}
+
+/**
+ * A reset is reported as APPLIED and PARTIALLY VERIFIED, and as NOT
+ * PERSISTED - because that is what the firmware command does. Naming it
+ * "restored to defaults and saved" would be a claim the operator would
+ * discover was false on the next power cycle.
+ */
+function profileResetMessage(outcome: PidProfileResetOutcome): {text: string; warning: boolean} {
+  switch (outcome.kind) {
+    case 'RESET_APPLIED_PARTIALLY_VERIFIED': return {
+      text: `أُعيد الملف إلى قيم المصنع في الذاكرة العاملة. تحقّقنا من: ${outcome.verifiedScope.join(' · ')}. `
+        + 'بقية الحقول لم نقرأها ولا ندّعي صحتها. الأمر نفسه لا يحفظ حفظًا دائمًا؛ احفظ إن أردت بقاءه بعد فصل البطارية.',
+      warning: true,
+    };
+    case 'READBACK_MISMATCH': return {text: `القراءة بعد الإعادة لا تطابق قيم المصنع في ${outcome.fields.length} حقلًا. لم يُدّع نجاح.`, warning: true};
+    case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
+    case 'UNCONFIRMED': return {text: 'لم تتأكد نتيجة الإعادة. أعد القراءة قبل الاعتماد عليها.', warning: true};
+    case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء الإعادة.', warning: true};
+    case 'FAILED': return {text: 'فشلت الإعادة قبل أن تصل إلى المتحكم.', warning: true};
+  }
+}
+
 function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]): string {
   return ({
     PID_GAIN_INVALID: 'إحدى قيم P/I/D خارج 0–250',
@@ -516,6 +584,18 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   const updateRate = useCallback((axis: PidAxisKey, term: keyof RateAxisDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [axis]: Object.freeze({...current.rates[axis], [term]: value})})})); retireStatus(); }, [retireStatus]);
   const updateThrottle = useCallback((term: keyof Omit<RatesDraft, PidAxisKey | 'type'>, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, rates: Object.freeze({...current.rates, [term]: value})})); retireStatus(); }, [retireStatus]);
   const updateFilter = useCallback((term: keyof FiltersDraft, value: number) => { setDraft(current => current === undefined ? current : Object.freeze({...current, filters: Object.freeze({...current.filters, [term]: value})})); retireStatus(); }, [retireStatus]);
+  /* The two P-E advanced groups. Kept as their own setters rather than one
+     generic patcher, because the two sub-drafts live in different MSP
+     payloads with different scopes and merging them would invite code that
+     forgets which is which. */
+  const updateAdvanced = useCallback((field: AdvancedPidFieldKey, value: number) => {
+    setDraft(current => current === undefined ? current : Object.freeze({...current, advanced: Object.freeze({...current.advanced, [field]: value})}));
+    retireStatus();
+  }, [retireStatus]);
+  const updateAdvancedFilter = useCallback((field: AdvancedFilterFieldKey, value: number) => {
+    setDraft(current => current === undefined ? current : Object.freeze({...current, advancedFilters: Object.freeze({...current.advancedFilters, [field]: value})}));
+    retireStatus();
+  }, [retireStatus]);
   const patchPids = useCallback((patch: SimplifiedPidInputPatch) => { setSimplifiedPatch(current => Object.freeze({...current, pids: {...current.pids, ...patch}})); retireStatus(); }, [retireStatus]);
   const patchBlock = useCallback((block: 'gyro' | 'dterm', patch: SimplifiedFilterPatch) => { setSimplifiedPatch(current => Object.freeze({...current, [block]: {...current[block], ...patch}})); retireStatus(); }, [retireStatus]);
 
@@ -635,10 +715,87 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
     setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
   }, [controller, dirty, refreshProfileScoped, retireStatus, sessionKey]);
 
+  /**
+   * THE THREE WHOLE-PROFILE OPERATIONS.
+   *
+   * Each refuses to run over unsaved edits for the same reason profile
+   * switching does: all three replace values that are on screen, and
+   * carrying a draft across that would be a lie about which tune is
+   * stored. Each reports the controller's own outcome verbatim - a rename
+   * that came back different is NAME_MISMATCH, a reset is
+   * RESET_APPLIED_PARTIALLY_VERIFIED and says which part was checked.
+   */
+  const guardUnsaved = useCallback((): boolean => {
+    if (!dirty) return true;
+    Alert.alert('لديك تغييرات غير محفوظة', 'هذه العملية تستبدل قيم الملف. احفظ أولًا أو تجاهل التغييرات.', [{text: 'حسنًا', style: 'cancel'}]);
+    return false;
+  }, [dirty]);
+
+  const renameProfile = useCallback(async (name: string) => {
+    if (sessionKey === undefined || controller.setProfileName === undefined) return;
+    if (!guardUnsaved()) return;
+    setPhase('SAVING'); retireStatus();
+    let outcome: PidProfileNameOutcome;
+    try { outcome = await controller.setProfileName(sessionKey, 'PID', name); }
+    catch (error) { outcome = {kind: 'FAILED', error}; }
+    setStatus(profileNameMessage(outcome));
+    if (outcome.kind === 'NAMED_VERIFIED' || outcome.kind === 'NAME') {
+      setProfileNames(current => ({...current, pid: outcome.name}));
+    }
+    setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
+  }, [controller, guardUnsaved, retireStatus, sessionKey]);
+
+  const copyProfile = useCallback(async (sourceIndex: number, destinationIndex: number) => {
+    if (sessionKey === undefined || controller.copyProfile === undefined) return;
+    if (!guardUnsaved()) return;
+    setPhase('SAVING'); retireStatus();
+    let outcome: PidProfileCopyOutcome;
+    try { outcome = await controller.copyProfile(sessionKey, {kind: 'PID', sourceIndex, destinationIndex}); }
+    catch (error) { outcome = {kind: 'FAILED', error}; }
+    setStatus(profileCopyMessage(outcome));
+    if (outcome.kind === 'COPIED_VERIFIED') {
+      setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot));
+    }
+    setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
+  }, [controller, guardUnsaved, retireStatus, sessionKey]);
+
+  const resetProfile = useCallback(async () => {
+    if (sessionKey === undefined || controller.resetPidProfile === undefined) return;
+    if (!guardUnsaved()) return;
+    setPhase('SAVING'); retireStatus();
+    let outcome: PidProfileResetOutcome;
+    try { outcome = await controller.resetPidProfile(sessionKey); }
+    catch (error) { outcome = {kind: 'FAILED', error}; }
+    setStatus(profileResetMessage(outcome));
+    if (outcome.kind === 'RESET_APPLIED_PARTIALLY_VERIFIED') {
+      setSnapshot(outcome.snapshot); setDraft(createPidTuningDraft(outcome.snapshot));
+      setSimplifiedPatch(EMPTY_PATCH); setPendingRatesType(undefined);
+      // The reset rewrote the name and the simplified sliders too, so both
+      // are re-read rather than left showing what they were before.
+      await refreshProfileScoped(sessionKey, () => true);
+    }
+    setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
+  }, [controller, guardUnsaved, refreshProfileScoped, retireStatus, sessionKey]);
+
   const loadingMessage = loadOutcome?.kind === 'REJECTED' ? blockMessage(loadOutcome.reason) : loadOutcome?.kind === 'FAILED' ? 'تعذرت قراءة إعدادات PID من متحكم الطيران.' : loadOutcome?.kind === 'SESSION_ENDED' ? 'انتهت جلسة الاتصال.' : undefined;
   const gyroNyquist = snapshot?.gyroSampleRateHz === undefined ? undefined : snapshot.gyroSampleRateHz / 2;
   const pidNyquist = snapshot?.gyroSampleRateHz === undefined || snapshot.pidProcessDenom === undefined || snapshot.pidProcessDenom < 1 ? undefined : snapshot.gyroSampleRateHz / snapshot.pidProcessDenom / 2;
   const filtersEditable = gyroNyquist !== undefined && pidNyquist !== undefined;
+  /**
+   * The two RPM-filter values that exist on EVERY supported API.
+   *
+   * Read straight from the payload at the decoder's own offsets rather
+   * than from a second table. The 1.48 tail - Q, fade range and the
+   * variable-length weights - is deliberately NOT shown: whether it is
+   * present depends on the API contract, which this screen is not given,
+   * and rendering it from a byte count would be guessing. Showing two
+   * true values and saying the rest is not surfaced beats showing four
+   * where two might be invented.
+   */
+  const rpmFilter = snapshot === undefined ? undefined : {
+    harmonics: snapshot.filtersRaw[FILTER_CONFIG_OFFSETS.rpmFilterHarmonics],
+    minHz: snapshot.filtersRaw[FILTER_CONFIG_OFFSETS.rpmFilterMinHz],
+  };
   const busy = phase !== 'READY';
   const simplifiedNotice = simplifiedLoadMessage(simplifiedState);
   const overwrite = draftSimplified !== undefined && simplifiedDirty ? overwriteSummary(draftSimplified) : undefined;
@@ -813,10 +970,52 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
         <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>Filters</Text><Text style={styles.sectionHint}>تُعدّل فقط أوضاع الفلاتر النشطة التي أثبتتها القراءة. لا يفعّل التطبيق ميزة غير مثبتة في بناء الـFC ولا يغيّر نوع الفلتر.</Text></View>
         {!filtersEditable ? <View style={styles.warning}><Text style={styles.warningText}>تعذرت معرفة Gyro/PID loop rate؛ الفلاتر معروضة للقراءة فقط ولن يُسمح بكتابتها دون حد Nyquist موثوق.</Text></View> : <View style={styles.rateEvidence}><Text style={styles.readout}>Gyro Nyquist: {gyroNyquist} Hz</Text><Text style={styles.readout}>D-term Nyquist: {pidNyquist} Hz</Text></View>}
         <View style={[styles.readOnlyGrid, wide && styles.readOnlyGridWide]}>
-          <View style={styles.card} testID="pid-gyro-filter"><Text style={styles.sectionTitle}>Gyro LPF1</Text>{snapshot?.filterConfig.gyroLpf1DynamicMinHz !== undefined && snapshot.filterConfig.gyroLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ Min يجب أن يبقى أصغر من Max وحد Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.gyroLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMinHz', next)} testID="pid-gyro-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.gyroLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMaxHz', next)} testID="pid-gyro-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.gyroLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1StaticHz', next)} testID="pid-gyro-static" /></>}</View>
-          <View style={styles.card} testID="pid-dterm-filter"><Text style={styles.sectionTitle}>D-term LPF1</Text>{snapshot?.filterConfig.dtermLpf1DynamicMinHz !== undefined && snapshot.filterConfig.dtermLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ يحكمه PID loop Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.dtermLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMinHz', next)} testID="pid-dterm-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.dtermLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMaxHz', next)} testID="pid-dterm-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.dtermLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1StaticHz', next)} testID="pid-dterm-static" /></>}</View>
+          <View style={[styles.card, wide && styles.cardInRow]} testID="pid-gyro-filter"><Text style={styles.sectionTitle}>Gyro LPF1</Text>{snapshot?.filterConfig.gyroLpf1DynamicMinHz !== undefined && snapshot.filterConfig.gyroLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ Min يجب أن يبقى أصغر من Max وحد Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.gyroLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMinHz', next)} testID="pid-gyro-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.gyroLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1DynamicMaxHz', next)} testID="pid-gyro-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.gyroLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('gyroLpf1StaticHz', next)} testID="pid-gyro-static" /></>}</View>
+          <View style={[styles.card, wide && styles.cardInRow]} testID="pid-dterm-filter"><Text style={styles.sectionTitle}>D-term LPF1</Text>{snapshot?.filterConfig.dtermLpf1DynamicMinHz !== undefined && snapshot.filterConfig.dtermLpf1DynamicMinHz > 0 ? <><Text style={styles.sectionHint}>الوضع الديناميكي مثبت من القراءة؛ يحكمه PID loop Nyquist.</Text><View style={styles.fieldsRow}><NumericField label="Dynamic min Hz" value={draft.filters.dtermLpf1DynamicMinHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMinHz', next)} testID="pid-dterm-dynamic-min" /><NumericField label="Dynamic max Hz" value={draft.filters.dtermLpf1DynamicMaxHz} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1DynamicMaxHz', next)} testID="pid-dterm-dynamic-max" /></View></> : <><Text style={styles.sectionHint}>الوضع الثابت مثبت من القراءة؛ 0 يعطّل LPF1.</Text><NumericField label="Static cutoff Hz" value={draft.filters.dtermLpf1StaticHz} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dtermLpf1StaticHz', next)} testID="pid-dterm-static" /></>}</View>
         </View>
         <View style={styles.card} testID="pid-dynamic-notch"><Text style={styles.sectionTitle}>Dynamic Notch</Text>{snapshot?.filterConfig.dynamicNotchCount !== undefined && snapshot.filterConfig.dynamicNotchCount > 0 ? <><Text style={styles.sectionHint}>الميزة نشطة ومثبتة من القراءة. لا تسمح هذه المرحلة بتعطيلها أو تفعيلها على بناء لم يثبت دعمه.</Text><View style={styles.fieldsRow}><NumericField label="عدد الفلاتر" value={draft.filters.dynamicNotchCount} min={1} max={7} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchCount', next)} testID="pid-notch-count" /><NumericField label="Q ×100" value={draft.filters.dynamicNotchQ} min={1} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchQ', next)} testID="pid-notch-q" /><NumericField label="Min Hz" value={draft.filters.dynamicNotchMinHz} min={20} max={250} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchMinHz', next)} testID="pid-notch-min" /><NumericField label="Max Hz" value={draft.filters.dynamicNotchMaxHz} min={200} max={1000} disabled={busy || !filtersEditable} onChange={next => updateFilter('dynamicNotchMaxHz', next)} testID="pid-notch-max" /></View></> : <Text style={styles.sectionHint}>القراءة الحالية لا تثبت أن Dynamic Notch نشط؛ لذلك لن نخمن دعم البناء أو نرسِل قيم تفعيل.</Text>}</View>
+
+        {/* THE EXPERT TIER. Grouped and folded rather than poured onto the
+            page: opening «الإعدادات المتقدمة» must not drop forty controls
+            into a phone screen (§29). Two balanced columns once the
+            viewport can carry them (§27). */}
+        <View style={styles.sectionHeading}><Text style={styles.sectionTitle}>إعدادات الخبراء</Text><Text style={styles.sectionHint}>مجموعات مطويّة، كل واحدة تذكر نطاقها: ما يخصّ هذا الملف وما هو مشترك بين كل الملفات.</Text></View>
+        <AdvancedTuningGroups
+          advanced={draft.advanced}
+          filters={draft.advancedFilters}
+          disabled={busy}
+          wide={wide}
+          ownedFields={ownedDirectFields}
+          onChangeAdvanced={updateAdvanced}
+          onChangeFilter={updateAdvancedFilter}
+        />
+
+        {/* THE RPM FILTER, READ ONLY. Shown where the board reports it, and
+            saying WHY there is no control - a disabled field with no
+            explanation is the thing this project keeps refusing to ship. */}
+        <View style={styles.card} testID="pid-rpm-filter">
+          <Text style={styles.sectionTitle}>{RPM_FILTER_COPY.title}</Text>
+          <Text style={styles.sectionHint}>{RPM_FILTER_COPY.hint}</Text>
+          {rpmFilter === undefined ? null : <View style={styles.rateEvidence} testID="pid-rpm-readout">
+            <Text style={styles.readout}>{`Harmonics: ${rpmFilter.harmonics}`}</Text>
+            <Text style={styles.readout}>{`Min Hz: ${rpmFilter.minHz}`}</Text>
+          </View>}
+          <Text style={styles.sectionHint}>{RPM_FILTER_COPY.readOnlyReason}</Text>
+        </View>
+
+        {/* WHOLE-PROFILE OPERATIONS, last: they are the ones that lose work. */}
+        <ProfileManagementCard
+          profileCount={snapshot?.pidProfileCount}
+          activeIndex={snapshot?.pidProfileIndex}
+          currentName={profileNames.pid}
+          busy={busy}
+          canRename={controller.setProfileName !== undefined && profileNames.pid !== undefined}
+          canCopy={controller.copyProfile !== undefined}
+          canReset={controller.resetPidProfile !== undefined}
+          onRename={name => { renameProfile(name).catch(() => undefined); }}
+          onCopy={(from, to) => { copyProfile(from, to).catch(() => undefined); }}
+          onReset={() => { resetProfile().catch(() => undefined); }}
+        />
       </Disclosure>
     </> : phase === 'LOADING' ? <Text style={styles.loading}>جارٍ قراءة الضبط من متحكم الطيران…</Text> : null}<View style={styles.bottomSpace} />
   </ScrollView>
@@ -877,7 +1076,19 @@ const styles = StyleSheet.create({
   rangeHint: {...typography.caption, color: colors.textMuted, textAlign: 'center', writingDirection: 'ltr'},
   readOnlyGrid: {gap: spacing.md},
   readOnlyGridWide: {flexDirection: 'row'},
-  card: {flex: 1, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.sm},
+  /*
+   * NO `flex: 1` HERE - that was a measured defect, not a style opinion.
+   *
+   * `flex: 1` means `flex-basis: 0`, so every card using it grew to the
+   * SAME height regardless of what it held: at 1366 the feel, throttle,
+   * Dynamic Idle, Dynamic Notch and RPM cards all measured exactly 211px
+   * for between 93px and 211px of content. The short ones were carrying
+   * up to 118px of dead space each. A card in a COLUMN sizes to its
+   * content; `cardInRow` restores the growth only where cards genuinely
+   * share a row and must match.
+   */
+  card: {backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: radii.lg, padding: spacing.lg, gap: spacing.sm},
+  cardInRow: {flex: 1},
   readout: {...typography.body, color: colors.textSecondary, textAlign: 'right', fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE},
   choiceRow: {flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap'},
   choice: {minHeight: 44, minWidth: 88, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: colors.borderStrong, borderRadius: radii.md, backgroundColor: colors.backgroundRaised, paddingHorizontal: spacing.md},

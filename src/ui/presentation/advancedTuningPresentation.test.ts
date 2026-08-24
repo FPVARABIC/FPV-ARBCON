@@ -21,7 +21,6 @@ import {
   ADVANCED_PRESENTED_FIELDS,
   RPM_FILTER_COPY,
   advancedFieldCopy,
-  type AdvancedFieldKey,
 } from './advancedTuningPresentation';
 
 /** Wire names, which may appear ONLY in the technical detail. */
@@ -144,6 +143,8 @@ describe('advanced tuning presentation', () => {
 
   it('explains WHY the RPM filter is read-only instead of just disabling it', () => {
     expect(RPM_FILTER_COPY.readOnlyReason).toContain('1.48');
-    expect(RPM_FILTER_COPY.unavailable).toContain('وليس قيمة صفر');
+    // And why the 1.48 tail is not DISPLAYED either: deciding it is there
+    // from the payload length would be a guess (§12).
+    expect(RPM_FILTER_COPY.readOnlyReason).toContain('تخمينًا');
   });
 });

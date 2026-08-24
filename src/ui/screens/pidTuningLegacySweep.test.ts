@@ -95,10 +95,26 @@ describe('commands that must not be reachable from this page', () => {
   });
 
   it('offers no path to the whole-configuration reset', () => {
-    // MSP_RESET_CONF (208) wipes far more than this page owns. The PID
-    // profile reset the controller implements is a different command with a
-    // different scope, and neither is offered here.
+    // MSP_RESET_CONF (208) wipes far more than this page owns - the whole
+    // board, not one profile - and nothing here may reach it.
+    //
+    // P-E §23 DID add the PID-PROFILE reset, which is a different command
+    // with a different scope. That is deliberate, and the assertion that
+    // used to forbid `resetPidProfile` alongside RESET_CONF was retired
+    // with it rather than weakened: the two are checked separately now,
+    // and the profile reset has its own contract below.
     expect(screen).not.toContain('RESET_CONF');
-    expect(screen).not.toContain('resetPidProfile');
+    expect(screen).not.toContain('resetConfiguration');
+  });
+
+  it('reports the profile reset as APPLIED and PARTIALLY VERIFIED, never as saved', () => {
+    // The firmware command rewrites the profile in RAM and writes no
+    // EEPROM, and this screen can only observe part of what it rewrote.
+    // The outcome name carries both facts, and the screen must render THAT
+    // outcome rather than a success sentence of its own.
+    expect(screen).toContain('RESET_APPLIED_PARTIALLY_VERIFIED');
+    expect(screen).toContain('verifiedScope');
+    // No sentence anywhere on this page may call a reset "saved".
+    expect(screen).not.toMatch(/حُفظت[^\n]*المصنع/);
   });
 });

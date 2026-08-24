@@ -24,7 +24,7 @@ import {
   type MspSimplifiedTuning,
   type SimplifiedPidsMode,
 } from '../../core/protocol/msp/decoding/decodeSimplifiedTuning';
-import {simplifiedOwnedFields} from '../../core/state/pidWriteVerification';
+import {simplifiedOwnedFields, simplifiedOwnedNames} from '../../core/state/pidWriteVerification';
 
 /* ------------------------------------------------------------------ */
 /* Mode                                                                */
@@ -249,9 +249,16 @@ export function overwriteSummary(simplified: MspSimplifiedTuning): OverwriteSumm
   });
 }
 
-/** Which direct fields the generator currently owns, for disabling them. */
+/**
+ * Which fields the generator currently owns, for disabling them.
+ *
+ * Delegates to `simplifiedOwnedNames`, which is the SAME set the
+ * controller refuses a save against - PID gains, D Max, and the filter
+ * frequencies. Building a shorter list here is how a control ends up
+ * editable on screen and rejected on the wire.
+ */
 export function generatorOwnedDirectFields(simplified: MspSimplifiedTuning | undefined): ReadonlySet<string> {
-  return new Set(simplified === undefined ? [] : simplifiedOwnedFields(simplified));
+  return simplified === undefined ? new Set<string>() : simplifiedOwnedNames(simplified);
 }
 
 export const GENERATOR_OWNED_NOTE = 'تتحكم به إعدادات الضبط المبسّط حاليًا.';

@@ -13,7 +13,7 @@ import {
   SIMPLIFIED_TUNING_FILTERS_MIN, SIMPLIFIED_TUNING_MAX, SIMPLIFIED_TUNING_PIDS_MIN,
   classifySimplifiedPidsMode, decodeSimplifiedTuning, type MspSimplifiedTuning,
 } from '../../core/protocol/msp/decoding/decodeSimplifiedTuning';
-import {simplifiedOwnedFields} from '../../core/state/pidWriteVerification';
+import {simplifiedOwnedFields, simplifiedOwnedNames} from '../../core/state/pidWriteVerification';
 import {
   GENERATOR_OWNED_NOTE, SIMPLIFIED_DTERM_FILTER, SIMPLIFIED_EXPLANATION,
   SIMPLIFIED_GYRO_FILTER, SIMPLIFIED_MORE_SLIDERS, SIMPLIFIED_OFF_CONSEQUENCE,
@@ -204,13 +204,34 @@ describe('generatorOwnedDirectFields', () => {
     expect(generatorOwnedDirectFields(undefined).size).toBe(0);
   });
 
-  it('owns nothing while the generator is off, so no direct field is disabled for no reason', () => {
-    expect(generatorOwnedDirectFields(tuning({modeRaw: 0})).size).toBe(0);
+  it('owns nothing at all when every generator block is off', () => {
+    const off = tuning({modeRaw: 0, gyro: {enabled: false}, dterm: {enabled: false}});
+    expect(generatorOwnedDirectFields(off).size).toBe(0);
+  });
+
+  it('owns no PID field while the PID generator is off - but still owns the filters it regenerates', () => {
+    // P-E: the three blocks are INDEPENDENT. simplified_pids_mode = OFF
+    // stops the gains being regenerated; it does not stop an enabled gyro
+    // or D-term block from rescaling its frequencies on the next write.
+    // Reporting "nothing is owned" here would leave a filter control
+    // editable that the very next simplified save overwrites.
+    const pidsOff = tuning({modeRaw: 0});
+    const owned = generatorOwnedDirectFields(pidsOff);
+    expect([...owned].filter(field => field.includes('.'))).toEqual([]);
+    expect(owned.has('gyroLpf1StaticHz')).toBe(true);
+    expect(owned.has('dtermLpf1StaticHz')).toBe(true);
   });
 
   it('matches the controller\'s own conflict rule field for field', () => {
+    // The SAME set `detectSimplifiedConflict` refuses a save against -
+    // PID gains, D Max AND filter frequencies. A shorter list here is how
+    // a control ends up editable on screen and rejected on the wire.
     const simplified = tuning({modeRaw: 1});
     expect([...generatorOwnedDirectFields(simplified)].sort())
-      .toEqual([...simplifiedOwnedFields(simplified)].sort());
+      .toEqual([...simplifiedOwnedNames(simplified)].sort());
+    // ...and it is strictly larger than the PID half alone, which is what
+    // this assertion used to compare against.
+    expect(generatorOwnedDirectFields(simplified).size)
+      .toBeGreaterThan(simplifiedOwnedFields(simplified).length);
   });
 });

@@ -519,11 +519,28 @@ export interface SimplifiedConflict {
  * lie. So the controller refuses before the wire and names the fields the
  * generator owns.
  */
-export function detectSimplifiedConflict(
-  editedFields: readonly string[],
-  simplified: MspSimplifiedTuning,
-  filterEdits: readonly string[] = [],
-): SimplifiedConflict | undefined {
+/**
+ * EVERY NAME THE ACTIVE GENERATOR OWNS - PID gains AND filter frequencies.
+ *
+ * Exported because the SCREEN needs exactly this set to decide which
+ * controls to disable, and a second list over there would be a second
+ * opinion: a control the UI left editable that the controller then
+ * refuses, or a control greyed out for no reason. One function, both
+ * callers.
+ *
+ * DELIBERATELY CONSERVATIVE on the filters, and in the same way the lpf1
+ * entries always have been: `generateFilterBlock` skips a block whose
+ * CURRENT value is zero, so an edit that switches a lowpass off would in
+ * fact survive. This function is handed no values and cannot draw that
+ * line. Refusing costs the operator one step - disable the simplified
+ * group first - while allowing it would risk reporting a value saved that
+ * the next regeneration silently replaces.
+ *
+ * The second lowpass joined the set in P-E, when the expert tier first
+ * offered it: the generator rescales lpf2 from the same multiplier as
+ * lpf1 on every simplified write.
+ */
+export function simplifiedOwnedNames(simplified: MspSimplifiedTuning): ReadonlySet<string> {
   const owned = new Set<string>(simplifiedOwnedFields(simplified));
   if (simplified.dterm.enabled) {
     owned.add('dtermLpf1StaticHz');
@@ -537,21 +554,15 @@ export function detectSimplifiedConflict(
     owned.add('gyroLpf1DynMaxHz');
     owned.add('gyroLpf2StaticHz');
   }
-  /*
-   * THE SECOND LOWPASS IS GENERATOR-OWNED TOO, which only became reachable
-   * in P-E when the expert tier started offering it. `generateFilterBlock`
-   * rescales lpf2 from the multiplier on every simplified write, exactly
-   * as it does lpf1.
-   *
-   * DELIBERATELY CONSERVATIVE, and in the same way the three lpf1 entries
-   * above already are: the generator skips a block whose CURRENT value is
-   * zero, so an edit that switches lpf2 off would in fact survive. This
-   * function is handed field names, not values, and would have to be given
-   * the proposed numbers to draw that line. Refusing the edit costs the
-   * operator one step - disable the simplified group first - while
-   * allowing it would risk reporting a value saved that the next
-   * regeneration silently replaces.
-   */
+  return owned;
+}
+
+export function detectSimplifiedConflict(
+  editedFields: readonly string[],
+  simplified: MspSimplifiedTuning,
+  filterEdits: readonly string[] = [],
+): SimplifiedConflict | undefined {
+  const owned = simplifiedOwnedNames(simplified);
   const conflicting = [...editedFields, ...filterEdits].filter(field => owned.has(field));
   if (conflicting.length === 0) return undefined;
   return Object.freeze({
