@@ -57,8 +57,30 @@ function mountMapping(props: Partial<MotorOutputMappingSectionProps>) {
 }
 
 describe('reading the output mapping is reachable, or it says why not', () => {
-  it('a connected quiet session leaves the read control enabled', () => {
-    const tree = mountMapping({sessionId: 'fc-session', blockedReason: undefined});
+  it('a connected quiet session reads BY ITSELF on open, then leaves re-read enabled', async () => {
+    /* M-F3 §13: opening the tool IS the read. The mount fires the load,
+       and once it lands the button is the RE-read - enabled, with no
+       blocked note anywhere. */
+    const controller = {
+      loadOutputOrder: jest.fn(async () => ({
+        kind: 'LOADED' as const,
+        values: [0, 1, 2, 3, 4, 5, 6, 7],
+      })),
+      saveOutputOrder: jest.fn(async () => ({
+        kind: 'NO_CHANGES' as const,
+        values: [] as number[],
+      })),
+    };
+    const tree = mountMapping({
+      sessionId: 'fc-session',
+      blockedReason: undefined,
+      controller: controller as never,
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(controller.loadOutputOrder).toHaveBeenCalledTimes(1);
+    expect(anyProps(tree, 'motor-output-mapping-rows').length).toBeGreaterThan(0);
     const read = anyProps(tree, 'motor-output-mapping-read')[0];
     expect(read).toBeDefined();
     expect(read.props.disabled).toBe(false);

@@ -29,6 +29,7 @@
  */
 
 import React from 'react';
+import {Text} from 'react-native';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 
 import '../../i18n';
@@ -701,7 +702,85 @@ describe('28 - the current mapping is read, never assumed', () => {
 });
 
 describe('29 - the write path is reached from core, and is the same path', () => {
-  it('opens the existing reorder panel, bound to the same controller', async () => {
+  it('M-F3 §13: opening the tool IS the read - no second press to begin', async () => {
+    const controller = mappingController(async () => ({
+      kind: 'LOADED',
+      values: [2, 0, 3, 1, 4, 5, 6, 7],
+    }));
+    const tree = await mountMapping(controller);
+    // The mount itself performed the read, and the rows show it.
+    expect(controller.loadOutputOrder).toHaveBeenCalledTimes(1);
+    expect(has(tree, 'motor-output-mapping-rows')).toBe(true);
+    act(() => tree.unmount());
+  });
+
+  it('M-F3 §12: the M-number is the LOGICAL motor, never renamed to its output', async () => {
+    /* A remapped board: M1 is fed by resource 3. The row must still be
+       LABELLED M1 - printing "M3" there renames the motor to its output
+       and destroys the one identity everything else keys on. Asserted on
+       a vector where every label would differ from every value. */
+    const controller = mappingController(async () => ({
+      kind: 'LOADED',
+      values: [2, 0, 3, 1, 4, 5, 6, 7],
+    }));
+    const tree = await mountMapping(controller);
+    for (let motor = 1; motor <= 4; motor += 1) {
+      const row = tree.root.findAllByProps({
+        testID: `motor-output-row-M${motor}`,
+      })[0];
+      expect(row).toBeDefined();
+      const labels = row
+        .findAllByType(Text)
+        .map(node => String(node.props.children ?? ''));
+      expect(labels).toContain(`M${motor}`);
+      // And the value cell names the RESOURCE, not a second motor number.
+      const value = tree.root.findAllByProps({
+        testID: `motor-output-row-M${motor}-value`,
+      })[0];
+      expect(String(value.props.children)).toContain(
+        String([2, 0, 3, 1][motor - 1] + 1),
+      );
+    }
+    act(() => tree.unmount());
+  });
+
+  it('M-F3 §11: the DIRECT editor opens over the read vector - two taps swap two outputs', async () => {
+    const controller = mappingController(async () => ({
+      kind: 'LOADED',
+      values: [0, 1, 2, 3, 4, 5, 6, 7],
+    }));
+    const tree = await mountMapping(controller);
+    await act(async () => {
+      first(tree, 'motor-output-edit').props.onPress();
+    });
+    expect(has(tree, 'motor-output-editor')).toBe(true);
+    // Swap M1 <-> M2: tap the two rows. The values exchange, the editor
+    // reports DIRTY, and nothing has been written.
+    await act(async () => {
+      first(tree, 'motor-output-editor-row-M1').props.onPress();
+    });
+    await act(async () => {
+      first(tree, 'motor-output-editor-row-M2').props.onPress();
+    });
+    const rowValue = (id: string): string =>
+      String(first(tree, id).props.children);
+    expect(rowValue('motor-output-editor-row-M1-value')).toContain('2');
+    expect(rowValue('motor-output-editor-row-M2-value')).toContain('1');
+    expect(has(tree, 'motor-output-editor-dirty')).toBe(true);
+    expect(controller.saveOutputOrder).not.toHaveBeenCalled();
+    // Save hands the SAME controller transaction the read base and the
+    // swapped draft - full vector, tail intact.
+    await act(async () => {
+      first(tree, 'motor-output-editor-save').props.onPress();
+    });
+    expect(controller.saveOutputOrder).toHaveBeenCalledTimes(1);
+    const [, base, desired] = controller.saveOutputOrder.mock.calls[0];
+    expect(base).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(desired).toEqual([1, 0, 2, 3, 4, 5, 6, 7]);
+    act(() => tree.unmount());
+  });
+
+  it('the guided observation-derived panel is its own entry, and refuses without observations', async () => {
     const controller = mappingController(async () => ({
       kind: 'LOADED',
       values: [0, 1, 2, 3, 4, 5, 6, 7],
@@ -709,27 +788,14 @@ describe('29 - the write path is reached from core, and is the same path', () =>
     const tree = await mountMapping(controller);
     expect(has(tree, 'motor-output-reorder-panel')).toBe(false);
     await act(async () => {
-      first(tree, 'motor-output-edit').props.onPress();
+      first(tree, 'motor-output-guided').props.onPress();
     });
     // The SAME panel, therefore the same controller transaction: full
     // vector, stale-base detection, disarmed proof, EEPROM write and
-    // readback all still live in MotorConfigurationController.
+    // readback all still live in MotorConfigurationController. Deriving
+    // a PHYSICAL correction still needs the observations, and the panel
+    // says so rather than guessing.
     expect(has(tree, 'motor-output-reorder-panel')).toBe(true);
-    expect(has(tree, 'motor-output-reorder-prepare')).toBe(true);
-    act(() => tree.unmount());
-  });
-
-  it('refuses to prepare a write from an incomplete observation set', async () => {
-    const controller = mappingController(async () => ({
-      kind: 'LOADED',
-      values: [0, 1, 2, 3, 4, 5, 6, 7],
-    }));
-    const tree = await mountMapping(controller);
-    await act(async () => {
-      first(tree, 'motor-output-edit').props.onPress();
-    });
-    // Reading needed nothing; deriving a PHYSICAL correction still needs
-    // the observations, and the panel says so rather than guessing.
     expect(has(tree, 'motor-output-reorder-incomplete')).toBe(true);
     expect(first(tree, 'motor-output-reorder-prepare').props.disabled).toBe(true);
     act(() => tree.unmount());
@@ -794,11 +860,19 @@ describe('30 - the first viewport holds the tool, the paperwork is one press awa
     expect(has(tree, 'verification-wizard')).toBe(true);
     expect(has(tree, 'motor-test-report')).toBe(true);
     act(() => first(tree, 'motors-open-direction').props.onPress());
+    // M-F3: the direction button opens the WHOLE guided workflow - the
+    // three-truths section embedded inside it - in the airframe column.
+    expect(has(tree, 'motor-direction-workflow')).toBe(true);
     expect(has(tree, 'motor-direction-section')).toBe(true);
     act(() => first(tree, 'motors-open-reorder').props.onPress());
     expect(has(tree, 'motor-output-mapping-section')).toBe(true);
     expect(has(tree, 'motor-output-mapping-read')).toBe(true);
-    expect(has(tree, 'motor-output-edit')).toBe(true);
+    // The direct-edit entry exists in some truthful form: the button once
+    // the auto-read lands, or the "read first" explanation while it has
+    // not (this harness has no live configuration link to answer it).
+    expect(
+      has(tree, 'motor-output-edit') || has(tree, 'motor-output-edit-needs-read'),
+    ).toBe(true);
   });
 
   it('holds no second copy of either core workflow', () => {

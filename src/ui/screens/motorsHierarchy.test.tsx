@@ -275,10 +275,11 @@ describe('the Motors screen leads with the workspace, not with its paperwork', (
        holds the aircraft AND the aircraft's own controls - the mixer
        selector, the props flag, and the ENTRIES to the direction and
        reorder tools - because those answer "what is this aircraft and
-       how is it built". What still may not stand here is the WORK: the
-       verification paperwork, the direction workflow's body and the
-       reorder transaction render outside the column, full width, only
-       when their one-press entries are opened. */
+       how is it built". M-F3 then made the entries honest: each tool
+       OPENS in this column, directly under its button, and exists
+       nowhere at all until its entry is pressed. What still never
+       stands here uninvited is the verification paperwork - it keeps
+       its technical-details home. */
     expect(within(r, 'motors-airframe-column', 'motors-identity-map')).toBe(true);
     expect(within(r, 'motors-airframe-column', 'motors-airframe-controls')).toBe(true);
     for (const id of [
@@ -291,13 +292,17 @@ describe('the Motors screen leads with the workspace, not with its paperwork', (
     // The verification workflow keeps its technical-details home...
     r.press('motors-advanced-verification-toggle');
     expect(within(r, 'motors-advanced-verification', 'motors-identity-section')).toBe(true);
-    // ...and the two primary tools open from their own entries, OUTSIDE
-    // the airframe column, so the model never scrolls away under them.
+    // ...and the two primary tools open IN PLACE - M-F3 §9/§16: inside
+    // the airframe column, directly under the buttons that open them.
+    // They used to mount ~1000px lower, after the whole workspace, which
+    // is exactly the "button changes colour, nothing opens" defect the
+    // release review rejected.
     r.press('motors-open-direction');
     r.press('motors-open-reorder');
     expect(within(r, 'motors-direction-tool', 'motor-direction-section')).toBe(true);
     expect(within(r, 'motors-reorder-tool', 'motor-output-mapping-section')).toBe(true);
-    expect(within(r, 'motors-airframe-column', 'motor-direction-section')).toBe(false);
+    expect(within(r, 'motors-airframe-column', 'motors-direction-tool')).toBe(true);
+    expect(within(r, 'motors-airframe-column', 'motors-reorder-tool')).toBe(true);
     r.unmount();
   });
 

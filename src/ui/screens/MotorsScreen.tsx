@@ -119,10 +119,22 @@ import { MotorConfigurationPanel } from './MotorConfigurationPanel';
 import {
   MotorAirframeControls,
   type AirframeConfigTopology,
+  type AirframeEditState,
   type MotorAirframeControlsPort,
 } from './MotorAirframeControls';
+/* M-F3 §33: the DRAFT PREVIEW mounts the diagram directly - the identity
+   section speaks about the ACTIVE aircraft and must never be handed an
+   unsaved topology. */
+import { MotorAirframeDiagram } from './MotorAirframeDiagram';
+import {
+  BETAFLIGHT_MIXER_REFERENCE_V147,
+} from '../../core/firmware-adapters/betaflightMixerReferenceV147';
 import { MotorDiagnosticsPanel } from './MotorDiagnosticsPanel';
-import { MotorDirectionSection } from './MotorDirectionSection';
+import { MotorDirectionWorkflow } from './MotorDirectionWorkflow';
+import {
+  nextMotorDirectionWorkflowStatus,
+  type MotorDirectionWorkflowStatus,
+} from '../../core/state/motorDirectionWorkflow';
 import {
   evaluateMotorDirectionCommandCapability,
 } from '../../core/state/motorDirectionCapability';
@@ -894,6 +906,47 @@ export function MotorsScreenView({
    * COMMANDED: no observation, no verification, no expected value and no
    * physical claim of any kind change here.
    */
+  /* ---- M-F3 §15-§18: the guided direction workflow's session state ----
+   * The per-motor statuses are the OPERATOR'S OWN ANSWERS plus the FC's
+   * acknowledgements, stepped through the pure core transition function.
+   * Session state by design (§18): no readback for ESC direction exists
+   * on the audited MSP surface, so this is all the source permits. */
+  const [directionAck, setDirectionAck] = useState(false);
+  const [directionStatuses, setDirectionStatuses] = useState<
+    ReadonlyMap<number, MotorDirectionWorkflowStatus>
+  >(new Map());
+  /** Increments when the operator answers «اعكس الاتجاه», opening the
+   * reverse form directly - opening sends nothing. */
+  const [directionAuthoringRequest, setDirectionAuthoringRequest] = useState(0);
+  useEffect(() => {
+    // A new connection is a new aircraft: answers about the old one are
+    // not knowledge about this one. Same reset rule as the command log.
+    setDirectionAck(false);
+    setDirectionStatuses(new Map());
+    setDirectionAuthoringRequest(0);
+  }, [operator, sessionId]);
+
+  const handleDirectionAnswer = useCallback(
+    (motorNumber: number, correct: boolean) => {
+      setDirectionStatuses(current => {
+        const next = new Map(current);
+        next.set(
+          motorNumber,
+          nextMotorDirectionWorkflowStatus(
+            current.get(motorNumber) ?? 'UNCHECKED',
+            correct ? {kind: 'ANSWER_CORRECT'} : {kind: 'ANSWER_WRONG'},
+          ),
+        );
+        return next;
+      });
+      if (!correct) {
+        // «لا، اعكس الاتجاه» leads straight to the reverse form.
+        setDirectionAuthoringRequest(current => current + 1);
+      }
+    },
+    [],
+  );
+
   const handleDirectionCommandOutcome = useCallback(
     (
       motorNumber: number,
@@ -907,6 +960,22 @@ export function MotorsScreenView({
       setDirectionLog(current =>
         recordDirectionCommand(current, token, {motorNumber, target, status}),
       );
+      // §17: an ACKNOWLEDGED reverse marks «تم عكسه ويحتاج إعادة فحص» -
+      // never "correct" and never "confirmed". UNCONFIRMED marks nothing:
+      // a command that may not have arrived cannot even claim "reversed".
+      if (status === 'ACKNOWLEDGED') {
+        setDirectionStatuses(current => {
+          const next = new Map(current);
+          next.set(
+            motorNumber,
+            nextMotorDirectionWorkflowStatus(
+              current.get(motorNumber) ?? 'UNCHECKED',
+              {kind: 'REVERSE_ACKNOWLEDGED'},
+            ),
+          );
+          return next;
+        });
+      }
     },
     [],
   );
@@ -956,8 +1025,31 @@ export function MotorsScreenView({
    * reading the session's own scope. */
   const [configTopology, setConfigTopology] = useState<AirframeConfigTopology>();
   const [quickConfigBusy, setQuickConfigBusy] = useState(false);
+  /** The airframe strip's draft/pending truth - M-F3 §32-§35. Drives the
+   * labelled preview and the topology interlock below; display and
+   * UI-level gating only, never command authority. */
+  const [airframeEditState, setAirframeEditState] = useState<AirframeEditState>();
+  /*
+   * THE TOPOLOGY INTERLOCK - M-F3 §34/§35, and it is P0.
+   *
+   * A DIRTY mixer draft, or a mixer saved but not yet applied by a
+   * reboot, means the aircraft on screen is not the aircraft the
+   * firmware is mixing for. Motor Test must not run as if it were:
+   * activation is refused with the reason in words, until the draft is
+   * saved (or discarded) and the reboot-reconnect cycle re-reads the
+   * truth. UI-LEVEL AND FAIL-CLOSED: this can only remove the ability
+   * to enable; the controller's own gates (runtime count authority,
+   * session drift guard) are untouched underneath, and the emergency
+   * stop never consults it.
+   */
+  const topologyDirty = airframeEditState?.dirtyMixer === true;
+  const topologyPendingReboot = airframeEditState?.mixerPendingReboot === true;
+  const topologyInterlocked = topologyDirty || topologyPendingReboot;
   const holdGateBlocked =
-    operator === undefined || requiresNewConnection || !canActivate;
+    operator === undefined ||
+    requiresNewConnection ||
+    !canActivate ||
+    topologyInterlocked;
   // See holdOwned's own declaration: disabling mid-gesture is what
   // terminated the responder and stopped a held motor in the field.
   const holdDisabled = holdGateBlocked && !holdOwned;
@@ -1113,6 +1205,13 @@ export function MotorsScreenView({
            session is the route that re-runs the read. */
         : runtimeMotorCountUnread
           ? t('motorsScreen.holdBlockedCountUnread')
+        /* M-F3 §34/§35: the drafted or saved-but-not-rebooted airframe is
+           not the one the firmware is flying. Ahead of "enable control
+           first" because enabling is refused for the same reason. */
+        : topologyDirty
+          ? t('motorsScreen.holdBlockedTopologyDirty')
+        : topologyPendingReboot
+          ? t('motorsScreen.holdBlockedTopologyPendingReboot')
         : !motorControlEnabled
           ? t('motorsScreen.holdBlockedControlOff')
           : motorConfigurationBusy || quickConfigBusy
@@ -1262,13 +1361,21 @@ export function MotorsScreenView({
         if (sessionState !== 'ON') {
           return;
         }
+        // M-F3 §34/§35: while the topology is drafted or saved-but-not-
+        // rebooted, motor control may not be ENABLED - the switch carries
+        // the reason (enableBlockedReason on the workspace). Turning it
+        // OFF below is never blocked: withdrawing permission must always
+        // work, and it stops.
+        if (topologyInterlocked) {
+          return;
+        }
         setMotorControlEnabled(true);
         return;
       }
       setMotorControlEnabled(false);
       operatorRef.current?.stopAll();
     },
-    [sessionState],
+    [sessionState, topologyInterlocked],
   );
 
   /**
@@ -1595,6 +1702,26 @@ export function MotorsScreenView({
   const effectiveMixerModeRaw = liveMixerModeRaw ?? configTopology?.mixerModeRaw;
   const effectiveYawMotorsReversed =
     liveYawMotorsReversed ?? configTopology?.yawMotorsReversed;
+  /*
+   * THE DRAFT PREVIEW - M-F3 §32/§33. While the strip holds an unsaved
+   * mixer or props draft, the AIRCRAFT DRAWING follows the draft - under
+   * an explicit «معاينة» label and an activation note - and the identity
+   * section (whose words are about the ACTIVE aircraft) is withheld,
+   * so one screen can never show a draft drawing beside active words.
+   * Draft motor numbers come from the verified reference's own fixed
+   * table count for that mixer; a runtime-count mixer (CUSTOM) has no
+   * authored artwork to preview and the label + caption stand alone.
+   * STRICTLY DISPLAY: displaySlots, identitySlots, every wording guard
+   * and every command gate keep reading the ACTIVE values - and the
+   * §34 interlock refuses motor test while this preview exists at all.
+   */
+  const previewingTopology =
+    airframeEditState !== undefined &&
+    (airframeEditState.dirtyMixer || airframeEditState.dirtyProps);
+  const previewMixerModeRaw =
+    airframeEditState?.draftMixerModeRaw ?? effectiveMixerModeRaw;
+  const previewYawMotorsReversed =
+    airframeEditState?.draftYawMotorsReversed ?? effectiveYawMotorsReversed;
   const displaySlots: readonly number[] =
     snapshot?.motorScope?.motorCount !== undefined ||
     snapshot?.motorDomain?.motorCount !== undefined
@@ -1602,6 +1729,31 @@ export function MotorsScreenView({
           snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount,
         )
       : motorTestPulseMotorNumbers(configTopology?.motorCount);
+  /** The motor list the PREVIEW draws. For a drafted mixer it is the
+   * verified reference's own fixed table count (1..N); the active list
+   * would be the wrong aircraft's. A strategy other than a fixed table
+   * (CUSTOM) has no authored preview and yields the empty list. */
+  const previewMotorNumbers: readonly number[] =
+    airframeEditState?.draftMixerModeRaw !== undefined
+      ? (() => {
+          const row = BETAFLIGHT_MIXER_REFERENCE_V147.find(
+            candidate => candidate.mixerId === airframeEditState.draftMixerModeRaw,
+          );
+          return row?.motorCountStrategy.kind === 'TABLE_FIXED'
+            ? Array.from({length: row.motorCountStrategy.count}, (_, i) => i + 1)
+            : [];
+        })()
+      : displaySlots;
+  const previewMixerName = (() => {
+    const row = BETAFLIGHT_MIXER_REFERENCE_V147.find(
+      candidate => candidate.mixerId === previewMixerModeRaw,
+    );
+    return row === undefined
+      ? previewMixerModeRaw === undefined
+        ? t('motorsScreen.mixerUnreadValue')
+        : t('motorsScreen.mixerUnknownValue', {id: previewMixerModeRaw})
+      : t(`motorsScreen.topology.airframe.${row.firmwareName}`);
+  })();
 
   /**
    * MAY THE SHIPPED PHYSICAL-IDENTIFICATION MODEL BE APPLIED HERE?
@@ -1799,28 +1951,33 @@ export function MotorsScreenView({
         </Text>
       </Pressable>
 
-      {/* THE HINT IS A HINT, not button furniture. Same words, same
-          truth, one caption line under the control. */}
-      <Text style={styles.holdHint} testID="motors-hold-hint">
-        {holdBlockedReason === undefined
-          ? t('motorsScreen.holdHint')
-          : t('motorsScreen.holdBlockedHint')}
-      </Text>
+      {/* THE HINT IS A HINT, not button furniture - and it renders ONLY
+          while the control is usable. While blocked, the block below is
+          the whole story; a second caption saying "it is locked" was one
+          of the M-F3 §38 duplicates. */}
+      {holdBlockedReason === undefined ? (
+        <Text style={styles.holdHint} testID="motors-hold-hint">
+          {t('motorsScreen.holdHint')}
+        </Text>
+      ) : null}
 
-      {/* A locked safety control must never look like dead pixels. It
-          issues zero commands either way; it still says why - beside the
-          control rather than inside it, so a blocked reason can grow
-          without resizing a pressable surface. */}
+      {/* A locked safety control must never look like dead pixels. ONE
+          block, TWO sentences, nothing else anywhere on the page - M-F3
+          §38-§40. The first line is the CAUSE (the same canonical reason
+          assistive technology reads); the second is the safety fact no
+          other line carries: pressing this sends nothing. The title that
+          used to sit above them («لا يمكن اختبار المحرك الآن») said what
+          the disabled button and the reason already say, and is gone. */}
       {holdBlockedReason !== undefined ? (
         <View style={styles.holdBlocked} testID="motors-hold-blocked">
-          <Text style={styles.holdBlockedTitle}>
-            {t('motorsScreen.holdBlockedTitle')}
-          </Text>
           <Text
             style={styles.holdBlockedReason}
             testID="motors-hold-blocked-reason"
           >
             {holdBlockedReason}
+          </Text>
+          <Text style={styles.holdBlockedSafety}>
+            {t('motorsScreen.holdBlockedHint')}
           </Text>
         </View>
       ) : null}
@@ -2086,6 +2243,7 @@ export function MotorsScreenView({
             liveYawMotorsReversed={liveYawMotorsReversed}
             writesLocked={holdOwned || mayBeLive || motorControlEnabled}
             onTopology={setConfigTopology}
+            onEditState={setAirframeEditState}
             onBusyChange={setQuickConfigBusy}
             directionOpen={directionOpen}
             reorderOpen={reorderOpen}
@@ -2093,25 +2251,104 @@ export function MotorsScreenView({
             onToggleReorder={() => setReorderOpen(open => !open)}
             controller={airframeConfigPort}
           />
-          <MotorIdentitySection
-            variant="MAP"
-            slots={displaySlots}
-            selectedSlot={selectedSlot}
-            onSelectSlot={handleSelectSlot}
-            capability={identificationCapability}
-            mixerModeRaw={effectiveMixerModeRaw}
-            yawMotorsReversed={effectiveYawMotorsReversed}
-            diagramMotorNumbers={displaySlots}
-            active={active}
-            liveSlot={liveSlot}
-            liveActivity={liveActivity}
-            verification={verification}
-            receipt={receipt}
-            onConfirm={handleConfirmObservation}
-            onMultipleMotorsReported={handleMultipleMotors}
-            onClearObservation={handleClearObservation}
-            outputOrder={outputOrderValues}
-          />
+          {/* ============================== M-F3 §9/§16 - THE TOOLS OPEN
+              HERE, directly under the buttons that open them. They used
+              to mount ~1000px lower, after the whole workspace: pressing
+              «اتجاه المحركات» visibly changed nothing but the button's
+              colour - P0-2/P0-3's shared placement defect. Same
+              components, same controllers, same gates; only the mount
+              moved to where the press happened. */}
+          {directionOpen ? (
+            <View style={styles.primaryToolPanel} testID="motors-direction-tool">
+              <MotorDirectionWorkflow
+                motorNumbers={identitySlots}
+                selectedMotor={selectedSlot}
+                onSelectMotor={handleSelectSlot}
+                statuses={directionStatuses}
+                onAnswer={handleDirectionAnswer}
+                propsOffAcknowledged={directionAck}
+                onAcknowledgePropsOff={setDirectionAck}
+                spinControl={holdControl}
+                operator={operator}
+                identificationCapability={identificationCapability}
+                commandCapability={directionCommandCapability}
+                expectedRotation={expectedMotorRotation(
+                  effectiveMixerModeRaw,
+                  selectedSlot,
+                  effectiveYawMotorsReversed,
+                )}
+                verification={verification}
+                commanded={selectedDirectionCommand}
+                onCommandOutcome={handleDirectionCommandOutcome}
+                onDirtyChange={setEscDirectionDirty}
+                authoringRequestId={directionAuthoringRequest}
+              />
+            </View>
+          ) : null}
+          {reorderOpen ? (
+            <View style={styles.primaryToolPanel} testID="motors-reorder-tool">
+              <MotorOutputMappingSection
+                sessionId={sessionId}
+                motorCount={liveMotorCount}
+                verification={verification}
+                capability={identificationCapability}
+                onEndMotorTestSession={handleEndSessionForConfiguration}
+                onDirtyChange={setOutputOrderDirty}
+                blockedReason={configurationReadBlockedReason}
+                onValuesChange={setOutputOrderValues}
+              />
+            </View>
+          ) : null}
+          {previewingTopology ? (
+            /* M-F3 §33 - THE DRAFT, LABELLED AS A DRAFT. The drawing
+               follows the unsaved selection so the tap visibly answers,
+               under «معاينة: …» and the activation sentence. The identity
+               section is withheld here on purpose: its words describe the
+               ACTIVE aircraft, and rendering them beside a draft drawing
+               is the two-truths screen §32 forbids. Motor test is
+               interlocked for as long as this block exists (§34). */
+            <View style={styles.topologyPreview} testID="motors-topology-preview">
+              <Text
+                style={styles.topologyPreviewLabel}
+                testID="motors-topology-preview-label"
+              >
+                {t('motorsScreen.topologyPreviewLabel', {name: previewMixerName})}
+              </Text>
+              <MotorAirframeDiagram
+                selectedSlot={selectedSlot}
+                onSelectSlot={handleSelectSlot}
+                mixerModeRaw={previewMixerModeRaw}
+                yawMotorsReversed={previewYawMotorsReversed}
+                motorNumbers={previewMotorNumbers}
+              />
+              <Text
+                style={styles.topologyPreviewNote}
+                testID="motors-topology-preview-note"
+              >
+                {t('motorsScreen.topologyPreviewNote')}
+              </Text>
+            </View>
+          ) : (
+            <MotorIdentitySection
+              variant="MAP"
+              slots={displaySlots}
+              selectedSlot={selectedSlot}
+              onSelectSlot={handleSelectSlot}
+              capability={identificationCapability}
+              mixerModeRaw={effectiveMixerModeRaw}
+              yawMotorsReversed={effectiveYawMotorsReversed}
+              diagramMotorNumbers={displaySlots}
+              active={active}
+              liveSlot={liveSlot}
+              liveActivity={liveActivity}
+              verification={verification}
+              receipt={receipt}
+              onConfirm={handleConfirmObservation}
+              onMultipleMotorsReported={handleMultipleMotors}
+              onClearObservation={handleClearObservation}
+              outputOrder={outputOrderValues}
+            />
+          )}
           {/* SESSION READINESS, BESIDE THE HOLD CONTROL IT DESCRIBES.
               These two blocks used to live at the bottom of the tools
               bench. "الجلسة جاهزة - اضغط مطولًا على M1" and the exact
@@ -2171,6 +2408,13 @@ export function MotorsScreenView({
             onSessionChange={handleSessionChange}
             enabled={motorControlEnabled}
             onEnableChange={handleMotorControlChange}
+            enableBlockedReason={
+              topologyDirty
+                ? t('motorsScreen.holdBlockedTopologyDirty')
+                : topologyPendingReboot
+                  ? t('motorsScreen.holdBlockedTopologyPendingReboot')
+                  : undefined
+            }
           />
           {/* M-E §17 / §32: THE IDENTIFICATION ACTION, WITH THE CONTROLS.
               It used to live inside the verification wizard, which is a
@@ -2184,12 +2428,24 @@ export function MotorsScreenView({
               the sliders beside it already use on every airframe.
               The gate is unchanged: operator present, no reconnection
               required, activation allowed. */}
-          <View testID="motors-identify-action">{holdControl}</View>
-            {/* LIVE ESC TELEMETRY BELONGS BESIDE THE SLIDERS, not in an
-                advanced drawer: RPM and temperature are what a person
-                reads WHILE a motor is spinning, and reading them meant
-                scrolling 2,300px away from the control that produced
-                them. The panel is unchanged - only where it sits. */}
+          {/* ONE spin control, ONE mount. While the direction workflow is
+              open the hold renders inside it (same element, same gates,
+              same stop seams) - two simultaneous mounts would be two
+              claims to one gesture. */}
+          {directionOpen ? null : (
+            <View testID="motors-identify-action">{holdControl}</View>
+          )}
+          </View>
+        </View>
+
+        {/* LIVE ESC TELEMETRY, FULL WIDTH AFTER THE WORKSPACE - M-F3
+            §42/§43. It used to sit inside the control column, where on a
+            desktop it inherited the column's half width and left the
+            other half of the page empty below the airframe column - a
+            dead half-page under the drawing. RPM and temperature are a
+            row of per-motor readouts; they read best across the whole
+            content width, directly under BOTH columns they describe.
+            The panel itself is unchanged - only where it sits. */}
         {/* Outside a test lease monitoring uses the canonical scheduler.
             While the lease is held it performs fixed read-only requests
             through that SAME serialized lease, without bypassing pulse or
@@ -2204,53 +2460,6 @@ export function MotorsScreenView({
             motorTestDiagnostics={snapshot?.diagnostics}
             support={snapshot?.motorDiagnosticsSupport}
           />
-        ) : null}
-          </View>
-        </View>
-
-        {/* ================================================ M-F2 PRIMARY
-            MOTOR TOOLS - opened from the airframe strip, one click, and
-            rendered full-width straight under the workspace so the model
-            stays on screen above them while they are used.
-
-            THE SAME COMPONENTS the advanced disclosure used to hold: the
-            three-truths direction workflow (expected / commanded /
-            observed, never merged, an acknowledgement never physical)
-            and the read-then-transact output reorder. Moving a mount
-            point changes no semantics - and the suites that proved those
-            semantics now run against this placement. */}
-        {directionOpen ? (
-          <View style={styles.primaryToolPanel} testID="motors-direction-tool">
-            <MotorDirectionSection
-              selectedMotor={selectedSlot}
-              operator={operator}
-              identificationCapability={identificationCapability}
-              commandCapability={directionCommandCapability}
-              expectedRotation={expectedMotorRotation(
-                effectiveMixerModeRaw,
-                selectedSlot,
-                effectiveYawMotorsReversed,
-              )}
-              verification={verification}
-              commanded={selectedDirectionCommand}
-              onCommandOutcome={handleDirectionCommandOutcome}
-              onDirtyChange={setEscDirectionDirty}
-            />
-          </View>
-        ) : null}
-        {reorderOpen ? (
-          <View style={styles.primaryToolPanel} testID="motors-reorder-tool">
-            <MotorOutputMappingSection
-              sessionId={sessionId}
-              motorCount={liveMotorCount}
-              verification={verification}
-              capability={identificationCapability}
-              onEndMotorTestSession={handleEndSessionForConfiguration}
-              onDirtyChange={setOutputOrderDirty}
-              blockedReason={configurationReadBlockedReason}
-              onValuesChange={setOutputOrderValues}
-            />
-          </View>
         ) : null}
 
         {/* ================================================ REGION C
@@ -2916,18 +3125,40 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
     alignSelf: 'stretch',
   },
-  holdBlockedTitle: {
-    ...typography.caption,
-    color: colors.accentStrong,
-    fontWeight: '700',
-    textAlign: 'center',
-    writingDirection: 'rtl',
-  },
   holdBlockedReason: {
     ...typography.body,
     color: colors.textPrimary,
     textAlign: 'center',
     writingDirection: 'rtl',
+  },
+  holdBlockedSafety: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    writingDirection: 'rtl',
+  },
+  /* The draft preview block - a dashed frame so the drawing inside can
+     never be mistaken for the active aircraft, with the label above and
+     the activation sentence below. */
+  topologyPreview: {
+    gap: spacing.xs,
+    padding: spacing.sm,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    borderColor: colors.warning,
+  },
+  topologyPreviewLabel: {
+    ...typography.label,
+    color: colors.textPrimary,
+    fontWeight: '700',
+    writingDirection: 'rtl',
+  },
+  topologyPreviewNote: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    writingDirection: 'rtl',
+    maxWidth: PROSE_MEASURE,
   },
   advancedEmpty: {
     padding: spacing.md,

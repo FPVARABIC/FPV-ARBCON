@@ -93,6 +93,16 @@ export interface MotorWorkspaceProps {
   /** True once the operator's motor-control intent is granted. */
   readonly enabled: boolean;
   readonly onEnableChange: (next: boolean) => void;
+  /**
+   * A screen-level reason motor control may not be ENABLED right now -
+   * M-F3 §34/§35's topology interlock ("the drafted or saved-but-not-
+   * rebooted airframe is not the one the firmware is flying"). When set,
+   * the enable switch is disabled and this exact sentence renders beside
+   * it, so the refusal is never a control that silently does nothing.
+   * UI-level and fail-closed: it can only ever REMOVE the ability to
+   * enable, never grant one, and no controller gate reads it.
+   */
+  readonly enableBlockedReason?: string;
   /** Compact width stacks the master row; wide puts controls side-by-side. */
   readonly compact?: boolean;
 }
@@ -317,6 +327,7 @@ export function MotorWorkspace({
   onSessionChange,
   enabled,
   onEnableChange,
+  enableBlockedReason,
   compact = false,
 }: MotorWorkspaceProps): React.JSX.Element {
   const { t } = useTranslation();
@@ -524,20 +535,35 @@ export function MotorWorkspace({
               )}
             </Text>
           </View>
-          <Text style={styles.phaseText}>
-            {sessionOn
-              ? t('motorsScreen.controlToggleHint')
-              : t('motorsScreen.controlRequiresSession')}
-          </Text>
+          {sessionOn && enableBlockedReason !== undefined && !enabled ? (
+            <Text
+              style={styles.enableBlockedText}
+              testID="motor-workspace-enable-blocked"
+            >
+              {enableBlockedReason}
+            </Text>
+          ) : (
+            <Text style={styles.phaseText}>
+              {sessionOn
+                ? t('motorsScreen.controlToggleHint')
+                : t('motorsScreen.controlRequiresSession')}
+            </Text>
+          )}
         </View>
         <ToggleSwitch
           value={enabled && sessionOn}
           onValueChange={onEnableChange}
           // Not operational without a session - PART C. Disabled rather
           // than hidden, so the hierarchy stays visible and the operator
-          // can see WHY it cannot be used.
+          // can see WHY it cannot be used. The screen-level topology
+          // interlock disables ENABLING the same way - the reason renders
+          // beside the switch - but never blocks turning control OFF:
+          // withdrawing permission (which stops) must always work.
           disabled={
-            !sessionOn || phase === 'ENABLING' || phase === 'STOPPING'
+            !sessionOn ||
+            phase === 'ENABLING' ||
+            phase === 'STOPPING' ||
+            (enableBlockedReason !== undefined && !enabled)
           }
           accessibilityLabel={`${t('motorsScreen.controlToggleTitle')} — ${t(
             commandable
@@ -712,6 +738,12 @@ const styles = StyleSheet.create({
   phaseText: {
     ...typography.caption,
     color: colors.textSecondary,
+  },
+  enableBlockedText: {
+    ...typography.caption,
+    color: colors.warning,
+    fontWeight: '600',
+    writingDirection: 'rtl',
   },
   /* STATE IS TEXT IN A SHAPE, never colour alone: the label inside the
      chip is the truth, the border is only reinforcement. */

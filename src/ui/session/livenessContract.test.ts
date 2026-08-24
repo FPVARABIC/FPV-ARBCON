@@ -618,6 +618,15 @@ const SCREEN_PHASE_FILES: readonly string[] = [
   'src/ui/screens/VideoTransmitterScreen.tsx',
   'src/ui/screens/MotorOutputMappingSection.tsx',
   'src/ui/screens/MotorOutputReorderPanel.tsx',
+  /* M-F3: the airframe strip's LOADING and its EditPhase
+     ('SAVING' | 'REBOOTING') each await exactly one
+     MotorConfigurationController call (load / save / requestReboot),
+     whose every wait is an MSP request bounded by
+     MSP_RESPONSE_TIMEOUT_MILLIS through the operations engine - link
+     loss resolves as SESSION_ENDED / OUTCOME_UNKNOWN rather than
+     hanging - and the phase returns to IDLE in a mounted-guarded
+     `finally` on every path. No timer of its own is needed. */
+  'src/ui/screens/MotorAirframeControls.tsx',
   'src/ui/screens/SensorsScreen.tsx',
 ];
 

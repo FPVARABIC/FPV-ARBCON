@@ -309,6 +309,7 @@ export type {
   MotorConfigurationSaveOutcome,
   MotorOutputOrderLoadOutcome,
   MotorOutputOrderSaveOutcome,
+  MotorRebootOutcome,
   EscDirectionOutcome,
   MotorConfigurationControllerOptions,
   MotorConfigurationSessionCoordinator,

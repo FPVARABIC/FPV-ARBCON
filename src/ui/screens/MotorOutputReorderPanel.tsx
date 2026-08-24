@@ -68,6 +68,13 @@ export function MotorOutputReorderPanel({
     { text: string; danger: boolean } | undefined
   >();
 
+  /* The READINESS precheck only: "would the observation set derive an
+     order?", asked against an identity seed. The template this flow maps
+     positions with is the four-corner Quad X one, so four is the flow's
+     own size - this panel is mounted ONLY behind the airframe-template
+     gate (M-F3 §10: the guided tool keeps its template; the DIRECT
+     editor in the section above serves every other count). The actual
+     derivation below always uses the values READ from the FC. */
   const evidence = useMemo(
     () => deriveMotorOutputOrder([0, 1, 2, 3], verification),
     [verification],

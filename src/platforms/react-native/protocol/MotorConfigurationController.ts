@@ -22,6 +22,7 @@ import {
   MSP_MIXER_CONFIG,
   MSP_MOTOR_3D_CONFIG,
   MSP_MOTOR_CONFIG,
+  MSP_REBOOT,
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_FEATURE_CONFIG,
   MSP_SET_MIXER_CONFIG,
@@ -195,6 +196,28 @@ export type MotorOutputOrderSaveOutcome =
     }
   | { readonly kind: 'FAILED'; readonly error: unknown }
   | { readonly kind: 'UNCONFIRMED'; readonly stage: 'OUTPUT_ORDER' | 'EEPROM' }
+  | { readonly kind: 'SESSION_ENDED' };
+
+/**
+ * The explicit reboot step of the M-F3 §36 save lifecycle. A saved mixer
+ * or props flag governs only after mixerInit() runs at boot, so the strip
+ * offers this as its own verified action AFTER a verified save - never
+ * silently inside one.
+ *
+ * REBOOT_REQUESTED.acknowledged distinguishes "the FC answered the
+ * MSP_REBOOT frame before restarting" from "the link dropped around the
+ * request" - which is the expected shape of a reboot actually happening,
+ * and therefore not a failure. Neither value claims the FC came back:
+ * that is only established by the reconnect reading the new configuration.
+ */
+export type MotorRebootOutcome =
+  | { readonly kind: 'REBOOT_REQUESTED'; readonly acknowledged: boolean }
+  | { readonly kind: 'UNCONFIRMED' }
+  | {
+      readonly kind: 'REJECTED';
+      readonly reason: MotorConfigurationBlockReason;
+    }
+  | { readonly kind: 'FAILED'; readonly error: unknown }
   | { readonly kind: 'SESSION_ENDED' };
 
 export type EscDirectionOutcome =
@@ -1007,6 +1030,103 @@ export class MotorConfigurationController {
             persisted: false,
           };
         }
+      }
+    } finally {
+      interlock.release();
+    }
+  }
+
+  /**
+   * Send MSP_REBOOT so a persisted mixer/props save can take effect - the
+   * same frame and the same guard order the General controller's
+   * save-and-reboot uses, but as a standalone, explicitly requested step:
+   * DISARMED is re-verified immediately before the frame, because
+   * restarting an armed flight controller is the one thing this must
+   * never do, and the link dropping right after the request is reported
+   * as the reboot proceeding, not as an error.
+   */
+  async requestReboot(sessionId: string): Promise<MotorRebootOutcome> {
+    const preflight = this.captureSession(
+      sessionId,
+      'MOTOR_CONFIGURATION_WRITE',
+    );
+    if ('reason' in preflight) {
+      return { kind: 'REJECTED', reason: preflight.reason };
+    }
+    const { client, scheduler, generation, epoch } = preflight;
+    let interlock;
+    try {
+      interlock = acquireMotorConfigurationInterlock(client);
+    } catch (error) {
+      return error instanceof MotorConfigurationTransactionInProgressError
+        ? { kind: 'REJECTED', reason: 'CONFIGURATION_BUSY' }
+        : { kind: 'FAILED', error };
+    }
+    try {
+      const acquisition = this.boxIdsFor(sessionId, client);
+      const identity: BoxIdsOwnerIdentity = {
+        physicalGeneration: generation,
+        mspEpoch: epoch,
+      };
+      const result = await this.operations(sessionId, client, scheduler).execute<{
+        readonly acknowledged: boolean;
+      }>({
+        id: `motor-config:reboot:${sessionId}:${generation}`,
+        sessionEffect: 'EXPECT_REBOOT',
+        validate: context =>
+          context.clientState === 'READY'
+            ? { allowed: true }
+            : {
+                allowed: false,
+                error: new MotorConfigurationPreflightError('LINK_RECOVERING'),
+              },
+        execute: async requester => {
+          this.assertLivePreflight(sessionId, client, generation, epoch);
+          await this.assertDisarmed(
+            sessionId,
+            client,
+            generation,
+            epoch,
+            requester,
+            acquisition,
+            identity,
+          );
+          try {
+            await requester.request(MSP_REBOOT, EMPTY_PAYLOAD, {
+              wireFormat: 'v1',
+            });
+            return { acknowledged: true };
+          } catch (error) {
+            if (isDefiniteNotApplied(error)) {
+              throw new MotorConfigurationDefiniteWriteError(error, []);
+            }
+            // The restarting FC tears the link down; an unanswered
+            // MSP_REBOOT is the expected shape of the reboot happening.
+            return { acknowledged: false };
+          }
+        },
+      });
+      switch (result.status) {
+        case 'SUCCEEDED':
+          return {
+            kind: 'REBOOT_REQUESTED',
+            acknowledged: result.result.acknowledged,
+          };
+        case 'OUTCOME_UNKNOWN':
+          // The link died before the reboot frame was dispatched - during
+          // the disarmed preflight, for example. Whether the FC is
+          // restarting is genuinely unknown; do not claim it is.
+          return { kind: 'UNCONFIRMED' };
+        case 'SESSION_ENDED':
+          return { kind: 'SESSION_ENDED' };
+        default:
+          if (result.error instanceof MotorConfigurationPreflightError) {
+            return { kind: 'REJECTED', reason: result.error.reason };
+          }
+          if (result.error instanceof MotorConfigurationDefiniteWriteError) {
+            return { kind: 'FAILED', error: result.error.cause };
+          }
+          return { kind: 'FAILED', error: result.error };
       }
     } finally {
       interlock.release();

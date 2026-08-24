@@ -11,6 +11,7 @@ import {
   MSP_MIXER_CONFIG,
   MSP_MOTOR_3D_CONFIG,
   MSP_MOTOR_CONFIG,
+  MSP_REBOOT,
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_FEATURE_CONFIG,
   MSP_SET_MIXER_CONFIG,
@@ -957,5 +958,80 @@ describe('M-D §0 - what the Motors screen really does with command 43', () => {
     expect(harness.client.calls.map(call => call.command)).not.toContain(
       MSP_SET_MIXER_CONFIG,
     );
+  });
+});
+/* ================================================================== *
+ * M-F3 §36 - the explicit reboot step, through the production path
+ * ================================================================== */
+
+describe('requestReboot - the §36 lifecycle step', () => {
+  it('re-verifies DISARMED and only then sends MSP_REBOOT, acknowledged', async () => {
+    const harness = makeHarness();
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    harness.client.enqueue(MSP_REBOOT, { payload: Uint8Array.from([]) });
+
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome).toEqual({ kind: 'REBOOT_REQUESTED', acknowledged: true });
+
+    const commands = harness.client.calls.map(call => call.command);
+    // Exactly one reboot frame, and the fresh disarmed proof precedes it.
+    expect(commands.filter(command => command === MSP_REBOOT)).toHaveLength(1);
+    expect(commands.indexOf(MSP_STATUS_EX)).toBeGreaterThanOrEqual(0);
+    expect(commands.indexOf(MSP_STATUS_EX)).toBeLessThan(
+      commands.indexOf(MSP_REBOOT),
+    );
+    // v1 wire, empty payload - the same frame the General controller's
+    // save-and-reboot sends.
+    const rebootCall = harness.client.calls.find(
+      call => call.command === MSP_REBOOT,
+    );
+    expect(rebootCall?.options.wireFormat).toBe('v1');
+    expect(rebootCall?.payload).toHaveLength(0);
+  });
+
+  it('REFUSES to reboot an armed flight controller - no MSP_REBOOT frame exists', async () => {
+    const harness = makeHarness();
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(true) });
+
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome).toEqual({ kind: 'REJECTED', reason: 'FC_ARMED' });
+    expect(harness.client.calls.map(call => call.command)).not.toContain(
+      MSP_REBOOT,
+    );
+  });
+
+  it('a link that drops around the reboot frame is the reboot proceeding, not a failure', async () => {
+    const harness = makeHarness();
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    // The restarting FC tears the link down before answering - the
+    // expected shape of a reboot actually happening.
+    harness.client.enqueue(MSP_REBOOT, {
+      reject: Object.assign(new Error('link dropped'), { code: 'MSP_DETACHED' }),
+    });
+
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome).toEqual({ kind: 'REBOOT_REQUESTED', acknowledged: false });
+  });
+
+  it('a frame the FC definitely refused is FAILED, never "rebooting"', async () => {
+    const harness = makeHarness();
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    harness.client.enqueue(MSP_REBOOT, {
+      reject: Object.assign(new Error('refused'), { code: 'MSP_REMOTE_ERROR' }),
+    });
+
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome.kind).toBe('FAILED');
+  });
+
+  it('refuses while a motor output may be engaged, before touching the link', async () => {
+    const harness = makeHarness({ motorTestActive: true });
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome).toEqual({ kind: 'REJECTED', reason: 'MOTOR_TEST_ACTIVE' });
+    expect(harness.client.calls).toEqual([]);
   });
 });

@@ -305,20 +305,42 @@ describe('MotorAirframeDiagram', () => {
     }
   });
 
-  /* ---------------- §22 / §23: coaxial aircraft read as coaxial ---------- */
+  /* ------- §22 / §23, reworked by M-F3 §24/§26: coaxial = per-motor ------- */
 
-  it('draws a coaxial arm as one node carrying both motor numbers', () => {
+  it('gives an X8 eight separate nodes: two decks sharing four arms', () => {
     const nodes = computeDiagramNodes(layoutFor(11, 8));
-    expect(nodes).toHaveLength(4);
+    expect(nodes).toHaveLength(8);
+    // One node per motor, in motor order, each wearing exactly one number.
     expect(nodes.map(node => [...node.slots])).toEqual([
+      [1],
+      [2],
+      [3],
+      [4],
+      [5],
+      [6],
+      [7],
+      [8],
+    ]);
+    // The pairing survives as SHARED ARMS, not merged identities: M1+M5,
+    // M2+M6, M3+M7, M4+M8 sit on the same authored (x, y), upper over
+    // lower - straight from the firmware table's own row comments.
+    for (const [upper, lower] of [
       [1, 5],
       [2, 6],
       [3, 7],
       [4, 8],
-    ]);
+    ] as const) {
+      const upperNode = nodes[upper - 1];
+      const lowerNode = nodes[lower - 1];
+      expect(upperNode.deck).toBe('UPPER');
+      expect(lowerNode.deck).toBe('LOWER');
+      expect(lowerNode.armKey).toBe(upperNode.armKey);
+      expect(lowerNode.x).toBe(upperNode.x);
+      expect(lowerNode.y).toBe(upperNode.y);
+    }
   });
 
-  it('walks between the two motors on a coaxial arm when it is pressed', () => {
+  it('selects each rotor of a coaxial pair directly from its own node', () => {
     const picked: number[] = [];
     const tree = render({
       mixerModeRaw: 11,
@@ -326,17 +348,90 @@ describe('MotorAirframeDiagram', () => {
       selectedSlot: 1,
       onSelectSlot: slot => picked.push(slot),
     });
-    const arm = tree.root.find(
+    // M5 - the LOWER rotor of M1's arm - has its own touch target. It was
+    // previously reachable only by pressing the shared node twice; M-F3
+    // §24 requires selecting M5 without passing through M1.
+    const lower = tree.root.find(
+      node => node.props?.testID === 'motors-airframe-slot-5',
+    );
+    act(() => lower.props.onPress());
+    // And pressing M1's own node selects M1 - never a "walk" to M5.
+    const upper = tree.root.find(
       node => node.props?.testID === 'motors-airframe-slot-1',
     );
-    act(() => arm.props.onPress());
-    expect(picked).toEqual([5]);
+    act(() => upper.props.onPress());
+    expect(picked).toEqual([5, 1]);
     act(() => tree.unmount());
   });
 
   it('gives a flat octo eight separate nodes, because it has eight arms', () => {
     expect(computeDiagramNodes(layoutFor(12, 8))).toHaveLength(8);
     expect(computeDiagramNodes(layoutFor(13, 8))).toHaveLength(8);
+  });
+
+  it('draws the LOWER rotor visibly INWARD of its UPPER partner - never on top of it', () => {
+    /* M-F3 §24/§26: both rotors of a coaxial arm are full-size targets,
+       so the lower one is pulled toward the hub along the arm. If that
+       offset regressed to zero the two 44px discs would coincide and
+       "two independent motors" would be one ambiguous pixel stack. The
+       flattened style is measured, not the style array, so the pin holds
+       however the styles compose. */
+    const tree = render({
+      mixerModeRaw: 11,
+      motorNumbers: [1, 2, 3, 4, 5, 6, 7, 8],
+    });
+    const flat = (slot: number) => {
+      const node = tree.root.findAll(
+        candidate =>
+          candidate.props?.testID === `motors-airframe-slot-${slot}` &&
+          candidate.props?.style !== undefined,
+      )[0];
+      const styleOf = (value: unknown): Record<string, unknown> =>
+        Array.isArray(value)
+          ? value.reduce<Record<string, unknown>>(
+              (merged, entry) => ({...merged, ...styleOf(entry)}),
+              {},
+            )
+          : ((value ?? {}) as Record<string, unknown>);
+      return styleOf(node.props.style);
+    };
+    const upper = flat(1); // REAR_R tip
+    const lower = flat(5); // its LOWER partner
+    const dx = Number(lower.left) - Number(upper.left);
+    const dy = Number(lower.top) - Number(upper.top);
+    const separation = Math.hypot(dx, dy);
+    // One full node size: the discs TOUCH and never overlap, so neither
+    // motor number can hide behind the other (the §61 finding).
+    expect(separation).toBeGreaterThan(42);
+    // And INWARD: M1 sits rear-right (positive x, positive y), so its
+    // lower partner moves toward the centre - smaller left AND top.
+    expect(dx).toBeLessThan(0);
+    expect(dy).toBeLessThan(0);
+    // Draw order: the upper disc wins where they overlap.
+    expect(Number(upper.zIndex)).toBeGreaterThan(Number(lower.zIndex));
+    act(() => tree.unmount());
+  });
+
+  it('paints the nose word above every disc, from inside the stage', () => {
+    // Y6 measured in Chromium: the two inward lower discs flank the hub
+    // top and covered 3.5px of each end of «المقدمة». The pointer is a
+    // stage-level layer AFTER the nodes with a zIndex above both decks -
+    // the word wins, and pointerEvents none keeps the discs tappable.
+    const tree = render({mixerModeRaw: 10, motorNumbers: [1, 2, 3, 4, 5, 6]});
+    const front = tree.root.find(
+      node => node.props?.testID === 'motors-diagram-front',
+    );
+    const frontStyle = StyleSheet.flatten(front.props.style);
+    expect(Number(frontStyle.zIndex)).toBeGreaterThan(4);
+    expect(front.props.pointerEvents).toBe('none');
+    // It is a child of the stage itself - not buried in the body layer
+    // the discs paint over.
+    let parent = front.parent;
+    while (parent && parent.props?.testID === undefined) {
+      parent = parent.parent;
+    }
+    expect(parent?.props?.testID).toBe('motors-airframe-stage');
+    act(() => tree.unmount());
   });
 
   /* ---------------- Colour is never the only carrier ---------------- */

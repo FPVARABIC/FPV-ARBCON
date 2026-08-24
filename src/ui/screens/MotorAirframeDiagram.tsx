@@ -31,13 +31,16 @@
  * mixer does not determine a direction (a tricopter's motors, a custom
  * mixer) or the flag is unread, no arrow renders - absence, not a guess.
  *
- * COAXIAL AIRCRAFT ARE DRAWN AS COAXIAL. A Y6 is not a flat hexacopter
- * and an X8 is not a flat octocopter; they carry two rotors per arm. Those
- * arms render as ONE node bearing both motor numbers with an upper/lower
- * mark, because eight independently-tappable 44px targets do not fit in a
- * compact stage and spreading them around a circle would draw an aircraft
- * that does not exist. Pressing the node moves between the two motors on
- * that arm, and both are also selectable from the numbered rows.
+ * COAXIAL AIRCRAFT ARE DRAWN AS COAXIAL - AND EVERY MOTOR IS ITS OWN
+ * NODE (M-F3 §24). A Y6 is not a flat hexacopter and an X8 is not a flat
+ * octocopter; they carry two rotors per arm. Each rotor renders as its
+ * own full-size disc: the UPPER at the arm tip, the LOWER pulled inward
+ * along the same arm, visually under its partner. Six motors are six
+ * targets and eight are eight - a merged "M1/4" disc was rejected in the
+ * M-F3 release review because it made two independent motors one
+ * ambiguous control. Both discs keep the full 44px touch target; the
+ * stage clearance is computed per ARM, so the pair's deliberate
+ * closeness does not inflate the drawing.
  *
  * A view-only geometry layer: the slot handed to onSelectSlot is the same
  * number printed on the node, and no value here can reach a motor command
@@ -65,9 +68,9 @@ import {
   verificationPositionOf,
 } from '../../core/state/motorAirframeLayout';
 import type {
+  AirframeDeck,
   AirframeLayout,
   AirframeStation,
-  MotorAirframePlacement,
 } from '../../core/state/motorAirframeLayout';
 import {
   MOTOR_TEST_EXPECTED_CONFIGURATION,
@@ -155,20 +158,32 @@ export const MOTOR_AIRFRAME_STAGE_ASPECT_RATIO = 1;
 
 /** One motor node's place in the stage, in normalised -1..1 space. */
 interface DiagramNode {
-  /** The motors this node stands for. More than one means a coaxial arm. */
+  /** THE motor this node stands for. M-F3 §24/§26: every motor is its
+   * own node - a coaxial pair is two nodes sharing an arm, never one
+   * circle wearing two numbers. Kept as a one-element array so the many
+   * callers that read `slots[0]` did not all have to move at once. */
   readonly slots: readonly number[];
   readonly x: number;
   readonly y: number;
   readonly station: AirframeStation;
+  /** SINGLE for a flat arm; UPPER/LOWER for the two rotors of a coaxial
+   * arm, straight from the authored layout's firmware comments. */
+  readonly deck: AirframeDeck;
+  /** The arm this node sits on - both rotors of a coaxial pair share it.
+   * Arms, not nodes, drive the silhouette and the clearance rule. */
+  readonly armKey: string;
 }
 
 /**
- * Collapses a layout into the nodes that will actually be drawn, with the
+ * Turns a layout into the nodes that will actually be drawn, with the
  * coordinates normalised so the outermost motor touches the stage edge.
  *
- * Motors sharing a station are one node: see the coaxial note in the file
- * header. Slot order within a node is ascending, so pressing it walks the
- * arm from the upper rotor down.
+ * M-F3 §24/§26 - ONE NODE PER MOTOR, ALWAYS. The M-E compaction merged a
+ * coaxial pair into one pressable circle labelled "M1/4"; the release
+ * review rejected that outright: M4 must be selectable without selecting
+ * M1, carry its own number and its own expected-rotation mark. The two
+ * rotors still SHARE an arm (same authored x, y) - the stacked drawing
+ * happens at render time from `deck`, never by merging identities.
  */
 export function computeDiagramNodes(layout: AirframeLayout): readonly DiagramNode[] {
   const extent = layout.placements.reduce(
@@ -177,31 +192,36 @@ export function computeDiagramNodes(layout: AirframeLayout): readonly DiagramNod
     0,
   );
   const scale = extent === 0 ? 1 : 1 / extent;
-  const byStation = new Map<string, MotorAirframePlacement[]>();
-  for (const placement of layout.placements) {
-    const key = `${placement.x.toFixed(4)},${placement.y.toFixed(4)}`;
-    const bucket = byStation.get(key);
-    if (bucket === undefined) {
-      byStation.set(key, [placement]);
-    } else {
-      bucket.push(placement);
+  return Object.freeze(
+    [...layout.placements]
+      .sort((left, right) => left.motorNumber - right.motorNumber)
+      .map(placement =>
+        Object.freeze({
+          slots: Object.freeze([placement.motorNumber]),
+          x: placement.x * scale,
+          y: placement.y * scale,
+          station: stationOf(placement),
+          deck: placement.deck,
+          armKey: `${placement.x.toFixed(4)},${placement.y.toFixed(4)}`,
+        }),
+      ),
+  );
+}
+
+/** The arms of a layout: one entry per authored (x, y) station, shared by
+ * both rotors of a coaxial pair. The silhouette draws these; the stage
+ * clearance rule separates these - a coaxial pair is DELIBERATELY close,
+ * so it must not inflate the stage the way two flat arms would. */
+function armPositions(
+  nodes: readonly DiagramNode[],
+): readonly {readonly x: number; readonly y: number; readonly armKey: string}[] {
+  const seen = new Map<string, {x: number; y: number; armKey: string}>();
+  for (const node of nodes) {
+    if (!seen.has(node.armKey)) {
+      seen.set(node.armKey, {x: node.x, y: node.y, armKey: node.armKey});
     }
   }
-  return Object.freeze(
-    [...byStation.values()].map(bucket => {
-      const [first] = bucket;
-      return Object.freeze({
-        slots: Object.freeze(
-          [...bucket]
-            .sort((left, right) => left.motorNumber - right.motorNumber)
-            .map(placement => placement.motorNumber),
-        ),
-        x: first.x * scale,
-        y: first.y * scale,
-        station: stationOf(first),
-      });
-    }),
-  );
+  return Object.freeze([...seen.values()]);
 }
 
 /**
@@ -216,12 +236,15 @@ export function computeDiagramNodes(layout: AirframeLayout): readonly DiagramNod
  * floor.
  */
 export function computeAirframeStageWidth(layout: AirframeLayout): number {
-  const nodes = computeDiagramNodes(layout);
+  /* Clearance separates ARMS, never the two rotors of one coaxial arm:
+     those are stacked on purpose, and measuring their (near-zero) spacing
+     here would inflate the stage to push apart what belongs together. */
+  const arms = armPositions(computeDiagramNodes(layout));
   let closest = Number.POSITIVE_INFINITY;
-  for (let left = 0; left < nodes.length; left += 1) {
-    for (let right = left + 1; right < nodes.length; right += 1) {
-      const dx = nodes[left].x - nodes[right].x;
-      const dy = nodes[left].y - nodes[right].y;
+  for (let left = 0; left < arms.length; left += 1) {
+    for (let right = left + 1; right < arms.length; right += 1) {
+      const dx = arms[left].x - arms[right].x;
+      const dy = arms[left].y - arms[right].y;
       closest = Math.min(closest, Math.hypot(dx, dy));
     }
   }
@@ -441,17 +464,20 @@ function Silhouette({
      model keep the same proportions. */
   const hub = Math.round(stage * 0.24);
   if (layout.silhouette === 'ROTARY') {
+    /* One arm PER STATION: a coaxial pair shares its arm, so drawing per
+       node would paint the same line twice. */
+    const arms = armPositions(nodes);
     return (
       <View pointerEvents="none" style={StyleSheet.absoluteFill} testID="motors-diagram-body">
-        {nodes.map(node => {
-          const length = Math.hypot(node.x, node.y) * reach;
+        {arms.map(arm => {
+          const length = Math.hypot(arm.x, arm.y) * reach;
           if (length < 1) {
             return null;
           }
-          const angle = (Math.atan2(node.y, node.x) * 180) / Math.PI;
+          const angle = (Math.atan2(arm.y, arm.x) * 180) / Math.PI;
           return (
             <View
-              key={`arm-${node.slots.join('-')}`}
+              key={`arm-${arm.armKey}`}
               style={[
                 styles.arm,
                 {
@@ -535,6 +561,44 @@ function Silhouette({
   );
 }
 
+/* M-F3 §21/§22 - THE FRONT BELONGS TO THE AIRCRAFT.
+   A detached "المقدمة ↑" caption above the drawing was rejected in the
+   release review: orientation is a property of the airframe, so the
+   nose pointer is drawn FROM the body, along the aircraft's own
+   forward axis. Positions are physical left/top - an RTL interface
+   mirrors reading order, never which way this aircraft flies.
+
+   IT PAINTS ABOVE THE MOTOR NODES. On a Y6 the two inward lower discs
+   flank the hub top and were measured (Chromium, 240px stage) covering
+   3.5px of each end of the nose word - enough to eat the outer glyphs.
+   The word carries meaning and a disc edge is periphery, so the pointer
+   is its own stage layer after the nodes, and the word sits on a small
+   surface chip. It never overlaps any M-number or rotation mark; those
+   live at the disc centres and outward corners. */
+function NosePointer({
+  layout,
+  stage,
+}: {
+  layout: AirframeLayout;
+  stage: number;
+}): React.JSX.Element {
+  const {t} = useTranslation();
+  const hub = Math.round(stage * 0.24);
+  const noseTip = layout.silhouette === 'ROTARY' ? (stage - hub) / 2 - stage * 0.14 : stage * 0.03;
+  const noseBase = layout.silhouette === 'ROTARY' ? (stage - hub) / 2 + 2 : stage * 0.14;
+  return (
+    <View
+      pointerEvents="none"
+      style={[styles.frontPointer, {top: noseTip, height: Math.max(10, noseBase - noseTip)}]}
+      testID="motors-diagram-front"
+    >
+      <View style={styles.frontHead} />
+      <View style={[styles.frontShaft, {height: Math.max(4, noseBase - noseTip - 9)}]} />
+      <Text style={styles.frontText}>{t('motorsScreen.diagramFront')}</Text>
+    </View>
+  );
+}
+
 function MotorNode({
   node,
   stage,
@@ -552,20 +616,31 @@ function MotorNode({
   liveActivity: MotorSlotActivity | undefined;
   verifiedSlots: readonly number[];
   onSelectSlot: (slot: number) => void;
-  /** The EXPECTED rotation for this node's single rotor, if the mixer
-   * determines one. Coaxial nodes are handed undefined - their two
-   * rotors counter-rotate, so one arrow on the shared node would be
-   * wrong for one of them; the selected-motor line and the direction
-   * tool speak for each rotor there. */
+  /** The EXPECTED rotation for THIS rotor, if the mixer determines one.
+   * Every motor is its own node now - a coaxial pair is two nodes on one
+   * arm - so each rotor of a counter-rotating pair carries its own mark. */
   expectedRotation: 'CW' | 'CCW' | undefined;
 }): React.JSX.Element {
   const {t} = useTranslation();
+  const slot = node.slots[0];
   const reach = (stage - NODE_SIZE) / 2;
-  const left = stage / 2 + node.x * reach - NODE_SIZE / 2;
-  const top = stage / 2 + node.y * reach - NODE_SIZE / 2;
-  const selectedHere = node.slots.includes(selectedSlot);
-  const liveHere = liveSlot !== undefined && node.slots.includes(liveSlot);
-  const verifiedHere = node.slots.some(slot => verifiedSlots.includes(slot));
+  /* A LOWER rotor sits under the UPPER one on the same arm. On a flat
+   * drawing "under" is drawn as INWARD: the lower disc is pulled toward
+   * the hub along its own arm by exactly one node size, so the two discs
+   * TOUCH without overlapping - the §61 screenshot review caught the
+   * previous 0.72 pull hiding the lower motor's number behind the upper
+   * disc on a vertical arm. Touching still reads as one stacked pair;
+   * both numbers stay fully legible; both stay full 44px targets. The
+   * pull is a vector in frame geometry, so RTL cannot mirror it. */
+  const armLength = Math.hypot(node.x, node.y);
+  const inward = node.deck === 'LOWER' && armLength > 0 ? NODE_SIZE : 0;
+  const dx = armLength > 0 ? (-node.x / armLength) * inward : 0;
+  const dy = armLength > 0 ? (-node.y / armLength) * inward : 0;
+  const left = stage / 2 + node.x * reach - NODE_SIZE / 2 + dx;
+  const top = stage / 2 + node.y * reach - NODE_SIZE / 2 + dy;
+  const selectedHere = slot === selectedSlot;
+  const liveHere = liveSlot === slot;
+  const verifiedHere = verifiedSlots.includes(slot);
   const activity = liveHere ? liveActivity : undefined;
   const badge =
     activity !== undefined
@@ -574,18 +649,15 @@ function MotorNode({
       ? {text: t('motorsScreen.slotStateObserved'), color: colors.success}
       : undefined;
 
-  /* Pressing a coaxial arm walks to the next motor on it, so both rotors
-   * are reachable from the drawing without either needing its own target.
-   * A single-motor node simply selects that motor. */
-  const nextSlot = (): number => {
-    if (node.slots.length === 1) {
-      return node.slots[0];
-    }
-    const at = node.slots.indexOf(selectedSlot);
-    return node.slots[(at + 1) % node.slots.length];
-  };
-
   const spokenStation = t(`motorsScreen.${stationKey(node.station)}`);
+  const spokenDeck =
+    node.deck === 'SINGLE'
+      ? ''
+      : ` ${t(
+          node.deck === 'UPPER'
+            ? 'motorsScreen.deckUpper'
+            : 'motorsScreen.deckLower',
+        )}`;
   const spokenRotation =
     expectedRotation === undefined
       ? ''
@@ -594,83 +666,63 @@ function MotorNode({
             ? 'motorsScreen.expectedRotationCw'
             : 'motorsScreen.expectedRotationCcw',
         )}`;
-  const spokenSlots = node.slots
-    .map((slot, index) =>
-      node.slots.length === 1
-        ? `M${slot}`
-        : `M${slot} ${t(
-            index === 0 ? 'motorsScreen.deckUpper' : 'motorsScreen.deckLower',
-          )}`,
-    )
-    .join('، ');
 
   return (
     <Pressable
-      onPress={() => onSelectSlot(nextSlot())}
+      onPress={() => onSelectSlot(slot)}
       accessibilityRole="radio"
       accessibilityState={{selected: selectedHere}}
       // The station IS spoken: a screen-reader user cannot see where the
-      // node sits on the frame. The ROTATION is not - not even as
-      // "unknown". Nothing supplies one, and the caption says once, in
-      // words, that rotation is not read.
-      accessibilityLabel={`${spokenSlots}، ${spokenStation}${spokenRotation}${
+      // node sits on the frame - and on a coaxial arm the deck is part
+      // of the position. Rotation is spoken only where a source
+      // determines it; nothing invents one.
+      accessibilityLabel={`M${slot}${spokenDeck}، ${spokenStation}${spokenRotation}${
         badge === undefined ? '' : `، ${badge.text}`
       }`}
       style={[
         styles.motorNode,
         {left, top, width: NODE_SIZE, height: NODE_SIZE},
+        /* Draw order on a coaxial arm: the upper disc wins where the two
+         * overlap, and selecting either lifts it above both. */
+        {zIndex: (node.deck === 'LOWER' ? 1 : 2) + (selectedHere ? 2 : 0)},
+        node.deck === 'LOWER' && styles.motorNodeLowerDeck,
         selectedHere && styles.motorNodeSelected,
         verifiedHere && styles.motorNodeVerified,
         activity !== undefined && styles.motorNodeLive,
         activity !== undefined && {borderColor: activityColor(activity)},
       ]}
-      testID={`motors-airframe-slot-${node.slots[0]}`}
+      testID={`motors-airframe-slot-${slot}`}
     >
-      {/* A COAXIAL ARM LOOKS LIKE TWO DISCS, because it is two rotors.
-          The numbers already say "M1 /5" and the caption says it in
-          words; this is the third channel, for the operator who reads the
-          shape before either. */}
-      {node.slots.length > 1 ? (
-        <View pointerEvents="none" style={styles.stackRing} />
-      ) : null}
       <RotorGlyph size={Math.round(NODE_SIZE * 0.5)} active={activity !== undefined} />
-      {/* ONE Text, with the numbers nested inside it.
-          A row of two Texts was laid out right-to-left by the Arabic
-          interface, so a coaxial arm carrying motors 1 and 5 printed
-          "/5M1". Motor NUMBERING is not a writing system: the composite
-          is forced left-to-right here, exactly as the node's position is
-          computed from its coordinate and not from the locale. */}
       <Text style={styles.slotRow} numberOfLines={1}>
-        {node.slots.map((slot, index) => (
-          <Text
-            key={slot}
-            style={[
-              node.slots.length > 1 ? styles.slotStacked : styles.slot,
-              slot === selectedSlot && styles.slotSelected,
-            ]}
-            testID={`motors-diagram-slot-${slot}`}
-          >
-            {index === 0 ? `M${slot}` : `\u2009/${slot}`}
-          </Text>
-        ))}
+        <Text
+          style={[styles.slot, selectedHere && styles.slotSelected]}
+          testID={`motors-diagram-slot-${slot}`}
+        >
+          {`M${slot}`}
+        </Text>
       </Text>
       {badge === undefined ? null : (
         <View
           style={[styles.stateDot, {backgroundColor: badge.color}]}
-          testID={`motors-diagram-state-${node.slots[0]}`}
+          testID={`motors-diagram-state-${slot}`}
         />
       )}
-      {/* THE EXPECTED-ROTATION MARK - M-F2 §17.
+      {/* THE EXPECTED-ROTATION MARK - M-F2 §17, per motor since M-F3 §51.
           A physical claim about geometry, so it is positioned with
           physical offsets and its glyph is a raw (never RTL-aliased)
           icon: a clockwise arrow must render clockwise in an Arabic
           interface exactly as in any other. It states the CONFIGURED
-          expectation; the caption under the stage says so in words. */}
+          expectation; the caption under the stage says so in words. On a
+          coaxial arm the two discs carry two independent marks in
+          opposite corners, so neither covers the other. */}
       {expectedRotation === undefined ? null : (
         <View
           pointerEvents="none"
-          style={styles.rotationMark}
-          testID={`motors-expected-rotation-${node.slots[0]}`}
+          style={
+            node.deck === 'LOWER' ? styles.rotationMarkLower : styles.rotationMark
+          }
+          testID={`motors-expected-rotation-${slot}`}
           accessibilityElementsHidden
         >
           <Icon
@@ -807,13 +859,12 @@ export function MotorAirframeDiagram({
           {t('motorsScreen.diagramTitle')}
         </Text>
       )}
-      {/* THE FRONT MARKER IS NOT OPTIONAL. Every layout gets it, above the
-          stage where it cannot be mistaken for a motor, and it stays the
-          same size on every device so it is still readable at 390px. */}
-      <View style={styles.frontMarker} testID="motors-diagram-front">
-        <Text style={styles.frontArrow}>↑</Text>
-        <Text style={styles.frontText}>{t('motorsScreen.diagramFront')}</Text>
-      </View>
+      {/* THE FRONT MARKER LIVES ON THE AIRCRAFT - M-F3 §21.
+          It used to be a floating chip above the stage; a floating arrow
+          near a drawing is furniture. The Silhouette now grows it out of
+          the nose, so "front" is a property of the airframe geometry -
+          and, like every position here, it is physical: RTL never
+          mirrors it. */}
       <View
         style={[styles.stage, {width: stage, height: stage}]}
         testID="motors-airframe-stage"
@@ -821,7 +872,7 @@ export function MotorAirframeDiagram({
         <Silhouette layout={layout} nodes={nodes} stage={stage} />
         {nodes.map(node => (
           <MotorNode
-            key={node.slots.join('-')}
+            key={node.slots[0]}
             node={node}
             stage={stage}
             selectedSlot={selectedSlot}
@@ -829,17 +880,14 @@ export function MotorAirframeDiagram({
             liveActivity={liveActivity}
             verifiedSlots={verifiedSlots}
             onSelectSlot={onSelectSlot}
-            expectedRotation={
-              node.slots.length === 1
-                ? expectedMotorRotation(
-                    mixerModeRaw,
-                    node.slots[0],
-                    yawMotorsReversed,
-                  )
-                : undefined
-            }
+            expectedRotation={expectedMotorRotation(
+              mixerModeRaw,
+              node.slots[0],
+              yawMotorsReversed,
+            )}
           />
         ))}
+        <NosePointer layout={layout} stage={stage} />
       </View>
       {/* THE AIRFRAME'S SERVOS, NAMED AND NEVER OFFERED.
           It used to be a badge pinned inside the stage at the tail, which
@@ -909,24 +957,46 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '600',
   },
-  frontMarker: {
-    flexDirection: 'row',
+  /* The nose pointer is part of the aircraft: an arrowhead and shaft
+     growing forward out of the body, with the word under it. All
+     physical positions - `left`/`right`, never `start`/`end` - because
+     which way the aircraft flies is not a property of the script. */
+  frontPointer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
     alignItems: 'center',
-    gap: 4,
+    /* Above every node deck (their zIndex tops out at 4): the nose word
+       must never lose to a disc edge. pointerEvents stays 'none', so
+       the discs under it remain fully tappable. */
+    zIndex: 5,
   },
-  frontArrow: {
-    ...typography.label,
-    color: colors.accentStrong,
-    fontWeight: '700',
-    fontSize: 15,
-    lineHeight: 17,
+  frontHead: {
+    width: 0,
+    height: 0,
+    borderLeftWidth: 5,
+    borderRightWidth: 5,
+    borderBottomWidth: 9,
+    borderLeftColor: 'transparent',
+    borderRightColor: 'transparent',
+    borderBottomColor: colors.accentStrong,
+  },
+  frontShaft: {
+    width: 2.5,
+    borderRadius: 1,
+    backgroundColor: colors.accentStrong,
   },
   frontText: {
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '600',
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 10,
+    lineHeight: 13,
+    /* A small surface chip so the word stays readable where a coaxial
+       lower disc passes beneath it. */
+    backgroundColor: colors.surface,
+    paddingHorizontal: 3,
+    borderRadius: 4,
   },
   stage: {
     position: 'relative',
@@ -981,6 +1051,24 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
     padding: 1,
   },
+  /* The LOWER rotor of a coaxial pair keeps its mark in the OPPOSITE
+     corner, so the two independent marks on one arm never cover each
+     other. Physical offsets, like the mark above. */
+  rotationMarkLower: {
+    position: 'absolute',
+    bottom: -8,
+    left: -8,
+    backgroundColor: colors.surface,
+    borderRadius: radii.pill,
+    padding: 1,
+  },
+  /* A lower-deck disc reads as sitting UNDER its partner: softer border,
+     the sunken surface tone - but the same size, because it is the same
+     kind of thing and the same touch target. */
+  motorNodeLowerDeck: {
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceAlt,
+  },
   motorNodeSelected: {
     borderColor: colors.accentStrong,
     borderWidth: 2,
@@ -991,16 +1079,6 @@ const styles = StyleSheet.create({
   },
   motorNodeLive: {
     borderWidth: 2,
-  },
-  stackRing: {
-    position: 'absolute',
-    top: -4,
-    bottom: -4,
-    left: -4,
-    right: -4,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
   },
   rotor: {
     alignItems: 'center',
@@ -1032,10 +1110,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
     lineHeight: 15,
-  },
-  slotStacked: {
-    fontSize: 10,
-    lineHeight: 12,
   },
   slotSelected: {
     color: colors.accentStrong,

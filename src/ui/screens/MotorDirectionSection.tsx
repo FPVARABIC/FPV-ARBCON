@@ -65,6 +65,14 @@ export interface MotorDirectionSectionProps {
     status: 'ACKNOWLEDGED' | 'UNCONFIRMED',
   ) => void;
   readonly onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * M-F3 §15 - the guided workflow's «عكس الاتجاه» answer opens the
+   * reverse form HERE, so answering "wrong direction" leads directly to
+   * the action instead of to a second hunt for a button. A monotonically
+   * increasing value; each new value opens the authoring form once.
+   * Opening a form sends nothing - the form's own explicit send does.
+   */
+  readonly authoringRequestId?: number;
 }
 
 function SourceRow({
@@ -109,6 +117,7 @@ export function MotorDirectionSection({
   commanded,
   onCommandOutcome,
   onDirtyChange,
+  authoringRequestId,
 }: MotorDirectionSectionProps): React.JSX.Element {
   const { t } = useTranslation();
   /**
@@ -137,6 +146,14 @@ export function MotorDirectionSection({
     setAuthoringOpen(false);
     setLastResult(undefined);
   }, [selectedMotor, operator]);
+
+  // §15: the workflow's «عكس الاتجاه» answer opens the form. Opening
+  // sends nothing; a zero/undefined id (mount value) opens nothing.
+  useEffect(() => {
+    if (authoringRequestId !== undefined && authoringRequestId > 0) {
+      setAuthoringOpen(true);
+    }
+  }, [authoringRequestId]);
 
   const handleOutcome = useCallback(
     (

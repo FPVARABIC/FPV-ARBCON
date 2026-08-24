@@ -259,13 +259,34 @@ describe('M-F2 - expected rotation, from the yaw column and the stored flag', ()
     expect(shell.has('motors-diagram-servo')).toBe(true);
   });
 
-  it('a Y6 stays coaxial: shared nodes carry no single arrow, the selected motor line does', async () => {
+  it('a Y6 is SIX independent marked motors: coaxial pairs counter-rotate on one arm', async () => {
+    /* M-F3 §24/§26/§51 - the merged "M1/4" disc is gone. Every motor has
+     * its own selectable node AND its own expected-rotation mark; the
+     * hand-written directions below are the transcribed mixerY6 yaw
+     * column [+1,-1,-1,-1,+1,+1] read through the props-in convention
+     * (yaw < 0 -> CW), so each coaxial pair shows two OPPOSITE marks. */
     const shell = await liveMotorsScreen(MIXER_Y6, 6);
     expect(shell.has('motors-airframe-stage')).toBe(true);
-    // Three drawn nodes (one per arm), none wearing one arrow for two
-    // counter-rotating rotors.
+    const markIcon = (slot: number): string => {
+      const marks = shell.all(`motors-expected-rotation-${slot}`);
+      expect(marks.length).toBeGreaterThan(0);
+      const icons = marks[0].findAll(
+        candidate =>
+          candidate.props?.name === 'rotate-cw' ||
+          candidate.props?.name === 'rotate-ccw',
+      );
+      expect(icons.length).toBeGreaterThan(0);
+      return icons[0].props.name as string;
+    };
+    expect(markIcon(1)).toBe('rotate-ccw'); // REAR upper, yaw +1
+    expect(markIcon(2)).toBe('rotate-cw'); //  RIGHT upper, yaw -1
+    expect(markIcon(3)).toBe('rotate-cw'); //  LEFT upper, yaw -1
+    expect(markIcon(4)).toBe('rotate-cw'); //  UNDER_REAR, yaw -1
+    expect(markIcon(5)).toBe('rotate-ccw'); // UNDER_RIGHT, yaw +1
+    expect(markIcon(6)).toBe('rotate-ccw'); // UNDER_LEFT, yaw +1
+    // Each motor is its own touch target - M4 selectable without M1.
     for (const slot of [1, 2, 3, 4, 5, 6]) {
-      expect(shell.has(`motors-expected-rotation-${slot}`)).toBe(false);
+      expect(shell.has(`motors-airframe-slot-${slot}`)).toBe(true);
     }
     // The selected motor (M1, REAR upper, yaw +1, default flag) still
     // gets its expectation in words on the identity line.
@@ -389,10 +410,13 @@ const QUADX_CONFIG_SNAPSHOT = {
 
 function fakeConfigPort(): MotorAirframeControlsPort & {
   savedDrafts: MotorConfigurationDraft[];
+  rebootRequests: number[];
 } {
   const savedDrafts: MotorConfigurationDraft[] = [];
+  const rebootRequests: number[] = [];
   return {
     savedDrafts,
+    rebootRequests,
     load: async () => ({kind: 'LOADED', snapshot: QUADX_CONFIG_SNAPSHOT}),
     save: async (_sessionId, _original, draft) => {
       savedDrafts.push(draft);
@@ -402,6 +426,10 @@ function fakeConfigPort(): MotorAirframeControlsPort & {
         rebootRequired: true,
         changedGroups: ['MIXER'],
       };
+    },
+    requestReboot: async () => {
+      rebootRequests.push(rebootRequests.length + 1);
+      return {kind: 'REBOOT_REQUESTED', acknowledged: true};
     },
   };
 }
@@ -458,18 +486,22 @@ describe('M-F2 §32/§60-1 - session OFF, model ON', () => {
   });
 });
 
-describe('M-F2 §11/§56 - one field per edit, the other preserved, on the draft itself', () => {
-  it('a mixer change hands the transaction the CURRENT props flag', async () => {
+describe('M-F3 §3-§7/§56 - a tap is a visible draft, ONE save transaction, companions preserved', () => {
+  it('a mixer change is a labelled draft first, then ONE transaction carrying the CURRENT props flag', async () => {
     const port = fakeConfigPort();
     const view = mountView(port);
     await flush();
 
     view.press('motors-mixer-select');
     view.press('motors-mixer-select-option-10'); // HEX6X
-    // Nothing was sent yet - selection is a draft, the confirm is the gate.
+    // P0-1's fix, asserted: the tap changed the SCREEN immediately - a
+    // dirty save bar exists and nothing has touched the link.
     expect(port.savedDrafts).toHaveLength(0);
-    expect(view.has('motors-quick-save-confirm')).toBe(true);
-    view.press('motors-quick-save-apply');
+    expect(view.has('motors-airframe-savebar')).toBe(true);
+    expect(view.has('motors-airframe-savebar-mixer')).toBe(true);
+    // §33: while the mixer draft exists the drawing is a labelled preview.
+    expect(view.has('motors-topology-preview-label')).toBe(true);
+    view.press('motors-airframe-save');
     await flush();
 
     expect(port.savedDrafts).toHaveLength(1);
@@ -480,22 +512,49 @@ describe('M-F2 §11/§56 - one field per edit, the other preserved, on the draft
     expect(draft.yawMotorsReversed).toBe(false);
     expect(draft.motorProtocolRaw).toBe(6);
     expect(draft.motorPoleCount).toBe(14);
+    // Saved and verified: the bar is gone and the reboot step is offered.
+    expect(view.has('motors-airframe-savebar')).toBe(false);
+    expect(view.has('motors-airframe-reboot')).toBe(true);
   });
 
-  it('a props change hands the transaction the CURRENT mixer', async () => {
+  it('a props tap moves the chip IMMEDIATELY, and the save carries the CURRENT mixer', async () => {
     const port = fakeConfigPort();
     const view = mountView(port);
     await flush();
 
     view.press('motors-props-out');
+    // P0-1: «للخارج» is now the selected chip BEFORE any save - the draft
+    // is the display truth of the control that edits it.
+    const outChip = view
+      .all('motors-props-out')
+      .find(node => node.props?.accessibilityState !== undefined);
+    expect(outChip?.props.accessibilityState.selected).toBe(true);
     expect(port.savedDrafts).toHaveLength(0);
-    view.press('motors-quick-save-apply');
+    expect(view.has('motors-airframe-savebar-props')).toBe(true);
+    view.press('motors-airframe-save');
     await flush();
 
     expect(port.savedDrafts).toHaveLength(1);
     const draft = port.savedDrafts[0];
     expect(draft.yawMotorsReversed).toBe(true);
     expect(draft.mixerModeRaw).toBe(MIXER_QUADX);
+  });
+
+  it('mixer AND props drafted together save as ONE transaction with both fields', async () => {
+    const port = fakeConfigPort();
+    const view = mountView(port);
+    await flush();
+
+    view.press('motors-mixer-select');
+    view.press('motors-mixer-select-option-10');
+    view.press('motors-props-out');
+    expect(port.savedDrafts).toHaveLength(0);
+    view.press('motors-airframe-save');
+    await flush();
+
+    expect(port.savedDrafts).toHaveLength(1);
+    expect(port.savedDrafts[0].mixerModeRaw).toBe(10);
+    expect(port.savedDrafts[0].yawMotorsReversed).toBe(true);
   });
 
   it('preserves values that CANNOT be defaults: props-out survives a mixer edit, HEX6X survives a props edit', async () => {
@@ -525,6 +584,7 @@ describe('M-F2 §11/§56 - one field per edit, the other preserved, on the draft
           changedGroups: ['MIXER'],
         };
       },
+      requestReboot: async () => ({kind: 'REBOOT_REQUESTED', acknowledged: true}),
     };
     const view = mountView(port);
     await flush();
@@ -532,7 +592,7 @@ describe('M-F2 §11/§56 - one field per edit, the other preserved, on the draft
     // Mixer edit: HEX6X -> QUAD X. The props flag must arrive TRUE.
     view.press('motors-mixer-select');
     view.press(`motors-mixer-select-option-${MIXER_QUADX}`);
-    view.press('motors-quick-save-apply');
+    view.press('motors-airframe-save');
     await flush();
     expect(saved).toHaveLength(1);
     expect(saved[0].mixerModeRaw).toBe(MIXER_QUADX);
@@ -540,30 +600,36 @@ describe('M-F2 §11/§56 - one field per edit, the other preserved, on the draft
 
     // Props edit: out -> in. The mixer must arrive as HEX6X.
     view.press('motors-props-in');
-    view.press('motors-quick-save-apply');
+    view.press('motors-airframe-save');
     await flush();
     expect(saved).toHaveLength(2);
     expect(saved[1].yawMotorsReversed).toBe(false);
     expect(saved[1].mixerModeRaw).toBe(10);
   });
 
-  it('cancel sends nothing at all', async () => {
+  it('discard sends nothing at all, and the drafted chip returns to the stored value', async () => {
     const port = fakeConfigPort();
     const view = mountView(port);
     await flush();
 
     view.press('motors-props-out');
-    view.press('motors-quick-save-cancel');
+    expect(view.has('motors-airframe-savebar')).toBe(true);
+    view.press('motors-airframe-discard');
     await flush();
     expect(port.savedDrafts).toHaveLength(0);
+    expect(view.has('motors-airframe-savebar')).toBe(false);
+    const inChip = view
+      .all('motors-props-in')
+      .find(node => node.props?.accessibilityState !== undefined);
+    expect(inChip?.props.accessibilityState.selected).toBe(true);
   });
 
-  it('a verified save says reboot-then-reopen, and never calls the new mixer active', async () => {
+  it('a verified save is PERSISTED_VERIFIED wording plus the explicit reboot step - never "active"', async () => {
     const port = fakeConfigPort();
     const view = mountView(port);
     await flush();
     view.press('motors-props-out');
-    view.press('motors-quick-save-apply');
+    view.press('motors-airframe-save');
     await flush();
     const outcome = view
       .all('motors-quick-outcome')
@@ -571,6 +637,18 @@ describe('M-F2 §11/§56 - one field per edit, the other preserved, on the draft
       .map(node => String(node.props.children ?? ''))
       .join(' ');
     expect(outcome).toContain(ar.motorsScreen.quickSavedVerified);
+    // §36: the reboot is ITS OWN acknowledged step through the same
+    // controller, not a silent side effect of saving.
+    expect(port.rebootRequests).toHaveLength(0);
+    view.press('motors-airframe-reboot');
+    await flush();
+    expect(port.rebootRequests).toHaveLength(1);
+    const afterReboot = view
+      .all('motors-quick-outcome')
+      .flatMap(node => node.findAllByType(Text))
+      .map(node => String(node.props.children ?? ''))
+      .join(' ');
+    expect(afterReboot).toContain(ar.motorsScreen.quickRebootRequested);
   });
 });
 
@@ -665,6 +743,9 @@ describe('M-F2 §40 - the display fallback never leaks into command identity', (
             }),
             save: async () => {
               throw new Error('no save in this scenario');
+            },
+            requestReboot: async () => {
+              throw new Error('no reboot in this scenario');
             },
           }}
         />,
