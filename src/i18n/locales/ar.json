@@ -1071,6 +1071,8 @@
     "holdBlockedTitle": "لا يمكن اختبار المحرك الآن",
     "holdBlockedNoSession": "افتح جلسة المحركات أولًا.",
     "holdBlockedControlOff": "فعّل التحكم بالمحركات أولًا.",
+    "holdToTestNoScope": "اختبار المحركات غير جاهز",
+    "holdBlockedCountUnread": "عدد المحركات لم يُقرأ من متحكم الطيران. أعد فتح الجلسة لإعادة المحاولة.",
     "holdBlockedBusy": "انتظر انتهاء قراءة إعدادات المحركات.",
     "holdBlockedUnknown": "حالة الأمان غير مؤكدة. راجع حالة الجلسة أعلاه.",
     "holdBlockedHint": "زر الاختبار مقفل الآن. لن يُرسل أي أمر للمحركات.",

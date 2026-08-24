@@ -65,6 +65,9 @@ import type {
   MotorTestActivationBlockReason,
   MotorTestControllerSnapshot,
 } from '../../core/state/motorTestController';
+/* THE COMMANDABLE SET, from the controller's own rule rather than a
+   second copy of it - see identitySlots below. */
+import { motorTestPulseMotorNumbers } from '../../core/state/motorTestController';
 import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
 import { mspSessionCoordinator } from '../../platforms/react-native/protocol';
 import type { SetupUiSessionKey } from '../../platforms/react-native/protocol';
@@ -1012,12 +1015,68 @@ export function MotorsScreenView({
    * the gesture actually needs. Genuine blocks render exactly as before
    * the moment the gesture ends.
    */
+  /**
+   * THE LOGICAL MOTORS THIS AIRCRAFT ACTUALLY HAS.
+   *
+   * Derived from the same live count the workspace sliders use, so the
+   * selector cannot list four motors on a hex or hide two on one. Before
+   * anything has been read there is no count to derive from and the list
+   * is EMPTY - see MOTOR_TEST_OUTPUT_SLOTS for why it is no longer four.
+   *
+   * THE RULE IS THE CONTROLLER'S, NOT A SECOND COPY OF IT - M-E3.
+   * `motorTestPulseMotorNumbers` is the exported function the controller's
+   * own `commandableMotorCount()` is written from: MSP_MOTOR_CONFIG offset
+   * 6, an integer, at least one, and no more than the command vector's
+   * eight slots. Asking IT means the screen cannot offer a motor the
+   * controller would refuse. The copy it replaced checked "integer and
+   * > 0" with NO UPPER BOUND, so a board reporting twelve outputs got
+   * twelve sliders on a screen whose controller refuses every one.
+   *
+   * IT IS DECLARED HERE, ABOVE THE HOLD CONTROL'S BLOCKED REASON, because
+   * that reason consults it - and a `const` read before its declaration
+   * is a temporal-dead-zone throw rather than a wrong answer.
+   */
+  const liveMotorCount =
+    snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount;
+  const identitySlots: readonly number[] =
+    motorTestPulseMotorNumbers(liveMotorCount);
+  /**
+   * MAY THE SELECTED MOTOR BE NAMED OUT LOUD? - M-E3.
+   *
+   * `selectedSlot` starts at 1 because a numeric state has to start
+   * somewhere; that initial value is a placeholder, not a reading. Until
+   * the flight controller has reported a count that CONTAINS it, there is
+   * no motor 1 to speak of, and printing "M1" on the test control invents
+   * the one fact this screen most needs to be honest about.
+   *
+   * The fixed eight-slot MSP_SET_MOTOR payload proves nothing here: it is
+   * a wire safety contract - every addressable output written in one
+   * frame so none is left at an old value - and never a claim that any
+   * particular output exists.
+   */
+  const selectedMotorIsCommandable = identitySlots.includes(selectedSlot);
+  /**
+   * The count read has not landed, or did not survive. Distinguished from
+   * every other block reason because it is the one an operator can act on
+   * differently: no amount of enabling motor control will help, and the
+   * route back is to reopen the session so the read runs again.
+   */
+  const runtimeMotorCountUnread = identitySlots.length === 0;
+
   const holdBlockedReason: string | undefined = !holdGateBlocked || holdOwned
     ? undefined
     : requiresNewConnection
       ? t('motorsScreen.requiresNewConnection')
       : operator === undefined || sessionId === undefined
         ? t('motorsScreen.holdBlockedNoSession')
+        /* M-E3: AHEAD OF "enable motor control first", because that
+           instruction cannot succeed here. Enabling is refused for the
+           very same missing count, so naming the control sent the
+           operator to a switch that would not help and told them nothing
+           about their aircraft. The count is the cause; reopening the
+           session is the route that re-runs the read. */
+        : runtimeMotorCountUnread
+          ? t('motorsScreen.holdBlockedCountUnread')
         : !motorControlEnabled
           ? t('motorsScreen.holdBlockedControlOff')
           : motorConfigurationBusy
@@ -1467,16 +1526,6 @@ export function MotorsScreenView({
       ? 'UNSAFE'
       : undefined;
   /**
-   * THE LOGICAL MOTORS THIS AIRCRAFT ACTUALLY HAS.
-   *
-   * Derived from the same live count the workspace sliders use, so the
-   * selector cannot list four motors on a hex or hide two on one. Before
-   * anything has been read there is no count to derive from and the list
-   * is EMPTY - see MOTOR_TEST_OUTPUT_SLOTS for why it is no longer four.
-   */
-  const liveMotorCount =
-    snapshot?.motorDomain?.motorCount ?? snapshot?.motorScope?.motorCount;
-  /**
    * WHICH AIRFRAME THE FLIGHT CONTROLLER REPORTED, raw.
    *
    * From the SAME snapshot as the motor count, read by the motor-test
@@ -1488,12 +1537,6 @@ export function MotorsScreenView({
    * DRAWN. It is not a motor count, and it gates no command.
    */
   const liveMixerModeRaw = snapshot?.mixerModeRaw;
-  const identitySlots: readonly number[] =
-    liveMotorCount !== undefined &&
-    Number.isInteger(liveMotorCount) &&
-    liveMotorCount > 0
-      ? Array.from({length: liveMotorCount}, (_, index) => index + 1)
-      : MOTOR_TEST_OUTPUT_SLOTS;
 
   /**
    * MAY THE SHIPPED PHYSICAL-IDENTIFICATION MODEL BE APPLIED HERE?
@@ -1659,11 +1702,22 @@ export function MotorsScreenView({
           numberOfLines={1}
           style={[styles.holdLabel, !canActivate && styles.holdLabelOff]}
         >
-          {holdOwned && mayBeLive
-            ? t('motorsScreen.holdActive', { slot: `M${selectedSlot}` })
-            : holdOwned
-              ? t('motorsScreen.holdCountdown', { slot: `M${selectedSlot}` })
-              : t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })}
+          {/* M-E3: THE LABEL NAMES A MOTOR ONLY WHERE ONE IS PROVEN.
+              This read `اضغط مطوّلًا — M1` on a board that had reported
+              no motor count at all - the last invented identity on the
+              screen, and the only one an operator meets while deciding
+              whether to press a control that spins propellers. The two
+              held states below cannot be reached without a commandable
+              motor (the gate refuses activation), so only the resting
+              label needs the guard; it carries it anyway rather than
+              relying on that reasoning holding for ever. */}
+          {selectedMotorIsCommandable
+            ? holdOwned && mayBeLive
+              ? t('motorsScreen.holdActive', { slot: `M${selectedSlot}` })
+              : holdOwned
+                ? t('motorsScreen.holdCountdown', { slot: `M${selectedSlot}` })
+                : t('motorsScreen.holdToTest', { slot: `M${selectedSlot}` })
+            : t('motorsScreen.holdToTestNoScope')}
         </Text>
       </Pressable>
 
