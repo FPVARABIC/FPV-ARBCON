@@ -92,6 +92,25 @@ export interface OwnedAdvancedFields {
   readonly feedforwardAveraging: number;
   readonly feedforwardBoost: number;
   readonly feedforwardJitterFactor: number;
+  /* ---- added by P-E, once the screen could actually write them ----- */
+  readonly dMaxAdvance: number;
+  readonly feedforwardTransition: number;
+  readonly feedforwardSmoothFactor: number;
+  readonly feedforwardMaxRateLimit: number;
+  readonly itermRelax: number;
+  readonly itermRelaxType: number;
+  readonly itermRelaxCutoff: number;
+  readonly itermRotation: number;
+  readonly antiGravityGain: number;
+  readonly throttleBoost: number;
+  readonly thrustLinearization: number;
+  readonly vbatSagCompensation: number;
+  readonly motorOutputLimit: number;
+  readonly angleLimit: number;
+  readonly acroTrainerAngleLimit: number;
+  readonly rateAccelLimit: number;
+  readonly yawRateAccelLimit: number;
+  readonly autoProfileCellCount: number;
 }
 
 export function ownedAdvancedFields(advanced: MspPidAdvanced): OwnedAdvancedFields {
@@ -106,6 +125,24 @@ export function ownedAdvancedFields(advanced: MspPidAdvanced): OwnedAdvancedFiel
     feedforwardAveraging: advanced.feedforwardAveraging,
     feedforwardBoost: advanced.feedforwardBoost,
     feedforwardJitterFactor: advanced.feedforwardJitterFactor,
+    dMaxAdvance: advanced.dMaxAdvance,
+    feedforwardTransition: advanced.feedforwardTransition,
+    feedforwardSmoothFactor: advanced.feedforwardSmoothFactor,
+    feedforwardMaxRateLimit: advanced.feedforwardMaxRateLimit,
+    itermRelax: advanced.itermRelax,
+    itermRelaxType: advanced.itermRelaxType,
+    itermRelaxCutoff: advanced.itermRelaxCutoff,
+    itermRotation: advanced.itermRotation,
+    antiGravityGain: advanced.antiGravityGain,
+    throttleBoost: advanced.throttleBoost,
+    thrustLinearization: advanced.thrustLinearization,
+    vbatSagCompensation: advanced.vbatSagCompensation,
+    motorOutputLimit: advanced.motorOutputLimit,
+    angleLimit: advanced.angleLimit,
+    acroTrainerAngleLimit: advanced.acroTrainerAngleLimit,
+    rateAccelLimit: advanced.rateAccelLimit,
+    yawRateAccelLimit: advanced.yawRateAccelLimit,
+    autoProfileCellCount: advanced.autoProfileCellCount,
   });
 }
 
@@ -113,6 +150,22 @@ export function ownedAdvancedFields(advanced: MspPidAdvanced): OwnedAdvancedFiel
  * The one normalisation MSP_SET_PID_ADVANCED performs is the tpa_rate clamp.
  * Every other owned field is stored verbatim, so predicting it is predicting
  * the request.
+ *
+ * RE-CONFIRMED AT THE PINNED FIRMWARE TREE for the fields P-E added:
+ * msp.c's `MSP_SET_PID_ADVANCED` case assigns each one straight from the
+ * buffer. Its only value-changing step is `MIN(sbufReadU8(src), TPA_MAX)`
+ * on tpa_rate, and its only other guard is a hard refusal - a
+ * feedforward_averaging above 3 returns MSP_RESULT_ERROR and NOTHING in
+ * the message is stored. That is a rejected write, not a normalisation,
+ * which is why it is kept out of range by validation rather than modelled
+ * here.
+ *
+ * A FIELD THE BOARD'S BUILD OMITS reads its byte and throws it away
+ * (`#else sbufReadU8(src);`), so the readback returns the old value and
+ * this classifier reports MISMATCH. That is the honest verdict: MSP gives
+ * no way to distinguish "your build lacks this feature" from "the write
+ * did not land", and naming a firmware rule that did not run would be
+ * fiction. The save stops instead of claiming success.
  */
 export function classifyAdvancedReadback(
   requested: OwnedAdvancedFields,
@@ -142,6 +195,24 @@ export function classifyAdvancedReadback(
   plain('feedforwardAveraging', requested.feedforwardAveraging, observed.feedforwardAveraging);
   plain('feedforwardBoost', requested.feedforwardBoost, observed.feedforwardBoost);
   plain('feedforwardJitterFactor', requested.feedforwardJitterFactor, observed.feedforwardJitterFactor);
+  plain('dMaxAdvance', requested.dMaxAdvance, observed.dMaxAdvance);
+  plain('feedforwardTransition', requested.feedforwardTransition, observed.feedforwardTransition);
+  plain('feedforwardSmoothFactor', requested.feedforwardSmoothFactor, observed.feedforwardSmoothFactor);
+  plain('feedforwardMaxRateLimit', requested.feedforwardMaxRateLimit, observed.feedforwardMaxRateLimit);
+  plain('itermRelax', requested.itermRelax, observed.itermRelax);
+  plain('itermRelaxType', requested.itermRelaxType, observed.itermRelaxType);
+  plain('itermRelaxCutoff', requested.itermRelaxCutoff, observed.itermRelaxCutoff);
+  plain('itermRotation', requested.itermRotation, observed.itermRotation);
+  plain('antiGravityGain', requested.antiGravityGain, observed.antiGravityGain);
+  plain('throttleBoost', requested.throttleBoost, observed.throttleBoost);
+  plain('thrustLinearization', requested.thrustLinearization, observed.thrustLinearization);
+  plain('vbatSagCompensation', requested.vbatSagCompensation, observed.vbatSagCompensation);
+  plain('motorOutputLimit', requested.motorOutputLimit, observed.motorOutputLimit);
+  plain('angleLimit', requested.angleLimit, observed.angleLimit);
+  plain('acroTrainerAngleLimit', requested.acroTrainerAngleLimit, observed.acroTrainerAngleLimit);
+  plain('rateAccelLimit', requested.rateAccelLimit, observed.rateAccelLimit);
+  plain('yawRateAccelLimit', requested.yawRateAccelLimit, observed.yawRateAccelLimit);
+  plain('autoProfileCellCount', requested.autoProfileCellCount, observed.autoProfileCellCount);
   return classifyGroup(comparisons);
 }
 
@@ -217,6 +288,19 @@ export interface OwnedFilterFields {
   readonly dynamicNotchMinHz: number;
   readonly dynamicNotchMaxHz: number;
   readonly dynamicNotchCount: number;
+  /* ---- added by P-E ------------------------------------------------ */
+  readonly gyroLpf1Type: number;
+  readonly gyroLpf2StaticHz: number;
+  readonly gyroLpf2Type: number;
+  readonly gyroSoftNotchHz2: number;
+  readonly gyroSoftNotchCutoff2: number;
+  readonly dtermLpf1Type: number;
+  readonly dtermLpf1DynExpo: number;
+  readonly dtermLpf2StaticHz: number;
+  readonly dtermLpf2Type: number;
+  readonly dtermNotchHz: number;
+  readonly dtermNotchCutoff: number;
+  readonly yawLowpassHz: number;
 }
 
 export function ownedFilterFields(filters: MspFilterConfigFull): OwnedFilterFields {
@@ -233,6 +317,18 @@ export function ownedFilterFields(filters: MspFilterConfigFull): OwnedFilterFiel
     dynamicNotchMinHz: filters.dynNotchMinHz,
     dynamicNotchMaxHz: filters.dynNotchMaxHz,
     dynamicNotchCount: filters.dynNotchCount,
+    gyroLpf1Type: filters.gyroLpf1Type,
+    gyroLpf2StaticHz: filters.gyroLpf2StaticHz,
+    gyroLpf2Type: filters.gyroLpf2Type,
+    gyroSoftNotchHz2: filters.gyroSoftNotchHz2,
+    gyroSoftNotchCutoff2: filters.gyroSoftNotchCutoff2,
+    dtermLpf1Type: filters.dtermLpf1Type,
+    dtermLpf1DynExpo: filters.dtermLpf1DynExpo,
+    dtermLpf2StaticHz: filters.dtermLpf2StaticHz,
+    dtermLpf2Type: filters.dtermLpf2Type,
+    dtermNotchHz: filters.dtermNotchHz,
+    dtermNotchCutoff: filters.dtermNotchCutoff,
+    yawLowpassHz: filters.yawLowpassHz,
   });
 }
 
@@ -244,11 +340,30 @@ export function ownedFilterFields(filters: MspFilterConfigFull): OwnedFilterFiel
  * dynamic minimum above its maximum. This is deliberately not a port of the
  * whole validation routine; it is the minimum needed to read a readback
  * honestly.
+ *
+ * WHICH FIELDS THAT ROUTINE ACTUALLY REACHES, at the pinned tree:
+ * `MSP_SET_FILTER_CONFIG` calls `validateAndFixGyroConfig()` and nothing
+ * else, and that function touches ONLY gyro-scope values - the two static
+ * lowpasses, BOTH notches, and the dynamic minimum. The D-term chain has
+ * the same-shaped corrections, but they live in `validateAndFixConfig()`,
+ * which an MSP filter write never calls; it runs at EEPROM write and at
+ * boot. So a D-term field reads back EXACT here, and the only way to be
+ * honest about the later correction is to refuse to create the condition
+ * in the first place - which is what `validatePidTuningDraft` does for a
+ * D-term notch whose cutoff has swallowed its centre.
  */
 export function projectFilterWrite(requested: OwnedFilterFields): OwnedFilterFields {
   const notch = projectGyroNotch({
     centreHz: requested.gyroSoftNotchHz1,
     cutoffHz: requested.gyroSoftNotchCutoff1,
+  });
+  /* The SECOND gyro notch gets the identical treatment, because the
+     firmware gives it the identical two lines - `adjustFilterLimit` on
+     both halves and `if (cutoff_2 >= hz_2) hz_2 = 0`. Reusing the same
+     projection is what keeps the two notches from drifting apart. */
+  const notch2 = projectGyroNotch({
+    centreHz: requested.gyroSoftNotchHz2,
+    cutoffHz: requested.gyroSoftNotchCutoff2,
   });
   const gyroDynamic = projectDynamicLowpass({
     minHz: requested.gyroLpf1DynMinHz,
@@ -267,6 +382,22 @@ export function projectFilterWrite(requested: OwnedFilterFields): OwnedFilterFie
     dynamicNotchMinHz: requested.dynamicNotchMinHz,
     dynamicNotchMaxHz: requested.dynamicNotchMaxHz,
     dynamicNotchCount: requested.dynamicNotchCount,
+    gyroLpf2StaticHz: projectFilterLimit(requested.gyroLpf2StaticHz, 1000),
+    gyroSoftNotchHz2: notch2.centreHz,
+    gyroSoftNotchCutoff2: notch2.cutoffHz,
+    /* Everything below is returned UNCHANGED because the firmware returns
+       it unchanged: the lowpass TYPES are enumerations no validation
+       rewrites, and the whole D-term group is out of
+       `validateAndFixGyroConfig`'s reach - see this function's header. */
+    gyroLpf1Type: requested.gyroLpf1Type,
+    gyroLpf2Type: requested.gyroLpf2Type,
+    dtermLpf1Type: requested.dtermLpf1Type,
+    dtermLpf1DynExpo: requested.dtermLpf1DynExpo,
+    dtermLpf2StaticHz: requested.dtermLpf2StaticHz,
+    dtermLpf2Type: requested.dtermLpf2Type,
+    dtermNotchHz: requested.dtermNotchHz,
+    dtermNotchCutoff: requested.dtermNotchCutoff,
+    yawLowpassHz: requested.yawLowpassHz,
   });
 }
 
@@ -288,6 +419,23 @@ export function classifyFilterReadback(
     dynamicNotchMinHz: 'FILTER_LIMIT_RESET',
     dynamicNotchMaxHz: 'FILTER_LIMIT_RESET',
     dynamicNotchCount: 'FILTER_LIMIT_RESET',
+    gyroLpf2StaticHz: 'FILTER_LIMIT_RESET',
+    gyroSoftNotchHz2: 'NOTCH_DISABLED_BY_CUTOFF',
+    gyroSoftNotchCutoff2: 'FILTER_LIMIT_RESET',
+    /* No firmware rule reaches these on an MSP filter write, so a
+       difference has no name and must not be given one. The rule label is
+       only consulted when the projection differs from the request, and for
+       these the projection IS the request - so every one of them can only
+       land as EXACT or MISMATCH. */
+    gyroLpf1Type: 'FILTER_LIMIT_RESET',
+    gyroLpf2Type: 'FILTER_LIMIT_RESET',
+    dtermLpf1Type: 'FILTER_LIMIT_RESET',
+    dtermLpf1DynExpo: 'FILTER_LIMIT_RESET',
+    dtermLpf2StaticHz: 'FILTER_LIMIT_RESET',
+    dtermLpf2Type: 'FILTER_LIMIT_RESET',
+    dtermNotchHz: 'FILTER_LIMIT_RESET',
+    dtermNotchCutoff: 'FILTER_LIMIT_RESET',
+    yawLowpassHz: 'FILTER_LIMIT_RESET',
   };
   const comparisons = (Object.keys(rules) as (keyof OwnedFilterFields)[]).map(field => ({
     field,
@@ -381,12 +529,29 @@ export function detectSimplifiedConflict(
     owned.add('dtermLpf1StaticHz');
     owned.add('dtermLpf1DynMinHz');
     owned.add('dtermLpf1DynMaxHz');
+    owned.add('dtermLpf2StaticHz');
   }
   if (simplified.gyro.enabled) {
     owned.add('gyroLpf1StaticHz');
     owned.add('gyroLpf1DynMinHz');
     owned.add('gyroLpf1DynMaxHz');
+    owned.add('gyroLpf2StaticHz');
   }
+  /*
+   * THE SECOND LOWPASS IS GENERATOR-OWNED TOO, which only became reachable
+   * in P-E when the expert tier started offering it. `generateFilterBlock`
+   * rescales lpf2 from the multiplier on every simplified write, exactly
+   * as it does lpf1.
+   *
+   * DELIBERATELY CONSERVATIVE, and in the same way the three lpf1 entries
+   * above already are: the generator skips a block whose CURRENT value is
+   * zero, so an edit that switches lpf2 off would in fact survive. This
+   * function is handed field names, not values, and would have to be given
+   * the proposed numbers to draw that line. Refusing the edit costs the
+   * operator one step - disable the simplified group first - while
+   * allowing it would risk reporting a value saved that the next
+   * regeneration silently replaces.
+   */
   const conflicting = [...editedFields, ...filterEdits].filter(field => owned.has(field));
   if (conflicting.length === 0) return undefined;
   return Object.freeze({

@@ -241,6 +241,8 @@ function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]):
     FILTER_CAPABILITY_UNPROVEN: 'لا يمكن تفعيل أو تعطيل وضع فلتر لم تثبته القراءة الحالية',
     FILTER_RATE_UNKNOWN: 'لا يمكن تعديل الفلاتر دون معرفة Gyro وPID loop rate',
     FILTER_EXCEEDS_NYQUIST: 'أحد ترددات الفلاتر يبلغ أو يتجاوز حد Nyquist',
+    ADVANCED_PID_VALUE_INVALID: 'إحدى قيم الإعدادات المتقدمة خارج حدود البرنامج الثابت',
+    ADVANCED_FILTER_VALUE_INVALID: 'إحدى قيم الفلاتر المتقدمة خارج حدود البرنامج الثابت',
   })[issue];
 }
 

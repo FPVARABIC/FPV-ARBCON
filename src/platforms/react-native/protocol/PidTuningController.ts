@@ -376,6 +376,16 @@ function editedDirectFields(original: MspPidTuningSnapshot, draft: PidTuningDraf
     if (draft[axis].d !== base[axis].d) out.push(`${label}.D`);
     if (draft[axis].f !== base[axis].f) out.push(`${label}.F`);
   });
+  /* D MAX IS GENERATOR-OWNED. `simplifiedOwnedFields` already lists
+     ROLL/PITCH/YAW.D_MAX because the firmware rewrites `d_max[axis]` from
+     the sliders on every simplified write - it was simply unreachable
+     until P-E made D Max editable. Emitting the same names here is what
+     connects the new controls to the refusal that already existed. */
+  const advancedBase = base.advanced;
+  const dMaxKeys = ['dMaxRoll', 'dMaxPitch', 'dMaxYaw'] as const;
+  dMaxKeys.forEach((key, index) => {
+    if (draft.advanced[key] !== advancedBase[key]) out.push(`${['ROLL', 'PITCH', 'YAW'][index]}.D_MAX`);
+  });
   return out;
 }
 
@@ -392,6 +402,16 @@ function editedFilterFields(original: MspPidTuningSnapshot, draft: PidTuningDraf
   compare('dtermLpf1StaticHz', 'dtermLpf1StaticHz');
   compare('dtermLpf1DynamicMinHz', 'dtermLpf1DynMinHz');
   compare('dtermLpf1DynamicMaxHz', 'dtermLpf1DynMaxHz');
+  /* The SECOND lowpasses, which P-E added to the expert tier. The
+     simplified generator rescales them from the same multiplier, so they
+     belong in the same conflict check as the first pair. */
+  const advancedBase = createPidTuningDraft(original).advancedFilters;
+  if (draft.advancedFilters.gyroLpf2StaticHz !== advancedBase.gyroLpf2StaticHz) {
+    out.push('gyroLpf2StaticHz');
+  }
+  if (draft.advancedFilters.dtermLpf2StaticHz !== advancedBase.dtermLpf2StaticHz) {
+    out.push('dtermLpf2StaticHz');
+  }
   return out;
 }
 

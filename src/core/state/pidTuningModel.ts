@@ -1,5 +1,17 @@
 import type {MspPidTuningSnapshot} from '../protocol/msp/decoding/decodePidTuning';
 import {IDLE_MIN_RPM_MAX} from '../protocol/msp/decoding/decodePidTuning';
+import type {AdvancedPidDraft} from './advancedPidFields';
+import {
+  createAdvancedPidDraftFromRaw,
+  advancedPidDraftsEqual,
+  invalidAdvancedFields,
+} from './advancedPidFields';
+import type {AdvancedFilterDraft} from './advancedFilterFields';
+import {
+  createAdvancedFilterDraftFromRaw,
+  advancedFilterDraftsEqual,
+  invalidAdvancedFilterFields,
+} from './advancedFilterFields';
 
 export type PidAxisKey = 'roll' | 'pitch' | 'yaw';
 export interface PidAxisDraft { readonly p: number; readonly i: number; readonly d: number; readonly f: number }
@@ -54,6 +66,25 @@ export interface PidTuningDraft {
   readonly feedforwardAveraging: number;
   readonly feedforwardBoost: number;
   readonly feedforwardJitterFactor: number;
+
+  /**
+   * The P-E advanced tier, kept in TWO named groups rather than flattened
+   * into this interface.
+   *
+   * They stay separate because they are separate on the wire and in the
+   * firmware: `advanced` is MSP_PID_ADVANCED and belongs entirely to the
+   * PID profile, while `advancedFilters` is MSP_FILTER_CONFIG and carries
+   * BOTH lifetimes - which is why `ADVANCED_FILTER_BOUNDS` records a scope
+   * per field. Flattening the two would make it possible to write code
+   * that forgets which is which, and P-E §13 exists precisely to stop
+   * that.
+   *
+   * Every field in both is EXPOSED, not merely carried: the encode path
+   * patches each one into the board's own payload, so a value here that no
+   * control ever moves is written back unchanged.
+   */
+  readonly advanced: AdvancedPidDraft;
+  readonly advancedFilters: AdvancedFilterDraft;
 }
 
 /** settings.c: lookupTableFeedforwardAveraging has four entries. */
@@ -78,7 +109,9 @@ export type PidTuningValidationCode =
   | 'FILTER_ORDER_INVALID'
   | 'FILTER_CAPABILITY_UNPROVEN'
   | 'FILTER_RATE_UNKNOWN'
-  | 'FILTER_EXCEEDS_NYQUIST';
+  | 'FILTER_EXCEEDS_NYQUIST'
+  | 'ADVANCED_PID_VALUE_INVALID'
+  | 'ADVANCED_FILTER_VALUE_INVALID';
 
 const AXES = Object.freeze(['roll', 'pitch', 'yaw'] as const);
 
@@ -115,6 +148,13 @@ export function createPidTuningDraft(snapshot: MspPidTuningSnapshot): PidTuningD
     feedforwardAveraging: snapshot.feedforwardAveraging,
     feedforwardBoost: snapshot.feedforwardBoost,
     feedforwardJitterFactor: snapshot.feedforwardJitterFactor,
+    /* Built from the RAW payloads rather than from a decoded view, so no
+       API contract has to be threaded through this function. Both groups
+       read strictly inside the minimum length `decodePidTuning` already
+       enforces (61 advanced bytes, 49 filter bytes) - a snapshot that
+       could not satisfy those never becomes a snapshot at all. */
+    advanced: createAdvancedPidDraftFromRaw(snapshot.advancedRaw),
+    advancedFilters: createAdvancedFilterDraftFromRaw(snapshot.filtersRaw),
   });
 }
 
@@ -124,7 +164,9 @@ export function pidTuningDraftsEqual(a: PidTuningDraft, b: PidTuningDraft): bool
     a.feedforwardBoost === b.feedforwardBoost &&
     a.feedforwardJitterFactor === b.feedforwardJitterFactor &&
     AXES.every(key => a[key].p === b[key].p && a[key].i === b[key].i && a[key].d === b[key].d && a[key].f === b[key].f) &&
-    ratesEqual(a.rates, b.rates) && filtersEqual(a.filters, b.filters);
+    ratesEqual(a.rates, b.rates) && filtersEqual(a.filters, b.filters) &&
+    advancedPidDraftsEqual(a.advanced, b.advanced) &&
+    advancedFilterDraftsEqual(a.advancedFilters, b.advancedFilters);
 }
 
 export function ratesEqual(a: RatesDraft, b: RatesDraft): boolean {
@@ -191,6 +233,17 @@ export function validatePidTuningDraft(draft: PidTuningDraft, snapshot?: MspPidT
   if (moved('feedforwardAveraging') && !bounded(draft.feedforwardAveraging, FEEDFORWARD_AVERAGING_MAX)) issues.add('FEEDFORWARD_AVERAGING_INVALID');
   if (moved('feedforwardBoost') && !bounded(draft.feedforwardBoost, FEEDFORWARD_BOOST_MAX)) issues.add('FEEDFORWARD_BOOST_INVALID');
   if (moved('feedforwardJitterFactor') && !bounded(draft.feedforwardJitterFactor, FEEDFORWARD_JITTER_FACTOR_MAX)) issues.add('FEEDFORWARD_JITTER_INVALID');
+  /* The advanced tier, held to the SAME change-scoped rule as the three
+     above and for the same reason: these are fifty-odd bytes of somebody
+     else's tune, and one stored value this app judges out of range must
+     not make the whole screen unsaveable. Bounds are the firmware's own -
+     see the `source` citation carried beside every entry. */
+  if (invalidAdvancedFields(draft.advanced, stored?.advanced).length > 0) {
+    issues.add('ADVANCED_PID_VALUE_INVALID');
+  }
+  if (invalidAdvancedFilterFields(draft.advancedFilters, stored?.advancedFilters).length > 0) {
+    issues.add('ADVANCED_FILTER_VALUE_INVALID');
+  }
   for (const key of AXES) {
     const value = draft[key];
     if ([value.p, value.i, value.d].some(gain => !Number.isInteger(gain) || gain < 0 || gain > 250)) issues.add('PID_GAIN_INVALID');
@@ -215,6 +268,24 @@ export function validatePidTuningDraft(draft: PidTuningDraft, snapshot?: MspPidT
     f.dtermLpf1DynamicMinHz, f.dtermLpf1DynamicMaxHz].every(value => integerIn(value, 0, 1000)) ||
     !integerIn(f.dynamicNotchCount, 0, 7) || !integerIn(f.dynamicNotchQ, 0, 1000) ||
     !integerIn(f.dynamicNotchMinHz, 0, 250) || !integerIn(f.dynamicNotchMaxHz, 0, 1000)) issues.add('FILTER_VALUE_INVALID');
+  /*
+   * A D-TERM NOTCH WHOSE CUTOFF HAS SWALLOWED ITS CENTRE IS REFUSED, NOT
+   * WRITTEN AND THEN EXPLAINED.
+   *
+   * The firmware has the same `cutoff >= hz -> hz = 0` correction for the
+   * D-term notch as for the gyro notches, but it lives in
+   * `validateAndFixConfig()`, which an MSP filter write never calls - it
+   * runs at EEPROM write and at boot. So the board would accept this
+   * value, hand it straight back, and then discard it the next time the
+   * configuration is persisted. There is no verdict that reports that
+   * honestly after the fact; the only honest move is not to send it. The
+   * operator's real way to switch the notch off is dterm_notch_hz = 0,
+   * which this rule leaves alone.
+   */
+  const af = draft.advancedFilters;
+  if (af.dtermNotchHz > 0 && af.dtermNotchCutoff >= af.dtermNotchHz) {
+    issues.add('FILTER_ORDER_INVALID');
+  }
   if ((f.gyroLpf1DynamicMinHz > 0 && f.gyroLpf1DynamicMinHz > f.gyroLpf1DynamicMaxHz) ||
     (f.dtermLpf1DynamicMinHz > 0 && f.dtermLpf1DynamicMinHz > f.dtermLpf1DynamicMaxHz) ||
     (f.dynamicNotchCount > 0 && (f.dynamicNotchQ < 1 || f.dynamicNotchMinHz < 20 ||

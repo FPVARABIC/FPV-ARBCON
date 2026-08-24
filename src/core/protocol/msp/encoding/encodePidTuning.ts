@@ -2,6 +2,8 @@ import type {MspPidTuningSnapshot} from '../decoding/decodePidTuning';
 import {IDLE_MIN_RPM_OFFSET, FEEDFORWARD_AVERAGING_OFFSET, FEEDFORWARD_BOOST_OFFSET, FEEDFORWARD_JITTER_FACTOR_OFFSET} from '../decoding/decodePidTuning';
 import type {PidTuningDraft} from '../../../state/pidTuningModel';
 import {createPidTuningDraft, pidTuningDraftsEqual, validatePidTuningDraft} from '../../../state/pidTuningModel';
+import {patchAdvancedPidDraft} from '../../../state/advancedPidFields';
+import {patchAdvancedFilterDraft} from '../../../state/advancedFilterFields';
 
 export type PidTuningWriteGroup = 'PID' | 'PID_ADVANCED' | 'RC_TUNING' | 'FILTER_CONFIG';
 export interface EncodedPidTuningWrite { readonly group: PidTuningWriteGroup; readonly payload: Uint8Array }
@@ -28,6 +30,12 @@ export function encodeChangedPidTuning(snapshot: MspPidTuningSnapshot, draft: Pi
   if (advanced.length > FEEDFORWARD_AVERAGING_OFFSET) advanced[FEEDFORWARD_AVERAGING_OFFSET] = draft.feedforwardAveraging;
   if (advanced.length > FEEDFORWARD_BOOST_OFFSET) advanced[FEEDFORWARD_BOOST_OFFSET] = draft.feedforwardBoost;
   if (advanced.length > FEEDFORWARD_JITTER_FACTOR_OFFSET) advanced[FEEDFORWARD_JITTER_FACTOR_OFFSET] = draft.feedforwardJitterFactor;
+  // The P-E advanced tier, into the same clone. Every one of its fields is
+  // patched unconditionally, which is safe precisely BECAUSE it is a clone:
+  // an untouched field writes back the byte the board sent. The highest
+  // offset it reaches is 60 (tpa_breakpoint's high byte), inside the 61
+  // bytes decodePidTuning already requires before a snapshot exists.
+  patchAdvancedPidDraft(advanced, draft.advanced);
   const rates = snapshot.ratesRaw.slice();
   rates[0] = draft.rates.roll.rcRate;
   rates[12] = draft.rates.pitch.rcRate;
@@ -64,6 +72,13 @@ export function encodeChangedPidTuning(snapshot: MspPidTuningSnapshot, draft: Pi
   writeU16(filters, 41, draft.filters.dynamicNotchMinHz);
   writeU16(filters, 45, draft.filters.dynamicNotchMaxHz);
   filters[48] = draft.filters.dynamicNotchCount;
+  // The advanced filter tier - gyro LPF1/2 types, LPF2 static, both gyro
+  // notches, D-term types, dyn expo, LPF2 static, the D-term notch and the
+  // yaw lowpass. The RPM filter is NOT here: it is read-only in this phase
+  // because its fields live in a tail that only exists from API 1.48, and
+  // inventing a write contract for it is the "fake zeros on 1.47" P-E §12
+  // forbids.
+  patchAdvancedFilterDraft(filters, draft.advancedFilters);
   const writes: EncodedPidTuningWrite[] = [];
   if (pid.some((value, index) => value !== snapshot.pidRaw[index])) writes.push(Object.freeze({group: 'PID', payload: pid}));
   if (advanced.some((value, index) => value !== snapshot.advancedRaw[index])) writes.push(Object.freeze({group: 'PID_ADVANCED', payload: advanced}));
