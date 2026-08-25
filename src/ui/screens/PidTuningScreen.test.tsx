@@ -15,7 +15,7 @@ function snapshot(rollP = 42, rollRcRate = 100, gyroStaticHz = 0, ratesTypeRaw =
   const rates = new Uint8Array(24); rates[0] = rollRcRate; rates[12] = 100; rates[11] = 100; rates[2] = 70; rates[3] = 70; rates[4] = 70; rates[6] = 50; rates[15] = 100; rates[22] = ratesTypeRaw; rates[23] = 50;
   const ratesView = new DataView(rates.buffer); ratesView.setUint16(16, 1998, true); ratesView.setUint16(18, 1998, true); ratesView.setUint16(20, 1998, true);
   const filters = new Uint8Array(49); new DataView(filters.buffer).setUint16(20, gyroStaticHz, true);
-  return decodePidTuningSnapshot({pid, advanced, rates, filters, gyroSampleRateHz: 8000, pidProcessDenom: 2, pidProfileIndex: 1, pidProfileCount: 3, controlRateProfileIndex: 2});
+  return decodePidTuningSnapshot({contract: 'API_1_47', pid, advanced, rates, filters, gyroSampleRateHz: 8000, pidProcessDenom: 2, pidProfileIndex: 1, pidProfileCount: 3, controlRateProfileIndex: 2});
 }
 
 /** The 53-byte simplified block, laid out in the firmware's own order. */

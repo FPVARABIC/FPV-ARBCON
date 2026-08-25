@@ -494,7 +494,14 @@ function rcTuning(o: {
 }
 
 /**
- * MSP_FILTER_CONFIG at the app's pinned 49 bytes.
+ * MSP_FILTER_CONFIG, at the length the drone's own API version sends.
+ *
+ * TWO LENGTHS, ONE COMMAND. 49 bytes at API 1.47; from 1.48 the firmware
+ * appends a 7-byte RPM tail to EVERY reply - unconditionally, even on a
+ * target built without `USE_RPM_FILTER`, which simply writes zeros there.
+ * This fixture used to send 49 bytes for all three API versions, which is
+ * not a board that exists; the 1.48 and 1.49 drones now answer with the
+ * tail their firmware would really have sent.
  *
  * The offsets are decodeFilterConfiguration's own, not a guess: that
  * decoder reads the frame POSITIONALLY (deliberately, so a firmware that
@@ -509,8 +516,18 @@ function filterConfig(o: {
   dtermLowpassHz: number;
   dynLpfMinHz: number;
   dynLpfMaxHz: number;
+  apiMinor: number;
 }): Uint8Array {
-  return withView(49, (view, bytes) => {
+  const withTail = o.apiMinor >= 48;
+  return withView(withTail ? 56 : 49, (view, bytes) => {
+    // `pg/rpm_filter.c` reset values at the pinned tree.
+    bytes[43] = 3;   // rpm_filter_harmonics
+    bytes[44] = 100; // rpm_filter_min_hz
+    if (withTail) {
+      view.setUint16(49, 50, true);  // rpm_filter_fade_range_hz
+      view.setUint16(51, 500, true); // rpm_filter_q
+      bytes[53] = 100; bytes[54] = 100; bytes[55] = 100; // rpm_filter_weights
+    }
     view.setUint16(1, o.dtermLowpassHz, true); // dtermLpf1StaticHz
     view.setUint16(20, o.gyroLowpassHz, true); // gyroLpf1StaticHz
     view.setUint16(29, o.dynLpfMinHz, true); // gyroLpf1DynamicMinHz
@@ -724,7 +741,11 @@ export interface DroneTarget {
   readonly failsafe: Parameters<typeof failsafeConfig>[0];
   readonly pid: Parameters<typeof pid>[0];
   readonly rates: Parameters<typeof rcTuning>[0];
-  readonly filters: Parameters<typeof filterConfig>[0];
+  /* `apiMinor` is NOT part of a drone's chosen filter values - it is the
+     board's protocol version, already declared once on `hardware`, and
+     `buildFactoryBoard` supplies it. A spec that could state a second,
+     different API version here is a spec that could contradict itself. */
+  readonly filters: Omit<Parameters<typeof filterConfig>[0], 'apiMinor'>;
   readonly boardAlignment: readonly [number, number, number];
   readonly gps?: Parameters<typeof gpsConfig>[0];
   readonly gpsRescue?: Parameters<typeof gpsRescue>[0];
@@ -1249,6 +1270,7 @@ export function buildFactoryBoard(spec: DroneSpec): Map<number, Uint8Array> {
         dtermLowpassHz: 150,
         dynLpfMinHz: 300,
         dynLpfMaxHz: 750,
+        apiMinor: spec.hardware.apiMinor,
       }),
     ],
     [MSP_MODE_RANGES, modeRanges([])],

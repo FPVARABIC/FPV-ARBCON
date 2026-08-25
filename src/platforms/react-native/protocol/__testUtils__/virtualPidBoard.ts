@@ -64,6 +64,10 @@ import {
   MSP2TEXT_RATE_PROFILE_NAME,
 } from '../../../../core/protocol/msp/encoding/encodeProfileCommands';
 import {FILTER_CONFIG_OFFSETS} from '../../../../core/protocol/msp/decoding/decodeFilterConfigFull';
+import {
+  MSP_FILTER_CONFIG_BYTES_API148,
+  RPM_FILTER_HARMONICS_MAX,
+} from '../../../../core/protocol/msp/decoding/pidWireContracts';
 import {PID_ADVANCED_OFFSETS, TPA_RATE_MAX} from '../../../../core/protocol/msp/decoding/decodePidAdvancedFull';
 import {RC_TUNING_OFFSETS, RC_TUNING_RETIRED_OFFSETS} from '../../../../core/protocol/msp/decoding/decodeRcTuningFull';
 import {
@@ -335,6 +339,21 @@ function defaultGlobals(filterBytes: number): VirtualPidGlobals {
   view.setUint16(FILTER_CONFIG_OFFSETS.dynNotchMinHz, 100, true);
   view.setUint16(FILTER_CONFIG_OFFSETS.dynNotchMaxHz, 600, true);
   filterGlobal[FILTER_CONFIG_OFFSETS.dynNotchCount] = 3;
+  /* THE RPM FILTER'S OWN PG DEFAULTS, from `pg/rpm_filter.c` at the pinned
+     tree - harmonics 3, min 100 Hz, fade 50 Hz, q 500, weights 100/100/100.
+     A zero-filled RPM group would not be any board that exists: q = 0 is
+     below the firmware's own {250, 3000} floor, so the very first filter
+     save would have been rejected by a faithful board. The head is written
+     under every contract; the tail only where the payload carries it. */
+  filterGlobal[FILTER_CONFIG_OFFSETS.rpmFilterHarmonics] = 3;
+  filterGlobal[FILTER_CONFIG_OFFSETS.rpmFilterMinHz] = 100;
+  if (filterBytes >= MSP_FILTER_CONFIG_BYTES_API148) {
+    view.setUint16(FILTER_CONFIG_OFFSETS.rpmFilterFadeRangeHz, 50, true);
+    view.setUint16(FILTER_CONFIG_OFFSETS.rpmFilterQ, 500, true);
+    for (let index = 0; index < RPM_FILTER_HARMONICS_MAX; index += 1) {
+      filterGlobal[FILTER_CONFIG_OFFSETS.rpmFilterWeights + index] = 100;
+    }
+  }
   const simplifiedGyro = new Uint8Array(SIMPLIFIED_FILTER_BLOCK_BYTES);
   simplifiedGyro[1] = 100;
   const sg = new DataView(simplifiedGyro.buffer);
@@ -667,9 +686,55 @@ export class VirtualPidBoard {
     }
   }
 
+  /**
+   * MSP_SET_FILTER_CONFIG REFUSES OVER ONE RPM FIELD - AND THE REFUSAL IS
+   * NOT ATOMIC.
+   *
+   * Read at the pinned tree rather than assumed, because the detail matters
+   * and is easy to get wrong. The setter validates the 1.48 tail INTO LOCALS
+   * first:
+   *
+   *   if (q < 250 || q > 3000 || fadeRangeHz > 1000) return MSP_RESULT_ERROR;
+   *   for (...) if (weights[j] > 100)                return MSP_RESULT_ERROR;
+   *
+   * but every field BEFORE the tail was already assigned straight into
+   * `gyroConfigMutable()` and `currentPidProfile` as it was read. So an
+   * out-of-range RPM value means: the command errors, the RPM tail is NOT
+   * applied, the earlier filter fields ARE already stored, and
+   * `validateAndFixGyroConfig()` / `gyroInitFilters()` never run - the board
+   * is left holding new filter values it has not re-initialised against.
+   *
+   * That is precisely why this app checks these bounds BEFORE the wire
+   * rather than letting the board answer: there is no clean rollback to
+   * report afterwards.
+   */
+  private rejectsRpmTail(payload: Uint8Array): boolean {
+    if (this.apiMinor < 48 || payload.length < MSP_FILTER_CONFIG_BYTES_API148) return false;
+    const o = FILTER_CONFIG_OFFSETS;
+    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const q = view.getUint16(o.rpmFilterQ, true);
+    if (q < 250 || q > 3000) return true;
+    if (view.getUint16(o.rpmFilterFadeRangeHz, true) > 1000) return true;
+    for (let index = 0; index < RPM_FILTER_HARMONICS_MAX; index += 1) {
+      if (payload[o.rpmFilterWeights + index] > 100) return true;
+    }
+    return false;
+  }
+
   private setFilterConfig(payload: Uint8Array): void {
     const global = this.state.globals.filterGlobal;
     const profile = this.state.pidProfiles[this.state.activePid].filterProfile;
+    /* The partial store described above: everything up to the tail lands,
+       and only then is the tail judged. */
+    const rejected = this.rejectsRpmTail(payload);
+    const accepted = rejected
+      ? payload.subarray(0, FILTER_CONFIG_OFFSETS.rpmFilterFadeRangeHz)
+      : payload.subarray(0, this.filterBytes);
+    global.set(accepted);
+    profile.set(accepted);
+    if (rejected) {
+      throw new VirtualPidError(MSP_ERROR, 'MSP_SET_FILTER_CONFIG rejected: RPM filter value out of range');
+    }
     global.set(payload.subarray(0, this.filterBytes));
     profile.set(payload.subarray(0, this.filterBytes));
     const view = new DataView(global.buffer);

@@ -42,6 +42,8 @@ function snapshot() {
   filterView.setUint16(22, 500, true); // gyro_lpf2_static_hz
   filters[24] = 0; filters[25] = 0; // lowpass types
   return decodePidTuningSnapshot({
+    // A 49-byte MSP_FILTER_CONFIG is the API 1.47 contract.
+    contract: 'API_1_47',
     pid,
     advanced,
     rates,

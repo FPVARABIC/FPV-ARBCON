@@ -8,7 +8,13 @@ import {
 function writeU16(bytes: Uint8Array, offset: number, value: number): void {
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint16(offset, value, true);
 }
-const PROFILES = {pidProfileIndex: 1, pidProfileCount: 3, controlRateProfileIndex: 2} as const;
+/* `contract` sits beside the profile identity because it is the same kind of
+   fact: something the caller PROVED before it read a byte, not something this
+   decoder may infer. These fixtures are 49-byte MSP_FILTER_CONFIG payloads,
+   which is the 1.47 contract, so that is what they declare. */
+const PROFILES = {
+  contract: 'API_1_47', pidProfileIndex: 1, pidProfileCount: 3, controlRateProfileIndex: 2,
+} as const;
 
 describe('PID tuning MSP decoding', () => {
   it('decodes the five official PID rows and API 1.47 feedforward offsets', () => {

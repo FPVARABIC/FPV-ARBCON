@@ -16,11 +16,18 @@ import {
   type AdvancedPidFieldKey,
 } from '../../core/state/advancedPidFields';
 import {
+  RPM_FILTER_HEAD_KEYS,
+  RPM_FILTER_TAIL_KEYS,
+  rpmFilterBoundFor,
+  type RpmFilterFieldKey,
+} from '../../core/state/rpmFilterFields';
+import {
   ADVANCED_CATALOGUE_FIELDS,
   ADVANCED_GROUPS,
   ADVANCED_PRESENTED_FIELDS,
   RPM_FILTER_COPY,
   advancedFieldCopy,
+  rpmFieldCopy,
 } from './advancedTuningPresentation';
 
 /** Wire names, which may appear ONLY in the technical detail. */
@@ -141,10 +148,52 @@ describe('advanced tuning presentation', () => {
     });
   });
 
-  it('explains WHY the RPM filter is read-only instead of just disabling it', () => {
-    expect(RPM_FILTER_COPY.readOnlyReason).toContain('1.48');
-    // And why the 1.48 tail is not DISPLAYED either: deciding it is there
-    // from the payload length would be a guess (§12).
-    expect(RPM_FILTER_COPY.readOnlyReason).toContain('تخمينًا');
+  /* CONTRACT CHANGED BY P-E2, DELIBERATELY.
+     This used to assert that the copy explained why the RPM filter was
+     READ-ONLY and why its 1.48 tail was not displayed at all - both of
+     which were true when the screen had no API contract to consult. It
+     now has one, so the tail is editable where the contract defines it
+     and the copy's job changed with it: say what the fields DO, and say
+     one sentence where the older protocol has no such fields. */
+  describe('the RPM filter copy', () => {
+    it('offers an operator sentence for a contract without the tail, not a row of zeros', () => {
+      expect(RPM_FILTER_COPY.tailAbsentNote).toContain('الإصدارات الأحدث');
+      // No greyed-out numbers to explain, so no "why is this disabled".
+      expect(RPM_FILTER_COPY.tailAbsentNote).not.toContain('0');
+    });
+
+    it('states that presence is decided by the protocol version, not by bytes or zeros', () => {
+      expect(RPM_FILTER_COPY.detail).toContain('1.48');
+      expect(RPM_FILTER_COPY.detail).toContain('لا من طول الرسالة');
+      expect(RPM_FILTER_COPY.detail).toContain('صفرًا');
+    });
+
+    it('says all seven fields are global, so a profile switch is not implicated', () => {
+      expect(RPM_FILTER_COPY.scopeBadge).toBe('مشترك بين كل الملفات');
+    });
+
+    it('gives every RPM field a label, a hint and its wire name', () => {
+      const fields: RpmFilterFieldKey[] = [
+        ...RPM_FILTER_HEAD_KEYS, ...RPM_FILTER_TAIL_KEYS,
+      ];
+      expect(fields).toHaveLength(7);
+      for (const field of fields) {
+        const copy = rpmFieldCopy(field);
+        expect(copy.label.length).toBeGreaterThan(0);
+        expect(copy.hint.length).toBeGreaterThan(0);
+        expect(copy.wireName.startsWith('rpm_filter_')).toBe(true);
+        // §31: the raw firmware name never leaks into the label itself.
+        expect(copy.label).not.toContain('rpm_filter');
+      }
+    });
+
+    it('reads the weights as a percentage, which is what the source says they are', () => {
+      // pg/rpm_filter.h: "effect or 'weight' (0% - 100%)", and msp.c
+      // refuses any weight above 100. Both agree, so the unit is proven.
+      for (const field of ['weight1', 'weight2', 'weight3'] as const) {
+        expect(rpmFieldCopy(field).label).toContain('٪');
+        expect(rpmFilterBoundFor(field)).toMatchObject({min: 0, max: 100});
+      }
+    });
   });
 });

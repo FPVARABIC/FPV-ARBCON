@@ -43,6 +43,7 @@ import {
   ADVANCED_FILTER_FIELD_KEYS,
   type AdvancedFilterFieldKey,
 } from '../../core/state/advancedFilterFields';
+import type {RpmFilterFieldKey} from '../../core/state/rpmFilterFields';
 
 export type AdvancedFieldKey = AdvancedPidFieldKey | AdvancedFilterFieldKey;
 
@@ -570,19 +571,83 @@ export const ADVANCED_CATALOGUE_FIELDS: readonly AdvancedFieldKey[] = Object.fre
 ]);
 
 /**
- * The RPM filter, which this phase READS and does not write.
+ * The RPM filter.
  *
- * Its fields live in a tail that only exists from API 1.48 and its weights
- * are variable-length. Saying so where the values are shown is the honest
- * surface; a disabled control with no explanation is not.
+ * Two of its fields exist under every wire contract this app speaks; the
+ * other five exist only from API 1.48. That difference is the ONE thing this
+ * card is version-aware about, and the copy below says it in the operator's
+ * terms - the settings are not in the older protocol, rather than a row of
+ * greyed-out zeros with no explanation.
  */
 export const RPM_FILTER_COPY = Object.freeze({
   title: 'مرشّح RPM',
-  hint: 'يعرض التطبيق القيمتين الموجودتين على كل الإصدارات، ولا يكتب شيئًا هنا.',
-  readOnlyReason:
-    'بقية حقول مرشّح RPM - الـQ ومدى التلاشي والأوزان - تعيش في ذيل الرسالة '
-    + 'الذي لا يظهر إلا من إصدار MSP 1.48، وعدد الأوزان متغيّر. عرضها بالاعتماد '
-    + 'على طول الرسالة كان سيكون تخمينًا، وكتابتها كانت ستعني إرسال أصفار على '
-    + 'لوحة لا تحمل هذه الحقول أصلًا. فلا نعرضها ولا نكتبها، ونقول ذلك بدل '
-    + 'تعطيل حقول دون تفسير.',
+  hint: 'يلغي ضجيج المراوح بالاعتماد على سرعة دوران كل محرك، ويتحرّك مع تغيّر السرعة.',
+  scopeBadge: 'مشترك بين كل الملفات',
+  /** Shown ONLY under a contract whose message has no tail. §5. */
+  tailAbsentNote: 'الإعدادات الإضافية لمرشّح RPM تتوفر عبر MSP في الإصدارات الأحدث.',
+  /** What a harmonics of zero actually means, said once. */
+  disabledNote: 'عدد التوافقيات صفر يعني أن المرشّح متوقف.',
+  detailTitle: 'التفاصيل التقنية',
+  detail:
+    'الحقول السبعة كلها ضمن رسالة إعدادات المرشّحات نفسها. الأولان - عدد '
+    + 'التوافقيات والتردد الأدنى - موجودان في كل الإصدارات المدعومة. أما مدى '
+    + 'التلاشي والـQ والأوزان الثلاثة فتظهر في ذيل الرسالة ابتداءً من إصدار '
+    + 'MSP 1.48، ويقرر التطبيق وجودها من إصدار البروتوكول الذي أثبته عند '
+    + 'التعرّف على اللوحة، لا من طول الرسالة ولا من كون القيمة صفرًا.',
 });
+
+export interface RpmFieldCopy {
+  readonly label: string;
+  readonly hint: string;
+  readonly wireName: string;
+}
+
+/**
+ * Units and meanings, each taken from the firmware rather than assumed.
+ *
+ * The weights are stated as a percentage because two independent places in
+ * the source say so: the struct comment in `pg/rpm_filter.h` - "effect or
+ * 'weight' (0% - 100%) of each RPM filter harmonic" - and the MSP setter,
+ * which rejects any weight above 100.
+ */
+export const RPM_FIELD_COPY: Readonly<Record<RpmFilterFieldKey, RpmFieldCopy>> = Object.freeze({
+  harmonics: {
+    label: 'عدد التوافقيات',
+    hint: 'كم مضاعفًا من تردد دوران المحرك يلاحقه المرشّح. صفر يوقفه.',
+    wireName: 'rpm_filter_harmonics',
+  },
+  minHz: {
+    label: 'أدنى تردد (هرتز)',
+    hint: 'لا يعمل المرشّح تحت هذا التردد، حتى لا يلاحق دورانًا بطيئًا جدًا.',
+    wireName: 'rpm_filter_min_hz',
+  },
+  fadeRangeHz: {
+    label: 'مدى التلاشي (هرتز)',
+    hint: 'المدى الذي يخفّ فيه أثر المرشّح تدريجيًا قرب أدنى تردد بدل أن يتوقف فجأة.',
+    wireName: 'rpm_filter_fade_range_hz',
+  },
+  q: {
+    label: 'حدّة المرشّح Q',
+    hint: 'كلما ارتفعت صار المرشّح أضيق: يزيل نطاقًا أرفع حول التردد المستهدف.',
+    wireName: 'rpm_filter_q',
+  },
+  weight1: {
+    label: 'وزن التوافقية الأولى ٪',
+    hint: 'قوة المرشّح على المضاعف الأول، من صفر إلى مئة بالمئة.',
+    wireName: 'rpm_filter_weights[0]',
+  },
+  weight2: {
+    label: 'وزن التوافقية الثانية ٪',
+    hint: 'قوة المرشّح على المضاعف الثاني، من صفر إلى مئة بالمئة.',
+    wireName: 'rpm_filter_weights[1]',
+  },
+  weight3: {
+    label: 'وزن التوافقية الثالثة ٪',
+    hint: 'قوة المرشّح على المضاعف الثالث، من صفر إلى مئة بالمئة.',
+    wireName: 'rpm_filter_weights[2]',
+  },
+});
+
+export function rpmFieldCopy(field: RpmFilterFieldKey): RpmFieldCopy {
+  return RPM_FIELD_COPY[field];
+}

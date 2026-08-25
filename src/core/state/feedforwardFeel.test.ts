@@ -62,6 +62,7 @@ function board(overrides: {averaging?: number; boost?: number; jitter?: number; 
   advanced[FEEDFORWARD_BOOST_OFFSET] = overrides.boost ?? 15;
   advanced[FEEDFORWARD_JITTER_FACTOR_OFFSET] = overrides.jitter ?? 7;
   return decodePidTuningSnapshot({
+    contract: 'API_1_47',
     pid: new Uint8Array(30),
     advanced,
     rates: ratesPayload(),

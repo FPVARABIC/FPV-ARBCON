@@ -1,4 +1,5 @@
 import {MspPayloadReadError, MspPayloadReader} from './MspPayloadReader';
+import {filterConfigBytesFor, type PidApiContract} from './pidWireContracts';
 
 export const PID_ITEM_COUNT = 5;
 export const PID_AXIS_COUNT = 3;
@@ -67,6 +68,27 @@ export interface MspFilterConfiguration {
   readonly dynamicNotchCount: number;
 }
 export interface MspPidTuningSnapshot {
+  /**
+   * WHICH WIRE CONTRACT PRODUCED THESE BYTES. Not a hint - the identity of
+   * the payloads themselves.
+   *
+   * It is carried here so that everything downstream - the draft, the
+   * encoder, the readback classifier and the screen - answers "does this
+   * board's MSP_FILTER_CONFIG define the 1.48 RPM tail?" from the SAME
+   * source-verified API resolution the controller already used to decide
+   * whether it may write at all. Without it each layer would have to form
+   * its own opinion, and the only material available to a layer that far
+   * from the identification is the payload's length or the fact that a
+   * field reads zero. Neither is evidence:
+   *
+   *   - length is a property of one response, not of the firmware's
+   *     capability set, and
+   *   - the firmware appends the tail unconditionally from 1.48, so zero
+   *     is what a board WITHOUT the RPM filter compiled in also reports.
+   *
+   * One version truth, resolved once, passed down.
+   */
+  readonly contract: PidApiContract;
   readonly terms: readonly MspPidTerm[];
   readonly feedforward: readonly [number, number, number];
   readonly rcTuning: MspRcTuning;
@@ -181,6 +203,14 @@ export function decodePidTerms(payload: Uint8Array): readonly MspPidTerm[] {
 }
 
 export function decodePidTuningSnapshot(input: {
+  /**
+   * REQUIRED, and deliberately not defaulted. A default would be this
+   * module quietly deciding a firmware's wire contract on the caller's
+   * behalf - a second version truth, arrived at without evidence. Every
+   * production caller has already resolved the contract from the proven
+   * API version before it asks for a payload.
+   */
+  readonly contract: PidApiContract;
   readonly pid: Uint8Array;
   readonly advanced: Uint8Array;
   readonly rates: Uint8Array;
@@ -215,6 +245,17 @@ export function decodePidTuningSnapshot(input: {
   if (input.filters.length < FILTER_CONFIG_API147_BYTES) {
     throw new MspPayloadReadError(`MSP_FILTER_CONFIG requires at least ${FILTER_CONFIG_API147_BYTES} bytes for API 1.47; received ${input.filters.length}.`);
   }
+  // THE CONTRACT AND THE BYTES MUST AGREE. From API 1.48 the firmware's own
+  // reply builder appends the RPM tail unconditionally, so a board claiming
+  // 1.48 or newer and sending a 1.47-length payload has contradicted itself.
+  // Reading the tail out of it would run off the end of the buffer; padding
+  // it with zeros would invent five values. Refusing is the only answer that
+  // states what is actually true - that this payload is not the contract it
+  // was announced as.
+  const filterMinimum = filterConfigBytesFor(input.contract);
+  if (input.filters.length < filterMinimum) {
+    throw new MspPayloadReadError(`MSP_FILTER_CONFIG requires at least ${filterMinimum} bytes for ${input.contract}; received ${input.filters.length}.`);
+  }
   if (!Number.isInteger(input.pidProfileIndex) || input.pidProfileIndex < 0 ||
     !Number.isInteger(input.pidProfileCount) || input.pidProfileCount < 1 ||
     input.pidProfileIndex >= input.pidProfileCount ||
@@ -222,6 +263,7 @@ export function decodePidTuningSnapshot(input: {
     throw new MspPayloadReadError('MSP_STATUS_EX did not provide a valid PID/rates profile identity for API 1.47.');
   }
   return Object.freeze({
+    contract: input.contract,
     terms: decodePidTerms(input.pid),
     feedforward: Object.freeze([u16At(input.advanced, 32), u16At(input.advanced, 34), u16At(input.advanced, 36)]) as readonly [number, number, number],
     rcTuning: decodeRcTuning(input.rates),

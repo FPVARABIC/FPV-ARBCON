@@ -40,6 +40,11 @@ const SESSION: SetupUiSessionKey = {sessionId: 'pid-advanced-ui', generation: 3}
 
 function harness(options: Partial<VirtualPidBoardOptions> = {}) {
   const board = new VirtualPidBoard({apiMinor: 47, filterBytes: 49, ...options});
+  /* THE IDENTIFICATION MUST AGREE WITH THE BOARD. It used to be hard-coded
+     to 47 while the board was configurable, which meant an API-1.48 fixture
+     silently ran against a 1.47 identification - and every version-aware
+     decision downstream would have been tested against the wrong answer. */
+  const apiMinor = options.apiMinor ?? 47;
   const telemetry = {
     acquirePauseLease: jest.fn(() => ({release: jest.fn()})),
     discardPendingDemands: jest.fn(),
@@ -50,7 +55,7 @@ function harness(options: Partial<VirtualPidBoardOptions> = {}) {
     status: 'SUCCEEDED',
     identity: {
       firmware: {identifier: 'BTFL', knownFamily: 'BETAFLIGHT'},
-      apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: 47},
+      apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: apiMinor},
       board: {gyroSampleRateHz: 8000},
     },
   } as MspIdentificationState;
@@ -360,15 +365,25 @@ describe('P-E: the expert tier reaches the board', () => {
     act(() => renderer.unmount());
   });
 
-  it('16. shows the RPM filter as read-only and explains why', async () => {
+  /* CONTRACT CHANGED BY P-E2, DELIBERATELY.
+     This item used to assert that the RPM filter was READ-ONLY and that the
+     card explained why. That was the honest surface while the screen had no
+     API contract to consult. It has one now, so on a 1.47 board the card
+     shows the two fields that contract really carries, as controls, plus one
+     sentence about the newer protocol - and no invented tail. The stronger
+     guarantee, that nothing fake appears, is asserted here directly. */
+  it('16. shows only the fields API 1.47 really carries, with no invented tail', async () => {
     const h = harness();
     const renderer = await render(h.port);
     press(renderer, 'pid-advanced-toggle');
     expect(exists(renderer, 'pid-rpm-filter')).toBe(true);
-    expect(exists(renderer, 'pid-rpm-readout')).toBe(true);
-    const text = screenText(renderer);
-    expect(text).toContain('مرشّح RPM');
-    expect(text).toContain('1.48');
+    expect(exists(renderer, 'pid-rpm-filter-harmonics')).toBe(true);
+    expect(exists(renderer, 'pid-rpm-filter-minHz')).toBe(true);
+    for (const absent of ['fadeRangeHz', 'q', 'weight1', 'weight2', 'weight3']) {
+      expect(exists(renderer, `pid-rpm-filter-${absent}`)).toBe(false);
+    }
+    expect(exists(renderer, 'pid-rpm-filter-tail-absent')).toBe(true);
+    expect(screenText(renderer)).toContain('مرشّح RPM');
     act(() => renderer.unmount());
   });
 });

@@ -49,9 +49,9 @@ import {
 } from '../../platforms/react-native/protocol';
 import type {AdvancedPidFieldKey} from '../../core/state/advancedPidFields';
 import type {AdvancedFilterFieldKey} from '../../core/state/advancedFilterFields';
+import {withRpmFilterValue, type RpmFilterFieldKey} from '../../core/state/rpmFilterFields';
 import type {CopyProfileRequest} from '../../core/protocol/msp/encoding/encodeProfileCommands';
-import {FILTER_CONFIG_OFFSETS} from '../../core/protocol/msp/decoding/decodeFilterConfigFull';
-import {RPM_FILTER_COPY} from '../presentation/advancedTuningPresentation';
+import RpmFilterCard from '../components/pid/RpmFilterCard';
 import AdvancedTuningGroups from '../components/pid/AdvancedTuningGroups';
 import ProfileManagementCard from '../components/pid/ProfileManagementCard';
 import {StickyActionBar} from '../components/editing';
@@ -311,6 +311,7 @@ function issueMessage(issue: ReturnType<typeof validatePidTuningDraft>[number]):
     FILTER_EXCEEDS_NYQUIST: 'أحد ترددات الفلاتر يبلغ أو يتجاوز حد Nyquist',
     ADVANCED_PID_VALUE_INVALID: 'إحدى قيم الإعدادات المتقدمة خارج حدود البرنامج الثابت',
     ADVANCED_FILTER_VALUE_INVALID: 'إحدى قيم الفلاتر المتقدمة خارج حدود البرنامج الثابت',
+    RPM_FILTER_VALUE_INVALID: 'إحدى قيم مرشّح RPM خارج حدود البرنامج الثابت، والمتحكم يرفض الرسالة كاملة',
   })[issue];
 }
 
@@ -596,6 +597,17 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
     setDraft(current => current === undefined ? current : Object.freeze({...current, advancedFilters: Object.freeze({...current.advancedFilters, [field]: value})}));
     retireStatus();
   }, [retireStatus]);
+  /* The RPM group needs `withRpmFilterValue` rather than a spread, because
+     three of its fields live inside a fixed-length weights tuple and five of
+     them may not exist at all under this board's wire contract. That helper
+     is also the thing that DROPS a tail edit on a contract with no tail,
+     instead of materialising the tail a spread would have created. */
+  const updateRpmFilter = useCallback((field: RpmFilterFieldKey, value: number) => {
+    setDraft(current => current === undefined
+      ? current
+      : Object.freeze({...current, rpmFilter: withRpmFilterValue(current.rpmFilter, field, value)}));
+    retireStatus();
+  }, [retireStatus]);
   const patchPids = useCallback((patch: SimplifiedPidInputPatch) => { setSimplifiedPatch(current => Object.freeze({...current, pids: {...current.pids, ...patch}})); retireStatus(); }, [retireStatus]);
   const patchBlock = useCallback((block: 'gyro' | 'dterm', patch: SimplifiedFilterPatch) => { setSimplifiedPatch(current => Object.freeze({...current, [block]: {...current[block], ...patch}})); retireStatus(); }, [retireStatus]);
 
@@ -781,21 +793,6 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   const gyroNyquist = snapshot?.gyroSampleRateHz === undefined ? undefined : snapshot.gyroSampleRateHz / 2;
   const pidNyquist = snapshot?.gyroSampleRateHz === undefined || snapshot.pidProcessDenom === undefined || snapshot.pidProcessDenom < 1 ? undefined : snapshot.gyroSampleRateHz / snapshot.pidProcessDenom / 2;
   const filtersEditable = gyroNyquist !== undefined && pidNyquist !== undefined;
-  /**
-   * The two RPM-filter values that exist on EVERY supported API.
-   *
-   * Read straight from the payload at the decoder's own offsets rather
-   * than from a second table. The 1.48 tail - Q, fade range and the
-   * variable-length weights - is deliberately NOT shown: whether it is
-   * present depends on the API contract, which this screen is not given,
-   * and rendering it from a byte count would be guessing. Showing two
-   * true values and saying the rest is not surfaced beats showing four
-   * where two might be invented.
-   */
-  const rpmFilter = snapshot === undefined ? undefined : {
-    harmonics: snapshot.filtersRaw[FILTER_CONFIG_OFFSETS.rpmFilterHarmonics],
-    minHz: snapshot.filtersRaw[FILTER_CONFIG_OFFSETS.rpmFilterMinHz],
-  };
   const busy = phase !== 'READY';
   const simplifiedNotice = simplifiedLoadMessage(simplifiedState);
   const overwrite = draftSimplified !== undefined && simplifiedDirty ? overwriteSummary(draftSimplified) : undefined;
@@ -990,18 +987,17 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
           onChangeFilter={updateAdvancedFilter}
         />
 
-        {/* THE RPM FILTER, READ ONLY. Shown where the board reports it, and
-            saying WHY there is no control - a disabled field with no
-            explanation is the thing this project keeps refusing to ship. */}
-        <View style={styles.card} testID="pid-rpm-filter">
-          <Text style={styles.sectionTitle}>{RPM_FILTER_COPY.title}</Text>
-          <Text style={styles.sectionHint}>{RPM_FILTER_COPY.hint}</Text>
-          {rpmFilter === undefined ? null : <View style={styles.rateEvidence} testID="pid-rpm-readout">
-            <Text style={styles.readout}>{`Harmonics: ${rpmFilter.harmonics}`}</Text>
-            <Text style={styles.readout}>{`Min Hz: ${rpmFilter.minHz}`}</Text>
-          </View>}
-          <Text style={styles.sectionHint}>{RPM_FILTER_COPY.readOnlyReason}</Text>
-        </View>
+        {/* THE RPM FILTER. The one card whose SHAPE depends on the board's
+            protocol version - and it is told that shape by the draft, which
+            got it from the contract the identification proved. This screen
+            does not decide it, does not measure a payload, and does not
+            read capability into a zero. */}
+        <RpmFilterCard
+          rpm={draft.rpmFilter}
+          disabled={busy}
+          wide={wide}
+          onChange={updateRpmFilter}
+        />
 
         {/* WHOLE-PROFILE OPERATIONS, last: they are the ones that lose work. */}
         <ProfileManagementCard

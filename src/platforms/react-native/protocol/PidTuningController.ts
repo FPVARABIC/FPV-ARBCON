@@ -714,14 +714,14 @@ export class PidTuningController {
 
   async load(key: SetupUiSessionKey): Promise<PidLoadOutcome> {
     const captured = this.capture(key); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
-    const {client, scheduler, epoch, gyroSampleRateHz} = captured; let interlock;
+    const {client, scheduler, epoch, gyroSampleRateHz, contract} = captured; let interlock;
     try { interlock = acquireMotorConfigurationInterlock(client); }
     catch (error) { return error instanceof MotorConfigurationTransactionInProgressError ? {kind: 'REJECTED', reason: 'CONFIGURATION_BUSY'} : {kind: 'FAILED', error}; }
     try {
       const result = await this.operations(key.sessionId, client, scheduler).execute<MspPidTuningSnapshot>({
         id: `pid:load:${key.sessionId}:${key.generation}`, sessionEffect: 'KEEP_SESSION',
         validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
-        execute: async requester => { this.assertLive(key, client, epoch); return this.readSnapshot(requester, gyroSampleRateHz); },
+        execute: async requester => { this.assertLive(key, client, epoch); return this.readSnapshot(requester, contract, gyroSampleRateHz); },
       });
       if (result.status === 'SUCCEEDED') return {kind: 'LOADED', snapshot: result.result};
       if (result.status === 'SESSION_ENDED' || result.status === 'OUTCOME_UNKNOWN') return {kind: 'SESSION_ENDED'};
@@ -743,7 +743,7 @@ export class PidTuningController {
         validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
         execute: async requester => {
           this.assertLive(key, client, epoch);
-          const fresh = await this.readSnapshot(requester, gyroSampleRateHz);
+          const fresh = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           // PROFILE FIRST, then values. A moved profile is not a stale
           // value - the draft may be byte-identical and still belong to
           // somebody else's tune - so it gets its own refusal.
@@ -785,7 +785,7 @@ export class PidTuningController {
           for (const write of writes) await this.writeOnce(requester, COMMAND_FOR_GROUP[write.group], write.payload, write.group);
 
           // APPLIED proof, per group, per field.
-          const applied = await this.readSnapshot(requester, gyroSampleRateHz);
+          const applied = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           const verdicts = classifySaveGroups(contract, original, applied, writes);
           const failed = verdicts.find(entry => entry.verdict.kind === 'MISMATCH');
           if (failed !== undefined && failed.verdict.kind === 'MISMATCH') {
@@ -812,7 +812,7 @@ export class PidTuningController {
           await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
           // EEPROM acknowledging is not persistence. Read it back.
           try {
-            const persisted = await this.readSnapshot(requester, gyroSampleRateHz);
+            const persisted = await this.readSnapshot(requester, contract, gyroSampleRateHz);
             const persistedVerdicts = classifySaveGroups(contract, original, persisted, writes);
             if (persistedVerdicts.some(entry => entry.verdict.kind === 'MISMATCH')) {
               return {appliedOnly: {snapshot: applied, evidence, error: new Error('Persisted PID readback does not match the applied state.')}};
@@ -864,7 +864,7 @@ export class PidTuningController {
         validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
         execute: async requester => {
           this.assertLive(key, client, epoch);
-          const fresh = await this.readSnapshot(requester, gyroSampleRateHz);
+          const fresh = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           assertSameProfile(original, fresh);
           const observed = await this.readSimplifiedIfSupported(requester);
           if (observed === undefined) throw new PidPreflightError('SIMPLIFIED_TUNING_UNSUPPORTED');
@@ -958,7 +958,7 @@ export class PidTuningController {
   async setRatesType(key: SetupUiSessionKey, original: MspPidTuningSnapshot, ratesTypeRaw: number): Promise<PidRatesTypeOutcome> {
     if (!isEncodableRatesType(ratesTypeRaw)) return {kind: 'REJECTED', reason: 'UNKNOWN_RATES_TYPE'};
     const captured = this.capture(key, 'WRITE'); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
-    const {client, scheduler, epoch, gyroSampleRateHz} = captured; let interlock;
+    const {client, scheduler, epoch, gyroSampleRateHz, contract} = captured; let interlock;
     try { interlock = acquireMotorConfigurationInterlock(client); }
     catch (error) { return error instanceof MotorConfigurationTransactionInProgressError ? {kind: 'REJECTED', reason: 'CONFIGURATION_BUSY'} : {kind: 'FAILED', error}; }
     try {
@@ -968,7 +968,7 @@ export class PidTuningController {
         validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
         execute: async requester => {
           this.assertLive(key, client, epoch);
-          const fresh = await this.readSnapshot(requester, gyroSampleRateHz);
+          const fresh = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           assertSameProfile(original, fresh);
           if (fresh.ratesRaw[RC_TUNING_OFFSETS.ratesType] === ratesTypeRaw) return {unchanged: fresh};
 
@@ -976,13 +976,13 @@ export class PidTuningController {
           const payload = encodeRcTuningRatesType(fresh.ratesRaw, ratesTypeRaw);
           await this.writeOnce(requester, MSP_SET_RC_TUNING, payload, 'RC_TUNING');
 
-          const applied = await this.readSnapshot(requester, gyroSampleRateHz);
+          const applied = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           const drift = ratesTypeWriteDifferences(fresh, applied, ratesTypeRaw);
           if (drift.length > 0) return {mismatch: {fields: drift}};
 
           await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
           try {
-            const persisted = await this.readSnapshot(requester, gyroSampleRateHz);
+            const persisted = await this.readSnapshot(requester, contract, gyroSampleRateHz);
             const persistedDrift = ratesTypeWriteDifferences(fresh, persisted, ratesTypeRaw);
             if (persistedDrift.length > 0) {
               return {appliedOnly: {snapshot: applied, error: new Error('Persisted rates type does not match the applied state.')}};
@@ -1057,7 +1057,7 @@ export class PidTuningController {
     contract: PidApiContract,
     requested: MspSimplifiedTuning,
   ): Promise<{snapshot: MspPidTuningSnapshot; verdict: GroupVerdict}> {
-    const snapshot = await this.readSnapshot(requester, gyroSampleRateHz);
+    const snapshot = await this.readSnapshot(requester, contract, gyroSampleRateHz);
     const observedSimplified = await this.readSimplifiedIfSupported(requester);
     if (observedSimplified === undefined) throw new Error('MSP_SIMPLIFIED_TUNING stopped answering mid-save.');
     return {
@@ -1113,7 +1113,7 @@ export class PidTuningController {
    */
   async copyProfile(key: SetupUiSessionKey, request: CopyProfileRequest): Promise<PidProfileCopyOutcome> {
     const captured = this.capture(key, 'WRITE'); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
-    const {client, scheduler, epoch, gyroSampleRateHz} = captured; let interlock;
+    const {client, scheduler, epoch, gyroSampleRateHz, contract} = captured; let interlock;
     try { interlock = acquireMotorConfigurationInterlock(client); }
     catch (error) { return error instanceof MotorConfigurationTransactionInProgressError ? {kind: 'REJECTED', reason: 'CONFIGURATION_BUSY'} : {kind: 'FAILED', error}; }
     try {
@@ -1123,7 +1123,7 @@ export class PidTuningController {
         validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
         execute: async requester => {
           this.assertLive(key, client, epoch);
-          const before = await this.readSnapshot(requester, gyroSampleRateHz);
+          const before = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           const home = request.kind === 'RATE' ? before.controlRateProfileIndex : before.pidProfileIndex;
           const projected = projectCopyProfile(request, home);
           if (projected.kind !== 'COPIED') throw new PidPreflightError('INVALID_CONFIGURATION');
@@ -1132,15 +1132,15 @@ export class PidTuningController {
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
           const source = request.sourceIndex === home
             ? before
-            : await this.visitProfile(requester, gyroSampleRateHz, request.kind, request.sourceIndex);
+            : await this.visitProfile(requester, gyroSampleRateHz, contract, request.kind, request.sourceIndex);
           if (source === undefined) return {leftOnAnotherProfile: {requestedIndex: request.sourceIndex, activeIndex: home}};
 
           await this.writeOnce(requester, MSP_COPY_PROFILE, encodeCopyProfile(request), 'COPY_PROFILE');
 
-          const destination = await this.visitProfile(requester, gyroSampleRateHz, request.kind, request.destinationIndex);
-          const restored = await this.visitProfile(requester, gyroSampleRateHz, request.kind, home);
+          const destination = await this.visitProfile(requester, gyroSampleRateHz, contract, request.kind, request.destinationIndex);
+          const restored = await this.visitProfile(requester, gyroSampleRateHz, contract, request.kind, home);
           if (restored === undefined) {
-            const active = await this.readSnapshot(requester, gyroSampleRateHz);
+            const active = await this.readSnapshot(requester, contract, gyroSampleRateHz);
             return {leftOnAnotherProfile: {
               requestedIndex: home,
               activeIndex: request.kind === 'RATE' ? active.controlRateProfileIndex : active.pidProfileIndex,
@@ -1153,7 +1153,7 @@ export class PidTuningController {
 
           // Only now, with the operator's own profile selected again.
           await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
-          const after = await this.readSnapshot(requester, gyroSampleRateHz);
+          const after = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           const stillHome = (request.kind === 'RATE' ? after.controlRateProfileIndex : after.pidProfileIndex) === home;
           if (!stillHome) {
             return {leftOnAnotherProfile: {
@@ -1188,11 +1188,12 @@ export class PidTuningController {
   private async visitProfile(
     requester: MspRequester,
     gyroSampleRateHz: number | undefined,
+    contract: PidApiContract,
     kind: PidProfileKind,
     index: number,
   ): Promise<MspPidTuningSnapshot | undefined> {
     await this.writeOnce(requester, MSP_SELECT_SETTING, encodeSelectSetting(kind, index), 'SELECT_PROFILE');
-    const snapshot = await this.readSnapshot(requester, gyroSampleRateHz);
+    const snapshot = await this.readSnapshot(requester, contract, gyroSampleRateHz);
     const active = kind === 'RATE' ? snapshot.controlRateProfileIndex : snapshot.pidProfileIndex;
     return active === index ? snapshot : undefined;
   }
@@ -1225,7 +1226,7 @@ export class PidTuningController {
           await this.writeOnce(requester, MSP_SET_RESET_CURR_PID, encodePidProfileReset(), 'RESET_PID_PROFILE');
           // The reset rewrites the name and the simplified sliders too, so
           // both are read back rather than left to an assumption.
-          const snapshot = await this.readSnapshot(requester, gyroSampleRateHz);
+          const snapshot = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           const name = await this.readName(requester, 'PID').catch(() => undefined);
           const simplified = await this.readSimplifiedIfSupported(requester);
           return {snapshot, fields: pidProfileDefaultDifferences({snapshot, name, simplified}, contract)};
@@ -1398,7 +1399,7 @@ export class PidTuningController {
     }
     const captured = this.capture(key);
     if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
-    const {client, scheduler, epoch, gyroSampleRateHz} = captured;
+    const {client, scheduler, epoch, gyroSampleRateHz, contract} = captured;
     let interlock;
     try { interlock = acquireMotorConfigurationInterlock(client); }
     catch (error) { return error instanceof MotorConfigurationTransactionInProgressError ? {kind: 'REJECTED', reason: 'CONFIGURATION_BUSY'} : {kind: 'FAILED', error}; }
@@ -1423,7 +1424,7 @@ export class PidTuningController {
           }
           this.assertLive(key, client, epoch);
           // The board is the authority on what is now active.
-          return this.readSnapshot(requester, gyroSampleRateHz);
+          return this.readSnapshot(requester, contract, gyroSampleRateHz);
         },
       });
       if (result.status === 'SUCCEEDED') {
@@ -1489,7 +1490,13 @@ export class PidTuningController {
     const armed = deriveArmedState(status.flightModeFlagsLow32, status.readiness.extraFlightModeFlagBytes, mapping.permanentIds);
     if (armed === 'ARMED') throw new PidPreflightError('FC_ARMED'); if (armed !== 'DISARMED' || status.readiness.malformedTail) throw new PidPreflightError('ARMED_STATE_UNKNOWN'); this.assertLive(key, client, epoch);
   }
-  private async readSnapshot(requester: MspRequester, gyroSampleRateHz?: number): Promise<MspPidTuningSnapshot> {
+  /**
+   * `contract` is a REQUIRED parameter, taken from the same `capture()` that
+   * decided whether this session may write at all. It travels with the bytes
+   * into the snapshot so that nothing downstream has to re-derive a firmware
+   * version from a payload length.
+   */
+  private async readSnapshot(requester: MspRequester, contract: PidApiContract, gyroSampleRateHz?: number): Promise<MspPidTuningSnapshot> {
     const pid = await requester.request(MSP_PID, EMPTY, {wireFormat: 'v1'}); const advanced = await requester.request(MSP_PID_ADVANCED, EMPTY, {wireFormat: 'v1'}); const rates = await requester.request(MSP_RC_TUNING, EMPTY, {wireFormat: 'v1'}); const filters = await requester.request(MSP_FILTER_CONFIG, EMPTY, {wireFormat: 'v1'});
     const generalAdvanced = decodeAdvancedConfig((await requester.request(MSP_ADVANCED_CONFIG, EMPTY, {wireFormat: 'v1'})).payload);
     const statusFrame = await requester.request(MSP_STATUS_EX, EMPTY, {wireFormat: 'v1'});
@@ -1501,6 +1508,7 @@ export class PidTuningController {
       throw new Error('MSP_STATUS_EX omitted PID/rates profile identity required by API 1.47.');
     }
     return decodePidTuningSnapshot({
+      contract,
       pid: pid.payload,
       advanced: advanced.payload,
       rates: rates.payload,

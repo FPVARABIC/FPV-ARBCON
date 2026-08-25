@@ -23,6 +23,58 @@
  * hand outrank a version number in a different response.
  */
 
+/**
+ * THE COMMITS THIS APP'S PID SUBSYSTEM WAS READ FROM, WRITTEN DOWN.
+ *
+ * Two firmware commits both announce `API_VERSION_MINOR 49`, and a version
+ * number is not an identity: "API 1.49" names a protocol, a COMMIT names the
+ * source that was actually read. Only one of them is the pin, and the other
+ * is recorded here so that saying so is a fact in the codebase rather than a
+ * sentence in a report nobody can check.
+ *
+ *   PINNED 1.49   e72a8e93695270d54897a8f128cffdf8f74a0245
+ *   COMPARED      d26516289e7e39aee53626beb91d51725ee0677f
+ *
+ * WHAT THE COMPARISON FOUND. `git diff --name-status` between the two lists
+ * exactly seven files, none of them in the PID subsystem:
+ *
+ *   blackbox/blackbox.c        blackbox/blackbox_fielddefs.h
+ *   drivers/bus_i2c_busdev.c   fc/init.c
+ *   sensors/barometer.c        sensors/compass.c        sensors/pitot.c
+ *
+ * Every path this subsystem reads - msp.c, msp_protocol.h, settings.c,
+ * pid.h/pid.c, simplified_tuning.c, fc/rc.c, controlrate_profile.*, the gyro
+ * and filter configuration structures and pg/rpm_filter.h - is byte-identical
+ * across the two, and grepping the whole diff for any PID, RPM, notch,
+ * lowpass, simplified, control-rate or MSP_SET_* token returns nothing.
+ *
+ * SO THE COMPARED COMMIT IS A COMPARISON POINT AND NOT A SECOND DEFINITION.
+ * It is never to replace the pin merely because both say minor 49: a later
+ * master commit that happens to carry the same protocol number is a different
+ * tree, and "we read 1.49" would stop being checkable the moment the identity
+ * drifted to whatever master looked like on the day.
+ */
+export const PID_SOURCE_PINS = Object.freeze({
+  /** Betaflight Configurator, stable 2026.6.1. */
+  configurator: '14a057ffc58417c5128199fc1233284982a64be3',
+  firmwareApi147: '7348054f268f0058574719c134e9f149565bb8ea',
+  /** Firmware tag 2026.6.1. */
+  firmwareApi148: '6dbc4218fd6bc33bf16ea32c670304d4f89321d5',
+  /** THE 1.49 IDENTITY. Every bound and offset in this subsystem is read here. */
+  firmwareApi149: 'e72a8e93695270d54897a8f128cffdf8f74a0245',
+} as const);
+
+/**
+ * A tree that was DIFFED AGAINST the pin, and is not itself a pin.
+ *
+ * Kept separate from `PID_SOURCE_PINS` on purpose: nothing may resolve a
+ * contract, a bound or an offset from this value, and a reader who finds it
+ * next to a 1.49 claim should see immediately which of the two is which.
+ */
+export const PID_SOURCE_COMPARISONS = Object.freeze({
+  api149AdditionalComparison: 'd26516289e7e39aee53626beb91d51725ee0677f',
+} as const);
+
 /** The three pinned contracts. Nothing else is speakable. */
 export type PidApiContract = 'API_1_47' | 'API_1_48' | 'API_1_49';
 

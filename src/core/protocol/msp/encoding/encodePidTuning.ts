@@ -4,6 +4,7 @@ import type {PidTuningDraft} from '../../../state/pidTuningModel';
 import {createPidTuningDraft, pidTuningDraftsEqual, validatePidTuningDraft} from '../../../state/pidTuningModel';
 import {patchAdvancedPidDraft} from '../../../state/advancedPidFields';
 import {patchAdvancedFilterDraft} from '../../../state/advancedFilterFields';
+import {patchRpmFilterDraft} from '../../../state/rpmFilterFields';
 
 export type PidTuningWriteGroup = 'PID' | 'PID_ADVANCED' | 'RC_TUNING' | 'FILTER_CONFIG';
 export interface EncodedPidTuningWrite { readonly group: PidTuningWriteGroup; readonly payload: Uint8Array }
@@ -74,11 +75,17 @@ export function encodeChangedPidTuning(snapshot: MspPidTuningSnapshot, draft: Pi
   filters[48] = draft.filters.dynamicNotchCount;
   // The advanced filter tier - gyro LPF1/2 types, LPF2 static, both gyro
   // notches, D-term types, dyn expo, LPF2 static, the D-term notch and the
-  // yaw lowpass. The RPM filter is NOT here: it is read-only in this phase
-  // because its fields live in a tail that only exists from API 1.48, and
-  // inventing a write contract for it is the "fake zeros on 1.47" P-E §12
-  // forbids.
+  // yaw lowpass.
   patchAdvancedFilterDraft(filters, draft.advancedFilters);
+  // The RPM filter, into the SAME clone of the board's own payload.
+  //
+  // Its head (harmonics, min Hz) is patched on every contract. Its tail
+  // (fade range, q, three weights) is patched ONLY where the contract
+  // defines those bytes - on API 1.47 the payload is 49 bytes long and
+  // offsets 49-55 are not part of it. The contract comes from the snapshot,
+  // which got it from the identification, so this decision is made from the
+  // same version truth the write authority itself used.
+  patchRpmFilterDraft(filters, draft.rpmFilter, snapshot.contract);
   const writes: EncodedPidTuningWrite[] = [];
   if (pid.some((value, index) => value !== snapshot.pidRaw[index])) writes.push(Object.freeze({group: 'PID', payload: pid}));
   if (advanced.some((value, index) => value !== snapshot.advancedRaw[index])) writes.push(Object.freeze({group: 'PID_ADVANCED', payload: advanced}));

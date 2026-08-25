@@ -301,7 +301,45 @@ export interface OwnedFilterFields {
   readonly dtermNotchHz: number;
   readonly dtermNotchCutoff: number;
   readonly yawLowpassHz: number;
+  /* ---- added by P-E2: the RPM filter ------------------------------- */
+  /** Head. Present under every contract this app speaks. */
+  readonly rpmFilterHarmonics: number;
+  readonly rpmFilterMinHz: number;
+  /**
+   * Tail. `undefined` means the contract has no such byte - NOT zero, and
+   * not "unknown". A save under API 1.47 leaves all five undefined on both
+   * sides of the comparison, and the classifier below skips them rather
+   * than inventing a value to compare.
+   */
+  readonly rpmFilterFadeRangeHz: number | undefined;
+  readonly rpmFilterQ: number | undefined;
+  readonly rpmFilterWeight1: number | undefined;
+  readonly rpmFilterWeight2: number | undefined;
+  readonly rpmFilterWeight3: number | undefined;
 }
+
+/** The five fields whose very existence depends on the wire contract. */
+export type RpmTailFilterField =
+  | 'rpmFilterFadeRangeHz' | 'rpmFilterQ'
+  | 'rpmFilterWeight1' | 'rpmFilterWeight2' | 'rpmFilterWeight3';
+
+/**
+ * Every filter field the firmware's validation could rewrite on a write.
+ *
+ * The RPM group is excluded because nothing in `validateAndFixGyroConfig()`
+ * reads it - see `projectFilterWrite`. Keeping the rules table keyed to this
+ * type means adding a CORRECTABLE field still fails to compile without a
+ * rule, which is the exhaustiveness this table was built for.
+ */
+export type CorrectableFilterField = Exclude<
+  keyof OwnedFilterFields,
+  RpmTailFilterField | 'rpmFilterHarmonics' | 'rpmFilterMinHz'
+>;
+
+const RPM_TAIL_FILTER_FIELDS: readonly RpmTailFilterField[] = Object.freeze([
+  'rpmFilterFadeRangeHz', 'rpmFilterQ',
+  'rpmFilterWeight1', 'rpmFilterWeight2', 'rpmFilterWeight3',
+]);
 
 export function ownedFilterFields(filters: MspFilterConfigFull): OwnedFilterFields {
   return Object.freeze({
@@ -329,6 +367,16 @@ export function ownedFilterFields(filters: MspFilterConfigFull): OwnedFilterFiel
     dtermNotchHz: filters.dtermNotchHz,
     dtermNotchCutoff: filters.dtermNotchCutoff,
     yawLowpassHz: filters.yawLowpassHz,
+    rpmFilterHarmonics: filters.rpmFilterHarmonics,
+    rpmFilterMinHz: filters.rpmFilterMinHz,
+    /* `rpmTail` is already `undefined` under a contract without the tail -
+       the decoder decides that from the contract, not from the length of
+       the buffer in hand - so this simply carries that fact forward. */
+    rpmFilterFadeRangeHz: filters.rpmTail?.fadeRangeHz,
+    rpmFilterQ: filters.rpmTail?.q,
+    rpmFilterWeight1: filters.rpmTail?.weights[0],
+    rpmFilterWeight2: filters.rpmTail?.weights[1],
+    rpmFilterWeight3: filters.rpmTail?.weights[2],
   });
 }
 
@@ -398,6 +446,21 @@ export function projectFilterWrite(requested: OwnedFilterFields): OwnedFilterFie
     dtermNotchHz: requested.dtermNotchHz,
     dtermNotchCutoff: requested.dtermNotchCutoff,
     yawLowpassHz: requested.yawLowpassHz,
+    /* The RPM filter is likewise untouched, and for a stronger reason than
+       the D-term group: `validateAndFixGyroConfig()` never reads any RPM
+       field at all. MSP_SET_FILTER_CONFIG's only RPM behaviour is to REFUSE
+       - a q outside {250, 3000}, a fade range above 1000 or any weight above
+       100 returns MSP_RESULT_ERROR instead of storing the tail. A refusal is
+       not a normalisation and never reaches a readback, so every RPM field
+       can only be EXACT or MISMATCH, and that is how the classifier below
+       scores them. */
+    rpmFilterHarmonics: requested.rpmFilterHarmonics,
+    rpmFilterMinHz: requested.rpmFilterMinHz,
+    rpmFilterFadeRangeHz: requested.rpmFilterFadeRangeHz,
+    rpmFilterQ: requested.rpmFilterQ,
+    rpmFilterWeight1: requested.rpmFilterWeight1,
+    rpmFilterWeight2: requested.rpmFilterWeight2,
+    rpmFilterWeight3: requested.rpmFilterWeight3,
   });
 }
 
@@ -406,7 +469,11 @@ export function classifyFilterReadback(
   observed: OwnedFilterFields,
 ): GroupVerdict {
   const expected = projectFilterWrite(requested);
-  const rules: Readonly<Record<keyof OwnedFilterFields, Parameters<typeof classifyField>[3]>> = {
+  /* Keyed over the fields the firmware can CORRECT. The RPM group is scored
+     separately below by `classifyExactField`, which exists precisely for a
+     value no firmware rule can rewrite - handing those a rule name would be
+     naming a correction that cannot happen. */
+  const rules: Readonly<Record<CorrectableFilterField, Parameters<typeof classifyField>[3]>> = {
     gyroLpf1StaticHz: 'FILTER_LIMIT_RESET',
     gyroLpf1DynMinHz: 'DYNAMIC_MIN_ABOVE_MAX',
     gyroLpf1DynMaxHz: 'FILTER_LIMIT_RESET',
@@ -437,10 +504,37 @@ export function classifyFilterReadback(
     dtermNotchCutoff: 'FILTER_LIMIT_RESET',
     yawLowpassHz: 'FILTER_LIMIT_RESET',
   };
-  const comparisons = (Object.keys(rules) as (keyof OwnedFilterFields)[]).map(field => ({
+  const comparisons: FieldComparison[] = (Object.keys(rules) as CorrectableFilterField[]).map(field => ({
     field,
     verdict: classifyField(requested[field], expected[field], observed[field], rules[field]),
   }));
+  /* The RPM head exists under every contract, so it is always compared. */
+  comparisons.push(
+    {field: 'rpmFilterHarmonics', verdict: classifyExactField(requested.rpmFilterHarmonics, observed.rpmFilterHarmonics)},
+    {field: 'rpmFilterMinHz', verdict: classifyExactField(requested.rpmFilterMinHz, observed.rpmFilterMinHz)},
+  );
+  for (const field of RPM_TAIL_FILTER_FIELDS) {
+    const want = requested[field];
+    const got = observed[field];
+    /* NOT IN THIS CONTRACT ON BOTH SIDES: there is no byte to compare, so
+       there is nothing to report. Scoring it EXACT would be claiming a
+       verification this save never performed, and scoring it MISMATCH would
+       fail every API 1.47 save over five fields that do not exist. */
+    if (want === undefined && got === undefined) continue;
+    /* One side has the field and the other does not. There is no honest
+       verdict for that: a FieldVerdict compares two NUMBERS, and inventing
+       one to stand for "this contract has no such byte" would put a
+       fabricated value into a report about a real board. It is also not a
+       board behaviour - both sides of a readback are built from the same
+       decoded contract - so it is raised as the caller error it is. */
+    if (want === undefined || got === undefined) {
+      throw new Error(
+        `Filter readback compared ${field} across two different wire contracts; `
+        + 'a requested and observed pair must be decoded under the same API contract.',
+      );
+    }
+    comparisons.push({field, verdict: classifyExactField(want, got)});
+  }
   return classifyGroup(comparisons);
 }
 

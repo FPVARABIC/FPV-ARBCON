@@ -44,6 +44,7 @@ function snapshotWith(idleMinRpm: number) {
   const advanced = new Uint8Array(61);
   advanced[IDLE_MIN_RPM_OFFSET] = idleMinRpm;
   return decodePidTuningSnapshot({
+    contract: 'API_1_47',
     pid: new Uint8Array(15),
     advanced,
     rates: new Uint8Array(24),
@@ -141,6 +142,7 @@ describe('writing it back', () => {
     ratesView.setUint16(18, 1998, true);
     ratesView.setUint16(20, 1998, true);
     return decodePidTuningSnapshot({
+      contract: 'API_1_47',
       pid, advanced, rates, filters: new Uint8Array(49),
       gyroSampleRateHz: 8000, pidProcessDenom: 2,
       pidProfileIndex: 0, pidProfileCount: 3, controlRateProfileIndex: 0,

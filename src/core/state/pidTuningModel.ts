@@ -12,6 +12,12 @@ import {
   advancedFilterDraftsEqual,
   invalidAdvancedFilterFields,
 } from './advancedFilterFields';
+import type {RpmFilterDraft} from './rpmFilterFields';
+import {
+  createRpmFilterDraftFromRaw,
+  rpmFilterDraftsEqual,
+  invalidRpmFilterFields,
+} from './rpmFilterFields';
 
 export type PidAxisKey = 'roll' | 'pitch' | 'yaw';
 export interface PidAxisDraft { readonly p: number; readonly i: number; readonly d: number; readonly f: number }
@@ -85,6 +91,23 @@ export interface PidTuningDraft {
    */
   readonly advanced: AdvancedPidDraft;
   readonly advancedFilters: AdvancedFilterDraft;
+
+  /**
+   * The RPM filter, kept as a THIRD group because it is the only one whose
+   * SHAPE depends on the firmware's API version.
+   *
+   * `advanced` and `advancedFilters` have the same fields on every board
+   * this app admits. The RPM filter does not: its two head fields exist
+   * everywhere, and its five tail fields exist only from API 1.48, where
+   * MSP_FILTER_CONFIG grows from 49 bytes to 56. Folding those five into
+   * `advancedFilters` would have forced every one of them to be a number on
+   * a board that has no such byte - which is to say, a zero this app made
+   * up. `rpmFilter.tail === undefined` says the honest thing instead.
+   *
+   * Scope: GLOBAL, all seven fields. PG_RPM_FILTER_CONFIG is a MASTER_VALUE
+   * parameter group, so switching PID profile changes none of them.
+   */
+  readonly rpmFilter: RpmFilterDraft;
 }
 
 /** settings.c: lookupTableFeedforwardAveraging has four entries. */
@@ -111,7 +134,8 @@ export type PidTuningValidationCode =
   | 'FILTER_RATE_UNKNOWN'
   | 'FILTER_EXCEEDS_NYQUIST'
   | 'ADVANCED_PID_VALUE_INVALID'
-  | 'ADVANCED_FILTER_VALUE_INVALID';
+  | 'ADVANCED_FILTER_VALUE_INVALID'
+  | 'RPM_FILTER_VALUE_INVALID';
 
 const AXES = Object.freeze(['roll', 'pitch', 'yaw'] as const);
 
@@ -148,13 +172,17 @@ export function createPidTuningDraft(snapshot: MspPidTuningSnapshot): PidTuningD
     feedforwardAveraging: snapshot.feedforwardAveraging,
     feedforwardBoost: snapshot.feedforwardBoost,
     feedforwardJitterFactor: snapshot.feedforwardJitterFactor,
-    /* Built from the RAW payloads rather than from a decoded view, so no
-       API contract has to be threaded through this function. Both groups
-       read strictly inside the minimum length `decodePidTuning` already
-       enforces (61 advanced bytes, 49 filter bytes) - a snapshot that
-       could not satisfy those never becomes a snapshot at all. */
+    /* Built from the RAW payloads. Both groups read strictly inside the
+       minimum length `decodePidTuning` already enforces (61 advanced bytes,
+       49 filter bytes) - a snapshot that could not satisfy those never
+       becomes a snapshot at all. */
     advanced: createAdvancedPidDraftFromRaw(snapshot.advancedRaw),
     advancedFilters: createAdvancedFilterDraftFromRaw(snapshot.filtersRaw),
+    /* The one group that needs more than the bytes: which fields EXIST is a
+       property of the firmware's API version, and the snapshot carries the
+       contract that was proven before it was read. Nothing here measures a
+       payload length or reads meaning into a zero. */
+    rpmFilter: createRpmFilterDraftFromRaw(snapshot.filtersRaw, snapshot.contract),
   });
 }
 
@@ -166,7 +194,8 @@ export function pidTuningDraftsEqual(a: PidTuningDraft, b: PidTuningDraft): bool
     AXES.every(key => a[key].p === b[key].p && a[key].i === b[key].i && a[key].d === b[key].d && a[key].f === b[key].f) &&
     ratesEqual(a.rates, b.rates) && filtersEqual(a.filters, b.filters) &&
     advancedPidDraftsEqual(a.advanced, b.advanced) &&
-    advancedFilterDraftsEqual(a.advancedFilters, b.advancedFilters);
+    advancedFilterDraftsEqual(a.advancedFilters, b.advancedFilters) &&
+    rpmFilterDraftsEqual(a.rpmFilter, b.rpmFilter);
 }
 
 export function ratesEqual(a: RatesDraft, b: RatesDraft): boolean {
@@ -243,6 +272,18 @@ export function validatePidTuningDraft(draft: PidTuningDraft, snapshot?: MspPidT
   }
   if (invalidAdvancedFilterFields(draft.advancedFilters, stored?.advancedFilters).length > 0) {
     issues.add('ADVANCED_FILTER_VALUE_INVALID');
+  }
+  /* THESE BOUNDS ARE NOT PRESENTATION POLITENESS.
+     MSP_SET_FILTER_CONFIG returns MSP_RESULT_ERROR for a q outside
+     {250, 3000}, a fade range above 1000, or any weight above 100 - and it
+     does so AFTER every earlier field in the payload has already been
+     assigned into the running configuration, and BEFORE
+     `validateAndFixGyroConfig()` and `gyroInitFilters()` are reached. So the
+     board is left holding new filter values it never re-initialised against,
+     with no rollback to report. The only honest place to stop that is here,
+     before the payload is built. */
+  if (invalidRpmFilterFields(draft.rpmFilter, stored?.rpmFilter).length > 0) {
+    issues.add('RPM_FILTER_VALUE_INVALID');
   }
   for (const key of AXES) {
     const value = draft[key];

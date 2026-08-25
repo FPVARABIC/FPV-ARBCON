@@ -7,6 +7,8 @@ import {
   MSP_FILTER_CONFIG_BYTES_API148,
   FILTER_CONFIG_RPM_TAIL_BYTES,
   NEWEST_SOURCE_VERIFIED_CONTRACT,
+  PID_SOURCE_COMPARISONS,
+  PID_SOURCE_PINS,
   NEWEST_SOURCE_VERIFIED_MINOR,
   OLDEST_SUPPORTED_MINOR,
   absControlLifetime,
@@ -135,5 +137,40 @@ describe('P-B - MSP_PID carries five items and all of them survive', () => {
     // Lenient by design (matching Betaflight), but the tail is then zeros -
     // which is exactly why a write must never be built from a short read.
     expect(terms[4]).toEqual({p: 0, i: 0, d: 0});
+  });
+
+  /* ------------------------------------------------------------------ */
+  /* P-E2 §1/§2 - THE SOURCE IDENTITY, MADE CHECKABLE                    */
+  /* ------------------------------------------------------------------ */
+
+  describe('the pinned firmware identity', () => {
+    it('names the exact commit each contract was read from', () => {
+      expect(PID_SOURCE_PINS).toEqual({
+        configurator: '14a057ffc58417c5128199fc1233284982a64be3',
+        firmwareApi147: '7348054f268f0058574719c134e9f149565bb8ea',
+        firmwareApi148: '6dbc4218fd6bc33bf16ea32c670304d4f89321d5',
+        firmwareApi149: 'e72a8e93695270d54897a8f128cffdf8f74a0245',
+      });
+    });
+
+    it('keeps the additional 1.49 comparison OUT of the pins', () => {
+      /* Two commits both announce API_VERSION_MINOR 49. Only one of them is
+         the tree this subsystem's bounds and offsets were read from, and
+         the other is a comparison point. Letting the second quietly become
+         "our 1.49" is the drift §2 forbids - so it lives in its own table
+         and is asserted never to appear among the pins. */
+      expect(PID_SOURCE_COMPARISONS.api149AdditionalComparison)
+        .toBe('d26516289e7e39aee53626beb91d51725ee0677f');
+      expect(Object.values(PID_SOURCE_PINS))
+        .not.toContain(PID_SOURCE_COMPARISONS.api149AdditionalComparison);
+    });
+
+    it('states four distinct full-length commit ids', () => {
+      const pins = Object.values(PID_SOURCE_PINS);
+      expect(new Set(pins).size).toBe(pins.length);
+      for (const pin of [...pins, ...Object.values(PID_SOURCE_COMPARISONS)]) {
+        expect(pin).toMatch(/^[0-9a-f]{40}$/);
+      }
+    });
   });
 });

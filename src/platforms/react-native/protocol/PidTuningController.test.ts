@@ -4,6 +4,10 @@ import type {MspTelemetryScheduler} from '../../../core/protocol/telemetry';
 import {MSP_ADVANCED_CONFIG, MSP_BOXIDS, MSP_EEPROM_WRITE, MSP_FILTER_CONFIG, MSP_PID, MSP_PID_ADVANCED, MSP_RC_TUNING, MSP_SET_FILTER_CONFIG, MSP_SET_PID, MSP_SET_PID_ADVANCED, MSP_SET_RC_TUNING, MSP_STATUS_EX} from '../../../core/protocol/msp/commands/mspCommands';
 import {createPidTuningDraft} from '../../../core/state/pidTuningModel';
 import type {MspPidTuningSnapshot} from '../../../core/protocol/msp/decoding/decodePidTuning';
+import {
+  MSP_FILTER_CONFIG_BYTES_API147,
+  MSP_FILTER_CONFIG_BYTES_API148,
+} from '../../../core/protocol/msp/decoding/pidWireContracts';
 import type {MspIdentificationState} from './MspSessionCoordinator';
 import {PidTuningController, type PidSessionCoordinator} from './PidTuningController';
 
@@ -35,9 +39,14 @@ function pidPayload(rollP = 42): Uint8Array { return Uint8Array.from([rollP, 85,
 function advancedPayload(yawF = 140): Uint8Array { const bytes = new Uint8Array(61); const view = new DataView(bytes.buffer); view.setUint16(32, 120, true); view.setUint16(34, 130, true); view.setUint16(36, yawF, true); return bytes; }
 function generalAdvancedPayload(pidProcessDenom = 2): Uint8Array { const bytes = new Uint8Array(20); bytes[0] = 1; bytes[1] = pidProcessDenom; return bytes; }
 function ratesPayload(rollRcRate = 100): Uint8Array { const bytes = new Uint8Array(24); bytes[0] = rollRcRate; bytes[12] = 100; bytes[11] = 100; bytes[14] = 0; bytes[15] = 100; const view = new DataView(bytes.buffer); view.setUint16(16, 1998, true); view.setUint16(18, 1998, true); view.setUint16(20, 1998, true); bytes[22] = 0; bytes[23] = 50; return bytes; }
-function filterPayload(gyroStaticHz = 0): Uint8Array { const bytes = new Uint8Array(49); new DataView(bytes.buffer).setUint16(20, gyroStaticHz, true); return bytes; }
-function enqueueSnapshot(client: FakeClient, rollP = 42, yawF = 140, rollRcRate = 100, gyroStaticHz = 0, pidProfileIndex = 0, controlRateProfileIndex = 0) { client.enqueue(MSP_PID, {payload: pidPayload(rollP)}); client.enqueue(MSP_PID_ADVANCED, {payload: advancedPayload(yawF)}); client.enqueue(MSP_RC_TUNING, {payload: ratesPayload(rollRcRate)}); client.enqueue(MSP_FILTER_CONFIG, {payload: filterPayload(gyroStaticHz)}); client.enqueue(MSP_ADVANCED_CONFIG, {payload: generalAdvancedPayload()}); client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false, pidProfileIndex, controlRateProfileIndex)}); }
-async function loadOriginal(h: ReturnType<typeof harness>): Promise<MspPidTuningSnapshot> { enqueueSnapshot(h.client); const outcome = await h.controller.load(key); if (outcome.kind !== 'LOADED') throw new Error(outcome.kind); return outcome.snapshot; }
+/* THE PAYLOAD LENGTH IS PART OF THE API. MSP_FILTER_CONFIG is 49 bytes at
+   1.47; from 1.48 the firmware appends the 7-byte RPM tail to EVERY reply,
+   whether or not the target was built with the RPM filter. So a fixture for
+   a 1.48 board that answered 49 bytes would not be modelling any firmware
+   that exists, and the decoder now says so instead of reading past the end. */
+function filterPayload(gyroStaticHz = 0, length = MSP_FILTER_CONFIG_BYTES_API147): Uint8Array { const bytes = new Uint8Array(length); new DataView(bytes.buffer).setUint16(20, gyroStaticHz, true); return bytes; }
+function enqueueSnapshot(client: FakeClient, rollP = 42, yawF = 140, rollRcRate = 100, gyroStaticHz = 0, pidProfileIndex = 0, controlRateProfileIndex = 0, filterBytes = MSP_FILTER_CONFIG_BYTES_API147) { client.enqueue(MSP_PID, {payload: pidPayload(rollP)}); client.enqueue(MSP_PID_ADVANCED, {payload: advancedPayload(yawF)}); client.enqueue(MSP_RC_TUNING, {payload: ratesPayload(rollRcRate)}); client.enqueue(MSP_FILTER_CONFIG, {payload: filterPayload(gyroStaticHz, filterBytes)}); client.enqueue(MSP_ADVANCED_CONFIG, {payload: generalAdvancedPayload()}); client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false, pidProfileIndex, controlRateProfileIndex)}); }
+async function loadOriginal(h: ReturnType<typeof harness>, filterBytes = MSP_FILTER_CONFIG_BYTES_API147): Promise<MspPidTuningSnapshot> { enqueueSnapshot(h.client, 42, 140, 100, 0, 0, 0, filterBytes); const outcome = await h.controller.load(key); if (outcome.kind !== 'LOADED') throw new Error(outcome.kind); return outcome.snapshot; }
 /**
  * A save now reads the board THREE times, not twice.
  *
@@ -49,7 +58,7 @@ async function loadOriginal(h: ReturnType<typeof harness>): Promise<MspPidTuning
  * evidence that anything survived. So the post-write state is scripted
  * twice - once as the applied answer, once as the persisted answer.
  */
-function enqueueReadbackTwice(client: FakeClient, rollP = 42, yawF = 140, rollRcRate = 100, gyroStaticHz = 0) { enqueueSnapshot(client, rollP, yawF, rollRcRate, gyroStaticHz); enqueueSnapshot(client, rollP, yawF, rollRcRate, gyroStaticHz); }
+function enqueueReadbackTwice(client: FakeClient, rollP = 42, yawF = 140, rollRcRate = 100, gyroStaticHz = 0, filterBytes = MSP_FILTER_CONFIG_BYTES_API147) { enqueueSnapshot(client, rollP, yawF, rollRcRate, gyroStaticHz, 0, 0, filterBytes); enqueueSnapshot(client, rollP, yawF, rollRcRate, gyroStaticHz, 0, 0, filterBytes); }
 
 describe('PidTuningController', () => {
   it('loads PID, advanced, rates and filters under one exclusive telemetry pause', async () => { const h = harness(); const snapshot = await loadOriginal(h); expect(snapshot.terms[0].p).toBe(42); expect(snapshot.feedforward).toEqual([120, 130, 140]); expect(h.telemetry.acquirePauseLease).toHaveBeenCalledTimes(1); });
@@ -202,14 +211,16 @@ describe('PidTuningController', () => {
 describe.each([47, 48, 49])('a complete PID save on API 1.%s', minor => {
   it('writes each changed group once, persists once and verifies the readback', async () => {
     const h = harness({apiMinor: minor});
-    const original = await loadOriginal(h);
-    enqueueSnapshot(h.client);
+    /* Each API answers with the length ITS firmware actually sends. */
+    const filterBytes = minor === 47 ? MSP_FILTER_CONFIG_BYTES_API147 : MSP_FILTER_CONFIG_BYTES_API148;
+    const original = await loadOriginal(h, filterBytes);
+    enqueueSnapshot(h.client, 42, 140, 100, 0, 0, 0, filterBytes);
     h.client.enqueue(MSP_BOXIDS, {payload: Uint8Array.from([0])});
     h.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)});
     h.client.enqueue(MSP_SET_PID, {payload: EMPTY});
     h.client.enqueue(MSP_SET_PID_ADVANCED, {payload: EMPTY});
     h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
-    enqueueReadbackTwice(h.client, 50, 222);
+    enqueueReadbackTwice(h.client, 50, 222, 100, 0, filterBytes);
     const base = createPidTuningDraft(original);
     const draft = {...base, roll: {...base.roll, p: 50}, yaw: {...base.yaw, f: 222}};
 
