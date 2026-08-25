@@ -40,6 +40,7 @@
  */
 
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import type {LayoutChangeEvent} from 'react-native';
 import {ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import Svg, {Line, Polyline} from 'react-native-svg';
 import {useTranslation} from 'react-i18next';
@@ -192,13 +193,59 @@ export function traceY(value: number, bound: number): number {
   return centre - clamped * usable;
 }
 
+/**
+ * Horizontal position of ONE sample, in plot pixels.
+ *
+ * THE DEFECT THIS FUNCTION EXISTS TO CLOSE. `tracePoints()` used to emit
+ * the array index as the x coordinate, and the <Svg> it feeds is sized
+ * `width="100%"` with no viewBox - so one user unit is one CSS pixel. A
+ * full 48-sample window therefore drew 47px wide no matter how wide the
+ * card was, and inside a ~600px desktop card the whole trace collapsed
+ * into a smear against one edge. Nothing about the DATA was wrong; the
+ * sample axis simply had no relationship to the space it was drawn in.
+ *
+ * The window, not the sample count, is the axis. The buffer is a rolling
+ * TRACE_CAPACITY window and the plot is that whole window: the newest
+ * sample is pinned to the right edge and every earlier one steps back by
+ * exactly one slot. A sample therefore keeps its horizontal position for
+ * its whole life in the window and the time axis never rescales as the
+ * buffer fills - a window that is not full yet starts partway in and
+ * grows leftwards, which is what a filling scope looks like. Mapping by
+ * `samples.length` instead would slide every existing sample sideways on
+ * every new frame, which is a different (and wrong) claim about time.
+ *
+ * Left is older, right is newer, in every writing direction: these are
+ * SVG user-space coordinates, which an RTL container does not mirror.
+ */
+export function traceX(index: number, count: number, width: number): number {
+  const step = width / (TRACE_CAPACITY - 1);
+  return width - (count - 1 - index) * step;
+}
+
+/**
+ * The polyline for one axis, in plot pixels.
+ *
+ * `width` is the MEASURED width of the plot box (see TraceCard's
+ * onLayout), so the trace uses whatever space the card actually has at
+ * 390, 768 or 1366 without a fixed desktop width anywhere. Before layout
+ * has reported a width there is no honest place to put a point, so the
+ * polyline is empty rather than degenerate.
+ */
 export function tracePoints(
   samples: readonly Sample[],
   axis: keyof Sample,
   bound: number,
+  width: number,
 ): string {
+  if (samples.length === 0 || !(width > 0)) {
+    return '';
+  }
   return samples
-    .map((sample, index) => `${index},${traceY(sample[axis], bound).toFixed(2)}`)
+    .map(
+      (sample, index) =>
+        `${traceX(index, samples.length, width).toFixed(2)},` +
+        `${traceY(sample[axis], bound).toFixed(2)}`,
+    )
     .join(' ');
 }
 
@@ -1172,7 +1219,10 @@ function CalibrationCard({
   );
 }
 
-function TraceCard({
+/** Exported for the trace-geometry regression tests, which mount ONE
+ *  card with a known sample window and a known measured width. Nothing
+ *  else imports it; the screen composes it directly. */
+export function TraceCard({
   family,
   samples,
   title,
@@ -1186,6 +1236,17 @@ function TraceCard({
   t: Translate;
 }): React.JSX.Element {
   const bound = sharedTraceBound(samples);
+  /* THE PLOT MEASURES ITSELF. The <Svg> is `width="100%"` with no
+     viewBox, so its user units are CSS pixels of whatever the card ended
+     up being - which is exactly the number the sample axis needs and the
+     only one no stylesheet can get wrong. onLayout also re-fires when the
+     container resizes, so the trace stays correct across 390/768/1366
+     without a breakpoint. All three axes read this one width, so the
+     series share one coordinate space by construction. */
+  const [plotWidth, setPlotWidth] = useState(0);
+  const measurePlot = useCallback((event: LayoutChangeEvent) => {
+    setPlotWidth(event.nativeEvent.layout.width);
+  }, []);
   return (
     <View style={styles.card} testID={`sensors-trace-${family}`}>
       <View style={styles.rowHead}>
@@ -1194,25 +1255,30 @@ function TraceCard({
           {unit}
         </Text>
       </View>
-      <Svg width="100%" height={TRACE_HEIGHT} testID={`sensors-trace-${family}-svg`}>
-        <Line
-          x1="0"
-          y1={TRACE_HEIGHT / 2}
-          x2="100%"
-          y2={TRACE_HEIGHT / 2}
-          stroke={colors.border}
-          strokeWidth={1}
-        />
-        {(['x', 'y', 'z'] as const).map(axis => (
-          <Polyline
-            key={axis}
-            points={tracePoints(samples, axis, bound)}
-            fill="none"
-            stroke={AXIS_COLORS[axis]}
-            strokeWidth={1.5}
+      <View
+        style={styles.tracePlot}
+        onLayout={measurePlot}
+        testID={`sensors-trace-${family}-plot`}>
+        <Svg width="100%" height={TRACE_HEIGHT} testID={`sensors-trace-${family}-svg`}>
+          <Line
+            x1="0"
+            y1={TRACE_HEIGHT / 2}
+            x2="100%"
+            y2={TRACE_HEIGHT / 2}
+            stroke={colors.border}
+            strokeWidth={1}
           />
-        ))}
-      </Svg>
+          {(['x', 'y', 'z'] as const).map(axis => (
+            <Polyline
+              key={axis}
+              points={tracePoints(samples, axis, bound, plotWidth)}
+              fill="none"
+              stroke={AXIS_COLORS[axis]}
+              strokeWidth={1.5}
+            />
+          ))}
+        </Svg>
+      </View>
       <Text style={styles.scaleNote} testID={`sensors-trace-${family}-scale`}>
         {t('sensorsScreen.liveScale', {bound, unit})}
       </Text>
@@ -1396,6 +1462,10 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   unit: {...typography.caption, color: colors.textMuted},
+  /* The box the sample axis is measured against: full card width, the
+     plot's own height, and no horizontal padding of its own so the
+     measured width IS the drawable width. */
+  tracePlot: {alignSelf: 'stretch', height: TRACE_HEIGHT},
   scaleNote: {...typography.caption, color: colors.textMuted, textAlign: 'right'},
   stale: {...typography.caption, color: colors.warning, textAlign: 'right'},
   contradictionList: {gap: spacing.xs},

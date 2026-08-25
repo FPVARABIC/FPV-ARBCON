@@ -17,12 +17,15 @@ jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTranspor
 
 import React from 'react';
 import ReactTestRenderer, {act} from 'react-test-renderer';
-import {Text} from 'react-native';
+import {I18nManager, Text} from 'react-native';
+import {Polyline} from 'react-native-svg';
 
 import SensorsScreen, {
   sharedTraceBound,
+  traceX,
   traceY,
   tracePoints,
+  TraceCard,
   TRACE_CAPACITY,
   TRACE_HEIGHT,
   type SensorsControllerPort,
@@ -1010,8 +1013,223 @@ describe('the live trace geometry is exact', () => {
       y: -index,
       z: 0,
     }));
-    expect(tracePoints(samples, 'x', sharedTraceBound(samples)).split(' ')).toHaveLength(
-      TRACE_CAPACITY,
-    );
+    expect(
+      tracePoints(samples, 'x', sharedTraceBound(samples), 600).split(' '),
+    ).toHaveLength(TRACE_CAPACITY);
+  });
+});
+
+/* ================================================================== *
+ * 53-65: THE SAMPLE AXIS USES THE WIDTH IT WAS GIVEN
+ *
+ * THE DEFECT THESE TESTS EXIST TO CLOSE. `tracePoints()` used to emit
+ * the array index as the x coordinate into an <Svg width="100%"> with no
+ * viewBox, so one sample was one CSS pixel: a full 48-sample window drew
+ * 47px wide inside a ~600px card and the whole trace collapsed against
+ * one edge. The data was right; the axis had no relationship to the
+ * space it was drawn in.
+ * ================================================================== */
+
+/** A window of `count` samples with a distinct, ordered value per axis,
+ *  so a reordering or an axis mix-up cannot pass unnoticed. */
+function traceWindow(count: number): ReadonlyArray<{x: number; y: number; z: number}> {
+  return Array.from({length: count}, (_unused, index) => ({
+    x: index - count / 2,
+    y: (count - index) / 2,
+    z: index % 7,
+  }));
+}
+
+/** The x coordinate of every point in a rendered polyline string. */
+function xsOf(points: string): number[] {
+  return points === '' ? [] : points.split(' ').map(pair => Number(pair.split(',')[0]));
+}
+
+/** The y coordinate of every point in a rendered polyline string. */
+function ysOf(points: string): number[] {
+  return points === '' ? [] : points.split(' ').map(pair => Number(pair.split(',')[1]));
+}
+
+describe('the live trace fills the width it is actually given', () => {
+  it('53. a full window spans the whole plot, edge to edge', () => {
+    const samples = traceWindow(TRACE_CAPACITY);
+    for (const width of [318, 704, 1294]) {
+      const xs = xsOf(tracePoints(samples, 'x', sharedTraceBound(samples), width));
+      expect(xs).toHaveLength(TRACE_CAPACITY);
+      expect(xs[0]).toBeCloseTo(0, 1);
+      expect(xs[xs.length - 1]).toBeCloseTo(width, 1);
+      // The span is the plot, not a 47px stub in the corner of it.
+      expect(xs[xs.length - 1] - xs[0]).toBeGreaterThan(width * 0.99);
+    }
+  });
+
+  it('54. one sample does not crash, and does not pretend to be a window', () => {
+    const points = tracePoints(traceWindow(1), 'x', 1, 600);
+    const xs = xsOf(points);
+    expect(xs).toHaveLength(1);
+    expect(Number.isFinite(xs[0])).toBe(true);
+    expect(ysOf(points).every(value => Number.isFinite(value))).toBe(true);
+    // Newest is pinned to the right edge; the rest of the window is
+    // simply history this session does not have yet.
+    expect(xs[0]).toBeCloseTo(600, 1);
+  });
+
+  it('55. an empty trace renders an empty polyline rather than a degenerate one', () => {
+    expect(tracePoints([], 'x', 1, 600)).toBe('');
+    expect(() => tracePoints([], 'z', 1, 600)).not.toThrow();
+  });
+
+  it('56. before layout has reported a width, no point is invented', () => {
+    const samples = traceWindow(TRACE_CAPACITY);
+    expect(tracePoints(samples, 'x', 1, 0)).toBe('');
+    expect(tracePoints(samples, 'x', 1, Number.NaN)).toBe('');
+  });
+
+  it('57. x is strictly chronological: index 0 is the oldest and leftmost', () => {
+    const samples = traceWindow(TRACE_CAPACITY);
+    const xs = xsOf(tracePoints(samples, 'y', sharedTraceBound(samples), 900));
+    for (let index = 1; index < xs.length; index += 1) {
+      expect(xs[index]).toBeGreaterThan(xs[index - 1]);
+    }
+  });
+
+  it('58. container width changes the pixels and nothing about the data', () => {
+    const samples = traceWindow(TRACE_CAPACITY);
+    const bound = sharedTraceBound(samples);
+    const narrow = tracePoints(samples, 'x', bound, 300);
+    const wide = tracePoints(samples, 'x', bound, 1200);
+    // Same samples, same count, same vertical mapping.
+    expect(xsOf(narrow)).toHaveLength(xsOf(wide).length);
+    expect(ysOf(narrow)).toEqual(ysOf(wide));
+    // Purely proportional horizontally - one shared scale, no offset.
+    const narrowXs = xsOf(narrow);
+    xsOf(wide).forEach((x, index) => {
+      expect(x).toBeCloseTo(narrowXs[index] * 4, 1);
+    });
+  });
+
+  it('59. the three series of one sensor share one coordinate space', () => {
+    const samples = traceWindow(TRACE_CAPACITY);
+    const bound = sharedTraceBound(samples);
+    const xAxis = xsOf(tracePoints(samples, 'x', bound, 640));
+    expect(xsOf(tracePoints(samples, 'y', bound, 640))).toEqual(xAxis);
+    expect(xsOf(tracePoints(samples, 'z', bound, 640))).toEqual(xAxis);
+  });
+
+  it('60. the geometry has no direction dependency, so RTL cannot mirror time', () => {
+    const samples = traceWindow(TRACE_CAPACITY);
+    const bound = sharedTraceBound(samples);
+    const draw = () =>
+      (['x', 'y', 'z'] as const)
+        .map(axis => tracePoints(samples, axis, bound, 512))
+        .join('|');
+    const original = I18nManager.isRTL;
+    try {
+      (I18nManager as unknown as {isRTL: boolean}).isRTL = false;
+      const ltr = draw();
+      (I18nManager as unknown as {isRTL: boolean}).isRTL = true;
+      const rtl = draw();
+      expect(rtl).toBe(ltr);
+      // And the oldest sample is still on the left in the RTL app.
+      const xs = xsOf(tracePoints(samples, 'x', bound, 512));
+      expect(xs[0]).toBeLessThan(xs[xs.length - 1]);
+    } finally {
+      (I18nManager as unknown as {isRTL: boolean}).isRTL = original;
+    }
+  });
+
+  it('61. a filling window keeps every sample where it was: the axis is the window, not the count', () => {
+    // Sample 5 of a 10-long history must sit exactly where sample 5 of a
+    // 20-long history sits, or the time axis rescales on every frame.
+    const width = 480;
+    const shortWindow = xsOf(tracePoints(traceWindow(10), 'x', 1, width));
+    const longWindow = xsOf(tracePoints(traceWindow(20), 'x', 1, width));
+    const step = width / (TRACE_CAPACITY - 1);
+    expect(shortWindow[shortWindow.length - 1]).toBeCloseTo(width, 1);
+    expect(longWindow[longWindow.length - 1]).toBeCloseTo(width, 1);
+    expect(shortWindow[0]).toBeCloseTo(width - 9 * step, 1);
+    expect(longWindow[0]).toBeCloseTo(width - 19 * step, 1);
+    // One slot is one slot at every fill level.
+    expect(shortWindow[1] - shortWindow[0]).toBeCloseTo(step, 1);
+    expect(longWindow[1] - longWindow[0]).toBeCloseTo(step, 1);
+  });
+
+  it('62. traceX never leaves the plot box for any window the buffer can hold', () => {
+    const width = 777;
+    for (let count = 1; count <= TRACE_CAPACITY; count += 1) {
+      for (let index = 0; index < count; index += 1) {
+        const x = traceX(index, count, width);
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+});
+
+/* ================================================================== *
+ * 63-65: THE CARD MEASURES ITSELF
+ * ================================================================== */
+
+describe('the trace card feeds its own measured width to every series', () => {
+  const translate = ((key: string) => key) as never;
+
+  function card(samples: ReadonlyArray<{x: number; y: number; z: number}>) {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    act(() => {
+      renderer = ReactTestRenderer.create(
+        <TraceCard
+          family="GYRO"
+          samples={samples}
+          title="Gyro"
+          unit="dps"
+          t={translate}
+        />,
+      );
+    });
+    return renderer;
+  }
+
+  function measure(renderer: ReactTestRenderer.ReactTestRenderer, width: number) {
+    const plot = byTestID(renderer, 'sensors-trace-GYRO-plot');
+    act(() => {
+      plot.props.onLayout({nativeEvent: {layout: {width, height: TRACE_HEIGHT}}});
+    });
+  }
+
+  it('63. an unmeasured card draws no polyline at all', () => {
+    const renderer = card(traceWindow(TRACE_CAPACITY));
+    const lines = renderer.root.findAllByType(Polyline);
+    expect(lines).toHaveLength(3);
+    for (const line of lines) {
+      expect(line.props.points).toBe('');
+    }
+  });
+
+  it('64. once measured, all three series span the measured width', () => {
+    const renderer = card(traceWindow(TRACE_CAPACITY));
+    measure(renderer, 612);
+    const lines = renderer.root.findAllByType(Polyline);
+    expect(lines).toHaveLength(3);
+    for (const line of lines) {
+      const xs = xsOf(line.props.points as string);
+      expect(xs[0]).toBeCloseTo(0, 1);
+      expect(xs[xs.length - 1]).toBeCloseTo(612, 1);
+    }
+  });
+
+  it('65. re-measuring at another width re-lays the same samples, unchanged', () => {
+    const renderer = card(traceWindow(TRACE_CAPACITY));
+    measure(renderer, 318);
+    const narrow = renderer.root
+      .findAllByType(Polyline)
+      .map(line => line.props.points as string);
+    measure(renderer, 1294);
+    const wide = renderer.root
+      .findAllByType(Polyline)
+      .map(line => line.props.points as string);
+    narrow.forEach((points, index) => {
+      expect(ysOf(wide[index])).toEqual(ysOf(points));
+      expect(xsOf(wide[index])[TRACE_CAPACITY - 1]).toBeCloseTo(1294, 1);
+    });
   });
 });
