@@ -1,3 +1,5 @@
+/* eslint-disable no-bitwise -- hand-composed wire words; the shifts ARE the
+ * field offsets being pinned. */
 /**
  * HAND-AUTHORED LED WIRE VECTORS.
  *

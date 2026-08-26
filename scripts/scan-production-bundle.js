@@ -520,6 +520,10 @@ const ENGINE_BOUNDARIES = [
          that proved the value actually changed; a mismatch stops the
          sequence before this command is ever sent. */
       'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+      /* LED Strip L-C. Exactly one persist per save, reached only after
+         every dirty group has been written AND read back. A partial apply,
+         a readback mismatch and a lost session all return before it. */
+      'src/platforms/react-native/protocol/LedStripConfigurationController.ts',
     ],
     reExporters: [
       'src/core/index.ts',

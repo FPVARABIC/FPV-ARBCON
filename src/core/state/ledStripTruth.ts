@@ -1,3 +1,5 @@
+/* eslint-disable no-bitwise -- coordinates are packed into a single key and
+ * unpacked from it; the nibble arithmetic is the firmware layout. */
 /**
  * WHAT THE BOARD ACTUALLY LIGHTS, DERIVED FROM WHAT THE BOARD SENT.
  *

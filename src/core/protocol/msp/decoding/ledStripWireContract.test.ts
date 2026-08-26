@@ -1,3 +1,5 @@
+/* eslint-disable no-bitwise -- these assertions read the same firmware bit
+ * fields the module under test writes. */
 import {
   decodeLedEntry,
   encodeLedEntry,

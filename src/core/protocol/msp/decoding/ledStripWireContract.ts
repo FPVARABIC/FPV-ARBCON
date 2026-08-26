@@ -1,3 +1,6 @@
+/* eslint-disable no-bitwise -- this file IS the packed LED bit layout: every
+ * shift and mask below restates a firmware field offset, and writing them
+ * any other way would obscure the one thing the module exists to state. */
 /**
  * THE LED STRIP WIRE CONTRACT, AND THE SOURCE IT WAS READ FROM.
  *

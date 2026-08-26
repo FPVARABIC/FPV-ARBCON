@@ -1,3 +1,5 @@
+/* eslint-disable no-bitwise -- test words are composed from the same field
+ * offsets the module derives truth from. */
 import {classifyLedQuadrant, deriveLedStripTruth} from './ledStripTruth';
 import {decodeLedEntry, type LedEntry} from '../protocol/msp/decoding/ledStripWireContract';
 import {F3_GAP_WORDS, F4_DUPLICATE_WORDS} from '../protocol/msp/__testUtils__/ledStripFixtures';

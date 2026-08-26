@@ -1,3 +1,4 @@
+/* eslint-disable no-bitwise -- one shift, to place an index byte bound. */
 /**
  * THE FOUR LED WRITE PAYLOADS.
  *
