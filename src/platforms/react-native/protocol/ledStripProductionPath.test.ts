@@ -1154,3 +1154,61 @@ describe('session ownership and persistence lifecycle', () => {
     expect(board.counts.eepromWrites).toBeLessThanOrEqual(1);
   });
 });
+
+/* ================================================================== *
+ * 53. THE SNAPSHOT MUST SAY WHETHER IT MAY BE WRITTEN BACK
+ *
+ * THE DEFECT, found by integrating the L-D screen against this frozen
+ * controller. On a firmware newer than any tree whose LED source was
+ * pinned, `capture()` resolves `UNVERIFIED_FUTURE_API`, READS the board
+ * through the newest verified layout, and refuses every write. Both halves
+ * are right. But the snapshot it hands back carries `apiContract:
+ * 'API_1_49'` - the newest VERIFIED contract - and nothing else, so a
+ * caller holding a successful load cannot tell a genuine 1.49 board from a
+ * 1.50 one whose writes will be refused.
+ *
+ * That makes L-D §61 unimplementable: the screen is required to show the
+ * observed data behind a «قراءة فقط» badge with Save disabled, and it has
+ * no way to know it should. The write authority is already computed on
+ * every capture; it simply was not carried out.
+ * ================================================================== */
+
+describe('the snapshot carries its own write authority', () => {
+  it('says ALLOWED on a source-verified board', async () => {
+    const board = makeBoard();
+    const session = makeSession(board, 48);
+    const snapshot = await loadOrThrow(makeController(session), session);
+    expect(snapshot.writeAuthority.kind).toBe('ALLOWED');
+  });
+
+  it('reads a future firmware and marks the snapshot write-REFUSED', async () => {
+    const board = makeBoard();
+    const session = makeSession(board, 50);
+    const snapshot = await loadOrThrow(makeController(session), session);
+
+    /* The read really happened - this is not an empty shell. */
+    expect(snapshot.entries.length).toBe(board.maxLength);
+    expect(snapshot.truth.effectiveCount).toBe(FOUR.length);
+    /* Decoded through the newest layout this build actually verified. */
+    expect(snapshot.apiContract).toBe('API_1_49');
+    /* And the caller can now see that writing it back is refused. */
+    expect(snapshot.writeAuthority).toEqual({
+      kind: 'REFUSED',
+      reason: 'UNVERIFIED_FUTURE_API',
+    });
+    expect(writeCounts(board)).toEqual(NO_WRITES);
+  });
+
+  it('still refuses the save itself, so the flag is a label and not the gate', async () => {
+    const board = makeBoard();
+    const session = makeSession(board, 50);
+    const controller = makeController(session);
+    const observed = await loadOrThrow(controller, session);
+    const outcome = await controller.save(session.key, {
+      observed,
+      runtimeValues: {brightness: 60},
+    });
+    expect(outcome).toEqual({kind: 'REJECTED', reason: 'UNVERIFIED_FUTURE_API'});
+    expect(writeCounts(board)).toEqual(NO_WRITES);
+  });
+});

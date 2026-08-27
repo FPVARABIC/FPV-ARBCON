@@ -142,15 +142,26 @@ export function LedGridCanvas({
         The one scroll container in the screen. The page itself must never
         scroll sideways, so the 704-unit canvas is bounded here instead.
 
-        `direction: 'ltr'` IS THE FIX FOR A REAL DEFECT, not decoration.
+        LTR ON THIS SUBTREE IS THE FIX FOR A REAL DEFECT, not decoration.
         A horizontal scroller inherits the layout direction, and under RTL
-        that puts its scroll ORIGIN at the right - so a phone opened on
-        this screen showed the aircraft's right-hand side first and LED 1
-        at x=2 sat off-screen to the left. Pinning this one subtree to LTR
-        makes offset zero the left edge, which is where X=0 is. It is a
-        hard-coded physical constant, not a question asked of the locale:
-        the cell positions inside are unchanged either way, and the
-        geometry test proves it.
+        the scroll ORIGIN moves to the right: offset zero becomes the
+        RIGHT edge, so a phone opening this screen showed the aircraft's
+        right-hand side and LED 1 at x=2 sat off-screen to the left, with
+        no forward scroll that could reach it.
+
+        IT IS SET AS A DOM ATTRIBUTE, NOT AS A STYLE, and that distinction
+        was itself a bug: `direction` is not part of the View style
+        contract, so a `direction: 'ltr'` entry in the stylesheet is
+        dropped on the floor and the scroller stays RTL. Measured in
+        Chromium at 390px: with the style alone the canvas sat at
+        left -337 and LED 1 at -249; with the attribute the canvas sits at
+        23 and LED 1 at 111. `styles.viewport` deliberately no longer
+        carries `direction` so nothing looks like it is doing this job
+        twice.
+
+        The cast is the price of a web DOM attribute in a shared
+        component; `dir` is a forwarded prop, and on a platform that has
+        no DOM it is simply ignored.
       */}
       <ScrollView
         horizontal
@@ -158,6 +169,7 @@ export function LedGridCanvas({
         showsHorizontalScrollIndicator
         style={styles.viewport}
         contentContainerStyle={styles.viewportContent}
+        {...({dir: 'ltr'} as object)}
         testID="led-grid-viewport">
         <View style={styles.canvas} testID="led-grid-canvas">
           {cells}
@@ -279,7 +291,6 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
     borderRadius: radii.md,
     backgroundColor: colors.surfaceAlt,
-    direction: 'ltr',
   },
   viewportContent: {
     padding: spacing.xs,

@@ -656,13 +656,52 @@ describe('palette, mode colours and runtime values', () => {
 
   it('marks a runtime value dirty, and clean again when it returns to the board value', () => {
     const draft = draftOf([WORD_A]);
-    const edited = setLedRuntimeValue(draft, 'brightness', 42);
+    const edited = ok(setLedRuntimeValue(draft, 'brightness', 42));
     expect(ledDraftDirtyGroups(edited)).toEqual(['RUNTIME_VALUES']);
     expect(draftRuntimeValue(edited, 'brightness')).toBe(42);
 
-    const restored = setLedRuntimeValue(edited, 'brightness', RUNTIME.brightness);
+    const restored = ok(setLedRuntimeValue(edited, 'brightness', RUNTIME.brightness));
     expect(ledDraftDirtyGroups(restored)).toEqual([]);
     expect(draftRuntimeValue(restored, 'brightness')).toBe(RUNTIME.brightness);
+  });
+
+  /* THE LAST LINE BEFORE THE ENCODER. `encodeLedStripConfigValues` THROWS
+     on a value outside the firmware's write range, so a draft that accepts
+     one turns a bad number into a crash at save time. The step control is
+     supposed to keep the UI from ever asking - this proves the draft
+     refuses even when something else does ask. */
+  it('refuses a runtime value the firmware would not accept as a write', () => {
+    const draft = draftOf([WORD_A]);
+    /* brightness writes 5..100 */
+    expect(setLedRuntimeValue(draft, 'brightness', 4).refused).toBe('VALUE_OUT_OF_RANGE');
+    expect(setLedRuntimeValue(draft, 'brightness', 101).refused).toBe('VALUE_OUT_OF_RANGE');
+    /* rainbowDelta writes 0..359 */
+    expect(setLedRuntimeValue(draft, 'rainbowDelta', -1).refused).toBe('VALUE_OUT_OF_RANGE');
+    expect(setLedRuntimeValue(draft, 'rainbowDelta', 360).refused).toBe('VALUE_OUT_OF_RANGE');
+    /* rainbowFreq writes 1..2000 - NOT capped at 360 */
+    expect(setLedRuntimeValue(draft, 'rainbowFreq', 0).refused).toBe('VALUE_OUT_OF_RANGE');
+    expect(setLedRuntimeValue(draft, 'rainbowFreq', 2001).refused).toBe('VALUE_OUT_OF_RANGE');
+    expect(setLedRuntimeValue(draft, 'brightness', 42.5).refused).toBe('VALUE_OUT_OF_RANGE');
+    /* refused means UNCHANGED, not silently clamped to the bound */
+    expect(ledDraftDirtyGroups(setLedRuntimeValue(draft, 'brightness', 4).draft)).toEqual([]);
+    /* 360 is out of range for delta and perfectly ordinary for freq */
+    expect(setLedRuntimeValue(draft, 'rainbowFreq', 360).refused).toBeUndefined();
+  });
+
+  /* An unwritable observation must not become a trap. Returning the field
+     to what the board reported drops our claim on it, so nothing is
+     written - that is allowed at ANY value, in range or not. */
+  it('lets an out-of-range board value be handed back untouched', () => {
+    const zeroed = draftOf([WORD_A], {
+      runtimeValues: {brightness: 0, rainbowDelta: 0, rainbowFreq: 0},
+    });
+    const moved = ok(setLedRuntimeValue(zeroed, 'brightness', 60));
+    expect(ledDraftDirtyGroups(moved)).toEqual(['RUNTIME_VALUES']);
+
+    const handedBack = setLedRuntimeValue(moved, 'brightness', 0);
+    expect(handedBack.refused).toBeUndefined();
+    expect(ledDraftDirtyGroups(handedBack.draft)).toEqual([]);
+    expect(draftRuntimeValue(handedBack.draft, 'brightness')).toBe(0);
   });
 
   it('shows the board value for a runtime field nobody edited, zero included', () => {
@@ -679,7 +718,7 @@ describe('palette, mode colours and runtime values', () => {
     draft = ok(setLedColorIndex(draft, 7));
     draft = setLedPaletteSlot(draft, 1, {hue: 9, whiteness: 9, value: 9});
     draft = setLedModeColor(draft, 1, 1, 13);
-    draft = setLedRuntimeValue(draft, 'rainbowFreq', 1999);
+    draft = ok(setLedRuntimeValue(draft, 'rainbowFreq', 1999));
     expect(ledDraftDirtyGroups(draft)).toEqual([
       'ENTRIES',
       'PALETTE',
@@ -716,7 +755,7 @@ describe('save blockers', () => {
   it('does not block entry or runtime edits on a basic board', () => {
     const basic = draftOf([WORD_A], {capability: 'BASIC_LED_STRIP'});
     expect(ledDraftSaveBlockers(ok(setLedColorIndex(selectLed(basic, 0), 5)))).toEqual([]);
-    expect(ledDraftSaveBlockers(setLedRuntimeValue(basic, 'brightness', 60))).toEqual([]);
+    expect(ledDraftSaveBlockers(ok(setLedRuntimeValue(basic, 'brightness', 60)))).toEqual([]);
   });
 
   it('clears once the pending LED becomes a real one', () => {
@@ -733,7 +772,7 @@ describe('save blockers', () => {
 
 describe('the save request handed to the controller', () => {
   it('carries only the groups that changed', () => {
-    const runtimeOnly = setLedRuntimeValue(draftOf([WORD_A]), 'brightness', 60);
+    const runtimeOnly = ok(setLedRuntimeValue(draftOf([WORD_A]), 'brightness', 60));
     expect(Object.keys(buildLedSaveRequest(runtimeOnly))).toEqual(['runtimeValues']);
     expect(buildLedSaveRequest(runtimeOnly).runtimeValues).toEqual({brightness: 60});
   });
@@ -779,7 +818,7 @@ describe('discarding the draft', () => {
     draft = ok(setLedColorIndex(draft, 9));
     draft = setLedPaletteSlot(draft, 2, {hue: 5, whiteness: 5, value: 5});
     draft = setLedModeColor(draft, 3, 3, 3);
-    draft = setLedRuntimeValue(draft, 'rainbowDelta', 359);
+    draft = ok(setLedRuntimeValue(draft, 'rainbowDelta', 359));
     draft = ok(appendLed(draft));
 
     const discarded = discardLedStripDraft(draft);

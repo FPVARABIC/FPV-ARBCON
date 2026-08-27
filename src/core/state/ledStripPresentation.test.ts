@@ -52,9 +52,18 @@ import {
   ledSaveOutcomeSeverity,
   ledSaveRequiresReload,
   ledSpecialSlotLabel,
+  ledDependencyNotes,
+  ledEntryDependencies,
+  ledRuntimeStep,
+  ledRuntimeStepInert,
   type LedSaveOutcomeId,
 } from './ledStripPresentation';
 import {LED_LAYER_PRIORITY_ORDER} from './ledStripModel';
+import {LedBaseFunction, LedOverlayBit} from '../protocol/msp/decoding/ledStripWireContract';
+import {
+  LED_BRIGHTNESS_MAX,
+  LED_BRIGHTNESS_MIN,
+} from '../protocol/msp/encoding/encodeLedStrip';
 import type {
   LedGroupState,
   LedSaveRefusal,
@@ -134,10 +143,11 @@ describe('directions', () => {
   });
 
   it('says which direction wins when a flight-mode LED has more than one', () => {
-    /* EAST(1) and WEST(3) both set: the firmware stops at the lowest bit. */
+    /* EAST(1) and WEST(3) both set: the firmware stops at the lowest bit.
+       §32 wants the RULE stated, not the winner named - the exact priority
+       order is technical detail and lives behind that disclosure. */
     expect(ledEffectiveDirectionNote(1, 0b001010)).toEqual({
       key: 'ledStripScreen.direction.firstWins',
-      params: {direction: 'ledStripScreen.direction.EAST'},
     });
   });
 
@@ -398,5 +408,115 @@ describe('the restated unions match the controller exactly', () => {
   it('covers every editor refusal and every save blocker', () => {
     expect(Object.keys(LED_EDIT_REFUSAL_IDS)).toHaveLength(9);
     expect(Object.keys(LED_SAVE_BLOCKER_IDS)).toHaveLength(5);
+  });
+});
+
+/* ================================================================== *
+ * STEPPING A RUNTIME VALUE FROM OUTSIDE THE WRITABLE RANGE
+ *
+ * A board may REPORT a value it would itself refuse as a write - raw
+ * zero brightness is the ordinary case. Both halves matter: where the
+ * first press lands, and which of the two buttons is honestly dead.
+ * ================================================================== */
+
+describe('runtime value stepping', () => {
+  const B = {min: LED_BRIGHTNESS_MIN, max: LED_BRIGHTNESS_MAX};
+
+  it('lands on the nearest bound when the board value is outside the range', () => {
+    /* NOT 0 + 1 = 1. One is still unwritable, and the encoder throws on
+       it, so the first press must arrive somewhere the firmware accepts. */
+    expect(ledRuntimeStep('brightness', 0, 1, B)).toBe(LED_BRIGHTNESS_MIN);
+    expect(ledRuntimeStep('brightness', 250, -1, B)).toBe(LED_BRIGHTNESS_MAX);
+  });
+
+  it('leaves the value alone when the only step available leads further out', () => {
+    expect(ledRuntimeStep('brightness', 0, -1, B)).toBe(0);
+    expect(ledRuntimeStep('brightness', 250, 1, B)).toBe(250);
+  });
+
+  it('steps by one inside the range and stops at each bound', () => {
+    expect(ledRuntimeStep('brightness', 42, 1, B)).toBe(43);
+    expect(ledRuntimeStep('brightness', 42, -1, B)).toBe(41);
+    expect(ledRuntimeStep('brightness', LED_BRIGHTNESS_MAX, 1, B)).toBe(LED_BRIGHTNESS_MAX);
+    expect(ledRuntimeStep('brightness', LED_BRIGHTNESS_MIN, -1, B)).toBe(LED_BRIGHTNESS_MIN);
+  });
+
+  /* THE CONTROL MUST NOT LIE ABOUT WHICH WAY IT CAN GO. From below the
+     floor the UP press is live - it reaches the floor - and the DOWN
+     press is dead. A control that looks live and does nothing is the
+     defect this pins. */
+  it('marks dead exactly the direction that cannot move', () => {
+    expect(ledRuntimeStepInert(0, 1, B)).toBe(false);
+    expect(ledRuntimeStepInert(0, -1, B)).toBe(true);
+    expect(ledRuntimeStepInert(250, -1, B)).toBe(false);
+    expect(ledRuntimeStepInert(250, 1, B)).toBe(true);
+  });
+
+  it('marks dead the direction that has run out at each bound', () => {
+    expect(ledRuntimeStepInert(LED_BRIGHTNESS_MAX, 1, B)).toBe(true);
+    expect(ledRuntimeStepInert(LED_BRIGHTNESS_MAX, -1, B)).toBe(false);
+    expect(ledRuntimeStepInert(LED_BRIGHTNESS_MIN, -1, B)).toBe(true);
+    expect(ledRuntimeStepInert(LED_BRIGHTNESS_MIN, 1, B)).toBe(false);
+    expect(ledRuntimeStepInert(42, 1, B)).toBe(false);
+    expect(ledRuntimeStepInert(42, -1, B)).toBe(false);
+  });
+});
+
+/* ================================================================== *
+ * WHAT AN EDIT ACTUALLY DEPENDS ON
+ *
+ * Some behaviour is driven by the LED's place in the WIRE ORDER and
+ * some by its place on the AIRCRAFT. An overlay can introduce either
+ * dependency on its own, with no help from the base function - the
+ * note has to come from BOTH sources or it tells the operator the
+ * wrong thing about their own strip.
+ * ================================================================== */
+
+describe('entry dependencies', () => {
+  const bit = (n: number): number => 1 << n;
+
+  it('finds no dependency in a plain coloured LED', () => {
+    expect(ledEntryDependencies(LedBaseFunction.COLOR, 0)).toEqual({
+      ordinal: false,
+      geometry: false,
+    });
+    expect(ledDependencyNotes(LedBaseFunction.COLOR, 0)).toEqual([]);
+  });
+
+  it('reads ORDINAL and GEOMETRY off the base function', () => {
+    expect(ledEntryDependencies(6 /* THRUST_RING */, 0).ordinal).toBe(true);
+    expect(ledEntryDependencies(LedBaseFunction.FLIGHT_MODE, 0).geometry).toBe(true);
+  });
+
+  /* THE SURVIVOR THIS EXISTS FOR: the base function below carries NO
+     dependency of its own, so if the overlay bits are ignored the note
+     disappears entirely and nothing else notices. */
+  it('reads ORDINAL off an overlay a dependency-free base function carries', () => {
+    const rainbow = ledEntryDependencies(LedBaseFunction.COLOR, bit(LedOverlayBit.RAINBOW));
+    expect(rainbow.ordinal).toBe(true);
+    expect(rainbow.geometry).toBe(false);
+    expect(ledDependencyNotes(LedBaseFunction.COLOR, bit(LedOverlayBit.RAINBOW))).toHaveLength(1);
+  });
+
+  it('reads GEOMETRY off an overlay a dependency-free base function carries', () => {
+    const indicator = ledEntryDependencies(LedBaseFunction.COLOR, bit(LedOverlayBit.INDICATOR));
+    expect(indicator.geometry).toBe(true);
+    expect(indicator.ordinal).toBe(false);
+  });
+
+  it('reports both when the base function and an overlay each contribute one', () => {
+    const both = ledEntryDependencies(
+      LedBaseFunction.FLIGHT_MODE /* GEOMETRY */,
+      bit(LedOverlayBit.RAINBOW) /* ORDINAL */,
+    );
+    expect(both).toEqual({ordinal: true, geometry: true});
+    expect(ledDependencyNotes(LedBaseFunction.FLIGHT_MODE, bit(LedOverlayBit.RAINBOW))).toHaveLength(2);
+  });
+
+  it('ignores an overlay bit that is set but carries no dependency', () => {
+    expect(ledEntryDependencies(LedBaseFunction.COLOR, bit(LedOverlayBit.BLINK))).toEqual({
+      ordinal: false,
+      geometry: false,
+    });
   });
 });

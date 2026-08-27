@@ -193,12 +193,24 @@ describe('the canvas cannot be reached by the layout direction', () => {
     expect(code).not.toMatch(/marginStart|marginEnd|paddingStart|paddingEnd/);
   });
 
+  /* THIS TEST USED TO GREP THE STYLESHEET FOR `direction: 'ltr'`, AND
+     THAT IS WHY IT MISSED A REAL DEFECT. `direction` is not part of the
+     View style contract, so the entry was dropped before it ever reached
+     a browser: the scroller stayed RTL, its scroll ORIGIN stayed at the
+     right, and on a 390px viewport LED 1 at x=2 sat at left -249 - off
+     the screen, with no forward scroll that could reach it. A source
+     regex cannot see a property being ignored, so the assertion now
+     looks at what was RENDERED. */
   it('pins the scrolling viewport to LTR, so it opens on the aircraft LEFT', () => {
-    /* A horizontal scroller inherits the layout direction, and under RTL
-       that puts its scroll ORIGIN at the right - which showed the
-       aircraft's right-hand side first and left LED 1 at x=2 off-screen.
-       The constant is hard-coded, never derived from the locale. */
-    expect(code).toMatch(/viewport:\s*\{[^}]*direction:\s*'ltr'/s);
+    const tree = renderGrid(true);
+    const viewport = tree.root.findByProps({testID: 'led-grid-viewport'});
+    expect(viewport.props.dir).toBe('ltr');
+    act(() => tree.unmount());
+  });
+
+  it('does not pretend a stylesheet entry is doing that job', () => {
+    /* Two mechanisms for one rule is how the dead one survives. */
+    expect(code).not.toMatch(/viewport:\s*\{[^}]*direction:/s);
   });
 
   it('does not lay the cells out in a flex row, which WOULD mirror', () => {

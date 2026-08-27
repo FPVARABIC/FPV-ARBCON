@@ -237,6 +237,14 @@ function stepperValue(
   return String(node.props.value);
 }
 
+/** Open one of the four sections, the way an operator does. */
+function openSection(
+  tree: ReactTestRenderer.ReactTestRenderer,
+  key: 'LAYOUT' | 'PALETTE' | 'MODE_COLORS' | 'RUNTIME',
+): void {
+  press(tree, `led-section-tab-${key}`);
+}
+
 function textOf(tree: ReactTestRenderer.ReactTestRenderer): string {
   const collect = (node: unknown): string => {
     if (typeof node === 'string') return node;
@@ -787,6 +795,7 @@ describe('the wiring order', () => {
 describe('colours and effects', () => {
   it('47. shows the sixteen observed palette slots, numbered', async () => {
     const {tree} = await mount();
+    openSection(tree, 'PALETTE');
     expect(has(tree, 'led-palette-slot-0')).toBe(true);
     expect(has(tree, 'led-palette-slot-15')).toBe(true);
     expect(has(tree, 'led-palette-slot-16')).toBe(false);
@@ -795,6 +804,7 @@ describe('colours and effects', () => {
 
   it('48. editing a palette slot marks the palette group dirty and writes nothing', async () => {
     const {tree, board} = await mount();
+    openSection(tree, 'PALETTE');
     step(tree, 'led-palette-hue', 'up');
     expect(saveBar(tree).details).toContain(L.save.group.PALETTE);
     expect(writeCounts(board)).toEqual(NO_WRITES);
@@ -803,22 +813,32 @@ describe('colours and effects', () => {
 
   it('49. a basic board has no palette to show and is told so', async () => {
     const {tree} = await mount({advancedRaw: 0});
+    openSection(tree, 'PALETTE');
     expect(has(tree, 'led-no-palette')).toBe(true);
     expect(textOf(tree)).toContain(L.palette.unavailable);
     expect(textOf(tree)).toContain(L.capability.BASIC_LED_STRIP);
     act(() => tree.unmount());
   });
 
-  it('50. marks the flight mode the firmware stores and never reads', async () => {
+  it('50. keeps the stored-but-never-read flight mode OUT of the editable modes', async () => {
     const {tree} = await mount();
-    press(tree, 'led-mode-5');
-    expect(has(tree, 'led-mode-runtime-note')).toBe(true);
-    expect(textOf(tree)).toContain(L.mode.runtime.KNOWN_BUT_RUNTIME_INERT);
+    openSection(tree, 'MODE_COLORS');
+    /* §42: mode 5 is on the wire, is validated on write, and is never read
+       by the firmware. It gets no editing control beside the four that
+       work - it appears only behind the technical disclosure, with why. */
+    expect(has(tree, 'led-mode-0')).toBe(true);
+    expect(has(tree, 'led-mode-4')).toBe(true);
+    expect(has(tree, 'led-mode-5')).toBe(false);
+
+    press(tree, 'led-technical-toggle');
+    expect(has(tree, 'led-technical-inert-5')).toBe(true);
+    expect(textIn(tree, 'led-technical-body')).toContain(L.technical.inertMode);
     act(() => tree.unmount());
   });
 
   it('51. exposes the BACKGROUND special colour slot and the aux channel', async () => {
     const {tree} = await mount();
+    openSection(tree, 'MODE_COLORS');
     expect(textOf(tree)).toContain(L.special.BACKGROUND);
     expect(textOf(tree)).toContain(L.mode.auxChannel);
     expect(has(tree, 'led-special-10')).toBe(true);
@@ -827,6 +847,7 @@ describe('colours and effects', () => {
 
   it('52. lets the rainbow frequency go past 360, because the firmware does', async () => {
     const {tree} = await mount({rainbowFreq: 400});
+    openSection(tree, 'RUNTIME');
     expect(stepperValue(tree, 'led-runtime-rainbowFreq')).toBe('400');
     step(tree, 'led-runtime-rainbowFreq', 'up');
     expect(stepperValue(tree, 'led-runtime-rainbowFreq')).toBe('401');
@@ -849,7 +870,10 @@ describe('saving', () => {
     const {tree} = await mount();
     press(tree, 'led-cell-2-1');
     press(tree, 'led-color-6');
+    openSection(tree, 'RUNTIME');
     step(tree, 'led-runtime-brightness', 'up');
+    /* The save surface is OUTSIDE the section switch, so it still carries
+       the layout change made in a different section. */
     const bar = saveBar(tree);
     expect(bar.visible).toBe(true);
     expect(bar.details).toContain(L.save.group.ENTRIES);
@@ -895,10 +919,12 @@ describe('saving', () => {
     const {tree, board} = await mount();
     press(tree, 'led-cell-2-1');
     step(tree, 'led-x', 'up');
+    openSection(tree, 'PALETTE');
     step(tree, 'led-palette-hue', 'up');
     expect(saveBar(tree).visible).toBe(true);
     press(tree, 'led-save-bar-discard');
     expect(saveBar(tree).visible).toBe(false);
+    openSection(tree, 'LAYOUT');
     expect(cellOf(tree, 0)).toEqual({x: 2, y: 1});
     expect(writeCounts(board)).toEqual(NO_WRITES);
     act(() => tree.unmount());
@@ -957,6 +983,276 @@ describe('saving', () => {
       await sleep(120);
     });
     expect(writeCounts(board)).toEqual(NO_WRITES);
+    act(() => tree.unmount());
+  });
+});
+
+/* ================================================================== *
+ * 61-75. THE STATES THE FIRST PASS OF THIS MATRIX DID NOT COVER
+ *
+ * Every one of these is a §72 line item that had no test until the spec
+ * was re-read against the delivery. They are the states an operator only
+ * meets when something is wrong, which is exactly when a configurator
+ * must not improvise.
+ * ================================================================== */
+
+describe('states that only appear when something is wrong', () => {
+  it('61. §47 - a board reporting a value it would not accept is shown, not corrected', async () => {
+    const {tree} = await mount({brightness: 0});
+    openSection(tree, 'RUNTIME');
+    /* Zero is real: the firmware stores it and the decoder returns it. The
+       reference tab's `brightness || 50` would show a fabricated 50 here. */
+    expect(stepperValue(tree, 'led-runtime-brightness')).toBe('0');
+    expect(textOf(tree)).not.toContain('50');
+    expect(has(tree, 'led-runtime-observed-brightness')).toBe(true);
+    act(() => tree.unmount());
+  });
+
+  it('62. §47 - stepping out of that value lands INSIDE the writable range', async () => {
+    const {tree, board} = await mount({brightness: 0});
+    openSection(tree, 'RUNTIME');
+    step(tree, 'led-runtime-brightness', 'up');
+    /* Not 1. The firmware's write floor is 5, and `0 + 1` is a number the
+       encoder throws a RangeError on - a crash instead of a sentence. */
+    expect(stepperValue(tree, 'led-runtime-brightness')).toBe('5');
+    expect(writeCounts(board)).toEqual(NO_WRITES);
+    act(() => tree.unmount());
+  });
+
+  it('63. §47 - and that draft saves cleanly instead of throwing', async () => {
+    const {tree, board} = await mount({brightness: 0});
+    openSection(tree, 'RUNTIME');
+    step(tree, 'led-runtime-brightness', 'up');
+    await act(async () => {
+      press(tree, 'led-save-bar-save');
+      await sleep(250);
+    });
+    expect(textOf(tree)).toContain(L.save.outcome.SAVE_VERIFIED);
+    expect(writeCounts(board).runtimeValues).toBeGreaterThan(0);
+    act(() => tree.unmount());
+  });
+
+  it('64. §72.5 - a board that claims the advanced build then refuses one of its reads', async () => {
+    const board = makeBoard();
+    board.injectFault({command: LED_CMD.COLORS, fault: {kind: 'REMOTE_ERROR'}});
+    const session = new VirtualSession({
+      sessionId: 'led-contradiction',
+      board: board as never,
+      apiMinor: 48,
+    });
+    const controller = new LedStripConfigurationController({
+      coordinator: session.coordinator as never,
+      appStateOwner: {getPhase: () => 'ACTIVE' as const},
+    });
+    let tree!: ReactTestRenderer.ReactTestRenderer;
+    await act(async () => {
+      tree = ReactTestRenderer.create(
+        <LedStripScreen
+          sessionKey={session.key}
+          active
+          onOpenSetup={() => undefined}
+          controller={controller}
+        />,
+      );
+      await sleep(120);
+    });
+    expect(has(tree, 'led-capability-contradiction')).toBe(true);
+    /* NOT an empty palette pretending to be the board's. */
+    expect(writeCounts(board)).toEqual(NO_WRITES);
+    act(() => tree.unmount());
+  }, 30000);
+
+  it('65. §72.6 / §61 - a firmware newer than any pinned source is READ, and is read-only', async () => {
+    const {tree} = await mount({}, 50);
+    /* The controller decodes it through the newest layout it verified, so
+       there IS data - the strip renders. What it does not offer is a Save. */
+    expect(nodeNumbers(tree)).toEqual([1, 2, 3, 4]);
+    expect(has(tree, 'led-read-only')).toBe(true);
+    expect(has(tree, 'led-read-only-badge')).toBe(true);
+    expect(textIn(tree, 'led-read-only')).toContain(L.readOnlyBadge);
+    expect(textIn(tree, 'led-read-only')).toContain(L.blocked.futureApiReadOnly);
+    act(() => tree.unmount());
+  });
+
+  it('65b. §61 - and no edit or save is reachable on that surface', async () => {
+    const {tree, board} = await mount({}, 50);
+    /* Every control is inert, and the save bar never appears however hard
+       the grid is pressed. */
+    press(tree, 'led-cell-2-1');
+    expect(pressable(tree, 'led-append').disabled).toBe(true);
+    expect(saveBar(tree).visible).toBe(false);
+    expect(writeCounts(board)).toEqual(NO_WRITES);
+    act(() => tree.unmount());
+  });
+
+  it('66. §58 / §72.47-49 - an observed gap names the count and the unreachable LEDs', async () => {
+    /* index 1 is empty, so index 2 is configured and invisible. */
+    const gapped = [FOUR[0], 0, FOUR[2], FOUR[3]];
+    const {tree, board} = await mount({entries: gapped});
+    expect(has(tree, 'led-observed-gap')).toBe(true);
+    const card = textIn(tree, 'led-observed-gap');
+    expect(card).toContain(L.gap.title);
+    expect(card).toContain(L.gap.explain);
+    expect(has(tree, 'led-gap-effective')).toBe(true);
+    expect(has(tree, 'led-gap-unreachable')).toBe(true);
+    /* One LED is reachable; LEDs 3 and 4 are not. */
+    expect(textIn(tree, 'led-gap-effective')).toContain('1');
+    expect(textIn(tree, 'led-gap-unreachable')).toContain('3');
+    expect(textIn(tree, 'led-gap-unreachable')).toContain('4');
+    expect(writeCounts(board)).toEqual(NO_WRITES);
+    act(() => tree.unmount());
+  });
+
+  it('67. §58 - and it is not auto-repaired or compacted away', async () => {
+    const gapped = [FOUR[0], 0, FOUR[2], FOUR[3]];
+    const {tree, board} = await mount({entries: gapped});
+    /* The board still holds exactly what it held. No silent compaction. */
+    expect(writeCounts(board)).toEqual(NO_WRITES);
+    press(tree, 'led-cell-2-1');
+    press(tree, 'led-color-6');
+    expect(saveBar(tree).disabledReason).toBe(L.save.blocked.OBSERVED_STRIP_HAS_GAP);
+    await act(async () => {
+      press(tree, 'led-save-bar-save');
+      await sleep(150);
+    });
+    expect(writeCounts(board)).toEqual(NO_WRITES);
+    act(() => tree.unmount());
+  });
+
+  it('68. §72.54 - someone else re-ordered the strip while it was being edited', async () => {
+    const {tree, board} = await mount();
+    press(tree, 'led-cell-2-1');
+    press(tree, 'led-color-6');
+    board.externallySetEntry(1, led({x: 9, y: 9, color: 11}));
+    await act(async () => {
+      press(tree, 'led-save-bar-save');
+      await sleep(300);
+    });
+    expect(textOf(tree)).toContain(L.save.outcome.REFUSED);
+    expect(textOf(tree)).not.toContain(L.save.outcome.SAVE_VERIFIED);
+    /* Refused BEFORE writing: no entry SET, no persist. */
+    expect(writeCounts(board).entries).toBe(0);
+    expect(writeCounts(board).eeprom).toBe(0);
+    act(() => tree.unmount());
+  });
+
+  it('69. §72.55 - the same palette slot changed on the board mid-edit', async () => {
+    const {tree, board} = await mount();
+    openSection(tree, 'PALETTE');
+    step(tree, 'led-palette-hue', 'up');
+    board.externallySetPaletteSlot(0, {hue: 300, whiteness: 4, value: 9});
+    await act(async () => {
+      press(tree, 'led-save-bar-save');
+      await sleep(300);
+    });
+    expect(textOf(tree)).toContain(L.save.outcome.REFUSED);
+    expect(textOf(tree)).toContain(L.save.refusal.STALE_PALETTE_SLOT);
+    expect(writeCounts(board).palette).toBe(0);
+    act(() => tree.unmount());
+  });
+
+  it('70. §72.56 - a mode colour changed on the board mid-edit', async () => {
+    const {tree, board} = await mount();
+    openSection(tree, 'MODE_COLORS');
+    press(tree, 'led-mode-0-0-current');
+    press(tree, 'led-mode-0-0-picker-9');
+    board.externallySetTuple(0, 0, 13);
+    await act(async () => {
+      press(tree, 'led-save-bar-save');
+      await sleep(300);
+    });
+    expect(textOf(tree)).toContain(L.save.outcome.REFUSED);
+    expect(textOf(tree)).toContain(L.save.refusal.STALE_MODE_COLOR);
+    expect(writeCounts(board).modeColors).toBe(0);
+    act(() => tree.unmount());
+  });
+
+  it('71. §72.57 - a runtime value changed on the board mid-edit', async () => {
+    const {tree, board} = await mount();
+    openSection(tree, 'RUNTIME');
+    step(tree, 'led-runtime-rainbowFreq', 'up');
+    board.externallySetValues({rainbowFreq: 777});
+    await act(async () => {
+      press(tree, 'led-save-bar-save');
+      await sleep(300);
+    });
+    expect(textOf(tree)).toContain(L.save.outcome.REFUSED);
+    expect(textOf(tree)).toContain(L.save.refusal.STALE_RUNTIME_VALUE);
+    expect(writeCounts(board).runtimeValues).toBe(0);
+    act(() => tree.unmount());
+  });
+
+  it('72. §49 / §72.58-60 - a save touches no feature mask and no reboot', async () => {
+    const {tree, board} = await mount();
+    press(tree, 'led-cell-2-1');
+    press(tree, 'led-color-6');
+    await act(async () => {
+      press(tree, 'led-save-bar-save');
+      await sleep(300);
+    });
+    expect(textOf(tree)).toContain(L.save.outcome.SAVE_VERIFIED);
+    /* MSP_FEATURE_CONFIG / MSP_SET_FEATURE_CONFIG are 36 and 37. This
+       screen is not a second owner of feature bit 16, so neither number
+       may appear anywhere in the transcript. */
+    const commands = board.requests.map(r => r.command);
+    expect(commands).not.toContain(36);
+    expect(commands).not.toContain(37);
+    expect(writeCounts(board).reboots).toBe(0);
+    act(() => tree.unmount());
+  });
+
+  it('73. §9/§27/§44/§62 - the technical disclosure carries what the primary surface will not', async () => {
+    const {tree} = await mount({entries: [EXOTIC], profile: 2});
+    press(tree, 'led-cell-9-9');
+    expect(has(tree, 'led-technical-body')).toBe(false);
+    press(tree, 'led-technical-toggle');
+    const body = textIn(tree, 'led-technical-body');
+    /* LED 1 is raw index 0, and the disclosure is where that is said. */
+    expect(body).toContain('0');
+    expect(has(tree, 'led-technical-wire-index')).toBe(true);
+    expect(has(tree, 'led-technical-symbol')).toBe(true);
+    expect(has(tree, 'led-technical-raw')).toBe(true);
+    expect(has(tree, 'led-technical-profile')).toBe(true);
+    expect(has(tree, 'led-technical-special-slots')).toBe(true);
+    /* §44: the three unnamed slots are listed by number, never renamed. */
+    expect(textIn(tree, 'led-technical-special-slots')).toContain('8');
+    expect(textIn(tree, 'led-technical-special-slots')).toContain('10');
+    act(() => tree.unmount());
+  });
+
+  it('74. §34/§35 - an effect that depends on wire order or geometry says so', async () => {
+    /* A thrust ring walks the chain in WIRE ORDER; a flight-mode LED reads
+       its own X/Y against every other LED's extent. Two different
+       couplings, two different sentences. */
+    const ring = led({x: 4, y: 4, fn: LedBaseFunction.THRUST_RING});
+    const mode = led({x: 10, y: 10, fn: LedBaseFunction.FLIGHT_MODE});
+    const {tree} = await mount({entries: [ring, mode]});
+
+    press(tree, 'led-cell-4-4');
+    expect(textIn(tree, 'led-inspector')).toContain(L.effect.ordinalDependent);
+    expect(textIn(tree, 'led-inspector')).not.toContain(L.effect.geometryDependent);
+    /* And the wiring-order editor repeats the ordinal one where the order
+       is actually being changed. */
+    expect(has(tree, 'led-order-ordinal-note')).toBe(true);
+
+    press(tree, 'led-cell-10-10');
+    expect(textIn(tree, 'led-inspector')).toContain(L.effect.geometryDependent);
+    expect(textIn(tree, 'led-inspector')).not.toContain(L.effect.ordinalDependent);
+
+    /* A plain colour LED is coupled to nothing and says nothing. */
+    const plain = await mount({entries: [led({x: 3, y: 3})]});
+    press(plain.tree, 'led-cell-3-3');
+    expect(textIn(plain.tree, 'led-inspector')).not.toContain(L.effect.ordinalDependent);
+    expect(textIn(plain.tree, 'led-inspector')).not.toContain(L.effect.geometryDependent);
+    act(() => plain.tree.unmount());
+    act(() => tree.unmount());
+  });
+
+  it('75. §40 - a basic board names the colour INDEX and invents no swatch', async () => {
+    const {tree} = await mount({advancedRaw: 0});
+    press(tree, 'led-cell-2-1');
+    expect(has(tree, 'led-color-index-only')).toBe(true);
+    expect(textIn(tree, 'led-inspector')).toContain(L.palette.indexOnlyHelp);
     act(() => tree.unmount());
   });
 });

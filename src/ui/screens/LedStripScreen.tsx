@@ -76,8 +76,9 @@ import {
 import {
   LED_BASE_FUNCTION_IDS,
   LED_DIRECTION_BITS,
+  LED_EDITABLE_MODE_INDEXES,
+  LED_INERT_MODE_INDEXES,
   LED_LAYER_DISPLAY_ORDER,
-  LED_MODE_INDEXES,
   LED_RUNTIME_FIELD_IDS,
   LED_TOGGLEABLE_OVERLAY_BITS,
   ledAuxChannelLabel,
@@ -86,8 +87,11 @@ import {
   ledCapabilityContradictionMessage,
   ledCapabilityNotice,
   ledClusterBadge,
+  ledDependencyNotes,
   ledDirectionLabel,
   ledEffectiveDirectionNote,
+  ledFirmwareSymbolDetail,
+  ledInertModeDetail,
   ledEditRefusalMessage,
   ledGridCaption,
   ledLayerLabel,
@@ -96,8 +100,14 @@ import {
   ledOverlayLabel,
   ledPaletteFieldLabel,
   ledPaletteSlotLabel,
+  ledProfileDetail,
+  ledRawWordDetail,
+  ledReadOnlyBadge,
   ledRuntimeFieldHelp,
   ledRuntimeFieldLabel,
+  ledRuntimeObservedNotice,
+  ledRuntimeStep,
+  ledRuntimeStepInert,
   ledReadOnlyNotice,
   ledReservedOverlayNotice,
   ledSaveBlockerMessage,
@@ -107,6 +117,11 @@ import {
   ledSaveRefusalMessage,
   ledSaveRequiresReload,
   ledSpecialSlotLabel,
+  ledSurfaceIsReadOnly,
+  ledStripHasOrdinalEffect,
+  ledTechnicalTitle,
+  ledUnknownSpecialSlotsDetail,
+  ledWireIndexDetail,
   type LedBlockReasonId,
   type LedPhrase,
   type LedRuntimeFieldId,
@@ -156,6 +171,23 @@ interface Props {
 
 type Busy = 'IDLE' | 'LOADING' | 'SAVING';
 
+/** The four sections of the ONE LED page, in reading order. */
+type LedSectionKey = 'LAYOUT' | 'PALETTE' | 'MODE_COLORS' | 'RUNTIME';
+
+const LED_SECTIONS: readonly LedSectionKey[] = Object.freeze([
+  'LAYOUT',
+  'PALETTE',
+  'MODE_COLORS',
+  'RUNTIME',
+]);
+
+const LED_SECTION_TITLE_KEY: Readonly<Record<LedSectionKey, string>> = Object.freeze({
+  LAYOUT: 'sectionLayout',
+  PALETTE: 'sectionPalette',
+  MODE_COLORS: 'sectionModeColors',
+  RUNTIME: 'sectionRuntime',
+});
+
 const NUMBER_MAX_SAFE_COORDINATE = LED_COORDINATE_MAX;
 
 /* ================================================================== *
@@ -182,6 +214,10 @@ export default function LedStripScreen({
   const [editRefusal, setEditRefusal] = useState<LedEditRefusal | undefined>(undefined);
   const [paletteSlot, setPaletteSlot] = useState(0);
   const [modeIndex, setModeIndex] = useState<number>(LedModeIndex.ORIENTATION);
+  /* §5: ONE page, four sections, one visible at a time. The save surface
+     is outside this and stays put whichever section is open. */
+  const [section, setSection] = useState<LedSectionKey>('LAYOUT');
+  const [technical, setTechnical] = useState(false);
 
   const say = useCallback(
     (phrase: LedPhrase): string => t(phrase.key, phrase.params ?? {}),
@@ -298,7 +334,17 @@ export default function LedStripScreen({
     [draft],
   );
 
-  const editable = blocked === undefined && draft !== undefined && busy === 'IDLE';
+  /**
+   * §61. The controller READS a firmware newer than any pinned source,
+   * decoding it through the newest layout it verified, and refuses every
+   * write against it. So there is real data to show and no Save to offer:
+   * the surface goes read-only rather than empty.
+   */
+  const readOnly =
+    snapshot !== undefined && ledSurfaceIsReadOnly(snapshot.writeAuthority);
+
+  const editable =
+    blocked === undefined && draft !== undefined && busy === 'IDLE' && !readOnly;
 
   /**
    * A CELL PRESS SELECTS; IT NEVER CREATES.
@@ -391,7 +437,6 @@ export default function LedStripScreen({
 
   const capability =
     snapshot === undefined ? undefined : ledCapabilityNotice(snapshot.capability);
-  const readOnly = ledReadOnlyNotice(blocked);
   const advanced = snapshot?.capability === 'ADVANCED_STATUS_MODE';
 
   return (
@@ -425,9 +470,9 @@ export default function LedStripScreen({
         {blocked !== undefined && (
           <NoticeBox variant="warning" testID="led-blocked">
             <Text style={styles.noticeText}>{say(ledBlockReasonMessage(blocked))}</Text>
-            {readOnly !== undefined && (
-              <Text style={styles.noticeText} testID="led-read-only">
-                {say(readOnly)}
+            {ledReadOnlyNotice(blocked) !== undefined && (
+              <Text style={styles.noticeText} testID="led-blocked-read-only">
+                {say(ledReadOnlyNotice(blocked)!)}
               </Text>
             )}
             {blocked === 'DISCONNECTED' && (
@@ -454,17 +499,46 @@ export default function LedStripScreen({
           </NoticeBox>
         )}
 
+        {readOnly && (
+          <NoticeBox variant="info" testID="led-read-only">
+            <Text style={styles.badge} testID="led-read-only-badge">
+              {say(ledReadOnlyBadge())}
+            </Text>
+            <Text style={styles.noticeText}>
+              {t('ledStripScreen.blocked.futureApiReadOnly')}
+            </Text>
+          </NoticeBox>
+        )}
+
         {capability !== undefined && (
           <NoticeBox variant="info" testID="led-capability">
             <Text style={styles.noticeText}>{say(capability)}</Text>
           </NoticeBox>
         )}
 
-        {blockers.includes('OBSERVED_STRIP_HAS_GAP') && (
-          <NoticeBox variant="danger" testID="led-observed-gap">
-            <Text style={styles.noticeText}>
-              {say(ledSaveBlockerMessage('OBSERVED_STRIP_HAS_GAP'))}
+        {/* §58. The board arrived truncated. Everything after the first
+            empty slot is invisible to the aircraft, so the entries are
+            preserved and NAMED rather than compacted away - this app does
+            not silently repair a state nobody chose. */}
+        {blockers.includes('OBSERVED_STRIP_HAS_GAP') && snapshot !== undefined && (
+          <NoticeBox
+            variant="danger"
+            title={t('ledStripScreen.gap.title')}
+            testID="led-observed-gap">
+            <Text style={styles.noticeText}>{t('ledStripScreen.gap.explain')}</Text>
+            <Text style={styles.noticeText} testID="led-gap-effective">
+              {t('ledStripScreen.gap.effectiveCount', {
+                count: snapshot.truth.effectiveCount,
+              })}
             </Text>
+            <Text style={styles.noticeText} testID="led-gap-unreachable">
+              {t('ledStripScreen.gap.unreachable', {
+                indexes: snapshot.truth.unreachableEntries
+                  .map(entry => entry.index + 1)
+                  .join('، '),
+              })}
+            </Text>
+            <Text style={styles.caption}>{t('ledStripScreen.gap.noAutoFix')}</Text>
           </NoticeBox>
         )}
 
@@ -489,7 +563,24 @@ export default function LedStripScreen({
 
         {draft !== undefined && snapshot !== undefined && (
           <>
+            {/* §5: ONE page. A compact segmented control chooses which of
+                the four sections is on screen; the save surface below is
+                outside this switch and never moves. */}
+            <View style={styles.chipRow} accessibilityRole="tablist" testID="led-section-nav">
+              {LED_SECTIONS.map(key => (
+                <Chip
+                  key={key}
+                  label={t(`ledStripScreen.${LED_SECTION_TITLE_KEY[key]}`)}
+                  selected={section === key}
+                  disabled={false}
+                  onPress={() => setSection(key)}
+                  testID={`led-section-tab-${key}`}
+                />
+              ))}
+            </View>
+
             {/* ---------------- §1 التخطيط ---------------- */}
+            {section === 'LAYOUT' && (
             <Section title={t('ledStripScreen.sectionLayout')} testID="led-section-layout">
               <Text style={styles.caption}>{say(ledGridCaption())}</Text>
               <Text style={styles.caption} testID="led-count">
@@ -560,8 +651,10 @@ export default function LedStripScreen({
                 </View>
               </View>
             </Section>
+            )}
 
             {/* ---------------- §2 لوحة الألوان ---------------- */}
+            {section === 'PALETTE' && (
             <Section title={t('ledStripScreen.sectionPalette')} testID="led-section-palette">
               {palette === undefined ? (
                 <Text style={styles.caption} testID="led-no-palette">
@@ -579,8 +672,10 @@ export default function LedStripScreen({
                 />
               )}
             </Section>
+            )}
 
             {/* ---------------- §3 ألوان الحالات ---------------- */}
+            {section === 'MODE_COLORS' && (
             <Section title={t('ledStripScreen.sectionModeColors')} testID="led-section-modes">
               {snapshot.modeColors === undefined ? (
                 <Text style={styles.caption} testID="led-no-mode-colors">
@@ -601,24 +696,38 @@ export default function LedStripScreen({
                 />
               )}
             </Section>
+            )}
 
             {/* ---------------- §4 الإضاءة والتأثيرات ---------------- */}
+            {section === 'RUNTIME' && (
             <Section title={t('ledStripScreen.sectionRuntime')} testID="led-section-runtime">
               <RuntimeValues
                 draft={draft}
                 editable={editable}
                 say={say}
                 t={t}
-                onChange={(field, value) => applyView(setLedRuntimeValue(draft, field, value))}
+                onChange={(field, value) => applyEdit(setLedRuntimeValue(draft, field, value))}
               />
               <LayerPriority say={say} t={t} />
             </Section>
+            )}
+
+            {/* §9/§27/§44/§62 - everything an operator does not read first,
+                in one place, off by default. */}
+            <TechnicalDetails
+              open={technical}
+              onToggle={() => setTechnical(!technical)}
+              draft={draft}
+              snapshot={snapshot}
+              say={say}
+              t={t}
+            />
           </>
         )}
       </ScrollView>
 
       <StickyActionBar
-        visible={dirtyGroups.length > 0}
+        visible={dirtyGroups.length > 0 && !readOnly}
         summary={t('ledStripScreen.save.summary', {count: dirtyGroups.length})}
         details={dirtyGroups.map(group => say(ledSaveGroupLabel(group)))}
         saveLabel={t('ledStripScreen.save.apply')}
@@ -787,10 +896,19 @@ function Inspector({
           const note = ledEffectiveDirectionNote(chosen[0].baseFunction, chosen[0].directionMask);
           return note === undefined ? null : (
             <Text style={styles.caption} testID="led-direction-note">
-              {t(note.key, note.params === undefined ? {} : {direction: t(String(note.params.direction))})}
+              {say(note)}
             </Text>
           );
         })()}
+
+      {/* §34/§35 - one line each, and only when the LED actually carries
+          an effect that depends on something outside itself. */}
+      {chosen.length === 1 &&
+        ledDependencyNotes(chosen[0].baseFunction, chosen[0].overlayMask).map(note => (
+          <Text key={note.key} style={styles.caption} testID={`led-dep-${note.key}`}>
+            {say(note)}
+          </Text>
+        ))}
 
       <Text style={styles.groupTitle}>{t('ledStripScreen.inspector.overlays')}</Text>
       {LED_TOGGLEABLE_OVERLAY_BITS.map(bit => {
@@ -846,6 +964,16 @@ function Inspector({
       })}
 
       <Text style={styles.groupTitle}>{t('ledStripScreen.inspector.color')}</Text>
+      {/* §40. No palette on this build, so the INDEX is the only truth
+          there is - it is named as an index and no swatch is invented. */}
+      {palette === undefined && typeof color === 'number' && (
+        <>
+          <Text style={styles.fieldLabel} testID="led-color-index-only">
+            {t('ledStripScreen.palette.indexOnly', {number: color + 1})}
+          </Text>
+          <Text style={styles.caption}>{t('ledStripScreen.palette.indexOnlyHelp')}</Text>
+        </>
+      )}
       <ColorIndexPicker
         palette={palette}
         value={color === 'MIXED' ? undefined : color}
@@ -935,6 +1063,8 @@ function WiringOrder({
     readonly number: number;
     readonly x: number;
     readonly y: number;
+    readonly baseFunction: number;
+    readonly overlayMask: number;
   }[];
   readonly clusters: ReadonlyMap<string, readonly number[]>;
 }): React.JSX.Element {
@@ -946,6 +1076,13 @@ function WiringOrder({
           LED here changes the animation without changing any LED's own
           settings, which is why it gets its own list. */}
       <Text style={styles.caption}>{t('ledStripScreen.order.help')}</Text>
+      {/* §34: say it HERE, where the order is actually being changed, and
+          only when at least one LED in the chain renders by walking it. */}
+      {ledStripHasOrdinalEffect(nodes) && (
+        <Text style={styles.caption} testID="led-order-ordinal-note">
+          {t('ledStripScreen.effect.ordinalDependent')}
+        </Text>
+      )}
       {nodes.map((node, position) => (
         <View key={node.index} style={styles.orderRow} testID={`led-order-${node.index}`}>
           <Text style={styles.orderNumber}>{node.number}</Text>
@@ -1097,7 +1234,7 @@ function ModeColors({
   return (
     <View testID="led-mode-colors">
       <View style={styles.chipRow}>
-        {LED_MODE_INDEXES.map(index => (
+        {LED_EDITABLE_MODE_INDEXES.map(index => (
           <Chip
             key={index}
             label={say(ledModeLabel(index))}
@@ -1202,18 +1339,29 @@ function RuntimeValues({
     <View testID="led-runtime-values">
       {LED_RUNTIME_FIELD_IDS.map(field => {
         const value = draftRuntimeValue(draft, field);
-        const {min, max} = RUNTIME_BOUNDS[field];
+        const bounds = RUNTIME_BOUNDS[field];
+        const {min, max} = bounds;
+        /* The BOARD's own value, not the draft's - an out-of-range notice
+           is about what arrived, and must not disappear the moment the
+           operator starts editing. */
+        const observedNotice = ledRuntimeObservedNotice(
+          draft.observed.runtimeValues[field],
+          bounds,
+        );
         return (
           <View key={field} style={styles.stackRow}>
             <View style={styles.fieldRow}>
               <Stepper
                 value={String(value)}
                 /* The bounds are the firmware's own setting table, not a
-                   slider's. The rainbow frequency really does go to 2000. */
-                onDecrement={() => onChange(field, Math.max(min, value - 1))}
-                onIncrement={() => onChange(field, Math.min(max, value + 1))}
-                decrementDisabled={value <= min}
-                incrementDisabled={value >= max}
+                   slider's - the rainbow frequency really does go to 2000.
+                   Stepping from OUTSIDE that range lands on the nearest
+                   bound rather than on `value ± 1`, which would hand the
+                   encoder a number it refuses. */
+                onDecrement={() => onChange(field, ledRuntimeStep(field, value, -1, bounds))}
+                onIncrement={() => onChange(field, ledRuntimeStep(field, value, 1, bounds))}
+                decrementDisabled={ledRuntimeStepInert(value, -1, bounds)}
+                incrementDisabled={ledRuntimeStepInert(value, 1, bounds)}
                 disabled={!editable}
                 accessibilityLabel={say(ledRuntimeFieldLabel(field))}
                 testID={`led-runtime-${field}`}
@@ -1223,6 +1371,11 @@ function RuntimeValues({
             <Text style={styles.caption}>
               {t('ledStripScreen.runtime.range', {min, max})}
             </Text>
+            {observedNotice !== undefined && (
+              <Text style={styles.outOfRange} testID={`led-runtime-observed-${field}`}>
+                {say(observedNotice)}
+              </Text>
+            )}
             <Text style={styles.caption}>{say(ledRuntimeFieldHelp(field))}</Text>
           </View>
         );
@@ -1249,7 +1402,7 @@ function LayerPriority({
       <Text style={styles.cardTitle}>{t('ledStripScreen.layer.title')}</Text>
       <Text style={styles.caption}>{t('ledStripScreen.layer.help')}</Text>
       {LED_LAYER_DISPLAY_ORDER.map((layer, position) => (
-        <Text key={layer} style={styles.orderCoords} testID={`led-layer-${layer}`}>
+        <Text key={layer} style={styles.layerRow} testID={`led-layer-${layer}`}>
           {`${position + 1}. ${say(ledLayerLabel(layer))}`}
         </Text>
       ))}
@@ -1260,6 +1413,94 @@ function LayerPriority({
 /* ================================================================== *
  * SMALL PIECES
  * ================================================================== */
+
+/**
+ * EVERYTHING AN OPERATOR DOES NOT READ FIRST.
+ *
+ * §78 keeps internal vocabulary off the primary surface; it does not say
+ * to throw it away. The raw wire index, the firmware's own enum spelling,
+ * the packed word, the read-only profile byte, the three unnamed special
+ * slots and the flight mode that is stored-but-never-read are all true and
+ * all useful to somebody filing a report. They live here, closed by
+ * default.
+ */
+function TechnicalDetails({
+  open,
+  onToggle,
+  draft,
+  snapshot,
+  say,
+  t,
+}: {
+  readonly open: boolean;
+  readonly onToggle: () => void;
+  readonly draft: LedStripDraft;
+  readonly snapshot: LedStripSnapshot;
+  readonly say: (phrase: LedPhrase) => string;
+  readonly t: (key: string, params?: Record<string, unknown>) => string;
+}): React.JSX.Element {
+  const chosen = selectedNodes(draft);
+  const unknownSlots = ledUnknownSpecialSlotsDetail(
+    Array.from({length: LED_SPECIAL_SLOT_COUNT}, (_unused, slot) => slot),
+  );
+  return (
+    <View style={styles.card} testID="led-technical">
+      <Button
+        label={say(ledTechnicalTitle())}
+        variant="ghost"
+        size="sm"
+        icon={open ? 'chevron-up' : 'chevron-down'}
+        onPress={onToggle}
+        testID="led-technical-toggle"
+      />
+      {open && (
+        <View style={styles.stackRow} testID="led-technical-body">
+          {chosen.length === 1 && (
+            <>
+              <Text style={styles.technicalLine} testID="led-technical-wire-index">
+                {say(ledWireIndexDetail(chosen[0].index))}
+              </Text>
+              <Text style={styles.technicalLine} testID="led-technical-symbol">
+                {say(ledFirmwareSymbolDetail(chosen[0].baseFunction))}
+              </Text>
+              <Text style={styles.technicalLine} testID="led-technical-raw">
+                {say(ledRawWordDetail(chosen[0].raw))}
+              </Text>
+            </>
+          )}
+          <Text style={styles.technicalLine} testID="led-technical-profile">
+            {say(ledProfileDetail(snapshot.profile))}
+          </Text>
+          <Text style={styles.technicalLine}>
+            {t('ledStripScreen.technical.profileReadOnly')}
+          </Text>
+          <Text style={styles.technicalLine}>
+            {t('ledStripScreen.technical.directionPriority')}
+          </Text>
+          {snapshot.modeColors !== undefined && unknownSlots !== undefined && (
+            <>
+              <Text style={styles.technicalLine} testID="led-technical-special-slots">
+                {say(unknownSlots)}
+              </Text>
+              <Text style={styles.technicalLine}>
+                {t('ledStripScreen.technical.unknownSpecialSlotsHelp')}
+              </Text>
+            </>
+          )}
+          {/* §42: mode 5 appears ONLY here, with the reason. */}
+          {LED_INERT_MODE_INDEXES.map(mode => (
+            <View key={mode} style={styles.stackRow} testID={`led-technical-inert-${mode}`}>
+              <Text style={styles.technicalLine}>{say(ledInertModeDetail(mode))}</Text>
+              <Text style={styles.technicalLine}>
+                {t('ledStripScreen.technical.inertMode')}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
 
 function Section({
   title,
@@ -1526,6 +1767,17 @@ const styles = StyleSheet.create({
   stackRow: {gap: spacing.xs},
   fieldLabel: {...typography.label, color: colors.textPrimary},
   mixed: {...typography.caption, color: colors.warning},
+  outOfRange: {...typography.caption, color: colors.warning},
+  badge: {
+    ...typography.caption,
+    color: colors.accentText,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    alignSelf: 'flex-start',
+  },
+  technicalLine: {...typography.caption, color: colors.textMuted},
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1540,6 +1792,19 @@ const styles = StyleSheet.create({
   },
   orderNumber: {...typography.value, color: colors.textPrimary, minWidth: 28},
   orderCoords: {...typography.caption, color: colors.textSecondary},
+  /* THE PRIORITY LIST HAS TO READ AS ONE COLUMN.
+     Without an explicit alignment each row picks its own paragraph
+     direction from its first STRONG character, so "1. تحذير" aligned
+     right while "2. RSSI", "4. GPS" and "5. VTX" - whose labels are
+     Latin acronyms the firmware itself uses - jumped to the opposite
+     edge. The order is the whole point of the card, and an order split
+     across two margins cannot be read. Pinned to the reading edge, which
+     is what the rest of this app does. */
+  layerRow: {
+    ...typography.caption,
+    color: colors.textSecondary,
+    textAlign: 'right',
+  },
   swatchGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

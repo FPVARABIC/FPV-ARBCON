@@ -234,21 +234,94 @@ describe('the two-panel workspace', () => {
  * EVERY SECTION IS REACHABLE AT EVERY WIDTH
  * ================================================================== */
 
-describe('the four sections are one page at every width', () => {
+describe('the four sections are ONE page at every width', () => {
   it.each(WIDTHS.map(width => [width] as const))(
-    'at %ipx',
+    'at %ipx, all four are reachable from one segmented control',
     async width => {
       const tree = await mountAt(width);
-      for (const section of [
-        'led-section-layout',
-        'led-section-palette',
-        'led-section-modes',
-        'led-section-runtime',
-      ]) {
-        expect(tree.root.findAllByProps({testID: section}).length).toBeGreaterThan(0);
+      /* §5: one LED page, four sections, a compact segmented control - not
+         four independent screens. Every tab is present at every width, and
+         the save surface below is outside the switch. */
+      expect(tree.root.findAllByProps({testID: 'led-section-nav'}).length).toBeGreaterThan(0);
+      for (const key of ['LAYOUT', 'PALETTE', 'MODE_COLORS', 'RUNTIME'] as const) {
+        expect(
+          tree.root.findAllByProps({testID: `led-section-tab-${key}`}).length,
+        ).toBeGreaterThan(0);
       }
+      expect(tree.root.findAllByProps({testID: 'led-save-bar'}).length).toBeGreaterThan(0);
       act(() => tree.unmount());
     },
     30000,
   );
+
+  it.each(
+    (['LAYOUT', 'PALETTE', 'MODE_COLORS', 'RUNTIME'] as const).map(k => [k] as const),
+  )('%s opens its own section and only that one', async key => {
+    const tree = await mountAt(1366);
+    const tab = tree.root
+      .findAllByProps({testID: `led-section-tab-${key}`})
+      .find(node => typeof node.props.onPress === 'function');
+    act(() => tab?.props.onPress());
+    const testIDs = {
+      LAYOUT: 'led-section-layout',
+      PALETTE: 'led-section-palette',
+      MODE_COLORS: 'led-section-modes',
+      RUNTIME: 'led-section-runtime',
+    } as const;
+    for (const [other, id] of Object.entries(testIDs)) {
+      const present = tree.root.findAllByProps({testID: id}).length > 0;
+      expect(present).toBe(other === key);
+    }
+    act(() => tree.unmount());
+  }, 30000);
+});
+
+/* ================================================================== *
+ * THE LAYER PRIORITY LIST READS AS ONE COLUMN
+ *
+ * Found by looking at a screenshot, not by a test. Without an explicit
+ * alignment every row picks its own paragraph direction from its first
+ * STRONG character, so "1. تحذير" aligned to the reading edge while
+ * "2. RSSI", "4. GPS" and "5. VTX" - whose labels are Latin acronyms
+ * the firmware itself uses - jumped to the opposite margin. An ordered
+ * list split across two edges cannot be read as an order, and the order
+ * IS the content of that card.
+ * ================================================================== */
+
+describe('the layer priority list', () => {
+  it('pins every row to the same edge, Latin-labelled ones included', async () => {
+    const tree = await mountAt(1366);
+    /* The card lives in the RUNTIME section, so open it the way an
+       operator does rather than reaching past the navigation. */
+    const tab = tree.root
+      .findAllByProps({testID: 'led-section-tab-RUNTIME'})
+      .find(node => typeof node.props.onPress === 'function');
+    act(() => tab?.props.onPress());
+
+    const rows = tree.root.findAll(
+      node =>
+        typeof node.props?.testID === 'string' &&
+        /^led-layer-[A-Z_]+$/.test(node.props.testID),
+    );
+    const byId = new Map<string, unknown>();
+    for (const row of rows) {
+      const id = row.props.testID as string;
+      if (byId.has(id)) continue;
+      const flat = ([] as unknown[]).concat(row.props.style).filter(Boolean);
+      byId.set(
+        id,
+        flat.map(x => (x as {textAlign?: string}).textAlign).find(a => a !== undefined),
+      );
+    }
+    /* The runtime layer table has ten entries; five would already be
+       enough to catch the split, but a vacuous pass must be impossible. */
+    expect(byId.size).toBeGreaterThanOrEqual(5);
+    /* ONE alignment across every row, explicitly set - NOT left to the
+       per-row bidi default, which is what split the list in the first
+       place. */
+    const alignments = new Set(byId.values());
+    expect(alignments.size).toBe(1);
+    expect([...alignments][0]).toBe('right');
+    act(() => tree.unmount());
+  }, 30000);
 });

@@ -54,6 +54,14 @@ import type {
   LedModeColorTuple,
   LedStripRuntimeConfigValues,
 } from '../protocol/msp/decoding/decodeLedStrip';
+import {
+  LED_BRIGHTNESS_MAX,
+  LED_BRIGHTNESS_MIN,
+  LED_RAINBOW_DELTA_MAX,
+  LED_RAINBOW_DELTA_MIN,
+  LED_RAINBOW_FREQ_MAX,
+  LED_RAINBOW_FREQ_MIN,
+} from '../protocol/msp/encoding/encodeLedStrip';
 import type {LedStripBuildCapability} from './ledStripModel';
 import {
   ledPaletteColorsEqual,
@@ -594,15 +602,70 @@ export function setLedModeColor(
   return Object.freeze({...draft, modeColors: Object.freeze(next)});
 }
 
+/**
+ * THE FIRMWARE'S OWN WRITE BOUNDS, restated where a draft can be refused
+ * against them.
+ *
+ * These are the setting-table limits the encoder enforces, not a slider's.
+ * The encoder throws a `RangeError` on a value outside them - which is
+ * correct for a byte-builder and useless to an operator, because by then
+ * the save is already in flight. Refusing the DRAFT turns that crash into
+ * a sentence.
+ */
+const RUNTIME_BOUNDS: Readonly<
+  Record<LedRuntimeValueField, {readonly min: number; readonly max: number}>
+> = Object.freeze({
+  brightness: {min: LED_BRIGHTNESS_MIN, max: LED_BRIGHTNESS_MAX},
+  rainbowDelta: {min: LED_RAINBOW_DELTA_MIN, max: LED_RAINBOW_DELTA_MAX},
+  rainbowFreq: {min: LED_RAINBOW_FREQ_MIN, max: LED_RAINBOW_FREQ_MAX},
+});
+
+export function ledRuntimeBounds(field: LedRuntimeValueField): {
+  readonly min: number;
+  readonly max: number;
+} {
+  return RUNTIME_BOUNDS[field];
+}
+
+/**
+ * Whether a value is one the firmware would accept as a WRITE.
+ *
+ * A board may REPORT something outside this - `ledstrip_brightness` 0 is a
+ * real observation and is displayed truthfully - but it is not something
+ * this app may send back.
+ */
+export function ledRuntimeValueWritable(
+  field: LedRuntimeValueField,
+  value: number,
+): boolean {
+  const {min, max} = RUNTIME_BOUNDS[field];
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
+/**
+ * Edit one runtime value.
+ *
+ * REFUSES ANYTHING THE FIRMWARE WOULD NOT TAKE. Returning to the board's
+ * own observed value is always allowed even when that value is outside the
+ * write range, because that is not an edit - it is putting back what was
+ * there, and it drops the field from the owned set so nothing is sent.
+ */
 export function setLedRuntimeValue(
   draft: LedStripDraft,
   field: LedRuntimeValueField,
   value: number,
-): LedStripDraft {
-  const runtimeValues = {...draft.runtimeValues};
-  if (draft.observed.runtimeValues[field] === value) delete runtimeValues[field];
-  else runtimeValues[field] = value;
-  return Object.freeze({...draft, runtimeValues: Object.freeze(runtimeValues)});
+): LedEditOutcome {
+  const observed = draft.observed.runtimeValues[field];
+  if (observed === value) {
+    const cleared = {...draft.runtimeValues};
+    delete cleared[field];
+    return applied(Object.freeze({...draft, runtimeValues: Object.freeze(cleared)}));
+  }
+  if (!ledRuntimeValueWritable(field, value)) {
+    return refuse(draft, 'VALUE_OUT_OF_RANGE');
+  }
+  const runtimeValues = {...draft.runtimeValues, [field]: value};
+  return applied(Object.freeze({...draft, runtimeValues: Object.freeze(runtimeValues)}));
 }
 
 /* ------------------------------------------------------------------ *
@@ -657,15 +720,20 @@ export function ledDraftSaveBlockers(draft: LedStripDraft): readonly LedSaveBloc
     blockers.push('PENDING_LED_ENCODES_AS_TERMINATOR');
   }
 
+  /* THE BOARD'S OWN GAP COMES FIRST, because it is the root cause and the
+     only one the operator can act on: the draft can only inherit a hole,
+     never author one. Reporting the derived assertion ahead of it would
+     hand them a sentence about their own edit for a state that arrived
+     with the board. */
+  const observedTruth = deriveLedStripTruth(draft.observed.entries, draft.observed.maxLength);
+  if (observedTruth.gapDetected) blockers.push('OBSERVED_STRIP_HAS_GAP');
+
   const target = buildTargetEntries(draft);
   const truth = deriveLedStripTruth(
     target.map((word, index) => decodeLedEntry(word, index)),
     draft.observed.maxLength,
   );
   if (truth.gapDetected) blockers.push('DRAFT_HAS_GAP');
-
-  const observedTruth = deriveLedStripTruth(draft.observed.entries, draft.observed.maxLength);
-  if (observedTruth.gapDetected) blockers.push('OBSERVED_STRIP_HAS_GAP');
 
   const needsAdvanced = groups.includes('PALETTE') || groups.includes('MODE_COLORS');
   if (needsAdvanced && draft.observed.capability !== 'ADVANCED_STATUS_MODE') {

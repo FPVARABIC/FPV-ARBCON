@@ -25,9 +25,12 @@
 
 import {
   LED_LAYER_PRIORITY_ORDER,
+  LED_SPECIAL_SLOT_NAMED_COUNT,
   LedModeIndex,
   LedSpecialColorSlot,
+  ledBaseFunctionDependency,
   ledModeRuntimeStatus,
+  ledOverlayDependency,
   ledSpecialSlotStatus,
   type LedLayer,
   type LedModeRuntimeStatus,
@@ -206,8 +209,129 @@ export function ledEffectiveDirectionNote(
   }
   if (first === undefined) return phrase(`${NS}.direction.noneChosen`);
   if (count === 1) return undefined;
-  return phrase(`${NS}.direction.firstWins`, {
-    direction: `${NS}.direction.${LED_DIRECTION_IDS[first]}`,
+  /* §32's copy states the RULE rather than naming the winner: the exact
+     priority order lives behind the technical disclosure, so the primary
+     line stays one short sentence. */
+  return phrase(`${NS}.direction.firstWins`);
+}
+
+/* ================================================================== *
+ * WHAT AN LED'S BEHAVIOUR DEPENDS ON BESIDES ITSELF
+ *
+ * Two different couplings, and confusing them is how a UI ends up lying:
+ * an ORDINAL effect walks the matching LEDs in WIRE ORDER, so renumbering
+ * the chain changes the animation though no LED's own settings moved; a
+ * GEOMETRY effect reads the LED's X/Y against the extent of every OTHER
+ * configured LED, so moving one LED can change which quadrant a different
+ * one belongs to. Both facts come from the L-B dependency tables, which
+ * were read out of the firmware rather than guessed.
+ * ================================================================== */
+
+export interface LedDependencyKinds {
+  readonly ordinal: boolean;
+  readonly geometry: boolean;
+}
+
+export function ledEntryDependencies(
+  baseFunction: number,
+  overlayMask: number,
+): LedDependencyKinds {
+  let ordinal = ledBaseFunctionDependency(baseFunction) === 'ORDINAL';
+  let geometry = ledBaseFunctionDependency(baseFunction) === 'GEOMETRY';
+  for (const bit of LED_TOGGLEABLE_OVERLAY_BITS) {
+    /* eslint-disable-next-line no-bitwise -- one bit of the firmware's mask. */
+    if (((overlayMask >>> bit) & 1) !== 1) continue;
+    const kind = ledOverlayDependency(bit);
+    if (kind === 'ORDINAL') ordinal = true;
+    if (kind === 'GEOMETRY') geometry = true;
+  }
+  return Object.freeze({ordinal, geometry});
+}
+
+/** The concise notes an LED with either coupling earns. Never a wall of
+ *  warning text - one line each, and only when it actually applies. */
+export function ledDependencyNotes(
+  baseFunction: number,
+  overlayMask: number,
+): readonly LedPhrase[] {
+  const {ordinal, geometry} = ledEntryDependencies(baseFunction, overlayMask);
+  const notes: LedPhrase[] = [];
+  if (ordinal) notes.push(phrase(`${NS}.effect.ordinalDependent`));
+  if (geometry) notes.push(phrase(`${NS}.effect.geometryDependent`));
+  return Object.freeze(notes);
+}
+
+/** Whether reordering this strip would change any animation - which is the
+ *  only time the wiring-order editor needs to say so. */
+export function ledStripHasOrdinalEffect(
+  entries: readonly {readonly baseFunction: number; readonly overlayMask: number}[],
+): boolean {
+  return entries.some(e => ledEntryDependencies(e.baseFunction, e.overlayMask).ordinal);
+}
+
+/* ================================================================== *
+ * TECHNICAL DETAILS
+ *
+ * §78: internal vocabulary never reaches the primary surface. The firmware
+ * symbol, the raw wire index, the packed word, the read-only profile byte
+ * and the unnamed special slots are all real and all useful to somebody
+ * filing a report - they simply are not what an operator reads first.
+ * ================================================================== */
+
+export function ledTechnicalTitle(): LedPhrase {
+  return phrase(`${NS}.technical.title`);
+}
+
+/** The physical index as the wire carries it: LED 1 is raw index 0. */
+export function ledWireIndexDetail(index: number): LedPhrase {
+  return phrase(`${NS}.technical.wireIndex`, {index});
+}
+
+/** The firmware's own enum spelling, kept behind the disclosure so the
+ *  primary label can stay Arabic. */
+export function ledFirmwareSymbolDetail(baseFunction: number): LedPhrase {
+  const known =
+    Number.isInteger(baseFunction) &&
+    baseFunction >= 0 &&
+    baseFunction < LED_BASE_FUNCTION_KNOWN_COUNT;
+  return phrase(`${NS}.technical.firmwareSymbol`, {
+    symbol: known ? LED_BASE_FUNCTION_IDS[baseFunction] : String(baseFunction),
+  });
+}
+
+export function ledRawWordDetail(raw: number): LedPhrase {
+  return phrase(`${NS}.technical.rawWord`, {
+    /* eslint-disable-next-line no-bitwise -- coercing the packed word to
+       unsigned before printing it; a negative hex would be nonsense. */
+    word: `0x${(raw >>> 0).toString(16).toUpperCase().padStart(8, '0')}`,
+  });
+}
+
+export function ledProfileDetail(profile: number): LedPhrase {
+  return phrase(`${NS}.technical.profile`, {profile});
+}
+
+/**
+ * The special slots the firmware transmits but never names.
+ *
+ * `LED_SPECIAL_COLOR_COUNT` is eleven and the enumeration defines eight.
+ * Inventing friendly names for the last three would be this app asserting
+ * meaning the source never gave them, so they are listed by number and
+ * carried back untouched.
+ */
+export function ledUnknownSpecialSlotsDetail(
+  slots: readonly number[],
+): LedPhrase | undefined {
+  const unnamed = slots.filter(slot => slot >= LED_SPECIAL_SLOT_NAMED_COUNT);
+  return unnamed.length === 0
+    ? undefined
+    : phrase(`${NS}.technical.unknownSpecialSlots`, {slots: unnamed.join('، ')});
+}
+
+/** Mode 5: stored, transmitted, validated on write, and never read. */
+export function ledInertModeDetail(mode: number): LedPhrase {
+  return phrase(`${NS}.technical.inertModeName`, {
+    name: LED_MODE_IDS[mode] ?? String(mode),
   });
 }
 
@@ -256,6 +380,25 @@ export const LED_MODE_INDEXES: readonly number[] = Object.freeze([
   LedModeIndex.MAG,
   LedModeIndex.BARO,
 ]);
+
+/**
+ * THE MODES AN OPERATOR MAY EDIT, AND MODE 5 IS NOT ONE OF THEM.
+ *
+ * `LED_MODE_COUNT` is six so six slots exist on the wire, and the
+ * flight-mode-to-LED table has five entries, none of them mode 5. It is
+ * stored, transmitted, round-tripped and validated on write, and no code
+ * path ever reads it. Giving it an editing control beside the four that
+ * work would make this app an inert control wearing a working one's
+ * clothes - so it is listed only behind the technical disclosure, with the
+ * reason.
+ */
+export const LED_EDITABLE_MODE_INDEXES: readonly number[] = Object.freeze(
+  LED_MODE_INDEXES.filter(mode => ledModeRuntimeStatus(mode) !== 'KNOWN_BUT_RUNTIME_INERT'),
+);
+
+export const LED_INERT_MODE_INDEXES: readonly number[] = Object.freeze(
+  LED_MODE_INDEXES.filter(mode => ledModeRuntimeStatus(mode) === 'KNOWN_BUT_RUNTIME_INERT'),
+);
 
 export function ledModeLabel(mode: number): LedPhrase {
   if (Number.isInteger(mode) && mode >= 0 && mode < LED_MODE_IDS.length) {
@@ -330,6 +473,64 @@ export function ledRuntimeFieldLabel(field: LedRuntimeFieldId): LedPhrase {
 
 export function ledRuntimeFieldHelp(field: LedRuntimeFieldId): LedPhrase {
   return phrase(`${NS}.runtime.help.${field}`);
+}
+
+/**
+ * WHERE ONE PRESS OF A RUNTIME STEPPER LANDS.
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE, found by rendering a board that reports
+ * `ledstrip_brightness = 0`. Zero is a real observation - the firmware
+ * stores it and the decoder returns it truthfully - but the firmware's own
+ * setting table will only ACCEPT 5..100 on a write. Stepping naively gave
+ * `0 + 1 = 1`, which the encoder rejects with a `RangeError` at save time:
+ * a crash instead of a sentence, and only after the operator pressed Save.
+ *
+ * So from outside the writable range the first press lands ON the nearest
+ * bound, and the direction that would move further out is inert. The board's
+ * own value is still displayed exactly as it arrived; it is simply not a
+ * value this app may send back.
+ */
+export function ledRuntimeStep(
+  field: LedRuntimeFieldId,
+  current: number,
+  direction: 1 | -1,
+  bounds: {readonly min: number; readonly max: number},
+): number {
+  if (current < bounds.min) return direction > 0 ? bounds.min : current;
+  if (current > bounds.max) return direction < 0 ? bounds.max : current;
+  const next = current + direction;
+  return next < bounds.min ? bounds.min : next > bounds.max ? bounds.max : next;
+}
+
+export function ledRuntimeStepInert(
+  current: number,
+  direction: 1 | -1,
+  bounds: {readonly min: number; readonly max: number},
+): boolean {
+  if (current < bounds.min) return direction < 0;
+  if (current > bounds.max) return direction > 0;
+  return direction > 0 ? current >= bounds.max : current <= bounds.min;
+}
+
+/**
+ * The board reported a value it would not itself accept as a write.
+ *
+ * Said plainly rather than corrected. The reference tab's `brightness || 50`
+ * turns this exact observation into a fabricated 50 and then writes the
+ * fabrication back; this states what the board holds and leaves it there
+ * until the operator chooses something valid.
+ */
+export function ledRuntimeObservedNotice(
+  observed: number,
+  bounds: {readonly min: number; readonly max: number},
+): LedPhrase | undefined {
+  return observed < bounds.min || observed > bounds.max
+    ? phrase(`${NS}.runtime.observedOutOfRange`, {
+        value: observed,
+        min: bounds.min,
+        max: bounds.max,
+      })
+    : undefined;
 }
 
 /* ================================================================== *
@@ -470,6 +671,24 @@ export function ledEditingAllowed(reason: LedBlockReasonId | undefined): boolean
 
 export function ledReadOnlyNotice(reason: LedBlockReasonId | undefined): LedPhrase | undefined {
   return reason === 'UNVERIFIED_FUTURE_API' ? phrase(`${NS}.blocked.futureApiReadOnly`) : undefined;
+}
+
+/** The badge a read-only surface wears. */
+export function ledReadOnlyBadge(): LedPhrase {
+  return phrase(`${NS}.readOnlyBadge`);
+}
+
+/**
+ * WHETHER THIS SNAPSHOT MAY BE WRITTEN BACK AT ALL.
+ *
+ * A firmware newer than any tree whose LED source was pinned is READ - the
+ * controller decodes it through the newest layout it actually verified -
+ * and every write against it is refused. So the data on screen is real and
+ * the Save button is not: the surface earns a «قراءة فقط» badge rather
+ * than an empty state.
+ */
+export function ledSurfaceIsReadOnly(authority: {readonly kind: string}): boolean {
+  return authority.kind !== 'ALLOWED';
 }
 
 export type LedLoadOutcomeId =

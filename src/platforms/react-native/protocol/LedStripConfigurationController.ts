@@ -73,6 +73,7 @@ import {
 import {
   ledStripWriteAuthority,
   resolveLedStripApi,
+  type LedStripWriteAuthority,
   type LedEntry,
   type LedStripApiContract,
 } from '../../../core/protocol/msp/decoding/ledStripWireContract';
@@ -167,6 +168,20 @@ export interface LedStripSnapshot {
   readonly sessionId: string;
   readonly generation: number;
   readonly apiContract: LedStripApiContract;
+  /**
+   * WHETHER THIS SNAPSHOT MAY BE WRITTEN BACK.
+   *
+   * A board newer than any tree whose LED source was pinned is still READ,
+   * through the newest layout this build verified - so `apiContract` on
+   * such a snapshot says `API_1_49` and looks identical to a genuine 1.49
+   * board. Without this field a caller holding a successful load cannot
+   * tell the two apart, and cannot mark its surface read-only.
+   *
+   * It is a LABEL, not the gate: `save()` refuses on its own authority
+   * check, computed fresh at the moment of the write. Nothing about the
+   * fail-closed rule depends on a caller reading this.
+   */
+  readonly writeAuthority: LedStripWriteAuthority;
   /** From the payload length, never assumed. */
   readonly maxLength: number;
   readonly entries: readonly LedEntry[];
@@ -385,7 +400,7 @@ export class LedStripConfigurationController {
     if (this.busy.has(key.sessionId)) {
       return {kind: 'REJECTED', reason: 'OPERATION_IN_PROGRESS'};
     }
-    const {client, scheduler, epoch, contract} = captured;
+    const {client, scheduler, epoch, contract, authority} = captured;
     this.busy.add(key.sessionId);
     try {
       const result = await this.operations(key.sessionId, client, scheduler).execute<
@@ -399,7 +414,7 @@ export class LedStripConfigurationController {
             : {allowed: false, error: new LedPreflightError('LINK_RECOVERING')},
         execute: async requester => {
           this.assertLive(key, client, epoch);
-          return this.readSnapshot(requester, key, contract);
+          return this.readSnapshot(requester, key, contract, authority);
         },
       });
       if (result.status === 'SUCCEEDED') return result.result;
@@ -427,6 +442,7 @@ export class LedStripConfigurationController {
     requester: MspRequester,
     key: SetupUiSessionKey,
     apiContract: LedStripApiContract,
+    writeAuthority: LedStripWriteAuthority,
   ): Promise<LedStripLoadOutcome> {
     let stripFrame;
     try {
@@ -462,6 +478,7 @@ export class LedStripConfigurationController {
         sessionId: key.sessionId,
         generation: key.generation,
         apiContract,
+        writeAuthority,
         maxLength: strip.maxLength,
         entries: strip.entries,
         advancedRaw: strip.advancedRaw,
@@ -573,7 +590,8 @@ export class LedStripConfigurationController {
           context.clientState === 'READY'
             ? {allowed: true}
             : {allowed: false, error: new LedPreflightError('LINK_RECOVERING')},
-        execute: requester => this.runSave(requester, key, client, epoch, contract, request),
+        execute: requester =>
+          this.runSave(requester, key, client, epoch, contract, authority, request),
       });
       if (result.status === 'SUCCEEDED') return result.result;
       if (result.status === 'SESSION_ENDED' || result.status === 'OUTCOME_UNKNOWN') {
@@ -593,6 +611,9 @@ export class LedStripConfigurationController {
     client: MspClient,
     epoch: number,
     contract: LedStripApiContract,
+    /* Carried only so the snapshots this save re-reads carry it too. The
+       write gate itself already ran in `save()`, before we got here. */
+    authority: LedStripWriteAuthority,
     request: LedStripSaveRequest,
   ): Promise<LedStripSaveOutcome> {
     this.assertLive(key, client, epoch);
@@ -715,7 +736,7 @@ export class LedStripConfigurationController {
       modeColorWrites.length === 0 &&
       runtimeFrame === undefined;
     if (nothingToDo) {
-      const snapshot = await this.readSnapshotOrUndefined(requester, key, contract);
+      const snapshot = await this.readSnapshotOrUndefined(requester, key, contract, authority);
       return snapshot === undefined
         ? {kind: 'SESSION_ENDED'}
         : {kind: 'NO_CHANGES', snapshot};
@@ -737,7 +758,7 @@ export class LedStripConfigurationController {
       failedEntryPhase: failure?.entryPhase,
       appliedModeColors: Object.freeze([...appliedModeColors]),
       failedModeColor: failure?.modeColor,
-      observed: await this.readSnapshotOrUndefined(requester, key, contract),
+      observed: await this.readSnapshotOrUndefined(requester, key, contract, authority),
       persistence: 'NOT_ATTEMPTED',
     });
 
@@ -903,12 +924,12 @@ export class LedStripConfigurationController {
       return {
         kind: 'APPLIED_NOT_PERSISTED',
         groups: Object.freeze({...groups}),
-        snapshot: await this.readSnapshotOrUndefined(requester, key, contract),
+        snapshot: await this.readSnapshotOrUndefined(requester, key, contract, authority),
       };
     }
 
     this.assertLive(key, client, epoch);
-    const finalSnapshot = await this.readSnapshotOrUndefined(requester, key, contract);
+    const finalSnapshot = await this.readSnapshotOrUndefined(requester, key, contract, authority);
     if (finalSnapshot === undefined) return {kind: 'SESSION_ENDED'};
     return {kind: 'SAVE_VERIFIED', snapshot: finalSnapshot};
   }
@@ -929,9 +950,10 @@ export class LedStripConfigurationController {
     requester: MspRequester,
     key: SetupUiSessionKey,
     contract: LedStripApiContract,
+    authority: LedStripWriteAuthority,
   ): Promise<LedStripSnapshot | undefined> {
     try {
-      const outcome = await this.readSnapshot(requester, key, contract);
+      const outcome = await this.readSnapshot(requester, key, contract, authority);
       return outcome.kind === 'LOADED' ? outcome.snapshot : outcome.kind === 'CAPABILITY_CONTRADICTION'
         ? outcome.partial
         : undefined;
