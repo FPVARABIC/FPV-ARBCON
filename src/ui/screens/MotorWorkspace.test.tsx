@@ -238,6 +238,64 @@ describe('MotorWorkspace - facade calls', () => {
     expect(body.replace(/[\s\"]|,/g, '')).not.toContain('محايد/إيقاف1000');
   });
 
+  /* THE LEGEND LABELS A PHYSICAL AXIS, SO ITS ORDER IS NOT EDITORIAL.
+     The thumb is placed with absolute `left` from (value - min) / span
+     and the gesture maps a larger pageX to a larger value, so the LEFT
+     end of the track commands REVERSE and the RIGHT end FORWARD -
+     measured identical under both document directions.
+
+     This used to be asserted with `direction: 'ltr'` in the stylesheet,
+     which react-native-web drops. Measured in Chromium at 390/768/1366,
+     the rendered order under document RTL was
+     [أمامي, محايد, عكسي] against [عكسي, محايد, أمامي] under LTR: the
+     legend named FORWARD on the end that commands REVERSE. The live
+     mechanism is the forwarded `dir` DOM attribute, and this pins it.
+
+     A render assertion cannot see a dropped CSS property, so the browser
+     measurement in .dev-preview/motorrtlmeasure.mjs remains the primary
+     proof; this exists so the mechanism cannot be deleted silently. */
+  it('pins the 3D legend row to the physical axis, not the text direction', () => {
+    const renderer = render(
+      <MotorWorkspace
+        sessionState="ON"
+        onSessionChange={() => {}}
+        snapshot={makeSnapshot({ feature3d: true })}
+        port={makePort()}
+        enabled
+        onEnableChange={() => {}}
+      />,
+    );
+    const rows = renderer.root.findAll(
+      node =>
+        typeof node.type === 'string' &&
+        (node.props as { dir?: string }).dir === 'ltr',
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    /* Every pinned row is the legend, and it really holds the axis
+       labels in physical order - a vacuous pass is not possible. */
+    const textOf = (node: (typeof rows)[number]): string =>
+      node
+        .findAll(child => typeof child.type === 'string')
+        .flatMap(child => {
+          const kids = child.props.children;
+          return Array.isArray(kids) ? kids : [kids];
+        })
+        .filter((k): k is string => typeof k === 'string')
+        .join(' ');
+    const legend = rows.find(node => textOf(node).includes('عكسي'));
+    expect(legend).toBeDefined();
+    const flat = ([] as unknown[]).concat(legend?.props.style).filter(Boolean);
+    expect(
+      flat.map(x => (x as { flexDirection?: string }).flexDirection).find(v => v !== undefined),
+    ).toBe('row');
+    /* ONE mechanism only. A stylesheet `direction` here is the dead one
+       that let the defect through, and must not come back beside it. */
+    expect(
+      flat.map(x => (x as { direction?: string }).direction).find(v => v !== undefined),
+    ).toBeUndefined();
+    act(() => renderer.unmount());
+  });
+
   it('analog 3D renders the concise unsupported state and no sliders', () => {
     const renderer = render(
       <MotorWorkspace

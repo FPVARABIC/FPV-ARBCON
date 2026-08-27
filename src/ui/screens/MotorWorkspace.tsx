@@ -302,8 +302,23 @@ function MotorSlider({
         ) : null}
       </View>
       {neutral !== undefined ? (
-        <View style={sliderStyles.threeDLegend}>
-          {/* LTR axis: reverse left of neutral, forward right of it. */}
+        <View style={sliderStyles.threeDLegend} {...({dir: 'ltr'} as object)}>
+          {/* LTR axis: reverse left of neutral, forward right of it.
+              THE ORDER OF THESE THREE IS PHYSICAL, NOT EDITORIAL. The
+              thumb is placed with absolute `left` from
+              (value - min) / span, and the gesture maps a larger pageX to
+              a larger value, so the LEFT end of the track commands
+              REVERSE and the RIGHT end commands FORWARD - measured
+              identical under both document directions.
+
+              The row must therefore not reverse with the text. It used to
+              say so with `direction: 'ltr'` in the stylesheet, which
+              react-native-web drops, so under RTL this legend printed
+              أمامي at the left end - naming FORWARD on the end that
+              commands REVERSE. Measured at 390/768/1366: order was
+              [أمامي, محايد, عكسي] under RTL against [عكسي, محايد, أمامي]
+              under LTR, while the thumb offsets were identical in both.
+              `dir` is a forwarded DOM prop and is ignored off the web. */}
           <Text style={sliderStyles.legendText}>عكسي</Text>
           <Text style={sliderStyles.legendText}>
             {'محايد / إيقاف '}
@@ -699,7 +714,6 @@ const sliderStyles = StyleSheet.create({
   threeDLegend: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    direction: 'ltr',
   },
   legendText: {
     ...typography.caption,
