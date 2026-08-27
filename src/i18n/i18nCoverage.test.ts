@@ -77,6 +77,55 @@ import {
   type MotorCountStrategy,
 } from '../core/firmware-adapters/betaflightMixerReferenceV147';
 import type { SensorsBlockReason } from '../platforms/react-native/protocol';
+import {
+  LED_BASE_FUNCTION_IDS,
+  LED_BLOCK_REASON_IDS,
+  LED_DIRECTION_IDS,
+  LED_EDIT_REFUSAL_IDS,
+  LED_ENTRY_PLAN_REFUSAL_IDS,
+  LED_GROUP_STATE_IDS,
+  LED_MODE_IDS,
+  LED_OVERLAY_IDS,
+  LED_SAVE_BLOCKER_IDS,
+  LED_SAVE_OUTCOME_IDS,
+  LED_SAVE_REFUSAL_IDS,
+  LED_SPECIAL_SLOT_IDS,
+} from '../core/state/ledStripPresentation';
+import {
+  LED_LAYER_PRIORITY_ORDER,
+  type LedStripBuildCapability,
+} from '../core/state/ledStripModel';
+import type { LedSaveGroup } from '../core/state/ledStripSaveModel';
+import type { LedRuntimeValueField } from '../core/state/ledStripSaveModel';
+
+/* ------------------------------------------------------------------ *
+ * LED STRIP (L-D).
+ *
+ * The LED presentation layer builds every key from a template, so none
+ * of them is a `t('...')` literal that source scanning could find. The
+ * maps below are what makes the catalogue provable: each is typed against
+ * the union it enumerates, so `tsc` fails when a union grows, and the
+ * coverage assertion then fails until the Arabic exists.
+ * ------------------------------------------------------------------ */
+
+const LED_SAVE_GROUPS: Record<LedSaveGroup, true> = {
+  ENTRIES: true,
+  PALETTE: true,
+  MODE_COLORS: true,
+  RUNTIME_VALUES: true,
+};
+
+const LED_CAPABILITIES: Record<LedStripBuildCapability, true> = {
+  BASIC_LED_STRIP: true,
+  ADVANCED_STATUS_MODE: true,
+  UNRECOGNISED_CAPABILITY_BYTE: true,
+};
+
+const LED_RUNTIME_FIELDS: Record<LedRuntimeValueField, true> = {
+  brightness: true,
+  rainbowDelta: true,
+  rainbowFreq: true,
+};
 
 const REPO_ROOT = join(__dirname, '..', '..');
 const SCAN_ROOTS = [join(REPO_ROOT, 'src'), join(REPO_ROOT, 'App.tsx')];
@@ -510,6 +559,39 @@ const ENUMERATED_FAMILIES: readonly {
   readonly prefix: string;
   readonly members: readonly string[];
 }[] = [
+  {prefix: 'ledStripScreen.function', members: LED_BASE_FUNCTION_IDS},
+  {prefix: 'ledStripScreen.functionHelp', members: LED_BASE_FUNCTION_IDS},
+  {prefix: 'ledStripScreen.overlay', members: LED_OVERLAY_IDS},
+  {prefix: 'ledStripScreen.direction', members: LED_DIRECTION_IDS},
+  {prefix: 'ledStripScreen.mode', members: LED_MODE_IDS},
+  {
+    /* Only the two statuses that produce a sentence. RUNTIME_MAPPED is
+       deliberately absent: a mode that simply works says nothing. */
+    prefix: 'ledStripScreen.mode.runtime',
+    members: ['RUNTIME_MAPPED_WHEN_BUILT', 'KNOWN_BUT_RUNTIME_INERT'],
+  },
+  {prefix: 'ledStripScreen.special', members: LED_SPECIAL_SLOT_IDS},
+  {prefix: 'ledStripScreen.layer', members: [...LED_LAYER_PRIORITY_ORDER]},
+  {prefix: 'ledStripScreen.runtime.field', members: Object.keys(LED_RUNTIME_FIELDS)},
+  {prefix: 'ledStripScreen.runtime.help', members: Object.keys(LED_RUNTIME_FIELDS)},
+  {
+    /* ADVANCED_STATUS_MODE has no notice - it is the case with nothing to
+       report - so it is the one capability without a string. */
+    prefix: 'ledStripScreen.capability',
+    members: Object.keys(LED_CAPABILITIES).filter(id => id !== 'ADVANCED_STATUS_MODE'),
+  },
+  {prefix: 'ledStripScreen.blocked', members: Object.keys(LED_BLOCK_REASON_IDS)},
+  {prefix: 'ledStripScreen.edit.refusal', members: Object.keys(LED_EDIT_REFUSAL_IDS)},
+  {prefix: 'ledStripScreen.save.blocked', members: Object.keys(LED_SAVE_BLOCKER_IDS)},
+  {prefix: 'ledStripScreen.save.outcome', members: Object.keys(LED_SAVE_OUTCOME_IDS)},
+  {prefix: 'ledStripScreen.save.refusal', members: Object.keys(LED_SAVE_REFUSAL_IDS)},
+  {
+    prefix: 'ledStripScreen.save.entryPlan',
+    members: Object.keys(LED_ENTRY_PLAN_REFUSAL_IDS),
+  },
+  {prefix: 'ledStripScreen.save.group', members: Object.keys(LED_SAVE_GROUPS)},
+  {prefix: 'ledStripScreen.save.groupState', members: Object.keys(LED_GROUP_STATE_IDS)},
+  {prefix: 'ledStripScreen.palette.field', members: ['hue', 'whiteness', 'value']},
   {prefix: 'motorsScreen.topology.airframe', members: TOPOLOGY_AIRFRAMES},
   {prefix: 'motorsScreen.topology.servo', members: TOPOLOGY_SERVO_MIXERS},
   {prefix: 'motorsScreen.topology.notice', members: Object.keys(TOPOLOGY_NOTICES)},

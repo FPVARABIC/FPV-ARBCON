@@ -78,6 +78,7 @@ describe('Motors reachability after the single-app merge', () => {
       'POWER',
       'OSD',
       'VTX',
+      'LED',
       'SENSORS',
       'BLACKBOX',
       'PRESETS',

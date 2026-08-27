@@ -61,6 +61,7 @@ import FailsafeScreen from './FailsafeScreen';
 import PowerBatteryScreen from './PowerBatteryScreen';
 import OsdScreen from './OsdScreen';
 import VideoTransmitterScreen from './VideoTransmitterScreen';
+import LedStripScreen from './LedStripScreen';
 import SensorsScreen from './SensorsScreen';
 import BlackboxScreen from './BlackboxScreen';
 import PresetsScreen from './PresetsScreen';
@@ -569,6 +570,13 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
     }),
     [reportVtxDirty, selectTab, sessionKey],
   );
+  const ledProps = useMemo(
+    () => ({
+      sessionKey,
+      onOpenSetup: () => selectTab('SETUP'),
+    }),
+    [selectTab, sessionKey],
+  );
   const sensorsProps = useMemo(
     () => ({
       sessionKey,
@@ -705,6 +713,14 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
             active={activeTab === 'VTX'}
             Screen={VideoTransmitterScreen as never}
             screenProps={vtxProps}
+          />
+        ) : null}
+        {mountedTabs.includes('LED') ? (
+          <TabPanel
+            tabKey="LED"
+            active={activeTab === 'LED'}
+            Screen={LedStripScreen as never}
+            screenProps={ledProps}
           />
         ) : null}
         {mountedTabs.includes('SENSORS') ? (

@@ -22,6 +22,8 @@ import type {MainTabKey} from '../../../navigation/tabs';
  *   battery-charging   Power & battery
  *   monitor            OSD — the pilot's screen
  *   antenna            VTX — video transmitter
+ *   zap                LED strip — the only glyph in the registry that
+ *                      denotes light being emitted, and unused elsewhere
  *   activity           Sensors — live waveforms
  *   hard-drive         Blackbox — the storage the flight is written to
  *   package            Presets
@@ -40,6 +42,7 @@ export const TAB_ICONS: Record<MainTabKey, IconName> = {
   POWER: 'battery-charging',
   OSD: 'monitor',
   VTX: 'antenna',
+  LED: 'zap',
   SENSORS: 'activity',
   BLACKBOX: 'hard-drive',
   PRESETS: 'package',

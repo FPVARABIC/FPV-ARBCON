@@ -376,3 +376,23 @@ export type {
   SensorsSessionCoordinator,
   SensorsSnapshot,
 } from './SensorsConfigurationController';
+
+export {
+  LedStripConfigurationController,
+  ledStripConfigurationController,
+} from './LedStripConfigurationController';
+export type {
+  LedGroupState,
+  LedGroupStates,
+  LedPartialApplyDetail,
+  LedSaveRefusal,
+  LedStripAppStateOwner,
+  LedStripBlockReason,
+  LedStripConfigurationControllerOptions,
+  LedStripLoadOutcome,
+  LedStripResource,
+  LedStripSaveOutcome,
+  LedStripSaveRequest,
+  LedStripSessionCoordinator,
+  LedStripSnapshot,
+} from './LedStripConfigurationController';

@@ -19,6 +19,7 @@ export type MainTabKey =
   | 'POWER'
   | 'OSD'
   | 'VTX'
+  | 'LED'
   | 'SENSORS'
   | 'BLACKBOX'
   | 'PRESETS'
@@ -105,6 +106,27 @@ export const MAIN_TABS: readonly MainTabDefinition[] = Object.freeze([
   Object.freeze({
     key: 'VTX' as const,
     labelKey: 'tabs.vtx',
+    implemented: true,
+  }),
+  /**
+   * WHY شريط LED SITS HERE, between VTX and Sensors.
+   *
+   * It belongs to the PERIPHERAL run, not the configuration run. OSD is
+   * what the pilot sees through the goggles, VTX is the link that carries
+   * it, and the LED strip is what everyone else sees from the ground -
+   * three destinations about equipment bolted to the aircraft rather than
+   * about how it flies. Nothing in the flight-configuration sequence
+   * (Ports → Configurations → Receiver → PID → Modes → Failsafe → Power)
+   * depends on it, and putting it there would interrupt that sequence
+   * with a cosmetic destination.
+   *
+   * It is equally deliberately BEFORE the diagnostic pair (Sensors,
+   * تسجيل الرحلات): lighting is something an operator configures, not
+   * something they read a measurement from.
+   */
+  Object.freeze({
+    key: 'LED' as const,
+    labelKey: 'tabs.led',
     implemented: true,
   }),
   Object.freeze({
