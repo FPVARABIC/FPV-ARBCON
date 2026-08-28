@@ -239,8 +239,10 @@ describe('PortsConfigurationController', () => {
     expect(loaded).toMatchObject({
       kind: 'LOADED',
       snapshot: {
-        vtxTableAvailable: true,
-        vtxTableConfigured: false,
+        vtxTable: {
+          kind: 'OBSERVED',
+          value: { tableAvailable: true, tableConfigured: false },
+        },
       },
     });
   });

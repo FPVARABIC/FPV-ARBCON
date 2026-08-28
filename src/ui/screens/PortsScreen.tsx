@@ -31,13 +31,15 @@ import {
   hasSerialRole,
   serialPortDisplayName,
   serialPortsEqual,
+  serialRoleCompilationUnverified,
   serialRoleIsAvailable,
   setSerialBaud,
   setSerialRole,
   unknownSerialFunctionMask,
-  validateSerialPorts,
+  assessSerialPorts,
   type SerialBaudField,
   type SerialPortsSnapshot,
+  type SerialPortsUncertainty,
   type SerialPortsValidationIssue,
   type SerialRoleCategory,
   type SerialRoleKey,
@@ -206,12 +208,30 @@ function ChoiceGroup({
             testID: `ports-${portIdentifier}-${categoryKey}-none`,
           },
           ...roles.map(role => {
-            const available = serialRoleIsAvailable(snapshot, role.key);
+            /* A role the board already runs stays selectable whatever the
+               build evidence says - that is board truth, and it must stay
+               removable. Only INTRODUCING a build-gated role needs proof.
+               The authority is the FC's own record, not the draft: an
+               operator cannot authorise a role by picking it. */
+            const onBoard = snapshot.ports.find(
+              record => record.identifier === portIdentifier,
+            );
+            const assigned =
+              onBoard !== undefined && hasSerialRole(onBoard, role.key);
+            const available = serialRoleIsAvailable(snapshot, role.key, assigned);
+            const unverified =
+              !available && serialRoleCompilationUnverified(snapshot, role.key);
             return {
               key: role.key as string,
               label: t(roleLabelKey(role.key)),
               disabled: !available || isRoleDisabled?.(role.key) === true,
-              note: available ? undefined : t('portsConfiguration.notCompiled'),
+              note: available
+                ? undefined
+                : t(
+                    unverified
+                      ? 'portsConfiguration.compilationUnverified'
+                      : 'portsConfiguration.notCompiled',
+                  ),
               testID: `ports-${portIdentifier}-role-${role.key}`,
             };
           }),
@@ -531,10 +551,21 @@ export default function PortsScreen({
         : Object.freeze({ ...original, ports: draft }),
     [draft, original],
   );
-  const issues = useMemo(
-    () => (snapshot === undefined ? [] : validateSerialPorts(snapshot)),
+  /* Two lists, deliberately. `issues` are configurations known to be
+     wrong and still block Save. `uncertainties` are things the optional
+     reads never established: they are shown, and they block only the
+     specific edits that depend on them - the controller is the authority
+     on that, this is the matching screen behaviour. */
+  const assessment = useMemo(
+    () =>
+      snapshot === undefined
+        ? { issues: [], uncertainties: [] }
+        : assessSerialPorts(snapshot),
     [snapshot],
   );
+  const issues = assessment.issues;
+  const uncertainties: readonly SerialPortsUncertainty[] =
+    assessment.uncertainties;
   const dirty =
     original !== undefined && !serialPortsEqual(original.ports, draft);
   const controlsDisabled = phase === 'LOADING' || phase === 'SAVING';
@@ -811,12 +842,56 @@ export default function PortsScreen({
               ) : null}
             </View>
 
-            {snapshot.vtxTableAvailable === true &&
-            snapshot.vtxTableConfigured === false &&
+            {/* Two DIFFERENT things, and the wording must not merge
+                them: the board said its table is empty, versus the board
+                never answered. The second used to render as nothing at
+                all, so a failed read looked exactly like a healthy VTX. */}
+            {snapshot.vtxTable.kind === 'OBSERVED' &&
+            snapshot.vtxTable.value.tableAvailable &&
+            !snapshot.vtxTable.value.tableConfigured &&
             draft.some(port => hasSerialRole(port, 'VTX_MSP')) ? (
               <NoticeBox variant="info" testID="ports-vtx-table-warning">
                 {t('portsConfiguration.vtxTableMissing')}
               </NoticeBox>
+            ) : null}
+            {/* A failed VTX read deliberately gets NO notice of its own.
+                It is reported once, in the uncertainties card below,
+                which covers it whether or not a VTX role is assigned -
+                a second copy here said the same sentence twice on one
+                page, measured at 390px RTL. */}
+
+            {/* Unproven, not wrong. Rendered apart from the validation
+                card so an operator can tell "your configuration is
+                invalid" from "we could not check this". */}
+            {uncertainties.length > 0 ? (
+              <View
+                style={styles.validationCard}
+                testID="ports-evidence-uncertainties"
+              >
+                <Text style={styles.validationTitle}>
+                  {t('portsConfiguration.uncertaintyTitle')}
+                </Text>
+                {uncertainties.map((uncertainty, index) => (
+                  <Text
+                    key={`${uncertainty.code}-${
+                      uncertainty.portIdentifier ?? 'all'
+                    }-${index}`}
+                    style={styles.validationText}
+                  >
+                    •{' '}
+                    {t(`portsConfiguration.uncertainty.${uncertainty.code}`, {
+                      port:
+                        uncertainty.portIdentifier === undefined
+                          ? ''
+                          : serialPortDisplayName(uncertainty.portIdentifier),
+                      role:
+                        uncertainty.role === undefined
+                          ? ''
+                          : t(roleLabelKey(uncertainty.role)),
+                    })}
+                  </Text>
+                ))}
+              </View>
             ) : null}
 
             {issues.length > 0 ? (

@@ -283,6 +283,7 @@ const PORT_BLOCK_REASONS: Record<PortsBlockReason, true> = {
   CONFIGURATION_BUSY: true,
   STALE_BASE: true,
   INVALID_CONFIGURATION: true,
+  EVIDENCE_NOT_VERIFIED: true,
 };
 
 const GPS_BLOCK_REASONS: Record<GpsBlockReason, true> = {

@@ -28,10 +28,16 @@ import { deriveArmedState } from '../../../core/state/armingBlockers';
 import {
   normalizeSerialPortsForSave,
   deriveSerialPortsFeatureMask,
+  refusalsForUnverifiedEvidence,
   serialPortsEqual,
   validateSerialPorts,
+  observedEvidence,
+  EVIDENCE_READ_FAILED,
+  type SerialEvidence,
+  type SerialPortsEvidenceRefusal,
   type SerialPortsSnapshot,
   type SerialPortsValidationIssue,
+  type VtxTableEvidence,
 } from '../../../core/state/serialPortsModel';
 import type { MspClientState } from '../../../core/protocol/mspClient';
 import {
@@ -90,7 +96,9 @@ export type PortsBlockReason =
   | 'MOTOR_TEST_ACTIVE'
   | 'CONFIGURATION_BUSY'
   | 'STALE_BASE'
-  | 'INVALID_CONFIGURATION';
+  | 'INVALID_CONFIGURATION'
+  /** The write depends on optional evidence that could not be obtained. */
+  | 'EVIDENCE_NOT_VERIFIED';
 
 export type PortsLoadOutcome =
   | { readonly kind: 'LOADED'; readonly snapshot: SerialPortsSnapshot }
@@ -114,6 +122,8 @@ export type PortsSaveOutcome =
       readonly kind: 'REJECTED';
       readonly reason: PortsBlockReason;
       readonly issues?: readonly SerialPortsValidationIssue[];
+      /** Present only with reason EVIDENCE_NOT_VERIFIED. */
+      readonly refusals?: readonly SerialPortsEvidenceRefusal[];
     }
   | {
       readonly kind: 'UNCONFIRMED';
@@ -132,6 +142,22 @@ class PortsPreflightError extends Error {
   constructor(readonly reason: PortsBlockReason) {
     super(`Ports preflight rejected: ${reason}`);
     this.name = 'PortsPreflightError';
+  }
+}
+
+/**
+ * Refused because the evidence this specific write depends on never
+ * arrived - distinct from "the configuration is invalid", which is a
+ * claim about the configuration itself.
+ */
+class PortsEvidenceError extends Error {
+  constructor(readonly refusals: readonly SerialPortsEvidenceRefusal[]) {
+    super(
+      `Ports save refused for want of evidence: ${refusals
+        .map(refusal => refusal.reason)
+        .join(',')}`,
+    );
+    this.name = 'PortsEvidenceError';
   }
 }
 
@@ -318,6 +344,65 @@ export class PortsConfigurationController {
             acquisition,
             ownerIdentity,
           );
+          /*
+           * THE CONTROLLER IS THE FINAL AUTHORITY ON UNPROVEN EVIDENCE.
+           *
+           * MSP2_COMMON_SET_SERIAL_CONFIG replaces the WHOLE table, so
+           * "the operator only touched another card" is not a safety
+           * argument - the bytes are. Any port whose validity rests on
+           * evidence we never obtained must come out of normalisation
+           * byte-identical, or this write is asserting something it
+           * cannot support.
+           *
+           * Evidence is RE-READ here rather than trusted from page load:
+           * a provider read that timed out ten minutes ago is not a
+           * reason to refuse an edit the board can answer for now. Only
+           * the evidence the proposed delta actually needs is fetched.
+           *
+           * This gate sits LAST in the preflight chain, after stale-base
+           * and after the armed proof. It is a new refusal and it does
+           * not get to pre-empt an older one: an armed board is told it
+           * is armed, which is the more urgent thing to say, and the
+           * extra reads are not spent on a save that was refused anyway.
+           */
+          const needsEvidence = refusalsForUnverifiedEvidence(
+            original,
+            normalized,
+          );
+          if (needsEvidence.length > 0) {
+            const refreshed: SerialPortsSnapshot = Object.freeze({
+              ...original,
+              serialRxProvider: needsEvidence.some(
+                r => r.reason === 'RX_PROVIDER_REQUIRED_FOR_SHARING_VALIDATION',
+              )
+                ? await this.readRxProvider(requester)
+                : original.serialRxProvider,
+              buildOptionIds: needsEvidence.some(
+                r => r.reason === 'BUILD_CAPABILITY_NOT_VERIFIED',
+              )
+                ? await this.readBuildOptions(requester)
+                : original.buildOptionIds,
+            });
+            this.assertLive(sessionKey, client, epoch);
+            const stillUnproven = refusalsForUnverifiedEvidence(
+              refreshed,
+              normalized,
+            );
+            if (stillUnproven.length > 0)
+              throw new PortsEvidenceError(stillUnproven);
+            /* Fresh evidence can also reveal the edit is genuinely
+               invalid - that is an ordinary validation failure, not an
+               uncertainty. */
+            const freshIssues = validateSerialPorts(
+              Object.freeze({
+                ...refreshed,
+                ports: normalized,
+                featureMaskRaw: desiredFeatureMask,
+              }),
+            );
+            if (freshIssues.length > 0)
+              throw new PortsPreflightError('INVALID_CONFIGURATION');
+          }
           this.assertLive(sessionKey, client, epoch);
           try {
             await requester.request(
@@ -404,6 +489,14 @@ export class PortsConfigurationController {
           : { kind: 'SESSION_ENDED' };
       }
       if (result.status === 'SESSION_ENDED') return { kind: 'SESSION_ENDED' };
+      /* A refusal for want of evidence is NOT the same answer as
+         "your configuration is wrong", and it carries which resource. */
+      if (result.error instanceof PortsEvidenceError)
+        return {
+          kind: 'REJECTED',
+          reason: 'EVIDENCE_NOT_VERIFIED',
+          refusals: result.error.refusals,
+        };
       return result.error instanceof PortsPreflightError
         ? { kind: 'REJECTED', reason: result.error.reason }
         : { kind: 'FAILED', error: result.error };
@@ -569,52 +662,84 @@ export class PortsConfigurationController {
   ): Promise<SerialPortsSnapshot> {
     const ports = await this.readSerialPorts(requester);
     const featureMaskRaw = await this.readFeatureMask(requester);
-    let serialRxProvider = 0;
-    let buildOptionIds: ReadonlySet<number> | undefined;
-    let vtxTableAvailable: boolean | undefined;
-    let vtxTableConfigured: boolean | undefined;
-    try {
-      const frame = await requester.request(MSP_RX_CONFIG, EMPTY, {
-        wireFormat: 'v1',
-      });
-      serialRxProvider = decodeSerialRxProvider(frame.payload);
-    } catch {
-      /* Optional evidence; conservative sharing rules remain. */
-    }
-    if (apiVersionMajor === 1 && apiVersionMinor >= 46) {
-      try {
-        const frame = await requester.request(MSP_BUILD_INFO, EMPTY, {
-          wireFormat: 'v1',
-        });
-        buildOptionIds = decodeBuildOptions(frame.payload).optionIds;
-      } catch {
-        /* Older/custom targets may omit build option ids. */
-      }
-    }
-    try {
-      const frame = await requester.request(MSP_VTX_CONFIG, EMPTY, {
-        wireFormat: 'v1',
-      });
-      const status = decodeVtxTableStatus(frame.payload);
-      vtxTableAvailable = status.tableAvailable;
-      vtxTableConfigured =
-        status.tableAvailable &&
-        status.bands > 0 &&
-        status.channels > 0 &&
-        status.powerLevels > 0;
-    } catch {
-      /* VTX is optional. */
-    }
     return Object.freeze({
       ports,
       featureMaskRaw,
       apiVersionMajor,
       apiVersionMinor,
-      serialRxProvider,
-      buildOptionIds,
-      vtxTableAvailable,
-      vtxTableConfigured,
+      serialRxProvider: await this.readRxProvider(requester),
+      buildOptionIds: await this.readBuildOptions(requester),
+      vtxTable: await this.readVtxTable(requester),
     });
+  }
+
+  /*
+   * THE THREE OPTIONAL READS.
+   *
+   * Each one answers with what it OBSERVED or says it failed. None of
+   * them substitutes a plausible value: a failed MSP_RX_CONFIG used to
+   * become provider 0, which is a real provider (SERIALRX_NONE) and one
+   * that happens to fail the RX/telemetry sharing rule - so a single
+   * timed-out read reported a working board as misconfigured and blocked
+   * every save on the page. A failed MSP_BUILD_INFO used to become
+   * "no build gating", presenting every gated role as compiled.
+   *
+   * The transport CAN distinguish MSP_REMOTE_ERROR from MSP_TIMEOUT from
+   * MSP_DEVICE_DETACHED, and that distinction is deliberately NOT
+   * carried here. Calling an error frame "unsupported" would be an
+   * inference - a board can refuse a frame for other reasons - and the
+   * three produce the same consequence for every consumer: we did not
+   * learn the thing. READ_FAILED is what is actually known.
+   */
+  private async readRxProvider(
+    requester: MspRequester,
+  ): Promise<SerialEvidence<number>> {
+    try {
+      const frame = await requester.request(MSP_RX_CONFIG, EMPTY, {
+        wireFormat: 'v1',
+      });
+      return observedEvidence(decodeSerialRxProvider(frame.payload));
+    } catch {
+      return EVIDENCE_READ_FAILED;
+    }
+  }
+
+  /* No API-version branch here: capture() already refuses anything below
+     1.46, so a version guard in this method could never run and could
+     never be tested. A firmware that does not know the command answers
+     with an error frame, which is READ_FAILED like any other silence. */
+  private async readBuildOptions(
+    requester: MspRequester,
+  ): Promise<SerialEvidence<ReadonlySet<number>>> {
+    try {
+      const frame = await requester.request(MSP_BUILD_INFO, EMPTY, {
+        wireFormat: 'v1',
+      });
+      return observedEvidence(decodeBuildOptions(frame.payload).optionIds);
+    } catch {
+      return EVIDENCE_READ_FAILED;
+    }
+  }
+
+  private async readVtxTable(
+    requester: MspRequester,
+  ): Promise<SerialEvidence<VtxTableEvidence>> {
+    try {
+      const frame = await requester.request(MSP_VTX_CONFIG, EMPTY, {
+        wireFormat: 'v1',
+      });
+      const status = decodeVtxTableStatus(frame.payload);
+      return observedEvidence({
+        tableAvailable: status.tableAvailable,
+        tableConfigured:
+          status.tableAvailable &&
+          status.bands > 0 &&
+          status.channels > 0 &&
+          status.powerLevels > 0,
+      });
+    } catch {
+      return EVIDENCE_READ_FAILED;
+    }
   }
 }
 

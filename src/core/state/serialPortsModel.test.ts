@@ -1,6 +1,8 @@
 /* eslint-disable no-bitwise -- fixtures use the same function-mask notation as firmware. */
 import type { MspSerialPortRecord } from '../protocol/msp';
 import {
+  EVIDENCE_READ_FAILED,
+  observedEvidence,
   deriveSerialPortsFeatureMask,
   FEATURE_ESC_SENSOR_BIT_FOR_PORTS,
   FEATURE_RX_SERIAL_BIT,
@@ -33,7 +35,9 @@ const snapshot = (
   featureMaskRaw: 0,
   apiVersionMajor: 1,
   apiVersionMinor: 48,
-  serialRxProvider,
+  serialRxProvider: observedEvidence(serialRxProvider),
+  buildOptionIds: observedEvidence<ReadonlySet<number>>(new Set()),
+  vtxTable: EVIDENCE_READ_FAILED,
 });
 
 describe('serial ports policy', () => {
