@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState} from 'react';
-import {Alert, Animated, Easing, I18nManager, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent} from 'react-native';
+import {Alert, Animated, Easing, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent} from 'react-native';
 import {useTranslation} from 'react-i18next';
 import {
   createReceiverConfigurationDraft, deriveReceiverRssi, receiverDraftsEqual,
@@ -26,6 +26,10 @@ import {StickyActionBar} from '../components/editing';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, SelectField, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
 import {Icon, type IconName} from '../icons/Icon';
+/* The app's ONE layout-direction owner, with a `.web.ts` sibling that
+   asks the document because react-native-web's I18nManager cannot
+   answer. See ChannelRow for why a channel bar needs it. */
+import {isRtlLayout} from '../icons/layoutDirection';
 
 export interface ReceiverControllerPort {
   load(key: SetupUiSessionKey): Promise<ReceiverLoadOutcome>;
@@ -660,6 +664,16 @@ const PRIMARY_AXIS_KEYS = ['receiverScreen.axisRoll', 'receiverScreen.axisPitch'
  *     translateX = -(W / 2) * (1 - f)      (LTR: start edge is the left)
  *     translateX = +(W / 2) * (1 - f)      (RTL: start edge is the right)
  *
+ * WHAT "START EDGE" MEANS HERE. The bar is a LEVEL readout of the
+ * channel's numeric position - a quantity growing from its logical
+ * beginning - and NOT a picture of the stick's physical X axis. So it
+ * follows the reading direction: in Arabic the fill starts at the RIGHT
+ * and grows leftward, in LTR diagnostic mode it starts at the LEFT. The
+ * StickPad directly below is the opposite kind of view and is
+ * deliberately NOT mirrored; the printed microsecond value remains the
+ * numeric truth in both. Direction changes only where the fill BEGINS,
+ * never how much of the track it covers.
+ *
  * Both are LINEAR in f, so each is a plain numeric interpolation of the
  * same Animated.Value - no second node, and nothing that would disqualify
  * the native driver. W comes from one onLayout on the track (the track is
@@ -678,7 +692,15 @@ function ChannelRow({index, value, primary, stale, position}: {index: number; va
   }, []);
   // The physical start edge. A transform is physical and is NOT mirrored
   // by RTL, so the anchor sign is chosen explicitly rather than inherited.
-  const anchorSign = I18nManager.isRTL ? 1 : -1;
+  //
+  // It is chosen from `isRtlLayout()`, the app's direction owner, and not
+  // from `I18nManager.isRTL` directly. Measured, not assumed: under an
+  // Arabic RTL document react-native-web's I18nManager stub answers
+  // false, so this row anchored to the physical LEFT on the web build
+  // while the identical code anchored RIGHT on Android - one screen, two
+  // opposite start edges. The owner has a `.web.ts` sibling that reads
+  // the document's own `dir`, which is what actually lays the page out.
+  const anchorSign = isRtlLayout() ? 1 : -1;
   const translateX = useMemo(
     () => position.interpolate({inputRange: [0, 1], outputRange: [(anchorSign * trackWidth) / 2, 0]}),
     [position, trackWidth, anchorSign],
