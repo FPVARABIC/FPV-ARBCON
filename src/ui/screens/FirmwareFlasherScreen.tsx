@@ -67,6 +67,7 @@ import {
   base64ToBytesAsync,
   bytesToBase64,
 } from '../../platforms/react-native/protocol/base64';
+import {MIN_TOUCH_TARGET} from '../components/controls';
 import {
   FirmwareButton,
   FirmwareChoice,
@@ -2948,15 +2949,33 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.borderSoft,
   },
   /* 44, not 42: MIN_TOUCH_TARGET, which the simple flasher's own back
-     button already uses. Measured at 42x42 on every width. */
-  backButton: {width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center'},
+     button already uses. Measured at 42x42 on every width. Now the
+     constant itself rather than a copy of its value - a hard-coded 44
+     is how the floor drifted out of six files in the first place. */
+  backButton: {
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    borderRadius: 22,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   headerCopy: {flex: 1},
   headerEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   headerTitle: {...typography.title, color: colors.textPrimary},
   formatPill: {paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: colors.surfaceAlt},
   formatPillText: {...typography.caption, color: colors.info, fontWeight: '700'},
   steps: {flexDirection: 'row', padding: spacing.sm, gap: spacing.sm, backgroundColor: colors.backgroundRaised},
-  step: {flex: 1, minHeight: 40, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center'},
+  /* 44, not 40. These two step tabs are the widest controls in the
+     inventory (up to 949px) and still missed the floor, because only
+     the height was ever short. */
+  step: {
+    flex: 1,
+    minHeight: MIN_TOUCH_TARGET,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   stepActive: {backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent},
   stepText: {...typography.caption, color: colors.textMuted, fontWeight: '700'},
   stepTextActive: {color: colors.accentStrong},

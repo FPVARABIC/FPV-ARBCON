@@ -23,6 +23,7 @@ import {
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
 import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {MIN_TOUCH_TARGET} from '../components/controls';
 import {Icon} from '../icons';
 
 export type PresetsRepositoryPort = Pick<
@@ -665,6 +666,17 @@ const styles = StyleSheet.create({
   reloadText: {...typography.label, color: colors.accentStrong},
   categories: { gap: spacing.xs, paddingVertical: spacing.xs },
   chip: {
+    /* The eleven category chips. These declared NO height at all - their
+       42px fell out of paddingVertical plus the label's line box - so a
+       source search for a sub-44 `minHeight` finds nothing here while
+       every one of them renders under the floor. Only a rendered
+       measurement catches this shape, which is why the floor is now
+       stated rather than inferred from padding.
+
+       `justifyContent` keeps the label optically centred once the box is
+       taller than the text needs. */
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radii.pill,

@@ -8,7 +8,7 @@ import {
 
 import {colors, noticeSurface, radii, spacing, typography} from '../../theme';
 import {PROSE_MEASURE} from '../../theme';
-import {ToggleSwitch} from '../controls';
+import {MIN_TOUCH_TARGET, ToggleSwitch} from '../controls';
 
 export function FirmwareSection({
   title,
@@ -264,7 +264,13 @@ const styles = StyleSheet.create({
   toggleDetail: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   choiceWrap: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   choice: {
-    minHeight: 39,
+    /* 44, not 39. This is the shared radio chip behind every
+       `FirmwareChoice`, and the sweep only ever rendered two of its NINE
+       call sites - the firmware-source pair on the first step. The other
+       seven were the same 39px defect, unrendered by the fixture, which
+       is why the floor belongs on the primitive and not at the two call
+       sites that happened to be measured. */
+    minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
     borderRadius: radii.pill,

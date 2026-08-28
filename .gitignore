@@ -84,3 +84,4 @@ node_modules/.vite/
 # can be measured (fonts, text sizes, ARIA, hit targets, overflow) instead
 # of eyeballed. Local tooling with absolute paths - never shipped.
 .dev-preview/
+e2e/touch-targets/dist/

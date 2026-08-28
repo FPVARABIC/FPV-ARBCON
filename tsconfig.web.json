@@ -39,7 +39,15 @@
     "App.web.tsx",
     "vite.config.mts",
     "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.tsx",
+    /* The touch-floor browser fixture and its bundler config. Excluded
+     * from tsconfig.json because they are browser code; named here so
+     * they are checked by SOMETHING rather than falling through the seam
+     * unchecked, which is how the fixture came to call a repository
+     * method the port does not have. */
+    "e2e/**/*.ts",
+    "e2e/**/*.tsx",
+    "e2e/touch-targets/vite.config.mts"
   ],
   /*
    * The browser's OWN tests, listed explicitly.

@@ -33,7 +33,7 @@ import {
 } from '../../platforms/react-native/protocol';
 import {StickyActionBar} from '../components/editing';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
-import {Button, IconButton, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
+import {Button, IconButton, MIN_TOUCH_TARGET, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
 
 export interface ModesControllerPort {
   load(key: SetupUiSessionKey): Promise<ModesLoadOutcome>;
@@ -432,7 +432,11 @@ const styles = StyleSheet.create({
   conditionHeader: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: spacing.md},
   conditionType: {...typography.heading, color: colors.textPrimary, textAlign: 'right'},
   conditionHint: {...typography.caption, color: colors.textMuted, textAlign: 'right', maxWidth: PROSE_MEASURE},
-  removeButton: {minHeight: 38, justifyContent: 'center', paddingHorizontal: spacing.sm, borderRadius: radii.md, borderWidth: 1, borderColor: colors.error},
+  /* 44, not 38. Measured 46x38 - but only in a Modes state that has a
+     configured AUX range, which no swept QA fixture had, so the global
+     excavation never rendered this control and never flagged it. It is
+     reachable by any operator who adds a range. */
+  removeButton: {minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', paddingHorizontal: spacing.sm, borderRadius: radii.md, borderWidth: 1, borderColor: colors.error},
   removeText: {...typography.caption, color: colors.error, fontWeight: '700'},
   fieldsRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, alignItems: 'flex-end'},
   stepperField: {flexGrow: 1, flexBasis: 150, gap: 5},
@@ -458,8 +462,12 @@ const styles = StyleSheet.create({
   liveRangeText: {...typography.caption, color: colors.textMuted, textAlign: 'right', fontVariant: ['tabular-nums'], maxWidth: PROSE_MEASURE},
   liveRangeTextInside: {color: colors.success, fontWeight: '700'},
   addRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
-  addButton: {minHeight: 42, justifyContent: 'center', alignItems: 'center', paddingHorizontal: spacing.md, borderRadius: radii.md, backgroundColor: colors.accentStrong},
+  /* 44, not 42. Measured 146x42 at every width. */
+  addButton: {minHeight: MIN_TOUCH_TARGET, justifyContent: 'center', alignItems: 'center', paddingHorizontal: spacing.md, borderRadius: radii.md, backgroundColor: colors.accentStrong},
   addButtonText: {...typography.body, color: colors.white, fontWeight: '700'},
+  /* Unreferenced today (no call site), and left at its declared value
+     rather than silently corrected: this phase changes hit targets that
+     were measured, and nothing renders this one to measure. */
   secondaryButton: {minHeight: 42, justifyContent: 'center', alignItems: 'center', paddingHorizontal: spacing.md, borderRadius: radii.md, borderWidth: 1, borderColor: colors.accentStrong},
   secondaryButtonText: {...typography.body, color: colors.accentStrong, fontWeight: '700'},
   buttonDisabled: {opacity: 0.45},

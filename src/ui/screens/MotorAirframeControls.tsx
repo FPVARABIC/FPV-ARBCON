@@ -67,6 +67,7 @@ import {
   type MotorConfigurationSaveOutcome,
   type MotorRebootOutcome,
 } from '../../platforms/react-native/protocol';
+import {MIN_TOUCH_TARGET} from '../components/controls';
 import {SelectField} from '../components/controls/SelectField';
 import {Icon} from '../icons';
 import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
@@ -1260,7 +1261,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   retryButton: {
-    minHeight: 36,
+    /* 44, not 36. Measured 97x36 in Chromium at 390/430/768/1024/1366/
+       1920 - the height was declared, not incidental, so the control
+       missed the touch floor identically at every width. The label and
+       the row around it are unchanged; only the minimum height moved. */
+    minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     paddingHorizontal: spacing.sm,
     borderRadius: radii.md,
