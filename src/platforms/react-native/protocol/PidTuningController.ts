@@ -1482,10 +1482,11 @@ export class PidTuningController {
   /**
    * THE RESET'S OWN SIMPLIFIED-TUNING OBSERVATION.
    *
-   * `readSimplifiedIfSupported` is deliberately left alone. Its three other
-   * callers use `undefined` to mean "do not apply the generator rules here",
-   * which is the right answer for them; only the reset needs to distinguish
-   * a read that failed from a resource it may claim it checked.
+   * `readSimplifiedIfSupported` is deliberately left alone. Its four other
+   * call sites - `save`, `saveSimplified`, `loadSimplified` and
+   * `observeSimplified` - use `undefined` to mean "do not apply the generator
+   * rules here", which is the right answer for them; only the reset needs to
+   * distinguish a read that failed from a resource it may claim it checked.
    */
   private async observeSimplifiedForReset(requester: MspRequester): Promise<ResetObserved<MspSimplifiedTuning>> {
     try {
