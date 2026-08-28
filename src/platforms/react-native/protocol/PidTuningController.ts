@@ -262,6 +262,39 @@ export type PidProfileCopyOutcome =
   | {readonly kind: 'FAILED'; readonly error: unknown};
 
 /**
+ * A RESOURCE THE RESET READBACK CAN TRY TO OBSERVE.
+ *
+ * These are identifiers, not sentences. The wording an operator reads is
+ * the screen's job; the controller's job is to say WHICH resource it did
+ * and did not manage to check.
+ */
+export type PidResetResource =
+  | 'PID'
+  | 'PID_ADVANCED'
+  | 'FILTER_CONFIG'
+  | 'PROFILE_NAME'
+  | 'SIMPLIFIED_TUNING';
+
+/**
+ * WHY A RESOURCE IS MISSING FROM `verifiedScope`.
+ *
+ * There is exactly one member, and that is deliberate. Telling a timeout
+ * apart from "this build does not implement the command" would need
+ * evidence this controller does not have: support for MSP_SIMPLIFIED_TUNING
+ * is inferred from whether the read answers, and MSP2_GET_TEXT has no
+ * capability gate either. Emitting UNSUPPORTED here would be a guess
+ * dressed as a finding, so the honest label is the one that says only what
+ * happened - the read was attempted and produced no value.
+ */
+export type PidResetVerificationGapReason = 'READ_FAILED';
+
+/** One resource this reset could NOT check, and why. */
+export interface PidResetVerificationGap {
+  readonly resource: PidResetResource;
+  readonly reason: PidResetVerificationGapReason;
+}
+
+/**
  * The success case is named for what it actually is. The firmware command
  * persists nothing, so calling this SAVED would be a lie the operator would
  * discover on the next power cycle.
@@ -269,10 +302,24 @@ export type PidProfileCopyOutcome =
 export type PidProfileResetOutcome =
   /**
    * PARTIALLY, because `RESET_CONFIG` rewrites the entire `pidProfile_t` and
-   * this screen can only read part of it. `verifiedScope` names exactly what
-   * was checked; the rest is untested rather than assumed correct.
+   * this screen can only read part of it.
+   *
+   * `verifiedScope` carries ONLY resources whose read actually succeeded on
+   * THIS reset, and `verificationGaps` names the ones that did not. The two
+   * together are the whole claim: everything outside both lists is untested
+   * rather than assumed correct.
+   *
+   * It used to return the static OBSERVABLE_RESET_SCOPE constant here, which
+   * meant a failed profile-name read still reported the name as verified -
+   * an operator was told a check had passed that was never performed.
    */
-  | {readonly kind: 'RESET_APPLIED_PARTIALLY_VERIFIED'; readonly snapshot: MspPidTuningSnapshot; readonly persists: false; readonly verifiedScope: readonly string[]}
+  | {
+      readonly kind: 'RESET_APPLIED_PARTIALLY_VERIFIED';
+      readonly snapshot: MspPidTuningSnapshot;
+      readonly persists: false;
+      readonly verifiedScope: readonly PidResetResource[];
+      readonly verificationGaps: readonly PidResetVerificationGap[];
+    }
   | {readonly kind: 'READBACK_MISMATCH'; readonly fields: readonly FieldComparison[]}
   | {readonly kind: 'REJECTED'; readonly reason: PidBlockReason}
   | {readonly kind: 'UNCONFIRMED'}
@@ -621,7 +668,16 @@ const FIRMWARE_YAW_LOWPASS_DEFAULT = 100;
 /** `.simplified_pids_mode = PID_SIMPLIFIED_TUNING_RPY`. */
 const FIRMWARE_SIMPLIFIED_PIDS_MODE_DEFAULT = 2;
 
-/** Exactly what this build checks after a reset, and nothing more. */
+/**
+ * WHAT THIS BUILD CAN ATTEMPT TO OBSERVE AFTER A RESET - A CAPABILITY
+ * STATEMENT, NOT A RESULT.
+ *
+ * This is static: it describes the reader that ships in this build. It is
+ * emphatically NOT evidence that any particular reset checked these things,
+ * and `resetPidProfile` no longer returns it as such. What a given reset
+ * actually managed to observe travels in that outcome's `verifiedScope`,
+ * and what it could not travels in `verificationGaps`.
+ */
 export const OBSERVABLE_RESET_SCOPE: readonly string[] = Object.freeze([
   'MSP_PID: all five items, P/I/D',
   'MSP_PID_ADVANCED: feedforward, D Max, D Max gain, TPA rate/breakpoint, dynamic idle, feedforward feel',
@@ -630,10 +686,47 @@ export const OBSERVABLE_RESET_SCOPE: readonly string[] = Object.freeze([
   'MSP_SIMPLIFIED_TUNING: the generator mode',
 ]);
 
+/**
+ * The result of ONE optional post-reset read.
+ *
+ * `undefined` used to carry this, and that is precisely what made the
+ * defect possible: a value that was never read and a value that came back
+ * absent were the same thing to every caller downstream.
+ */
+type ResetObserved<T> =
+  | {readonly kind: 'OBSERVED'; readonly value: T}
+  | {readonly kind: 'READ_FAILED'};
+
 interface ResetObservation {
   readonly snapshot: MspPidTuningSnapshot;
-  readonly name: string | undefined;
-  readonly simplified: MspSimplifiedTuning | undefined;
+  readonly name: ResetObserved<string>;
+  readonly simplified: ResetObserved<MspSimplifiedTuning>;
+}
+
+/**
+ * The evidence a reset is entitled to claim.
+ *
+ * The three core groups are unconditional here because they all arrive on
+ * one `readSnapshot`, which throws as a unit - reaching this function at
+ * all means those three reads succeeded. The two optional resources are
+ * listed only when their own read answered.
+ */
+function pidResetEvidence(observation: ResetObservation): {
+  readonly verifiedScope: readonly PidResetResource[];
+  readonly verificationGaps: readonly PidResetVerificationGap[];
+} {
+  const verifiedScope: PidResetResource[] = ['PID', 'PID_ADVANCED', 'FILTER_CONFIG'];
+  const verificationGaps: PidResetVerificationGap[] = [];
+  const record = (resource: PidResetResource, observed: ResetObserved<unknown>): void => {
+    if (observed.kind === 'OBSERVED') verifiedScope.push(resource);
+    else verificationGaps.push({resource, reason: 'READ_FAILED'});
+  };
+  record('PROFILE_NAME', observation.name);
+  record('SIMPLIFIED_TUNING', observation.simplified);
+  return {
+    verifiedScope: Object.freeze(verifiedScope),
+    verificationGaps: Object.freeze(verificationGaps),
+  };
 }
 
 function pidProfileDefaultDifferences(
@@ -673,13 +766,22 @@ function pidProfileDefaultDifferences(
   expect('dtermLpf1DynMinHz', FIRMWARE_DTERM_LPF1_DYN_MIN_DEFAULT, filters.dtermLpf1DynMinHz);
   expect('dtermLpf1DynMaxHz', FIRMWARE_DTERM_LPF1_DYN_MAX_DEFAULT, filters.dtermLpf1DynMaxHz);
   expect('yawLowpassHz', FIRMWARE_YAW_LOWPASS_DEFAULT, filters.yawLowpassHz);
-  if (observation.simplified !== undefined) {
-    expect('simplifiedPidsMode', FIRMWARE_SIMPLIFIED_PIDS_MODE_DEFAULT, observation.simplified.pids.modeRaw);
+  /*
+   * A MISMATCH IS A STATEMENT ABOUT AN OBSERVED VALUE.
+   *
+   * Both of these compare only when the read answered. A failed read is not
+   * evidence of agreement and it is not evidence of disagreement either -
+   * it produces no comparison at all, and shows up instead as a gap in
+   * `pidResetEvidence`. Deriving "matches the default" from a read that
+   * never happened is the whole defect this guards.
+   */
+  if (observation.simplified.kind === 'OBSERVED') {
+    expect('simplifiedPidsMode', FIRMWARE_SIMPLIFIED_PIDS_MODE_DEFAULT, observation.simplified.value.pids.modeRaw);
   }
-  if (observation.name !== undefined && observation.name !== '') {
+  if (observation.name.kind === 'OBSERVED' && observation.name.value !== '') {
     comparisons.push({
       field: 'profileName',
-      verdict: {kind: 'MISMATCH', requested: 0, expected: 0, observed: observation.name.length},
+      verdict: {kind: 'MISMATCH', requested: 0, expected: 0, observed: observation.name.value.length},
     });
   }
   return comparisons;
@@ -1217,7 +1319,14 @@ export class PidTuningController {
     try {
       const acquisition = this.boxIdsFor(key.sessionId, client); const identity: BoxIdsOwnerIdentity = {physicalGeneration: key.generation, mspEpoch: epoch};
       const request = pidProfileResetRequest();
-      const result = await this.operations(key.sessionId, client, scheduler).execute<{snapshot: MspPidTuningSnapshot; fields: readonly FieldComparison[]}>({
+      const result = await this.operations(key.sessionId, client, scheduler).execute<{
+        snapshot: MspPidTuningSnapshot;
+        fields: readonly FieldComparison[];
+        evidence: {
+          readonly verifiedScope: readonly PidResetResource[];
+          readonly verificationGaps: readonly PidResetVerificationGap[];
+        };
+      }>({
         id: `pid:reset:${key.sessionId}:${key.generation}`, sessionEffect: 'KEEP_SESSION',
         validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
         execute: async requester => {
@@ -1227,9 +1336,14 @@ export class PidTuningController {
           // The reset rewrites the name and the simplified sliders too, so
           // both are read back rather than left to an assumption.
           const snapshot = await this.readSnapshot(requester, contract, gyroSampleRateHz);
-          const name = await this.readName(requester, 'PID').catch(() => undefined);
-          const simplified = await this.readSimplifiedIfSupported(requester);
-          return {snapshot, fields: pidProfileDefaultDifferences({snapshot, name, simplified}, contract)};
+          const name = await this.observeNameForReset(requester);
+          const simplified = await this.observeSimplifiedForReset(requester);
+          const observation: ResetObservation = {snapshot, name, simplified};
+          return {
+            snapshot,
+            fields: pidProfileDefaultDifferences(observation, contract),
+            evidence: pidResetEvidence(observation),
+          };
         },
       });
       if (result.status === 'SUCCEEDED') {
@@ -1239,7 +1353,8 @@ export class PidTuningController {
             kind: 'RESET_APPLIED_PARTIALLY_VERIFIED',
             snapshot: result.result.snapshot,
             persists: request.persists,
-            verifiedScope: OBSERVABLE_RESET_SCOPE,
+            verifiedScope: result.result.evidence.verifiedScope,
+            verificationGaps: result.result.evidence.verificationGaps,
           };
       }
       if (result.status === 'OUTCOME_UNKNOWN') return {kind: 'UNCONFIRMED'};
@@ -1349,6 +1464,34 @@ export class PidTuningController {
       const frame = await requester.request(MSP_SIMPLIFIED_TUNING, EMPTY, {wireFormat: 'v1'});
       return decodeSimplifiedTuning(frame.payload);
     } catch { return undefined; }
+  }
+
+  /**
+   * THE RESET'S OWN PROFILE-NAME OBSERVATION.
+   *
+   * Separate from `readName` because the reset needs a different ANSWER
+   * SHAPE, not different wire behaviour: it has to be able to say "the read
+   * did not answer" as a fact of its own, rather than collapsing that into
+   * a missing value that later reads as agreement.
+   */
+  private async observeNameForReset(requester: MspRequester): Promise<ResetObserved<string>> {
+    try { return {kind: 'OBSERVED', value: await this.readName(requester, 'PID')}; }
+    catch { return {kind: 'READ_FAILED'}; }
+  }
+
+  /**
+   * THE RESET'S OWN SIMPLIFIED-TUNING OBSERVATION.
+   *
+   * `readSimplifiedIfSupported` is deliberately left alone. Its three other
+   * callers use `undefined` to mean "do not apply the generator rules here",
+   * which is the right answer for them; only the reset needs to distinguish
+   * a read that failed from a resource it may claim it checked.
+   */
+  private async observeSimplifiedForReset(requester: MspRequester): Promise<ResetObserved<MspSimplifiedTuning>> {
+    try {
+      const frame = await requester.request(MSP_SIMPLIFIED_TUNING, EMPTY, {wireFormat: 'v1'});
+      return {kind: 'OBSERVED', value: decodeSimplifiedTuning(frame.payload)};
+    } catch { return {kind: 'READ_FAILED'}; }
   }
 
   private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: PidWriteStage): Promise<void> {

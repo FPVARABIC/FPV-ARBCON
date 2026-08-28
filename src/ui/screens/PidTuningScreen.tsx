@@ -43,7 +43,7 @@ import {
 import {
   pidTuningController, type PidBlockReason, type PidLoadOutcome,
   type PidProfileCopyOutcome, type PidProfileKind, type PidProfileNameOutcome,
-  type PidProfileResetOutcome, type PidProfileSwitchOutcome,
+  type PidProfileResetOutcome, type PidProfileSwitchOutcome, type PidResetResource,
   type PidRatesTypeOutcome, type PidSaveOutcome, type PidSimplifiedLoadOutcome,
   type PidSimplifiedSaveOutcome, type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
@@ -268,16 +268,38 @@ function profileCopyMessage(outcome: PidProfileCopyOutcome): {text: string; warn
   }
 }
 
+/** What each observable reset resource is called in the operator's words. */
+const RESET_RESOURCE_LABELS: Readonly<Record<PidResetResource, string>> = Object.freeze({
+  PID: 'قيم P/I/D للمحاور الخمسة',
+  PID_ADVANCED: 'الإعدادات المتقدمة: F و D Max و TPA و Dynamic Idle',
+  FILTER_CONFIG: 'مرشّحات D-term وترشيح Yaw',
+  PROFILE_NAME: 'اسم الملف',
+  SIMPLIFIED_TUNING: 'وضع الضبط المبسّط',
+});
+
+const resetResourceList = (resources: readonly PidResetResource[]): string =>
+  resources.map(resource => RESET_RESOURCE_LABELS[resource]).join(' · ');
+
 /**
  * A reset is reported as APPLIED and PARTIALLY VERIFIED, and as NOT
  * PERSISTED - because that is what the firmware command does. Naming it
  * "restored to defaults and saved" would be a claim the operator would
  * discover was false on the next power cycle.
+ *
+ * «تحقّقنا من» LISTS ONLY WHAT WAS ACTUALLY READ BACK. It used to render a
+ * static capability list, so a profile-name read that failed was still
+ * reported to the operator as verified. Anything the reset could not check
+ * now gets its own sentence instead, because "we did not look" and "we
+ * looked and it was right" are different things to tell a pilot.
  */
 function profileResetMessage(outcome: PidProfileResetOutcome): {text: string; warning: boolean} {
   switch (outcome.kind) {
     case 'RESET_APPLIED_PARTIALLY_VERIFIED': return {
-      text: `أُعيد الملف إلى قيم المصنع في الذاكرة العاملة. تحقّقنا من: ${outcome.verifiedScope.join(' · ')}. `
+      text: `أُعيد الملف إلى قيم المصنع في الذاكرة العاملة. تحقّقنا من: ${resetResourceList(outcome.verifiedScope)}. `
+        + (outcome.verificationGaps.length > 0
+          ? `تعذّر التحقق من: ${resetResourceList(outcome.verificationGaps.map(gap => gap.resource))}`
+            + ' لأن قراءتها لم تُجب، ولا ندّعي صحتها. '
+          : '')
         + 'بقية الحقول لم نقرأها ولا ندّعي صحتها. الأمر نفسه لا يحفظ حفظًا دائمًا؛ احفظ إن أردت بقاءه بعد فصل البطارية.',
       warning: true,
     };
