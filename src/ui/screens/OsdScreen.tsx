@@ -835,6 +835,37 @@ export default function OsdScreen({
   );
 }
 
+/**
+ * HOW WIDE AN ELEMENT CHIP HAS TO BE BEFORE ITS LABEL STOPS TRUNCATING.
+ *
+ * The element grid wraps, and every chip declares `flexGrow: 1` over
+ * this basis. `flexGrow` only shares out LEFTOVER space, so the more
+ * columns fit, the closer every chip sits to the basis itself - which
+ * made a WIDER window produce NARROWER chips and newly ellipsized
+ * labels. Measured in Chromium at the shipped widths, with the basis at
+ * its previous 180:
+ *
+ *     768  ->  3 columns, chip 229px, label 149px, 0 truncated
+ *    1024  ->  5 columns, chip 187px, label 107px, 4 truncated
+ *    1366  ->  7 columns, chip 181px, label 101px, 10 truncated
+ *    1920  -> 10 columns, chip 181px, label 101px, 10 truncated
+ *
+ * The number is derived, not chosen. The widest element name the product
+ * actually ships - «نص تسلسلي مخصص» - measures 115.58px, and a chip
+ * spends a measured 94.56px on the 44px visibility target, the x,y
+ * readout, the gaps and the horizontal padding. A chip therefore needs
+ * 210.14px before the longest real label fits, and 180 was ~30px short
+ * of that. Because a wrapped flex line always satisfies
+ * `chip >= flexBasis`, stating a sufficient basis is what makes the
+ * guarantee hold at EVERY width rather than at the ones sampled here.
+ *
+ * 216 = 116 (widest label) + 95 (measured chip overhead) + 5 slack for
+ * font-metric variation between platforms. Raising it further would cost
+ * columns for no readability gain; lowering it re-opens the defect,
+ * which `scripts/verify-osd-labels.mjs` fails on.
+ */
+const OSD_ELEMENT_CHIP_BASIS = 216;
+
 const styles = StyleSheet.create({
   root: {flex: 1, backgroundColor: colors.background},
   content: {width: '100%', alignSelf: 'center', padding: spacing.lg, gap: spacing.md},
@@ -894,8 +925,21 @@ const styles = StyleSheet.create({
   fieldLabel: {...typography.label, color: colors.textPrimary, textAlign: 'right'},
   elementGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   elementChip: {
-    flexBasis: 180,
+    flexBasis: OSD_ELEMENT_CHIP_BASIS,
     flexGrow: 1,
+    /* A basis is a STARTING width, not a floor, and React Native
+       defaults `flexShrink` to 0 - so a basis wider than the line makes
+       the chip overhang instead of fitting. That is not hypothetical:
+       at 390 with the page zoomed to 200% the usable line is ~157px,
+       and a rigid 216px chip put the label at x=-52.8, clipped off the
+       left edge by an `overflow-x: hidden` ancestor that cannot be
+       scrolled. Shrinking costs nothing where it is not needed: a
+       wrapped line never overflows on its own, so at every ordinary
+       width the chip still gets its full basis and the label still
+       fits. Where the line genuinely IS narrower than one chip, an
+       ellipsis inside the viewport beats correct text off the side of
+       it. */
+    flexShrink: 1,
     minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',

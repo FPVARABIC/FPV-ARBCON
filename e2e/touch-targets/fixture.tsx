@@ -3,13 +3,14 @@
    tsconfig.web.json, not by this file, so `any` is used deliberately
    below. */
 /**
- * THE TOUCH-FLOOR BROWSER FIXTURE.
+ * THE REAL-RENDER BROWSER FIXTURE.
  *
- * `scripts/verify-touch-targets.mjs` measures this page. It exists
- * because the 44px contract is about a RENDERED rect, and neither a
- * source scan nor a jsdom render can produce one - jsdom has no layout
- * engine, so `getBoundingClientRect` there returns zeros and proves
- * nothing.
+ * `scripts/verify-touch-targets.mjs` and `scripts/verify-osd-labels.mjs`
+ * measure this page. It exists because both contracts they check - a
+ * 44px hit target, and whether a label is actually ellipsized - are
+ * about a RENDERED rect, and neither a source scan nor a jsdom render
+ * can produce one: jsdom has no layout engine, so
+ * `getBoundingClientRect` there returns zeros and proves nothing.
  *
  * Every group mounts the REAL production component in the REAL state
  * that draws the control in question. Two of them are only reachable in
@@ -32,7 +33,13 @@ import { MotorAirframeControls } from '../../src/ui/screens/MotorAirframeControl
 import { FirmwareChoice } from '../../src/ui/components/firmware';
 import FirmwareFlasherScreen from '../../src/ui/screens/FirmwareFlasherScreen';
 import ModesScreen from '../../src/ui/screens/ModesScreen';
+import OsdScreen from '../../src/ui/screens/OsdScreen';
 import PresetsScreen from '../../src/ui/screens/PresetsScreen';
+import {
+  OSD_ELEMENT_NAMES_AR,
+  setOsdPosition,
+  setOsdProfileVisibility,
+} from '../../src/core/state/osdConfigurationModel';
 
 const KEY = { sessionId: 'touch-fixture', generation: 1 } as const;
 
@@ -180,6 +187,50 @@ const flasherBuildApi = {
   loadBuildLog: async () => '',
 } as any;
 
+/* ---------------- OSD: the full element list ---------------------- */
+
+/**
+ * A production-SHAPED OSD snapshot: one entry per element the firmware
+ * actually names, so the element grid renders the real Arabic labels at
+ * their real lengths rather than a convenient short sample.
+ *
+ * The positions are ordinary in-canvas coordinates and the visibility
+ * bits are set through the model's own encoders, so nothing here invents
+ * a wire value the product could not receive.
+ */
+const OSD_ELEMENT_POSITIONS = OSD_ELEMENT_NAMES_AR.map((_name, index) => {
+  const withPosition = setOsdPosition(0, index % 30, index % 15);
+  return setOsdProfileVisibility(withPosition, 1, index % 3 !== 0);
+});
+
+const OSD_SNAPSHOT: any = {
+  canvas: {columns: 53, rows: 20},
+  config: {
+    flags: 1,
+    videoSystem: 3,
+    units: 1,
+    rssiAlarmPercent: 30,
+    capacityAlarmMah: 1400,
+    altitudeAlarm: 120,
+    elementPositions: OSD_ELEMENT_POSITIONS,
+    statistics: [true, false, true],
+    timers: [0x0a21, 0x0b42],
+    warningCount: 2,
+    enabledWarnings: 1,
+    profileCount: 3,
+    selectedProfile: 1,
+    overlayRadioMode: 0,
+    cameraFrameWidth: 24,
+    cameraFrameHeight: 11,
+    linkQualityAlarmPercent: 70,
+    rssiDbmAlarm: -95,
+  },
+};
+const osdController = {
+  load: async () => ({kind: 'LOADED', snapshot: OSD_SNAPSHOT}),
+  save: async () => ({kind: 'SAVED_VERIFIED', snapshot: OSD_SNAPSHOT}),
+} as any;
+
 const SCENES: Record<string, () => React.JSX.Element> = {
   motors: () => (
     <MotorAirframeControls
@@ -215,6 +266,9 @@ const SCENES: Record<string, () => React.JSX.Element> = {
   choice: () => <ChoiceMatrix />,
   flasher: () => (
     <FirmwareFlasherScreen client={flasherClient} buildApi={flasherBuildApi} />
+  ),
+  osd: () => (
+    <OsdScreen sessionKey={KEY as any} active controller={osdController} />
   ),
 };
 
