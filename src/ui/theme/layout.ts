@@ -17,17 +17,21 @@
  * Comparing raw pixels would hand them a two-column layout with no space
  * for the words.
  *
- * WHY TWO ENVELOPES RATHER THAN ONE BIGGER NUMBER. Raising the single
+ * WHY A CAP AND A NON-CAP RATHER THAN TWO NUMBERS. Raising the single
  * content cap would make paragraphs span a metre of screen - unreadable,
- * and explicitly not what the desktop complaint was about. So:
+ * and explicitly not what the desktop complaint was about. So there are
+ * two DIFFERENT IDEAS here, not two sizes of the same idea:
  *
- *   CONTENT_MAX_WIDTH  (1180) bounds a READING column and is unchanged.
- *   WORKSPACE_MAX_WIDTH (1600) bounds a screen that has actually split
- *                              into columns, where the extra width buys
- *                              parallel information rather than longer
- *                              lines.
+ *   CONTENT_MAX_WIDTH (1180) bounds a READING column. A number, because
+ *                            a line of text has a length past which the
+ *                            eye loses its way back.
+ *   THE TOOL WORKSPACE        has no number at all. A screen that has
+ *                            actually split into columns is given the
+ *                            room the shell handed it, because the right
+ *                            width for a workspace is however much
+ *                            monitor there is.
  *
- * A screen may only use the wider envelope in a tier where it genuinely
+ * A screen may only ask for the workspace in a tier where it genuinely
  * arranges content side by side.
  *
  * ANDROID SAFETY. Every threshold above TABLET is beyond what an Android
@@ -89,25 +93,6 @@ export const CONTENT_MAX_WIDTH = 1180;
  */
 export const PROSE_MEASURE = 760;
 
-/** The envelope for a screen that has actually split into columns. */
-export const WORKSPACE_MAX_WIDTH = 1600;
-
-/**
- * The same envelope on a genuinely large monitor.
- *
- * NOT A SCALING FACTOR, and the distinction is the whole point: nothing
- * about type, controls, icons or touch targets changes with this. It
- * only lets a layout that ALREADY arranges content in parallel columns
- * use the room those columns have, instead of stopping at a number
- * chosen for a 1920 window and leaving 400px of ground down each side.
- *
- * It is not 100% of the viewport either, deliberately. A workspace that
- * runs edge to edge on a 2560 monitor puts its two ends a head-turn
- * apart, and the reading cap below still bounds every paragraph inside
- * it - so widening here buys parallel information, never longer lines.
- */
-export const WORKSPACE_ULTRA_MAX_WIDTH = 2040;
-
 /**
  * The effective width a layout decision should be made from: raw window
  * width divided by the user's text-scaling factor, floored at 1 so a
@@ -146,15 +131,44 @@ export function isDesktopTier(tier: LayoutTier): boolean {
 }
 
 /**
- * The envelope a screen should cap itself at for a given tier. A screen
- * that has NOT split into columns must keep passing `false` so its
- * paragraphs stay readable no matter how wide the window is.
+ * The envelope a screen should cap itself at for a given tier, or
+ * `undefined` when it should not cap itself at all.
+ *
+ * `undefined` IS THE ANSWER, NOT A MISSING ONE. A desktop tool screen
+ * already sits inside a box the shell sized to the viewport minus the
+ * navigation rail (MainTabsScreen's `content` is `flex: 1`), and its own
+ * container is `width: '100%'`. So the way to make a workspace fill the
+ * monitor is to stop capping it: flex has already computed the right
+ * number, and any constant put here would be somebody's monitor.
+ *
+ * MEASURED, which is why the old constants are gone rather than raised.
+ * At a 2040 cap, Chromium reported the same figures on all eight tool
+ * screens - identical because the cap, not the screen, was the owner:
+ *
+ *   1366 -> 1158 of 1158 usable  100%   (cap never reached)
+ *   1920 -> 1712 of 1712 usable  100%   (cap never reached)
+ *   2560 -> 2040 of 2352 usable   87%   156px dead down each side
+ *   3440 -> 2040 of 3232 usable   63%   596px dead down each side
+ *   3840 -> 2040 of 3632 usable   56%   796px dead down each side
+ *
+ * A previous pass here reasoned that a workspace running edge to edge on
+ * a large monitor "puts its two ends a head-turn apart" and chose 2040 on
+ * that basis. On a real 3440x1440 ultrawide the operator reported the
+ * opposite complaint - an application sitting inside a page - so that
+ * judgement is reversed deliberately, not lost.
+ *
+ * A screen that has NOT split into columns must keep passing `false`: it
+ * gets the reading cap at every width, because a paragraph does have a
+ * length past which it stops being readable. Full-width workspace is not
+ * full-width prose, and PROSE_MEASURE above bounds the sentences inside
+ * a workspace that no longer bounds itself.
  */
-export function contentEnvelope(tier: LayoutTier, splitsIntoColumns: boolean): number {
+export function contentEnvelope(
+  tier: LayoutTier,
+  splitsIntoColumns: boolean,
+): number | undefined {
   if (!splitsIntoColumns || !isDesktopTier(tier)) {
     return CONTENT_MAX_WIDTH;
   }
-  return tier === 'desktopUltra'
-    ? WORKSPACE_ULTRA_MAX_WIDTH
-    : WORKSPACE_MAX_WIDTH;
+  return undefined;
 }

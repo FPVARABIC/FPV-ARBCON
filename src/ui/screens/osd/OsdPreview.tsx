@@ -374,6 +374,35 @@ const WEB_CANVAS_STYLE: ViewStyle | undefined =
 const styles = StyleSheet.create({
   frame: {
     width: '100%',
+    /**
+     * HOW BIG A VIDEO PREVIEW IS WORTH BEING.
+     *
+     * The preview's job is to show WHERE each element sits on the frame,
+     * and its glyphs stop growing: `fontSize` above is
+     * `Math.min(20, cell.height * 0.74)`, so 20px is the ceiling.
+     * Measured in Chromium on the real screen, canvas width against
+     * rendered glyph size:
+     *
+     *      776px canvas -> 16.2px glyphs
+     *     1032px canvas ->   20px glyphs   <- the ceiling is reached here
+     *     1436px canvas ->   20px
+     *     2312px canvas ->   20px
+     *     3592px canvas ->   20px
+     *
+     * So past ~1032px nothing becomes more legible; the extra width only
+     * spreads the characters further apart. It is not free, because the
+     * frame keeps its aspect: at 3440 the preview grew to 3192x1807 and
+     * filled an entire 1440px monitor by itself, putting all 88 element
+     * chips below the fold. This bound is 1440 - about 40% past the point
+     * legibility saturates, so drag precision keeps a margin - and it
+     * lands the preview at ~813px tall, which leaves the grid on screen.
+     *
+     * It is a bound on ONE COMPONENT, not a workspace envelope: the
+     * screen around it still takes the whole window. Below 1920 the
+     * preview never reached this width, so nothing there changes.
+     */
+    maxWidth: 1440,
+    alignSelf: 'center',
     borderRadius: radii.lg,
     overflow: 'hidden',
     borderWidth: 2,

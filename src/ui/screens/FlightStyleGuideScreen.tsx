@@ -139,7 +139,15 @@ export default function FlightStyleGuideScreen({
         style={styles.scroll}
         contentContainerStyle={[
           styles.content,
-          {maxWidth: Math.min(contentEnvelope(tier, desktop), GUIDE_MAX_WIDTH)},
+          /* `?? Infinity`: a released envelope imposes nothing, and this
+             screen's own GUIDE_MAX_WIDTH is then the binding cap. A
+             guide is reading material and keeps its measure. */
+          {
+            maxWidth: Math.min(
+              contentEnvelope(tier, desktop) ?? Infinity,
+              GUIDE_MAX_WIDTH,
+            ),
+          },
         ]}>
         <Text style={styles.intro}>
           كل نمط ركن مستقل: خطواته مرقّمة من الأولى إلى الأخيرة، وصوره

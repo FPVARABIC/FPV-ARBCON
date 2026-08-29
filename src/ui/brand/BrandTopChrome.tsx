@@ -24,7 +24,7 @@
 import React from 'react';
 import {StyleSheet, Text, View} from 'react-native';
 
-import {PROSE_MEASURE, WORKSPACE_MAX_WIDTH, colors, spacing, typography} from '../theme';
+import {PROSE_MEASURE, colors, spacing, typography} from '../theme';
 import BrandLogo, {
   BRAND_PRODUCT_NAME,
   BRAND_PRODUCT_TAGLINE,
@@ -38,14 +38,22 @@ import BrandLogo, {
 const CHROME_LOGO_HEIGHT = 68;
 
 /**
- * THE STRIP SPANS THE WINDOW; THE LOCKUP DOES NOT.
+ * THE STRIP SPANS THE WINDOW, AND SO DOES THE RAIL THE LOCKUP SITS ON.
  *
- * The ground still reaches both edges, but the emblem and name now sit
- * on the same rail the Start page's own bands use, so identity and page
- * content share one right edge. Before this the name sat hard against
- * the 1920px viewport edge while the content below it started 378px
- * further in, and that misalignment was a large part of why the page
- * read as an island floating under an unrelated bar.
+ * The lockup used to carry `maxWidth: 1600` and centre itself, which was
+ * right while the workspace below it stopped at a cap too - identity and
+ * content shared one edge, and that was the point. Once the workspace
+ * was allowed to reach the viewport, the same rule inverted: measured on
+ * a 3440 monitor, the emblem's right edge sat at x=2520 while the
+ * application's right edge was at 3422, so the brand floated 902px
+ * inside its own product.
+ *
+ * WHAT FOLLOWS THE WINDOW IS THE RAIL, NOT THE WORD. The lockup is the
+ * full inner width of the strip, so the emblem lands on the application's
+ * outer edge - the same edge the navigation rail's border sits on. The
+ * copy beside it stays content-sized (see `copy` below), so the product
+ * name does not stretch across a metre of screen; it just stops being
+ * marooned in the middle of one.
  */
 export default function BrandTopChrome(): React.JSX.Element {
   return (
@@ -79,8 +87,6 @@ const styles = StyleSheet.create({
   },
   lockup: {
     width: '100%',
-    maxWidth: WORKSPACE_MAX_WIDTH,
-    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.md,

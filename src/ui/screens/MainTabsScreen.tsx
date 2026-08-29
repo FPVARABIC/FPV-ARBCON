@@ -46,6 +46,7 @@ import { colors } from '../theme';
 import BottomTabBar from '../components/navigation/BottomTabBar';
 import SideNavigationRail from '../components/navigation/SideNavigationRail';
 import { isDesktopTier, resolveLayoutTier } from '../theme/layout';
+import { MAIN_TABS_SHELL } from './mainTabsShellLayout';
 import SetupScreen from './SetupScreen';
 import MotorsTab from './MotorsScreen';
 import type { MotorsDepartureGate } from './MotorsScreen';
@@ -771,10 +772,10 @@ export default function MainTabsScreen(props: Props): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.background },
-  /* The rail sits beside the workspace instead of below it. `row` under
-     forceRTL puts the rail on the right, which is the reading start. */
-  rootDesktop: { flexDirection: 'row' },
+  /* The four geometry rules come from mainTabsShellLayout, which the
+     browser gate measures through the same object - see that file. */
+  root: { ...MAIN_TABS_SHELL.root, backgroundColor: colors.background },
+  rootDesktop: MAIN_TABS_SHELL.rootDesktop,
   awaitingStop: {
     paddingVertical: 8,
     paddingHorizontal: 16,
@@ -788,10 +789,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     writingDirection: 'rtl',
   },
-  content: { flex: 1 },
-  visible: { flex: 1 },
-  /* Hidden, NOT unmounted - see the Motors-bridge note in this file's
-     header. `display: 'none'` removes it from layout entirely, so a hidden
-     tab cannot occupy space or intercept touches. */
-  hidden: { display: 'none' },
+  content: MAIN_TABS_SHELL.content,
+  visible: MAIN_TABS_SHELL.visible,
+  hidden: MAIN_TABS_SHELL.hidden,
 });

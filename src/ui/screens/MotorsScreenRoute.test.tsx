@@ -266,7 +266,17 @@ describe('The main tab shell owns no session', () => {
   });
 
   it('hides an inactive tab rather than unmounting it, so the Motors bridge stays attached', () => {
-    expect(executable).toContain("display: 'none'");
+    /* `display: 'none'` moved to mainTabsShellLayout.ts so the browser
+       workspace gate can measure the shell through the same object the
+       shell renders. The invariant is unchanged and is checked as a
+       chain: the rule still says `display: 'none'`, and the shell is
+       still wired to that rule. */
+    const layout = readFileSync(
+      join(__dirname, 'mainTabsShellLayout.ts'),
+      'utf8',
+    );
+    expect(layout).toContain("hidden: {display: 'none'}");
+    expect(executable).toContain('MAIN_TABS_SHELL.hidden');
     expect(executable).toContain('mountedTabs');
   });
 

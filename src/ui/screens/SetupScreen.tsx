@@ -54,9 +54,9 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import type { RootStackParamList } from '../../navigation/types';
 import {
-  CONTENT_MAX_WIDTH,
   PROSE_MEASURE,
   colors,
+  isDesktopTier,
   spacing,
   typography,
   useContentEnvelope,
@@ -215,7 +215,21 @@ function SetupScreenContent({
   const { sessionId } = sessionKey;
   // Desktop tiers get the wider workspace envelope; narrower tiers keep
   // the 1180px reading cap. See useContentEnvelope.ts.
-  const { maxWidth: contentMaxWidth } = useContentEnvelope(true);
+  const { tier, maxWidth: contentMaxWidth } = useContentEnvelope(true);
+  /**
+   * THE DESKTOP GUTTER, AND WHY IT IS NOT IN THE STYLESHEET.
+   *
+   * This screen's sections carry their own `marginHorizontal`, which was
+   * the entire gutter while the container was capped and centred - there
+   * was always dead ground outside it. Once the workspace reaches the
+   * viewport edge, 12px stops reading as a margin.
+   *
+   * Applied at desktop tiers ONLY, and that is a measured decision, not
+   * caution: put in the StyleSheet it took 16px off the content at 360,
+   * 390, 430 and 768 as well, which is exactly the phone reflow this
+   * change is not allowed to cause.
+   */
+  const workspaceGutter = isDesktopTier(tier) ? spacing.sm : 0;
 
   // SETUP P1: the `armed` and `armingBlockers` subscriptions are GONE.
   // Nothing in this application registers those two poll ids (the
@@ -459,7 +473,11 @@ function SetupScreenContent({
         onBack={onBack}
         onDisconnect={handleDisconnect}
       />
-      <ScrollView contentContainerStyle={[styles.scrollContent, { maxWidth: contentMaxWidth }]}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scrollContent,
+          { maxWidth: contentMaxWidth, paddingHorizontal: workspaceGutter },
+        ]}>
         {/* ==============================================================
             SETUP R9 - THE ORDER, AND THE MEASUREMENT BEHIND IT.
 
@@ -735,8 +753,13 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: spacing.xxl,
+    /* No horizontal padding here: the desktop gutter is applied inline
+       so it cannot reach a phone. See `workspaceGutter` above. */
     width: '100%',
-    maxWidth: CONTENT_MAX_WIDTH,
+    /* NO STATIC maxWidth. The cap is applied inline from
+       useContentEnvelope, and on a desktop tier that value is
+       `undefined` - which cannot override a StyleSheet entry, so a
+       "fallback" here would silently pin the workspace at 1180. */
     alignSelf: 'center',
   },
   sectionHeading: {

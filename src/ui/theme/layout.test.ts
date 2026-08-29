@@ -18,7 +18,6 @@
 import {
   CONTENT_MAX_WIDTH,
   LAYOUT_BREAKPOINTS,
-  WORKSPACE_MAX_WIDTH,
   contentEnvelope,
   effectiveWidth,
   isDesktopTier,
@@ -79,9 +78,13 @@ describe('contentEnvelope', () => {
     expect(contentEnvelope('desktop', false)).toBe(CONTENT_MAX_WIDTH);
   });
 
-  it('grants the workspace width only when a desktop tier actually splits', () => {
-    expect(contentEnvelope('desktop', true)).toBe(WORKSPACE_MAX_WIDTH);
-    expect(contentEnvelope('desktopWide', true)).toBe(WORKSPACE_MAX_WIDTH);
+  it('releases the cap entirely when a desktop tier actually splits', () => {
+    // `undefined` is the workspace answer: the screen already sits in a
+    // box the shell sized to the viewport, so the way to fill a monitor
+    // is to stop capping rather than to cap higher.
+    expect(contentEnvelope('desktop', true)).toBeUndefined();
+    expect(contentEnvelope('desktopWide', true)).toBeUndefined();
+    expect(contentEnvelope('desktopUltra', true)).toBeUndefined();
   });
 
   it('never grants it below the desktop tier, even if a screen asks', () => {

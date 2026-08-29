@@ -100,8 +100,13 @@ type BandTone = 'page' | 'raised' | 'surface';
 
 type BandProps = {
   readonly tone: BandTone;
-  /** Inner cap, from contentEnvelope(). Inert below the desktop tier. */
-  readonly cap: number;
+  /**
+   * Inner cap, from contentEnvelope(). Inert below the desktop tier, and
+   * `undefined` at a desktop tier for a band that has split into columns
+   * - which is not a missing value but the workspace answer: the band's
+   * content takes the width the window has. See contentEnvelope().
+   */
+  readonly cap: number | undefined;
   readonly testID?: string;
   readonly children: React.ReactNode;
 };
@@ -228,7 +233,7 @@ function GuideSection({
   onPress,
 }: {
   readonly desktop: boolean;
-  readonly cap: number;
+  readonly cap: number | undefined;
   readonly onPress: () => void;
 }): React.JSX.Element {
   return (

@@ -1,25 +1,30 @@
 /**
  * THE DESKTOP ENVELOPE, AND THE TRAP THAT COMES WITH ADDING A TIER.
  *
- * Measured before this pass, in Chromium, on the real application:
+ * This file was written when the answer to "a tool full of controls with
+ * 400-600px of dead ground down each side" was a THIRD, WIDER CAP -
+ * WORKSPACE_ULTRA_MAX_WIDTH, 2040. On a real 3440x1440 ultrawide that cap
+ * became the defect it was meant to cure. Measured in Chromium on the
+ * real shell, identically on all eight tool screens because the cap and
+ * not the screen was the owner:
  *
- *   1920px window   workspaces painted 1564 of 1712 usable px  (91%)
- *                   Failsafe painted 1144                      (67%)
- *   2560px window   workspaces painted 1564 of 2352            (67%)
- *                   Failsafe painted 1144                      (49%)
+ *   2560px window   2040 of 2352 usable  87%   156px dead down each side
+ *   3440px window   2040 of 3232 usable  63%   596px dead down each side
+ *   3840px window   2040 of 3632 usable  56%   796px dead down each side
  *
- * - 400 to 600px of dead ground down each side of a tool full of
- * controls. The fix is a THIRD envelope for genuinely large monitors,
- * and this file holds both halves of it: that the envelope exists, and
- * that nothing scales to fill it.
+ * So there is no third cap any more, and no first or second one either
+ * for a screen that has split into columns: `contentEnvelope` returns
+ * `undefined` and the screen takes the width the shell gave it.
+ *
+ * BOTH HALVES ARE STILL HERE, and they are the halves that matter:
+ * that the workspace is released, and that NOTHING SCALES to fill it -
+ * the reading cap, the prose measure and the tier ladder are untouched.
  */
 
 import {
   CONTENT_MAX_WIDTH,
   LAYOUT_BREAKPOINTS,
   PROSE_MEASURE,
-  WORKSPACE_MAX_WIDTH,
-  WORKSPACE_ULTRA_MAX_WIDTH,
   contentEnvelope,
   isDesktopTier,
   resolveLayoutTier,
@@ -35,7 +40,7 @@ const ALL_TIERS: readonly LayoutTier[] = [
   'desktopUltra',
 ];
 
-describe('a large monitor gets a wider workspace, not a bigger one', () => {
+describe('a large monitor gets its whole workspace, not a bigger one', () => {
   it('resolves the ultra tier only at the measured threshold', () => {
     expect(resolveLayoutTier(1919, 1)).toBe('desktopWide');
     expect(resolveLayoutTier(1920, 1)).toBe('desktopUltra');
@@ -49,12 +54,10 @@ describe('a large monitor gets a wider workspace, not a bigger one', () => {
     expect(resolveLayoutTier(3840, 2)).toBe('desktopUltra');
   });
 
-  it('gives a split workspace the wider envelope there and only there', () => {
-    expect(contentEnvelope('desktop', true)).toBe(WORKSPACE_MAX_WIDTH);
-    expect(contentEnvelope('desktopWide', true)).toBe(WORKSPACE_MAX_WIDTH);
-    expect(contentEnvelope('desktopUltra', true)).toBe(
-      WORKSPACE_ULTRA_MAX_WIDTH,
-    );
+  it('releases a split workspace from any cap, there and only there', () => {
+    expect(contentEnvelope('desktop', true)).toBeUndefined();
+    expect(contentEnvelope('desktopWide', true)).toBeUndefined();
+    expect(contentEnvelope('desktopUltra', true)).toBeUndefined();
   });
 
   /**
@@ -96,19 +99,42 @@ describe('a large monitor gets a wider workspace, not a bigger one', () => {
     expect(isDesktopTier('compact')).toBe(false);
   });
 
-  it('has an ultra breakpoint above the wide one, and an envelope to match', () => {
+  it('keeps the tier ladder ordered', () => {
     expect(LAYOUT_BREAKPOINTS.desktopUltra).toBeGreaterThan(
       LAYOUT_BREAKPOINTS.desktopWide,
     );
-    expect(WORKSPACE_ULTRA_MAX_WIDTH).toBeGreaterThan(WORKSPACE_MAX_WIDTH);
+    expect(LAYOUT_BREAKPOINTS.desktopWide).toBeGreaterThan(
+      LAYOUT_BREAKPOINTS.desktop,
+    );
   });
 
   /**
-   * AND IT IS NOT THE WHOLE WINDOW. A workspace that runs edge to edge
-   * on a 2560 monitor puts its two ends a head-turn apart.
+   * AND IT IS THE WHOLE WINDOW, WHICH REVERSES A DECISION THIS FILE USED
+   * TO ASSERT.
+   *
+   * The old test here read `WORKSPACE_ULTRA_MAX_WIDTH < 2560 * 0.85` and
+   * was called "stops well short of a 2560 viewport", on the reasoning
+   * that an edge-to-edge workspace "puts its two ends a head-turn apart".
+   * The operator, on the monitor in question, reported the opposite: an
+   * application sitting inside a page. The reversal is deliberate and
+   * recorded rather than deleted, and what replaces it is stronger,
+   * because a constant cannot be checked against a viewport that does not
+   * exist at unit-test time: `scripts/verify-desktop-workspace.mjs`
+   * measures the RENDERED workspace against the RENDERED viewport in
+   * Chromium at 1920/2560/3440/3840.
+   *
+   * What is still asserted here is the half that did not reverse: no
+   * number in this module may quietly become a workspace cap again.
    */
-  it('stops well short of a 2560 viewport', () => {
-    expect(WORKSPACE_ULTRA_MAX_WIDTH).toBeLessThan(2560 * 0.85);
+  it('offers no constant that could serve as a workspace cap', () => {
+    const layout: Record<string, unknown> = LAYOUT_BREAKPOINTS;
+    for (const [name, value] of Object.entries(layout)) {
+      /* Breakpoints decide WHICH LAYOUT to use; they must never be
+         mistaken for how wide the result may be. */
+      expect(typeof value).toBe('number');
+      expect(name).not.toMatch(/max|width|envelope/i);
+    }
+    expect(contentEnvelope('desktopUltra', true)).toBeUndefined();
   });
 });
 
@@ -119,10 +145,13 @@ describe('the prose measure is what keeps the extra width honest', () => {
    * 1650-1688px at 1920 and up to 2016px at 2560 - a single line of
    * Arabic across a metre of screen.
    */
-  it('is a readable measure, far below either workspace envelope', () => {
+  it('is a readable measure, well below even the reading column', () => {
     expect(PROSE_MEASURE).toBeGreaterThan(500);
     expect(PROSE_MEASURE).toBeLessThan(CONTENT_MAX_WIDTH);
-    expect(PROSE_MEASURE).toBeLessThan(WORKSPACE_MAX_WIDTH / 2);
+    /* It is now the ONLY bound on a sentence inside a tool screen, since
+       the container around it has none. Two thirds of a reading column
+       keeps that margin obvious rather than incidental. */
+    expect(PROSE_MEASURE).toBeLessThan(CONTENT_MAX_WIDTH * (2 / 3) + 1);
   });
 
   /** It bounds paragraphs; it must never bound a layout. */

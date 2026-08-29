@@ -164,8 +164,12 @@ export default function FlightStyleCornerScreen({
         contentContainerStyle={[
           styles.content,
           {
+            /* `?? Infinity` because a released envelope means "the
+               shared policy imposes nothing here", and this screen's own
+               CORNER_MAX_WIDTH is then the binding cap. A guide is
+               reading material: it keeps its measure on any monitor. */
             maxWidth: Math.min(
-              contentEnvelope(tier, isDesktopTier(tier)),
+              contentEnvelope(tier, isDesktopTier(tier)) ?? Infinity,
               CORNER_MAX_WIDTH,
             ),
           },

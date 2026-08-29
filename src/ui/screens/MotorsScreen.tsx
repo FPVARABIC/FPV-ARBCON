@@ -2954,7 +2954,10 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     gap: spacing.md,
     width: '100%',
-    maxWidth: 1180,
+    /* NO STATIC maxWidth. The cap is applied inline from
+       useContentEnvelope, and on a desktop tier that value is
+       `undefined` - which cannot override a StyleSheet entry, so a
+       "fallback" here would silently pin the workspace at 1180. */
     alignSelf: 'center',
   },
   flexOne: { flex: 1 },

@@ -3,7 +3,6 @@ import {join} from 'node:path';
 
 import {
   CONTENT_MAX_WIDTH,
-  WORKSPACE_MAX_WIDTH,
   contentEnvelope,
   resolveLayoutTier,
 } from '../theme/layout';
@@ -89,24 +88,24 @@ describe('responsive shell', () => {
     },
   );
 
-  it('the envelope helper widens ONLY for a screen that has actually split into columns', () => {
-    // 1440, not 1920: a 1920 window is now its own tier with its own
-    // (wider) envelope, which desktopLayout.test.ts covers. The rule
-    // asserted HERE is the one that has not changed - splitting is what
-    // earns the wider envelope, at every desktop tier.
+  it('the envelope releases ONLY for a screen that has actually split into columns', () => {
+    // The rule asserted HERE has not changed - splitting is what earns
+    // the workspace, at every desktop tier. What changed is what the
+    // workspace IS: `undefined`, meaning the screen takes the width the
+    // shell gave it, rather than a cap chosen for somebody's monitor.
     const desktop = resolveLayoutTier(1440, 1);
-    expect(contentEnvelope(desktop, true)).toBe(WORKSPACE_MAX_WIDTH);
+    expect(contentEnvelope(desktop, true)).toBeUndefined();
     expect(contentEnvelope(desktop, false)).toBe(CONTENT_MAX_WIDTH);
     const ultra = resolveLayoutTier(1920, 1);
     expect(contentEnvelope(ultra, false)).toBe(CONTENT_MAX_WIDTH);
-    // Below the desktop tier nothing widens, so Android is untouched.
+    // Below the desktop tier nothing is released, so Android is untouched.
     const tablet = resolveLayoutTier(800, 1);
     expect(contentEnvelope(tablet, true)).toBe(CONTENT_MAX_WIDTH);
   });
 
-  it('a desktop window genuinely uses more of its width than the old fixed cap', () => {
+  it('a desktop window is not held to any fixed cap at all', () => {
     const desktop = resolveLayoutTier(1920, 1);
-    expect(contentEnvelope(desktop, true)).toBeGreaterThan(1180);
+    expect(contentEnvelope(desktop, true)).toBeUndefined();
   });
 
   it('keeps the bottom navigation aligned with the same tablet envelope', () => {
@@ -121,9 +120,19 @@ describe('responsive shell', () => {
     const shell = readFileSync(join(__dirname, 'MainTabsScreen.tsx'), 'utf8');
     expect(shell).toContain('SideNavigationRail');
     expect(shell).toContain('isDesktopTier');
-    // The panels themselves must still be kept mounted and hidden - the
-    // invariant the motor-stop bridge depends on.
-    expect(shell).toContain("hidden: { display: 'none' }");
+    /* THE PANELS MUST STILL BE KEPT MOUNTED AND HIDDEN - the invariant
+       the motor-stop bridge depends on.
+       The rule itself now lives in mainTabsShellLayout.ts, because the
+       browser gate that measures the shell has to render the SAME object
+       production does rather than a copy of it. So the pin follows it,
+       and it is checked as a CHAIN: the rule exists, and the shell is
+       still wired to it. Either half breaking fails this. */
+    const layout = readFileSync(
+      join(__dirname, 'mainTabsShellLayout.ts'),
+      'utf8',
+    );
+    expect(layout).toContain("hidden: {display: 'none'}");
+    expect(shell).toContain('MAIN_TABS_SHELL.hidden');
   });
 
   it('does not lock Android to portrait or landscape', () => {

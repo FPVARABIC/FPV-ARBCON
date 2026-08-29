@@ -59,7 +59,7 @@ import React, {useState} from 'react';
 import {Pressable, StyleSheet, Text, View, useWindowDimensions} from 'react-native';
 import {useTranslation} from 'react-i18next';
 
-import {colors, radii, spacing, typography} from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 import {Icon} from '../icons';
 import {expectedMotorRotation} from '../../core/state/motorExpectedRotation';
 import {
@@ -1149,6 +1149,16 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     textAlign: 'center',
+    /* CENTRED PROSE STILL NEEDS THE MEASURE, it just cannot take it the
+       way right-aligned prose does. layout.ts notes that a bare cap on a
+       centred box moves the box off centre, which is why the repo-wide
+       PROSE_MEASURE pass skipped styles like this one - and it is why
+       this caption was the one paragraph on Motors still growing with
+       the container, measured at 788px once the workspace was released.
+       `alignSelf: 'center'` centres the capped box, so the line is
+       bounded AND still centred. */
+    alignSelf: 'center',
+    maxWidth: PROSE_MEASURE,
   },
   liveState: {
     ...typography.caption,

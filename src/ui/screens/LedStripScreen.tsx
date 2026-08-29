@@ -149,7 +149,7 @@ import {StickyActionBar} from '../components/editing';
 import {LedGridCanvas, ledCellKey} from '../led/LedGridCanvas';
 import {ledColorToCss, ledSwatchInk, type LedColorTriplet} from '../led/ledColorPresentation';
 import {isRtlLayout} from '../icons/layoutDirection';
-import {colors, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 
 /* ================================================================== *
  * PORT
@@ -1737,8 +1737,13 @@ const styles = StyleSheet.create({
   },
   header: {gap: spacing.xs},
   title: {...typography.title, color: colors.textPrimary},
-  subtitle: {...typography.body, color: colors.textSecondary},
-  status: {...typography.body, color: colors.textSecondary},
+  /* THE READING MEASURE, and it is not decorative here. Measured in
+     Chromium before the workspace was allowed to fill the viewport: this
+     subtitle already ran 1676px at 1920 and 2004px at 2560, because it
+     was the one prose style in this file with no cap at all. Letting the
+     workspace reach a 3440 monitor would have made it a 3196px line. */
+  subtitle: {...typography.body, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
+  status: {...typography.body, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   section: {gap: spacing.md},
   sectionTitle: {...typography.sectionTitle, color: colors.textPrimary},
   card: {
@@ -1751,7 +1756,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {...typography.heading, color: colors.textPrimary},
   groupTitle: {...typography.label, color: colors.textSecondary, marginTop: spacing.sm},
-  caption: {...typography.caption, color: colors.textMuted},
+  caption: {...typography.caption, color: colors.textMuted, maxWidth: PROSE_MEASURE},
   noticeText: {...typography.body, color: colors.textPrimary},
   workspace: {gap: spacing.md},
   column: {gap: spacing.md},
