@@ -257,7 +257,7 @@ describe('BoardAlignmentCard', () => {
   it('stops claiming to know the values after an unconfirmed write', async () => {
     const controller = makeController(
       [{kind: 'LOADED', snapshot: NEUTRAL}],
-      [{kind: 'UNCONFIRMED', stage: 'BOARD_ALIGNMENT'}],
+      [{kind: 'UNCONFIRMED', stage: 'BOARD_ALIGNMENT', confirmedStages: []}],
     );
     const renderer = await render(controller);
     press(renderer, 'board-alignment-edit');

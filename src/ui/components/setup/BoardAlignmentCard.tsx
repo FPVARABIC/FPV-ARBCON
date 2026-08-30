@@ -275,6 +275,16 @@ export default function BoardAlignmentCard({
             tone: 'warn',
             text: t(`boardAlignment.unconfirmed.${outcome.stage}`),
           };
+        /* U-R1. The angles are in FC RAM and were not persisted. The
+           `default` below says «تعذر الحفظ» - false here, and dangerous
+           because alignment only takes effect at the next reboot, which
+           is exactly when these unpersisted values disappear. */
+        case 'PARTIAL_UNPERSISTED':
+          return {
+            kind: 'MESSAGE',
+            tone: 'warn',
+            text: t('boardAlignment.appliedNotPersisted'),
+          };
         case 'REJECTED':
           return {
             kind: 'MESSAGE',
@@ -322,7 +332,13 @@ export default function BoardAlignmentCard({
       setEditing(false);
     } else if (outcome.kind === 'NO_CHANGES') {
       setEditing(false);
-    } else if (outcome.kind === 'SAVED_UNVERIFIED' || outcome.kind === 'UNCONFIRMED') {
+    } else if (
+      outcome.kind === 'SAVED_UNVERIFIED' ||
+      outcome.kind === 'UNCONFIRMED' ||
+      /* U-R1: RAM holds the new angles, flash holds the old ones -
+         the card cannot show either as THE stored value. */
+      outcome.kind === 'PARTIAL_UNPERSISTED'
+    ) {
       // We do not know what the board holds now, so we stop claiming to.
       setSnapshot(undefined);
       setEditing(false);

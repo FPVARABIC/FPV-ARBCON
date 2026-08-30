@@ -59,7 +59,7 @@ import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} f
 import {Button, ChoiceChips, NoticeBox, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
 import {Icon} from '../icons';
 import RateResponsePreview from '../components/pid/RateResponsePreview';
-import {unconfirmedWriteMessage} from '../presentation/writeStageNames';
+import {partialApplyMessage, unconfirmedWriteMessage} from '../presentation/writeStageNames';
 import {
   formatRateField, rateAxisPresentation, ratesTypeName,
   type RateAxisPresentation,
@@ -166,6 +166,8 @@ function saveMessage(outcome: PidSaveOutcome): {text: string; warning: boolean} 
     case 'UNEXPECTED_CROSS_SUBSYSTEM_CHANGE': return {text: 'غيّر المتحكم إعدادًا خارج هذه الشاشة بطريقة لا يفسّرها المصدر. أعد قراءة إعدادات المحركات.', warning: true};
     case 'SIDE_EFFECT_PREDICTION_NOT_PROVEN': return {text: 'غيّر المتحكم إعدادًا خارج هذه الشاشة، ولا يمكننا حساب القيمة المتوقعة له من بيانات MSP وحدها. لم يُحفظ التغيير؛ أعد قراءة إعدادات المحركات.', warning: true};
     case 'UNCONFIRMED': return {text: unconfirmedWriteMessage(outcome.stage), warning: true};
+    /* U-R1. RAM moved and flash did not - never «فشل الحفظ». */
+    case 'PARTIAL_UNPERSISTED': return {text: partialApplyMessage(outcome.failedStage === 'EEPROM'), warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};
     case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء العملية.', warning: true};
     case 'FAILED': return {text: 'فشل الحفظ قبل تأكيد الاستمرار. لم يدّع التطبيق نجاحًا.', warning: true};

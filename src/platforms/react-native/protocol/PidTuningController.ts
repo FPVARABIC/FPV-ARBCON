@@ -89,6 +89,7 @@ import {isMotorTestSessionActive} from './motorTestCapability';
 import {mspSessionCoordinator, type MspIdentificationState, type MspSessionOwnershipState, type SetupUiSessionKey} from './MspSessionCoordinator';
 import {setupAppStateTelemetryOwner, type SetupAppStatePhase} from './setupAppStateTelemetryOwner';
 import {acquireMotorConfigurationInterlock, MotorConfigurationTransactionInProgressError} from './motorConfigurationInterlock';
+import {MutationLedger, MutationStoppedError, type PartialApplyEvidence} from './configurationSaveLedger';
 import {isSupportedConfigurationApi} from './betaflightApiSupport';
 
 const EMPTY = new Uint8Array(0);
@@ -227,7 +228,11 @@ export type PidSaveOutcome =
   | {readonly kind: 'SIDE_EFFECT_PREDICTION_NOT_PROVEN'; readonly sideEffects: CrossSubsystemReport}
   | {readonly kind: 'SAVED_UNVERIFIED'; readonly error: unknown}
   | {readonly kind: 'REJECTED'; readonly reason: PidBlockReason; readonly conflict?: SimplifiedConflict}
-  | {readonly kind: 'UNCONFIRMED'; readonly stage: PidWriteStage}
+  | {readonly kind: 'UNCONFIRMED'; readonly stage: PidWriteStage; readonly confirmedStages: readonly PidWriteStage[]}
+  /** U-R1. At least one RAM write was ACKNOWLEDGED and the sequence then
+   *  stopped before EEPROM was acknowledged. Nothing is persisted, but
+   *  the aircraft's RAM has already moved. No rollback, no retry. */
+  | {readonly kind: 'PARTIAL_UNPERSISTED'; readonly confirmedStages: readonly PidWriteStage[]; readonly failedStage: PidWriteStage; readonly definitelyNotSent: boolean}
   | {readonly kind: 'SESSION_ENDED'}
   | {readonly kind: 'FAILED'; readonly error: unknown};
 
@@ -370,8 +375,8 @@ export type PidProfileNameOutcome =
 export interface PidTuningControllerOptions { readonly coordinator?: PidSessionCoordinator; readonly appStateOwner?: PidAppStateOwner; readonly isMotorTestActive?: (sessionId: string) => boolean }
 
 class PidPreflightError extends Error { constructor(readonly reason: PidBlockReason) { super(`PID preflight rejected: ${reason}`); this.name = 'PidPreflightError'; } }
-interface AmbiguousPidCause { readonly kind: 'PID_AMBIGUOUS_WRITE'; readonly stage: PidWriteStage }
-class AmbiguousPidWriteError extends MspOperationOutcomeUnknownError { constructor(error: unknown, stage: PidWriteStage) { super(Object.freeze({kind: 'PID_AMBIGUOUS_WRITE', stage, error})); } }
+interface AmbiguousPidCause extends PartialApplyEvidence<PidWriteStage> { readonly kind: 'PID_AMBIGUOUS_WRITE'; readonly stage: PidWriteStage }
+class AmbiguousPidWriteError extends MspOperationOutcomeUnknownError { constructor(error: unknown, stage: PidWriteStage, confirmedStages: readonly PidWriteStage[] = [], partial = false, definitelyNotSent = false) { super(Object.freeze({kind: 'PID_AMBIGUOUS_WRITE', stage, error, confirmedStages: Object.freeze([...confirmedStages]), partial, definitelyNotSent})); } }
 /**
  * A profile select that may or may not have reached the board.
  *
@@ -884,7 +889,8 @@ export class PidTuningController {
               useDshotTelemetry: await this.readDshotTelemetry(requester),
             })
             : undefined;
-          for (const write of writes) await this.writeOnce(requester, COMMAND_FOR_GROUP[write.group], write.payload, write.group);
+          const ledger = new MutationLedger<PidWriteStage>();
+          for (const write of writes) await this.writeOnce(requester, COMMAND_FOR_GROUP[write.group], write.payload, write.group, key, client, epoch, ledger);
 
           // APPLIED proof, per group, per field.
           const applied = await this.readSnapshot(requester, contract, gyroSampleRateHz);
@@ -911,7 +917,8 @@ export class PidTuningController {
             entry.verdict.kind === 'NORMALISED' ? entry.verdict.fields : []);
           const evidence: PidWriteEvidence = {normalisations, ...(sideEffects === undefined ? {} : {sideEffects})};
 
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM', key, client, epoch, ledger);
           // EEPROM acknowledging is not persistence. Read it back.
           try {
             const persisted = await this.readSnapshot(requester, contract, gyroSampleRateHz);
@@ -926,7 +933,11 @@ export class PidTuningController {
         },
       });
       if (result.status === 'SUCCEEDED') return saveOutcomeFrom(result.result);
-      if (result.status === 'OUTCOME_UNKNOWN') return ambiguousCause(result.reason) ? {kind: 'UNCONFIRMED', stage: result.reason.stage} : {kind: 'SESSION_ENDED'};
+      if (result.status === 'OUTCOME_UNKNOWN') {
+        if (!ambiguousCause(result.reason)) return {kind: 'SESSION_ENDED'};
+        if (result.reason.partial) return {kind: 'PARTIAL_UNPERSISTED', confirmedStages: result.reason.confirmedStages, failedStage: result.reason.stage, definitelyNotSent: result.reason.definitelyNotSent};
+        return {kind: 'UNCONFIRMED', stage: result.reason.stage, confirmedStages: result.reason.confirmedStages};
+      }
       if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
       if (result.error instanceof SimplifiedConflictError) {
         return {kind: 'REJECTED', reason: 'DIRECT_EDIT_CONFLICTS_WITH_ACTIVE_SIMPLIFIED', conflict: result.error.conflict};
@@ -982,7 +993,7 @@ export class PidTuningController {
           const oracle = await this.consultProjectionOracle(requester, requested, payload);
           if (oracle.kind === 'ORACLE_DISAGREES') throw new PidPreflightError('SIMPLIFIED_PROJECTION_ORACLE_DISAGREES');
 
-          await this.writeOnce(requester, MSP_SET_SIMPLIFIED_TUNING, payload, 'SIMPLIFIED');
+          await this.writeOnce(requester, MSP_SET_SIMPLIFIED_TUNING, payload, 'SIMPLIFIED', key, client, epoch);
 
           const applied = await this.observeSimplified(requester, gyroSampleRateHz, contract, requested);
           if (applied.verdict.kind === 'MISMATCH') return {mismatch: {fields: applied.verdict.fields}};
@@ -993,7 +1004,8 @@ export class PidTuningController {
             projectionOracle: oracle,
           };
 
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM', key, client, epoch);
           try {
             const persisted = await this.observeSimplified(requester, gyroSampleRateHz, contract, requested);
             if (persisted.verdict.kind === 'MISMATCH') {
@@ -1076,13 +1088,14 @@ export class PidTuningController {
 
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
           const payload = encodeRcTuningRatesType(fresh.ratesRaw, ratesTypeRaw);
-          await this.writeOnce(requester, MSP_SET_RC_TUNING, payload, 'RC_TUNING');
+          await this.writeOnce(requester, MSP_SET_RC_TUNING, payload, 'RC_TUNING', key, client, epoch);
 
           const applied = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           const drift = ratesTypeWriteDifferences(fresh, applied, ratesTypeRaw);
           if (drift.length > 0) return {mismatch: {fields: drift}};
 
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM', key, client, epoch);
           try {
             const persisted = await this.readSnapshot(requester, contract, gyroSampleRateHz);
             const persistedDrift = ratesTypeWriteDifferences(fresh, persisted, ratesTypeRaw);
@@ -1237,7 +1250,7 @@ export class PidTuningController {
             : await this.visitProfile(requester, gyroSampleRateHz, contract, request.kind, request.sourceIndex);
           if (source === undefined) return {leftOnAnotherProfile: {requestedIndex: request.sourceIndex, activeIndex: home}};
 
-          await this.writeOnce(requester, MSP_COPY_PROFILE, encodeCopyProfile(request), 'COPY_PROFILE');
+          await this.writeOnce(requester, MSP_COPY_PROFILE, encodeCopyProfile(request), 'COPY_PROFILE', key, client, epoch);
 
           const destination = await this.visitProfile(requester, gyroSampleRateHz, contract, request.kind, request.destinationIndex);
           const restored = await this.visitProfile(requester, gyroSampleRateHz, contract, request.kind, home);
@@ -1254,7 +1267,8 @@ export class PidTuningController {
           if (fields.length > 0) return {mismatch: {destinationIndex: request.destinationIndex, fields}};
 
           // Only now, with the operator's own profile selected again.
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM', key, client, epoch);
           const after = await this.readSnapshot(requester, contract, gyroSampleRateHz);
           const stillHome = (request.kind === 'RATE' ? after.controlRateProfileIndex : after.pidProfileIndex) === home;
           if (!stillHome) {
@@ -1332,7 +1346,7 @@ export class PidTuningController {
         execute: async requester => {
           this.assertLive(key, client, epoch);
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
-          await this.writeOnce(requester, MSP_SET_RESET_CURR_PID, encodePidProfileReset(), 'RESET_PID_PROFILE');
+          await this.writeOnce(requester, MSP_SET_RESET_CURR_PID, encodePidProfileReset(), 'RESET_PID_PROFILE', key, client, epoch);
           // The reset rewrites the name and the simplified sliders too, so
           // both are read back rather than left to an assumption.
           const snapshot = await this.readSnapshot(requester, contract, gyroSampleRateHz);
@@ -1408,10 +1422,11 @@ export class PidTuningController {
         execute: async requester => {
           this.assertLive(key, client, epoch);
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
-          await this.writeOnce(requester, MSP2_SET_TEXT, payload, 'PROFILE_NAME');
+          await this.writeOnce(requester, MSP2_SET_TEXT, payload, 'PROFILE_NAME', key, client, epoch);
           const applied = await this.readName(requester, kind);
           if (applied !== name) return {applied, persisted: applied};
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM', key, client, epoch);
           return {applied, persisted: await this.readName(requester, kind)};
         },
       });
@@ -1495,9 +1510,38 @@ export class PidTuningController {
     } catch { return {kind: 'READ_FAILED'}; }
   }
 
-  private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: PidWriteStage): Promise<void> {
+  /**
+   * THE SINGLE FUNNEL EVERY MUTATION PASSES THROUGH.
+   *
+   * U-R1. When the caller supplies the session identity, liveness is
+   * asserted HERE - in the same synchronous turn as the request it
+   * authorises - so a flight controller that restarted mid-sequence
+   * never receives the rest of it, and above all never receives the
+   * EEPROM write. Every PID operation that persists passes it.
+   *
+   * The ledger is supplied by the operations that also REPORT partial
+   * application; where it is absent the safety behaviour is identical
+   * and the result vocabulary is the pre-existing one.
+   */
+  private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: PidWriteStage, key?: SetupUiSessionKey, client?: PidClient, epoch?: number, ledger?: MutationLedger<PidWriteStage>): Promise<void> {
+    if (key !== undefined && client !== undefined && epoch !== undefined) {
+      try { this.assertLive(key, client, epoch); }
+      catch (error) {
+        if (ledger === undefined || !ledger.hasMutated) throw error;
+        throw new AmbiguousPidWriteError(new MutationStoppedError(stage, ledger.acknowledgedStages, error), stage, ledger.acknowledgedStages, true, true);
+      }
+    }
     try { await requester.request(command, payload, {wireFormat: 'v1'}); }
-    catch (error) { const code = errorCode(error); if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) throw error; throw new AmbiguousPidWriteError(error, stage); }
+    catch (error) {
+      const code = errorCode(error);
+      const confirmed = ledger?.acknowledgedStages ?? [];
+      if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) {
+        if (ledger === undefined || !ledger.hasMutated) throw error;
+        throw new AmbiguousPidWriteError(error, stage, confirmed, true, true);
+      }
+      throw new AmbiguousPidWriteError(error, stage, confirmed, false, false);
+    }
+    ledger?.acknowledge(stage);
   }
   /**
    * SELECTS THE ACTIVE PID OR RATE PROFILE ON THE BOARD.

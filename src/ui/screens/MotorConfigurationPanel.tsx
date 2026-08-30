@@ -26,6 +26,7 @@ import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography} from '
 import { SelectField, ToggleSwitch } from '../components/controls';
 import { BETAFLIGHT_MIXER_REFERENCE_V147 } from '../../core/firmware-adapters/betaflightMixerReferenceV147';
 import { formatMotorProtocol } from './MotorConfigurationSummary';
+import { partialApplyMessage } from '../presentation/writeStageNames';
 
 const MIN_TOUCH_TARGET = 44;
 
@@ -168,6 +169,16 @@ function outcomeText(
     case 'UNCONFIRMED':
       return {
         text: t('motorConfiguration.outcomeUnconfirmed'),
+        danger: true,
+      };
+    /* U-R1. RAM moved, flash did not. `outcomeFailed` would say nothing
+       happened - which is exactly the sentence that made an operator
+       believe an aircraft was untouched while it was running half of an
+       edit. The two phrasings separate "all of it is live, unsaved" from
+       "some of it is live, unsaved". */
+    case 'PARTIAL_UNPERSISTED':
+      return {
+        text: partialApplyMessage(outcome.failedStage === 'EEPROM'),
         danger: true,
       };
     case 'SESSION_ENDED':

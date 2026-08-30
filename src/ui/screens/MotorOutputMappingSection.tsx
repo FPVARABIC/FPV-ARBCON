@@ -84,6 +84,14 @@ function saveMessage(
       return { text: t('motorOutputReorder.savedUnverified'), danger: true };
     case 'UNCONFIRMED':
       return { text: t('motorOutputReorder.unconfirmed'), danger: true };
+    /* U-R1. The reorder map is LIVE in FC RAM and was not persisted -
+       the motor numbers on this screen are already the new ones inside
+       the flight controller. Never «فشل الحفظ». */
+    case 'PARTIAL_UNPERSISTED':
+      return {
+        text: t('motorOutputReorder.appliedNotPersisted'),
+        danger: true,
+      };
     case 'REJECTED':
       return { text: t('motorOutputReorder.rejected'), danger: true };
     case 'SESSION_ENDED':

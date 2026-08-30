@@ -94,6 +94,12 @@ function outcomeKey(outcome: GeneralConfigurationSaveOutcome): string {
       return 'configurationsSystem.outcome.savedUnverified';
     case 'UNCONFIRMED':
       return 'configurationsSystem.outcome.unconfirmed';
+    /* U-R1. Part of the configuration is live in the flight controller
+       and none of it is stored. Neither `saved` nor `failed` says that. */
+    case 'PARTIAL_UNPERSISTED':
+      return outcome.failedStage === 'EEPROM'
+        ? 'configurationsSystem.outcome.appliedNotPersisted'
+        : 'configurationsSystem.outcome.partiallyApplied';
     case 'SESSION_ENDED':
       return 'configurationsSystem.outcome.sessionEnded';
     case 'FAILED':

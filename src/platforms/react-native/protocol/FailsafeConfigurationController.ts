@@ -37,6 +37,7 @@ import {isMotorTestSessionActive} from './motorTestCapability';
 import {mspSessionCoordinator, type MspIdentificationState, type MspSessionOwnershipState, type SetupUiSessionKey} from './MspSessionCoordinator';
 import {setupAppStateTelemetryOwner, type SetupAppStatePhase} from './setupAppStateTelemetryOwner';
 import {acquireMotorConfigurationInterlock, MotorConfigurationTransactionInProgressError} from './motorConfigurationInterlock';
+import {MutationLedger, MutationStoppedError, type PartialApplyEvidence} from './configurationSaveLedger';
 import {isSupportedConfigurationApi} from './betaflightApiSupport';
 
 const EMPTY = new Uint8Array(0);
@@ -57,12 +58,20 @@ export interface FailsafeAppStateOwner {getPhase(): SetupAppStatePhase}
 export type FailsafeBlockReason = 'DISCONNECTED' | 'IDENTIFYING' | 'UNSUPPORTED_FIRMWARE' | 'APP_BACKGROUNDED' | 'LINK_RECOVERING' | 'FC_ARMED' | 'ARMED_STATE_UNKNOWN' | 'MOTOR_TEST_ACTIVE' | 'CONFIGURATION_BUSY' | 'STALE_BASE' | 'INVALID_CONFIGURATION';
 export type FailsafeSaveStage = {readonly group: FailsafeWriteGroup; readonly index?: number} | {readonly group: 'EEPROM'};
 export type FailsafeLoadOutcome = {readonly kind: 'LOADED'; readonly snapshot: MspFailsafeSnapshot} | {readonly kind: 'REJECTED'; readonly reason: FailsafeBlockReason} | {readonly kind: 'SESSION_ENDED'} | {readonly kind: 'FAILED'; readonly error: unknown};
-export type FailsafeSaveOutcome = {readonly kind: 'NO_CHANGES'; readonly snapshot: MspFailsafeSnapshot} | {readonly kind: 'SAVED_VERIFIED'; readonly snapshot: MspFailsafeSnapshot} | {readonly kind: 'SAVED_UNVERIFIED'; readonly error: unknown} | {readonly kind: 'REJECTED'; readonly reason: FailsafeBlockReason} | {readonly kind: 'UNCONFIRMED'; readonly stage: FailsafeSaveStage} | {readonly kind: 'SESSION_ENDED'} | {readonly kind: 'FAILED'; readonly error: unknown};
+export type FailsafeSaveOutcome = {readonly kind: 'NO_CHANGES'; readonly snapshot: MspFailsafeSnapshot} | {readonly kind: 'SAVED_VERIFIED'; readonly snapshot: MspFailsafeSnapshot} | {readonly kind: 'SAVED_UNVERIFIED'; readonly error: unknown} | {readonly kind: 'REJECTED'; readonly reason: FailsafeBlockReason} | {readonly kind: 'UNCONFIRMED'; readonly stage: FailsafeSaveStage; readonly confirmedStages: readonly FailsafeSaveStage[]}
+  /** U-R1. At least one RAM write was ACKNOWLEDGED and the sequence then
+   *  stopped - a later frame provably refused, or the session/epoch
+   *  changed under it - before EEPROM was acknowledged. Nothing is
+   *  persisted, but the aircraft's RAM has already moved, and the
+   *  aircraft flies on RAM. No rollback, no retry: see
+   *  `configurationSaveLedger.ts`. */
+  | {readonly kind: 'PARTIAL_UNPERSISTED'; readonly confirmedStages: readonly FailsafeSaveStage[]; readonly failedStage: FailsafeSaveStage; readonly definitelyNotSent: boolean}
+  | {readonly kind: 'SESSION_ENDED'} | {readonly kind: 'FAILED'; readonly error: unknown};
 export interface FailsafeConfigurationControllerOptions {readonly coordinator?: FailsafeSessionCoordinator; readonly appStateOwner?: FailsafeAppStateOwner; readonly isMotorTestActive?: (sessionId: string) => boolean}
 
 class FailsafePreflightError extends Error {constructor(readonly reason: FailsafeBlockReason) {super(`Failsafe preflight rejected: ${reason}`); this.name = 'FailsafePreflightError';}}
-interface AmbiguousFailsafeCause {readonly kind: 'FAILSAFE_AMBIGUOUS_WRITE'; readonly stage: FailsafeSaveStage}
-class AmbiguousFailsafeWriteError extends MspOperationOutcomeUnknownError {constructor(error: unknown, stage: FailsafeSaveStage) {super(Object.freeze({kind: 'FAILSAFE_AMBIGUOUS_WRITE', stage, error}));}}
+interface AmbiguousFailsafeCause extends PartialApplyEvidence<FailsafeSaveStage> {readonly kind: 'FAILSAFE_AMBIGUOUS_WRITE'; readonly stage: FailsafeSaveStage}
+class AmbiguousFailsafeWriteError extends MspOperationOutcomeUnknownError {constructor(error: unknown, stage: FailsafeSaveStage, confirmedStages: readonly FailsafeSaveStage[] = [], partial = false, definitelyNotSent = false) {super(Object.freeze({kind: 'FAILSAFE_AMBIGUOUS_WRITE', stage, error, confirmedStages: Object.freeze([...confirmedStages]), partial, definitelyNotSent}));}}
 function errorCode(error: unknown): string | undefined {return error !== null && typeof error === 'object' && 'code' in error ? String((error as {code: unknown}).code) : undefined;}
 function ambiguousCause(value: unknown): value is AmbiguousFailsafeCause {return value !== null && typeof value === 'object' && 'kind' in value && value.kind === 'FAILSAFE_AMBIGUOUS_WRITE';}
 
@@ -98,21 +107,57 @@ export class FailsafeConfigurationController {
         execute: async requester => {
           this.assertLive(key, client, epoch); const fresh = await this.readSnapshot(requester); if (!failsafeSnapshotsEqual(fresh, original)) throw new FailsafePreflightError('STALE_BASE');
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
+          const ledger = new MutationLedger<FailsafeSaveStage>();
           for (const write of encodeChangedFailsafeConfiguration(original, draft)) {
-            await this.writeOnce(requester, WRITE_COMMANDS[write.group], write.payload, {group: write.group, index: write.index});
+            await this.writeOnce(requester, WRITE_COMMANDS[write.group], write.payload, {group: write.group, index: write.index}, key, client, epoch, ledger);
           }
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, {group: 'EEPROM'});
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, {group: 'EEPROM'}, key, client, epoch, ledger);
           try {const snapshot = await this.readSnapshot(requester); if (!failsafeDraftsEqual(createFailsafeConfigurationDraft(snapshot), draft)) throw new Error('Failsafe readback does not match saved values.'); return {snapshot};} catch (error) {return {readbackError: error};}
         },
       });
       if (result.status === 'SUCCEEDED') return result.result.snapshot !== undefined ? {kind: 'SAVED_VERIFIED', snapshot: result.result.snapshot} : {kind: 'SAVED_UNVERIFIED', error: result.result.readbackError};
-      if (result.status === 'OUTCOME_UNKNOWN') return ambiguousCause(result.reason) ? {kind: 'UNCONFIRMED', stage: result.reason.stage} : {kind: 'SESSION_ENDED'};
+      if (result.status === 'OUTCOME_UNKNOWN') {
+        if (!ambiguousCause(result.reason)) return {kind: 'SESSION_ENDED'};
+        if (result.reason.partial) return {kind: 'PARTIAL_UNPERSISTED', confirmedStages: result.reason.confirmedStages, failedStage: result.reason.stage, definitelyNotSent: result.reason.definitelyNotSent};
+        return {kind: 'UNCONFIRMED', stage: result.reason.stage, confirmedStages: result.reason.confirmedStages};
+      }
       if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
       return result.error instanceof FailsafePreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
     } finally {interlock.release();}
   }
 
-  private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: FailsafeSaveStage): Promise<void> {try {await requester.request(command, payload, {wireFormat: 'v1'});} catch (error) {const code = errorCode(error); if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) throw error; throw new AmbiguousFailsafeWriteError(error, stage);}}
+  /**
+   * THE SINGLE FUNNEL EVERY MUTATION PASSES THROUGH.
+   *
+   * U-R1. Liveness is asserted HERE, in the same synchronous turn as the
+   * request it authorises - no `await` sits between the check and the
+   * submission, or the board could change in the gap the check exists to
+   * close. Checking once at the top of `execute` was the confirmed
+   * defect: a flight controller that restarted after the first SET went
+   * on to receive the rest of the sequence and an EEPROM write.
+   *
+   * The ledger is what lets a stop at any stage say which groups the
+   * board actually acknowledged, instead of an ordinary failure that
+   * reads as "nothing happened".
+   */
+  private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: FailsafeSaveStage, key: SetupUiSessionKey, client: FailsafeClient, epoch: number, ledger: MutationLedger<FailsafeSaveStage>): Promise<void> {
+    try {this.assertLive(key, client, epoch);}
+    catch (error) {
+      if (!ledger.hasMutated) throw error;
+      throw new AmbiguousFailsafeWriteError(new MutationStoppedError(stage, ledger.acknowledgedStages, error), stage, ledger.acknowledgedStages, true, true);
+    }
+    try {await requester.request(command, payload, {wireFormat: 'v1'});}
+    catch (error) {
+      const code = errorCode(error);
+      if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) {
+        if (!ledger.hasMutated) throw error;
+        throw new AmbiguousFailsafeWriteError(error, stage, ledger.acknowledgedStages, true, true);
+      }
+      throw new AmbiguousFailsafeWriteError(error, stage, ledger.acknowledgedStages, false, false);
+    }
+    ledger.acknowledge(stage);
+  }
   private capture(key: SetupUiSessionKey): {client: FailsafeClient; scheduler: MspTelemetryScheduler; epoch: number} | {reason: FailsafeBlockReason} {
     if (this.appStateOwner.getPhase() !== 'ACTIVE') return {reason: 'APP_BACKGROUNDED'}; if (this.isMotorTestActive(key.sessionId)) return {reason: 'MOTOR_TEST_ACTIVE'};
     const identification = this.coordinator.getIdentificationState(key.sessionId); if (identification.status === 'IDLE' || identification.status === 'RUNNING') return {reason: 'IDENTIFYING'};

@@ -86,6 +86,10 @@ import {
   acquireMotorConfigurationInterlock,
   MotorConfigurationTransactionInProgressError,
 } from './motorConfigurationInterlock';
+import {
+  MutationLedger,
+  MutationStoppedError,
+} from './configurationSaveLedger';
 
 const EMPTY_PAYLOAD = new Uint8Array(0);
 
@@ -175,6 +179,32 @@ export type MotorConfigurationSaveOutcome =
       readonly stage: MotorConfigurationWriteGroup | 'EEPROM' | 'UNKNOWN';
       readonly acknowledgedGroups: readonly MotorConfigurationWriteGroup[];
     }
+  /**
+   * THE AIRCRAFT'S RAM MOVED AND ITS FLASH DID NOT.
+   *
+   * U-R1. A Motors save sends up to five SET frames before the EEPROM
+   * commit, and the flight controller applies each one the instant it
+   * acknowledges it. If the sequence then stops - the board restarted,
+   * the app was backgrounded, the link changed hands, or a frame was
+   * refused outright - the acknowledged groups are LIVE and unpersisted.
+   *
+   * Neither `FAILED` nor `SAVED_*` can say that. `FAILED` means nothing
+   * happened, which is false and is exactly the shape of U-X2-001; a
+   * `SAVED_*` claim is worse. `acknowledgedGroups` names what the board
+   * accepted, so the operator can be told which half of their edit the
+   * aircraft is flying until the next power cycle.
+   *
+   * `definitelyNotSent` distinguishes a frame this app never handed to
+   * the transport (it stopped first, or the queue refused it) from one
+   * whose fate is unknown. It is never used to upgrade an ambiguous
+   * result.
+   */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly acknowledgedGroups: readonly MotorConfigurationWriteGroup[];
+      readonly failedStage: MotorConfigurationWriteGroup | 'EEPROM';
+      readonly definitelyNotSent: boolean;
+    }
   | { readonly kind: 'SESSION_ENDED' };
 
 export type MotorOutputOrderLoadOutcome =
@@ -196,6 +226,16 @@ export type MotorOutputOrderSaveOutcome =
     }
   | { readonly kind: 'FAILED'; readonly error: unknown }
   | { readonly kind: 'UNCONFIRMED'; readonly stage: 'OUTPUT_ORDER' | 'EEPROM' }
+  /**
+   * The reorder map reached the flight controller's RAM and the EEPROM
+   * commit did not. U-R1: same defect shape as the main save, on a
+   * two-stage sequence - see MotorConfigurationSaveOutcome.
+   */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly failedStage: 'EEPROM';
+      readonly definitelyNotSent: boolean;
+    }
   | { readonly kind: 'SESSION_ENDED' };
 
 /**
@@ -294,6 +334,17 @@ interface MotorConfigurationAmbiguousWriteCause {
     | 'ESC_DIRECTION'
     | 'EEPROM';
   readonly acknowledgedGroups: readonly MotorConfigurationWriteGroup[];
+  /**
+   * The save left the aircraft holding SOME of the requested change in
+   * RAM with nothing in flash. U-R1: a decision made where the sequence
+   * stopped, not re-derived from `acknowledgedGroups.length` - by the
+   * time the EEPROM frame runs every RAM write is already confirmed, so
+   * an ambiguous EEPROM is not a partial configuration and stays
+   * UNCONFIRMED(EEPROM).
+   */
+  readonly partial: boolean;
+  /** The frame provably never reached the flight controller. */
+  readonly definitelyNotSent: boolean;
 }
 
 class MotorConfigurationAmbiguousWriteError extends MspOperationOutcomeUnknownError {
@@ -305,6 +356,8 @@ class MotorConfigurationAmbiguousWriteError extends MspOperationOutcomeUnknownEr
       | 'ESC_DIRECTION'
       | 'EEPROM',
     acknowledgedGroups: readonly MotorConfigurationWriteGroup[],
+    partial = false,
+    definitelyNotSent = false,
   ) {
     super(
       Object.freeze({
@@ -312,6 +365,8 @@ class MotorConfigurationAmbiguousWriteError extends MspOperationOutcomeUnknownEr
         originalError: cause,
         stage,
         acknowledgedGroups,
+        partial,
+        definitelyNotSent,
       } satisfies MotorConfigurationAmbiguousWriteCause),
     );
     this.name = 'MotorConfigurationAmbiguousWriteError';
@@ -608,6 +663,31 @@ export class MotorConfigurationController {
             identity,
           );
 
+          /* U-R1. Two mutating stages, so the same rule as the main save:
+             re-ask liveness in the frame's own synchronous turn, and once
+             the reorder map has been acknowledged never let the EEPROM
+             commit reach a board that has meanwhile restarted. A reorder
+             persisted across a restart maps the operator's motor numbers
+             onto outputs they never saw. */
+          let reordered = false;
+          const stopIfNotLive = (stage: 'OUTPUT_ORDER' | 'EEPROM'): void => {
+            try {
+              this.assertLivePreflight(sessionId, client, generation, epoch);
+            } catch (error) {
+              if (!reordered) {
+                throw error;
+              }
+              throw new MotorConfigurationAmbiguousWriteError(
+                new MutationStoppedError(stage, ['OUTPUT_ORDER'], error),
+                stage,
+                [],
+                true,
+                true,
+              );
+            }
+          };
+
+          stopIfNotLive('OUTPUT_ORDER');
           try {
             await requester.request(MSP2_SET_MOTOR_OUTPUT_REORDERING, payload, {
               wireFormat: 'v2',
@@ -622,14 +702,24 @@ export class MotorConfigurationController {
               [],
             );
           }
+          reordered = true;
 
+          stopIfNotLive('EEPROM');
           try {
             await requester.request(MSP_EEPROM_WRITE, EMPTY_PAYLOAD, {
               wireFormat: 'v1',
             });
           } catch (error) {
             if (isDefiniteNotApplied(error)) {
-              throw new MotorConfigurationDefiniteWriteError(error, []);
+              /* The map is live in RAM and the commit was refused
+                 outright - not a failed save, an unpersisted one. */
+              throw new MotorConfigurationAmbiguousWriteError(
+                error,
+                'EEPROM',
+                [],
+                true,
+                true,
+              );
             }
             throw new MotorConfigurationAmbiguousWriteError(
               error,
@@ -665,10 +755,20 @@ export class MotorConfigurationController {
               };
         case 'OUTCOME_UNKNOWN': {
           const reason = result.reason;
-          return isAmbiguousWriteCause(reason) &&
-            (reason.stage === 'OUTPUT_ORDER' || reason.stage === 'EEPROM')
-            ? { kind: 'UNCONFIRMED', stage: reason.stage }
-            : { kind: 'UNCONFIRMED', stage: 'OUTPUT_ORDER' };
+          if (
+            !isAmbiguousWriteCause(reason) ||
+            (reason.stage !== 'OUTPUT_ORDER' && reason.stage !== 'EEPROM')
+          ) {
+            return { kind: 'UNCONFIRMED', stage: 'OUTPUT_ORDER' };
+          }
+          /* U-R1. The map is in RAM and provably not in flash. */
+          return reason.partial
+            ? {
+                kind: 'PARTIAL_UNPERSISTED',
+                failedStage: 'EEPROM',
+                definitelyNotSent: reason.definitelyNotSent,
+              }
+            : { kind: 'UNCONFIRMED', stage: reason.stage };
         }
         case 'SESSION_ENDED':
           return { kind: 'SESSION_ENDED' };
@@ -953,47 +1053,68 @@ export class MotorConfigurationController {
           }
           this.assertLivePreflight(sessionId, client, generation, epoch);
 
-          const acknowledged: MotorConfigurationWriteGroup[] = [];
+          /*
+           * U-R1 - LIVENESS IS RE-ASKED BEFORE EVERY MUTATING FRAME.
+           *
+           * The preflight above establishes that the board is ours, is
+           * disarmed, and is answering. It establishes it ONCE. Between
+           * this point and the EEPROM commit there are up to six awaited
+           * round trips, and a flight controller can restart inside any
+           * of them - a brownout, a bench knock on the USB plug, a
+           * watchdog. When it does, the frames after the restart land on
+           * a board that has come back with its stored RAM, and the
+           * EEPROM write at the end then persists that mixture. One
+           * operator intent, split durably across two FC lifetimes,
+           * reported as a successful save.
+           *
+           * So each frame re-asks immediately before it goes out, and
+           * the check and the request sit in the SAME synchronous turn -
+           * no `await` between them - because a check separated from its
+           * write by a suspension point is a check of the past.
+           *
+           * After the first acknowledgement the answer to "is it still
+           * live" stops being a refusal and becomes a report: the
+           * aircraft's RAM has already moved, and the ledger says by how
+           * much.
+           */
+          const ledger = new MutationLedger<MotorConfigurationWriteGroup>();
           for (const write of writes) {
+            this.stopIfNotLive(
+              sessionId,
+              client,
+              generation,
+              epoch,
+              write.group,
+              ledger,
+            );
             try {
               await requester.request(
                 COMMAND_FOR_GROUP[write.group],
                 write.payload,
                 { wireFormat: 'v1' },
               );
-              acknowledged.push(write.group);
             } catch (error) {
-              if (isDefiniteNotApplied(error)) {
-                throw new MotorConfigurationDefiniteWriteError(
-                  error,
-                  Object.freeze([...acknowledged]),
-                );
-              }
-              throw new MotorConfigurationAmbiguousWriteError(
-                error,
-                write.group,
-                Object.freeze([...acknowledged]),
-              );
+              throw this.writeFailure(error, write.group, ledger);
             }
+            ledger.acknowledge(write.group);
           }
 
+          this.stopIfNotLive(
+            sessionId,
+            client,
+            generation,
+            epoch,
+            'EEPROM',
+            ledger,
+          );
           try {
             await requester.request(MSP_EEPROM_WRITE, EMPTY_PAYLOAD, {
               wireFormat: 'v1',
             });
           } catch (error) {
-            if (isDefiniteNotApplied(error)) {
-              throw new MotorConfigurationDefiniteWriteError(
-                error,
-                Object.freeze([...acknowledged]),
-              );
-            }
-            throw new MotorConfigurationAmbiguousWriteError(
-              error,
-              'EEPROM',
-              Object.freeze([...acknowledged]),
-            );
+            throw this.writeFailure(error, 'EEPROM', ledger);
           }
+          ledger.markPersisted();
 
           // Persistence is already acknowledged. A readback failure cannot
           // truthfully downgrade it to a failed save.
@@ -1049,18 +1170,32 @@ export class MotorConfigurationController {
         }
         case 'OUTCOME_UNKNOWN': {
           const reason = result.reason;
-          return isAmbiguousWriteCause(reason) &&
-            reason.stage !== 'OUTPUT_ORDER' &&
-            reason.stage !== 'ESC_DIRECTION'
+          if (
+            !isAmbiguousWriteCause(reason) ||
+            reason.stage === 'OUTPUT_ORDER' ||
+            reason.stage === 'ESC_DIRECTION'
+          ) {
+            return {
+              kind: 'UNCONFIRMED',
+              stage: 'UNKNOWN',
+              acknowledgedGroups: [],
+            };
+          }
+          /* U-R1. Groups acknowledged, nothing persisted: the aircraft is
+             running a mixture until its next power cycle, which is a
+             different statement from "the result is unknown" and has to
+             be made separately. */
+          return reason.partial
             ? {
-                kind: 'UNCONFIRMED',
-                stage: reason.stage,
+                kind: 'PARTIAL_UNPERSISTED',
                 acknowledgedGroups: reason.acknowledgedGroups,
+                failedStage: reason.stage,
+                definitelyNotSent: reason.definitelyNotSent,
               }
             : {
                 kind: 'UNCONFIRMED',
-                stage: 'UNKNOWN',
-                acknowledgedGroups: [],
+                stage: reason.stage,
+                acknowledgedGroups: reason.acknowledgedGroups,
               };
         }
         case 'SESSION_ENDED':
@@ -1336,6 +1471,94 @@ export class MotorConfigurationController {
     if (this.coordinator.getMspRecoveryState(sessionId) !== 'READY') {
       throw new MotorConfigurationPreflightError('LINK_RECOVERING');
     }
+  }
+
+  /**
+   * The liveness check a MUTATING frame asks immediately before going out.
+   *
+   * Before anything has been acknowledged this is exactly
+   * `assertLivePreflight` - the aircraft is untouched, so a lost session
+   * is an ordinary refusal and the operator is told the save did not
+   * happen, which is true.
+   *
+   * After the first acknowledgement it can no longer say that. The RAM
+   * has moved. The sequence still stops - continuing would write to
+   * whatever is on the other end of the link now, which is the defect
+   * this closes - but it stops with the ledger attached so the outcome
+   * can name the groups the board accepted.
+   *
+   * THE INVARIANT THIS EXISTS FOR: when liveness is lost after any SET,
+   * the EEPROM write count is zero. Nothing half-applied is ever made
+   * permanent.
+   */
+  private stopIfNotLive(
+    sessionId: string,
+    client: MotorConfigurationClient,
+    generation: number,
+    epoch: number,
+    stage: MotorConfigurationWriteGroup | 'EEPROM',
+    ledger: MutationLedger<MotorConfigurationWriteGroup>,
+  ): void {
+    try {
+      this.assertLivePreflight(sessionId, client, generation, epoch);
+    } catch (error) {
+      if (!ledger.hasMutated) {
+        throw error;
+      }
+      throw new MotorConfigurationAmbiguousWriteError(
+        new MutationStoppedError(stage, ledger.acknowledgedStages, error),
+        stage,
+        ledger.acknowledgedStages,
+        true,
+        // This app stopped before handing the frame to the transport, so
+        // it provably never reached the flight controller.
+        true,
+      );
+    }
+  }
+
+  /**
+   * What a refused or unanswered mutating frame means, given what the
+   * board has already accepted.
+   *
+   * A refusal with an EMPTY ledger is an ordinary failure and keeps the
+   * existing `FAILED` answer: nothing was written, and saying so is
+   * accurate.
+   *
+   * A refusal AFTER an acknowledgement is not. The refused frame is
+   * provably not applied, and the acknowledged ones provably are - the
+   * aircraft is running a mixture, unpersisted. Reporting that as
+   * `FAILED` is the second confirmed defect this phase closes.
+   *
+   * An UNANSWERED frame stays ambiguous in both cases and is never
+   * upgraded to either certainty.
+   */
+  private writeFailure(
+    error: unknown,
+    stage: MotorConfigurationWriteGroup | 'EEPROM',
+    ledger: MutationLedger<MotorConfigurationWriteGroup>,
+  ): unknown {
+    if (isDefiniteNotApplied(error)) {
+      return ledger.hasMutated
+        ? new MotorConfigurationAmbiguousWriteError(
+            error,
+            stage,
+            ledger.acknowledgedStages,
+            true,
+            true,
+          )
+        : new MotorConfigurationDefiniteWriteError(
+            error,
+            ledger.acknowledgedStages,
+          );
+    }
+    return new MotorConfigurationAmbiguousWriteError(
+      error,
+      stage,
+      ledger.acknowledgedStages,
+      false,
+      false,
+    );
   }
 
   private isStillOwned(

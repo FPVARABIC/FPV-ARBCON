@@ -122,6 +122,20 @@ function outcomeKey(outcome: PortsSaveOutcome): string {
       return 'portsConfiguration.outcome.savedUnverified';
     case 'UNCONFIRMED':
       return 'portsConfiguration.outcome.unconfirmed';
+    /*
+     * RAM MOVED AND FLASH DID NOT, and the two halves of that need
+     * different sentences.
+     *
+     * A stop at EEPROM means every port change the operator asked for
+     * IS live on the aircraft and simply was not written to flash - it
+     * will vanish at the next power cycle. A stop at a configuration
+     * group means only PART of the change is live, which is the more
+     * alarming of the two and must not borrow the calmer wording.
+     */
+    case 'PARTIAL_UNPERSISTED':
+      return outcome.failedStage === 'EEPROM'
+        ? 'portsConfiguration.outcome.appliedNotPersisted'
+        : 'portsConfiguration.outcome.partiallyApplied';
     case 'SESSION_ENDED':
       return 'portsConfiguration.outcome.sessionEnded';
     case 'FAILED':

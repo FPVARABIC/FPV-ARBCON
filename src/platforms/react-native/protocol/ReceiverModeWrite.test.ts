@@ -437,7 +437,10 @@ describe('P4 combined transaction and interruption truth', () => {
       failEeprom: Object.assign(new Error('timeout'), {code: 'MSP_TIMEOUT'}),
     });
     await expect(h.controller.save(key, original, {...createReceiverConfigurationDraft(original), serialRxProvider: 2}))
-      .resolves.toEqual({kind: 'UNCONFIRMED', stage: 'EEPROM'});
+      /* U-R1: still UNCONFIRMED, not partial - and the ledger says WHY:
+         RX_CONFIG was acknowledged, so RAM is complete and only the
+         commit is in doubt. */
+      .resolves.toEqual({kind: 'UNCONFIRMED', stage: 'EEPROM', confirmedStages: ['RX_CONFIG']});
   });
 
   it('reports SAVED_UNVERIFIED when the configuration read-back disagrees', async () => {

@@ -104,6 +104,31 @@ const STAGE_TEXT: Readonly<Record<WriteStageName, string>> = {
  * one-based because that is how every one of those screens numbers them
  * for the operator.
  */
+/**
+ * THE TWO SENTENCES FOR "RAM MOVED AND FLASH DID NOT".
+ *
+ * U-R1. A configuration save is a sequence of writes followed by a
+ * persistence step, and the sequence can stop between them - because the
+ * flight controller restarted, because the session changed, or because a
+ * frame was refused outright. When that happens AFTER at least one write
+ * was acknowledged, the aircraft's RAM has already moved.
+ *
+ * Neither of these may be called «فشل الحفظ»: that says nothing
+ * happened, and something did. Neither may be called «تم الحفظ» either.
+ * The truth has to name RAM against permanent storage, because that is
+ * the difference the operator will meet at the next power cycle.
+ *
+ * `everythingApplied` separates the two: all the requested changes are
+ * live and only persistence was missed, versus only SOME of them are
+ * live - a mixture of old and new that no operator asked for and the
+ * more alarming of the two.
+ */
+export function partialApplyMessage(everythingApplied: boolean): string {
+  return everythingApplied
+    ? 'وصلت كل التغييرات إلى الذاكرة العاملة للمتحكم، لكن الحفظ الدائم لم يتم؛ ستُفقد عند إعادة التشغيل. لا تكرر الحفظ؛ أعد الاتصال واقرأ الإعدادات أولًا.'
+    : 'تم تطبيق جزء من التغييرات في الذاكرة العاملة للمتحكم، ولم يتم حفظها بشكل دائم. المتحكم يعمل الآن بخليط من القديم والجديد حتى إعادة التشغيل. لا تكرر الحفظ؛ أعد الاتصال واقرأ الإعدادات أولًا.';
+}
+
 export function unconfirmedWriteMessage(stage: WriteStageName, index?: number): string {
   const what = STAGE_TEXT[stage];
   const row = typeof index === 'number' && Number.isInteger(index) && index >= 0 ? ` رقم ${index + 1}` : '';

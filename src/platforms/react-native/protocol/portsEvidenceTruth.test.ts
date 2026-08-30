@@ -751,7 +751,11 @@ describe('save safety with unverified evidence present', () => {
       command: MSP2_COMMON_SET_SERIAL_CONFIG,
       code: 'MSP_TIMEOUT',
     });
-    expect(outcome).toEqual({ kind: 'UNCONFIRMED', stage: 'SERIAL_CONFIG' });
+    expect(outcome).toEqual({
+      kind: 'UNCONFIRMED',
+      stage: 'SERIAL_CONFIG',
+      confirmedStages: [],
+    });
   });
 
   it('the whole normalized table goes out, and the unverified record byte-identical', async () => {

@@ -44,6 +44,11 @@ import {
   acquireMotorConfigurationInterlock,
   MotorConfigurationTransactionInProgressError,
 } from './motorConfigurationInterlock';
+import {
+  MutationLedger,
+  MutationStoppedError,
+  type PartialApplyEvidence,
+} from './configurationSaveLedger';
 const EMPTY = new Uint8Array(0);
 const DEFINITELY_NOT_SENT = new Set([
   'MSP_ENCODE_FAILED',
@@ -92,7 +97,25 @@ export type VtxSaveOutcome =
   | { readonly kind: 'SAVED_VERIFIED'; readonly snapshot: MspVtxSnapshot }
   | { readonly kind: 'SAVED_UNVERIFIED'; readonly error: unknown }
   | { readonly kind: 'REJECTED'; readonly reason: VtxBlockReason }
-  | { readonly kind: 'UNCONFIRMED'; readonly stage: VtxSaveStage }
+  | {
+      readonly kind: 'UNCONFIRMED';
+      readonly stage: VtxSaveStage;
+      readonly confirmedStages: readonly VtxSaveStage[];
+    }
+  /**
+   * U-R1. RAM moved and flash did not: at least one VTX write was
+   * acknowledged and the sequence then stopped before persistence -
+   * because the board restarted, the session changed, or a frame was
+   * refused. `FAILED` would say nothing happened, and the transmitter is
+   * meanwhile radiating on whatever band and power the acknowledged
+   * writes put it on.
+   */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly confirmedStages: readonly VtxSaveStage[];
+      readonly failedStage: VtxSaveStage;
+      readonly definitelyNotSent: boolean;
+    }
   | { readonly kind: 'SESSION_ENDED' }
   | { readonly kind: 'FAILED'; readonly error: unknown };
 export interface VtxConfigurationControllerOptions {
@@ -106,13 +129,28 @@ class VtxPreflightError extends Error {
     this.name = 'VtxPreflightError';
   }
 }
-interface AmbiguousVtxCause {
+interface AmbiguousVtxCause extends PartialApplyEvidence<VtxSaveStage> {
   readonly kind: 'VTX_AMBIGUOUS_WRITE';
   readonly stage: VtxSaveStage;
 }
 class AmbiguousVtxWriteError extends MspOperationOutcomeUnknownError {
-  constructor(error: unknown, stage: VtxSaveStage) {
-    super(Object.freeze({ kind: 'VTX_AMBIGUOUS_WRITE', stage, error }));
+  constructor(
+    error: unknown,
+    stage: VtxSaveStage,
+    confirmedStages: readonly VtxSaveStage[] = [],
+    partial = false,
+    definitelyNotSent = false,
+  ) {
+    super(
+      Object.freeze({
+        kind: 'VTX_AMBIGUOUS_WRITE',
+        stage,
+        error,
+        confirmedStages,
+        partial,
+        definitelyNotSent,
+      }),
+    );
   }
 }
 function errorCode(error: unknown): string | undefined {
@@ -243,6 +281,7 @@ export class VtxConfigurationController {
             acquisition,
             identity,
           );
+          const ledger = new MutationLedger<VtxSaveStage>();
           for (const write of encodeChangedVtxConfiguration(original, draft)) {
             const command =
               write.group === 'CONFIG'
@@ -250,14 +289,28 @@ export class VtxConfigurationController {
                 : write.group === 'BAND'
                 ? MSP_SET_VTXTABLE_BAND
                 : MSP_SET_VTXTABLE_POWERLEVEL;
-            await this.writeOnce(requester, command, write.payload, {
-              group: write.group,
-              index: write.index,
-            });
+            await this.writeOnce(
+              requester,
+              command,
+              write.payload,
+              { group: write.group, index: write.index },
+              key,
+              client,
+              epoch,
+              ledger,
+            );
           }
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, {
-            group: 'EEPROM',
-          });
+          await this.writeOnce(
+            requester,
+            MSP_EEPROM_WRITE,
+            EMPTY,
+            { group: 'EEPROM' },
+            key,
+            client,
+            epoch,
+            ledger,
+          );
+          ledger.markPersisted();
           try {
             const snapshot = await this.readSnapshot(requester);
             if (!vtxDraftsEqual(createVtxConfigurationDraft(snapshot), draft))
@@ -274,7 +327,18 @@ export class VtxConfigurationController {
           : { kind: 'SAVED_UNVERIFIED', error: result.result.readbackError };
       if (result.status === 'OUTCOME_UNKNOWN')
         return ambiguousCause(result.reason)
-          ? { kind: 'UNCONFIRMED', stage: result.reason.stage }
+          ? result.reason.partial
+            ? {
+                kind: 'PARTIAL_UNPERSISTED',
+                confirmedStages: result.reason.confirmedStages,
+                failedStage: result.reason.stage,
+                definitelyNotSent: result.reason.definitelyNotSent,
+              }
+            : {
+                kind: 'UNCONFIRMED',
+                stage: result.reason.stage,
+                confirmedStages: result.reason.confirmedStages,
+              }
           : { kind: 'SESSION_ENDED' };
       if (result.status === 'SESSION_ENDED') return { kind: 'SESSION_ENDED' };
       return result.error instanceof VtxPreflightError
@@ -323,19 +387,68 @@ export class VtxConfigurationController {
       powerLevels: Object.freeze(powerLevels),
     });
   }
+  /**
+   * U-R1 - THE ONE FUNNEL EVERY MUTATING VTX FRAME PASSES THROUGH.
+   *
+   * Liveness is asked HERE, immediately before the request and in the
+   * same synchronous turn, rather than once at the top of the
+   * transaction. A VTX save writes the config, then a band row, then a
+   * power-level row, then commits - and the flight controller can
+   * restart inside any of those awaits. Checking once meant the later
+   * frames could land on a board that had come back with different RAM,
+   * and the EEPROM write then made that mixture permanent.
+   *
+   * Once the ledger holds an acknowledgement, a lost session stops being
+   * a refusal and becomes a report: the transmitter's RAM has already
+   * moved, and refusing to say so is the defect this closes.
+   */
   private async writeOnce(
     requester: MspRequester,
     command: number,
     payload: Uint8Array,
     stage: VtxSaveStage,
+    key: SetupUiSessionKey,
+    client: VtxClient,
+    epoch: number,
+    ledger: MutationLedger<VtxSaveStage>,
   ): Promise<void> {
+    try {
+      this.assertLive(key, client, epoch);
+    } catch (error) {
+      if (!ledger.hasMutated) throw error;
+      throw new AmbiguousVtxWriteError(
+        new MutationStoppedError(stage, ledger.acknowledgedStages, error),
+        stage,
+        ledger.acknowledgedStages,
+        true,
+        true,
+      );
+    }
     try {
       await requester.request(command, payload, { wireFormat: 'v1' });
     } catch (error) {
       const code = errorCode(error);
-      if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) throw error;
-      throw new AmbiguousVtxWriteError(error, stage);
+      if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) {
+        // Provably not applied. With nothing acknowledged that is an
+        // ordinary failure; after an acknowledgement it is a partial.
+        if (!ledger.hasMutated) throw error;
+        throw new AmbiguousVtxWriteError(
+          error,
+          stage,
+          ledger.acknowledgedStages,
+          true,
+          true,
+        );
+      }
+      throw new AmbiguousVtxWriteError(
+        error,
+        stage,
+        ledger.acknowledgedStages,
+        false,
+        false,
+      );
     }
+    ledger.acknowledge(stage);
   }
   private capture(
     key: SetupUiSessionKey,

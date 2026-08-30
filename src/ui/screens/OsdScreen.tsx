@@ -59,7 +59,7 @@ import {
   ToggleSwitch,
 } from '../components/controls';
 import {OsdPreview, type OsdPreviewElement} from './osd/OsdPreview';
-import {unconfirmedWriteMessage} from '../presentation/writeStageNames';
+import {partialApplyMessage, unconfirmedWriteMessage} from '../presentation/writeStageNames';
 
 type Phase = 'IDLE' | 'LOADING' | 'READY' | 'SAVING' | 'ERROR';
 
@@ -116,6 +116,12 @@ function saveMessage(outcome: OsdSaveOutcome): {text: string; warning: boolean} 
     case 'UNCONFIRMED':
       return {
         text: unconfirmedWriteMessage(outcome.stage.group, 'index' in outcome.stage ? outcome.stage.index : undefined),
+        warning: true,
+      };
+    /* U-R1. RAM moved and flash did not - never «فشل الحفظ». */
+    case 'PARTIAL_UNPERSISTED':
+      return {
+        text: partialApplyMessage(outcome.failedStage.group === 'EEPROM'),
         warning: true,
       };
     case 'SESSION_ENDED':

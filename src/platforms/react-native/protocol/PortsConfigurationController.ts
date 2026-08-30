@@ -26,6 +26,11 @@ import {
 } from '../../../core';
 import { deriveArmedState } from '../../../core/state/armingBlockers';
 import {
+  MutationLedger,
+  MutationStoppedError,
+  type PartialApplyEvidence,
+} from './configurationSaveLedger';
+import {
   normalizeSerialPortsForSave,
   deriveSerialPortsFeatureMask,
   refusalsForUnverifiedEvidence,
@@ -127,10 +132,34 @@ export type PortsSaveOutcome =
     }
   | {
       readonly kind: 'UNCONFIRMED';
-      readonly stage: 'SERIAL_CONFIG' | 'FEATURE_CONFIG' | 'EEPROM';
+      readonly stage: PortsWriteStage;
+      /** RAM writes the board acknowledged before the doubt began. */
+      readonly confirmedStages: readonly PortsWriteStage[];
+    }
+  /**
+   * At least one RAM write was ACKNOWLEDGED and the sequence then
+   * stopped - because a later frame was provably refused, or because the
+   * session/epoch changed under it - before EEPROM was acknowledged.
+   *
+   * Nothing is persisted: the flight controller's STORED configuration
+   * is untouched. But its RAM has already moved, and the aircraft flies
+   * on RAM. Reporting this as an ordinary failure would tell the
+   * operator nothing happened, and something did.
+   *
+   * No rollback and no retry - see `configurationSaveLedger.ts`.
+   */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly confirmedStages: readonly PortsWriteStage[];
+      readonly failedStage: PortsWriteStage;
+      readonly definitelyNotSent: boolean;
     }
   | { readonly kind: 'SESSION_ENDED' }
   | { readonly kind: 'FAILED'; readonly error: unknown };
+
+/** The ordered mutating stages of a Ports save. EEPROM is persistence,
+ *  not another configuration group - see §18 of the repair brief. */
+export type PortsWriteStage = 'SERIAL_CONFIG' | 'FEATURE_CONFIG' | 'EEPROM';
 
 export interface PortsConfigurationControllerOptions {
   readonly coordinator?: PortsSessionCoordinator;
@@ -161,17 +190,29 @@ class PortsEvidenceError extends Error {
   }
 }
 
-interface AmbiguousPortsWriteCause {
+interface AmbiguousPortsWriteCause extends PartialApplyEvidence<PortsWriteStage> {
   readonly kind: 'PORTS_AMBIGUOUS_WRITE';
-  readonly stage: 'SERIAL_CONFIG' | 'FEATURE_CONFIG' | 'EEPROM';
+  readonly stage: PortsWriteStage;
 }
 
 class AmbiguousPortsWriteError extends MspOperationOutcomeUnknownError {
   constructor(
     error: unknown,
-    stage: 'SERIAL_CONFIG' | 'FEATURE_CONFIG' | 'EEPROM',
+    stage: PortsWriteStage,
+    confirmedStages: readonly PortsWriteStage[] = [],
+    partial = false,
+    definitelyNotSent = false,
   ) {
-    super(Object.freeze({ kind: 'PORTS_AMBIGUOUS_WRITE', stage, error }));
+    super(
+      Object.freeze({
+        kind: 'PORTS_AMBIGUOUS_WRITE',
+        stage,
+        error,
+        confirmedStages: Object.freeze([...confirmedStages]),
+        partial,
+        definitelyNotSent,
+      }),
+    );
   }
 }
 
@@ -403,7 +444,24 @@ export class PortsConfigurationController {
             if (freshIssues.length > 0)
               throw new PortsPreflightError('INVALID_CONFIGURATION');
           }
-          this.assertLive(sessionKey, client, epoch);
+          /*
+           * THE MUTATION SEQUENCE.
+           *
+           * Every frame below is preceded by its OWN liveness check, in
+           * the same synchronous turn as the request it guards - no
+           * `await` sits between the check and the submission it
+           * authorises, or the board could change in the gap the check
+           * was supposed to close.
+           *
+           * Checking once at the top of `execute` was the confirmed
+           * defect: a flight controller that restarted after
+           * SET_SERIAL_CONFIG went on to receive SET_FEATURE_CONFIG and
+           * an EEPROM_WRITE, and the flash then held the feature mask
+           * without the port table it describes - one operator intent
+           * split durably across two FC lifetimes.
+           */
+          const ledger = new MutationLedger<PortsWriteStage>();
+          this.stopIfNotLive(sessionKey, client, epoch, 'SERIAL_CONFIG', ledger);
           try {
             await requester.request(
               MSP2_COMMON_SET_SERIAL_CONFIG,
@@ -411,9 +469,10 @@ export class PortsConfigurationController {
               { wireFormat: 'v2' },
             );
           } catch (error) {
-            if (definitelyNotApplied(error)) throw error;
-            throw new AmbiguousPortsWriteError(error, 'SERIAL_CONFIG');
+            throw this.writeFailure(error, 'SERIAL_CONFIG', ledger);
           }
+          ledger.acknowledge('SERIAL_CONFIG');
+
           if (desiredFeatureMask !== original.featureMaskRaw) {
             const featurePayload = new Uint8Array(4);
             new DataView(featurePayload.buffer).setUint32(
@@ -421,23 +480,35 @@ export class PortsConfigurationController {
               desiredFeatureMask,
               true,
             );
+            this.stopIfNotLive(
+              sessionKey,
+              client,
+              epoch,
+              'FEATURE_CONFIG',
+              ledger,
+            );
             try {
               await requester.request(MSP_SET_FEATURE_CONFIG, featurePayload, {
                 wireFormat: 'v1',
               });
             } catch (error) {
-              if (definitelyNotApplied(error)) throw error;
-              throw new AmbiguousPortsWriteError(error, 'FEATURE_CONFIG');
+              throw this.writeFailure(error, 'FEATURE_CONFIG', ledger);
             }
+            ledger.acknowledge('FEATURE_CONFIG');
           }
+
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. This check is the
+             hard invariant of the repair: if the board is not the one
+             the RAM writes went to, its flash must not be written. */
+          this.stopIfNotLive(sessionKey, client, epoch, 'EEPROM', ledger);
           try {
             await requester.request(MSP_EEPROM_WRITE, EMPTY, {
               wireFormat: 'v1',
             });
           } catch (error) {
-            if (definitelyNotApplied(error)) throw error;
-            throw new AmbiguousPortsWriteError(error, 'EEPROM');
+            throw this.writeFailure(error, 'EEPROM', ledger);
           }
+          ledger.markPersisted();
 
           let snapshot: SerialPortsSnapshot | undefined;
           let readbackError: unknown;
@@ -484,9 +555,22 @@ export class PortsConfigurationController {
             };
       }
       if (result.status === 'OUTCOME_UNKNOWN') {
-        return ambiguousCause(result.reason)
-          ? { kind: 'UNCONFIRMED', stage: result.reason.stage }
-          : { kind: 'SESSION_ENDED' };
+        if (!ambiguousCause(result.reason)) return { kind: 'SESSION_ENDED' };
+        /* "Some of it landed and none of it was saved" is its own
+           answer, never an ordinary failure. */
+        if (result.reason.partial) {
+          return {
+            kind: 'PARTIAL_UNPERSISTED',
+            confirmedStages: result.reason.confirmedStages,
+            failedStage: result.reason.stage,
+            definitelyNotSent: result.reason.definitelyNotSent,
+          };
+        }
+        return {
+          kind: 'UNCONFIRMED',
+          stage: result.reason.stage,
+          confirmedStages: result.reason.confirmedStages,
+        };
       }
       if (result.status === 'SESSION_ENDED') return { kind: 'SESSION_ENDED' };
       /* A refusal for want of evidence is NOT the same answer as
@@ -578,6 +662,80 @@ export class PortsConfigurationController {
     }
     if (this.coordinator.getMspRecoveryState(sessionKey.sessionId) !== 'READY')
       throw new PortsPreflightError('LINK_RECOVERING');
+  }
+
+  /**
+   * THE LIVENESS CHECK THAT GUARDS ONE MUTATION, and knows what has
+   * already been written.
+   *
+   * Before anything has been acknowledged this is an ordinary preflight
+   * refusal and is rethrown untouched: the aircraft was never modified,
+   * so `REJECTED(DISCONNECTED)` is the whole truth.
+   *
+   * AFTER a write has been acknowledged it is not. The flight
+   * controller's RAM has already moved, and answering `DISCONNECTED`
+   * would tell the operator nothing happened. The ledger is carried out
+   * so the outcome can name exactly which groups landed.
+   */
+  private stopIfNotLive(
+    sessionKey: SetupUiSessionKey,
+    client: PortsClient,
+    epoch: number,
+    stage: PortsWriteStage,
+    ledger: MutationLedger<PortsWriteStage>,
+  ): void {
+    try {
+      this.assertLive(sessionKey, client, epoch);
+    } catch (error) {
+      if (!ledger.hasMutated) throw error;
+      throw new AmbiguousPortsWriteError(
+        new MutationStoppedError(stage, ledger.acknowledgedStages, error),
+        stage,
+        ledger.acknowledgedStages,
+        true,
+        /* The frame was never submitted, so it provably did not reach
+           the flight controller. */
+        true,
+      );
+    }
+  }
+
+  /**
+   * Classify a failed mutation against what this save has already
+   * written.
+   *
+   * DEFINITELY-NOT-APPLIED after an acknowledged write is a PARTIAL
+   * application: the earlier groups are in RAM, this one is not, and
+   * nothing is persisted. Before any acknowledged write it stays an
+   * ordinary failure, because nothing happened.
+   *
+   * AMBIGUOUS stays ambiguous at every stage - it is never upgraded to
+   * acknowledged and never downgraded to definitely-not-applied. The
+   * ledger rides along so `UNCONFIRMED` can still say which groups are
+   * known to have landed.
+   */
+  private writeFailure(
+    error: unknown,
+    stage: PortsWriteStage,
+    ledger: MutationLedger<PortsWriteStage>,
+  ): unknown {
+    if (definitelyNotApplied(error)) {
+      if (!ledger.hasMutated) return error;
+      return new AmbiguousPortsWriteError(
+        error,
+        stage,
+        ledger.acknowledgedStages,
+        true,
+        true,
+      );
+    }
+    return new AmbiguousPortsWriteError(
+      error,
+      stage,
+      ledger.acknowledgedStages,
+      false,
+      false,
+    );
   }
 
   private operations(

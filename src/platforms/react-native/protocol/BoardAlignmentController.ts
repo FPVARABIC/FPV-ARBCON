@@ -119,6 +119,11 @@ import {
   acquireMotorConfigurationInterlock,
   MotorConfigurationTransactionInProgressError,
 } from './motorConfigurationInterlock';
+import {
+  MutationLedger,
+  MutationStoppedError,
+  type PartialApplyEvidence,
+} from './configurationSaveLedger';
 import {isSupportedConfigurationApi} from './betaflightApiSupport';
 
 const EMPTY = new Uint8Array(0);
@@ -189,7 +194,25 @@ export type BoardAlignmentSaveOutcome =
       readonly error: unknown;
     }
   | {readonly kind: 'REJECTED'; readonly reason: BoardAlignmentBlockReason}
-  | {readonly kind: 'UNCONFIRMED'; readonly stage: BoardAlignmentSaveStage}
+  | {
+      readonly kind: 'UNCONFIRMED';
+      readonly stage: BoardAlignmentSaveStage;
+      readonly confirmedStages: readonly BoardAlignmentSaveStage[];
+    }
+  /**
+   * U-R1. The alignment angles are in FC RAM and were not persisted.
+   *
+   * A single-write save, so this can only be the EEPROM stage - and it
+   * matters here more than most: the angles do not take effect until a
+   * reboot, so an operator told «فشل الحفظ» would reasonably retry,
+   * while the board is holding values it will discard at that reboot.
+   */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly confirmedStages: readonly BoardAlignmentSaveStage[];
+      readonly failedStage: BoardAlignmentSaveStage;
+      readonly definitelyNotSent: boolean;
+    }
   | {readonly kind: 'SESSION_ENDED'}
   | {readonly kind: 'FAILED'; readonly error: unknown};
 
@@ -206,15 +229,29 @@ class BoardAlignmentPreflightError extends Error {
   }
 }
 
-interface AmbiguousBoardAlignmentCause {
+interface AmbiguousBoardAlignmentCause
+  extends PartialApplyEvidence<BoardAlignmentSaveStage> {
   readonly kind: 'BOARD_ALIGNMENT_AMBIGUOUS_WRITE';
   readonly stage: BoardAlignmentSaveStage;
 }
 
 class AmbiguousBoardAlignmentWriteError extends MspOperationOutcomeUnknownError {
-  constructor(error: unknown, stage: BoardAlignmentSaveStage) {
+  constructor(
+    error: unknown,
+    stage: BoardAlignmentSaveStage,
+    confirmedStages: readonly BoardAlignmentSaveStage[] = [],
+    partial = false,
+    definitelyNotSent = false,
+  ) {
     super(
-      Object.freeze({kind: 'BOARD_ALIGNMENT_AMBIGUOUS_WRITE', stage, error}),
+      Object.freeze({
+        kind: 'BOARD_ALIGNMENT_AMBIGUOUS_WRITE',
+        stage,
+        error,
+        confirmedStages,
+        partial,
+        definitelyNotSent,
+      }),
     );
   }
 }
@@ -340,13 +377,28 @@ export class BoardAlignmentController {
           if (payload === undefined) {
             return {snapshot: original, rebootAcknowledged: false};
           }
+          const ledger = new MutationLedger<BoardAlignmentSaveStage>();
           await this.writeOnce(
             requester,
             MSP_SET_BOARD_ALIGNMENT_CONFIG,
             payload,
             'BOARD_ALIGNMENT',
+            key,
+            client,
+            epoch,
+            ledger,
           );
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
+          await this.writeOnce(
+            requester,
+            MSP_EEPROM_WRITE,
+            EMPTY,
+            'EEPROM',
+            key,
+            client,
+            epoch,
+            ledger,
+          );
+          ledger.markPersisted();
 
           // Readback first, while the board is still up: this proves the
           // angles are STORED. The reboot after it is what makes them
@@ -388,7 +440,18 @@ export class BoardAlignmentController {
       }
       if (result.status === 'OUTCOME_UNKNOWN') {
         return ambiguousCause(result.reason)
-          ? {kind: 'UNCONFIRMED', stage: result.reason.stage}
+          ? result.reason.partial
+            ? {
+                kind: 'PARTIAL_UNPERSISTED',
+                confirmedStages: result.reason.confirmedStages,
+                failedStage: result.reason.stage,
+                definitelyNotSent: result.reason.definitelyNotSent,
+              }
+            : {
+                kind: 'UNCONFIRMED',
+                stage: result.reason.stage,
+                confirmedStages: result.reason.confirmedStages,
+              }
           : {kind: 'SESSION_ENDED'};
       }
       if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
@@ -400,19 +463,59 @@ export class BoardAlignmentController {
     }
   }
 
+  /**
+   * U-R1 - LIVENESS IN THE SAME SYNCHRONOUS TURN AS THE REQUEST.
+   *
+   * Two mutating frames with an await between them, so the board can
+   * restart in the gap and the EEPROM commit would otherwise land on it.
+   * Once the alignment write is acknowledged, a lost session is reported
+   * as a partial application rather than refused as if nothing happened.
+   */
   private async writeOnce(
     requester: MspRequester,
     command: number,
     payload: Uint8Array,
     stage: BoardAlignmentSaveStage,
+    key: SetupUiSessionKey,
+    client: BoardAlignmentClient,
+    epoch: number,
+    ledger: MutationLedger<BoardAlignmentSaveStage>,
   ): Promise<void> {
+    try {
+      this.assertLive(key, client, epoch);
+    } catch (error) {
+      if (!ledger.hasMutated) throw error;
+      throw new AmbiguousBoardAlignmentWriteError(
+        new MutationStoppedError(stage, ledger.acknowledgedStages, error),
+        stage,
+        ledger.acknowledgedStages,
+        true,
+        true,
+      );
+    }
     try {
       await requester.request(command, payload, {wireFormat: 'v1'});
     } catch (error) {
       const code = errorCode(error);
-      if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) throw error;
-      throw new AmbiguousBoardAlignmentWriteError(error, stage);
+      if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) {
+        if (!ledger.hasMutated) throw error;
+        throw new AmbiguousBoardAlignmentWriteError(
+          error,
+          stage,
+          ledger.acknowledgedStages,
+          true,
+          true,
+        );
+      }
+      throw new AmbiguousBoardAlignmentWriteError(
+        error,
+        stage,
+        ledger.acknowledgedStages,
+        false,
+        false,
+      );
     }
+    ledger.acknowledge(stage);
   }
 
   private capture(

@@ -445,9 +445,11 @@ describe('Receiver P2 closure - save interruption taxonomy', () => {
     h.client.enqueue(MSP_SET_RX_MAP, {reject: Object.assign(new Error('timeout'), {code: 'MSP_TIMEOUT'})});
     // Not "failed" and certainly not "saved": the write may or may not
     // have landed, and the operator is told not to retry blindly.
+    /* U-R1: empty ledger - RX_MAP is the first write. */
     await expect(h.controller.save(key, original, draftFor(original))).resolves.toEqual({
       kind: 'UNCONFIRMED',
       stage: 'RX_MAP',
+      confirmedStages: [],
     });
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_EEPROM_WRITE);
   });
@@ -467,9 +469,12 @@ describe('Receiver P2 closure - save interruption taxonomy', () => {
     queueToDisarmProof(h);
     h.client.enqueue(MSP_SET_RX_MAP, {payload: EMPTY});
     h.client.enqueue(MSP_EEPROM_WRITE, {reject: Object.assign(new Error('timeout'), {code: 'MSP_TIMEOUT'})});
+    /* U-R1: the ledger names RX_MAP - the configuration IS in the
+       board's RAM and only persistence is unknown. */
     await expect(h.controller.save(key, original, draftFor(original))).resolves.toEqual({
       kind: 'UNCONFIRMED',
       stage: 'EEPROM',
+      confirmedStages: ['RX_MAP'],
     });
   });
 

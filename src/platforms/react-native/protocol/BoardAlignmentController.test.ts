@@ -383,7 +383,8 @@ describe('BoardAlignmentController', () => {
 
     await expect(
       h.controller.save(key, original, {...ROTATED}),
-    ).resolves.toEqual({kind: 'UNCONFIRMED', stage: 'BOARD_ALIGNMENT'});
+    /* U-R1: empty ledger - the alignment write is the first frame. */
+    ).resolves.toEqual({kind: 'UNCONFIRMED', stage: 'BOARD_ALIGNMENT', confirmedStages: []});
 
     expect(
       h.client.calls.filter(c => c.command === MSP_SET_BOARD_ALIGNMENT_CONFIG),
@@ -403,7 +404,10 @@ describe('BoardAlignmentController', () => {
 
     await expect(
       h.controller.save(key, original, {...ROTATED}),
-    ).resolves.toEqual({kind: 'UNCONFIRMED', stage: 'EEPROM'});
+    /* U-R1: and the ledger PROVES the angles reached the board - the
+       alignment write was acknowledged before the commit went
+       unanswered. That is the fact an operator needs here. */
+    ).resolves.toEqual({kind: 'UNCONFIRMED', stage: 'EEPROM', confirmedStages: ['BOARD_ALIGNMENT']});
 
     expect(
       h.client.calls.filter(c => c.command === MSP_EEPROM_WRITE),

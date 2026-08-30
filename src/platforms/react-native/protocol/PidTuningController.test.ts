@@ -152,9 +152,12 @@ describe('PidTuningController', () => {
     const base = createPidTuningDraft(original);
     const draft = {...base, roll: {...base.roll, p: 50}};
 
+    /* U-R1: with an EMPTY ledger - MSP_SET_PID is the first write, so
+       no group had been acknowledged when it went unanswered. */
     await expect(h.controller.save(key, original, draft)).resolves.toEqual({
       kind: 'UNCONFIRMED',
       stage: 'PID',
+      confirmedStages: [],
     });
     expect(h.client.calls.filter(call => call.command === MSP_SET_PID)).toHaveLength(1);
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_EEPROM_WRITE);

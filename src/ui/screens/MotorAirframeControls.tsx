@@ -71,6 +71,7 @@ import {MIN_TOUCH_TARGET} from '../components/controls';
 import {SelectField} from '../components/controls/SelectField';
 import {Icon} from '../icons';
 import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
+import {partialApplyMessage} from '../presentation/writeStageNames';
 
 /** The same port shape the full settings panel injects, plus the
  * explicit reboot step of the §36 lifecycle. */
@@ -607,6 +608,19 @@ export function MotorAirframeControls({
           break;
         case 'UNCONFIRMED':
           setOutcome({text: t('motorsScreen.quickSaveUnconfirmed'), danger: true});
+          break;
+        case 'PARTIAL_UNPERSISTED':
+          /* U-R1. The mixer/props write reached FC RAM and the EEPROM
+             commit did not. This branch exists ahead of `default`
+             because `default` says «فشل الحفظ» - the one sentence that
+             is false here, and the more dangerous for being about a
+             mixer: the aircraft is running a motor mapping the operator
+             was told it does not have. The draft is deliberately KEPT so
+             what they asked for is still on screen. */
+          setOutcome({
+            text: partialApplyMessage(result.failedStage === 'EEPROM'),
+            danger: true,
+          });
           break;
         default:
           setOutcome({text: t('motorsScreen.quickSaveFailed'), danger: true});

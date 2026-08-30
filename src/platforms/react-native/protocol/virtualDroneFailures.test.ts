@@ -115,9 +115,11 @@ describe('failure injection - the app never claims what it cannot prove', () => 
       original,
       ROTATED,
     )) as Outcome;
+    /* U-R1: empty ledger - nothing had been acknowledged. */
     expect(outcome).toEqual({
       kind: 'UNCONFIRMED',
       stage: 'BOARD_ALIGNMENT',
+      confirmedStages: [],
     });
     expect(
       board.requests.filter(r => r.command === MSP_SET_BOARD_ALIGNMENT_CONFIG),
@@ -133,7 +135,9 @@ describe('failure injection - the app never claims what it cannot prove', () => 
       original,
       ROTATED,
     )) as Outcome;
-    expect(outcome).toEqual({kind: 'UNCONFIRMED', stage: 'EEPROM'});
+    /* U-R1: the ledger names the acknowledged alignment write, which is
+       the same fact hasUnsavedChanges() proves on the board below. */
+    expect(outcome).toEqual({kind: 'UNCONFIRMED', stage: 'EEPROM', confirmedStages: ['BOARD_ALIGNMENT']});
     // The angles reached RAM but were never persisted: exactly the state
     // the operator must be told about, and the board proves it.
     expect(board.hasUnsavedChanges()).toBe(true);

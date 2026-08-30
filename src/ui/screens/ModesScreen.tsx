@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import {partialApplyMessage} from '../presentation/writeStageNames';
 import {Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions} from 'react-native';
 import {useTranslation} from 'react-i18next';
 import {
@@ -76,6 +77,8 @@ function saveMessage(outcome: ModesSaveOutcome): {text: string; warning: boolean
     case 'SAVED_VERIFIED': return {text: 'حُفظت جميع شروط الأوضاع وتطابقت القراءة الراجعة من متحكم الطيران.', warning: false};
     case 'SAVED_UNVERIFIED': return {text: 'أقرّ المتحكم الحفظ، لكن تعذر إثبات القيم بالقراءة الراجعة. أعد الاتصال واقرأ قبل تعديل آخر.', warning: true};
     case 'UNCONFIRMED': return {text: outcome.stage.kind === 'EEPROM' ? 'نتيجة الحفظ في ذاكرة المتحكم غير مؤكدة. لا تكرر الحفظ؛ أعد الاتصال واقرأ أولًا.' : `نتيجة كتابة خانة الوضع ${outcome.stage.index + 1} غير مؤكدة. لا تكرر العملية؛ أعد الاتصال واقرأ أولًا.`, warning: true};
+    /* U-R1. RAM moved and flash did not - never «فشل الحفظ». */
+    case 'PARTIAL_UNPERSISTED': return {text: partialApplyMessage(outcome.failedStage.kind === 'EEPROM'), warning: true};
     case 'SESSION_ENDED': return {text: 'انتهت جلسة الاتصال أثناء العملية. أعد الاتصال واقرأ القيم.', warning: true};
     case 'FAILED': return {text: 'فشلت العملية قبل اكتمال التحقق.', warning: true};
     case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};

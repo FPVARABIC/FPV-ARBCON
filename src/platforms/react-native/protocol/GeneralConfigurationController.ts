@@ -61,6 +61,11 @@ import {
   acquireMotorConfigurationInterlock,
   MotorConfigurationTransactionInProgressError,
 } from './motorConfigurationInterlock';
+import {
+  MutationLedger,
+  MutationStoppedError,
+  type PartialApplyEvidence,
+} from './configurationSaveLedger';
 import {isSupportedConfigurationApi} from './betaflightApiSupport';
 
 const EMPTY = new Uint8Array(0);
@@ -128,7 +133,23 @@ export type GeneralConfigurationSaveOutcome =
       readonly error: unknown;
     }
   | { readonly kind: 'REJECTED'; readonly reason: GeneralConfigurationBlockReason }
-  | { readonly kind: 'UNCONFIRMED'; readonly stage: GeneralConfigurationSaveStage }
+  | {
+      readonly kind: 'UNCONFIRMED';
+      readonly stage: GeneralConfigurationSaveStage;
+      readonly confirmedStages: readonly GeneralConfigurationSaveStage[];
+    }
+  /**
+   * U-R1. RAM moved and flash did not. General owns arming, beeper, RX
+   * and advanced settings, so a save that stops half-way leaves the
+   * aircraft with a mixture of the operator's old and new configuration
+   * live until its next power cycle - and `FAILED` says the opposite.
+   */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly confirmedStages: readonly GeneralConfigurationSaveStage[];
+      readonly failedStage: GeneralConfigurationSaveStage;
+      readonly definitelyNotSent: boolean;
+    }
   | { readonly kind: 'SESSION_ENDED' }
   | { readonly kind: 'FAILED'; readonly error: unknown };
 
@@ -145,18 +166,28 @@ class GeneralConfigurationPreflightError extends Error {
   }
 }
 
-interface AmbiguousGeneralConfigurationCause {
+interface AmbiguousGeneralConfigurationCause
+  extends PartialApplyEvidence<GeneralConfigurationSaveStage> {
   readonly kind: 'GENERAL_CONFIGURATION_AMBIGUOUS_WRITE';
   readonly stage: GeneralConfigurationSaveStage;
 }
 
 class AmbiguousGeneralConfigurationWriteError extends MspOperationOutcomeUnknownError {
-  constructor(error: unknown, stage: GeneralConfigurationSaveStage) {
+  constructor(
+    error: unknown,
+    stage: GeneralConfigurationSaveStage,
+    confirmedStages: readonly GeneralConfigurationSaveStage[] = [],
+    partial = false,
+    definitelyNotSent = false,
+  ) {
     super(
       Object.freeze({
         kind: 'GENERAL_CONFIGURATION_AMBIGUOUS_WRITE',
         stage,
         error,
+        confirmedStages,
+        partial,
+        definitelyNotSent,
       }),
     );
   }
@@ -335,6 +366,7 @@ export class GeneralConfigurationController {
             acquisition,
             ownerIdentity,
           );
+          const ledger = new MutationLedger<GeneralConfigurationSaveStage>();
           for (const write of writes) {
             const command = COMMAND_FOR_GROUP[write.group];
             await this.writeOnce(
@@ -343,6 +375,10 @@ export class GeneralConfigurationController {
               write.payload,
               command.wireFormat,
               write.group,
+              sessionKey,
+              client,
+              epoch,
+              ledger,
             );
           }
           await this.writeOnce(
@@ -351,7 +387,12 @@ export class GeneralConfigurationController {
             EMPTY,
             'v1',
             'EEPROM',
+            sessionKey,
+            client,
+            epoch,
+            ledger,
           );
+          ledger.markPersisted();
 
           let snapshot: GeneralConfigurationSnapshot | undefined;
           let readbackError: unknown;
@@ -424,7 +465,18 @@ export class GeneralConfigurationController {
       }
       if (result.status === 'OUTCOME_UNKNOWN')
         return ambiguousCause(result.reason)
-          ? { kind: 'UNCONFIRMED', stage: result.reason.stage }
+          ? result.reason.partial
+            ? {
+                kind: 'PARTIAL_UNPERSISTED',
+                confirmedStages: result.reason.confirmedStages,
+                failedStage: result.reason.stage,
+                definitelyNotSent: result.reason.definitelyNotSent,
+              }
+            : {
+                kind: 'UNCONFIRMED',
+                stage: result.reason.stage,
+                confirmedStages: result.reason.confirmedStages,
+              }
           : { kind: 'SESSION_ENDED' };
       if (result.status === 'SESSION_ENDED') return { kind: 'SESSION_ENDED' };
       return result.error instanceof GeneralConfigurationPreflightError
@@ -494,19 +546,60 @@ export class GeneralConfigurationController {
     return decoded.value;
   }
 
+  /**
+   * U-R1 - THE ONE FUNNEL EVERY MUTATING GENERAL FRAME PASSES THROUGH.
+   *
+   * Liveness is asked here, in the same synchronous turn as the request,
+   * because the transaction's single opening check says nothing about
+   * the board four awaits later. Once the ledger holds an
+   * acknowledgement, losing the session is reported rather than merely
+   * refused: the aircraft's RAM has already moved.
+   */
   private async writeOnce(
     requester: MspRequester,
     command: number,
     payload: Uint8Array,
     wireFormat: 'v1' | 'v2',
     stage: GeneralConfigurationSaveStage,
+    sessionKey: SetupUiSessionKey,
+    client: GeneralConfigurationClient,
+    epoch: number,
+    ledger: MutationLedger<GeneralConfigurationSaveStage>,
   ): Promise<void> {
+    try {
+      this.assertLive(sessionKey, client, epoch);
+    } catch (error) {
+      if (!ledger.hasMutated) throw error;
+      throw new AmbiguousGeneralConfigurationWriteError(
+        new MutationStoppedError(stage, ledger.acknowledgedStages, error),
+        stage,
+        ledger.acknowledgedStages,
+        true,
+        true,
+      );
+    }
     try {
       await requester.request(command, payload, { wireFormat });
     } catch (error) {
-      if (definitelyNotApplied(error)) throw error;
-      throw new AmbiguousGeneralConfigurationWriteError(error, stage);
+      if (definitelyNotApplied(error)) {
+        if (!ledger.hasMutated) throw error;
+        throw new AmbiguousGeneralConfigurationWriteError(
+          error,
+          stage,
+          ledger.acknowledgedStages,
+          true,
+          true,
+        );
+      }
+      throw new AmbiguousGeneralConfigurationWriteError(
+        error,
+        stage,
+        ledger.acknowledgedStages,
+        false,
+        false,
+      );
     }
+    ledger.acknowledge(stage);
   }
 
   private capture(

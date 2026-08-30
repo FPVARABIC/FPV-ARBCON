@@ -105,7 +105,19 @@ export type ReceiverSaveOutcome =
     }
   | {readonly kind: 'SAVED_UNVERIFIED'; readonly error: unknown}
   | {readonly kind: 'REJECTED'; readonly reason: ReceiverBlockReason}
-  | {readonly kind: 'UNCONFIRMED'; readonly stage: ReceiverWriteGroup | 'EEPROM'}
+  /**
+   * A write whose answer never came. U-R1 adds `confirmedStages`: the
+   * groups this transaction had ALREADY been told the board accepted
+   * before the ambiguous one. Without it an ambiguous second write reads
+   * as though the whole save were in doubt, when in fact everything
+   * before it is known-applied and only one group is unknown - and that
+   * is a different instruction to the operator.
+   */
+  | {
+      readonly kind: 'UNCONFIRMED';
+      readonly stage: ReceiverWriteGroup | 'EEPROM';
+      readonly confirmedStages: readonly (ReceiverWriteGroup | 'EEPROM')[];
+    }
   /**
    * RECEIVER P4-M. At least one write was CONFIRMED and a later one was
    * not, before EEPROM was reached.
@@ -235,10 +247,15 @@ interface AmbiguousReceiverCause {
   readonly definitelyNotSent: boolean;
 }
 class AmbiguousReceiverWriteError extends MspOperationOutcomeUnknownError {
-  constructor(error: unknown, stage: ReceiverWriteGroup | 'EEPROM', confirmedStages: readonly (ReceiverWriteGroup | 'EEPROM')[] = [], definitelyNotSent = false) {
+  constructor(error: unknown, stage: ReceiverWriteGroup | 'EEPROM', confirmedStages: readonly (ReceiverWriteGroup | 'EEPROM')[] = [], partial = false, definitelyNotSent = false) {
     super(Object.freeze({
       kind: 'RECEIVER_AMBIGUOUS_WRITE', stage, error,
-      partial: confirmedStages.length > 0,
+      /* U-R1. `partial` is a DECISION, not a count. An AMBIGUOUS EEPROM
+         write is not a partial configuration - every RAM write before it
+         was confirmed and only persistence is unknown, which
+         UNCONFIRMED(EEPROM) already says precisely. The caller decides,
+         and deriving it from the list length here overrode that. */
+      partial,
       confirmedStages: Object.freeze([...confirmedStages]),
       definitelyNotSent,
     }));
@@ -402,13 +419,14 @@ export class ReceiverConfigurationController {
              wrong protocol. */
           const confirmed: (ReceiverWriteGroup | 'EEPROM')[] = [];
           for (const write of encodeChangedReceiverConfiguration(original, draft)) {
-            await this.writeOnce(requester, COMMAND_FOR_GROUP[write.group], write.payload, write.group, confirmed);
+            await this.writeOnce(requester, COMMAND_FOR_GROUP[write.group], write.payload, write.group, confirmed, sessionKey, client, epoch);
           }
           const modeWritten = desiredMask !== undefined && desiredMask !== freshMask;
           if (modeWritten && desiredMask !== undefined) {
-            await this.writeOnce(requester, MSP_SET_FEATURE_CONFIG, encodeFeatureConfig(desiredMask), 'FEATURE', confirmed);
+            await this.writeOnce(requester, MSP_SET_FEATURE_CONFIG, encodeFeatureConfig(desiredMask), 'FEATURE', confirmed, sessionKey, client, epoch);
           }
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM', confirmed);
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM', confirmed, sessionKey, client, epoch);
           try {
             const snapshot = await this.readSnapshot(requester);
             if (!receiverDraftsEqual(createReceiverConfigurationDraft(snapshot), draft)) throw new Error('Receiver readback does not match saved configuration.');
@@ -452,7 +470,11 @@ export class ReceiverConfigurationController {
             definitelyNotSent: result.reason.definitelyNotSent,
           };
         }
-        return {kind: 'UNCONFIRMED', stage: result.reason.stage};
+        return {
+          kind: 'UNCONFIRMED',
+          stage: result.reason.stage,
+          confirmedStages: result.reason.confirmedStages,
+        };
       }
       if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
       return result.error instanceof ReceiverPreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
@@ -471,20 +493,39 @@ export class ReceiverConfigurationController {
    * regardless, with the attribution of the failing frame preserved in
    * `definitelyNotSent` rather than flattened away.
    */
-  private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: ReceiverWriteGroup | 'EEPROM', confirmed?: (ReceiverWriteGroup | 'EEPROM')[]): Promise<void> {
+  private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: ReceiverWriteGroup | 'EEPROM', confirmed?: (ReceiverWriteGroup | 'EEPROM')[], key?: SetupUiSessionKey, client?: ReceiverClient, epoch?: number): Promise<void> {
+    /* U-R1. LIVENESS IS ASSERTED HERE, in the same synchronous turn as
+       the request it authorises. Checking once at the top of `execute`
+       let a flight controller that restarted after the first write go on
+       to receive the rest of the sequence and an EEPROM write. */
+    if (key !== undefined && client !== undefined && epoch !== undefined) {
+      try { this.assertLive(key, client, epoch); }
+      catch (error) {
+        if (confirmed === undefined || confirmed.length === 0) throw error;
+        throw new AmbiguousReceiverWriteError(error, stage, confirmed, true, true);
+      }
+    }
     try { await requester.request(command, payload, {wireFormat: 'v1'}); }
     catch (error) {
       const code = errorCode(error);
       const notSent = code !== undefined && DEFINITELY_NOT_SENT.has(code);
-      /* PARTIAL applies to RAM writes only. A failure at the EEPROM step
-         is NOT a partial configuration: every RAM write before it was
-         confirmed, so the flight controller holds the complete intended
-         state and only PERSISTENCE is unknown - which is precisely what
-         P2's UNCONFIRMED at stage EEPROM already says. Widening partial
-         to cover it would replace a precise answer with a vaguer one. */
-      if (stage !== 'EEPROM' && confirmed !== undefined && confirmed.length > 0) throw new AmbiguousReceiverWriteError(error, stage, confirmed, notSent);
-      if (notSent) throw error;
-      throw new AmbiguousReceiverWriteError(error, stage);
+      /* AMBIGUITY at the EEPROM step is NOT a partial configuration:
+         every RAM write before it was confirmed, so the flight
+         controller holds the complete intended state and only
+         PERSISTENCE is unknown - which is precisely what P2's
+         UNCONFIRMED at stage EEPROM already says.
+
+         U-R1 splits out the case that comment did not cover: an EEPROM
+         write the board provably REFUSED. That is not unknown
+         persistence, it is known ABSENT persistence on top of RAM that
+         has already moved, and reporting it as an ordinary failure said
+         nothing happened when something had. */
+      if (stage !== 'EEPROM' && confirmed !== undefined && confirmed.length > 0) throw new AmbiguousReceiverWriteError(error, stage, confirmed, true, notSent);
+      if (notSent) {
+        if (confirmed === undefined || confirmed.length === 0) throw error;
+        throw new AmbiguousReceiverWriteError(error, stage, confirmed, true, true);
+      }
+      throw new AmbiguousReceiverWriteError(error, stage, confirmed ?? [], false, false);
     }
     confirmed?.push(stage);
   }

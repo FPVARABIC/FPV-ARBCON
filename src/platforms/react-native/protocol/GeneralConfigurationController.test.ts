@@ -328,7 +328,13 @@ describe('GeneralConfigurationController', () => {
         ...createGeneralConfigurationDraft(loaded.snapshot),
         craftName: 'NEW',
       }),
-    ).resolves.toEqual({ kind: 'UNCONFIRMED', stage: 'CRAFT_NAME' });
+    /* U-R1: empty ledger - the craft-name text frame is the first
+       write this draft produces. */
+    ).resolves.toEqual({
+      kind: 'UNCONFIRMED',
+      stage: 'CRAFT_NAME',
+      confirmedStages: [],
+    });
     expect(
       h.client.calls.filter(call => call.command === MSP2_SET_TEXT),
     ).toHaveLength(1);

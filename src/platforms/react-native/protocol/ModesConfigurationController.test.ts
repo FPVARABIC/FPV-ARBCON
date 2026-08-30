@@ -160,7 +160,8 @@ describe('ModesConfigurationController', () => {
     h.client.enqueue(MSP_BOXIDS, {payload: IDS});
     h.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)});
     h.client.enqueue(MSP_SET_MODE_RANGE, {reject: Object.assign(new Error('timeout'), {code: 'MSP_RESPONSE_TIMEOUT'})});
-    await expect(h.controller.save(key, original, changedDraft(original))).resolves.toEqual({kind: 'UNCONFIRMED', stage: {kind: 'MODE_RANGE', index: 0}});
+    /* U-R1: slot 0 is the first frame, so the ledger is empty. */
+    await expect(h.controller.save(key, original, changedDraft(original))).resolves.toEqual({kind: 'UNCONFIRMED', stage: {kind: 'MODE_RANGE', index: 0}, confirmedStages: []});
     expect(h.client.calls.filter(call => call.command === MSP_SET_MODE_RANGE)).toHaveLength(1);
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_EEPROM_WRITE);
   });

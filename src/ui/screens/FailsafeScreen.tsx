@@ -39,7 +39,7 @@ import {
 import {StickyActionBar} from '../components/editing';
 import {PROSE_MEASURE, colors, isDesktopTier, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, ChoiceChips, MIN_TOUCH_TARGET, Stepper as SharedStepper} from '../components/controls';
-import {unconfirmedWriteMessage} from '../presentation/writeStageNames';
+import {partialApplyMessage, unconfirmedWriteMessage} from '../presentation/writeStageNames';
 
 export interface FailsafeControllerPort {load(key: SetupUiSessionKey): Promise<FailsafeLoadOutcome>; save(key: SetupUiSessionKey, original: MspFailsafeSnapshot, draft: FailsafeConfigurationDraft): Promise<FailsafeSaveOutcome>}
 export interface FailsafeScreenProps {readonly sessionKey?: SetupUiSessionKey; readonly active: boolean; readonly onOpenReceiver: () => void; readonly onOpenMotors: () => void; readonly onDirtyChange?: (dirty: boolean) => void; readonly controller?: FailsafeControllerPort}
@@ -93,7 +93,13 @@ type Phase = 'IDLE' | 'LOADING' | 'READY' | 'SAVING' | 'ERROR';
 
 function valueOf<T>(value: TelemetryValue<T>): T | undefined {return value.status === 'FRESH' || value.status === 'STALE' ? value.value : undefined;}
 function blockMessage(reason: FailsafeBlockReason): string {return ({DISCONNECTED: 'انتهى الاتصال بمتحكم الطيران. أعد الاتصال ثم أعد القراءة.', IDENTIFYING: 'ما زال التطبيق يتحقق من هوية متحكم الطيران.', UNSUPPORTED_FIRMWARE: 'إصدار البرنامج الثابت في هذه اللوحة غير مدعوم لهذه الشاشة. حدّث البرنامج الثابت.', APP_BACKGROUNDED: 'أعد التطبيق إلى الواجهة قبل القراءة أو الحفظ.', LINK_RECOVERING: 'الرابط التسلسلي يتعافى. انتظر ثم أعد القراءة.', FC_ARMED: 'رُفض الحفظ لأن متحكم الطيران ARMED.', ARMED_STATE_UNKNOWN: 'تعذر إثبات DISARMED؛ لم تُرسل الإعدادات.', MOTOR_TEST_ACTIVE: 'جلسة اختبار المحركات نشطة. افتح المحركات وأنهِ الجلسة ثم أعد القراءة.', CONFIGURATION_BUSY: 'توجد معاملة إعدادات أخرى قيد التنفيذ.', STALE_BASE: 'تغيرت إعدادات Failsafe في المتحكم. أعد القراءة قبل الحفظ.', INVALID_CONFIGURATION: 'توجد قيمة Failsafe غير صالحة.'} as const)[reason];}
-function saveMessage(outcome: FailsafeSaveOutcome): {text: string; warning: boolean} {switch (outcome.kind) {case 'NO_CHANGES': return {text: 'لا توجد تغييرات.', warning: false}; case 'SAVED_VERIFIED': return {text: 'حُفظ Failsafe وتطابقت القراءة الراجعة.', warning: false}; case 'SAVED_UNVERIFIED': return {text: 'أقرّ المتحكم الحفظ لكن تعذر التحقق. أعد الاتصال واقرأ قبل محاولة أخرى.', warning: true}; case 'UNCONFIRMED': return {text: unconfirmedWriteMessage(outcome.stage.group, 'index' in outcome.stage ? outcome.stage.index : undefined), warning: true}; case 'SESSION_ENDED': return {text: 'انتهت الجلسة أثناء العملية.', warning: true}; case 'FAILED': return {text: 'فشلت العملية قبل اكتمال التحقق.', warning: true}; case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};}}
+function saveMessage(outcome: FailsafeSaveOutcome): {text: string; warning: boolean} {switch (outcome.kind) {case 'NO_CHANGES': return {text: 'لا توجد تغييرات.', warning: false}; case 'SAVED_VERIFIED': return {text: 'حُفظ Failsafe وتطابقت القراءة الراجعة.', warning: false}; case 'SAVED_UNVERIFIED': return {text: 'أقرّ المتحكم الحفظ لكن تعذر التحقق. أعد الاتصال واقرأ قبل محاولة أخرى.', warning: true}; case 'UNCONFIRMED': return {text: unconfirmedWriteMessage(outcome.stage.group, 'index' in outcome.stage ? outcome.stage.index : undefined), warning: true};
+ /* U-R1. RAM MOVED AND FLASH DID NOT. A stop at EEPROM means every
+    change is live on the aircraft and simply was not written to flash;
+    a stop at a settings group means only PART of it is live, which is
+    the more alarming of the two and must not borrow the calmer
+    sentence. Neither may be called «فشل الحفظ» - something did happen. */
+ case 'PARTIAL_UNPERSISTED': return {text: partialApplyMessage(outcome.failedStage.group === 'EEPROM'), warning: true}; case 'SESSION_ENDED': return {text: 'انتهت الجلسة أثناء العملية.', warning: true}; case 'FAILED': return {text: 'فشلت العملية قبل اكتمال التحقق.', warning: true}; case 'REJECTED': return {text: blockMessage(outcome.reason), warning: true};}}
 
 /**
  * CLAMPS INTO the range, not just against it.

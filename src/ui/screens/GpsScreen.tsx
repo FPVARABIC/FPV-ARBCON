@@ -90,6 +90,14 @@ function outcomeKey(outcome: GpsSaveOutcome): string {
       return 'gpsSystem.outcome.savedUnverified';
     case 'UNCONFIRMED':
       return 'gpsSystem.outcome.unconfirmed';
+    /* U-R1. RAM moved and flash did not. A stop at EEPROM means every
+       change is live and only persistence was missed; a stop at a
+       configuration group means only PART of it is live. Neither is
+       «فشل الحفظ». */
+    case 'PARTIAL_UNPERSISTED':
+      return outcome.failedStage === 'EEPROM'
+        ? 'gpsSystem.outcome.appliedNotPersisted'
+        : 'gpsSystem.outcome.partiallyApplied';
     case 'SESSION_ENDED':
       return 'gpsSystem.outcome.sessionEnded';
     case 'FAILED':
