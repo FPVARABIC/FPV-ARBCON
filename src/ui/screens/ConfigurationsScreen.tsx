@@ -88,10 +88,33 @@ function outcomeKey(outcome: GeneralConfigurationSaveOutcome): string {
   switch (outcome.kind) {
     case 'NO_CHANGES':
       return 'configurationsSystem.outcome.noChanges';
+    /*
+     * PERSISTENCE AND REBOOT ACKNOWLEDGEMENT ARE TWO DIFFERENT FACTS.
+     *
+     * The save persists to EEPROM and then asks the flight controller to
+     * restart. That second frame can go unanswered - a timeout, a link
+     * that vanishes - and the app then knows only that IT DID NOT
+     * RECEIVE THE ACKNOWLEDGEMENT. It does not know the reboot failed;
+     * a disappearing link is itself consistent with a board rebooting.
+     *
+     * Reporting «إعادة تشغيل المتحكم متوقعة» on that evidence stated a
+     * restart the app never confirmed. `rebootAcknowledged` was sitting
+     * on the outcome the whole time and this mapping ignored it.
+     *
+     * So the language is CONFIRMED ACKNOWLEDGEMENT vs NOT CONFIRMED -
+     * never "rebooted" vs "reboot failed" - and it never touches the
+     * persistence claim, which is already established by the EEPROM
+     * acknowledgement and stays true either way.
+     */
     case 'SAVED_VERIFIED':
-      return 'configurationsSystem.outcome.saved';
+      return outcome.rebootAcknowledged
+        ? 'configurationsSystem.outcome.saved'
+        : 'configurationsSystem.outcome.savedRebootUnconfirmed';
+    /* Readback uncertainty and reboot uncertainty stay separate. */
     case 'SAVED_UNVERIFIED':
-      return 'configurationsSystem.outcome.savedUnverified';
+      return outcome.rebootAcknowledged
+        ? 'configurationsSystem.outcome.savedUnverified'
+        : 'configurationsSystem.outcome.savedUnverifiedRebootUnconfirmed';
     case 'UNCONFIRMED':
       return 'configurationsSystem.outcome.unconfirmed';
     /* U-R1. Part of the configuration is live in the flight controller

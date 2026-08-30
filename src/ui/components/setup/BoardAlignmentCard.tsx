@@ -263,11 +263,18 @@ export default function BoardAlignmentCard({
               ? t('boardAlignment.savedRebooting')
               : t('boardAlignment.savedRebootUnconfirmed'),
           };
+        /* U-R2. The verified branch above already told the truth about
+           the reboot acknowledgement; this one did not, so a save whose
+           readback failed AND whose reboot went unacknowledged reported
+           only the first. Two uncertainties, two facts - neither hides
+           the other. */
         case 'SAVED_UNVERIFIED':
           return {
             kind: 'MESSAGE',
             tone: 'warn',
-            text: t('boardAlignment.savedUnverified'),
+            text: outcome.rebootAcknowledged
+              ? t('boardAlignment.savedUnverified')
+              : t('boardAlignment.savedUnverifiedRebootUnconfirmed'),
           };
         case 'UNCONFIRMED':
           return {

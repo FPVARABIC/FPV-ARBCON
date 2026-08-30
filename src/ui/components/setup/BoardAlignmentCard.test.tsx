@@ -227,8 +227,12 @@ describe('BoardAlignmentCard', () => {
     const text = textOf(renderer);
     expect(text).toContain('2°');
     expect(text).toContain('90°');
-    // The restart is stated, not implied by a bare "saved".
-    expect(text).toContain('إعادة تشغيل المتحكم');
+    /* The restart is stated, not implied by a bare "saved" - and U-R2
+       makes the assertion stricter than the old substring did: the copy
+       must name the ACKNOWLEDGEMENT of the restart command, because this
+       is the branch where `rebootAcknowledged` is true. A sentence that
+       merely mentioned a restart would no longer be enough. */
+    expect(text).toContain('أقرّ المتحكم أمر إعادة التشغيل');
   });
 
   it('tells the operator the alignment is unknown again after an unverified save', async () => {

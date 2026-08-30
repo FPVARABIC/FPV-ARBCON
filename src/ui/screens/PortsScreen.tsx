@@ -116,10 +116,35 @@ function outcomeKey(outcome: PortsSaveOutcome): string {
   switch (outcome.kind) {
     case 'NO_CHANGES':
       return 'portsConfiguration.outcome.noChanges';
+    /*
+     * PERSISTENCE AND REBOOT ACKNOWLEDGEMENT ARE TWO DIFFERENT FACTS.
+     *
+     * The save persists to EEPROM and then asks the flight controller to
+     * restart. That second frame can go unanswered - a timeout, a link
+     * that vanishes - and the app then knows only that IT DID NOT
+     * RECEIVE THE ACKNOWLEDGEMENT. It does not know the reboot failed;
+     * a disappearing link is itself consistent with a board rebooting.
+     *
+     * Reporting «إعادة تشغيل المتحكم متوقعة» on that evidence stated a
+     * restart the app never confirmed. `rebootAcknowledged` was sitting
+     * on the outcome the whole time and this mapping ignored it.
+     *
+     * So the language is CONFIRMED ACKNOWLEDGEMENT vs NOT CONFIRMED -
+     * never "rebooted" vs "reboot failed" - and it never touches the
+     * persistence claim, which is already established by the EEPROM
+     * acknowledgement and stays true either way.
+     */
     case 'SAVED_VERIFIED':
-      return 'portsConfiguration.outcome.saved';
+      return outcome.rebootAcknowledged
+        ? 'portsConfiguration.outcome.saved'
+        : 'portsConfiguration.outcome.savedRebootUnconfirmed';
+    /* Two independent uncertainties, and neither may hide the other:
+       the readback was not verified AND the reboot was not acknowledged
+       is its own sentence, not the readback one reused. */
     case 'SAVED_UNVERIFIED':
-      return 'portsConfiguration.outcome.savedUnverified';
+      return outcome.rebootAcknowledged
+        ? 'portsConfiguration.outcome.savedUnverified'
+        : 'portsConfiguration.outcome.savedUnverifiedRebootUnconfirmed';
     case 'UNCONFIRMED':
       return 'portsConfiguration.outcome.unconfirmed';
     /*
