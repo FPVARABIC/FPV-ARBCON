@@ -32,6 +32,7 @@ import {
   type ModesSaveOutcome,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
 import {StickyActionBar} from '../components/editing';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, IconButton, MIN_TOUCH_TARGET, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
@@ -68,6 +69,7 @@ function blockMessage(reason: ModesBlockReason): string {
     CONFIGURATION_BUSY: 'توجد معاملة إعدادات أخرى قيد التنفيذ.',
     STALE_BASE: 'تغيرت الأوضاع في المتحكم منذ القراءة. أعد القراءة وراجع القيم.',
     INVALID_CONFIGURATION: 'يوجد شرط وضع غير صالح. راجع AUX والنطاق والربط.',
+    SESSION_CHANGED: 'تغيّرت جلسة المتحكم منذ إنشاء هذه التعديلات. أعد تحميل الإعدادات قبل الحفظ.',
   } as const)[reason];
 }
 
@@ -309,6 +311,15 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined || snapshot === undefined ? [] : validateModesDraft(draft, snapshot), [draft, snapshot]);
+  /* DOES THIS SCREEN'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; the snapshot and the draft are state
+     that outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `dirty` is still true and the Save button is still live, over
+     a draft built against a DIFFERENT aircraft. The controller refuses
+     this too; both layers are required, and this is the one the operator
+     can see. See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(snapshot, sessionKey);
 
   const updateCondition = useCallback((index: number, condition: ModeConditionDraft) => {
     setDraft(current => current === undefined ? current : Object.freeze({conditions: Object.freeze(current.conditions.map((item, itemIndex) => itemIndex === index ? Object.freeze(condition) : item))}));
@@ -333,7 +344,7 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
   }, [dirty]);
 
   const save = useCallback(async () => {
-    if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0) return;
+    if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0 || saveBlockedBySession) return;
     setPhase('SAVING');
     /* An unexpected throw must land on the same ERROR the screen already
        renders, not leave the sticky bar spinning "جارٍ حفظ الأوضاع…". */
@@ -349,7 +360,7 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
       setDraft(createModesConfigurationDraft(outcome.snapshot));
     }
     setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
-  }, [controller, draft, issues.length, sessionKey, snapshot]);
+  }, [saveBlockedBySession, controller, draft, issues.length, sessionKey, snapshot]);
 
   const statusCopy = saveOutcome === undefined ? undefined : saveMessage(saveOutcome);
   const loadingMessage = loadOutcome?.kind === 'REJECTED'
@@ -379,7 +390,7 @@ export default function ModesScreen({sessionKey, active, onOpenMotors, onDirtyCh
       </> : phase === 'LOADING' ? <Text style={styles.loading}>جارٍ قراءة أسماء الأوضاع وجدول الشروط والروابط…</Text> : null}
       <View style={styles.bottomSpace} />
     </ScrollView>
-    <StickyActionBar visible={dirty} summary="تغيّرت شروط الأوضاع" details={[`سيُعاد إرسال جدول الشروط كاملًا (${snapshot?.capacity ?? 20} خانة) ثم الحفظ والتحقق`]} saveLabel="حفظ والتحقق" discardLabel="تجاهل" onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createModesConfigurationDraft(snapshot))} disabledReason={issues.length > 0 ? 'صحح شروط AUX أو الربط أولًا.' : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel="جارٍ حفظ الأوضاع…" testID="modes-save-bar" />
+    <StickyActionBar visible={dirty} summary="تغيّرت شروط الأوضاع" details={[`سيُعاد إرسال جدول الشروط كاملًا (${snapshot?.capacity ?? 20} خانة) ثم الحفظ والتحقق`]} saveLabel="حفظ والتحقق" discardLabel="تجاهل" onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createModesConfigurationDraft(snapshot))} disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : issues.length > 0 ? 'صحح شروط AUX أو الربط أولًا.' : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel="جارٍ حفظ الأوضاع…" testID="modes-save-bar" />
   </View>;
 }
 

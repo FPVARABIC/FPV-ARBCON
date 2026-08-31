@@ -22,6 +22,8 @@ import {
   type MotorConfigurationLoadOutcome,
   type MotorConfigurationSaveOutcome,
 } from '../../platforms/react-native/protocol/MotorConfigurationController';
+import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography} from '../theme';
 import { SelectField, ToggleSwitch } from '../components/controls';
 import { BETAFLIGHT_MIXER_REFERENCE_V147 } from '../../core/firmware-adapters/betaflightMixerReferenceV147';
@@ -47,16 +49,25 @@ type NumericField =
 type NumericText = Readonly<Record<NumericField, string>>;
 
 export interface MotorConfigurationControllerPort {
-  load(sessionId: string): Promise<MotorConfigurationLoadOutcome>;
+  load(sessionKey: SetupUiSessionKey): Promise<MotorConfigurationLoadOutcome>;
   save(
-    sessionId: string,
+    sessionKey: SetupUiSessionKey,
     original: MotorConfigurationSnapshot,
     draft: MotorConfigurationDraft,
   ): Promise<MotorConfigurationSaveOutcome>;
 }
 
 export interface MotorConfigurationPanelProps {
-  readonly sessionId: string;
+  /**
+   * THE ONLY SESSION AUTHORITY THIS PANEL HAS.
+   *
+   * It used to take a bare `sessionId` string as well. Two props naming
+   * one session is two chances to disagree, and the id alone cannot tell
+   * one activation of a session from the next - which is precisely the
+   * distinction a draft's ownership turns on. `sessionKey.sessionId` is
+   * the same string, from one source.
+   */
+  readonly sessionKey: SetupUiSessionKey;
   readonly controller?: MotorConfigurationControllerPort;
   readonly onDirtyChange?: (dirty: boolean) => void;
   /** Reports the panel's exclusive MSP transaction so the motor-test
@@ -116,6 +127,8 @@ function blockReasonText(
   reason: MotorConfigurationBlockReason,
 ): string {
   switch (reason) {
+    case 'SESSION_CHANGED':
+      return t('motorsScreen.blockSessionChanged');
     case 'DISCONNECTED':
       return t('motorConfiguration.reasonDisconnected');
     case 'IDENTIFYING':
@@ -265,7 +278,7 @@ function NumberField({
 }
 
 export function MotorConfigurationPanel({
-  sessionId,
+  sessionKey,
   controller = motorConfigurationController,
   onDirtyChange,
   onBusyChange,
@@ -306,7 +319,7 @@ export function MotorConfigurationPanel({
     setLoadError(undefined);
     setSaveOutcome(undefined);
     try {
-      const result = await controller.load(sessionId);
+      const result = await controller.load(sessionKey);
       if (result.kind === 'LOADED') {
         installSnapshot(result.snapshot);
       } else if (result.kind === 'REJECTED') {
@@ -321,7 +334,7 @@ export function MotorConfigurationPanel({
     } finally {
       setPhase('IDLE');
     }
-  }, [controller, installSnapshot, sessionId, t]);
+  }, [controller, installSnapshot, sessionKey, t]);
 
   useEffect(() => {
     load().catch(() => undefined);
@@ -348,11 +361,24 @@ export function MotorConfigurationPanel({
     onDirtyChange?.(changed);
     return () => onDirtyChange?.(false);
   }, [changed, onDirtyChange]);
+  /* DOES THIS PANEL'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; `original` and the draft are state
+     that outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `changed` is still true and Save is still live, over a draft
+     built against a DIFFERENT aircraft. The controller refuses this too;
+     both layers are required, and this is the one the operator can see.
+     See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(
+    original,
+    sessionKey,
+  );
   const canReview =
     phase === 'IDLE' &&
     changed &&
     validation?.valid === true &&
-    loadError === undefined;
+    loadError === undefined &&
+    !saveBlockedBySession;
   const disabled = phase !== 'IDLE' || original === undefined;
 
   /**
@@ -462,14 +488,15 @@ export function MotorConfigurationPanel({
     if (
       original === undefined ||
       effectiveDraft === undefined ||
-      validation?.valid !== true
+      validation?.valid !== true ||
+      saveBlockedBySession
     ) {
       return;
     }
     setPhase('SAVING');
     setSaveOutcome(undefined);
     try {
-      const result = await controller.save(sessionId, original, effectiveDraft);
+      const result = await controller.save(sessionKey, original, effectiveDraft);
       setSaveOutcome(result);
       if (result.kind === 'SAVED_VERIFIED' || result.kind === 'NO_CHANGES') {
         installSnapshot(result.snapshot);
@@ -488,11 +515,12 @@ export function MotorConfigurationPanel({
       setPhase('IDLE');
     }
   }, [
+    saveBlockedBySession,
     controller,
     effectiveDraft,
     installSnapshot,
     original,
-    sessionId,
+    sessionKey,
     validation,
   ]);
 
@@ -749,6 +777,20 @@ export function MotorConfigurationPanel({
             <View style={styles.errorNotice} testID="motor-config-invalid">
               <Text style={styles.errorText}>
                 {t('motorConfiguration.invalidValues')}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* Disabling Save is not enough on its own: an operator who set
+              a protocol and then found the button dead would read that as
+              the app being broken. Say which fact stopped the write. */}
+          {original !== undefined && saveBlockedBySession ? (
+            <View
+              style={styles.errorNotice}
+              testID="motor-config-session-changed"
+            >
+              <Text style={styles.errorText}>
+                {t('motorsScreen.blockSessionChanged')}
               </Text>
             </View>
           ) : null}

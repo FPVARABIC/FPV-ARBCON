@@ -60,6 +60,7 @@ import {
   type MotorConfigurationDraft,
   type MotorConfigurationSnapshot,
 } from '../../../core/state/motorConfigurationModel';
+import {rememberConfigurationSession} from '../../../core/state/configurationSessionOwnership';
 import {MotorConfigurationController} from './MotorConfigurationController';
 import type {
   MotorConfigurationLoadOutcome,
@@ -118,7 +119,7 @@ async function loadOrThrow(
   session: VirtualSession,
   label: string,
 ): Promise<MotorConfigurationSnapshot> {
-  const outcome = await motors.load(session.sessionId);
+  const outcome = await motors.load(session.key);
   if (outcome.kind !== 'LOADED') {
     throw new Error(
       `${label}: expected LOADED, got ${outcome.kind}` +
@@ -164,7 +165,7 @@ describe('motor configuration: reading, per API revision', () => {
     'loads the live motor settings on API 1.%i',
     async minor => {
       const {board, session, motors} = rig('RACING', minor);
-      const outcome = await motors.load(session.sessionId);
+      const outcome = await motors.load(session.key);
 
       expect(`1.${minor}: ${describeOutcome(outcome)}`).toBe(
         `1.${minor}: LOADED`,
@@ -203,7 +204,7 @@ describe('motor configuration: reading, per API revision', () => {
 
   it('still refuses API 1.45, which is below the reviewed range', async () => {
     const {board, session, motors} = rig('RACING', 45);
-    const outcome = await motors.load(session.sessionId);
+    const outcome = await motors.load(session.key);
     expect(describeOutcome(outcome)).toBe('REJECTED (INCOMPATIBLE_FIRMWARE)');
     expect(board.requests).toEqual([]);
   });
@@ -211,7 +212,7 @@ describe('motor configuration: reading, per API revision', () => {
   it('refuses a non-Betaflight board at every revision', async () => {
     const {board, session, motors} = rig('RACING', 48);
     session.firmwareIdentifier = 'INAV';
-    const outcome = await motors.load(session.sessionId);
+    const outcome = await motors.load(session.key);
     expect(describeOutcome(outcome)).toBe('REJECTED (INCOMPATIBLE_FIRMWARE)');
     expect(board.requests).toEqual([]);
   });
@@ -231,7 +232,7 @@ describe('motor configuration: writing, per API revision', () => {
       // operator moves it to the digital protocol the aircraft flies.
       expect(before.advanced.motorProtocolRaw).toBe(MOTOR_PWM);
 
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorProtocolRaw: MOTOR_DSHOT600,
       });
@@ -263,7 +264,7 @@ describe('motor configuration: writing, per API revision', () => {
         dshotTelemetryEnabled: true,
         motorStopEnabled: true,
       };
-      const outcome = await motors.save(session.sessionId, before, draft);
+      const outcome = await motors.save(session.key, before, draft);
       expect(`1.${minor}: ${describeOutcome(outcome)}`).toBe(
         `1.${minor}: SAVED_VERIFIED`,
       );
@@ -309,7 +310,7 @@ describe('motor configuration: writing, per API revision', () => {
     async minor => {
       const {board, session, motors} = rig('RACING', minor);
       const before = await loadOrThrow(motors, session, `1.${minor} load`);
-      await motors.save(session.sessionId, before, {
+      await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorPoleCount: 12,
       });
@@ -331,7 +332,7 @@ describe('motor configuration: writing, per API revision', () => {
       const readsAfterLoad = board.counts.reads;
 
       const outcome = await motors.save(
-        session.sessionId,
+        session.key,
         before,
         createMotorConfigurationDraft(before),
       );
@@ -350,7 +351,7 @@ describe('motor configuration: writing, per API revision', () => {
     async minor => {
       const {board, session, motors} = rig('RACING', minor);
       const before = await loadOrThrow(motors, session, `1.${minor} load`);
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorProtocolRaw: MOTOR_DSHOT300,
       });
@@ -378,7 +379,7 @@ describe('motor configuration: API 1.49 is read-only, and says which', () => {
       const before = await loadOrThrow(motors, session, `1.${minor} load`);
       const requestsAfterLoad = board.requests.length;
 
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorProtocolRaw: MOTOR_DSHOT600,
       });
@@ -418,10 +419,34 @@ describe('motor configuration: API 1.49 is read-only, and says which', () => {
    * must keep the different reason. Collapsing the two was half the defect,
    * so this proves they did not collapse the other way either.
    *
-   * The snapshot is taken from a 1.47 board and the save attempted against
-   * a 1.45 one, because the refusal has to happen at admission - before the
-   * snapshot is even looked at.
+   * U-R3 CHANGED HOW THIS HAS TO BE ASKED. The case used to be built by
+   * loading from a 1.47 board and saving against a 1.45 one, and the
+   * refusal it read was the admission gate's. That construction is now
+   * TWO faults at once - a foreign baseline as well as an unreadable
+   * board - and session ownership is decided first, before admission and
+   * before anything reaches the wire. So the two are separated: the
+   * cross-board submission proves the ownership refusal comes first, and
+   * a baseline this session really does own proves the capability reason
+   * still survives underneath it. Neither may touch the link.
    */
+  it('refuses a baseline from another session before it ever asks what the board is', async () => {
+    const reference = rig('RACING', 47);
+    const snapshot = await loadOrThrow(
+      reference.motors,
+      reference.session,
+      'reference load',
+    );
+
+    const {board, session, motors} = rig('RACING', 45);
+    const outcome = await motors.save(session.key, snapshot, {
+      ...createMotorConfigurationDraft(snapshot),
+      motorProtocolRaw: MOTOR_DSHOT300,
+    });
+
+    expect(describeOutcome(outcome)).toBe('REJECTED (SESSION_CHANGED)');
+    expect(board.requests).toEqual([]);
+  });
+
   it('keeps INCOMPATIBLE_FIRMWARE for a board that cannot be read', async () => {
     const reference = rig('RACING', 47);
     const snapshot = await loadOrThrow(
@@ -431,7 +456,12 @@ describe('motor configuration: API 1.49 is read-only, and says which', () => {
     );
 
     const {board, session, motors} = rig('RACING', 45);
-    const outcome = await motors.save(session.sessionId, snapshot, {
+    /* The operator holds a baseline that belongs to THIS session - the one
+       thing the 1.45 board cannot supply, since it cannot be read at all.
+       Stating it explicitly is what isolates the capability refusal from
+       the ownership refusal instead of letting one hide the other. */
+    rememberConfigurationSession(snapshot, session.key);
+    const outcome = await motors.save(session.key, snapshot, {
       ...createMotorConfigurationDraft(snapshot),
       motorProtocolRaw: MOTOR_DSHOT300,
     });
@@ -453,7 +483,7 @@ describe('motor configuration: refusals and failures at 1.47 and 1.48 alike', ()
       const before = await loadOrThrow(motors, session, `1.${minor} load`);
       board.setArmed(true);
 
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorProtocolRaw: MOTOR_DSHOT600,
       });
@@ -487,7 +517,7 @@ describe('motor configuration: refusals and failures at 1.47 and 1.48 alike', ()
         fault: {kind: 'REMOTE_ERROR'},
       });
 
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorProtocolRaw: MOTOR_DSHOT600,
       });
@@ -514,7 +544,7 @@ describe('motor configuration: refusals and failures at 1.47 and 1.48 alike', ()
         fault: {kind: 'REMOTE_ERROR'},
       });
 
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorProtocolRaw: MOTOR_DSHOT600,
       });
@@ -537,7 +567,7 @@ describe('motor configuration: refusals and failures at 1.47 and 1.48 alike', ()
         fault: {kind: 'TRUNCATE', bytes: 6},
       });
 
-      const outcome = await motors.load(session.sessionId);
+      const outcome = await motors.load(session.key);
       expect(`1.${minor}: ${outcome.kind}`).toBe(`1.${minor}: FAILED`);
     },
   );
@@ -554,7 +584,7 @@ describe('motor configuration: refusals and failures at 1.47 and 1.48 alike', ()
       moved[3] = MOTOR_DSHOT600;
       board.overwriteParameter(MSP_ADVANCED_CONFIG, moved);
 
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorPoleCount: 12,
       });
@@ -573,7 +603,7 @@ describe('motor configuration: refusals and failures at 1.47 and 1.48 alike', ()
       const before = await loadOrThrow(motors, session, `1.${minor} load`);
       const requestsAfterLoad = board.requests.length;
 
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         motorPoleCount: 2, // firmware bound is 4..255 (cli/settings.c)
       });
@@ -615,7 +645,7 @@ describe('Racing and Freestyle on API 1.47, 1.48 and 1.49', () => {
       motorIdleRaw: target.motorIdlePercent,
       dshotTelemetryEnabled: true,
     };
-    const outcome = await motors.save(session.sessionId, before, draft);
+    const outcome = await motors.save(session.key, before, draft);
 
     if (minor >= 49) {
       expect(`${key} 1.${minor}: ${describeOutcome(outcome)}`).toBe(
@@ -674,7 +704,7 @@ describe('motor configuration: reconnect and reload', () => {
     async minor => {
       const {board, session, motors} = rig('LONG_RANGE', minor);
       const before = await loadOrThrow(motors, session, `1.${minor} load`);
-      const outcome = await motors.save(session.sessionId, before, {
+      const outcome = await motors.save(session.key, before, {
         ...createMotorConfigurationDraft(before),
         // The long-range build flies DShot300, per its own fixture.
         motorProtocolRaw: MOTOR_DSHOT300,

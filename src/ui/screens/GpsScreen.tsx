@@ -45,6 +45,7 @@ import {
   useTelemetryValue,
 } from '../../platforms/react-native/protocol';
 import { openMapLocation } from '../../platforms/mapLink';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
 import {colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {PROSE_MEASURE} from '../theme';
 import {
@@ -396,6 +397,15 @@ export default function GpsScreen({
     !gpsDraftsEqual(draft, originalDraft);
   const invalid = draft === undefined ? [] : validateGpsDraft(draft);
   const busy = phase === 'LOADING' || phase === 'SAVING';
+  /* DOES THIS SCREEN'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; the snapshot and the draft are state
+     that outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `dirty` is still true and the Save button is still live, over
+     a draft built against a DIFFERENT aircraft. The controller refuses
+     this too; both layers are required, and this is the one the operator
+     can see. See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(snapshot, sessionKey);
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -415,7 +425,8 @@ export default function GpsScreen({
       snapshot === undefined ||
       draft === undefined ||
       !dirty ||
-      invalid.length > 0
+      invalid.length > 0 ||
+      saveBlockedBySession
     )
       return;
     Alert.alert(t('gpsSystem.confirmTitle'), t('gpsSystem.confirmBody'), [
@@ -447,7 +458,7 @@ export default function GpsScreen({
         },
       },
     ]);
-  }, [controller, dirty, draft, invalid.length, sessionKey, snapshot, t]);
+  }, [saveBlockedBySession, controller, dirty, draft, invalid.length, sessionKey, snapshot, t]);
 
   const reloadNow = useCallback(() => {
     setSaveOutcome(undefined);
@@ -939,7 +950,7 @@ export default function GpsScreen({
                   onPress={handleSave}
                   variant="primary"
                   icon="save"
-                  disabled={busy || !dirty || invalid.length > 0}
+                  disabled={busy || !dirty || invalid.length > 0 || saveBlockedBySession}
                   accessibilityLabel={t('gpsSystem.save')}
                   style={styles.saveGrow}
                   testID="gps-save"
@@ -964,7 +975,11 @@ export default function GpsScreen({
           setSaveOutcome(undefined);
         }}
         disabledReason={
-          invalid.length > 0 ? t('gpsSystem.invalidPending') : undefined
+          saveBlockedBySession
+            ? t(blockReasonKey('SESSION_CHANGED'))
+            : invalid.length > 0
+              ? t('gpsSystem.invalidPending')
+              : undefined
         }
         statusMessage={
           saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))

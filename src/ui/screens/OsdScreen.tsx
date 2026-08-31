@@ -48,6 +48,7 @@ import {
   type OsdSaveOutcome,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
 import {StickyActionBar} from '../components/editing';
 import {MIN_TOUCH_TARGET} from '../components/controls/interaction';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
@@ -98,6 +99,7 @@ function blockMessage(reason: OsdBlockReason): string {
       CONFIGURATION_BUSY: 'توجد معاملة إعدادات أخرى قيد التنفيذ.',
       STALE_BASE: 'تغير OSD في المتحكم. أعد القراءة.',
       INVALID_CONFIGURATION: 'توجد قيمة OSD غير صالحة.',
+      SESSION_CHANGED: 'تغيّرت جلسة المتحكم منذ إنشاء هذه التعديلات. أعد تحميل الإعدادات قبل الحفظ.',
     } as const
   )[reason];
 }
@@ -268,6 +270,15 @@ export default function OsdScreen({
         : validateOsdDraft(draft, snapshot),
     [draft, snapshot],
   );
+  /* DOES THIS SCREEN'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; the snapshot and the draft are state
+     that outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `dirty` is still true and the Save button is still live, over
+     a draft built against a DIFFERENT aircraft. The controller refuses
+     this too; both layers are required, and this is the one the operator
+     can see. See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(snapshot, sessionKey);
 
   const update = useCallback(
     <K extends keyof Omit<OsdConfigurationDraft, 'elementPositions' | 'statistics' | 'timers'>>(
@@ -347,7 +358,8 @@ export default function OsdScreen({
       sessionKey === undefined ||
       snapshot === undefined ||
       draft === undefined ||
-      issues.length > 0
+      issues.length > 0 ||
+      saveBlockedBySession
     )
       return;
     setPhase('SAVING');
@@ -366,7 +378,7 @@ export default function OsdScreen({
       setDraft(createOsdConfigurationDraft(outcome.snapshot));
     }
     setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
-  }, [controller, draft, issues.length, sessionKey, snapshot]);
+  }, [saveBlockedBySession, controller, draft, issues.length, sessionKey, snapshot]);
 
   const statusCopy = saveOutcome === undefined ? undefined : saveMessage(saveOutcome);
   const loadingMessage =
@@ -830,7 +842,7 @@ export default function OsdScreen({
         onDiscard={() =>
           snapshot !== undefined && setDraft(createOsdConfigurationDraft(snapshot))
         }
-        disabledReason={issues.length > 0 ? 'صحح إعدادات OSD أولًا.' : undefined}
+        disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : issues.length > 0 ? 'صحح إعدادات OSD أولًا.' : undefined}
         statusMessage={statusCopy?.text}
         statusTone={statusCopy?.warning ? 'warning' : 'normal'}
         busy={phase === 'SAVING'}

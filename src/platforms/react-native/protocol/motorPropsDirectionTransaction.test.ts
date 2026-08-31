@@ -116,7 +116,7 @@ async function loadOrThrow(
   {motors, session}: Rig,
   label: string,
 ): Promise<MotorConfigurationSnapshot> {
-  const outcome = await motors.load(session.sessionId);
+  const outcome = await motors.load(session.key);
   if (outcome.kind !== 'LOADED') {
     throw new Error(
       `${label}: expected LOADED, got ${outcome.kind}` +
@@ -176,7 +176,7 @@ describe('M-F3D §11 - saving props out is a real, verified transaction', () => 
     expect(payloadsOf(board, MSP_SET_MIXER_CONFIG)).toHaveLength(0);
 
     const saveFrom = board.requests.length;
-    const outcome = await motors.save(session.sessionId, before, draft);
+    const outcome = await motors.save(session.key, before, draft);
 
     expect(
       outcome.kind === 'SAVED_VERIFIED'
@@ -223,7 +223,7 @@ describe('M-F3D §11 - saving props out is a real, verified transaction', () => 
     const {board, session, motors} = harness;
     const before = await loadOrThrow(harness, 'initial load');
 
-    await motors.save(session.sessionId, before, {
+    await motors.save(session.key, before, {
       ...createMotorConfigurationDraft(before),
       yawMotorsReversed: true,
     });
@@ -248,7 +248,7 @@ describe('M-F3D §13 - props out -> props in is equally real', () => {
 
     // Get the board to props OUT first, the same way an operator would.
     const first = await loadOrThrow(harness, 'initial load');
-    const toOut = await motors.save(session.sessionId, first, {
+    const toOut = await motors.save(session.key, first, {
       ...createMotorConfigurationDraft(first),
       yawMotorsReversed: true,
     });
@@ -261,7 +261,7 @@ describe('M-F3D §13 - props out -> props in is equally real', () => {
     expect(outNow.mixer.yawMotorsReversedConfigured).toBe(true);
 
     const backFrom = board.requests.length;
-    const toIn = await motors.save(session.sessionId, outNow, {
+    const toIn = await motors.save(session.key, outNow, {
       ...createMotorConfigurationDraft(outNow),
       yawMotorsReversed: false,
     });
@@ -296,7 +296,7 @@ describe('M-F3D §11 - a save with no change writes nothing', () => {
 
     const from = board.requests.length;
     const outcome = await motors.save(
-      session.sessionId,
+      session.key,
       before,
       createMotorConfigurationDraft(before),
     );
@@ -320,7 +320,7 @@ describe('M-F3D §11 - the fresh read is a guard, not a formality', () => {
 
     // Someone else - another screen, the CLI, a second operator - changed
     // the same field after this editor loaded its base.
-    const other = await motors.save(session.sessionId, before, {
+    const other = await motors.save(session.key, before, {
       ...createMotorConfigurationDraft(before),
       yawMotorsReversed: true,
     });
@@ -330,7 +330,7 @@ describe('M-F3D §11 - the fresh read is a guard, not a formality', () => {
     // against the base it loaded, so the no-change short circuit does not
     // answer first and the fresh read is what refuses it.
     const from = board.requests.length;
-    const stale = await motors.save(session.sessionId, before, {
+    const stale = await motors.save(session.key, before, {
       ...createMotorConfigurationDraft(before),
       yawMotorsReversed: true,
     });
@@ -358,7 +358,7 @@ describe('M-F3D §11 - an armed aircraft is not reconfigured', () => {
 
     board.setArmed(true);
     const from = board.requests.length;
-    const outcome = await motors.save(session.sessionId, before, {
+    const outcome = await motors.save(session.key, before, {
       ...createMotorConfigurationDraft(before),
       yawMotorsReversed: true,
     });

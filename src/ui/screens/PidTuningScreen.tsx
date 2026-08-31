@@ -54,6 +54,7 @@ import type {CopyProfileRequest} from '../../core/protocol/msp/encoding/encodePr
 import RpmFilterCard from '../components/pid/RpmFilterCard';
 import AdvancedTuningGroups from '../components/pid/AdvancedTuningGroups';
 import ProfileManagementCard from '../components/pid/ProfileManagementCard';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
 import {StickyActionBar} from '../components/editing';
 import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, ChoiceChips, NoticeBox, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
@@ -147,6 +148,7 @@ function blockMessage(reason: PidBlockReason): string {
     CONFIGURATION_BUSY: 'هناك معاملة إعدادات أخرى جارية. انتظر ثم أعد المحاولة.',
     STALE_BASE: 'تغيّرت قيم PID على متحكم الطيران منذ آخر قراءة. أعد القراءة قبل الحفظ.',
     INVALID_CONFIGURATION: 'هناك قيمة PID أو Rates أو Filters خارج الحدود الرسمية أو حد Nyquist الآمن.',
+    SESSION_CHANGED: 'تغيّرت جلسة المتحكم منذ إنشاء هذه التعديلات. أعد تحميل الإعدادات قبل الحفظ.',
     UNVERIFIED_FUTURE_API: 'إصدار البرنامج الثابت أحدث من أي تخطيط تحقّقنا منه من المصدر، لذلك لا نكتب أي ضبط إليه.',
     PROFILE_CHANGED: 'تغيّر الملف النشط على متحكم الطيران بعد قراءة القيم. لم يُرسل أي تعديل؛ أعد القراءة أولًا.',
     DIRECT_EDIT_CONFLICTS_WITH_ACTIVE_SIMPLIFIED: 'الضبط المبسّط نشط ويملك هذه القيم؛ تعديلها يدويًا سيُلغى فورًا. لم يُرسل شيء.',
@@ -584,6 +586,18 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined ? [] : validatePidTuningDraft(draft, snapshot), [draft, snapshot]);
   const blocked = issues.length > 0 || pendingRangeIssue;
+  /* DOES THIS SCREEN'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; the snapshot and the draft are state
+     that outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `dirty` is still true and the Save button is still live, over
+     a draft built against a DIFFERENT aircraft. This screen's save chains
+     THREE writes (rates algorithm, values, simplified), so the check has
+     to sit in front of the chain rather than in front of one call. The
+     controller refuses each of the three as well; both layers are
+     required, and this is the one the operator can see.
+     See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(snapshot, sessionKey);
 
   /**
    * ADVANCED OPENS ITSELF WHEN THE SIMPLIFIED WORKSPACE CANNOT WORK.
@@ -662,7 +676,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
    * prevent.
    */
   const save = useCallback(async () => {
-    if (sessionKey === undefined || snapshot === undefined || draft === undefined || blocked) return;
+    if (sessionKey === undefined || snapshot === undefined || draft === undefined || blocked || saveBlockedBySession) return;
     setPhase('SAVING'); retireStatus();
     let base = snapshot;
     let working = draft;
@@ -713,7 +727,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
     setDraft(createPidTuningDraft(base));
     setStatus(last ?? {text: 'لا توجد تغييرات جديدة.', warning: false});
     setPhase(terminal ? 'ERROR' : 'READY');
-  }, [blocked, controller, draft, pendingRatesType, ratesTypeDirty, retireStatus, sessionKey, simplifiedDirty, simplifiedPatch, snapshot]);
+  }, [saveBlockedBySession, blocked, controller, draft, pendingRatesType, ratesTypeDirty, retireStatus, sessionKey, simplifiedDirty, simplifiedPatch, snapshot]);
 
   /**
    * SWITCHES THE ACTIVE PROFILE ON THE BOARD, not in this component.
@@ -1041,7 +1055,7 @@ export default function PidTuningScreen({sessionKey, active, onOpenMotors, onDir
   </ScrollView>
   {/* 5. COMMIT. The bar names the scopes that changed, so a pilot who edited
       one thing is not told "الإعدادات تغيّرت" and left to guess which. */}
-  <StickyActionBar visible={dirty} summary={dirtyScopes.length === 0 ? 'تغيّرت إعدادات الضبط' : `تغيّر: ${dirtyScopes.join(' · ')}`} details={['تُكتب المجموعات المتغيرة فقط، بالترتيب: خوارزمية Rates ثم القيم ثم الضبط المبسّط، وتُقرأ كل خطوة للتحقق']} saveLabel="حفظ والتحقق" discardLabel="تجاهل" onSave={save} onDiscard={discard} disabledReason={blocked ? 'صحح القيم أو حدود Nyquist أولًا.' : undefined} statusMessage={status?.text} statusTone={status?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel="جارٍ حفظ إعدادات الضبط…" testID="pid-save-bar" /></View>;
+  <StickyActionBar visible={dirty} summary={dirtyScopes.length === 0 ? 'تغيّرت إعدادات الضبط' : `تغيّر: ${dirtyScopes.join(' · ')}`} details={['تُكتب المجموعات المتغيرة فقط، بالترتيب: خوارزمية Rates ثم القيم ثم الضبط المبسّط، وتُقرأ كل خطوة للتحقق']} saveLabel="حفظ والتحقق" discardLabel="تجاهل" onSave={save} onDiscard={discard} disabledReason={saveBlockedBySession ? blockMessage('SESSION_CHANGED') : blocked ? 'صحح القيم أو حدود Nyquist أولًا.' : undefined} statusMessage={status?.text} statusTone={status?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel="جارٍ حفظ إعدادات الضبط…" testID="pid-save-bar" /></View>;
 }
 
 const styles = StyleSheet.create({

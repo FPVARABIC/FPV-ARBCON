@@ -272,6 +272,7 @@ const PORT_ROLES: Record<SerialRoleKey, true> = {
 };
 
 const PORT_BLOCK_REASONS: Record<PortsBlockReason, true> = {
+  SESSION_CHANGED: true,
   DISCONNECTED: true,
   IDENTIFYING: true,
   UNSUPPORTED_FIRMWARE: true,
@@ -287,6 +288,7 @@ const PORT_BLOCK_REASONS: Record<PortsBlockReason, true> = {
 };
 
 const GPS_BLOCK_REASONS: Record<GpsBlockReason, true> = {
+  SESSION_CHANGED: true,
   DISCONNECTED: true,
   IDENTIFYING: true,
   UNSUPPORTED_FIRMWARE: true,

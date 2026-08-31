@@ -501,6 +501,9 @@ export interface MotorsScreenViewProps {
    * presentation-only tests omit it, so no configuration I/O can start from
    * an unbound view. */
   readonly sessionId?: string;
+  /** U-R3: the composite key the configuration transaction is
+   * authorised by. `sessionId` alone cannot express a stale generation. */
+  readonly sessionKey?: SetupUiSessionKey;
   readonly onConfigurationDirtyChange?: (dirty: boolean) => void;
   /** See MotorsTabProps.active - presentation only, never safety. */
   readonly active?: boolean;
@@ -516,6 +519,7 @@ export function MotorsScreenView({
   bottomInset,
   bringUpFailure,
   sessionId,
+  sessionKey,
   onConfigurationDirtyChange,
   active = true,
   airframeConfigPort,
@@ -2253,6 +2257,7 @@ export function MotorsScreenView({
               see the strip's own header. */}
           <MotorAirframeControls
             sessionId={sessionId}
+            sessionKey={sessionKey}
             liveMixerModeRaw={liveMixerModeRaw}
             liveYawMotorsReversed={liveYawMotorsReversed}
             writesLocked={holdOwned || mayBeLive || motorControlEnabled}
@@ -2516,9 +2521,11 @@ export function MotorsScreenView({
           </Pressable>
         ) : null}
 
-        {sessionId !== undefined && motorSettingsOpen ? (
+        {sessionId !== undefined &&
+        sessionKey !== undefined &&
+        motorSettingsOpen ? (
           <MotorConfigurationPanel
-            sessionId={sessionId}
+            sessionKey={sessionKey}
             onDirtyChange={setMotorConfigurationDirty}
             onBusyChange={setMotorConfigurationBusy}
           />
@@ -3966,6 +3973,7 @@ function MotorsScreenBinding({
       bottomInset={bottomInset}
       bringUpFailure={bringUpFailure}
       sessionId={sessionKey.sessionId}
+      sessionKey={sessionKey}
       onConfigurationDirtyChange={onConfigurationDirtyChange}
       active={active}
     />

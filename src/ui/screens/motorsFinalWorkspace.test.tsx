@@ -451,6 +451,7 @@ function mountView(port: MotorAirframeControlsPort) {
       <MotorsScreenView
         operator={undefined}
         sessionId={SESSION_ID}
+        sessionKey={{sessionId: SESSION_ID, generation: 1}}
         onRequestLeave={() => undefined}
         airframeConfigPort={port}
       />,
@@ -757,6 +758,7 @@ describe('M-F2 §40 - the display fallback never leaks into command identity', (
         <MotorsScreenView
           operator={operator}
           sessionId={SESSION_ID}
+          sessionKey={{sessionId: SESSION_ID, generation: 1}}
           onRequestLeave={() => undefined}
           airframeConfigPort={{
             load: async () => ({

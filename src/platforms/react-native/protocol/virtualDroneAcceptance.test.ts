@@ -525,7 +525,7 @@ describe('virtual drone acceptance - API 1.47 / 1.48 / 1.49', () => {
   ])('motor settings on API 1.%i are %s', async (minor, expected) => {
     const {session} = rigFor(spec('RACING'), minor as number);
     const motors = new MotorConfigurationController(session.options);
-    const outcome = (await motors.load(session.sessionId)) as SaveOutcome;
+    const outcome = (await motors.load(session.key)) as SaveOutcome;
     expect(`1.${minor}: ${describeOutcome(outcome)}`).toBe(
       `1.${minor}: ${expected}`,
     );
@@ -538,11 +538,11 @@ describe('virtual drone acceptance - API 1.47 / 1.48 / 1.49', () => {
   ])('a motor protocol change on API 1.%i is %s', async (minor, expected) => {
     const {board, session} = rigFor(spec('RACING'), minor as number);
     const motors = new MotorConfigurationController(session.options);
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     expect(loaded.kind).toBe('LOADED');
     if (loaded.kind !== 'LOADED') return;
 
-    const outcome = (await motors.save(session.sessionId, loaded.snapshot, {
+    const outcome = (await motors.save(session.key, loaded.snapshot, {
       ...createMotorConfigurationDraft(loaded.snapshot),
       motorProtocolRaw: spec('RACING').target.motorProtocol,
     })) as SaveOutcome;

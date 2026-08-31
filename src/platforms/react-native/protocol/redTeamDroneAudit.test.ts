@@ -360,7 +360,7 @@ describe('red team: an old draft must not win', () => {
     const {board, session} = rig(spec);
 
     const motors = new MotorConfigurationController(session.options);
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     if (loaded.kind !== 'LOADED') throw new Error('motors load failed');
 
     // Another screen enables GPS while the Motors editor is open.
@@ -373,7 +373,7 @@ describe('red team: an old draft must not win', () => {
     );
     await board.request(MSP_SET_FEATURE_CONFIG, mask, {wireFormat: 'v1'});
 
-    const outcome = (await motors.save(session.sessionId, loaded.snapshot, {
+    const outcome = (await motors.save(session.key, loaded.snapshot, {
       ...createMotorConfigurationDraft(loaded.snapshot),
       motorStopEnabled: true,
     })) as Outcome;
@@ -525,11 +525,11 @@ describe('red team: the 3D band cannot be driven out of the firmware range', () 
   it('refuses the ordered-but-impossible band and writes nothing', async () => {
     const {board, session} = rig(redTeamSpec('CINE5_SMOOTH'));
     const motors = new MotorConfigurationController(session.options);
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     if (loaded.kind !== 'LOADED') throw new Error('load failed');
     const writesBefore = board.counts.writes;
 
-    const outcome = (await motors.save(session.sessionId, loaded.snapshot, {
+    const outcome = (await motors.save(session.key, loaded.snapshot, {
       ...createMotorConfigurationDraft(loaded.snapshot),
       deadband3dLow: 0,
       neutral3d: 1,
@@ -552,11 +552,11 @@ describe('red team: the 3D band cannot be driven out of the firmware range', () 
   it('refuses a PWM rate of zero and one beyond the timer range', async () => {
     const {board, session} = rig(redTeamSpec('MICRO2_TOY'));
     const motors = new MotorConfigurationController(session.options);
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     if (loaded.kind !== 'LOADED') throw new Error('load failed');
 
     for (const rate of [0, 65535]) {
-      const outcome = (await motors.save(session.sessionId, loaded.snapshot, {
+      const outcome = (await motors.save(session.key, loaded.snapshot, {
         ...createMotorConfigurationDraft(loaded.snapshot),
         motorPwmRate: rate,
       })) as Outcome;
@@ -572,11 +572,11 @@ describe('red team: the 3D band cannot be driven out of the firmware range', () 
     // everything.
     const {board, session} = rig(redTeamSpec('MICRO2_TOY'));
     const motors = new MotorConfigurationController(session.options);
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     if (loaded.kind !== 'LOADED') throw new Error('load failed');
 
     const spec = redTeamSpec('MICRO2_TOY');
-    const outcome = (await motors.save(session.sessionId, loaded.snapshot, {
+    const outcome = (await motors.save(session.key, loaded.snapshot, {
       ...createMotorConfigurationDraft(loaded.snapshot),
       motorProtocolRaw: spec.target.motorProtocol,
       motorIdleRaw: spec.target.motorIdlePercent,
@@ -629,7 +629,7 @@ describe('red team: payloads longer, shorter and stranger than expected', () => 
 
     const loaded = await new MotorConfigurationController(
       session.options,
-    ).load(session.sessionId);
+    ).load(session.key);
     expect(loaded.kind).toBe('LOADED');
     if (loaded.kind !== 'LOADED') return;
     // The known prefix decoded correctly; the trailing bytes changed
@@ -651,7 +651,7 @@ describe('red team: payloads longer, shorter and stranger than expected', () => 
       });
       const loaded = await new MotorConfigurationController(
         session.options,
-      ).load(session.sessionId);
+      ).load(session.key);
       expect(loaded.kind).toBe('FAILED');
     },
   );
@@ -673,7 +673,7 @@ describe('red team: payloads longer, shorter and stranger than expected', () => 
 
     const loaded = await new MotorConfigurationController(
       session.options,
-    ).load(session.sessionId);
+    ).load(session.key);
     expect(loaded.kind).toBe('LOADED');
     if (loaded.kind !== 'LOADED') return;
     expect(loaded.snapshot.advanced.motorProtocolRaw).toBe(9);
@@ -685,10 +685,10 @@ describe('red team: payloads longer, shorter and stranger than expected', () => 
     // value written to one is a guess.
     const {board, session} = rig(redTeamSpec('CINE5_SMOOTH'));
     const motors = new MotorConfigurationController(session.options);
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     if (loaded.kind !== 'LOADED') throw new Error('load failed');
 
-    const outcome = (await motors.save(session.sessionId, loaded.snapshot, {
+    const outcome = (await motors.save(session.key, loaded.snapshot, {
       ...createMotorConfigurationDraft(loaded.snapshot),
       motorProtocolRaw: 10, // MOTOR_PROTOCOL_MAX - one past the last real one
     })) as Outcome;

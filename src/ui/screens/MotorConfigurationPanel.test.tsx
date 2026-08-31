@@ -100,7 +100,10 @@ async function render(controller: MotorConfigurationControllerPort) {
   let tree!: ReactTestRenderer.ReactTestRenderer;
   await act(async () => {
     tree = ReactTestRenderer.create(
-      <MotorConfigurationPanel sessionId="fc-1" controller={controller} />,
+      <MotorConfigurationPanel
+        sessionKey={{sessionId: 'fc-1', generation: 1}}
+        controller={controller}
+      />,
     );
   });
   return tree;
@@ -125,7 +128,7 @@ describe('MotorConfigurationPanel', () => {
     await act(async () => {
       tree = ReactTestRenderer.create(
         <MotorConfigurationPanel
-          sessionId="fc-1"
+          sessionKey={{sessionId: 'fc-1', generation: 1}}
           controller={controller}
           onBusyChange={onBusyChange}
         />,
@@ -146,7 +149,7 @@ describe('MotorConfigurationPanel', () => {
     const tree = await render(controller);
     const text = JSON.stringify(tree.toJSON());
 
-    expect(controller.load).toHaveBeenCalledWith('fc-1');
+    expect(controller.load).toHaveBeenCalledWith({sessionId: 'fc-1', generation: 1});
     expect(text).toContain('بروتوكول خرج ESC');
     expect(text).toContain('ميزات ESC وسلوك الخمول');
     expect(text).toContain('وضع 3D');
@@ -189,7 +192,7 @@ describe('MotorConfigurationPanel', () => {
     });
     expect(controller.save).toHaveBeenCalledTimes(1);
     expect(controller.save).toHaveBeenCalledWith(
-      'fc-1',
+      {sessionId: 'fc-1', generation: 1},
       expect.any(Object),
       expect.objectContaining({ motorIdleRaw: 600, motorProtocolRaw: 7 }),
     );

@@ -377,7 +377,16 @@ function canOpenMotorTestSession(coordinator: MspSessionCoordinator): string {
   return 'CAN_OPEN';
 }
 
-/** Can an ordinary configuration screen load its data? */
+/**
+ * Can an ordinary configuration screen load its data?
+ *
+ * THE KEY IS ASKED FOR, NEVER ASSUMED. A screen is mounted with the key
+ * the coordinator minted for the session it is looking at, and after a
+ * CLI save reboots the board that is a NEW key with a new generation.
+ * Hard-coding `generation: 1` here would make every round after the
+ * first read as a refusal, and would be measuring the fixture's
+ * bookkeeping rather than the product's.
+ */
 async function canScreenRead(
   coordinator: MspSessionCoordinator,
 ): Promise<string> {
@@ -386,7 +395,9 @@ async function canScreenRead(
     appStateOwner: {getPhase: () => 'ACTIVE'},
     isMotorOutputEngaged: () => false,
   });
-  const outcome = await controller.load(SESSION_ID);
+  const key = coordinator.getSessionKey(SESSION_ID);
+  if (key === undefined) return 'NO_SESSION_KEY';
+  const outcome = await controller.load(key);
   return outcome.kind === 'REJECTED'
     ? `REJECTED:${outcome.reason}`
     : outcome.kind;
@@ -990,7 +1001,7 @@ describe('a board that reboots WITHOUT a detach event', () => {
       generation: number;
     }) => ({
       motors: await new MotorConfigurationController(deps)
-        .load(sessionKey.sessionId)
+        .load(sessionKey)
         .then(r => (r.kind === 'REJECTED' ? r.reason : r.kind)),
       pid: await new PidTuningController(deps)
         .load(sessionKey)

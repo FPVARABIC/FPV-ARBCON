@@ -102,7 +102,7 @@ describe('a Motors save must not undo another screen s feature bits', () => {
   it('keeps a feature another screen enabled between load and save', async () => {
     const {board, session, motors} = rig();
 
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     expect(loaded.kind).toBe('LOADED');
     if (loaded.kind !== 'LOADED') return;
     const baseMask = loaded.snapshot.feature.enabledFeaturesRaw;
@@ -112,7 +112,7 @@ describe('a Motors save must not undo another screen s feature bits', () => {
     expect(liveFeatureMask(board) & FEATURE_GPS).toBe(FEATURE_GPS);
 
     // ---- the Motors save, touching only a bit Motors owns ------------
-    const outcome = await motors.save(session.sessionId, loaded.snapshot, {
+    const outcome = await motors.save(session.key, loaded.snapshot, {
       ...createMotorConfigurationDraft(loaded.snapshot),
       motorStopEnabled: true,
     });
@@ -137,7 +137,7 @@ describe('a Motors save must not undo another screen s feature bits', () => {
       liveFeatureMask(board) | FEATURE_TELEMETRY,
     );
 
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     expect(loaded.kind).toBe('LOADED');
     if (loaded.kind !== 'LOADED') return;
     expect(loaded.snapshot.feature.enabledFeaturesRaw & FEATURE_TELEMETRY).toBe(
@@ -149,7 +149,7 @@ describe('a Motors save must not undo another screen s feature bits', () => {
       liveFeatureMask(board) & ~FEATURE_TELEMETRY,
     );
 
-    const outcome = await motors.save(session.sessionId, loaded.snapshot, {
+    const outcome = await motors.save(session.key, loaded.snapshot, {
       ...createMotorConfigurationDraft(loaded.snapshot),
       motorStopEnabled: true,
     });
@@ -171,7 +171,7 @@ describe('a Motors save must not undo another screen s feature bits', () => {
    */
   it('still refuses when the other screen changed a bit Motors owns', async () => {
     const {board, session, motors} = rig();
-    const loaded = await motors.load(session.sessionId);
+    const loaded = await motors.load(session.key);
     if (loaded.kind !== 'LOADED') throw new Error('expected LOADED');
 
     // FEATURE_MOTOR_STOP is one of the three bits the Motors draft covers.
@@ -180,7 +180,7 @@ describe('a Motors save must not undo another screen s feature bits', () => {
       loaded.snapshot.feature.enabledFeaturesRaw | (1 << 4),
     );
 
-    const outcome = await motors.save(session.sessionId, loaded.snapshot, {
+    const outcome = await motors.save(session.key, loaded.snapshot, {
       ...createMotorConfigurationDraft(loaded.snapshot),
       escSensorEnabled: true,
     });

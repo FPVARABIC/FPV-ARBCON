@@ -225,6 +225,7 @@ function mountView(
       <MotorsScreenView
         operator={operator}
         sessionId={SESSION_ID}
+        sessionKey={{sessionId: SESSION_ID, generation: 1}}
         onRequestLeave={() => undefined}
         airframeConfigPort={port}
       />,

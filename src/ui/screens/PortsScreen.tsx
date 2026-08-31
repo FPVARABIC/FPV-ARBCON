@@ -53,6 +53,7 @@ import {
   type SetupUiSessionKey,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import { StickyActionBar } from '../components/editing';
 import {
@@ -608,6 +609,18 @@ export default function PortsScreen({
   const dirty =
     original !== undefined && !serialPortsEqual(original.ports, draft);
   const controlsDisabled = phase === 'LOADING' || phase === 'SAVING';
+  /* DOES THIS SCREEN'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; `original` and `draft` are state that
+     outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `dirty` is still true and the Save button is still live, over
+     a draft built against a DIFFERENT aircraft. The controller refuses
+     this too; both layers are required, and this is the one the operator
+     can see. See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(
+    original,
+    sessionKey,
+  );
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -683,7 +696,8 @@ export default function PortsScreen({
       sessionKey === undefined ||
       original === undefined ||
       !dirty ||
-      issues.length > 0
+      issues.length > 0 ||
+      saveBlockedBySession
     )
       return;
     setPhase('SAVING');
@@ -706,7 +720,7 @@ export default function PortsScreen({
         ? 'ERROR'
         : 'READY',
     );
-  }, [controller, dirty, draft, issues.length, original, sessionKey]);
+  }, [saveBlockedBySession, controller, dirty, draft, issues.length, original, sessionKey]);
 
   const reloadNow = useCallback(() => {
     setSaveOutcome(undefined);
@@ -1031,7 +1045,12 @@ export default function PortsScreen({
                 variant="primary"
                 size="lg"
                 icon="save"
-                disabled={controlsDisabled || !dirty || issues.length > 0}
+                disabled={
+                  controlsDisabled ||
+                  !dirty ||
+                  issues.length > 0 ||
+                  saveBlockedBySession
+                }
                 accessibilityLabel={t('portsConfiguration.saveAndReboot')}
                 style={styles.saveGrow}
                 testID="ports-save"
@@ -1060,9 +1079,11 @@ export default function PortsScreen({
           setSaveOutcome(undefined);
         }}
         disabledReason={
-          issues.length > 0
-            ? t('portsConfiguration.validationTitle')
-            : undefined
+          saveBlockedBySession
+            ? t(blockReasonKey('SESSION_CHANGED'))
+            : issues.length > 0
+              ? t('portsConfiguration.validationTitle')
+              : undefined
         }
         statusMessage={
           saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))

@@ -168,8 +168,8 @@ function boardModel(
   const rebootRequests: string[] = [];
   const loads: string[] = [];
   const port: MotorAirframeControlsPort = {
-    load: async sessionId => {
-      loads.push(sessionId);
+    load: async sessionKey => {
+      loads.push(sessionKey.sessionId);
       return {kind: 'LOADED', snapshot: snapshotWith(active, count)};
     },
     save: async (_sessionId, _original, draft) => {
@@ -300,6 +300,7 @@ function mountView(
     <MotorsScreenView
       operator={live}
       sessionId={sessionId}
+      sessionKey={{sessionId, generation: 1}}
       onRequestLeave={() => undefined}
       airframeConfigPort={port}
     />

@@ -23,6 +23,10 @@ import {
   type ReceiverRssiSource, type ReceiverWriteGroup,
 } from '../../../core';
 import {deriveArmedState} from '../../../core/state/armingBlockers';
+import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
 import type {MspClientState} from '../../../core/protocol/mspClient';
 import {isMotorTestSessionActive} from './motorTestCapability';
 import {mspSessionCoordinator, type MspIdentificationState, type MspSessionOwnershipState, type SetupUiSessionKey} from './MspSessionCoordinator';
@@ -50,7 +54,7 @@ export interface ReceiverAppStateOwner { getPhase(): SetupAppStatePhase }
  * Collapsing them would tell an operator their receiver settings are
  * wrong when the actual answer is "assign a UART in Ports first".
  */
-export type ReceiverBlockReason = 'DISCONNECTED' | 'IDENTIFYING' | 'UNSUPPORTED_FIRMWARE' | 'APP_BACKGROUNDED' | 'LINK_RECOVERING' | 'FC_ARMED' | 'ARMED_STATE_UNKNOWN' | 'MOTOR_TEST_ACTIVE' | 'CONFIGURATION_BUSY' | 'STALE_BASE' | 'INVALID_CONFIGURATION' | 'DEPENDENCY_MISSING' | 'DEPENDENCY_AMBIGUOUS' | 'DEPENDENCY_UNKNOWN' | 'MODE_NOT_WRITABLE'
+export type ReceiverBlockReason = 'DISCONNECTED' | 'IDENTIFYING' | 'UNSUPPORTED_FIRMWARE' | 'APP_BACKGROUNDED' | 'LINK_RECOVERING' | 'FC_ARMED' | 'ARMED_STATE_UNKNOWN' | 'MOTOR_TEST_ACTIVE' | 'CONFIGURATION_BUSY' | 'STALE_BASE' | 'INVALID_CONFIGURATION' | 'SESSION_CHANGED' | 'DEPENDENCY_MISSING' | 'DEPENDENCY_AMBIGUOUS' | 'DEPENDENCY_UNKNOWN' | 'MODE_NOT_WRITABLE'
   /** P4 CLOSURE: the connected build reported its options and the driver
    * this change needs was NOT among them. */
   | 'CAPABILITY_UNAVAILABLE'
@@ -295,7 +299,8 @@ export class ReceiverConfigurationController {
         validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new ReceiverPreflightError('LINK_RECOVERING')},
         execute: async requester => { this.assertLive(sessionKey, client, epoch); return this.readSnapshot(requester); },
       });
-      if (result.status === 'SUCCEEDED') return {kind: 'LOADED', snapshot: result.result};
+      if (result.status === 'SUCCEEDED')
+        return {kind: 'LOADED', snapshot: rememberConfigurationSession(result.result, sessionKey)};
       if (result.status === 'SESSION_ENDED' || result.status === 'OUTCOME_UNKNOWN') return {kind: 'SESSION_ENDED'};
       return result.error instanceof ReceiverPreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
     } finally { interlock.release(); }
@@ -309,6 +314,14 @@ export class ReceiverConfigurationController {
    * receiver happens.
    */
   async save(sessionKey: SetupUiSessionKey, original: ReceiverConfigurationSnapshot, draft: ReceiverConfigurationDraft, modeTarget?: ReceiverModeTarget): Promise<ReceiverSaveOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before the no-op check, before capture(), before any wire
+       access at all: a baseline produced under a DIFFERENT session may
+       not be written under this one. Two byte-identical boards defeat
+       every other guard here - stale-base compares configuration, and
+       assertLive compares liveness; neither asks which aircraft the
+       operator was editing. See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, sessionKey)) return {kind: 'REJECTED', reason: 'SESSION_CHANGED'};
     const baseDraft = createReceiverConfigurationDraft(original);
     if (receiverDraftsEqual(baseDraft, draft) && modeTarget === undefined) return {kind: 'NO_CHANGES', snapshot: original};
     if (validateReceiverDraft(draft).length > 0) return {kind: 'REJECTED', reason: 'INVALID_CONFIGURATION'};
@@ -451,6 +464,7 @@ export class ReceiverConfigurationController {
         if (snapshot === undefined) return {kind: 'SAVED_UNVERIFIED', error: readbackError};
         // Authoritative FC truth first; the changed-field expectation is
         // only the fallback for when the flag could not be re-read.
+        rememberConfigurationSession(snapshot, sessionKey);
         if (rebootRequired === true) return {kind: 'SAVED_REBOOT_REQUIRED', snapshot, evidence: 'FC_REPORTED'};
         /* P4-P. The FC does not raise its flag for either of these, so
            the absence of the flag proves nothing about them. Structure

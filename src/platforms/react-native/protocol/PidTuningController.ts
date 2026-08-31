@@ -11,6 +11,10 @@ import {
 import {MSP2_GET_TEXT, MSP2_SET_TEXT, MSP_SELECT_SETTING} from '../../../core/protocol/msp/commands/mspCommands';
 import {decodeMspText} from '../../../core/protocol/msp/decoding/decodeMspText';
 import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
+import {
   MSP_CALCULATE_SIMPLIFIED_PID,
   MSP_COPY_PROFILE,
   MSP_SET_RESET_CURR_PID,
@@ -106,6 +110,7 @@ export interface PidSessionCoordinator {
 }
 export interface PidAppStateOwner { getPhase(): SetupAppStatePhase }
 export type PidBlockReason =
+  | 'SESSION_CHANGED'
   | 'DISCONNECTED' | 'IDENTIFYING' | 'UNSUPPORTED_FIRMWARE' | 'APP_BACKGROUNDED' | 'LINK_RECOVERING'
   | 'FC_ARMED' | 'ARMED_STATE_UNKNOWN' | 'MOTOR_TEST_ACTIVE' | 'CONFIGURATION_BUSY' | 'STALE_BASE'
   | 'INVALID_CONFIGURATION'
@@ -819,6 +824,17 @@ export class PidTuningController {
     this.isMotorTestActive = options.isMotorTestActive ?? isMotorTestSessionActive;
   }
 
+  /**
+   * Re-binds a snapshot this controller just produced to the session that
+   * produced it. The screen adopts it as its next baseline, so leaving it
+   * unregistered would refuse the operator's very next edit.
+   */
+  private own<T>(outcome: T, key: SetupUiSessionKey): T {
+    const snapshot = (outcome as {snapshot?: object}).snapshot;
+    if (snapshot !== undefined) rememberConfigurationSession(snapshot, key);
+    return outcome;
+  }
+
   async load(key: SetupUiSessionKey): Promise<PidLoadOutcome> {
     const captured = this.capture(key); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
     const {client, scheduler, epoch, gyroSampleRateHz, contract} = captured; let interlock;
@@ -830,13 +846,23 @@ export class PidTuningController {
         validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new PidPreflightError('LINK_RECOVERING')},
         execute: async requester => { this.assertLive(key, client, epoch); return this.readSnapshot(requester, contract, gyroSampleRateHz); },
       });
-      if (result.status === 'SUCCEEDED') return {kind: 'LOADED', snapshot: result.result};
+      if (result.status === 'SUCCEEDED')
+        return {kind: 'LOADED', snapshot: rememberConfigurationSession(result.result, key)};
       if (result.status === 'SESSION_ENDED' || result.status === 'OUTCOME_UNKNOWN') return {kind: 'SESSION_ENDED'};
       return result.error instanceof PidPreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
     } finally { interlock.release(); }
   }
 
   async save(key: SetupUiSessionKey, original: MspPidTuningSnapshot, draft: PidTuningDraft): Promise<PidSaveOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before every other check and before any wire access: a
+       baseline produced under a DIFFERENT session may not be written
+       under this one. Two byte-identical boards defeat every other guard
+       here - stale-base compares configuration, assertSameProfile
+       compares the profile, assertLive compares liveness; none of them
+       asks which aircraft the operator was editing.
+       See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, key)) return {kind: 'REJECTED', reason: 'SESSION_CHANGED'};
     if (pidTuningDraftsEqual(createPidTuningDraft(original), draft)) return {kind: 'NO_CHANGES', snapshot: original};
     if (validatePidTuningDraft(draft, original).length > 0) return {kind: 'REJECTED', reason: 'INVALID_CONFIGURATION'};
     const captured = this.capture(key, 'WRITE'); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
@@ -932,7 +958,7 @@ export class PidTuningController {
           }
         },
       });
-      if (result.status === 'SUCCEEDED') return saveOutcomeFrom(result.result);
+      if (result.status === 'SUCCEEDED') return this.own(saveOutcomeFrom(result.result), key);
       if (result.status === 'OUTCOME_UNKNOWN') {
         if (!ambiguousCause(result.reason)) return {kind: 'SESSION_ENDED'};
         if (result.reason.partial) return {kind: 'PARTIAL_UNPERSISTED', confirmedStages: result.reason.confirmedStages, failedStage: result.reason.stage, definitelyNotSent: result.reason.definitelyNotSent};
@@ -966,6 +992,15 @@ export class PidTuningController {
     original: MspPidTuningSnapshot,
     patch: SimplifiedTuningPatch,
   ): Promise<PidSimplifiedSaveOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before every other check and before any wire access: a
+       baseline produced under a DIFFERENT session may not be written
+       under this one. Two byte-identical boards defeat every other guard
+       here - stale-base compares configuration, assertSameProfile
+       compares the profile, assertLive compares liveness; none of them
+       asks which aircraft the operator was editing.
+       See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, key)) return {kind: 'REJECTED', reason: 'SESSION_CHANGED'};
     const captured = this.capture(key, 'WRITE'); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
     const {client, scheduler, epoch, gyroSampleRateHz, contract} = captured; let interlock;
     try { interlock = acquireMotorConfigurationInterlock(client); }
@@ -1020,7 +1055,7 @@ export class PidTuningController {
       if (result.status === 'SUCCEEDED') {
         const internal = result.result;
         if ('unchanged' in internal) return {kind: 'NO_CHANGES', snapshot: internal.unchanged};
-        if ('saved' in internal) return {kind: 'SAVED_VERIFIED', ...internal.saved};
+        if ('saved' in internal) return this.own({kind: 'SAVED_VERIFIED', ...internal.saved}, key);
         if ('appliedOnly' in internal) return {kind: 'APPLIED_PERSISTENCE_UNVERIFIED', ...internal.appliedOnly};
         return {kind: 'READBACK_MISMATCH', fields: internal.mismatch.fields};
       }
@@ -1070,6 +1105,15 @@ export class PidTuningController {
    * normalisation: an unknown formula is not a formula.
    */
   async setRatesType(key: SetupUiSessionKey, original: MspPidTuningSnapshot, ratesTypeRaw: number): Promise<PidRatesTypeOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before every other check and before any wire access: a
+       baseline produced under a DIFFERENT session may not be written
+       under this one. Two byte-identical boards defeat every other guard
+       here - stale-base compares configuration, assertSameProfile
+       compares the profile, assertLive compares liveness; none of them
+       asks which aircraft the operator was editing.
+       See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, key)) return {kind: 'REJECTED', reason: 'SESSION_CHANGED'};
     if (!isEncodableRatesType(ratesTypeRaw)) return {kind: 'REJECTED', reason: 'UNKNOWN_RATES_TYPE'};
     const captured = this.capture(key, 'WRITE'); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
     const {client, scheduler, epoch, gyroSampleRateHz, contract} = captured; let interlock;
@@ -1111,7 +1155,7 @@ export class PidTuningController {
       if (result.status === 'SUCCEEDED') {
         const internal = result.result;
         if ('unchanged' in internal) return {kind: 'NO_CHANGES', snapshot: internal.unchanged};
-        if ('persisted' in internal) return {kind: 'PERSISTED_VERIFIED', ...internal.persisted};
+        if ('persisted' in internal) return this.own({kind: 'PERSISTED_VERIFIED', ...internal.persisted}, key);
         if ('appliedOnly' in internal) return {kind: 'APPLIED_PERSISTENCE_UNVERIFIED', ...internal.appliedOnly};
         return {kind: 'READBACK_MISMATCH', fields: internal.mismatch.fields};
       }

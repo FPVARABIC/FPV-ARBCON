@@ -514,7 +514,7 @@ async function motorsRig(tag: string) {
     apiMinor: 47,
   });
   const controller = new MotorConfigurationController(session.options);
-  const loaded = await controller.load(session.sessionId);
+  const loaded = await controller.load(session.key);
   if (loaded.kind !== 'LOADED') {
     throw new Error(`motors load ${loaded.kind}`);
   }
@@ -555,7 +555,7 @@ describe('the Motors save obeys the same invariant', () => {
 
     const from = board.requests.length;
     const outcome = (await controller.save(
-      session.sessionId,
+      session.key,
       original,
       draft,
     )) as MotorConfigurationSaveOutcome;
@@ -591,7 +591,7 @@ describe('the Motors save obeys the same invariant', () => {
     const dry = await motorsRig('midloop-dry');
     const dryFrom = dry.board.requests.length;
     await dry.controller.save(
-      dry.session.sessionId,
+      dry.session.key,
       dry.original,
       dry.twoGroupDraft,
     );
@@ -606,7 +606,7 @@ describe('the Motors save obeys the same invariant', () => {
 
     const from = board.requests.length;
     const outcome = (await controller.save(
-      session.sessionId,
+      session.key,
       original,
       twoGroupDraft,
     )) as MotorConfigurationSaveOutcome;
@@ -637,7 +637,7 @@ describe('the Motors save obeys the same invariant', () => {
 
     const from = board.requests.length;
     const outcome = (await controller.save(
-      session.sessionId,
+      session.key,
       original,
       draft,
     )) as MotorConfigurationSaveOutcome;
@@ -664,7 +664,7 @@ describe('the Motors save obeys the same invariant', () => {
       await motorsRig('healthy');
     const from = board.requests.length;
     const outcome = (await controller.save(
-      session.sessionId,
+      session.key,
       original,
       draft,
     )) as MotorConfigurationSaveOutcome;

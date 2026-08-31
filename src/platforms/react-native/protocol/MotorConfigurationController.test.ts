@@ -200,7 +200,18 @@ function makeHarness(
     },
     isMotorOutputEngaged: () => options.motorTestActive === true,
   });
-  return { client, controller, telemetry, state };
+  /* U-R3: load/save now take the composite SetupUiSessionKey. A getter
+     rather than a snapshot, because tests move `state.generation` to
+     simulate a reconnect and must see the change. */
+  const key = {
+    get sessionId() {
+      return 'fc-1';
+    },
+    get generation() {
+      return state.generation;
+    },
+  };
+  return { client, controller, telemetry, state, key };
 }
 
 function enqueueSnapshot(client: FakeClient, idle = 550, protocol = 7): void {
@@ -215,7 +226,7 @@ function enqueueSnapshot(client: FakeClient, idle = 550, protocol = 7): void {
 
 async function loadOriginal(harness: ReturnType<typeof makeHarness>) {
   enqueueSnapshot(harness.client);
-  const loaded = await harness.controller.load('fc-1');
+  const loaded = await harness.controller.load(harness.key);
   if (loaded.kind !== 'LOADED') {
     throw new Error(`Expected LOADED, received ${loaded.kind}`);
   }
@@ -242,7 +253,7 @@ describe('MotorConfigurationController', () => {
       },
     };
 
-    await expect(harness.controller.load('fc-1')).resolves.toEqual({
+    await expect(harness.controller.load(harness.key)).resolves.toEqual({
       kind: 'REJECTED',
       reason: 'INCOMPATIBLE_FIRMWARE',
     });
@@ -294,7 +305,7 @@ describe('MotorConfigurationController', () => {
     harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
     enqueueSnapshot(harness.client, 550, 6);
 
-    const outcome = await harness.controller.save('fc-1', original, {
+    const outcome = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorProtocolRaw: 6,
     });
@@ -314,7 +325,7 @@ describe('MotorConfigurationController', () => {
     const callsAfterLoad = harness.client.calls.length;
     expect(callsAfterLoad).toBeGreaterThan(0);
 
-    const outcome = await harness.controller.save('fc-1', original, {
+    const outcome = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorProtocolRaw: 6,
     });
@@ -342,7 +353,7 @@ describe('MotorConfigurationController', () => {
 
   it('rejects an active motor-test lifecycle before any request', async () => {
     const harness = makeHarness({ motorTestActive: true });
-    expect(await harness.controller.load('fc-1')).toEqual({
+    expect(await harness.controller.load(harness.key)).toEqual({
       kind: 'REJECTED',
       reason: 'MOTOR_TEST_ACTIVE',
     });
@@ -356,7 +367,7 @@ describe('MotorConfigurationController', () => {
 
     expect(
       await harness.controller.save(
-        'fc-1',
+        harness.key,
         original,
         createMotorConfigurationDraft(original),
       ),
@@ -371,7 +382,7 @@ describe('MotorConfigurationController', () => {
     harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
     harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(true) });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -390,7 +401,7 @@ describe('MotorConfigurationController', () => {
     const original = await loadOriginal(harness);
     enqueueSnapshot(harness.client, 575);
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -416,7 +427,7 @@ describe('MotorConfigurationController', () => {
     harness.client.enqueue(MSP_EEPROM_WRITE, { payload: Uint8Array.from([]) });
     enqueueSnapshot(harness.client, 600);
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -469,7 +480,7 @@ describe('MotorConfigurationController', () => {
     // The readback: the SAME mixer byte the board started with.
     enqueueSnapshot(harness.client);
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       mixerModeRaw: 10,
     });
@@ -507,7 +518,7 @@ describe('MotorConfigurationController', () => {
       payload: advancedPayload(550, 7),
     });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       mixerModeRaw: 10,
     });
@@ -561,7 +572,7 @@ describe('MotorConfigurationController', () => {
     harness.client.enqueue(MSP_EEPROM_WRITE, {payload: Uint8Array.from([])});
     enqueueSnapshot(harness.client);
 
-    await harness.controller.save('fc-1', original, {
+    await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorStopEnabled: true,
     });
@@ -584,7 +595,7 @@ describe('MotorConfigurationController', () => {
       reject: { code: 'MSP_REMOTE_ERROR' },
     });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -609,7 +620,7 @@ describe('MotorConfigurationController', () => {
       reject: { code: 'MSP_TIMEOUT' },
     });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -642,7 +653,7 @@ describe('MotorConfigurationController', () => {
       reject: { code: 'MSP_TIMEOUT' },
     });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -899,7 +910,7 @@ describe('M-D §0 - what the Motors screen really does with command 43', () => {
 
   async function loadHexacopter(harness: ReturnType<typeof makeHarness>) {
     enqueueHexSnapshot(harness);
-    const loaded = await harness.controller.load('fc-1');
+    const loaded = await harness.controller.load(harness.key);
     if (loaded.kind !== 'LOADED') {
       throw new Error(`Expected LOADED, received ${loaded.kind}`);
     }
@@ -921,7 +932,7 @@ describe('M-D §0 - what the Motors screen really does with command 43', () => {
     harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
     enqueueHexSnapshot(harness, HEX_MIXER_REVERSED); // the verification read
 
-    const outcome = await harness.controller.save('fc-1', original, {
+    const outcome = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       yawMotorsReversed: true,
     });
@@ -950,7 +961,7 @@ describe('M-D §0 - what the Motors screen really does with command 43', () => {
     harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
     enqueueHexSnapshot(harness, HEX_MIXER, 6); // the verification read
 
-    const outcome = await harness.controller.save('fc-1', original, {
+    const outcome = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorProtocolRaw: 6,
     });

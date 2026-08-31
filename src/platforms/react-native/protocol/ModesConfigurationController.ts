@@ -24,6 +24,10 @@ import {
 } from '../../../core';
 import type {MspClientState} from '../../../core/protocol/mspClient';
 import {deriveArmedState} from '../../../core/state/armingBlockers';
+import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
 import {isMotorTestSessionActive} from './motorTestCapability';
 import {
   mspSessionCoordinator,
@@ -63,6 +67,7 @@ export interface ModesSessionCoordinator {
 export interface ModesAppStateOwner { getPhase(): SetupAppStatePhase }
 
 export type ModesBlockReason =
+  | 'SESSION_CHANGED'
   | 'DISCONNECTED'
   | 'IDENTIFYING'
   | 'UNSUPPORTED_FIRMWARE'
@@ -167,7 +172,8 @@ export class ModesConfigurationController {
           return this.readSnapshot(requester);
         },
       });
-      if (result.status === 'SUCCEEDED') return {kind: 'LOADED', snapshot: result.result};
+      if (result.status === 'SUCCEEDED')
+        return {kind: 'LOADED', snapshot: rememberConfigurationSession(result.result, key)};
       if (result.status === 'SESSION_ENDED' || result.status === 'OUTCOME_UNKNOWN') return {kind: 'SESSION_ENDED'};
       return result.error instanceof ModesPreflightError
         ? {kind: 'REJECTED', reason: result.error.reason}
@@ -178,6 +184,14 @@ export class ModesConfigurationController {
   }
 
   async save(key: SetupUiSessionKey, original: MspModesConfiguration, draft: ModesConfigurationDraft): Promise<ModesSaveOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before the no-op check, before capture(), before any wire
+       access at all: a baseline produced under a DIFFERENT session may
+       not be written under this one. Two byte-identical boards defeat
+       every other guard here - stale-base compares configuration, and
+       assertLive compares liveness; neither asks which aircraft the
+       operator was editing. See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, key)) return {kind: 'REJECTED', reason: 'SESSION_CHANGED'};
     if (modesDraftsEqual(createModesConfigurationDraft(original), draft)) return {kind: 'NO_CHANGES', snapshot: original};
     if (validateModesDraft(draft, original).length > 0) return {kind: 'REJECTED', reason: 'INVALID_CONFIGURATION'};
     const captured = this.capture(key);
@@ -224,7 +238,7 @@ export class ModesConfigurationController {
       });
       if (result.status === 'SUCCEEDED') {
         return result.result.snapshot !== undefined
-          ? {kind: 'SAVED_VERIFIED', snapshot: result.result.snapshot}
+          ? {kind: 'SAVED_VERIFIED', snapshot: rememberConfigurationSession(result.result.snapshot, key)}
           : {kind: 'SAVED_UNVERIFIED', error: result.result.readbackError};
       }
       if (result.status === 'OUTCOME_UNKNOWN') {

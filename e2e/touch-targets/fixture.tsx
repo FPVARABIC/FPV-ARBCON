@@ -456,6 +456,7 @@ const SCENES: Record<string, () => React.JSX.Element> = {
   motors: () => (
     <MotorAirframeControls
       sessionId="touch-fixture"
+      sessionKey={{sessionId: 'touch-fixture', generation: 1}}
       liveMixerModeRaw={3}
       liveYawMotorsReversed={false}
       writesLocked={false}

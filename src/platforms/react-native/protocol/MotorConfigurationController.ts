@@ -31,6 +31,10 @@ import {
   MSP_STATUS_EX,
 } from '../../../core/protocol/msp/commands/mspCommands';
 import { decodeAdvancedConfig } from '../../../core/protocol/msp/decoding/decodeAdvancedConfig';
+import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
 import { decodeFeatureConfig } from '../../../core/protocol/msp/decoding/decodeFeatureConfig';
 import { decodeMixerConfig } from '../../../core/protocol/msp/decoding/decodeMixerConfig';
 import { decodeMotor3dConfig } from '../../../core/protocol/msp/decoding/decodeMotor3dConfig';
@@ -112,6 +116,7 @@ const CONFIRMED_NOT_SENT_CODES: readonly string[] = Object.freeze([
 ]);
 
 export type MotorConfigurationBlockReason =
+  | 'SESSION_CHANGED'
   | 'DISCONNECTED'
   | 'IDENTIFYING'
   | 'INCOMPATIBLE_FIRMWARE'
@@ -430,12 +435,29 @@ export class MotorConfigurationController {
       options.isMotorOutputEngaged ?? defaultMotorOutputEngaged;
   }
 
-  async load(sessionId: string): Promise<MotorConfigurationLoadOutcome> {
+  /**
+   * U-R3: takes a `SetupUiSessionKey`, not a bare sessionId.
+   *
+   * This controller was the ONE of the nine whose caller could not
+   * express a stale generation - the native layer is allowed to reuse a
+   * sessionId string, so `sessionId` alone cannot distinguish one
+   * activation from the next. Every other configuration controller had
+   * been taking the composite key since Pass 7.1; this closes the gap
+   * rather than reproducing the missing half inside the controller,
+   * which would have meant inventing a generation the caller never
+   * proved.
+   */
+  async load(sessionKey: SetupUiSessionKey): Promise<MotorConfigurationLoadOutcome> {
+    const sessionId = sessionKey.sessionId;
     const preflight = this.captureSession(sessionId, 'MOTOR_CONFIGURATION_READ');
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
     const { client, scheduler, generation, epoch } = preflight;
+    /* The half a bare sessionId could never carry. */
+    if (generation !== sessionKey.generation) {
+      return { kind: 'REJECTED', reason: 'DISCONNECTED' };
+    }
     let interlock;
     try {
       interlock = acquireMotorConfigurationInterlock(client);
@@ -458,7 +480,10 @@ export class MotorConfigurationController {
               },
         execute: async requester => {
           this.assertLivePreflight(sessionId, client, generation, epoch);
-          return this.readSnapshot(requester);
+          return rememberConfigurationSession(
+            await this.readSnapshot(requester),
+            sessionKey,
+          );
         },
       });
 
@@ -905,10 +930,22 @@ export class MotorConfigurationController {
   }
 
   async save(
-    sessionId: string,
+    sessionKey: SetupUiSessionKey,
     original: MotorConfigurationSnapshot,
     draft: MotorConfigurationDraft,
   ): Promise<MotorConfigurationSaveOutcome> {
+    const sessionId = sessionKey.sessionId;
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before validation, before captureSession(), before any wire
+       access at all: a baseline produced under a DIFFERENT session may
+       not be written under this one. Two byte-identical boards defeat
+       every other guard here - stale-base compares configuration, and
+       assertLivePreflight compares liveness; neither asks which aircraft
+       the operator was editing.
+       See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, sessionKey)) {
+      return { kind: 'REJECTED', reason: 'SESSION_CHANGED' };
+    }
     const validation = validateMotorConfigurationDraft(draft);
     if (!validation.valid) {
       return {
@@ -935,6 +972,10 @@ export class MotorConfigurationController {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
     const { client, scheduler, generation, epoch } = preflight;
+    /* The half a bare sessionId could never carry. */
+    if (generation !== sessionKey.generation) {
+      return { kind: 'REJECTED', reason: 'DISCONNECTED' };
+    }
     let interlock;
     try {
       interlock = acquireMotorConfigurationInterlock(client);
@@ -1163,7 +1204,10 @@ export class MotorConfigurationController {
           }
           return {
             kind: 'SAVED_VERIFIED',
-            snapshot: execution.readback,
+            snapshot: rememberConfigurationSession(
+              execution.readback,
+              sessionKey,
+            ),
             rebootRequired: true,
             changedGroups: execution.changedGroups,
           };

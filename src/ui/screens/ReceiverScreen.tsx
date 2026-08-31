@@ -22,6 +22,7 @@ import {
   type ReceiverModeTarget, type ReceiverRuntimeOutcome, type ReceiverRuntimeTruth,
   type ReceiverSaveOutcome, type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol/receiverPresentation';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
 import {StickyActionBar} from '../components/editing';
 import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import {Button, SelectField, Stepper as SharedStepper, ToggleSwitch} from '../components/controls';
@@ -242,6 +243,7 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
     MOTOR_TEST_ACTIVE: t('receiverScreen.blockMotorTest'),
     CONFIGURATION_BUSY: t('receiverScreen.blockBusy'),
     STALE_BASE: t('receiverScreen.blockStaleBase'),
+    SESSION_CHANGED: t('receiverScreen.blockSessionChanged'),
     INVALID_CONFIGURATION: t('receiverScreen.blockInvalid'),
     DEPENDENCY_MISSING: t('receiverScreen.blockDependencyMissing'),
     DEPENDENCY_AMBIGUOUS: t('receiverScreen.blockDependencyAmbiguous'),
@@ -302,10 +304,19 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
   useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const issues = useMemo(() => draft === undefined ? [] : validateReceiverDraft(draft), [draft]);
+  /* DOES THIS SCREEN'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; the snapshot and the draft are state
+     that outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `dirty` is still true and the Save button is still live, over
+     a draft built against a DIFFERENT aircraft. The controller refuses
+     this too; both layers are required, and this is the one the operator
+     can see. See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(snapshot, sessionKey);
   const update = useCallback(<K extends keyof ReceiverConfigurationDraft>(key: K, value: ReceiverConfigurationDraft[K]) => { setDraft(current => current === undefined ? current : Object.freeze({...current, [key]: value})); setSaveOutcome(undefined); }, []);
   const reload = useCallback(() => { const perform = () => setReloadToken(v => v + 1); if (!dirty) return perform(); Alert.alert(t('receiverScreen.discardTitle'), t('receiverScreen.discardBody'), [{text: t('receiverScreen.cancel'), style: 'cancel'}, {text: t('receiverScreen.reload'), style: 'destructive', onPress: perform}]); }, [dirty, t]);
   const save = useCallback(async () => {
-    if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0 || dependencyBlock !== undefined) return;
+    if (sessionKey === undefined || snapshot === undefined || draft === undefined || issues.length > 0 || dependencyBlock !== undefined || saveBlockedBySession) return;
     setPhase('SAVING'); setRebootOutcome(undefined);
     // ONE save authority: the mode target rides along with the same call
     // the rest of the configuration already uses.
@@ -326,7 +337,7 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
       setRuntimeToken(value => value + 1);
     }
     setPhase(outcome.kind === 'FAILED' || outcome.kind === 'SESSION_ENDED' ? 'ERROR' : 'READY');
-  }, [controller, dependencyBlock, draft, issues.length, modeTarget, sessionKey, snapshot]);
+  }, [saveBlockedBySession, controller, dependencyBlock, draft, issues.length, modeTarget, sessionKey, snapshot]);
   const requestReboot = useCallback(async () => { if (sessionKey === undefined || controller.requestReboot === undefined) return; try { setRebootOutcome(await controller.requestReboot(sessionKey)); } catch (error) { setRebootOutcome({kind: 'FAILED', error}); } }, [controller, sessionKey]);
 
   const saveMessage = (outcome: ReceiverSaveOutcome): {text: string; warning: boolean} => {
@@ -531,7 +542,7 @@ export default function ReceiverScreen({sessionKey, active, onOpenPorts, onOpenM
       </> : phase === 'LOADING' ? <Text style={styles.loading}>{t('receiverScreen.loading')}</Text> : null}
       <View style={styles.bottomSpace} />
     </ScrollView>
-    <StickyActionBar visible={dirty} summary={t('receiverScreen.saveSummary')} details={[t('receiverScreen.saveDetails')]} saveLabel={t('receiverScreen.saveLabel')} discardLabel={t('receiverScreen.discardLabel')} onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createReceiverConfigurationDraft(snapshot))} disabledReason={issues.length > 0 ? t('receiverScreen.blockInvalid') : dependencyBlock !== undefined ? blockMessage(dependencyBlock.kind) : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel={t('receiverScreen.saveLabel')} testID="receiver-save-bar" />
+    <StickyActionBar visible={dirty} summary={t('receiverScreen.saveSummary')} details={[t('receiverScreen.saveDetails')]} saveLabel={t('receiverScreen.saveLabel')} discardLabel={t('receiverScreen.discardLabel')} onSave={save} onDiscard={() => snapshot !== undefined && setDraft(createReceiverConfigurationDraft(snapshot))} disabledReason={saveBlockedBySession ? t('receiverScreen.blockSessionChanged') : issues.length > 0 ? t('receiverScreen.blockInvalid') : dependencyBlock !== undefined ? blockMessage(dependencyBlock.kind) : undefined} statusMessage={statusCopy?.text} statusTone={statusCopy?.warning ? 'warning' : 'normal'} busy={phase === 'SAVING'} busyLabel={t('receiverScreen.saveLabel')} testID="receiver-save-bar" />
   </View>;
 }
 

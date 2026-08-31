@@ -404,6 +404,7 @@ describe('Motors: the airframe retry meets the touch floor', () => {
       element: (
         <MotorAirframeControls
           sessionId="touch-floor"
+          sessionKey={{sessionId: 'touch-floor', generation: 1}}
           liveMixerModeRaw={3}
           liveYawMotorsReversed={false}
           writesLocked={false}
@@ -571,6 +572,7 @@ describe('the repaired controls still do their job, and mounting writes nothing'
     const renderer = await render(
       <MotorAirframeControls
         sessionId="touch-floor"
+        sessionKey={{sessionId: 'touch-floor', generation: 1}}
         liveMixerModeRaw={3}
         liveYawMotorsReversed={false}
         writesLocked={false}

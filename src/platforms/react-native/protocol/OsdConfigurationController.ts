@@ -24,6 +24,10 @@ import {
 } from '../../../core';
 import type {MspClientState} from '../../../core/protocol/mspClient';
 import {deriveArmedState} from '../../../core/state/armingBlockers';
+import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
 import {isMotorTestSessionActive} from './motorTestCapability';
 import {mspSessionCoordinator, type MspIdentificationState, type MspSessionOwnershipState, type SetupUiSessionKey} from './MspSessionCoordinator';
 import {setupAppStateTelemetryOwner, type SetupAppStatePhase} from './setupAppStateTelemetryOwner';
@@ -43,7 +47,7 @@ export interface OsdSessionCoordinator {
   getMspRecoveryState(sessionId: string): MspClientState | undefined;
 }
 export interface OsdAppStateOwner {getPhase(): SetupAppStatePhase}
-export type OsdBlockReason = 'DISCONNECTED' | 'IDENTIFYING' | 'UNSUPPORTED_FIRMWARE' | 'APP_BACKGROUNDED' | 'LINK_RECOVERING' | 'FC_ARMED' | 'ARMED_STATE_UNKNOWN' | 'MOTOR_TEST_ACTIVE' | 'CONFIGURATION_BUSY' | 'STALE_BASE' | 'INVALID_CONFIGURATION';
+export type OsdBlockReason = 'DISCONNECTED' | 'IDENTIFYING' | 'UNSUPPORTED_FIRMWARE' | 'APP_BACKGROUNDED' | 'LINK_RECOVERING' | 'FC_ARMED' | 'ARMED_STATE_UNKNOWN' | 'MOTOR_TEST_ACTIVE' | 'CONFIGURATION_BUSY' | 'STALE_BASE' | 'INVALID_CONFIGURATION' | 'SESSION_CHANGED';
 export type OsdSaveStage = {readonly group: OsdWriteGroup; readonly index?: number} | {readonly group: 'EEPROM'};
 export type OsdLoadOutcome = {readonly kind: 'LOADED'; readonly snapshot: MspOsdSnapshot} | {readonly kind: 'REJECTED'; readonly reason: OsdBlockReason} | {readonly kind: 'SESSION_ENDED'} | {readonly kind: 'FAILED'; readonly error: unknown};
 export type OsdSaveOutcome = {readonly kind: 'NO_CHANGES'; readonly snapshot: MspOsdSnapshot} | {readonly kind: 'SAVED_VERIFIED'; readonly snapshot: MspOsdSnapshot} | {readonly kind: 'SAVED_UNVERIFIED'; readonly error: unknown} | {readonly kind: 'REJECTED'; readonly reason: OsdBlockReason} | {readonly kind: 'UNCONFIRMED'; readonly stage: OsdSaveStage; readonly confirmedStages: readonly OsdSaveStage[]}
@@ -74,13 +78,21 @@ export class OsdConfigurationController {
     try {interlock = acquireMotorConfigurationInterlock(client);} catch (error) {return error instanceof MotorConfigurationTransactionInProgressError ? {kind: 'REJECTED', reason: 'CONFIGURATION_BUSY'} : {kind: 'FAILED', error};}
     try {
       const result = await this.operations(key.sessionId, client, scheduler).execute<MspOsdSnapshot>({id: `osd:load:${key.sessionId}:${key.generation}`, sessionEffect: 'KEEP_SESSION', validate: context => context.clientState === 'READY' ? {allowed: true} : {allowed: false, error: new OsdPreflightError('LINK_RECOVERING')}, execute: async requester => {this.assertLive(key, client, epoch); return this.readSnapshot(requester);}});
-      if (result.status === 'SUCCEEDED') return {kind: 'LOADED', snapshot: result.result};
+      if (result.status === 'SUCCEEDED') return {kind: 'LOADED', snapshot: rememberConfigurationSession(result.result, key)};
       if (result.status === 'SESSION_ENDED' || result.status === 'OUTCOME_UNKNOWN') return {kind: 'SESSION_ENDED'};
       return result.error instanceof OsdPreflightError ? {kind: 'REJECTED', reason: result.error.reason} : {kind: 'FAILED', error: result.error};
     } finally {interlock.release();}
   }
 
   async save(key: SetupUiSessionKey, original: MspOsdSnapshot, draft: OsdConfigurationDraft): Promise<OsdSaveOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before the no-op check, before capture(), before any wire
+       access at all: a baseline produced under a DIFFERENT session may
+       not be written under this one. Two byte-identical boards defeat
+       every other guard here - stale-base compares configuration, and
+       assertLive compares liveness; neither asks which aircraft the
+       operator was editing. See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, key)) return {kind: 'REJECTED', reason: 'SESSION_CHANGED'};
     if (osdDraftsEqual(createOsdConfigurationDraft(original), draft)) return {kind: 'NO_CHANGES', snapshot: original};
     if (validateOsdDraft(draft, original).length > 0) return {kind: 'REJECTED', reason: 'INVALID_CONFIGURATION'};
     const captured = this.capture(key); if ('reason' in captured) return {kind: 'REJECTED', reason: captured.reason};
@@ -100,7 +112,7 @@ export class OsdConfigurationController {
           try {const snapshot = await this.readSnapshot(requester); if (!osdDraftsEqual(createOsdConfigurationDraft(snapshot), draft)) throw new Error('OSD readback does not match saved values.'); return {snapshot};} catch (error) {return {readbackError: error};}
         },
       });
-      if (result.status === 'SUCCEEDED') return result.result.snapshot !== undefined ? {kind: 'SAVED_VERIFIED', snapshot: result.result.snapshot} : {kind: 'SAVED_UNVERIFIED', error: result.result.readbackError};
+      if (result.status === 'SUCCEEDED') return result.result.snapshot !== undefined ? {kind: 'SAVED_VERIFIED', snapshot: rememberConfigurationSession(result.result.snapshot, key)} : {kind: 'SAVED_UNVERIFIED', error: result.result.readbackError};
       if (result.status === 'OUTCOME_UNKNOWN') {
         if (!ambiguousCause(result.reason)) return {kind: 'SESSION_ENDED'};
         if (result.reason.partial) return {kind: 'PARTIAL_UNPERSISTED', confirmedStages: result.reason.confirmedStages, failedStage: result.reason.stage, definitelyNotSent: result.reason.definitelyNotSent};

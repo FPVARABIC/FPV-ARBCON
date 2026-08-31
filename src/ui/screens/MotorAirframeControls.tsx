@@ -67,6 +67,8 @@ import {
   type MotorConfigurationSaveOutcome,
   type MotorRebootOutcome,
 } from '../../platforms/react-native/protocol';
+import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
 import {MIN_TOUCH_TARGET} from '../components/controls';
 import {SelectField} from '../components/controls/SelectField';
 import {Icon} from '../icons';
@@ -76,9 +78,9 @@ import {partialApplyMessage} from '../presentation/writeStageNames';
 /** The same port shape the full settings panel injects, plus the
  * explicit reboot step of the §36 lifecycle. */
 export interface MotorAirframeControlsPort {
-  load(sessionId: string): Promise<MotorConfigurationLoadOutcome>;
+  load(sessionKey: SetupUiSessionKey): Promise<MotorConfigurationLoadOutcome>;
   save(
-    sessionId: string,
+    sessionKey: SetupUiSessionKey,
     original: MotorConfigurationSnapshot,
     draft: MotorConfigurationDraft,
   ): Promise<MotorConfigurationSaveOutcome>;
@@ -135,6 +137,8 @@ export interface AirframeEditState {
 
 export interface MotorAirframeControlsProps {
   readonly sessionId: string | undefined;
+  /** U-R3: the composite key load/save are authorised by. */
+  readonly sessionKey: SetupUiSessionKey | undefined;
   /** The LIVE session's values, when a session has read them. They name
    * what the running firmware is actually flying with - the strip's
    * pending-reboot notes compare against them. */
@@ -224,6 +228,7 @@ const NO_DRAFT: AirframeDraft = Object.freeze({});
 
 export function MotorAirframeControls({
   sessionId,
+  sessionKey,
   liveMixerModeRaw,
   liveYawMotorsReversed,
   writesLocked,
@@ -325,7 +330,7 @@ export function MotorAirframeControls({
   );
 
   const load = useCallback(async () => {
-    if (sessionId === undefined) {
+    if (sessionId === undefined || sessionKey === undefined) {
       setLoadState('UNAVAILABLE');
       applySnapshot(undefined);
       return;
@@ -333,7 +338,7 @@ export function MotorAirframeControls({
     setLoadState('LOADING');
     reportBusy(true);
     try {
-      const result = await controller.load(sessionId);
+      const result = await controller.load(sessionKey);
       if (!mounted.current) {
         return;
       }
@@ -354,7 +359,7 @@ export function MotorAirframeControls({
         reportBusy(false);
       }
     }
-  }, [applySnapshot, controller, reportBusy, sessionId]);
+  }, [applySnapshot, controller, reportBusy, sessionId, sessionKey]);
 
   useEffect(() => {
     // A new connection is a new aircraft: whatever was drafted against
@@ -449,8 +454,24 @@ export function MotorAirframeControls({
     [t],
   );
 
+  /* DOES THIS STRIP'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; the snapshot and the mixer/props
+     draft are state that outlive a prop change by at least one render -
+     and by the entire reload if that reload is slow, or forever if it is
+     refused. A mixer write reboots the aircraft, so a draft submitted
+     against a different board is the most expensive version of this
+     defect on the whole app. The controller refuses this too; both layers
+     are required. See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(
+    snapshot,
+    sessionKey,
+  );
   const editingLocked =
-    writesLocked || phase !== 'IDLE' || loadState !== 'READY' || snapshot === undefined;
+    writesLocked ||
+    phase !== 'IDLE' ||
+    loadState !== 'READY' ||
+    snapshot === undefined ||
+    saveBlockedBySession;
 
   const editMixer = useCallback((mixerModeRaw: number) => {
     setOutcome(undefined);
@@ -526,7 +547,13 @@ export function MotorAirframeControls({
   );
 
   const saveDraft = useCallback(async () => {
-    if (!dirty || snapshot === undefined || sessionId === undefined) {
+    if (
+      !dirty ||
+      snapshot === undefined ||
+      sessionId === undefined ||
+      sessionKey === undefined ||
+      saveBlockedBySession
+    ) {
       return;
     }
     // ONE transaction for everything drafted; every untouched field comes
@@ -547,7 +574,7 @@ export function MotorAirframeControls({
        إعادة تشغيل متحكم الطيران…» the instant it is shown. */
     let handedToActivation = false;
     try {
-      const result = await controller.save(sessionId, snapshot, payload);
+      const result = await controller.save(sessionKey, snapshot, payload);
       if (!mounted.current) {
         return;
       }
@@ -640,6 +667,7 @@ export function MotorAirframeControls({
     }
   }, [
     applySnapshot,
+    saveBlockedBySession,
     controller,
     dirty,
     dirtyMixer,
@@ -650,6 +678,7 @@ export function MotorAirframeControls({
     reportBusy,
     restartForActivation,
     sessionId,
+    sessionKey,
     snapshot,
     t,
   ]);
@@ -1088,7 +1117,9 @@ export function MotorAirframeControls({
               onPress={() => {
                 saveDraft().catch(() => undefined);
               }}
-              disabled={phase !== 'IDLE' || writesLocked}
+              disabled={
+                phase !== 'IDLE' || writesLocked || saveBlockedBySession
+              }
               accessibilityRole="button"
               style={[styles.barButton, styles.barApply]}
               testID="motors-airframe-save"
@@ -1101,6 +1132,17 @@ export function MotorAirframeControls({
         </View>
       ) : null}
 
+      {/* Disabling the controls is not enough on its own: an operator
+          whose airframe strip went inert would read that as the app being
+          broken. Say which fact stopped the write. */}
+      {snapshot !== undefined && saveBlockedBySession ? (
+        <Text
+          style={[styles.stateNote, styles.outcomeDanger]}
+          testID="motors-airframe-session-changed"
+        >
+          {t('motorsScreen.blockSessionChanged')}
+        </Text>
+      ) : null}
       {phase === 'SAVING' ? (
         <Text style={styles.stateNote} testID="motors-airframe-saving">
           {t('motorsScreen.quickSaving')}

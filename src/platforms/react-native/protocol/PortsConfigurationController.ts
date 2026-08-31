@@ -26,6 +26,10 @@ import {
 } from '../../../core';
 import { deriveArmedState } from '../../../core/state/armingBlockers';
 import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
+import {
   MutationLedger,
   MutationStoppedError,
   type PartialApplyEvidence,
@@ -91,6 +95,7 @@ export interface PortsAppStateOwner {
 }
 
 export type PortsBlockReason =
+  | 'SESSION_CHANGED'
   | 'DISCONNECTED'
   | 'IDENTIFYING'
   | 'UNSUPPORTED_FIRMWARE'
@@ -296,7 +301,10 @@ export class PortsConfigurationController {
         },
       });
       if (result.status === 'SUCCEEDED')
-        return { kind: 'LOADED', snapshot: result.result };
+        return {
+          kind: 'LOADED',
+          snapshot: rememberConfigurationSession(result.result, sessionKey),
+        };
       if (
         result.status === 'SESSION_ENDED' ||
         result.status === 'OUTCOME_UNKNOWN'
@@ -315,6 +323,15 @@ export class PortsConfigurationController {
     original: SerialPortsSnapshot,
     desiredPorts: readonly MspSerialPortRecord[],
   ): Promise<PortsSaveOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before the no-op check, before capture(), before any wire
+       access at all: a baseline produced under a DIFFERENT session may
+       not be written under this one. Two byte-identical boards defeat
+       every other guard here - stale-base compares configuration, and
+       assertLive compares liveness; neither asks which aircraft the
+       operator was editing. See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, sessionKey))
+      return { kind: 'REJECTED', reason: 'SESSION_CHANGED' };
     if (serialPortsEqual(original.ports, desiredPorts))
       return { kind: 'NO_CHANGES', snapshot: original };
     const normalized = normalizeSerialPortsForSave(desiredPorts);
@@ -545,7 +562,10 @@ export class PortsConfigurationController {
         return result.result.snapshot !== undefined
           ? {
               kind: 'SAVED_VERIFIED',
-              snapshot: result.result.snapshot,
+              snapshot: rememberConfigurationSession(
+                result.result.snapshot,
+                sessionKey,
+              ),
               rebootAcknowledged: result.result.rebootAcknowledged,
             }
           : {

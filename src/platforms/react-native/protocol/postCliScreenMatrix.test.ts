@@ -85,7 +85,7 @@ const SCREENS: ReadonlyArray<{
   {
     screen: 'Motors',
     carriesGeneration: false,
-    load: (o, k) => new MotorConfigurationController(o).load(k.sessionId),
+    load: (o, k) => new MotorConfigurationController(o).load(k),
   },
   {
     screen: 'Ports',
