@@ -11,7 +11,7 @@ import type {
   OrientationStabilitySample,
   OrientationViewState,
 } from '../../../core';
-import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../../theme';
 
 type CaptureState =
   | { readonly kind: 'IDLE' }
@@ -440,8 +440,7 @@ const styles = StyleSheet.create({
   description: {
     ...typography.body,
     color: colors.textSecondary,
-    marginTop: spacing.md,
-  },
+    marginTop: spacing.md, maxWidth: PROSE_MEASURE},
   progressBlock: { marginTop: spacing.md },
   progressTrack: {
     height: 7,
@@ -460,13 +459,11 @@ const styles = StyleSheet.create({
   keepStillText: {
     ...typography.caption,
     color: colors.warning,
-    marginTop: spacing.xs,
-  },
+    marginTop: spacing.xs, maxWidth: PROSE_MEASURE},
   warningText: {
     ...typography.body,
     color: colors.warning,
-    marginTop: spacing.md,
-  },
+    marginTop: spacing.md, maxWidth: PROSE_MEASURE},
   result: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -492,15 +489,17 @@ const styles = StyleSheet.create({
   metricCaption: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   disclaimer: {
     ...typography.caption,
     color: colors.textMuted,
-    marginTop: spacing.md,
-  },
+    marginTop: spacing.md, maxWidth: PROSE_MEASURE},
   action: {
     minHeight: 48,
+    // «إعادة معايرة مقياس التسارع» is a short label and does not need the
+    // width of the card behind it.
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.lg,
     marginTop: spacing.md,
     alignItems: 'center',
     justifyContent: 'center',
@@ -515,12 +514,11 @@ const styles = StyleSheet.create({
   actionText: {
     ...typography.body,
     color: colors.accentText,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   actionTextDisabled: { color: colors.disabled },
   unavailableText: {
     ...typography.caption,
     color: colors.textMuted,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
 });

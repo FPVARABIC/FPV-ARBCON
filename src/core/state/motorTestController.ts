@@ -238,15 +238,16 @@ import {
 import {
   MSP_ADVANCED_CONFIG,
   MSP_FEATURE_CONFIG,
+  MSP_MIXER_CONFIG,
   MSP_MOTOR,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
   MSP2_SEND_DSHOT_COMMAND,
 } from '../protocol/msp/commands/mspCommands';
-// R2: motor-only command id, declared outside the Release-reachable
-// command table so its NAME does not ship in a Release bundle. Same id,
-// same encoding, same behaviour.
-import {MSP_SET_MOTOR} from '../protocol/msp/commands/motorTestCommands';
+// P2-ii: MSP_SET_MOTOR is no longer imported here. The controller
+// encodes and dispatches no motor frame by any route - the professional
+// command engine owns both the ordinary command path and the canonical
+// priority stop.
 // Phase 2F. The encoder and the vector builders are ACCEPTED, PROTECTED
 // modules and are reused unchanged - this controller neither duplicates
 // their logic nor introduces a second encoder. `assertSupportedMotorScope`
@@ -254,12 +255,12 @@ import {MSP_SET_MOTOR} from '../protocol/msp/commands/motorTestCommands';
 // than four, then any raw protocol outside the reviewed DShot-family
 // values at the pinned tag.
 import {
-  assertSupportedMotorScope,
-  buildAllStopVector,
-  buildSingleMotorVector,
-  MOTOR_VECTOR_MOTOR_COUNT,
+  buildSingleOutputVectorForDomain,
   type MotorVectorScope,
 } from '../firmware-adapters/betaflightMotorVectorsV147';
+// M-C: the canonical wire width, and the only bound on how many logical
+// motors any airframe may expose. Both come from MAX_SUPPORTED_MOTORS.
+import {MOTOR_TEST_COMMAND_VECTOR_SLOTS} from './motorTestCommandVector';
 import {
   readMotorArmedStateEvidence,
   type MotorTestArmedStateEvidence,
@@ -272,12 +273,9 @@ import {
   type MotorTestSafetyUnsafeReason,
 } from './motorTestSafetyMonitor';
 import type {MotorArmedStateObservationFailure} from './motorArmedStateObservation';
-import {
-  encodeSetMotorPayload,
-  MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
-} from '../protocol/msp/encoding/encodeSetMotorPayload';
 import {decodeAdvancedConfig} from '../protocol/msp/decoding/decodeAdvancedConfig';
 import {decodeFeatureConfig} from '../protocol/msp/decoding/decodeFeatureConfig';
+import {decodeMixerConfig} from '../protocol/msp/decoding/decodeMixerConfig';
 import {decodeMotorConfig} from '../protocol/msp/decoding/decodeMotorConfig';
 import {
   decodeMotorOutputs,
@@ -296,7 +294,6 @@ import {MspPayloadReadError} from '../protocol/msp/decoding/MspPayloadReader';
 import {
   MspClientError,
   MspMotorTestStopDisplacementError,
-  type MspEmergencyStopDispatch,
 } from '../protocol/mspClient';
 import {
   encodeDshotEscDirection,
@@ -323,6 +320,37 @@ import {
   type MotorTestState,
   type MotorTestStopTriggerReason,
 } from './motorTestStateMachine';
+// P2-ii-A. The P1 domain resolver and the P2-i runtime-scope policy, wired
+// into the LIVE enable path. MSP_MOTOR_3D_CONFIG is read only where it
+// participates in domain resolution - it is never a decorative request.
+import {decodeMotor3dConfig} from '../protocol/msp/decoding/decodeMotor3dConfig';
+import {MSP_MOTOR_3D_CONFIG} from '../protocol/msp/commands/mspCommands';
+import {
+  resolveMotorTestValueDomain,
+  type MotorTestValueDomain,
+} from '../firmware-adapters/betaflightMotorDomainV147';
+import {
+  classifyMotorControlRuntimeScope,
+  type MotorControlRuntimeScope,
+} from './motorControlRuntimeScope';
+// P2-ii. The ONE professional command authority, and the reviewed arming
+// restriction module that owns command 99's encoding in both directions.
+import {
+  MotorControlCommandEngine,
+  type MotorControlCommandResult,
+} from './motorControlCommandEngine';
+import {projectStopOutcomeToLegacyRecord} from './motorStopExecutionProjection';
+import {
+  buildArmingReleasePayload,
+  establishMotorArmingRestriction,
+  MSP_SET_ARMING_DISABLED,
+  recordMotorArmingRestrictionReleased,
+  type MotorArmingRestrictionReceipt,
+} from './motorArmingRestriction';
+import type {
+  MotorControlFaultReason,
+  MotorControlStopReason,
+} from './motorControlStateMachine';
 
 /* ------------------------------------------------------------------ *
  * Ports - the only things a caller supplies
@@ -693,6 +721,9 @@ export type MotorTestSetupStep =
   | 'SAFETY_MONITOR'
   /** Step 10 - one fresh, satisfied, disarmed observation, AWAITED. */
   | 'FIRST_OBSERVATION'
+  /** Step 10b (P2-ii) - MSP_SET_ARMING_DISABLED [1], established AFTER
+   * disarmed is proven and BEFORE READY is published. */
+  | 'ARMING_RESTRICTION'
   | 'READY';
 
 export type MotorTestSetupBlockedReason =
@@ -714,13 +745,17 @@ export type MotorTestSetupBlockedReason =
   | 'BOX_EVIDENCE_UNAVAILABLE'
   | 'MOTOR_CONFIG_REQUEST_FAILED'
   | 'MOTOR_CONFIG_MALFORMED'
-  /** FEATURE_3D enabled, a motor count other than four, or a raw motor
-   * protocol the encoder is not scoped for. Complete evidence, refused. */
-  | 'MOTOR_SCOPE_UNSUPPORTED'
+  /** M-C: the configuration cannot be commanded at all - see
+   * MotorCommandScopeRefusal. Complete decoded evidence, refused, and
+   * nothing written. */
+  | MotorCommandScopeRefusal
   /** The first production observation never completed usably. */
   | 'FIRST_OBSERVATION_UNAVAILABLE'
   /** The first production observation completed and proved ARMED. */
   | 'FIRST_OBSERVATION_NOT_DISARMED'
+  /** P2-ii: command 99 was sent and its effect could not be established.
+   * Uncertain by construction, so it fails closed rather than locking. */
+  | 'ARMING_RESTRICTION_NOT_ESTABLISHED'
   | 'TEARDOWN_INCOMPLETE'
   | 'UNEXPECTED_SERVICE_EXCEPTION';
 
@@ -764,6 +799,10 @@ export type MotorTestTeardownStepName =
   /** Step 9's monitor. Stopped before the lease is released so no
    * observation can be outstanding against a dead lease. */
   | 'STOP_SAFETY_MONITOR'
+  /** P2-ii: MSP_SET_ARMING_DISABLED [0]. Ordered AFTER the all-stop and
+   * BEFORE the lease is released, and WITHHELD entirely when the stop
+   * could not be established. */
+  | 'RELEASE_ARMING_RESTRICTION'
   | 'RELEASE_LEASE'
   | 'RELEASE_TELEMETRY_TOKENS';
 
@@ -785,6 +824,19 @@ export interface MotorTestTeardownReport {
    * acquired, or `'THREW'` when the accepted call itself threw. */
   readonly leaseRelease: MotorTestLeaseReleaseResult | 'NOT_HELD' | 'THREW';
   readonly telemetryTokensReleased: boolean;
+  /**
+   * P2-ii. What happened to the FC-side arming restriction.
+   *
+   * `WITHHELD_STOP_UNPROVEN` is the fail-closed case and is NOT a defect:
+   * turning an uncertain motor-output state into an immediately armable
+   * flight controller would be strictly worse than leaving the
+   * restriction in force. It is never a claim about physical motor state.
+   */
+  readonly armingRestrictionRelease:
+    | 'NOT_OWED'
+    | 'RELEASED'
+    | 'WITHHELD_STOP_UNPROVEN'
+    | 'RELEASE_FAILED';
   /** True only when exclusivity is conclusively gone AND every local step
    * completed. */
   readonly complete: boolean;
@@ -849,11 +901,38 @@ export type MotorTestStopExecutionOutcome =
  */
 export const MOTOR_TEST_FIXED_PULSE_VALUE = 1050;
 
-/** Operator-facing motor numbers. These are MSP OUTPUT SLOTS, never
- * airframe positions and never rotation directions. */
-export const MOTOR_TEST_PULSE_MOTOR_NUMBERS: readonly number[] = Object.freeze(
-  [1, 2, 3, 4],
-);
+/**
+ * Operator-facing motor numbers for a given runtime motor count.
+ *
+ * M-C REPLACED A CONSTANT WITH A FUNCTION. This used to be the frozen
+ * literal `[1, 2, 3, 4]` - a fixed truth that was wrong for every airframe
+ * that is not a quad, and that silently offered a tricopter a fourth motor
+ * it does not have. The list is now derived from the ONLY authority for
+ * how many motor outputs exist: MSP_MOTOR_CONFIG's own count.
+ *
+ * These are MSP OUTPUT SLOTS, never airframe positions and never rotation
+ * directions. Motor N is always firmware output index N-1, on every
+ * airframe and in every text direction - no right-to-left reversal is
+ * applied here or anywhere below this line.
+ *
+ * An unusable count yields an EMPTY list rather than a quad: a missing or
+ * corrupt figure is not four motors.
+ */
+export function motorTestPulseMotorNumbers(
+  runtimeMotorCount: number | undefined,
+): readonly number[] {
+  if (
+    runtimeMotorCount === undefined ||
+    !Number.isInteger(runtimeMotorCount) ||
+    runtimeMotorCount < 1 ||
+    runtimeMotorCount > MOTOR_TEST_COMMAND_VECTOR_SLOTS
+  ) {
+    return Object.freeze([]);
+  }
+  return Object.freeze(
+    Array.from({length: runtimeMotorCount}, (_, index) => index + 1),
+  );
+}
 
 export type MotorTestPulseRequestResult =
   | 'ACCEPTED'
@@ -910,7 +989,54 @@ export type MotorTestPulseRequestResult =
  * which internal condition folds into which reason, and the full internal
  * state stays available behind the screen's collapsed diagnostics.
  */
+/**
+ * M-C - WHY A CONFIGURATION CANNOT BE COMMANDED AT ALL.
+ *
+ * Shared verbatim between bring-up and the activation gate, because the
+ * two used to run different rules and could therefore disagree: a session
+ * could open on a configuration its own pulse path would refuse. There is
+ * one evaluator (`evaluateMotorCommandScope`) and one vocabulary.
+ *
+ * NONE of these names an airframe. There is no "unsupported airframe" and
+ * no mixer in the set - a tricopter, a hexacopter and an octocopter all
+ * pass, and what fails is a count outside the firmware's own bound, a
+ * protocol with no resolvable conversion, or a 3D configuration whose
+ * active endpoints MSP does not carry.
+ */
+export type MotorCommandScopeRefusal =
+  /**
+   * MSP_MOTOR_CONFIG reported a motor count of zero: this configuration
+   * drives no motor outputs at all, so there is nothing a motor test
+   * could command. Distinct from an unsupported one - the aircraft is
+   * fine, it simply has no motors on this mixer.
+   */
+  | 'NO_RUNTIME_MOTORS'
+  /**
+   * The reported motor count is not a usable 1..MAX_SUPPORTED_MOTORS
+   * figure. mixerConfigureOutput() clamps to that bound on both of its
+   * branches, so a count outside it is a corrupt or unrecognised runtime
+   * result rather than an airframe this app declines to support.
+   */
+  | 'MOTOR_COUNT_OUT_OF_RANGE'
+  /**
+   * The configured motor protocol has no external-value conversion this
+   * app can resolve - MOTOR_PROTOCOL_DISABLED, or a raw byte outside the
+   * pinned enum. Nothing is guessed: an unknown protocol is refused, not
+   * assumed to be PWM or DShot.
+   */
+  | 'UNSUPPORTED_PROTOCOL_DOMAIN'
+  /**
+   * FEATURE_3D is on and the active endpoints are NOT observable over MSP
+   * at this API version, so forward and reverse cannot be told apart.
+   * This is the ANALOG 3D case specifically: `limit3d_low`/`limit3d_high`
+   * exist in the firmware struct but are not on the wire at 1.47 or 1.49.
+   * DIGITAL 3D is NOT refused - its neutral is the protocol constant
+   * PWM_RANGE_MIDDLE and the split is the firmware's own branch.
+   */
+  | 'ANALOG_3D_ENDPOINTS_UNKNOWN';
+
 export type MotorTestActivationBlockReason =
+  | MotorCommandScopeRefusal
   /**
    * There is no live, current, writable session: not started, still
    * preparing, closing, closed, invalidated, replaced, barrier not held,
@@ -930,13 +1056,14 @@ export type MotorTestActivationBlockReason =
   /** No reviewed motor-write adapter matches the identified firmware/API. */
   | 'FIRMWARE_UNSUPPORTED'
   /**
-   * FEATURE_3D is enabled. Called out separately from the general scope
-   * refusal because it is the one configuration whose effect INVERTS: with
-   * 3D on, stop is external 1500 and 1000 is FULL REVERSE.
+   * The configuration this session was opened against is no longer the
+   * configuration the flight controller reports: the motor count, the
+   * mixer identity, the protocol or the 3D domain moved underneath an
+   * active session. Fails closed rather than silently re-scoping - a
+   * session opened for four motors must never quietly start commanding a
+   * fifth.
    */
-  | 'MOTOR_3D_ENABLED'
-  /** Motor count or raw motor protocol outside the one supported scope. */
-  | 'MOTOR_SCOPE_UNSUPPORTED'
+  | 'MOTOR_CONFIGURATION_DRIFTED'
   /** A pulse or a stop is already running. */
   | 'PULSE_OR_STOP_IN_PROGRESS'
   /**
@@ -1072,8 +1199,11 @@ function mapActivationBlockToPulseResult(
     case 'ARMED_STATE_UNKNOWN_OR_STALE':
     case 'FIRMWARE_IDENTITY_UNAVAILABLE':
     case 'FIRMWARE_UNSUPPORTED':
-    case 'MOTOR_3D_ENABLED':
-    case 'MOTOR_SCOPE_UNSUPPORTED':
+    case 'NO_RUNTIME_MOTORS':
+    case 'MOTOR_COUNT_OUT_OF_RANGE':
+    case 'UNSUPPORTED_PROTOCOL_DOMAIN':
+    case 'ANALOG_3D_ENDPOINTS_UNKNOWN':
+    case 'MOTOR_CONFIGURATION_DRIFTED':
       return 'GATES_NOT_SATISFIED';
     case undefined:
       // Unreachable: only called when at least one reason exists. Fails
@@ -1248,6 +1378,22 @@ export interface MotorTestControllerSnapshot {
    * unattemptable and a pre-evidence pulse is unencodable.
    */
   readonly motorScope: MotorVectorScope | undefined;
+  /**
+   * MSP_MIXER_CONFIG offset 0, raw - WHICH AIRFRAME, for PRESENTATION.
+   *
+   * Undefined before step 7. Deliberately NOT part of MotorVectorScope:
+   * that type is the narrow command-safety contract, and the mixer is not
+   * in it because nothing the encoder does depends on the mixer. A view
+   * uses this to decide whether it may DRAW an aircraft; it is never a
+   * motor count and never a gate.
+   */
+  readonly mixerModeRaw: number | undefined;
+  /** MSP_MIXER_CONFIG offset 1, as stored by the flight controller.
+   * PRESENTATION ONLY, exactly like mixerModeRaw above: it feeds the
+   * expected-rotation arrows and the props-direction control's display,
+   * and it gates no command. It is the FC's CONFIGURATION flag, never a
+   * statement about how any propeller is physically mounted. */
+  readonly yawMotorsReversedConfigured?: boolean | undefined;
   /** Truthful source model for command-139 fields, derived from the same
    * MSP_MOTOR_CONFIG response as motorScope. */
   readonly motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
@@ -1257,6 +1403,24 @@ export interface MotorTestControllerSnapshot {
   readonly stopDescriptors: readonly MotorTestStopDescriptor[];
   readonly teardown: MotorTestTeardownReport | undefined;
   /** Phase 2F: the command-214 stop execution record. */
+  /**
+   * Whether a motor command MAY BE LIVE right now, by the SAME expression
+   * the real wire-stop gate uses (`pulseMayHaveReachedFc ||
+   * engine.mayHaveReachedFc`), so a consumer that trusts this can never
+   * disagree with the gate that actually stops motors.
+   *
+   * Reading `pulse.mayHaveReachedFc` alone is NOT equivalent and is the
+   * specific mistake this field exists to prevent: a facade `setMaster`
+   * latches the professional engine and never the legacy pulse, so a
+   * consumer consulting only the legacy latch would call a
+   * professionally-commanded, still-spinning output "at rest".
+   *
+   * False means NEITHER latch is set, which is the codebase's existing
+   * statement that the session provably never commanded anything. It never
+   * means "the motors have physically stopped" - see physicalStopConfirmed,
+   * which is permanently false because that is not knowable from here.
+   */
+  readonly outputMayBeLive: boolean;
   readonly stopExecution: MotorTestStopExecutionRecord;
   /** Phase 2G: the fixed single-motor pulse-attempt record. */
   readonly pulse: MotorTestPulseRecord;
@@ -1280,6 +1444,24 @@ export interface MotorTestControllerSnapshot {
   readonly armedStateEvidence: MotorTestArmedStateEvidence;
   /** Fixed read-only probes sent through the SAME exclusive lease. */
   readonly diagnostics?: MotorTestDiagnosticsSnapshot;
+  /**
+   * P2-ii-A / P2-ii-S. The P1-resolved command domain for this exact
+   * configuration - motor count, protocol family, 3D, the command-domain
+   * bounds and their provenance, and the domain's own stop value.
+   *
+   * Undefined when the resolver refused the configuration. This is
+   * DESCRIPTIVE only: it never widens what the shipping pulse path will
+   * command, which `motorScope` and the legacy scope guard still decide
+   * on their own terms.
+   */
+  readonly motorDomain: MotorTestValueDomain | undefined;
+  /**
+   * P2-ii-A / P2-ii-P. Whether the professional runtime path may command
+   * that domain, and when it may not, exactly which firmware fact is
+   * missing. Analog 3D is refused here - `limit3d_low`/`limit3d_high` are
+   * not on the wire at API 1.47 - rather than approximated.
+   */
+  readonly motorRuntimeScope: MotorControlRuntimeScope | undefined;
 }
 
 export type MotorTestStopRequestResult =
@@ -1370,11 +1552,263 @@ export interface MotorTestController {
   refreshDiagnostics(): Promise<MotorTestDiagnosticsSnapshot>;
   /** Idempotent. Concurrent callers observe the same operation. */
   close(): Promise<MotorTestControllerSnapshot>;
+
+  /* ---- P2-ii: THE PROFESSIONAL MOTOR-CONTROL FACADE. ----------------
+   *
+   * Thin, synchronous wrappers over the ONE session-owned
+   * MotorControlCommandEngine. They add NO validation, coalescing,
+   * encoding, stop logic or lease dispatch of their own - the engine owns
+   * all of it - and they require no long press, no heartbeat, no fixed
+   * magnitude and no one-motor-at-a-time restriction. A refusal has
+   * dispatched nothing.
+   */
+  /** Sets the full desired vector - one value per motor, dense, inside
+   * the resolved command domain. */
+  setMotorValues(values: readonly number[]): MotorControlCommandResult;
+  /** Mutates ONE entry of the desired full vector; travels the identical
+   * full-vector path. */
+  setMotorValue(motorIndex: number, value: number): MotorControlCommandResult;
+  /** Every motor to one value: [value x motorCount]. */
+  setMaster(value: number): MotorControlCommandResult;
+  /** The canonical professional stop, through the same authority every
+   * other stop source uses. */
+  stopAll(): MotorTestStopRequestResult;
 }
 
 /* ------------------------------------------------------------------ *
  * Implementation
  * ------------------------------------------------------------------ */
+
+/**
+ * M-C - THE ONE MOTOR-COMMAND SCOPE RULE, generic over 1..8 motors.
+ *
+ * WHAT REPLACED WHAT. Until M-C this controller ran the legacy quad rule:
+ * `assertSupportedMotorScope` refused FEATURE_3D outright and then refused
+ * any motor count other than four. Both refusals were wrong for different
+ * reasons and both are gone:
+ *
+ *  - THE COUNT. Nothing in the firmware makes four special. The mixer
+ *    table carries counts from 0 to 8, MSP_SET_MOTOR is a plain vector
+ *    write bounded by getMotorCount(), and MAX_SUPPORTED_MOTORS is 8. The
+ *    rule is now the firmware's own bound.
+ *
+ *  - THE 3D BLANKET. Refusing every 3D configuration also refused DIGITAL
+ *    3D, whose neutral is the protocol constant PWM_RANGE_MIDDLE and whose
+ *    forward/reverse split is the firmware's own branch in
+ *    dshotConvertFromExternal(). That is fully knowable. The case that is
+ *    genuinely unknowable is ANALOG 3D, where `limit3d_low`/`limit3d_high`
+ *    live in the firmware struct but are not on the wire at API 1.47 or
+ *    1.49 - and `motorControlRuntimeScope` already refuses exactly that,
+ *    by name. So there is now ONE owner of the 3D question instead of two
+ *    that could disagree, and the strict half of the old rule is kept
+ *    while the over-broad half is dropped.
+ *
+ * NO AIRFRAME BRANCHES. There is no `if TRI`, no `if HEX`, no `if OCTO`
+ * and no mixer-mode test anywhere in this function or in anything it
+ * calls. A tricopter and an octocopter reach the same three checks.
+ *
+ * Returns every reason that applies, so a caller sees the whole picture
+ * rather than the first thing that happened to fail.
+ */
+/**
+ * The fallback for a runtime-scope refusal this function does not name.
+ *
+ * The `never` parameter is the whole point: adding a refusal kind to
+ * `MotorControlRuntimeScope` without handling it here FAILS TO COMPILE,
+ * rather than silently producing no reason at all - which would be
+ * fail-OPEN on a safety gate. At runtime it still refuses.
+ */
+function refusalForUnhandledScope(_unhandled: never): MotorCommandScopeRefusal {
+  return 'UNSUPPORTED_PROTOCOL_DOMAIN';
+}
+
+function evaluateMotorCommandScope(
+  scope: MotorVectorScope,
+  runtimeScope: MotorControlRuntimeScope | undefined,
+): readonly MotorCommandScopeRefusal[] {
+  const reasons: MotorCommandScopeRefusal[] = [];
+
+  // (1) THE RUNTIME COUNT, from MSP_MOTOR_CONFIG offset 6 and nothing
+  // else. Never the mixer's expected count, never the telemetry frame's
+  // count, never the first zero in MSP_MOTOR, and never a fallback of 4.
+  const count = scope.motorCount;
+  if (!Number.isInteger(count) || count < 0) {
+    reasons.push('MOTOR_COUNT_OUT_OF_RANGE');
+  } else if (count === 0) {
+    reasons.push('NO_RUNTIME_MOTORS');
+  } else if (count > MOTOR_TEST_COMMAND_VECTOR_SLOTS) {
+    reasons.push('MOTOR_COUNT_OUT_OF_RANGE');
+  }
+
+  // (2) THE COMMAND DOMAIN, owned entirely by motorControlRuntimeScope.
+  // An undefined runtime scope means the domain resolver refused this
+  // configuration outright - an unknown protocol raw, or a 3D setup whose
+  // required fields never arrived.
+  if (runtimeScope === undefined) {
+    reasons.push('UNSUPPORTED_PROTOCOL_DOMAIN');
+  } else if (!runtimeScope.eligible) {
+    switch (runtimeScope.refusal) {
+      case 'ANALOG_3D_ACTIVE_ENDPOINTS_UNKNOWN':
+      case 'THREE_D_ACTIVE_REGIONS_UNPROVEN':
+      case 'THREE_D_NEUTRAL_UNRESOLVED':
+        reasons.push('ANALOG_3D_ENDPOINTS_UNKNOWN');
+        break;
+      case 'PROTOCOL_FAMILY_UNKNOWN':
+        reasons.push('UNSUPPORTED_PROTOCOL_DOMAIN');
+        break;
+      default:
+        reasons.push(refusalForUnhandledScope(runtimeScope.refusal));
+        break;
+    }
+  }
+
+  return reasons;
+}
+
+/**
+ * M-C - THE CONFIGURATION IDENTITY A SESSION IS BOUND TO.
+ *
+ * Captured once, when bring-up first resolves a usable configuration, and
+ * compared on every activation evaluation afterwards. Every field is one
+ * this controller would have to re-derive its command semantics from if it
+ * changed:
+ *
+ *  - `motorCount` decides how many logical motors are commandable. A
+ *    session opened for four must never quietly start commanding a fifth
+ *    because a later read said six; that is a new session's decision, not
+ *    a silent widening of this one.
+ *  - `motorProtocolRaw` and `feature3dEnabled` decide the external-value
+ *    conversion. A stale conversion is how 1000 stops one aircraft and
+ *    drives another one backwards at full throttle.
+ *  - `stopValue` is carried explicitly so a drift in the resolved stop is
+ *    caught even if the three inputs above somehow matched.
+ */
+export interface MotorTestTopologyBinding {
+  readonly motorCount: number;
+  readonly motorProtocolRaw: number;
+  readonly feature3dEnabled: boolean;
+  readonly stopValue: number;
+}
+
+/**
+ * Whether an observed configuration has moved away from the one a session
+ * was bound to.
+ *
+ * EXPORTED, AND PURE, DELIBERATELY. The controller's own field-comparison
+ * used to be a private method, and a mutation that deleted the comparison
+ * outright survived every test in this repository - not because the tests
+ * were weak, but because NO CURRENT CODE PATH RE-READS THE MOTOR SCOPE
+ * DURING A LIVE SESSION. `runBenchSteps` reads it once at bring-up, the
+ * diagnostics poller reads MSP_MOTOR and MSP_MOTOR_TELEMETRY only, and a
+ * reconnect builds a whole new controller. So the guard cannot fire today.
+ *
+ * That is stated here rather than hidden, and the rule is tested directly
+ * instead of being asserted through a path that cannot reach it. The guard
+ * is a PRECONDITION for the migration that adds a mid-session refresh -
+ * it exists so that refresh cannot be added without a decision - not a
+ * claim that drift is currently detected in flight.
+ *
+ * Returns false when there is no binding: a session that never resolved a
+ * configuration has nothing to have drifted FROM, and that case is already
+ * reported as link unavailability.
+ */
+export function motorTopologyBindingHasDrifted(
+  binding: MotorTestTopologyBinding | undefined,
+  scope: MotorVectorScope | undefined,
+  stopValue: number | undefined,
+): boolean {
+  if (binding === undefined || scope === undefined) {
+    return false;
+  }
+  if (
+    scope.motorCount !== binding.motorCount ||
+    scope.motorProtocolRaw !== binding.motorProtocolRaw ||
+    scope.feature3dEnabled !== binding.feature3dEnabled
+  ) {
+    return true;
+  }
+  // The resolved stop is compared separately: two configurations can agree
+  // on all three inputs above and still resolve different stops if the
+  // endpoints behind them moved.
+  return stopValue !== undefined && stopValue !== binding.stopValue;
+}
+
+/** P2-ii. Whether the professional runtime path may command this domain. */
+function runtimeScopeEligible(
+  scope: MotorControlRuntimeScope | undefined,
+): boolean {
+  return scope !== undefined && scope.eligible;
+}
+
+/**
+ * P2-ii. Projects an engine fault onto the legacy reducer's vocabulary.
+ *
+ * The engine's reasons are the professional model's; the legacy reducer
+ * predates it and has its own smaller set. This mapping exists so the
+ * legacy PROJECTION stays truthful - it never decides anything.
+ */
+function mapEngineFaultToLegacy(
+  reason: MotorControlFaultReason,
+): MotorTestFaultReason {
+  switch (reason) {
+    case 'STOP_FAILED':
+    case 'STOP_UNCONFIRMED':
+      return 'STOP_FAILED';
+    case 'COMMAND_FAILED':
+    case 'COMMAND_UNCONFIRMED':
+      return 'WRITE_OUTCOME_UNKNOWN';
+    case 'SESSION_ENDED':
+    case 'ENABLE_FAILED':
+    case 'UNSUPPORTED_DOMAIN':
+      return 'SESSION_CHANGED';
+    case 'AUTHORITY_MISMATCH':
+      return 'AUTHORITY_MISMATCH';
+    case 'TRANSPORT_LOST':
+      return 'DESYNCHRONIZED';
+    default:
+      return 'NATIVE_EXCEPTION';
+  }
+}
+
+/**
+ * P2-ii. Projects a LEGACY stop trigger onto the professional reducer's
+ * stop reason.
+ *
+ * The legacy vocabulary is the old pulse product's; the professional one
+ * is the model P2-i proved SD1-SD5 against. This selects which
+ * disposition a CONFIRMED stop lands in - it never decides whether the
+ * stop happens, and every trigger from every source reaches the same
+ * canonical engine stop.
+ */
+function mapLegacyStopReason(
+  trigger: MotorTestStopTriggerReason,
+): MotorControlStopReason {
+  switch (trigger) {
+    // Ordinary completions: the operator, or a designed cutoff.
+    case 'TOUCH_RELEASED':
+    case 'STOP_BUTTON_PRESSED':
+    case 'MOTOR_SELECTION_CHANGED':
+    case 'PULSE_DEADLINE_ELAPSED':
+      return 'OPERATOR_STOP';
+    case 'ARMED_STATE_DETECTED':
+      return 'ARMED_STATE_DETECTED';
+    case 'ARMING_RESTRICTION_REMOVED':
+      return 'ARMING_RESTRICTION_LOST';
+    case 'SAFETY_MONITORING_FAILED':
+      return 'SAFETY_MONITORING_FAILED';
+    case 'APP_STATE_BACKGROUNDED':
+      return 'APP_BACKGROUNDED';
+    case 'NAVIGATION_BLURRED':
+    case 'ANDROID_BACK':
+    case 'ANDROID_PREDICTIVE_BACK':
+      return 'DEPARTURE_REQUESTED';
+    default:
+      // Battery and any future locking reason. Conservatively the
+      // stricter class - an unforeseen trigger can never be treated as an
+      // ordinary completion.
+      return 'CONFIGURATION_CHANGED';
+  }
+}
 
 const READ_REQUEST_OPTIONS = {wireFormat: 'v1'} as const;
 const EMPTY_PAYLOAD = new Uint8Array(0);
@@ -1478,7 +1912,44 @@ class MotorTestControllerImpl {
    * than "no link".
    */
   private motorScope: MotorVectorScope | undefined;
+  /** M-D. The airframe the FC reported, raw, for PRESENTATION only. No
+   * gate, scope or command reads it. */
+  private mixerModeRaw: number | undefined;
+  private yawMotorsReversedConfigured: boolean | undefined;
   private motorDiagnosticsSupport: MotorDiagnosticsSupport | undefined;
+  /** P2-ii-A. The P1-resolved domain for this configuration, or undefined
+   * when the resolver refused it. Never approximated. */
+  private motorDomain: MotorTestValueDomain | undefined;
+  /** P2-ii-A. Whether the professional runtime path may command that
+   * domain, and if not, exactly what the pinned firmware could not tell
+   * us. Analog 3D is refused here rather than guessed. */
+  private motorRuntimeScope: MotorControlRuntimeScope | undefined;
+  /**
+   * M-C. The configuration identity this session was opened against.
+   * Captured once at bring-up and never rewritten while the session
+   * lives; see MotorTestTopologyBinding for what each field protects.
+   */
+  private topologyBinding: MotorTestTopologyBinding | undefined;
+  /**
+   * P2-ii. THE ONE session-scoped professional command authority.
+   *
+   * Constructed exactly once, in the enable path, after the flight
+   * controller has been proven disarmed and the arming restriction has
+   * been established. Every MSP_SET_MOTOR this controller issues after
+   * that instant - professional or legacy-adapted - goes through it.
+   */
+  private engine: MotorControlCommandEngine | undefined;
+  /** True once command 99 payload [1] has been acknowledged. Teardown
+   * consults it to know whether a release is OWED, never as a gate. */
+  private armingRestrictionEstablished = false;
+  private armingRestrictionReceipt: MotorArmingRestrictionReceipt | undefined;
+  /** P2-ii. Whether teardown actually released the restriction, and if
+   * not, why it deliberately did not. */
+  private armingRestrictionReleased:
+    | 'NOT_OWED'
+    | 'RELEASED'
+    | 'WITHHELD_STOP_UNPROVEN'
+    | 'RELEASE_FAILED' = 'NOT_OWED';
   private stopExecution: MotorTestStopExecutionRecord = NO_STOP_EXECUTION;
   /**
    * The ONE in-flight stop operation FOR THE CURRENT EPISODE. Concurrent
@@ -1501,12 +1972,19 @@ class MotorTestControllerImpl {
    * still look like a complete pair.
    */
   private stopEpisodeAttemptId: number | undefined;
+  /** P2-ii. The legacy trigger that DEMANDED the episode currently
+   * running, captured synchronously so the engine receives the reason
+   * that actually caused it. Projection metadata: it selects the stop's
+   * disposition, never whether the stop happens. */
+  private stopTriggerForEpisode: MotorTestStopTriggerReason | undefined;
   /**
    * Set once a stop episode ended unsafely (failed, ambiguous, or never
    * attributably completed). A sealed stop can NEVER be rearmed - the
    * session is finished and only a full reset may follow.
    */
   private stopSealed = false;
+  /** The most recent trigger passed to requestStop. */
+  private lastStopTrigger: MotorTestStopTriggerReason | undefined;
 
   /* --- Phase 2G: the fixed single-motor pulse engine ---------------- */
 
@@ -1568,11 +2046,15 @@ class MotorTestControllerImpl {
       outcome: this.outcome,
       firmwareCompatibility: this.firmwareCompatibility,
       motorScope: this.motorScope,
+      mixerModeRaw: this.mixerModeRaw,
+      yawMotorsReversedConfigured: this.yawMotorsReversedConfigured,
       motorDiagnosticsSupport: this.motorDiagnosticsSupport,
       telemetryHeld: this.barrier?.isHeld() ?? false,
       warnings: this.effectRecord.warnings,
       stopDescriptors: this.effectRecord.stopDescriptors,
       teardown: this.teardownReport,
+      outputMayBeLive:
+        this.pulseMayHaveReachedFc || (this.engine?.mayHaveReachedFc ?? false),
       stopExecution: this.stopExecution,
       pulse: this.pulse,
       activation: this.evaluateActivation(),
@@ -1581,6 +2063,8 @@ class MotorTestControllerImpl {
       // could outlive the condition it described.
       armedStateEvidence: this.readArmedStateEvidence(),
       diagnostics: this.diagnostics,
+      motorDomain: this.motorDomain,
+      motorRuntimeScope: this.motorRuntimeScope,
     });
   }
 
@@ -1864,13 +2348,24 @@ class MotorTestControllerImpl {
     if (dispositionForStopReason(trigger) === 'Locked') {
       this.activationBarred = true;
     }
+    // Recorded BEFORE any stop runs, so the episode binds to the trigger
+    // that actually demanded it.
+    this.lastStopTrigger = trigger;
     this.clearPulseDeadline();
     const dominated = this.pulseAttempt !== undefined;
     if (dominated) {
       this.endPulseAttempt({kind: 'FAILED', reason: 'STOP_DOMINATED'});
     }
     this.dispatchStop(trigger);
-    if (this.pulseMayHaveReachedFc) {
+    // P2-ii FINAL CONVERGENCE. The wire stop runs when a command MAY BE
+    // LIVE by EITHER liveness latch: the legacy pulse's, or the
+    // professional engine's own - a facade `setMaster` latches the second
+    // and never the first, and a stop that consulted only the legacy one
+    // would leave a professionally-commanded output spinning. A session
+    // where NEITHER is latched provably never commanded anything, and
+    // keeps the legacy contract of reporting its own specific cause
+    // rather than manufacturing stop traffic.
+    if (this.pulseMayHaveReachedFc || (this.engine?.mayHaveReachedFc ?? false)) {
       // Fire-and-join: the operation is registered now; its outcome is
       // consumed by whoever awaits it (teardown, or a later trigger that
       // joins this same episode). The catch is a guard against an
@@ -1890,11 +2385,11 @@ class MotorTestControllerImpl {
     if (this.phase === 'CLOSED' || this.phase === 'CLOSING' || this.closing) {
       return 'CONTROLLER_CLOSED';
     }
-    if (
-      !Number.isInteger(motorNumber) ||
-      motorNumber < 1 ||
-      motorNumber > MOTOR_VECTOR_MOTOR_COUNT
-    ) {
+    // M-C: 1..runtimeMotorCount, from MSP_MOTOR_CONFIG and nothing else.
+    // A tricopter offers three, an octocopter eight, and a configuration
+    // whose count was never read offers none - `commandableMotorCount()`
+    // returns undefined rather than assuming four.
+    if (!this.isCommandableMotorNumber(motorNumber)) {
       return 'INVALID_MOTOR';
     }
 
@@ -1915,22 +2410,43 @@ class MotorTestControllerImpl {
     }
 
     // Non-null by construction: the gate above rejects every one of these.
-    const scope = this.motorScope as MotorVectorScope;
-    const lease = this.lease as MotorTestLease;
     const authority = this.authority as MspOfficialSessionAuthority;
 
-    let payload: Uint8Array;
+    /* ---- P2-ii STEP 4: THE CONVERGENCE POINT. --------------------
+     *
+     * This used to encode the payload here and hand it straight to
+     * `lease.request(...)`. That made the LEGACY reducer plus this gate a
+     * SECOND, independent permission to put a motor value on the wire -
+     * exactly the duplicate authority P2-ii exists to remove.
+     *
+     * The legacy pulse is now a COMPATIBILITY ADAPTER over the one
+     * session-scoped professional engine. What survives here is legacy UI
+     * SEMANTICS - the fixed magnitude, the one-motor-at-a-time rule, the
+     * held-gesture watchdog, the activation episode - and every one of
+     * them may only decide WHETHER TO ASK. The engine decides whether the
+     * command happens, validates it against the resolved P1 domain,
+     * encodes it, and owns the lease call.
+     *
+     * 1050 IS NOW JUST A VALUE THIS ADAPTER CHOOSES. It is not a
+     * professional default, minimum, master value or safety invariant, and
+     * nothing inside the engine knows it exists.
+     */
+    const engine = this.engine;
+    const domain = this.motorDomain;
+    if (engine === undefined || domain === undefined) {
+      // No professional authority for this session means no motor command,
+      // whatever the legacy gate concluded. Fails closed with zero traffic.
+      return 'GATES_NOT_SATISFIED';
+    }
+
+    let desired: readonly number[];
     try {
-      payload = encodeSetMotorPayload(
-        buildSingleMotorVector(
-          scope,
-          motorNumber - 1,
-          MOTOR_TEST_FIXED_PULSE_VALUE,
-        ),
-        MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
+      desired = buildSingleOutputVectorForDomain(
+        domain,
+        motorNumber - 1,
+        MOTOR_TEST_FIXED_PULSE_VALUE,
       );
     } catch {
-      // Zero transport traffic on any scope, index or encoding refusal.
       return 'GATES_NOT_SATISFIED';
     }
 
@@ -1969,13 +2485,68 @@ class MotorTestControllerImpl {
     // (5) The write call is being made now.
     this.apply({authority, kind: 'START_WRITE_CALLED'}, undefined);
 
-    // (6) Submit through the ordinary lease FIFO. The stop deliberately
-    //     does NOT share this route - it uses the priority route, which is
-    //     what lets it displace this very request.
-    this.runPulse(attempt, authority, lease, payload).catch(() => undefined);
+    // (6) Submit THROUGH THE PROFESSIONAL ENGINE. It validates against the
+    //     resolved domain, encodes, and issues the lease request itself.
+    //     A refusal here is authoritative even though the legacy gate
+    //     already said yes - which is the entire point of the migration.
+    const accepted = engine.setMotorValues(desired);
+    if (accepted.kind !== 'ACCEPTED') {
+      // The engine refused after the legacy gate allowed. Roll the legacy
+      // projection back to a non-active episode; nothing was written.
+      this.endPulseAttempt({kind: 'FAILED', reason: 'STOP_DOMINATED'});
+      this.pulse = Object.freeze({
+        ...this.pulse,
+        submitted: false,
+        outcome: {kind: 'FAILED' as const, reason: 'STOP_DOMINATED' as const},
+      });
+      this.publish();
+      return 'GATES_NOT_SATISFIED';
+    }
 
     this.publish();
     return 'ACCEPTED';
+  }
+
+  /**
+   * P2-ii Step 4 - the legacy PROJECTION of one engine command outcome.
+   *
+   * This is where a dispatch result becomes legacy pulse state. It decides
+   * NOTHING: by the time it runs the engine has already applied its own
+   * reducer and already acted. Attribution is by REFERENCE to the live
+   * attempt, exactly as the old `runPulse` did, so a late acknowledgement
+   * cannot complete an episode that a stop, a fault or a newer activation
+   * has already ended - and therefore cannot complete the WRONG
+   * verification episode.
+   */
+  private onEngineCommandOutcome(
+    outcome: 'ACKNOWLEDGED' | 'FAILED' | 'SUPERSEDED',
+  ): void {
+    const attempt = this.pulseAttempt;
+    const authority = this.authority;
+    if (attempt === undefined || authority === undefined) {
+      // No live legacy episode. A professional-only command, or a result
+      // for an episode already ended. Recorded nowhere, which is correct.
+      return;
+    }
+    if (outcome === 'SUPERSEDED') {
+      // Discarded entirely: it cannot re-enter Pulsing, clear a Fault,
+      // cancel a stop, or touch a replacement session.
+      return;
+    }
+    if (outcome === 'FAILED') {
+      this.endPulseAttempt({kind: 'FAILED', reason: 'REQUEST_FAILED'});
+      this.failPulseClosed('WRITE_OUTCOME_UNKNOWN');
+      return;
+    }
+    // ACK is reception. It is not motion, not RPM, not direction and not a
+    // frame position.
+    this.pulse = Object.freeze({
+      ...this.pulse,
+      acknowledged: true,
+      outcome: {kind: 'ACKNOWLEDGED' as const},
+    });
+    this.apply({authority, kind: 'START_ACKNOWLEDGED'}, undefined);
+    this.publish();
   }
 
   renewPulseHold(): MotorTestHoldHeartbeatResult {
@@ -1990,15 +2561,62 @@ class MotorTestControllerImpl {
     return 'RENEWED';
   }
 
+  /* ---- P2-ii: the professional facade. ----------------------------
+   *
+   * Each operation is a THIN wrapper: the engine validates against the
+   * resolved P1 domain, coalesces, encodes and dispatches. The controller
+   * contributes exactly two things - session phase gating, and the rule
+   * that a session with no professional authority refuses rather than
+   * improvising one. No long press, no heartbeat, no fixed 1050 and no
+   * one-motor restriction exist on this path.
+   */
+
+  private professionalEngine(): MotorControlCommandEngine | undefined {
+    if (this.phase === 'CLOSED' || this.phase === 'CLOSING' || this.closing) {
+      return undefined;
+    }
+    return this.engine;
+  }
+
+  setMotorValues(values: readonly number[]): MotorControlCommandResult {
+    const engine = this.professionalEngine();
+    if (engine === undefined) {
+      return {kind: 'REFUSED', reason: 'NOT_COMMANDABLE'};
+    }
+    return engine.setMotorValues(values);
+  }
+
+  setMotorValue(motorIndex: number, value: number): MotorControlCommandResult {
+    const engine = this.professionalEngine();
+    if (engine === undefined) {
+      return {kind: 'REFUSED', reason: 'NOT_COMMANDABLE'};
+    }
+    return engine.setMotorValue(motorIndex, value);
+  }
+
+  setMaster(value: number): MotorControlCommandResult {
+    const engine = this.professionalEngine();
+    if (engine === undefined) {
+      return {kind: 'REFUSED', reason: 'NOT_COMMANDABLE'};
+    }
+    return engine.setMaster(value);
+  }
+
+  /**
+   * The canonical professional stop. Deliberately routed through
+   * `requestStop` rather than straight at the engine: episode binding,
+   * the seal, the legacy projection and the reducer dispatch all live on
+   * that one funnel, and a second entrance would bypass them.
+   */
+  stopAll(): MotorTestStopRequestResult {
+    return this.requestStop('STOP_BUTTON_PRESSED');
+  }
+
   async setEscDirection(
     motorNumber: number,
     direction: DshotEscDirection,
   ): Promise<MotorTestEscDirectionOutcome> {
-    if (
-      !Number.isInteger(motorNumber) ||
-      motorNumber < 1 ||
-      motorNumber > MOTOR_VECTOR_MOTOR_COUNT
-    ) {
+    if (!this.isCommandableMotorNumber(motorNumber)) {
       return {kind: 'REJECTED', reason: 'INVALID_MOTOR'};
     }
     if (
@@ -2019,7 +2637,17 @@ class MotorTestControllerImpl {
 
     let payload: Uint8Array;
     try {
-      assertSupportedMotorScope(this.motorScope as MotorVectorScope);
+      // M-C: the same generic scope rule the activation gate runs. A
+      // direction command is a DShot command, so it is refused for exactly
+      // the configurations that cannot resolve a command domain - never
+      // because the aircraft has a motor count this app used to dislike.
+      const scope = this.motorScope;
+      if (
+        scope === undefined ||
+        evaluateMotorCommandScope(scope, this.motorRuntimeScope).length > 0
+      ) {
+        return {kind: 'REJECTED', reason: 'UNSUPPORTED'};
+      }
       payload = encodeDshotEscDirection(motorNumber - 1, direction);
     } catch {
       return {kind: 'REJECTED', reason: 'UNSUPPORTED'};
@@ -2309,14 +2937,20 @@ class MotorTestControllerImpl {
       if (!reasons.includes('CONTROLLER_LINK_UNAVAILABLE')) {
         reasons.push('CONTROLLER_LINK_UNAVAILABLE');
       }
-    } else if (scope.feature3dEnabled) {
-      // Called out on its own because 3D INVERTS stop semantics.
-      reasons.push('MOTOR_3D_ENABLED');
     } else {
-      try {
-        assertSupportedMotorScope(scope);
-      } catch {
-        reasons.push('MOTOR_SCOPE_UNSUPPORTED');
+      for (const reason of evaluateMotorCommandScope(
+        scope,
+        this.motorRuntimeScope,
+      )) {
+        reasons.push(reason);
+      }
+      // M-C: the configuration this session was opened against must still
+      // be the one the flight controller reports. Checked HERE, on every
+      // evaluation, rather than only at bring-up - a binding that is only
+      // proved once is a snapshot, and a snapshot is what this guard
+      // exists to refuse.
+      if (this.topologyBindingHasDrifted()) {
+        reasons.push('MOTOR_CONFIGURATION_DRIFTED');
       }
     }
 
@@ -2334,6 +2968,63 @@ class MotorTestControllerImpl {
       return ACTIVATION_ALLOWED;
     }
     return Object.freeze({allowed: false, reasons: Object.freeze(reasons)});
+  }
+
+  /**
+   * M-C. How many logical motors this session may command, or undefined
+   * when no count has been read.
+   *
+   * THE ONE AUTHORITY IS MSP_MOTOR_CONFIG offset 6. Deliberately NOT the
+   * mixer's expected count (which is a compile-time constant that the
+   * running firmware may disagree with, and which does not exist at all
+   * for a custom mixer), NOT MSP_MOTOR_TELEMETRY's frame count, NOT the
+   * first zero in MSP_MOTOR's eight slots, and never a fallback of four.
+   */
+  private commandableMotorCount(): number | undefined {
+    const count = this.motorScope?.motorCount;
+    if (
+      count === undefined ||
+      !Number.isInteger(count) ||
+      count < 1 ||
+      count > MOTOR_TEST_COMMAND_VECTOR_SLOTS
+    ) {
+      return undefined;
+    }
+    return count;
+  }
+
+  /**
+   * Whether an operator-facing motor number addresses a motor this
+   * session may command: 1..runtimeMotorCount, and nothing else.
+   *
+   * Motor N is firmware output index N-1 on every airframe. No right-to-
+   * left reversal is applied - mirroring is a drawing decision and
+   * renumbering a machine's motors to suit a layout would be a defect.
+   */
+  private isCommandableMotorNumber(motorNumber: number): boolean {
+    const count = this.commandableMotorCount();
+    return (
+      count !== undefined &&
+      Number.isInteger(motorNumber) &&
+      motorNumber >= 1 &&
+      motorNumber <= count
+    );
+  }
+
+  /**
+   * M-C. Whether the flight controller's configuration has moved away
+   * from the one this session was opened against.
+   *
+   * Returns false when no binding has been captured yet - a session that
+   * has not resolved a configuration has nothing to have drifted FROM,
+   * and that case is already reported as link unavailability.
+   */
+  private topologyBindingHasDrifted(): boolean {
+    return motorTopologyBindingHasDrifted(
+      this.topologyBinding,
+      this.motorScope,
+      this.motorDomain?.stopValue,
+    );
   }
 
   /**
@@ -2478,59 +3169,18 @@ class MotorTestControllerImpl {
     });
   }
 
-  private async runPulse(
-    attempt: object,
-    authority: MspOfficialSessionAuthority,
-    lease: MotorTestLease,
-    payload: Uint8Array,
-  ): Promise<void> {
-    try {
-      await lease.request(MSP_SET_MOTOR, payload, READ_REQUEST_OPTIONS);
-    } catch {
-      // Write failure, response timeout, desync, detach, close, or
-      // displacement by our own stop. Every one of them ends the attempt
-      // and takes the stop route WITHOUT waiting for the touch-heartbeat
-      // deadline, which would leave a possibly-live output commanded after
-      // we already know something went wrong.
-      if (this.pulseAttempt === attempt) {
-        this.endPulseAttempt({kind: 'FAILED', reason: 'REQUEST_FAILED'});
-        this.failPulseClosed('WRITE_OUTCOME_UNKNOWN');
-      }
-      return;
-    }
-
-    // A response arrived. It counts ONLY if this exact attempt is still
-    // live and the session it was submitted under has not moved.
-    if (this.pulseAttempt !== attempt) {
-      // Stale: a stop, a fault, a close or a newer attempt already ended
-      // this one. Discarded entirely - it cannot re-enter Pulsing, cannot
-      // clear a Fault, cannot cancel a stop, and cannot touch whatever
-      // session replaced this one.
-      return;
-    }
-    if (
-      this.closing ||
-      this.lease !== lease ||
-      this.authority !== authority ||
-      !lease.isActive() ||
-      lease.officialSessionAuthority() !== authority
-    ) {
-      this.endPulseAttempt({kind: 'FAILED', reason: 'AUTHORITY_CHANGED'});
-      this.failPulseClosed('SESSION_CHANGED');
-      return;
-    }
-
-    // Attributable, and no stop is pending. Only now may Pulsing be
-    // entered. ACK is reception - it is not motion, not RPM, not
-    // direction and not a frame position.
-    this.pulse = Object.freeze({
-      ...this.pulse,
-      acknowledged: true,
-      outcome: {kind: 'ACKNOWLEDGED' as const},
-    });
-    this.apply({authority, kind: 'START_ACKNOWLEDGED'}, undefined);
-    this.publish();
-  }
+  /*
+   * `runPulse` WAS HERE, AND ITS REMOVAL IS THE POINT OF P2-ii STEP 4.
+   *
+   * It awaited `lease.request(MSP_SET_MOTOR, payload, ...)` directly, which
+   * made the legacy pulse a SECOND, independent motor-command authority
+   * alongside the professional engine. Its two real jobs - attributing a
+   * response to the live attempt by reference, and turning that into legacy
+   * pulse state - now live in `onEngineCommandOutcome`, driven by the
+   * engine's own dispatch. There is no longer any path from a legacy pulse
+   * intent to a transport call that does not pass through
+   * MotorControlCommandEngine.
+   */
 
   /** Ends the live attempt and records why. Idempotent by reference: a
    * second call for an attempt that is no longer live does nothing. */
@@ -2621,7 +3271,16 @@ class MotorTestControllerImpl {
     if (this.phase === 'CLOSED' || this.closing) {
       return;
     }
-    // Synchronous invalidation first, exactly as for a stop.
+    // Synchronous invalidation first, exactly as for a stop - and the
+    // PROFESSIONAL engine's own command generation with it, so a delayed
+    // continuation created before this instant can never dispatch another
+    // vector, and the coalesced pending vector is destroyed. No traffic
+    // is issued here; teardown's canonical stop still attempts the real
+    // all-stop if the old transport can legitimately carry one, and
+    // records an honest non-stop if it cannot. Nothing fabricates an ACK.
+    this.engine?.invalidateForSessionLoss(
+      reason === 'SESSION_CHANGED' ? 'SESSION_ENDED' : 'TRANSPORT_LOST',
+    );
     this.invalidateContinuations();
     this.closing = true;
     const faultReason: MotorTestFaultReason =
@@ -3094,7 +3753,15 @@ class MotorTestControllerImpl {
     // Retained BEFORE the guard runs, so a refusal can still say which
     // configuration was refused. See the field's own comment.
     this.motorScope = scopeRead.scope;
+    this.mixerModeRaw = scopeRead.mixerModeRaw;
+    this.yawMotorsReversedConfigured = scopeRead.yawMotorsReversedConfigured;
     this.motorDiagnosticsSupport = scopeRead.diagnosticsSupport;
+    // P2-ii-A. Retained whatever the legacy guard decides below: a
+    // configuration the shipping pulse path refuses may still be one the
+    // professional path could describe, and a refusal must be able to say
+    // WHICH domain it refused.
+    this.motorDomain = scopeRead.domain;
+    this.motorRuntimeScope = scopeRead.runtimeScope;
     if (!hasEscTelemetrySource(scopeRead.diagnosticsSupport)) {
       this.diagnostics = Object.freeze({
         ...this.diagnostics,
@@ -3106,18 +3773,41 @@ class MotorTestControllerImpl {
       });
     }
     this.publish();
-    try {
-      // 3D first - it inverts stop semantics - then motor count, then the
-      // raw protocol. The identical guard runs again inside
-      // `evaluateActivation()` on every evaluation and again inside
-      // `buildAllStopVector`/`buildSingleMotorVector`.
-      assertSupportedMotorScope(scopeRead.scope);
-    } catch {
-      // Complete, decoded evidence that fails the scope. Nothing was
-      // written and nothing is uncertain, so this LOCKS rather than
-      // claiming the ambiguity a fault would assert.
-      return failure('MOTOR_SCOPE_UNSUPPORTED', LOCK);
+    /* ---- M-C: ONE ELIGIBILITY, NOT TWO. ------------------------------
+     *
+     * P2 ran two rules at once: a professional one driven by the resolved
+     * domain, and a legacy one that demanded exactly four motors, the
+     * DShot family and no 3D. The session proceeded if EITHER passed,
+     * while `pulseMotor` was governed by the legacy rule alone - so a hex
+     * could open a session it could never use, and a digital-3D quad was
+     * refused a pulse the professional path could prove safe.
+     *
+     * There is now ONE rule, `evaluateMotorCommandScope`, and it is the
+     * same object the activation gate re-runs on every evaluation. The
+     * strict half of the old rule survives intact: analog 3D is still
+     * refused by name, an unresolvable protocol is still refused, and the
+     * refusal still LOCKS with complete decoded evidence and nothing
+     * written rather than claiming the ambiguity a fault would assert.
+     * What is gone is the count restriction, which was never a firmware
+     * fact, and the 3D blanket, which refused a case that is fully
+     * knowable.
+     */
+    const scopeRefusals = evaluateMotorCommandScope(
+      scopeRead.scope,
+      scopeRead.runtimeScope,
+    );
+    if (scopeRefusals.length > 0) {
+      return failure(scopeRefusals[0], LOCK);
     }
+    // The configuration this session is bound to, captured the instant it
+    // is first proven usable. From here on a disagreeing read fails the
+    // activation gate rather than silently re-scoping the session.
+    this.topologyBinding = Object.freeze({
+      motorCount: scopeRead.scope.motorCount,
+      motorProtocolRaw: scopeRead.scope.motorProtocolRaw,
+      feature3dEnabled: scopeRead.scope.feature3dEnabled,
+      stopValue: scopeRead.domain?.stopValue ?? Number.NaN,
+    });
 
     // ---- (8) Only the BOX evidence armed state needs. ----------------
     this.setupStep = 'ARMED_STATE_EVIDENCE';
@@ -3223,6 +3913,107 @@ class MotorTestControllerImpl {
       return boundary;
     }
 
+    // ---- (10b) P2-ii: THE FC-SIDE ARMING RESTRICTION, RESTORED. -------
+    //
+    // WHY IT IS BACK. An earlier pass removed this write, correctly
+    // observing that its receipt could never detect its own removal - it
+    // proved the lease was alive, which the lease already proved. What was
+    // NOT true is the implied conclusion that the write itself bought
+    // nothing: the receipt is weak evidence, but the restriction is a real
+    // effect on the flight controller, and it is the only thing standing
+    // between a commanded output and an aircraft that could be armed
+    // underneath it. Continuous armed-state observation DETECTS that
+    // condition; the restriction PREVENTS it. They are complements, and
+    // this pass keeps both.
+    //
+    // ORDER IS LOAD-BEARING AND IS PROVEN, NOT ASSUMED. It is established
+    // AFTER the flight controller has been proven disarmed - restricting
+    // arming on an aircraft that is already armed would be a false comfort
+    // - and BEFORE READY is published, so no snapshot can ever report a
+    // commandable session whose restriction is not in force.
+    //
+    // POLARITY IS NOT INFERRED FROM THE NAME. Command 99 with payload [1]
+    // ESTABLISHES the restriction; [0] releases this descriptor's hold.
+    // Proven at 79065c96 in motorArmingRestriction.ts, which owns the
+    // encoding - nothing is duplicated here.
+    this.setupStep = 'ARMING_RESTRICTION';
+    this.publish();
+    const restriction = await establishMotorArmingRestriction({
+      lease,
+      requestedIdentity: anchor,
+      readCurrentIdentity,
+      boxIds: boxAcquisition.snapshot,
+    });
+    // THE ESTABLISHMENT'S OWN VERDICT IS CONSULTED FIRST, and the ordering
+    // is load-bearing rather than stylistic - the same rule the first
+    // observation already follows. A rejected command-99 request FAULTS
+    // the lease, so the generic boundary check would report SESSION_CHANGED
+    // and bury the real cause: the operator would be told their session was
+    // replaced when in truth their flight controller refused the
+    // restriction. Both fail closed; only the recorded reason differs, and
+    // it must be true. The boundary check still runs, immediately below.
+    if (restriction.kind !== 'ESTABLISHED') {
+      // Command 99 may have reached the wire, so this is uncertainty
+      // rather than a clean refusal, and it must fail closed. The
+      // restriction is deliberately NOT "released to tidy up": a release
+      // issued into an unknown state is a second write with an unknown
+      // outcome, and teardown handles it under its own contract.
+      this.armingRestrictionEstablished = false;
+      return failure(
+        'ARMING_RESTRICTION_NOT_ESTABLISHED',
+        fault('WRITE_OUTCOME_UNKNOWN'),
+      );
+    }
+    boundary = this.revalidate(generation);
+    if (boundary !== undefined) {
+      // The restriction succeeded but the session moved underneath it. It
+      // is recorded as established anyway, so teardown still knows a
+      // release is owed rather than silently abandoning it on the FC.
+      this.armingRestrictionEstablished = true;
+      this.armingRestrictionReceipt = restriction.receipt;
+      return boundary;
+    }
+    // Recorded so teardown knows a release is OWED. Nothing else consults
+    // it as a safety gate - the live armed-state read remains the gate.
+    this.armingRestrictionEstablished = true;
+    this.armingRestrictionReceipt = restriction.receipt;
+    this.publish();
+
+    // ---- (10c) THE ONE SESSION-SCOPED PROFESSIONAL ENGINE. -----------
+    //
+    // Constructed EXACTLY ONCE per session, from the exact official
+    // authority, the exact lease, and the P1 domain resolved from this
+    // session's own reads. It starts at the domain's all-stop vector and
+    // in the reducer's `EnabledIdle` phase - never `EnabledCommanding` -
+    // because the enable flow sends no active value.
+    //
+    // From this instant it is the SINGLE authority for MSP_SET_MOTOR:
+    // `pulseMotor` and every professional operation route through it, and
+    // the legacy reducer can no longer authorize a write on its own.
+    const engineAuthority = this.authority;
+    if (
+      engineAuthority !== undefined &&
+      runtimeScopeEligible(this.motorRuntimeScope) &&
+      this.motorDomain
+    ) {
+      this.engine = new MotorControlCommandEngine({
+        lease,
+        authority: engineAuthority,
+        domain: this.motorDomain,
+        requestOptions: READ_REQUEST_OPTIONS,
+        readArmedStateEvidence: () => this.readArmedStateEvidence(),
+        suspendSafetyMonitor: () => {
+          this.safetyMonitor?.stop();
+        },
+        publish: () => this.publish(),
+        onFault: reason => {
+          this.dispatchFault(mapEngineFaultToLegacy(reason));
+        },
+        onCommandOutcome: outcome => this.onEngineCommandOutcome(outcome),
+      });
+      this.engine.markEnabled();
+    }
+
     // ---- (11) Ready - every mandatory fact valid for one authority. --
     //
     // Reached only with the first observation already published, so the
@@ -3239,11 +4030,33 @@ class MotorTestControllerImpl {
   }
 
   /**
-   * Step 7 - the three reads the command encoder actually depends on.
+   * Step 7 - the reads the command encoder and the airframe view depend on.
    *
    * MSP_MOTOR_CONFIG    offset 6  -> motor count, the ONLY authority for it
    * MSP_ADVANCED_CONFIG offset 3  -> raw motorProtocolTypes_e
    * MSP_FEATURE_CONFIG  bit 12    -> FEATURE_3D, the ONLY authority for it
+   * MSP_MIXER_CONFIG    offset 0  -> raw mixerMode_e, for PRESENTATION only
+   *
+   * M-D: THE MIXER READ IS NEW, AND IT COMMANDS NOTHING.
+   *
+   * It was added because a UI production-path test found that the Motors
+   * screen could not tell a QUAD X from a V-TAIL 4. The airframe drawing
+   * may only be shown for a mixer this project has authored a layout for,
+   * and the only component reading the mixer was the collapsed Motor
+   * Settings panel - which the motor-test flow never opens. So the
+   * drawing was withheld from the one workflow it exists to serve.
+   *
+   * WHAT IT DOES NOT DO. It is not an authority over anything the encoder
+   * uses. The motor COUNT still comes from MSP_MOTOR_CONFIG offset 6 and
+   * nothing else; the mixer's own expected count is never substituted for
+   * it, and a mixer this table does not recognise changes no gate, no
+   * scope and no command. It is carried to the view and stops there.
+   *
+   * 42 IS THE READ. The write, MSP_SET_MIXER_CONFIG = 43, is not issued
+   * from this controller and never has been - see
+   * motorsMixerCommandBoundary.test.ts and the command allowlist in
+   * motorTestBenchGate.test.ts, which pins the complete set this path
+   * puts on the wire.
    *
    * Every one travels the lease and therefore the canonical FIFO. A
    * REJECTED REQUEST and a MALFORMED RESPONSE are separated deliberately:
@@ -3256,7 +4069,15 @@ class MotorTestControllerImpl {
   ): Promise<
     | {
         readonly scope: MotorVectorScope;
+        /** MSP_MIXER_CONFIG offset 0, raw. PRESENTATION ONLY - see the
+         * method's own comment. Nothing downstream commands from it. */
+        readonly mixerModeRaw: number;
+        /** MSP_MIXER_CONFIG offset 1, presentation only - see snapshot. */
+        readonly yawMotorsReversedConfigured: boolean;
         readonly diagnosticsSupport: MotorDiagnosticsSupport;
+        /** P2-ii-A: the P1 domain, resolved from these same reads. */
+        readonly domain: MotorTestValueDomain | undefined;
+        readonly runtimeScope: MotorControlRuntimeScope | undefined;
       }
     | SetupFailure
   > {
@@ -3287,19 +4108,96 @@ class MotorTestControllerImpl {
     if (isFailure(feature)) {
       return feature;
     }
+    const mixer = await this.readDecoded(
+      generation,
+      lease,
+      MSP_MIXER_CONFIG,
+      decodeMixerConfig,
+    );
+    if (isFailure(mixer)) {
+      return mixer;
+    }
+
+    // ---- P2-ii-A: MSP_MOTOR_3D_CONFIG, read only where it is USED. ----
+    //
+    // The three reads above cannot resolve a 3D domain on their own:
+    // `resolveMotorTestValueDomain` requires deadband3d_low/high and
+    // neutral3d when FEATURE_3D is on, and inventing them would mean
+    // commanding a reversible aircraft against a guessed forward/reverse
+    // split. So the request is made EXACTLY when FEATURE_3D is enabled and
+    // its result feeds domain resolution directly - it is never issued as
+    // an unused fourth request, and a non-3D bring-up sends no extra frame
+    // at all, which is what keeps the shipping enable byte stream
+    // unchanged for every configuration the current product supports.
+    const scope = Object.freeze({
+      motorCount: motor.value.motorCount,
+      motorProtocolRaw: advanced.value.motorProtocolRaw,
+      feature3dEnabled: feature.value.feature3dEnabled,
+    });
+
+    let motor3d: {
+      readonly deadband3dLow: number;
+      readonly deadband3dHigh: number;
+      readonly neutral3d: number;
+    } | undefined;
+    // P2 CLOSURE: the read fires WHENEVER FEATURE_3D is on, because the
+    // professional runtime - not the legacy pulse UI - is now what decides
+    // whether a 3D session may proceed, and 3D domain resolution REQUIRES
+    // deadband3d/neutral3d. A digital-3D aircraft resolves a full domain
+    // and becomes professionally commandable; an analog-3D aircraft
+    // resolves a domain the runtime then REFUSES (its active endpoints are
+    // not on the wire at API 1.47). Either way the result participates in
+    // domain resolution - it is never a decorative request. Every API-1.47
+    // flight controller answers command 124; a link that rejects it is
+    // genuinely faulting, and reporting that as transport trouble is
+    // truthful.
+    if (feature.value.feature3dEnabled) {
+      const read3d = await this.readDecoded(
+        generation,
+        lease,
+        MSP_MOTOR_3D_CONFIG,
+        decodeMotor3dConfig,
+      );
+      if (isFailure(read3d)) {
+        return read3d;
+      }
+      motor3d = read3d.value;
+    }
 
     const boundary = this.revalidate(generation);
     if (boundary !== undefined) {
       return boundary;
     }
 
-    return {
-      scope: Object.freeze({
+    // The resolver REFUSES rather than approximating an unknown protocol
+    // family, so a configuration it cannot describe leaves both fields
+    // undefined and the professional path simply never becomes eligible.
+    // The legacy scope guard below is unaffected and still decides the
+    // shipping pulse path on its own terms.
+    let domain: MotorTestValueDomain | undefined;
+    let runtimeScope: MotorControlRuntimeScope | undefined;
+    try {
+      domain = resolveMotorTestValueDomain({
         motorCount: motor.value.motorCount,
         motorProtocolRaw: advanced.value.motorProtocolRaw,
         feature3dEnabled: feature.value.feature3dEnabled,
-      }),
+        minCommand: motor.value.minCommand,
+        maxThrottle: motor.value.maxThrottle,
+        motor3d,
+      });
+      runtimeScope = classifyMotorControlRuntimeScope(domain);
+    } catch {
+      domain = undefined;
+      runtimeScope = undefined;
+    }
+
+    return {
+      scope,
+      mixerModeRaw: mixer.value.mixerModeRaw,
+      yawMotorsReversedConfigured: mixer.value.yawMotorsReversedConfigured,
       diagnosticsSupport: deriveMotorDiagnosticsSupport(motor.value),
+      domain,
+      runtimeScope,
     };
   }
 
@@ -3387,6 +4285,7 @@ class MotorTestControllerImpl {
     // Captured BEFORE the operation runs, so the episode is bound to the
     // attempt that was live when the stop was demanded.
     this.stopEpisodeAttemptId = this.pulse.attemptId;
+    this.stopTriggerForEpisode = this.lastStopTrigger;
     const started = this.runStopVector();
     this.stopInFlight = started;
     return started
@@ -3455,205 +4354,74 @@ class MotorTestControllerImpl {
       });
   }
 
+  /**
+   * P2-ii - THE STOP, DELEGATED TO THE ONE COMMAND AUTHORITY.
+   *
+   * WHAT THIS REPLACED. This method used to own a complete second stop
+   * implementation: its own all-stop encoding, its own
+   * `lease.emergencyStop(...)`, its own ambiguity counting argument, its
+   * own confirmation stop and its own settle bookkeeping. The professional
+   * engine owns every one of those, so keeping both meant TWO stop
+   * authorities - the duplication P2-ii exists to remove.
+   *
+   * WHAT REMAINS IS PROJECTION, NOT AUTHORITY. The engine performs the
+   * stop and reports semantic attribution facts it alone can observe
+   * (`deferredBehindActiveWrite` and `attributionAmbiguous` come from the
+   * lease AT REGISTRATION TIME and are gone by the time a frame settles).
+   * `projectStopOutcomeToLegacyRecord` - pure, and proven on its own
+   * before this routing existed - turns that into the legacy record.
+   *
+   * THE EPISODE IDENTITY IS ALREADY BOUND. `executeStopVector` captured
+   * `stopEpisodeId` and `stopEpisodeAttemptId` synchronously, before this
+   * runs, so the record cannot drift onto whatever attempt happens to be
+   * live when the awaited stop settles.
+   */
   private async runStopVector(): Promise<MotorTestStopExecutionOutcome> {
-    const lease = this.lease;
-    const authority = this.authority;
-    const scope = this.motorScope;
+    const engine = this.engine;
+    const episodeId = this.stopEpisodeId;
 
-    let deferred = false;
-    let ambiguous = false;
-    let resolvedByConfirmation = false;
-    let submittedNext = false;
-
-    const settle = (
-      outcome: MotorTestStopExecutionOutcome,
-      dispatched: boolean,
-      acknowledged: boolean,
-    ): MotorTestStopExecutionOutcome => {
+    if (engine === undefined) {
+      // No professional authority for this session, so nothing this
+      // controller did could have commanded an output. Recorded honestly
+      // rather than reported as a stop that happened - and with the SAME
+      // precedence the pre-engine implementation used: no lease, then no
+      // decoded scope, then an authority that never came to exist (a
+      // session that failed closed before the engine was constructed).
+      const outcome: MotorTestStopExecutionOutcome = {
+        kind: 'NOT_ATTEMPTED',
+        reason:
+          this.lease === undefined
+            ? 'NO_LEASE'
+            : this.motorScope === undefined
+              ? 'NO_SCOPE'
+              : 'AUTHORITY_STALE',
+      };
       this.stopExecution = Object.freeze({
+        ...this.stopExecution,
         attempts: this.stopExecution.attempts + 1,
-        commandDispatched: this.stopExecution.commandDispatched || dispatched,
-        commandAcknowledged:
-          this.stopExecution.commandAcknowledged || acknowledged,
-        physicalStopConfirmed: false as const,
-        deferredBehindActiveWrite:
-          this.stopExecution.deferredBehindActiveWrite || deferred,
-        attributionAmbiguous:
-          this.stopExecution.attributionAmbiguous || ambiguous,
-        attributionResolvedByConfirmation:
-          this.stopExecution.attributionResolvedByConfirmation ||
-          resolvedByConfirmation,
-        wirePreemptionClaimed: false as const,
-        submittedNextOnTransport:
-          this.stopExecution.submittedNextOnTransport || submittedNext,
-        episodeId: this.stopEpisodeId,
+        episodeId,
         outcome,
       });
       return outcome;
-    };
-
-    if (lease === undefined) {
-      return settle({kind: 'NOT_ATTEMPTED', reason: 'NO_LEASE'}, false, false);
-    }
-    if (scope === undefined) {
-      return settle({kind: 'NOT_ATTEMPTED', reason: 'NO_SCOPE'}, false, false);
-    }
-    // Reference identity, before a single byte is built.
-    if (
-      authority === undefined ||
-      !lease.isActive() ||
-      lease.officialSessionAuthority() !== authority
-    ) {
-      return settle(
-        {kind: 'NOT_ATTEMPTED', reason: 'AUTHORITY_STALE'},
-        false,
-        false,
-      );
     }
 
-    let payload: Uint8Array;
-    try {
-      // The accepted guard runs FIRST: 3D, motor count, raw protocol.
-      assertSupportedMotorScope(scope);
-      payload = encodeSetMotorPayload(
-        buildAllStopVector(scope),
-        MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
-      );
-    } catch {
-      // Zero transport traffic on any scope or encoding refusal.
-      return settle({kind: 'SCOPE_REJECTED'}, false, false);
-    }
-
-    // THE MONITOR IS SUSPENDED BEFORE THE STOP IS REGISTERED, and this
-    // one line is the whole of correction (1).
-    //
-    // THE DEFECT IT CLOSES, from the device. The priority stop purges the
-    // FIFO and displaces the active request. When that active request was
-    // the safety monitor's own MSP_STATUS_EX - which it very often is,
-    // because the monitor observes back-to-back - the observation rejected
-    // with MSP_DISPLACED_IN_FLIGHT_BY_EMERGENCY_STOP, `observeMotorArmedState`
-    // reported REQUEST_FAILED, the monitor published SAFETY_OBSERVATION_FAILED
-    // and called `onUnsafe`, and the controller faulted the session under
-    // SAFETY_MONITORING_FAILED. A perfectly successful stop therefore
-    // ended in "disconnect the LiPo".
-    //
-    // A read this controller cancelled ITSELF is an expected cancellation,
-    // never evidence that the flight controller became unsafe. `stop()`
-    // bumps the monitor's own generation, so the settling observation
-    // publishes nothing and cannot reach `onUnsafe` at all - the ambiguity
-    // is removed rather than filtered after the fact.
-    //
-    // It is stopped for EVERY stop path, including teardown: no stop may
-    // ever be gated on a read, and no read this controller displaced may
-    // ever be read as a safety signal.
-    this.safetyMonitor?.stop();
-
-    // Phase 2G: the stop travels the PRIORITY route, not the ordinary
-    // lease FIFO. The client purges everything still queued and makes this
-    // the next transport submission. That is submission order only - it
-    // preempts nothing already handed to the transport, and the dispatch's
-    // own flags below are what keep this record honest about it.
-    const dispatch = this.dispatchAllStop(lease, payload);
-    deferred = dispatch.deferredBehindActiveWrite;
-    ambiguous = dispatch.attributionAmbiguous;
-    // True in every case: the client took this out of its stop slot ahead
-    // of the FIFO. When `deferred` is also true it was still the next
-    // SUBMISSION - it simply had to wait for an uncancellable write.
-    submittedNext = true;
-
-    try {
-      await dispatch.frame;
-    } catch {
-      // Dispatched, outcome unknown. Never a stop.
-      return settle(
-        {kind: 'FAILED', reason: 'REQUEST_FAILED'},
-        true,
-        false,
-      );
-    }
-
-    // The ACK belongs to THIS session or it belongs to nothing.
-    if (
-      !lease.isActive() ||
-      lease.officialSessionAuthority() !== authority ||
-      this.authority !== authority
-    ) {
-      return settle(
-        {kind: 'FAILED', reason: 'AUTHORITY_CHANGED'},
-        true,
-        false,
-      );
-    }
-
-    // Phase 2G / correction (3): the frame resolved, but this stop
-    // displaced an already-written command 214 - the pulse's own request -
-    // so THIS frame may be the pulse's response rather than the stop's.
-    // It is discarded as proof, exactly as before.
-    //
-    // WHAT IS NEW is that the ambiguity is now RESOLVED rather than
-    // treated as terminal. A normal early release always produces it, and
-    // permanently faulting a bench session for letting go of a button a
-    // few milliseconds early is not a safety property - it is a defect.
-    //
-    // The resolution is a counting argument, not an optimism: there is
-    // exactly ONE non-stop command 214 outstanding (the pulse), the link
-    // answers a single serialized FIFO in order, and both writes carry the
-    // IDENTICAL all-stop payload. So issuing one more all-stop and waiting
-    // for its acknowledgement guarantees that at least one genuine
-    // all-stop frame was received and processed by the flight controller,
-    // while the possibly-stale first frame is never counted as that proof.
-    if (ambiguous) {
-      const confirmation = this.dispatchAllStop(lease, payload);
-      try {
-        await confirmation.frame;
-      } catch {
-        // The confirming stop itself failed. Nothing is proven and this
-        // stays terminal - the lease is already faulted by the client's
-        // own rejection policy.
-        return settle({kind: 'FAILED', reason: 'REQUEST_FAILED'}, true, false);
-      }
-      if (
-        !lease.isActive() ||
-        lease.officialSessionAuthority() !== authority ||
-        this.authority !== authority
-      ) {
-        return settle({kind: 'FAILED', reason: 'AUTHORITY_CHANGED'}, true, false);
-      }
-      if (confirmation.attributionAmbiguous) {
-        // Unreachable in practice - the pulse was the only competing 214
-        // and it is settled by now - but a second ambiguity would mean the
-        // counting argument above does not hold, and this must fail closed
-        // rather than resolve on an assumption. The lease is failed closed
-        // so the identity cannot be reused.
-        lease.failClosed();
-        return settle(
-          {kind: 'FAILED', reason: 'ATTRIBUTION_AMBIGUOUS'},
-          true,
-          false,
-        );
-      }
-      resolvedByConfirmation = true;
-    }
-
-    // ACKNOWLEDGED means received and processed. It is NOT a physical
-    // stop, and `physicalStopConfirmed` stays false.
-    return settle({kind: 'ACKNOWLEDGED'}, true, true);
+    const engineOutcome = await engine.stopAll(
+      mapLegacyStopReason(this.stopTriggerForEpisode ?? 'STOP_BUTTON_PRESSED'),
+    );
+    this.stopExecution = projectStopOutcomeToLegacyRecord(engineOutcome, {
+      previous: this.stopExecution,
+      episodeId,
+    });
+    return this.stopExecution.outcome as MotorTestStopExecutionOutcome;
   }
 
-  /**
-   * THE ONE SITE THAT PUTS AN ALL-STOP ON THE WIRE.
-   *
-   * Extracted so the priority route has a single call site even though a
-   * stop may need two submissions to be attributable (see the ambiguity
-   * resolution above). Every argument is fixed by the caller from the
-   * protected vector builder; nothing here shapes a payload.
+  /*
+   * `dispatchAllStop` WAS HERE. It was the controller's single
+   * `lease.emergencyStop(MSP_SET_MOTOR, ...)` call site - the last legacy
+   * direct STOP write. The engine owns that dispatch now, together with
+   * the ambiguity confirmation it sometimes needs, so this controller no
+   * longer puts any motor frame on the wire by any route.
    */
-  private dispatchAllStop(
-    lease: MotorTestLease,
-    payload: Uint8Array,
-  ): MspEmergencyStopDispatch {
-    return lease.emergencyStop(MSP_SET_MOTOR, payload, READ_REQUEST_OPTIONS);
-  }
 
   /* --- teardown ---------------------------------------------------- */
 
@@ -3781,6 +4549,78 @@ class MotorTestControllerImpl {
       record('STOP_SAFETY_MONITOR', 'THREW');
     }
 
+    // (6b) P2-ii: RELEASE THE FC-SIDE ARMING RESTRICTION - BUT ONLY IF
+    //      THE STOP WAS ESTABLISHED.
+    //
+    // ORDER. This runs AFTER the all-stop attempt above and BEFORE the
+    // lease is released. Releasing first would re-permit arming while an
+    // output could still be commanded, which inverts the entire point of
+    // establishing the restriction; releasing after the lease is gone
+    // would be impossible, because the release travels that same lease.
+    //
+    // FAIL CLOSED, AND SAY SO. When the stop could not be established
+    // under the contract above (`stopUnsafe`), the restriction is
+    // deliberately LEFT IN FORCE. Releasing it merely to make teardown
+    // look complete would turn an uncertain motor-output state into an
+    // immediately armable flight controller - strictly worse than leaving
+    // a flight controller temporarily unable to arm, which the operator
+    // can always clear by reconnecting. This is fail-closed behaviour, not
+    // a failure, and it is NEVER a claim about physical motor state.
+    if (!this.armingRestrictionEstablished) {
+      this.armingRestrictionReleased = 'NOT_OWED';
+      record('RELEASE_ARMING_RESTRICTION', 'SKIPPED');
+    } else if (stopUnsafe) {
+      this.armingRestrictionReleased = 'WITHHELD_STOP_UNPROVEN';
+      record('RELEASE_ARMING_RESTRICTION', 'SKIPPED');
+    } else {
+      try {
+        const lease = this.lease;
+        if (lease !== undefined && lease.isActive()) {
+          // Payload [0] = release THIS descriptor's hold. The builder is
+          // the reviewed module's; nothing is encoded here.
+          await lease.request(
+            MSP_SET_ARMING_DISABLED,
+            buildArmingReleasePayload(),
+            READ_REQUEST_OPTIONS,
+          );
+          this.armingRestrictionReleased = 'RELEASED';
+          // THE RELEASE IS REPORTED BACK TO THE MODULE THAT RECORDED THE
+          // ESTABLISHMENT, and this is not bookkeeping tidiness - it is
+          // the second half of the reopen fix.
+          //
+          // motorArmingRestriction.ts records an establishment against the
+          // OFFICIAL SESSION AUTHORITY, which deliberately outlives an
+          // ordinary lease release-and-reacquire. This release travels the
+          // lease, so without this call the module never learns the hold
+          // is gone: the operator's NEXT motor session on the same cable
+          // is refused with ARMING_RESTRICTION_ALREADY_ESTABLISHED and
+          // fails closed at setup. Reached only after the request above
+          // actually succeeded, so a withheld or failed release still
+          // leaves the record - and the refusal - standing.
+          if (this.armingRestrictionReceipt !== undefined) {
+            recordMotorArmingRestrictionReleased(this.armingRestrictionReceipt);
+          }
+          record('RELEASE_ARMING_RESTRICTION', 'DONE');
+        } else {
+          // The transport is already gone. Nothing can be sent, and
+          // nothing is pretended.
+          this.armingRestrictionReleased = 'RELEASE_FAILED';
+          record('RELEASE_ARMING_RESTRICTION', 'SKIPPED');
+        }
+      } catch {
+        // The release itself failed. The restriction may still be in
+        // force on the aircraft - the safe direction to be wrong in - but
+        // the teardown must NOT present itself as ordinarily clean: the
+        // operator's next connection starts against a flight controller
+        // whose arming state this session could not settle. `threw` marks
+        // the report incomplete, and `armingRestrictionRelease` carries
+        // the distinct recovery cause.
+        threw = true;
+        this.armingRestrictionReleased = 'RELEASE_FAILED';
+        record('RELEASE_ARMING_RESTRICTION', 'THREW');
+      }
+    }
+
     // (7) Release the genuine lease.
     let leaseRelease: MotorTestLeaseReleaseResult | 'NOT_HELD' | 'THREW' =
       'NOT_HELD';
@@ -3869,6 +4709,7 @@ class MotorTestControllerImpl {
       safetyMonitorStopped,
       leaseRelease,
       telemetryTokensReleased: telemetryReleased,
+      armingRestrictionRelease: this.armingRestrictionReleased,
       complete,
       ...(complete
         ? {}
@@ -3915,5 +4756,13 @@ export function createMotorTestController(
       controller.setEscDirection(motorNumber, direction),
     refreshDiagnostics: () => controller.refreshDiagnostics(),
     close: () => controller.close(),
+    // P2-ii: the professional facade, same frozen-literal rule - the
+    // engine and its authority stay in private fields behind it.
+    setMotorValues: (values: readonly number[]) =>
+      controller.setMotorValues(values),
+    setMotorValue: (motorIndex: number, value: number) =>
+      controller.setMotorValue(motorIndex, value),
+    setMaster: (value: number) => controller.setMaster(value),
+    stopAll: () => controller.stopAll(),
   });
 }

@@ -59,8 +59,8 @@ function statusPayload(armed: boolean): Uint8Array {
   return Uint8Array.from([0, 0, 0, 0, 0, 0, armed ? 1 : 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 29, 0, 0, 0, 0, 0]);
 }
 
-function identification(identifier = 'BTFL'): MspIdentificationState {
-  return {status: 'SUCCEEDED', identity: {firmware: {identifier, knownFamily: identifier === 'BTFL' ? 'BETAFLIGHT' : 'INAV'}, apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: 47}, board: {}}} as MspIdentificationState;
+function identification(identifier = 'BTFL', minor = 47): MspIdentificationState {
+  return {status: 'SUCCEEDED', identity: {firmware: {identifier, knownFamily: identifier === 'BTFL' ? 'BETAFLIGHT' : 'INAV'}, apiVersion: {mspProtocolVersion: 0, apiVersionMajor: 1, apiVersionMinor: minor}, board: {}}} as MspIdentificationState;
 }
 
 function scheduler(): MspTelemetryScheduler {
@@ -72,10 +72,10 @@ function scheduler(): MspTelemetryScheduler {
   } as unknown as MspTelemetryScheduler;
 }
 
-function harness(options: {motorTest?: boolean} = {}) {
+function harness(options: {motorTest?: boolean; apiMinor?: number} = {}) {
   const client = new FakeClient();
   const telemetry = scheduler();
-  const state = {identification: identification(), generation: 8, ownership: 'ACTIVE' as const, recovery: 'READY' as const};
+  const state = {identification: identification('BTFL', options.apiMinor ?? 47), generation: 8, ownership: 'ACTIVE' as const, recovery: 'READY' as const};
   const coordinator: ModesSessionCoordinator = {
     getOwnershipState: () => state.ownership,
     getIdentificationState: () => state.identification,
@@ -160,7 +160,8 @@ describe('ModesConfigurationController', () => {
     h.client.enqueue(MSP_BOXIDS, {payload: IDS});
     h.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)});
     h.client.enqueue(MSP_SET_MODE_RANGE, {reject: Object.assign(new Error('timeout'), {code: 'MSP_RESPONSE_TIMEOUT'})});
-    await expect(h.controller.save(key, original, changedDraft(original))).resolves.toEqual({kind: 'UNCONFIRMED', stage: {kind: 'MODE_RANGE', index: 0}});
+    /* U-R1: slot 0 is the first frame, so the ledger is empty. */
+    await expect(h.controller.save(key, original, changedDraft(original))).resolves.toEqual({kind: 'UNCONFIRMED', stage: {kind: 'MODE_RANGE', index: 0}, confirmedStages: []});
     expect(h.client.calls.filter(call => call.command === MSP_SET_MODE_RANGE)).toHaveLength(1);
     expect(h.client.calls.map(call => call.command)).not.toContain(MSP_EEPROM_WRITE);
   });
@@ -180,5 +181,34 @@ describe('ModesConfigurationController', () => {
     expect([...writes[0].payload]).toEqual([0, 1, 2, 12, 28, 1, 0]);
     expect([...writes[19].payload]).toEqual([19, 0, 0, 0, 0, 0, 0]);
     expect(h.client.calls.filter(call => call.command === MSP_EEPROM_WRITE)).toHaveLength(1);
+  });
+});
+
+/**
+ * THE SAME COMPLETE SAVE, ON EVERY API VERSION THE FLOOR ADMITS.
+ *
+ * Modes writes twenty indexed rows and then persists, so it is the
+ * controller with the most write traffic per save - and the one where a
+ * payload that shifted on a newer firmware would be least obvious. The
+ * readback comparison at the end is what would catch it.
+ *
+ * Not a real 1.48 board: the scripted board answers with the payloads
+ * this app decodes, which IS the forward-compatibility claim under test.
+ */
+describe.each([47, 48, 49])('a complete Modes save on API 1.%s', minor => {
+  it('writes every row, persists once and verifies the readback', async () => {
+    const h = harness({apiMinor: minor});
+    const original = await loadOriginal(h);
+    enqueueSnapshot(h.client);
+    h.client.enqueue(MSP_BOXIDS, {payload: IDS});
+    h.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)});
+    h.client.enqueue(MSP_SET_MODE_RANGE, ...Array.from({length: 20}, () => ({payload: EMPTY})));
+    h.client.enqueue(MSP_EEPROM_WRITE, {payload: EMPTY});
+    enqueueSnapshot(h.client, {aux: 2, startStep: 12, endStep: 28, logic: 1});
+
+    await expect(h.controller.save(key, original, changedDraft(original))).resolves.toEqual(
+      expect.objectContaining({kind: 'SAVED_VERIFIED'}),
+    );
+    expect(h.client.calls.map(call => call.command)).toContain(MSP_EEPROM_WRITE);
   });
 });

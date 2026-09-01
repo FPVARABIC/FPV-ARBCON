@@ -239,8 +239,10 @@ describe('PortsConfigurationController', () => {
     expect(loaded).toMatchObject({
       kind: 'LOADED',
       snapshot: {
-        vtxTableAvailable: true,
-        vtxTableConfigured: false,
+        vtxTable: {
+          kind: 'OBSERVED',
+          value: { tableAvailable: true, tableConfigured: false },
+        },
       },
     });
   });
@@ -351,9 +353,14 @@ describe('PortsConfigurationController', () => {
     h.client.enqueue(MSP2_COMMON_SET_SERIAL_CONFIG, {
       reject: { code: 'MSP_TIMEOUT' },
     });
+    /* U-R1. The ledger rides on the ambiguous outcome: nothing had been
+       acknowledged when the FIRST write went unanswered, so the list of
+       confirmed groups is empty - and an empty list is exactly what must
+       NOT be confused with "a group landed". */
     await expect(h.controller.save(key, original, desired)).resolves.toEqual({
       kind: 'UNCONFIRMED',
       stage: 'SERIAL_CONFIG',
+      confirmedStages: [],
     });
     expect(
       h.client.calls.filter(
@@ -379,9 +386,15 @@ describe('PortsConfigurationController', () => {
     h.client.enqueue(MSP_SET_FEATURE_CONFIG, {
       reject: { code: 'MSP_TIMEOUT' },
     });
+    /* U-R1. SERIAL_CONFIG was acknowledged before FEATURE_CONFIG went
+       unanswered, and the outcome now says so. An ambiguous later write
+       is still UNCONFIRMED - it is never upgraded to acknowledged and
+       never downgraded to definitely-not-applied - but the operator is
+       told which group is known to have landed. */
     await expect(h.controller.save(key, original, desired)).resolves.toEqual({
       kind: 'UNCONFIRMED',
       stage: 'FEATURE_CONFIG',
+      confirmedStages: ['SERIAL_CONFIG'],
     });
     expect(
       h.client.calls.filter(call => call.command === MSP_SET_FEATURE_CONFIG),

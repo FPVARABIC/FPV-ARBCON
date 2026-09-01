@@ -1,6 +1,10 @@
 import type {MspPidTuningSnapshot} from '../decoding/decodePidTuning';
+import {IDLE_MIN_RPM_OFFSET, FEEDFORWARD_AVERAGING_OFFSET, FEEDFORWARD_BOOST_OFFSET, FEEDFORWARD_JITTER_FACTOR_OFFSET} from '../decoding/decodePidTuning';
 import type {PidTuningDraft} from '../../../state/pidTuningModel';
 import {createPidTuningDraft, pidTuningDraftsEqual, validatePidTuningDraft} from '../../../state/pidTuningModel';
+import {patchAdvancedPidDraft} from '../../../state/advancedPidFields';
+import {patchAdvancedFilterDraft} from '../../../state/advancedFilterFields';
+import {patchRpmFilterDraft} from '../../../state/rpmFilterFields';
 
 export type PidTuningWriteGroup = 'PID' | 'PID_ADVANCED' | 'RC_TUNING' | 'FILTER_CONFIG';
 export interface EncodedPidTuningWrite { readonly group: PidTuningWriteGroup; readonly payload: Uint8Array }
@@ -17,6 +21,22 @@ export function encodeChangedPidTuning(snapshot: MspPidTuningSnapshot, draft: Pi
   axes.forEach((axis, index) => { const offset = index * 3; pid[offset] = axis.p; pid[offset + 1] = axis.i; pid[offset + 2] = axis.d; });
   const advanced = snapshot.advancedRaw.slice();
   axes.forEach((axis, index) => writeU16(advanced, 32 + index * 2, axis.f));
+  // Patched into a CLONE of the payload the board just sent, like every other
+  // field here, so the ~60 bytes this screen does not own are returned
+  // byte-for-byte. A PID_ADVANCED write is emitted below only if some byte
+  // actually changed, so reading this screen never rewrites tuning.
+  if (advanced.length > IDLE_MIN_RPM_OFFSET) advanced[IDLE_MIN_RPM_OFFSET] = draft.idleMinRpm;
+  // Patched into the board's OWN payload, like every other field here, so
+  // a byte this app does not understand is written back untouched.
+  if (advanced.length > FEEDFORWARD_AVERAGING_OFFSET) advanced[FEEDFORWARD_AVERAGING_OFFSET] = draft.feedforwardAveraging;
+  if (advanced.length > FEEDFORWARD_BOOST_OFFSET) advanced[FEEDFORWARD_BOOST_OFFSET] = draft.feedforwardBoost;
+  if (advanced.length > FEEDFORWARD_JITTER_FACTOR_OFFSET) advanced[FEEDFORWARD_JITTER_FACTOR_OFFSET] = draft.feedforwardJitterFactor;
+  // The P-E advanced tier, into the same clone. Every one of its fields is
+  // patched unconditionally, which is safe precisely BECAUSE it is a clone:
+  // an untouched field writes back the byte the board sent. The highest
+  // offset it reaches is 60 (tpa_breakpoint's high byte), inside the 61
+  // bytes decodePidTuning already requires before a snapshot exists.
+  patchAdvancedPidDraft(advanced, draft.advanced);
   const rates = snapshot.ratesRaw.slice();
   rates[0] = draft.rates.roll.rcRate;
   rates[12] = draft.rates.pitch.rcRate;
@@ -53,6 +73,19 @@ export function encodeChangedPidTuning(snapshot: MspPidTuningSnapshot, draft: Pi
   writeU16(filters, 41, draft.filters.dynamicNotchMinHz);
   writeU16(filters, 45, draft.filters.dynamicNotchMaxHz);
   filters[48] = draft.filters.dynamicNotchCount;
+  // The advanced filter tier - gyro LPF1/2 types, LPF2 static, both gyro
+  // notches, D-term types, dyn expo, LPF2 static, the D-term notch and the
+  // yaw lowpass.
+  patchAdvancedFilterDraft(filters, draft.advancedFilters);
+  // The RPM filter, into the SAME clone of the board's own payload.
+  //
+  // Its head (harmonics, min Hz) is patched on every contract. Its tail
+  // (fade range, q, three weights) is patched ONLY where the contract
+  // defines those bytes - on API 1.47 the payload is 49 bytes long and
+  // offsets 49-55 are not part of it. The contract comes from the snapshot,
+  // which got it from the identification, so this decision is made from the
+  // same version truth the write authority itself used.
+  patchRpmFilterDraft(filters, draft.rpmFilter, snapshot.contract);
   const writes: EncodedPidTuningWrite[] = [];
   if (pid.some((value, index) => value !== snapshot.pidRaw[index])) writes.push(Object.freeze({group: 'PID', payload: pid}));
   if (advanced.some((value, index) => value !== snapshot.advancedRaw[index])) writes.push(Object.freeze({group: 'PID_ADVANCED', payload: advanced}));

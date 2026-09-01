@@ -15,9 +15,11 @@ import {
   MSP_BOXIDS,
   MSP_FC_VARIANT,
   MSP_FEATURE_CONFIG,
+  MSP_MIXER_CONFIG,
   MSP_MOTOR_CONFIG,
   MSP_STATUS_EX,
 } from '../../core';
+import {MSP_SET_ARMING_DISABLED} from '../../core/state/motorArmingRestriction';
 import {buildMspFrameBytes} from '../../core/protocol/__testUtils__/mspFixtures';
 import {MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS} from '../../core/state/motorTestSafetyMonitor';
 import {
@@ -53,12 +55,22 @@ function advancedConfig(): Uint8Array {
   return Uint8Array.from([1, 1, 0, 6, ...u16(480), ...u16(550), 0, 0, 0, 0, 0, ...u16(125), ...u16(0), 0, 0, 0]);
 }
 
-function disarmedStatus(): Uint8Array {
+/**
+ * P2-ii: `armingDisableFlags` gained a parameter so this fixture can model
+ * a flight controller that has ACCEPTED the MSP arming restriction. The
+ * enable path now establishes it and independently re-reads MSP_STATUS_EX
+ * to verify bit 16 came back set, so a status that never reports the flag
+ * would describe a device that ignored the write.
+ */
+function disarmedStatus(armingDisableFlags = 0): Uint8Array {
   return Uint8Array.from([
     ...u16(125), ...u16(0), ...u16(0x21), ...u32(0), 2, ...u16(15),
-    4, 1, 0, 29, ...u32(0), 0, ...u16(3400), 6,
+    4, 1, 0, 29, ...u32(armingDisableFlags), 0, ...u16(3400), 6,
   ]);
 }
+
+/** ARMING_DISABLED_MSP is bit 16 of the global mask. */
+const MSP_RESTRICTION_BIT = 16;
 
 function makeTransport(): UsbSerialTransportClient {
   const dataListeners = new Set<(event: UsbSerialDataEvent) => void>();
@@ -75,14 +87,28 @@ function makeTransport(): UsbSerialTransportClient {
     [MSP_MOTOR_CONFIG, motorConfig()],
     [MSP_ADVANCED_CONFIG, advancedConfig()],
     [MSP_FEATURE_CONFIG, Uint8Array.from(u32(0))],
+    // M-D: MIXER_QUADX (3), yaw not reversed. The setup reads which
+    // airframe it is so the view can draw the right one; presentation
+    // only - the motor COUNT still comes from MSP_MOTOR_CONFIG alone.
+    [MSP_MIXER_CONFIG, Uint8Array.from([3, 0])],
     [MSP_BOXIDS, Uint8Array.from([0, 1, 2, 13])],
     [MSP_STATUS_EX, disarmedStatus()],
+    // P2-ii: command 99 is acknowledged with an empty payload.
+    [MSP_SET_ARMING_DISABLED, new Uint8Array(0)],
   ]);
 
   return {
     writeBytes: jest.fn((_sessionId: string, encoded: string) => {
       const command = base64ToBytes(encoded)[4];
       const payload = responses.get(command);
+      // A device that accepted the restriction reports it in every later
+      // status, which is what the establishment's re-read verifies.
+      if (command === MSP_SET_ARMING_DISABLED) {
+        responses.set(
+          MSP_STATUS_EX,
+          disarmedStatus(Math.pow(2, MSP_RESTRICTION_BIT)),
+        );
+      }
       if (payload !== undefined) {
         setTimeout(() => {
           const frame = buildMspFrameBytes(command, payload, {
@@ -162,7 +188,11 @@ describe('Motors full-stack readiness', () => {
 
     const beginning = operator.beginSession();
     // Configuration, BOXIDS and the first live DISARMED observation.
-    await driveUntil(() => operator.getSnapshot().setupStep === 'READY', 12);
+    // P2-ii adds two round trips to the enable path - command 99 and its
+    // independent MSP_STATUS_EX verification re-read - so the bounded
+    // drive needs headroom for them. It still stops as soon as READY is
+    // reached, so the bound is a safety net, not a fixed step count.
+    await driveUntil(() => operator.getSnapshot().setupStep === 'READY', 20);
     const ready = await beginning;
 
     expect(ready).toMatchObject({
@@ -185,13 +215,26 @@ describe('Motors full-stack readiness', () => {
     // READY must not be followed by an immediate back-to-back status read.
     // That exact zero-delay cycle was able to fault a healthy browser link
     // and produced READY + REQUIRES_NEW_CONNECTION in the operator's trace.
-    expect(statusWriteCount()).toBe(1);
+    //
+    // UPDATED IN P2-ii: the baseline grew from 1 to 3 because the enable
+    // path now establishes the arming restriction, which performs its own
+    // independent MSP_STATUS_EX verification re-read, and the monitor takes
+    // a fresh reading afterwards. The GUARD is unchanged and is what
+    // matters: the count must be a small FIXED number at READY and must
+    // then advance by exactly one per observation interval. A runaway
+    // zero-delay loop would blow past both assertions.
+    const READY_STATUS_READS = 3;
+    expect(statusWriteCount()).toBe(READY_STATUS_READS);
     expect(MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS).toBeGreaterThan(0);
+    // The restriction's verification re-read leaves the monitor's own
+    // interval freshly armed, so the next observation is one full interval
+    // away from THAT read rather than from READY. Advancing the interval
+    // plus one response delay lands after it deterministically.
     await jest.advanceTimersByTimeAsync(
-      MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS,
+      MOTOR_TEST_SAFETY_OBSERVATION_INTERVAL_MILLIS + RESPONSE_DELAY_MS,
     );
     await flush();
-    expect(statusWriteCount()).toBe(2);
+    expect(statusWriteCount()).toBe(READY_STATUS_READS + 1);
     await jest.advanceTimersByTimeAsync(RESPONSE_DELAY_MS);
     await flush();
     expect(operator.getSnapshot().activation).toEqual({

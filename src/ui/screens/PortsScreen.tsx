@@ -18,7 +18,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from 'react-native';
@@ -32,13 +31,15 @@ import {
   hasSerialRole,
   serialPortDisplayName,
   serialPortsEqual,
+  serialRoleCompilationUnverified,
   serialRoleIsAvailable,
   setSerialBaud,
   setSerialRole,
   unknownSerialFunctionMask,
-  validateSerialPorts,
+  assessSerialPorts,
   type SerialBaudField,
   type SerialPortsSnapshot,
+  type SerialPortsUncertainty,
   type SerialPortsValidationIssue,
   type SerialRoleCategory,
   type SerialRoleKey,
@@ -52,10 +53,22 @@ import {
   type SetupUiSessionKey,
   useMspOwnershipState,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography, useContentEnvelope } from '../theme';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography, useContentEnvelope} from '../theme';
 import { StickyActionBar } from '../components/editing';
+import {
+  Button,
+  ChoiceChips,
+  MIN_TOUCH_TARGET,
+  NoticeBox,
+  ToggleSwitch,
+} from '../components/controls';
+import { readInteraction } from '../components/controls/interaction';
+import { Icon } from '../icons';
 
-const MIN_TOUCH_TARGET = 44;
+/** The synthetic key for "no role in this category" inside ChoiceChips,
+ * which selects by string key. Never leaves this module. */
+const NONE_ROLE_KEY = '__NONE__';
 const TELEMETRY_ROLES = SERIAL_ROLE_DEFINITIONS.filter(
   role => role.category === 'TELEMETRY',
 );
@@ -104,12 +117,51 @@ function outcomeKey(outcome: PortsSaveOutcome): string {
   switch (outcome.kind) {
     case 'NO_CHANGES':
       return 'portsConfiguration.outcome.noChanges';
+    /*
+     * PERSISTENCE AND REBOOT ACKNOWLEDGEMENT ARE TWO DIFFERENT FACTS.
+     *
+     * The save persists to EEPROM and then asks the flight controller to
+     * restart. That second frame can go unanswered - a timeout, a link
+     * that vanishes - and the app then knows only that IT DID NOT
+     * RECEIVE THE ACKNOWLEDGEMENT. It does not know the reboot failed;
+     * a disappearing link is itself consistent with a board rebooting.
+     *
+     * Reporting «إعادة تشغيل المتحكم متوقعة» on that evidence stated a
+     * restart the app never confirmed. `rebootAcknowledged` was sitting
+     * on the outcome the whole time and this mapping ignored it.
+     *
+     * So the language is CONFIRMED ACKNOWLEDGEMENT vs NOT CONFIRMED -
+     * never "rebooted" vs "reboot failed" - and it never touches the
+     * persistence claim, which is already established by the EEPROM
+     * acknowledgement and stays true either way.
+     */
     case 'SAVED_VERIFIED':
-      return 'portsConfiguration.outcome.saved';
+      return outcome.rebootAcknowledged
+        ? 'portsConfiguration.outcome.saved'
+        : 'portsConfiguration.outcome.savedRebootUnconfirmed';
+    /* Two independent uncertainties, and neither may hide the other:
+       the readback was not verified AND the reboot was not acknowledged
+       is its own sentence, not the readback one reused. */
     case 'SAVED_UNVERIFIED':
-      return 'portsConfiguration.outcome.savedUnverified';
+      return outcome.rebootAcknowledged
+        ? 'portsConfiguration.outcome.savedUnverified'
+        : 'portsConfiguration.outcome.savedUnverifiedRebootUnconfirmed';
     case 'UNCONFIRMED':
       return 'portsConfiguration.outcome.unconfirmed';
+    /*
+     * RAM MOVED AND FLASH DID NOT, and the two halves of that need
+     * different sentences.
+     *
+     * A stop at EEPROM means every port change the operator asked for
+     * IS live on the aircraft and simply was not written to flash - it
+     * will vanish at the next power cycle. A stop at a configuration
+     * group means only PART of the change is live, which is the more
+     * alarming of the two and must not borrow the calmer wording.
+     */
+    case 'PARTIAL_UNPERSISTED':
+      return outcome.failedStage === 'EEPROM'
+        ? 'portsConfiguration.outcome.appliedNotPersisted'
+        : 'portsConfiguration.outcome.partiallyApplied';
     case 'SESSION_ENDED':
       return 'portsConfiguration.outcome.sessionEnded';
     case 'FAILED':
@@ -143,15 +195,11 @@ function RoleSwitch({
   return (
     <View style={[styles.switchRow, disabled && styles.disabled]}>
       <Text style={styles.controlLabel}>{label}</Text>
-      <Switch
+      <ToggleSwitch
         value={value}
         disabled={disabled}
         onValueChange={onChange}
         accessibilityLabel={label}
-        accessibilityRole="switch"
-        accessibilityState={{ checked: value, disabled }}
-        trackColor={{ false: colors.disabled, true: colors.accentStrong }}
-        thumbColor={value ? colors.accent : colors.textSecondary}
         testID={testID}
       />
     </View>
@@ -183,68 +231,52 @@ function ChoiceGroup({
   return (
     <View style={styles.controlGroup}>
       <Text style={styles.groupLabel}>{title}</Text>
-      <View style={styles.chipWrap}>
-        <Pressable
-          disabled={disabled}
-          onPress={() => onSelect(undefined)}
-          accessibilityLabel={`${title}: ${t('portsConfiguration.none')}`}
-          accessibilityRole="radio"
-          accessibilityState={{
-            selected: selected === undefined,
-            disabled,
-          }}
-          style={[
-            styles.chip,
-            selected === undefined && styles.chipSelected,
-            disabled && styles.disabled,
-          ]}
-          testID={`ports-${portIdentifier}-${categoryKey}-none`}
-        >
-          <Text
-            style={[
-              styles.chipText,
-              selected === undefined && styles.chipTextSelected,
-            ]}
-          >
-            {t('portsConfiguration.none')}
-          </Text>
-        </Pressable>
-        {roles.map(role => {
-          const available = serialRoleIsAvailable(snapshot, role.key);
-          const active = selected === role.key;
-          const roleDisabled = isRoleDisabled?.(role.key) === true;
-          return (
-            <Pressable
-              key={role.key}
-              disabled={disabled || !available || roleDisabled}
-              onPress={() => onSelect(role.key)}
-              accessibilityLabel={`${title}: ${t(roleLabelKey(role.key))}`}
-              accessibilityRole="radio"
-              accessibilityState={{
-                selected: active,
-                disabled: disabled || !available || roleDisabled,
-              }}
-              style={[
-                styles.chip,
-                active && styles.chipSelected,
-                (!available || disabled || roleDisabled) && styles.disabled,
-              ]}
-              testID={`ports-${portIdentifier}-role-${role.key}`}
-            >
-              <Text
-                style={[styles.chipText, active && styles.chipTextSelected]}
-              >
-                {t(roleLabelKey(role.key))}
-              </Text>
-              {!available ? (
-                <Text style={styles.unavailableText}>
-                  {t('portsConfiguration.notCompiled')}
-                </Text>
-              ) : null}
-            </Pressable>
-          );
-        })}
-      </View>
+      {/* The shared chip group: one selection look, one set of a11y
+          semantics. NONE is a synthetic key mapped back to `undefined`
+          at the boundary so the screen's own contract is unchanged. */}
+      <ChoiceChips
+        accessibilityLabel={title}
+        selectedKey={selected ?? NONE_ROLE_KEY}
+        onSelect={key =>
+          onSelect(key === NONE_ROLE_KEY ? undefined : (key as SerialRoleKey))
+        }
+        disabled={disabled}
+        options={[
+          {
+            key: NONE_ROLE_KEY,
+            label: t('portsConfiguration.none'),
+            testID: `ports-${portIdentifier}-${categoryKey}-none`,
+          },
+          ...roles.map(role => {
+            /* A role the board already runs stays selectable whatever the
+               build evidence says - that is board truth, and it must stay
+               removable. Only INTRODUCING a build-gated role needs proof.
+               The authority is the FC's own record, not the draft: an
+               operator cannot authorise a role by picking it. */
+            const onBoard = snapshot.ports.find(
+              record => record.identifier === portIdentifier,
+            );
+            const assigned =
+              onBoard !== undefined && hasSerialRole(onBoard, role.key);
+            const available = serialRoleIsAvailable(snapshot, role.key, assigned);
+            const unverified =
+              !available && serialRoleCompilationUnverified(snapshot, role.key);
+            return {
+              key: role.key as string,
+              label: t(roleLabelKey(role.key)),
+              disabled: !available || isRoleDisabled?.(role.key) === true,
+              note: available
+                ? undefined
+                : t(
+                    unverified
+                      ? 'portsConfiguration.compilationUnverified'
+                      : 'portsConfiguration.notCompiled',
+                  ),
+              testID: `ports-${portIdentifier}-role-${role.key}`,
+            };
+          }),
+        ]}
+      />
     </View>
   );
 }
@@ -268,39 +300,17 @@ function BaudSelector({
       <Text style={styles.baudLabel}>
         {t(`portsConfiguration.baud.${field}`)}
       </Text>
-      <View style={styles.chipWrap}>
-        {availableBaudIndexes(field, apiMinor).map(index => {
-          const selected = port[field] === index;
-          return (
-            <Pressable
-              key={index}
-              disabled={disabled}
-              onPress={() => onChange(index)}
-              accessibilityLabel={`${t(`portsConfiguration.baud.${field}`)}: ${
-                SERIAL_BAUD_RATES[index]
-              }`}
-              accessibilityRole="radio"
-              accessibilityState={{ selected, disabled }}
-              style={[
-                styles.baudChip,
-                selected && styles.chipSelected,
-                disabled && styles.disabled,
-              ]}
-              testID={`ports-${port.identifier}-${field}-${index}`}
-            >
-              <Text
-                style={[
-                  styles.chipText,
-                  styles.ltr,
-                  selected && styles.chipTextSelected,
-                ]}
-              >
-                {SERIAL_BAUD_RATES[index]}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <ChoiceChips
+        accessibilityLabel={t(`portsConfiguration.baud.${field}`)}
+        selectedKey={String(port[field])}
+        onSelect={key => onChange(Number(key))}
+        disabled={disabled}
+        options={availableBaudIndexes(field, apiMinor).map(index => ({
+          key: String(index),
+          label: String(SERIAL_BAUD_RATES[index]),
+          testID: `ports-${port.identifier}-${field}-${index}`,
+        }))}
+      />
     </View>
   );
 }
@@ -361,7 +371,13 @@ function PortCard({
         }`}
         accessibilityRole="button"
         accessibilityState={{ expanded }}
-        style={styles.portHeader}
+        style={state => {
+          const { pressed, hovered } = readInteraction(state);
+          return [
+            styles.portHeader,
+            (hovered || pressed) && styles.portHeaderActive,
+          ];
+        }}
         testID={`ports-card-toggle-${port.identifier}`}
       >
         <View>
@@ -378,11 +394,18 @@ function PortCard({
               {t('portsConfiguration.activeRoleCount', { count: roles.length })}
             </Text>
           </View>
-          <Text style={styles.expandText}>
-            {expanded
-              ? t('portsConfiguration.collapsePort')
-              : t('portsConfiguration.editPort')}
-          </Text>
+          <View style={styles.expandRow}>
+            <Icon
+              name={expanded ? 'chevron-up' : 'chevron-down'}
+              size={18}
+              color={colors.accentStrong}
+            />
+            <Text style={styles.expandText}>
+              {expanded
+                ? t('portsConfiguration.collapsePort')
+                : t('portsConfiguration.editPort')}
+            </Text>
+          </View>
         </View>
       </Pressable>
       {roles.length > 0 ? (
@@ -568,13 +591,36 @@ export default function PortsScreen({
         : Object.freeze({ ...original, ports: draft }),
     [draft, original],
   );
-  const issues = useMemo(
-    () => (snapshot === undefined ? [] : validateSerialPorts(snapshot)),
+  /* Two lists, deliberately. `issues` are configurations known to be
+     wrong and still block Save. `uncertainties` are things the optional
+     reads never established: they are shown, and they block only the
+     specific edits that depend on them - the controller is the authority
+     on that, this is the matching screen behaviour. */
+  const assessment = useMemo(
+    () =>
+      snapshot === undefined
+        ? { issues: [], uncertainties: [] }
+        : assessSerialPorts(snapshot),
     [snapshot],
   );
+  const issues = assessment.issues;
+  const uncertainties: readonly SerialPortsUncertainty[] =
+    assessment.uncertainties;
   const dirty =
     original !== undefined && !serialPortsEqual(original.ports, draft);
   const controlsDisabled = phase === 'LOADING' || phase === 'SAVING';
+  /* DOES THIS SCREEN'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; `original` and `draft` are state that
+     outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `dirty` is still true and the Save button is still live, over
+     a draft built against a DIFFERENT aircraft. The controller refuses
+     this too; both layers are required, and this is the one the operator
+     can see. See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(
+    original,
+    sessionKey,
+  );
 
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -650,7 +696,8 @@ export default function PortsScreen({
       sessionKey === undefined ||
       original === undefined ||
       !dirty ||
-      issues.length > 0
+      issues.length > 0 ||
+      saveBlockedBySession
     )
       return;
     setPhase('SAVING');
@@ -673,7 +720,7 @@ export default function PortsScreen({
         ? 'ERROR'
         : 'READY',
     );
-  }, [controller, dirty, draft, issues.length, original, sessionKey]);
+  }, [saveBlockedBySession, controller, dirty, draft, issues.length, original, sessionKey]);
 
   const reloadNow = useCallback(() => {
     setSaveOutcome(undefined);
@@ -754,14 +801,12 @@ export default function PortsScreen({
           </Text>
         </View>
 
-        <View style={styles.warningCard}>
-          <Text style={styles.warningTitle}>
-            {t('portsConfiguration.warningTitle')}
-          </Text>
-          <Text style={styles.warningText}>
-            {t('portsConfiguration.warningBody')}
-          </Text>
-        </View>
+        <NoticeBox
+          variant="warning"
+          title={t('portsConfiguration.warningTitle')}
+        >
+          {t('portsConfiguration.warningBody')}
+        </NoticeBox>
 
         {phase === 'IDLE' ? (
           <Text style={styles.stateText}>
@@ -776,17 +821,13 @@ export default function PortsScreen({
         {loadMessage !== undefined ? (
           <View style={styles.errorCard}>
             <Text style={styles.errorText}>{loadMessage}</Text>
-            <Pressable
-              style={styles.secondaryButton}
-              accessibilityRole="button"
-              accessibilityLabel={t('portsConfiguration.reload')}
+            <Button
+              label={t('portsConfiguration.reload')}
               onPress={reloadNow}
+              variant="secondary"
+              icon="refresh-cw"
               testID="ports-retry-load"
-            >
-              <Text style={styles.secondaryButtonText}>
-                {t('portsConfiguration.reload')}
-              </Text>
-            </Pressable>
+            />
           </View>
         ) : null}
 
@@ -844,26 +885,65 @@ export default function PortsScreen({
                 </Text>
               </View>
               {onOpenGps !== undefined ? (
-                <Pressable
+                <Button
+                  label={t('portsConfiguration.openGps')}
                   onPress={onOpenGps}
-                  style={styles.secondaryButton}
-                  accessibilityRole="button"
+                  variant="secondary"
+                  icon="satellite"
                   testID="ports-open-gps"
-                >
-                  <Text style={styles.secondaryButtonText}>
-                    {t('portsConfiguration.openGps')}
-                  </Text>
-                </Pressable>
+                />
               ) : null}
             </View>
 
-            {snapshot.vtxTableAvailable === true &&
-            snapshot.vtxTableConfigured === false &&
+            {/* Two DIFFERENT things, and the wording must not merge
+                them: the board said its table is empty, versus the board
+                never answered. The second used to render as nothing at
+                all, so a failed read looked exactly like a healthy VTX. */}
+            {snapshot.vtxTable.kind === 'OBSERVED' &&
+            snapshot.vtxTable.value.tableAvailable &&
+            !snapshot.vtxTable.value.tableConfigured &&
             draft.some(port => hasSerialRole(port, 'VTX_MSP')) ? (
-              <View style={styles.noticeCard} testID="ports-vtx-table-warning">
-                <Text style={styles.noticeText}>
-                  {t('portsConfiguration.vtxTableMissing')}
+              <NoticeBox variant="info" testID="ports-vtx-table-warning">
+                {t('portsConfiguration.vtxTableMissing')}
+              </NoticeBox>
+            ) : null}
+            {/* A failed VTX read deliberately gets NO notice of its own.
+                It is reported once, in the uncertainties card below,
+                which covers it whether or not a VTX role is assigned -
+                a second copy here said the same sentence twice on one
+                page, measured at 390px RTL. */}
+
+            {/* Unproven, not wrong. Rendered apart from the validation
+                card so an operator can tell "your configuration is
+                invalid" from "we could not check this". */}
+            {uncertainties.length > 0 ? (
+              <View
+                style={styles.validationCard}
+                testID="ports-evidence-uncertainties"
+              >
+                <Text style={styles.validationTitle}>
+                  {t('portsConfiguration.uncertaintyTitle')}
                 </Text>
+                {uncertainties.map((uncertainty, index) => (
+                  <Text
+                    key={`${uncertainty.code}-${
+                      uncertainty.portIdentifier ?? 'all'
+                    }-${index}`}
+                    style={styles.validationText}
+                  >
+                    •{' '}
+                    {t(`portsConfiguration.uncertainty.${uncertainty.code}`, {
+                      port:
+                        uncertainty.portIdentifier === undefined
+                          ? ''
+                          : serialPortDisplayName(uncertainty.portIdentifier),
+                      role:
+                        uncertainty.role === undefined
+                          ? ''
+                          : t(roleLabelKey(uncertainty.role)),
+                    })}
+                  </Text>
+                ))}
               </View>
             ) : null}
 
@@ -936,64 +1016,45 @@ export default function PortsScreen({
             ) : null}
 
             <View style={styles.actions}>
-              <Pressable
-                disabled={controlsDisabled || !dirty}
-                accessibilityRole="button"
-                accessibilityLabel={t('portsConfiguration.reset')}
-                accessibilityState={{
-                  disabled: controlsDisabled || !dirty,
-                }}
+              <Button
+                label={t('portsConfiguration.reset')}
                 onPress={() => {
                   setDraft(original?.ports ?? []);
                   setSaveOutcome(undefined);
                 }}
-                style={[
-                  styles.secondaryButton,
-                  (controlsDisabled || !dirty) && styles.disabled,
-                ]}
+                variant="secondary"
+                icon="rotate-ccw"
+                disabled={controlsDisabled || !dirty}
                 testID="ports-reset"
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {t('portsConfiguration.reset')}
-                </Text>
-              </Pressable>
-              <Pressable
-                disabled={controlsDisabled}
-                accessibilityRole="button"
-                accessibilityLabel={t('portsConfiguration.reload')}
-                accessibilityState={{ disabled: controlsDisabled }}
+              />
+              <Button
+                label={t('portsConfiguration.reload')}
                 onPress={requestReload}
-                style={[
-                  styles.secondaryButton,
-                  controlsDisabled && styles.disabled,
-                ]}
+                variant="secondary"
+                icon="refresh-cw"
+                disabled={controlsDisabled}
                 testID="ports-reload"
-              >
-                <Text style={styles.secondaryButtonText}>
-                  {t('portsConfiguration.reload')}
-                </Text>
-              </Pressable>
-              <Pressable
-                disabled={controlsDisabled || !dirty || issues.length > 0}
-                accessibilityRole="button"
-                accessibilityLabel={t('portsConfiguration.saveAndReboot')}
-                accessibilityState={{
-                  disabled: controlsDisabled || !dirty || issues.length > 0,
-                }}
-                onPress={handleSave}
-                style={[
-                  styles.saveButton,
-                  (controlsDisabled || !dirty || issues.length > 0) &&
-                    styles.disabled,
-                ]}
-                testID="ports-save"
-              >
-                <Text style={styles.saveButtonText}>
-                  {phase === 'SAVING'
+              />
+              <Button
+                label={
+                  phase === 'SAVING'
                     ? t('portsConfiguration.saving')
-                    : t('portsConfiguration.saveAndReboot')}
-                </Text>
-              </Pressable>
+                    : t('portsConfiguration.saveAndReboot')
+                }
+                onPress={handleSave}
+                variant="primary"
+                size="lg"
+                icon="save"
+                disabled={
+                  controlsDisabled ||
+                  !dirty ||
+                  issues.length > 0 ||
+                  saveBlockedBySession
+                }
+                accessibilityLabel={t('portsConfiguration.saveAndReboot')}
+                style={styles.saveGrow}
+                testID="ports-save"
+              />
             </View>
           </>
         ) : null}
@@ -1018,9 +1079,11 @@ export default function PortsScreen({
           setSaveOutcome(undefined);
         }}
         disabledReason={
-          issues.length > 0
-            ? t('portsConfiguration.validationTitle')
-            : undefined
+          saveBlockedBySession
+            ? t(blockReasonKey('SESSION_CHANGED'))
+            : issues.length > 0
+              ? t('portsConfiguration.validationTitle')
+              : undefined
         }
         statusMessage={
           saveOutcome === undefined ? undefined : t(outcomeKey(saveOutcome))
@@ -1045,7 +1108,8 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
     gap: spacing.lg,
     width: '100%',
-    maxWidth: 1180,
+    // The real cap is applied inline from useContentEnvelope; no static
+    // fallback so the envelope logic is the only authority.
     alignSelf: 'center',
   },
   hero: { alignItems: 'flex-end', gap: spacing.xs },
@@ -1053,40 +1117,17 @@ const styles = StyleSheet.create({
     ...typography.eyebrow,
     color: colors.accentStrong,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.display,
     color: colors.textPrimary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   subtitle: {
     ...typography.body,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
-  warningCard: {
-    backgroundColor: '#FFF4D8',
-    borderColor: colors.warning,
-    borderWidth: 1,
-    borderRadius: radii.lg,
-    padding: spacing.lg,
-    gap: spacing.xs,
-  },
-  warningTitle: {
-    ...typography.sectionTitle,
-    color: colors.warning,
-    textAlign: 'right',
-    writingDirection: 'rtl',
-  },
-  warningText: {
-    ...typography.body,
-    color: colors.textPrimary,
-    textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   stateText: {
     ...typography.body,
     color: colors.textSecondary,
@@ -1094,20 +1135,14 @@ const styles = StyleSheet.create({
     padding: spacing.xl,
     writingDirection: 'rtl',
   },
-  errorCard: {
-    backgroundColor: '#FFF0F1',
-    borderWidth: 1,
+  errorCard: {...noticeSurface, backgroundColor: colors.errorSoft,
     borderColor: colors.error,
-    borderRadius: radii.md,
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
+    gap: spacing.md},
   errorText: {
     ...typography.body,
     color: colors.error,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   summaryCard: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1123,19 +1158,16 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   summaryValue: {
     ...typography.title,
     color: colors.textPrimary,
-    textAlign: 'right',
-  },
+    textAlign: 'right'},
   summaryStatus: {
     ...typography.sectionTitle,
     color: colors.success,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   summaryDirty: { color: colors.warning },
   gpsIntegrationCard: {
     flexDirection: 'row',
@@ -1154,39 +1186,20 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     marginTop: spacing.xs,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
-  noticeCard: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: radii.md,
-    padding: spacing.md,
-  },
-  noticeText: {
-    ...typography.body,
-    color: colors.info,
-    textAlign: 'right',
-    writingDirection: 'rtl',
-  },
-  validationCard: {
-    backgroundColor: '#FFF4D8',
-    borderWidth: 1,
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  validationCard: {...noticeSurface, backgroundColor: colors.warningSoft,
     borderColor: colors.warning,
-    borderRadius: radii.md,
-    padding: spacing.lg,
-    gap: spacing.xs,
-  },
+    gap: spacing.xs},
   validationTitle: {
     ...typography.sectionTitle,
     color: colors.warning,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   validationText: {
     ...typography.caption,
     color: colors.textPrimary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   portCard: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -1200,7 +1213,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: spacing.md,
+    borderRadius: radii.sm,
   },
+  portHeaderActive: { backgroundColor: colors.surfaceHover },
   portHeaderStatus: { alignItems: 'flex-start', gap: spacing.xs },
   portName: {
     ...typography.title,
@@ -1211,8 +1226,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'left',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   roleCountBadge: {
     backgroundColor: colors.accentSoft,
     borderRadius: radii.pill,
@@ -1222,24 +1236,25 @@ const styles = StyleSheet.create({
   roleCountText: {
     ...typography.caption,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  expandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
   },
   expandText: {
-    ...typography.caption,
+    ...typography.label,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   roleSummary: {
     ...typography.caption,
     color: colors.textSecondary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   baudSummary: {
     ...typography.caption,
     color: colors.accentStrong,
-    textAlign: 'left',
-  },
+    textAlign: 'left', maxWidth: PROSE_MEASURE},
   preservedNotice: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1254,8 +1269,7 @@ const styles = StyleSheet.create({
     color: colors.warning,
     textAlign: 'right',
     writingDirection: 'rtl',
-    flex: 1,
-  },
+    flex: 1, maxWidth: PROSE_MEASURE},
   preservedMask: { ...typography.mono, color: colors.warning },
   primaryControls: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
   switchRow: {
@@ -1274,60 +1288,19 @@ const styles = StyleSheet.create({
     ...typography.sectionTitle,
     color: colors.textPrimary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   controlGroup: { gap: spacing.sm },
   groupLabel: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
-  chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-  chip: {
-    minHeight: MIN_TOUCH_TARGET,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.surfaceAlt,
-  },
-  chipSelected: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft,
-  },
-  chipText: {
-    ...typography.caption,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    writingDirection: 'rtl',
-  },
-  chipTextSelected: { color: colors.accentStrong, fontWeight: '800' },
-  unavailableText: {
-    fontSize: 9,
-    lineHeight: 12,
-    color: colors.textMuted,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   baudSection: { gap: spacing.xs, paddingTop: spacing.xs },
   baudLabel: {
     ...typography.caption,
     color: colors.textMuted,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
-  baudChip: {
-    minHeight: 36,
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.borderSoft,
-    borderRadius: radii.pill,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
+    writingDirection: 'rtl'},
   ltr: { writingDirection: 'ltr' },
   disabled: { opacity: 0.42 },
   outcomeCard: {
@@ -1337,47 +1310,17 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: spacing.md,
   },
-  outcomeDanger: { backgroundColor: '#FFF0F1', borderColor: colors.error },
+  outcomeDanger: { backgroundColor: colors.errorSoft, borderColor: colors.error },
   outcomeText: {
     ...typography.body,
     color: colors.success,
     textAlign: 'right',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.md,
     paddingTop: spacing.sm,
   },
-  secondaryButton: {
-    minHeight: MIN_TOUCH_TARGET,
-    borderWidth: 1,
-    borderColor: colors.accent,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    ...typography.sectionTitle,
-    color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
-  saveButton: {
-    flexGrow: 1,
-    minHeight: 52,
-    backgroundColor: colors.accent,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  saveButtonText: {
-    ...typography.sectionTitle,
-    color: colors.accentText,
-    writingDirection: 'rtl',
-  },
+  saveGrow: { flexGrow: 1 },
 });

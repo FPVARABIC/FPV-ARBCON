@@ -218,14 +218,29 @@ describe('GeneralConfigurationController', () => {
     ]);
   });
 
-  it('fails closed outside the exact reviewed MSP API', async () => {
-    const h = harness();
-    h.state.identification = identification(48);
-    await expect(h.controller.load(key)).resolves.toEqual({
+  it('fails closed BELOW the reviewed MSP API, and opens above it', async () => {
+    // This assertion changed deliberately. It used to demand
+    // UNSUPPORTED_FIRMWARE for API 1.48 - an exact `!== 47` lock that
+    // turned Betaflight 4.7 into a dead screen while Ports, GPS and
+    // Receiver kept working on the same board. The floor is real and
+    // still enforced; the ceiling was not, and every payload this screen
+    // reads or writes was re-checked against 1.48 in
+    // betaflightApiSupport.ts before it was removed.
+    const below = harness();
+    below.state.identification = identification(46);
+    await expect(below.controller.load(key)).resolves.toEqual({
       kind: 'REJECTED',
       reason: 'UNSUPPORTED_FIRMWARE',
     });
-    expect(h.client.calls).toEqual([]);
+    expect(below.client.calls).toEqual([]);
+
+    const above = harness();
+    above.state.identification = identification(48);
+    const result = (await above.controller.load(key)) as {kind: string; reason?: string};
+    // It may still fail further along on this harness's scripting - what
+    // it must not do is refuse the board for its version.
+    expect(result.reason).not.toBe('UNSUPPORTED_FIRMWARE');
+    expect(above.client.calls).not.toEqual([]);
   });
 
   it('rejects stale state before DISARMED proof or a write', async () => {
@@ -313,12 +328,53 @@ describe('GeneralConfigurationController', () => {
         ...createGeneralConfigurationDraft(loaded.snapshot),
         craftName: 'NEW',
       }),
-    ).resolves.toEqual({ kind: 'UNCONFIRMED', stage: 'CRAFT_NAME' });
+    /* U-R1: empty ledger - the craft-name text frame is the first
+       write this draft produces. */
+    ).resolves.toEqual({
+      kind: 'UNCONFIRMED',
+      stage: 'CRAFT_NAME',
+      confirmedStages: [],
+    });
     expect(
       h.client.calls.filter(call => call.command === MSP2_SET_TEXT),
     ).toHaveLength(1);
     expect(h.client.calls.map(call => call.command)).not.toContain(
       MSP_EEPROM_WRITE,
     );
+  });
+});
+
+/**
+ * THE SAME COMPLETE SAVE, ON EVERY API VERSION THE FLOOR ADMITS.
+ *
+ * Configuration is the screen whose save can end in a REBOOT, so an
+ * unnoticed version difference here would be discovered after the board
+ * had already restarted. `state.identification` is reassigned rather
+ * than threaded through the harness, matching how the admission tests
+ * above already do it.
+ */
+describe.each([47, 48, 49])('a complete Configuration save on API 1.%s', minor => {
+  it('writes, persists and verifies the readback', async () => {
+    const h = harness();
+    h.state.identification = identification(minor);
+    enqueueSnapshot(h.client);
+    const loaded = await h.controller.load(key);
+    if (loaded.kind !== 'LOADED') throw new Error(`load ${loaded.kind}`);
+
+    enqueueSnapshot(h.client);
+    h.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    h.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    h.client.enqueue(MSP_SET_FEATURE_CONFIG, { payload: EMPTY });
+    h.client.enqueue(MSP_EEPROM_WRITE, { payload: EMPTY });
+    enqueueSnapshot(h.client, { featureMask: 2 ** 22 });
+    h.client.enqueue(MSP_REBOOT, { payload: EMPTY });
+
+    await expect(
+      h.controller.save(key, loaded.snapshot, {
+        ...createGeneralConfigurationDraft(loaded.snapshot),
+        featureMaskRaw: 2 ** 22,
+      }),
+    ).resolves.toMatchObject({ kind: 'SAVED_VERIFIED' });
+    expect(h.client.calls.map(call => call.command)).toContain(MSP_EEPROM_WRITE);
   });
 });

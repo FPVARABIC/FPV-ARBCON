@@ -1,3 +1,9 @@
+// ENTRY CLEANUP: SetupScreen now hosts the USB connection workspace
+// (UsbConnectionScreen) for its disconnected state, so importing it pulls
+// in the transport client whose TurboModule must be mocked under Jest -
+// the exact mock App.test.tsx has always used.
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 /**
  * CHECKPOINT F - THE LIVE SETUP TELEMETRY PIPELINE, END TO END.
  *
@@ -51,6 +57,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import SetupScreen from './SetupScreen';
 import '../../i18n';
+import i18n from '../../i18n';
 import type { RootStackParamList } from '../../navigation/types';
 import {
   mspSessionCoordinator,
@@ -726,12 +733,24 @@ describe('Setup battery telemetry - real coordinator, real decode, real card', (
     return renderer;
   }
 
+  /**
+   * EVERY BATTERY SURFACE, AS ONE STRING.
+   *
+   * SETUP R9 replaced BatteryCard with a chip in the compact status area
+   * (setup-status-battery-*) plus the voltage / cells / state / reading
+   * rows of the information grid. What this helper reads changed; what
+   * the assertions below prove did not - the wire bytes still have to
+   * arrive as exactly these characters and no others.
+   */
   function cardText(renderer: ReactTestRenderer.ReactTestRenderer): string {
     return [
       ...renderer.root.findAll(
         node =>
           typeof node.props.testID === 'string' &&
-          node.props.testID.startsWith('battery-card'),
+          (node.props.testID.startsWith('setup-status-battery') ||
+            node.props.testID.startsWith('setup-info-status-voltage') ||
+            node.props.testID.startsWith('setup-info-status-cells') ||
+            node.props.testID.startsWith('setup-info-status-battery-')),
         { deep: false },
       ),
     ]
@@ -776,9 +795,12 @@ describe('Setup battery telemetry - real coordinator, real decode, real card', (
     const renderer = await mount(sessionId, client);
 
     const text = cardText(renderer);
-    expect(text).toContain('لا يوجد قياس جهد بطارية');
+    /* The R9 wording states both halves in one line: no pack was
+       detected, and the 0.17 V that WAS measured is a raw reading. The
+       old card said the same thing in two lines. Neither presents it as
+       a pack voltage, which is the guarantee. */
+    expect(text).toContain(i18n.t('setupStatusBar.batteryNoPack', {value: '0.17'}));
     expect(text).toContain('0.17 V');
-    expect(text).toContain('ليست جهد حزمة بطارية');
     expect(
       renderer.root.findAllByProps({ testID: 'battery-card-voltage' }),
     ).toHaveLength(0);
@@ -797,7 +819,7 @@ describe('Setup battery telemetry - real coordinator, real decode, real card', (
     expect(battery.status).toBe('ERROR');
     expect(battery.lastErrorCode).toBe('MspPayloadReadError');
     const text = cardText(renderer);
-    expect(text).toContain('تعذّر قراءة بيانات البطارية');
+    expect(text).toContain(i18n.t('setupStatusBar.error'));
     expect(text).not.toMatch(/\d+\.\d+ V/);
   });
 
@@ -812,7 +834,7 @@ describe('Setup battery telemetry - real coordinator, real decode, real card', (
         poll => poll.id === BATTERY_TELEMETRY_POLL_ID,
       ),
     ).toBeUndefined();
-    expect(cardText(renderer)).toContain('بيانات البطارية غير متاحة');
+    expect(cardText(renderer)).toContain(i18n.t('setupStatusBar.unavailable'));
     expect(cardText(renderer)).not.toMatch(/\d+\.\d+ V/);
   });
 
@@ -839,9 +861,19 @@ describe('Setup battery telemetry - real coordinator, real decode, real card', (
         poll => poll.id === BATTERY_TELEMETRY_POLL_ID,
       ),
     ).toBeUndefined();
-    // ...and the card shows the last real reading, explicitly stale.
+    /* ...and the surfaces show the last real reading, explicitly stale -
+       in WORDS, twice: on the chip and in its own grid row. Never
+       colour-alone, and never blanked (a frozen genuine reading is more
+       use than nothing, as long as it says it is frozen). */
     const text = cardText(renderer);
     expect(text).toContain('16.56 V');
-    expect(text).toContain('بيانات البطارية غير محدثة');
+    expect(text).toContain(i18n.t('telemetryCards.state.stale'));
+    expect(text).toContain(
+      i18n.t('setupStatusBar.batteryMeasuredStale', {
+        volts: '16.56',
+        cells: 4,
+        stale: i18n.t('telemetryCards.state.stale'),
+      }),
+    );
   });
 });

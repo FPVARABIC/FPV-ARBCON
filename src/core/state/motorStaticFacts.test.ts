@@ -51,6 +51,7 @@ function makeBoard(): MspBoardInfo {
     spiRegisteredDeviceCount: 4,
     i2cRegisteredDeviceCount: 2,
     trailingBytes: Uint8Array.from([9, 8, 7]),
+    truncated: false,
   };
 }
 
@@ -67,6 +68,7 @@ function makeBoardWithoutOptionals(): MspBoardInfo {
     signature: board.signature,
     mcuTypeId: board.mcuTypeId,
     trailingBytes: board.trailingBytes,
+    truncated: false,
   };
 }
 

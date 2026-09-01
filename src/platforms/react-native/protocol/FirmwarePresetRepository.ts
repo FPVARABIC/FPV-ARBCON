@@ -11,6 +11,8 @@ import {
   type MspExclusiveOperation,
 } from '../../../core';
 import { MSP_FC_VERSION } from '../../../core/protocol/msp/commands/mspCommands';
+import { withDeadline } from '../../../core/async/deadline';
+import { readTextBounded } from '../../../core/async/boundedBody';
 import {
   decodeFcVersion,
   type MspFcVersion,
@@ -29,12 +31,35 @@ const MAX_FILE_CHARACTERS = 1024 * 1024;
 type FetchResponse = {
   readonly ok: boolean;
   readonly status: number;
+  /** Present in browsers, absent under React Native's fetch - which is
+   *  why the body bound has two strategies. See boundedBody.ts. */
+  readonly body?: {
+    getReader?: () => ReadableStreamDefaultReader<Uint8Array>;
+  } | null;
+  readonly headers?: {get(name: string): string | null};
   text(): Promise<string>;
+  arrayBuffer?(): Promise<ArrayBuffer>;
 };
+
+/** The server's own claim about the body size, when it made one. */
+function declaredLength(response: FetchResponse): number | undefined {
+  const raw = response.headers?.get('content-length');
+  if (raw === null || raw === undefined) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
 type Fetcher = (
   url: string,
-  init?: { cache?: 'no-cache' },
+  init?: { cache?: 'no-cache'; signal?: AbortSignal },
 ) => Promise<FetchResponse>;
+
+/**
+ * How long the preset host gets to send response headers before the
+ * Presets screen is told the truth instead of spinning. Same reasoning
+ * and the same figure as buildApi's own bound: a public HTTPS service on
+ * a slow mobile link, not the MSP wire.
+ */
+const PRESET_RESPONSE_TIMEOUT_MILLIS = 30_000;
 
 export interface LoadedFirmwarePreset {
   readonly summary: FirmwarePresetSummary;
@@ -169,16 +194,55 @@ export class FirmwarePresetRepository {
     return result.result;
   }
 
+  /**
+   * BOUNDED. The Presets screen shows a loading state while this runs and
+   * has no other way out of it: an un-timed `fetch` to a host that
+   * accepts the connection and then goes quiet leaves that state
+   * permanent. Aborting on expiry rather than only abandoning the
+   * Promise means the half-open request is actually torn down.
+   *
+   * As in buildApi, this bounds the response HEADERS, not the body: a
+   * slow download of a legitimately large preset file is not a defect.
+   */
   private async loadText(path: string, limit: number): Promise<string> {
-    const response = await this.fetcher(`${this.baseUrl}${path}`, {
-      cache: 'no-cache',
-    });
+    const aborter = new AbortController();
+    const outcome = await withDeadline(
+      this.fetcher(`${this.baseUrl}${path}`, {
+        cache: 'no-cache',
+        signal: aborter.signal,
+      }),
+      PRESET_RESPONSE_TIMEOUT_MILLIS,
+    );
+    if (outcome.status === 'TIMED_OUT') {
+      aborter.abort();
+      throw new Error(`لم يستجب مصدر Presets عند تنزيل ${path}.`);
+    }
+    if (outcome.status === 'REJECTED') throw outcome.reason;
+    const response = outcome.value;
     if (!response.ok)
       throw new Error(`فشل تنزيل ${path} (HTTP ${response.status}).`);
-    const text = await response.text();
-    if (text.length > limit)
+    /*
+     * THE BODY, BOUNDED TOO.
+     *
+     * The clock above covers the HEADERS. A host that answers `200 OK`
+     * and then stops sending bytes used to leave `response.text()`
+     * pending with nothing left running, and the Presets screen on its
+     * loading state permanently. This is a STALL bound - re-armed on
+     * every chunk - so a large preset file on a slow link still
+     * finishes; see boundedBody.ts.
+     */
+    const body = await readTextBounded(response, {
+      limitBytes: limit,
+      stallTimeoutMs: PRESET_RESPONSE_TIMEOUT_MILLIS,
+      expectedBytes: declaredLength(response),
+      abort: () => aborter.abort(),
+    });
+    if (body.status === 'TOO_LARGE')
       throw new Error(`الملف ${path} أكبر من الحد الآمن.`);
-    return text;
+    if (body.status === 'STALLED')
+      throw new Error(`توقّف تنزيل ${path} من مصدر Presets قبل اكتماله.`);
+    if (body.status === 'FAILED') throw body.reason;
+    return body.value;
   }
 }
 

@@ -20,6 +20,30 @@ import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
 import {readMotorTestCapability} from '../../platforms/react-native/protocol/motorTestCapability';
 import type {UsbSerialTransportClient} from '../../platforms/react-native/transport/UsbSerialTransportClient';
 
+/**
+ * Presses the control that ACTUALLY owns the gesture.
+ *
+ * `ToggleSwitch` forwards its testID to the Pressable it renders, so the
+ * tree holds the ToggleSwitch composite (value/onValueChange), the
+ * Pressable composite (onPress) and the host View. Taking the first match
+ * and calling `onPress?.()` would silently do nothing and still pass -
+ * exactly the blind spot these session-reachability tests exist to close.
+ */
+function pressPressable(
+  renderer: ReactTestRenderer.ReactTestRenderer,
+  testID: string,
+): void {
+  const node = renderer.root
+    .findAll(candidate => candidate.props?.testID === testID)
+    .find(candidate => typeof candidate.props?.onPress === 'function');
+  if (node === undefined) {
+    throw new Error(`no pressable node with testID "${testID}"`);
+  }
+  ReactTestRenderer.act(() => {
+    node.props.onPress();
+  });
+}
+
 const SESSION_ID = 'device-session-1';
 
 const flush = async (turns = 8): Promise<void> => {
@@ -88,7 +112,7 @@ describe('the real coordinator makes the simplified motor action reachable', () 
     expect(hold.props.disabled).toBe(true);
     expect(hold.props.delayLongPress).toBe(800);
     expect(
-      renderer.root.findAllByProps({testID: 'motors-begin-session-button'}).length,
+      renderer.root.findAllByProps({testID: 'motor-session-toggle'}).length,
     ).toBeGreaterThan(0);
     expect(
       renderer.root.findAllByProps({testID: 'motors-ack-propellers'}),
@@ -113,7 +137,7 @@ describe('the real coordinator makes the simplified motor action reachable', () 
     });
     expect(readMotorTestCapability(SESSION_ID)).toBeDefined();
     expect(
-      renderer.root.findAllByProps({testID: 'motors-begin-session-button'}).length,
+      renderer.root.findAllByProps({testID: 'motor-session-toggle'}).length,
     ).toBeGreaterThan(0);
     expect(
       renderer.root.findAllByProps({testID: 'motors-hold-button'})[0].props
@@ -141,13 +165,9 @@ describe('the real coordinator makes the simplified motor action reachable', () 
     const renderer = renderMotors(
       mspSessionCoordinator.getSessionKey(SESSION_ID),
     );
-    const prepare = renderer.root.findAllByProps({
-      testID: 'motors-begin-session-button',
-    })[0];
-
-    ReactTestRenderer.act(() => {
-      prepare.props.onPress();
-    });
+    // The SESSION TOGGLE is now the only session lifecycle control. It
+    // must reach the device exactly as the removed rectangle did.
+    pressPressable(renderer, 'motor-session-toggle');
     await ReactTestRenderer.act(async () => {
       await flush();
     });

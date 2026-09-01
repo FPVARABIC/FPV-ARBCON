@@ -59,11 +59,52 @@
         border-radius: 6px;
         box-shadow: 0 0 0 5px rgba(94, 234, 212, 0.48);
       }
+      /* WEB CARET POLICY - measured, not cosmetic.
+         A browser probe of the running app found 0 contenteditable
+         elements and 0 inputs on ordinary screens, yet 149 selectable
+         text nodes: every label, heading, badge and status line was
+         `user-select: auto`, so a click left a collapsed selection and a
+         drag selected product chrome. That is the thin blinking
+         Word-like line the operator reported, and it also has a real
+         safety cost - react-native-web's press responder terminates on
+         `selectionchange`, so accidental selection can interfere with a
+         held control.
+         Ordinary chrome is therefore not selectable and uses the default
+         arrow cursor. REAL TEXT INTERACTION IS PRESERVED EXPLICITLY
+         BELOW, with higher specificity than this rule: inputs, text
+         areas, genuine editors and anything the product marks copyable
+         (CLI output, diagnostics, logs) keep native selection, their own
+         caret and a text cursor. Keyboard focus is untouched - the
+         :focus-visible ring above still applies to every control. */
+      #root {
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+      }
+      #root input,
+      #root textarea,
+      #root [contenteditable="true"],
+      #root [data-selectable="true"],
+      #root [data-selectable="true"] *,
+      /* Intentionally copyable product surfaces, named explicitly: the
+         CLI terminal log and the connection/telemetry diagnostics an
+         operator is asked to copy into a report. */
+      #root [data-testid="cli-output"],
+      #root [data-testid="usb-log"],
+      #root [data-testid="connection-report-text"] {
+        -webkit-user-select: text;
+        user-select: text;
+        cursor: auto;
+      }
       body {
         background-color: #faf8f3;
         color: #152232;
-        font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Naskh Arabic',
-          'Noto Sans Arabic', Tahoma, Arial, sans-serif;
+        /* Cairo is declared in src/web/cairo.css (bundled, fingerprinted);
+           this stack names it first so everything that inherits from body
+           — including the pre-JS #boot line once the CSS arrives — picks
+           it up, with honest Arabic fallbacks for the instant before. */
+        font-family: 'Cairo', system-ui, -apple-system, 'Segoe UI',
+          'Noto Naskh Arabic', 'Noto Sans Arabic', Tahoma, Arial, sans-serif;
         overscroll-behavior: none;
       }
       /* Shown until the entry chunk executes and replaces it. Plain CSS

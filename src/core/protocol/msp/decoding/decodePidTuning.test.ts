@@ -8,7 +8,13 @@ import {
 function writeU16(bytes: Uint8Array, offset: number, value: number): void {
   new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).setUint16(offset, value, true);
 }
-const PROFILES = {pidProfileIndex: 1, pidProfileCount: 3, controlRateProfileIndex: 2} as const;
+/* `contract` sits beside the profile identity because it is the same kind of
+   fact: something the caller PROVED before it read a byte, not something this
+   decoder may infer. These fixtures are 49-byte MSP_FILTER_CONFIG payloads,
+   which is the 1.47 contract, so that is what they declare. */
+const PROFILES = {
+  contract: 'API_1_47', pidProfileIndex: 1, pidProfileCount: 3, controlRateProfileIndex: 2,
+} as const;
 
 describe('PID tuning MSP decoding', () => {
   it('decodes the five official PID rows and API 1.47 feedforward offsets', () => {
@@ -67,18 +73,56 @@ describe('PID tuning MSP decoding', () => {
     });
   });
 
-  it('rejects layouts that are not the pinned API 1.47 contract', () => {
-    expect(() => decodePidTerms(new Uint8Array(14))).toThrow('15 bytes');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(60), rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES})).toThrow('at least 61');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(23), filters: new Uint8Array(49), ...PROFILES})).toThrow('24 bytes');
-    expect(() => decodePidTuningSnapshot({pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(48), ...PROFILES})).toThrow('49 bytes');
-    expect(() => decodeRcTuning(new Uint8Array(23))).toThrow('24 bytes');
-    expect(() => decodeFilterConfiguration(new Uint8Array(48))).toThrow('49 bytes');
+  it('TOLERATES a layout that is not exactly the pinned API 1.47 contract', () => {
+    // Reversed deliberately. Betaflight reads MSP_PID, MSP_RC_TUNING and
+    // MSP_FILTER_CONFIG positionally with no length assertion, so a
+    // firmware that appends or omits a trailing field still opens its PID
+    // tab. Exact-length gates here meant a future Betaflight release would
+    // make PID tuning unreachable rather than showing one odd value.
+    expect(() => decodePidTerms(new Uint8Array(14))).not.toThrow();
+    expect(decodePidTerms(new Uint8Array(14))).toHaveLength(5);
+    // A LONGER payload is equally survivable - the extra bytes are ignored.
+    expect(() => decodePidTerms(new Uint8Array(18))).not.toThrow();
+    // Rates and filters take the same posture.
+    expect(() => decodeRcTuning(new Uint8Array(23))).not.toThrow();
+    expect(() => decodeRcTuning(new Uint8Array(30))).not.toThrow();
+    expect(() => decodeFilterConfiguration(new Uint8Array(48))).not.toThrow();
+    expect(() => decodeFilterConfiguration(new Uint8Array(60))).not.toThrow();
   });
   it('rejects missing or inconsistent profile identity', () => {
     const base = {pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES};
     expect(() => decodePidTuningSnapshot({...base, pidProfileIndex: 3})).toThrow('profile identity');
     expect(() => decodePidTuningSnapshot({...base, pidProfileCount: 0})).toThrow('profile identity');
     expect(() => decodePidTuningSnapshot({...base, controlRateProfileIndex: -1})).toThrow('profile identity');
+  });
+
+  it('LOADS when a firmware appends a field to MSP_RC_TUNING or MSP_FILTER_CONFIG', () => {
+    // Betaflight reads both positionally with version gates and no length
+    // guard (MSPHelper.js). Both have grown across API versions - its own
+    // semver.lt(API_VERSION_1_45) branches are the proof - so an exact-length
+    // check meant the next firmware to append one field would have taken the
+    // whole PID screen down. Enough bytes for what this build reads is the
+    // real requirement.
+    const base = {pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES};
+    const longer = decodePidTuningSnapshot({
+      ...base,
+      rates: Uint8Array.from([...base.rates, 42, 7]),
+      filters: Uint8Array.from([...base.filters, 9]),
+    });
+    const exact = decodePidTuningSnapshot(base);
+    expect(longer.rcTuning).toEqual(exact.rcTuning);
+    expect(longer.filterConfig).toEqual(exact.filterConfig);
+  });
+
+  it('still refuses a payload SHORTER than the fields it reads', () => {
+    // Tolerance for extra bytes is not tolerance for missing ones: these
+    // values become editable state that gets written back to the board.
+    const base = {pid: new Uint8Array(15), advanced: new Uint8Array(61), rates: new Uint8Array(24), filters: new Uint8Array(49), ...PROFILES};
+    expect(() =>
+      decodePidTuningSnapshot({...base, rates: base.rates.slice(0, -1)}),
+    ).toThrow(/MSP_RC_TUNING/);
+    expect(() =>
+      decodePidTuningSnapshot({...base, filters: base.filters.slice(0, -1)}),
+    ).toThrow(/MSP_FILTER_CONFIG/);
   });
 });

@@ -224,8 +224,12 @@ describe('scanner - the engine boundary is the remaining structural containment'
 
   it('fails when a second module imports the vector builders or the command id', () => {
     for (const token of [
-      'buildSingleMotorVector',
-      'buildAllStopVector',
+      // M-C: the quad-only helpers are gone; their replacements carry the
+      // boundary now, and MSP_SET_MOTOR itself is unchanged.
+      'buildSingleOutputVectorForDomain',
+      'buildAllStopCommandVector',
+      'buildCommandVectorFromValues',
+      'encodeMotorTestCommandVector',
       'MSP_SET_MOTOR',
     ]) {
       const sources = readSourceTree();
@@ -280,10 +284,13 @@ describe('scanner - the engine boundary is the remaining structural containment'
 
   it('fails when an allowance goes stale rather than silently testing nothing', () => {
     const sources = readSourceTree();
-    // The controller stops importing the encoder: the rule now guards a
-    // module that does not exercise it.
-    sources['src/core/state/motorTestController.ts'] = sources[
-      'src/core/state/motorTestController.ts'
+    // M-C: the encoder's importer moved again, from the command engine to
+    // the canonical command-vector module - the one place that decides
+    // payload width - so the stale-detection fixture mutates THAT file
+    // now. The property under test is unchanged: an allowance whose module
+    // no longer exercises the token must fail, not silently test nothing.
+    sources['src/core/state/motorTestCommandVector.ts'] = sources[
+      'src/core/state/motorTestCommandVector.ts'
     ].replace(/\bencodeSetMotorPayload\b/g, 'somethingElse');
     const result = analyzeEngineBoundaries(sources);
     expect(result.ok).toBe(false);
@@ -299,6 +306,7 @@ describe('scanner - the engine boundary is the remaining structural containment'
     const result = analyzeEngineBoundaries(sources);
     expect(result.ok).toBe(false);
     expect(result.unleashed).toContainEqual({
+      file: 'src/core/state/motorTestController.ts',
       receiver: 'client',
       method: 'request',
     });
@@ -311,9 +319,15 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'MSP2_SET_MOTOR_OUTPUT_REORDERING',
       'MSP2_SET_TEXT',
       'MSP_EEPROM_WRITE',
+      // Sensors B-1: the four sensor WRITE commands, declared with an
+      // empty importer list for the same reason as the motor primitives
+      // below - the boundary exists before the first runtime caller does.
+      'MSP_SET_ACC_TRIM',
       'MSP_SET_ADVANCED_CONFIG',
       'MSP_SET_ARMING_CONFIG',
       'MSP_SET_BEEPER_CONFIG',
+      'MSP_SET_BOARD_ALIGNMENT_CONFIG',
+      'MSP_SET_COMPASS_CONFIG',
       'MSP_SET_FEATURE_CONFIG',
       'MSP_SET_FILTER_CONFIG',
       'MSP_SET_GPS_CONFIG',
@@ -328,16 +342,160 @@ describe('scanner - the engine boundary is the remaining structural containment'
       'MSP_SET_RSSI_CONFIG',
       'MSP_SET_RX_CONFIG',
       'MSP_SET_RX_MAP',
-      'buildAllStopVector',
-      'buildSingleMotorVector',
+      'MSP_SET_SENSOR_ALIGNMENT',
+      'MSP_SET_SENSOR_CONFIG',
+      // M-C: `buildAllStopVector` and `buildSingleMotorVector` left this
+      // set with the quad-only helpers they guarded. Three M-C boundaries
+      // arrived in their place, around the ONE module that decides the
+      // canonical eight-slot payload width.
+      'buildAllStopCommandVector',
+      'buildAllStopVectorForDomain',
+      'buildCommandVectorFromValues',
+      'buildMotorVector',
+      'buildSingleOutputVectorForDomain',
+      'encodeChangedBoardAlignment',
       'encodeChangedGeneralConfiguration',
       'encodeChangedMotorConfiguration',
       'encodeChangedPidTuning',
       'encodeChangedReceiverConfiguration',
+      'encodeDshotCommand',
       'encodeDshotEscDirection',
+      'encodeDshotMotorStopCommand',
       'encodeMotorOutputOrder',
+      'encodeMotorTestCommandVector',
       'encodeSetMotorPayload',
     ]);
+  });
+
+  /**
+   * The boundary must detect REACHABILITY, not the literal presence of a
+   * token. Each case below injects one forbidden path into an in-memory
+   * copy of the tree; the real tree is never touched.
+   */
+  describe('forbidden reachability - negative cases', () => {
+    const inject = mutate => {
+      const sources = readSourceTree();
+      mutate(sources);
+      return analyzeEngineBoundaries(sources);
+    };
+    const findings = result => [
+      ...result.violations.map(entry => `namedImport:${entry.token}`),
+      ...result.reExportViolations.map(entry => `reExport:${entry.token}`),
+      ...result.indirectUses.map(entry => `indirectUse:${entry.token}`),
+    ];
+
+    it('fails on a direct import from a UI screen', () => {
+      const result = inject(sources => {
+        sources['src/ui/screens/MotorsScreen.tsx'] +=
+          "\nimport {buildMotorVector} from '../../core/firmware-adapters/betaflightMotorVectorsV147';\n";
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain('namedImport:buildMotorVector');
+    });
+
+    it('fails on reachability through a barrel re-export', () => {
+      const result = inject(sources => {
+        sources['src/core/index.ts'] +=
+          "\nexport {buildMotorVector} from './firmware-adapters/betaflightMotorVectorsV147';\n";
+        sources['src/ui/screens/MotorsScreen.tsx'] +=
+          "\nimport * as core from '../../core';\nconst v = core.buildMotorVector(d, x);\n";
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain('reExport:buildMotorVector');
+      // and the consumer is caught too, even though it never names the
+      // token in an import statement.
+      expect(
+        result.indirectUses.some(
+          entry =>
+            entry.token === 'buildMotorVector' &&
+            entry.module === 'src/ui/screens/MotorsScreen.tsx',
+        ),
+      ).toBe(true);
+    });
+
+    it('fails on an import from a platform module', () => {
+      const result = inject(sources => {
+        sources[
+          'src/platforms/react-native/protocol/MotorConfigurationController.ts'
+        ] +=
+          "\nimport {encodeDshotMotorStopCommand} from '../../../core/protocol/msp/encoding/encodeDshotEscDirection';\n";
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain(
+        'namedImport:encodeDshotMotorStopCommand',
+      );
+    });
+
+    it('fails on an import from another runtime controller outside the Motors engine', () => {
+      const result = inject(sources => {
+        sources['src/platforms/react-native/protocol/PidTuningController.ts'] +=
+          "\nimport {encodeDshotCommand} from '../../../core/protocol/msp/encoding/encodeDshotEscDirection';\n";
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain('namedImport:encodeDshotCommand');
+    });
+
+    it('fails on a namespace import that never names the token', () => {
+      const result = inject(sources => {
+        sources['src/ui/screens/MotorsScreen.tsx'] +=
+          "\nimport * as vectors from '../../core/firmware-adapters/betaflightMotorVectorsV147';\n" +
+          'const z = vectors.buildSingleOutputVectorForDomain(d, 0, 1);\n';
+      });
+      expect(result.ok).toBe(false);
+      expect(findings(result)).toContain(
+        'indirectUse:buildSingleOutputVectorForDomain',
+      );
+    });
+
+    it('does NOT fail when the token appears only in a comment', () => {
+      const result = inject(sources => {
+        sources['src/ui/screens/MotorsScreen.tsx'] +=
+          '\n// TODO later: buildMotorVector will be used here\n';
+      });
+      expect(result.ok).toBe(true);
+    });
+
+    it('the unmodified tree is clean, so the fixture is restored', () => {
+      expect(analyzeEngineBoundaries(readSourceTree()).ok).toBe(true);
+    });
+  });
+
+  it('holds the P1 general motor primitives at zero runtime importers', () => {
+    // REWRITTEN IN P2-ii, NOT DELETED.
+    //
+    // In P1 these primitives had NO runtime consumer, and the assertion
+    // was that every importer list is empty. P2-ii gives them exactly one
+    // consumer - `motorControlCommandEngine.ts`, MotorTestController's
+    // tightly-owned helper - so "zero importers" is no longer the true
+    // statement, and asserting it would have to be deleted rather than
+    // tightened.
+    //
+    // The SAFETY INTENT is preserved and made sharper: the allowed set is
+    // pinned to exactly that one file, no barrel may re-export any of
+    // them, and the real tree must agree. A UI screen, a platform
+    // controller or a second state controller reaching one of these still
+    // fails, which is the property this test exists for.
+    const OWNED_HELPER = 'src/core/state/motorControlCommandEngine.ts';
+    const p1Tokens = [
+      ['buildMotorVector', [OWNED_HELPER]],
+      ['buildAllStopVectorForDomain', [OWNED_HELPER]],
+      ['buildSingleOutputVectorForDomain', ['src/core/state/motorTestController.ts']],
+      ['encodeDshotCommand', []],
+      ['encodeDshotMotorStopCommand', [OWNED_HELPER]],
+    ];
+    for (const [token, allowed] of p1Tokens) {
+      const boundary = ENGINE_BOUNDARIES.find(entry => entry.token === token);
+      expect(boundary).toBeDefined();
+      expect(boundary.importers).toEqual(allowed);
+      // No barrel may re-export them either.
+      expect(boundary.reExporters ?? []).toEqual([]);
+    }
+    // And the real tree agrees: nothing outside the allowlists reaches them.
+    const result = analyzeEngineBoundaries(readSourceTree());
+    for (const [token] of p1Tokens) {
+      expect(result.violations.map(entry => entry.token)).not.toContain(token);
+      expect(result.stale.map(entry => entry.token)).not.toContain(token);
+    }
   });
 });
 
@@ -349,5 +507,62 @@ describe('scanner - build failure is never a pass', () => {
     const { main } = require('../scan-production-bundle');
     expect(typeof main).toBe('function');
     expect(analyzeBundle('').ok).toBe(false);
+  });
+});
+
+/**
+ * RECEIVER P5 - the Receiver UI/protocol authority boundary rule.
+ *
+ * P0 recorded the risk structurally: ReceiverScreen's imports were clean,
+ * but it reached them through a barrel that also exports RNMspTransport
+ * and the live session coordinator, so one added identifier would have
+ * handed a React component the wire. These tests prove the new scanner
+ * rule is not decoration - it fails on each way that could happen.
+ */
+describe('scanner - the Receiver UI/protocol authority boundary', () => {
+  const {
+    analyzeReceiverBoundary,
+    RECEIVER_FORBIDDEN_AUTHORITY,
+  } = require('../scan-production-bundle.js');
+  const SCREEN = 'src/ui/screens/ReceiverScreen.tsx';
+
+  it('holds against the real source tree', () => {
+    const result = analyzeReceiverBoundary(readSourceTree());
+    expect(result.violations).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('fails when the screen imports the broad platform barrel', () => {
+    const sources = readSourceTree();
+    sources[SCREEN] = sources[SCREEN].replace(
+      "from '../../platforms/react-native/protocol/receiverPresentation'",
+      "from '../../platforms/react-native/protocol'",
+    );
+    const result = analyzeReceiverBoundary(sources);
+    expect(result.ok).toBe(false);
+    expect(result.violations.map(entry => entry.kind)).toContain('BROAD_PROTOCOL_IMPORT');
+    expect(result.violations.map(entry => entry.kind)).toContain('FACADE_NOT_USED');
+  });
+
+  it.each(RECEIVER_FORBIDDEN_AUTHORITY)('fails when the screen names %s in executable code', token => {
+    const sources = readSourceTree();
+    sources[SCREEN] = `const smuggled = ${token};\n${sources[SCREEN]}`;
+    const result = analyzeReceiverBoundary(sources);
+    expect(result.ok).toBe(false);
+    expect(result.violations).toContainEqual({kind: 'RAW_AUTHORITY', detail: token});
+  });
+
+  it('does NOT fail when a forbidden name appears only in a comment', () => {
+    // The screen documents these names at length; a prose-level grep
+    // would have fired on ordinary explanation rather than on authority.
+    const sources = readSourceTree();
+    sources[SCREEN] = `/* discussion of MSP_SET_FEATURE_CONFIG and RNMspTransport */\n// and mspSessionCoordinator too\n${sources[SCREEN]}`;
+    expect(analyzeReceiverBoundary(sources).ok).toBe(true);
+  });
+
+  it('fails loudly rather than silently if the screen file disappears', () => {
+    const result = analyzeReceiverBoundary({});
+    expect(result.ok).toBe(false);
+    expect(result.violations[0].kind).toBe('MISSING_SCREEN');
   });
 });

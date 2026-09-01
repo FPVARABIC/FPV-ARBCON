@@ -18,7 +18,6 @@
 import {
   CONTENT_MAX_WIDTH,
   LAYOUT_BREAKPOINTS,
-  WORKSPACE_MAX_WIDTH,
   contentEnvelope,
   effectiveWidth,
   isDesktopTier,
@@ -37,7 +36,11 @@ describe('resolveLayoutTier', () => {
     [1024, 'desktop'],
     [1439, 'desktop'],
     [1440, 'desktopWide'],
-    [1920, 'desktopWide'],
+    [1919, 'desktopWide'],
+    // A genuinely large monitor gets its own tier - see
+    // desktopLayout.test.ts for what that tier is allowed to change.
+    [1920, 'desktopUltra'],
+    [2560, 'desktopUltra'],
   ])('resolves %ipx (fontScale 1) to %s', (width, expected) => {
     expect(resolveLayoutTier(width, 1)).toBe(expected);
   });
@@ -57,7 +60,7 @@ describe('resolveLayoutTier', () => {
     // A zero/absent fontScale must not invert or explode the result.
     expect(effectiveWidth(1000, 0)).toBe(1000);
     expect(effectiveWidth(1000, 0.5)).toBe(1000);
-    expect(resolveLayoutTier(1920, 0)).toBe('desktopWide');
+    expect(resolveLayoutTier(1920, 0)).toBe('desktopUltra');
   });
 
   it('keeps the pre-existing thresholds the shipped screens already use', () => {
@@ -75,9 +78,13 @@ describe('contentEnvelope', () => {
     expect(contentEnvelope('desktop', false)).toBe(CONTENT_MAX_WIDTH);
   });
 
-  it('grants the workspace width only when a desktop tier actually splits', () => {
-    expect(contentEnvelope('desktop', true)).toBe(WORKSPACE_MAX_WIDTH);
-    expect(contentEnvelope('desktopWide', true)).toBe(WORKSPACE_MAX_WIDTH);
+  it('releases the cap entirely when a desktop tier actually splits', () => {
+    // `undefined` is the workspace answer: the screen already sits in a
+    // box the shell sized to the viewport, so the way to fill a monitor
+    // is to stop capping rather than to cap higher.
+    expect(contentEnvelope('desktop', true)).toBeUndefined();
+    expect(contentEnvelope('desktopWide', true)).toBeUndefined();
+    expect(contentEnvelope('desktopUltra', true)).toBeUndefined();
   });
 
   it('never grants it below the desktop tier, even if a screen asks', () => {

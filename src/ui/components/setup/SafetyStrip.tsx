@@ -30,6 +30,7 @@ import {
   selectTopArmingBlockReasons,
 } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 
 /** Never color-alone (per this pass's own accessibility requirement) -
  * every compact status also carries distinct Arabic text, and every
@@ -146,7 +147,12 @@ export default function SafetyStrip({
               { backgroundColor: SEVERITY_COLOR[reason.severity] },
             ]}
           />
-          <Text style={styles.reasonText}>{reason.message}</Text>
+          {/* SETUP P1: the reason carries an i18n KEY, not Arabic -
+              src/core holds no operator copy. The raw firmware code is
+              still never rendered; it is only the React key/testID. */}
+          <Text style={styles.reasonText}>
+            {t(reason.messageKey, reason.messageParams)}
+          </Text>
         </View>
       ))}
       {!expanded && remainingCount > 0 && (
@@ -190,8 +196,7 @@ const styles = StyleSheet.create({
   },
   statusText: {
     ...typography.body,
-    fontWeight: '600',
-  },
+    fontWeight: '600', maxWidth: PROSE_MEASURE},
   reasonRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -206,8 +211,7 @@ const styles = StyleSheet.create({
   reasonText: {
     ...typography.body,
     color: colors.textPrimary,
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   showAllLink: {
     marginTop: spacing.sm,
     minHeight: MIN_TOUCH_TARGET,

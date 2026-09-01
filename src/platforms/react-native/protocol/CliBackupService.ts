@@ -1,5 +1,12 @@
 import type {UsbSerialTransportClient} from '../transport';
 import {bytesToBase64} from './base64';
+import {
+  CLI_DIFF_REPLY,
+  CLI_PLAIN_REPLY,
+  CliReplyAccumulator,
+  stripCliEnvelope,
+  type CliReplyExpectation,
+} from './cliReplyReader';
 import {ReactNativeSerialPort} from './ReactNativeSerialPort';
 
 const MAX_BACKUP_CHARACTERS = 1024 * 1024;
@@ -50,15 +57,15 @@ export class CliBackupService {
     try {
       port.flushInput();
       await port.writeRaw(Uint8Array.of(0x23, 0x0d)); // #\r
-      await this.readUntilPrompt(port, 5000);
+      // Entering interactive mode prints a banner and the prompt, and
+      // cannot print a heading, so the first prompt is the real one.
+      await this.readReply(port, CLI_PLAIN_REPLY, 5000);
       port.flushInput();
       await port.writeRaw(asciiBytes('diff all\r'));
-      const output = await this.readUntilPrompt(port, 30_000);
-      const start = output.toLowerCase().indexOf('diff all');
-      const backup = (start >= 0 ? output.slice(start + 'diff all'.length) : output)
-        .replace(/\r/g, '')
-        .replace(/\n?#\s*$/, '')
-        .trim();
+      // `diff` DOES print headings, so its reply is only complete once
+      // the batch terminator has been seen - see cliReplyReader.
+      const output = await this.readReply(port, CLI_DIFF_REPLY, 30_000);
+      const backup = stripCliEnvelope(output, 'diff all');
       if (!isPlausibleCliBackup(backup)) throw new Error('لم يُرجع Flight Controller نسخة CLI صالحة.');
       return backup;
     } finally {
@@ -89,12 +96,16 @@ export class CliBackupService {
     await port.connect(115200, {dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none'});
     try {
       await port.writeRaw(Uint8Array.of(0x23, 0x0d));
-      await this.readUntilPrompt(port, 5000);
+      await this.readReply(port, CLI_PLAIN_REPLY, 5000);
       for (let index = 0; index < commands.length; index += 1) {
         if (signal?.aborted) throw new Error('أُلغيَت استعادة إعدادات CLI.');
         port.flushInput();
         await port.writeRaw(asciiBytes(`${commands[index]}\r`));
-        const reply = await this.readUntilPrompt(port, 5000);
+        // A replayed line is a `set`, a `batch`, or a profile switch -
+        // none of which can print a `# ` heading - so the first prompt
+        // ends the reply, and the whole reply INCLUDING any
+        // `###ERROR IN ...###` is in hand before this line runs.
+        const reply = await this.readReply(port, CLI_PLAIN_REPLY, 5000);
         if (/###ERROR/i.test(reply)) errors.push(`${commands[index]}: ${reply.trim()}`);
         onProgress(index + 1, commands.length);
       }
@@ -107,19 +118,45 @@ export class CliBackupService {
     }
   }
 
-  private async readUntilPrompt(port: ReactNativeSerialPort, timeout: number): Promise<string> {
+  /**
+   * Reads one reply, deciding its end with the firmware's own rules
+   * rather than with a regex over whatever has arrived.
+   *
+   * The accumulator is fed ONE BYTE AT A TIME on purpose: chunk
+   * boundaries belong to the transport, not to the protocol, and a
+   * reader whose answer depends on them is not reading the protocol.
+   */
+  private async readReply(
+    port: ReactNativeSerialPort,
+    expectation: CliReplyExpectation,
+    timeout: number,
+  ): Promise<string> {
     const deadline = Date.now() + timeout;
-    let text = '';
+    const reply = new CliReplyAccumulator(expectation, MAX_BACKUP_CHARACTERS);
     while (Date.now() < deadline) {
-      const byte = (await port.readExactly(1, Math.max(1, deadline - Date.now())))[0];
-      if (byte === 9 || byte === 10 || byte === 13 || (byte >= 32 && byte <= 126)) {
-        text += String.fromCharCode(byte);
-      } else {
+      let byte: number;
+      try {
+        byte = (
+          await port.readExactly(1, Math.max(1, deadline - Date.now()))
+        )[0];
+      } catch (error) {
+        // The board stopped sending. For a command with no structural
+        // terminator that silence IS the end of the reply - but only if
+        // a prompt is already standing; otherwise the reply is genuinely
+        // incomplete and must not be handed to anyone.
+        if (reply.settleAtDeadline().kind === 'COMPLETE') return reply.text;
+        throw error;
+      }
+      const state = reply.push(byte);
+      if (state.kind === 'COMPLETE') return reply.text;
+      if (state.kind === 'BINARY') {
         throw new Error('استجابة CLI تحتوي بيانات ثنائية غير متوقعة.');
       }
-      if (text.length > MAX_BACKUP_CHARACTERS) throw new Error('استجابة CLI تجاوزت الحد الآمن.');
-      if (/(?:^|\r?\n)#\s*$/.test(text)) return text;
+      if (state.kind === 'OVERFLOW') {
+        throw new Error('استجابة CLI تجاوزت الحد الآمن.');
+      }
     }
+    if (reply.settleAtDeadline().kind === 'COMPLETE') return reply.text;
     throw new Error('انتهت مهلة انتظار CLI prompt.');
   }
 }

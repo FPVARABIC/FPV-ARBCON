@@ -7,7 +7,10 @@ import {decodeBoardInfo} from '../decoding/decodeBoardInfo';
 import {decodeFcVariant} from '../decoding/decodeFcVariant';
 import {MspPayloadReadError} from '../decoding/MspPayloadReader';
 import {checkMspCompatibility} from './mspCompatibility';
-import {deriveFcFamily} from './mspIdentificationTypes';
+import {deriveFcFamily, UNKNOWN_BOARD} from './mspIdentificationTypes';
+import {resolveCatalogTarget} from './flightControllerNaming';
+import type {ConnectionTrace} from './connectionTrace';
+import {toHex} from './connectionTrace';
 import type {FlightControllerIdentity, MspFcVariant} from './mspIdentificationTypes';
 
 /**
@@ -42,23 +45,38 @@ const EMPTY_PAYLOAD = new Uint8Array(0);
 
 /**
  * MSP_API_VERSION/MSP_FC_VARIANT/MSP_BOARD_INFO are all classic,
- * single-byte-command MSP v1 requests - mirrors mspClient.ts's own Pass
- * 6.2b recovery-probe precedent (MSP_PROBE_WIRE_FORMAT = 'v1', also used
- * for MSP_API_VERSION specifically).
- *
- * NO responseTimeoutMs OVERRIDE, and no retry policy. Both were briefly
- * added here and are deliberately restored - see
- * docs/IDENTIFICATION_RETRY_DECISION.md for the evidence. In short: a
- * probe against the REAL MspClient showed the retry loop never reached
- * the wire at all (2 transport writes, the second being the client's own
- * recovery probe), because a first-contact timeout synchronously latches
- * desync and every later attempt is refused with MSP_RECOVERING. It also
- * changed the user-visible failure code and, being shared core, changed
- * Android with no Android evidence asking for it. First contact is ONE
- * attempt at the client's own default timeout, and its rejection is
- * final and unmodified.
+ * single-byte-command MSP v1 requests - the same wire format Betaflight
+ * Configurator uses for them (src/js/msp.js send_message picks v1 for any
+ * code <= 254, and all three are 1, 2 and 4).
  */
-const IDENTIFICATION_REQUEST_OPTIONS: MspRequestOptions = {wireFormat: 'v1'};
+/**
+ * BETAFLIGHT'S RESEND, APPLIED WHERE BETAFLIGHT APPLIES IT.
+ *
+ * Betaflight Configurator arms a 1000 ms timer on every MSP request whose
+ * only action is to write the same frame again, leaving the request
+ * pending (src/js/msp.js, MSP.send_message; MSP.TIMEOUT = 1000). That is
+ * the whole reason a flight controller which misses the first request
+ * after its port opens still connects there - and this app, which asked
+ * exactly once, reported it as absent.
+ *
+ * The resend lives inside MspClient (MspRequestOptions.resend), NOT in a
+ * loop around identify(): a loop here was tried before and reverted with
+ * evidence, because the client latches desync on the first response
+ * timeout and refuses every later attempt with MSP_RECOVERING before it
+ * ever reaches the wire (docs/IDENTIFICATION_RETRY_DECISION.md). Asking
+ * the client to ask again - which is what Betaflight does - is the only
+ * form of this that reaches the board.
+ *
+ * 1000 ms is Betaflight's own interval. Two extra writes rather than
+ * Betaflight's one, with a 4000 ms overall deadline replacing
+ * Betaflight's "wait forever", so a genuinely silent port still fails in
+ * bounded time instead of hanging the operator.
+ */
+const IDENTIFICATION_REQUEST_OPTIONS: MspRequestOptions = {
+  wireFormat: 'v1',
+  responseTimeoutMs: 4000,
+  resend: {intervalMs: 1000, maxResends: 2},
+};
 
 /** Thrown by identify() when the connected firmware's MSP_API_VERSION is
  * below mspCompatibility.ts's own documented minimum - the ONE typed error
@@ -110,7 +128,15 @@ function decodeOrThrow<T>(command: number, decode: () => T): T {
  * itself. All of that is Pass 6.4b+, built on top of this.
  */
 export class MspIdentificationService {
-  constructor(private readonly requester: MspRequester) {}
+  /**
+   * `trace` is optional and developer-facing only (see connectionTrace.ts).
+   * Passing none changes nothing about the protocol sequence - the trace
+   * observes, it never decides.
+   */
+  constructor(
+    private readonly requester: MspRequester,
+    private readonly trace?: ConnectionTrace,
+  ) {}
 
   /**
    * Stops at the first failure and propagates a clear typed error:
@@ -129,15 +155,39 @@ export class MspIdentificationService {
    *    changed.
    */
   async identify(): Promise<FlightControllerIdentity> {
-    const apiVersionFrame = await this.requester.request(
-      MSP_API_VERSION,
-      EMPTY_PAYLOAD,
-      IDENTIFICATION_REQUEST_OPTIONS,
-    );
+    // THE TWO STAGES A REAL FAILING TRACE HAD NO WAY TO EXPRESS. It read
+    // "sent=0 received=0", which is equally consistent with a permission
+    // problem, a dead port and a protocol fault. Recorded either side of
+    // the first request so those three can never be confused again.
+    this.trace?.reached('MSP_FIRST_WRITE', `MSP_API_VERSION (command ${MSP_API_VERSION}, v1)`);
+    let apiVersionFrame;
+    try {
+      apiVersionFrame = await this.requester.request(
+        MSP_API_VERSION,
+        EMPTY_PAYLOAD,
+        IDENTIFICATION_REQUEST_OPTIONS,
+      );
+    } catch (error) {
+      this.trace?.failed('MSP_FIRST_RESPONSE', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+    this.trace?.reached('MSP_FIRST_RESPONSE', `${apiVersionFrame.payload.length} byte payload`);
+    // The first well-framed response is itself the proof that the byte
+    // stream is synchronized - it is recorded as its own stage because
+    // "the port opened but nothing ever parsed" and "it parsed but the
+    // firmware is too old" are completely different hardware stories.
+    this.trace?.reached('MSP_SYNCED', `first framed response, ${apiVersionFrame.payload.length} byte payload`);
     const apiVersion = decodeOrThrow(MSP_API_VERSION, () => decodeApiVersion(apiVersionFrame.payload));
+    this.trace?.reached(
+      'API_VERSION_RECEIVED',
+      `MSP ${apiVersion.apiVersionMajor}.${apiVersion.apiVersionMinor}`,
+    );
+    this.trace?.fact('apiVersion', `${apiVersion.apiVersionMajor}.${apiVersion.apiVersionMinor}`);
+    this.trace?.fact('mspProtocolVersion', apiVersion.mspProtocolVersion);
 
     const compatibility = checkMspCompatibility(apiVersion);
     if (!compatibility.compatible) {
+      this.trace?.failed('API_VERSION_RECEIVED', compatibility.reason);
       throw new MspIncompatibleFirmwareError(apiVersion, compatibility.reason);
     }
 
@@ -151,14 +201,63 @@ export class MspIdentificationService {
       identifier: rawVariant.identifier,
       knownFamily: deriveFcFamily(rawVariant.identifier),
     };
+    this.trace?.reached('FC_VARIANT_RECEIVED', firmware.identifier);
+    this.trace?.fact('fcVariant', firmware.identifier);
+    this.trace?.fact('fcFamily', firmware.knownFamily);
+    // Betaflight's own bar: parsed api version at/above the accepted one,
+    // plus a firmware that named itself. Both now hold.
+    this.trace?.reached('FC_IDENTIFIED', 'protocol truth satisfied; board metadata is a separate fact');
 
-    const boardInfoFrame = await this.requester.request(
-      MSP_BOARD_INFO,
-      EMPTY_PAYLOAD,
-      IDENTIFICATION_REQUEST_OPTIONS,
-    );
-    const board = decodeOrThrow(MSP_BOARD_INFO, () => decodeBoardInfo(boardInfoFrame.payload));
-
-    return {apiVersion, firmware, board};
+    // BEST EFFORT, EXACTLY AS IN BETAFLIGHT.
+    //
+    // The flight controller is already identified at this point: it
+    // answered MSP_API_VERSION at a supported version and named its
+    // firmware. Betaflight's own processBoardInfo() cannot abort a
+    // connection, so neither can this - a board whose MSP_BOARD_INFO times
+    // out, errors, or arrives too short is a board with unknown metadata,
+    // not an absent flight controller. The reason is carried on the
+    // identity so the operator can be told the specific, true thing
+    // ("connected, board name unknown - choose a Target") instead of the
+    // false one ("no flight controller found").
+    try {
+      const boardInfoFrame = await this.requester.request(
+        MSP_BOARD_INFO,
+        EMPTY_PAYLOAD,
+        IDENTIFICATION_REQUEST_OPTIONS,
+      );
+      // decodeBoardInfo is itself total - it never throws - but the
+      // wrapper stays so any future strict field keeps its command
+      // attribution, and so a genuinely unexpected throw is still caught
+      // by the surrounding best-effort block rather than escaping.
+      this.trace?.reached('BOARD_INFO_RECEIVED', `${boardInfoFrame.payload.length} bytes`);
+      // THE single most useful artifact when a real board is not
+      // recognized: the exact bytes, before anything interpreted them.
+      this.trace?.fact('boardInfoLength', boardInfoFrame.payload.length);
+      this.trace?.fact('boardInfoHex', toHex(boardInfoFrame.payload));
+      const board = decodeOrThrow(MSP_BOARD_INFO, () => decodeBoardInfo(boardInfoFrame.payload));
+      this.trace?.reached('BOARD_INFO_PARSED', board.truncated ? 'decoded, response was short' : 'decoded');
+      this.trace?.fact('boardIdentifier', board.boardIdentifier);
+      this.trace?.fact('targetName', board.targetName);
+      this.trace?.fact('boardName', board.boardName);
+      this.trace?.fact('manufacturerId', board.manufacturerId);
+      this.trace?.fact('mcuTypeId', board.mcuTypeId);
+      this.trace?.fact('boardInfoTruncated', String(board.truncated));
+      // What the catalogue will actually be asked for - the field whose
+      // ordering caused a real board to look unknown.
+      this.trace?.fact('resolvedCatalogTarget', resolveCatalogTarget(board) || '(none)');
+      return {apiVersion, firmware, board};
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      // NOT a connection failure - recorded as a note so the report shows
+      // the FC was identified and only its metadata is missing.
+      this.trace?.failed('BOARD_INFO_RECEIVED', reason);
+      this.trace?.note('board metadata unavailable; the flight controller is still identified');
+      return {
+        apiVersion,
+        firmware,
+        board: UNKNOWN_BOARD,
+        boardInfoUnavailableReason: reason,
+      };
+    }
   }
 }

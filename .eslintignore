@@ -2,4 +2,8 @@
 # linting them produces tens of thousands of meaningless findings and hides
 # the real ones in the source tree. Kept in step with .gitignore.
 dist-web/
+# The touch-floor fixture's bundle, same rationale and same reason it is
+# gitignored: `verify:touch-targets` builds it on every run, and its
+# minified output would otherwise be linted as if it were source.
+e2e/touch-targets/dist/
 node_modules/

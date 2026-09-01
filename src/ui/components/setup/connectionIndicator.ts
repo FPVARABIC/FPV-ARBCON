@@ -12,7 +12,8 @@
  * generic/reusable; only the REAL candidate-building below is
  * platform-aware.
  *
- * Deliberately separate from the rendering component (TopSystemBar.tsx)
+ * Deliberately separate from the rendering components (SetupChromeBar
+ * and SetupStatusBar; before SETUP R9 this was TopSystemBar.tsx)
  * - per this pass's own explicit instruction that the SetupNotice model
  * and top-bar tie-break exist as a pure, independently tested function.
  */
@@ -27,8 +28,8 @@ export type SetupConnectionIndicatorState = 'CONNECTED' | 'ACTIVATING' | 'RECOVE
 /**
  * The exactly-5-states connection indicator (متصل / جارٍ التفعيل / جارٍ
  * استعادة الاتصال / تعذّرت الاستعادة / غير متصل - Arabic labels are
- * TopSystemBar.tsx's own concern, this function only picks WHICH of the
- * 5 applies).
+ * the rendering component's own concern, this function only picks WHICH
+ * of the 5 applies).
  *
  * ownership is checked first (INACTIVE/ACTIVATING/CLOSING all have an
  * unambiguous answer with no MspClient recovery state to consult at

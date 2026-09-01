@@ -1,4 +1,3 @@
-export { default as UsbConnectionScreen } from './UsbConnectionScreen';
 export { default as StartScreen } from './StartScreen';
 export { default as SetupScreen } from './SetupScreen';
 export { default as PortsScreen } from './PortsScreen';

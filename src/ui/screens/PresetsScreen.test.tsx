@@ -1,5 +1,5 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Text } from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 import type { FirmwarePresetIndex, FirmwarePresetSummary } from '../../core';
 import type { LoadedFirmwarePreset } from '../../platforms/react-native/protocol';
@@ -16,6 +16,8 @@ const SUMMARY: FirmwarePresetSummary = {
   firmwareVersions: ['2025.12'],
   category: 'TUNE',
   status: 'OFFICIAL',
+  rawCategory: 'TUNE',
+  rawStatus: 'OFFICIAL',
   keywords: ['five-inch'],
   author: 'Betaflight',
   forceOptionsReview: true,
@@ -25,6 +27,7 @@ const INDEX: FirmwarePresetIndex = {
   majorVersion: 1,
   minorVersion: 0,
   presets: [SUMMARY],
+  rejectedCount: 0,
 };
 const LOADED: LoadedFirmwarePreset = {
   summary: SUMMARY,
@@ -120,8 +123,9 @@ describe('PresetsScreen', () => {
         .props.onPress();
     });
     expect(cli.captureDiffAll).toHaveBeenCalledTimes(1);
+    // Our own name on our own backup - see brandSafeText.ts.
     expect(cli.saveTextFile).toHaveBeenCalledWith(
-      'betaflight-backup-2025.12.5.txt',
+      'fpv-arbcon-backup-2025.12.5.txt',
       '# diff all\n',
     );
 
@@ -189,6 +193,46 @@ describe('PresetsScreen', () => {
         .props.onPress();
     });
     expect(cli.exitWithoutSave).toHaveBeenCalled();
+    ReactTestRenderer.act(() => renderer.unmount());
+  });
+
+  it('names the catalogue provenance in Arabic, never as a raw identifier', () => {
+    // OFFICIAL / COMMUNITY / EXPERIMENTAL used to render verbatim on an Arabic
+    // screen. EXPERIMENTAL in particular is a safety signal about a tune that
+    // gets written to a flight controller, so it has to read as one.
+    const fs = require('fs') as typeof import('fs');
+    const path = require('path') as typeof import('path');
+    const screen = fs.readFileSync(path.join(__dirname, 'PresetsScreen.tsx'), 'utf8');
+
+    expect(screen).toContain('STATUS_LABEL');
+    expect(screen).not.toContain('{preset.status}');
+    for (const arabic of ['رسمية', 'من المجتمع', 'تجريبية'])
+      expect(screen).toContain(arabic);
+  });
+
+  it('tells the operator when catalogue entries were refused, rather than showing a shorter list', async () => {
+    const { repository, cli } = ports();
+    repository.loadIndex = jest.fn(async () => ({...INDEX, rejectedCount: 3}));
+    // Rendered WITHOUT picking a preset, so the catalogue-load status is the
+    // one on screen - that is the moment the operator learns about the drop.
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    await ReactTestRenderer.act(async () => {
+      renderer = ReactTestRenderer.create(
+        <PresetsScreen
+          sessionKey={SESSION_KEY}
+          active
+          repository={repository}
+          cli={cli}
+          onCliBusyChange={jest.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+    const texts = renderer.root
+      .findAllByType(Text)
+      .flatMap(node => (typeof node.props.children === 'string' ? [node.props.children] : []));
+    expect(texts.join(' ')).toContain('3');
+    expect(texts.some(text => text.includes('تجاهلنا'))).toBe(true);
     ReactTestRenderer.act(() => renderer.unmount());
   });
 });

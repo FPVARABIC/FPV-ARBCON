@@ -247,7 +247,13 @@ const styles = StyleSheet.create({
     // RTL: index 0 is the RIGHTMOST action, matching the tab strip's own
     // convention in src/navigation/tabs.ts. Wraps rather than shrinking,
     // so a three-button dialog stays legible on a narrow viewport.
-    flexDirection: 'row-reverse',
+    //
+    // PLAIN 'row' delivers that. This file only ever runs in the browser,
+    // where the document carries dir="rtl", so a row already runs
+    // right-to-left; 'row-reverse' inverted it and put the FIRST action
+    // (by convention the safe/cancel one) on the far left. Measured on the
+    // Start screen, which had the identical defect.
+    flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
     marginTop: spacing.sm,

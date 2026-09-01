@@ -80,6 +80,17 @@ const FORBIDDEN_TOKENS = [
   'debug-send-custom',
   'dev-open-motor-test',
   'DevBenchScreen',
+  // OUR OWN REVIEW VOCABULARY, held at zero in the shipped bundle.
+  //
+  // Nine shared screens rendered this English phrase as the title of
+  // their hardware warning, inside an Arabic-first product, on Android
+  // and in the browser alike. It is legitimate in comments, audit
+  // documents and test names - all of which the minifier strips or never
+  // sees - so a bundle-level zero is exactly the right place to enforce
+  // it: source keeps its engineering vocabulary, the operator never
+  // reads it. The warning itself did not go anywhere; see the two
+  // `hardwareVerification` titles in the required-Arabic list below.
+  'REQUIRES HARDWARE TEST',
 ];
 
 /** CATEGORY B - every entry must be PRESENT at least once. */
@@ -139,7 +150,9 @@ const REQUIRED_TOKENS = [
  */
 const REQUIRED_ARABIC_STRINGS = [
   // The propeller warning - the single most important string in the app.
-  'أزل جميع المراوح قبل المتابعة',
+  // P3: the propeller warning became one concise sentence - the same
+  // safety intent, stated once instead of as a checklist ritual.
+  'أزل المراوح قبل اختبار المحركات.',
   // The emergency instruction after an unconfirmed stop.
   'تعذّر تأكيد توقف المحرك — افصل بطارية LiPo فورًا',
   // Configuration transaction truthfulness.
@@ -148,12 +161,66 @@ const REQUIRED_ARABIC_STRINGS = [
   // Firmware erase gates.
   'أزلت جميع المراوح',
   'تجاوز عدم تطابق Target',
-  // The browser-specific capability messages.
-  'هذا المتصفح لا يدعم Web Serial. استخدم Chrome أو Edge على سطح المكتب للاتصال بمتحكم الطيران.',
+  // The browser-specific capability messages. These are CAPABILITY
+  // statements, not device advice: the previous copy told every
+  // visitor to move to a desktop, which reads as a desktop-only
+  // product to someone holding a phone.
+  'هذا المتصفح لا يوفّر واجهة Web Serial المطلوبة للاتصال بمتحكم الطيران. جرّب Chrome أو Edge حديثًا عبر HTTPS.',
   'يتطلب الاتصال بجهاز USB صفحة آمنة عبر HTTPS. افتح التطبيق من عنوان HTTPS ثم أعد المحاولة.',
+  // The hardware-verification titles that replaced the English review
+  // token above. Required, not merely permitted: the point of removing
+  // an internal phrase is to say the same true thing in the operator's
+  // language, NOT to delete the warning. Both must ship.
+  'يتطلب التحقق على جهاز فعلي',
+  'يتطلب اختبارًا على جهاز فعلي',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous. */
+/**
+ * RECEIVER P5 - Receiver coverage in the WEB bundle.
+ *
+ * P0 recorded that this scanner had no Receiver-specific coverage at all:
+ * the browser build could have shipped without the professional Receiver
+ * workspace, or with the P4 capability gating tree-shaken out, and every
+ * category here would still have said OK.
+ *
+ * These are SEMANTIC markers taken from the real built bundle - stable
+ * test ids and i18n keys the Receiver implementation emits - never chunk
+ * filenames, which are content-hashed and change on every edit.
+ *
+ * What each one proves:
+ *   receiver-live-monitor      P3 live workspace ships
+ *   receiver-observed-rate     the MEASURED-cadence surface ships, so the
+ *                              honest "no fabricated Hz" path is present
+ *   receiver-channel-          the per-channel rows ship
+ *   -fill                      P3's animated fill node ships (the
+ *                              smoothing target is `receiver-channel-N-fill`)
+ *   receiver-signal-alert      P2 failsafe indication ships
+ *   receiver-reboot-required   P2/P4 reboot truth ships
+ *   receiver-mode-row          P4 mode surface ships
+ *   receiver-mode-select       P4 capability-gated mode control ships
+ *   receiver-provider-select   P4 capability-gated provider control ships
+ *   receiver-dependency-block  P4 Ports dependency blocking ships
+ *   receiverScreen.capabilityNotProven
+ *                              the NOT-PROVEN wording ships, so an
+ *                              unverifiable build cannot silently present
+ *                              an unrestricted selector
+ */
+const REQUIRED_RECEIVER_TOKENS = [
+  'receiver-live-monitor',
+  'receiver-observed-rate',
+  'receiver-status-strip',
+  'receiver-channel-',
+  '-fill',
+  'receiver-signal-alert',
+  'receiver-reboot-required',
+  'receiver-mode-row',
+  'receiver-mode-select',
+  'receiver-provider-select',
+  'receiver-dependency-block',
+  'receiverScreen.capabilityNotProven',
+];
+
 const POSITIVE_CONTROLS = ['diagnostics-section', 'fc-tools-section'];
 
 /**
@@ -242,6 +309,9 @@ function analyzeWebBundle(combined, entry) {
   const missingArabic = REQUIRED_ARABIC_STRINGS.filter(
     text => !containsEitherForm(combined, text),
   );
+  const missingReceiver = REQUIRED_RECEIVER_TOKENS.filter(
+    token => countOccurrences(combined, token) === 0,
+  );
   const missingControls = POSITIVE_CONTROLS.filter(
     token => countOccurrences(combined, token) === 0,
   );
@@ -253,12 +323,14 @@ function analyzeWebBundle(combined, entry) {
     forbidden,
     missingRequired,
     missingArabic,
+    missingReceiver,
     missingControls,
     eagerlyBundled,
     ok:
       forbidden.length === 0 &&
       missingRequired.length === 0 &&
       missingArabic.length === 0 &&
+      missingReceiver.length === 0 &&
       missingControls.length === 0 &&
       eagerlyBundled.length === 0,
   };
@@ -379,7 +451,20 @@ function main() {
   }
 
   console.log('');
-  console.log('C. Positive controls');
+  console.log(
+    `C. Receiver professional surface: ${REQUIRED_RECEIVER_TOKENS.length} markers`,
+  );
+  for (const token of result.missingReceiver) {
+    console.error(
+      `   MISSING RECEIVER MARKER: ${JSON.stringify(token)} - the browser build does not ship the Receiver workspace/capability behaviour this marker represents.`,
+    );
+  }
+  if (result.missingReceiver.length === 0) {
+    console.log('   all present.');
+  }
+
+  console.log('');
+  console.log('D. Positive controls');
   for (const token of result.missingControls) {
     console.error(
       `   MISSING POSITIVE CONTROL: ${JSON.stringify(token)} - the scan would be vacuous.`,
@@ -390,7 +475,7 @@ function main() {
   }
 
   console.log('');
-  console.log('D. Code splitting (entry chunk)');
+  console.log('E. Code splitting (entry chunk)');
   for (const eager of result.eagerlyBundled) {
     console.error(
       `   EAGERLY BUNDLED: ${JSON.stringify(eager.token)} is in the entry chunk; ${
@@ -405,7 +490,7 @@ function main() {
   }
 
   console.log('');
-  console.log('E. HTML shell layout contract');
+  console.log('F. HTML shell layout contract');
   for (const rule of missingHtmlRules) {
     console.error(
       `   MISSING SHELL RULE: ${rule.description} - without it every flex:1 descendant collapses to height 0 while still painting through overflow, so the page LOOKS correct but cannot scroll and swallows clicks.`,
@@ -422,7 +507,7 @@ function main() {
   }
   console.log('');
   console.log(
-    'OK - no Android/Node-only code in the browser bundle, Web Serial transport and Arabic safety copy both shipped, lazy routes still lazy, shell layout contract intact.',
+    'OK - no Android/Node-only code in the browser bundle, Web Serial transport and Arabic safety copy both shipped, the Receiver professional surface present, lazy routes still lazy, shell layout contract intact.',
   );
   return 0;
 }

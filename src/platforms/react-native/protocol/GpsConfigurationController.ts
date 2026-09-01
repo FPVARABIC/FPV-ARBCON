@@ -25,7 +25,16 @@ import {
   type MspRequester,
   type MspTelemetryScheduler,
 } from '../../../core';
+import {
+  MutationLedger,
+  MutationStoppedError,
+  type PartialApplyEvidence,
+} from './configurationSaveLedger';
 import { deriveArmedState } from '../../../core/state/armingBlockers';
+import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
 import type { MspClientState } from '../../../core/protocol/mspClient';
 import {
   isMotorTestSessionActive,
@@ -73,6 +82,7 @@ export interface GpsAppStateOwner {
 }
 
 export type GpsBlockReason =
+  | 'SESSION_CHANGED'
   | 'DISCONNECTED'
   | 'IDENTIFYING'
   | 'UNSUPPORTED_FIRMWARE'
@@ -107,6 +117,16 @@ export type GpsSaveOutcome =
   | {
       readonly kind: 'UNCONFIRMED';
       readonly stage: 'FEATURE_CONFIG' | 'GPS_CONFIG' | 'EEPROM';
+      readonly confirmedStages: readonly ('FEATURE_CONFIG' | 'GPS_CONFIG' | 'EEPROM')[];
+    }
+  /** U-R1. At least one RAM write was ACKNOWLEDGED and the sequence then
+   *  stopped before EEPROM was acknowledged. Nothing is persisted, but
+   *  the aircraft's RAM has already moved. No rollback, no retry. */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly confirmedStages: readonly ('FEATURE_CONFIG' | 'GPS_CONFIG' | 'EEPROM')[];
+      readonly failedStage: 'FEATURE_CONFIG' | 'GPS_CONFIG' | 'EEPROM';
+      readonly definitelyNotSent: boolean;
     }
   | { readonly kind: 'SESSION_ENDED' }
   | { readonly kind: 'FAILED'; readonly error: unknown };
@@ -125,14 +145,29 @@ class GpsPreflightError extends Error {
 }
 
 type GpsWriteStage = 'FEATURE_CONFIG' | 'GPS_CONFIG' | 'EEPROM';
-interface AmbiguousGpsWriteCause {
+interface AmbiguousGpsWriteCause extends PartialApplyEvidence<GpsWriteStage> {
   readonly kind: 'GPS_AMBIGUOUS_WRITE';
   readonly stage: GpsWriteStage;
 }
 
 class AmbiguousGpsWriteError extends MspOperationOutcomeUnknownError {
-  constructor(error: unknown, stage: GpsWriteStage) {
-    super(Object.freeze({ kind: 'GPS_AMBIGUOUS_WRITE', stage, error }));
+  constructor(
+    error: unknown,
+    stage: GpsWriteStage,
+    confirmedStages: readonly GpsWriteStage[] = [],
+    partial = false,
+    definitelyNotSent = false,
+  ) {
+    super(
+      Object.freeze({
+        kind: 'GPS_AMBIGUOUS_WRITE',
+        stage,
+        error,
+        confirmedStages: Object.freeze([...confirmedStages]),
+        partial,
+        definitelyNotSent,
+      }),
+    );
   }
 }
 
@@ -216,7 +251,10 @@ export class GpsConfigurationController {
         },
       });
       if (result.status === 'SUCCEEDED')
-        return { kind: 'LOADED', snapshot: result.result };
+        return {
+          kind: 'LOADED',
+          snapshot: rememberConfigurationSession(result.result, sessionKey),
+        };
       if (
         result.status === 'SESSION_ENDED' ||
         result.status === 'OUTCOME_UNKNOWN'
@@ -235,6 +273,15 @@ export class GpsConfigurationController {
     original: GpsConfigurationSnapshot,
     draft: GpsConfigurationDraft,
   ): Promise<GpsSaveOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before the no-op check, before capture(), before any wire
+       access at all: a baseline produced under a DIFFERENT session may
+       not be written under this one. Two byte-identical boards defeat
+       every other guard here - stale-base compares configuration, and
+       assertLive compares liveness; neither asks which aircraft the
+       operator was editing. See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, sessionKey))
+      return { kind: 'REJECTED', reason: 'SESSION_CHANGED' };
     const originalDraft: GpsConfigurationDraft = Object.freeze({
       enabled: this.featureEnabled(original.featureMaskRaw),
       ...original.configuration,
@@ -309,6 +356,7 @@ export class GpsConfigurationController {
             acquisition,
             ownerIdentity,
           );
+          const ledger = new MutationLedger<GpsWriteStage>();
           if (desiredMask !== original.featureMaskRaw) {
             const payload = new Uint8Array(4);
             new DataView(payload.buffer).setUint32(0, desiredMask, true);
@@ -317,6 +365,10 @@ export class GpsConfigurationController {
               MSP_SET_FEATURE_CONFIG,
               payload,
               'FEATURE_CONFIG',
+              sessionKey,
+              client,
+              epoch,
+              ledger,
             );
           }
           if (!gpsConfigurationsEqual(desiredConfig, original.configuration)) {
@@ -325,9 +377,23 @@ export class GpsConfigurationController {
               MSP_SET_GPS_CONFIG,
               encodeGpsConfiguration(desiredConfig),
               'GPS_CONFIG',
+              sessionKey,
+              client,
+              epoch,
+              ledger,
             );
           }
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, 'EEPROM');
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(
+            requester,
+            MSP_EEPROM_WRITE,
+            EMPTY,
+            'EEPROM',
+            sessionKey,
+            client,
+            epoch,
+            ledger,
+          );
 
           let snapshot: GpsConfigurationSnapshot | undefined;
           let readbackError: unknown;
@@ -363,7 +429,10 @@ export class GpsConfigurationController {
         return result.result.snapshot !== undefined
           ? {
               kind: 'SAVED_VERIFIED',
-              snapshot: result.result.snapshot,
+              snapshot: rememberConfigurationSession(
+                result.result.snapshot,
+                sessionKey,
+              ),
               rebootAcknowledged: result.result.rebootAcknowledged,
             }
           : {
@@ -372,10 +441,21 @@ export class GpsConfigurationController {
               error: result.result.readbackError,
             };
       }
-      if (result.status === 'OUTCOME_UNKNOWN')
-        return ambiguousCause(result.reason)
-          ? { kind: 'UNCONFIRMED', stage: result.reason.stage }
-          : { kind: 'SESSION_ENDED' };
+      if (result.status === 'OUTCOME_UNKNOWN') {
+        if (!ambiguousCause(result.reason)) return { kind: 'SESSION_ENDED' };
+        if (result.reason.partial)
+          return {
+            kind: 'PARTIAL_UNPERSISTED',
+            confirmedStages: result.reason.confirmedStages,
+            failedStage: result.reason.stage,
+            definitelyNotSent: result.reason.definitelyNotSent,
+          };
+        return {
+          kind: 'UNCONFIRMED',
+          stage: result.reason.stage,
+          confirmedStages: result.reason.confirmedStages,
+        };
+      }
       if (result.status === 'SESSION_ENDED') return { kind: 'SESSION_ENDED' };
       return result.error instanceof GpsPreflightError
         ? { kind: 'REJECTED', reason: result.error.reason }
@@ -390,18 +470,58 @@ export class GpsConfigurationController {
     return (mask & (2 ** 7)) !== 0;
   }
 
+  /**
+   * THE SINGLE FUNNEL EVERY MUTATION PASSES THROUGH.
+   *
+   * U-R1. Liveness is asserted here, in the same synchronous turn as the
+   * request it authorises, and the ledger records what the board
+   * acknowledged so a later stop can name it instead of reporting an
+   * ordinary failure that reads as "nothing happened".
+   */
   private async writeOnce(
     requester: MspRequester,
     command: number,
     payload: Uint8Array,
     stage: GpsWriteStage,
+    sessionKey: SetupUiSessionKey,
+    client: GpsClient,
+    epoch: number,
+    ledger: MutationLedger<GpsWriteStage>,
   ): Promise<void> {
+    try {
+      this.assertLive(sessionKey, client, epoch);
+    } catch (error) {
+      if (!ledger.hasMutated) throw error;
+      throw new AmbiguousGpsWriteError(
+        new MutationStoppedError(stage, ledger.acknowledgedStages, error),
+        stage,
+        ledger.acknowledgedStages,
+        true,
+        true,
+      );
+    }
     try {
       await requester.request(command, payload, { wireFormat: 'v1' });
     } catch (error) {
-      if (definitelyNotApplied(error)) throw error;
-      throw new AmbiguousGpsWriteError(error, stage);
+      if (definitelyNotApplied(error)) {
+        if (!ledger.hasMutated) throw error;
+        throw new AmbiguousGpsWriteError(
+          error,
+          stage,
+          ledger.acknowledgedStages,
+          true,
+          true,
+        );
+      }
+      throw new AmbiguousGpsWriteError(
+        error,
+        stage,
+        ledger.acknowledgedStages,
+        false,
+        false,
+      );
     }
+    ledger.acknowledge(stage);
   }
 
   private capture(

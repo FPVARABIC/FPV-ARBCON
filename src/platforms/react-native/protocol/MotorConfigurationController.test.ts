@@ -11,7 +11,10 @@ import {
   MSP_MIXER_CONFIG,
   MSP_MOTOR_3D_CONFIG,
   MSP_MOTOR_CONFIG,
+  MSP_REBOOT,
   MSP_SET_ADVANCED_CONFIG,
+  MSP_SET_FEATURE_CONFIG,
+  MSP_SET_MIXER_CONFIG,
   MSP_STATUS_EX,
 } from '../../../core/protocol/msp/commands/mspCommands';
 import { MSP_BOXIDS } from '../../../core/protocol/msp/commands/mspCommands';
@@ -195,9 +198,20 @@ function makeHarness(
       getPhase: () =>
         options.appActive === false ? 'APP_BACKGROUND' : 'ACTIVE',
     },
-    isMotorTestActive: () => options.motorTestActive === true,
+    isMotorOutputEngaged: () => options.motorTestActive === true,
   });
-  return { client, controller, telemetry, state };
+  /* U-R3: load/save now take the composite SetupUiSessionKey. A getter
+     rather than a snapshot, because tests move `state.generation` to
+     simulate a reconnect and must see the change. */
+  const key = {
+    get sessionId() {
+      return 'fc-1';
+    },
+    get generation() {
+      return state.generation;
+    },
+  };
+  return { client, controller, telemetry, state, key };
 }
 
 function enqueueSnapshot(client: FakeClient, idle = 550, protocol = 7): void {
@@ -212,7 +226,7 @@ function enqueueSnapshot(client: FakeClient, idle = 550, protocol = 7): void {
 
 async function loadOriginal(harness: ReturnType<typeof makeHarness>) {
   enqueueSnapshot(harness.client);
-  const loaded = await harness.controller.load('fc-1');
+  const loaded = await harness.controller.load(harness.key);
   if (loaded.kind !== 'LOADED') {
     throw new Error(`Expected LOADED, received ${loaded.kind}`);
   }
@@ -239,15 +253,18 @@ describe('MotorConfigurationController', () => {
       },
     };
 
-    await expect(harness.controller.load('fc-1')).resolves.toEqual({
+    await expect(harness.controller.load(harness.key)).resolves.toEqual({
       kind: 'REJECTED',
       reason: 'INCOMPATIBLE_FIRMWARE',
     });
     expect(harness.client.calls).toEqual([]);
   });
 
-  it('keeps general configuration writes disabled on the partial API-1.48 adapter', async () => {
-    const harness = makeHarness();
+  /** Points the harness's identified firmware at a different API minor. */
+  function atApiMinor(
+    harness: ReturnType<typeof makeHarness>,
+    apiVersionMinor: number,
+  ): void {
     const compatible = compatibleIdentity();
     if (compatible.status !== 'SUCCEEDED') {
       throw new Error('fixture must be identified');
@@ -256,15 +273,67 @@ describe('MotorConfigurationController', () => {
       status: 'SUCCEEDED',
       identity: {
         ...compatible.identity,
-        apiVersion: {...compatible.identity.apiVersion, apiVersionMinor: 48},
+        apiVersion: { ...compatible.identity.apiVersion, apiVersionMinor },
       },
     };
+  }
 
-    await expect(harness.controller.load('fc-1')).resolves.toEqual({
-      kind: 'REJECTED',
-      reason: 'INCOMPATIBLE_FIRMWARE',
+  /**
+   * This test used to be called "keeps general configuration writes disabled
+   * on the partial API-1.48 adapter" and asserted that a 1.48 LOAD returned
+   * REJECTED/INCOMPATIBLE_FIRMWARE. Both halves of that were wrong.
+   *
+   * The write gate had nothing behind it: every motor MSP handler is
+   * byte-identical between the API 1.47 and API 1.48 firmware trees. And a
+   * LOAD should never have consulted the write capability in the first
+   * place - it did only because captureSession defaulted the required
+   * capability to MOTOR_CONFIGURATION_WRITE.
+   */
+  it('reads and writes on API 1.48, whose motor contract matches 1.47', async () => {
+    const harness = makeHarness();
+    atApiMinor(harness, 48);
+
+    const original = await loadOriginal(harness);
+    expect(original.advanced.motorProtocolRaw).toBe(7);
+
+    enqueueSnapshot(harness.client);
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload() });
+    harness.client.enqueue(MSP_SET_ADVANCED_CONFIG, {
+      payload: new Uint8Array(0),
     });
-    expect(harness.client.calls).toEqual([]);
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
+    enqueueSnapshot(harness.client, 550, 6);
+
+    const outcome = await harness.controller.save(harness.key, original, {
+      ...createMotorConfigurationDraft(original),
+      motorProtocolRaw: 6,
+    });
+    expect(outcome.kind).toBe('SAVED_VERIFIED');
+  });
+
+  /**
+   * API 1.49 has no published Betaflight source to check a setter against,
+   * so the write stays withheld - but the READ does not, and the refusal
+   * names the write rather than the screen.
+   */
+  it('reads on API 1.49 and refuses only the write, by its own reason', async () => {
+    const harness = makeHarness();
+    atApiMinor(harness, 49);
+
+    const original = await loadOriginal(harness);
+    const callsAfterLoad = harness.client.calls.length;
+    expect(callsAfterLoad).toBeGreaterThan(0);
+
+    const outcome = await harness.controller.save(harness.key, original, {
+      ...createMotorConfigurationDraft(original),
+      motorProtocolRaw: 6,
+    });
+    expect(outcome).toEqual({
+      kind: 'REJECTED',
+      reason: 'CONFIGURATION_WRITE_UNVERIFIED',
+    });
+    expect(harness.client.calls.length).toBe(callsAfterLoad);
   });
 
   it('loads all five groups under one telemetry pause lease', async () => {
@@ -284,7 +353,7 @@ describe('MotorConfigurationController', () => {
 
   it('rejects an active motor-test lifecycle before any request', async () => {
     const harness = makeHarness({ motorTestActive: true });
-    expect(await harness.controller.load('fc-1')).toEqual({
+    expect(await harness.controller.load(harness.key)).toEqual({
       kind: 'REJECTED',
       reason: 'MOTOR_TEST_ACTIVE',
     });
@@ -298,7 +367,7 @@ describe('MotorConfigurationController', () => {
 
     expect(
       await harness.controller.save(
-        'fc-1',
+        harness.key,
         original,
         createMotorConfigurationDraft(original),
       ),
@@ -313,7 +382,7 @@ describe('MotorConfigurationController', () => {
     harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
     harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(true) });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -332,7 +401,7 @@ describe('MotorConfigurationController', () => {
     const original = await loadOriginal(harness);
     enqueueSnapshot(harness.client, 575);
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -358,7 +427,7 @@ describe('MotorConfigurationController', () => {
     harness.client.enqueue(MSP_EEPROM_WRITE, { payload: Uint8Array.from([]) });
     enqueueSnapshot(harness.client, 600);
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -384,6 +453,138 @@ describe('MotorConfigurationController', () => {
     ]);
   });
 
+  /**
+   * M-E §8 - NO SUCCESS BEFORE VERIFICATION, PROVED.
+   *
+   * M-E gave the Motors screen a mixer selector, so the byte this
+   * transaction writes now changes which aircraft the flight controller
+   * believes it is. Mutation testing then found that nothing asserted the
+   * readback comparison at all: deleting it left every test green while
+   * the app reported a mixer change as saved that the board had not
+   * taken.
+   *
+   * The flight controller here acknowledges the write and the EEPROM
+   * commit, and then reports the OLD mixer. That is the case the operator
+   * must never be told is a success.
+   */
+  it('reports a mixer that did not take as SAVED_UNVERIFIED, not as saved', async () => {
+    const harness = makeHarness();
+    const original = await loadOriginal(harness);
+    enqueueSnapshot(harness.client);
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    harness.client.enqueue(MSP_SET_MIXER_CONFIG, {
+      payload: Uint8Array.from([]),
+    });
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: Uint8Array.from([]) });
+    // The readback: the SAME mixer byte the board started with.
+    enqueueSnapshot(harness.client);
+
+    const result = await harness.controller.save(harness.key, original, {
+      ...createMotorConfigurationDraft(original),
+      mixerModeRaw: 10,
+    });
+
+    expect(result).toMatchObject({
+      kind: 'SAVED_UNVERIFIED',
+      rebootRequired: true,
+      changedGroups: ['MIXER'],
+    });
+    // The write and the persist both happened - the transaction is not
+    // being described as a failure either.
+    const commands = harness.client.calls.map(call => call.command);
+    expect(commands).toContain(MSP_SET_MIXER_CONFIG);
+    expect(commands).toContain(MSP_EEPROM_WRITE);
+  });
+
+  it('reports a mixer the board DID take as verified', async () => {
+    const harness = makeHarness();
+    const original = await loadOriginal(harness);
+    enqueueSnapshot(harness.client);
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    harness.client.enqueue(MSP_SET_MIXER_CONFIG, {
+      payload: Uint8Array.from([]),
+    });
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: Uint8Array.from([]) });
+    // The readback: the mixer the operator asked for.
+    harness.client.enqueue(MSP_FEATURE_CONFIG, { payload: FEATURE });
+    harness.client.enqueue(MSP_MIXER_CONFIG, {
+      payload: Uint8Array.from([10, MIXER[1]]),
+    });
+    harness.client.enqueue(MSP_MOTOR_CONFIG, { payload: MOTOR });
+    harness.client.enqueue(MSP_MOTOR_3D_CONFIG, { payload: MOTOR_3D });
+    harness.client.enqueue(MSP_ADVANCED_CONFIG, {
+      payload: advancedPayload(550, 7),
+    });
+
+    const result = await harness.controller.save(harness.key, original, {
+      ...createMotorConfigurationDraft(original),
+      mixerModeRaw: 10,
+    });
+
+    expect(result).toMatchObject({
+      kind: 'SAVED_VERIFIED',
+      rebootRequired: true,
+      changedGroups: ['MIXER'],
+    });
+  });
+
+  /**
+   * M-E: THE UNOWNED FIELDS COME FROM THE LIVE BOARD, NOT FROM THE BASE.
+   *
+   * MSP_SET_FEATURE_CONFIG carries ONE 32-bit mask for the whole
+   * aircraft. Motors owns three bits of it; GPS, Ports, Receiver and
+   * General own others. There is no way to set one bit, so whichever
+   * snapshot the mask is mirrored from is the mask the aircraft ends up
+   * with - and mirroring it from the snapshot this editor loaded means a
+   * Motors save silently reverts whatever another screen changed since.
+   *
+   * The stale-base check cannot catch it: it compares the DRAFT, which
+   * projects only the three owned bits, so an unowned bit set in between
+   * compares equal and is then overwritten. Every signal says success.
+   *
+   * Mutation testing found that nothing asserted which snapshot the mask
+   * came from. Here bit 5 - not one of the three Motors owns - is set on
+   * the live board after this editor loaded, the operator toggles
+   * MOTOR_STOP, and the mask that goes on the wire must still carry it.
+   */
+  it('mirrors unowned feature bits from the live board, not from the stale base', async () => {
+    const harness = makeHarness();
+    const original = await loadOriginal(harness);
+
+    // The live board, read under the transaction's own lease.
+    const OTHER_SCREENS_BIT = 1 << 5;
+    harness.client.enqueue(MSP_FEATURE_CONFIG, {
+      payload: Uint8Array.from([OTHER_SCREENS_BIT, 0, 0, 0]),
+    });
+    harness.client.enqueue(MSP_MIXER_CONFIG, {payload: MIXER});
+    harness.client.enqueue(MSP_MOTOR_CONFIG, {payload: MOTOR});
+    harness.client.enqueue(MSP_MOTOR_3D_CONFIG, {payload: MOTOR_3D});
+    harness.client.enqueue(MSP_ADVANCED_CONFIG, {
+      payload: advancedPayload(550, 7),
+    });
+    harness.client.enqueue(MSP_BOXIDS, {payload: Uint8Array.from([0])});
+    harness.client.enqueue(MSP_STATUS_EX, {payload: statusPayload(false)});
+    harness.client.enqueue(MSP_SET_FEATURE_CONFIG, {
+      payload: Uint8Array.from([]),
+    });
+    harness.client.enqueue(MSP_EEPROM_WRITE, {payload: Uint8Array.from([])});
+    enqueueSnapshot(harness.client);
+
+    await harness.controller.save(harness.key, original, {
+      ...createMotorConfigurationDraft(original),
+      motorStopEnabled: true,
+    });
+
+    const write = harness.client.calls.find(
+      call => call.command === MSP_SET_FEATURE_CONFIG,
+    );
+    expect(write).toBeDefined();
+    // The other screen's bit survives the Motors save.
+    expect(write!.payload[0] & OTHER_SCREENS_BIT).toBe(OTHER_SCREENS_BIT);
+  });
+
   it('reports a definite first-write rejection without persistence', async () => {
     const harness = makeHarness();
     const original = await loadOriginal(harness);
@@ -394,7 +595,7 @@ describe('MotorConfigurationController', () => {
       reject: { code: 'MSP_REMOTE_ERROR' },
     });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -419,7 +620,7 @@ describe('MotorConfigurationController', () => {
       reject: { code: 'MSP_TIMEOUT' },
     });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -452,7 +653,7 @@ describe('MotorConfigurationController', () => {
       reject: { code: 'MSP_TIMEOUT' },
     });
 
-    const result = await harness.controller.save('fc-1', original, {
+    const result = await harness.controller.save(harness.key, original, {
       ...createMotorConfigurationDraft(original),
       motorIdleRaw: 600,
     });
@@ -669,5 +870,179 @@ describe('MotorConfigurationController', () => {
         call => call.command === MSP2_SEND_DSHOT_COMMAND,
       ),
     ).toHaveLength(1);
+  });
+});
+
+/**
+ * M-D §0. The M-C report claimed the Motors screen sends no mixer write.
+ * These two tests establish, through the production controller and against
+ * the recorded wire traffic, what it actually does - because a claim about
+ * the wire that was never measured on the wire is not evidence.
+ *
+ * msp_protocol.h:114-115 @ 7348054f
+ *   MSP_MIXER_CONFIG      42   out message: GET
+ *   MSP_SET_MIXER_CONFIG  43   in  message: SET   <- msp.c:3734-3743
+ *                                    byte 0 mixerMode, byte 1 yaw_motors_reversed
+ */
+describe('M-D §0 - what the Motors screen really does with command 43', () => {
+  /** HEX6X, yaw not reversed. Deliberately not a quad: a mixer byte that
+   * came back as 3 would then be a normalisation bug, not a coincidence. */
+  const HEX_MIXER = Uint8Array.from([10, 0]);
+  /** The same hexacopter after the yaw sign flip took effect. */
+  const HEX_MIXER_REVERSED = Uint8Array.from([10, 1]);
+
+  /** One full five-group read, as the FC would answer it. The controller
+   * performs three of these per save: the load, the pre-write re-read that
+   * guards against a stale base, and the post-write verification. */
+  function enqueueHexSnapshot(
+    harness: ReturnType<typeof makeHarness>,
+    mixer: Uint8Array = HEX_MIXER,
+    protocol = 7,
+  ): void {
+    harness.client.enqueue(MSP_FEATURE_CONFIG, { payload: FEATURE });
+    harness.client.enqueue(MSP_MIXER_CONFIG, { payload: mixer });
+    harness.client.enqueue(MSP_MOTOR_CONFIG, { payload: MOTOR });
+    harness.client.enqueue(MSP_MOTOR_3D_CONFIG, { payload: MOTOR_3D });
+    harness.client.enqueue(MSP_ADVANCED_CONFIG, {
+      payload: advancedPayload(550, protocol),
+    });
+  }
+
+  async function loadHexacopter(harness: ReturnType<typeof makeHarness>) {
+    enqueueHexSnapshot(harness);
+    const loaded = await harness.controller.load(harness.key);
+    if (loaded.kind !== 'LOADED') {
+      throw new Error(`Expected LOADED, received ${loaded.kind}`);
+    }
+    expect(loaded.snapshot.mixer.mixerModeRaw).toBe(10);
+    return loaded.snapshot;
+  }
+
+  it('DOES put command 43 on the wire when the yaw sign flip is saved', async () => {
+    // The finding that corrects M-C. `motor-config-yaw-reversed` in
+    // MotorConfigurationPanel is bound to draft.yawMotorsReversed, which is
+    // byte 1 of this command. Betaflight's own Motors tab owns this same
+    // write; the value of stating it here is that it is now measured.
+    const harness = makeHarness();
+    const original = await loadHexacopter(harness);
+    enqueueHexSnapshot(harness); // the pre-write re-read
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload() });
+    harness.client.enqueue(MSP_SET_MIXER_CONFIG, { payload: new Uint8Array(0) });
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
+    enqueueHexSnapshot(harness, HEX_MIXER_REVERSED); // the verification read
+
+    const outcome = await harness.controller.save(harness.key, original, {
+      ...createMotorConfigurationDraft(original),
+      yawMotorsReversed: true,
+    });
+    expect(outcome.kind).toBe('SAVED_VERIFIED');
+
+    const mixerWrites = harness.client.calls.filter(
+      call => call.command === MSP_SET_MIXER_CONFIG,
+    );
+    expect(mixerWrites).toHaveLength(1);
+    // Byte 0 is the airframe the FC reported, byte-identical. Byte 1 is the
+    // only thing the user changed.
+    expect(Array.from(mixerWrites[0].payload)).toEqual([10, 1]);
+  });
+
+  it('sends NO mixer write when only a non-mixer field is saved', async () => {
+    // A protocol change must not drag the airframe byte onto the wire with
+    // it. This is the assertion M-C thought it was making.
+    const harness = makeHarness();
+    const original = await loadHexacopter(harness);
+    enqueueHexSnapshot(harness); // the pre-write re-read
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload() });
+    harness.client.enqueue(MSP_SET_ADVANCED_CONFIG, {
+      payload: new Uint8Array(0),
+    });
+    harness.client.enqueue(MSP_EEPROM_WRITE, { payload: new Uint8Array(0) });
+    enqueueHexSnapshot(harness, HEX_MIXER, 6); // the verification read
+
+    const outcome = await harness.controller.save(harness.key, original, {
+      ...createMotorConfigurationDraft(original),
+      motorProtocolRaw: 6,
+    });
+    expect(outcome.kind).toBe('SAVED_VERIFIED');
+    expect(harness.client.calls.map(call => call.command)).not.toContain(
+      MSP_SET_MIXER_CONFIG,
+    );
+  });
+});
+/* ================================================================== *
+ * M-F3 §36 - the explicit reboot step, through the production path
+ * ================================================================== */
+
+describe('requestReboot - the §36 lifecycle step', () => {
+  it('re-verifies DISARMED and only then sends MSP_REBOOT, acknowledged', async () => {
+    const harness = makeHarness();
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    harness.client.enqueue(MSP_REBOOT, { payload: Uint8Array.from([]) });
+
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome).toEqual({ kind: 'REBOOT_REQUESTED', acknowledged: true });
+
+    const commands = harness.client.calls.map(call => call.command);
+    // Exactly one reboot frame, and the fresh disarmed proof precedes it.
+    expect(commands.filter(command => command === MSP_REBOOT)).toHaveLength(1);
+    expect(commands.indexOf(MSP_STATUS_EX)).toBeGreaterThanOrEqual(0);
+    expect(commands.indexOf(MSP_STATUS_EX)).toBeLessThan(
+      commands.indexOf(MSP_REBOOT),
+    );
+    // v1 wire, empty payload - the same frame the General controller's
+    // save-and-reboot sends.
+    const rebootCall = harness.client.calls.find(
+      call => call.command === MSP_REBOOT,
+    );
+    expect(rebootCall?.options.wireFormat).toBe('v1');
+    expect(rebootCall?.payload).toHaveLength(0);
+  });
+
+  it('REFUSES to reboot an armed flight controller - no MSP_REBOOT frame exists', async () => {
+    const harness = makeHarness();
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(true) });
+
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome).toEqual({ kind: 'REJECTED', reason: 'FC_ARMED' });
+    expect(harness.client.calls.map(call => call.command)).not.toContain(
+      MSP_REBOOT,
+    );
+  });
+
+  it('a link that drops around the reboot frame is the reboot proceeding, not a failure', async () => {
+    const harness = makeHarness();
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    // The restarting FC tears the link down before answering - the
+    // expected shape of a reboot actually happening.
+    harness.client.enqueue(MSP_REBOOT, {
+      reject: Object.assign(new Error('link dropped'), { code: 'MSP_DETACHED' }),
+    });
+
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome).toEqual({ kind: 'REBOOT_REQUESTED', acknowledged: false });
+  });
+
+  it('a frame the FC definitely refused is FAILED, never "rebooting"', async () => {
+    const harness = makeHarness();
+    harness.client.enqueue(MSP_BOXIDS, { payload: Uint8Array.from([0]) });
+    harness.client.enqueue(MSP_STATUS_EX, { payload: statusPayload(false) });
+    harness.client.enqueue(MSP_REBOOT, {
+      reject: Object.assign(new Error('refused'), { code: 'MSP_REMOTE_ERROR' }),
+    });
+
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome.kind).toBe('FAILED');
+  });
+
+  it('refuses while a motor output may be engaged, before touching the link', async () => {
+    const harness = makeHarness({ motorTestActive: true });
+    const outcome = await harness.controller.requestReboot('fc-1');
+    expect(outcome).toEqual({ kind: 'REJECTED', reason: 'MOTOR_TEST_ACTIVE' });
+    expect(harness.client.calls).toEqual([]);
   });
 });

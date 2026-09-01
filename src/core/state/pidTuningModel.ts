@@ -1,4 +1,23 @@
 import type {MspPidTuningSnapshot} from '../protocol/msp/decoding/decodePidTuning';
+import {IDLE_MIN_RPM_MAX} from '../protocol/msp/decoding/decodePidTuning';
+import type {AdvancedPidDraft} from './advancedPidFields';
+import {
+  createAdvancedPidDraftFromRaw,
+  advancedPidDraftsEqual,
+  invalidAdvancedFields,
+} from './advancedPidFields';
+import type {AdvancedFilterDraft} from './advancedFilterFields';
+import {
+  createAdvancedFilterDraftFromRaw,
+  advancedFilterDraftsEqual,
+  invalidAdvancedFilterFields,
+} from './advancedFilterFields';
+import type {RpmFilterDraft} from './rpmFilterFields';
+import {
+  createRpmFilterDraftFromRaw,
+  rpmFilterDraftsEqual,
+  invalidRpmFilterFields,
+} from './rpmFilterFields';
 
 export type PidAxisKey = 'roll' | 'pitch' | 'yaw';
 export interface PidAxisDraft { readonly p: number; readonly i: number; readonly d: number; readonly f: number }
@@ -37,19 +56,86 @@ export interface PidTuningDraft {
   readonly yaw: PidAxisDraft;
   readonly rates: RatesDraft;
   readonly filters: FiltersDraft;
+  /**
+   * Dynamic Idle floor, in units of 100 rpm, exactly as the wire carries it.
+   * Betaflight's own bound is 0-100, raised to 0-200 for API >= 1.45.
+   */
+  readonly idleMinRpm: number;
+  /**
+   * The three feedforward "feel" settings, in wire units.
+   *
+   * Ranges are the firmware's own (settings.c): averaging is a lookup of
+   * four entries, boost 0-50, jitter factor 0-20. They are what
+   * Betaflight's official presets change to define a flight style, which
+   * is why they are editable here rather than left to the CLI.
+   */
+  readonly feedforwardAveraging: number;
+  readonly feedforwardBoost: number;
+  readonly feedforwardJitterFactor: number;
+
+  /**
+   * The P-E advanced tier, kept in TWO named groups rather than flattened
+   * into this interface.
+   *
+   * They stay separate because they are separate on the wire and in the
+   * firmware: `advanced` is MSP_PID_ADVANCED and belongs entirely to the
+   * PID profile, while `advancedFilters` is MSP_FILTER_CONFIG and carries
+   * BOTH lifetimes - which is why `ADVANCED_FILTER_BOUNDS` records a scope
+   * per field. Flattening the two would make it possible to write code
+   * that forgets which is which, and P-E §13 exists precisely to stop
+   * that.
+   *
+   * Every field in both is EXPOSED, not merely carried: the encode path
+   * patches each one into the board's own payload, so a value here that no
+   * control ever moves is written back unchanged.
+   */
+  readonly advanced: AdvancedPidDraft;
+  readonly advancedFilters: AdvancedFilterDraft;
+
+  /**
+   * The RPM filter, kept as a THIRD group because it is the only one whose
+   * SHAPE depends on the firmware's API version.
+   *
+   * `advanced` and `advancedFilters` have the same fields on every board
+   * this app admits. The RPM filter does not: its two head fields exist
+   * everywhere, and its five tail fields exist only from API 1.48, where
+   * MSP_FILTER_CONFIG grows from 49 bytes to 56. Folding those five into
+   * `advancedFilters` would have forced every one of them to be a number on
+   * a board that has no such byte - which is to say, a zero this app made
+   * up. `rpmFilter.tail === undefined` says the honest thing instead.
+   *
+   * Scope: GLOBAL, all seven fields. PG_RPM_FILTER_CONFIG is a MASTER_VALUE
+   * parameter group, so switching PID profile changes none of them.
+   */
+  readonly rpmFilter: RpmFilterDraft;
 }
+
+/** settings.c: lookupTableFeedforwardAveraging has four entries. */
+export const FEEDFORWARD_AVERAGING_MAX = 3;
+/** settings.c: PARAM_NAME_FEEDFORWARD_BOOST minmaxUnsigned {0, 50}. */
+export const FEEDFORWARD_BOOST_MAX = 50;
+/** settings.c: PARAM_NAME_FEEDFORWARD_JITTER_FACTOR minmaxUnsigned {0, 20}. */
+export const FEEDFORWARD_JITTER_FACTOR_MAX = 20;
+
 export type PidTuningValidationCode =
   | 'PID_GAIN_INVALID'
   | 'FEEDFORWARD_INVALID'
+  | 'FEEDFORWARD_AVERAGING_INVALID'
+  | 'FEEDFORWARD_BOOST_INVALID'
+  | 'FEEDFORWARD_JITTER_INVALID'
   | 'RATES_TYPE_INVALID'
   | 'RATES_TYPE_CHANGE_UNSUPPORTED'
   | 'RATE_VALUE_INVALID'
   | 'THROTTLE_CURVE_INVALID'
   | 'FILTER_VALUE_INVALID'
+  | 'IDLE_MIN_RPM_INVALID'
   | 'FILTER_ORDER_INVALID'
   | 'FILTER_CAPABILITY_UNPROVEN'
   | 'FILTER_RATE_UNKNOWN'
-  | 'FILTER_EXCEEDS_NYQUIST';
+  | 'FILTER_EXCEEDS_NYQUIST'
+  | 'ADVANCED_PID_VALUE_INVALID'
+  | 'ADVANCED_FILTER_VALUE_INVALID'
+  | 'RPM_FILTER_VALUE_INVALID';
 
 const AXES = Object.freeze(['roll', 'pitch', 'yaw'] as const);
 
@@ -82,12 +168,34 @@ export function createPidTuningDraft(snapshot: MspPidTuningSnapshot): PidTuningD
       throttleLimitPercent: snapshot.rcTuning.throttleLimitPercent,
     }),
     filters: Object.freeze({...snapshot.filterConfig}),
+    idleMinRpm: snapshot.idleMinRpm,
+    feedforwardAveraging: snapshot.feedforwardAveraging,
+    feedforwardBoost: snapshot.feedforwardBoost,
+    feedforwardJitterFactor: snapshot.feedforwardJitterFactor,
+    /* Built from the RAW payloads. Both groups read strictly inside the
+       minimum length `decodePidTuning` already enforces (61 advanced bytes,
+       49 filter bytes) - a snapshot that could not satisfy those never
+       becomes a snapshot at all. */
+    advanced: createAdvancedPidDraftFromRaw(snapshot.advancedRaw),
+    advancedFilters: createAdvancedFilterDraftFromRaw(snapshot.filtersRaw),
+    /* The one group that needs more than the bytes: which fields EXIST is a
+       property of the firmware's API version, and the snapshot carries the
+       contract that was proven before it was read. Nothing here measures a
+       payload length or reads meaning into a zero. */
+    rpmFilter: createRpmFilterDraftFromRaw(snapshot.filtersRaw, snapshot.contract),
   });
 }
 
 export function pidTuningDraftsEqual(a: PidTuningDraft, b: PidTuningDraft): boolean {
-  return AXES.every(key => a[key].p === b[key].p && a[key].i === b[key].i && a[key].d === b[key].d && a[key].f === b[key].f) &&
-    ratesEqual(a.rates, b.rates) && filtersEqual(a.filters, b.filters);
+  return a.idleMinRpm === b.idleMinRpm &&
+    a.feedforwardAveraging === b.feedforwardAveraging &&
+    a.feedforwardBoost === b.feedforwardBoost &&
+    a.feedforwardJitterFactor === b.feedforwardJitterFactor &&
+    AXES.every(key => a[key].p === b[key].p && a[key].i === b[key].i && a[key].d === b[key].d && a[key].f === b[key].f) &&
+    ratesEqual(a.rates, b.rates) && filtersEqual(a.filters, b.filters) &&
+    advancedPidDraftsEqual(a.advanced, b.advanced) &&
+    advancedFilterDraftsEqual(a.advancedFilters, b.advancedFilters) &&
+    rpmFilterDraftsEqual(a.rpmFilter, b.rpmFilter);
 }
 
 export function ratesEqual(a: RatesDraft, b: RatesDraft): boolean {
@@ -124,6 +232,59 @@ const enabledFrequencyBelow = (value: number, nyquist: number) => value === 0 ||
 
 export function validatePidTuningDraft(draft: PidTuningDraft, snapshot?: MspPidTuningSnapshot): readonly PidTuningValidationCode[] {
   const issues = new Set<PidTuningValidationCode>();
+  // Betaflight's own bound: 0-100, raised to 0-200 for API >= 1.45. We speak
+  // 1.47. Enforced on the way OUT, which is where Betaflight enforces it.
+  if (
+    !Number.isInteger(draft.idleMinRpm) ||
+    draft.idleMinRpm < 0 ||
+    draft.idleMinRpm > IDLE_MIN_RPM_MAX
+  ) {
+    issues.add('IDLE_MIN_RPM_INVALID');
+  }
+  /*
+   * CHANGE-SCOPED, for the reason gpsRescueConfigurationModel.ts spells
+   * out at length: holding a field the operator never touched to a range
+   * would let one stored byte make the WHOLE screen unsaveable. These
+   * three offsets are only populated from API 1.44, and a board can
+   * present bytes there this app has no business judging - but the moment
+   * an operator moves one, it must land inside the firmware's own bound,
+   * because MSP_SET_PID_ADVANCED does not clamp and will store whatever
+   * arrives.
+   */
+  // The snapshot is optional on this function. With no board to compare
+  // against there is no "unchanged" to exempt, so every field is bounded -
+  // the stricter reading, which is the right default when in doubt.
+  const stored = snapshot === undefined ? undefined : createPidTuningDraft(snapshot);
+  const moved = (key: 'feedforwardAveraging' | 'feedforwardBoost' | 'feedforwardJitterFactor'): boolean =>
+    stored === undefined || draft[key] !== stored[key];
+  const bounded = (value: number, max: number): boolean =>
+    Number.isInteger(value) && value >= 0 && value <= max;
+  if (moved('feedforwardAveraging') && !bounded(draft.feedforwardAveraging, FEEDFORWARD_AVERAGING_MAX)) issues.add('FEEDFORWARD_AVERAGING_INVALID');
+  if (moved('feedforwardBoost') && !bounded(draft.feedforwardBoost, FEEDFORWARD_BOOST_MAX)) issues.add('FEEDFORWARD_BOOST_INVALID');
+  if (moved('feedforwardJitterFactor') && !bounded(draft.feedforwardJitterFactor, FEEDFORWARD_JITTER_FACTOR_MAX)) issues.add('FEEDFORWARD_JITTER_INVALID');
+  /* The advanced tier, held to the SAME change-scoped rule as the three
+     above and for the same reason: these are fifty-odd bytes of somebody
+     else's tune, and one stored value this app judges out of range must
+     not make the whole screen unsaveable. Bounds are the firmware's own -
+     see the `source` citation carried beside every entry. */
+  if (invalidAdvancedFields(draft.advanced, stored?.advanced).length > 0) {
+    issues.add('ADVANCED_PID_VALUE_INVALID');
+  }
+  if (invalidAdvancedFilterFields(draft.advancedFilters, stored?.advancedFilters).length > 0) {
+    issues.add('ADVANCED_FILTER_VALUE_INVALID');
+  }
+  /* THESE BOUNDS ARE NOT PRESENTATION POLITENESS.
+     MSP_SET_FILTER_CONFIG returns MSP_RESULT_ERROR for a q outside
+     {250, 3000}, a fade range above 1000, or any weight above 100 - and it
+     does so AFTER every earlier field in the payload has already been
+     assigned into the running configuration, and BEFORE
+     `validateAndFixGyroConfig()` and `gyroInitFilters()` are reached. So the
+     board is left holding new filter values it never re-initialised against,
+     with no rollback to report. The only honest place to stop that is here,
+     before the payload is built. */
+  if (invalidRpmFilterFields(draft.rpmFilter, stored?.rpmFilter).length > 0) {
+    issues.add('RPM_FILTER_VALUE_INVALID');
+  }
   for (const key of AXES) {
     const value = draft[key];
     if ([value.p, value.i, value.d].some(gain => !Number.isInteger(gain) || gain < 0 || gain > 250)) issues.add('PID_GAIN_INVALID');
@@ -148,6 +309,24 @@ export function validatePidTuningDraft(draft: PidTuningDraft, snapshot?: MspPidT
     f.dtermLpf1DynamicMinHz, f.dtermLpf1DynamicMaxHz].every(value => integerIn(value, 0, 1000)) ||
     !integerIn(f.dynamicNotchCount, 0, 7) || !integerIn(f.dynamicNotchQ, 0, 1000) ||
     !integerIn(f.dynamicNotchMinHz, 0, 250) || !integerIn(f.dynamicNotchMaxHz, 0, 1000)) issues.add('FILTER_VALUE_INVALID');
+  /*
+   * A D-TERM NOTCH WHOSE CUTOFF HAS SWALLOWED ITS CENTRE IS REFUSED, NOT
+   * WRITTEN AND THEN EXPLAINED.
+   *
+   * The firmware has the same `cutoff >= hz -> hz = 0` correction for the
+   * D-term notch as for the gyro notches, but it lives in
+   * `validateAndFixConfig()`, which an MSP filter write never calls - it
+   * runs at EEPROM write and at boot. So the board would accept this
+   * value, hand it straight back, and then discard it the next time the
+   * configuration is persisted. There is no verdict that reports that
+   * honestly after the fact; the only honest move is not to send it. The
+   * operator's real way to switch the notch off is dterm_notch_hz = 0,
+   * which this rule leaves alone.
+   */
+  const af = draft.advancedFilters;
+  if (af.dtermNotchHz > 0 && af.dtermNotchCutoff >= af.dtermNotchHz) {
+    issues.add('FILTER_ORDER_INVALID');
+  }
   if ((f.gyroLpf1DynamicMinHz > 0 && f.gyroLpf1DynamicMinHz > f.gyroLpf1DynamicMaxHz) ||
     (f.dtermLpf1DynamicMinHz > 0 && f.dtermLpf1DynamicMinHz > f.dtermLpf1DynamicMaxHz) ||
     (f.dynamicNotchCount > 0 && (f.dynamicNotchQ < 1 || f.dynamicNotchMinHz < 20 ||

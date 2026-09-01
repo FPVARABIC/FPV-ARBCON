@@ -4,7 +4,10 @@ import { Alert, ScrollView } from 'react-native';
 
 import '../../i18n';
 import i18n from '../../i18n';
-import { serialPortDisplayName } from '../../core/state/serialPortsModel';
+import {
+  observedEvidence,
+  serialPortDisplayName,
+} from '../../core/state/serialPortsModel';
 import type { MspSerialPortRecord } from '../../core/protocol/msp';
 import type { SerialPortsSnapshot } from '../../core/state/serialPortsModel';
 
@@ -38,10 +41,12 @@ function snapshot(
     featureMaskRaw: 0,
     apiVersionMajor: 1,
     apiVersionMinor: 48,
-    serialRxProvider: 7,
-    buildOptionIds: undefined,
-    vtxTableAvailable: true,
-    vtxTableConfigured: true,
+    serialRxProvider: observedEvidence(7),
+    buildOptionIds: observedEvidence(new Set<number>()),
+    vtxTable: observedEvidence({
+      tableAvailable: true,
+      tableConfigured: true,
+    }),
     ...options,
   });
 }
@@ -156,8 +161,10 @@ describe('PortsScreen', () => {
       controllerFor(
         snapshot({
           ports: vtxPorts,
-          vtxTableAvailable: true,
-          vtxTableConfigured: false,
+          vtxTable: observedEvidence({
+            tableAvailable: true,
+            tableConfigured: false,
+          }),
         }),
       ),
     );
@@ -170,8 +177,10 @@ describe('PortsScreen', () => {
       controllerFor(
         snapshot({
           ports: vtxPorts,
-          vtxTableAvailable: false,
-          vtxTableConfigured: false,
+          vtxTable: observedEvidence({
+            tableAvailable: false,
+            tableConfigured: false,
+          }),
         }),
       ),
     );
@@ -232,7 +241,9 @@ describe('PortsScreen', () => {
 
   it('disables a role proven absent from the connected firmware build', async () => {
     const screen = await render(
-      controllerFor(snapshot({ buildOptionIds: new Set([16412]) })),
+      controllerFor(
+        snapshot({ buildOptionIds: observedEvidence(new Set([16412])) }),
+      ),
     );
     await screen.press('ports-card-toggle-0');
     expect(screen.find('ports-0-role-GPS').props.disabled).toBe(false);

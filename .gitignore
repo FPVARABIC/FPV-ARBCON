@@ -78,3 +78,10 @@ node_modules/.vite/
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Throwaway browser harness for the UI polish pass: mounts a single real
+# screen in Chromium through its own controller seam so the design system
+# can be measured (fonts, text sizes, ARIA, hit targets, overflow) instead
+# of eyeballed. Local tooling with absolute paths - never shipped.
+.dev-preview/
+e2e/touch-targets/dist/

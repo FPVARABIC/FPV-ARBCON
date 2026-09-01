@@ -33,7 +33,16 @@ describe('MotorConfigurationSummary', () => {
     const tree = render(undefined);
     const text = JSON.stringify(tree.toJSON());
     expect(text).toContain('ستظهر القيم بعد الضغط على زر تهيئة جلسة الاختبار');
-    expect(text.match(/—/g)).toHaveLength(3);
+    // M-D §46 - THIS USED TO COUNT THREE EM DASHES.
+    //
+    // The test's name is right and its intent is unchanged: before the
+    // session reads anything, the three facts must not show plausible
+    // numbers. What changed is HOW an unread value says so. A dash is
+    // read as zero, or as broken, or as still loading, and is none of
+    // those; the screen now says it has not been read.
+    const notRead = String(i18n.t('motorsScreen.valueNotRead'));
+    expect(text.split(notRead).length - 1).toBeGreaterThanOrEqual(2);
+    expect(text).not.toContain('—');
     act(() => tree.unmount());
   });
 
@@ -64,7 +73,10 @@ describe('MotorConfigurationSummary', () => {
   });
 
   it('names known protocol values and preserves unknown raw values', () => {
-    expect(formatMotorProtocol(undefined)).toBe('—');
+    // An unread protocol yields NOTHING from the formatter, so each
+    // caller can say the right kind of not-available for its own
+    // surface. MotorAirframeSummary says "not read yet".
+    expect(formatMotorProtocol(undefined)).toBe('');
     expect(formatMotorProtocol(5)).toBe('DSHOT150');
     expect(formatMotorProtocol(7)).toBe('DSHOT600');
     expect(formatMotorProtocol(42)).toBe('RAW 42');

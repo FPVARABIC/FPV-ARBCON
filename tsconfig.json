@@ -33,6 +33,11 @@
      * Native's ambient types and fail for entirely the wrong reason. */
     "**/*.web.test.ts",
     "**/*.web.test.tsx",
-    "src/platforms/web/**"
+    "src/platforms/web/**",
+    /* The touch-floor browser fixture. Browser code by construction - it
+     * calls `createRoot` on a `document` element and reads
+     * `window.location` - so it belongs on the web side of this seam for
+     * exactly the reason stated above, and tsconfig.web.json includes it. */
+    "e2e/**"
   ]
 }

@@ -10,6 +10,17 @@ export interface ReceiverConfigurationSnapshot {
 }
 
 export interface ReceiverConfigurationDraft {
+  /**
+   * RECEIVER P4. The serial receiver provider lives in RX_CONFIG byte 0
+   * (msp.c MSP_SET_RX_CONFIG: `rxConfigMutable()->serialrx_provider =
+   * sbufReadU8(src)`), so it is ordinary Receiver CONFIGURATION and
+   * belongs in this draft - unlike the receiver MODE, which lives in the
+   * global feature mask and is deliberately kept out (see
+   * ReceiverRuntimeTruth). Putting it here means the existing dirty
+   * tracking, stale-base comparison, validation and read-modify-write all
+   * cover it with no second save authority.
+   */
+  readonly serialRxProvider: number;
   readonly channelMapText: string;
   readonly rssiChannel: number;
   readonly stickMin: number;
@@ -29,7 +40,8 @@ export type ReceiverConfigurationValidationCode =
   | 'CHANNEL_MAP_INVALID' | 'STICK_MIN_INVALID' | 'STICK_CENTER_INVALID'
   | 'STICK_MAX_INVALID' | 'STICK_ORDER_INVALID' | 'RSSI_CHANNEL_INVALID'
   | 'DEADBAND_INVALID' | 'YAW_DEADBAND_INVALID'
-  | 'THROTTLE_3D_DEADBAND_INVALID' | 'SMOOTHING_INVALID';
+  | 'THROTTLE_3D_DEADBAND_INVALID' | 'SMOOTHING_INVALID'
+  | 'SERIAL_RX_PROVIDER_INVALID';
 
 export function receiverMapToText(map: readonly number[]): string {
   if (map.length !== 8) return '';
@@ -51,6 +63,7 @@ export function receiverMapFromText(text: string): readonly number[] | undefined
 
 export function createReceiverConfigurationDraft(snapshot: ReceiverConfigurationSnapshot): ReceiverConfigurationDraft {
   return Object.freeze({
+    serialRxProvider: snapshot.rx.serialRxProvider,
     channelMapText: receiverMapToText(snapshot.channelMap),
     rssiChannel: snapshot.rssiChannel,
     stickMin: snapshot.rx.stickMin,
@@ -71,6 +84,48 @@ export function receiverDraftsEqual(a: ReceiverConfigurationDraft, b: ReceiverCo
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+/**
+ * RECEIVER P2 - the draft fields whose MSP_SET_RX_CONFIG handler marks the
+ * flight controller's configuration as REBOOT REQUIRED.
+ *
+ * FIRMWARE FACT - src/main/msp/msp.c @ pinned Betaflight API 1.47
+ * (79065c96ba0bb5cdc675e67d7093e05dab8b330e). `configRebootUpdateCheckU8`
+ * (msp.c:353) calls `setRebootRequired()` when the incoming value differs
+ * from the stored one, and inside MSP_SET_RX_CONFIG it is used at exactly
+ * five sites - all of them rc_smoothing, and all five exposed by our UI:
+ *
+ *   msp.c:3779  rc_smoothing_setpoint_cutoff        -> setpointCutoff
+ *   msp.c:3780  rc_smoothing_throttle_cutoff        -> throttleCutoff
+ *   msp.c:3781  rc_smoothing_auto_factor_throttle   -> throttleAutoFactor
+ *   msp.c:3807  rc_smoothing_auto_factor_rpy        -> setpointAutoFactor
+ *   msp.c:3815  rc_smoothing                        -> smoothingEnabled
+ *
+ * No other Receiver field this screen writes (channel map, RSSI channel,
+ * deadbands, mincheck/midrc/maxcheck) flags a reboot at this pin, and
+ * none is added here on suspicion.
+ *
+ * THIS IS AN EXPECTATION, NOT THE VERDICT. The firmware only raises the
+ * flag when the value actually CHANGED, which is why this compares the
+ * two drafts rather than merely listing the fields; but the authoritative
+ * answer still comes from re-reading the FC's own reboot-required bit
+ * after the write (see ReceiverConfigurationController.save). This
+ * function exists so the controller knows when to go and ask.
+ */
+export const RECEIVER_REBOOT_SENSITIVE_FIELDS = Object.freeze([
+  'setpointCutoff',
+  'throttleCutoff',
+  'throttleAutoFactor',
+  'setpointAutoFactor',
+  'smoothingEnabled',
+] as const satisfies readonly (keyof ReceiverConfigurationDraft)[]);
+
+export function receiverChangeMayRequireReboot(
+  original: ReceiverConfigurationDraft,
+  draft: ReceiverConfigurationDraft,
+): boolean {
+  return RECEIVER_REBOOT_SENSITIVE_FIELDS.some(field => original[field] !== draft[field]);
+}
+
 export function receiverSnapshotsEqual(a: ReceiverConfigurationSnapshot, b: ReceiverConfigurationSnapshot): boolean {
   return a.rssiChannel === b.rssiChannel &&
     a.channelMap.length === b.channelMap.length && a.channelMap.every((v, i) => v === b.channelMap[i]) &&
@@ -81,8 +136,19 @@ export function receiverSnapshotsEqual(a: ReceiverConfigurationSnapshot, b: Rece
     a.deadband.throttle3dDeadband === b.deadband.throttle3dDeadband;
 }
 
+/**
+ * RECEIVER P4 - FIRMWARE FACT, src/main/rx/rx.h:53-69 @ pinned 1.47:
+ * `SERIALRX_NONE = 0` through `SERIALRX_MAVLINK = 16`, contiguous.
+ *
+ * A value inside this range is a value the firmware's enum can hold. It
+ * is NOT a claim that this particular build compiled that receiver
+ * driver in - see SERIAL_RX_PROVIDER_SUPPORT_IS_NOT_REPORTED.
+ */
+export const SERIAL_RX_PROVIDER_MAX = 16;
+
 export function validateReceiverDraft(draft: ReceiverConfigurationDraft): readonly ReceiverConfigurationValidationCode[] {
   const issues: ReceiverConfigurationValidationCode[] = [];
+  if (!Number.isInteger(draft.serialRxProvider) || draft.serialRxProvider < 0 || draft.serialRxProvider > SERIAL_RX_PROVIDER_MAX) issues.push('SERIAL_RX_PROVIDER_INVALID');
   if (receiverMapFromText(draft.channelMapText) === undefined) issues.push('CHANNEL_MAP_INVALID');
   if (!Number.isInteger(draft.stickMin) || draft.stickMin < 1000 || draft.stickMin > 1200) issues.push('STICK_MIN_INVALID');
   if (!Number.isInteger(draft.stickCenter) || draft.stickCenter < 1401 || draft.stickCenter > 1599) issues.push('STICK_CENTER_INVALID');

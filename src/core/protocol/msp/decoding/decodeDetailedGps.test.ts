@@ -1,4 +1,3 @@
-import { MspPayloadReadError } from './MspPayloadReader';
 import { decodeDetailedGps } from './decodeDetailedGps';
 
 function payload(
@@ -40,15 +39,22 @@ describe('decodeDetailedGps', () => {
     ).toBeUndefined();
   });
 
-  it('rejects truncated coordinates', () => {
-    expect(() => decodeDetailedGps(new Uint8Array(9))).toThrow(
-      MspPayloadReadError,
-    );
+  it('reads a truncated frame instead of closing the GPS screen', () => {
+    // Betaflight reads MSP_RAW_GPS positionally with no length guard
+    // (MSPHelper.js case MSP_RAW_GPS). Fix state and satellite count arrive in
+    // the first two bytes and are exactly what an operator checks first; a
+    // short frame must not take them away along with the coordinates.
+    const decoded = decodeDetailedGps(Uint8Array.from([2, 14, 0, 0, 0, 0, 0, 0, 0]));
+    expect(decoded.hasFix).toBe(true);
+    expect(decoded.satelliteCount).toBe(14);
   });
 
-  it('rejects a half-emitted PDOP field', () => {
+  it('ignores a half-emitted PDOP field rather than refusing the whole fix', () => {
+    // One odd trailing byte used to discard a complete, valid position.
     const truncated = new Uint8Array(17);
-    truncated.set(payload(0, 0, false));
-    expect(() => decodeDetailedGps(truncated)).toThrow(MspPayloadReadError);
+    truncated.set(payload(-33.1234567, 151.7654321, false));
+    const decoded = decodeDetailedGps(truncated);
+    expect(decoded.latitudeDegrees).toBe(-33.1234567);
+    expect(decoded.satelliteCount).toBe(14);
   });
 });

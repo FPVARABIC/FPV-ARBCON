@@ -8,9 +8,11 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import {
   filterCompatiblePresets,
   type FirmwarePresetCategory,
+  type FirmwarePresetStatus,
   type FirmwarePresetSummary,
 } from '../../core';
 import {
@@ -20,13 +22,9 @@ import {
   type LoadedFirmwarePreset,
   type SetupUiSessionKey,
 } from '../../platforms/react-native/protocol';
-import {
-  colors,
-  radii,
-  spacing,
-  typography,
-  useContentEnvelope,
-} from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography, useContentEnvelope} from '../theme';
+import {MIN_TOUCH_TARGET} from '../components/controls';
+import {Icon} from '../icons';
 
 export type PresetsRepositoryPort = Pick<
   typeof firmwarePresetRepository,
@@ -63,6 +61,18 @@ const CATEGORY_LABEL: Record<FirmwarePresetCategory, string> = {
   BNF: 'BNF',
   OTHER: 'Other',
 };
+/**
+ * The catalogue's provenance words, in Arabic. They used to render raw
+ * ("OFFICIAL", "EXPERIMENTAL") to an operator reading an Arabic screen, and
+ * EXPERIMENTAL in particular is a safety signal about a tune that will be
+ * written to a flight controller - it deserves to be legible and to look
+ * different from the other two, not to be a grey pill in another language.
+ */
+const STATUS_LABEL: Record<FirmwarePresetStatus, string> = {
+  OFFICIAL: 'رسمية',
+  COMMUNITY: 'من المجتمع',
+  EXPERIMENTAL: 'تجريبية',
+};
 const ALL_CATEGORIES: readonly FirmwarePresetCategory[] = [
   'TUNE',
   'RATES',
@@ -86,6 +96,7 @@ export default function PresetsScreen({
   repository = firmwarePresetRepository,
   cli = rawCliSessionController,
 }: Props): React.JSX.Element {
+  const { t } = useTranslation();
   const { maxWidth } = useContentEnvelope(true);
   const [loading, setLoading] = useState(false);
   const [failure, setFailure] = useState<string>();
@@ -126,10 +137,17 @@ export default function PresetsScreen({
       const compatible = filterCompatiblePresets(index, version.versionString);
       setFirmwareVersion(version.versionString);
       setPresets(compatible);
+      // A dropped entry is one we refused to make downloadable - an unsafe
+      // path or a bad hash. The operator is told, rather than shown a quietly
+      // shorter list.
+      const dropped =
+        index.rejectedCount > 0
+          ? ` تجاهلنا ${index.rejectedCount} مدخلًا لم تُطابق بصمته أو مساره.`
+          : '';
       setStatus(
         compatible.length
-          ? `عُثر على ${compatible.length} حزمة متوافقة مع ${version.versionString}.`
-          : `لا توجد حزم في المصدر الرسمي للإصدار ${version.versionString}.`,
+          ? `عُثر على ${compatible.length} حزمة متوافقة مع ${version.versionString}.${dropped}`
+          : `لا توجد حزم في المصدر الرسمي للإصدار ${version.versionString}.${dropped}`,
       );
     } catch (error) {
       setFailure(errorText(error));
@@ -218,7 +236,7 @@ export default function PresetsScreen({
       await cli.begin(sessionKey);
       const backup = await cli.captureDiffAll();
       const saved = await cli.saveTextFile(
-        `betaflight-backup-${firmwareVersion ?? 'unknown'}.txt`,
+        `fpv-arbcon-backup-${firmwareVersion ?? 'unknown'}.txt`,
         backup,
       );
       if (!saved)
@@ -306,19 +324,15 @@ export default function PresetsScreen({
     <View style={styles.root} testID="presets-screen">
       <ScrollView contentContainerStyle={[styles.content, { maxWidth }]}>
         <View style={styles.hero}>
-          <Text style={styles.eyebrow}>
-            BETAFLIGHT OFFICIAL PRESETS · HASH VERIFIED · CLI REVIEW
-          </Text>
           <Text style={styles.title}>الحزم الجاهزة</Text>
           <Text style={styles.subtitle}>
-            حزم Betaflight الرسمية والمتوافقة فقط؛ معاينة ونسخة احتياطية وتطبيق
-            مؤقت قبل الحفظ.
+            حزم الإعدادات الرسمية، مع معاينة الأوامر ونسخة احتياطية قبل الحفظ.
           </Text>
           <View style={styles.identityRow}>
             <Text style={styles.identity}>
               Firmware: {firmwareVersion ?? '—'}
             </Text>
-            <Text style={styles.identity}>المصدر: presets.betaflight.com</Text>
+            <Text style={styles.identity}>المصدر: مستودع الحزم الرسمي</Text>
           </View>
         </View>
         {failure ? (
@@ -386,11 +400,18 @@ export default function PresetsScreen({
                   <Text style={styles.badge}>
                     {CATEGORY_LABEL[preset.category]}
                   </Text>
-                  <Text style={styles.badge}>{preset.status}</Text>
+                  <Text
+                    style={[
+                      styles.badge,
+                      preset.status === 'EXPERIMENTAL' && styles.badgeWarn,
+                    ]}
+                  >
+                    {STATUS_LABEL[preset.status]}
+                  </Text>
                 </View>
                 <Text style={styles.presetTitle}>{preset.title}</Text>
                 <Text style={styles.meta}>
-                  {preset.author ?? 'Betaflight community'} ·{' '}
+                  {preset.author ?? 'مجتمع الحزم'} ·{' '}
                   {preset.firmwareVersions.join(', ')}
                 </Text>
               </Pressable>
@@ -428,14 +449,33 @@ export default function PresetsScreen({
                         key={option.name}
                         testID={`preset-option-${option.name}`}
                         onPress={() => toggleOption(option.name)}
+                        accessibilityRole={
+                          option.exclusive ? 'radio' : 'checkbox'
+                        }
+                        accessibilityLabel={option.name}
+                        accessibilityState={{
+                          checked: selectedOptions.has(option.name),
+                          selected: selectedOptions.has(option.name),
+                        }}
+                        aria-checked={selectedOptions.has(option.name)}
                         style={[
                           styles.option,
                           selectedOptions.has(option.name) && styles.optionOn,
                         ]}
                       >
-                        <Text style={styles.optionMark}>
-                          {selectedOptions.has(option.name) ? '✓' : '○'}
-                        </Text>
+                        <Icon
+                          name={
+                            selectedOptions.has(option.name)
+                              ? 'circle-check'
+                              : 'circle'
+                          }
+                          size={20}
+                          color={
+                            selectedOptions.has(option.name)
+                              ? colors.accentStrong
+                              : colors.textMuted
+                          }
+                        />
                         <View style={styles.optionCopy}>
                           <Text style={styles.optionName}>{option.name}</Text>
                           {option.group ? (
@@ -463,7 +503,7 @@ export default function PresetsScreen({
                 >
                   <Text style={styles.primaryText}>
                     {backupReady
-                      ? '✓ نسخة diff all محفوظة'
+                      ? 'نسخة diff all محفوظة'
                       : '1 · أنشئ واحفظ نسخة diff all'}
                   </Text>
                 </Pressable>
@@ -539,8 +579,8 @@ export default function PresetsScreen({
           <Text style={styles.statusText}>{status}</Text>
         </View>
         <Text style={styles.hardware}>
-          REQUIRES HARDWARE TEST · نجاح إرسال CLI لا يثبت جودة الضبط أو سلامة
-          الطيران؛ اختبر على الطاولة بلا مراوح.
+          {t('hardwareVerification.behaviourTitle')} · نجاح إرسال CLI لا يثبت
+          جودة الضبط أو سلامة الطيران؛ اختبر على الطاولة بلا مراوح.
         </Text>
       </ScrollView>
     </View>
@@ -566,19 +606,17 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '900',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   title: {
-    ...typography.screenTitle,
+    ...typography.title,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   subtitle: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   identityRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -601,10 +639,11 @@ const styles = StyleSheet.create({
     borderColor: colors.error,
   },
   errorText: {
+    // Was weight+colour with no token, so the blocked-session message
+    // rendered in the system fallback font. Measured in a browser.
+    ...typography.bodyStrong,
     color: colors.error,
-    fontWeight: '800',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   toolbar: { flexDirection: 'row', gap: spacing.sm },
   search: {
     flex: 1,
@@ -624,9 +663,20 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.accentSoft,
   },
-  reloadText: { color: colors.accentStrong, fontWeight: '800' },
+  reloadText: {...typography.label, color: colors.accentStrong},
   categories: { gap: spacing.xs, paddingVertical: spacing.xs },
   chip: {
+    /* The eleven category chips. These declared NO height at all - their
+       42px fell out of paddingVertical plus the label's line box - so a
+       source search for a sub-44 `minHeight` finds nothing here while
+       every one of them renders under the floor. Only a rendered
+       measurement catches this shape, which is why the floor is now
+       stated rather than inferred from padding.
+
+       `justifyContent` keeps the label optically centred once the box is
+       taller than the text needs. */
+    minHeight: MIN_TOUCH_TARGET,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
     borderRadius: radii.pill,
@@ -635,7 +685,7 @@ const styles = StyleSheet.create({
     borderColor: colors.borderSoft,
   },
   chipOn: { backgroundColor: colors.accent, borderColor: colors.accentStrong },
-  chipText: { color: colors.textPrimary, fontWeight: '800' },
+  chipText: {...typography.label, color: colors.textPrimary},
   workspace: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -656,8 +706,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   preset: {
     padding: spacing.md,
     borderRadius: radii.md,
@@ -678,27 +727,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.xs,
     borderRadius: radii.pill,
   },
+  badgeWarn: { color: colors.warning, backgroundColor: colors.warningSoft },
   presetTitle: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '900',
+    fontWeight: '700',
   },
-  meta: { ...typography.caption, color: colors.textMuted },
+  meta: { ...typography.caption, color: colors.textMuted, maxWidth: PROSE_MEASURE},
   hint: {
     ...typography.body,
     color: colors.textMuted,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   detailTitle: {
     ...typography.sectionTitle,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   description: {
     ...typography.body,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   warning: {
     padding: spacing.md,
     borderRadius: radii.md,
@@ -711,9 +758,8 @@ const styles = StyleSheet.create({
   subhead: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '900',
-    writingDirection: 'rtl',
-  },
+    fontWeight: '700',
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   option: {
     minHeight: 48,
     flexDirection: 'row',
@@ -728,19 +774,18 @@ const styles = StyleSheet.create({
     borderColor: colors.accentStrong,
     backgroundColor: colors.accentSoft,
   },
-  optionMark: { fontSize: 22, color: colors.accentStrong },
   optionCopy: { flex: 1 },
   optionName: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   commandSummary: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
   },
-  commandCount: { fontSize: 28, fontWeight: '900', color: colors.accentStrong },
+  commandCount: {...typography.display, color: colors.accentStrong},
   primary: {
     minHeight: 48,
     alignItems: 'center',
@@ -750,15 +795,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.accentStrong,
   },
-  primaryText: { color: colors.accentStrong, fontWeight: '900' },
+  primaryText: {...typography.label, color: colors.accentStrong},
   apply: {
     minHeight: 50,
+    alignSelf: 'flex-start',
+    paddingHorizontal: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,
     backgroundColor: colors.accent,
   },
-  applyText: { color: colors.textPrimary, fontWeight: '900' },
+  applyText: {...typography.label, color: colors.textPrimary},
   disabled: { opacity: 0.4 },
   progress: {
     height: 28,
@@ -777,7 +824,7 @@ const styles = StyleSheet.create({
   progressText: {
     textAlign: 'center',
     color: colors.textPrimary,
-    fontWeight: '900',
+    fontWeight: '700',
   },
   decision: {
     padding: spacing.lg,
@@ -790,8 +837,7 @@ const styles = StyleSheet.create({
   decisionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   cliError: {
     ...typography.caption,
     color: colors.error,
@@ -807,7 +853,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.error,
   },
-  cancelText: { color: colors.error, fontWeight: '900' },
+  cancelText: { color: colors.error, fontWeight: '700' },
   save: {
     flex: 1,
     minHeight: 48,
@@ -816,15 +862,15 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.accent,
   },
-  saveText: { color: colors.textPrimary, fontWeight: '900' },
+  saveText: { color: colors.textPrimary, fontWeight: '700' },
   status: {
     padding: spacing.md,
     borderRadius: radii.md,
     backgroundColor: colors.accentSoft,
   },
   statusText: {
+    ...typography.label,
     color: colors.accentText,
-    fontWeight: '800',
     textAlign: 'center',
     writingDirection: 'rtl',
   },
@@ -832,6 +878,5 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.warning,
     textAlign: 'center',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

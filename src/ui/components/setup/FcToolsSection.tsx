@@ -27,7 +27,14 @@ import React, { useCallback } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
+import { Button } from '../controls';
+import { readInteraction } from '../controls/interaction';
+
 import { FC_TOOL_IDS, resolveFcToolAvailability } from '../../../core';
+import {
+  describeCalibrationOutcome,
+  type SensorCalibrationOutcomeId,
+} from '../../../core/state/sensorPresentation';
 import type { FcToolGateInput, FcToolId } from '../../../core';
 import {
   fcToolsController,
@@ -39,6 +46,7 @@ import type {
   FcToolsController,
 } from '../../../platforms/react-native/protocol';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 
 /** Android's minimum recommended touch target. */
 const MIN_TOUCH_TARGET = 44;
@@ -50,12 +58,32 @@ export interface FcToolsSectionProps {
   gate: Omit<FcToolGateInput, 'busy'>;
   /** Injectable for tests; defaults to the app-wide singleton. */
   controller?: FcToolsController;
+  /**
+   * FINAL UI CORRECTION: which tools THIS surface presents. Defaults to
+   * all of them so existing callers/tests are unchanged. SetupScreen now
+   * hosts ACC_CALIBRATION beside the orientation hero (see
+   * OrientationCalibrationCard), so it passes the remaining two here -
+   * one tool, one surface, and the shared phase/outcome banners below
+   * only render for a tool this instance actually owns.
+   */
+  tools?: readonly FcToolId[];
+}
+
+/** True when this surface owns the tool an outcome/phase refers to. */
+function ownsOutcomeTool(
+  tools: readonly FcToolId[],
+  outcome: FcToolOutcome,
+): boolean {
+  return outcome.kind === 'REBOOT_REQUESTED'
+    ? tools.includes('REBOOT')
+    : tools.includes(outcome.tool);
 }
 
 export default function FcToolsSection({
   sessionId,
   gate,
   controller,
+  tools = FC_TOOL_IDS,
 }: FcToolsSectionProps): React.JSX.Element {
   const { t } = useTranslation();
   const active = controller ?? fcToolsController;
@@ -122,7 +150,7 @@ export default function FcToolsSection({
         ))}
       </View>
 
-      {FC_TOOL_IDS.map(tool => {
+      {tools.map(tool => {
         const availability = resolveFcToolAvailability(tool, { ...gate, busy });
         const name = t(`fcTools.toolNames.${tool}`);
         const description = t(`fcTools.toolDescriptions.${tool}`);
@@ -197,12 +225,18 @@ export default function FcToolsSection({
               accessibilityHint={
                 availability.enabled ? t('fcTools.hint') : undefined
               }
-              style={[
-                styles.toolButton,
-                availability.enabled
-                  ? styles.toolButtonEnabled
-                  : styles.toolButtonDisabled,
-              ]}
+              style={state => {
+                const {pressed, hovered} = readInteraction(state);
+                return [
+                  styles.toolButton,
+                  availability.enabled
+                    ? styles.toolButtonEnabled
+                    : styles.toolButtonDisabled,
+                  (hovered || pressed) &&
+                    availability.enabled &&
+                    styles.toolButtonActive,
+                ];
+              }}
               testID={`fc-tool-${tool}-button`}
             >
               <Text
@@ -224,7 +258,7 @@ export default function FcToolsSection({
         );
       })}
 
-      {phase.kind === 'RUNNING' && (
+      {phase.kind === 'RUNNING' && tools.includes(phase.tool) && (
         <View style={styles.runningBanner} testID="fc-tools-running">
           <View style={styles.runningDot} />
           <View style={styles.runningCopy}>
@@ -236,7 +270,7 @@ export default function FcToolsSection({
         </View>
       )}
 
-      {phase.kind === 'CONFIRMING' && (
+      {phase.kind === 'CONFIRMING' && tools.includes(phase.tool) && (
         <View
           style={styles.confirmation}
           accessibilityRole="alert"
@@ -246,32 +280,26 @@ export default function FcToolsSection({
           <Text style={styles.confirmBody} testID="fc-tools-confirmation-body">
             {t(`fcTools.confirmBodies.${phase.tool}`)}
           </Text>
-          <Pressable
+          <Button
+            label={t('fcTools.confirmAction')}
             onPress={onConfirm}
-            accessibilityRole="button"
-            accessibilityLabel={t('fcTools.confirmAction')}
-            style={[styles.toolButton, styles.confirmButton]}
+            variant="primary"
+            icon="circle-check"
+            block
             testID="fc-tools-confirm"
-          >
-            <Text style={styles.confirmActionText}>
-              {t('fcTools.confirmAction')}
-            </Text>
-          </Pressable>
-          <Pressable
+          />
+          <Button
+            label={t('fcTools.cancelAction')}
             onPress={onCancel}
-            accessibilityRole="button"
-            accessibilityLabel={t('fcTools.cancelAction')}
-            style={[styles.toolButton, styles.cancelButton]}
+            variant="secondary"
+            icon="x"
+            block
             testID="fc-tools-cancel"
-          >
-            <Text style={styles.cancelActionText}>
-              {t('fcTools.cancelAction')}
-            </Text>
-          </Pressable>
+          />
         </View>
       )}
 
-      {outcome !== undefined && (
+      {outcome !== undefined && ownsOutcomeTool(tools, outcome) && (
         <View
           style={styles.outcomeCard}
           accessibilityRole="alert"
@@ -282,14 +310,8 @@ export default function FcToolsSection({
             accessibilityRole="alert"
             testID="fc-tools-outcome"
           >
-            {describeOutcome(outcome, t)}
+            {describeFcToolOutcome(outcome, t)}
           </Text>
-          {outcome.kind === 'ACCEPTED' &&
-            outcome.tool === 'ACC_CALIBRATION' && (
-              <Text style={styles.nextStepText}>
-                {t('fcTools.accVerificationStarted')}
-              </Text>
-            )}
         </View>
       )}
     </View>
@@ -298,9 +320,30 @@ export default function FcToolsSection({
 
 type Translate = ReturnType<typeof useTranslation>['t'];
 
-/** Never claims more than the firmware actually confirmed. */
-function describeOutcome(outcome: FcToolOutcome, t: Translate): string {
+/** Never claims more than the firmware actually confirmed. Exported so
+ * OrientationCalibrationCard announces the SAME wording for the same
+ * outcome - two surfaces, one truth. */
+export function describeFcToolOutcome(
+  outcome: FcToolOutcome,
+  t: Translate,
+): string {
   switch (outcome.kind) {
+    /**
+     * A WATCHED CALIBRATION REPORTS WHAT WAS WATCHED. The wording comes
+     * from the Sensors presentation layer, so this surface and the
+     * Sensors screen say the same sentence for the same observation -
+     * there is one definition of "calibrated" in this application and
+     * both screens read it from the same place.
+     */
+    case 'CALIBRATION_OBSERVED': {
+      const target =
+        outcome.tool === 'ACC_CALIBRATION' ? 'ACCELEROMETER' : 'MAGNETOMETER';
+      const phrase = describeCalibrationOutcome(
+        target,
+        outcome.outcome.kind as SensorCalibrationOutcomeId,
+      );
+      return t(phrase.key, phrase.params ?? {});
+    }
     case 'ACCEPTED':
       return t('fcTools.outcomeAccepted');
     case 'REBOOT_REQUESTED':
@@ -363,8 +406,7 @@ const styles = StyleSheet.create({
   sectionDescription: {
     ...typography.body,
     color: colors.textSecondary,
-    marginTop: spacing.sm,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
   workflow: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -390,7 +432,7 @@ const styles = StyleSheet.create({
   workflowNumberText: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   workflowCopy: { flex: 1 },
   workflowTitle: {
@@ -398,7 +440,7 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontWeight: '700',
   },
-  workflowBody: { ...typography.caption, color: colors.textSecondary },
+  workflowBody: { ...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   tool: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -422,12 +464,12 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
   },
   toolMarkPrimary: { backgroundColor: colors.accentSoft },
-  toolMarkInfo: { backgroundColor: '#DCEEF5' },
-  toolMarkMaintenance: { backgroundColor: '#EEEAF5' },
+  toolMarkInfo: { backgroundColor: colors.infoSoft },
+  toolMarkMaintenance: { backgroundColor: colors.surfaceAlt },
   toolMarkText: {
     ...typography.caption,
     color: colors.textPrimary,
-    fontWeight: '800',
+    fontWeight: '700',
     writingDirection: 'ltr',
   },
   toolHeadingCopy: { flex: 1 },
@@ -437,8 +479,8 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: radii.pill,
   },
-  availabilityPillReady: { backgroundColor: '#EAF7F2' },
-  availabilityPillBlocked: { backgroundColor: '#FFF4D8' },
+  availabilityPillReady: { backgroundColor: colors.successSoft },
+  availabilityPillBlocked: { backgroundColor: colors.warningSoft },
   availabilityReadyText: {
     ...typography.caption,
     color: colors.success,
@@ -476,14 +518,12 @@ const styles = StyleSheet.create({
   toolDescription: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
-  },
+    marginTop: 2, maxWidth: PROSE_MEASURE},
   toolReason: {
     ...typography.caption,
     color: colors.warning,
     marginTop: spacing.xs,
-    fontWeight: '600',
-  },
+    fontWeight: '600', maxWidth: PROSE_MEASURE},
   confirmation: {
     marginTop: spacing.md,
     padding: spacing.md,
@@ -499,25 +539,8 @@ const styles = StyleSheet.create({
   confirmBody: {
     ...typography.body,
     color: colors.textPrimary,
-    marginTop: spacing.sm,
-  },
-  confirmButton: {
-    marginTop: spacing.md,
-    borderColor: colors.warning,
-  },
-  cancelButton: {
-    marginTop: spacing.sm,
-    borderColor: colors.border,
-  },
-  confirmActionText: {
-    ...typography.body,
-    color: colors.warning,
-    fontWeight: '700',
-  },
-  cancelActionText: {
-    ...typography.body,
-    color: colors.textSecondary,
-  },
+    marginTop: spacing.sm, maxWidth: PROSE_MEASURE},
+  toolButtonActive: { backgroundColor: colors.surfaceHover },
   outcome: {
     ...typography.body,
     color: colors.textPrimary,
@@ -562,6 +585,5 @@ const styles = StyleSheet.create({
   runningBody: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginTop: 2,
-  },
+    marginTop: 2, maxWidth: PROSE_MEASURE},
 });

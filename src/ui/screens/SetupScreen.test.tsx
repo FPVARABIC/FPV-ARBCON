@@ -1,3 +1,9 @@
+// ENTRY CLEANUP: SetupScreen now hosts the USB connection workspace
+// (UsbConnectionScreen) for its disconnected state, so importing it pulls
+// in the transport client whose TurboModule must be mocked under Jest -
+// the exact mock App.test.tsx has always used.
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 /**
  * Pass 7.4, Step 5 - a MINIMAL smoke test only: confirms the real screen
  * assembles and mounts without crashing, and that the Pass 7.1 missing-
@@ -19,14 +25,15 @@ jest.mock('../orientation3d', () => ({
   OrientationRenderer: jest.fn(() => null),
 }));
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 import React from 'react';
 import { Text } from 'react-native';
 import ReactTestRenderer, { act } from 'react-test-renderer';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
-import SetupScreen, {
-  shouldUseSingleColumnTelemetryCards,
-} from './SetupScreen';
+import SetupScreen from './SetupScreen';
 import { OrientationRenderer } from '../orientation3d';
 import '../../i18n';
 import i18n from '../../i18n';
@@ -48,8 +55,8 @@ import {
   MSP_ANALOG,
   MSP_RAW_GPS,
   MSP_STATUS_EX,
+  MSP_BOXIDS,
 } from '../../core';
-import type { ArmingBlockReason } from '../../core';
 import { buildMspFrameBytes } from '../../core/protocol/__testUtils__/mspFixtures';
 import {
   base64ToBytes,
@@ -63,28 +70,22 @@ import type {
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
-describe('SetupScreen responsive telemetry layout', () => {
+/* SETUP R9: the four telemetry cards this suite used to lay out are
+   gone, and with them shouldUseSingleColumnTelemetryCards. The column
+   rule that replaced it - resolveSetupInfoColumns - is tested beside the
+   grid it belongs to, in SetupInfoGrid's own suite. */
+import {resolveSetupInfoColumns} from '../components/setup';
+
+describe('SetupScreen responsive information grid', () => {
   it('uses one column only when the effective readable width is narrow', () => {
-    expect(shouldUseSingleColumnTelemetryCards(320, 1)).toBe(true);
-    expect(shouldUseSingleColumnTelemetryCards(390, 1)).toBe(false);
-    expect(shouldUseSingleColumnTelemetryCards(720, 2)).toBe(false);
-    expect(shouldUseSingleColumnTelemetryCards(600, 2)).toBe(true);
+    expect(resolveSetupInfoColumns(390, 1)).toBe(1);
+    expect(resolveSetupInfoColumns(768, 1)).toBe(2);
+    expect(resolveSetupInfoColumns(1366, 1)).toBe(3);
+    // fontScale normalisation: 1200px at 200% text is a phone's worth of
+    // effective room, and must not be given three columns.
+    expect(resolveSetupInfoColumns(1200, 2)).toBe(2);
   });
 });
-
-// Mirrors App.test.tsx's own queryByTestID(): findAllByProps({testID})
-// also matches Text's own underlying host-component instance (which
-// forwards the same testID prop through undisturbed), not just the
-// logical <Text> element - filtering to node.type === Text is what
-// actually disambiguates it.
-function queryByTestID(
-  renderer: ReactTestRenderer.ReactTestRenderer,
-  testID: string,
-) {
-  return renderer.root
-    .findAllByProps({ testID })
-    .filter(node => node.type === Text);
-}
 
 function findAnyByTestID(
   renderer: ReactTestRenderer.ReactTestRenderer,
@@ -306,6 +307,15 @@ function makeFakeClient(
     MSP_BATTERY_STATE,
     Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]),
   );
+  // SAME isolation rationale, new cause. This fixture identifies as API
+  // 1.48, which used to be "identified but not the pinned pair" and so
+  // left the FC-tools BOXIDS mapping switched off. 1.48 is now a
+  // supported configuration API - that is the point of the fix - so the
+  // one-shot MSP_BOXIDS request genuinely fires, and an UNANSWERED one
+  // would occupy the serialized queue for its full 2000ms timeout and
+  // starve every poll behind it. The ARM box at permanent id 0 is the
+  // same benign mapping the protocol tests use.
+  fake.setResponse(MSP_BOXIDS, Uint8Array.from([0]));
   // Pass 7.6c (same isolation rationale): production now also registers
   // three auxiliary polls (MSP_ANALOG / MSP_RAW_GPS / MSP_STATUS_EX,
   // phase-staggered at 700/1400/2100ms) for every identified BETAFLIGHT
@@ -368,27 +378,38 @@ function makeProps(params: RootStackParamList['Setup'] | undefined): Props {
 }
 
 describe('SetupScreen', () => {
-  it('does not throw and renders an honest fallback when route.params is missing (defense-in-depth)', () => {
+  it('renders NOTHING when route.params is missing - there is no disconnected posture to draw', async () => {
+    /*
+     * THIS USED TO RENDER A WHOLE CONNECTION WORKSPACE, and that was the
+     * defect rather than the feature. The 'Setup' route is registered in
+     * the navigator only while a flight controller is verified (App.tsx),
+     * so a params-less arrival is not a product state at all - it is the
+     * single render between a board going away and react-navigation
+     * unmounting this route.
+     *
+     * What must NOT appear is any connected content, any fabricated
+     * session, and any connection surface: a second place to be
+     * stranded is exactly what was removed.
+     */
     const props = makeProps(undefined);
     let renderer!: ReactTestRenderer.ReactTestRenderer;
 
-    expect(() => {
-      act(() => {
-        renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
-      });
-    }).not.toThrow();
+    await act(async () => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+      await Promise.resolve();
+    });
 
-    expect(
-      queryByTestID(renderer, 'setup-screen-missing-session'),
-    ).toHaveLength(1);
+    expect(findAnyByTestID(renderer, 'setup-awaiting-unmount')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-connect-workspace')).toBeNull();
+    expect(findAnyByTestID(renderer, 'usb-refresh-button')).toBeNull();
     expect(findAnyByTestID(renderer, 'setup-screen')).toBeNull();
 
-    act(() => {
+    await act(async () => {
       renderer.unmount();
     });
   });
 
-  it('assembles and mounts Regions 1+2 (TopSystemBar + OrientationHero + SafetyStrip) without crashing, for a never-opened session', () => {
+  it('assembles and mounts the chrome, the status area and the hero without crashing, for a never-opened session', () => {
     const props = makeProps({
       sessionKey: { sessionId: 'setup-screen-smoke-session', generation: 1 },
     });
@@ -401,18 +422,23 @@ describe('SetupScreen', () => {
     }).not.toThrow();
 
     expect(findAnyByTestID(renderer, 'setup-screen')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-chrome-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-bar')).not.toBeNull();
     expect(
       findAnyByTestID(renderer, 'orientation-hero-waiting'),
     ).not.toBeNull(); // no telemetry scheduler yet
-    expect(findAnyByTestID(renderer, 'safety-strip-unknown')).not.toBeNull(); // placeholder armed/blockers -> UNAVAILABLE -> UNKNOWN
+    /* SETUP R9: an UNKNOWN readiness is a steady-state fact, so it reads
+       as a chip in the status area rather than occupying a full-width
+       alert strip. The strip is reserved for ARMED and BLOCKED. */
+    expect(findAnyByTestID(renderer, 'setup-status-arming')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'safety-strip-unknown')).toBeNull();
 
     act(() => {
       renderer.unmount();
     });
   });
 
-  it('pressing the top bar back button calls navigation.goBack()', async () => {
+  it('pressing the chrome back button calls navigation.goBack()', async () => {
     const goBack = jest.fn();
     const props = {
       route: {
@@ -428,7 +454,7 @@ describe('SetupScreen', () => {
     });
 
     await act(async () => {
-      findAnyByTestID(renderer, 'setup-top-bar-back')!.props.onPress();
+      findAnyByTestID(renderer, 'setup-chrome-back')!.props.onPress();
     });
 
     expect(goBack).toHaveBeenCalledTimes(1);
@@ -612,7 +638,7 @@ describe('SetupScreen - Step 6: connection-indicator states through the real scr
     expect(allText(renderer)).toContain(
       i18n.t('setupTopBar.connectionState.recovering'),
     );
-    expect(findAnyByTestID(renderer, 'setup-top-bar-notice')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-notice')).not.toBeNull();
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -652,7 +678,7 @@ describe('SetupScreen - Step 6: connection-indicator states through the real scr
     expect(allText(renderer)).toContain(
       i18n.t('setupTopBar.connectionState.recoveryFailed'),
     );
-    expect(findAnyByTestID(renderer, 'setup-top-bar-notice')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-notice')).not.toBeNull();
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -736,219 +762,66 @@ describe('SetupScreen - Step 6: STALE freeze visible in real rendered output', (
 });
 
 /**
- * Pass 7.4, Step 6 - SafetyStrip compact vs. expanded through the REAL
- * assembled screen. Production's own startTelemetry()
- * (MspSessionCoordinator.ts) does NOT register ARMED_TELEMETRY_POLL_ID/
- * ARMING_BLOCKERS_TELEMETRY_POLL_ID yet - no real MSP armed/blocker
- * decoder exists (Step 3's own explicit placeholder design), so
- * useTelemetryValue() for those ids normally reports UNAVAILABLE
- * forever (already covered by the Step 5 smoke test's own
- * 'safety-strip-unknown' assertion).
+ * SETUP P1 - THE OBSOLETE ARMING BLOCK IS GONE, DELIBERATELY.
  *
- * To genuinely exercise the REAL pipeline beyond that placeholder state
- * (useTelemetryValue -> deriveArmingReadiness -> SafetyStrip/TopSystemBar
- * rendering) without waiting for a future decoder pass, these tests
- * manually call scheduler.registerPoll() - a real, public
- * MspTelemetryScheduler method - for those same two poll ids, using a
- * fake command number and a decode() that reads a test-local variable
- * instead of a real MSP payload. This bypasses only the ONE thing that
- * does not exist yet (a real decoder for a real MSP command); the entire
- * rest of the pipeline (the real scheduler, the real useTelemetryValue()
- * hook, the real deriveArmingReadiness(), the real SafetyStrip/
- * TopSystemBar rendering) is exercised exactly as production code will
- * use it once that decoder is added.
+ * A "Step 6: SafetyStrip compact vs expanded" suite used to live here. It
+ * called `scheduler.registerPoll()` ITSELF for ARMED_TELEMETRY_POLL_ID and
+ * ARMING_BLOCKERS_TELEMETRY_POLL_ID with two invented command numbers,
+ * because production registers neither. It therefore proved a pipeline
+ * production never runs, and stayed green for the entire life of the
+ * shipping defect it was nominally covering: on a real board the strip
+ * read "حالة التسليح غير مؤكدة" while the FC tools on the same screen
+ * read "غير متاح: الطائرة مسلّحة".
+ *
+ * Its replacement is SetupArmingTruth.test.tsx, which drives ARMED /
+ * READY / BLOCKED / UNKNOWN through the REAL BOXIDS + STATUS_EX path and
+ * registers no poll of its own. The negative half - that Setup can never
+ * again reach for a poll id at all - is enforced structurally by
+ * setupPresentationBoundary.test.ts.
+ *
+ * The one thing worth keeping here is the negative contract itself.
  */
-describe('SetupScreen - Step 6: SafetyStrip compact vs expanded through the real screen', () => {
-  const FAKE_ARMED_COMMAND = 220;
-  const FAKE_BLOCKERS_COMMAND = 221;
-
-  async function openAndRegisterArmingPolls(
-    sessionId: string,
-    client: ReturnType<typeof makeFakeClient>,
-    armedValue: boolean,
-    blockersValue: ArmingBlockReason[],
-  ) {
-    client.setResponse(FAKE_ARMED_COMMAND, Uint8Array.from([0]));
-    client.setResponse(FAKE_BLOCKERS_COMMAND, Uint8Array.from([0]));
-    // MspClient allows only ONE in-flight request at a time (an
-    // already-established finding this pass, re-confirmed here the hard
-    // way): the real 50ms tick driver dispatches MSP_ATTITUDE
-    // automatically once startTelemetry() runs, and without a scripted
-    // response that request would sit forever un-settled, permanently
-    // occupying MspClient's single in-flight slot and queuing every
-    // OTHER poll's own request (armed/blockers included) behind it,
-    // forever - confirmed by an actual failing assertion + writeBytes
-    // call-log inspection during this test's development, not assumed.
+describe('SETUP P1 - the dead placeholder polls stay dead', () => {
+  it('a real session registers neither placeholder poll id', async () => {
+    const sessionId = 'p1-no-placeholder-polls';
+    const client = makeFakeClient(sessionId);
     client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
 
-    mspSessionCoordinator.openSession(
-      client as unknown as UsbSerialTransportClient,
-      sessionId,
-    );
-    await flushAsync();
+    await act(async () => {
+      mspSessionCoordinator.openSession(
+        client as unknown as UsbSerialTransportClient,
+        sessionId,
+      );
+      await flushAsync();
+    });
 
     const scheduler = mspSessionCoordinator.getTelemetryScheduler(sessionId);
-    if (!scheduler) {
-      throw new Error(
-        'expected a real telemetry scheduler after openSession()',
-      );
-    }
-    scheduler.registerPoll({
-      id: ARMED_TELEMETRY_POLL_ID,
-      command: FAKE_ARMED_COMMAND,
-      intervalMs: 100_000,
-      staleAfterMs: 100_000,
-      priority: 0,
-      decode: () => armedValue,
+    expect(scheduler).toBeDefined();
+    // Never registered => the scheduler has no definition for them, and
+    // getValue() reports UNAVAILABLE through its own real mechanism.
+    expect(scheduler!.getValue(ARMED_TELEMETRY_POLL_ID)).toEqual({
+      status: 'UNAVAILABLE',
     });
-    scheduler.registerPoll({
-      id: ARMING_BLOCKERS_TELEMETRY_POLL_ID,
-      command: FAKE_BLOCKERS_COMMAND,
-      intervalMs: 100_000,
-      staleAfterMs: 100_000,
-      priority: 0,
-      decode: () => blockersValue,
+    expect(scheduler!.getValue(ARMING_BLOCKERS_TELEMETRY_POLL_ID)).toEqual({
+      status: 'UNAVAILABLE',
     });
 
-    // tick() dispatches only the single MOST-OVERDUE poll per call (its
-    // own coalescing design - see MspTelemetryScheduler.ts's own class
-    // doc comment), not every due poll at once - and MSP_ATTITUDE (due
-    // since session-open time, already registered) competes for that
-    // slot too. A single tick() call is not enough to settle BOTH newly
-    // registered polls (confirmed by an actual failing assertion during
-    // this test's development, not assumed) - loop until both report
-    // something other than WAITING.
-    for (let i = 0; i < 10; i++) {
-      scheduler.tick();
-      // Deliberately sequential (not Promise.all'd) - each tick() must
-      // fully settle (including its own dispatch's microtask chain)
-      // before the next tick() re-evaluates what's still due.
+    await act(async () => {
+      mspSessionCoordinator.deactivateMspSession(sessionId);
       await flushAsync();
-      const armedSettled =
-        scheduler.getValue(ARMED_TELEMETRY_POLL_ID).status !== 'WAITING';
-      const blockersSettled =
-        scheduler.getValue(ARMING_BLOCKERS_TELEMETRY_POLL_ID).status !==
-        'WAITING';
-      if (armedSettled && blockersSettled) {
-        break;
-      }
-    }
-  }
-
-  it('READY (compact "✓ جاهزة للتسليح"): armed=false, no blockers', async () => {
-    const sessionId = 'step6-safety-ready-1';
-    const client = makeFakeClient(sessionId);
-    const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
-
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
-    });
-
-    await act(async () => {
-      await openAndRegisterArmingPolls(sessionId, client, false, []);
-    });
-
-    expect(findAnyByTestID(renderer, 'safety-strip-ready')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('safetyStrip.ready'));
-    expect(
-      findAnyByTestID(renderer, 'setup-top-bar-arming-badge'),
-    ).not.toBeNull();
-    expect(allText(renderer)).toContain(
-      i18n.t('setupTopBar.armingBadge.ready'),
-    );
-
-    await act(async () => {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    });
-    act(() => {
-      renderer.unmount();
     });
   });
 
-  it('ARMED (compact, danger-colored): armed=true, regardless of blockers', async () => {
-    const sessionId = 'step6-safety-armed-1';
-    const client = makeFakeClient(sessionId);
-    const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
-
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
-    });
-
-    await act(async () => {
-      await openAndRegisterArmingPolls(sessionId, client, true, []);
-    });
-
-    expect(findAnyByTestID(renderer, 'safety-strip-armed')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('safetyStrip.armed'));
-    expect(allText(renderer)).toContain(
-      i18n.t('setupTopBar.armingBadge.armed'),
-    );
-
-    await act(async () => {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    });
-    act(() => {
-      renderer.unmount();
-    });
-  });
-
-  it('BLOCKED (auto-expanded, top-3 + show-all link): armed=false, 4 real blocker reasons', async () => {
-    const sessionId = 'step6-safety-blocked-1';
-    const client = makeFakeClient(sessionId);
-    const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
-    const reasons: ArmingBlockReason[] = [
-      {
-        code: 'THROTTLE',
-        message: 'الخانق مرتفع جدًا',
-        severity: 'CRITICAL_DANGER',
-      },
-      {
-        code: 'GYRO',
-        message: 'الجيروسكوب غير معاير',
-        severity: 'ARMING_BLOCKER',
-      },
-      { code: 'FAILSAFE', message: 'وضع الفشل الآمن نشط', severity: 'WARNING' },
-      { code: 'RX', message: 'لم يتم اكتشاف جهاز الاستقبال', severity: 'INFO' },
-    ];
-
-    let renderer!: ReactTestRenderer.ReactTestRenderer;
-    act(() => {
-      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
-    });
-
-    await act(async () => {
-      await openAndRegisterArmingPolls(sessionId, client, false, reasons);
-    });
-
-    expect(findAnyByTestID(renderer, 'safety-strip-blocked')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('safetyStrip.blockedHeading'));
-    // Top 3 by priority: THROTTLE, GYRO, FAILSAFE - not RX (rank 4).
-    expect(allText(renderer)).toContain('الخانق مرتفع جدًا');
-    expect(allText(renderer)).toContain('الجيروسكوب غير معاير');
-    expect(allText(renderer)).toContain('وضع الفشل الآمن نشط');
-    expect(allText(renderer)).not.toContain('لم يتم اكتشاف جهاز الاستقبال');
-    const showAll = findAnyByTestID(renderer, 'safety-strip-show-all');
-    expect(showAll).not.toBeNull();
-    expect(allText(renderer)).toContain(
-      i18n.t('setupTopBar.armingBadge.blocked'),
-    );
-
-    await act(async () => {
-      showAll!.props.onPress();
-    });
-    expect(allText(renderer)).toContain('لم يتم اكتشاف جهاز الاستقبال');
-    expect(findAnyByTestID(renderer, 'safety-strip-show-all')).toBeNull();
-
-    await act(async () => {
-      mspSessionCoordinator.deactivateMspSession(sessionId);
-    });
-    act(() => {
-      renderer.unmount();
-    });
+  it('SetupScreen source names neither placeholder poll id', () => {
+    const source = readFileSync(
+      join(__dirname, 'SetupScreen.tsx'),
+      'utf8',
+    ).replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(source).not.toMatch(/ARMED_TELEMETRY_POLL_ID/);
+    expect(source).not.toMatch(/ARMING_BLOCKERS_TELEMETRY_POLL_ID/);
   });
 });
+
 
 describe('SetupScreen - Step 6: resetOrientationViewOffset() end-to-end', () => {
   it('pressing the reset button captures the CURRENT raw yaw as the REAL stored heading reference, drives the displayed Heading to 0, leaves roll/pitch untouched, and shows the one-time hint only on the first press', async () => {
@@ -1539,7 +1412,7 @@ describe('SetupScreen - the display-only Heading reset', () => {
  * text alternative actually lives.
  */
 describe('SetupScreen - Step 6: accessibility properties through the real screen', () => {
-  it('TopSystemBar: back button, connection indicator, arming badge all carry their accessibility roles/labels', async () => {
+  it('the chrome back button and the status chips all carry their accessibility roles/labels', async () => {
     const sessionId = 'step6-a11y-topbar-1';
     const client = makeFakeClient(sessionId);
     const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
@@ -1556,7 +1429,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
       await flushAsync();
     });
 
-    const backButton = findAnyByTestID(renderer, 'setup-top-bar-back');
+    const backButton = findAnyByTestID(renderer, 'setup-chrome-back');
     expect(backButton?.props.accessibilityRole).toBe('button');
     expect(backButton?.props.accessibilityLabel).toBe(
       i18n.t('setupTopBar.back'),
@@ -1564,11 +1437,11 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
 
     const indicator = findAnyByTestID(
       renderer,
-      'setup-top-bar-connection-indicator',
+      'setup-status-connection',
     );
     expect(indicator?.props.accessibilityRole).toBe('text');
 
-    const armingBadge = findAnyByTestID(renderer, 'setup-top-bar-arming-badge');
+    const armingBadge = findAnyByTestID(renderer, 'setup-status-arming');
     expect(armingBadge?.props.accessibilityRole).toBe('text');
 
     await act(async () => {
@@ -1579,7 +1452,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
     });
   });
 
-  it('TopSystemBar: the notice banner carries accessibilityRole="alert" when present', () => {
+  it('the status area notice carries accessibilityRole="alert" when present', () => {
     // A never-opened session (DISCONNECTED) always has a notice - no
     // need to drive a real desync for this one.
     const props = makeProps({
@@ -1590,7 +1463,7 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
       renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
     });
 
-    const notice = findAnyByTestID(renderer, 'setup-top-bar-notice');
+    const notice = findAnyByTestID(renderer, 'setup-status-notice');
     expect(notice?.props.accessibilityRole).toBe('alert');
 
     act(() => {
@@ -1654,18 +1527,37 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
     });
 
     expect(
-      findAnyByTestID(renderer, 'orientation-hero-renderer-wrapper'),
-    ).toBeNull();
-    expect(
       findAnyByTestID(renderer, 'orientation-hero-waiting'),
     ).not.toBeNull();
+
+    /* SETUP R9 unified the hero into ONE tree shape, so the stage frame
+       is now present in every state - it simply holds the waiting
+       message instead of the model. (It had to: separate per-status
+       trees were remounting whatever the host put in the calibration
+       slot, which silently discarded the acknowledgement an operator was
+       reading. See OrientationHero's own header.)
+
+       The GUARANTEE this test exists for is unchanged and asserted
+       directly: with no sample there is nothing to describe, so the
+       frame is not an accessibility node and carries no label. An empty
+       or invented label would be worse than none - a screen reader would
+       announce a pose the aircraft never reported. */
+    const wrapper = findAnyByTestID(
+      renderer,
+      'orientation-hero-renderer-wrapper',
+    );
+    expect(wrapper).not.toBeNull();
+    expect(wrapper?.props.accessible).toBe(false);
+    expect(wrapper?.props.accessibilityLabel).toBeUndefined();
+    // And no attitude readout exists at all - not a zero pose.
+    expect(findAnyByTestID(renderer, 'orientation-hero-readouts')).toBeNull();
 
     act(() => {
       renderer.unmount();
     });
   });
 
-  it('SafetyStrip: the compact states carry accessibilityRole="text", BLOCKED carries a "header" title and a "button" show-all link', async () => {
+  it('the arming chip reports an unconfirmed readiness as text, and no alert strip is raised for it', async () => {
     const sessionId = 'step6-a11y-safety-1';
     const client = makeFakeClient(sessionId);
     client.setResponse(MSP_ATTITUDE, attitudePayload(0, 0, 0));
@@ -1683,9 +1575,17 @@ describe('SetupScreen - Step 6: accessibility properties through the real screen
       await flushAsync();
     });
 
-    // Placeholder armed/blockers (Step 3) -> UNAVAILABLE -> UNKNOWN, compact.
-    const unknownStrip = findAnyByTestID(renderer, 'safety-strip-unknown');
-    expect(unknownStrip?.props.accessibilityRole).toBe('text');
+    /* No BOXIDS mapping yet -> armed UNPROVEN -> readiness UNKNOWN.
+       SETUP R9: that is a steady state, not an alert. It reads as a chip
+       with accessibilityRole="text"; the full-width strip is reserved for
+       ARMED and BLOCKED, which SafetyStrip's own suite still covers in
+       every one of its four states. */
+    const armingChip = findAnyByTestID(renderer, 'setup-status-arming');
+    expect(armingChip?.props.accessibilityRole).toBe('text');
+    expect(armingChip?.props.accessibilityLabel).toContain(
+      i18n.t('setupTopBar.armingBadge.unknown'),
+    );
+    expect(findAnyByTestID(renderer, 'safety-strip-unknown')).toBeNull();
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -1750,11 +1650,18 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await flushAsync();
     });
 
-    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.title'));
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.notDetected'));
-    // Regions 1+2 still present around the card.
-    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    /* SETUP R9: the default fixture reports BATTERY_NOT_PRESENT with 0
+       cells, so the honest state is NO_PACK - the measured value is
+       still carried, explicitly labelled as a raw reading, and never
+       occupies the pack-voltage slot. */
+    expect(findAnyByTestID(renderer, 'setup-status-battery-no-pack')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-battery-live')).toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('setupStatusBar.battery'));
+    expect(allText(renderer)).toContain(
+      i18n.t('setupStatusBar.batteryNoPack', {value: '0.00'}),
+    );
+    // The chrome and the hero are still present around the status area.
+    expect(findAnyByTestID(renderer, 'setup-chrome-bar')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
 
     await act(async () => {
@@ -1788,11 +1695,27 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await flushAsync();
     });
 
+    expect(findAnyByTestID(renderer, 'setup-status-battery-live')).not.toBeNull();
+    // The chip carries the voltage AND the cell count the firmware
+    // proved; the grid row carries the firmware's own battery state.
+    expect(allText(renderer)).toContain(
+      i18n.t('setupStatusBar.batteryMeasured', {volts: '16.85', cells: 4}),
+    );
     expect(allText(renderer)).toContain('16.85 V');
     expect(allText(renderer)).toContain(i18n.t('batteryCard.state.OK'));
-    expect(allText(renderer)).toContain(
-      i18n.t('batteryCard.percentageUnavailable'),
-    );
+    /* SETUP P2: no state-of-charge percentage is ever invented. RSSI and
+       CPU load are genuine percentages from the wire, so the check is
+       scoped to the battery rows rather than to the whole screen. */
+    const batteryRowText = [
+      'setup-info-status-voltage',
+      'setup-info-status-cells',
+      'setup-info-status-battery-state',
+      'setup-status-battery-live',
+    ]
+      .map(id => String(findAnyByTestID(renderer, id)?.props.accessibilityLabel ?? ''))
+      .join(' ');
+    expect(batteryRowText).toContain('16.85');
+    expect(batteryRowText).not.toMatch(/\d+%/);
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -1824,7 +1747,7 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await jest.advanceTimersByTimeAsync(150);
       await flushAsync();
     });
-    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-battery-live')).not.toBeNull();
 
     // Every later battery WRITE hangs (never settles - no response
     // timeout starts), so the value ages past the 9000ms stale threshold
@@ -1839,11 +1762,14 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await flushAsync();
     });
 
-    expect(findAnyByTestID(renderer, 'battery-card-stale')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-battery-stale')).not.toBeNull();
+    /* NEVER COLOUR-ALONE: the stale reading says so in words, in the chip
+       and in its own grid row. */
+    expect(allText(renderer)).toContain(i18n.t('telemetryCards.state.stale'));
     expect(
-      findAnyByTestID(renderer, 'battery-card-stale-label'),
+      findAnyByTestID(renderer, 'setup-info-status-battery-reading'),
     ).not.toBeNull();
-    expect(allText(renderer)).toContain('16.85 V'); // frozen last real value, dimmed - not blanked
+    expect(allText(renderer)).toContain('16.85 V'); // frozen last real value - not blanked
     expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
 
     await act(async () => {
@@ -1884,7 +1810,7 @@ describe('SetupScreen - Pass 7.6b battery summary card through the REAL pipeline
       await flushAsync();
     });
     expect(
-      findAnyByTestID(renderer, 'battery-card-unavailable'),
+      findAnyByTestID(renderer, 'setup-status-battery-unavailable'),
     ).not.toBeNull();
     expect(allText(renderer)).not.toContain('16.85 V');
 
@@ -2035,38 +1961,62 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     });
   }
 
-  it('renders the complete 2x2 grid with all four cards live, in the approved diagnostic tree order Battery -> Receiver -> GPS -> FC', async () => {
+  it('renders the whole aircraft state in two dense surfaces: the status area above the model and the Status/GPS/Build grid below it', async () => {
     const sessionId = 'pass76c-grid-1';
     const { renderer } = await renderWithLiveAux(sessionId);
 
-    expect(findAnyByTestID(renderer, 'telemetry-card-grid')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'receiver-card-live')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'gps-card-live')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'fc-card-live')).not.toBeNull();
+    // ABOVE the model: connection, board, firmware, API, arming,
+    // battery, and every sensor the FC's own mask reported.
+    expect(findAnyByTestID(renderer, 'setup-status-bar')).not.toBeNull();
+    /* The shared fixture reports BATTERY_NOT_PRESENT with 0 cells, so
+       the honest chip is NO_PACK - a reading exists, and it is labelled
+       as a raw one rather than as a pack voltage. */
+    expect(
+      findAnyByTestID(renderer, 'setup-status-battery-no-pack'),
+    ).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-status-sensors')).not.toBeNull();
+    for (const token of ['GYRO', 'ACC', 'BARO', 'MAG', 'GPS']) {
+      expect(
+        findAnyByTestID(renderer, `setup-status-sensor-${token}`),
+      ).not.toBeNull();
+    }
 
-    // Tree order = accessibility (reading) order: the four titles appear
-    // in exactly the approved diagnostic sequence.
+    // BELOW the model: the three dense columns.
+    expect(findAnyByTestID(renderer, 'setup-info-grid')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-status')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-gps')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-build')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-status-rssi')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-status-cpu')).not.toBeNull();
+
+    /* Tree order = accessibility (reading) order, and this is the whole
+       point of the round: the battery and the sensors are read BEFORE
+       the model, not two screens after it. */
     const text = allText(renderer);
     const positions = [
-      text.indexOf(i18n.t('batteryCard.title')),
-      text.indexOf(i18n.t('telemetryCards.receiver.title')),
-      text.indexOf(i18n.t('telemetryCards.gps.title')),
-      text.indexOf(i18n.t('telemetryCards.fc.title')),
+      text.indexOf(i18n.t('setupStatusBar.battery')),
+      text.indexOf(i18n.t('setupStatusBar.sensors')),
+      text.indexOf(i18n.t('orientationHero.title')),
+      text.indexOf(i18n.t('setupInfo.status.title')),
+      /* The GPS COLUMN, matched by a row label rather than by its "GPS"
+         heading: the sensor chips above legitimately contain the token
+         GPS too, so the heading is not a unique marker. */
+      text.indexOf(i18n.t('setupInfo.gps.fix')),
+      text.indexOf(i18n.t('setupInfo.build.title')),
     ];
     for (const position of positions) {
       expect(position).toBeGreaterThanOrEqual(0);
     }
     expect([...positions].sort((a, b) => a - b)).toEqual(positions);
 
-    // Regions 1+2 are preserved around the grid.
-    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
+    // The chrome and the model are preserved around them.
+    expect(findAnyByTestID(renderer, 'setup-chrome-bar')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'orientation-hero')).not.toBeNull();
 
     await teardown(sessionId, renderer);
   });
 
-  it('feeds every auxiliary card from the REAL decode pipeline: RSSI percentage, GPS fix + satellites (presence via the shared STATUS_EX bit), CPU load + cycle time', async () => {
+  it('feeds every grid row from the REAL decode pipeline: RSSI percentage, GPS fix + satellites (presence via the shared STATUS_EX bit), CPU load + cycle time', async () => {
     const sessionId = 'pass76c-aux-live-1';
     const { renderer } = await renderWithLiveAux(sessionId);
     const text = allText(renderer);
@@ -2074,11 +2024,31 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     // Default fixtures: MSP_ANALOG rssi=540 -> 53%; MSP_RAW_GPS raw fix
     // flag 2 (the real GPS_FIX bit) + 8 sats; MSP_STATUS_EX mask 41
     // (includes GPS bit 8), cycle 312us, cpu 12%.
-    expect(text).toContain('RSSI: 53%');
+    expect(text).toContain('53%');
     expect(text).toContain(i18n.t('telemetryCards.gps.fix'));
-    expect(text).toContain('عدد الأقمار: 8');
-    expect(text).toContain('استخدام المعالج: 12%');
-    expect(text).toContain('زمن الدورة: 312 µs');
+    expect(text).toContain('8');
+    expect(text).toContain('12%');
+    expect(text).toContain('312 µs');
+
+    /* Read through the rows themselves, so the assertion cannot pass on
+       a coincidental digit elsewhere on the screen. */
+    const labelOf = (id: string) =>
+      String(findAnyByTestID(renderer, id)?.props.accessibilityLabel ?? '');
+    expect(labelOf('setup-info-status-rssi')).toBe(
+      `${i18n.t('setupInfo.status.rssi')}: 53%`,
+    );
+    expect(labelOf('setup-info-status-cpu')).toBe(
+      `${i18n.t('setupInfo.status.cpuLoad')}: 12%`,
+    );
+    expect(labelOf('setup-info-status-cycle')).toBe(
+      `${i18n.t('setupInfo.status.cycleTime')}: 312 µs`,
+    );
+    expect(labelOf('setup-info-gps-satellites')).toBe(
+      `${i18n.t('setupInfo.gps.satellites')}: 8`,
+    );
+    expect(labelOf('setup-info-gps-fix')).toBe(
+      `${i18n.t('setupInfo.gps.fix')}: ${i18n.t('telemetryCards.gps.fix')}`,
+    );
 
     await teardown(sessionId, renderer);
   });
@@ -2105,12 +2075,22 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
       await flushAsync();
     });
 
-    expect(findAnyByTestID(renderer, 'receiver-card-waiting')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'gps-card-waiting')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'fc-card-waiting')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('telemetryCards.state.waiting'));
-    // The battery card (its poll is immediately due) is already live.
-    expect(findAnyByTestID(renderer, 'battery-card-live')).not.toBeNull();
+    /* SETUP R9: the rows say WAITING, not "unavailable" and certainly
+       not 0 - "the first reading has not arrived" and "there is no data"
+       are different facts, and auxChannelGate.ts keeps them apart. */
+    const labelOf = (id: string) =>
+      String(findAnyByTestID(renderer, id)?.props.accessibilityLabel ?? '');
+    const waiting = i18n.t('telemetryCards.state.waiting');
+    expect(labelOf('setup-info-status-rssi')).toContain(waiting);
+    expect(labelOf('setup-info-status-cpu')).toContain(waiting);
+    expect(labelOf('setup-info-status-cycle')).toContain(waiting);
+    expect(labelOf('setup-info-gps-satellites')).toContain(waiting);
+    expect(allText(renderer)).toContain(waiting);
+    // The battery poll is immediately due, so its chip already carries a
+    // reading (this fixture's is the honest no-pack one).
+    expect(
+      findAnyByTestID(renderer, 'setup-status-battery-no-pack'),
+    ).not.toBeNull();
 
     await teardown(sessionId, renderer);
   });
@@ -2137,14 +2117,18 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     });
 
     const text = allText(renderer);
-    expect(text).toContain(i18n.t('batteryCard.percentageUnavailable'));
+    // SETUP P2: no filler caption, and still no percentage anywhere.
     expect(text.join(' ')).not.toContain('الشحن التقديري');
     // The battery card carries no percent figure at all (the receiver's
     // own RSSI percent lives on a different card and is unrelated).
-    const batteryCard = findAnyByTestID(renderer, 'battery-card-live');
-    expect(JSON.stringify(batteryCard?.props.accessibilityLabel)).not.toContain(
-      '%',
-    );
+    const batteryChip = findAnyByTestID(renderer, 'setup-status-battery-live');
+    expect(String(batteryChip?.props.accessibilityLabel)).not.toContain('%');
+    expect(
+      String(
+        findAnyByTestID(renderer, 'setup-info-status-voltage')?.props
+          .accessibilityLabel,
+      ),
+    ).not.toContain('%');
 
     await teardown(sessionId, renderer);
   });
@@ -2158,19 +2142,20 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
       await flushAsync();
     });
 
+    /* A dead session outranks every cached value: the rows say
+       DISCONNECTED rather than continuing to print the last numbers. */
+    const labelOf = (id: string) =>
+      String(findAnyByTestID(renderer, id)?.props.accessibilityLabel ?? '');
+    const disconnected = i18n.t('telemetryCards.state.disconnected');
+    expect(labelOf('setup-info-status-rssi')).toContain(disconnected);
+    expect(labelOf('setup-info-status-cpu')).toContain(disconnected);
+    expect(labelOf('setup-info-gps-satellites')).toContain(disconnected);
+    expect(allText(renderer)).toContain(disconnected);
+    // And the battery chip drops to its own honest unavailable state.
     expect(
-      findAnyByTestID(renderer, 'receiver-card-disconnected'),
+      findAnyByTestID(renderer, 'setup-status-battery-unavailable'),
     ).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'gps-card-disconnected')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'fc-card-disconnected')).not.toBeNull();
-    expect(allText(renderer)).toContain(
-      i18n.t('telemetryCards.state.disconnected'),
-    );
-    // Pass 7.6b preserved: the battery card's own unavailable copy.
-    expect(
-      findAnyByTestID(renderer, 'battery-card-unavailable'),
-    ).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.unavailable'));
+    expect(allText(renderer)).toContain(i18n.t('setupStatusBar.unavailable'));
 
     act(() => {
       renderer.unmount();
@@ -2209,8 +2194,8 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
     // read-timeout ERROR (batteryCard.error) rather than the generic
     // unavailable copy - the timeout really did fail to read, and that is
     // what the card now says.
-    expect(findAnyByTestID(renderer, 'battery-card-error')).not.toBeNull();
-    expect(allText(renderer)).toContain(i18n.t('batteryCard.error'));
+    expect(findAnyByTestID(renderer, 'setup-status-battery-error')).not.toBeNull();
+    expect(allText(renderer)).toContain(i18n.t('setupStatusBar.error'));
 
     // Navigate away (unmount) and back (fresh mount, SAME session/
     // generation) - the breaker lives in the coordinator, not the screen.
@@ -2230,12 +2215,14 @@ describe('SetupScreen - Pass 7.6c complete Region 3 card grid through the REAL p
 
     expect(countBatteryWrites()).toBe(1); // STILL exactly the one timed-out request
     // The latch (coordinator-owned, generation-scoped) survives remount.
-    expect(findAnyByTestID(renderer2, 'battery-card-error')).not.toBeNull();
+    expect(findAnyByTestID(renderer2, 'setup-status-battery-error')).not.toBeNull();
     // Never the stale pre-timeout value as live, never a "no LiPo" claim.
-    expect(allText(renderer2)).not.toContain(i18n.t('batteryCard.notDetected'));
+    expect(allText(renderer2)).not.toContain(
+      i18n.t('setupStatusBar.batteryNoPack', {value: '0.00'}),
+    );
     // The rest of the screen is alive.
     expect(findAnyByTestID(renderer2, 'setup-screen')).not.toBeNull();
-    expect(findAnyByTestID(renderer2, 'setup-top-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer2, 'setup-chrome-bar')).not.toBeNull();
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -2346,13 +2333,16 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
 
     expect(findAnyByTestID(renderer, 'diagnostics-section')).not.toBeNull();
     const text = allText(renderer);
-    const gridTitleIndex = text.indexOf(i18n.t('telemetryCards.fc.title'));
+    /* SETUP R9: the FC status counters moved out of their own card and
+       into the Status column of the grid, so the grid's title is what
+       the diagnostics disclosure must follow. */
+    const gridTitleIndex = text.indexOf(i18n.t('setupInfo.status.title'));
     const region4Index = text.indexOf('التشخيص والجاهزية');
     expect(gridTitleIndex).toBeGreaterThanOrEqual(0);
     expect(region4Index).toBeGreaterThan(gridTitleIndex);
     // Regions 1-3 are all still present around it.
-    expect(findAnyByTestID(renderer, 'setup-top-bar')).not.toBeNull();
-    expect(findAnyByTestID(renderer, 'telemetry-card-grid')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-chrome-bar')).not.toBeNull();
+    expect(findAnyByTestID(renderer, 'setup-info-grid')).not.toBeNull();
 
     await teardown(sessionId, renderer);
   });
@@ -2363,9 +2353,14 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
 
     // One phase-staggered dispatch at 2100ms within the 2200ms window.
     expect(countStatusExWrites(client)).toBe(1);
-    // Both regions rendered from it.
-    expect(findAnyByTestID(renderer, 'fc-card-live')).not.toBeNull();
-    expect(allText(renderer)).toContain('استخدام المعالج: 12%');
+    /* Both surfaces rendered from that ONE request: the grid's CPU row
+       and the diagnostics disclosure's sensor list. */
+    expect(
+      String(
+        findAnyByTestID(renderer, 'setup-info-status-cpu')?.props
+          .accessibilityLabel,
+      ),
+    ).toBe(`${i18n.t('setupInfo.status.cpuLoad')}: 12%`);
     expect(findAnyByTestID(renderer, 'diagnostics-sensors')).not.toBeNull();
 
     // A second full FC-status interval adds exactly one more request.
@@ -2382,9 +2377,23 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const sessionId = 'pass77-region4-sensors';
     const { renderer } = await renderSession(sessionId);
     const text = allText(renderer);
-    // Fixture mask 41 = ACC | GPS | GYRO.
-    expect(text).toEqual(expect.arrayContaining(['ACC', 'GPS', 'GYRO']));
-    expect(text).not.toContain('BARO');
+    // SETUP P1: the sensor block is now EXHAUSTIVE - every canonical
+    // sensor is named with its own state, so a missing one is visible as
+    // a line rather than as the absence of one. Fixture mask 41 =
+    // ACC | GPS | GYRO.
+    const detected = i18n.t('diagnostics.sensorDetected');
+    const notDetected = i18n.t('diagnostics.sensorNotDetected');
+    const line = (token: string, state: string) =>
+      i18n.t('diagnostics.sensorLine', { token, state });
+    expect(text).toEqual(
+      expect.arrayContaining([
+        line('ACC', detected),
+        line('GPS', detected),
+        line('GYRO', detected),
+      ]),
+    );
+    expect(text).toContain(line('BARO', notDetected));
+    expect(text).not.toContain(line('BARO', detected));
     await teardown(sessionId, renderer);
   });
 
@@ -2398,7 +2407,13 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     );
     // The rest of the section still works - one absent field does not
     // take down identity, compatibility or sensors.
-    expect(text).toEqual(expect.arrayContaining(['ACC', 'GYRO']));
+    const detectedState = i18n.t('diagnostics.sensorDetected');
+    expect(text).toEqual(
+      expect.arrayContaining([
+        i18n.t('diagnostics.sensorLine', { token: 'ACC', state: detectedState }),
+        i18n.t('diagnostics.sensorLine', { token: 'GYRO', state: detectedState }),
+      ]),
+    );
     await teardown(sessionId, renderer);
   });
 
@@ -2429,15 +2444,24 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     await teardown(sessionId, renderer);
   });
 
-  it('reports the real identity and does NOT claim API-1.47 compatibility for the 1.48 fixture', async () => {
+  it('reports the real identity and now ACCEPTS the 1.48 fixture', async () => {
+    // This assertion is inverted deliberately. It used to demand that
+    // Betaflight 4.7 (API 1.48) be reported as unverified firmware with
+    // readings only - the exact `=== 47` lock that also made FC Tools
+    // refuse every operation on that board. The floor is unchanged and
+    // still refuses 1.46; there is simply no ceiling any more. See
+    // core/protocol/msp/identification/betaflightApiFloor.ts.
     const sessionId = 'pass77-region4-compat';
     const { renderer } = await renderSession(sessionId);
     const text = allText(renderer);
-    expect(text).toContain('البرنامج الثابت: BTFL — واجهة MSP 1.48');
-    expect(text).toContain(
+    // The identity is still read and still gates compatibility; what the
+    // DIAGNOSTICS PANEL prints is the capability, not the project name.
+    expect(text).toContain('نوع البرنامج الثابت: MSP متوافق');
+    expect(text.join(' ')).not.toMatch(/BTFL|betaflight/i);
+    expect(text).toContain('متوافق مع هذا الإصدار');
+    expect(text).not.toContain(
       'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',
     );
-    expect(text).not.toContain('متوافق مع واجهة MSP 1.47');
     await teardown(sessionId, renderer);
   });
 
@@ -2446,7 +2470,7 @@ describe('SetupScreen - Pass 7.7 Region 4 diagnostics through the REAL pipeline'
     const { renderer } = await renderSession(sessionId, client => {
       client.setResponse(MSP_API_VERSION, Uint8Array.from([0, 1, 47]));
     });
-    expect(allText(renderer)).toContain('متوافق مع واجهة MSP 1.47');
+    expect(allText(renderer)).toContain('متوافق مع هذا الإصدار');
     await teardown(sessionId, renderer);
   });
 
@@ -2546,11 +2570,13 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
     const text = allText(renderer);
     const region4 = text.indexOf('التشخيص والجاهزية');
     const region5 = text.indexOf('أدوات وحدة التحكم');
-    // FINAL-POLISH PASS: Region 5 moved UP to sit under the Orientation
-    // hero, so it now precedes Region 4 rather than following it. The
-    // ordering is still asserted exactly - only its direction changed.
-    expect(region5).toBeGreaterThanOrEqual(0);
-    expect(region4).toBeGreaterThan(region5);
+    // SETUP P2: the calibration/reboot tools moved to the BOTTOM
+    // maintenance region. P0 measured them at 908px on a 390px phone,
+    // standing between the operator and every live aircraft fact. They
+    // keep every capability and every gate; they simply no longer come
+    // first. Diagnostics now precede them.
+    expect(region4).toBeGreaterThanOrEqual(0);
+    expect(region5).toBeGreaterThan(region4);
     expect(text).toEqual(
       expect.arrayContaining([
         'معايرة مقياس التسارع',
@@ -2617,15 +2643,31 @@ describe('SetupScreen - Pass 7.7 Region 5 FC tools through the REAL pipeline', (
  * file: findAll() walks depth-first in render order, so the sequence
  * these markers appear in IS the sequence a user scrolls through.
  */
-describe('SetupScreen - effective section order after the final polish', () => {
+/**
+ * SETUP P2 - THE DASHBOARD HIERARCHY CONTRACT.
+ *
+ * This block used to assert the pre-P2 order (orientation hero, then the
+ * calibration tools, then everything else). P0 measured what that cost on
+ * a 390px phone: the hero (969px) and FC Tools (908px) held 62% of a
+ * 3,021px page, the safety strip sat at y=2598, RSSI and battery voltage
+ * at y=2846, GPS at y=3144, and the sensor mask at y=3241 behind a
+ * disclosure. The order below is the replacement, and it is asserted
+ * SEMANTICALLY - pixel evidence is captured separately by the gitignored
+ * measurement harness, so this suite cannot become brittle.
+ */
+describe('SetupScreen - P2 dashboard hierarchy', () => {
   /** One stable marker per major section. SafetyStrip's own testID
    * varies with readiness state, so it is matched by prefix. */
   const SECTION_MARKERS = [
-    'orientation-hero',
-    'fc-tools-section',
+    'setup-status-bar',
     'safety-strip-',
-    'telemetry-card-grid',
+    'orientation-hero',
+    'orientation-calibration-card',
+    'setup-info-grid',
+    'board-alignment-card',
+    'orientation-stability-panel',
     'diagnostics-section',
+    'fc-tools-section',
   ];
 
   function markerFor(testID: unknown): string | undefined {
@@ -2685,16 +2727,43 @@ describe('SetupScreen - effective section order after the final polish', () => {
     await flushAsync();
   });
 
-  it('renders Orientation, then أدوات وحدة التحكم, then the safety strip, cards and diagnostics', async () => {
-    const sessionId = 'final-polish-order';
+  it('shows the aircraft first and its diagnostics after', async () => {
+    /**
+     * AIRCRAFT STATE FIRST, ANALYSIS SECOND.
+     *
+     * The page used to open with the warning stack and the stability
+     * check, so the first thing an operator saw after connecting was a
+     * list of what was wrong with the aircraft rather than the aircraft.
+     * What they came to see - the model, the battery, the receiver, the
+     * GPS, which sensors were detected - was below all of it.
+     *
+     * SETUP R9 finished the job. The compact status area now leads -
+     * connection, board, firmware, API, arming, battery and every
+     * detected sensor, above the model rather than below it - then the
+     * model with its calibration, then the dense Status/GPS/Build grid,
+     * then board alignment, and only then the stability check and deep
+     * diagnostics.
+     *
+     * NOTHING WAS REMOVED. Arming state is the fifth chip in the status
+     * area, so ARMING_DISABLED is still stated before anything else; the
+     * full-width alert STRIP is now reserved for ARMED and BLOCKED (this
+     * fixture is neither), and the multi-line warning stack still sits
+     * with the rest of the analysis below. A safety surface that has
+     * been relocated is still a safety surface; one that has been
+     * deleted is a defect, which is why the notices are asserted below.
+     */
+    const sessionId = 'p2-hierarchy-order';
     const { renderer } = await renderConnectedScreen(sessionId);
 
     expect(renderedSectionOrder(renderer)).toEqual([
+      'setup-status-bar',
       'orientation-hero',
-      'fc-tools-section',
-      'safety-strip-',
-      'telemetry-card-grid',
+      'orientation-calibration-card',
+      'setup-info-grid',
+      'board-alignment-card',
+      'orientation-stability-panel',
       'diagnostics-section',
+      'fc-tools-section',
     ]);
 
     await act(async () => {
@@ -2706,25 +2775,31 @@ describe('SetupScreen - effective section order after the final polish', () => {
     });
   });
 
-  it('places NOTHING between the end of the Orientation section and the FC tools section', async () => {
-    const sessionId = 'final-polish-adjacency';
+  it('places every operational fact BEFORE the calibration tools', async () => {
+    const sessionId = 'p2-hierarchy-before-tools';
     const { renderer } = await renderConnectedScreen(sessionId);
 
     const order = renderedSectionOrder(renderer);
-    expect(order.indexOf('fc-tools-section')).toBe(
-      order.indexOf('orientation-hero') + 1,
-    );
-    // Named explicitly, because these are the sections that USED to be
-    // in between and must not creep back.
-    for (const displaced of [
-      'safety-strip-',
-      'telemetry-card-grid',
-      'diagnostics-section',
+    const tools = order.indexOf('fc-tools-section');
+    expect(tools).toBeGreaterThanOrEqual(0);
+    // The exact list P0 found buried underneath 908px of calibration UI.
+    for (const operational of [
+      'setup-status-bar',
+      'setup-info-grid',
+      'orientation-hero',
     ]) {
-      expect(order.indexOf(displaced)).toBeGreaterThan(
-        order.indexOf('fc-tools-section'),
-      );
+      const at = order.indexOf(operational);
+      expect({operational, at, beforeTools: at >= 0 && at < tools}).toEqual({
+        operational,
+        at,
+        beforeTools: true,
+      });
     }
+    // Deep diagnostics stay secondary - below the live summary, above
+    // the tools, and never in front of Receiver/GPS/Battery/Sensors.
+    expect(order.indexOf('diagnostics-section')).toBeGreaterThan(
+      order.indexOf('setup-info-grid'),
+    );
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -2735,33 +2810,75 @@ describe('SetupScreen - effective section order after the final polish', () => {
     });
   });
 
-  it('moves the FC TOOLS section, not the FlightController telemetry card', async () => {
-    const sessionId = 'final-polish-not-the-card';
+  /* The pre-P2 'nothing between orientation and the tools' adjacency
+   * test is deliberately gone: P2's whole point is that the live
+   * summary now sits between the operator and the calibration UI. */
+  it('keeps every FC TOOL capability, and separates it from the live summary', async () => {
+    const sessionId = 'p2-tools-intact';
     const { renderer } = await renderConnectedScreen(sessionId);
 
-    // The moved section is the one with the calibration/reboot controls.
+    // Nothing was weakened or dropped by the move: all three tools and
+    // the section's own Arabic title still render.
     expect(findAnyByTestID(renderer, 'fc-tool-ACC_CALIBRATION')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'fc-tool-MAG_CALIBRATION')).not.toBeNull();
     expect(findAnyByTestID(renderer, 'fc-tool-REBOOT')).not.toBeNull();
     expect(allText(renderer)).toContain('أدوات وحدة التحكم');
 
-    // The FlightController CARD stayed where it was: inside the
-    // telemetry grid, which is still after the safety strip.
-    const grid = renderer.root.findAll(
+    /* SETUP R9: the four elevated cards are gone and their facts live in
+       exactly one place each. The grid carries Status / GPS / Build; the
+       sensor chips and the battery live ABOVE the model, in the status
+       area. Nothing is reported twice. */
+    const gridNodes = renderer.root.findAll(
       n =>
-        typeof n.type === 'string' && n.props.testID === 'telemetry-card-grid',
+        typeof n.type === 'string' && n.props.testID === 'setup-info-grid',
     );
-    expect(grid).toHaveLength(1);
-    const cardTestIds = grid[0]
+    expect(gridNodes).toHaveLength(1);
+    const gridIds = gridNodes[0]
+      .findAll(
+        n => typeof n.type === 'string' && typeof n.props.testID === 'string',
+      )
+      .map(n => n.props.testID as string);
+    for (const expected of [
+      'setup-info-status',
+      'setup-info-status-rssi',
+      'setup-info-status-cpu',
+      'setup-info-status-cycle',
+      'setup-info-gps',
+      'setup-info-gps-satellites',
+      'setup-info-build',
+      'setup-info-build-api',
+    ]) {
+      expect({expected, present: gridIds.includes(expected)}).toEqual({
+        expected,
+        present: true,
+      });
+    }
+
+    /* NO DUPLICATION: the grid must not also carry a sensor chip or a
+       second battery chip - those are the status area's, once. */
+    expect(gridIds.filter(id => id.startsWith('setup-status-sensor-'))).toEqual(
+      [],
+    );
+    expect(gridIds.filter(id => id.startsWith('setup-status-battery'))).toEqual(
+      [],
+    );
+
+    // And the status area carries them exactly once each.
+    const statusNodes = renderer.root.findAll(
+      n => typeof n.type === 'string' && n.props.testID === 'setup-status-bar',
+    );
+    expect(statusNodes).toHaveLength(1);
+    const statusIds = statusNodes[0]
       .findAll(
         n => typeof n.type === 'string' && typeof n.props.testID === 'string',
       )
       .map(n => n.props.testID as string);
     expect(
-      cardTestIds.some(
-        id => id.startsWith('fc-card') || id.includes('flight-controller'),
-      ),
-    ).toBe(true);
+      statusIds.filter(id => id.startsWith('setup-status-battery')),
+    ).toHaveLength(1);
+    expect(
+      statusIds.filter(id => id.startsWith('setup-status-sensor-')),
+    ).toHaveLength(7);
 
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);

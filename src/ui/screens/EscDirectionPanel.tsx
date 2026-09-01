@@ -1,3 +1,28 @@
+/**
+ * ESC SPIN DIRECTION - A WRITE-ONLY SETTING, PRESENTED AS ONE.
+ *
+ * THE DEFECT THIS FILE NOW REFUSES TO REPEAT. The panel used to open with
+ * NORMAL already selected. Nothing had read NORMAL from anywhere: the
+ * audited firmware has no command that reports ESC spin direction at all -
+ * `MSP2_SEND_DSHOT_COMMAND` carries commands outward and returns no
+ * direction, the setting is saved inside the ESC rather than in flight
+ * controller configuration, and a search of the pinned firmware's MSP
+ * surface for a spin-direction read finds nothing. A preselected NORMAL was
+ * therefore a default wearing the clothes of a reading, on a control whose
+ * whole job is to change which way a propeller turns.
+ *
+ * THE THREE CONCEPTS, KEPT APART ON SCREEN:
+ *   EXPECTED  - what an airframe reference says. Not shown here.
+ *   COMMANDED - what THIS session asked the ESC to become, after an
+ *               acknowledgement. Session memory, never a reading, and
+ *               deliberately discarded when the selected output changes.
+ *   OBSERVED  - what a person saw. Only the verification workflow collects
+ *               it, and nothing here may stand in for it.
+ *
+ * WHAT AN ACKNOWLEDGEMENT MEANS. The flight controller accepted and
+ * processed the request. It is not proof that the ESC applied it, that the
+ * motor turns that way, or that anything was verified physically.
+ */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
@@ -5,12 +30,25 @@ import { useTranslation } from 'react-i18next';
 import type { DshotEscDirection } from '../../core';
 import type { MotorTestEscDirectionOutcome } from '../../core/state/motorTestController';
 import type { MotorTestOperatorPort } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
 export interface EscDirectionPanelProps {
   readonly selectedMotor: number;
   readonly operator: MotorTestOperatorPort | undefined;
   readonly onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * Raises the outcome of ONE command so the host can keep the session's
+   * COMMANDED record. It reports what was ASKED FOR and how the flight
+   * controller answered - never a physical claim, and never an
+   * observation. UNCONFIRMED is reported as such rather than dropped: an
+   * outcome nobody knows is exactly the one an operator must be told.
+   */
+  readonly onCommandOutcome?: (
+    motorNumber: number,
+    target: DshotEscDirection,
+    status: 'ACKNOWLEDGED' | 'UNCONFIRMED' | 'REJECTED' | 'FAILED',
+    message: string,
+  ) => void;
 }
 
 function resultText(
@@ -37,9 +75,23 @@ export function EscDirectionPanel({
   selectedMotor,
   operator,
   onDirtyChange,
+  onCommandOutcome,
 }: EscDirectionPanelProps): React.JSX.Element {
   const { t } = useTranslation();
-  const [direction, setDirection] = useState<DshotEscDirection>('NORMAL');
+  /**
+   * UNDEFINED IS THE HONEST INITIAL STATE, and it is undefined rather than
+   * a sentinel value so the type system refuses a silent default: there is
+   * no readable current direction, so neither option may start selected.
+   * The operator picks a COMMAND TARGET; nothing here reports a state.
+   */
+  const [direction, setDirection] = useState<DshotEscDirection | undefined>(
+    undefined,
+  );
+  /** COMMANDED, and only after an acknowledgement. Session memory. */
+  const [commanded, setCommanded] = useState<DshotEscDirection | undefined>(
+    undefined,
+  );
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<
@@ -60,14 +112,26 @@ export function EscDirectionPanel({
   // an acknowledgement for M1 must never be rendered under an M2 heading.
   useEffect(() => {
     operationRef.current = undefined;
-    setDirection('NORMAL');
+    // Back to UNKNOWN, not back to a default. A target chosen for M1 is not
+    // a statement about M2, and a command acknowledged for M1 is not one
+    // either - both are discarded rather than carried across outputs.
+    setDirection(undefined);
+    setCommanded(undefined);
     setReviewing(false);
     setBusy(false);
     setResult(undefined);
   }, [operator, selectedMotor]);
 
   const apply = useCallback(async () => {
-    if (!reviewing || busy || !available || operator === undefined) {
+    if (
+      !reviewing ||
+      busy ||
+      !available ||
+      operator === undefined ||
+      // No target, no command. The gate is here as well as on the button so
+      // an undefined direction can never reach the encoder.
+      direction === undefined
+    ) {
       return;
     }
     const operation = {};
@@ -83,14 +147,25 @@ export function EscDirectionPanel({
       ) {
         return;
       }
-      setResult(resultText(t, outcome));
+      const message = resultText(t, outcome);
+      setResult(message);
+      // EVERY outcome is raised so the host can show a compact result
+      // even after this panel collapses. Only the two that say something
+      // about the request itself become COMMANDED evidence there - a
+      // rejected command never happened, and the host does not record it.
+      if (outcome.kind === 'ACKNOWLEDGED') {
+        setCommanded(direction);
+      }
+      onCommandOutcome?.(targetMotor, direction, outcome.kind, message.text);
       setReviewing(false);
     } catch {
       if (
         operationRef.current === operation &&
         selectedMotorRef.current === targetMotor
       ) {
-        setResult({ text: t('escDirection.failed'), danger: true });
+        const failure = t('escDirection.failed');
+        setResult({ text: failure, danger: true });
+        onCommandOutcome?.(targetMotor, direction, 'FAILED', failure);
       }
     } finally {
       if (operationRef.current === operation) {
@@ -102,6 +177,7 @@ export function EscDirectionPanel({
     busy,
     direction,
     available,
+    onCommandOutcome,
     operator,
     reviewing,
     selectedMotor,
@@ -110,14 +186,51 @@ export function EscDirectionPanel({
 
   return (
     <View style={styles.root} testID="esc-direction-panel">
-      <Text style={styles.eyebrow}>{t('escDirection.eyebrow')}</Text>
-      <Text style={styles.title}>{t('escDirection.title')}</Text>
-      <Text style={styles.caption}>{t('escDirection.subtitle')}</Text>
-      <Text style={styles.warning}>{t('escDirection.physicalCaveat')}</Text>
-
+      {/* THE CURRENT DIRECTION IS NOT AVAILABLE, and this says so before
+          anything is offered. Unconditional: there is no firmware state
+          that could ever fill it in. The heading is the CLAIM and stays
+          visible; the sentence explaining why sits under the one details
+          toggle below, with the protocol scope. The eyebrow, title and
+          selected-motor line are gone because MotorDirectionSection
+          already names all three above this panel. */}
       <Text style={styles.sectionTitle} testID="esc-direction-selected-motor">
         {t('escDirection.motor')}: {`M${selectedMotor}`}
       </Text>
+
+      <View style={styles.unknownBlock} testID="esc-direction-current-unknown">
+        <Text style={styles.sectionTitle}>
+          {t('escDirection.currentUnknownTitle')}
+        </Text>
+        {/* KEPT VISIBLE. This sentence is the P1b-A claim itself - the
+            flight controller offers no reading - not an elaboration of
+            it, so it does not go behind a tap. Only the protocol-scope
+            paragraph does. */}
+        <Text style={styles.caption}>{t('escDirection.currentUnknown')}</Text>
+      </View>
+
+      {/* SAFETY, NOT EXPLANATION: Normal/Reverse is an ESC setting and not
+          a measure of clockwise or anticlockwise, and the physical result
+          also depends on wiring. That stays on screen. */}
+      <Text style={styles.warning}>{t('escDirection.physicalCaveat')}</Text>
+
+      <Pressable
+        onPress={() => setDetailsOpen(open => !open)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: detailsOpen }}
+        accessibilityLabel={t('escDirection.title')}
+        style={styles.detailsToggle}
+        testID="esc-direction-details-toggle"
+      >
+        <Text style={styles.detailsToggleText}>
+          {t('motorsScreen.detailsToggle')}
+        </Text>
+      </Pressable>
+      {detailsOpen ? (
+        <View style={styles.notesBlock} testID="esc-direction-details">
+          <Text style={styles.caption}>{t('escDirection.title')}</Text>
+          <Text style={styles.caption}>{t('escDirection.subtitle')}</Text>
+        </View>
+      ) : null}
 
       <Text style={styles.sectionTitle}>{t('escDirection.target')}</Text>
       <View style={styles.optionRow}>
@@ -133,6 +246,7 @@ export function EscDirectionPanel({
             }}
             disabled={busy}
             accessibilityRole="radio"
+            // Neither option is selected until the operator selects one.
             accessibilityState={{ selected: direction === value }}
             style={[
               styles.directionOption,
@@ -149,7 +263,13 @@ export function EscDirectionPanel({
         ))}
       </View>
 
-      {reviewing ? (
+      {direction === undefined ? (
+        <Text style={styles.caption} testID="esc-direction-no-target">
+          {t('escDirection.targetNotSelected')}
+        </Text>
+      ) : null}
+
+      {reviewing && direction !== undefined ? (
         <View style={styles.confirmation} testID="esc-direction-confirmation">
           <Text style={styles.sectionTitle}>
             {t('escDirection.confirmTitle', {
@@ -176,12 +296,15 @@ export function EscDirectionPanel({
       ) : (
         <Pressable
           onPress={() => setReviewing(true)}
-          disabled={!available || busy}
+          disabled={!available || busy || direction === undefined}
           accessibilityRole="button"
-          accessibilityState={{ disabled: !available || busy }}
+          accessibilityState={{
+            disabled: !available || busy || direction === undefined,
+          }}
           style={[
             styles.primaryButton,
-            (!available || busy) && styles.optionDisabled,
+            (!available || busy || direction === undefined) &&
+              styles.optionDisabled,
           ]}
           testID="esc-direction-review"
         >
@@ -190,6 +313,23 @@ export function EscDirectionPanel({
           </Text>
         </Pressable>
       )}
+
+      {/* COMMANDED lives in MotorDirectionSection now, beside EXPECTED and
+          OBSERVED, so the three sources are read together and this panel
+          stays what it is: the place a command is authored. `commanded`
+          is still tracked here only to keep the panel truthful when it is
+          mounted on its own. */}
+      {commanded !== undefined ? (
+        <Text style={styles.caption} testID="esc-direction-commanded">
+          {t('escDirection.commandedBody', {
+            motor: selectedMotor,
+            direction:
+              commanded === 'NORMAL'
+                ? t('escDirection.normal')
+                : t('escDirection.reversed'),
+          })}
+        </Text>
+      ) : null}
 
       {!available ? (
         <Text style={styles.caption} testID="esc-direction-needs-observation">
@@ -220,30 +360,25 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   warning: {
     ...typography.body,
     color: colors.warning,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   sectionTitle: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
-    writingDirection: 'rtl',
-  },
+    fontWeight: '700',
+    writingDirection: 'rtl'},
   optionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   option: {
     minWidth: 56,
@@ -275,9 +410,8 @@ const styles = StyleSheet.create({
   optionText: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
-    writingDirection: 'rtl',
-  },
+    fontWeight: '700',
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   confirmation: {
     gap: spacing.sm,
     padding: spacing.md,
@@ -286,8 +420,24 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.surfaceAlt,
   },
+  unknownBlock: {
+    gap: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  notesBlock: { gap: spacing.xs },
+  detailsToggle: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  detailsToggleText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '700',
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   primaryButton: {
     minHeight: 48,
+    alignSelf: 'flex-start',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,
@@ -297,11 +447,11 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.body,
     color: colors.background,
-    fontWeight: '900',
-    writingDirection: 'rtl',
-  },
+    fontWeight: '700',
+    writingDirection: 'rtl'},
   dangerButton: {
     minHeight: 48,
+    alignSelf: 'flex-start',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,
@@ -311,19 +461,16 @@ const styles = StyleSheet.create({
   dangerButtonText: {
     ...typography.body,
     color: colors.background,
-    fontWeight: '900',
-    writingDirection: 'rtl',
-  },
+    fontWeight: '700',
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   resultDanger: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   resultGood: {
     ...typography.body,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

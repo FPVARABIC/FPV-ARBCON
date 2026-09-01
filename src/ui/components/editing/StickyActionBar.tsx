@@ -23,10 +23,12 @@
  */
 
 import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
-import { colors, radii, spacing, typography } from '../../theme';
+import { CONTENT_MAX_WIDTH, colors, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
+import { Button } from '../controls';
 
 export interface StickyActionBarProps {
   /** Nothing renders at all when false. */
@@ -83,6 +85,7 @@ export default function StickyActionBar({
       testID={testID}
       accessibilityRole="toolbar"
     >
+     <View style={styles.envelope}>
       <View style={styles.copy}>
         <Text style={styles.eyebrow} testID={`${testID}-eyebrow`}>
           {t('editing.pendingChanges')}
@@ -123,31 +126,26 @@ export default function StickyActionBar({
       </View>
 
       <View style={styles.buttons}>
-        <Pressable
-          disabled={busy}
+        <Button
+          label={discardLabel}
           onPress={onDiscard}
-          accessibilityRole="button"
-          accessibilityLabel={discardLabel}
-          accessibilityState={{ disabled: busy }}
-          style={[styles.secondary, busy && styles.dim]}
+          variant="secondary"
+          icon="rotate-ccw"
+          disabled={busy}
+          style={styles.discardButton}
           testID={`${testID}-discard`}
-        >
-          <Text style={styles.secondaryText}>{discardLabel}</Text>
-        </Pressable>
-        <Pressable
-          disabled={saveBlocked}
+        />
+        <Button
+          label={busy && busyLabel !== undefined ? busyLabel : saveLabel}
           onPress={onSave}
-          accessibilityRole="button"
-          accessibilityLabel={saveLabel}
-          accessibilityState={{ disabled: saveBlocked }}
-          style={[styles.primary, saveBlocked && styles.dim]}
+          variant="primary"
+          icon="save"
+          disabled={saveBlocked}
+          style={styles.saveButton}
           testID={`${testID}-save`}
-        >
-          <Text style={styles.primaryText}>
-            {busy && busyLabel !== undefined ? busyLabel : saveLabel}
-          </Text>
-        </Pressable>
+        />
       </View>
+     </View>
     </View>
   );
 }
@@ -169,37 +167,29 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -4 },
     elevation: 12,
   },
+  // The comment above promises the content envelope; this is what
+  // actually delivers it — before this container existed, the Save
+  // button stretched to ~1200px on a desktop window while the fields it
+  // acts on were capped at CONTENT_MAX_WIDTH.
+  envelope: {
+    width: '100%',
+    maxWidth: CONTENT_MAX_WIDTH,
+    alignSelf: 'center',
+    gap: spacing.sm,
+  },
   copy: { gap: 2 },
   eyebrow: { ...typography.eyebrow, color: colors.accentStrong },
-  summary: { ...typography.body, color: colors.textPrimary, fontWeight: '700' },
+  summary: { ...typography.bodyStrong, color: colors.textPrimary },
   details: { maxHeight: 84 },
   detailsContent: { gap: 2 },
-  detailLine: { ...typography.caption, color: colors.textSecondary },
-  reason: { ...typography.caption, color: colors.warning, marginTop: 2 },
-  status: { ...typography.caption, color: colors.success, marginTop: 2 },
+  detailLine: { ...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
+  reason: { ...typography.caption, color: colors.warning, marginTop: 2, maxWidth: PROSE_MEASURE},
+  status: { ...typography.caption, color: colors.success, marginTop: 2, maxWidth: PROSE_MEASURE},
   statusWarning: { color: colors.warning },
   buttons: { flexDirection: 'row', gap: spacing.sm },
-  secondary: {
-    flex: 1,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.backgroundRaised,
-  },
-  secondaryText: { ...typography.body, color: colors.textSecondary, fontWeight: '600' },
-  primary: {
-    flex: 2,
-    minHeight: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    borderRadius: radii.md,
-    backgroundColor: colors.accent,
-  },
-  primaryText: { ...typography.body, color: colors.background, fontWeight: '800' },
-  dim: { opacity: 0.45 },
+  // Save keeps twice the discard width — the affirmative action is the
+  // reason this bar exists. (The old local Pressables carried a real
+  // contrast defect: near-white text on the light accent fill.)
+  discardButton: { flex: 1 },
+  saveButton: { flex: 2 },
 });

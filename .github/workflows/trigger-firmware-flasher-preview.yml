@@ -1,0 +1,39 @@
+name: Trigger Firmware Flasher Preview
+
+# One-shot branch-local dispatcher for operator hardware validation.
+# It changes no product code. The push that creates this workflow dispatches
+# the existing Web Preview and Android Validation workflows against this exact
+# branch so both artifacts are built from the same commit.
+
+on:
+  push:
+    branches:
+      - claude/firmware-flasher-completion-fix
+    paths:
+      - '.github/workflows/trigger-firmware-flasher-preview.yml'
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch Web and Android validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch Web Preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/web-preview.yml/dispatches" \
+            -f ref="${GITHUB_REF_NAME}"
+
+      - name: Dispatch Android Validation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/android-validation.yml/dispatches" \
+            -f ref="${GITHUB_REF_NAME}" \
+            -F inputs[diagnostic_js_only]=false

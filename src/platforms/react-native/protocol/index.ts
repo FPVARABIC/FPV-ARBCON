@@ -92,12 +92,18 @@ export type {
   ReceiverBlockReason,
   ReceiverLoadOutcome,
   ReceiverSaveOutcome,
+  ReceiverRebootEvidence,
+  ReceiverRebootOutcome,
+  ReceiverRuntimeOutcome,
+  ReceiverModeTarget,
+  ReceiverRuntimeTruth,
   ReceiverSessionCoordinator,
   ReceiverAppStateOwner,
   ReceiverConfigurationControllerOptions,
 } from './ReceiverConfigurationController';
 export {
   acquireReceiverTelemetry,
+  getReceiverObservedRateHz,
   RECEIVER_CHANNELS_POLL_ID,
 } from './receiverTelemetry';
 export {
@@ -107,10 +113,23 @@ export {
 export type {
   PidBlockReason,
   PidLoadOutcome,
+  PidProfileCopyOutcome,
+  PidProfileKind,
+  PidProfileNameOutcome,
+  PidProfileResetOutcome,
+  PidProfileSwitchOutcome,
+  PidRatesTypeOutcome,
+  PidResetResource,
+  PidResetVerificationGap,
+  PidResetVerificationGapReason,
   PidSaveOutcome,
+  PidSimplifiedLoadOutcome,
+  PidSimplifiedSaveOutcome,
   PidSessionCoordinator,
   PidAppStateOwner,
   PidTuningControllerOptions,
+  PidWriteEvidence,
+  PidWriteStage,
 } from './PidTuningController';
 export {
   ModesConfigurationController,
@@ -126,6 +145,19 @@ export type {
   ModesConfigurationControllerOptions,
 } from './ModesConfigurationController';
 export {
+  BoardAlignmentController,
+  boardAlignmentController,
+} from './BoardAlignmentController';
+export type {
+  BoardAlignmentBlockReason,
+  BoardAlignmentSaveStage,
+  BoardAlignmentLoadOutcome,
+  BoardAlignmentSaveOutcome,
+  BoardAlignmentSessionCoordinator,
+  BoardAlignmentAppStateOwner,
+  BoardAlignmentControllerOptions,
+} from './BoardAlignmentController';
+export {
   FailsafeConfigurationController,
   failsafeConfigurationController,
 } from './FailsafeConfigurationController';
@@ -138,6 +170,31 @@ export type {
   FailsafeAppStateOwner,
   FailsafeConfigurationControllerOptions,
 } from './FailsafeConfigurationController';
+export {
+  BlackboxConfigurationController,
+  blackboxConfigurationController,
+  BLACKBOX_ERASE_ABSOLUTE_DEADLINE_MS,
+  BLACKBOX_ERASE_POLL_INTERVAL_MS,
+} from './BlackboxConfigurationController';
+export type {
+  BlackboxBlockReason,
+  BlackboxClock,
+  BlackboxEraseObservation,
+  BlackboxEraseOutcome,
+  BlackboxEraseProgress,
+  BlackboxEraseRefusal,
+  BlackboxLoadOutcome,
+  BlackboxOwnedDraft,
+  BlackboxPendingPersistence,
+  BlackboxPersistenceOutcome,
+  BlackboxSaveOutcome,
+  BlackboxSaveProgress,
+  BlackboxSaveStage,
+  BlackboxSnapshot,
+  BlackboxConfigurationControllerOptions,
+  BlackboxSessionCoordinator,
+  BlackboxAppStateOwner,
+} from './BlackboxConfigurationController';
 export {
   PowerConfigurationController,
   powerConfigurationController,
@@ -188,6 +245,12 @@ export {
   SENSOR_ALTITUDE_POLL_ID,
   SENSOR_IMU_INTERVAL_MS,
 } from './sensorsTelemetry';
+/* SETUP P3. Only the acquire is public. `isSetupAttitudeSuppressedBySetup`
+ * is test-only introspection and stays off the barrel deliberately: the
+ * scheduler's own reference count is the authority on whether a poll is
+ * suppressed, and a second, weaker answer reachable from the UI would be
+ * a way for a screen to disagree with it. */
+export {acquireSetupHiddenAttitudeSuppression} from './setupHiddenAttitudeSuppression';
 export {
   GeneralConfigurationController,
   generalConfigurationController,
@@ -226,10 +289,12 @@ export type {
 export {
   acquireMotorDiagnosticsTelemetry,
   getMotorDiagnosticsAvailability,
+  getMotorDiagnosticsSupport,
   subscribeMotorDiagnosticsAvailability,
   classifyMotorDiagnosticsFailure,
   MOTOR_OUTPUTS_TELEMETRY_POLL_ID,
   MOTOR_ESC_TELEMETRY_POLL_ID,
+  MOTOR_TELEMETRY_SOURCE_POLL_ID,
 } from './motorDiagnosticsTelemetry';
 export type {
   MotorDiagnosticsAvailability,
@@ -247,6 +312,7 @@ export type {
   MotorConfigurationSaveOutcome,
   MotorOutputOrderLoadOutcome,
   MotorOutputOrderSaveOutcome,
+  MotorRebootOutcome,
   EscDirectionOutcome,
   MotorConfigurationControllerOptions,
   MotorConfigurationSessionCoordinator,
@@ -274,3 +340,62 @@ export type {
   MotorTestLifecycleStopPort,
   MotorTestSessionPortInput,
 } from './motorTestSessionBinding';
+
+export {
+  SensorsConfigurationController,
+  sensorsConfigurationController,
+  ACC_CALIBRATION_ABSOLUTE_DEADLINE_MS,
+  ACC_CALIBRATION_POLL_INTERVAL_MS,
+  MAG_CALIBRATION_ABSOLUTE_DEADLINE_MS,
+  MAG_CALIBRATION_MOVEMENT_WINDOW_MS,
+  MAG_CALIBRATION_POLL_INTERVAL_MS,
+  MAG_CALIBRATION_START_DEADLINE_MS,
+  MAG_NO_MOVEMENT_CUTOFF_MS,
+} from './SensorsConfigurationController';
+export type {
+  SensorsAccTrimDraft,
+  SensorsBlockReason,
+  SensorsCalibrationEvidence,
+  SensorsCalibrationObservation,
+  SensorsCalibrationOutcome,
+  SensorsCalibrationProgress,
+  SensorsCalibrationTarget,
+  SensorsCapabilityRead,
+  SensorsClock,
+  SensorsCompassDraft,
+  SensorsConfigurationControllerOptions,
+  SensorsHardwareDraft,
+  SensorsHardwarePersistenceOutcome,
+  SensorsHardwareSaveOutcome,
+  SensorsHardwareState,
+  SensorsLoadOutcome,
+  SensorsMagAlignmentDraft,
+  SensorsMagAlignmentObserved,
+  SensorsPendingHardware,
+  SensorsRuntimeDetection,
+  SensorsSaveOutcome,
+  SensorsSaveProgress,
+  SensorsSaveStage,
+  SensorsSessionCoordinator,
+  SensorsSnapshot,
+} from './SensorsConfigurationController';
+
+export {
+  LedStripConfigurationController,
+  ledStripConfigurationController,
+} from './LedStripConfigurationController';
+export type {
+  LedGroupState,
+  LedGroupStates,
+  LedPartialApplyDetail,
+  LedSaveRefusal,
+  LedStripAppStateOwner,
+  LedStripBlockReason,
+  LedStripConfigurationControllerOptions,
+  LedStripLoadOutcome,
+  LedStripResource,
+  LedStripSaveOutcome,
+  LedStripSaveRequest,
+  LedStripSessionCoordinator,
+  LedStripSnapshot,
+} from './LedStripConfigurationController';

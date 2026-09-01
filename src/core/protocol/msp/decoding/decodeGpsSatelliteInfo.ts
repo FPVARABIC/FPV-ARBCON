@@ -1,4 +1,4 @@
-import { MspPayloadReadError, MspPayloadReader } from './MspPayloadReader';
+import { MspPayloadReader } from './MspPayloadReader';
 
 export const GPS_SATELLITE_MAX_COUNT = 64;
 
@@ -41,16 +41,17 @@ const GNSS: readonly GpsConstellation[] = [
 export function decodeGpsSatelliteInfo(
   payload: Uint8Array,
 ): MspGpsSatelliteInfo {
-  const reader = new MspPayloadReader(payload);
-  const count = reader.readU8();
-  if (count > GPS_SATELLITE_MAX_COUNT) {
-    throw new MspPayloadReadError(
-      `GPS satellite count ${count} exceeds ${GPS_SATELLITE_MAX_COUNT}.`,
-    );
-  }
-  if (reader.remaining() < count * 4) {
-    throw new MspPayloadReadError('GPS satellite payload is truncated.');
-  }
+  const reader = new MspPayloadReader(payload, {lenient: true});
+  const declared = reader.readU8();
+  // The cap still bounds how much we will allocate for a declared count, but
+  // it CLAMPS rather than rejects: a satellite list is read-only telemetry,
+  // and neither an implausible count nor a short payload is a reason to close
+  // the GPS screen over the satellites that did arrive.
+  const count = Math.min(
+    declared,
+    GPS_SATELLITE_MAX_COUNT,
+    Math.floor(reader.remaining() / 4),
+  );
   // Betaflight Configurator uses the first byte as GNSS id only in the
   // extended (>16 entries) representation. Smaller legacy lists keep an
   // opaque channel number; labelling them as GPS would fabricate truth.

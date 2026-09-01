@@ -1,3 +1,49 @@
+// ENTRY CLEANUP: SetupScreen now hosts the USB connection workspace
+// (UsbConnectionScreen) for its disconnected state, so importing it pulls
+// in the transport client whose TurboModule must be mocked under Jest -
+// the exact mock App.test.tsx has always used.
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
+/**
+ * A CONNECTED BOARD, so the connection gate is open.
+ *
+ * MainTabsScreen now refuses to mount a configuration screen unless the
+ * coordinator reports a live, current, identified session
+ * (ui/session/flightControllerGate.ts) - which is the point of that
+ * gate, and is why an unconnected shell renders no panels at all.
+ * This file is about something else entirely, so it presents the shell
+ * with the session an operator would actually have. The REAL gate logic
+ * still runs over these values; only the hardware underneath is faked.
+ */
+jest.mock(
+  '../../platforms/react-native/protocol/useMspSessionState',
+  () => {
+const IDENTIFIED = Object.freeze({
+  status: 'SUCCEEDED',
+  identity: Object.freeze({
+    firmware: Object.freeze({identifier: 'BTFL', knownFamily: 'BETAFLIGHT'}),
+    apiVersion: Object.freeze({
+      mspProtocolVersion: 0,
+      apiVersionMajor: 1,
+      apiVersionMinor: 47,
+    }),
+    board: Object.freeze({}),
+  }),
+});
+  return ({
+    /* ONE FROZEN OBJECT, returned by reference. The real hook caches its
+       identification snapshot for exactly this reason - a fresh object
+       per call makes every useSyncExternalStore consumer re-render, and
+       here it would defeat the tab panels' memoisation and make this
+       file fail while measuring nothing real. */
+    useMspOwnershipState: () => 'ACTIVE',
+    useMspIdentificationState: () => IDENTIFIED,
+    useMspRecoveryState: () => undefined,
+  });
+  },
+);
+
+
 /**
  * THE MOTORS TAB GUARD.
  *
@@ -82,7 +128,10 @@ import ReactTestRenderer from 'react-test-renderer';
 import { Alert } from 'react-native';
 
 import '../../i18n';
+import {mspSessionCoordinator} from '../../platforms/react-native/protocol';
 import MainTabsScreen from './MainTabsScreen';
+
+
 import CliScreen from './CliScreen';
 
 function renderShell() {
@@ -119,6 +168,16 @@ beforeEach(() => {
   mockGate = undefined;
   mockGateListeners = [];
   jest.restoreAllMocks();
+  /* AFTER restoreAllMocks, not before it: the shell's connection gate
+     asks the coordinator which session is current, and a spy installed
+     at module scope would be torn off again here and leave every test
+     after the first one looking at a disconnected board. */
+  jest.spyOn(mspSessionCoordinator, 'getSessionKey').mockImplementation(
+    sessionId =>
+      sessionId === 'session-1'
+        ? {sessionId: 'session-1', generation: 1}
+        : undefined,
+  );
 });
 
 /** Installs a gate whose verdict the test controls. */

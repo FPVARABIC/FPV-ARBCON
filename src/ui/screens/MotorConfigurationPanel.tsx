@@ -3,7 +3,6 @@ import {
   Alert,
   Pressable,
   StyleSheet,
-  Switch,
   Text,
   TextInput,
   View,
@@ -23,8 +22,13 @@ import {
   type MotorConfigurationLoadOutcome,
   type MotorConfigurationSaveOutcome,
 } from '../../platforms/react-native/protocol/MotorConfigurationController';
-import { colors, radii, spacing, typography } from '../theme';
+import type {SetupUiSessionKey} from '../../platforms/react-native/protocol';
+import {isOwnedByDifferentConfigurationSession} from '../../core/state/configurationSessionOwnership';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography} from '../theme';
+import { SelectField, ToggleSwitch } from '../components/controls';
+import { BETAFLIGHT_MIXER_REFERENCE_V147 } from '../../core/firmware-adapters/betaflightMixerReferenceV147';
 import { formatMotorProtocol } from './MotorConfigurationSummary';
+import { partialApplyMessage } from '../presentation/writeStageNames';
 
 const MIN_TOUCH_TARGET = 44;
 
@@ -45,16 +49,25 @@ type NumericField =
 type NumericText = Readonly<Record<NumericField, string>>;
 
 export interface MotorConfigurationControllerPort {
-  load(sessionId: string): Promise<MotorConfigurationLoadOutcome>;
+  load(sessionKey: SetupUiSessionKey): Promise<MotorConfigurationLoadOutcome>;
   save(
-    sessionId: string,
+    sessionKey: SetupUiSessionKey,
     original: MotorConfigurationSnapshot,
     draft: MotorConfigurationDraft,
   ): Promise<MotorConfigurationSaveOutcome>;
 }
 
 export interface MotorConfigurationPanelProps {
-  readonly sessionId: string;
+  /**
+   * THE ONLY SESSION AUTHORITY THIS PANEL HAS.
+   *
+   * It used to take a bare `sessionId` string as well. Two props naming
+   * one session is two chances to disagree, and the id alone cannot tell
+   * one activation of a session from the next - which is precisely the
+   * distinction a draft's ownership turns on. `sessionKey.sessionId` is
+   * the same string, from one source.
+   */
+  readonly sessionKey: SetupUiSessionKey;
   readonly controller?: MotorConfigurationControllerPort;
   readonly onDirtyChange?: (dirty: boolean) => void;
   /** Reports the panel's exclusive MSP transaction so the motor-test
@@ -114,6 +127,8 @@ function blockReasonText(
   reason: MotorConfigurationBlockReason,
 ): string {
   switch (reason) {
+    case 'SESSION_CHANGED':
+      return t('motorsScreen.blockSessionChanged');
     case 'DISCONNECTED':
       return t('motorConfiguration.reasonDisconnected');
     case 'IDENTIFYING':
@@ -138,6 +153,8 @@ function blockReasonText(
       return t('motorConfiguration.reasonBusy');
     case 'ESC_DIRECTION_UNSUPPORTED':
       return t('motorConfiguration.reasonEscDirectionUnsupported');
+    case 'CONFIGURATION_WRITE_UNVERIFIED':
+      return t('motorConfiguration.reasonWriteUnverified');
   }
 }
 
@@ -165,6 +182,16 @@ function outcomeText(
     case 'UNCONFIRMED':
       return {
         text: t('motorConfiguration.outcomeUnconfirmed'),
+        danger: true,
+      };
+    /* U-R1. RAM moved, flash did not. `outcomeFailed` would say nothing
+       happened - which is exactly the sentence that made an operator
+       believe an aircraft was untouched while it was running half of an
+       edit. The two phrasings separate "all of it is live, unsaved" from
+       "some of it is live, unsaved". */
+    case 'PARTIAL_UNPERSISTED':
+      return {
+        text: partialApplyMessage(outcome.failedStage === 'EEPROM'),
         danger: true,
       };
     case 'SESSION_ENDED':
@@ -205,12 +232,14 @@ function ToggleRow({
         <Text style={styles.settingLabel}>{label}</Text>
         <Text style={styles.caption}>{detail}</Text>
       </View>
-      <Switch
+      {/* The platform Switch drew accentSoft on accent here - pale teal
+          on pale teal, so ON and OFF were nearly indistinguishable on a
+          motor-configuration row. The shared control states it plainly. */}
+      <ToggleSwitch
         value={value}
         disabled={disabled}
         onValueChange={onValueChange}
-        trackColor={{ false: colors.disabled, true: colors.accentSoft }}
-        thumbColor={value ? colors.accent : colors.textMuted}
+        accessibilityLabel={label}
       />
     </View>
   );
@@ -249,7 +278,7 @@ function NumberField({
 }
 
 export function MotorConfigurationPanel({
-  sessionId,
+  sessionKey,
   controller = motorConfigurationController,
   onDirtyChange,
   onBusyChange,
@@ -290,7 +319,7 @@ export function MotorConfigurationPanel({
     setLoadError(undefined);
     setSaveOutcome(undefined);
     try {
-      const result = await controller.load(sessionId);
+      const result = await controller.load(sessionKey);
       if (result.kind === 'LOADED') {
         installSnapshot(result.snapshot);
       } else if (result.kind === 'REJECTED') {
@@ -305,7 +334,7 @@ export function MotorConfigurationPanel({
     } finally {
       setPhase('IDLE');
     }
-  }, [controller, installSnapshot, sessionId, t]);
+  }, [controller, installSnapshot, sessionKey, t]);
 
   useEffect(() => {
     load().catch(() => undefined);
@@ -332,15 +361,90 @@ export function MotorConfigurationPanel({
     onDirtyChange?.(changed);
     return () => onDirtyChange?.(false);
   }, [changed, onDirtyChange]);
+  /* DOES THIS PANEL'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
+     THROUGH? `sessionKey` is a prop; `original` and the draft are state
+     that outlive a prop change by at least one render - and by the entire
+     reload if that reload is slow, or forever if it is refused. In that
+     window `changed` is still true and Save is still live, over a draft
+     built against a DIFFERENT aircraft. The controller refuses this too;
+     both layers are required, and this is the one the operator can see.
+     See core/state/configurationSessionOwnership. */
+  const saveBlockedBySession = isOwnedByDifferentConfigurationSession(
+    original,
+    sessionKey,
+  );
   const canReview =
     phase === 'IDLE' &&
     changed &&
     validation?.valid === true &&
-    loadError === undefined;
+    loadError === undefined &&
+    !saveBlockedBySession;
   const disabled = phase !== 'IDLE' || original === undefined;
+
+  /**
+   * THE AIRFRAMES THIS PANEL WILL OFFER TO WRITE.
+   *
+   * SOURCE OWNERSHIP, RESOLVED FOR M-E §7. Betaflight Configurator
+   * 2026.6.1 (14a057ff) puts the mixer selector on the MOTORS tab -
+   * MotorsTab.vue:13-14, a select bound to `fcStore.mixerConfig.mixer` -
+   * and its save sends MSP_SET_MIXER_CONFIG at MotorsTab.vue:1388,
+   * followed by an EEPROM write and a reboot. Our earlier design decision
+   * that Motors may never change the mixer was therefore wrong about the
+   * reference implementation, and M-E §7 says source truth wins.
+   *
+   * WE ARE STRICTER THAN THE REFERENCE IN ONE WAY, DELIBERATELY. The
+   * reference sends the write and reports success on the acknowledgement.
+   * This panel's save re-reads the whole configuration after the EEPROM
+   * commit and compares it field by field against the draft, so a mixer
+   * that did not take reports SAVED_UNVERIFIED rather than success. That
+   * transaction is unchanged by M-E: the mixer byte was always in the
+   * draft and always in the readback comparison; what was missing was a
+   * control to change it.
+   *
+   * THREE MODES ARE NOT OFFERED, AND IT IS NOT A JUDGEMENT ABOUT THEM.
+   * validateAndFixConfig() (config.c:200-218 @ 7348054f) REWRITES
+   * HELI_90_DEG, PPM_TO_SERVO and SINGLECOPTER to a custom mode inside
+   * readEEPROM(), before anything can observe the value. Offering them
+   * would mean writing a byte that is guaranteed to read back as a
+   * different byte, which our own verification would then - correctly -
+   * report as unverified. The reference table records that rewrite per
+   * mode, so this list is derived from it rather than hand-maintained.
+   *
+   * AN UNKNOWN MIXER IS NEVER NORMALISED. If the flight controller
+   * reports an id this table does not know, `selectedKey` below is simply
+   * not in the list: the field shows the raw value and offers no
+   * substitute. Silently snapping it to a neighbouring mixer would be the
+   * exact failure this whole subsystem exists to prevent.
+   */
+  const mixerOptions = useMemo(
+    () =>
+      BETAFLIGHT_MIXER_REFERENCE_V147.filter(
+        row => row.configValidationRewrite === undefined,
+      ).map(row => ({
+        key: String(row.mixerId),
+        label: t(`motorsScreen.topology.airframe.${row.firmwareName}`),
+      })),
+    [t],
+  );
 
   const setBoolean = useCallback(
     (field: keyof MotorConfigurationDraft, value: boolean) => {
+      setDraft(current =>
+        current === undefined
+          ? current
+          : Object.freeze({ ...current, [field]: value }),
+      );
+      setSaveOutcome(undefined);
+      setConfirming(false);
+    },
+    [],
+  );
+
+  /** Sets a numeric draft field from a value rather than from typed
+   *  text. The text setters exist because a partially-typed number is not
+   *  a number; a chosen option always is. */
+  const setNumberValue = useCallback(
+    (field: keyof MotorConfigurationDraft, value: number) => {
       setDraft(current =>
         current === undefined
           ? current
@@ -384,14 +488,15 @@ export function MotorConfigurationPanel({
     if (
       original === undefined ||
       effectiveDraft === undefined ||
-      validation?.valid !== true
+      validation?.valid !== true ||
+      saveBlockedBySession
     ) {
       return;
     }
     setPhase('SAVING');
     setSaveOutcome(undefined);
     try {
-      const result = await controller.save(sessionId, original, effectiveDraft);
+      const result = await controller.save(sessionKey, original, effectiveDraft);
       setSaveOutcome(result);
       if (result.kind === 'SAVED_VERIFIED' || result.kind === 'NO_CHANGES') {
         installSnapshot(result.snapshot);
@@ -410,11 +515,12 @@ export function MotorConfigurationPanel({
       setPhase('IDLE');
     }
   }, [
+    saveBlockedBySession,
     controller,
     effectiveDraft,
     installSnapshot,
     original,
-    sessionId,
+    sessionKey,
     validation,
   ]);
 
@@ -578,6 +684,24 @@ export function MotorConfigurationPanel({
               onValueChange={value => setBoolean('motorStopEnabled', value)}
               testID="motor-config-motor-stop"
             />
+            {/* M-E §7 / §8 / §10: CHOOSING THE AIRCRAFT.
+                It sits directly above the propeller-direction switch
+                because the two are the same MSP command - byte 0 and
+                byte 1 of MSP_SET_MIXER_CONFIG - and a save that changes
+                either sends both. Changing it does not redraw the
+                aircraft on its own: the drawing follows the RUNTIME motor
+                count, and that only changes once the flight controller
+                has rebooted and run mixerInit() again. The save's own
+                reboot notice is what carries that, and it is unchanged. */}
+            <SelectField
+              label={t('motorConfiguration.mixerLabel')}
+              helper={t('motorConfiguration.mixerDetail')}
+              options={mixerOptions}
+              selectedKey={String(draft.mixerModeRaw)}
+              disabled={disabled}
+              onSelect={value => setNumberValue('mixerModeRaw', Number(value))}
+              testID="motor-config-mixer"
+            />
             <ToggleRow
               label={t('motorConfiguration.propsDirection')}
               detail={t('motorConfiguration.propsDirectionDetail')}
@@ -653,6 +777,20 @@ export function MotorConfigurationPanel({
             <View style={styles.errorNotice} testID="motor-config-invalid">
               <Text style={styles.errorText}>
                 {t('motorConfiguration.invalidValues')}
+              </Text>
+            </View>
+          ) : null}
+
+          {/* Disabling Save is not enough on its own: an operator who set
+              a protocol and then found the button dead would read that as
+              the app being broken. Say which fact stopped the write. */}
+          {original !== undefined && saveBlockedBySession ? (
+            <View
+              style={styles.errorNotice}
+              testID="motor-config-session-changed"
+            >
+              <Text style={styles.errorText}>
+                {t('motorsScreen.blockSessionChanged')}
               </Text>
             </View>
           ) : null}
@@ -757,23 +895,19 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.title,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   infoText: {
     ...typography.body,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   section: {
     gap: spacing.md,
     backgroundColor: colors.backgroundRaised,
@@ -786,8 +920,7 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   settingRow: {
     minHeight: MIN_TOUCH_TARGET,
     flexDirection: 'row',
@@ -801,8 +934,7 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   protocolGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs },
   protocolChip: {
     minHeight: MIN_TOUCH_TARGET,
@@ -824,7 +956,7 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     writingDirection: 'ltr',
   },
-  protocolTextSelected: { color: colors.accentStrong, fontWeight: '800' },
+  protocolTextSelected: { color: colors.accentStrong, fontWeight: '700' },
   numberGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   numberField: {
     flexGrow: 1,
@@ -858,7 +990,7 @@ const styles = StyleSheet.create({
   smallButtonText: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '800',
+    fontWeight: '700',
   },
   actionRow: { flexDirection: 'row', gap: spacing.sm },
   primaryButton: {
@@ -873,9 +1005,8 @@ const styles = StyleSheet.create({
   primaryButtonText: {
     ...typography.body,
     color: colors.accentText,
-    fontWeight: '800',
-    writingDirection: 'rtl',
-  },
+    fontWeight: '700',
+    writingDirection: 'rtl'},
   secondaryButton: {
     flex: 1,
     minHeight: MIN_TOUCH_TARGET + 4,
@@ -890,39 +1021,22 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: colors.textPrimary,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
-  confirmation: {
-    gap: spacing.md,
+    writingDirection: 'rtl'},
+  confirmation: {...noticeSurface, gap: spacing.md,
     borderColor: colors.warning,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    backgroundColor: '#FFF4D8',
-    padding: spacing.md,
-  },
+    backgroundColor: colors.warningSoft},
   confirmationTitle: {
     ...typography.sectionTitle,
     color: colors.warning,
-    writingDirection: 'rtl',
-  },
-  errorNotice: {
-    borderRadius: radii.sm,
-    backgroundColor: '#FFF0F1',
-    padding: spacing.md,
-  },
+    writingDirection: 'rtl'},
+  errorNotice: {...noticeSurface, backgroundColor: colors.errorSoft},
   errorText: {
     ...typography.body,
     color: colors.error,
-    writingDirection: 'rtl',
-  },
-  successNotice: {
-    borderRadius: radii.sm,
-    backgroundColor: '#EAF7F2',
-    padding: spacing.md,
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  successNotice: {...noticeSurface, backgroundColor: colors.successSoft},
   successText: {
     ...typography.body,
     color: colors.success,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
 });

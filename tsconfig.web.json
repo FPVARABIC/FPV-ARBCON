@@ -39,7 +39,15 @@
     "App.web.tsx",
     "vite.config.mts",
     "src/**/*.ts",
-    "src/**/*.tsx"
+    "src/**/*.tsx",
+    /* The touch-floor browser fixture and its bundler config. Excluded
+     * from tsconfig.json because they are browser code; named here so
+     * they are checked by SOMETHING rather than falling through the seam
+     * unchecked, which is how the fixture came to call a repository
+     * method the port does not have. */
+    "e2e/**/*.ts",
+    "e2e/**/*.tsx",
+    "e2e/touch-targets/vite.config.mts"
   ],
   /*
    * The browser's OWN tests, listed explicitly.
@@ -55,11 +63,16 @@
     "src/platforms/web/webAlert.test.tsx",
     "src/platforms/web/webEnvironment.test.ts",
     "src/platforms/mapLink.web.test.ts",
+    "src/platforms/supportLink.web.test.ts",
     "src/platforms/react-native/transport/native/NativeUsbSerialTransport.web.test.ts",
     "src/platforms/react-native/transport/native/webUsbDfu.web.test.ts",
+    "src/platforms/react-native/transport/native/webUsbDfuCompletion.web.test.ts",
+    "src/platforms/react-native/transport/native/webUsbDfuMemoryDiscovery.web.test.ts",
     "src/platforms/web/connectionDiagnostics.test.ts",
     "src/platforms/web/telemetryDiagnostics.test.ts",
-    "src/ui/screens/MotorsScreen.web.test.tsx"
+    "src/ui/screens/MotorsScreen.web.test.tsx",
+    "src/ui/screens/OsdScreen.web.test.tsx",
+    "src/ui/brand/BrandTopChrome.web.test.tsx"
   ],
   "exclude": [
     "**/node_modules",
@@ -68,6 +81,15 @@
      * TurboModuleRegistry, which react-native-web does not export. Its
      * .web.ts sibling is what the browser build actually resolves. */
     "src/platforms/react-native/transport/native/NativeUsbSerialTransport.ts",
+    /* Same seam for the brand asset: the Metro half uses require(), a
+     * construct this DOM-typed project has no types for. Vite resolves
+     * brandLogoSource.web.ts instead (moduleSuffixes above). */
+    "src/ui/brand/brandLogoSource.ts",
+    /* Same seam again for the guide's step captures and covers: these
+     * Metro halves use require(), which this DOM-typed project has no
+     * types for. Vite resolves the .web.ts siblings (moduleSuffixes). */
+    "src/ui/flight-guides/guideImages.ts",
+    "src/ui/flight-guides/heroImages.ts",
     "src/platforms/react-native/transport/native/__mocks__/**",
     /* Tests run under Jest against the Android resolution, and are
      * typechecked by tsconfig.json. */

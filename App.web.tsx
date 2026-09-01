@@ -4,18 +4,36 @@
  * This is the same application as App.tsx, not a web edition of it. It
  * renders the same Arabic screens, drives the same MSP core, and reuses
  * useSessionLossRedirect() - the one shared implementation of the
- * "tracked session died -> return to Connection" safety rule - rather
- * than carrying a second copy of it.
+ * "tracked session died -> return to Home" safety rule - rather than
+ * carrying a second copy of it.
  *
  * THE THREE THINGS THAT LEGITIMATELY DIFFER HERE, and why:
  *
  * 1. LAZY ROUTES. On Android, Metro ships one bundle and `getComponent`
  *    is enough to keep the flasher out of the connection path. A browser
- *    downloads what it is given, so Connection, MainTabs and the Firmware
- *    Flasher are React.lazy() chunks: opening the app fetches the Start
- *    screen and the shared core, not the entire configurator plus
- *    esptool. `getComponent` cannot express this - it must return a
- *    component synchronously - so these are lazy() + <Suspense>.
+ *    downloads what it is given, so MainTabs and the Firmware Flasher are
+ *    React.lazy() chunks: opening the app fetches the Start screen and
+ *    the shared core, not the entire configurator plus esptool.
+ *    `getComponent` cannot express this - it must return a component
+ *    synchronously - so these are lazy() + <Suspense>. There is no
+ *    connection chunk at all: connecting is a service Home drives rather
+ *    than a screen anyone navigates to, so it ships with Home, and the
+ *    fifteen configuration screens arrive only once there is a board to
+ *    configure.
+ *
+ * 1c. THE HARD CONNECTION WALL IS NOT PLATFORM-SPECIFIC. The `Setup`
+ *    route - the configuration workspace and every screen in it - is
+ *    registered here on exactly the same predicate App.tsx uses, from
+ *    exactly the same hook. A browser is the platform where an
+ *    unregistered route matters MOST: a registered one could be reached
+ *    by a typed URL, a bookmark or a restored history entry. Registering
+ *    it unconditionally here while Android walls it off would have been
+ *    the drift this file's whole preamble exists to prevent.
+ *
+ * 1b. THE PERSISTENT BRAND CHROME. The official logo lives in a slim
+ *    always-visible strip above the navigator - the browser top chrome
+ *    the product brief calls for. Android deliberately renders no such
+ *    strip; its logo lives on the Start screen (see BrandTopChrome.tsx).
  *
  * 2. THE ALERT HOST. react-native-web's Alert.alert is a no-op; see
  *    webAlert.tsx for the full list of safety decisions that silently
@@ -34,32 +52,51 @@
 import React, {Suspense} from 'react';
 import {ActivityIndicator, I18nManager, StyleSheet, Text, View} from 'react-native';
 import {NavigationContainer} from '@react-navigation/native';
+import {useBrowserBackIntegration} from './src/navigation/useBrowserBackIntegration.web';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import {useTranslation} from 'react-i18next';
 
 import './src/i18n';
 // Imported from its own module rather than the './src/ui' barrel: that
-// barrel statically re-exports MainTabsScreen and UsbConnectionScreen, so
-// importing through it would pull the entire configurator into the entry
-// chunk and defeat every lazy() boundary below.
+// barrel statically re-exports MainTabsScreen, so importing through it
+// would pull the entire configurator into the entry chunk and defeat
+// every lazy() boundary below.
 import StartScreen from './src/ui/screens/StartScreen';
+import BrandTopChrome from './src/ui/brand/BrandTopChrome';
 import {useSessionLossRedirect} from './src/navigation/useSessionLossRedirect';
+import {
+  configurationWorkspaceUnlocked,
+  RebootOverlay,
+  useRebootReconnect,
+  useVerifiedFcConnection,
+} from './src/ui/session';
 import type {RootStackParamList} from './src/navigation/types';
 import {WebAlertHost, installWebAlert} from './src/platforms/web/webAlert';
 import {WebCompatibilityNotice} from './src/platforms/web/WebCompatibilityNotice';
-import {PreviewNotice} from './src/platforms/web/PreviewNotice';
 import {colors} from './src/ui/theme';
 
 /**
  * True only in the GitHub Pages preview build, which sets
- * VITE_FPV_ARBCON_PREVIEW=true. This is the ONLY place the flag is read -
- * PreviewNotice itself takes no flag, so it stays a plain, testable
- * component and the build-time condition stays in one place.
+ * VITE_FPV_ARBCON_PREVIEW=true.
  *
  * `import.meta.env` is a Vite construct, which is why this read lives in
  * this file: App.web.tsx is only ever compiled by Vite, never by Jest.
+ *
+ * IT NO LONGER RENDERS ANYTHING. A yellow "unverified preview" strip used
+ * to sit above every route, and it was the first thing an operator saw on
+ * every screen - build provenance occupying the top of a flight-controller
+ * tool. Build status is a DEVELOPER fact, so it is now a developer
+ * diagnostic: emitted once to the console, where a developer looking for
+ * it will find it, and nowhere in the product surface.
  */
 const IS_PREVIEW_BUILD = import.meta.env.VITE_FPV_ARBCON_PREVIEW === 'true';
+
+if (IS_PREVIEW_BUILD) {
+  console.info(
+    '[FPV-ARBCON] Preview build. Connection paths are real and unmodified; ' +
+      'hardware behaviour still requires confirmation on a physical board.',
+  );
+}
 
 // The shared screens are written for a genuinely RTL layout (see
 // src/navigation/tabs.ts on tab order). react-native-web reads this the
@@ -76,12 +113,20 @@ installWebAlert();
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-const UsbConnectionScreen = React.lazy(
-  () => import('./src/ui/screens/UsbConnectionScreen'),
-);
 const MainTabsScreen = React.lazy(() => import('./src/ui/screens/MainTabsScreen'));
+// The default flasher route is the compact simple workflow; the full
+// legacy surface stays reachable from its own «متقدم» control for recovery
+// and specialist cases (the simple screen renders it embedded).
 const FirmwareFlasherScreen = React.lazy(
-  () => import('./src/ui/screens/FirmwareFlasherScreen'),
+  () => import('./src/ui/screens/FirmwareFlasherSimpleScreen'),
+);
+// The guide carries every step capture of every corner - megabytes of
+// PNG - so it is its own chunk and downloads only when opened.
+const FlightStyleGuideScreen = React.lazy(
+  () => import('./src/ui/screens/FlightStyleGuideScreen'),
+);
+const FlightStyleCornerScreen = React.lazy(
+  () => import('./src/ui/screens/FlightStyleCornerScreen'),
 );
 
 function ScreenFallback(): React.JSX.Element {
@@ -96,14 +141,57 @@ function ScreenFallback(): React.JSX.Element {
 
 function App(): React.JSX.Element {
   const {navigationRef, onReady, onStateChange} = useSessionLossRedirect();
+  // Browser Back navigates the app instead of doing nothing - see the
+  // hook's own note on why this is history-depth mirroring rather than
+  // path linking.
+  useBrowserBackIntegration(navigationRef);
+
+  /**
+   * THE WALL. See App.tsx for the full reasoning - it is one predicate,
+   * one hook, and deliberately identical on both roots.
+   *
+   * What it buys specifically here: browser Back, a refresh, a typed URL
+   * and a restored history entry all resolve against the navigator's
+   * REGISTERED routes. While this says locked there is no `Setup` route
+   * to resolve to, so none of them can produce a configuration screen -
+   * not even for the single frame a runtime guard would need in order to
+   * notice and redirect.
+   */
+  const connection = useVerifiedFcConnection();
+  /**
+   * THE WAY OUT OF THE OVERLAY, and it lives here because the overlay
+   * does. A CLI save reboots the board; something has to reopen it, and
+   * whatever owns a blocking state owns ending it. See
+   * useRebootReconnect - every path out is bounded by the lifecycle's
+   * own deadline, including the one where the board never returns.
+   */
+  useRebootReconnect();
+  const workspaceUnlocked = configurationWorkspaceUnlocked(connection);
+  const sessionKey =
+    connection.kind === 'CONNECTED' ? connection.sessionKey : undefined;
+
+  /**
+   * Opening the workspace is a NAVIGATION, and one place decides it, so
+   * there is no window in which two of them disagree.
+   */
+  React.useEffect(() => {
+    if (!workspaceUnlocked || sessionKey === undefined) return;
+    const navigator = navigationRef.current;
+    if (navigator === null || !navigator.isReady()) return;
+    if (navigator.getCurrentRoute()?.name === 'Setup') return;
+    navigator.reset({
+      index: 1,
+      routes: [{name: 'Start'}, {name: 'Setup', params: {sessionKey}}],
+    });
+  }, [navigationRef, sessionKey, workspaceUnlocked]);
 
   return (
     <View style={styles.container}>
-      {/* Above the compatibility notice: "this build is unverified" is
-          the first thing a preview visitor must read. Purely a label -
-          see PreviewNotice for why it changes no behaviour. */}
-      {IS_PREVIEW_BUILD ? <PreviewNotice /> : null}
+      {/* No build-status strip here. The compatibility notice stays: it
+          reports a capability the browser genuinely lacks, which changes
+          what the operator can do, unlike which build they are running. */}
       <WebCompatibilityNotice />
+      <BrandTopChrome />
       <View style={styles.navigator}>
         <NavigationContainer
           ref={navigationRef}
@@ -126,16 +214,29 @@ function App(): React.JSX.Element {
               initialRouteName="Start"
               screenOptions={{headerShown: false}}>
               <Stack.Screen name="Start" component={StartScreen} />
-              <Stack.Screen name="Connection" component={UsbConnectionScreen} />
-              <Stack.Screen name="Setup" component={MainTabsScreen} />
+              {workspaceUnlocked ? (
+                <Stack.Screen name="Setup" component={MainTabsScreen} />
+              ) : null}
               <Stack.Screen
                 name="FirmwareFlasher"
                 component={FirmwareFlasherScreen}
+              />
+              <Stack.Screen
+                name="FlightStyleGuide"
+                component={FlightStyleGuideScreen}
+              />
+              <Stack.Screen
+                name="FlightStyleCorner"
+                component={FlightStyleCornerScreen}
               />
             </Stack.Navigator>
           </Suspense>
         </NavigationContainer>
       </View>
+      {/* A reboot we asked for is a STATE, not a destination. Outside
+          the navigator on purpose: not a route, not a history entry, and
+          nothing a refresh or Back can bring back. */}
+      <RebootOverlay connection={connection} />
       {/* Last child, so it paints above the navigator without needing a
           portal - a dialog must survive navigation happening underneath. */}
       <WebAlertHost />
@@ -159,6 +260,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.backgroundRaised,
   },
   fallbackText: {
+    fontFamily: 'Cairo',
+    fontSize: 14,
+    lineHeight: 22,
     color: colors.textSecondary,
     textAlign: 'center',
     writingDirection: 'rtl',

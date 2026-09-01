@@ -1,0 +1,126 @@
+{
+  "id": "firmware",
+  "kind": "PREREQUISITE",
+  "title_ar": "البرنامج الثابت",
+  "title_en": "Firmware",
+  "description_ar": "ما يجب أن يكون صحيحًا في متحكم طيرانك قبل أن يعني أي دليل نمط شيئًا.",
+  "description_en": "What must be right on the flight controller before any style guide means anything.",
+  "difficulty": "intermediate",
+  "difficulty_ar": "متوسط",
+  "intended_aircraft": [
+    "أي طائرة تعمل ببرنامج Betaflight"
+  ],
+  "required_screens": [
+    "FirmwareFlasherScreen",
+    "PortsScreen",
+    "SetupScreen"
+  ],
+  "optional_screens": [
+    "PresetsScreen",
+    "ConfigurationsScreen",
+    "CliScreen"
+  ],
+  "hardware_requirements": [
+    "متحكم طيران Betaflight بواجهة MSP API 1.47 فأعلى",
+    "كابل USB موثوق",
+    "المراوح مفكوكة"
+  ],
+  "hardware_verification_status": "NOT VERIFIED — DEFERRED",
+  "verification_level": "SOFTWARE VERIFIED",
+  "sources": [
+    "S1.12",
+    "S1.13",
+    "S2.1",
+    "S2.2"
+  ],
+  "image": "_shared/images/firmware-flasher.png",
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "اللوحة والإصدار وخيارات البناء",
+      "screen": "تحديث البرنامج الثابت · المرحلة 1: اللوحة والبناء",
+      "screenshot": "images/1-flasher-board.png",
+      "targets": [
+        {
+          "control": "target-selector",
+          "kind": "contains",
+          "expected": "SPEEDYBEEF405V3",
+          "source": "C"
+        },
+        {
+          "control": "release-selector",
+          "kind": "contains",
+          "expected": "4.6.0",
+          "source": "C"
+        },
+        {
+          "control": "build-configuration",
+          "kind": "contains",
+          "expected": "بروتوكول الراديو",
+          "source": "C"
+        },
+        {
+          "control": "radio-protocol-selector",
+          "kind": "contains",
+          "expected": "CRSF",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "بوابة الأمان قبل التفليش",
+      "screen": "تحديث البرنامج الثابت · المرحلة 2 · بطاقة بوابة الأمان",
+      "screenshot": "images/2-flasher-safety.png",
+      "targets": [
+        {
+          "control": "confirm-props-removed",
+          "kind": "switch",
+          "expected": "on",
+          "source": "C"
+        },
+        {
+          "control": "confirm-usb-power-only",
+          "kind": "switch",
+          "expected": "on",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title_ar": "الحزم الجاهزة",
+      "screen": "الحزم الجاهزة · المكتبة الرسمية",
+      "screenshot": "images/3-presets.png",
+      "targets": [
+        {
+          "control": "presets-screen",
+          "kind": "contains",
+          "expected": "الحزم المتوافقة (5)",
+          "source": "S1"
+        }
+      ]
+    }
+  ],
+  "step_count": 3,
+  "decisions": [
+    {
+      "requirement": "إعدادات الطيران",
+      "decision": "NOT_APPLICABLE",
+      "detail": "هذه ليست بطاقة نمط طيران. بعد التحديث، افتح ركن نمطك واتبعه من خطوته الأولى.",
+      "source": null
+    },
+    {
+      "requirement": "النسخة الاحتياطية قبل التحديث",
+      "decision": "ACTION",
+      "detail": "فعّل خيار النسخ الاحتياطي قبل بدء التفليش. التحديث يمسح كل إعداداتك، بما فيها Failsafe و GPS Rescue والمعايرة.",
+      "source": null
+    },
+    {
+      "requirement": "ترتيب ما بعد التحديث",
+      "decision": "ACTION",
+      "detail": "المنافذ ← المستقبل ← المحركات ← الأوضاع (مفتاح ARM أولًا) ← Failsafe ← ثم دليل نمطك.",
+      "source": null
+    }
+  ]
+}

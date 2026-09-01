@@ -341,7 +341,14 @@ describe('GpsConfigurationController', () => {
         ...createGpsConfigurationDraft(original),
         provider: 1,
       }),
-    ).resolves.toEqual({ kind: 'UNCONFIRMED', stage: 'GPS_CONFIG' });
+    /* U-R1: and the ledger is EMPTY - this is the first write of the
+       transaction, so nothing had reached the board before it. The
+       assertion is stricter than it was, not looser. */
+    ).resolves.toEqual({
+      kind: 'UNCONFIRMED',
+      stage: 'GPS_CONFIG',
+      confirmedStages: [],
+    });
     expect(
       h.client.calls.filter(call => call.command === MSP_SET_GPS_CONFIG),
     ).toHaveLength(1);

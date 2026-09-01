@@ -69,17 +69,24 @@ describe('BetaflightBuildApi', () => {
     }
   });
 
-  it('names the build server and CORS in Arabic when the network layer itself rejects', async () => {
-    // A raw TypeError("Failed to fetch") is browser-internal English; the
-    // operator must instead read what actually happened and keep the
-    // technical text as a suffix for bug reports.
+  it('explains a network rejection in Arabic and keeps the browser English out of the message', async () => {
+    // A raw TypeError("Failed to fetch") is browser-internal English. An
+    // Arabic operator learns nothing from it and it reads as an
+    // untranslated defect, so the message states what happened and what
+    // to do; the technical sentence goes to the console for developers.
     const fetcher = jest.fn(async () => {
       throw new TypeError('Failed to fetch');
     });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
     const api = new BetaflightBuildApi(fetcher as unknown as typeof fetch);
 
     await expect(api.loadTargets()).rejects.toThrow(/تعذّر الوصول إلى خادم البناء/);
-    await expect(api.loadTargets()).rejects.toThrow(/Failed to fetch/);
+    await expect(api.loadTargets()).rejects.not.toThrow(/Failed to fetch/);
+    expect(warn).toHaveBeenCalledWith(
+      '[buildApi] network/CORS failure:',
+      'Failed to fetch',
+    );
+    warn.mockRestore();
   });
 
   it('rethrows the caller\'s own abort untouched', async () => {

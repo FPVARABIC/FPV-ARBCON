@@ -23,8 +23,15 @@ import type { LayoutTier } from './layout';
 
 export interface ContentEnvelope {
   readonly tier: LayoutTier;
-  /** The maxWidth the screen's content container should use. */
-  readonly maxWidth: number;
+  /**
+   * The maxWidth the screen's content container should use, or
+   * `undefined` for a desktop tool workspace, which takes the width the
+   * shell gave it. See contentEnvelope() for why that is an answer
+   * rather than an omission - and note that a consumer must not keep a
+   * static `maxWidth` in its StyleSheet as a "fallback", because an
+   * inline `undefined` cannot override one.
+   */
+  readonly maxWidth: number | undefined;
 }
 
 export function useContentEnvelope(splitsIntoColumns: boolean): ContentEnvelope {

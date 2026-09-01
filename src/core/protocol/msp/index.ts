@@ -11,6 +11,7 @@ export {
   MSP_GPS_SV_INFO,
   MSP_ANALOG,
   MSP_STATUS_EX,
+  MSP_TX_INFO,
   MSP_BOXIDS,
   MSP_ACC_CALIBRATION,
   MSP_MAG_CALIBRATION,
@@ -46,6 +47,10 @@ export {
   MSP_RC_DEADBAND,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
+  MSP_BLACKBOX_CONFIG,
+  MSP_SET_BLACKBOX_CONFIG,
+  MSP_DATAFLASH_SUMMARY,
+  MSP_SDCARD_SUMMARY,
   MSP2_MOTOR_OUTPUT_REORDERING,
   MSP2_SET_MOTOR_OUTPUT_REORDERING,
   MSP2_SEND_DSHOT_COMMAND,
@@ -60,7 +65,103 @@ export {
   MSP_VTX_CONFIG,
   MSP2_COMMON_SERIAL_CONFIG,
   MSP2_COMMON_SET_SERIAL_CONFIG,
+  MSP_SENSOR_CONFIG,
+  MSP_SET_SENSOR_CONFIG,
+  MSP_SENSOR_ALIGNMENT,
+  MSP_SET_SENSOR_ALIGNMENT,
+  MSP_COMPASS_CONFIG,
+  MSP_SET_COMPASS_CONFIG,
+  MSP_ACC_TRIM,
+  MSP_SET_ACC_TRIM,
+  MSP2_SENSOR_CONFIG_ACTIVE,
+  MSP2_GYRO_SENSOR_ACTIVE,
+  MSP_SONAR_ALTITUDE,
 } from './commands/mspCommands';
+
+/* SENSORS - the B-1 wire layer. Semantics live in
+ * src/core/state/sensorTruthSemantics.ts and are imported from there
+ * directly, exactly as the blackbox storage semantics are. */
+export {
+  modelSensorHardware,
+  sensorHardwareDefaultIndex,
+  sensorHardwareIndices,
+  sensorHardwareNoneIndex,
+} from './decoding/sensorHardwareCatalog';
+export type {
+  SensorHardwareFamily,
+  SensorHardwareKind,
+  SensorHardwareValue,
+} from './decoding/sensorHardwareCatalog';
+export {
+  decodeSensorConfig,
+  NOT_AVAILABLE_IN_THIS_CONTRACT,
+  SENSOR_CONFIG_CONTRACT_BYTES,
+  SENSOR_CONFIG_MIN_BYTES,
+} from './decoding/decodeSensorConfig';
+export type {
+  NotAvailableInThisContract,
+  SensorConfig,
+  SensorConfigContract,
+} from './decoding/decodeSensorConfig';
+export {
+  decodeSensorAlignment,
+  gyroIndicesFromBitmask,
+  modelSensorAlignment,
+  ALIGN_CUSTOM_RAW,
+  ALIGN_DEFAULT_RAW,
+  SENSOR_ALIGNMENT_PAYLOAD_BYTES,
+} from './decoding/decodeSensorAlignment';
+export type {
+  CustomAlignmentDecidegrees,
+  SensorAlignment,
+  SensorAlignmentKind,
+  SensorAlignmentValue,
+} from './decoding/decodeSensorAlignment';
+export {
+  decodeSensorConfigActive,
+  SENSOR_CONFIG_ACTIVE_BYTES,
+  SENSOR_NOT_AVAILABLE,
+  SENSOR_NOT_AVAILABLE_RAW,
+} from './decoding/decodeSensorConfigActive';
+export type {
+  DetectedSensor,
+  SensorConfigActive,
+  SensorNotAvailable,
+} from './decoding/decodeSensorConfigActive';
+export {decodeGyroSensorActive} from './decoding/decodeGyroSensorActive';
+export type {GyroSensorActive} from './decoding/decodeGyroSensorActive';
+export {decodeAccTrim, ACC_TRIM_PAYLOAD_BYTES} from './decoding/decodeAccTrim';
+export type {AccTrim} from './decoding/decodeAccTrim';
+export {
+  decodeCompassConfig,
+  COMPASS_CONFIG_PAYLOAD_BYTES,
+} from './decoding/decodeCompassConfig';
+export type {CompassConfig} from './decoding/decodeCompassConfig';
+export {
+  encodeSensorConfig,
+  sensorConfigContractFor,
+  sensorConfigWriteFrom,
+} from './encoding/encodeSensorConfig';
+export type {SensorConfigWrite} from './encoding/encodeSensorConfig';
+export {
+  encodeSensorAlignment,
+  CUSTOM_ALIGNMENT_DECIDEGREE_LIMIT,
+  SENSOR_ALIGNMENT_WRITE_BASE_BYTES,
+  SENSOR_ALIGNMENT_WRITE_FULL_BYTES,
+} from './encoding/encodeSensorAlignment';
+export type {SensorAlignmentWrite} from './encoding/encodeSensorAlignment';
+export {
+  encodeAccTrim,
+  ACC_TRIM_LIMIT,
+  ACC_TRIM_WRITE_BYTES,
+} from './encoding/encodeAccTrim';
+export type {AccTrimWrite} from './encoding/encodeAccTrim';
+export {
+  encodeCompassConfig,
+  COMPASS_CONFIG_WRITE_BYTES,
+  MAG_DECLINATION_DECIDEGREE_LIMIT,
+} from './encoding/encodeCompassConfig';
+export type {CompassConfigWrite} from './encoding/encodeCompassConfig';
 
 export { decodeDetailedGps } from './decoding/decodeDetailedGps';
 export type { MspDetailedGps } from './decoding/decodeDetailedGps';
@@ -138,6 +239,33 @@ export {
 export type { MspAdvancedConfig } from './decoding/decodeAdvancedConfig';
 export { decodeMotorConfig } from './decoding/decodeMotorConfig';
 export type { MspMotorConfig } from './decoding/decodeMotorConfig';
+export {
+  decodeBlackboxConfig,
+  BLACKBOX_CONFIG_PAYLOAD_BYTES,
+} from './decoding/decodeBlackboxConfig';
+export type { MspBlackboxConfig } from './decoding/decodeBlackboxConfig';
+export {
+  decodeDataflashSummary,
+  DATAFLASH_FLAG_READY,
+  DATAFLASH_FLAG_SUPPORTED,
+  DATAFLASH_SUMMARY_PAYLOAD_BYTES,
+} from './decoding/decodeDataflashSummary';
+export type { MspDataflashSummary } from './decoding/decodeDataflashSummary';
+export {
+  decodeSdcardSummary,
+  SDCARD_FLAG_CONFIGURED,
+  SDCARD_SUMMARY_PAYLOAD_BYTES,
+} from './decoding/decodeSdcardSummary';
+export type { MspSdcardSummary } from './decoding/decodeSdcardSummary';
+export {
+  encodeBlackboxConfig,
+  BLACKBOX_CONFIG_WRITE_BYTES,
+} from './encoding/encodeBlackboxConfig';
+export {
+  encodeAdvancedConfigDebugMode,
+  ADVANCED_CONFIG_WRITE_BYTES,
+} from './encoding/encodeAdvancedConfigDebugMode';
+export type { BlackboxConfigWrite } from './encoding/encodeBlackboxConfig';
 export { decodeMotor3dConfig } from './decoding/decodeMotor3dConfig';
 export type { MspMotor3dConfig } from './decoding/decodeMotor3dConfig';
 export {
@@ -183,6 +311,8 @@ export {
   RECEIVER_CHANNEL_MAX_COUNT,
 } from './decoding/decodeReceiver';
 export type { MspRcChannels, MspReceiverDeadband } from './decoding/decodeReceiver';
+export { decodeTxInfo } from './decoding/decodeTxInfo';
+export type { MspTxInfo } from './decoding/decodeTxInfo';
 export {
   decodePidTerms,
   decodeRcTuning,
@@ -244,9 +374,33 @@ export type {
   MspFailsafeConfiguration,
   MspRxFailsafeChannel,
   MspFailsafeSnapshot,
+  GpsRescueAvailability,
 } from './decoding/decodeFailsafe';
 export {encodeChangedFailsafeConfiguration} from './encoding/encodeFailsafe';
 export type {FailsafeWriteGroup, EncodedFailsafeWrite} from './encoding/encodeFailsafe';
+export {
+  MSP_GPS_RESCUE,
+  MSP_SET_GPS_RESCUE,
+} from './commands/mspCommands';
+export {
+  decodeGpsRescue,
+  GPS_RESCUE_BASE_BYTES,
+  GPS_RESCUE_WITH_RATES_BYTES,
+  GPS_RESCUE_WITH_MIN_START_BYTES,
+  GPS_RESCUE_FULL_BYTES,
+} from './decoding/decodeGpsRescue';
+export type {
+  MspGpsRescueConfiguration,
+  MspGpsRescuePreservedFields,
+} from './decoding/decodeGpsRescue';
+export {encodeChangedGpsRescue, encodeGpsRescue} from './encoding/encodeGpsRescue';
+export {
+  encodeSelectSetting,
+  isEncodableProfileIndex,
+  SELECT_SETTING_RATE_PROFILE_FLAG,
+  SELECT_SETTING_MAX_INDEX,
+} from './encoding/encodeSelectSetting';
+export type {SelectSettingProfileKind} from './encoding/encodeSelectSetting';
 export {
   MSP_BATTERY_CONFIG,
   MSP_SET_BATTERY_CONFIG,
@@ -332,6 +486,7 @@ export {
   encodeChangedReceiverConfiguration,
 } from './encoding/encodeReceiver';
 export type { ReceiverWriteGroup, EncodedReceiverWrite } from './encoding/encodeReceiver';
+export { encodeFeatureConfig } from './encoding/encodeFeatureConfig';
 
 export {
   checkMspCompatibility,
@@ -340,11 +495,37 @@ export {
 } from './identification/mspCompatibility';
 export type { MspCompatibilityResult } from './identification/mspCompatibility';
 export { deriveFcFamily } from './identification/mspIdentificationTypes';
+export {
+  classifyConnectionStage,
+  connectionStageLabelKey,
+} from './identification/connectionStageTruth';
+export type {
+  ConnectionStage,
+  ConnectionStageEvidence,
+} from './identification/connectionStageTruth';
+export {
+  boardIdentityNames,
+  boardMatchesTarget,
+  describeFlightControllerHardware,
+  isIdentifiedFlightController,
+  resolveCatalogTarget,
+} from './identification/flightControllerNaming';
 export type {
   MspFcFamily,
   MspFcVariant,
   FlightControllerIdentity,
 } from './identification/mspIdentificationTypes';
+export {canEnterConfiguration} from './identification/connectionStageTruth';
+
+export {
+  beginConnectionTrace,
+  getLastConnectionTrace,
+  ConnectionTrace,
+  CONNECTION_TRACE_STAGES,
+  toHex as connectionTraceHex,
+} from './identification/connectionTrace';
+export type {ConnectionTraceStage, ConnectionTraceEntry} from './identification/connectionTrace';
+
 export {
   MspIdentificationService,
   MspIncompatibleFirmwareError,

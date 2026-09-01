@@ -1,3 +1,9 @@
+// ENTRY CLEANUP: SetupScreen now hosts the USB connection workspace
+// (UsbConnectionScreen) for its disconnected state, so importing it pulls
+// in the transport client whose TurboModule must be mocked under Jest -
+// the exact mock App.test.tsx has always used.
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 /**
  * Pass 7.7 - the INTEGRATED acceptance test for the complete Setup
  * screen: all five regions assembled over the real MspSessionCoordinator,
@@ -37,6 +43,8 @@ import {
   MSP_BATTERY_STATE,
   MSP_BOARD_INFO,
   MSP_BOXIDS,
+  MSP_MIXER_CONFIG,
+  MSP_MOTOR_CONFIG,
   MSP_FC_VARIANT,
   MSP_MAG_CALIBRATION,
   MSP_RAW_GPS,
@@ -58,6 +66,10 @@ type Props = NativeStackScreenProps<RootStackParamList, 'Setup'>;
 
 const ARABIC = {
   region1Title: 'إعداد الطائرة',
+  /* SETUP R9 markers: the compact status area's own column/section
+     titles, used as order probes now that the four cards are gone. */
+  orientationTitle: 'حركة متزامنة مع متحكم الطيران',
+  statusColumnTitle: 'الحالة',
   region4Title: 'التشخيص والجاهزية',
   region5Title: 'أدوات وحدة التحكم',
   disconnected: 'غير متصل',
@@ -66,7 +78,7 @@ const ARABIC = {
   toolDisconnected: 'غير متاح: لا يوجد اتصال نشط',
   toolArmed: 'غير متاح: الطائرة مسلّحة',
   toolBackgrounded: 'غير متاح: التطبيق ليس في المقدمة',
-  toolIncompatible: 'غير متاح: يتطلب واجهة MSP 1.47 المدعومة',
+  toolIncompatible: 'غير متاح مع إصدار البرنامج الثابت في هذه اللوحة.',
   toolArmedUnknown: 'غير متاح: تعذّر تأكيد أن الطائرة غير مسلّحة',
   confirmAction: 'نعم، المراوح مفكوكة — تابع',
 };
@@ -194,6 +206,29 @@ function makeFakeClient(sessionId: string) {
   fake.setResponse(MSP_FC_VARIANT, Uint8Array.from(ascii('BTFL')));
   fake.setResponse(MSP_BOARD_INFO, boardInfoPayload());
   fake.setResponse(MSP_ATTITUDE, Uint8Array.from([0, 0, 0, 0, 0, 0]));
+  /* M-F3F P0-B - THE BOARD ANSWERS WHAT AIRCRAFT IT IS.
+     Setup draws the orientation model from the airframe the board
+     reports, so this model now answers the two read-only commands every
+     Betaflight board answers: MSP_MIXER_CONFIG (mixer mode + the yaw
+     flag) and MSP_MOTOR_CONFIG. Adding them completes a board that was
+     silent on questions nothing used to ask - a board that answers
+     nothing is not a more realistic board, and an UNANSWERED command
+     occupies the client's in-flight slot until it times out, which is a
+     property of the harness and not of the product. No assertion in this
+     file is relaxed. */
+  fake.setResponse(MSP_MIXER_CONFIG, Uint8Array.from([3, 0])); // QUAD X, props in
+  fake.setResponse(
+    MSP_MOTOR_CONFIG,
+    Uint8Array.from([
+      ...u16le(1070), // minthrottle (deprecated)
+      ...u16le(2000), // maxthrottle
+      ...u16le(1000), // mincommand
+      4, // motor count
+      14, // motor pole count
+      0, // dshot telemetry disabled
+      0, // esc sensor disabled
+    ]),
+  );
   fake.setResponse(
     MSP_BATTERY_STATE,
     Uint8Array.from([0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0]),
@@ -575,6 +610,49 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
   }
 
   /**
+   * SENSORS B-5: SETUP NO LONGER SETTLES A CALIBRATION ON ITS
+   * ACKNOWLEDGEMENT.
+   *
+   * Both calibration tools are delegated to the Sensors verified
+   * lifecycle, which watches the arming-disable flags until the board
+   * itself says the run ended. So driving one to a result now means
+   * driving the BOARD: the CALIBRATING blocker (bit 12 of the
+   * arming-disable tail) has to rise and then fall. An ack alone leaves
+   * the tool running, and the regression below pins exactly that.
+   */
+  const CALIBRATING_BLOCKER = 1 << 12;
+
+  function startAccCalibration(
+    renderer: ReactTestRenderer.ReactTestRenderer,
+  ): void {
+    act(() => {
+      pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
+    });
+    act(() => {
+      pressable(renderer, 'fc-tools-confirm').props.onPress();
+    });
+  }
+
+  /** Rising then falling CALIBRATING edge - the only evidence that ends
+   *  an accelerometer run as a success. */
+  async function observeCalibrationCompleting(
+    client: ReturnType<typeof makeFakeClient>,
+  ): Promise<void> {
+    await settle(200); // baseline read, the command, the first poll
+    client.setResponse(
+      MSP_STATUS_EX,
+      statusExPayload({ blockerMask: CALIBRATING_BLOCKER }),
+    );
+    await settle(400); // the board reports it is calibrating
+    client.setResponse(MSP_STATUS_EX, statusExPayload());
+    await settle(400); // and stops, which is what completion means
+  }
+
+  /** The observed-completion copy the migrated Setup shows for the
+   *  accelerometer. Not an acknowledgement - a result. */
+  const ACC_CALIBRATION_COMPLETED = 'اكتملت معايرة مقياس التسارع.';
+
+  /**
    * A-6, per the PASS 7.7B.1R causal audit: this test carries an explicit
    * 15 s budget, and it is the ONLY test in this file that does.
    *
@@ -606,27 +684,37 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const { renderer } = await mount('integration-order');
       const text = allText(renderer);
 
-      // FINAL-POLISH PASS: Region 5 ("أدوات وحدة التحكم") now sits
-      // directly below the COMPLETE Orientation section rather than
-      // after Region 4 - the calibration and reboot controls belong
-      // next to the thing they act on. Region 4 keeps its own place
-      // after the telemetry cards; only Region 5 moved.
-      const positions = [
-        text.indexOf(ARABIC.region1Title),
-        text.indexOf('نموذج الاتجاه'),
-        text.indexOf(ARABIC.region5Title),
+      /* SETUP R9: the accepted order is the compact status area
+         (connection, board, firmware, API, arming, battery, detected
+         sensors) FIRST, then the 3D model with its calibration action,
+         then the dense Status/GPS/Build grid, then deep diagnostics
+         (Region 4) and finally the remaining maintenance tools
+         (Region 5). Every probe below is a string the assembled screen
+         actually renders, and every one must be found. */
+      const orderedProbes = [
+        'البطارية', // status chip label - FIRST content
+        ARABIC.orientationTitle, // the model's own title
+        'معايرة مقياس التسارع', // calibration action beside the model
+        ARABIC.statusColumnTitle, // the information grid, after the model
+        ARABIC.region4Title,
+        ARABIC.region5Title,
+      ];
+      const positions = orderedProbes.map(probe => text.indexOf(probe));
+      for (const [index, probe] of orderedProbes.entries()) {
+        expect(`${probe}:${positions[index] >= 0}`).toBe(`${probe}:true`);
+      }
+      expect(text.indexOf(ARABIC.region4Title)).toBeGreaterThan(0);
+      expect(text.indexOf(ARABIC.region5Title)).toBeGreaterThan(
         text.indexOf(ARABIC.region4Title),
-      ].filter(index => index >= 0);
-      expect(text.indexOf(ARABIC.region5Title)).toBeGreaterThan(0);
-      expect(text.indexOf(ARABIC.region4Title)).toBeGreaterThan(
-        text.indexOf(ARABIC.region5Title),
       );
       expect([...positions].sort((a, b) => a - b)).toEqual(positions);
 
       for (const testID of [
-        'setup-top-bar',
+        'setup-chrome-bar',
+        'setup-status-bar',
         'orientation-hero',
-        'telemetry-card-grid',
+        'orientation-calibration-card',
+        'setup-info-grid',
         'diagnostics-section',
         'fc-tools-section',
       ]) {
@@ -658,9 +746,19 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const text = allText(renderer);
       // Region 1 identity, Region 3 live cards, Region 4 compatibility,
       // Region 5 enabled controls - all from the same session.
-      expect(text).toContain('متوافق مع واجهة MSP 1.47');
-      expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
-      expect(text).toEqual(expect.arrayContaining(['ACC', 'GYRO']));
+      expect(text).toContain('متوافق مع هذا الإصدار');
+      /* Region 3's live values now read from the information grid: the
+         FC status counters are its CPU and cycle rows. */
+      expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
+      expect(hasTestID(renderer, 'setup-info-status-cycle')).toBe(true);
+      // SETUP P1: sensors are named with their own detection state, and
+      // R9 moved that naming ABOVE the model into the status chips.
+      expect(text).toEqual(
+        expect.arrayContaining(['ACC — مكتشف', 'GYRO — مكتشف']),
+      );
+      for (const token of ['ACC', 'GYRO']) {
+        expect(hasTestID(renderer, `setup-status-sensor-${token}`)).toBe(true);
+      }
     },
   );
 
@@ -688,7 +786,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     async () => {
       const sessionId = 'integration-generation';
       const { renderer } = await mount(sessionId);
-      expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
+      expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
 
       await act(async () => {
         mspSessionCoordinator.deactivateMspSession(sessionId);
@@ -713,7 +811,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       });
       await settle(2200);
 
-      expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
+      expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
       expect(allText(renderer)).not.toContain(ARABIC.toolDisconnected);
     },
   );
@@ -752,8 +850,12 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       // "ACC" is now also a permanent visual mark on the calibration
       // card, so only the live diagnostics region can prove that the
       // replacement generation did not inherit the old ACC bit.
-      expect(sensorText).toContain('GYRO');
-      expect(sensorText).not.toContain('ACC');
+      // SETUP P1: an exhaustive list makes this assertion STRONGER - the
+      // replacement generation's mask must show GYRO detected AND ACC
+      // explicitly not detected, rather than merely omitting ACC.
+      expect(sensorText).toContain('GYRO — مكتشف');
+      expect(sensorText).toContain('ACC — غير مكتشف');
+      expect(sensorText).not.toContain('ACC — مكتشف');
 
       // The dead client emitting a late frame changes nothing.
       const beforeLateFrame = allText(renderer);
@@ -812,21 +914,70 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const { client, renderer } = await mount(sessionId);
 
       const statusBefore = client.countOf(MSP_STATUS_EX);
-      act(() => {
-        pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
-      });
-      act(() => {
-        pressable(renderer, 'fc-tools-confirm').props.onPress();
-      });
+      const firstOfThisAction = client.commands.length;
+      startAccCalibration(renderer);
       await settle(200);
 
       expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
       expect(client.countOf(MSP_STATUS_EX)).toBeGreaterThan(statusBefore);
-      // The preflight read happened BEFORE the write, in the same session.
-      const order = client.commands;
-      const writeIndex = order.lastIndexOf(MSP_ACC_CALIBRATION);
-      const statusIndex = order.lastIndexOf(MSP_STATUS_EX);
+      /**
+       * The preflight read happened BEFORE the write, in the same
+       * session - measured over the commands THIS action issued.
+       *
+       * `lastIndexOf` over the whole log used to say the same thing and
+       * no longer can: the verified lifecycle keeps reading STATUS_EX
+       * after the write, because that is how it observes the calibration
+       * ending. Those later reads are the migration working, so the
+       * window is what narrowed here, never the requirement - a write
+       * with no fresh status ahead of it inside its own action still
+       * fails.
+       */
+      const action = client.commands.slice(firstOfThisAction);
+      const writeIndex = action.indexOf(MSP_ACC_CALIBRATION);
+      expect(writeIndex).toBeGreaterThanOrEqual(0);
+      const statusIndex = action.lastIndexOf(MSP_STATUS_EX, writeIndex);
+      expect(statusIndex).toBeGreaterThanOrEqual(0);
       expect(statusIndex).toBeLessThan(writeIndex);
+    },
+  );
+
+  /**
+   * SENSORS B-5 §44. The migration's whole point, pinned as its own
+   * regression: the board acknowledges the command and STAYS calibrating,
+   * and Setup must show no success while that is true.
+   */
+  itOwningRenderer(
+    'an acknowledged calibration that is still running shows NO success in Setup',
+    async () => {
+      const sessionId = 'integration-ack-not-success';
+      const { client, renderer } = await mount(sessionId);
+
+      startAccCalibration(renderer);
+      await settle(200);
+      // Acknowledged - the command went out and was answered.
+      expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+
+      // ...and the board is still inside the calibration.
+      client.setResponse(
+        MSP_STATUS_EX,
+        statusExPayload({ blockerMask: CALIBRATING_BLOCKER }),
+      );
+      await settle(1500);
+
+      const text = allText(renderer);
+      expect(text).not.toContain(ACC_CALIBRATION_COMPLETED);
+      expect(text).not.toContain(TRUTHFUL_ACK);
+      expect(fcToolsController.getPhase()).toEqual({
+        kind: 'RUNNING',
+        tool: 'ACC_CALIBRATION',
+        sessionId,
+      });
+
+      // Only the falling edge ends it, and only then is it a success.
+      client.setResponse(MSP_STATUS_EX, statusExPayload());
+      await settle(400);
+      expect(allText(renderer)).toContain(ACC_CALIBRATION_COMPLETED);
+      expect(fcToolsController.getPhase()).toEqual({ kind: 'IDLE' });
     },
   );
 
@@ -1032,23 +1183,18 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       const sessionId = 'integration-outcome-scope';
       const { client, renderer } = await mount(sessionId);
 
-      act(() => {
-        pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
-      });
-      act(() => {
-        pressable(renderer, 'fc-tools-confirm').props.onPress();
-      });
-      await settle(300);
+      startAccCalibration(renderer);
+      await observeCalibrationCompleting(client);
       expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
-      expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+      expect(allText(renderer)).toContain(ACC_CALIBRATION_COMPLETED);
 
       // Transient detach with NO replacement: the same mounted screen keeps
-      // the acknowledgement it legitimately received.
+      // the result it legitimately observed.
       await act(async () => {
         mspSessionCoordinator.deactivateMspSession(sessionId);
         await flushAsync();
       });
-      expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+      expect(allText(renderer)).toContain(ACC_CALIBRATION_COMPLETED);
 
       // A replacement generation becomes current: revoked immediately.
       const replacement = makeFakeClient(sessionId);
@@ -1060,7 +1206,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
         await flushAsync();
       });
       await settle(2200);
-      expect(allText(renderer)).not.toContain(TRUTHFUL_ACK);
+      expect(allText(renderer)).not.toContain(ACC_CALIBRATION_COMPLETED);
       expect(
         renderer.root.findAll(n => n.props.testID === 'fc-tools-outcome'),
       ).toEqual([]);
@@ -1071,15 +1217,10 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
     'a REMOUNT does not replay the previous outcome or re-announce it as an alert',
     async () => {
       const sessionId = 'integration-outcome-remount';
-      const { renderer } = await mount(sessionId);
-      act(() => {
-        pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
-      });
-      act(() => {
-        pressable(renderer, 'fc-tools-confirm').props.onPress();
-      });
-      await settle(300);
-      expect(allText(renderer)).toContain(TRUTHFUL_ACK);
+      const { client, renderer } = await mount(sessionId);
+      startAccCalibration(renderer);
+      await observeCalibrationCompleting(client);
+      expect(allText(renderer)).toContain(ACC_CALIBRATION_COMPLETED);
 
       act(() => {
         renderer.unmount();
@@ -1092,7 +1233,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
       });
       await settle(300);
 
-      expect(allText(remounted)).not.toContain(TRUTHFUL_ACK);
+      expect(allText(remounted)).not.toContain(ACC_CALIBRATION_COMPLETED);
       expect(
         remounted.root.findAll(n => n.props.testID === 'fc-tools-outcome'),
       ).toEqual([]);
@@ -1103,24 +1244,29 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
   );
 
   itOwningRenderer(
-    'a detach BEFORE the response keeps the conservative unconfirmed result, not an acknowledgement',
+    'an unanswered calibration command is reported as an unconfirmed START, never as a failure',
     async () => {
       const sessionId = 'integration-outcome-detach-first';
       const { client, renderer } = await mount(sessionId, c => {
-        c.hold(MSP_ACC_CALIBRATION);
+        c.hold(MSP_ACC_CALIBRATION); // never answered -> the real 2000ms timeout
       });
-      act(() => {
-        pressable(renderer, 'fc-tool-ACC_CALIBRATION-button').props.onPress();
-      });
-      act(() => {
-        pressable(renderer, 'fc-tools-confirm').props.onPress();
-      });
+      startAccCalibration(renderer);
       await settle(2500);
 
       const text = allText(renderer);
-      expect(text).toContain('تعذّر تأكيد النتيجة. لم يُعَد الإرسال تلقائيًا.');
+      /**
+       * The bytes may have reached the board and it may be calibrating
+       * right now, so "تعذّر إتمام المعايرة" would claim more than was
+       * observed and "اكتملت" would claim the opposite. The only fact is
+       * that the start was never confirmed.
+       */
+      expect(text).toContain('لم نتمكن من تأكيد بدء المعايرة.');
+      expect(text).not.toContain('تعذّر إتمام المعايرة.');
+      expect(text).not.toContain(ACC_CALIBRATION_COMPLETED);
       expect(text).not.toContain(TRUTHFUL_ACK);
       expect(client.countOf(MSP_ACC_CALIBRATION)).toBe(1);
+      // ...and the tool is free again: no eternal busy state.
+      expect(fcToolsController.getPhase()).toEqual({ kind: 'IDLE' });
     },
   );
 
@@ -1178,7 +1324,7 @@ describe('Setup screen - integrated acceptance (Regions 1-5)', () => {
         expect(client.countOf(command)).toBeGreaterThanOrEqual(1);
       }
       // ...the regions that need those answers are populated...
-      expect(hasTestID(renderer, 'fc-card-live')).toBe(true);
+      expect(hasTestID(renderer, 'setup-info-status-cpu')).toBe(true);
       expect(hasTestID(renderer, 'diagnostics-section')).toBe(true);
       expect(pressable(renderer, 'fc-tool-REBOOT-button').props.disabled).toBe(
         false,
@@ -1377,9 +1523,23 @@ describe('Setup screen - layout and accessibility', () => {
         expect(String(control.props.accessibilityLabel).length).toBeGreaterThan(
           0,
         );
-        const styles = control.props.style as Array<
-          { minHeight?: number } | undefined
-        >;
+        // Pressable styles may be a plain array OR the design system's
+        // ({pressed, hovered}) callback form. Resolve the callback at rest;
+        // the >=44dp guarantee is asserted identically either way.
+        const rawStyle = control.props.style as
+          | Array<{ minHeight?: number } | undefined>
+          | ((state: {
+              pressed: boolean;
+              hovered: boolean;
+              focused: boolean;
+            }) => Array<{ minHeight?: number } | undefined>);
+        const resolved =
+          typeof rawStyle === 'function'
+            ? rawStyle({ pressed: false, hovered: false, focused: false })
+            : rawStyle;
+        const styles = (
+          Array.isArray(resolved) ? resolved.flat(Infinity) : [resolved]
+        ) as Array<{ minHeight?: number } | undefined>;
         expect(
           styles.find(style => style?.minHeight !== undefined)?.minHeight,
         ).toBeGreaterThanOrEqual(44);

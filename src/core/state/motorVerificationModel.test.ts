@@ -25,6 +25,7 @@ import {
   type MotorRotationDirection,
   type MotorVerificationState,
 } from './motorVerificationModel';
+import {expectedMotorRotation} from './motorExpectedRotation';
 import type {MotorTestVerificationReceipt} from './motorTestController';
 
 const SESSION = {};
@@ -48,6 +49,14 @@ function receiptFor(
   });
 }
 
+/* M-F2 §14/§16: the direction expectation is an INPUT now, derived from
+   the mixer yaw column + the props flag. Every historical fixture in this
+   file was authored against the shipped PROPS-OUT Quad X reference, so
+   the helper below reproduces exactly that build's expectations - from
+   the honest source rather than the table's direction column. */
+const propsOutExpected = (motorNumber: number) =>
+  expectedMotorRotation(3, motorNumber, true);
+
 function observed(
   position: MotorPhysicalPosition,
   direction: MotorRotationDirection,
@@ -65,6 +74,7 @@ function accept(
     state,
     receiptFor(motorNumber, attemptId),
     observation,
+    propsOutExpected(motorNumber),
   );
   if (result.kind !== 'ACCEPTED') {
     throw new Error(`expected ACCEPTED, got ${result.reason}`);
@@ -112,6 +122,7 @@ describe('Phase 2I - the receipt is the only way in', () => {
       EMPTY_VERIFICATION_STATE,
       receiptFor(1),
       observed('REAR_RIGHT', 'CCW'),
+      propsOutExpected(1),
     );
     expect(result).toEqual({kind: 'REJECTED', reason: 'SESSION_MISMATCH'});
   });
@@ -120,7 +131,12 @@ describe('Phase 2I - the receipt is the only way in', () => {
     const state = beginVerification(SESSION);
     // Value-identical in every field except the session anchor itself.
     const stale = receiptFor(1, 1, OTHER_SESSION);
-    const result = confirmObservation(state, stale, observed('REAR_RIGHT', 'CCW'));
+    const result = confirmObservation(
+      state,
+      stale,
+      observed('REAR_RIGHT', 'CCW'),
+      propsOutExpected(1),
+    );
     expect(result).toEqual({kind: 'REJECTED', reason: 'SESSION_MISMATCH'});
   });
 
@@ -140,7 +156,14 @@ describe('Phase 2I - the receipt is the only way in', () => {
 
   it('refuses an output outside the supported four', () => {
     const state = beginVerification(SESSION);
-    expect(confirmObservation(state, receiptFor(5), observed('FRONT_LEFT', 'CW'))).toEqual({
+    expect(
+      confirmObservation(
+        state,
+        receiptFor(5),
+        observed('FRONT_LEFT', 'CW'),
+        propsOutExpected(5),
+      ),
+    ).toEqual({
       kind: 'REJECTED',
       reason: 'UNSUPPORTED_OUTPUT',
     });
@@ -149,33 +172,65 @@ describe('Phase 2I - the receipt is the only way in', () => {
 
 describe('Phase 2I - classification', () => {
   it('matches only when BOTH position and direction match', () => {
-    expect(classifyObservation(1, observed('REAR_RIGHT', 'CCW'))).toBe('MATCH');
+    expect(classifyObservation(1, observed('REAR_RIGHT', 'CCW'), propsOutExpected(1))).toBe('MATCH');
   });
 
   it('classifies a position mismatch', () => {
-    expect(classifyObservation(1, observed('FRONT_LEFT', 'CCW'))).toBe(
+    expect(classifyObservation(1, observed('FRONT_LEFT', 'CCW'), propsOutExpected(1))).toBe(
       'POSITION_MISMATCH',
     );
   });
 
   it('classifies a direction mismatch', () => {
-    expect(classifyObservation(1, observed('REAR_RIGHT', 'CW'))).toBe(
+    expect(classifyObservation(1, observed('REAR_RIGHT', 'CW'), propsOutExpected(1))).toBe(
       'DIRECTION_MISMATCH',
     );
   });
 
   it('classifies a combined mismatch', () => {
-    expect(classifyObservation(1, observed('FRONT_LEFT', 'CW'))).toBe(
+    expect(classifyObservation(1, observed('FRONT_LEFT', 'CW'), propsOutExpected(1))).toBe(
       'POSITION_AND_DIRECTION_MISMATCH',
     );
   });
 
   it('classifies the explicit exceptional results', () => {
-    expect(classifyObservation(1, {kind: 'NO_MOVEMENT'})).toBe('NO_MOVEMENT');
-    expect(classifyObservation(1, {kind: 'MULTIPLE_MOTORS'})).toBe('MULTIPLE_MOTORS');
+    expect(classifyObservation(1, {kind: 'NO_MOVEMENT'}, propsOutExpected(1))).toBe('NO_MOVEMENT');
+    expect(classifyObservation(1, {kind: 'MULTIPLE_MOTORS'}, propsOutExpected(1))).toBe('MULTIPLE_MOTORS');
     // "Unable to determine" is INCOMPLETE, never matching.
-    expect(classifyObservation(1, {kind: 'POSITION_UNCERTAIN'})).toBe('UNCERTAIN');
-    expect(classifyObservation(1, {kind: 'DIRECTION_UNCERTAIN'})).toBe('UNCERTAIN');
+    expect(classifyObservation(1, {kind: 'POSITION_UNCERTAIN'}, propsOutExpected(1))).toBe('UNCERTAIN');
+    expect(classifyObservation(1, {kind: 'DIRECTION_UNCERTAIN'}, propsOutExpected(1))).toBe('UNCERTAIN');
+  });
+});
+
+describe('M-F2 §14/§16 - the direction verdict follows the props flag', () => {
+  it('reproduces the shipped props-out reference through the derivation', () => {
+    // The bridge between the old table and the new source: at QUADX with
+    // yaw_motors_reversed=true the derivation answers exactly the shipped
+    // expectation, motor for motor.
+    for (const entry of MOTOR_TEST_EXPECTED_CONFIGURATION) {
+      expect(propsOutExpected(entry.motorNumber)).toBe(entry.direction);
+    }
+  });
+
+  it('a props-in aircraft expects the OPPOSITE directions - and a correct motor matches', () => {
+    const propsIn = (motorNumber: number) =>
+      expectedMotorRotation(3, motorNumber, false);
+    // M1 REAR_RIGHT on a props-in Quad X is CW (yaw -1, default build).
+    expect(propsIn(1)).toBe('CW');
+    expect(classifyObservation(1, observed('REAR_RIGHT', 'CW'), propsIn(1))).toBe(
+      'MATCH',
+    );
+    // The SAME observation judged against the props-out build mismatches,
+    // which is what made the old fixed table dangerous.
+    expect(
+      classifyObservation(1, observed('REAR_RIGHT', 'CW'), propsOutExpected(1)),
+    ).toBe('DIRECTION_MISMATCH');
+  });
+
+  it('no direction source means UNCERTAIN, never a guess', () => {
+    expect(classifyObservation(1, observed('REAR_RIGHT', 'CCW'), undefined)).toBe(
+      'UNCERTAIN',
+    );
   });
 });
 
@@ -184,7 +239,12 @@ describe('Phase 2I - immutability after confirmation', () => {
     const state = accept(beginVerification(SESSION), 1, observed('FRONT_LEFT', 'CW'));
     // A later, "corrected" observation must NOT silently erase the
     // recorded contradiction.
-    const second = confirmObservation(state, receiptFor(1), observed('REAR_RIGHT', 'CCW'));
+    const second = confirmObservation(
+      state,
+      receiptFor(1),
+      observed('REAR_RIGHT', 'CCW'),
+      propsOutExpected(1),
+    );
     expect(second).toEqual({kind: 'REJECTED', reason: 'ALREADY_CONFIRMED'});
     expect(state.entries.find(e => e.motorNumber === 1)?.outcome).toBe(
       'POSITION_AND_DIRECTION_MISMATCH',
@@ -194,18 +254,28 @@ describe('Phase 2I - immutability after confirmation', () => {
 
   it('refuses every mutation once finalized', () => {
     const state = finalizeVerification(beginVerification(SESSION));
-    expect(confirmObservation(state, receiptFor(1), observed('REAR_RIGHT', 'CCW'))).toEqual(
-      {kind: 'REJECTED', reason: 'FINALIZED'},
-    );
+    expect(
+      confirmObservation(
+        state,
+        receiptFor(1),
+        observed('REAR_RIGHT', 'CCW'),
+        propsOutExpected(1),
+      ),
+    ).toEqual({kind: 'REJECTED', reason: 'FINALIZED'});
     expect(Object.isFrozen(state)).toBe(true);
   });
 
   it('refuses every further observation once aborted', () => {
     const state = accept(beginVerification(SESSION), 1, {kind: 'MULTIPLE_MOTORS'});
     expect(state.aborted).toBe(true);
-    expect(confirmObservation(state, receiptFor(2), observed('FRONT_RIGHT', 'CW'))).toEqual(
-      {kind: 'REJECTED', reason: 'ABORTED'},
-    );
+    expect(
+      confirmObservation(
+        state,
+        receiptFor(2),
+        observed('FRONT_RIGHT', 'CW'),
+        propsOutExpected(2),
+      ),
+    ).toEqual({kind: 'REJECTED', reason: 'ABORTED'});
   });
 });
 

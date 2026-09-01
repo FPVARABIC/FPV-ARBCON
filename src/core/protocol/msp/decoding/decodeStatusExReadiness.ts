@@ -36,6 +36,11 @@ import {MspPayloadReader} from './MspPayloadReader';
 export interface MspStatusExReadiness {
   /** Present only when the payload actually carried the field. */
   readonly pidProfileCount?: number;
+  /** MSP_STATUS_EX tail, API >= 1.46. Absent on older boards. */
+  readonly cpuTempDeciCelsius?: number;
+  /** MSP_STATUS_EX tail, API >= 1.47 - how many RATE profiles the board
+   * has. Absent on older boards, so a selector must not assume one. */
+  readonly rateProfileCount?: number;
   readonly controlRateProfileIndex?: number;
   /** Extra flight-mode-flag bytes beyond the first 32 bits, verbatim. */
   readonly extraFlightModeFlagBytes?: readonly number[];
@@ -128,7 +133,7 @@ export function decodeStatusExReadiness(payload: Uint8Array): MspStatusExReadine
   const configState = reader.readU8();
   consumed += 1;
 
-  return {
+  const tail = {
     pidProfileCount,
     controlRateProfileIndex,
     extraFlightModeFlagBytes,
@@ -137,4 +142,32 @@ export function decodeStatusExReadiness(payload: Uint8Array): MspStatusExReadine
     // bit0 = getRebootRequired() at the pinned authority.
     rebootRequired: configState % 2 === 1,
   };
+
+  /**
+   * WHAT FOLLOWS configState, and why each step is length-guarded.
+   *
+   * Betaflight appends to the END of this frame as versions advance, and
+   * MSPHelper.js reads each addition behind its own API gate:
+   *
+   *   1.46  cpuTemp                u16
+   *   1.47  numberOfRateProfiles   u8
+   *   1.48  numberOfBatteryProfiles u8, batteryProfile u8
+   *
+   * Reading by LENGTH rather than by version is deliberate and is the
+   * same rule the rest of this decoder follows: a board that carries the
+   * bytes is read, one that does not is reported as absent, and a
+   * firmware newer than this build simply leaves bytes we never touch.
+   * Nothing here fabricates a count.
+   */
+  if (remaining() < 2) {
+    return tail;
+  }
+  const cpuTempDeciCelsius = reader.readU16LE();
+  consumed += 2;
+  if (remaining() < 1) {
+    return {...tail, cpuTempDeciCelsius};
+  }
+  const rateProfileCount = reader.readU8();
+  consumed += 1;
+  return {...tail, cpuTempDeciCelsius, rateProfileCount};
 }

@@ -63,6 +63,11 @@ function createFakeScheduler(): MspTelemetryScheduler & {
       // Never called by MspOperationCoordinator.
       return () => undefined;
     },
+    acquirePollIntervalOverride(): () => void {
+      // Never called by MspOperationCoordinator either - cadence boosts
+      // are acquired by screen-scoped telemetry owners, not by operations.
+      return () => undefined;
+    },
     acquirePauseLease(): TelemetryPauseLease {
       fake.acquirePauseLeaseCallCount += 1;
       fake.leaseReleased = false;
@@ -86,6 +91,11 @@ function createFakeScheduler(): MspTelemetryScheduler & {
     requestRefresh(ids: readonly string[]): void {
       fake.requestRefreshCalls.push(ids);
       fake.callOrder.push('requestRefresh');
+    },
+    getConsecutiveLinkFailureCount() {
+      // Never consulted by MspOperationCoordinator; present so the fake
+      // satisfies the interface.
+      return 0;
     },
     describeDiagnostics() {
       // Never called by MspOperationCoordinator - the Checkpoint F
@@ -382,5 +392,109 @@ describe('MspOperationCoordinator - getState()', () => {
     await resultPromise;
 
     expect(coordinator.getState()).toEqual({status: 'IDLE'});
+  });
+});
+
+/**
+ * THE UNBOUNDED WAIT THAT SPINS TEN SCREENS AT ONCE.
+ *
+ * `waitUntilIdle()` resolves from the `.finally()` of whatever polls were
+ * in flight when it was called. A poll that never settles is a promise
+ * that never settles, and every configuration screen's load and save
+ * awaits this same line - so the interesting case is not "does it
+ * eventually work" but "what does the screen see when it never does".
+ */
+describe('MspOperationCoordinator - the wait for idle is bounded', () => {
+  it('returns SESSION_ENDED, releases the pause lease and never dispatches when the scheduler never goes idle', async () => {
+    const scheduler = createFakeScheduler();
+    const sessionSource = createFakeSessionSource({sessionId: 's1', generation: 1});
+    let fire: (() => void) | undefined;
+    let requestedMs: number | undefined;
+    let cleared = 0;
+    const coordinator = makeCoordinator(scheduler, sessionSource, {
+      waitForIdleTimeoutMs: 6_000,
+      setTimer: (handler, ms) => {
+        requestedMs = ms;
+        fire = handler;
+        return 'handle';
+      },
+      clearTimer: () => {
+        cleared += 1;
+      },
+    });
+
+    const op = createControllableOperation<number>();
+    const resultPromise = coordinator.execute(op);
+    await flush();
+
+    // The operation is genuinely stuck at step 5 - not failed, not started.
+    expect(scheduler.idleCalled).toBe(true);
+    expect(op.executeCallCount).toBe(0);
+    expect(requestedMs).toBe(6_000);
+
+    // Nothing else happens. The deadline is the only thing that moves.
+    fire?.();
+    const result = await resultPromise;
+
+    expect(result).toEqual({status: 'SESSION_ENDED', reason: 'SESSION_CLOSED'});
+    // An exclusive write must never be dispatched onto a link that never
+    // went quiet - the timeout REFUSES to start, it does not start blind.
+    expect(op.executeCallCount).toBe(0);
+    // The pause lease is handed back, or telemetry stays paused forever
+    // and the next screen sees a link that answers nothing.
+    expect(scheduler.leaseReleased).toBe(true);
+    // Back to IDLE, so the operator can try again without a reload.
+    expect(coordinator.getState()).toEqual({status: 'IDLE'});
+    expect(cleared).toBe(1);
+  });
+
+  it('clears the deadline timer on the ordinary path, so it cannot fire into an operation that already moved on', async () => {
+    const scheduler = createFakeScheduler();
+    const sessionSource = createFakeSessionSource({sessionId: 's1', generation: 1});
+    let cleared = 0;
+    const coordinator = makeCoordinator(scheduler, sessionSource, {
+      setTimer: () => 'handle',
+      clearTimer: () => {
+        cleared += 1;
+      },
+    });
+
+    const op = createControllableOperation<number>();
+    const resultPromise = coordinator.execute(op);
+    await flush();
+    scheduler.resolveIdle();
+    await flush();
+    op.resolveExecute(7);
+
+    expect(await resultPromise).toEqual({status: 'SUCCEEDED', result: 7});
+    expect(cleared).toBe(1);
+  });
+
+  it('lets a second operation run normally after the first one timed out waiting for idle', async () => {
+    const scheduler = createFakeScheduler();
+    const sessionSource = createFakeSessionSource({sessionId: 's1', generation: 1});
+    let fire: (() => void) | undefined;
+    const coordinator = makeCoordinator(scheduler, sessionSource, {
+      setTimer: handler => {
+        fire = handler;
+        return 'handle';
+      },
+      clearTimer: () => undefined,
+    });
+
+    const first = coordinator.execute(createControllableOperation<number>());
+    await flush();
+    fire?.();
+    await first;
+
+    // The RUNNING guard must not still be holding the door shut.
+    const second = createControllableOperation<number>({id: 'op-2'});
+    const secondPromise = coordinator.execute(second);
+    await flush();
+    scheduler.resolveIdle();
+    await flush();
+    second.resolveExecute(42);
+
+    expect(await secondPromise).toEqual({status: 'SUCCEEDED', result: 42});
   });
 });

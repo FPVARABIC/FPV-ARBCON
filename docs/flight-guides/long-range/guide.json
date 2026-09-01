@@ -1,0 +1,282 @@
+{
+  "id": "long-range",
+  "kind": "FLIGHT_STYLE",
+  "title_ar": "المدى الطويل",
+  "title_en": "Long Range",
+  "description_ar": "الطيران خارج مدى البصر. النمط الوحيد الذي يكون فيه فقد الإشارة حدثًا متوقعًا لا حادثًا.",
+  "description_en": "Flying beyond visual line of sight — the one style where signal loss is a planned event, not an accident.",
+  "difficulty": "advanced",
+  "difficulty_ar": "متقدم",
+  "intended_aircraft": [
+    "7 إنش",
+    "6 إنش",
+    "5 إنش خفيفة بمراوح كبيرة"
+  ],
+  "required_screens": [
+    "FailsafeScreen",
+    "GpsScreen",
+    "PortsScreen",
+    "ModesScreen",
+    "PowerBatteryScreen",
+    "OsdScreen"
+  ],
+  "optional_screens": [
+    "PidTuningScreen",
+    "ReceiverScreen",
+    "VideoTransmitterScreen"
+  ],
+  "hardware_requirements": [
+    "وحدة GPS موصولة على UART مضبوط",
+    "بوصلة (اختيارية لكن موصى بها بشدة)",
+    "رابط راديو بعيد المدى",
+    "هوائي مرسل فيديو مركّب — الطاقة أعلى في هذا النمط"
+  ],
+  "hardware_verification_status": "NOT VERIFIED — DEFERRED",
+  "verification_level": "SOFTWARE / REFERENCE VERIFIED",
+  "image": "_shared/images/failsafe-and-rescue.png",
+  "sources": [
+    "S1.5",
+    "S1.10c",
+    "S1.12d",
+    "S2.1"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "المنافذ",
+      "screen": "المنافذ · منفذ GPS",
+      "screenshot": "images/1-ports.png",
+      "targets": [
+        {
+          "control": "ports-screen",
+          "kind": "contains",
+          "expected": "GPS / GNSS",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "المستقبل",
+      "screen": "المستقبل · المصدر و RSSI",
+      "screenshot": "images/2-receiver-cutoffs.png",
+      "targets": [
+        {
+          "control": "receiver-setpoint-cutoff",
+          "kind": "stepper",
+          "expected": "10",
+          "source": "S1.5"
+        },
+        {
+          "control": "receiver-throttle-cutoff",
+          "kind": "stepper",
+          "expected": "15",
+          "source": "S1.5"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title_ar": "GPS",
+      "screen": "GPS · التفعيل و Home والدقة",
+      "screenshot": "images/3-gps.png",
+      "targets": [
+        {
+          "control": "gps-screen",
+          "kind": "contains",
+          "expected": "UART2",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "title_ar": "GPS Rescue",
+      "screen": "Failsafe · معاملات GPS Rescue",
+      "screenshot": "images/4-gps-rescue.png",
+      "targets": [
+        {
+          "control": "failsafe-gps-return-altitude",
+          "kind": "stepper",
+          "expected": "30 م",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-ground-speed",
+          "kind": "stepper",
+          "expected": "7.5 م/ث",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-descend-rate",
+          "kind": "stepper",
+          "expected": "1.5 م/ث",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-min-sats",
+          "kind": "stepper",
+          "expected": "8",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-allow-arming-0",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-allow-arming-1",
+          "kind": "option",
+          "expected": "not-selected",
+          "source": "S1.12d"
+        },
+        {
+          "control": "failsafe-gps-sanity-2",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.12d"
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "title_ar": "الأوضاع",
+      "screen": "الأوضاع · GPS Rescue على مفتاح",
+      "screenshot": "images/5-modes.png",
+      "targets": [
+        {
+          "control": "modes-screen",
+          "kind": "contains",
+          "expected": "GPS RESCUE",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "title_ar": "الطاقة والبطارية",
+      "screen": "الطاقة · مثال 6S",
+      "screenshot": "images/6-power.png",
+      "targets": [
+        {
+          "control": "power-cell-warning",
+          "kind": "stepper",
+          "expected": "3.50 V",
+          "source": "C"
+        },
+        {
+          "control": "power-live",
+          "kind": "contains",
+          "expected": "6S",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 7,
+      "title_ar": "مرسل الفيديو — الطاقة ومستوياتها الحقيقية",
+      "screen": "مرسل الفيديو · القناة والطاقة",
+      "screenshot": "images/7-vtx.png",
+      "targets": [
+        {
+          "control": "vtx-power-4",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        },
+        {
+          "control": "vtx-low-power-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 8,
+      "title_ar": "OSD",
+      "screen": "OSD · إنذارات السلامة",
+      "screenshot": "images/8-osd-alarms.png",
+      "targets": [
+        {
+          "control": "osd-rssi-dbm",
+          "kind": "stepper",
+          "expected": "-100 dBm",
+          "source": "C"
+        },
+        {
+          "control": "osd-lq",
+          "kind": "stepper",
+          "expected": "60%",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 9,
+      "title_ar": "إحساس العصا",
+      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "screenshot": "images/9-pid-feel.png",
+      "targets": [
+        {
+          "control": "pid-ff-jitter",
+          "kind": "stepper",
+          "expected": "10",
+          "source": "S1.5"
+        },
+        {
+          "control": "pid-ff-boost",
+          "kind": "stepper",
+          "expected": "0",
+          "source": "S1.5"
+        },
+        {
+          "control": "pid-ff-averaging-0",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.5"
+        }
+      ]
+    }
+  ],
+  "step_count": 9,
+  "decisions": [
+    {
+      "requirement": "المحركات و Dynamic Idle",
+      "decision": "ACTION",
+      "detail": "فعّل Bidirectional DShot، واضبط عدد الأقطاب على محركك، واضبط Dynamic Idle على **30** (×100 rpm) لمقاس 7\". من شاشة المحركات وشاشة ضبط PID.",
+      "source": "S1.10c"
+    },
+    {
+      "requirement": "Rates",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "لا توجد Rates رسمية للمدى الطويل. المبدأ: أبطأ من ملفك المعتاد — أنت تطير في خط مستقيم طويلًا لا تنعطف بحدة. والرقم اختيارك.",
+      "source": null
+    },
+    {
+      "requirement": "قيم PID (P · I · D)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "إعداد المدى الطويل الرسمي يغيّر إحساس العصا والتنعيم فقط، ولا يلمس P أو I أو D.",
+      "source": "S1.5"
+    },
+    {
+      "requirement": "الفلاتر",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتبع ضبط مقاسك. القيمة المرجعية لمقاس 7\" هي أدنى فلتر ديناميكي 40Hz، لأن الهيكل الطويل يرنّ عند تردد أخفض.",
+      "source": "S1.10c"
+    },
+    {
+      "requirement": "قراءة جودة الرابط (LQ) و RSSI بوحدة dBm",
+      "decision": "NOT_APPLICABLE",
+      "detail": "**غير موجودتين في عقد MSP إطلاقًا**، فلا يستطيع أي تطبيق MSP عرضهما حيًّا. تراهما في نظارتك عبر OSD؛ التطبيق يضبط عتبة الإنذار فقط (الخطوة 8).",
+      "source": null
+    },
+    {
+      "requirement": "نوع التثبيت (2D/3D) و HDOP/VDOP",
+      "decision": "NOT_APPLICABLE",
+      "detail": "بروتوكول الاتصال مع المتحكم يرسل **بت تثبيت واحدًا و PDOP وحده** — لا 2D/3D ولا HDOP/VDOP. التطبيق يعرض PDOP بالاسم الصحيح ولا يخترع بديلًا. اسم الأمر نفسه في `_meta/sources.md` § S2.2.",
+      "source": null
+    }
+  ]
+}

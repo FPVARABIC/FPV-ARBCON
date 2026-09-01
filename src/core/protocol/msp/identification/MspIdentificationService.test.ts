@@ -1,7 +1,6 @@
 import {MspIdentificationService, MspIncompatibleFirmwareError} from './MspIdentificationService';
 import type {MspRequester} from './MspIdentificationService';
 import {MSP_API_VERSION, MSP_BOARD_INFO, MSP_FC_VARIANT} from '../commands/mspCommands';
-import {MspPayloadReadError} from '../decoding/MspPayloadReader';
 import type {MspFrame} from '../../mspTypes';
 import type {MspRequestOptions} from '../../mspClient';
 
@@ -152,7 +151,14 @@ describe('MspIdentificationService - request rejections propagate unchanged, sto
     expect(requester.calls.map(call => call.command)).toEqual([MSP_API_VERSION, MSP_FC_VARIANT]);
   });
 
-  it('MSP_BOARD_INFO rejecting propagates that error', async () => {
+  it('MSP_BOARD_INFO rejecting does NOT fail identification - it records why', async () => {
+    // Reversed deliberately. This test used to pin "a BOARD_INFO rejection
+    // propagates and stops the sequence", which makes optional metadata a
+    // precondition for being connected. The pinned Betaflight Configurator
+    // does the opposite: serial_backend.js onOpen() has already accepted
+    // the connection by this point (api version + "BTFL" variant), and
+    // processBoardInfo() cannot abort it. A board whose MSP_BOARD_INFO
+    // times out is a connected board with unknown metadata.
     const requester = new FakeMspRequester();
     requester.scriptResponse(MSP_API_VERSION, apiVersionPayload(48));
     requester.scriptResponse(MSP_FC_VARIANT, fcVariantPayload('BTFL'));
@@ -160,29 +166,32 @@ describe('MspIdentificationService - request rejections propagate unchanged, sto
     requester.scriptRejection(MSP_BOARD_INFO, boardInfoError);
     const service = new MspIdentificationService(requester);
 
-    await expect(service.identify()).rejects.toBe(boardInfoError);
+    const identity = await service.identify();
+    expect(identity.firmware.identifier).toBe('BTFL');
+    expect(identity.boardInfoUnavailableReason).toContain('simulated MSP_BOARD_INFO failure');
+    expect(identity.board.boardName).toBe('');
     expect(requester.calls.map(call => call.command)).toEqual([MSP_API_VERSION, MSP_FC_VARIANT, MSP_BOARD_INFO]);
   });
 });
 
 describe('MspIdentificationService - decode failures are enriched with which command failed', () => {
-  it('a malformed MSP_BOARD_INFO response rejects with an MspPayloadReadError whose message includes the MSP_BOARD_INFO command number (4)', async () => {
+  it('a MALFORMED MSP_BOARD_INFO response is tolerated and marked truncated, not rejected', async () => {
+    // Also reversed, and for the same Betaflight-parity reason as above:
+    // its reader returns null past the end of a payload rather than
+    // throwing (src/js/injected_methods.js), so a two-byte BOARD_INFO
+    // leaves Betaflight connected with empty names. The command-number
+    // enrichment in decodeOrThrow() is retained for any decoder that IS
+    // strict; BOARD_INFO simply no longer reaches it.
     const requester = new FakeMspRequester();
     requester.scriptResponse(MSP_API_VERSION, apiVersionPayload(48));
     requester.scriptResponse(MSP_FC_VARIANT, fcVariantPayload('BTFL'));
-    // Far too short to satisfy MSP_BOARD_INFO's own guaranteed-prefix fields.
     requester.scriptResponse(MSP_BOARD_INFO, Uint8Array.from([1, 2]));
     const service = new MspIdentificationService(requester);
 
-    let caught: unknown;
-    try {
-      await service.identify();
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(caught).toBeInstanceOf(MspPayloadReadError);
-    expect((caught as Error).message).toContain(`MSP command ${MSP_BOARD_INFO}`);
+    const identity = await service.identify();
+    expect(identity.board.truncated).toBe(true);
+    expect(identity.board.boardName).toBe('');
+    expect(identity.boardInfoUnavailableReason).toBeUndefined();
     expect(MSP_BOARD_INFO).toBe(4);
   });
 });

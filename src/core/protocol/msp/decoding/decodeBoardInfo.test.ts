@@ -1,5 +1,4 @@
 import {decodeBoardInfo} from './decodeBoardInfo';
-import {MspPayloadReadError} from './MspPayloadReader';
 
 function ascii(text: string): number[] {
   return text.split('').map(c => c.charCodeAt(0));
@@ -99,10 +98,20 @@ describe('decodeBoardInfo - full/minimal/extra optional-field payloads', () => {
     expect(result.trailingBytes).toEqual(Uint8Array.from(extra));
   });
 
-  it('throws MspPayloadReadError for a payload shorter than the minimum required (guaranteed-prefix) fields', () => {
-    // Only the first 3 bytes of the mandatory boardIdentifier(4)+... prefix.
+  it('TOLERATES a payload shorter than the guaranteed prefix, exactly as Betaflight does', () => {
+    // This used to assert a throw. The pinned Betaflight Configurator
+    // decodes MSP_BOARD_INFO with a reader that returns null past the end
+    // (src/js/injected_methods.js) and a handler that reads every field
+    // unconditionally (src/js/msp/MSPHelper.js), so a short response makes
+    // it connect with partial metadata rather than fail. Throwing here
+    // meant refusing a flight controller Betaflight can read, which is the
+    // defect this decoder was changed to fix - so the contract, and this
+    // test with it, is now tolerance plus an explicit `truncated` fact.
     const bytes = Uint8Array.from(baseFields().slice(0, 3));
-    expect(() => decodeBoardInfo(bytes)).toThrow(MspPayloadReadError);
+    const result = decodeBoardInfo(bytes);
+    expect(result.truncated).toBe(true);
+    expect(result.boardName).toBe('');
+    expect(result.targetName).toBe('');
   });
 });
 

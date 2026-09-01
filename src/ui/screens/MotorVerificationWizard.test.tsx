@@ -27,9 +27,15 @@ import {
   type MotorObservation,
   type MotorVerificationState,
 } from '../../core/state/motorVerificationModel';
+import {expectedMotorRotation} from '../../core/state/motorExpectedRotation';
 import type {MotorTestVerificationReceipt} from '../../core/state/motorTestController';
 
 const SESSION = {};
+
+/* Every fixture in this file was authored against the shipped PROPS-OUT
+   Quad X reference; the derivation reproduces that build exactly. */
+const propsOutExpected = (motorNumber: number) =>
+  expectedMotorRotation(3, motorNumber, true);
 
 function receiptFor(motorNumber: number, attemptId = motorNumber, sessionToken: object = SESSION): MotorTestVerificationReceipt {
   return Object.freeze({
@@ -90,7 +96,7 @@ beforeAll(async () => {
 describe('Phase 2I - the wizard requires an eligible receipt', () => {
   it('offers no questions at all without a receipt', () => {
     const rendered = mount(
-      <MotorVerificationWizard
+      <MotorVerificationWizard expectedDirectionFor={propsOutExpected}
         receipt={undefined}
         state={beginVerification(SESSION)}
         onConfirm={() => undefined}
@@ -104,7 +110,7 @@ describe('Phase 2I - the wizard requires an eligible receipt', () => {
 
   it('shows the exact output named by the receipt, and its expectation', () => {
     const rendered = mount(
-      <MotorVerificationWizard
+      <MotorVerificationWizard expectedDirectionFor={propsOutExpected}
         receipt={receiptFor(3)}
         state={beginVerification(SESSION)}
         onConfirm={() => undefined}
@@ -157,7 +163,7 @@ describe('Phase 2I - correcting before confirmation, immutable after', () => {
     const calls: {motor: number; observation: MotorObservation}[] = [];
     const state = beginVerification(SESSION);
     const rendered = mount(
-      <MotorVerificationWizard
+      <MotorVerificationWizard expectedDirectionFor={propsOutExpected}
         receipt={receiptFor(1)}
         state={state}
         onConfirm={(receipt, observation) =>
@@ -165,14 +171,20 @@ describe('Phase 2I - correcting before confirmation, immutable after', () => {
         }
       />,
     );
-    // Confirm is inert until both answers exist.
-    rendered.press('verification-confirm');
+    // The questions are staged now, so there is no confirm control at all
+    // until both answers exist - a stronger form of "confirm is inert".
+    expect(rendered.query('verification-confirm')).toBeUndefined();
     expect(calls).toEqual([]);
 
     rendered.press('verification-position-FRONT_LEFT');
     rendered.press('verification-direction-CW');
-    // Corrected before confirming.
+    // Corrected before confirming, through the staged step-back controls.
+    // Withdrawing the position does not withdraw the direction, so
+    // re-answering the position returns to review with CW still selected -
+    // which is what the second step-back is for.
+    rendered.press('verification-change-position');
     rendered.press('verification-position-REAR_RIGHT');
+    rendered.press('verification-change-direction');
     rendered.press('verification-direction-CCW');
     rendered.press('verification-confirm');
 
@@ -190,12 +202,13 @@ describe('Phase 2I - correcting before confirmation, immutable after', () => {
       beginVerification(SESSION),
       receiptFor(1),
       {kind: 'OBSERVED', position: 'REAR_RIGHT', direction: 'CCW'},
+      propsOutExpected(1),
     );
     if (confirmed.kind !== 'ACCEPTED') {
       throw new Error('fixture');
     }
     const rendered = mount(
-      <MotorVerificationWizard
+      <MotorVerificationWizard expectedDirectionFor={propsOutExpected}
         receipt={receiptFor(1)}
         state={confirmed.state}
         onConfirm={() => undefined}
@@ -209,7 +222,7 @@ describe('Phase 2I - correcting before confirmation, immutable after', () => {
   it('raises the multiple-motor abort to the host', () => {
     let aborted = 0;
     const rendered = mount(
-      <MotorVerificationWizard
+      <MotorVerificationWizard expectedDirectionFor={propsOutExpected}
         receipt={receiptFor(2)}
         state={beginVerification(SESSION)}
         onConfirm={() => undefined}
@@ -232,7 +245,7 @@ describe('Phase 2I - the read-only report', () => {
         kind: 'OBSERVED',
         position: entry.position,
         direction: entry.direction,
-      });
+      }, propsOutExpected(entry.motorNumber));
       if (result.kind !== 'ACCEPTED') {
         throw new Error('fixture');
       }
@@ -243,7 +256,7 @@ describe('Phase 2I - the read-only report', () => {
 
   it('states only that the OBSERVATIONS matched, with the safety caveat', () => {
     const rendered = mount(
-      <MotorTestReport state={fullyMatching()} safeTeardownConfirmed />,
+      <MotorTestReport expectedDirectionFor={propsOutExpected} state={fullyMatching()} safeTeardownConfirmed />,
     );
     expect(
       rendered.query('report-overall-OBSERVATIONS_MATCH_EXPECTED'),
@@ -257,7 +270,7 @@ describe('Phase 2I - the read-only report', () => {
 
   it('carries the observation disclaimer', () => {
     const rendered = mount(
-      <MotorTestReport state={fullyMatching()} safeTeardownConfirmed />,
+      <MotorTestReport expectedDirectionFor={propsOutExpected} state={fullyMatching()} safeTeardownConfirmed />,
     );
     expect(rendered.json()).toContain(
       'هذه النتيجة مبنية على ملاحظتك البصرية، وليست قياسًا تلقائيًا من وحدة التحكم.',
@@ -267,7 +280,7 @@ describe('Phase 2I - the read-only report', () => {
 
   it('never claims rotation, direction proof, physical stop, or safety to fly', () => {
     const rendered = mount(
-      <MotorTestReport state={fullyMatching()} safeTeardownConfirmed />,
+      <MotorTestReport expectedDirectionFor={propsOutExpected} state={fullyMatching()} safeTeardownConfirmed />,
     );
     const rendering = rendered.json();
     for (const forbidden of [
@@ -285,7 +298,7 @@ describe('Phase 2I - the read-only report', () => {
 
   it('refuses a normal completed report when final teardown was not safe', () => {
     const rendered = mount(
-      <MotorTestReport state={fullyMatching()} safeTeardownConfirmed={false} />,
+      <MotorTestReport expectedDirectionFor={propsOutExpected} state={fullyMatching()} safeTeardownConfirmed={false} />,
     );
     // Even four perfect observations cannot produce a completed report
     // when the software stop itself is unproven.
@@ -299,7 +312,7 @@ describe('Phase 2I - the read-only report', () => {
 
   it('exposes no operator capability at all', () => {
     const rendered = mount(
-      <MotorTestReport state={fullyMatching()} safeTeardownConfirmed />,
+      <MotorTestReport expectedDirectionFor={propsOutExpected} state={fullyMatching()} safeTeardownConfirmed />,
     );
     // No pressable, no handler: a finalized report cannot start, stop or
     // re-run anything.
@@ -312,7 +325,7 @@ describe('Phase 2I - the read-only report', () => {
 
   it('marks the report read-only and session-scoped', () => {
     const rendered = mount(
-      <MotorTestReport state={fullyMatching()} safeTeardownConfirmed />,
+      <MotorTestReport expectedDirectionFor={propsOutExpected} state={fullyMatching()} safeTeardownConfirmed />,
     );
     expect(rendered.query('report-readonly-notice')).toBeDefined();
     rendered.unmount();
@@ -351,23 +364,13 @@ describe('Motor flow entry after the single-app merge', () => {
     expect(panelsCode).toContain('__DEV__');
   });
 
-  it('removed the duplicate entry POINT from the connection screen, not just its import', () => {
-    const host = readFileSync(join(__dirname, 'UsbConnectionScreen.tsx'), 'utf8');
-    const code = host
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
-      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
-    // No import, no render site, no navigate() to a motors route.
-    expect(code).not.toContain('DevBenchEntry');
-    expect(code).not.toContain('MotorsDevEntry');
-    expect(code).not.toContain("'Motors'");
-    for (const forbidden of [
-      'createMotorTestSessionBinding',
-      'operatorPort',
-      'pulseMotor',
-    ]) {
-      expect(code).not.toContain(forbidden);
-    }
+  it('removed the duplicate entry POINT WITH the connection screen it lived on', () => {
+    // The seam this guarded was a second way into Motors, rendered by a
+    // standalone connection screen. That screen is gone from the product
+    // entirely, which closes the seam more completely than deleting the
+    // render site did - there is no host left to put it back on.
+    expect(existsSync(join(__dirname, 'UsbConnectionScreen.tsx'))).toBe(false);
+    expect(existsSync(join(__dirname, 'ConnectWorkspaceScreen.tsx'))).toBe(false);
   });
 
   it('keeps the app entry free of any direct motor-flow import', () => {

@@ -27,16 +27,24 @@
 
 import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
+
+import { Icon } from '../../icons';
+import { readInteraction } from '../controls/interaction';
+import { firmwareFamilyLabel } from '../../presentation/brandSafeText';
 import { useTranslation } from 'react-i18next';
 
-import { BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION } from '../../../core';
+import {
+  BLOCKER_TOKENS_WITH_PROVEN_DESCRIPTION,
+  deriveSetupSensorSummary,
+} from '../../../core';
 import type {
   DiagnosticsBlockers,
   DiagnosticsDataState,
   DiagnosticsSensors,
   SetupDiagnosticsView,
+  SetupSensorState,
 } from '../../../core';
-import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../../theme';
 
 /** The exact translate function useTranslation() hands back - keeps the
  * two pure copy helpers below out of the component without loosening
@@ -92,10 +100,19 @@ export default function DiagnosticsSection({
       t('diagnostics.identityBoard', { value: view.identity.boardName }),
     );
     identityLines.push(
+      // The wire protocol version was here too. It is developer information -
+      // the operator cannot change it and it is printed on no hardware - so it
+      // stays in the diagnostics EXPORT and out of the always-visible panel.
+      //
+      // The RAW WIRE IDENTIFIER used to be what this line printed, so the
+      // panel read "البرنامج الثابت: BTFL". Four characters, but they are an
+      // external project's name in shorthand and an operator reads them as
+      // one - the same claim of association a full spelling would make. What
+      // the line reports now is the capability those characters imply, via
+      // the one function that owns that vocabulary. `firmwareIdentifier` is
+      // untouched in the model and still goes out in the diagnostics export.
       t('diagnostics.identityFirmware', {
-        identifier: view.identity.firmwareIdentifier,
-        major: view.identity.apiVersionMajor,
-        minor: view.identity.apiVersionMinor,
+        value: firmwareFamilyLabel(view.identity.family),
       }),
     );
   }
@@ -120,7 +137,13 @@ export default function DiagnosticsSection({
         onPress={() => setDetailsOpen(current => !current)}
         accessibilityRole="button"
         accessibilityState={{ expanded: detailsOpen }}
-        style={styles.sectionHeader}
+        style={state => {
+          const {pressed, hovered} = readInteraction(state);
+          return [
+            styles.sectionHeader,
+            (hovered || pressed) && styles.sectionHeaderActive,
+          ];
+        }}
         testID="diagnostics-toggle"
       >
         <View style={styles.sectionHeading}>
@@ -141,7 +164,11 @@ export default function DiagnosticsSection({
                 : 'diagnostics.showDetails',
             )}
           </Text>
-          <Text style={styles.toggleIcon}>{detailsOpen ? '⌃' : '⌄'}</Text>
+          <Icon
+            name={detailsOpen ? 'chevron-up' : 'chevron-down'}
+            size={18}
+            color={colors.accentStrong}
+          />
         </View>
       </Pressable>
 
@@ -187,20 +214,54 @@ export default function DiagnosticsSection({
   );
 }
 
-/** Sensor copy: presence only ("reported as detected"), unknown bits
- * preserved with their hex value, an empty mask stated literally. */
+/**
+ * Sensor copy: DETECTION only, never health.
+ *
+ * SETUP P1 - the list is now EXHAUSTIVE. It used to print only the bits
+ * that were set, so a flight controller reporting no gyro produced a
+ * shorter list rather than a visible "GYRO — غير مكتشف": the single most
+ * important sensor fact an operator can be told was rendered as the
+ * absence of a line. Every canonical sensor is now named with its own
+ * state, from the shared derivation
+ * (src/core/state/setupSafetyModel.ts's deriveSetupSensorSummary), so
+ * this section and any future sensor card cannot disagree.
+ *
+ * The three states are DETECTED / NOT_DETECTED / UNKNOWN. There is no
+ * HEALTHY or UNHEALTHY wording anywhere, because the firmware mask
+ * proves the FC found the hardware and nothing whatsoever about whether
+ * it is working. Unknown bits keep their hex and are still listed.
+ */
 function describeSensors(sensors: DiagnosticsSensors, t: Translate): string[] {
-  if (sensors.kind === 'UNCONFIRMED') {
-    return [t('diagnostics.sensorsUnconfirmed')];
-  }
-  if (sensors.bits.length === 0) {
-    return [t('diagnostics.sensorsNoneInReading')];
-  }
-  return sensors.bits.map(bit =>
-    bit.kind === 'KNOWN'
-      ? bit.token
-      : t('diagnostics.sensorsUnknownBit', { hex: bit.hex }),
+  const summary = deriveSetupSensorSummary(sensors);
+  const stateKey: Record<SetupSensorState, string> = {
+    DETECTED: 'diagnostics.sensorDetected',
+    NOT_DETECTED: 'diagnostics.sensorNotDetected',
+    UNKNOWN: 'diagnostics.sensorUnknown',
+  };
+  const lines = summary.entries.map(entry =>
+    t('diagnostics.sensorLine', {
+      token: entry.token,
+      state: t(stateKey[entry.state]),
+    }),
   );
+  if (summary.unconfirmed) {
+    // Keep the explicit "nothing currently proves anything" sentence at
+    // the top: an all-UNKNOWN list must not read as seven findings.
+    return [t('diagnostics.sensorsUnconfirmed'), ...lines];
+  }
+  const anyDetected = summary.entries.some(entry => entry.state === 'DETECTED');
+  const unknownLines = summary.unknownBits.map(bit =>
+    t('diagnostics.sensorsUnknownBit', { hex: bit.hex }),
+  );
+  if (!anyDetected && unknownLines.length === 0) {
+    // A mask that carried no set bit at all. The per-sensor lines below
+    // are still true, but the leading sentence keeps the nuance the mask
+    // itself has: the FC reported a mask and named nothing in it - which
+    // is unusual, and is not the same claim as "this aircraft has no
+    // sensors fitted".
+    return [t('diagnostics.sensorsNoneInReading'), ...lines];
+  }
+  return [...lines, ...unknownLines];
 }
 
 /** Blocker copy: source-proven Arabic where proven, canonical token
@@ -295,7 +356,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: spacing.md,
+    borderRadius: radii.sm,
   },
+  sectionHeaderActive: { backgroundColor: colors.surfaceHover },
   sectionHeading: {
     flex: 1,
     gap: spacing.xs,
@@ -303,13 +366,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   sectionSummary: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   togglePill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -320,15 +381,9 @@ const styles = StyleSheet.create({
     borderRadius: radii.pill,
   },
   toggleText: {
-    ...typography.caption,
+    ...typography.label,
     color: colors.accentStrong,
-    fontWeight: '700',
-    writingDirection: 'rtl',
-  },
-  toggleIcon: {
-    color: colors.accentStrong,
-    fontSize: 14,
-  },
+    writingDirection: 'rtl'},
   detailsCollapsed: {
     display: 'none',
   },

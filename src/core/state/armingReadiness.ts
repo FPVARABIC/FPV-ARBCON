@@ -14,9 +14,28 @@
  * given example was explicitly offered as "minimal, e.g.", not a ceiling,
  * and severity is not optional data once ranking is a hard requirement
  * elsewhere in this same design.
+ *
+ * SETUP P1 - THE INPUT CHANGED, AND THE OLD INPUT IS GONE ON PURPOSE.
+ *
+ * This module used to take two TelemetryValues: `armed` and `blockers`.
+ * That signature was correct in the abstract and unusable in practice,
+ * because NOTHING in this application ever registers the `armed` or
+ * `armingBlockers` poll ids (MspSessionCoordinator.ts documents both as
+ * "a real, intentional placeholder"). Every shipping build therefore fed
+ * this function UNAVAILABLE/UNAVAILABLE and rendered a permanent
+ * "arming state not confirmed", while the FC Tools gate on the SAME
+ * screen simultaneously reported "unavailable: the aircraft is ARMED"
+ * from the real BOXIDS + STATUS_EX path.
+ *
+ * The poll-shaped signature is REMOVED rather than left exported and
+ * unused: a safety derivation whose only inputs are two ids that can
+ * never be fresh is not dormant, it is a trap. The replacement takes the
+ * evidence that actually exists - the canonical ArmedState (which is
+ * itself proven from BOXIDS + the packed flight-mode flags, never
+ * inferred from the arming-disable mask) and the STATUS_EX blocker
+ * verdict Setup already derives. `armed state` and `arming blockers`
+ * remain two SEPARATE facts, exactly as before.
  */
-
-import type {TelemetryValue} from '../protocol';
 
 /** The four ranking tiers named explicitly in the design spec, in
  * highest-to-lowest priority order. */
@@ -24,13 +43,22 @@ export type ArmingBlockSeverity = 'CRITICAL_DANGER' | 'ARMING_BLOCKER' | 'WARNIN
 
 export type ArmingBlockReason = {
   /** Raw firmware blocker code (e.g. a Betaflight arming-disable-flag
-   * name) - INTERNAL ONLY, never shown directly in the UI (per this
-   * pass's own explicit instruction: "raw firmware codes internal only,
-   * Arabic descriptions shown"). */
+   * name, or `BIT_n` for a bit this app cannot name) - INTERNAL ONLY,
+   * never shown directly in the UI (per this pass's own explicit
+   * instruction: "raw firmware codes internal only, Arabic descriptions
+   * shown"). Also the React key and testID suffix. */
   code: string;
-  /** User-facing Arabic description - what the Safety Strip actually
-   * renders. */
-  message: string;
+  /**
+   * SETUP P1: the i18n KEY of the user-facing Arabic description, not the
+   * Arabic itself. src/core carries no Arabic in this project (the
+   * convention flashPhaseModel.ts and mspClientErrorCodes.ts already
+   * establish); the renderer translates. This also removed the last
+   * reason for a screen to assemble safety copy by hand.
+   */
+  messageKey: string;
+  /** Interpolation values for `messageKey` - e.g. the bit index and hex
+   * of an unnameable blocker, which must never be dropped. */
+  messageParams?: Readonly<Record<string, string | number>>;
   severity: ArmingBlockSeverity;
 };
 
@@ -38,52 +66,30 @@ export type ArmingReadiness =
   | {status: 'ARMED'}
   | {status: 'READY'}
   | {status: 'BLOCKED'; reasons: ArmingBlockReason[]}
-  | {status: 'UNKNOWN'; cause: 'WAITING' | 'STALE' | 'ERROR' | 'UNAVAILABLE'};
+  | {status: 'UNKNOWN'; cause: ArmingReadinessUnknownCause};
 
 /**
- * THE CRITICAL SAFETY RULE (per this pass's own explicit instruction,
- * quoted near-verbatim): READY is only derivable when BOTH `armed` and
- * `blockers` are FRESH. Any non-FRESH status on either one - WAITING,
- * STALE, ERROR, or UNAVAILABLE - forces UNKNOWN, NEVER reusing a stale
- * "no blockers" reading to claim READY.
- *
- * ARMED IS A SEPARATE, STATED DECISION (not explicit in the literal
- * spec wording, which only defines when READY is derivable): once
- * `armed` itself is FRESH and true, this returns ARMED immediately,
- * WITHOUT waiting on `blockers` freshness at all. Reasoning: the armed
- * flag is its own independent, authoritative ground truth about whether
- * the aircraft is armed RIGHT NOW - once armed, "why can't I arm" reasons
- * are moot, and real flight controller configurators (Betaflight/INAV)
- * likewise always surface a live armed indicator from the armed flag
- * alone, never gated on a separate diagnostics channel's freshness. This
- * does NOT weaken the safety rule above: ARMED is not READY, and
- * `blockers` staleness never lets an actually-unarmed aircraft be
- * reported as safe to arm.
- *
- * PRIORITY WHEN BOTH ARE NON-FRESH: `armed`'s own freshness is checked
- * FIRST. If we do not reliably know whether the aircraft is currently
- * armed at all, that is a more fundamental unknown than "we don't know
- * the current blocker list" - so the UNKNOWN cause reported is always
- * `armed`'s own status in that case, never `blockers`'s.
+ * Why the current state cannot be proven. Each member names a DIFFERENT
+ * missing proof, so a future surface can explain itself without any
+ * caller having to re-derive the reason.
  */
-export function deriveArmingReadiness(
-  armed: TelemetryValue<boolean>,
-  blockers: TelemetryValue<ArmingBlockReason[]>,
-): ArmingReadiness {
-  if (armed.status !== 'FRESH') {
-    return {status: 'UNKNOWN', cause: armed.status};
-  }
-  if (armed.value) {
-    return {status: 'ARMED'};
-  }
-  if (blockers.status !== 'FRESH') {
-    return {status: 'UNKNOWN', cause: blockers.status};
-  }
-  if (blockers.value.length === 0) {
-    return {status: 'READY'};
-  }
-  return {status: 'BLOCKED', reasons: blockers.value};
-}
+export type ArmingReadinessUnknownCause =
+  /** The canonical armed state itself is UNKNOWN - no BOXIDS mapping for
+   * the current identity, no status reading, or a session/epoch
+   * mismatch. The most fundamental unknown there is. */
+  | 'ARMED_UNPROVEN'
+  /** Armed is proven DISARMED, but the blocker evidence is absent,
+   * stale, unsupported or disconnected. Never "no blockers". */
+  | 'BLOCKERS_UNCONFIRMED'
+  /** The frame began a readiness field it could not finish. Inconsistent
+   * data, categorically not the same as absent data. */
+  | 'BLOCKERS_MALFORMED';
+
+/* The derivation itself lives in setupSafetyModel.ts, next to the blocker
+ * describer it needs - importing that describer here would close a cycle
+ * (setupSafetyModel already depends on these types), and injecting it as
+ * a parameter would push an implementation detail onto every caller. This
+ * file keeps the vocabulary and the ranking; that file keeps the rule. */
 
 const SEVERITY_RANK: Record<ArmingBlockSeverity, number> = {
   CRITICAL_DANGER: 3,

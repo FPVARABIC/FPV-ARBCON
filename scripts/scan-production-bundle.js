@@ -96,6 +96,18 @@ const FORBIDDEN_TOKENS = [
   'dev-open-motor-test',
   'DevBenchScreen',
   'DevBenchEntry',
+  // OUR OWN REVIEW VOCABULARY, held at zero in the shipped bundle.
+  //
+  // Nine shared screens rendered this English phrase as the title of
+  // their hardware warning. They are SHARED files, so Android carried it
+  // exactly as the browser did - which is why this guard is mirrored in
+  // scripts/scan-web-bundle.js rather than living only there. Comments,
+  // audit documents and test names keep the phrase and are stripped by
+  // the release build, so enforcing zero HERE separates engineering
+  // vocabulary from product copy without policing either one wrongly.
+  // The warning itself still ships; see the two hardware-verification
+  // titles in the required-Arabic list below.
+  'REQUIRES HARDWARE TEST',
 ];
 
 /**
@@ -111,8 +123,15 @@ const REQUIRED_ENGINE_TOKENS = [
   'pulseMotor',
   'createMotorTestSessionBinding',
   'operatorPort',
-  'buildSingleMotorVector',
-  'buildAllStopVector',
+  // M-C: `buildSingleMotorVector` and `buildAllStopVector` were the
+  // QUAD-ONLY vector helpers and no longer exist. Their replacements are
+  // required here in their place, so the bundle still has to contain a
+  // reachable way to build a motor command - the property this list
+  // exists to hold - and now that way is airframe-independent.
+  'buildSingleOutputVectorForDomain',
+  'buildAllStopCommandVector',
+  'buildCommandVectorFromValues',
+  'encodeMotorTestCommandVector',
   'encodeSetMotorPayload',
   'emergencyStopWithMotorTestLease',
   'requestWithMotorTestLease',
@@ -188,10 +207,60 @@ const REQUIRED_ENGINE_TOKENS = [
   'MSP_SET_RX_MAP',
   'MSP_SET_RSSI_CONFIG',
   'MSP_SET_RC_DEADBAND',
-  // Firmware Flasher and the new landing route are product surfaces, not
+  // RECEIVER P5. The tokens above prove the Receiver PROTOCOL owner ships.
+  // These prove the professional surface built in P3/P4 ships with it -
+  // a Release that tree-shook the workspace, the smoothing node or the
+  // capability gating would otherwise pass every category here.
+  //
+  //   receiver-live-monitor      P3 live workspace
+  //   receiver-status-strip      P3 live/stale/rate/RSSI strip
+  //   receiver-observed-rate     MEASURED cadence surface (no fabricated Hz)
+  //   -fill                      P3 smoothing target (receiver-channel-N-fill)
+  //   CHANNEL_SMOOTHING_MS       the 50ms presentation constant itself
+  //   receiver-mode-row          P4 mode surface
+  //   receiver-mode-select       P4 capability-gated mode control
+  //   receiver-provider-select   P4 capability-gated provider control
+  //   receiver-dependency-block  P4 Ports dependency blocking
+  //   applyReceiverModeToFeatureMask
+  //                              the ONLY legal feature-mask mutation
+  //   resolveProviderAvailability
+  //                              connected-build capability resolution
+  //   selectableReceiverModes    capability-filtered mode offering
+  //   encodeFeatureConfig        the whole-mask encoder
+  'receiver-live-monitor',
+  'receiver-status-strip',
+  'receiver-observed-rate',
+  '-fill',
+  'CHANNEL_SMOOTHING_MS',
+  'receiver-mode-row',
+  'receiver-mode-select',
+  'receiver-provider-select',
+  'receiver-dependency-block',
+  'applyReceiverModeToFeatureMask',
+  'resolveProviderAvailability',
+  'selectableReceiverModes',
+  'encodeFeatureConfig',
+  // Firmware Flasher and the landing route are product surfaces, not
   // optional debug code. Their protocol owners must ship in Release.
+  // THE CONNECTION SHIPS WITH HOME. 'start-configure' is the door, and
+  // there is no connection screen behind it any more - pressing it runs
+  // the connection in place (ui/session/useDirectConnect) and reports it
+  // on Home. So the tokens that must be present are Home's own
+  // connection surface, not a workspace that no longer exists.
+  // Board alignment ships as a working transaction, not as a read-only
+  // panel: the controller, both codecs, the write command and the card's
+  // own surface must all be present together.
+  'BoardAlignmentController',
+  'board-alignment-card',
+  'board-alignment-save',
+  'decodeBoardAlignment',
+  'encodeChangedBoardAlignment',
+  'MSP_SET_BOARD_ALIGNMENT_CONFIG',
   'firmware-flasher-screen',
-  'start-connection',
+  'start-configure',
+  'home-connect-progress',
+  'home-connect-failed',
+  'useDirectConnect',
   'start-firmware',
   'start-safe-flash',
   'CloudBuildCoordinator',
@@ -215,7 +284,9 @@ const REQUIRED_ENGINE_TOKENS = [
  */
 const REQUIRED_ARABIC_STRINGS = [
   // The propeller warning - the single most important string in the app.
-  'أزل جميع المراوح قبل المتابعة',
+  // P3: the propeller warning became one concise sentence - the same
+  // safety intent, stated once instead of as a checklist ritual.
+  'أزل المراوح قبل اختبار المحركات.',
   // The honest manual battery-suitability boundary. This build does not
   // read cell count inside the motor-test controller.
   'لا يقرأ هذا الإصدار عدد خلايا البطارية آليًا',
@@ -245,6 +316,13 @@ const REQUIRED_ARABIC_STRINGS = [
   'التكوينات',
   'حفظ جراحي موثّق',
   'لا توجد روابط أو واجهات خارجية',
+  // The hardware-verification titles that replaced the English review
+  // token above. Required, not merely permitted: removing an internal
+  // phrase must not quietly remove the warning with it. A software ACK
+  // still proves storage, never physical behaviour, and these two lines
+  // are how the operator is told so.
+  'يتطلب التحقق على جهاز فعلي',
+  'يتطلب اختبارًا على جهاز فعلي',
 ];
 
 /** CATEGORY C - unrelated sentinels. Without these the scan is vacuous.
@@ -259,33 +337,166 @@ const POSITIVE_CONTROLS = ['diagnostics-section', 'fc-tools-section'];
  * A module not on the list importing it is a failure; so is the list
  * naming a module that no longer imports it, because a stale allowance is
  * how a boundary quietly stops being one.
+ *
+ * `reExporters` lists every non-test module permitted to RE-EXPORT the
+ * token (`export { token } from ...`, or `export * from` the defining
+ * module). A named import is not the only way to widen a boundary: a
+ * barrel that re-exports the token makes it reachable from anywhere that
+ * imports the barrel, including through a namespace import that never
+ * names the token in an import statement at all. Omitted means "no module
+ * may re-export this", which is what every P1 primitive wants.
+ *
+ * The analysis additionally rejects any USE of the token identifier in a
+ * module that is neither the definer nor a permitted importer, with
+ * comments and string literals stripped first. That is what turns this
+ * from a check on import statements into a check on reachability: a
+ * namespace import (`import * as core`) or a dynamic import followed by
+ * `.token(...)` is caught even though no import statement names it.
  */
 const ENGINE_BOUNDARIES = [
   {
+    // M-C MOVED THIS BOUNDARY, and moving it is the point. The engine used
+    // to encode its own payloads at `motorCount * 2` bytes. It now hands
+    // its per-motor vector to motorTestCommandVector, which is the single
+    // place the canonical eight-slot width is decided - so the encoder has
+    // exactly ONE importer again, and it is the module whose whole job is
+    // that width.
     token: 'encodeSetMotorPayload',
     from: 'src/core/protocol/msp/encoding/encodeSetMotorPayload.ts',
-    importers: ['src/core/state/motorTestController.ts'],
+    importers: [
+      'src/core/state/motorTestCommandVector.ts',
+    ],
   },
   {
-    token: 'buildSingleMotorVector',
-    from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: ['src/core/state/motorTestController.ts'],
+    // The canonical command builders. The engine is their only importer;
+    // a second one would mean a second place deciding payload width.
+    token: 'encodeMotorTestCommandVector',
+    from: 'src/core/state/motorTestCommandVector.ts',
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
   },
   {
-    token: 'buildAllStopVector',
+    token: 'buildCommandVectorFromValues',
+    from: 'src/core/state/motorTestCommandVector.ts',
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
+  },
+  {
+    token: 'buildAllStopCommandVector',
+    from: 'src/core/state/motorTestCommandVector.ts',
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
+  },
+  // P1-C/P1-D declared these general motor-command primitives without a
+  // runtime caller. An EMPTY importer list is the point: the boundary is
+  // in place from the day the primitive exists, so the P2 pass that first
+  // imports one has to say so here rather than slipping it in.
+  {
+    token: 'buildMotorVector',
     from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
-    importers: ['src/core/state/motorTestController.ts'],
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
+  },
+  {
+    token: 'buildAllStopVectorForDomain',
+    from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
+  },
+  {
+    token: 'buildSingleOutputVectorForDomain',
+    from: 'src/core/firmware-adapters/betaflightMotorVectorsV147.ts',
+    importers: [
+      'src/core/state/motorTestController.ts',
+    ],
+  },
+  {
+    token: 'encodeDshotCommand',
+    from: 'src/core/protocol/msp/encoding/encodeDshotEscDirection.ts',
+    importers: [],
+  },
+  {
+    token: 'encodeDshotMotorStopCommand',
+    from: 'src/core/protocol/msp/encoding/encodeDshotEscDirection.ts',
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
   },
   {
     token: 'MSP_SET_MOTOR',
     from: 'src/core/protocol/msp/commands/motorTestCommands.ts',
-    importers: ['src/core/state/motorTestController.ts'],
+    importers: [
+      'src/core/state/motorControlCommandEngine.ts',
+    ],
+  },
+  /* The four sensor WRITE commands. B-1 declared them with an EMPTY
+     importer list, before any runtime caller existed; B-3 is the pass that
+     first sends them, and this is where it had to say so. Exactly one
+     module may reach any of them, and it is the guarded Sensors
+     transaction - which pauses telemetry, proves the board is disarmed
+     where that matters, re-reads inside its own operation, and refuses to
+     persist anything a readback did not confirm. */
+  {
+    token: 'MSP_SET_SENSOR_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_SENSOR_ALIGNMENT',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_ACC_TRIM',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
+  },
+  {
+    token: 'MSP_SET_COMPASS_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'encodeChangedMotorConfiguration',
     from: 'src/core/protocol/msp/encoding/encodeMotorConfiguration.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -303,32 +514,72 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/PowerConfigurationController.ts',
       'src/platforms/react-native/protocol/OsdConfigurationController.ts',
       'src/platforms/react-native/protocol/VtxConfigurationController.ts',
+      'src/platforms/react-native/protocol/BoardAlignmentController.ts',
+      'src/platforms/react-native/protocol/BlackboxConfigurationController.ts',
+      /* Sensors B-3. Every persist it performs is preceded by a readback
+         that proved the value actually changed; a mismatch stops the
+         sequence before this command is ever sent. */
+      'src/platforms/react-native/protocol/SensorsConfigurationController.ts',
+      /* LED Strip L-C. Exactly one persist per save, reached only after
+         every dirty group has been written AND read back. A partial apply,
+         a readback mismatch and a lost session all return before it. */
+      'src/platforms/react-native/protocol/LedStripConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
     token: 'encodeChangedPidTuning',
     from: 'src/core/protocol/msp/encoding/encodePidTuning.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_PID',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_PID_ADVANCED',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_FILTER_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_RC_TUNING',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: ['src/platforms/react-native/protocol/PidTuningController.ts'],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_FEATURE_CONFIG',
@@ -338,6 +589,19 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      // RECEIVER P4: writing the receiver MODE means replacing the whole
+      // feature word (msp.c:3712-3714 is featureConfigReplace), so this
+      // controller joins the registry deliberately and visibly. Its
+      // mutation is the shared, tested one in
+      // src/core/state/receiverModeCapability.ts, which clears ONLY the
+      // five RX bits and preserves every other bit of a mask read fresh
+      // inside the same transaction.
+      'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -346,12 +610,50 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/PortsConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_GPS_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/GpsConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
+  },
+  {
+    // Board alignment's write command. One owner, and the rule exists so
+    // it stays one: these three angles rotate every sensor reading the
+    // aircraft flies on, and a second module reaching them would be a
+    // second place that can silently change how the board is mounted.
+    token: 'MSP_SET_BOARD_ALIGNMENT_CONFIG',
+    from: 'src/core/protocol/msp/commands/mspCommands.ts',
+    importers: [
+      'src/platforms/react-native/protocol/BoardAlignmentController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
+  },
+  {
+    token: 'encodeChangedBoardAlignment',
+    from: 'src/core/protocol/msp/encoding/encodeBoardAlignment.ts',
+    importers: [
+      'src/platforms/react-native/protocol/BoardAlignmentController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -360,6 +662,11 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_ADVANCED_CONFIG',
@@ -367,6 +674,12 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      'src/platforms/react-native/protocol/BlackboxConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -375,12 +688,22 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_ARMING_CONFIG',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -389,12 +712,22 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'encodeChangedReceiverConfiguration',
     from: 'src/core/protocol/msp/encoding/encodeReceiver.ts',
     importers: [
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -404,12 +737,22 @@ const ENGINE_BOUNDARIES = [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_RX_MAP',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -418,6 +761,11 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_RC_DEADBAND',
@@ -425,12 +773,28 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/ReceiverConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP2_SET_TEXT',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/GeneralConfigurationController.ts',
+      // The PID page names PID and rate PROFILES through the same command,
+      // with selectors 3 and 4. Reviewed and added deliberately: the two
+      // controllers write different text types and neither can reach the
+      // other's - GeneralConfigurationController uses the craft and pilot
+      // selectors, PidTuningController only the two profile selectors.
+      'src/platforms/react-native/protocol/PidTuningController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -439,6 +803,11 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP_SET_MOTOR_CONFIG',
@@ -446,12 +815,22 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'encodeMotorOutputOrder',
     from: 'src/core/protocol/msp/encoding/encodeMotorOutputOrder.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -461,12 +840,22 @@ const ENGINE_BOUNDARIES = [
       'src/core/state/motorTestController.ts',
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
     ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
+    ],
   },
   {
     token: 'MSP2_SET_MOTOR_OUTPUT_REORDERING',
     from: 'src/core/protocol/msp/commands/mspCommands.ts',
     importers: [
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
   {
@@ -475,6 +864,12 @@ const ENGINE_BOUNDARIES = [
     importers: [
       'src/core/state/motorTestController.ts',
       'src/platforms/react-native/protocol/MotorConfigurationController.ts',
+          'src/core/state/motorControlCommandEngine.ts',
+    ],
+    reExporters: [
+      'src/core/index.ts',
+      'src/core/protocol/index.ts',
+      'src/core/protocol/msp/index.ts',
     ],
   },
 ];
@@ -516,11 +911,31 @@ function escapeNonAscii(text) {
 }
 
 /** True when `text` appears either literally or fully escaped. */
+/**
+ * Bidi isolate marks (U+2066 LRI .. U+2069 PDI) are invisible: Arabic copy
+ * uses them so an RTL line does not print the conjunction to the LEFT of a
+ * Latin word ("...و" landing after "Telemetry"). Stripping them here keeps
+ * this guard asking the question it is for - did the SENTENCE ship, or did
+ * a raw i18n key ship - instead of failing on punctuation a reader cannot
+ * see. A missing sentence still fails, which is the point.
+ */
+function withoutBidiMarks(text) {
+  // Both the real characters and the \uXXXX escapes a minifier emits.
+  return text
+    .replace(/[\u2066-\u2069\u200e\u200f]/g, '')
+    .replace(/\\u20(?:6[6-9]|0[ef])/gi, '');
+}
+
 function containsEitherForm(haystack, text) {
   if (haystack.includes(text)) {
     return true;
   }
-  return haystack.includes(escapeNonAscii(text));
+  if (haystack.includes(escapeNonAscii(text))) {
+    return true;
+  }
+  const bare = withoutBidiMarks(text);
+  const plain = withoutBidiMarks(haystack);
+  return plain.includes(bare) || plain.includes(escapeNonAscii(bare));
 }
 
 /**
@@ -590,24 +1005,71 @@ function collectSourceFiles(directory, into) {
  * Pure analysis of an already-collected {relativePath -> source} map, so
  * tests can drive every verdict without touching the real tree.
  */
+/** Comments and string/template literals removed, so a token mentioned in
+ * prose or in a log message is never mistaken for a reference to it. */
+function executableText(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/`(?:\\.|[^`\\])*`/g, '``');
+}
+
+/** Module specifier without extension, for `export * from` matching. */
+function moduleSpecifierOf(path) {
+  return path.replace(/^src\//, '').replace(/\.tsx?$/, '');
+}
+
 function analyzeEngineBoundaries(sources) {
   const violations = [];
   const stale = [];
+  const reExportViolations = [];
+  const indirectUses = [];
 
   for (const boundary of ENGINE_BOUNDARIES) {
+    const allowedReExporters = boundary.reExporters ?? [];
+    const definingSpecifier = moduleSpecifierOf(boundary.from);
     const actual = [];
     for (const [path, text] of Object.entries(sources)) {
       if (path === boundary.from) {
         continue;
       }
-      // An import edge, not a mention: the token must appear inside an
-      // import statement naming the defining module's basename.
+      const code = executableText(text);
+      // 1. An import edge: the token inside an import statement.
       const importPattern = new RegExp(
         `import[^;]*\\b${boundary.token}\\b[^;]*from[^;]*;`,
         'g',
       );
       if (importPattern.test(text)) {
         actual.push(path);
+      }
+      // 2. A re-export edge, named or wildcard. Either makes the token
+      //    reachable from every module that imports THIS one.
+      const namedReExport = new RegExp(
+        `export[^;]*\\b${boundary.token}\\b[^;]*from[^;]*;`,
+        'g',
+      );
+      const wildcardReExport = new RegExp(
+        `export\\s*\\*\\s*from\\s*['"][^'"]*${definingSpecifier.split('/').pop()}['"]`,
+        'g',
+      );
+      if (
+        (namedReExport.test(text) || wildcardReExport.test(text)) &&
+        !allowedReExporters.includes(path)
+      ) {
+        reExportViolations.push({ token: boundary.token, reExporter: path });
+      }
+      // 3. Any USE of the identifier in executable code from a module that
+      //    is neither a permitted importer nor a permitted re-exporter.
+      //    Catches namespace imports and dynamic imports, which name
+      //    nothing in an import statement.
+      if (
+        !boundary.importers.includes(path) &&
+        !allowedReExporters.includes(path) &&
+        new RegExp(`\\b${boundary.token}\\b`).test(code)
+      ) {
+        indirectUses.push({ token: boundary.token, module: path });
       }
     }
     for (const path of actual) {
@@ -622,17 +1084,27 @@ function analyzeEngineBoundaries(sources) {
     }
   }
 
-  // D3: every dispatch of the motor command goes through a lease. The
-  // controller is the only importer (D2), so this is checked there.
-  const controller = sources['src/core/state/motorTestController.ts'] ?? '';
-  const executable = controller
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
-  const dispatchSites = Array.from(
-    executable.matchAll(
-      /([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(\s*MSP_SET_MOTOR/g,
-    ),
-  ).map(match => ({ receiver: match[1], method: match[2] }));
+  // D3: every dispatch of the motor command goes through a lease.
+  //
+  // P2-ii FINAL STATE: the dispatch sites moved OUT of the controller and
+  // into its tightly-owned command engine - the controller now encodes and
+  // sends nothing itself. Both files are scanned so a dispatch reappearing
+  // in the controller is caught, and the engine's sites are still required
+  // to be lease-shaped.
+  const dispatchOwners = [
+    'src/core/state/motorTestController.ts',
+    'src/core/state/motorControlCommandEngine.ts',
+  ];
+  const dispatchSites = dispatchOwners.flatMap(file => {
+    const executable = (sources[file] ?? '')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+    return Array.from(
+      executable.matchAll(
+        /([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(\s*MSP_SET_MOTOR\b/g,
+      ),
+    ).map(match => ({ file, receiver: match[1], method: match[2] }));
+  });
   const unleashed = dispatchSites.filter(
     site =>
       site.receiver !== 'lease' &&
@@ -642,10 +1114,86 @@ function analyzeEngineBoundaries(sources) {
   return {
     violations,
     stale,
+    reExportViolations,
+    indirectUses,
     dispatchSites,
     unleashed,
-    ok: violations.length === 0 && stale.length === 0 && unleashed.length === 0,
+    ok:
+      violations.length === 0 &&
+      stale.length === 0 &&
+      reExportViolations.length === 0 &&
+      indirectUses.length === 0 &&
+      unleashed.length === 0,
   };
+}
+
+/**
+ * RECEIVER P5 - the UI/protocol authority boundary, checked in CI.
+ *
+ * ReceiverScreen is a presentation component. It must reach protocol only
+ * through the narrow `receiverPresentation` facade, never through the
+ * ~180-symbol platform barrel that also exports RNMspTransport and the
+ * live session coordinator, and it must name no raw MSP command constant.
+ *
+ * SOURCE-AWARE, not prose-aware: comments are stripped first, because the
+ * screen legitimately DISCUSSES these names in its documentation and the
+ * pre-P3 version of this check would have fired on ordinary explanatory
+ * text rather than on executable authority.
+ *
+ * receiverBoundary.test.ts asserts the same contract at a finer grain;
+ * this runs it in the production scan so a bundle cannot be published
+ * from a tree that violates it.
+ */
+const RECEIVER_SCREEN_PATH = 'src/ui/screens/ReceiverScreen.tsx';
+const RECEIVER_FACADE_SPECIFIER = 'platforms/react-native/protocol/receiverPresentation';
+const RECEIVER_FORBIDDEN_AUTHORITY = [
+  'MspClient',
+  'RNMspTransport',
+  'mspSessionCoordinator',
+  'MspTelemetryScheduler',
+  'MSP_RC',
+  'MSP_SET_RX_CONFIG',
+  'MSP_SET_RX_MAP',
+  'MSP_SET_RSSI_CONFIG',
+  'MSP_SET_RC_DEADBAND',
+  'MSP_SET_FEATURE_CONFIG',
+  'MSP2_COMMON_SET_SERIAL_CONFIG',
+  'MSP_SET_RXFAIL_CONFIG',
+  'MSP_REBOOT',
+  'MSP_EEPROM_WRITE',
+  'encodeFeatureConfig',
+  'encodeChangedReceiverConfiguration',
+  'applyReceiverModeToFeatureMask',
+];
+
+function analyzeReceiverBoundary(sources) {
+  const source = sources[RECEIVER_SCREEN_PATH];
+  if (source === undefined) {
+    return { violations: [{ kind: 'MISSING_SCREEN', detail: RECEIVER_SCREEN_PATH }], ok: false };
+  }
+  const executable = source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '');
+  const violations = [];
+
+  const specifiers = [...executable.matchAll(/from\s+'([^']+)'/g)].map(match => match[1]);
+  if (!specifiers.some(specifier => specifier.endsWith(RECEIVER_FACADE_SPECIFIER))) {
+    violations.push({ kind: 'FACADE_NOT_USED', detail: RECEIVER_FACADE_SPECIFIER });
+  }
+  for (const specifier of specifiers) {
+    if (
+      specifier.includes('platforms/react-native/protocol') &&
+      !specifier.endsWith(RECEIVER_FACADE_SPECIFIER)
+    ) {
+      violations.push({ kind: 'BROAD_PROTOCOL_IMPORT', detail: specifier });
+    }
+  }
+  for (const token of RECEIVER_FORBIDDEN_AUTHORITY) {
+    if (executable.includes(token)) {
+      violations.push({ kind: 'RAW_AUTHORITY', detail: token });
+    }
+  }
+  return { violations, ok: violations.length === 0 };
 }
 
 function readSourceTree() {
@@ -710,7 +1258,9 @@ function main() {
   }
 
   const bundle = analyzeBundle(bundleText);
-  const boundaries = analyzeEngineBoundaries(readSourceTree());
+  const sourceTree = readSourceTree();
+  const boundaries = analyzeEngineBoundaries(sourceTree);
+  const receiverBoundary = analyzeReceiverBoundary(sourceTree);
 
   console.log(`Bundle size: ${bytes} bytes`);
   console.log(`Bundle SHA-256: ${sha256}`);
@@ -788,19 +1338,50 @@ function main() {
     );
   }
 
-  if (!bundle.ok || !boundaries.ok) {
+  console.log('');
+  console.log('E. Receiver UI/protocol authority boundary (source)');
+  for (const entry of receiverBoundary.violations) {
+    if (entry.kind === 'FACADE_NOT_USED') {
+      console.error(
+        `   BOUNDARY BROKEN: ReceiverScreen no longer imports the narrow ${entry.detail} facade.`,
+      );
+    } else if (entry.kind === 'BROAD_PROTOCOL_IMPORT') {
+      console.error(
+        `   BOUNDARY CROSSED: ReceiverScreen imports ${JSON.stringify(
+          entry.detail,
+        )} - the broad platform barrel also exports RNMspTransport and the live session coordinator.`,
+      );
+    } else if (entry.kind === 'RAW_AUTHORITY') {
+      console.error(
+        `   RAW AUTHORITY IN UI: ReceiverScreen names ${JSON.stringify(
+          entry.detail,
+        )} in executable code.`,
+      );
+    } else {
+      console.error(`   ${entry.kind}: ${entry.detail}`);
+    }
+  }
+  if (receiverBoundary.ok) {
+    console.log(
+      `   ReceiverScreen reaches protocol only through receiverPresentation; ${RECEIVER_FORBIDDEN_AUTHORITY.length} raw-authority tokens absent from executable code.`,
+    );
+  }
+
+  if (!bundle.ok || !boundaries.ok || !receiverBoundary.ok) {
     console.error('');
     console.error('SCAN FAILED.');
     return 1;
   }
   console.log('');
   console.log(
-    'OK - no forbidden token present, engine and Arabic safety copy both shipped, positive controls present, engine boundary intact.',
+    'OK - no forbidden token present, engine and Arabic safety copy both shipped, positive controls present, engine and Receiver boundaries intact.',
   );
   return 0;
 }
 
 module.exports = {
+  analyzeReceiverBoundary,
+  RECEIVER_FORBIDDEN_AUTHORITY,
   analyzeBundle,
   analyzeEngineBoundaries,
   containsEitherForm,

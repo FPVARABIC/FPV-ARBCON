@@ -17,11 +17,14 @@
 import {
   ARMING_DISABLE_COMMAND_BYTE,
   ARMING_DISABLED_MSP_BIT_INDEX,
+  ARMING_ENABLE_COMMAND_BYTE,
   buildArmingDisablePayload,
+  buildArmingReleasePayload,
   establishMotorArmingRestriction,
   MotorArmingRestrictionReceipt,
   MSP_SET_ARMING_DISABLED,
   MSP_STATUS_EX,
+  recordMotorArmingRestrictionReleased,
   type MotorArmingRestrictionEstablishment,
 } from './motorArmingRestriction';
 import * as armingRestrictionModule from './motorArmingRestriction';
@@ -284,13 +287,50 @@ describe('tagged protocol contract (betaflight 2025.12.2 @ 79065c96)', () => {
     expect(ARMING_DISABLED_MSP_BIT_INDEX).toBe(16);
   });
 
-  it('exposes NO inverse / re-enable payload or operation in the public API', () => {
+  /**
+   * REWRITTEN IN P2-i, NOT DELETED.
+   *
+   * This assertion used to be "the module exposes NO inverse / re-enable
+   * payload or operation", and it was correct for a pass that had no
+   * teardown. It is wrong for a pass that owns one: leaving a flight
+   * controller arming-disabled after a clean motor-control session is
+   * itself a defect, so the release payload now exists.
+   *
+   * The SAFETY INTENT of the old assertion is preserved and made
+   * narrower rather than dropped: the module must still expose exactly
+   * two payload builders and NO operation that establishes or releases
+   * anything by itself. Ordering - release only after an all-stop - is
+   * the driver's obligation, enforced in the controller and its tests,
+   * not by hiding the payload here.
+   */
+  it('exposes payload builders only - no self-issuing release operation', () => {
     const exported = Object.keys(armingRestrictionModule);
-    for (const name of exported) {
-      expect(name).not.toMatch(/enable|clear|restore|reenable|allowArming|undo/i);
-    }
-    // The only payload builder produces the DISABLE byte, never 0.
+    const releaseLike = exported.filter(name =>
+      /enable|clear|restore|reenable|allowArming|undo|release/i.test(name),
+    );
+    // Exactly the three intentional release-side symbols, nothing else.
+    //
+    // `recordMotorArmingRestrictionReleased` was added by the motor-session
+    // reopen fix and is named on this list deliberately rather than
+    // excluded from it. It is NOT a self-issuing release: it takes a
+    // receipt and updates this module's own bookkeeping, and it has no
+    // lease, no client, no transport and no payload - there is nothing in
+    // it that could put a byte on a wire. The zero-traffic proof below is
+    // the assertion; this list is only the inventory.
+    expect(releaseLike.sort()).toEqual([
+      'ARMING_ENABLE_COMMAND_BYTE',
+      'buildArmingReleasePayload',
+      'recordMotorArmingRestrictionReleased',
+    ]);
+    // Neither is an operation: both are inert value producers.
+    expect(typeof armingRestrictionModule.buildArmingReleasePayload).toBe(
+      'function',
+    );
+    expect(buildArmingReleasePayload()).toBeInstanceOf(Uint8Array);
+    // The establish builder still produces the DISABLE byte, never 0.
     expect(buildArmingDisablePayload()[0]).not.toBe(0);
+    // And the release builder produces exactly the inverse.
+    expect(buildArmingReleasePayload()[0]).toBe(0);
   });
 
   it('never references command 214 in any fixture', () => {
@@ -1883,5 +1923,193 @@ describe('post-submission boundary: a dead lease cannot re-open the session', ()
     transport.emitData(responseFrame(MSP_SET_ARMING_DISABLED));
     expectNotEstablished(await first, 'MOTOR_TEST_LEASE_INACTIVE');
     expect(calls).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/* ===================================================================== *
+ * P2-i - the RELEASE payload.
+ *
+ * Polarity is inverted from the command name, so it is asserted against
+ * the pinned firmware branch rather than against the identifier:
+ * MSP_SET_ARMING_DISABLED command==1 DISABLES arming, command==0 ENABLES
+ * it (msp.c @ 79065c96). Building bytes is inert; nothing here sends
+ * anything or claims a physical state.
+ * ===================================================================== */
+describe('P2-i arming restriction release payload', () => {
+  it('encodes exactly one byte, zero, which is the ENABLE-arming command', () => {
+    expect(ARMING_ENABLE_COMMAND_BYTE).toBe(0);
+    expect(Array.from(buildArmingReleasePayload())).toEqual([0]);
+  });
+
+  it('is the exact inverse of the establish payload', () => {
+    expect(Array.from(buildArmingDisablePayload())).toEqual([1]);
+    expect(ARMING_DISABLE_COMMAND_BYTE).not.toBe(ARMING_ENABLE_COMMAND_BYTE);
+  });
+
+  it('returns a fresh buffer every call, so no caller can mutate a shared one', () => {
+    const first = buildArmingReleasePayload();
+    const second = buildArmingReleasePayload();
+    expect(first).not.toBe(second);
+    first[0] = 99;
+    expect(Array.from(buildArmingReleasePayload())).toEqual([0]);
+  });
+
+  it('emits the one-byte form, leaving runaway-takeoff handling to the firmware default', () => {
+    // msp.c reads the optional second byte only when bytes remain.
+    expect(buildArmingReleasePayload()).toHaveLength(1);
+  });
+});
+
+/* =====================================================================
+ * RECORDING THE RELEASE - the deep half of the motor-session reopen bug.
+ *
+ * The establishment record is keyed by the OFFICIAL SESSION AUTHORITY and
+ * deliberately outlives an ordinary lease release, so one physical
+ * session sends command 99 exactly once. Nothing, however, ever told this
+ * module when the hold was actually RELEASED: teardown owns that request,
+ * because it owns the ordering rule that the all-stop must come first. So
+ * after one clean motor session the record still read ESTABLISHED, and
+ * the operator's SECOND session on the same cable was refused at
+ * ARMING_RESTRICTION_ALREADY_ESTABLISHED and failed closed at setup.
+ *
+ * These pin the narrow contract that closes it, and - just as important -
+ * the three cases that must NOT clear anything.
+ * ===================================================================== */
+describe('recording an arming-restriction release', () => {
+  it('lets the NEXT session establish its own restriction', async () => {
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const first = await runEstablishment(transport, leaseA, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    if (first.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    // Exactly what teardown does: release the hold, then say so.
+    expect(recordMotorArmingRestrictionReleased(first.receipt)).toBe('CLEARED');
+    expect(leaseA.release()).toBe('RELEASED');
+
+    const leaseB = leaseFor(client); // same client, same official session
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    const second = await runEstablishment(
+      transport,
+      leaseB,
+      {current: identity() as MspSessionCompositeIdentity | undefined},
+      {boxIds: boxIdsB},
+    );
+
+    expect(second.kind).toBe('ESTABLISHED');
+  });
+
+  it('makes the cleared receipt non-current', async () => {
+    const {transport, lease} = await standardSetup();
+    const first = await runEstablishment(transport, lease, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    if (first.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    expect(first.receipt.isCurrent()).toBe(true);
+
+    recordMotorArmingRestrictionReleased(first.receipt);
+
+    // The record is gone, so the receipt describes nothing live - which
+    // is true: this descriptor's hold has been released.
+    expect(first.receipt.isCurrent()).toBe(false);
+  });
+
+  it('is idempotent - a second call clears nothing further', async () => {
+    const {transport, lease} = await standardSetup();
+    const first = await runEstablishment(transport, lease, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    if (first.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    expect(recordMotorArmingRestrictionReleased(first.receipt)).toBe('CLEARED');
+    expect(recordMotorArmingRestrictionReleased(first.receipt)).toBe('NOT_CURRENT');
+  });
+
+  it('NEVER revives a session that has since failed closed', async () => {
+    // The sequence a stale caller can really produce: session one closes
+    // cleanly and records its release; session two fails closed and
+    // latches; then something still holding session one's receipt records
+    // the release again. That must not clear the latch - a failed-closed
+    // session stays refused until a genuinely new authority exists.
+    const {transport, client, lease: leaseA} = await standardSetup();
+    const first = await runEstablishment(transport, leaseA, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    if (first.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    expect(recordMotorArmingRestrictionReleased(first.receipt)).toBe('CLEARED');
+    expect(leaseA.release()).toBe('RELEASED');
+
+    // Session two: the flight controller does NOT show the restriction
+    // after acknowledging it, so establishment fails closed and latches.
+    const leaseB = leaseFor(client);
+    const boxIdsB = await mintBoxIds(transport, leaseB);
+    const second = await runEstablishment(
+      transport,
+      leaseB,
+      {current: identity() as MspSessionCompositeIdentity | undefined},
+      {boxIds: boxIdsB, status: {mspRestrictionPresent: false}},
+    );
+    expectNotEstablished(second, 'MSP_ARMING_RESTRICTION_NOT_OBSERVED');
+
+    // The stale record attempt changes nothing...
+    expect(recordMotorArmingRestrictionReleased(first.receipt)).not.toBe(
+      'CLEARED',
+    );
+    // ...and the latch still holds: the client cannot even take another
+    // motor-test lease, let alone establish a restriction on one.
+    const third = acquireMotorTestLease({
+      client,
+      requestedIdentity: identity(),
+      readCurrentIdentity: () => identity(),
+    });
+    expect(third.kind).toBe('NOT_ACQUIRED');
+    if (third.kind !== 'ACQUIRED') {
+      expect(third.reason).toBe('MOTOR_TEST_LEASE_FAULT_LATCHED');
+    }
+  });
+
+  it('puts NOTHING on the wire - it is bookkeeping, not a release', async () => {
+    // The property the module-surface guard above actually protects. A
+    // self-issuing release would let any holder of a receipt re-permit
+    // arming without the all-stop that must come first; this function
+    // cannot, because it has no lease, no client and no transport.
+    const {transport, lease} = await standardSetup();
+    const first = await runEstablishment(transport, lease, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    if (first.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    const writesBefore = transport.writeLog.length;
+
+    expect(recordMotorArmingRestrictionReleased(first.receipt)).toBe('CLEARED');
+    await flushMicrotasks();
+
+    expect(transport.writeLog.length).toBe(writesBefore);
+    expect(transport.writes).toHaveLength(0);
+  });
+
+  it('refuses a forged or copied receipt', async () => {
+    const {transport, lease} = await standardSetup();
+    const first = await runEstablishment(transport, lease, {
+      current: identity() as MspSessionCompositeIdentity | undefined,
+    });
+    if (first.kind !== 'ESTABLISHED') {
+      throw new Error('unreachable');
+    }
+    // Same anti-forgery rule as isCurrent(): strict instance identity.
+    const hand = new MotorArmingRestrictionReceipt(identity());
+    const spread = {...first.receipt} as MotorArmingRestrictionReceipt;
+
+    expect(recordMotorArmingRestrictionReleased(hand)).toBe('NOT_CURRENT');
+    expect(recordMotorArmingRestrictionReleased(spread)).toBe('NOT_CURRENT');
+    // ...and the genuine record survived both attempts untouched.
+    expect(first.receipt.isCurrent()).toBe(true);
   });
 });

@@ -5,6 +5,7 @@ import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
 import com.facebook.react.ReactNativeApplicationEntryPoint.loadReactNative
+import com.facebook.react.common.assets.ReactFontManager
 import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.fpvarbcon.transport.UsbSerialTransportPackage
 
@@ -29,6 +30,14 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // The Arabic UI typeface. Registering the res/font XML family under
+    // the name "Cairo" is what makes { fontFamily: 'Cairo', fontWeight }
+    // in shared JS styles resolve to the real weight-mapped faces (see
+    // res/font/cairo.xml); without this, Android would look for a
+    // "Cairo.ttf" asset, miss, and silently fall back to the system font.
+    // Registered before loadReactNative so no first-frame text can render
+    // ahead of the family being known.
+    ReactFontManager.getInstance().addCustomFont(this, "Cairo", R.font.cairo)
     loadReactNative(this)
   }
 }

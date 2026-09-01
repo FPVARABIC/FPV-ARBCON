@@ -19,7 +19,6 @@ export type {
 } from './orientationStability';
 
 export {
-  deriveArmingReadiness,
   rankArmingBlockReasons,
   selectTopArmingBlockReasons,
 } from './armingReadiness';
@@ -27,8 +26,39 @@ export type {
   ArmingBlockSeverity,
   ArmingBlockReason,
   ArmingReadiness,
+  ArmingReadinessUnknownCause,
   ArmingBlockReasonSelection,
 } from './armingReadiness';
+
+export {
+  describeArmingBlockers,
+  deriveSetupArmingReadiness,
+  deriveSetupSafetyFlags,
+  deriveSetupRebootRequired,
+  deriveSetupSensorSummary,
+  deriveSetupWarnings,
+  SETUP_SENSOR_TOKENS,
+  SETUP_SENSOR_TOKENS_MATCH_DECODER,
+} from './setupSafetyModel';
+export type {
+  SetupSafetyFlagState,
+  SetupSafetyFlags,
+  SetupSensorState,
+  SetupSensorEntry,
+  SetupSensorSummary,
+  SetupUnknownSensorBit,
+  SetupWarning,
+  SetupWarningId,
+  SetupWarningInput,
+  SetupWarningOwner,
+  SetupWarningSeverity,
+} from './setupSafetyModel';
+
+export {
+  deriveSetupBatterySummary,
+  isSetupSafetyStripWarranted,
+} from './setupStatusModel';
+export type { SetupBatterySummary } from './setupStatusModel';
 
 export { pickTopNotice } from './setupNotice';
 export type {
@@ -120,7 +150,59 @@ export {
   receiverDraftsEqual,
   receiverSnapshotsEqual,
   validateReceiverDraft,
+  SERIAL_RX_PROVIDER_MAX,
+  RECEIVER_REBOOT_SENSITIVE_FIELDS,
+  receiverChangeMayRequireReboot,
 } from './receiverConfigurationModel';
+export {
+  resolveReceiverMode,
+  resolveReceiverPortDependency,
+  resolveReceiverSignalState,
+  resolveRssiSource,
+  receiverProviderIsMeaningful,
+  receiverValuesMayBeFailsafeOutput,
+  RECEIVER_MODE_FEATURE_MASK,
+  RECEIVER_FAILSAFE_BIT,
+  RECEIVER_RXLOSS_BIT,
+  RECEIVER_BOXFAILSAFE_BIT,
+  RSSI_SOURCE_TOKENS,
+} from './receiverRuntimeSemantics';
+export {
+  RECEIVER_MODE_CAPABILITY,
+  WRITABLE_RECEIVER_MODES,
+  RECEIVER_MODE_APPLY_REQUIREMENT,
+  RECEIVER_PROVIDER_APPLY_REQUIREMENT,
+  receiverModeIsWritable,
+  receiverOwnedModeBits,
+  applyReceiverModeToFeatureMask,
+  receiverModeBaseIsStale,
+  resolveReceiverTargetDependency,
+  receiverModeAfterMutation,
+  receiverModeIsSelectable,
+  selectableReceiverModes,
+  providerWriteIsPermitted,
+} from './receiverModeCapability';
+export {
+  resolveProviderAvailability,
+  resolveModeAvailability,
+  selectableProviders,
+  RECEIVER_MODE_BUILD_OPTION,
+  BUILD_OPTION_RX_PPM,
+  BUILD_OPTION_SERIALRX_CRSF,
+} from './receiverBuildCapability';
+export type {ReceiverBuildAvailability} from './receiverBuildCapability';
+export type {
+  ReceiverModeCapability,
+  ReceiverModeWriteClassification,
+  ReceiverApplyRequirement,
+  ReceiverDependencyVerdict,
+} from './receiverModeCapability';
+export type {
+  ReceiverMode,
+  ReceiverPortDependency,
+  ReceiverSignalState,
+  ReceiverRssiSource,
+} from './receiverRuntimeSemantics';
 export type {
   ReceiverConfigurationSnapshot,
   ReceiverConfigurationDraft,
@@ -169,6 +251,23 @@ export type {
   FailsafeConfigurationDraft,
   FailsafeValidationCode,
 } from './failsafeConfigurationModel';
+export {
+  createGpsRescueDraft,
+  gpsRescueDraftsEqual,
+  gpsRescueSnapshotsEqual,
+  validateGpsRescueDraft,
+  gpsRescueSupportsRates,
+  gpsRescueSupportsMinStartDistance,
+  gpsRescueSupportsInitialClimb,
+  GPS_RESCUE_RANGES,
+} from './gpsRescueConfigurationModel';
+export type {
+  GpsRescueDraft,
+  GpsRescueRange,
+  GpsRescueSanityCheck,
+  GpsRescueAltitudeMode,
+  GpsRescueValidationCode,
+} from './gpsRescueConfigurationModel';
 export {createPowerConfigurationDraft, powerDraftsEqual, powerSnapshotsEqual, validatePowerDraft} from './powerConfigurationModel';
 export type {PowerConfigurationDraft, PowerValidationCode} from './powerConfigurationModel';
 export {
@@ -187,6 +286,7 @@ export {
 export {
   deriveMotorDiagnosticsSupport,
   hasEscTelemetrySource,
+  rpmIsUnprovenZero,
   visibleMotorTelemetryMetrics,
 } from './motorDiagnosticsSemantics';
 export type {
@@ -211,3 +311,39 @@ export type {
   MotorStaticFactsFirmwareSnapshot,
   MotorStaticFactsBoardSnapshot,
 } from './motorStaticFacts';
+export {classifyGpsPositionQuality, isGpsPositionTrustworthyForRescue, GPS_PDOP_BANDS} from './gpsPositionQuality';
+export type {GpsPositionQuality} from './gpsPositionQuality';
+
+export {
+  classifyBlackboxConfig,
+  classifyBlackboxDevice,
+  classifyBlackboxSampleRate,
+  classifyDataflash,
+  classifySdcard,
+  dataflashEraseWouldApply,
+  isBlackboxFieldDisabled,
+  setBlackboxFieldDisabled,
+  BLACKBOX_DEVICE_NONE,
+  BLACKBOX_DEVICE_FLASH,
+  BLACKBOX_DEVICE_SDCARD,
+  BLACKBOX_DEVICE_SERIAL,
+  BLACKBOX_SAMPLE_RATE_MIN,
+  BLACKBOX_SAMPLE_RATE_MAX,
+  BLACKBOX_FIELD_BIT_MIN,
+  BLACKBOX_FIELD_BIT_MAX,
+  SDCARD_STATE_NOT_PRESENT,
+  SDCARD_STATE_FATAL,
+  SDCARD_STATE_CARD_INITIALIZING,
+  SDCARD_STATE_FILESYSTEM_INITIALIZING,
+  SDCARD_STATE_READY,
+} from './blackboxStorageSemantics';
+export type {
+  BlackboxConfiguration,
+  BlackboxDeviceSelection,
+  BlackboxLoggingDevice,
+  BlackboxSampleRateSelection,
+  DataflashState,
+  DataflashStorage,
+  SdcardState,
+  SdcardStorage,
+} from './blackboxStorageSemantics';

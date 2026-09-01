@@ -13,7 +13,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useTranslation } from 'react-i18next';
 
 import type { MotorVectorScope } from '../../core/firmware-adapters/betaflightMotorVectorsV147';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
 
 const MOTOR_PROTOCOL_NAMES: Readonly<Record<number, string>> = Object.freeze({
   0: 'PWM',
@@ -28,10 +28,16 @@ const MOTOR_PROTOCOL_NAMES: Readonly<Record<number, string>> = Object.freeze({
   9: 'DISABLED',
 });
 
-/** Version-scoped display helper. Unknown raw values remain explicit. */
+/**
+ * Version-scoped display helper. Unknown raw values remain explicit.
+ *
+ * M-D §46: an unread protocol returns an empty string rather than a dash,
+ * and every caller decides what to say instead - MotorAirframeSummary
+ * says "not read yet", which is the fact.
+ */
 export function formatMotorProtocol(raw: number | undefined): string {
   if (raw === undefined) {
-    return '—';
+    return '';
   }
   return MOTOR_PROTOCOL_NAMES[raw] ?? `RAW ${raw}`;
 }
@@ -49,7 +55,10 @@ export function MotorConfigurationSummary({
     {
       id: 'count',
       label: t('motorsScreen.configMotorCount'),
-      value: scope === undefined ? '—' : String(scope.motorCount),
+      value:
+        scope === undefined
+          ? t('motorsScreen.valueNotRead')
+          : String(scope.motorCount),
       tone: styles.factValue,
     },
     {
@@ -63,7 +72,7 @@ export function MotorConfigurationSummary({
       label: t('motorsScreen.config3d'),
       value:
         scope === undefined
-          ? '—'
+          ? t('motorsScreen.valueNotRead')
           : scope.feature3dEnabled
           ? t('motorsScreen.configEnabled')
           : t('motorsScreen.configDisabled'),
@@ -128,13 +137,11 @@ const styles = StyleSheet.create({
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   readOnlyBadge: {
     borderRadius: radii.pill,
     backgroundColor: colors.accentSoft,
@@ -145,8 +152,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.accentStrong,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   factRow: { flexDirection: 'row', gap: spacing.sm },
   fact: {
     flex: 1,
@@ -172,14 +178,14 @@ const styles = StyleSheet.create({
   factValueGood: {
     ...typography.body,
     color: colors.success,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
     writingDirection: 'rtl',
   },
   factValueDanger: {
     ...typography.body,
     color: colors.error,
-    fontWeight: '800',
+    fontWeight: '700',
     textAlign: 'center',
     writingDirection: 'rtl',
   },

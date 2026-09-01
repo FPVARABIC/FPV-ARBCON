@@ -46,6 +46,10 @@ export type {
   MspMixerConfig,
   MspAdvancedConfig,
   MspMotorConfig,
+  MspBlackboxConfig,
+  MspDataflashSummary,
+  MspSdcardSummary,
+  BlackboxConfigWrite,
   MspMotor3dConfig,
   MspMotorOutputs,
   MspMotorTelemetry,
@@ -67,6 +71,8 @@ export type {
   EncodedPidTuningWrite,
   GeneralConfigurationWriteGroup,
   EncodedGeneralConfigurationWrite,
+  ConnectionStage,
+  ConnectionStageEvidence,
   MspCompatibilityResult,
   MspFcFamily,
   MspFcVariant,
@@ -120,6 +126,7 @@ export {
   MSP_GPS_SV_INFO,
   MSP_ANALOG,
   MSP_STATUS_EX,
+  MSP_TX_INFO,
   MSP_BOXIDS,
   MSP_ACC_CALIBRATION,
   MSP_MAG_CALIBRATION,
@@ -156,6 +163,10 @@ export {
   MSP_RC_DEADBAND,
   MSP_MOTOR_CONFIG,
   MSP_MOTOR_TELEMETRY,
+  MSP_BLACKBOX_CONFIG,
+  MSP_SET_BLACKBOX_CONFIG,
+  MSP_DATAFLASH_SUMMARY,
+  MSP_SDCARD_SUMMARY,
   MSP2_MOTOR_OUTPUT_REORDERING,
   MSP2_SET_MOTOR_OUTPUT_REORDERING,
   MSP2_SEND_DSHOT_COMMAND,
@@ -170,6 +181,53 @@ export {
   MSP_VTX_CONFIG,
   MSP2_COMMON_SERIAL_CONFIG,
   MSP2_COMMON_SET_SERIAL_CONFIG,
+  MSP_SENSOR_CONFIG,
+  MSP_SET_SENSOR_CONFIG,
+  MSP_SENSOR_ALIGNMENT,
+  MSP_SET_SENSOR_ALIGNMENT,
+  MSP_COMPASS_CONFIG,
+  MSP_SET_COMPASS_CONFIG,
+  MSP_ACC_TRIM,
+  MSP_SET_ACC_TRIM,
+  MSP2_SENSOR_CONFIG_ACTIVE,
+  MSP2_GYRO_SENSOR_ACTIVE,
+  MSP_SONAR_ALTITUDE,
+  modelSensorHardware,
+  sensorHardwareDefaultIndex,
+  sensorHardwareIndices,
+  sensorHardwareNoneIndex,
+  decodeSensorConfig,
+  NOT_AVAILABLE_IN_THIS_CONTRACT,
+  SENSOR_CONFIG_CONTRACT_BYTES,
+  SENSOR_CONFIG_MIN_BYTES,
+  decodeSensorAlignment,
+  gyroIndicesFromBitmask,
+  modelSensorAlignment,
+  ALIGN_CUSTOM_RAW,
+  ALIGN_DEFAULT_RAW,
+  SENSOR_ALIGNMENT_PAYLOAD_BYTES,
+  decodeSensorConfigActive,
+  SENSOR_CONFIG_ACTIVE_BYTES,
+  SENSOR_NOT_AVAILABLE,
+  SENSOR_NOT_AVAILABLE_RAW,
+  decodeGyroSensorActive,
+  decodeAccTrim,
+  ACC_TRIM_PAYLOAD_BYTES,
+  decodeCompassConfig,
+  COMPASS_CONFIG_PAYLOAD_BYTES,
+  encodeSensorConfig,
+  sensorConfigContractFor,
+  sensorConfigWriteFrom,
+  encodeSensorAlignment,
+  CUSTOM_ALIGNMENT_DECIDEGREE_LIMIT,
+  SENSOR_ALIGNMENT_WRITE_BASE_BYTES,
+  SENSOR_ALIGNMENT_WRITE_FULL_BYTES,
+  encodeAccTrim,
+  ACC_TRIM_LIMIT,
+  ACC_TRIM_WRITE_BYTES,
+  encodeCompassConfig,
+  COMPASS_CONFIG_WRITE_BYTES,
+  MAG_DECLINATION_DECIDEGREE_LIMIT,
   BETAFLIGHT_SOURCE_REPO,
   BETAFLIGHT_PINNED_COMMIT,
   BETAFLIGHT_API147_COMMIT,
@@ -205,6 +263,19 @@ export {
   decodeAdvancedConfig,
   MOTOR_PROTOCOL_RAW_DSHOT600_AT_2025_12_2,
   decodeMotorConfig,
+  decodeBlackboxConfig,
+  BLACKBOX_CONFIG_PAYLOAD_BYTES,
+  decodeDataflashSummary,
+  DATAFLASH_FLAG_READY,
+  DATAFLASH_FLAG_SUPPORTED,
+  DATAFLASH_SUMMARY_PAYLOAD_BYTES,
+  decodeSdcardSummary,
+  SDCARD_FLAG_CONFIGURED,
+  SDCARD_SUMMARY_PAYLOAD_BYTES,
+  encodeBlackboxConfig,
+  encodeAdvancedConfigDebugMode,
+  ADVANCED_CONFIG_WRITE_BYTES,
+  BLACKBOX_CONFIG_WRITE_BYTES,
   decodeMotor3dConfig,
   decodeMotorOutputs,
   MSP_MOTOR_OUTPUT_SLOT_COUNT,
@@ -229,6 +300,7 @@ export {
   decodeReceiverMap,
   decodeRssiConfig,
   decodeReceiverDeadband,
+  decodeTxInfo,
   RECEIVER_CHANNEL_MAX_COUNT,
   decodePidTerms,
   decodeRcTuning,
@@ -255,10 +327,18 @@ export {
   encodeReceiverDeadband,
   encodeReceiverConfig,
   encodeChangedReceiverConfiguration,
+  encodeFeatureConfig,
   checkMspCompatibility,
   MSP_MIN_REQUIRED_API_VERSION_MAJOR,
   MSP_MIN_REQUIRED_API_VERSION_MINOR,
+  boardIdentityNames,
+  classifyConnectionStage,
+  connectionStageLabelKey,
+  boardMatchesTarget,
+  describeFlightControllerHardware,
   deriveFcFamily,
+  isIdentifiedFlightController,
+  resolveCatalogTarget,
   MspIdentificationService,
   MspIncompatibleFirmwareError,
   BoxIdsAcquisition,
@@ -321,6 +401,43 @@ export type {
   MspModesConfiguration,
   EncodedModeRangeWrite,
 } from './protocol';
+/**
+ * BOARD ALIGNMENT - mounting angles of the whole flight controller.
+ * Separate from SENSOR alignment (MSP 126/220), which this app does not
+ * implement; see boardAlignmentModel.ts for why the two must not be
+ * treated as one feature.
+ */
+export {
+  MSP_BOARD_ALIGNMENT_CONFIG,
+  MSP_SET_BOARD_ALIGNMENT_CONFIG,
+} from './protocol/msp/commands/mspCommands';
+export {
+  decodeBoardAlignment,
+  BOARD_ALIGNMENT_PAYLOAD_BYTES,
+} from './protocol/msp/decoding/decodeBoardAlignment';
+export {
+  encodeBoardAlignment,
+  encodeChangedBoardAlignment,
+  BOARD_ALIGNMENT_WRITE_BYTES,
+} from './protocol/msp/encoding/encodeBoardAlignment';
+export {
+  BOARD_ALIGNMENT_MIN_DEGREES,
+  BOARD_ALIGNMENT_MAX_DEGREES,
+  BOARD_ALIGNMENT_DEFAULT_DEGREES,
+  BOARD_ALIGNMENT_AXES,
+  createBoardAlignmentDraft,
+  boardAlignmentDraftsEqual,
+  boardAlignmentSnapshotsEqual,
+  validateBoardAlignmentDraft,
+  isBoardAlignmentNeutral,
+} from './state/boardAlignmentModel';
+export type {
+  MspBoardAlignmentSnapshot,
+  BoardAlignmentDraft,
+  BoardAlignmentAxis,
+  BoardAlignmentValidationIssue,
+} from './state/boardAlignmentModel';
+
 export {
   MSP_FAILSAFE_CONFIG,
   MSP_SET_FAILSAFE_CONFIG,
@@ -333,6 +450,19 @@ export {
   RX_FAILSAFE_MAX,
   RX_FAILSAFE_STEP,
   BUILD_OPTION_GPS,
+  MSP_GPS_RESCUE,
+  MSP_SET_GPS_RESCUE,
+  decodeGpsRescue,
+  encodeChangedGpsRescue,
+  encodeGpsRescue,
+  GPS_RESCUE_BASE_BYTES,
+  GPS_RESCUE_WITH_RATES_BYTES,
+  GPS_RESCUE_WITH_MIN_START_BYTES,
+  GPS_RESCUE_FULL_BYTES,
+  encodeSelectSetting,
+  isEncodableProfileIndex,
+  SELECT_SETTING_RATE_PROFILE_FLAG,
+  SELECT_SETTING_MAX_INDEX,
 } from './protocol';
 export type {
   FailsafeProcedure,
@@ -343,6 +473,10 @@ export type {
   MspFailsafeSnapshot,
   FailsafeWriteGroup,
   EncodedFailsafeWrite,
+  GpsRescueAvailability,
+  MspGpsRescueConfiguration,
+  MspGpsRescuePreservedFields,
+  SelectSettingProfileKind,
 } from './protocol';
 export {
   createFailsafeConfigurationDraft,
@@ -355,6 +489,23 @@ export type {
   FailsafeConfigurationDraft,
   FailsafeValidationCode,
 } from './state/failsafeConfigurationModel';
+export {
+  createGpsRescueDraft,
+  gpsRescueDraftsEqual,
+  gpsRescueSnapshotsEqual,
+  validateGpsRescueDraft,
+  gpsRescueSupportsRates,
+  gpsRescueSupportsMinStartDistance,
+  gpsRescueSupportsInitialClimb,
+  GPS_RESCUE_RANGES,
+} from './state/gpsRescueConfigurationModel';
+export type {
+  GpsRescueDraft,
+  GpsRescueRange,
+  GpsRescueSanityCheck,
+  GpsRescueAltitudeMode,
+  GpsRescueValidationCode,
+} from './state/gpsRescueConfigurationModel';
 export {
   MSP_BATTERY_CONFIG,
   MSP_SET_BATTERY_CONFIG,
@@ -419,11 +570,41 @@ export {
   validateOsdDraft,
   OSD_ELEMENT_NAMES_AR,
   osdElementName,
+  OSD_ELEMENT_TOKENS,
+  osdElementToken,
 } from './state/osdConfigurationModel';
 export type {
   OsdConfigurationDraft,
   OsdValidationCode,
 } from './state/osdConfigurationModel';
+export {
+  OSD_VIDEO_AUTO,
+  OSD_VIDEO_PAL,
+  OSD_VIDEO_NTSC,
+  OSD_VIDEO_HD,
+  OSD_PAL_GRID,
+  OSD_NTSC_GRID,
+  OSD_CELL_WIDTH_UNITS,
+  OSD_CELL_HEIGHT_UNITS,
+  resolveOsdCanvas,
+  osdPreviewAspectRatio,
+  osdCellSize,
+  clampOsdCell,
+  isCellWithinCanvas,
+  pointToOsdCell,
+  osdCellToPoint,
+  osdCellToFraction,
+  beginOsdDrag,
+  resolveOsdDragCell,
+  hitTestOsdElements,
+} from './state/osdLayoutGeometry';
+export type {
+  OsdCell,
+  OsdPoint,
+  OsdPreviewBox,
+  OsdDragGrab,
+  OsdHitTarget,
+} from './state/osdLayoutGeometry';
 export {
   MSP_SET_VTX_CONFIG,
   MSP_VTXTABLE_BAND,
@@ -553,6 +734,50 @@ export {
   receiverDraftsEqual,
   receiverSnapshotsEqual,
   validateReceiverDraft,
+  RECEIVER_REBOOT_SENSITIVE_FIELDS,
+  receiverChangeMayRequireReboot,
+  resolveReceiverMode,
+  resolveReceiverPortDependency,
+  resolveReceiverSignalState,
+  resolveRssiSource,
+  receiverProviderIsMeaningful,
+  receiverValuesMayBeFailsafeOutput,
+  RECEIVER_MODE_FEATURE_MASK,
+  RECEIVER_FAILSAFE_BIT,
+  RECEIVER_RXLOSS_BIT,
+  RECEIVER_BOXFAILSAFE_BIT,
+  RSSI_SOURCE_TOKENS,
+  RECEIVER_MODE_CAPABILITY,
+  WRITABLE_RECEIVER_MODES,
+  RECEIVER_MODE_APPLY_REQUIREMENT,
+  RECEIVER_PROVIDER_APPLY_REQUIREMENT,
+  receiverModeIsWritable,
+  receiverOwnedModeBits,
+  applyReceiverModeToFeatureMask,
+  receiverModeBaseIsStale,
+  resolveReceiverTargetDependency,
+  receiverModeAfterMutation,
+  receiverModeIsSelectable,
+  selectableReceiverModes,
+  providerWriteIsPermitted,
+  resolveProviderAvailability,
+  resolveModeAvailability,
+  selectableProviders,
+  RECEIVER_MODE_BUILD_OPTION,
+  BUILD_OPTION_RX_PPM,
+  BUILD_OPTION_SERIALRX_CRSF,
+  SERIAL_RX_PROVIDER_MAX,
+} from './state';
+export type {
+  ReceiverBuildAvailability,
+  ReceiverModeCapability,
+  ReceiverModeWriteClassification,
+  ReceiverApplyRequirement,
+  ReceiverDependencyVerdict,
+  ReceiverMode,
+  ReceiverPortDependency,
+  ReceiverSignalState,
+  ReceiverRssiSource,
 } from './state';
 export type {
   ReceiverConfigurationSnapshot,
@@ -567,6 +792,11 @@ export type { OrientationViewOffset, OrientationViewState } from './state';
 export { deriveMotorOutputOrder } from './state/motorOutputReordering';
 export type { MotorOutputReorderDerivation } from './state/motorOutputReordering';
 export {
+  evaluateMotorIdentificationCapability,
+  MOTOR_IDENTIFICATION_MODEL_OUTPUT_COUNT,
+} from './state/motorIdentificationCapability';
+export type { MotorIdentificationCapability } from './state/motorIdentificationCapability';
+export {
   analyzeOrientationStability,
   ORIENTATION_STABILITY_WINDOW_MS,
   ORIENTATION_STABILITY_MIN_SAMPLES,
@@ -577,7 +807,6 @@ export type {
   OrientationStabilityResult,
 } from './state';
 export {
-  deriveArmingReadiness,
   rankArmingBlockReasons,
   selectTopArmingBlockReasons,
 } from './state';
@@ -585,8 +814,37 @@ export type {
   ArmingBlockSeverity,
   ArmingBlockReason,
   ArmingReadiness,
+  ArmingReadinessUnknownCause,
   ArmingBlockReasonSelection,
 } from './state';
+export {
+  describeArmingBlockers,
+  deriveSetupArmingReadiness,
+  deriveSetupSafetyFlags,
+  deriveSetupRebootRequired,
+  deriveSetupSensorSummary,
+  deriveSetupWarnings,
+  SETUP_SENSOR_TOKENS,
+  SETUP_SENSOR_TOKENS_MATCH_DECODER,
+} from './state';
+export type {
+  SetupSafetyFlagState,
+  SetupSafetyFlags,
+  SetupSensorState,
+  SetupSensorEntry,
+  SetupSensorSummary,
+  SetupUnknownSensorBit,
+  SetupWarning,
+  SetupWarningId,
+  SetupWarningInput,
+  SetupWarningOwner,
+  SetupWarningSeverity,
+} from './state';
+export {
+  deriveSetupBatterySummary,
+  isSetupSafetyStripWarranted,
+} from './state';
+export type { SetupBatterySummary } from './state';
 export { pickTopNotice } from './state';
 export type {
   SetupNotice,
@@ -597,12 +855,29 @@ export type {
 export { assembleMotorStaticFacts, bindMotorStaticFacts } from './state';
 export {
   deriveMotorDiagnosticsSupport,
+  classifyBlackboxConfig,
+  classifyBlackboxDevice,
+  classifyBlackboxSampleRate,
+  classifyDataflash,
+  classifySdcard,
+  dataflashEraseWouldApply,
+  isBlackboxFieldDisabled,
+  setBlackboxFieldDisabled,
   hasEscTelemetrySource,
+  rpmIsUnprovenZero,
   visibleMotorTelemetryMetrics,
 } from './state';
 export type {
   MotorEscTelemetrySource,
   MotorDiagnosticsSupport,
+  BlackboxConfiguration,
+  BlackboxDeviceSelection,
+  BlackboxLoggingDevice,
+  BlackboxSampleRateSelection,
+  DataflashState,
+  DataflashStorage,
+  SdcardState,
+  SdcardStorage,
   MotorTelemetryVisibleMetrics,
 } from './state';
 export type {
@@ -692,3 +967,29 @@ export type {
   FirmwarePresetOption,
   FirmwarePresetDocument,
 } from './state/presetCatalog';
+export {classifyGpsPositionQuality, isGpsPositionTrustworthyForRescue, GPS_PDOP_BANDS} from './state/gpsPositionQuality';
+export type {GpsPositionQuality} from './state/gpsPositionQuality';
+
+/* SENSORS - B-1 wire types. */
+export type {
+  SensorHardwareFamily,
+  SensorHardwareKind,
+  SensorHardwareValue,
+  NotAvailableInThisContract,
+  SensorConfig,
+  SensorConfigContract,
+  CustomAlignmentDecidegrees,
+  SensorAlignment,
+  SensorAlignmentKind,
+  SensorAlignmentValue,
+  DetectedSensor,
+  SensorConfigActive,
+  SensorNotAvailable,
+  GyroSensorActive,
+  AccTrim,
+  CompassConfig,
+  SensorConfigWrite,
+  SensorAlignmentWrite,
+  AccTrimWrite,
+  CompassConfigWrite,
+} from './protocol';

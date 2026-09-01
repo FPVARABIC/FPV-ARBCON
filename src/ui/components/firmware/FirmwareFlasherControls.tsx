@@ -2,12 +2,13 @@ import React from 'react';
 import {
   Pressable,
   StyleSheet,
-  Switch,
   Text,
   View,
 } from 'react-native';
 
-import {colors, radii, spacing, typography} from '../../theme';
+import {colors, noticeSurface, radii, spacing, typography} from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
+import {MIN_TOUCH_TARGET, ToggleSwitch} from '../controls';
 
 export function FirmwareSection({
   title,
@@ -29,17 +30,32 @@ export function FirmwareSection({
   );
 }
 
+/**
+ * `size` is the hierarchy control.
+ *
+ *   'block'   - spans its container. Reserved for the one action a step
+ *               exists to perform.
+ *   'compact' - sized to its own label. Everything else: supporting
+ *               actions, tools, cancel.
+ *
+ * Before this existed every action rendered as the same full-width 46px
+ * slab, so a reversible download and an irreversible write to a flight
+ * controller looked identical and read as a wall of bars on a desktop
+ * viewport. The default stays 'block' so existing callers are unchanged.
+ */
 export function FirmwareButton({
   title,
   onPress,
   disabled = false,
   tone = 'primary',
+  size = 'block',
   testID,
 }: {
   readonly title: string;
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly tone?: 'primary' | 'secondary' | 'danger';
+  readonly size?: 'block' | 'compact';
   readonly testID?: string;
 }): React.JSX.Element {
   return (
@@ -51,6 +67,7 @@ export function FirmwareButton({
       onPress={onPress}
       style={({pressed}) => [
         styles.button,
+        size === 'compact' && styles.buttonCompact,
         tone === 'secondary' && styles.buttonSecondary,
         tone === 'danger' && styles.buttonDanger,
         disabled && styles.disabled,
@@ -59,6 +76,7 @@ export function FirmwareButton({
       <Text
         style={[
           styles.buttonText,
+          size === 'compact' && styles.buttonTextCompact,
           tone === 'secondary' && styles.buttonTextSecondary,
           tone === 'danger' && styles.buttonTextDanger,
         ]}>
@@ -91,13 +109,12 @@ export function FirmwareToggle({
         <Text style={styles.toggleLabel}>{label}</Text>
         {detail ? <Text style={styles.toggleDetail}>{detail}</Text> : null}
       </View>
-      <Switch
+      <ToggleSwitch
         testID={testID}
         value={value}
         disabled={disabled}
         onValueChange={onValueChange}
-        trackColor={{false: colors.disabled, true: warning ? colors.warning : colors.accentStrong}}
-        thumbColor={value ? colors.white : colors.textSecondary}
+        accessibilityLabel={label}
       />
     </View>
   );
@@ -200,19 +217,33 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   sectionTitle: {...typography.title, color: colors.textPrimary},
-  sectionCaption: {...typography.caption, color: colors.textSecondary},
+  sectionCaption: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   sectionBody: {gap: spacing.md, paddingTop: spacing.sm},
   button: {
     minHeight: 46,
+    /* The 'block' variant, and full width ON PURPOSE: this is the flash
+       action, the one thing the step exists to do. It was full width by
+       ACCIDENT before - the parent column stretches any child that says
+       nothing - which is indistinguishable from intent when you read it.
+       Stated explicitly so the discipline test can tell the two apart;
+       `buttonCompact` overrides it for every supporting action. */
+    alignSelf: 'stretch',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,
     paddingHorizontal: spacing.md,
     backgroundColor: colors.accent,
   },
+  /** Sized to its label, never stretched. Still a 44px+ touch target. */
+  buttonCompact: {
+    alignSelf: 'flex-start',
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+  },
   buttonSecondary: {backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border},
   buttonDanger: {backgroundColor: colors.error},
   buttonText: {...typography.sectionTitle, color: colors.accentText, textAlign: 'center'},
+  buttonTextCompact: {...typography.bodyStrong},
   buttonTextSecondary: {color: colors.textPrimary},
   buttonTextDanger: {color: colors.white},
   disabled: {opacity: 0.45},
@@ -227,13 +258,19 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     backgroundColor: colors.surfaceAlt,
   },
-  toggleWarning: {borderWidth: 1, borderColor: '#D8B86F'},
+  toggleWarning: {borderWidth: 1, borderColor: colors.warning},
   toggleCopy: {flex: 1, gap: 2},
   toggleLabel: {...typography.sectionTitle, color: colors.textPrimary},
-  toggleDetail: {...typography.caption, color: colors.textSecondary},
+  toggleDetail: {...typography.caption, color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   choiceWrap: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
   choice: {
-    minHeight: 39,
+    /* 44, not 39. This is the shared radio chip behind every
+       `FirmwareChoice`, and the sweep only ever rendered two of its NINE
+       call sites - the firmware-source pair on the first step. The other
+       seven were the same 39px defect, unrendered by the fixture, which
+       is why the floor belongs on the primitive and not at the two call
+       sites that happened to be measured. */
+    minHeight: MIN_TOUCH_TARGET,
     justifyContent: 'center',
     paddingHorizontal: spacing.md,
     borderRadius: radii.pill,
@@ -247,13 +284,13 @@ const styles = StyleSheet.create({
   progressBlock: {gap: 7},
   progressLabels: {flexDirection: 'row', justifyContent: 'space-between', gap: spacing.md},
   progressLabel: {...typography.caption, color: colors.textSecondary, flex: 1},
-  progressPercent: {...typography.caption, color: colors.accentStrong, fontWeight: '800'},
+  progressPercent: {...typography.caption, color: colors.accentStrong, fontWeight: '700'},
   progressTrack: {height: 8, borderRadius: 4, backgroundColor: colors.surfaceRaised, overflow: 'hidden'},
   progressFill: {height: 8, borderRadius: 4, backgroundColor: colors.accent},
-  notice: {padding: spacing.md, borderRadius: radii.md, backgroundColor: '#EAF5F8', gap: 3},
-  noticeWarning: {backgroundColor: '#FFF4D8'},
-  noticeSuccess: {backgroundColor: '#EAF7F2'},
-  noticeError: {backgroundColor: '#FFF0F1'},
+  notice: {...noticeSurface, backgroundColor: colors.infoSoft, gap: 3},
+  noticeWarning: {backgroundColor: colors.warningSoft},
+  noticeSuccess: {backgroundColor: colors.successSoft},
+  noticeError: {backgroundColor: colors.errorSoft},
   noticeTitle: {...typography.sectionTitle, color: colors.info},
   noticeTitleWarning: {color: colors.warning},
   noticeTitleSuccess: {color: colors.success},

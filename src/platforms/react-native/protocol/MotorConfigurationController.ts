@@ -22,6 +22,7 @@ import {
   MSP_MIXER_CONFIG,
   MSP_MOTOR_3D_CONFIG,
   MSP_MOTOR_CONFIG,
+  MSP_REBOOT,
   MSP_SET_ADVANCED_CONFIG,
   MSP_SET_FEATURE_CONFIG,
   MSP_SET_MIXER_CONFIG,
@@ -30,6 +31,10 @@ import {
   MSP_STATUS_EX,
 } from '../../../core/protocol/msp/commands/mspCommands';
 import { decodeAdvancedConfig } from '../../../core/protocol/msp/decoding/decodeAdvancedConfig';
+import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
 import { decodeFeatureConfig } from '../../../core/protocol/msp/decoding/decodeFeatureConfig';
 import { decodeMixerConfig } from '../../../core/protocol/msp/decoding/decodeMixerConfig';
 import { decodeMotor3dConfig } from '../../../core/protocol/msp/decoding/decodeMotor3dConfig';
@@ -71,7 +76,7 @@ import {
   type MotorFirmwareCapability,
 } from '../../../core/firmware-adapters/motorFirmwareCompatibility';
 import {
-  isMotorTestSessionActive,
+  isMotorOutputEngagedForSession,
 } from './motorTestCapability';
 import { mspSessionCoordinator } from './MspSessionCoordinator';
 import type {
@@ -85,6 +90,10 @@ import {
   acquireMotorConfigurationInterlock,
   MotorConfigurationTransactionInProgressError,
 } from './motorConfigurationInterlock';
+import {
+  MutationLedger,
+  MutationStoppedError,
+} from './configurationSaveLedger';
 
 const EMPTY_PAYLOAD = new Uint8Array(0);
 
@@ -107,6 +116,7 @@ const CONFIRMED_NOT_SENT_CODES: readonly string[] = Object.freeze([
 ]);
 
 export type MotorConfigurationBlockReason =
+  | 'SESSION_CHANGED'
   | 'DISCONNECTED'
   | 'IDENTIFYING'
   | 'INCOMPATIBLE_FIRMWARE'
@@ -118,7 +128,19 @@ export type MotorConfigurationBlockReason =
   | 'INVALID_DRAFT'
   | 'STALE_BASE'
   | 'CONFIGURATION_BUSY'
-  | 'ESC_DIRECTION_UNSUPPORTED';
+  | 'ESC_DIRECTION_UNSUPPORTED'
+  /**
+   * The board CAN be read, and this app will not write to it.
+   *
+   * Distinct from INCOMPATIBLE_FIRMWARE on purpose: that one means "this
+   * screen is not for this board", and telling an operator that in front of
+   * a Motors page that is visibly showing them their own live settings is
+   * simply a false statement. This one means the settings on screen are
+   * real and the save button is the part that is unavailable, because the
+   * firmware is NEWER than any revision whose setter payloads this build
+   * has been able to check. See motorFirmwareCompatibility.ts.
+   */
+  | 'CONFIGURATION_WRITE_UNVERIFIED';
 
 export type MotorConfigurationLoadOutcome =
   | { readonly kind: 'LOADED'; readonly snapshot: MotorConfigurationSnapshot }
@@ -162,6 +184,32 @@ export type MotorConfigurationSaveOutcome =
       readonly stage: MotorConfigurationWriteGroup | 'EEPROM' | 'UNKNOWN';
       readonly acknowledgedGroups: readonly MotorConfigurationWriteGroup[];
     }
+  /**
+   * THE AIRCRAFT'S RAM MOVED AND ITS FLASH DID NOT.
+   *
+   * U-R1. A Motors save sends up to five SET frames before the EEPROM
+   * commit, and the flight controller applies each one the instant it
+   * acknowledges it. If the sequence then stops - the board restarted,
+   * the app was backgrounded, the link changed hands, or a frame was
+   * refused outright - the acknowledged groups are LIVE and unpersisted.
+   *
+   * Neither `FAILED` nor `SAVED_*` can say that. `FAILED` means nothing
+   * happened, which is false and is exactly the shape of U-X2-001; a
+   * `SAVED_*` claim is worse. `acknowledgedGroups` names what the board
+   * accepted, so the operator can be told which half of their edit the
+   * aircraft is flying until the next power cycle.
+   *
+   * `definitelyNotSent` distinguishes a frame this app never handed to
+   * the transport (it stopped first, or the queue refused it) from one
+   * whose fate is unknown. It is never used to upgrade an ambiguous
+   * result.
+   */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly acknowledgedGroups: readonly MotorConfigurationWriteGroup[];
+      readonly failedStage: MotorConfigurationWriteGroup | 'EEPROM';
+      readonly definitelyNotSent: boolean;
+    }
   | { readonly kind: 'SESSION_ENDED' };
 
 export type MotorOutputOrderLoadOutcome =
@@ -183,6 +231,38 @@ export type MotorOutputOrderSaveOutcome =
     }
   | { readonly kind: 'FAILED'; readonly error: unknown }
   | { readonly kind: 'UNCONFIRMED'; readonly stage: 'OUTPUT_ORDER' | 'EEPROM' }
+  /**
+   * The reorder map reached the flight controller's RAM and the EEPROM
+   * commit did not. U-R1: same defect shape as the main save, on a
+   * two-stage sequence - see MotorConfigurationSaveOutcome.
+   */
+  | {
+      readonly kind: 'PARTIAL_UNPERSISTED';
+      readonly failedStage: 'EEPROM';
+      readonly definitelyNotSent: boolean;
+    }
+  | { readonly kind: 'SESSION_ENDED' };
+
+/**
+ * The explicit reboot step of the M-F3 §36 save lifecycle. A saved mixer
+ * or props flag governs only after mixerInit() runs at boot, so the strip
+ * offers this as its own verified action AFTER a verified save - never
+ * silently inside one.
+ *
+ * REBOOT_REQUESTED.acknowledged distinguishes "the FC answered the
+ * MSP_REBOOT frame before restarting" from "the link dropped around the
+ * request" - which is the expected shape of a reboot actually happening,
+ * and therefore not a failure. Neither value claims the FC came back:
+ * that is only established by the reconnect reading the new configuration.
+ */
+export type MotorRebootOutcome =
+  | { readonly kind: 'REBOOT_REQUESTED'; readonly acknowledged: boolean }
+  | { readonly kind: 'UNCONFIRMED' }
+  | {
+      readonly kind: 'REJECTED';
+      readonly reason: MotorConfigurationBlockReason;
+    }
+  | { readonly kind: 'FAILED'; readonly error: unknown }
   | { readonly kind: 'SESSION_ENDED' };
 
 export type EscDirectionOutcome =
@@ -220,8 +300,17 @@ export interface MotorConfigurationAppStateOwner {
 export interface MotorConfigurationControllerOptions {
   readonly coordinator?: MotorConfigurationSessionCoordinator;
   readonly appStateOwner?: MotorConfigurationAppStateOwner;
-  /** Test seam only. Production uses the official capability store. */
-  readonly isMotorTestActive?: (sessionId: string) => boolean;
+  /**
+   * Test seam only. Production uses the official capability store.
+   *
+   * Named for what it now asks: could a motor be TURNING? It used to be
+   * bound to isMotorTestSessionActive - "does a session exist?" - which
+   * refused configuration whenever a Motors session was open even with every
+   * motor at rest, and so forced the operator to close the session, leave
+   * Motors and come back to change something that concerns motors. Session
+   * existence was never the dangerous condition.
+   */
+  readonly isMotorOutputEngaged?: (sessionId: string) => boolean;
 }
 
 class MotorConfigurationPreflightError extends Error {
@@ -250,6 +339,17 @@ interface MotorConfigurationAmbiguousWriteCause {
     | 'ESC_DIRECTION'
     | 'EEPROM';
   readonly acknowledgedGroups: readonly MotorConfigurationWriteGroup[];
+  /**
+   * The save left the aircraft holding SOME of the requested change in
+   * RAM with nothing in flash. U-R1: a decision made where the sequence
+   * stopped, not re-derived from `acknowledgedGroups.length` - by the
+   * time the EEPROM frame runs every RAM write is already confirmed, so
+   * an ambiguous EEPROM is not a partial configuration and stays
+   * UNCONFIRMED(EEPROM).
+   */
+  readonly partial: boolean;
+  /** The frame provably never reached the flight controller. */
+  readonly definitelyNotSent: boolean;
 }
 
 class MotorConfigurationAmbiguousWriteError extends MspOperationOutcomeUnknownError {
@@ -261,6 +361,8 @@ class MotorConfigurationAmbiguousWriteError extends MspOperationOutcomeUnknownEr
       | 'ESC_DIRECTION'
       | 'EEPROM',
     acknowledgedGroups: readonly MotorConfigurationWriteGroup[],
+    partial = false,
+    definitelyNotSent = false,
   ) {
     super(
       Object.freeze({
@@ -268,6 +370,8 @@ class MotorConfigurationAmbiguousWriteError extends MspOperationOutcomeUnknownEr
         originalError: cause,
         stage,
         acknowledgedGroups,
+        partial,
+        definitelyNotSent,
       } satisfies MotorConfigurationAmbiguousWriteCause),
     );
     this.name = 'MotorConfigurationAmbiguousWriteError';
@@ -310,12 +414,12 @@ function isDefiniteNotApplied(error: unknown): boolean {
  * motorTestCapability.ts's own isMotorTestSessionActive() for why a
  * per-controller copy that read `mayHaveReachedFc` as liveness blocked
  * every configuration screen until the cable was replugged. */
-const defaultMotorTestActive = isMotorTestSessionActive;
+const defaultMotorOutputEngaged = isMotorOutputEngagedForSession;
 
 export class MotorConfigurationController {
   private readonly coordinator: MotorConfigurationSessionCoordinator;
   private readonly appStateOwner: MotorConfigurationAppStateOwner;
-  private readonly isMotorTestActive: (sessionId: string) => boolean;
+  private readonly isMotorOutputEngaged: (sessionId: string) => boolean;
   private readonly boxIds = new Map<
     string,
     {
@@ -327,16 +431,33 @@ export class MotorConfigurationController {
   constructor(options: MotorConfigurationControllerOptions = {}) {
     this.coordinator = options.coordinator ?? mspSessionCoordinator;
     this.appStateOwner = options.appStateOwner ?? setupAppStateTelemetryOwner;
-    this.isMotorTestActive =
-      options.isMotorTestActive ?? defaultMotorTestActive;
+    this.isMotorOutputEngaged =
+      options.isMotorOutputEngaged ?? defaultMotorOutputEngaged;
   }
 
-  async load(sessionId: string): Promise<MotorConfigurationLoadOutcome> {
-    const preflight = this.captureSession(sessionId);
+  /**
+   * U-R3: takes a `SetupUiSessionKey`, not a bare sessionId.
+   *
+   * This controller was the ONE of the nine whose caller could not
+   * express a stale generation - the native layer is allowed to reuse a
+   * sessionId string, so `sessionId` alone cannot distinguish one
+   * activation from the next. Every other configuration controller had
+   * been taking the composite key since Pass 7.1; this closes the gap
+   * rather than reproducing the missing half inside the controller,
+   * which would have meant inventing a generation the caller never
+   * proved.
+   */
+  async load(sessionKey: SetupUiSessionKey): Promise<MotorConfigurationLoadOutcome> {
+    const sessionId = sessionKey.sessionId;
+    const preflight = this.captureSession(sessionId, 'MOTOR_CONFIGURATION_READ');
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
     const { client, scheduler, generation, epoch } = preflight;
+    /* The half a bare sessionId could never carry. */
+    if (generation !== sessionKey.generation) {
+      return { kind: 'REJECTED', reason: 'DISCONNECTED' };
+    }
     let interlock;
     try {
       interlock = acquireMotorConfigurationInterlock(client);
@@ -359,7 +480,10 @@ export class MotorConfigurationController {
               },
         execute: async requester => {
           this.assertLivePreflight(sessionId, client, generation, epoch);
-          return this.readSnapshot(requester);
+          return rememberConfigurationSession(
+            await this.readSnapshot(requester),
+            sessionKey,
+          );
         },
       });
 
@@ -379,10 +503,65 @@ export class MotorConfigurationController {
     }
   }
 
+  /**
+   * THE AIRFRAME ALONE - M-F3F §15, and it costs the link almost nothing.
+   *
+   * =====================================================================
+   * WHY THIS IS NOT `load()`
+   * =====================================================================
+   *
+   * A screen that only DRAWS the aircraft needs two numbers: the mixer
+   * mode and the runtime motor count. `load()` gives it those and four
+   * other groups, and - far more expensively - it runs the full FC-tool
+   * operation: an exclusive configuration interlock, a fresh capability
+   * scope (which re-reads the box-id mapping), and a telemetry pause.
+   *
+   * That is exactly right for the settings editor, which is about to
+   * WRITE. It is wrong for Setup, and measurably so: adding a `load()` at
+   * connect time cost Setup a third box-id acquisition and starved its
+   * attitude poll long enough that three of its own integration
+   * assertions failed. A screen asking "which aircraft is this?" must not
+   * degrade the screen it is asking on.
+   *
+   * So this is TWO READ-ONLY REQUESTS on the session's existing client.
+   * No interlock - nothing is being written and nothing needs excluding.
+   * No scope acquisition - no capability is being exercised. No telemetry
+   * pause - the scheduler keeps running. It cannot change the board, and
+   * it cannot make another operation fail: at worst it returns undefined.
+   *
+   * `undefined` means "not answered", never a guessed airframe.
+   */
+  async readObservedAirframe(sessionId: string): Promise<
+    | {readonly mixerModeRaw: number; readonly motorCount: number | undefined}
+    | undefined
+  > {
+    const preflight = this.captureSession(sessionId, 'MOTOR_CONFIGURATION_READ');
+    if ('reason' in preflight) {
+      return undefined;
+    }
+    const {client, generation, epoch} = preflight;
+    try {
+      this.assertLivePreflight(sessionId, client, generation, epoch);
+      const [mixer, motor] = await Promise.all([
+        this.read(client, MSP_MIXER_CONFIG, decodeMixerConfig),
+        this.read(client, MSP_MOTOR_CONFIG, decodeMotorConfig),
+      ]);
+      /* Re-checked AFTER the reads: a session that ended underneath them
+         would make these bytes describe a board that is no longer there. */
+      this.assertLivePreflight(sessionId, client, generation, epoch);
+      return Object.freeze({
+        mixerModeRaw: mixer.mixerModeRaw,
+        motorCount: motor.motorCount,
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
   async loadOutputOrder(
     sessionId: string,
   ): Promise<MotorOutputOrderLoadOutcome> {
-    const preflight = this.captureSession(sessionId);
+    const preflight = this.captureSession(sessionId, 'MOTOR_CONFIGURATION_READ');
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
@@ -450,7 +629,10 @@ export class MotorConfigurationController {
       return { kind: 'NO_CHANGES', values: Object.freeze([...original]) };
     }
 
-    const preflight = this.captureSession(sessionId);
+    const preflight = this.captureSession(
+      sessionId,
+      'MOTOR_CONFIGURATION_WRITE',
+    );
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
@@ -506,6 +688,31 @@ export class MotorConfigurationController {
             identity,
           );
 
+          /* U-R1. Two mutating stages, so the same rule as the main save:
+             re-ask liveness in the frame's own synchronous turn, and once
+             the reorder map has been acknowledged never let the EEPROM
+             commit reach a board that has meanwhile restarted. A reorder
+             persisted across a restart maps the operator's motor numbers
+             onto outputs they never saw. */
+          let reordered = false;
+          const stopIfNotLive = (stage: 'OUTPUT_ORDER' | 'EEPROM'): void => {
+            try {
+              this.assertLivePreflight(sessionId, client, generation, epoch);
+            } catch (error) {
+              if (!reordered) {
+                throw error;
+              }
+              throw new MotorConfigurationAmbiguousWriteError(
+                new MutationStoppedError(stage, ['OUTPUT_ORDER'], error),
+                stage,
+                [],
+                true,
+                true,
+              );
+            }
+          };
+
+          stopIfNotLive('OUTPUT_ORDER');
           try {
             await requester.request(MSP2_SET_MOTOR_OUTPUT_REORDERING, payload, {
               wireFormat: 'v2',
@@ -520,14 +727,24 @@ export class MotorConfigurationController {
               [],
             );
           }
+          reordered = true;
 
+          stopIfNotLive('EEPROM');
           try {
             await requester.request(MSP_EEPROM_WRITE, EMPTY_PAYLOAD, {
               wireFormat: 'v1',
             });
           } catch (error) {
             if (isDefiniteNotApplied(error)) {
-              throw new MotorConfigurationDefiniteWriteError(error, []);
+              /* The map is live in RAM and the commit was refused
+                 outright - not a failed save, an unpersisted one. */
+              throw new MotorConfigurationAmbiguousWriteError(
+                error,
+                'EEPROM',
+                [],
+                true,
+                true,
+              );
             }
             throw new MotorConfigurationAmbiguousWriteError(
               error,
@@ -563,10 +780,20 @@ export class MotorConfigurationController {
               };
         case 'OUTCOME_UNKNOWN': {
           const reason = result.reason;
-          return isAmbiguousWriteCause(reason) &&
-            (reason.stage === 'OUTPUT_ORDER' || reason.stage === 'EEPROM')
-            ? { kind: 'UNCONFIRMED', stage: reason.stage }
-            : { kind: 'UNCONFIRMED', stage: 'OUTPUT_ORDER' };
+          if (
+            !isAmbiguousWriteCause(reason) ||
+            (reason.stage !== 'OUTPUT_ORDER' && reason.stage !== 'EEPROM')
+          ) {
+            return { kind: 'UNCONFIRMED', stage: 'OUTPUT_ORDER' };
+          }
+          /* U-R1. The map is in RAM and provably not in flash. */
+          return reason.partial
+            ? {
+                kind: 'PARTIAL_UNPERSISTED',
+                failedStage: 'EEPROM',
+                definitelyNotSent: reason.definitelyNotSent,
+              }
+            : { kind: 'UNCONFIRMED', stage: reason.stage };
         }
         case 'SESSION_ENDED':
           return { kind: 'SESSION_ENDED' };
@@ -703,10 +930,22 @@ export class MotorConfigurationController {
   }
 
   async save(
-    sessionId: string,
+    sessionKey: SetupUiSessionKey,
     original: MotorConfigurationSnapshot,
     draft: MotorConfigurationDraft,
   ): Promise<MotorConfigurationSaveOutcome> {
+    const sessionId = sessionKey.sessionId;
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before validation, before captureSession(), before any wire
+       access at all: a baseline produced under a DIFFERENT session may
+       not be written under this one. Two byte-identical boards defeat
+       every other guard here - stale-base compares configuration, and
+       assertLivePreflight compares liveness; neither asks which aircraft
+       the operator was editing.
+       See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, sessionKey)) {
+      return { kind: 'REJECTED', reason: 'SESSION_CHANGED' };
+    }
     const validation = validateMotorConfigurationDraft(draft);
     if (!validation.valid) {
       return {
@@ -715,16 +954,28 @@ export class MotorConfigurationController {
         issues: validation.issues,
       };
     }
-    const writes = encodeChangedMotorConfiguration(original, draft);
-    if (writes.length === 0) {
+    // Is there anything at all to do? Answered against the snapshot the
+    // editor is holding, because it must be answered WITHOUT touching the
+    // link - an unchanged save costs nothing and takes no lease.
+    //
+    // The payloads themselves are NOT taken from here. See the re-encode
+    // inside the transaction below for why that distinction matters.
+    if (encodeChangedMotorConfiguration(original, draft).length === 0) {
       return { kind: 'NO_CHANGES', snapshot: original };
     }
 
-    const preflight = this.captureSession(sessionId);
+    const preflight = this.captureSession(
+      sessionId,
+      'MOTOR_CONFIGURATION_WRITE',
+    );
     if ('reason' in preflight) {
       return { kind: 'REJECTED', reason: preflight.reason };
     }
     const { client, scheduler, generation, epoch } = preflight;
+    /* The half a bare sessionId could never carry. */
+    if (generation !== sessionKey.generation) {
+      return { kind: 'REJECTED', reason: 'DISCONNECTED' };
+    }
     let interlock;
     try {
       interlock = acquireMotorConfigurationInterlock(client);
@@ -771,6 +1022,49 @@ export class MotorConfigurationController {
             throw new MotorConfigurationPreflightError('STALE_BASE');
           }
 
+          /*
+           * THE PAYLOADS ARE BUILT FROM `current`, NOT FROM `original`.
+           *
+           * Three of the five commands this transaction sends carry fields
+           * the Motors page does not own and cannot show:
+           *
+           *   MSP_SET_FEATURE_CONFIG    ONE 32-bit mask for the whole
+           *                             aircraft. Motors owns 3 bits of it;
+           *                             GPS, Ports, Receiver and General
+           *                             own others.
+           *   MSP_SET_ADVANCED_CONFIG   carries pid_process_denom, the gyro
+           *                             calibration fields, gyro_offset_yaw
+           *                             and debug_mode.
+           *   MSP_SET_MIXER_CONFIG      carries the mixer mode.
+           *
+           * MSP has no way to set one bit of a shared value: the whole
+           * thing goes on the wire every time. So whichever snapshot these
+           * unowned fields are mirrored from is the version of them the
+           * aircraft ends up with.
+           *
+           * Mirroring them from `original` - the snapshot the editor loaded,
+           * possibly minutes and several screens ago - meant a Motors save
+           * quietly reverted anything another screen had changed since. The
+           * stale-base check above cannot catch it: it compares the DRAFT,
+           * which projects 3 bits of a 32-bit mask, so a GPS feature enabled
+           * in between compares equal and is then overwritten. Every signal
+           * says success - the write is acknowledged, the EEPROM commit
+           * lands, the readback of the owned fields matches exactly - and
+           * the aircraft has silently lost its GPS feature.
+           *
+           * `current` was read a few lines above under this transaction's
+           * own exclusive lease, and the owned fields in it have just been
+           * proven equal to the base the operator edited. So it is the same
+           * base for everything Motors owns, and the LIVE value for
+           * everything it does not.
+           *
+           * The set of groups is unchanged by this: for each shared payload
+           * the unowned fields appear on both sides of the changed-or-not
+           * comparison and cancel, so a group is emitted on exactly the
+           * same condition as before.
+           */
+          const writes = encodeChangedMotorConfiguration(current, draft);
+
           const stillOwned = (): boolean =>
             this.isStillOwned(sessionId, client, generation, epoch);
           const mapping = await acquisition.acquire(identity, stillOwned);
@@ -800,47 +1094,68 @@ export class MotorConfigurationController {
           }
           this.assertLivePreflight(sessionId, client, generation, epoch);
 
-          const acknowledged: MotorConfigurationWriteGroup[] = [];
+          /*
+           * U-R1 - LIVENESS IS RE-ASKED BEFORE EVERY MUTATING FRAME.
+           *
+           * The preflight above establishes that the board is ours, is
+           * disarmed, and is answering. It establishes it ONCE. Between
+           * this point and the EEPROM commit there are up to six awaited
+           * round trips, and a flight controller can restart inside any
+           * of them - a brownout, a bench knock on the USB plug, a
+           * watchdog. When it does, the frames after the restart land on
+           * a board that has come back with its stored RAM, and the
+           * EEPROM write at the end then persists that mixture. One
+           * operator intent, split durably across two FC lifetimes,
+           * reported as a successful save.
+           *
+           * So each frame re-asks immediately before it goes out, and
+           * the check and the request sit in the SAME synchronous turn -
+           * no `await` between them - because a check separated from its
+           * write by a suspension point is a check of the past.
+           *
+           * After the first acknowledgement the answer to "is it still
+           * live" stops being a refusal and becomes a report: the
+           * aircraft's RAM has already moved, and the ledger says by how
+           * much.
+           */
+          const ledger = new MutationLedger<MotorConfigurationWriteGroup>();
           for (const write of writes) {
+            this.stopIfNotLive(
+              sessionId,
+              client,
+              generation,
+              epoch,
+              write.group,
+              ledger,
+            );
             try {
               await requester.request(
                 COMMAND_FOR_GROUP[write.group],
                 write.payload,
                 { wireFormat: 'v1' },
               );
-              acknowledged.push(write.group);
             } catch (error) {
-              if (isDefiniteNotApplied(error)) {
-                throw new MotorConfigurationDefiniteWriteError(
-                  error,
-                  Object.freeze([...acknowledged]),
-                );
-              }
-              throw new MotorConfigurationAmbiguousWriteError(
-                error,
-                write.group,
-                Object.freeze([...acknowledged]),
-              );
+              throw this.writeFailure(error, write.group, ledger);
             }
+            ledger.acknowledge(write.group);
           }
 
+          this.stopIfNotLive(
+            sessionId,
+            client,
+            generation,
+            epoch,
+            'EEPROM',
+            ledger,
+          );
           try {
             await requester.request(MSP_EEPROM_WRITE, EMPTY_PAYLOAD, {
               wireFormat: 'v1',
             });
           } catch (error) {
-            if (isDefiniteNotApplied(error)) {
-              throw new MotorConfigurationDefiniteWriteError(
-                error,
-                Object.freeze([...acknowledged]),
-              );
-            }
-            throw new MotorConfigurationAmbiguousWriteError(
-              error,
-              'EEPROM',
-              Object.freeze([...acknowledged]),
-            );
+            throw this.writeFailure(error, 'EEPROM', ledger);
           }
+          ledger.markPersisted();
 
           // Persistence is already acknowledged. A readback failure cannot
           // truthfully downgrade it to a failed save.
@@ -889,25 +1204,42 @@ export class MotorConfigurationController {
           }
           return {
             kind: 'SAVED_VERIFIED',
-            snapshot: execution.readback,
+            snapshot: rememberConfigurationSession(
+              execution.readback,
+              sessionKey,
+            ),
             rebootRequired: true,
             changedGroups: execution.changedGroups,
           };
         }
         case 'OUTCOME_UNKNOWN': {
           const reason = result.reason;
-          return isAmbiguousWriteCause(reason) &&
-            reason.stage !== 'OUTPUT_ORDER' &&
-            reason.stage !== 'ESC_DIRECTION'
+          if (
+            !isAmbiguousWriteCause(reason) ||
+            reason.stage === 'OUTPUT_ORDER' ||
+            reason.stage === 'ESC_DIRECTION'
+          ) {
+            return {
+              kind: 'UNCONFIRMED',
+              stage: 'UNKNOWN',
+              acknowledgedGroups: [],
+            };
+          }
+          /* U-R1. Groups acknowledged, nothing persisted: the aircraft is
+             running a mixture until its next power cycle, which is a
+             different statement from "the result is unknown" and has to
+             be made separately. */
+          return reason.partial
             ? {
-                kind: 'UNCONFIRMED',
-                stage: reason.stage,
+                kind: 'PARTIAL_UNPERSISTED',
                 acknowledgedGroups: reason.acknowledgedGroups,
+                failedStage: reason.stage,
+                definitelyNotSent: reason.definitelyNotSent,
               }
             : {
                 kind: 'UNCONFIRMED',
-                stage: 'UNKNOWN',
-                acknowledgedGroups: [],
+                stage: reason.stage,
+                acknowledgedGroups: reason.acknowledgedGroups,
               };
         }
         case 'SESSION_ENDED':
@@ -932,6 +1264,103 @@ export class MotorConfigurationController {
             persisted: false,
           };
         }
+      }
+    } finally {
+      interlock.release();
+    }
+  }
+
+  /**
+   * Send MSP_REBOOT so a persisted mixer/props save can take effect - the
+   * same frame and the same guard order the General controller's
+   * save-and-reboot uses, but as a standalone, explicitly requested step:
+   * DISARMED is re-verified immediately before the frame, because
+   * restarting an armed flight controller is the one thing this must
+   * never do, and the link dropping right after the request is reported
+   * as the reboot proceeding, not as an error.
+   */
+  async requestReboot(sessionId: string): Promise<MotorRebootOutcome> {
+    const preflight = this.captureSession(
+      sessionId,
+      'MOTOR_CONFIGURATION_WRITE',
+    );
+    if ('reason' in preflight) {
+      return { kind: 'REJECTED', reason: preflight.reason };
+    }
+    const { client, scheduler, generation, epoch } = preflight;
+    let interlock;
+    try {
+      interlock = acquireMotorConfigurationInterlock(client);
+    } catch (error) {
+      return error instanceof MotorConfigurationTransactionInProgressError
+        ? { kind: 'REJECTED', reason: 'CONFIGURATION_BUSY' }
+        : { kind: 'FAILED', error };
+    }
+    try {
+      const acquisition = this.boxIdsFor(sessionId, client);
+      const identity: BoxIdsOwnerIdentity = {
+        physicalGeneration: generation,
+        mspEpoch: epoch,
+      };
+      const result = await this.operations(sessionId, client, scheduler).execute<{
+        readonly acknowledged: boolean;
+      }>({
+        id: `motor-config:reboot:${sessionId}:${generation}`,
+        sessionEffect: 'EXPECT_REBOOT',
+        validate: context =>
+          context.clientState === 'READY'
+            ? { allowed: true }
+            : {
+                allowed: false,
+                error: new MotorConfigurationPreflightError('LINK_RECOVERING'),
+              },
+        execute: async requester => {
+          this.assertLivePreflight(sessionId, client, generation, epoch);
+          await this.assertDisarmed(
+            sessionId,
+            client,
+            generation,
+            epoch,
+            requester,
+            acquisition,
+            identity,
+          );
+          try {
+            await requester.request(MSP_REBOOT, EMPTY_PAYLOAD, {
+              wireFormat: 'v1',
+            });
+            return { acknowledged: true };
+          } catch (error) {
+            if (isDefiniteNotApplied(error)) {
+              throw new MotorConfigurationDefiniteWriteError(error, []);
+            }
+            // The restarting FC tears the link down; an unanswered
+            // MSP_REBOOT is the expected shape of the reboot happening.
+            return { acknowledged: false };
+          }
+        },
+      });
+      switch (result.status) {
+        case 'SUCCEEDED':
+          return {
+            kind: 'REBOOT_REQUESTED',
+            acknowledged: result.result.acknowledged,
+          };
+        case 'OUTCOME_UNKNOWN':
+          // The link died before the reboot frame was dispatched - during
+          // the disarmed preflight, for example. Whether the FC is
+          // restarting is genuinely unknown; do not claim it is.
+          return { kind: 'UNCONFIRMED' };
+        case 'SESSION_ENDED':
+          return { kind: 'SESSION_ENDED' };
+        default:
+          if (result.error instanceof MotorConfigurationPreflightError) {
+            return { kind: 'REJECTED', reason: result.error.reason };
+          }
+          if (result.error instanceof MotorConfigurationDefiniteWriteError) {
+            return { kind: 'FAILED', error: result.error.cause };
+          }
+          return { kind: 'FAILED', error: result.error };
       }
     } finally {
       interlock.release();
@@ -973,10 +1402,20 @@ export class MotorConfigurationController {
     this.assertLivePreflight(sessionId, client, generation, epoch);
   }
 
+  /**
+   * The admission check every operation runs before touching the link.
+   *
+   * `requiredCapability` HAS NO DEFAULT, and that is the fix rather than an
+   * accident of style. It used to default to MOTOR_CONFIGURATION_WRITE, so
+   * every caller that forgot to pass one - including `load`, which only
+   * ever reads - demanded permission to WRITE. On a board whose writes were
+   * withheld but whose reads were fine, opening the Motors page returned
+   * INCOMPATIBLE_FIRMWARE and the operator was shown nothing at all. Asking
+   * for the capability you actually exercise is now compulsory.
+   */
   private captureSession(
     sessionId: string,
-    requiredCapability: MotorFirmwareCapability =
-      'MOTOR_CONFIGURATION_WRITE',
+    requiredCapability: MotorFirmwareCapability,
   ):
     | {
         readonly client: MotorConfigurationClient;
@@ -988,7 +1427,10 @@ export class MotorConfigurationController {
     if (this.appStateOwner.getPhase() !== 'ACTIVE') {
       return { reason: 'APP_BACKGROUNDED' };
     }
-    if (this.isMotorTestActive(sessionId)) {
+    // Motors may be TURNING - not merely "a session is open". A session
+    // sitting at rest is exactly as safe as no session, and blocking it was
+    // the whole of the close-leave-return loop.
+    if (this.isMotorOutputEngaged(sessionId)) {
       return { reason: 'MOTOR_TEST_ACTIVE' };
     }
     const compatibility = this.compatibilityOf(
@@ -1020,6 +1462,18 @@ export class MotorConfigurationController {
     };
   }
 
+  /**
+   * Turns "this firmware lacks the capability" into the RIGHT refusal.
+   *
+   * Two different things were being reported identically. A board this app
+   * cannot read at all and a board it can read but will not write to are
+   * not the same situation, and collapsing them meant the second one was
+   * described to the operator with a sentence about the screen being
+   * unsupported - in front of a screen that had just loaded their settings.
+   *
+   * So the read capability is asked about SEPARATELY: if it is there and
+   * the requested write is not, the refusal is about the write.
+   */
   private compatibilityOf(
     sessionId: string,
     requiredCapability: MotorFirmwareCapability,
@@ -1032,11 +1486,12 @@ export class MotorConfigurationController {
       return 'INCOMPATIBLE_FIRMWARE';
     }
     const compatibility = resolveMotorFirmwareCompatibility(state.identity);
-    return motorFirmwareSupports(
-      compatibility,
-      requiredCapability,
-    )
-      ? undefined
+    if (motorFirmwareSupports(compatibility, requiredCapability)) {
+      return undefined;
+    }
+    return requiredCapability !== 'MOTOR_CONFIGURATION_READ' &&
+      motorFirmwareSupports(compatibility, 'MOTOR_CONFIGURATION_READ')
+      ? 'CONFIGURATION_WRITE_UNVERIFIED'
       : 'INCOMPATIBLE_FIRMWARE';
   }
 
@@ -1049,7 +1504,9 @@ export class MotorConfigurationController {
     if (this.appStateOwner.getPhase() !== 'ACTIVE') {
       throw new MotorConfigurationPreflightError('APP_BACKGROUNDED');
     }
-    if (this.isMotorTestActive(sessionId)) {
+    // Re-checked at write time, not just at admission: the operator may have
+    // started a motor between opening the editor and pressing save.
+    if (this.isMotorOutputEngaged(sessionId)) {
       throw new MotorConfigurationPreflightError('MOTOR_TEST_ACTIVE');
     }
     if (!this.isStillOwned(sessionId, client, generation, epoch)) {
@@ -1058,6 +1515,94 @@ export class MotorConfigurationController {
     if (this.coordinator.getMspRecoveryState(sessionId) !== 'READY') {
       throw new MotorConfigurationPreflightError('LINK_RECOVERING');
     }
+  }
+
+  /**
+   * The liveness check a MUTATING frame asks immediately before going out.
+   *
+   * Before anything has been acknowledged this is exactly
+   * `assertLivePreflight` - the aircraft is untouched, so a lost session
+   * is an ordinary refusal and the operator is told the save did not
+   * happen, which is true.
+   *
+   * After the first acknowledgement it can no longer say that. The RAM
+   * has moved. The sequence still stops - continuing would write to
+   * whatever is on the other end of the link now, which is the defect
+   * this closes - but it stops with the ledger attached so the outcome
+   * can name the groups the board accepted.
+   *
+   * THE INVARIANT THIS EXISTS FOR: when liveness is lost after any SET,
+   * the EEPROM write count is zero. Nothing half-applied is ever made
+   * permanent.
+   */
+  private stopIfNotLive(
+    sessionId: string,
+    client: MotorConfigurationClient,
+    generation: number,
+    epoch: number,
+    stage: MotorConfigurationWriteGroup | 'EEPROM',
+    ledger: MutationLedger<MotorConfigurationWriteGroup>,
+  ): void {
+    try {
+      this.assertLivePreflight(sessionId, client, generation, epoch);
+    } catch (error) {
+      if (!ledger.hasMutated) {
+        throw error;
+      }
+      throw new MotorConfigurationAmbiguousWriteError(
+        new MutationStoppedError(stage, ledger.acknowledgedStages, error),
+        stage,
+        ledger.acknowledgedStages,
+        true,
+        // This app stopped before handing the frame to the transport, so
+        // it provably never reached the flight controller.
+        true,
+      );
+    }
+  }
+
+  /**
+   * What a refused or unanswered mutating frame means, given what the
+   * board has already accepted.
+   *
+   * A refusal with an EMPTY ledger is an ordinary failure and keeps the
+   * existing `FAILED` answer: nothing was written, and saying so is
+   * accurate.
+   *
+   * A refusal AFTER an acknowledgement is not. The refused frame is
+   * provably not applied, and the acknowledged ones provably are - the
+   * aircraft is running a mixture, unpersisted. Reporting that as
+   * `FAILED` is the second confirmed defect this phase closes.
+   *
+   * An UNANSWERED frame stays ambiguous in both cases and is never
+   * upgraded to either certainty.
+   */
+  private writeFailure(
+    error: unknown,
+    stage: MotorConfigurationWriteGroup | 'EEPROM',
+    ledger: MutationLedger<MotorConfigurationWriteGroup>,
+  ): unknown {
+    if (isDefiniteNotApplied(error)) {
+      return ledger.hasMutated
+        ? new MotorConfigurationAmbiguousWriteError(
+            error,
+            stage,
+            ledger.acknowledgedStages,
+            true,
+            true,
+          )
+        : new MotorConfigurationDefiniteWriteError(
+            error,
+            ledger.acknowledgedStages,
+          );
+    }
+    return new MotorConfigurationAmbiguousWriteError(
+      error,
+      stage,
+      ledger.acknowledgedStages,
+      false,
+      false,
+    );
   }
 
   private isStillOwned(

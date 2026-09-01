@@ -1,3 +1,9 @@
+// ENTRY CLEANUP: SetupScreen now hosts the USB connection workspace
+// (UsbConnectionScreen) for its disconnected state, so importing it pulls
+// in the transport client whose TurboModule must be mocked under Jest -
+// the exact mock App.test.tsx has always used.
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 /**
  * THE SINGLE MOST IMPORTANT TEST IN THE MOTORS FEATURE.
  *
@@ -87,6 +93,7 @@ import React from 'react';
 import ReactTestRenderer from 'react-test-renderer';
 
 import '../../i18n';
+import {presentConnectedBoard} from '../session/__testUtils__/connectedBoard';
 import MainTabsScreen from './MainTabsScreen';
 import {
   closeMotorTestCapability,
@@ -116,6 +123,8 @@ import type {
 import {MspClient} from '../../core/protocol/mspClient';
 import {ARMING_DISABLE_FLAGS_COUNT} from '../../core/state/armingBlockers';
 import {ARMING_DISABLED_MSP_BIT_INDEX} from '../../core/state/motorArmingRestriction';
+import {StyleSheet} from 'react-native';
+import {openMotorsTechnicalDetails} from './__testUtils__/motorsTechnicalDetails';
 import {FakeMspTransport} from '../../core/protocol/__testUtils__/mspFakeTransport';
 import {buildMspFrameBytes} from '../../core/protocol/__testUtils__/mspFixtures';
 import {betaflightApi147Identity} from '../../core/protocol/__testUtils__/motorFirmwareFixtures';
@@ -350,25 +359,27 @@ async function serveOne(harness: Harness): Promise<boolean> {
     return false;
   }
   const data = harness.transport.writes[0].data;
-  const command = writtenCommand(data);
-  // v1 request frame: $ M < size cmd <payload...> checksum
+  // P2-ii: wire-format-aware. The engine's supplemental DShot stop is a
+  // real MSPv2 request; answering it with a v1 error would never match and
+  // would wedge the serialized FIFO for the rest of the session. The
+  // pinned API 1.47 firmware speaks MSPv2, so a v2 reply is correct
+  // simulation, not a convenience.
+  const isV2 = data[1] === 0x58; // '$X<'
+  const command = isV2 ? data[4] | (data[5] << 8) : writtenCommand(data);
   harness.writes.push({
     command,
-    payload: Array.from(data.subarray(5, 5 + data[3])),
+    payload: isV2
+      ? Array.from(data.subarray(8, 8 + (data[6] | (data[7] << 8))))
+      : Array.from(data.subarray(5, 5 + data[3])),
   });
   harness.transport.resolveNextWrite();
   await flush();
   const payload = harness.replies.get(command);
+  const wireFormat = isV2 ? ('v2' as const) : ('v1' as const);
   harness.transport.emitData(
     payload === undefined
-      ? buildMspFrameBytes(command, EMPTY, {
-          wireFormat: 'v1',
-          direction: 'error',
-        })
-      : buildMspFrameBytes(command, payload, {
-          wireFormat: 'v1',
-          direction: 'response',
-        }),
+      ? buildMspFrameBytes(command, EMPTY, {wireFormat, direction: 'error'})
+      : buildMspFrameBytes(command, payload, {wireFormat, direction: 'response'}),
   );
   await flush();
   return true;
@@ -454,6 +465,20 @@ class FakeOperator implements MotorTestOperatorPort {
   beginSession(): Promise<MotorTestControllerSnapshot> {
     throw new Error('beginSession must not be reached from a render');
   }
+  // P3: facade stubs - this suite drives the legacy pulse path only.
+  setMotorValues() {
+    return {kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const};
+  }
+  setMotorValue() {
+    return {kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const};
+  }
+  setMaster() {
+    return {kind: 'REFUSED' as const, reason: 'NOT_COMMANDABLE' as const};
+  }
+  stopAll() {
+    return 'ACCEPTED' as const;
+  }
+
   endSession(): Promise<MotorTestControllerSnapshot> {
     throw new Error('endSession must not be reached from a render');
   }
@@ -469,6 +494,16 @@ function readySnapshot(): MotorTestControllerSnapshot {
     pulse: {mayHaveReachedFc: false, motorNumber: undefined},
     stopExecution: {attributionAmbiguous: false},
     telemetryHeld: true,
+    // M-D: THE FIXTURE NOW STATES THE AIRCRAFT IT DESCRIBES.
+    //
+    // It used to carry no motor count at all and relied on the screen's
+    // four-slot placeholder to produce four cells. That placeholder is
+    // gone - an unread count now renders no motors rather than four - so
+    // the quad this test has always been about is written down. Both
+    // fields are the real authorities: the count from MSP_MOTOR_CONFIG,
+    // the mixer from MSP_MIXER_CONFIG (3 = QUADX).
+    motorScope: {motorCount: 4, motorProtocolRaw: 7, feature3dEnabled: false},
+    mixerModeRaw: 3,
   } as unknown as MotorTestControllerSnapshot;
 }
 
@@ -485,6 +520,9 @@ function render(operator: FakeOperator): Rendered {
       <MotorsScreenView operator={operator as unknown as MotorTestOperatorPort} />,
     );
   });
+  // M-E §44: the workflow this suite exercises now lives under the
+  // technical details disclosure. One press, as an operator would.
+  openMotorsTechnicalDetails(renderer);
   return {
     renderer,
     find: (testID: string) => {
@@ -544,9 +582,12 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
       const operator = new FakeOperator(readySnapshot());
       const rendered = render(operator);
 
-      // Select the output the way an operator does.
+      // Select the output the way an operator does. The numbered selector
+      // moved out of the legacy tools card into the core identity section
+      // in P1b-B; only the locator changed, and the assertions below -
+      // submitted number, rendered cell, payload index - are untouched.
       ReactTestRenderer.act(() => {
-        rendered.find(`motors-slot-${slot}`).props.onPress();
+        rendered.find(`motor-identity-M${slot}`).props.onPress();
       });
       // The long press is the ONE activation gesture.
       expect(MOTOR_TEST_LONG_PRESS_DELAY_MILLIS).toBe(800);
@@ -559,16 +600,16 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
       // The number the screen submitted is the number on the cell.
       expect(operator.pulsed).toEqual([slot]);
 
-      // And that number is what the diagram cell for this slot displays,
-      // in the geometrically correct place.
+      // And that number is what the diagram node for this slot displays,
+      // in the geometrically correct place. M-E replaced the four-cell
+      // grid with a coordinate-driven drawing, so the node itself is the
+      // handle; the glyph layout it is checked against is unchanged.
       const cell = computeMotorGlyphLayout().find(entry => entry.slot === slot);
       expect(cell).toBeDefined();
-      const glyph = rendered.find(
-        `motors-diagram-cell-${cell!.row}-${cell!.side}`,
-      );
+      const glyph = rendered.find(`motors-airframe-slot-${slot}`);
       expect(textsWithin(glyph)).toContain(`M${slot}`);
 
-      // The cell's claimed airframe position is the accepted mapping's,
+      // The node's claimed airframe position is the accepted mapping's,
       // never a second copy of it.
       const expectedMapping = MOTOR_TEST_EXPECTED_CONFIGURATION.find(
         entry => entry.motorNumber === slot,
@@ -603,12 +644,15 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
       expect(motorWrites.length).toBeGreaterThan(0);
 
       const commanded = motorWrites[0].payload;
-      // Four u16 values - the approved Quad X scope and nothing wider.
-      expect(commanded).toHaveLength(8);
+      // M-C: EIGHT u16 values, the canonical MSP_SET_MOTOR width, on every
+      // airframe. The identity this test exists to pin is unchanged and is
+      // now checked across the whole frame rather than its first half.
+      expect(commanded).toHaveLength(16);
       // EXACTLY ONE output above stop, and it is at index slot-1.
       expect(activeIndices(commanded)).toEqual([slot - 1]);
-      // Every other output is explicitly at stop, not merely "not active".
-      for (let index = 0; index < 4; index++) {
+      // Every other output is explicitly at stop, not merely "not active"
+      // - including the four padding slots past this quad's motor count.
+      for (let index = 0; index < 8; index++) {
         if (index !== slot - 1) {
           expect(readU16(commanded, index)).toBe(STOP_VALUE);
         }
@@ -640,31 +684,32 @@ describe('MSP_SET_MOTOR payload index === the motor number on the selected cell'
 
   it('renders the FRONT row above the REAR row, with a front-of-aircraft indicator', () => {
     const rendered = render(new FakeOperator(readySnapshot()));
-    const diagram = rendered.find('motors-diagram');
-    const order = diagram
-      .findAllByProps({}, {deep: true})
-      .map(node => node.props.testID)
-      .filter(
-        (testID: unknown): testID is string =>
-          typeof testID === 'string' &&
-          (testID.startsWith('motors-diagram-cell-') ||
-            testID === 'motors-diagram-front'),
-      );
-    const first = (needle: string) => order.indexOf(needle);
-    // The front indicator comes before every cell, and the front row
-    // before the rear row - top to bottom is nose to tail.
-    expect(first('motors-diagram-front')).toBe(0);
-    expect(first('motors-diagram-cell-FRONT-RIGHT')).toBeLessThan(
-      first('motors-diagram-cell-REAR-RIGHT'),
-    );
-    expect(first('motors-diagram-cell-FRONT-LEFT')).toBeLessThan(
-      first('motors-diagram-cell-REAR-LEFT'),
-    );
-    // And within a row the RIGHT cell is emitted first, which under the
-    // app's forceRTL puts it at the right edge.
-    expect(first('motors-diagram-cell-FRONT-RIGHT')).toBeLessThan(
-      first('motors-diagram-cell-FRONT-LEFT'),
-    );
+    // The front-of-aircraft indicator is on screen, above the drawing.
+    expect(rendered.find('motors-diagram-front')).toBeDefined();
+
+    // M-E: the four-cell grid became a coordinate-driven drawing, so
+    // "front row above rear row" is now a claim about PIXELS rather than
+    // about emission order - and is asserted as one. The offsets come
+    // from the node's own absolute position, which is computed from the
+    // layout table's coordinates and from nothing else.
+    const topOf = (slot: number): number => {
+      const style = StyleSheet.flatten(
+        rendered.find(`motors-airframe-slot-${slot}`).props.style,
+      ) as {top: number; left: number};
+      return style.top;
+    };
+    const leftOf = (slot: number): number => {
+      const style = StyleSheet.flatten(
+        rendered.find(`motors-airframe-slot-${slot}`).props.style,
+      ) as {top: number; left: number};
+      return style.left;
+    };
+    // QUADX: motors 2 and 4 are at the front, 1 and 3 at the rear.
+    expect(topOf(2)).toBeLessThan(topOf(1));
+    expect(topOf(4)).toBeLessThan(topOf(3));
+    // ...and 1 and 2 are on the right-hand side, 3 and 4 on the left.
+    expect(leftOf(2)).toBeGreaterThan(leftOf(4));
+    expect(leftOf(1)).toBeGreaterThan(leftOf(3));
     rendered.unmount();
   });
 
@@ -755,6 +800,10 @@ function renderTabShell() {
     name: 'Setup' as const,
     params: {sessionKey: {sessionId: SHELL_SESSION_ID, generation: 1}},
   } as never;
+  /* The shell's connection gate reads the coordinator, not the route
+     parameter, so a rendered configurator needs a board presented to
+     it. See ui/session/__testUtils__/connectedBoard.ts. */
+  presentConnectedBoard(SHELL_SESSION_ID);
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   ReactTestRenderer.act(() => {
     renderer = ReactTestRenderer.create(
@@ -765,10 +814,21 @@ function renderTabShell() {
   return {
     renderer,
     find,
-    press: (testID: string) =>
+    // Resolves the node that OWNS the gesture - see the note in
+    // motorsBeginSessionReachesDevice.test.tsx. A ToggleSwitch's outermost
+    // testID node has no onPress, so `find(testID).props.onPress()` would
+    // throw and `onPress?.()` would silently pass.
+    press: (testID: string) => {
+      const node = renderer.root
+        .findAll(candidate => candidate.props?.testID === testID)
+        .find(candidate => typeof candidate.props?.onPress === 'function');
+      if (node === undefined) {
+        throw new Error(`no pressable node with testID "${testID}"`);
+      }
       ReactTestRenderer.act(() => {
-        find(testID).props.onPress();
-      }),
+        node.props.onPress();
+      });
+    },
     longPress: (testID: string) =>
       ReactTestRenderer.act(() => {
         const node = find(testID);
@@ -814,7 +874,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     // the in-flight acquisition land anyway, after the operator has already
     // gone". Asserted rather than timed, so no microtask count is assumed.
     ReactTestRenderer.act(() => {
-      shell.press('motors-begin-session-button');
+      shell.press('motor-session-toggle');
     });
     expect(controller.getSnapshot().phase).not.toBe('ACTIVE');
     expect(client.isMotorTestLeaseHeld()).toBe(false);
@@ -857,7 +917,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const controller = shellController();
 
     await ReactTestRenderer.act(async () => {
-      shell.press('motors-begin-session-button');
+      shell.press('motor-session-toggle');
       for (
         let i = 0;
         i < 400 && !client.isMotorTestLeaseHeld();
@@ -893,7 +953,7 @@ describe('begin -> leave releases the lease and resumes telemetry', () => {
     const controller = shellController();
 
     await ReactTestRenderer.act(async () => {
-      shell.press('motors-begin-session-button');
+      shell.press('motor-session-toggle');
       for (
         let i = 0;
         i < 400 && controller.getSnapshot().machine?.name !== 'Ready';

@@ -17,6 +17,12 @@
  * tab change - reaches the one accepted bridge.
  */
 
+/* Home drives the connection itself now (ui/session/useDirectConnect),
+   so importing it reaches the transport module graph. The native module
+   is mocked for the same reason every other suite mocks it: this file is
+   not testing the USB bridge. */
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 44, bottom: 34, left: 0, right: 0 }),
 }));
@@ -36,18 +42,26 @@ const REPO_ROOT = join(__dirname, '..', '..', '..');
 
 describe('Motors reachability after the single-app merge', () => {
   it('is no longer a stack route - it stays inside Setup while Start and Firmware Flasher are independent routes', () => {
-    // Compile-time proof: Motors is absent while the four real stack routes remain.
+    // Compile-time proof: Motors is absent while the three real stack
+    // routes remain. 'Connection' left this list with the entry-flow
+    // cleanup - the connection workspace is hosted inside Setup now, and
+    // Setup's params are optional because the disconnected configurator
+    // is a first-class state (navigation/types.ts).
     const params: RootStackParamList['Setup'] = {
       sessionKey: { sessionId: 's-1', generation: 3 },
     };
-    expect(params.sessionKey.sessionId).toBe('s-1');
+    // Optional-chained through `sessionKey` too: the field is optional
+    // now, because the session-loss redirect carries `afterSessionLoss`
+    // on this same route with no session at all (navigation/types.ts).
+    expect(params?.sessionKey?.sessionId).toBe('s-1');
+    const disconnected: RootStackParamList['Setup'] = undefined;
+    expect(disconnected).toBeUndefined();
     const names: (keyof RootStackParamList)[] = [
       'Start',
-      'Connection',
       'Setup',
       'FirmwareFlasher',
     ];
-    expect(names).toHaveLength(4);
+    expect(names).toHaveLength(3);
   });
 
   it('is a selectable tab in the complete main shell', () => {
@@ -64,7 +78,9 @@ describe('Motors reachability after the single-app merge', () => {
       'POWER',
       'OSD',
       'VTX',
+      'LED',
       'SENSORS',
+      'BLACKBOX',
       'PRESETS',
       'CLI',
     ]);
@@ -92,13 +108,13 @@ describe('Motors reachability after the single-app merge', () => {
     }
   });
 
-  it('has no development-only motor entry anywhere in the connection screen', () => {
-    const connection = readFileSync(
-      join(__dirname, 'UsbConnectionScreen.tsx'),
-      'utf8',
-    );
-    expect(connection).not.toContain('DevBenchEntry');
-    expect(connection).not.toContain('MotorsDevEntry');
+  it('has no connection screen left to hide a development-only motor entry on', () => {
+    // The seam was a second way into Motors rendered by a standalone
+    // connection screen. Both that screen and the page that replaced it
+    // are gone from the product, which closes the seam more completely
+    // than deleting the render site: there is no host to put it back on.
+    expect(existsSync(join(__dirname, 'UsbConnectionScreen.tsx'))).toBe(false);
+    expect(existsSync(join(__dirname, 'ConnectWorkspaceScreen.tsx'))).toBe(false);
   });
 
   it('leaves no build-variant seam and no hardwareTest source set behind', () => {
@@ -250,7 +266,17 @@ describe('The main tab shell owns no session', () => {
   });
 
   it('hides an inactive tab rather than unmounting it, so the Motors bridge stays attached', () => {
-    expect(executable).toContain("display: 'none'");
+    /* `display: 'none'` moved to mainTabsShellLayout.ts so the browser
+       workspace gate can measure the shell through the same object the
+       shell renders. The invariant is unchanged and is checked as a
+       chain: the rule still says `display: 'none'`, and the shell is
+       still wired to that rule. */
+    const layout = readFileSync(
+      join(__dirname, 'mainTabsShellLayout.ts'),
+      'utf8',
+    );
+    expect(layout).toContain("hidden: {display: 'none'}");
+    expect(executable).toContain('MAIN_TABS_SHELL.hidden');
     expect(executable).toContain('mountedTabs');
   });
 

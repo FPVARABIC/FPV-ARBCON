@@ -1,6 +1,22 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { Alert, Switch, TextInput } from 'react-native';
+import { Alert, TextInput } from 'react-native';
+
+/**
+ * The row's switch, asked through its ACCESSIBILITY contract rather than
+ * by component type: the panel now uses the shared ToggleSwitch, and what
+ * matters to this test - and to an operator - is that the control reports
+ * itself disabled, not which class drew it.
+ */
+function switchDisabled(
+  tree: {root: {findByProps: (p: {testID: string}) => {findAllByProps: (p: {accessibilityRole: string}) => Array<{props: {accessibilityState?: {disabled?: boolean}}}>}}},
+  testID: string,
+): boolean | undefined {
+  const matches = tree.root
+    .findByProps({testID})
+    .findAllByProps({accessibilityRole: 'switch'});
+  return matches[matches.length - 1]?.props.accessibilityState?.disabled;
+}
 
 import '../../i18n';
 import i18n from '../../i18n';
@@ -84,7 +100,10 @@ async function render(controller: MotorConfigurationControllerPort) {
   let tree!: ReactTestRenderer.ReactTestRenderer;
   await act(async () => {
     tree = ReactTestRenderer.create(
-      <MotorConfigurationPanel sessionId="fc-1" controller={controller} />,
+      <MotorConfigurationPanel
+        sessionKey={{sessionId: 'fc-1', generation: 1}}
+        controller={controller}
+      />,
     );
   });
   return tree;
@@ -109,7 +128,7 @@ describe('MotorConfigurationPanel', () => {
     await act(async () => {
       tree = ReactTestRenderer.create(
         <MotorConfigurationPanel
-          sessionId="fc-1"
+          sessionKey={{sessionId: 'fc-1', generation: 1}}
           controller={controller}
           onBusyChange={onBusyChange}
         />,
@@ -130,7 +149,7 @@ describe('MotorConfigurationPanel', () => {
     const tree = await render(controller);
     const text = JSON.stringify(tree.toJSON());
 
-    expect(controller.load).toHaveBeenCalledWith('fc-1');
+    expect(controller.load).toHaveBeenCalledWith({sessionId: 'fc-1', generation: 1});
     expect(text).toContain('بروتوكول خرج ESC');
     expect(text).toContain('ميزات ESC وسلوك الخمول');
     expect(text).toContain('وضع 3D');
@@ -173,7 +192,7 @@ describe('MotorConfigurationPanel', () => {
     });
     expect(controller.save).toHaveBeenCalledTimes(1);
     expect(controller.save).toHaveBeenCalledWith(
-      'fc-1',
+      {sessionId: 'fc-1', generation: 1},
       expect.any(Object),
       expect.objectContaining({ motorIdleRaw: 600, motorProtocolRaw: 7 }),
     );
@@ -218,16 +237,10 @@ describe('MotorConfigurationPanel', () => {
         .findByProps({testID: 'motor-config-protocol-0'})
         .props.onPress();
     });
-    expect(
-      tree.root
-        .findByProps({testID: 'motor-config-bidirectional-dshot'})
-        .findByType(Switch).props.disabled,
-    ).toBe(true);
-    expect(
-      tree.root
-        .findByProps({testID: 'motor-config-esc-sensor'})
-        .findByType(Switch).props.disabled,
-    ).toBe(false);
+    expect(switchDisabled(tree, 'motor-config-bidirectional-dshot')).toBe(
+      true,
+    );
+    expect(switchDisabled(tree, 'motor-config-esc-sensor')).toBe(false);
     act(() => tree.unmount());
   });
 
@@ -235,9 +248,17 @@ describe('MotorConfigurationPanel', () => {
     const tree = await render(
       controllerDouble({ kind: 'REJECTED', reason: 'MOTOR_TEST_ACTIVE' }),
     );
-    expect(JSON.stringify(tree.toJSON())).toContain(
-      'إنهاء جلسة الاختبار وتحرير الإعدادات',
-    );
+    // The reason must name what the operator actually has to DO, and that
+    // changed with the gate. Configuration is no longer refused because a
+    // session exists - only because a motor may be turning - so telling them
+    // to switch the session off is now wrong advice: it asks for more than
+    // safety requires and sends them round the close-leave-return loop this
+    // change exists to remove. It must say "stop the motors", and it must
+    // say that the session can stay open.
+    const rendered = JSON.stringify(tree.toJSON());
+    expect(rendered).toContain('أوقف المحركات');
+    expect(rendered).toContain('دون إنهاء الجلسة');
+    expect(rendered).not.toContain('جلسة المحركات» في وضع الإيقاف');
     expect(
       tree.root.findAllByProps({ testID: 'motor-config-review-save' }),
     ).toHaveLength(0);

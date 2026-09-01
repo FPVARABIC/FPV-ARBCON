@@ -3,9 +3,16 @@ name: Web Preview (GitHub Pages)
 # PUBLISHES THE BROWSER BUILD OF THIS BRANCH AS AN HTTPS PREVIEW.
 #
 # This is a PREVIEW of unverified work, not a release. Every hardware path
-# in this branch is still REQUIRES HARDWARE TEST, and the deployed build
-# says so in Arabic at the top of the page (see PreviewNotice.tsx). The
-# banner is a label only - it disables nothing, and the real Web Serial /
+# in this branch still requires confirmation on a physical board.
+#
+# The deployed build no longer SAYS so on screen. It used to carry an
+# Arabic strip above every route announcing an unverified preview, and
+# that is a developer fact: which build an operator is running cannot
+# change a decision they make at the aircraft. It is now a console
+# diagnostic (App.web.tsx), and the check below asserts the strip stays
+# out of the shipped bytes.
+#
+# Nothing about the build is stubbed either way - the real Web Serial /
 # WebUSB connection path behaves exactly as it does locally.
 #
 # WHY HTTPS MATTERS HERE SPECIFICALLY, beyond the usual reasons: Web
@@ -126,8 +133,10 @@ jobs:
           # repository and every dependency, which a preview visitor has
           # no use for and should not be served by default.
           FPV_ARBCON_WEB_SOURCEMAP: 'false'
-          # Shows the Arabic "preview, still REQUIRES HARDWARE TEST"
-          # banner. A label only - it stubs nothing and fakes nothing.
+          # Marks this as the preview build. It no longer renders anything:
+          # the flag now only emits a console diagnostic naming the build,
+          # for a developer who goes looking. It stubs nothing and fakes
+          # nothing, and never did.
           VITE_FPV_ARBCON_PREVIEW: 'true'
           # Stamped into the connection diagnostics report so a user's
           # copied evidence names the exact deployed commit.
@@ -178,22 +187,60 @@ jobs:
           fi
           echo "OK: index.html references ${ASSET_PREFIX}."
 
-          # 3. The preview banner is genuinely in the shipped bytes.
-          #    Non-ASCII may be emitted literally or \u-escaped, so both
-          #    forms are accepted - asserting one would silently stop
-          #    testing anything if the minifier changed its mind.
-          if grep -rq "REQUIRES HARDWARE TEST" dist-web/assets; then
-            echo "OK: preview banner present."
-          else
-            echo "FAIL: the preview banner is missing from the bundle."
+          # 3. The build-status banner is genuinely ABSENT from the
+          #    shipped bytes.
+          #
+          #    THIS CHECK IS INVERTED FROM WHAT IT USED TO BE. It asserted
+          #    that "نسخة معاينة قيد التحقق" WAS present, because a strip
+          #    announcing an unverified preview build sat above every
+          #    route. That strip is gone: which build an operator is
+          #    running cannot change a single decision they make at the
+          #    aircraft, so it is a developer fact and now lives in a
+          #    console diagnostic (App.web.tsx) instead of at the top of a
+          #    flight-controller tool.
+          #
+          #    The gate is kept rather than deleted, pointing the other
+          #    way, so the banner cannot quietly return. Its Arabic copy
+          #    was removed from the catalogue too, and a unit test
+          #    (webOperatorCopy.test.ts) fails if any locale string starts
+          #    announcing the build as a preview or beta again - this is
+          #    the same rule enforced on the shipped bytes.
+          if grep -rq "نسخة معاينة قيد التحقق" dist-web/assets; then
+            echo "FAIL: a build-status preview banner is back in the bundle."
             exit 1
+          else
+            echo "OK: no build-status banner in the shipped bytes."
           fi
 
-          # 4. Receiver and PID must still be unimplemented tabs. This is
-          #    a product promise, not a detail: exposing them would claim
-          #    a capability that has no shared implementation at all.
-          if grep -rq '"RECEIVER"' dist-web/assets && grep -rq '"PID"' dist-web/assets; then
-            echo "OK: Receiver/PID tab keys present (rendered disabled)."
+          # 4. Receiver and PID both ship as full surfaces, and both are
+          #    proven by a STABLE SEMANTIC TOKEN rather than a tab-key
+          #    literal.
+          #
+          #    A production minifier is free to change quote style: this
+          #    build emits `RECEIVER` in backticks, so the previous
+          #    grep for '"RECEIVER"' matched nothing. It had no failing
+          #    branch, so for its whole life it silently proved nothing;
+          #    adding one turned it fail-closed and it immediately failed
+          #    a bundle that was completely correct. A deployment gate
+          #    must never be bound to emitted syntax.
+          #
+          #    testIDs are the stable contract - the same strategy
+          #    scripts/scan-web-bundle.js already uses for its Receiver
+          #    positive controls. Both tokens below are plain literals,
+          #    NOT template literals: `pid-axis-${axisKey}` interpolates
+          #    at runtime and never appears in the bundle at all, which
+          #    is why the PID gate anchors on the screen's own root.
+          if grep -rq 'receiver-live-monitor' dist-web/assets; then
+            echo "OK: Receiver professional surface present in the browser bundle."
+          else
+            echo "FAIL: the Receiver professional surface is missing from the bundle."
+            exit 1
+          fi
+          if grep -rq 'pid-screen' dist-web/assets; then
+            echo "OK: PID surface present in the browser bundle."
+          else
+            echo "FAIL: the PID surface is missing from the bundle."
+            exit 1
           fi
           echo "Published files:"
           find dist-web -maxdepth 1 -mindepth 1 | sort

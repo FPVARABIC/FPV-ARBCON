@@ -34,7 +34,21 @@ export function deriveReceiverRssi(analog: MspAnalog): ReceiverRssiSemantics {
   }
   return {
     kind: 'PERCENT',
-    percent: Math.round((analog.rssi / RSSI_MAX_VALUE) * 100),
+    // RECEIVER P2 - DISPLAY clamp, not a firmware clamp.
+    //
+    // FIRMWARE FACT (rx/rx.c:931-941 @ pinned 1.47): getRssi() applies
+    // rssi_scale and rssi_offset WITHOUT a final constrain, so the wire
+    // value can legitimately exceed RSSI_MAX_VALUE (1023) on a board with
+    // a scale/offset configured. Rounding that straight to a percentage
+    // produced readings above 100%, which is not a signal strength any
+    // operator can act on.
+    //
+    // Clamped only here, at the normalization boundary that produces the
+    // user-facing percentage. The RAW value is untouched and still
+    // reaches diagnostics through MspAnalog.rssi - this does not
+    // reinterpret the firmware's signal model, and 0 keeps its distinct
+    // NOT_DISTINGUISHABLE meaning above rather than becoming 0%.
+    percent: Math.max(0, Math.min(100, Math.round((analog.rssi / RSSI_MAX_VALUE) * 100))),
   };
 }
 

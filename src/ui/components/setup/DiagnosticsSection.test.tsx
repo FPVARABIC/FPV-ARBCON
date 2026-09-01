@@ -160,15 +160,20 @@ describe('DiagnosticsSection - Region 4 structure', () => {
 });
 
 describe('DiagnosticsSection - identity and compatibility copy', () => {
-  it('shows the board and the raw firmware identifier with the reported API version', () => {
+  it('reports the board by name and the firmware by capability, never by brand', () => {
     const renderer = render(view());
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
         'اللوحة: SPEEDYBEEF405V3',
-        'البرنامج الثابت: BTFL — واجهة MSP 1.47',
+        // WAS 'البرنامج الثابت: BTFL'. The four-character wire identifier
+        // is an external project's name in shorthand, and this panel is
+        // this application's own chrome. What an operator can act on is
+        // whether the dialect their board speaks has been verified here.
+        'نوع البرنامج الثابت: MSP متوافق',
       ]),
     );
-    expect(texts(renderer)).toContain('متوافق مع واجهة MSP 1.47');
+    expect(texts(renderer).join(' ')).not.toMatch(/BTFL|betaflight/i);
+    expect(texts(renderer)).toContain('متوافق مع هذا الإصدار');
     unmount(renderer);
   });
 
@@ -181,7 +186,7 @@ describe('DiagnosticsSection - identity and compatibility copy', () => {
     expect(texts(renderer)).toContain(
       'واجهة غير مُتحقَّق منها في هذا الإصدار؛ تُعرض القراءات فقط',
     );
-    expect(texts(renderer)).not.toContain('متوافق مع واجهة MSP 1.47');
+    expect(texts(renderer)).not.toContain('متوافق مع هذا الإصدار');
     unmount(renderer);
   });
 
@@ -254,17 +259,27 @@ describe('DiagnosticsSection - lifecycle state copy', () => {
 });
 
 describe('DiagnosticsSection - sensor truthfulness', () => {
-  it('lists only the detected sensors of the pinned mapping, under a "reported as detected" heading', () => {
+  /* SETUP P1: the list is now EXHAUSTIVE - every canonical sensor is
+   * named with its own DETECTED / NOT_DETECTED state, so a flight
+   * controller reporting no gyro produces a visible "GYRO — غير مكتشف"
+   * line instead of one fewer line. Still detection only: no HEALTHY or
+   * UNHEALTHY wording exists anywhere. */
+  it('names every canonical sensor with its own detection state', () => {
     const renderer = render(view());
     expect(texts(renderer)).toEqual(
       expect.arrayContaining([
         'المستشعرات المُبلَّغ عن اكتشافها',
-        'ACC',
-        'GPS',
-        'GYRO',
+        'ACC — مكتشف',
+        'GPS — مكتشف',
+        'GYRO — مكتشف',
+        // The fixture mask omits these, and their absence is now VISIBLE.
+        'BARO — غير مكتشف',
+        'MAG — غير مكتشف',
+        'RANGEFINDER — غير مكتشف',
+        'OPTICALFLOW — غير مكتشف',
       ]),
     );
-    expect(texts(renderer)).not.toContain('BARO');
+    expect(texts(renderer)).not.toContain('BARO — مكتشف');
     unmount(renderer);
   });
 
@@ -377,7 +392,9 @@ describe('DiagnosticsSection - blocker truthfulness', () => {
     );
     expect(all).not.toContain('جاهزة للطيران');
     // The safely decoded prefix (sensors) is still shown.
-    expect(texts(renderer)).toEqual(expect.arrayContaining(['ACC', 'GYRO']));
+    expect(texts(renderer)).toEqual(
+      expect.arrayContaining(['ACC — مكتشف', 'GYRO — مكتشف']),
+    );
     unmount(renderer);
   });
 

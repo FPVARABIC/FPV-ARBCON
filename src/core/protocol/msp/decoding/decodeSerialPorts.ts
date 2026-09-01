@@ -1,5 +1,5 @@
 /* eslint-disable no-bitwise -- MSP serial masks and u32 wire encoding are bit-defined. */
-import { MspPayloadReadError, MspPayloadReader } from './MspPayloadReader';
+import {MspPayloadReader} from './MspPayloadReader';
 
 export const SERIAL_PORT_RECORD_MIN_BYTES = 9;
 
@@ -17,27 +17,26 @@ export interface MspSerialPortRecord {
 export function decodeSerialPorts(
   payload: Uint8Array,
 ): readonly MspSerialPortRecord[] {
-  const reader = new MspPayloadReader(payload);
-  const count = reader.readU8();
-  if (count === 0) {
-    if (reader.remaining() !== 0) {
-      throw new MspPayloadReadError(
-        'Serial configuration declares zero ports but contains trailing bytes.',
-      );
-    }
+  // Betaflight derives the record width from the payload itself
+  // (`portConfigSize = data.remaining() / count`) and then simply skips
+  // whatever it does not understand at the end of each record, validating
+  // nothing (src/js/msp/MSPHelper.js case MSP2_COMMON_SERIAL_CONFIG). Ports is
+  // the screen an operator opens to fix a serial problem, so a firmware that
+  // widens the per-port record - which Betaflight has done before - must not
+  // be the reason they cannot open it.
+  //
+  // Reading tolerantly is safe here because encodeSerialPorts is the strict
+  // half of the pair: it re-derives a uniform layout from the records and
+  // rejects a non-uniform or non-u8 set, so a partially understood read can
+  // never be written back as a corrupt serial configuration.
+  const reader = new MspPayloadReader(payload, {lenient: true});
+  const declared = reader.readU8();
+  const recordWidth =
+    declared > 0 ? Math.floor(reader.remaining() / declared) : 0;
+  if (declared === 0 || recordWidth < SERIAL_PORT_RECORD_MIN_BYTES) {
     return Object.freeze([]);
   }
-  if (reader.remaining() % count !== 0) {
-    throw new MspPayloadReadError(
-      'Serial configuration records do not have a uniform width.',
-    );
-  }
-  const recordWidth = reader.remaining() / count;
-  if (recordWidth < SERIAL_PORT_RECORD_MIN_BYTES) {
-    throw new MspPayloadReadError(
-      `Serial configuration record width ${recordWidth} is below ${SERIAL_PORT_RECORD_MIN_BYTES}.`,
-    );
-  }
+  const count = Math.min(declared, Math.floor(reader.remaining() / recordWidth));
   const ports: MspSerialPortRecord[] = [];
   for (let index = 0; index < count; index += 1) {
     ports.push(

@@ -227,6 +227,22 @@ describe('no production file can manufacture the permitting armed-state answer',
 describe('the ESC-direction command stays inside its dedicated transaction', () => {
   const sources = productionSources();
 
+  /**
+   * WIDENED IN P2-ii, BY EXACTLY ONE FILE, AND THE REASON IS RECORDED.
+   *
+   * `motorControlCommandEngine.ts` is MotorTestController's tightly-owned
+   * helper - constructed by the controller, handed the controller's own
+   * lease and official authority, and reachable from nowhere else. It
+   * sends DSHOT_CMD_MOTOR_STOP after the all-stop vector, through THAT
+   * SAME lease: no second transport queue, no second client, no bypass.
+   *
+   * The containment property this test exists for is unchanged: the
+   * command still appears only in declarations, re-exports and the guarded
+   * command authority. It is still absent from every screen, every
+   * platform binding and every unrelated state controller, which the
+   * exact-set assertion below is what proves - the set cannot grow
+   * unnoticed.
+   */
   it('allows the MSP command only in declarations, re-exports, and the guarded controller', () => {
     const users = sources
       .filter(file => executableOf(file).includes('MSP2_SEND_DSHOT_COMMAND'))
@@ -238,6 +254,7 @@ describe('the ESC-direction command stays inside its dedicated transaction', () 
         join('src', 'core', 'protocol', 'index.ts'),
         join('src', 'core', 'protocol', 'msp', 'commands', 'mspCommands.ts'),
         join('src', 'core', 'protocol', 'msp', 'index.ts'),
+        join('src', 'core', 'state', 'motorControlCommandEngine.ts'),
         join('src', 'core', 'state', 'motorTestController.ts'),
         join(
           'src',
@@ -271,7 +288,7 @@ describe('the ESC-direction command stays inside its dedicated transaction', () 
     // The one MSP field that LOOKS like it means rotation direction. At
     // the pinned tag the firmware uses it in exactly one place - to flip
     // the sign of the yaw PID term. It may be edited as FC configuration,
-    // but it must never select a DShot ESC direction or alter the diagram.
+    // but it must never select a DShot ESC direction.
     const decisionFiles = [
       join(
         SRC_ROOT,
@@ -290,11 +307,36 @@ describe('the ESC-direction command stays inside its dedicated transaction', () 
         'MotorConfigurationController.ts',
       ),
       join(SRC_ROOT, 'ui', 'screens', 'EscDirectionPanel.tsx'),
-      join(SRC_ROOT, 'ui', 'screens', 'MotorAirframeDiagram.tsx'),
     ];
     const offenders = decisionFiles.filter(file =>
       /yawMotorsReversed/.test(executableOf(file)),
     );
     expect(offenders.map(file => file.replace(SRC_ROOT, 'src'))).toEqual([]);
+  });
+
+  it('the diagram reads yaw_motors_reversed for EXPECTED display only', () => {
+    // Until M-F2 the diagram was banned from the flag outright, because it
+    // drew no rotation at all. M-F2 §14 reinstated EXPECTED-rotation
+    // arrows derived from the verified mixer yaw column and this flag -
+    // the same derivation the firmware's mixer applies - so the diagram
+    // now names the flag. That is DISPLAY of an expectation, and this
+    // guard pins it to exactly that shape: the prop type, its
+    // destructuring, and the argument handed to expectedMotorRotation().
+    // A fourth occurrence, or any DShot-command vocabulary appearing in
+    // the same file, means the flag started doing something else - review
+    // it before touching this count.
+    const diagram = executableOf(
+      join(SRC_ROOT, 'ui', 'screens', 'MotorAirframeDiagram.tsx'),
+    );
+    expect(diagram.match(/yawMotorsReversed/g)?.length).toBe(3);
+    expect(diagram).toContain('expectedMotorRotation(');
+    for (const token of [
+      'encodeDshotEscDirection',
+      'DshotEscDirection',
+      'SEND_DSHOT',
+      'motorOutputReordering',
+    ]) {
+      expect(diagram).not.toContain(token);
+    }
   });
 });

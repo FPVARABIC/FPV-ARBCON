@@ -2,10 +2,12 @@ import React, {useCallback, useEffect, useLayoutEffect, useRef, useState} from '
 import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 
 import {colors, radii, spacing, typography} from '../theme';
+import {PROSE_MEASURE} from '../theme';
 import type {TransportError, UsbSerialTransportClient} from '../../platforms/react-native/transport';
 import {mspSessionCoordinator, useMspIdentificationState} from '../../platforms/react-native/protocol';
 import type {MspIdentificationState} from '../../platforms/react-native/protocol';
 import type {MspClientState} from '../../core';
+import {describeFlightControllerHardware} from '../../core';
 import {
   runPollingCapacityAudit,
   summarizePollingCapacityAudit,
@@ -228,7 +230,7 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
     const mspClient = mspSessionCoordinator.getActiveMspClient(sessionId);
     const transport = mspSessionCoordinator.getActiveTransport(sessionId);
     if (!mspClient || !transport) {
-      setPollingAuditError('لا توجد جلسة MSP نشطة لتشغيل هذا القياس.');
+      setPollingAuditError('لا يوجد اتصال نشط بمتحكم الطيران لتشغيل هذا القياس.');
       return;
     }
     setPollingAuditStatus('running');
@@ -452,7 +454,7 @@ export default function UsbSerialDebugPanel({sessionId, client, mspActive}: Prop
             الفئة: <Text style={styles.identityValue}>{firmwareFamilyLabel(identificationState.identity.firmware.knownFamily)}</Text>
           </Text>
           <Text style={styles.identityLabel}>
-            اسم اللوحة: <Text style={styles.identityValue}>{identificationState.identity.board.targetName}</Text>
+            اللوحة: <Text style={styles.identityValue}>{describeFlightControllerHardware(identificationState.identity.board)}</Text>
           </Text>
           {identificationMetrics ? (
             <Text testID="msp-identification-metrics" style={styles.metricsText}>
@@ -603,13 +605,11 @@ const styles = StyleSheet.create({
   mspStatusWarning: {
     ...typography.caption,
     color: colors.warning,
-    marginBottom: spacing.md,
-  },
+    marginBottom: spacing.md, maxWidth: PROSE_MEASURE},
   mspStatusInfo: {
     ...typography.caption,
     color: colors.textSecondary,
-    marginBottom: spacing.md,
-  },
+    marginBottom: spacing.md, maxWidth: PROSE_MEASURE},
   identitySection: {
     marginBottom: spacing.md,
     padding: spacing.sm,
@@ -678,8 +678,7 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'ltr',
-    marginBottom: spacing.md,
-  },
+    marginBottom: spacing.md, maxWidth: PROSE_MEASURE},
   textInput: {
     flex: 1,
     ...typography.mono,
@@ -711,8 +710,7 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...typography.caption,
-    color: colors.textSecondary,
-  },
+    color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   log: {
     maxHeight: 260,
     borderWidth: StyleSheet.hairlineWidth,

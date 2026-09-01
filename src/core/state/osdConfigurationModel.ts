@@ -72,6 +72,53 @@ export function validateOsdDraft(draft: OsdConfigurationDraft, snapshot: MspOsdS
   return Object.freeze([...new Set(issues)]);
 }
 
+/**
+ * EVERY OSD ELEMENT BETAFLIGHT DEFINES, IN THE FIRMWARE'S OWN ORDER.
+ *
+ * =====================================================================
+ * WHY THE ORDER IS THE WHOLE CONTRACT
+ * =====================================================================
+ *
+ * MSP_OSD_CONFIG carries element positions POSITIONALLY - a bare array
+ * of uint16 with no identifiers in it. Index N in that array IS
+ * `osd_items_e` entry N in the firmware, and nothing on the wire says
+ * so. A table that is off by one therefore does not fail, it MISLABELS:
+ * the operator drags what the screen calls "RSSI dBm" and the flight
+ * controller moves something else entirely, with no error anywhere.
+ *
+ * So this table is pinned against the firmware enum by
+ * osdElementAuthenticity.test.ts, which fails the build if an entry is
+ * inserted, removed or reordered relative to
+ * betaflight/src/main/osd/osd.h.
+ *
+ * VERIFIED AGAINST, on 2026-08-21:
+ *   betaflight/betaflight  src/main/osd/osd.h  `osd_items_e`
+ *     (indices 0-87 are unconditional; 88+ sit behind USE_GPS/
+ *      ENABLE_FLIGHT_PLAN, USE_OSD_NAV_MAP and USE_POSITION_HOLD and are
+ *      deliberately NOT listed - a build without those compile flags
+ *      would shift every entry after them)
+ *   betaflight/betaflight-configurator
+ *     src/components/tabs/osd/osd.js  OSD.constants.DISPLAY_FIELDS
+ *     ("DISPLAY_FIELDS order must mirror firmware's osd_items_e enum
+ *      order. decode() maps wire position N to DISPLAY_FIELDS[N]
+ *      positionally.")
+ *
+ * Index 50 is PILOT_NAME, not DISPLAY_NAME: the Configurator selects
+ * between them by API version at that ONE slot, and this application's
+ * floor is API 1.47 (betaflightApiFloor.ts), so PILOT_NAME is the only
+ * reachable answer.
+ *
+ * =====================================================================
+ * THESE ARE NAMES, NOT READINGS
+ * =====================================================================
+ *
+ * Nothing in this table is telemetry. The flight controller renders
+ * every OSD VALUE itself, from its own sensors - this application only
+ * decides which element is switched on and which character cell it
+ * occupies. See OSD_ELEMENT_TOKENS below, and
+ * osdPreviewIsolation.test.ts, which fails the build if the OSD surface
+ * ever acquires a telemetry source.
+ */
 export const OSD_ELEMENT_NAMES_AR: readonly string[] = Object.freeze([
   'قوة الإشارة RSSI', 'جهد البطارية', 'علامة المنتصف', 'الأفق الاصطناعي', 'جوانب الأفق',
   'المؤقت 1', 'المؤقت 2', 'وضع الطيران', 'اسم الطائرة', 'الخانق', 'قناة VTX', 'التيار',
@@ -86,6 +133,49 @@ export const OSD_ELEMENT_NAMES_AR: readonly string[] = Object.freeze([
   'واط-ساعة مستهلكة', 'قيمة AUX', 'وضع الجاهزية', 'RSNR', 'جهد النظارة', 'جهد VTX', 'معدل البت',
   'تأخير الفيديو', 'مسافة النظام', 'جودة رابط النظام', 'DVR النظارة', 'DVR VTX', 'تحذيرات النظام',
   'حرارة VTX', 'سرعة المروحة',
+  'زمن اللفة الحالية', 'زمن اللفة السابقة', 'أفضل ثلاث لفات',
+  'Debug 2', 'رسالة مخصصة 1', 'رسالة مخصصة 2', 'رسالة مخصصة 3', 'رسالة مخصصة 4', 'مسافة الليدار',
+  'نص تسلسلي مخصص', 'اسم ملف البطارية',
 ]);
 
 export function osdElementName(index: number): string {return OSD_ELEMENT_NAMES_AR[index] ?? `عنصر OSD ${index + 1}`;}
+
+/**
+ * The short ASCII token the PREVIEW draws for each element.
+ *
+ * WHY A TOKEN AND NOT A VALUE. The preview exists to answer "where will
+ * this sit over my video", so each element has to occupy roughly the
+ * cells it will really occupy - a name in Arabic script is neither the
+ * right width nor the right script for a MAX7456/HD character grid. What
+ * it must NOT do is invent a reading: showing "16.8V" would be fabricated
+ * telemetry from a flight controller that has told us nothing of the
+ * kind. Each token therefore NAMES the element in the same technical
+ * vocabulary the firmware uses, and its length is what sets the element's
+ * preview width in character cells.
+ *
+ * Same index basis as OSD_ELEMENT_NAMES_AR - an index the firmware
+ * reports beyond this table gets a neutral token rather than a guess.
+ */
+export const OSD_ELEMENT_TOKENS: readonly string[] = Object.freeze([
+  'RSSI', 'VBAT', 'CROSS', 'HORIZON', 'SIDES',
+  'TIMER1', 'TIMER2', 'MODE', 'CRAFT', 'THR', 'VTX', 'CURR',
+  'MAH', 'GPS SPD', 'GPS SATS', 'ALT', 'PID R', 'PID P', 'PID Y',
+  'PWR', 'RATE', 'WARN', 'CELL V', 'GPS LON', 'GPS LAT',
+  'DEBUG', 'PITCH', 'ROLL', 'BAT %', 'DISARMED', 'HOME DIR', 'HOME DIST',
+  'HEADING', 'VARIO', 'COMPASS', 'ESC TEMP', 'ESC RPM', 'TIME LEFT',
+  'DATE TIME', 'ADJUST', 'CORE T', 'ANTIGRAV', 'G-FORCE', 'MOTORS',
+  'LOG', 'FLIP', 'LQ', 'FLT DIST', 'STICKS L', 'STICKS R',
+  'PILOT', 'RPM FRQ', 'RATE NAME', 'PID NAME', 'OSD PROF', 'RSSI dBm',
+  'RC CH', 'CAM FRAME', 'EFFIC', 'FLIGHTS', 'UP/DOWN', 'TX PWR',
+  'WATT H', 'AUX', 'READY', 'RSNR', 'SYS VBAT', 'VTX V', 'BITRATE',
+  'DELAY', 'SYS DIST', 'SYS LQ', 'GOG DVR', 'VTX DVR', 'SYS WARN',
+  'VTX TEMP', 'FAN',
+  // 77-79: osd.h OSD_GPS_LAP_TIME_* (API 1.46)
+  'LAP NOW', 'LAP PREV', 'LAP BEST3',
+  // 80-85: osd.h OSD_DEBUG2 .. OSD_LIDAR_DIST (API 1.47)
+  'DEBUG2', 'MSG 1', 'MSG 2', 'MSG 3', 'MSG 4', 'LIDAR',
+  // 86-87: osd.h OSD_CUSTOM_SERIAL_TEXT, OSD_BATTERY_PROFILE_NAME (API 1.48)
+  'SER TEXT', 'BATT PROF',
+]);
+
+export function osdElementToken(index: number): string {return OSD_ELEMENT_TOKENS[index] ?? `EL${index + 1}`;}

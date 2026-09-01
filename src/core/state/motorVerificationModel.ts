@@ -58,6 +58,20 @@ export interface MotorExpectedMapping {
  * the rotation direction. Confirming it is precisely what the user's own
  * physical observation is for.
  */
+/**
+ * THE MIXER THE TABLE BELOW DESCRIBES - mixerMode_e MIXER_QUADX.
+ *
+ * M-E: the four corner positions are NOT enough to identify the subject.
+ * MIXER_VTAIL4 and MIXER_ATAIL4 put their four motors at the same four
+ * corners in the same output order (mixer_init.c:216-228), so a check on
+ * position alone admits them - and would then attach this table's props-out
+ * ROTATIONS, which those two mixers do not share, to a V-tail. Naming the
+ * subject keeps the expectation attached to the aircraft it was written
+ * for. The position comparison is kept as well, so that editing either
+ * table without the other closes the gate instead of quietly mis-claiming.
+ */
+export const MOTOR_TEST_EXPECTED_MIXER_MODE = 3;
+
 export const MOTOR_TEST_EXPECTED_CONFIGURATION: readonly MotorExpectedMapping[] =
   Object.freeze([
     Object.freeze({motorNumber: 1, position: 'REAR_RIGHT' as const, direction: 'CCW' as const}),
@@ -134,10 +148,22 @@ export interface MotorVerificationEntry {
  * Classifies ONE output. Total, pure, and deliberately conservative:
  * every path that is not an unambiguous match returns something that is
  * not `MATCH`.
+ *
+ * M-F2 §14/§16 - THE EXPECTED DIRECTION IS AN INPUT, NOT THE TABLE'S.
+ * The shipped table above is written for ONE build (Quad X, props-out).
+ * Its POSITIONS hold for every Quad X; its DIRECTIONS hold only for that
+ * props flag, and comparing a props-in aircraft against them called a
+ * physically correct motor a mismatch. The caller derives the expected
+ * direction from the mixer yaw column and the stored yaw_motors_reversed
+ * flag (motorExpectedRotation - imported HERE it would be a cycle, since
+ * that module takes its direction vocabulary from this one) and hands it
+ * in. `undefined` means the direction expectation has no source, and a
+ * comparison with no source is not a match - it is UNCERTAIN.
  */
 export function classifyObservation(
   motorNumber: number,
   observation: MotorObservation,
+  expectedDirection: MotorRotationDirection | undefined,
 ): MotorVerificationOutcome {
   switch (observation.kind) {
     case 'NO_MOVEMENT':
@@ -154,8 +180,13 @@ export function classifyObservation(
         // An output outside the supported four cannot be compared at all.
         return 'UNCERTAIN';
       }
+      if (expectedDirection === undefined) {
+        // No direction expectation exists for this configuration, so the
+        // observation cannot be judged in full. Incomplete, never a match.
+        return 'UNCERTAIN';
+      }
       const positionOk = observation.position === expected.position;
-      const directionOk = observation.direction === expected.direction;
+      const directionOk = observation.direction === expectedDirection;
       if (positionOk && directionOk) {
         return 'MATCH';
       }
@@ -264,6 +295,9 @@ export function confirmObservation(
   state: MotorVerificationState,
   receipt: MotorTestVerificationReceipt,
   observation: MotorObservation,
+  /** See classifyObservation: derived by the caller from the mixer yaw
+   * column and the stored props flag. Undefined = no source = UNCERTAIN. */
+  expectedDirection: MotorRotationDirection | undefined,
 ): MotorVerificationResult {
   if (state.finalized) {
     return {kind: 'REJECTED', reason: 'FINALIZED'};
@@ -289,7 +323,11 @@ export function confirmObservation(
     return {kind: 'REJECTED', reason: 'ALREADY_CONFIRMED'};
   }
 
-  const outcome = classifyObservation(receipt.motorNumber, observation);
+  const outcome = classifyObservation(
+    receipt.motorNumber,
+    observation,
+    expectedDirection,
+  );
   const entries = state.entries.map((entry, position) =>
     position === index
       ? Object.freeze({
@@ -312,6 +350,204 @@ export function confirmObservation(
       aborted: outcome === 'MULTIPLE_MOTORS',
     }),
   };
+}
+
+/**
+ * WITHDRAWS ONE CONFIRMED OBSERVATION, DELIBERATELY.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS NOT A WEAKENING. Confirmation is
+ * immutable so that a later observation cannot silently erase an earlier
+ * contradiction - `confirmObservation` rejects ALREADY_CONFIRMED for
+ * exactly that reason, and that rule is untouched. What was missing was a
+ * way for a person who mis-tapped to say so OUT LOUD. Without one, the
+ * only escape was to end the session, and a workflow whose only correction
+ * path is "start again" is a workflow operators work around.
+ *
+ * This is the narrowest transition that helps: it names ONE output, it
+ * returns that output to UNTESTED, and it touches nothing else. It cannot
+ * write an observation, cannot change another entry, cannot unfinalize a
+ * report, cannot revive an aborted verification, and - being a pure
+ * function over state - cannot reach a flight controller, a mixer, an
+ * output mapping, a direction command or a motor.
+ *
+ * WHAT IT IS NOT. It is not an undo of evidence in the sense of hiding a
+ * problem: clearing MULTIPLE_MOTORS is impossible because that outcome
+ * aborts the whole verification, and an aborted or finalized state is
+ * refused outright.
+ */
+export function clearObservation(
+  state: MotorVerificationState,
+  motorNumber: number,
+): MotorVerificationResult {
+  if (state.finalized) {
+    return {kind: 'REJECTED', reason: 'FINALIZED'};
+  }
+  // An aborted verification is not corrected by editing one row. The
+  // session itself is the thing that has to be restarted.
+  if (state.aborted) {
+    return {kind: 'REJECTED', reason: 'ABORTED'};
+  }
+  if (state.sessionToken === undefined) {
+    return {kind: 'REJECTED', reason: 'SESSION_MISMATCH'};
+  }
+  const index = state.entries.findIndex(
+    entry => entry.motorNumber === motorNumber,
+  );
+  if (index < 0) {
+    return {kind: 'REJECTED', reason: 'UNSUPPORTED_OUTPUT'};
+  }
+  if (state.entries[index].outcome === 'UNTESTED') {
+    // Nothing to withdraw. Reported rather than treated as success, so a
+    // caller cannot mistake "already empty" for "just cleared".
+    return {kind: 'REJECTED', reason: 'ALREADY_CONFIRMED'};
+  }
+
+  const entries = state.entries.map((entry, position) =>
+    position === index
+      ? Object.freeze({
+          motorNumber: entry.motorNumber,
+          outcome: 'UNTESTED' as const,
+          observation: undefined,
+          // The attempt binding goes with the observation. A cleared entry
+          // must not keep pointing at a pulse it no longer describes.
+          attemptId: undefined,
+        })
+      : entry,
+  );
+
+  return {
+    kind: 'ACCEPTED',
+    state: Object.freeze({
+      sessionToken: state.sessionToken,
+      entries: Object.freeze(entries),
+      finalized: false,
+      aborted: false,
+    }),
+  };
+}
+
+/**
+ * WHERE EACH LOGICAL MOTOR STANDS, FOR A COMPACT LIST.
+ *
+ * READ-ONLY, AND ADDITIVE. This derives nothing new - it reads the same
+ * entries `deriveOverall` reads and names them one motor at a time, so a
+ * summary row does not have to re-implement the outcome vocabulary in a
+ * component. No evidence semantics change here.
+ *
+ * NOT_APPLICABLE is the important member. A motor outside the shipped
+ * identification model has not FAILED identification and must never be
+ * counted as an outstanding one - it was never in scope for it.
+ */
+export type MotorIdentificationStatus =
+  /** A position was observed and confirmed. */
+  | 'CONFIRMED'
+  /** The operator answered, but the answer was not a position. */
+  | 'ANSWERED_WITHOUT_POSITION'
+  /** Software evidence was unsafe or ambiguous for this output. */
+  | 'UNSAFE'
+  /** In scope, nothing confirmed yet. */
+  | 'UNCONFIRMED'
+  /** Outside the shipped identification model entirely. */
+  | 'NOT_APPLICABLE';
+
+export interface MotorIdentificationSummaryRow {
+  readonly motorNumber: number;
+  readonly status: MotorIdentificationStatus;
+}
+
+export function summarizeMotorIdentification(
+  state: MotorVerificationState,
+  motorNumbers: readonly number[],
+): readonly MotorIdentificationSummaryRow[] {
+  return Object.freeze(
+    motorNumbers.map(motorNumber => {
+      const entry = state.entries.find(e => e.motorNumber === motorNumber);
+      if (entry === undefined) {
+        return Object.freeze({
+          motorNumber,
+          status: 'NOT_APPLICABLE' as const,
+        });
+      }
+      switch (entry.outcome) {
+        case 'UNTESTED':
+          return Object.freeze({motorNumber, status: 'UNCONFIRMED' as const});
+        case 'UNSAFE_OR_AMBIGUOUS':
+          return Object.freeze({motorNumber, status: 'UNSAFE' as const});
+        case 'NO_MOVEMENT':
+        case 'MULTIPLE_MOTORS':
+          return Object.freeze({
+            motorNumber,
+            status: 'ANSWERED_WITHOUT_POSITION' as const,
+          });
+        case 'UNCERTAIN':
+          /* Two states share this outcome: an answer that gave no
+           * determinate position (POSITION/DIRECTION_UNCERTAIN), and -
+           * since M-F2 made the direction expectation an input - a FULL
+           * observation whose expectation had no source to judge it
+           * against. The second one DID confirm a position; only the
+           * comparison is unavailable. The discriminator is the
+           * observation itself, never the verdict. */
+          return Object.freeze({
+            motorNumber,
+            status:
+              entry.observation?.kind === 'OBSERVED'
+                ? ('CONFIRMED' as const)
+                : ('ANSWERED_WITHOUT_POSITION' as const),
+          });
+        default:
+          // MATCH and every mismatch variant all rest on a confirmed
+          // OBSERVED position; whether it agrees with the template is a
+          // different question, answered elsewhere.
+          return Object.freeze({motorNumber, status: 'CONFIRMED' as const});
+      }
+    }),
+  );
+}
+
+/** One physical position claimed by more than one logical motor. */
+export interface MotorPositionConflict {
+  readonly position: MotorPhysicalPosition;
+  /** Every logical motor confirmed at that position, in ascending order. */
+  readonly motorNumbers: readonly number[];
+}
+
+/**
+ * Reports duplicate observed positions so the UI can name them.
+ *
+ * `deriveOverall` already refuses to call a duplicated set a match, and
+ * `deriveMotorOutputOrder` already refuses to derive a mapping from one.
+ * Neither can say WHICH motors collide, and "there is a mismatch
+ * somewhere" is not something a person standing next to an aircraft can
+ * act on. This adds no rule - it reads the same entries and reports what
+ * is already true.
+ */
+export function findPositionConflicts(
+  state: MotorVerificationState,
+): readonly MotorPositionConflict[] {
+  const byPosition = new Map<MotorPhysicalPosition, number[]>();
+  for (const entry of state.entries) {
+    if (entry.observation?.kind !== 'OBSERVED') {
+      continue;
+    }
+    const existing = byPosition.get(entry.observation.position);
+    if (existing === undefined) {
+      byPosition.set(entry.observation.position, [entry.motorNumber]);
+    } else {
+      existing.push(entry.motorNumber);
+    }
+  }
+  const conflicts: MotorPositionConflict[] = [];
+  for (const [position, motorNumbers] of byPosition) {
+    if (motorNumbers.length > 1) {
+      conflicts.push(
+        Object.freeze({
+          position,
+          motorNumbers: Object.freeze([...motorNumbers].sort((a, b) => a - b)),
+        }),
+      );
+    }
+  }
+  return Object.freeze(conflicts);
 }
 
 /**

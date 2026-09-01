@@ -1,4 +1,5 @@
 import type { MspClient, TelemetryPauseLease } from '../../../core';
+import { withDeadline } from '../../../core/async/deadline';
 import {
   acquireMotorTestLease,
   type MotorTestLease,
@@ -15,12 +16,45 @@ import {
   type MotorConfigurationInterlockLease,
 } from './motorConfigurationInterlock';
 import { isMotorTestSessionActive } from './motorTestCapability';
+import { fcRebootRecovery, type FcRebootRecovery } from './fcRebootRecovery';
 import {
   setupAppStateTelemetryOwner,
   type SetupAppStatePhase,
 } from './setupAppStateTelemetryOwner';
 
-const CLI_PROMPT_TIMEOUT_MS = 5_000;
+/**
+ * SILENCE, NOT DURATION.
+ *
+ * This bound used to start when the command was written and fire five seconds
+ * later no matter what, so a command that was still streaming was killed for
+ * being long rather than for being stuck. `diff all` and `dump all` return a
+ * whole configuration - many kilobytes - and on a slow USB link that takes
+ * well over five seconds. Worse, `execute` treats a timeout as a dead session
+ * and tears the CLI down, so the very first step of the Presets backup could
+ * fail while the board was mid-sentence.
+ *
+ * Betaflight has no per-command deadline at all in its CLI tab; it stamps
+ * `this.lastArrival` on every read and renders whatever arrives
+ * (src/js/tabs/cli.js). The equivalent here is an INACTIVITY bound: the timer
+ * is re-armed by every byte, so it now means "the board has said nothing for
+ * five seconds", which is the condition actually worth failing on.
+ */
+const CLI_IDLE_TIMEOUT_MS = 5_000;
+
+/**
+ * A `#` at the end of a chunk is not proof the board has finished.
+ *
+ * The prompt is detected as a `#` at the tail of the buffer, but `diff` and
+ * `dump` output contains `#` lines of its own, and serial data arrives in
+ * chunks that can end anywhere - including exactly on one of them. Resolving
+ * there truncated the response AND left the remainder to arrive during the
+ * next command, attributing one command's output to another. Requiring the
+ * prompt to still be the tail after a short silence costs a fraction of a
+ * second and removes both failures; any further byte cancels it and reading
+ * continues. Betaflight's own inter-line pacing is 15ms, so 40ms of quiet is
+ * comfortably longer than a gap inside a continuous stream.
+ */
+const CLI_PROMPT_SETTLE_MS = 40;
 const MAX_CLI_OUTPUT_CHARACTERS = 1024 * 1024;
 const MAX_COMMAND_CHARACTERS = 512;
 const SAVE_SETTLE_MS = 750;
@@ -113,7 +147,11 @@ type Resources = {
 type PromptWaiter = {
   readonly resolve: (text: string) => void;
   readonly reject: (error: Error) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
+  /** Re-armed by every arriving byte; fires only on real silence. */
+  idleTimer: ReturnType<typeof setTimeout>;
+  /** Armed when the prompt appears; cancelled if anything else arrives. */
+  settleTimer: ReturnType<typeof setTimeout> | undefined;
+  readonly idleMs: number;
 };
 
 export type RawCliCoordinator = Pick<
@@ -130,6 +168,9 @@ export interface RawCliSessionControllerOptions {
   readonly coordinator?: RawCliCoordinator;
   readonly appStatePhase?: () => SetupAppStatePhase;
   readonly motorTestActive?: (sessionId: string) => boolean;
+  /** The app-wide reboot lifecycle. Injectable so a test can watch the
+   *  hand-off without reaching for the singleton. */
+  readonly rebootRecovery?: FcRebootRecovery;
 }
 
 /**
@@ -141,6 +182,7 @@ export class RawCliSessionController {
   private readonly coordinator: RawCliCoordinator;
   private readonly appStatePhase: () => SetupAppStatePhase;
   private readonly motorTestActive: (sessionId: string) => boolean;
+  private readonly rebootRecovery: FcRebootRecovery;
   private resources: Resources | undefined;
   private phase: RawCliPhase = 'IDLE';
   private receiveBuffer = '';
@@ -154,6 +196,7 @@ export class RawCliSessionController {
     this.appStatePhase =
       options.appStatePhase ?? (() => setupAppStateTelemetryOwner.getPhase());
     this.motorTestActive = options.motorTestActive ?? isMotorTestSessionActive;
+    this.rebootRecovery = options.rebootRecovery ?? fcRebootRecovery;
   }
 
   getPhase(): RawCliPhase {
@@ -209,7 +252,18 @@ export class RawCliSessionController {
     let ownership: MotorTestLease | undefined;
     scheduler.discardPendingDemands();
     try {
-      await scheduler.waitUntilIdle();
+      /* BOUNDED. `waitUntilIdle()` resolves off the `.finally()` of the
+         polls in flight when it is called - a poll that never settles is
+         a Promise that never settles, and the phase would stay ENTERING
+         with the terminal open and no way back. The catch below is
+         already correct; it just needed something to catch. */
+      const quiet = await withDeadline(
+        scheduler.waitUntilIdle(),
+        CLI_IDLE_TIMEOUT_MS,
+      );
+      if (quiet.status !== 'SETTLED') {
+        throw new Error('لم يهدأ الاتصال بمتحكم الطيران. أعد المحاولة.');
+      }
       const requestedIdentity = this.coordinator.getMotorTestSessionIdentity(
         sessionKey.sessionId,
       );
@@ -237,7 +291,7 @@ export class RawCliSessionController {
       this.output = '';
       this.errorCount = 0;
       this.notify();
-      await this.exchange('#', CLI_PROMPT_TIMEOUT_MS, true);
+      await this.exchange('#', CLI_IDLE_TIMEOUT_MS, true);
       this.setPhase('ACTIVE');
     } catch (error) {
       ownership?.release();
@@ -253,7 +307,7 @@ export class RawCliSessionController {
     this.requireActive();
     this.setPhase('SENDING');
     try {
-      const response = await this.exchange(normalized, CLI_PROMPT_TIMEOUT_MS);
+      const response = await this.exchange(normalized, CLI_IDLE_TIMEOUT_MS);
       const result = {
         command: normalized,
         response,
@@ -301,6 +355,23 @@ export class RawCliSessionController {
     return this.requireResources().transport.saveTextFile(filename, text);
   }
 
+  /**
+   * `save` IS A REBOOT, AND THE APPLICATION HAS TO SAY SO BEFORE IT HAPPENS.
+   *
+   * Betaflight's `save` writes EEPROM and then reboots (cli.c: cliSave ->
+   * writeEEPROM + cliReboot), so the USB device disappears a moment after
+   * this write lands. Every layer above used to learn that the same way it
+   * learns about a cable being pulled out - which is why pressing save
+   * left the operator on a connection screen waiting to be told to press
+   * Connect, with Motors and every other screen holding a session id that
+   * no longer named anything.
+   *
+   * The expectation is recorded BEFORE the bytes go out, not after: the
+   * link can die between the write resolving and the next statement, and
+   * a loss that arrives before the expectation is recorded is
+   * indistinguishable from a fault. See fcRebootRecovery.ts for the
+   * lifecycle this hands off to.
+   */
   async saveAndClose(): Promise<void> {
     this.requireActive();
     if (this.errorCount > 0) {
@@ -308,6 +379,8 @@ export class RawCliSessionController {
         'لن يُرسل save بعد ظهور أخطاء CLI؛ اخرج دون حفظ وراجع الحزمة.',
       );
     }
+    const {sessionKey} = this.requireResources();
+    this.rebootRecovery.expectReboot(sessionKey.sessionId, 'CLI_SAVE');
     this.setPhase('CLOSING');
     try {
       await this.requireResources().transport.writeRawBytes(ascii('save\r'));
@@ -349,15 +422,18 @@ export class RawCliSessionController {
       throw new Error('أمر CLI آخر ما زال قيد التنفيذ.');
     this.receiveBuffer = '';
     const response = new Promise<string>((resolve, reject) => {
-      this.waiter = {
+      const waiter: PromptWaiter = {
         resolve,
         reject,
-        timer: setTimeout(() => {
-          if (this.waiter === undefined) return;
+        idleMs: timeout,
+        settleTimer: undefined,
+        idleTimer: setTimeout(() => {
+          if (this.waiter !== waiter) return;
           this.waiter = undefined;
           reject(new Error('انتهت مهلة انتظار CLI prompt.'));
         }, timeout),
       };
+      this.waiter = waiter;
     });
     try {
       await resources.transport.writeRawBytes(
@@ -377,20 +453,40 @@ export class RawCliSessionController {
     this.receiveBuffer += incoming;
     this.output = (this.output + incoming).slice(-MAX_CLI_OUTPUT_CHARACTERS);
     this.notify();
-    const clean = sanitizeCliOutput(this.receiveBuffer);
-    if (!/(?:^|\n)#\s*$/.test(clean)) return;
     const waiter = this.waiter;
     if (!waiter) return;
-    this.waiter = undefined;
-    clearTimeout(waiter.timer);
-    waiter.resolve(clean);
+    // The board is talking, so it is not stuck: push the deadline out, and
+    // withdraw any prompt we thought we had seen - these bytes prove it was a
+    // chunk boundary inside the output, not the end of it.
+    clearTimeout(waiter.idleTimer);
+    if (waiter.settleTimer !== undefined) {
+      clearTimeout(waiter.settleTimer);
+      waiter.settleTimer = undefined;
+    }
+    waiter.idleTimer = setTimeout(() => {
+      if (this.waiter !== waiter) return;
+      this.waiter = undefined;
+      waiter.reject(new Error('انتهت مهلة انتظار CLI prompt.'));
+    }, waiter.idleMs);
+    if (!/(?:^|\n)#\s*$/.test(sanitizeCliOutput(this.receiveBuffer))) return;
+    waiter.settleTimer = setTimeout(() => {
+      if (this.waiter !== waiter) return;
+      this.waiter = undefined;
+      clearTimeout(waiter.idleTimer);
+      waiter.resolve(sanitizeCliOutput(this.receiveBuffer));
+    }, CLI_PROMPT_SETTLE_MS);
+  }
+
+  private clearWaiterTimers(waiter: PromptWaiter): void {
+    clearTimeout(waiter.idleTimer);
+    if (waiter.settleTimer !== undefined) clearTimeout(waiter.settleTimer);
   }
 
   private rejectWaiter(error: Error): void {
     const waiter = this.waiter;
     this.waiter = undefined;
     if (!waiter) return;
-    clearTimeout(waiter.timer);
+    this.clearWaiterTimers(waiter);
     waiter.reject(error);
   }
 
@@ -415,7 +511,7 @@ export class RawCliSessionController {
     const waiter = this.waiter;
     this.waiter = undefined;
     if (waiter) {
-      clearTimeout(waiter.timer);
+      this.clearWaiterTimers(waiter);
       waiter.reject(new Error('أُغلقت جلسة CLI.'));
     }
     if (resources) {

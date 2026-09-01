@@ -278,9 +278,24 @@ describe('FcToolsSection - what is offered', () => {
     for (const tool of ['ACC_CALIBRATION', 'MAG_CALIBRATION', 'REBOOT']) {
       const control = button(renderer, `fc-tool-${tool}-button`);
       expect(control.props.accessibilityRole).toBe('button');
-      const styles = control.props.style as Array<
-        { minHeight?: number } | undefined
-      >;
+      // Pressable styles may be a plain array OR the ({pressed, hovered})
+      // callback form the design system uses to paint interaction states.
+      // Resolve the callback at rest and assert on what it returns - the
+      // touch-target guarantee is unchanged either way.
+      const rawStyle = control.props.style as
+        | Array<{ minHeight?: number } | undefined>
+        | ((state: {
+            pressed: boolean;
+            hovered: boolean;
+            focused: boolean;
+          }) => Array<{ minHeight?: number } | undefined>);
+      const resolved =
+        typeof rawStyle === 'function'
+          ? rawStyle({ pressed: false, hovered: false, focused: false })
+          : rawStyle;
+      const styles = (
+        Array.isArray(resolved) ? resolved.flat(Infinity) : [resolved]
+      ) as Array<{ minHeight?: number } | undefined>;
       expect(
         styles.find(style => style?.minHeight !== undefined)?.minHeight,
       ).toBeGreaterThanOrEqual(44);
@@ -300,7 +315,7 @@ describe('FcToolsSection - disabled states name their reason in text', () => {
     ],
     [
       { compatibility: 'OTHER_FIRMWARE_OR_API' },
-      'غير متاح: يتطلب واجهة MSP 1.47 المدعومة',
+      'غير متاح مع إصدار البرنامج الثابت في هذه اللوحة.',
     ],
     [
       { dataState: 'WAITING' },
@@ -390,7 +405,7 @@ describe('FcToolsSection - confirmation', () => {
     const controller3 = makeFakeController();
     const reboot = render(controller3);
     press(reboot, 'fc-tool-REBOOT-button');
-    expect(texts(reboot).join(' ')).toContain('سينقطع اتصال USB/MSP');
+    expect(texts(reboot).join(' ')).toContain('سينقطع الاتصال مؤقتًا');
     unmount(reboot);
   });
 

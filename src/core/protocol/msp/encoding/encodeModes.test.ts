@@ -8,8 +8,8 @@ const snapshot: MspModesConfiguration = {
     {name: 'ANGLE', permanentId: 1, flagIndex: 1},
     {name: 'BEEPER', permanentId: 13, flagIndex: 2},
   ],
-  capacity: 20,
-  slots: Array.from({length: 20}, () => ({permanentId: 0, auxChannelIndex: 0, start: 900, end: 900, logic: 0 as const, linkedTo: 0})),
+  capacity: 20, unknownIds: [],
+  slots: Array.from({length: 20}, () => ({permanentId: 0, auxChannelIndex: 0, start: 900, end: 900, logic: 0 as const, linkedTo: 0, outOfRange: false})),
 };
 
 describe('encodeModeRangeWrites', () => {

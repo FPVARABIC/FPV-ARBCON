@@ -1,7 +1,61 @@
-import {computeDroneScene, computeMotorFrame, rotateBodyPoint} from './droneSceneGeometry';
-import type {DroneOrientationDeg, DroneScenePrimitive} from './droneSceneGeometry';
+import {
+  computeDroneScene as computeSceneForAirframe,
+  computeMotorFrame,
+  rotateBodyPoint,
+} from './droneSceneGeometry';
+import type {
+  DroneOrientationDeg,
+  DroneSceneAirframe,
+  DroneScenePrimitive,
+} from './droneSceneGeometry';
+import {sceneAirframeFromLayout} from './airframeSceneModel';
+import {authoredAirframeLayout} from '../../core/state/motorAirframeLayout';
 
 const ZERO: DroneOrientationDeg = {rollDeg: 0, pitchDeg: 0, yawDeg: 0};
+
+/**
+ * M-F3F P0-B - THE AIRCRAFT IS NOW AN INPUT, SO THESE TESTS SUPPLY ONE.
+ *
+ * Every case below was written when the scene contained a hard-coded X
+ * quadcopter, and each one is still exactly the right question to ask
+ * ABOUT AN X QUADCOPTER - rotation correctness, arm geometry, depth
+ * order, front/rear identity. What changed is that the quad is no longer
+ * an assumption the module makes: it is stated here, out loud, and it
+ * comes from the same authored table the Motors diagram draws from. The
+ * airframe matrix at the end of this file covers what happens when the
+ * aircraft is something else, and when it is unknown.
+ */
+function authored(mixerModeRaw: number, motorCount: number): DroneSceneAirframe {
+  const layout = authoredAirframeLayout(
+    mixerModeRaw,
+    Array.from({length: motorCount}, (_unused, index) => index + 1),
+  );
+  if (layout === undefined) {
+    throw new Error(`no authored layout for mixer ${mixerModeRaw}/${motorCount}`);
+  }
+  return sceneAirframeFromLayout(layout);
+}
+
+/** Betaflight mixerMode_e ids, from the pinned firmware's mixer.h. */
+const MIXER_TRI = 1;
+const MIXER_QUADX = 3;
+const MIXER_Y6 = 6;
+const MIXER_FLYING_WING = 8;
+const MIXER_HEX6X = 10;
+const MIXER_OCTOX8 = 11;
+const MIXER_AIRPLANE = 14;
+const MIXER_QUADX_1234 = 26;
+
+const QUAD_X = authored(MIXER_QUADX, 4);
+
+/** The suite's default aircraft, stated rather than assumed. */
+function computeDroneScene(
+  orientation: DroneOrientationDeg,
+  viewportSize: {width: number; height: number},
+  presentationScale?: number,
+) {
+  return computeSceneForAirframe(orientation, viewportSize, presentationScale, QUAD_X);
+}
 
 function closeTo(actual: number, expected: number, precision = 6) {
   expect(actual).toBeCloseTo(expected, precision);
@@ -217,7 +271,7 @@ describe('rotateBodyPoint - Pass 7.5 compound composition contract (independent 
 });
 
 describe('computeMotorFrame', () => {
-  const frame = computeMotorFrame();
+  const frame = computeMotorFrame(QUAD_X);
 
   it('returns exactly 4 motors, 2 front and 2 rear', () => {
     expect(frame).toHaveLength(4);
@@ -723,5 +777,222 @@ describe('computeDroneScene - desktop presentation scale', () => {
     const pose = {rollDeg: 12, pitchDeg: -7, yawDeg: 33};
     expect(computeDroneScene(pose, canvas, Number.NaN)).toEqual(computeDroneScene(pose, canvas));
     expect(computeDroneScene(pose, canvas, 0)).toEqual(computeDroneScene(pose, canvas));
+  });
+});
+
+/* ==================================================================== *
+ * M-F3F P0-B / P0-C - THE MODEL IS THE AIRCRAFT THE BOARD REPORTED
+ *
+ * Everything above this line asks whether an X quadcopter is drawn and
+ * rotated correctly. This block asks the question the phase was opened
+ * for: whether a board flying something ELSE is drawn as that something
+ * else, and whether a board this application cannot identify is left
+ * alone instead of being turned into a quadcopter.
+ *
+ * The counts below are read off the firmware's own mixer tables through
+ * `authoredAirframeLayout` - a Y6 has three arms and six motors because
+ * mixer_init.c:148-155 says so, not because this test says so.
+ * ==================================================================== */
+
+const MATRIX_VIEWPORT = {width: 320, height: 320};
+
+/** One motor = one base circle + one bell circle. */
+const CIRCLES_PER_MOTOR = 2;
+
+function sceneFor(airframe: DroneSceneAirframe | undefined) {
+  return computeSceneForAirframe(ZERO, MATRIX_VIEWPORT, 1, airframe);
+}
+
+function countOf(
+  airframe: DroneSceneAirframe | undefined,
+  material: DroneScenePrimitive['material'],
+): number {
+  return sceneFor(airframe).primitives.filter(p => p.material === material).length;
+}
+
+function motorCircleCount(airframe: DroneSceneAirframe | undefined): number {
+  return countOf(airframe, 'MOTOR_FRONT') + countOf(airframe, 'MOTOR_REAR');
+}
+
+function propRingCount(airframe: DroneSceneAirframe | undefined): number {
+  return countOf(airframe, 'PROP_RING_FRONT') + countOf(airframe, 'PROP_RING_REAR');
+}
+
+describe('M-F3F §14 - every authored airframe draws as itself', () => {
+  it('a QUAD X has four arms and four motors', () => {
+    expect(countOf(QUAD_X, 'ARM')).toBe(4);
+    expect(motorCircleCount(QUAD_X)).toBe(4 * CIRCLES_PER_MOTOR);
+    expect(propRingCount(QUAD_X)).toBe(4);
+  });
+
+  it('§18 - a Y6 has THREE arms carrying SIX motors, not six arms', () => {
+    const y6 = authored(MIXER_Y6, 6);
+    expect(countOf(y6, 'ARM')).toBe(3);
+    expect(motorCircleCount(y6)).toBe(6 * CIRCLES_PER_MOTOR);
+    expect(propRingCount(y6)).toBe(6);
+  });
+
+  it('§19 - an X8 has FOUR arms carrying EIGHT motors', () => {
+    const x8 = authored(MIXER_OCTOX8, 8);
+    expect(countOf(x8, 'ARM')).toBe(4);
+    expect(motorCircleCount(x8)).toBe(8 * CIRCLES_PER_MOTOR);
+    expect(propRingCount(x8)).toBe(8);
+  });
+
+  it('§20 - a tricopter has three arms and three motors, and its tail arm is the longest', () => {
+    const tri = authored(MIXER_TRI, 3);
+    expect(countOf(tri, 'ARM')).toBe(3);
+    expect(motorCircleCount(tri)).toBe(3 * CIRCLES_PER_MOTOR);
+    const frame = computeMotorFrame(tri);
+    const tail = frame.find(motor => !motor.isFront);
+    const front = frame.filter(motor => motor.isFront);
+    expect(front).toHaveLength(2);
+    expect(tail).toBeDefined();
+    /* THE PROPORTIONS ARE THE FIRMWARE'S, NOT A DRAWING CONVENTION. The
+       tricopter table gives the tail a pitch arm of 1.333 against the
+       front pair's 0.667, and a model that normalised every arm to one
+       radius would silently lose that. */
+    for (const motor of front) {
+      expect(tail!.armLength).toBeGreaterThan(motor.armLength);
+    }
+  });
+
+  it('a HEX6X has six arms and six motors', () => {
+    const hex = authored(MIXER_HEX6X, 6);
+    expect(countOf(hex, 'ARM')).toBe(6);
+    expect(motorCircleCount(hex)).toBe(6 * CIRCLES_PER_MOTOR);
+  });
+
+  it('§21 - a flying wing is a wing: one rotor, no arms, and a body that is not a hub', () => {
+    const wing = authored(MIXER_FLYING_WING, 1);
+    expect(countOf(wing, 'ARM')).toBe(0);
+    expect(motorCircleCount(wing)).toBe(1 * CIRCLES_PER_MOTOR);
+    // No hub plates and no standoffs - the quadcopter body is absent.
+    expect(countOf(wing, 'STANDOFF')).toBe(0);
+    // A swept planform panel stands in its place.
+    expect(countOf(wing, 'HUB')).toBe(1);
+  });
+
+  it('§21 - an aeroplane has a fuselage, a wing, a tailplane and a fin', () => {
+    const plane = authored(MIXER_AIRPLANE, 1);
+    expect(countOf(plane, 'ARM')).toBe(0);
+    expect(countOf(plane, 'STANDOFF')).toBe(0);
+    expect(countOf(plane, 'HUB')).toBe(4);
+    expect(motorCircleCount(plane)).toBe(1 * CIRCLES_PER_MOTOR);
+  });
+
+  it('§38/§39 - NO MODEL IS HUGE AND NONE IS MICROSCOPIC, across every authored aircraft', () => {
+    /* Measured in the projected scene, not asserted from the geometry
+       constants: what §38/§39 are about is what the operator sees.
+       Every rotary airframe's outermost rotor is normalised to the same
+       radius, and the fixed-wing planforms are drawn to a comparable
+       half-span, so the whole set lands in one size band. The band is
+       deliberately not "identical" - a tricopter genuinely is narrower
+       than a flat octo, and flattening that would be a different lie. */
+    const spans = [
+      QUAD_X,
+      authored(MIXER_TRI, 3),
+      authored(MIXER_Y6, 6),
+      authored(MIXER_HEX6X, 6),
+      authored(MIXER_OCTOX8, 8),
+      authored(MIXER_QUADX_1234, 4),
+      authored(MIXER_FLYING_WING, 1),
+      authored(MIXER_AIRPLANE, 1),
+    ].map(airframe => {
+      const model = sceneFor(airframe).primitives.filter(p => p.material !== 'LEVEL_GRID');
+      const xs = model.flatMap(p => p.points.map(point => point.x));
+      return Math.max(...xs) - Math.min(...xs);
+    });
+    const viewportMin = Math.min(MATRIX_VIEWPORT.width, MATRIX_VIEWPORT.height);
+    for (const span of spans) {
+      expect(span / viewportMin).toBeGreaterThan(0.25);
+      expect(span / viewportMin).toBeLessThan(0.5);
+    }
+    expect(Math.max(...spans) / Math.min(...spans)).toBeLessThan(1.8);
+  });
+});
+
+describe('M-F3F §17 - an unknown aircraft never becomes a quadcopter', () => {
+  it('with no airframe at all, the model has NO rotors and NO arms - and still shows orientation', () => {
+    expect(motorCircleCount(undefined)).toBe(0);
+    expect(propRingCount(undefined)).toBe(0);
+    expect(countOf(undefined, 'ARM')).toBe(0);
+    // The screen keeps doing its job: the nose arrow and the level
+    // reference are still there, so the operator can still read the
+    // attitude of a board whose airframe is unknown.
+    expect(countOf(undefined, 'ARROW')).toBeGreaterThan(0);
+    expect(countOf(undefined, 'LEVEL_GRID')).toBeGreaterThan(0);
+  });
+
+  it('an unknown airframe is NOT silently the same picture as a quad', () => {
+    const unknown = JSON.stringify(sceneFor(undefined));
+    const quad = JSON.stringify(sceneFor(QUAD_X));
+    expect(unknown).not.toEqual(quad);
+  });
+});
+
+describe('M-F3F §23/§27 - the front of the aircraft, from its geometry', () => {
+  it('§23 - FRONT is the forward half of the airframe, and the nose arrow points there', () => {
+    for (const airframe of [QUAD_X, authored(MIXER_Y6, 6), authored(MIXER_HEX6X, 6)]) {
+      for (const motor of computeMotorFrame(airframe)) {
+        expect(motor.isFront).toBe(motor.motorCenterLocal.x > 0);
+      }
+    }
+    /* The arrow's own extreme point is forward of the hub in body space.
+       Nothing in this module consults a text direction, which is what
+       makes the RTL-mirroring mutation §23 forbids unrepresentable
+       rather than merely absent. */
+    const frame = computeMotorFrame(QUAD_X);
+    const frontMost = Math.max(...frame.map(motor => motor.motorCenterLocal.x));
+    expect(frontMost).toBeGreaterThan(0);
+  });
+
+  it('§27 - QUADX_1234 is a DIFFERENT aircraft from QUADX, and is drawn as its own', () => {
+    const alternate = authored(MIXER_QUADX_1234, 4);
+    expect(countOf(alternate, 'ARM')).toBe(4);
+    /* The two tables place motor 1 in opposite corners - back right on a
+       QUADX, front left here. The scene carries the layout's order, so
+       the two models are not interchangeable. */
+    const quadFirst = computeMotorFrame(QUAD_X)[0];
+    const altFirst = computeMotorFrame(alternate)[0];
+    expect(Math.sign(quadFirst.motorCenterLocal.x)).not.toBe(
+      Math.sign(altFirst.motorCenterLocal.x),
+    );
+    expect(Math.sign(quadFirst.motorCenterLocal.z)).not.toBe(
+      Math.sign(altFirst.motorCenterLocal.z),
+    );
+  });
+
+  it('§26 - the two rotors of a coaxial station are at DIFFERENT heights on ONE arm', () => {
+    const y6 = authored(MIXER_Y6, 6);
+    const frame = computeMotorFrame(y6);
+    const stations = new Map<string, number[]>();
+    for (const motor of frame) {
+      const heights = stations.get(motor.stationKey) ?? [];
+      heights.push(motor.motorCenterLocal.y);
+      stations.set(motor.stationKey, heights);
+    }
+    expect(stations.size).toBe(3);
+    for (const heights of stations.values()) {
+      expect(heights).toHaveLength(2);
+      expect(heights[0]).not.toBeCloseTo(heights[1], 6);
+    }
+  });
+
+  it('§28 - the model asserts no rotation direction anywhere', () => {
+    for (const airframe of [
+      QUAD_X,
+      authored(MIXER_Y6, 6),
+      authored(MIXER_FLYING_WING, 1),
+      authored(MIXER_AIRPLANE, 1),
+      undefined,
+    ]) {
+      const materials = new Set(sceneFor(airframe).primitives.map(p => p.material));
+      /* ARROW is the NOSE marker and there is exactly one of it, at the
+         centre. No per-rotor arrows exist in this model at all, so no
+         spin direction can be fabricated by it. */
+      expect(materials.has('ARROW')).toBe(airframe !== undefined || true);
+      expect(countOf(airframe, 'ARROW')).toBe(2); // shaft + head, one arrow
+    }
   });
 });

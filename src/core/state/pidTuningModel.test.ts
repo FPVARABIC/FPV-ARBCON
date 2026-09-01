@@ -13,6 +13,8 @@ function snapshot() {
   const ratesView = new DataView(rates.buffer);
   ratesView.setUint16(16, 1998, true); ratesView.setUint16(18, 1998, true); ratesView.setUint16(20, 1998, true);
   return decodePidTuningSnapshot({
+    // A 49-byte MSP_FILTER_CONFIG is the API 1.47 contract.
+    contract: 'API_1_47',
     pid,
     advanced,
     rates,
@@ -30,7 +32,7 @@ function dynamicFilterSnapshot() {
   view.setUint16(29, 180, true); view.setUint16(31, 420, true);
   view.setUint16(33, 90, true); view.setUint16(35, 180, true);
   view.setUint16(39, 300, true); view.setUint16(41, 100, true); view.setUint16(45, 600, true); filters[48] = 3;
-  return decodePidTuningSnapshot({pid: base.pidRaw, advanced: base.advancedRaw, rates: base.ratesRaw, filters, gyroSampleRateHz: 8000, pidProcessDenom: 2, pidProfileIndex: 0, pidProfileCount: 3, controlRateProfileIndex: 0});
+  return decodePidTuningSnapshot({contract: 'API_1_47', pid: base.pidRaw, advanced: base.advancedRaw, rates: base.ratesRaw, filters, gyroSampleRateHz: 8000, pidProcessDenom: 2, pidProfileIndex: 0, pidProfileCount: 3, controlRateProfileIndex: 0});
 }
 
 describe('PID tuning model and encoder', () => {

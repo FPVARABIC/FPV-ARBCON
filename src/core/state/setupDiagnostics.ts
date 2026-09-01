@@ -24,6 +24,7 @@
 
 import type {FlightControllerIdentity, MspFcFamily} from '../protocol';
 import type {MspStatusExDiagnostics} from '../protocol';
+import {isSupportedConfigurationIdentity} from '../protocol/msp/identification/betaflightApiFloor';
 import {decodeArmingBlockers, decodeSensorPresence} from './armingBlockers';
 import type {ArmingBlockerBit, SensorPresenceBit} from './armingBlockers';
 
@@ -41,8 +42,16 @@ export type DiagnosticsCompatibility =
   /** Identification has not settled yet. */
   | 'IDENTIFYING'
   | 'IDENTIFICATION_FAILED'
-  /** Exactly BTFL + MSP API exactly 1.47 - this pass's own definition of
-   * "identified for API authorization" (§8). */
+  /**
+   * BTFL on an MSP API this app has verified - major 1, minor at or above
+   * the configuration floor.
+   *
+   * It used to mean "exactly 1.47", and the name still says so: renaming
+   * a state that a screen, a controller and their tests all switch on is
+   * a separate change from correcting what it MEANS, and correcting the
+   * meaning is what stops Betaflight 4.7 being reported as incompatible
+   * firmware. See core/protocol/msp/identification/betaflightApiFloor.
+   */
   | 'BETAFLIGHT_API_1_47'
   /** Identified, but not that exact pair; readings are still shown, and
    * nothing that requires the pinned contract is authorized. */
@@ -137,10 +146,9 @@ function resolveCompatibility(input: SetupDiagnosticsInput): DiagnosticsCompatib
   if (input.identificationStatus !== 'SUCCEEDED' || input.identity === undefined) {
     return 'IDENTIFYING';
   }
-  const {firmware, apiVersion} = input.identity;
-  const exact =
-    firmware.identifier === 'BTFL' && apiVersion.apiVersionMajor === 1 && apiVersion.apiVersionMinor === 47;
-  return exact ? 'BETAFLIGHT_API_1_47' : 'OTHER_FIRMWARE_OR_API';
+  return isSupportedConfigurationIdentity(input.identity)
+    ? 'BETAFLIGHT_API_1_47'
+    : 'OTHER_FIRMWARE_OR_API';
 }
 
 export function deriveSetupDiagnostics(input: SetupDiagnosticsInput): SetupDiagnosticsView {

@@ -26,7 +26,8 @@ import React, {useCallback, useMemo, useState} from 'react';
 import {Pressable, StyleSheet, Text, View} from 'react-native';
 import {useTranslation} from 'react-i18next';
 
-import {colors, radii, spacing, typography} from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
+import {Icon} from '../icons';
 import type {MotorTestVerificationReceipt} from '../../core/state/motorTestController';
 import {
   confirmedCount,
@@ -51,12 +52,23 @@ const DIRECTIONS: readonly MotorRotationDirection[] = Object.freeze([
   'CCW',
 ]);
 
-const EXCEPTIONS: readonly {
+interface ExceptionOption {
   readonly kind: MotorObservation['kind'];
   readonly labelKey: string;
-}[] = Object.freeze([
+}
+
+/**
+ * Observations ABOUT THE AIRCRAFT. Always one tap away, at every stage.
+ * MULTIPLE_MOTORS aborts the whole verification and is safety-significant,
+ * so it is never placed behind a disclosure.
+ */
+const PRIMARY_EXCEPTIONS: readonly ExceptionOption[] = Object.freeze([
   Object.freeze({kind: 'NO_MOVEMENT' as const, labelKey: 'noMovement'}),
   Object.freeze({kind: 'MULTIPLE_MOTORS' as const, labelKey: 'multipleMotors'}),
+]);
+
+/** Answers about the OBSERVER, behind one labelled toggle. */
+const UNCERTAIN_EXCEPTIONS: readonly ExceptionOption[] = Object.freeze([
   Object.freeze({
     kind: 'POSITION_UNCERTAIN' as const,
     labelKey: 'positionUncertain',
@@ -83,6 +95,14 @@ export interface MotorVerificationWizardProps {
   /** Raised when the user reports more than one motor moving: the host
    * must abort verification and run the accepted safe teardown route. */
   readonly onMultipleMotorsReported?: () => void;
+  /** M-F2 §14/§16 - the configuration-derived expected direction for one
+   * motor: mixer yaw column + stored props flag, the same source as the
+   * airframe drawing. The shipped table below keeps POSITIONS only; its
+   * directions describe a single props-out build and are no longer
+   * printed as this aircraft's expectation. Undefined = no source. */
+  readonly expectedDirectionFor: (
+    motorNumber: number,
+  ) => MotorRotationDirection | undefined;
 }
 
 export function MotorVerificationWizard({
@@ -90,6 +110,7 @@ export function MotorVerificationWizard({
   state,
   onConfirm,
   onMultipleMotorsReported,
+  expectedDirectionFor,
 }: MotorVerificationWizardProps): React.JSX.Element {
   const {t} = useTranslation();
   // Pre-confirmation selections are freely correctable. They become
@@ -99,6 +120,21 @@ export function MotorVerificationWizard({
   const [direction, setDirection] = useState<
     MotorRotationDirection | undefined
   >();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [uncertainOpen, setUncertainOpen] = useState(false);
+
+  /**
+   * THE STAGE IS DERIVED, NOT STORED. It is a reading of the two selections
+   * that already existed, so there is no second state machine that could
+   * disagree with them - and clearing a selection is therefore the same
+   * thing as stepping back.
+   */
+  const stage: 'POSITION' | 'DIRECTION' | 'REVIEW' =
+    position === undefined
+      ? 'POSITION'
+      : direction === undefined
+        ? 'DIRECTION'
+        : 'REVIEW';
 
   const entry = useMemo(
     () =>
@@ -137,53 +173,94 @@ export function MotorVerificationWizard({
   const canConfirm = position !== undefined && direction !== undefined;
 
   return (
-    <View style={styles.card} testID="verification-wizard">
-      <Text style={styles.sectionTitle}>{t('motorVerification.title')}</Text>
-
-      {/* Progress, explicitly WITHOUT implying automatic sequencing. */}
-      <Text style={styles.caption} testID="verification-progress">
-        {t('motorVerification.progress', {
-          done: confirmedCount(state),
-          total: MOTOR_TEST_EXPECTED_CONFIGURATION.length,
-        })}
+    /* ONE SURFACE, NOT A CARD INSIDE A CARD INSIDE A CARD.
+       This block used to open with a title, a gold warning, a bordered
+       "software evidence" box, an expected-configuration line, a details
+       link, and THEN a bordered stage box holding a heading and the
+       question - six framed objects before the first thing to tap. It is
+       a panel now: a heading, one claim, one disclosure, and the question.
+       Nothing was deleted; the elaboration moved behind the disclosure it
+       always had. */
+    <View style={styles.panel} testID="verification-wizard">
+      {/* THE HEADING NAMES THE MOTOR. That is what the separate expected
+          line was for - "so the form always names the motor it belongs
+          to" - and a heading does it in no extra height. */}
+      <Text style={styles.panelTitle} testID="verification-title">
+        {t('motorVerification.titleFor', {motor: `M${receipt.motorNumber}`})}
       </Text>
-      <Text style={styles.caption}>{t('motorVerification.progressNotice')}</Text>
 
-      {/* The disclaimer, prominently. */}
+      {/* THE ONE TRUTH LINE THAT MUST NEVER BE A TAP AWAY: what confirms a
+          position is a person, not the flight controller. It appears ONCE
+          for the whole panel - not once per step - because a warning
+          repeated at every stage stops being read at any of them. */}
       <Text style={styles.disclaimer} testID="verification-disclaimer">
-        {t('motorVerification.disclaimer')}
+        {t('motorVerification.truthObservation')}
       </Text>
 
-      {/* Evidence source (2): SOFTWARE - stated as reception only. */}
-      <View style={styles.evidenceBlock} testID="verification-software-evidence">
-        <Text style={styles.evidenceHeading}>
-          {t('motorVerification.softwareHeading')}
+      <Pressable
+        onPress={() => setDetailsOpen(open => !open)}
+        accessibilityRole="button"
+        accessibilityState={{expanded: detailsOpen}}
+        accessibilityLabel={t('motorVerification.title')}
+        style={styles.detailsToggle}
+        testID="verification-details-toggle">
+        <Text style={styles.detailsToggleText}>
+          {t('motorsScreen.detailsToggle')}
         </Text>
-        <Text style={styles.body}>{t('motorVerification.softwareAck')}</Text>
-        <Text style={styles.caption}>
-          {t('motorVerification.softwareNotClaim')}
-        </Text>
-      </View>
-
-      {/* Evidence source (1): EXPECTED - visually distinct from observed. */}
-      <View style={styles.evidenceBlock} testID="verification-expected">
-        <Text style={styles.evidenceHeading}>
-          {t('motorVerification.expectedHeading')}
-        </Text>
-        <View style={styles.row}>
-          <Text style={styles.slotLabel}>{`M${receipt.motorNumber}`}</Text>
+      </Pressable>
+      {detailsOpen ? (
+        <View style={styles.compactEvidence} testID="verification-details">
+          {/* Evidence source (1): EXPECTED. It is a REFERENCE, and the
+              compact identity summary above the aircraft already states
+              it beside its "expected" badge - so here it is elaboration,
+              not a second claim. */}
           <Text
-            style={styles.body}
+            style={styles.caption}
+            testID="verification-expected"
             accessibilityLabel={`${t('motorVerification.expectedHeading')}: ${t(
               `motorVerification.position.${expected?.position}`,
             )}`}>
-            {t(`motorVerification.position.${expected?.position}`)}
+            {t('motorVerification.expectedCompact', {
+              motor: receipt.motorNumber,
+              position: t(`motorVerification.position.${expected?.position}`),
+              /* M-F2 §14: direction from the mixer + stored props flag,
+                 never from the props-out template above. */
+              direction:
+                expectedDirectionFor(receipt.motorNumber) === undefined
+                  ? t('motorsScreen.directionExpectedUnavailable')
+                  : t(
+                      `motorVerification.direction.${expectedDirectionFor(
+                        receipt.motorNumber,
+                      )}`,
+                    ),
+            })}
           </Text>
-          <Text style={styles.body}>
-            {t(`motorVerification.direction.${expected?.direction}`)}
+          {/* Evidence source (2): SOFTWARE. An attributable attempt
+              exists; it claims nothing physical. */}
+          <Text style={styles.caption} testID="verification-software-evidence">
+            {t('motorVerification.softwareCompact')}
+          </Text>
+          <Text style={styles.caption} testID="verification-progress">
+            {t('motorVerification.progress', {
+              done: confirmedCount(state),
+              total: MOTOR_TEST_EXPECTED_CONFIGURATION.length,
+            })}
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorVerification.progressNotice')}
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorVerification.softwareHeading')}:{' '}
+            {t('motorVerification.softwareAck')}
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorVerification.softwareNotClaim')}
+          </Text>
+          <Text style={styles.caption}>
+            {t('motorVerification.disclaimer')}
           </Text>
         </View>
-      </View>
+      ) : null}
 
       {alreadyConfirmed ? (
         <Text style={styles.lockedText} testID="verification-locked">
@@ -191,86 +268,205 @@ export function MotorVerificationWizard({
         </Text>
       ) : (
         <View
-          style={styles.evidenceBlock}
+          style={styles.questions}
           testID="verification-questions"
           accessibilityLabel={t('motorVerification.observedHeading')}>
-          <Text style={styles.evidenceHeading}>
-            {t('motorVerification.observedHeading')}
-          </Text>
+          {/* TWO QUESTIONS, COUNTED. The review stage carries its own
+              heading immediately below, so printing a third "step" line
+              above it was one heading describing another heading. */}
+          {stage === 'REVIEW' ? null : (
+            <Text style={styles.evidenceHeading} testID="verification-stage">
+              {t(
+                stage === 'POSITION'
+                  ? 'motorVerification.stagePosition'
+                  : 'motorVerification.stageDirection',
+              )}
+            </Text>
+          )}
 
-          <Text style={styles.body}>
-            {t('motorVerification.questionPosition')}
-          </Text>
-          <View style={styles.optionRow}>
-            {POSITIONS.map(value => (
+          {/* STAGE 1 - WHERE. Only the question being answered right now is
+              on screen. The evidence model is untouched: `position` and
+              `direction` are the same pre-confirmation selections they
+              always were, and the stage is DERIVED from them rather than
+              being a second state machine that could disagree. */}
+          {stage === 'POSITION' ? (
+            <View style={styles.stageBlock} testID="verification-stage-position">
+              <Text style={styles.body}>
+                {t('motorVerification.questionPosition')}
+              </Text>
+              <View style={styles.optionRow}>
+                {POSITIONS.map(value => (
+                  <Pressable
+                    key={value}
+                    onPress={() => setPosition(value)}
+                    accessibilityRole="radio"
+                    accessibilityState={{selected: position === value}}
+                    aria-checked={position === value}
+                    style={[styles.option, position === value && styles.optionOn]}
+                    testID={`verification-position-${value}`}>
+                    <Icon
+                      name={position === value ? 'circle-check' : 'circle'}
+                      size={18}
+                      color={
+                        position === value ? colors.accentStrong : colors.textMuted
+                      }
+                    />
+                    <Text style={styles.optionLabel}>
+                      {t(`motorVerification.position.${value}`)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {/* STAGE 2 - WHICH WAY, with the answer already given kept in
+              view so the operator can see - and undo - what they chose. */}
+          {stage === 'DIRECTION' ? (
+            <View style={styles.stageBlock} testID="verification-stage-direction">
+              <View style={styles.chosenRow}>
+                <Text style={styles.caption} testID="verification-chosen-position">
+                  {t(`motorVerification.position.${position}`)}
+                </Text>
+                <Pressable
+                  onPress={() => setPosition(undefined)}
+                  accessibilityRole="button"
+                  style={styles.linkButton}
+                  testID="verification-change-position">
+                  <Text style={styles.linkText}>
+                    {t('motorVerification.changePosition')}
+                  </Text>
+                </Pressable>
+              </View>
+              <Text style={styles.body}>
+                {t('motorVerification.questionDirection')}
+              </Text>
+              <View style={styles.optionRow}>
+                {DIRECTIONS.map(value => (
+                  <Pressable
+                    key={value}
+                    onPress={() => setDirection(value)}
+                    accessibilityRole="radio"
+                    accessibilityState={{selected: direction === value}}
+                    aria-checked={direction === value}
+                    style={[styles.option, direction === value && styles.optionOn]}
+                    testID={`verification-direction-${value}`}>
+                    <Icon
+                      name={direction === value ? 'circle-check' : 'circle'}
+                      size={18}
+                      color={
+                        direction === value ? colors.accentStrong : colors.textMuted
+                      }
+                    />
+                    <Text style={styles.optionLabel}>
+                      {t(`motorVerification.direction.${value}`)}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
+          {/* STAGE 3 - WHAT WILL BE RECORDED. Both answers, compactly, with
+              a way back to either, and then one confirm. */}
+          {stage === 'REVIEW' ? (
+            <View style={styles.stageBlock} testID="verification-stage-review">
+              <Text style={styles.evidenceHeading}>
+                {t('motorVerification.reviewHeading')}
+              </Text>
+              <Text style={styles.body} testID="verification-review-summary">
+                {`M${receipt.motorNumber} · ${t(
+                  `motorVerification.position.${position}`,
+                )} · ${t(`motorVerification.direction.${direction}`)}`}
+              </Text>
+              <View style={styles.chosenRow}>
+                <Pressable
+                  onPress={() => setPosition(undefined)}
+                  accessibilityRole="button"
+                  style={styles.linkButton}
+                  testID="verification-change-position">
+                  <Text style={styles.linkText}>
+                    {t('motorVerification.changePosition')}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setDirection(undefined)}
+                  accessibilityRole="button"
+                  style={styles.linkButton}
+                  testID="verification-change-direction">
+                  <Text style={styles.linkText}>
+                    {t('motorVerification.changeDirection')}
+                  </Text>
+                </Pressable>
+              </View>
               <Pressable
-                key={value}
-                onPress={() => setPosition(value)}
-                accessibilityRole="radio"
-                accessibilityState={{selected: position === value}}
-                style={[styles.option, position === value && styles.optionOn]}
-                testID={`verification-position-${value}`}>
+                onPress={() => {
+                  if (position !== undefined && direction !== undefined) {
+                    confirm({kind: 'OBSERVED', position, direction});
+                  }
+                }}
+                disabled={!canConfirm}
+                accessibilityRole="button"
+                accessibilityState={{disabled: !canConfirm}}
+                style={[styles.confirmButton, !canConfirm && styles.confirmOff]}
+                testID="verification-confirm">
+                <Text style={styles.confirmLabel}>
+                  {t('motorVerification.confirm')}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
+
+          {/* THE EXCEPTIONAL ANSWERS. "no motor moved" and "more than one
+              moved" are observations ABOUT THE AIRCRAFT and stay one tap
+              away at every stage - the second aborts the whole
+              verification, so burying it would be a safety regression.
+              The two "I could not tell" answers are about the OBSERVER and
+              sit behind a single labelled toggle. */}
+          <View style={styles.optionRow}>
+            {PRIMARY_EXCEPTIONS.map(exception => (
+              <Pressable
+                key={exception.kind}
+                onPress={() =>
+                  confirm({kind: exception.kind} as MotorObservation)
+                }
+                accessibilityRole="button"
+                style={styles.exceptionOption}
+                testID={`verification-exception-${exception.kind}`}>
                 <Text style={styles.optionLabel}>
-                  {position === value ? '◉ ' : '○ '}
-                  {t(`motorVerification.position.${value}`)}
+                  {t(`motorVerification.${exception.labelKey}`)}
                 </Text>
               </Pressable>
             ))}
           </View>
-
-          <Text style={styles.body}>
-            {t('motorVerification.questionDirection')}
-          </Text>
-          <View style={styles.optionRow}>
-            {DIRECTIONS.map(value => (
-              <Pressable
-                key={value}
-                onPress={() => setDirection(value)}
-                accessibilityRole="radio"
-                accessibilityState={{selected: direction === value}}
-                style={[styles.option, direction === value && styles.optionOn]}
-                testID={`verification-direction-${value}`}>
-                <Text style={styles.optionLabel}>
-                  {direction === value ? '◉ ' : '○ '}
-                  {t(`motorVerification.direction.${value}`)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-
           <Pressable
-            onPress={() => {
-              if (position !== undefined && direction !== undefined) {
-                confirm({kind: 'OBSERVED', position, direction});
-              }
-            }}
-            disabled={!canConfirm}
+            onPress={() => setUncertainOpen(open => !open)}
             accessibilityRole="button"
-            accessibilityState={{disabled: !canConfirm}}
-            style={[styles.confirmButton, !canConfirm && styles.confirmOff]}
-            testID="verification-confirm">
-            <Text style={styles.confirmLabel}>
-              {t('motorVerification.confirm')}
+            accessibilityState={{expanded: uncertainOpen}}
+            style={styles.detailsToggle}
+            testID="verification-uncertain-toggle">
+            <Text style={styles.detailsToggleText}>
+              {t('motorVerification.uncertainToggle')}
             </Text>
           </Pressable>
-
-          <Text style={styles.evidenceHeading}>
-            {t('motorVerification.exceptionHeading')}
-          </Text>
-          {EXCEPTIONS.map(exception => (
-            <Pressable
-              key={exception.kind}
-              onPress={() =>
-                confirm({kind: exception.kind} as MotorObservation)
-              }
-              accessibilityRole="button"
-              style={styles.option}
-              testID={`verification-exception-${exception.kind}`}>
-              <Text style={styles.optionLabel}>
-                {t(`motorVerification.${exception.labelKey}`)}
-              </Text>
-            </Pressable>
-          ))}
+          {uncertainOpen ? (
+            <View style={styles.optionRow} testID="verification-uncertain">
+              {UNCERTAIN_EXCEPTIONS.map(exception => (
+                <Pressable
+                  key={exception.kind}
+                  onPress={() =>
+                    confirm({kind: exception.kind} as MotorObservation)
+                  }
+                  accessibilityRole="button"
+                  style={styles.exceptionOption}
+                  testID={`verification-exception-${exception.kind}`}>
+                  <Text style={styles.optionLabel}>
+                    {t(`motorVerification.${exception.labelKey}`)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
         </View>
       )}
     </View>
@@ -289,11 +485,16 @@ export interface MotorTestReportProps {
    * never shown - the host keeps its fault presentation instead.
    */
   readonly safeTeardownConfirmed: boolean;
+  /** Same contract as MotorVerificationWizardProps.expectedDirectionFor. */
+  readonly expectedDirectionFor: (
+    motorNumber: number,
+  ) => MotorRotationDirection | undefined;
 }
 
 export function MotorTestReport({
   state,
   safeTeardownConfirmed,
+  expectedDirectionFor,
 }: MotorTestReportProps): React.JSX.Element {
   const {t} = useTranslation();
   const overall = deriveOverall(state);
@@ -350,7 +551,13 @@ export function MotorTestReport({
                 accessibilityLabel={t('motorVerification.expectedHeading')}>
                 {t('motorVerification.expectedHeading')}:{' '}
                 {t(`motorVerification.position.${expected?.position}`)} ·{' '}
-                {t(`motorVerification.direction.${expected?.direction}`)}
+                {expectedDirectionFor(entry.motorNumber) === undefined
+                  ? t('motorsScreen.directionExpectedUnavailable')
+                  : t(
+                      `motorVerification.direction.${expectedDirectionFor(
+                        entry.motorNumber,
+                      )}`,
+                    )}
               </Text>
               <Text
                 style={styles.body}
@@ -380,31 +587,44 @@ const styles = StyleSheet.create({
   sectionTitle: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   body: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   disclaimer: {
     ...typography.body,
     color: colors.warning,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
   caveat: {
     ...typography.body,
     color: colors.warning,
     writingDirection: 'rtl',
-    flexShrink: 1,
+    flexShrink: 1, maxWidth: PROSE_MEASURE},
+  /* THE ACTIVE PANEL. No border and no fill of its own: it already sits
+     inside the identification card, and a frame inside a frame inside a
+     frame is what this round exists to remove. Separation comes from
+     spacing and from the single rule above the questions. */
+  panel: {gap: spacing.xs},
+  panelTitle: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+    writingDirection: 'rtl',
+  },
+  /* One rule, where the reading genuinely changes from "what this is" to
+     "what to answer". */
+  questions: {
+    gap: spacing.xs,
+    paddingTop: spacing.xs,
+    borderTopWidth: 1,
+    borderTopColor: colors.borderSoft,
   },
   evidenceBlock: {
     backgroundColor: colors.surfaceAlt,
@@ -417,8 +637,7 @@ const styles = StyleSheet.create({
   evidenceHeading: {
     ...typography.caption,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   row: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   optionRow: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   option: {
@@ -430,12 +649,48 @@ const styles = StyleSheet.create({
     borderRadius: radii.sm,
   },
   optionOn: {borderColor: colors.accent, borderWidth: 2},
+  /** Same 44dp target, two per row on a phone instead of four stacked. */
+  exceptionOption: {
+    flexGrow: 1,
+    flexBasis: '46%',
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.sm,
+  },
+  /** The safety sentences without the box: same words, less height. */
+  compactEvidence: {gap: 2},
+  stageBlock: {gap: spacing.xs},
+  chosenRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  detailsToggle: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'flex-start',
+  },
+  detailsToggleText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '700',
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
+  linkButton: {minHeight: 44, justifyContent: 'center'},
+  linkText: {
+    ...typography.caption,
+    color: colors.accentStrong,
+    fontWeight: '700',
+    writingDirection: 'rtl'},
   optionLabel: {
     ...typography.body,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1},
   confirmButton: {
     minHeight: 44,
     alignItems: 'center',
@@ -449,19 +704,16 @@ const styles = StyleSheet.create({
   confirmLabel: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   lockedText: {
     ...typography.body,
     color: colors.success,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   overall: {
     ...typography.title,
     color: colors.textPrimary,
     writingDirection: 'rtl',
-    flexShrink: 1,
-  },
+    flexShrink: 1},
   reportRow: {
     flexDirection: 'row',
     gap: spacing.sm,

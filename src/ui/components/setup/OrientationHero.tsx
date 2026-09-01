@@ -44,6 +44,7 @@ import {
 import { useTranslation } from 'react-i18next';
 
 import { OrientationRenderer } from '../../orientation3d';
+import type { DroneSceneAirframe } from '../../orientation3d';
 // Imported from its own module, not the orientation3d barrel: several
 // screen-level suites jest.mock() that barrel down to OrientationRenderer
 // alone (the Skia component cannot mount under Jest), and the
@@ -57,15 +58,40 @@ import { orientationRenderObserver } from '../../orientation3d/orientationRender
 import type { OrientationViewState } from '../../../core';
 import { describeOrientationForAccessibility } from '../../../core';
 import { colors, radii, spacing, typography } from '../../theme';
+import {PROSE_MEASURE} from '../../theme';
 import FlightInstruments, { roundHeadingDegrees } from './FlightInstruments';
 import { ORIENTATION_DESKTOP_WORKSPACE_ENABLED } from './orientationHeroDesktopWorkspace';
 
 const HERO_MAX_SIZE = 340;
+/**
+ * SETUP FINAL UI CORRECTION - THE PHONE COMPOSITION, DECIDED AGAIN.
+ *
+ * P3 put a 196px stage beside a 126px instrument rail to shrink the
+ * hero's height. The accepted final direction reverses that priority:
+ * the model is the primary orientation instrument and must be visually
+ * dominant, with the horizon and relative-direction dials directly under
+ * it and the accelerometer-calibration action immediately after - all
+ * reachable without scrolling on a phone.
+ *
+ * So the phone stage is the full card width again (300px at 360,
+ * 330px at 390, capped at 340), and the two dials sit side by side
+ * BELOW it via the instruments' own 'row' layout - which also renders
+ * them larger than the old 126px rail did. The model is still NOT
+ * scaled: scene geometry, maths and rendering are untouched (P0's
+ * explicit warning); only the box it is drawn into grew.
+ */
 const HERO_TABLET_MAX_SIZE = 410;
 const HERO_MIN_SIZE = 180;
 const SIDEBAR_LAYOUT_MIN_WIDTH = 620;
 const DESKTOP_WORKSPACE_MIN_WIDTH = 1024;
-const DESKTOP_STAGE_MAX_HEIGHT = 512;
+/**
+ * 430, not 512: at 1024x768 the old 512px stage alone consumed the fold,
+ * pushing the dials and the calibration action off screen. 430 keeps the
+ * model unmistakably dominant while the calibration card that now
+ * follows the hero stays reachable without scrolling on the shortest
+ * desktop tier.
+ */
+const DESKTOP_STAGE_MAX_HEIGHT = 430;
 const DESKTOP_INSTRUMENT_RAIL_WIDTH = 128;
 const DESKTOP_WORKSPACE_GAP = 12;
 const DESKTOP_MODEL_SCALE = 0.56 / 0.37;
@@ -159,6 +185,31 @@ export interface OrientationHeroProps {
   canReset?: boolean;
   onResetView: () => void;
   onResetHintShown: () => void;
+  /**
+   * FINAL UI CORRECTION: the accelerometer-calibration surface, rendered
+   * DIRECTLY after the model and dials so leveling the aircraft while
+   * watching the model and pressing calibrate happens in one screenful.
+   * An opaque slot on purpose - this component stays presentational and
+   * controller-free; SetupScreen owns what goes here
+   * (OrientationCalibrationCard). Rendered in every status branch, so a
+   * blocked calibration still shows its causal reason before telemetry
+   * flows.
+   */
+  calibrationSlot?: React.ReactNode;
+  /**
+   * WHICH AIRCRAFT THE BOARD REPORTED - M-F3F P0-B.
+   *
+   * The model used to be a hard-coded X quad for every board, on the one
+   * screen whose whole purpose is answering a physical question about
+   * the aircraft in front of the operator. It follows the observed
+   * airframe now.
+   *
+   * `undefined` is a real answer and it is drawn as one: the orientation
+   * model with no rotors. It NEVER falls back to a quadcopter (§17).
+   * This component decides nothing about it - the screen supplies it, so
+   * the hero stays presentational.
+   */
+  airframe?: DroneSceneAirframe;
 }
 
 export default function OrientationHero({
@@ -170,21 +221,30 @@ export default function OrientationHero({
   canReset = true,
   onResetView,
   onResetHintShown,
+  calibrationSlot,
+  airframe,
 }: OrientationHeroProps): React.JSX.Element {
   const { t } = useTranslation();
   const { width: windowWidth, fontScale } = useWindowDimensions();
   const sidebar = shouldUseOrientationSidebar(windowWidth, fontScale);
   const [measuredVisualsWidth, setMeasuredVisualsWidth] = useState<number>();
   const workspace = computeOrientationWorkspaceLayout(windowWidth, fontScale, measuredVisualsWidth);
+  // FINAL UI CORRECTION: on a phone the stage is the full card width
+  // (dominant), with the dials on their own row directly beneath it.
   const heroSize = workspace.stageWidth;
   const heroHeight = workspace.stageHeight;
   const instrumentStageWidth = sidebar ? 156 : heroSize;
+  const instrumentsLayout = sidebar ? 'sidebar' : 'row';
   const [hintVisible, setHintVisible] = useState(false);
   const handleVisualsLayout = (event: LayoutChangeEvent) => {
     const measured = event.nativeEvent.layout.width;
     setMeasuredVisualsWidth(current => current === measured ? current : measured);
   };
-  const visualsStyle = [styles.visuals, sidebar && styles.visualsSidebar, workspace.expanded && styles.visualsDesktop];
+  const visualsStyle = [
+    styles.visuals,
+    sidebar && styles.visualsSidebar,
+    workspace.expanded && styles.visualsDesktop,
+  ];
 
   const handleReset = () => {
     // Rejected, not merely visually disabled: a press delivered while the
@@ -267,70 +327,63 @@ export default function OrientationHero({
       : undefined,
   );
 
-  if (orientationView.status === 'WAITING') {
-    return (
-      <View style={styles.container} testID="orientation-hero-waiting">
-        {renderHeader('WAITING')}
-        <View style={visualsStyle} onLayout={handleVisualsLayout}>
-          <View
-            style={[
-              styles.rendererWrapper,
-              { width: heroSize, height: heroHeight },
-            ]}
-          >
-            <Text style={styles.messageText}>{t('orientationHero.waiting')}</Text>
-          </View>
-          <FlightInstruments
-            status="WAITING"
-            stageWidth={instrumentStageWidth}
-            fontScale={fontScale}
-            layout={sidebar ? 'sidebar' : 'row'}
-            sizeScale={sidebar ? 0.8 : 1}
-          />
-        </View>
-      </View>
-    );
-  }
+  /**
+   * ONE RETURN, ONE TREE SHAPE - AND THAT IS A CORRECTNESS REQUIREMENT,
+   * NOT A STYLE PREFERENCE.
+   *
+   * This component used to `return` early for WAITING and for ERROR,
+   * each with its own child list. That made the calibration slot sit at
+   * child index 2 while waiting and at a different index once telemetry
+   * arrived, so every WAITING -> LIVE -> WAITING transition UNMOUNTED
+   * and remounted whatever the host put in that slot.
+   *
+   * The host puts OrientationCalibrationCard there, and that card reads
+   * useFcToolPublication(), which records the controller's publication
+   * sequence in a mount-time ref so an outcome belonging to an EARLIER
+   * mount can never be shown as though it were this one's. A spurious
+   * remount therefore does not merely cost a render: it silently
+   * DISCARDS the acknowledgement the operator was reading, because the
+   * new baseline is already past it. That was observed as a failing
+   * integration assertion, not theorised.
+   *
+   * So the branches below vary CONTENT and never STRUCTURE. Every
+   * conditional child keeps its slot as `null`, which React counts, and
+   * the calibration slot's parent depends only on `workspace.expanded`
+   * (a window-size fact that does not change while a board is talking) -
+   * never on telemetry status.
+   */
+  const status: 'LIVE' | 'STALE' | 'WAITING' | 'ERROR' =
+    orientationView.status === 'WAITING'
+      ? 'WAITING'
+      : orientationView.status === 'ERROR'
+      ? 'ERROR'
+      : orientationView.status === 'STALE'
+      ? 'STALE'
+      : 'LIVE';
+  const hasSample = status === 'LIVE' || status === 'STALE';
+  const isStale = status === 'STALE';
 
-  if (orientationView.status === 'ERROR') {
-    return (
-      <View style={styles.container} testID="orientation-hero-error">
-        {renderHeader('ERROR')}
-        <View style={visualsStyle} onLayout={handleVisualsLayout}>
-          <View
-            style={[
-              styles.rendererWrapper,
-              { width: heroSize, height: heroHeight },
-            ]}
-          >
-            <Text style={[styles.messageText, { color: colors.error }]}>
-              {t('orientationHero.error')}
-            </Text>
-          </View>
-          <FlightInstruments
-            status="ERROR"
-            stageWidth={instrumentStageWidth}
-            fontScale={fontScale}
-            layout={sidebar ? 'sidebar' : 'row'}
-            sizeScale={sidebar ? 0.8 : 1}
-          />
-        </View>
-      </View>
-    );
-  }
+  /**
+   * THE displayed sample. One object, built once, handed to the model
+   * and read by the numeric readouts - so "the number and the model
+   * disagree" is not a state this component can even represent.
+   *
+   * `undefined` when there is no genuine sample. There is deliberately
+   * no zero pose and no placeholder: a number can only ever appear on
+   * this screen when the flight controller actually sent one.
+   */
+  const displayed =
+    orientationView.status === 'LIVE' || orientationView.status === 'STALE'
+      ? {
+          rollDeg: orientationView.rollDeg,
+          pitchDeg: orientationView.pitchDeg,
+          yawDeg: orientationView.yawDeg,
+        }
+      : undefined;
 
-  const isStale = orientationView.status === 'STALE';
-  const accessibilityText =
-    describeOrientationForAccessibility(orientationView);
-
-  // THE displayed sample. One object, built once, handed to the model
-  // and read by the numeric readouts below - so "the number and the
-  // model disagree" is not a state this component can even represent.
-  const displayed = {
-    rollDeg: orientationView.rollDeg,
-    pitchDeg: orientationView.pitchDeg,
-    yawDeg: orientationView.yawDeg,
-  };
+  const accessibilityText = hasSample
+    ? describeOrientationForAccessibility(orientationView)
+    : undefined;
 
   // Development-only latency stamp. Deliberately during render rather
   // than in an effect: an effect would measure when React got round to
@@ -341,7 +394,7 @@ export default function OrientationHero({
     sessionToken !== undefined && sampleSeq !== undefined
       ? { sessionToken, sampleSeq }
       : undefined;
-  if (sampleIdentity !== undefined) {
+  if (sampleIdentity !== undefined && displayed !== undefined) {
     orientationLatencyTracker.noteHeroSample(
       sampleIdentity,
       sampleReceivedAt ?? 0,
@@ -350,48 +403,24 @@ export default function OrientationHero({
     );
   }
 
-  return (
-    <View style={styles.container} testID="orientation-hero">
-      {renderHeader(isStale ? 'STALE' : 'LIVE')}
-      <View style={visualsStyle} onLayout={handleVisualsLayout}>
-        <View
-          style={[styles.rendererWrapper, { width: heroSize, height: heroHeight }]}
-          accessible
-          accessibilityLabel={accessibilityText}
-          testID="orientation-hero-renderer-wrapper"
-        >
-          <OrientationRenderer
-            // The latest GENUINE sample, directly. No animation, no queue,
-            // no pending target: a newer sample simply replaces this prop,
-            // so an older pose can never be drawn after a newer one.
-            orientation={displayed}
-            width={heroSize}
-            height={heroHeight}
-            presentationScale={workspace.presentationScale}
-            stale={isStale}
-            sampleIdentity={sampleIdentity}
-          />
-        </View>
-
-        <FlightInstruments
-          status={isStale ? 'STALE' : 'LIVE'}
-          stageWidth={instrumentStageWidth}
-          fontScale={fontScale}
-          layout={sidebar ? 'sidebar' : 'row'}
-          sizeScale={sidebar ? 0.8 : 1}
-          rollDeg={displayed.rollDeg}
-          pitchDeg={displayed.pitchDeg}
-          headingDeg={displayed.yawDeg}
-        />
-      </View>
-
-      {isStale && (
-        <Text style={styles.staleLabel} testID="orientation-hero-stale-label">
-          {t('orientationHero.staleLabel')}
-        </Text>
-      )}
-
-      <View style={styles.readoutsRow}>
+  /**
+   * THE THREE NUMERIC TRUTHS, NOW ABOVE THE MODEL RATHER THAN UNDER IT.
+   *
+   * They render `displayed` - the SAME object handed to
+   * OrientationRenderer below, built from
+   * deriveOrientationViewState(useSetupAttitude(...)), which is the
+   * scheduler's MSP_ATTITUDE value. `displayed` is undefined without a
+   * genuine sample, so this whole row is absent rather than showing a
+   * zero pose.
+   *
+   * Position changed because the readouts used to sit BELOW the
+   * calibration card, roughly 500px under the model they describe. A
+   * pilot levelling an aircraft reads the number and watches the model
+   * in the same glance; separating them by a card made that impossible.
+   */
+  const readouts =
+    displayed === undefined ? null : (
+      <View style={styles.readoutsRow} testID="orientation-hero-readouts">
         <View style={styles.readout} testID="orientation-hero-roll">
           <Text style={styles.readoutLabel}>
             {t('orientationHero.rollLabel')}
@@ -417,6 +446,79 @@ export default function OrientationHero({
           )}°`}</Text>
         </View>
       </View>
+    );
+
+  const stage = (
+    <View style={visualsStyle} onLayout={handleVisualsLayout}>
+      <View
+        style={[styles.rendererWrapper, { width: heroSize, height: heroHeight }]}
+        accessible={accessibilityText !== undefined}
+        accessibilityLabel={accessibilityText}
+        testID="orientation-hero-renderer-wrapper"
+      >
+        {displayed === undefined ? (
+          <Text
+            style={
+              status === 'ERROR'
+                ? [styles.messageText, { color: colors.error }]
+                : styles.messageText
+            }
+          >
+            {t(
+              status === 'ERROR'
+                ? 'orientationHero.error'
+                : 'orientationHero.waiting',
+            )}
+          </Text>
+        ) : (
+          <OrientationRenderer
+            // The latest GENUINE sample, directly. No animation, no
+            // queue, no pending target: a newer sample simply replaces
+            // this prop, so an older pose can never be drawn after a
+            // newer one.
+            orientation={displayed}
+            width={heroSize}
+            height={heroHeight}
+            presentationScale={workspace.presentationScale}
+            stale={isStale}
+            sampleIdentity={sampleIdentity}
+            airframe={airframe}
+          />
+        )}
+      </View>
+
+      <FlightInstruments
+        status={status}
+        stageWidth={instrumentStageWidth}
+        fontScale={fontScale}
+        layout={instrumentsLayout}
+        sizeScale={sidebar ? 0.8 : 1}
+        rollDeg={displayed?.rollDeg}
+        pitchDeg={displayed?.pitchDeg}
+        headingDeg={displayed?.yawDeg}
+      />
+    </View>
+  );
+
+  /**
+   * SETUP R9 - THE CONTROLS BECOME A COLUMN ON A DESKTOP.
+   *
+   * The heading note, the display-only reset and its hint used to stack
+   * vertically under a 430px stage on every tier, so a 1920px window
+   * rendered an ~800px hero while leaving 700px of horizontal room
+   * unused. On the desktop workspace tier they sit beside the stage.
+   *
+   * NOTHING WAS RESIZED TO FILL THAT COLUMN. Same typography tokens,
+   * same 44px reset target, same instrument scale - a layout change, not
+   * a scale change.
+   */
+  const controls = !hasSample ? null : (
+    <>
+      {isStale && (
+        <Text style={styles.staleLabel} testID="orientation-hero-stale-label">
+          {t('orientationHero.staleLabel')}
+        </Text>
+      )}
 
       {/* Heading here is a RELATIVE direction, not magnetic north: this
           app never claims a compass it cannot prove, and after the
@@ -477,6 +579,42 @@ export default function OrientationHero({
           </Pressable>
         </View>
       )}
+    </>
+  );
+
+  /* The container's testID still names the state - three suites read it
+     - but it is the SAME element in every state, so naming it costs no
+     remount. */
+  const containerTestID =
+    status === 'WAITING'
+      ? 'orientation-hero-waiting'
+      : status === 'ERROR'
+      ? 'orientation-hero-error'
+      : 'orientation-hero';
+
+  if (workspace.expanded) {
+    return (
+      <View style={styles.container} testID={containerTestID}>
+        {renderHeader(status)}
+        {readouts}
+        <View style={styles.desktopRow}>
+          <View style={styles.desktopStage}>{stage}</View>
+          <View style={styles.desktopControls}>
+            {calibrationSlot}
+            {controls}
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container} testID={containerTestID}>
+      {renderHeader(status)}
+      {readouts}
+      {stage}
+      {calibrationSlot}
+      {controls}
     </View>
   );
 }
@@ -499,10 +637,10 @@ const styles = StyleSheet.create({
   },
   messageText: {
     ...typography.body,
-    color: colors.textSecondary,
-  },
+    color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   rendererWrapper: {
     marginTop: spacing.sm,
+    flexShrink: 0,
     borderRadius: radii.lg,
     overflow: 'hidden',
     backgroundColor: colors.backgroundRaised,
@@ -516,7 +654,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   visualsSidebar: {
-    direction: 'ltr',
+    /* `direction` was here too. react-native-web rejects it outright
+       ("Invalid style property of 'direction'"), so it only ever applied
+       on Android and the two platforms disagreed. A plain row follows the
+       surrounding layout consistently on both. */
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
@@ -600,12 +741,31 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
     fontWeight: '600',
   },
+  /* SETUP R9: the row sits ABOVE the stage now, so its spacing separates
+     it from the header rather than from the calibration card. */
   readoutsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     width: '100%',
-    marginTop: spacing.lg,
+    marginTop: spacing.sm,
     gap: spacing.sm,
+  },
+  desktopRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.lg,
+  },
+  desktopStage: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  /* Wide enough for the calibration card's own copy at its existing
+     typography - not a scaled-up control, a relocated one. */
+  desktopControls: {
+    width: 320,
+    flexShrink: 0,
   },
   readout: {
     alignItems: 'center',
@@ -671,8 +831,7 @@ const styles = StyleSheet.create({
   },
   hintText: {
     ...typography.caption,
-    color: colors.textSecondary,
-  },
+    color: colors.textSecondary, maxWidth: PROSE_MEASURE},
   hintDismiss: {
     marginTop: spacing.sm,
     alignSelf: 'flex-end',
@@ -682,6 +841,5 @@ const styles = StyleSheet.create({
   hintDismissText: {
     ...typography.caption,
     color: colors.accentStrong,
-    fontWeight: '600',
-  },
+    fontWeight: '600', maxWidth: PROSE_MEASURE},
 });

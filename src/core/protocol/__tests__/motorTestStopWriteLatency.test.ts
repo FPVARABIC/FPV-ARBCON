@@ -362,8 +362,18 @@ describe('the native write bound is what actually limits stop latency', () => {
     // Every byte this client emits goes through the ONE transport it was
     // constructed with. A second writer would need a second writeBytes
     // holder, and there is none.
-    const writeCalls = executable.match(/\.writeBytes\(/g) ?? [];
-    expect(writeCalls).toHaveLength(1);
-    expect(executable).toMatch(/this\.transport\.writeBytes\(/);
+    //
+    // This used to assert a single call SITE, which was a proxy for the
+    // real rule and stopped being accurate the moment the Betaflight-style
+    // resend was added (MspRequestOptions.resend): that is a second place
+    // the same frame is written, on the very same transport, and it is
+    // exactly the behaviour Betaflight's own MSP.send_message has. The
+    // assertion now states the rule itself - every write goes through
+    // `this.transport` - so a genuine bypass still fails it.
+    const writeCalls = executable.match(/[\w.]*\.writeBytes\(/g) ?? [];
+    expect(writeCalls.length).toBeGreaterThan(0);
+    for (const call of writeCalls) {
+      expect(call).toBe('this.transport.writeBytes(');
+    }
   });
 });

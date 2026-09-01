@@ -9,7 +9,8 @@ import {
   type MotorOutputOrderLoadOutcome,
   type MotorOutputOrderSaveOutcome,
 } from '../../platforms/react-native/protocol';
-import { colors, radii, spacing, typography } from '../theme';
+import {PROSE_MEASURE, colors, radii, spacing, typography} from '../theme';
+import { Icon } from '../icons';
 
 export interface MotorOutputOrderControllerPort {
   loadOutputOrder(sessionId: string): Promise<MotorOutputOrderLoadOutcome>;
@@ -43,6 +44,14 @@ function outcomeMessage(
       return { text: t('motorOutputReorder.savedUnverified'), danger: true };
     case 'UNCONFIRMED':
       return { text: t('motorOutputReorder.unconfirmed'), danger: true };
+    /* U-R1. The reorder map is LIVE in FC RAM and was not persisted -
+       the motor numbers on this screen are already the new ones inside
+       the flight controller. Never «فشل الحفظ». */
+    case 'PARTIAL_UNPERSISTED':
+      return {
+        text: t('motorOutputReorder.appliedNotPersisted'),
+        danger: true,
+      };
     case 'REJECTED':
       return { text: t('motorOutputReorder.rejected'), danger: true };
     case 'SESSION_ENDED':
@@ -67,6 +76,13 @@ export function MotorOutputReorderPanel({
     { text: string; danger: boolean } | undefined
   >();
 
+  /* The READINESS precheck only: "would the observation set derive an
+     order?", asked against an identity seed. The template this flow maps
+     positions with is the four-corner Quad X one, so four is the flow's
+     own size - this panel is mounted ONLY behind the airframe-template
+     gate (M-F3 §10: the guided tool keeps its template; the DIRECT
+     editor in the section above serves every other count). The actual
+     derivation below always uses the values READ from the FC. */
   const evidence = useMemo(
     () => deriveMotorOutputOrder([0, 1, 2, 3], verification),
     [verification],
@@ -132,11 +148,12 @@ export function MotorOutputReorderPanel({
       return;
     }
     setPhase('SAVING');
-    const outcome = await controller.saveOutputOrder(
-      sessionId,
-      original,
-      desired,
-    );
+    let outcome: MotorOutputOrderSaveOutcome;
+    try {
+      outcome = await controller.saveOutputOrder(sessionId, original, desired);
+    } catch (error) {
+      outcome = {kind: 'FAILED', error};
+    }
     const message = outcomeMessage(t, outcome);
     setResult(message);
     setPhase(
@@ -171,11 +188,25 @@ export function MotorOutputReorderPanel({
           <Text style={styles.caption}>
             {t('motorOutputReorder.reviewWarning')}
           </Text>
+          {/* Both sentences come from the pinned firmware, not from
+              product preference: the payload is written full-length so
+              msp.c:3559-3567 never resets the outputs this workflow did
+              not touch, and the array is only read at motor device init
+              (pwm_output_hw.c:213), so nothing changes until a reboot. */}
+          <Text style={styles.caption} testID="motor-output-reorder-tail">
+            {t('motorOutputReorder.tailPreserved')}
+          </Text>
+          <Text style={styles.caption} testID="motor-output-reorder-reboot">
+            {t('motorOutputReorder.rebootRequired')}
+          </Text>
           <View style={styles.mapRow}>
             {desired.map((resource, index) => (
               <View key={index} style={styles.mapCell}>
                 <Text style={styles.mapMotor}>{`M${index + 1}`}</Text>
-                <Text style={styles.mapArrow}>←</Text>
+                {/* "M1 is fed BY resource": the arrow points at the
+                    motor, so it must follow reading order - arrow-back
+                    resolves to right under RTL and left under LTR. */}
+                <Icon name="arrow-back" size={18} color={colors.textSecondary} />
                 <Text style={styles.mapResource}>
                   {t('motorOutputReorder.resource', { value: resource + 1 })}
                 </Text>
@@ -242,18 +273,15 @@ const styles = StyleSheet.create({
   eyebrow: {
     ...typography.eyebrow,
     color: colors.accentStrong,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   title: {
     ...typography.sectionTitle,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   caption: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   notice: {
     gap: spacing.xs,
     padding: spacing.md,
@@ -263,9 +291,8 @@ const styles = StyleSheet.create({
   noticeTitle: {
     ...typography.body,
     color: colors.textPrimary,
-    fontWeight: '800',
-    writingDirection: 'rtl',
-  },
+    fontWeight: '700',
+    writingDirection: 'rtl'},
   review: { gap: spacing.md },
   mapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
   mapCell: {
@@ -283,16 +310,15 @@ const styles = StyleSheet.create({
   mapMotor: {
     ...typography.mono,
     color: colors.accentStrong,
-    fontWeight: '900',
+    fontWeight: '700',
   },
-  mapArrow: { ...typography.body, color: colors.textMuted },
   mapResource: {
     ...typography.caption,
     color: colors.textPrimary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   primaryButton: {
     minHeight: 48,
+    alignSelf: 'flex-start',
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radii.md,
@@ -300,25 +326,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
   },
-  buttonDisabled: { backgroundColor: colors.disabled },
+  buttonDisabled: { backgroundColor: colors.surfaceAlt },
   primaryButtonText: {
-    ...typography.body,
-    color: colors.background,
-    fontWeight: '900',
-    writingDirection: 'rtl',
-  },
+    ...typography.label,
+    /* accentText, NOT background: near-white on the light accent fill
+       measured about 1.5:1 - the label on this panel's primary action was
+       effectively invisible. accentText is the theme's designated
+       text-on-accent colour and clears AA. */
+    color: colors.accentText,
+    writingDirection: 'rtl'},
   resultDanger: {
     ...typography.body,
     color: colors.error,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   resultGood: {
     ...typography.body,
     color: colors.success,
     fontWeight: '700',
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   progress: {
     ...typography.body,
     color: colors.accentStrong,

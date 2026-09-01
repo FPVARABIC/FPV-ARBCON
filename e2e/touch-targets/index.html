@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Touch target floor fixture</title>
+    <style>
+      html, body, #root { margin: 0; padding: 0; }
+      body { background: #faf8f3; font-family: 'Cairo', system-ui, Tahoma, sans-serif; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      var d = new URLSearchParams(location.search).get('dir');
+      if (d === 'ltr' || d === 'rtl') document.documentElement.setAttribute('dir', d);
+    </script>
+    <script type="module" src="/fixture.tsx"></script>
+  </body>
+</html>

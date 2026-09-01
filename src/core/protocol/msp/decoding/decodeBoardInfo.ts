@@ -44,6 +44,11 @@ export interface MspBoardInfo {
    * commit doesn't yet know about. Never an error; see this file's own
    * doc comment. */
   trailingBytes: Uint8Array;
+  /** True when the response ended INSIDE the guaranteed prefix - i.e. the
+   * firmware sent fewer bytes than even the mandatory fields need. Never
+   * an error (Betaflight accepts such a board too); it is recorded so
+   * diagnostics can say so and so callers know the names may be partial. */
+  truncated: boolean;
 }
 
 /**
@@ -76,8 +81,22 @@ export interface MspBoardInfo {
  * Whatever bytes remain at that stopping point (0 if every field fit, or
  * however many partial/leftover bytes are left) become trailingBytes.
  */
+/**
+ * NEVER THROWS - and that is a deliberate protocol decision, not laxity.
+ *
+ * The pinned Betaflight Configurator decodes MSP_BOARD_INFO with a reader
+ * that returns null past the end of the payload and a decoder that runs
+ * every field unconditionally (src/js/msp/MSPHelper.js, `case
+ * MSPCodes.MSP_BOARD_INFO`; src/js/injected_methods.js). It therefore
+ * accepts a short or unexpected BOARD_INFO response and connects anyway.
+ * A stricter decoder here does not make this app safer - it makes it
+ * reject flight controllers Betaflight can read, which is the exact
+ * failure this project is chasing. So the guaranteed prefix is read
+ * leniently too, and a response that ends early yields empty names with
+ * `truncated: true` rather than an exception.
+ */
 export function decodeBoardInfo(payload: Uint8Array): MspBoardInfo {
-  const reader = new MspPayloadReader(payload);
+  const reader = new MspPayloadReader(payload, {lenient: true});
 
   const boardIdentifier = reader.readFixedAscii(BOARD_IDENTIFIER_LENGTH);
   const hardwareRevision = reader.readU16LE();
@@ -100,6 +119,11 @@ export function decodeBoardInfo(payload: Uint8Array): MspBoardInfo {
     signature,
     mcuTypeId,
     trailingBytes: new Uint8Array(0),
+    // Captured BEFORE the optional tail is walked: running out during the
+    // optional fields is the normal older-firmware case (handled by the
+    // remaining() gate below), whereas running out during the mandatory
+    // prefix is what this flag is actually about.
+    truncated: reader.truncated(),
   };
 
   const optionalFields: ReadonlyArray<{sizeBytes: number; read: () => void}> = [

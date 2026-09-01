@@ -89,7 +89,9 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   header: {
-    flexDirection: 'row-reverse',
+    // See webAlert.tsx: browser-only file, dir="rtl" document, so a plain
+    // row is already right-to-left.
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },

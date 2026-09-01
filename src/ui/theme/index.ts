@@ -8,17 +8,28 @@ export {radii} from './radii';
 export type {ThemeRadii} from './radii';
 
 export {typography} from './typography';
+export type {TypographyToken} from './typography';
+
+export {cairo, fonts} from './font';
+export type {CairoWeight} from './font';
 
 export {
   CONTENT_MAX_WIDTH,
+  PROSE_MEASURE,
   LAYOUT_BREAKPOINTS,
-  WORKSPACE_MAX_WIDTH,
   contentEnvelope,
   effectiveWidth,
   isDesktopTier,
   resolveLayoutTier,
 } from './layout';
 export type {LayoutTier} from './layout';
+
+export {
+  noticeSurface,
+  noticeInline,
+  noticeText,
+  noticeTitle,
+} from './notice';
 
 export {useContentEnvelope} from './useContentEnvelope';
 export type {ContentEnvelope} from './useContentEnvelope';

@@ -1,0 +1,201 @@
+{
+  "id": "freestyle",
+  "kind": "FLIGHT_STYLE",
+  "title_ar": "الطيران الحر",
+  "title_en": "Freestyle",
+  "description_ar": "حركات وقلبات وتدفّق حول العوائق، باستجابة حادة بلا عصبية.",
+  "description_en": "Tricks, flips and flow around obstacles, with sharp response that stays predictable.",
+  "difficulty": "intermediate",
+  "difficulty_ar": "متوسط",
+  "intended_aircraft": [
+    "5 إنش",
+    "3–4 إنش",
+    "7 إنش"
+  ],
+  "required_screens": [
+    "PidTuningScreen",
+    "ReceiverScreen",
+    "FailsafeScreen",
+    "MotorsScreen"
+  ],
+  "optional_screens": [
+    "OsdScreen",
+    "PowerBatteryScreen",
+    "ModesScreen"
+  ],
+  "hardware_requirements": [
+    "ESC يدعم DShot ثنائي الاتجاه (لفلتر RPM)",
+    "إطار مخدوم وأذرع سليمة"
+  ],
+  "hardware_verification_status": "NOT VERIFIED — DEFERRED",
+  "verification_level": "SOFTWARE / REFERENCE VERIFIED",
+  "image": "_shared/images/pid-rates-and-feel.png",
+  "sources": [
+    "S1.3",
+    "S1.10a",
+    "S1.10b",
+    "S1.10c",
+    "S1.13"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "المستقبل",
+      "screen": "المستقبل · بطاقة تنعيم الإشارة",
+      "screenshot": "images/1-receiver-smoothing.png",
+      "targets": [
+        {
+          "control": "receiver-setpoint-factor",
+          "kind": "stepper",
+          "expected": "50",
+          "source": "S1.3"
+        },
+        {
+          "control": "receiver-throttle-factor",
+          "kind": "stepper",
+          "expected": "50",
+          "source": "S1.3"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "إحساس العصا",
+      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "screenshot": "images/2-pid-feel.png",
+      "targets": [
+        {
+          "control": "pid-ff-jitter",
+          "kind": "stepper",
+          "expected": "8",
+          "source": "S1.3"
+        },
+        {
+          "control": "pid-ff-boost",
+          "kind": "stepper",
+          "expected": "15",
+          "source": "S1.13"
+        },
+        {
+          "control": "pid-ff-averaging-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.3"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title_ar": "المحركات",
+      "screen": "المحركات · إعدادات ESC",
+      "screenshot": "images/3-motors.png",
+      "targets": [
+        {
+          "control": "motor-config-protocol-7",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.10b"
+        },
+        {
+          "control": "motor-config-bidirectional-dshot",
+          "kind": "switch",
+          "expected": "on",
+          "source": "S1.10b"
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "title_ar": "Dynamic Idle",
+      "screen": "ضبط PID · بطاقة Dynamic Idle",
+      "screenshot": "images/4-dynamic-idle.png",
+      "targets": [
+        {
+          "control": "pid-idle-min-rpm",
+          "kind": "stepper",
+          "expected": "30",
+          "source": "S1.10a–c"
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "title_ar": "Failsafe",
+      "screen": "Failsafe · إجراء المرحلة 2",
+      "screenshot": "images/5-failsafe.png",
+      "targets": [
+        {
+          "control": "failsafe-procedure-1",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "title_ar": "OSD",
+      "screen": "OSD · بطاقة التنبيهات",
+      "screenshot": "images/6-osd-alarms.png",
+      "targets": [
+        {
+          "control": "osd-rssi-dbm",
+          "kind": "stepper",
+          "expected": "-98 dBm",
+          "source": "S1.3"
+        }
+      ]
+    }
+  ],
+  "step_count": 6,
+  "decisions": [
+    {
+      "requirement": "ترددا القطع (setpoint · الخانق)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتركهما 0 — أي «تلقائي». إعداد الحر الرسمي يضبط المعاملين التلقائيين فقط.",
+      "source": "S1.13"
+    },
+    {
+      "requirement": "Rates",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "المكتبة الرسمية تعرض ثلاثة ملفات للنمط نفسه، وهذا في ذاته الجواب: لا يوجد رقم صحيح واحد. الخيارات الرسمية — RC rate 2 / expo 40 / super 80 · أو 3 / 35 / 105 · أو 25 / 45 / 108. ابدأ من الأول وارفع تدريجيًا.",
+      "source": "S1.10b"
+    },
+    {
+      "requirement": "قيم PID (P · I · D)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "إعداد الحر الرسمي للرابط لا يلمس P أو I أو D. حزم الضبط تستعمل منزلقات simplified التي لا يعرضها التطبيق؛ لا تعدّل القيم يدويًا لملاحقتها.",
+      "source": "S1.3"
+    },
+    {
+      "requirement": "الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتبع ضبط مقاسك. القيم المرجعية (سقف 400Hz وأدنى 90Hz لمقاس 3–5\") في قسم «اختياري».",
+      "source": "S1.10b"
+    },
+    {
+      "requirement": "الأوضاع (Modes)",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "مفتاح ARM إلزامي. Airmode و Turtle و Beeper تفضيلك.",
+      "source": null
+    },
+    {
+      "requirement": "الطاقة والبطارية",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "اضبطها على حزمتك: عدد الخلايا وتحذير الخلية والسعة. لا قيمة «حرة» رسمية.",
+      "source": null
+    },
+    {
+      "requirement": "مرسل الفيديو (VTX)",
+      "decision": "NOT_APPLICABLE",
+      "detail": "لا يغيّره هذا النمط. اضبطه مرة واحدة حسب مكانك.",
+      "source": null
+    },
+    {
+      "requirement": "`thrust_linear`",
+      "decision": "NOT_APPLICABLE",
+      "detail": "30 لمقاس 5\" · 40 لمقاس 3–4\" · 10 لمقاس 7\" في الإعداد الرسمي، ولا يعرضه هذا التطبيق.",
+      "source": "S1.10b"
+    }
+  ]
+}

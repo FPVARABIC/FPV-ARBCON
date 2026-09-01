@@ -10,7 +10,6 @@ import { acquireMotorDiagnosticsTelemetry } from '../../platforms/react-native/p
 import {
   MotorDiagnosticsPanel,
   motorOutputPercent,
-  rpmMeterPercent,
 } from './MotorDiagnosticsPanel';
 
 let mockOutputValue: TelemetryValue<unknown> = { status: 'UNAVAILABLE' };
@@ -22,6 +21,7 @@ jest.mock('../../platforms/react-native/protocol', () => ({
     outputs: 'ACTIVE',
     escTelemetry: 'ACTIVE',
   })),
+  getMotorDiagnosticsSupport: jest.fn(() => undefined),
   subscribeMotorDiagnosticsAvailability: jest.fn(() => () => undefined),
   MOTOR_OUTPUTS_TELEMETRY_POLL_ID: 'motorOutputs',
   MOTOR_ESC_TELEMETRY_POLL_ID: 'motorEscTelemetry',
@@ -43,12 +43,10 @@ describe('MotorDiagnosticsPanel', () => {
     jest.mocked(acquireMotorDiagnosticsTelemetry).mockClear();
   });
 
-  it('uses stable absolute scales for FC output and RPM meters', () => {
+  it('uses a stable absolute scale for the FC output meter', () => {
     expect(motorOutputPercent(1000)).toBe(0);
     expect(motorOutputPercent(1500)).toBe(50);
     expect(motorOutputPercent(2500)).toBe(100);
-    expect(rpmMeterPercent(25_000)).toBe(50);
-    expect(rpmMeterPercent(60_000)).toBe(100);
   });
 
   it('renders real FC output values and every available ESC metric', async () => {
@@ -88,7 +86,11 @@ describe('MotorDiagnosticsPanel', () => {
         />,
       );
     });
-    const text = JSON.stringify(tree.toJSON());
+    /* Bidi isolates (U+2066/U+2069) wrap the Latin runs in Arabic copy so
+       an RTL layout does not print the conjunction to the left of the
+       Latin word. They are invisible, so this asserts what a READER sees
+       rather than the exact code points. */
+    const text = JSON.stringify(tree.toJSON()).replace(/[\u2066-\u2069]/g, '');
     expect(text).toContain('مراقبة المحركات وESC');
     expect(text).toContain('12345 RPM');
     expect(text).toContain('أخطاء 2.50٪');
@@ -106,6 +108,12 @@ describe('MotorDiagnosticsPanel', () => {
   });
 
   it('does not invent ESC values when the capability is unavailable', async () => {
+    // NO SUPPORT PROP AND NO DERIVED SUPPORT: this session has not read a
+    // motor configuration from anywhere. The panel used to answer that
+    // with "فعّل تليمترية DShot أو حساس ESC" - advice whose premise is
+    // "we looked and they were off", which had never happened. It now
+    // says what is true OF ITSELF, and the no-invented-values property
+    // this test exists for is asserted alongside it rather than replaced.
     mockOutputValue = { status: 'WAITING' };
     mockEscValue = { status: 'UNAVAILABLE' };
     let tree!: ReactTestRenderer.ReactTestRenderer;
@@ -115,10 +123,16 @@ describe('MotorDiagnosticsPanel', () => {
       );
     });
     const text = JSON.stringify(tree.toJSON());
-    expect(text).toContain('لن يعرض التطبيق أرقامًا تقديرية');
+    expect(text).toContain('مصدر البيانات غير مثبت بعد');
+    // AND IT MUST NOT DIAGNOSE THE AIRCRAFT IT HAS NOT READ.
+    expect(text).not.toContain('أثبت متحكم الطيران');
+    expect(text).not.toContain('لا يوجد مصدر تليمترية مفعّل');
+    expect(text).not.toContain('فعّل تليمترية DShot');
+    // The original property, unchanged: no rows, no numbers, no zeros.
     expect(
       tree.root.findAllByProps({ testID: 'esc-telemetry-1' }),
     ).toHaveLength(0);
+    expect(text).not.toContain('RPM');
     act(() => tree.unmount());
   });
 
@@ -244,7 +258,21 @@ describe('MotorDiagnosticsPanel', () => {
     expect(text).toContain('قراءة قديمة');
     expect(text).not.toContain('54321 RPM');
     expect(text).not.toContain('2000');
-    expect(text.match(/—/g)?.length).toBeGreaterThanOrEqual(4);
+    // M-D §4. This used to assert `>= 4` em-dashes, which was a proxy for
+    // "the four output rows each show a placeholder". There is no motor
+    // count in this fixture, so those four rows were invented - the panel
+    // defaulted to a quad. They are gone, and the count of dashes with
+    // them.
+    //
+    // The safety property the test is named for is unchanged and is now
+    // asserted directly rather than through the scaffolding: not one of
+    // the stale figures reaches the screen as a value.
+    for (const staleFigure of ['54321', '2000', '0 °C', '0.00 V']) {
+      expect(text).not.toContain(staleFigure);
+    }
+    // And the stronger statement the fix makes available: with no motor
+    // count read, no output row exists at all.
+    expect(text).not.toContain('motor-output-slot');
     act(() => tree.unmount());
   });
 

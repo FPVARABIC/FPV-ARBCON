@@ -1,7 +1,10 @@
-import { MspPayloadReadError, MspPayloadReader } from './MspPayloadReader';
+import { MspPayloadReader } from './MspPayloadReader';
 
 /** MSP_MOTOR_TELEMETRY uses the same maximum output count as MSP_MOTOR. */
 export const MSP_MOTOR_TELEMETRY_MAX_COUNT = 8;
+
+/** u32 RPM, u16 invalid%, u8 degC, u16 volts, u16 amps, u16 mAh. */
+const MOTOR_TELEMETRY_ENTRY_BYTES = 13;
 
 export interface MspMotorTelemetryEntry {
   readonly rpm: number;
@@ -32,13 +35,17 @@ export interface MspMotorTelemetry {
  * never a reason to allocate or read an attacker-selected number of entries.
  */
 export function decodeMotorTelemetry(payload: Uint8Array): MspMotorTelemetry {
-  const reader = new MspPayloadReader(payload);
-  const motorCount = reader.readU8();
-  if (motorCount > MSP_MOTOR_TELEMETRY_MAX_COUNT) {
-    throw new MspPayloadReadError(
-      `MSP_MOTOR_TELEMETRY declared ${motorCount} motors; maximum is ${MSP_MOTOR_TELEMETRY_MAX_COUNT}.`,
-    );
-  }
+  const reader = new MspPayloadReader(payload, {lenient: true});
+  // The cap bounds what we will allocate, but it CLAMPS rather than rejects.
+  // This is read-only telemetry on the Motors screen; an implausible declared
+  // count must not blank the live readings for the motors that did report.
+  // Clamping by the bytes that actually arrived as well keeps a short frame
+  // from inventing all-zero motors that the firmware never sent.
+  const motorCount = Math.min(
+    reader.readU8(),
+    MSP_MOTOR_TELEMETRY_MAX_COUNT,
+    Math.floor(reader.remaining() / MOTOR_TELEMETRY_ENTRY_BYTES),
+  );
   const motors: MspMotorTelemetryEntry[] = [];
   for (let index = 0; index < motorCount; index++) {
     motors.push(

@@ -172,6 +172,32 @@ const CONNECT_TIMEOUT_MILLIS = 15_000;
 const WEB_SERIAL_WRITE_CHUNK_BYTES = 63;
 
 /**
+ * BOUNDS ONE CHUNK HANDED TO THE BROWSER DRIVER.
+ *
+ * `WritableStreamDefaultWriter.write()` resolves when the driver accepts
+ * the bytes. On a port whose peer has stopped draining - a board that
+ * browned out mid-reboot, a hub that went away without a disconnect
+ * event - the driver's queue fills and that Promise simply never
+ * settles. Nothing above it has a deadline of its own: mspClient's 2s
+ * bound covers the RESPONSE, not the write, and the flasher's raw path
+ * awaits `writeBytes` directly. So an un-bounded write here is a
+ * permanent freeze on whatever screen issued it, with no error to show.
+ *
+ * Android has never had this hole: its native module bounds every write
+ * at `TX_WRITE_TIMEOUT_MILLIS = 150` (UsbSerialTransportModule.kt:1899).
+ * This gives the browser path the same guarantee. The number is larger
+ * than Android's on purpose - a browser write crosses a renderer/driver
+ * boundary Android's does not - but it is still far below
+ * MSP_RESPONSE_TIMEOUT_MILLIS, so a stalled write surfaces as a write
+ * failure rather than being mistaken for a silent flight controller.
+ *
+ * A late-settling write is NOT abandoned quietly: the writer is released
+ * so the stalled chunk cannot interleave with the next frame's bytes and
+ * hand the FC's parser a spliced command.
+ */
+const WEB_SERIAL_WRITE_TIMEOUT_MILLIS = 1_000;
+
+/**
  * Bounds port.open(). On timeout the eventual LATE settlement is not
  * abandoned: a late success is immediately closed (the port would
  * otherwise stay locked-open and un-openable until tab close), and a
@@ -548,7 +574,8 @@ class WebSerialSession {
         offset < bytes.length;
         offset += WEB_SERIAL_WRITE_CHUNK_BYTES
       ) {
-        await this.writer.write(
+        await this.writeChunkBounded(
+          this.writer,
           bytes.subarray(offset, offset + WEB_SERIAL_WRITE_CHUNK_BYTES),
         );
       }
@@ -563,6 +590,58 @@ class WebSerialSession {
       recordBytesWritten(bytes.length);
     } catch (reason) {
       throw new WebTransportError('WRITE_FAILED', describeReason(reason));
+    }
+  }
+
+  /**
+   * One chunk, with a deadline. See WEB_SERIAL_WRITE_TIMEOUT_MILLIS.
+   *
+   * On timeout the writer is dropped rather than reused: the stalled
+   * chunk may still land, and a writer that later drains a leftover
+   * chunk into the middle of the NEXT frame would hand the flight
+   * controller a spliced command. Losing the writer costs one
+   * `getWriter()` on the next write; keeping it risks a command the
+   * operator never issued.
+   */
+  private async writeChunkBounded(
+    writer: WritableStreamDefaultWriter<Uint8Array>,
+    chunk: Uint8Array,
+  ): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        reject(
+          new WebTransportError(
+            'WRITE_FAILED',
+            `The serial write did not settle within ${WEB_SERIAL_WRITE_TIMEOUT_MILLIS}ms.`,
+          ),
+        );
+      }, WEB_SERIAL_WRITE_TIMEOUT_MILLIS);
+    });
+    const writing = writer.write(chunk);
+    try {
+      await Promise.race([writing, deadline]);
+    } finally {
+      clearTimeout(timer);
+      if (timedOut) {
+        // Never leave an un-awaited rejection behind - a stalled port
+        // that eventually errors would otherwise surface as an
+        // unhandled rejection with no owner.
+        writing.catch(() => undefined);
+        if (this.writer === writer) {
+          this.writer = null;
+        }
+        try {
+          writer.releaseLock();
+        } catch {
+          /* Some engines refuse to release a writer with a write still
+             pending. Dropping the reference above is what actually
+             prevents the splice; the lock is released when the stream
+             errors or the port closes. */
+        }
+      }
     }
   }
 

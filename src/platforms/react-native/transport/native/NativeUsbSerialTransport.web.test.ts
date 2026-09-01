@@ -52,6 +52,12 @@ class FakePort {
   readerUnavailable = false;
   /** The NEXT pending read() rejects - models a mid-session stream death (D2). */
   failNextRead: unknown = null;
+  /** writer.write() never settles - models a driver whose queue filled
+   *  because the peer stopped draining (a browned-out board, a hub that
+   *  went away without a disconnect event). */
+  writeHangs = false;
+  /** Set when the module releases a writer it gave up waiting on. */
+  writerReleases = 0;
 
   private readerLocked = false;
   private writerLocked = false;
@@ -167,10 +173,15 @@ class FakePort {
         }
         this.writerLocked = true;
         return {
-          write: async (chunk: Uint8Array) => {
+          write: (chunk: Uint8Array) => {
+            if (this.writeHangs) {
+              return new Promise<void>(() => {});
+            }
             this.written.push(chunk);
+            return Promise.resolve();
           },
           releaseLock: () => {
+            this.writerReleases += 1;
             this.writerLocked = false;
           },
         };
@@ -963,5 +974,71 @@ describe('D7: a failed receive-loop START also converges on session loss', () =>
 
     expect(detached).toEqual([]);
     await expect(transport.writeBytes(sessionId, 'AA==')).resolves.toBeUndefined();
+  });
+});
+/* ------------------------------------------------------------------ *
+ * The write bound: Android has always had one, the browser had none
+ * ------------------------------------------------------------------ */
+
+describe('a serial write cannot hang forever', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('rejects WRITE_FAILED when the browser driver never accepts the bytes', async () => {
+    const port = new FakePort({});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+
+    port.writeHangs = true;
+    const attempt = transport.writeBytes(sessionId, 'AA==');
+    // eslint-disable-next-line jest/valid-expect -- awaited two lines below
+    const expectation = expect(attempt).rejects.toMatchObject({
+      code: 'WRITE_FAILED',
+    });
+    await jest.advanceTimersByTimeAsync(2_000);
+    await expectation;
+  });
+
+  /**
+   * A stalled chunk may still land later. Reusing the same writer would
+   * let it drain into the middle of the NEXT frame and hand the flight
+   * controller a spliced command, so the writer is dropped on timeout.
+   */
+  it('drops the writer it gave up on, so a late chunk cannot splice the next frame', async () => {
+    const port = new FakePort({});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+
+    port.writeHangs = true;
+    const releasesBefore = port.writerReleases;
+    // eslint-disable-next-line jest/valid-expect -- awaited two lines below
+    const expectation = expect(transport.writeBytes(sessionId, 'AA==')).rejects.toBeDefined();
+    await jest.advanceTimersByTimeAsync(2_000);
+    await expectation;
+    expect(port.writerReleases).toBeGreaterThan(releasesBefore);
+
+    // And the link is usable again once the driver recovers: a fresh
+    // writer is taken, and the bytes that arrive are only the new ones.
+    port.writeHangs = false;
+    port.written.length = 0;
+    await expect(transport.writeBytes(sessionId, 'JE080A==')).resolves.toBeUndefined();
+    expect(port.written).toHaveLength(1);
+  });
+
+  it('does not fire the bound on an ordinary prompt write', async () => {
+    const port = new FakePort({});
+    installSerial([port]);
+    const [device] = await transport.listDevices();
+    const sessionId = await transport.openDevice(device.deviceId, 0, CONFIG);
+
+    await expect(transport.writeBytes(sessionId, 'AA==')).resolves.toBeUndefined();
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(port.written).toHaveLength(1);
   });
 });

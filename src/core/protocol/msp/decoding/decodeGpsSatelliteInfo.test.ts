@@ -1,4 +1,3 @@
-import { MspPayloadReadError } from './MspPayloadReader';
 import { decodeGpsSatelliteInfo } from './decodeGpsSatelliteInfo';
 
 describe('decodeGpsSatelliteInfo', () => {
@@ -32,12 +31,14 @@ describe('decodeGpsSatelliteInfo', () => {
     expect(decoded.satellites[1].constellation).toBe('GLONASS');
   });
 
-  it('rejects impossible counts and truncated records', () => {
-    expect(() => decodeGpsSatelliteInfo(Uint8Array.from([65]))).toThrow(
-      MspPayloadReadError,
-    );
-    expect(() =>
-      decodeGpsSatelliteInfo(Uint8Array.from([2, 0, 1, 2, 3])),
-    ).toThrow(MspPayloadReadError);
+  it('CLAMPS an impossible count and a truncated list instead of rejecting them', () => {
+    // A satellite list is read-only telemetry. Neither an implausible declared
+    // count nor a short payload is a reason to close the GPS screen over the
+    // satellites that did arrive - the cap survives as a bound on allocation.
+    expect(decodeGpsSatelliteInfo(Uint8Array.from([65])).satellites).toHaveLength(0);
+    // Two declared, one complete record present: show the one.
+    expect(
+      decodeGpsSatelliteInfo(Uint8Array.from([2, 0, 1, 2, 3])).satellites,
+    ).toHaveLength(1);
   });
 });

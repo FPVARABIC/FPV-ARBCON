@@ -24,6 +24,10 @@ import {
 } from '../../../core';
 import type {MspClientState} from '../../../core/protocol/mspClient';
 import {deriveArmedState} from '../../../core/state/armingBlockers';
+import {
+  isOwnedByConfigurationSession,
+  rememberConfigurationSession,
+} from '../../../core/state/configurationSessionOwnership';
 import {isMotorTestSessionActive} from './motorTestCapability';
 import {
   mspSessionCoordinator,
@@ -32,6 +36,8 @@ import {
   type SetupUiSessionKey,
 } from './MspSessionCoordinator';
 import {setupAppStateTelemetryOwner, type SetupAppStatePhase} from './setupAppStateTelemetryOwner';
+import {MutationLedger, MutationStoppedError, type PartialApplyEvidence} from './configurationSaveLedger';
+import {isSupportedConfigurationApi} from './betaflightApiSupport';
 import {
   acquireMotorConfigurationInterlock,
   MotorConfigurationTransactionInProgressError,
@@ -61,6 +67,7 @@ export interface ModesSessionCoordinator {
 export interface ModesAppStateOwner { getPhase(): SetupAppStatePhase }
 
 export type ModesBlockReason =
+  | 'SESSION_CHANGED'
   | 'DISCONNECTED'
   | 'IDENTIFYING'
   | 'UNSUPPORTED_FIRMWARE'
@@ -86,7 +93,12 @@ export type ModesSaveOutcome =
   | {readonly kind: 'SAVED_VERIFIED'; readonly snapshot: MspModesConfiguration}
   | {readonly kind: 'SAVED_UNVERIFIED'; readonly error: unknown}
   | {readonly kind: 'REJECTED'; readonly reason: ModesBlockReason}
-  | {readonly kind: 'UNCONFIRMED'; readonly stage: ModesWriteStage}
+  | {readonly kind: 'UNCONFIRMED'; readonly stage: ModesWriteStage; readonly confirmedStages: readonly ModesWriteStage[]}
+  /** U-R1. At least one mode-range write was ACKNOWLEDGED and the
+   *  sequence then stopped before EEPROM was acknowledged. Nothing is
+   *  persisted, but the controller's RAM already holds a mixture of old
+   *  and new slots. No rollback, no retry. */
+  | {readonly kind: 'PARTIAL_UNPERSISTED'; readonly confirmedStages: readonly ModesWriteStage[]; readonly failedStage: ModesWriteStage; readonly definitelyNotSent: boolean}
   | {readonly kind: 'SESSION_ENDED'}
   | {readonly kind: 'FAILED'; readonly error: unknown};
 
@@ -103,14 +115,14 @@ class ModesPreflightError extends Error {
   }
 }
 
-interface AmbiguousModesCause {
+interface AmbiguousModesCause extends PartialApplyEvidence<ModesWriteStage> {
   readonly kind: 'MODES_AMBIGUOUS_WRITE';
   readonly stage: ModesWriteStage;
 }
 
 class AmbiguousModesWriteError extends MspOperationOutcomeUnknownError {
-  constructor(error: unknown, stage: ModesWriteStage) {
-    super(Object.freeze({kind: 'MODES_AMBIGUOUS_WRITE', stage, error}));
+  constructor(error: unknown, stage: ModesWriteStage, confirmedStages: readonly ModesWriteStage[] = [], partial = false, definitelyNotSent = false) {
+    super(Object.freeze({kind: 'MODES_AMBIGUOUS_WRITE', stage, error, confirmedStages: Object.freeze([...confirmedStages]), partial, definitelyNotSent}));
   }
 }
 
@@ -160,7 +172,8 @@ export class ModesConfigurationController {
           return this.readSnapshot(requester);
         },
       });
-      if (result.status === 'SUCCEEDED') return {kind: 'LOADED', snapshot: result.result};
+      if (result.status === 'SUCCEEDED')
+        return {kind: 'LOADED', snapshot: rememberConfigurationSession(result.result, key)};
       if (result.status === 'SESSION_ENDED' || result.status === 'OUTCOME_UNKNOWN') return {kind: 'SESSION_ENDED'};
       return result.error instanceof ModesPreflightError
         ? {kind: 'REJECTED', reason: result.error.reason}
@@ -171,6 +184,14 @@ export class ModesConfigurationController {
   }
 
   async save(key: SetupUiSessionKey, original: MspModesConfiguration, draft: ModesConfigurationDraft): Promise<ModesSaveOutcome> {
+    /* SESSION-BOUND DRAFT OWNERSHIP.
+       FIRST, before the no-op check, before capture(), before any wire
+       access at all: a baseline produced under a DIFFERENT session may
+       not be written under this one. Two byte-identical boards defeat
+       every other guard here - stale-base compares configuration, and
+       assertLive compares liveness; neither asks which aircraft the
+       operator was editing. See core/state/configurationSessionOwnership. */
+    if (!isOwnedByConfigurationSession(original, key)) return {kind: 'REJECTED', reason: 'SESSION_CHANGED'};
     if (modesDraftsEqual(createModesConfigurationDraft(original), draft)) return {kind: 'NO_CHANGES', snapshot: original};
     if (validateModesDraft(draft, original).length > 0) return {kind: 'REJECTED', reason: 'INVALID_CONFIGURATION'};
     const captured = this.capture(key);
@@ -198,10 +219,12 @@ export class ModesConfigurationController {
           const fresh = await this.readSnapshot(requester);
           if (!modesSnapshotsEqual(fresh, original)) throw new ModesPreflightError('STALE_BASE');
           await this.assertDisarmed(key, client, epoch, requester, acquisition, identity);
+          const ledger = new MutationLedger<ModesWriteStage>();
           for (const write of encodeModeRangeWrites(original, draft)) {
-            await this.writeOnce(requester, MSP_SET_MODE_RANGE, write.payload, {kind: 'MODE_RANGE', index: write.index});
+            await this.writeOnce(requester, MSP_SET_MODE_RANGE, write.payload, {kind: 'MODE_RANGE', index: write.index}, key, client, epoch, ledger);
           }
-          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, {kind: 'EEPROM'});
+          /* PERSISTENCE NEVER FOLLOWS LOST LIVENESS. */
+          await this.writeOnce(requester, MSP_EEPROM_WRITE, EMPTY, {kind: 'EEPROM'}, key, client, epoch, ledger);
           try {
             const snapshot = await this.readSnapshot(requester);
             if (!modesDraftsEqual(createModesConfigurationDraft(snapshot), draft)) {
@@ -215,13 +238,13 @@ export class ModesConfigurationController {
       });
       if (result.status === 'SUCCEEDED') {
         return result.result.snapshot !== undefined
-          ? {kind: 'SAVED_VERIFIED', snapshot: result.result.snapshot}
+          ? {kind: 'SAVED_VERIFIED', snapshot: rememberConfigurationSession(result.result.snapshot, key)}
           : {kind: 'SAVED_UNVERIFIED', error: result.result.readbackError};
       }
       if (result.status === 'OUTCOME_UNKNOWN') {
-        return ambiguousCause(result.reason)
-          ? {kind: 'UNCONFIRMED', stage: result.reason.stage}
-          : {kind: 'SESSION_ENDED'};
+        if (!ambiguousCause(result.reason)) return {kind: 'SESSION_ENDED'};
+        if (result.reason.partial) return {kind: 'PARTIAL_UNPERSISTED', confirmedStages: result.reason.confirmedStages, failedStage: result.reason.stage, definitelyNotSent: result.reason.definitelyNotSent};
+        return {kind: 'UNCONFIRMED', stage: result.reason.stage, confirmedStages: result.reason.confirmedStages};
       }
       if (result.status === 'SESSION_ENDED') return {kind: 'SESSION_ENDED'};
       return result.error instanceof ModesPreflightError
@@ -232,14 +255,34 @@ export class ModesConfigurationController {
     }
   }
 
-  private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: ModesWriteStage): Promise<void> {
+  /**
+   * THE SINGLE FUNNEL EVERY MUTATION PASSES THROUGH.
+   *
+   * U-R1. Modes writes one frame PER SLOT, so this loop is the sharpest
+   * case of the confirmed defect: a flight controller that restarted
+   * after slot 1 went on to receive the other nineteen and an EEPROM
+   * write. Liveness is asserted here, in the same synchronous turn as
+   * the request it authorises, and the ledger records which slots the
+   * board actually acknowledged.
+   */
+  private async writeOnce(requester: MspRequester, command: number, payload: Uint8Array, stage: ModesWriteStage, key: SetupUiSessionKey, client: ModesClient, epoch: number, ledger: MutationLedger<ModesWriteStage>): Promise<void> {
+    try {
+      this.assertLive(key, client, epoch);
+    } catch (error) {
+      if (!ledger.hasMutated) throw error;
+      throw new AmbiguousModesWriteError(new MutationStoppedError(stage, ledger.acknowledgedStages, error), stage, ledger.acknowledgedStages, true, true);
+    }
     try {
       await requester.request(command, payload, {wireFormat: 'v1'});
     } catch (error) {
       const code = errorCode(error);
-      if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) throw error;
-      throw new AmbiguousModesWriteError(error, stage);
+      if (code !== undefined && DEFINITELY_NOT_SENT.has(code)) {
+        if (!ledger.hasMutated) throw error;
+        throw new AmbiguousModesWriteError(error, stage, ledger.acknowledgedStages, true, true);
+      }
+      throw new AmbiguousModesWriteError(error, stage, ledger.acknowledgedStages, false, false);
     }
+    ledger.acknowledge(stage);
   }
 
   private capture(key: SetupUiSessionKey): {client: ModesClient; scheduler: MspTelemetryScheduler; epoch: number} | {reason: ModesBlockReason} {
@@ -248,10 +291,7 @@ export class ModesConfigurationController {
     const identification = this.coordinator.getIdentificationState(key.sessionId);
     if (identification.status === 'IDLE' || identification.status === 'RUNNING') return {reason: 'IDENTIFYING'};
     if (
-      identification.status !== 'SUCCEEDED' ||
-      identification.identity.firmware.identifier !== 'BTFL' ||
-      identification.identity.apiVersion.apiVersionMajor !== 1 ||
-      identification.identity.apiVersion.apiVersionMinor !== 47
+      !isSupportedConfigurationApi(identification)
     ) return {reason: 'UNSUPPORTED_FIRMWARE'};
     const client = this.coordinator.getActiveMspClient(key.sessionId);
     const scheduler = this.coordinator.getTelemetryScheduler(key.sessionId);

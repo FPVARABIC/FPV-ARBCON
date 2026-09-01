@@ -1,4 +1,4 @@
-import {MspPayloadReadError, MspPayloadReader} from './MspPayloadReader';
+import {MspPayloadReader} from './MspPayloadReader';
 
 export interface MspOsdConfiguration {
   readonly flags: number;
@@ -25,7 +25,14 @@ export interface MspOsdCanvas {readonly columns: number; readonly rows: number}
 export interface MspOsdSnapshot {readonly config: MspOsdConfiguration; readonly canvas: MspOsdCanvas}
 
 export function decodeOsdConfiguration(payload: Uint8Array): MspOsdConfiguration {
-  const reader = new MspPayloadReader(payload);
+  // Betaflight reads MSP_OSD_CONFIG positionally over a reader that returns
+  // null past the end (src/js/injected_methods.js) and validates neither the
+  // total length nor any trailing byte (src/js/msp/MSPHelper.js). Every count
+  // in this payload - elements, statistics, timers - is declared by the
+  // firmware itself and grows between releases, so a build that demanded an
+  // exact length would refuse to open the OSD screen against the very next
+  // firmware that adds one element.
+  const reader = new MspPayloadReader(payload, {lenient: true});
   const flags = reader.readU8();
   const videoSystem = reader.readU8();
   const units = reader.readU8();
@@ -52,7 +59,6 @@ export function decodeOsdConfiguration(payload: Uint8Array): MspOsdConfiguration
   const cameraFrameHeight = reader.readU8();
   const linkQualityAlarmPercent = reader.readU16LE();
   const rssiDbmAlarm = reader.readS16LE();
-  if (reader.remaining() !== 0) throw new MspPayloadReadError('MSP_OSD_CONFIG has unexpected trailing bytes for API 1.47.');
   return Object.freeze({
     flags, videoSystem, units, rssiAlarmPercent, capacityAlarmMah, altitudeAlarm,
     elementPositions: Object.freeze(elementPositions), statistics: Object.freeze(statistics),
@@ -62,10 +68,23 @@ export function decodeOsdConfiguration(payload: Uint8Array): MspOsdConfiguration
   });
 }
 
+/**
+ * The HD grid Betaflight itself starts from, before any board answers
+ * (src/js/tabs/osd.js: VIDEO_COLS.HD = 53, VIDEO_ROWS.HD = 20).
+ *
+ * MSP_OSD_CANVAS is display geometry only - it sizes the preview and is
+ * never written back to the flight controller - so an absent or nonsensical
+ * answer has no safety meaning and must not close the screen. Falling back
+ * to the standard HD grid is exactly what Betaflight shows in that case.
+ */
+export const OSD_DEFAULT_HD_CANVAS: MspOsdCanvas = Object.freeze({columns: 53, rows: 20});
+
 export function decodeOsdCanvas(payload: Uint8Array): MspOsdCanvas {
-  if (payload.length !== 2) throw new MspPayloadReadError(`MSP_OSD_CANVAS must be exactly 2 bytes; received ${payload.length}.`);
-  const columns = payload[0];
-  const rows = payload[1];
-  if (columns < 1 || columns > 64 || rows < 1 || rows > 32) throw new MspPayloadReadError(`Invalid OSD canvas ${columns}x${rows}.`);
+  // Betaflight reads two bytes positionally with no length guard at all
+  // (src/js/msp/MSPHelper.js case MSP_OSD_CANVAS).
+  const reader = new MspPayloadReader(payload, {lenient: true});
+  const columns = reader.readU8();
+  const rows = reader.readU8();
+  if (columns < 1 || columns > 64 || rows < 1 || rows > 32) return OSD_DEFAULT_HD_CANVAS;
   return Object.freeze({columns, rows});
 }

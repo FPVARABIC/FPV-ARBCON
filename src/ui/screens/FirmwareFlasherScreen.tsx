@@ -20,6 +20,8 @@ import {
 } from 'react-native';
 
 import type {RootStackParamList} from '../../navigation/types';
+import {describeFlightControllerHardware, resolveCatalogTarget} from '../../core';
+import {abortable} from '../../core/async/deadline';
 import {
   CloudBuildCoordinator,
   MAX_UNIFIED_CONFIG_BYTES,
@@ -65,6 +67,7 @@ import {
   base64ToBytesAsync,
   bytesToBase64,
 } from '../../platforms/react-native/protocol/base64';
+import {MIN_TOUCH_TARGET} from '../components/controls';
 import {
   FirmwareButton,
   FirmwareChoice,
@@ -79,7 +82,8 @@ import {
   sanitizeUserVisibleText,
   usbProductLabel,
 } from '../presentation/brandSafeText';
-import {colors, radii, spacing, typography} from '../theme';
+import {PROSE_MEASURE, colors, noticeSurface, radii, spacing, typography} from '../theme';
+import {Icon} from '../icons';
 import {useTranslation} from 'react-i18next';
 import {copyPlainTextToClipboard} from '../../platforms/clipboard';
 import {
@@ -88,6 +92,14 @@ import {
   flashPhaseLabelKey,
   toFlashPhase,
 } from '../../core/firmware-flasher/flashPhaseModel';
+import {
+  FLASH_CODE_NEVER_STARTED,
+  FLASH_CODE_UI_BACKSTOP,
+  classifyFlashRejection,
+  flashNextActionLabelKey,
+  flashReasonLabelKey,
+} from '../../core/firmware-flasher/flashCompletionModel';
+import type {FlashOutcomeKind} from '../../core/firmware-flasher/flashCompletionModel';
 import {
   bootloaderStateLabelKey,
   canResumePendingFlash,
@@ -107,6 +119,12 @@ import type {
 
 type ScreenDependencies = {
   readonly client?: UsbSerialTransportClient;
+  /**
+   * Reports whether a destructive operation is in flight, so a host that
+   * embeds this screen can refuse to unmount it mid-write instead of
+   * silently aborting the flash.
+   */
+  readonly onBusyChange?: (busy: boolean) => void;
   readonly buildApi?: BetaflightBuildApi;
 };
 type Props = Partial<NativeStackScreenProps<RootStackParamList, 'FirmwareFlasher'>> & ScreenDependencies;
@@ -126,7 +144,58 @@ type Operation =
   | 'flashing'
   | 'restoring'
   | 'success'
-  | 'error';
+  | 'error'
+  /** Terminal: the attempt was frozen without enough evidence to claim
+   * SUCCESS or FAILED. Never silently pending - always says so. */
+  | 'unconfirmed';
+
+/** The restore half of the two separate truths a flash attempt records. */
+type FlashRestoreTruth = {
+  readonly kind: 'SUCCEEDED' | 'FAILED' | 'SKIPPED';
+  readonly detail?: string;
+};
+
+/**
+ * THE VISIBLE RESULT CONTRACT. Exactly one of these is rendered when an
+ * attempt ends, next to the progress bar: a real success, a real failure
+ * with its stated reason, or an honest "could not confirm" with a safe
+ * next step. `restore` is the SEPARATE post-flash settings-restore truth:
+ * a restore failure never rewrites a verified flash into a failure.
+ */
+type FlashResultPresentation = {
+  readonly kind: FlashOutcomeKind;
+  readonly reason?: string;
+  readonly nextAction?: string;
+  readonly restore?: FlashRestoreTruth;
+};
+
+/** What a flash method hands back to startFlash. `completed: false`
+ * means the attempt was HELD (browser permission gate) - nothing was
+ * flashed and nothing may be claimed. */
+type FlashMethodOutcome = {
+  readonly completed: boolean;
+  readonly backup: string | null;
+};
+
+/** A held DfuSe operation now carries its CLI backup too, so a resumed
+ * flash can still restore settings afterwards. */
+type PendingFlashImage = {
+  readonly bytes: Uint8Array;
+  readonly fullErase: boolean;
+  readonly backup: string | null;
+};
+
+/**
+ * The screen's LAST-RESORT terminal backstop. The engines are the real
+ * guarantee (WebUSB transfers are bounded observations now; Android's
+ * every controlTransfer carries a 5s native timeout) - this only settles
+ * the attempt truthfully if an engine itself fails to. 150s of total
+ * progress silence sits far above the longest engine observation window
+ * (60s) and every advisory stall threshold, so it can never race a
+ * working flash. It settles to UNCONFIRMED or records a restore failure;
+ * it never claims SUCCESS and never retries anything.
+ */
+const FLASH_TERMINAL_BACKSTOP_MS = 150_000;
 
 const EMPTY_BUILD_OPTIONS: FirmwareBuildOptions = {
   radioProtocols: [],
@@ -140,9 +209,25 @@ const MAX_CLI_BACKUP_BYTES = 1024 * 1024;
 const FLASH_BAUD_RATES = [57600, 115200, 230400, 256000, 460800, 921600] as const;
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message.trim().length > 0
-    ? error.message
-    : 'حدث خطأ غير متوقع في Firmware Flasher.';
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  // The transport client rejects with a plain {code, nativeMessage}
+  // object (normalizeNativeError strips everything else). Before this
+  // was read, every DFU failure displayed the generic fallback below -
+  // "no real reason", exactly as the operator reported.
+  const native = (error as {nativeMessage?: unknown} | null)?.nativeMessage;
+  if (typeof native === 'string' && native.trim().length > 0) {
+    return native;
+  }
+  return 'حدث خطأ غير متوقع في Firmware Flasher.';
+}
+
+/** The `code` a rejection carries, whether it is a DfuError (web engine),
+ * a normalized TransportError (client boundary), or anything else. */
+function errorCode(error: unknown): string | undefined {
+  const code = (error as {code?: unknown} | null)?.code;
+  return typeof code === 'string' && code.length > 0 ? code : undefined;
 }
 
 function firmwareDescription(image: FirmwareImage): string {
@@ -252,9 +337,17 @@ function OptionGroup({
         disabled={disabled}
         testID={`${testIDPrefix}-selector`}
         onPress={() => setOpen(value => !value)}
+        accessibilityState={{disabled, expanded: open}}
         style={[styles.selectorButton, disabled && styles.dimmed]}>
-        <Text style={styles.selectorValue}>{selectedLabel}</Text>
-        <Text style={styles.selectorHint}>{open ? 'إخفاء الخيارات' : 'اختيار أو تغيير'}</Text>
+        <View style={styles.selectorCopy}>
+          <Text style={styles.selectorValue}>{selectedLabel}</Text>
+          <Text style={styles.selectorHint}>{open ? 'إخفاء الخيارات' : 'اختيار أو تغيير'}</Text>
+        </View>
+        <Icon
+          name={open ? 'chevron-up' : 'chevron-down'}
+          size={20}
+          color={colors.textSecondary}
+        />
       </Pressable>
       {open ? (
         <FirmwareChoice
@@ -289,6 +382,7 @@ export default function FirmwareFlasherScreen({
   navigation,
   client = usbSerialTransportClient,
   buildApi = betaflightBuildApi,
+  onBusyChange,
 }: Props): React.JSX.Element {
   const {t} = useTranslation();
   const [step, setStep] = useState<Step>('board');
@@ -367,6 +461,13 @@ export default function FirmwareFlasherScreen({
   const lastProgressAt = useRef(0);
   const mounted = useRef(true);
   const startFlashRef = useRef<() => Promise<void>>(async () => undefined);
+  /**
+   * The attempt identity. Bumped when an attempt starts AND when one is
+   * terminally settled by the backstop, so a promise that settles LATE -
+   * after its attempt was already concluded - is recognized and ignored
+   * instead of overwriting a newer attempt's truth.
+   */
+  const flashAttemptSerial = useRef(0);
 
   const bootloader = useMemo(() => new FirmwareBootloaderController(client), [client]);
   const cliBackup = useMemo(() => new CliBackupService(client), [client]);
@@ -385,13 +486,38 @@ export default function FirmwareFlasherScreen({
     appendLog(`خطأ: ${message}`);
   }, [appendLog]);
 
-  const reportProgress = useCallback((percent: number, message: string, force = false) => {
-    const now = Date.now();
-    if (!force && now - lastProgressAt.current < 80 && percent < 100) return;
-    lastProgressAt.current = now;
-    setProgress(Math.max(0, Math.min(100, percent)));
-    setStatus(sanitizeUserVisibleText(message));
-  }, []);
+  /**
+   * `percent` is clamped to 99 while an operation is still running: 100
+   * is reserved for the SETTLED terminal state, exactly as in standard
+   * mode. A progress event alone must never paint a full bar for a flash
+   * whose promise has not resolved - the operator reads a full bar as
+   * "done", and that is a claim only the settlement can make.
+   */
+  /**
+   * BUSY, as the host needs to know it. Anything that is writing to the
+   * board, talking to it, or holding a prepared destructive operation
+   * counts - an embedding screen must not be able to unmount this one in
+   * the middle of it.
+   */
+  useEffect(() => {
+    onBusyChange?.(
+      ['detecting', 'building', 'saving', 'backing-up', 'flashing', 'restoring'].includes(
+        operation,
+      ),
+    );
+  }, [onBusyChange, operation]);
+
+  const reportProgress = useCallback(
+    (percent: number, message: string, force = false, terminal = false) => {
+      const now = Date.now();
+      if (!force && now - lastProgressAt.current < 80 && percent < 100) return;
+      lastProgressAt.current = now;
+      const ceiling = terminal ? 100 : 99;
+      setProgress(Math.max(0, Math.min(ceiling, percent)));
+      setStatus(sanitizeUserVisibleText(message));
+    },
+    [],
+  );
 
   /**
    * THE ~98% STALL CORRECTION, UI half.
@@ -403,6 +529,13 @@ export default function FirmwareFlasherScreen({
    * facts a stall report needs. Nothing here retries anything.
    */
   const [flashSnapshot, setFlashSnapshot] = useState<FlashProgressSnapshot | undefined>(
+    undefined,
+  );
+  /** Mirror for callbacks that settle an attempt: they need the phase at
+   * the moment of settlement, not the phase a stale closure rendered. */
+  const flashSnapshotRef = useRef<FlashProgressSnapshot | undefined>(undefined);
+  /** THE RESULT CONTRACT (P0-F): exactly one visible result per attempt. */
+  const [flashResult, setFlashResult] = useState<FlashResultPresentation | undefined>(
     undefined,
   );
   const flashStartedAt = useRef(0);
@@ -420,25 +553,29 @@ export default function FirmwareFlasherScreen({
       if (flashStartedAt.current === 0) {
         flashStartedAt.current = now;
       }
-      setFlashSnapshot(previous => ({
-        method,
-        phase,
-        percent,
-        bytesProcessed,
-        totalBytes,
-        lastProgressAtMs: now,
-        startedAtMs: flashStartedAt.current,
-        blockNumber: detail?.blockNumber ?? previous?.blockNumber,
-        targetIdentity: detail?.targetIdentity ?? previous?.targetIdentity,
-        // The phase that just finished is the last one we can claim
-        // completed; the one now reported is still running.
-        lastCompletedOperation:
-          previous !== undefined && previous.phase !== phase
-            ? previous.phase
-            : previous?.lastCompletedOperation,
-        // Only the WebUSB path holds transfers that cannot be cancelled.
-        transferMayBePending: method === 'DFU_WEBUSB',
-      }));
+      setFlashSnapshot(previous => {
+        const next: FlashProgressSnapshot = {
+          method,
+          phase,
+          percent,
+          bytesProcessed,
+          totalBytes,
+          lastProgressAtMs: now,
+          startedAtMs: flashStartedAt.current,
+          blockNumber: detail?.blockNumber ?? previous?.blockNumber,
+          targetIdentity: detail?.targetIdentity ?? previous?.targetIdentity,
+          // The phase that just finished is the last one we can claim
+          // completed; the one now reported is still running.
+          lastCompletedOperation:
+            previous !== undefined && previous.phase !== phase
+              ? previous.phase
+              : previous?.lastCompletedOperation,
+          // Only the WebUSB path holds transfers that cannot be cancelled.
+          transferMayBePending: method === 'DFU_WEBUSB',
+        };
+        flashSnapshotRef.current = next;
+        return next;
+      });
       reportProgress(
         percent,
         `${t(flashPhaseLabelKey(phase))} • ${bytesProcessed}/${totalBytes}`,
@@ -509,14 +646,31 @@ export default function FirmwareFlasherScreen({
       .catch(setFailure);
   }, [client, refreshDevices, setFailure]);
 
-  useEffect(() => {
-    mounted.current = true;
+  /**
+   * THE BOARDS DOWNLOAD, ON ITS OWN, so a retry can repeat exactly this
+   * and nothing else.
+   *
+   * It used to live inline in the mount effect below, beside USB
+   * discovery and the attach/detach subscriptions. That made the failure
+   * copy - "استخدم الملف المحلي أو أعد المحاولة" - a promise the screen
+   * could not keep: there was no way to run this again without unmounting
+   * the whole screen, and re-running the effect would also have torn down
+   * and rebuilt the USB listeners, which have nothing to do with a failed
+   * HTTP request.
+   *
+   * Its own AbortController, superseding the previous attempt, so a
+   * second press cannot let a slow first answer overwrite a newer one.
+   */
+  const targetsAbortRef = useRef<AbortController | null>(null);
+  const loadTargetCatalog = useCallback(() => {
+    targetsAbortRef.current?.abort();
     const controller = new AbortController();
+    targetsAbortRef.current = controller;
     setTargetsLoadState('loading');
     setTargetsLoadError(null);
     buildApi.loadTargets(controller.signal)
       .then(loadedTargets => {
-        if (!mounted.current) return;
+        if (!mounted.current || controller.signal.aborted) return;
         setTargets(loadedTargets);
         setTargetsLoadState('ready');
         appendLog(`تم تحميل ${loadedTargets.length} Target من المصدر الرسمي.`);
@@ -530,6 +684,11 @@ export default function FirmwareFlasherScreen({
         setStatus(`تعذر تحميل القائمة عبر الإنترنت؛ المسار المحلي ما زال متاحاً. ${message}`);
         appendLog(`تعذر تحديث قائمة Targets: ${message}`);
       });
+  }, [appendLog, buildApi]);
+
+  useEffect(() => {
+    mounted.current = true;
+    loadTargetCatalog();
     refreshDevices().catch(error => {
       if (mounted.current) appendLog(`تعذر اكتشاف USB: ${errorMessage(error)}`);
     });
@@ -541,7 +700,7 @@ export default function FirmwareFlasherScreen({
     });
     return () => {
       mounted.current = false;
-      controller.abort();
+      targetsAbortRef.current?.abort();
       if (operationController.current !== null) {
         operationController.current.abort();
         // Native DFU runs on its own worker. Aborting the JS signal stops
@@ -554,7 +713,7 @@ export default function FirmwareFlasherScreen({
       unsubscribeAttach();
       unsubscribeDetach();
     };
-  }, [appendLog, buildApi, client, refreshDevices]);
+  }, [appendLog, client, loadTargetCatalog, refreshDevices]);
 
   useEffect(() => {
     if (!selectedTarget) {
@@ -914,7 +1073,10 @@ export default function FirmwareFlasherScreen({
       const detected = await bootloader.detectFlightController(controller.signal, selection);
       try {
         const identity = detected.identity;
-        const target = identity.board.targetName || identity.board.boardName || identity.board.boardIdentifier;
+        // Board name first - see flightControllerNaming.ts. A unified
+        // target answers its MCU family as targetName, which is never a
+        // catalogue entry.
+        const target = resolveCatalogTarget(identity.board);
         setDetectedTarget(target);
         setDetectedSummary(
           `${firmwareFamilyLabel(identity.firmware.knownFamily)} • ${identity.board.boardName || identity.board.boardIdentifier} • Target ${target}`,
@@ -993,21 +1155,45 @@ export default function FirmwareFlasherScreen({
     return chosen;
   }, [appendLog, client, selectedPortIndex, selectedSerialId]);
 
+  /**
+   * A FILE-SAVE DIALOG IS PACED BY A PERSON, SO ITS EXIT IS CANCEL.
+   *
+   * `saveFirmwareFile()` resolves when the operator picks a location -
+   * which may legitimately take minutes, so a deadline here would be a
+   * defect. But `saving` makes `isBusy` true, and `isBusy` blocks
+   * navigation, so a dialog whose Promise never settles used to trap the
+   * operator on this screen with no cancel button. It now owns an
+   * AbortController like every other operation, and `saving` is
+   * cancellable.
+   */
   const saveCurrentFirmware = useCallback(async () => {
     if (!firmware) return;
+    const controller = new AbortController();
+    operationController.current = controller;
     setOperation('saving');
     setStatus('اختر مكان حفظ Firmware…');
     try {
-      const saved = await client.saveFirmwareFile(
-        firmwareFilenameLabel(firmware.filename),
-        'application/octet-stream',
-        bytesToBase64(firmware.bytes),
+      const saved = await abortable(
+        client.saveFirmwareFile(
+          firmwareFilenameLabel(firmware.filename),
+          'application/octet-stream',
+          bytesToBase64(firmware.bytes),
+        ),
+        controller.signal,
       );
       setOperation(saved ? 'success' : 'idle');
       setStatus(saved ? 'تم حفظ Firmware بنجاح.' : 'أُلغيَ حفظ Firmware دون تغيير الملف.');
       if (saved) appendLog(`حُفظ ${firmwareFilenameLabel(firmware.filename)}.`);
     } catch (error) {
-      setFailure(error);
+      if (controller.signal.aborted) {
+        // The operator's own cancel is not a failure banner.
+        setOperation('idle');
+        setStatus('أُلغيَ حفظ Firmware.');
+      } else {
+        setFailure(error);
+      }
+    } finally {
+      if (operationController.current === controller) operationController.current = null;
     }
   }, [appendLog, client, firmware, setFailure]);
 
@@ -1021,7 +1207,9 @@ export default function FirmwareFlasherScreen({
     setStatus('إنشاء نسخة CLI بـ diff all قبل المسح…');
     const backup = await cliBackup.capture(device.deviceId, selectedPortIndex, signal);
     const filename = `fpv-arbcon-backup-${selectedTarget || 'fc'}-${Date.now()}.txt`;
-    const saved = await cliBackup.saveBackup(filename, backup);
+    // Same reasoning as saveCurrentFirmware: a save dialog has no honest
+    // deadline, so the flash's own cancel is what ends the wait.
+    const saved = await abortable(cliBackup.saveBackup(filename, backup), signal);
     if (!saved) throw new Error('أُلغيَ حفظ النسخة الاحتياطية؛ لن يبدأ المسح.');
     appendLog(`حُفظت نسخة CLI (${backup.length} حرفاً) قبل التفليش.`);
     return backup;
@@ -1039,11 +1227,18 @@ export default function FirmwareFlasherScreen({
     }
   }, [firmware, manualTargetConfirmed, noReboot, propsRemoved, selectedReleaseInfo, unstableConfirmed, usbPowerOnly]);
 
+  /**
+   * POST-FLASH SETTINGS RESTORE - a separate truth from the flash itself
+   * (P0-E). By the time this runs the firmware result is already
+   * recorded; whatever happens here is reported as the RESTORE's own
+   * outcome and can never rewrite a verified flash into "فشل التفليش".
+   * Throws on failure; the caller records that as the restore truth.
+   */
   const restoreBackupAfterFlash = useCallback(async (
     backup: string | null,
     signal: AbortSignal,
-  ) => {
-    if (!backup || !restoreAfterFlash) return;
+  ): Promise<Exclude<FlashRestoreTruth['kind'], 'FAILED'>> => {
+    if (!backup || !restoreAfterFlash) return 'SKIPPED';
     setOperation('restoring');
     setStatus('انتظار عودة Flight Controller ثم استعادة إعدادات CLI…');
     const device = await bootloader.waitForOneSerialDevice(30_000, signal);
@@ -1054,12 +1249,13 @@ export default function FirmwareFlasherScreen({
       throw new Error(`لم تُرسل save لأن ${result.errors.length} أوامر CLI فشلت.`);
     }
     appendLog(`استُعيدت ${result.commandCount} أوامر CLI ثم أُرسلت save.`);
+    return 'SUCCEEDED';
   }, [appendLog, bootloader, cliBackup, reportProgress, restoreAfterFlash]);
 
   const flashHexDfu = useCallback(async (
     image: Extract<FirmwareImage, {kind: 'HEX'}>,
     signal: AbortSignal,
-  ) => {
+  ): Promise<FlashMethodOutcome> => {
     const serial = noReboot ? null : await requireOneSerial();
     const backup = serial ? await saveCliBackup(serial, signal) : null;
     let dfu: DfuDeviceDescriptor;
@@ -1076,7 +1272,7 @@ export default function FirmwareFlasherScreen({
         portIndex: selectedPortIndex,
       });
       if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
-        const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+        const actual = describeFlightControllerHardware(detected.identity.board);
         setDetectedTarget(actual);
         await detected.release();
         throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}. فعّل تجاوز عدم التطابق فقط بعد التحقق اليدوي.`);
@@ -1093,6 +1289,11 @@ export default function FirmwareFlasherScreen({
            * Stop here without flashing and hold the prepared operation.
            * requestDevice() needs a user gesture, so the resume button
            * below calls it directly from the operator's press.
+           *
+           * `completed: false` is load-bearing: startFlash used to treat
+           * this normal return as a finished flash and claimed 100% +
+           * success while NOTHING had been flashed. A held attempt
+           * claims nothing.
            */
           setPendingBootloaderFlash({
             operationId: `flash-${Date.now()}`,
@@ -1100,11 +1301,11 @@ export default function FirmwareFlasherScreen({
             rebootAlreadySent: true,
             writeAlreadyStarted: false,
           });
-          setPendingFlashImage({bytes: image.bytes, fullErase});
+          setPendingFlashImage({bytes: image.bytes, fullErase, backup});
           setBootloaderState('WAITING_FOR_PERMISSION');
           setOperation('idle');
           setStatus(t(bootloaderStateLabelKey('WAITING_FOR_PERMISSION')));
-          return;
+          return {completed: false, backup};
         }
         throw error;
       }
@@ -1113,7 +1314,7 @@ export default function FirmwareFlasherScreen({
     setOperation('flashing');
     appendLog(`بدء DfuSe على deviceId ${dfu.deviceId}.`);
     await client.flashDfuFirmware(dfu.deviceId, bytesToBase64(image.bytes), fullErase);
-    await restoreBackupAfterFlash(backup, signal);
+    return {completed: true, backup};
   }, [
     t,
     appendLog,
@@ -1122,7 +1323,6 @@ export default function FirmwareFlasherScreen({
     fullErase,
     noReboot,
     requireOneSerial,
-    restoreBackupAfterFlash,
     saveCliBackup,
     selectedDfuId,
     selectedPortIndex,
@@ -1133,7 +1333,7 @@ export default function FirmwareFlasherScreen({
   const flashHexSerial = useCallback(async (
     image: Extract<FirmwareImage, {kind: 'HEX'}>,
     signal: AbortSignal,
-  ) => {
+  ): Promise<FlashMethodOutcome> => {
     let device = await requireOneSerial();
     const backup = noReboot ? null : await saveCliBackup(device, signal);
     if (!noReboot) {
@@ -1142,7 +1342,7 @@ export default function FirmwareFlasherScreen({
         portIndex: selectedPortIndex,
       });
       if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
-        const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+        const actual = describeFlightControllerHardware(detected.identity.board);
         setDetectedTarget(actual);
         await detected.release();
         throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
@@ -1162,7 +1362,7 @@ export default function FirmwareFlasherScreen({
       );
     });
     await flasher.flash(image.hex, {baudRate: manualBaud ? baudRate : 256000, fullErase});
-    await restoreBackupAfterFlash(backup, signal);
+    return {completed: true, backup};
   }, [
     reportPhaseProgress,
     baudRate,
@@ -1172,7 +1372,6 @@ export default function FirmwareFlasherScreen({
     manualBaud,
     noReboot,
     requireOneSerial,
-    restoreBackupAfterFlash,
     saveCliBackup,
     selectedPortIndex,
     selectedTarget,
@@ -1182,7 +1381,7 @@ export default function FirmwareFlasherScreen({
   const flashEsp = useCallback(async (
     image: Extract<FirmwareImage, {kind: 'BIN'}>,
     signal: AbortSignal,
-  ) => {
+  ): Promise<FlashMethodOutcome> => {
     const device = await requireOneSerial();
     if (!noReboot && selectedTarget) {
       const detected = await bootloader.detectFlightController(signal, {
@@ -1191,7 +1390,7 @@ export default function FirmwareFlasherScreen({
       });
       try {
         if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
-          const actual = detected.identity.board.targetName || detected.identity.board.boardName;
+          const actual = describeFlightControllerHardware(detected.identity.board);
           setDetectedTarget(actual);
           throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
         }
@@ -1212,7 +1411,7 @@ export default function FirmwareFlasherScreen({
       );
     }, appendLog);
     await flasher.flash(image.bytes, {flashBaudRate: manualBaud ? baudRate : 460800, eraseAll: fullErase});
-    await restoreBackupAfterFlash(backup, signal);
+    return {completed: true, backup};
   }, [
     reportPhaseProgress,
     appendLog,
@@ -1223,15 +1422,88 @@ export default function FirmwareFlasherScreen({
     manualBaud,
     noReboot,
     requireOneSerial,
-    restoreBackupAfterFlash,
     saveCliBackup,
     selectedPortIndex,
     selectedTarget,
     targetMismatchOverride,
   ]);
 
+  /**
+   * Settles a flash attempt that ended in a rejection. The verdict comes
+   * from the rejection CODE plus the phase at settlement
+   * (classifyFlashRejection), so the WebUSB engine's frozen-attempt codes
+   * and Android's manifestation-window DFU_STATUS_TIMEOUT both land on
+   * the honest kind. Never SUCCESS: a rejection carries no completion
+   * evidence.
+   */
+  const settleFlashFailure = useCallback((error: unknown) => {
+    const code = errorCode(error);
+    const kind = classifyFlashRejection(code, flashSnapshotRef.current?.phase);
+    const fallback = sanitizeUserVisibleText(errorMessage(error));
+    const reason =
+      code === undefined
+        ? fallback
+        : t(flashReasonLabelKey(code), {defaultValue: fallback});
+    lastFlashErrorCode.current = code;
+    if (kind === 'UNCONFIRMED') {
+      const nextAction = t(flashNextActionLabelKey(code));
+      setFlashResult({kind: 'UNCONFIRMED', reason, nextAction});
+      setOperation('unconfirmed');
+      setStatus(reason);
+      appendLog(`لم يتأكد اكتمال التفليش: ${reason}`);
+    } else {
+      setFlashResult({kind: 'FAILED', reason});
+      setOperation('error');
+      setStatus(reason);
+      appendLog(`خطأ: ${reason}`);
+    }
+  }, [appendLog, t]);
+
+  /**
+   * Concludes a COMPLETED flash: the firmware truth is recorded first,
+   * then the settings restore runs as its own truth (P0-E). A restore
+   * failure after a verified flash reports two separate facts - the
+   * flash succeeded AND the restore failed - never "فشل التفليش".
+   */
+  const concludeCompletedFlash = useCallback(async (
+    backup: string | null,
+    signal: AbortSignal,
+    attempt: number,
+  ) => {
+    reportProgress(100, 'اكتملت الكتابة والتحقق بنجاح.', true, true);
+    appendLog('اكتملت كتابة Firmware والتحقق بالقراءة الراجعة.');
+    let restore: FlashRestoreTruth;
+    try {
+      restore = {kind: await restoreBackupAfterFlash(backup, signal)};
+    } catch (restoreError) {
+      // Same Arabic-first treatment the flash reasons get: a known code
+      // becomes operator copy, and only a genuinely unmapped message
+      // falls back - so a transport error can no longer surface its raw
+      // English sentence inside the restore line.
+      const restoreCode = (restoreError as {code?: unknown} | null)?.code;
+      const rawDetail = sanitizeUserVisibleText(errorMessage(restoreError));
+      restore = {
+        kind: 'FAILED',
+        detail:
+          typeof restoreCode === 'string' && restoreCode.length > 0
+            ? t(flashReasonLabelKey(restoreCode), {defaultValue: rawDetail})
+            : rawDetail,
+      };
+      appendLog(`فشلت استعادة إعدادات CLI بعد تفليش ناجح: ${restore.detail}`);
+    }
+    if (!mounted.current || flashAttemptSerial.current !== attempt) return;
+    setFlashResult({kind: 'SUCCESS', restore});
+    setOperation('success');
+    setStatus(
+      restore.kind === 'FAILED'
+        ? 'نجح تثبيت Firmware، لكن فشلت استعادة الإعدادات.'
+        : 'تمت كتابة Firmware والتحقق منه بنجاح.',
+    );
+    await refreshDevices().catch(() => undefined);
+  }, [appendLog, refreshDevices, reportProgress, restoreBackupAfterFlash, t]);
+
   const startFlash = useCallback(async () => {
-    if (operation !== 'idle' && operation !== 'success' && operation !== 'error') return;
+    if (!['idle', 'success', 'error', 'unconfirmed'].includes(operation)) return;
     try {
       validateSafety();
     } catch (error) {
@@ -1256,28 +1528,49 @@ export default function FirmwareFlasherScreen({
     }
     const controller = new AbortController();
     operationController.current = controller;
+    const attempt = ++flashAttemptSerial.current;
+    setFlashResult(undefined);
+    setFlashSnapshot(undefined);
+    flashSnapshotRef.current = undefined;
+    flashStartedAt.current = 0;
+    lastFlashErrorCode.current = undefined;
+    // The backstop measures silence from here; a stale stamp from an
+    // earlier operation must not count against this attempt.
+    lastProgressAt.current = Date.now();
     setProgress(0);
     setOperation('flashing');
     setStatus('بدء عملية Firmware المتحقَّق منها…');
     try {
+      let outcome: FlashMethodOutcome;
       if (selectedFirmware.kind === 'HEX') {
-        if (hexMethod === 'dfu') await flashHexDfu(selectedFirmware, controller.signal);
-        else await flashHexSerial(selectedFirmware, controller.signal);
+        outcome = hexMethod === 'dfu'
+          ? await flashHexDfu(selectedFirmware, controller.signal)
+          : await flashHexSerial(selectedFirmware, controller.signal);
       } else {
-        await flashEsp(selectedFirmware, controller.signal);
+        outcome = await flashEsp(selectedFirmware, controller.signal);
       }
-      if (!mounted.current) return;
-      reportProgress(100, 'اكتمل التفليش والتحقق وإعادة التشغيل.', true);
-      setOperation('success');
-      appendLog('اكتملت العملية بنجاح مع verify.');
-      await refreshDevices().catch(() => undefined);
+      if (!mounted.current || flashAttemptSerial.current !== attempt) return;
+      if (!outcome.completed) {
+        // Held for the browser's DFU permission gate: nothing was
+        // flashed, so nothing is claimed. The resume button concludes
+        // the attempt - or the operator abandons it. (This normal return
+        // used to fall through to a 100% + success claim.)
+        return;
+      }
+      await concludeCompletedFlash(outcome.backup, controller.signal, attempt);
     } catch (error) {
-      if (mounted.current) setFailure(error);
+      // A settlement arriving after this attempt was already concluded
+      // (backstop fired, or a newer attempt started) must not overwrite
+      // the truth that is already on screen.
+      if (mounted.current && flashAttemptSerial.current === attempt) {
+        settleFlashFailure(error);
+      }
     } finally {
       if (operationController.current === controller) operationController.current = null;
     }
   }, [
     appendLog,
+    concludeCompletedFlash,
     configurationLines,
     firmware,
     flashEsp,
@@ -1285,10 +1578,9 @@ export default function FirmwareFlasherScreen({
     flashHexSerial,
     hexMethod,
     operation,
-    refreshDevices,
-    reportProgress,
     saveCurrentFirmware,
     setFailure,
+    settleFlashFailure,
     validateSafety,
   ]);
   startFlashRef.current = startFlash;
@@ -1345,6 +1637,83 @@ export default function FirmwareFlasherScreen({
     return evaluateFlashStall(flashSnapshot, Date.now());
   }, [flashSnapshot, stallClock]);
 
+  /**
+   * THE LAST-RESORT TERMINAL BACKSTOP (P0-B). The engines carry the real
+   * guarantee - every WebUSB transfer is a bounded observation now, and
+   * Android's every controlTransfer has a 5s native timeout - so in a
+   * healthy build this never fires. It exists for the failure mode the
+   * operator actually hit: an attempt whose promise can no longer settle.
+   * After FLASH_TERMINAL_BACKSTOP_MS of total progress silence it FREEZES
+   * the attempt: invalidates its identity (late settlements are ignored),
+   * aborts what is abortable, and states the truth - UNCONFIRMED for a
+   * web flash whose transfer may still be pending, FAILED for an attempt
+   * that never produced a single transfer, and a restore-failure truth
+   * (never a flash failure) when the firmware had already completed. It
+   * NEVER claims SUCCESS and never retries anything. Serial and Android
+   * flashes with live snapshots are deliberately exempt: their engines
+   * are internally bounded, and a slow-but-valid erase must not be
+   * overridden by an impatient UI.
+   */
+  useEffect(() => {
+    if (operation !== 'flashing' && operation !== 'restoring') {
+      return;
+    }
+    const attempt = flashAttemptSerial.current;
+    const settledAs = operation;
+    const interval = setInterval(() => {
+      const silentForMs = Date.now() - lastProgressAt.current;
+      if (silentForMs < FLASH_TERMINAL_BACKSTOP_MS) return;
+      if (flashAttemptSerial.current !== attempt) return;
+      const snapshot = flashSnapshotRef.current;
+      if (
+        settledAs === 'flashing' &&
+        snapshot !== undefined &&
+        snapshot.method !== 'DFU_WEBUSB'
+      ) {
+        return;
+      }
+      // Freeze: this attempt is over. Anything of it that settles later
+      // meets a bumped serial and is ignored.
+      flashAttemptSerial.current += 1;
+      operationController.current?.abort();
+      if (settledAs === 'restoring') {
+        // The firmware truth was recorded before restore began; only the
+        // restore is being settled here.
+        appendLog('انقطع تقدّم استعادة الإعدادات نهائياً بعد تفليش ناجح؛ جُمّدت الاستعادة.');
+        setFlashResult({
+          kind: 'SUCCESS',
+          restore: {kind: 'FAILED', detail: t('firmwareFlasher.restoreSilent')},
+        });
+        setOperation('success');
+        setStatus('نجح تثبيت Firmware، لكن فشلت استعادة الإعدادات.');
+        return;
+      }
+      client.cancelDfuFlash().catch(() => undefined);
+      if (snapshot === undefined) {
+        // Not one transfer ever started, so nothing destructive can be
+        // pending: a plain, honest failure and a safe restart.
+        lastFlashErrorCode.current = FLASH_CODE_NEVER_STARTED;
+        const reason = t(flashReasonLabelKey(FLASH_CODE_NEVER_STARTED));
+        appendLog(`خطأ: ${reason}`);
+        setFlashResult({kind: 'FAILED', reason});
+        setOperation('error');
+        setStatus(reason);
+        return;
+      }
+      lastFlashErrorCode.current = FLASH_CODE_UI_BACKSTOP;
+      const reason = t(flashReasonLabelKey(FLASH_CODE_UI_BACKSTOP));
+      appendLog(`لم يتأكد اكتمال التفليش: ${reason}`);
+      setFlashResult({
+        kind: 'UNCONFIRMED',
+        reason,
+        nextAction: t(flashNextActionLabelKey(FLASH_CODE_UI_BACKSTOP)),
+      });
+      setOperation('unconfirmed');
+      setStatus(reason);
+    }, 5_000);
+    return () => clearInterval(interval);
+  }, [appendLog, client, operation, t]);
+
   const [flashReportCopied, setFlashReportCopied] = useState<
     'idle' | 'copied' | 'failed'
   >('idle');
@@ -1360,7 +1729,7 @@ export default function FirmwareFlasherScreen({
     PendingBootloaderFlash | undefined
   >(undefined);
   const [pendingFlashImage, setPendingFlashImage] = useState<
-    {bytes: Uint8Array; fullErase: boolean} | undefined
+    PendingFlashImage | undefined
   >(undefined);
   const [bootloaderState, setBootloaderState] = useState<
     BootloaderTransitionState | undefined
@@ -1403,20 +1772,49 @@ export default function FirmwareFlasherScreen({
         setBootloaderState('RESUMED_AFTER_PERMISSION');
         setPendingBootloaderFlash(undefined);
         setPendingFlashImage(undefined);
+        /* The resumed attempt gets the SAME terminal contract as a
+         * direct one. This chain used to end at the await below with no
+         * success handling at all - operation stayed 'flashing' forever
+         * even when the resumed flash completed perfectly. */
+        const controller = new AbortController();
+        operationController.current = controller;
+        const attempt = ++flashAttemptSerial.current;
+        setFlashResult(undefined);
+        lastFlashErrorCode.current = undefined;
+        lastProgressAt.current = Date.now();
         setOperation('flashing');
         appendLog('استُؤنفت العملية المعلّقة بعد منح إذن المتصفح؛ لم يُعَد إرسال أمر إعادة التشغيل.');
-        await client.flashDfuFirmware(
-          (device as DfuIdentity & {deviceId: number}).deviceId,
-          bytesToBase64(image.bytes),
-          image.fullErase,
-        );
+        try {
+          await client.flashDfuFirmware(
+            (device as DfuIdentity & {deviceId: number}).deviceId,
+            bytesToBase64(image.bytes),
+            image.fullErase,
+          );
+          if (!mounted.current || flashAttemptSerial.current !== attempt) return;
+          await concludeCompletedFlash(image.backup, controller.signal, attempt);
+        } catch (error) {
+          if (!mounted.current || flashAttemptSerial.current !== attempt) return;
+          setBootloaderState('FAILED_SAFELY');
+          settleFlashFailure(error);
+        } finally {
+          if (operationController.current === controller) operationController.current = null;
+        }
       })
       .catch(error => {
         if (!mounted.current) return;
         setBootloaderState('FAILED_SAFELY');
         setFailure(error);
       });
-  }, [appendLog, client, pendingBootloaderFlash, pendingFlashImage, setFailure, t]);
+  }, [
+    appendLog,
+    client,
+    concludeCompletedFlash,
+    pendingBootloaderFlash,
+    pendingFlashImage,
+    setFailure,
+    settleFlashFailure,
+    t,
+  ]);
   const copyFlashReport = useCallback(() => {
     if (flashSnapshot === undefined) {
       return;
@@ -1509,8 +1907,8 @@ export default function FirmwareFlasherScreen({
     }
   }, [cliBackup, client, reportProgress, requireOneSerial, selectedPortIndex, setFailure]);
 
-  const isBusy = !['idle', 'success', 'error'].includes(operation);
-  const canCancel = ['building', 'detecting', 'backing-up', 'flashing', 'restoring'].includes(operation);
+  const isBusy = !['idle', 'success', 'error', 'unconfirmed'].includes(operation);
+  const canCancel = ['building', 'detecting', 'saving', 'backing-up', 'flashing', 'restoring'].includes(operation);
   const isDevelopment = selectedReleaseInfo?.channel === 'development';
 
   useEffect(() => {
@@ -1561,11 +1959,24 @@ export default function FirmwareFlasherScreen({
             </View>
           ) : null}
           {targetsLoadState === 'error' ? (
-            <FirmwareNotice
-              title="تعذر تحميل قائمة اللوحات"
-              text={targetsLoadError ?? 'تحقق من الإنترنت أو استخدم ملف Firmware محلياً.'}
-              tone="error"
-            />
+            <View style={styles.catalogRetry}>
+              <FirmwareNotice
+                title="تعذر تحميل قائمة اللوحات"
+                text={targetsLoadError ?? 'تحقق من الإنترنت أو استخدم ملف Firmware محلياً.'}
+                tone="error"
+              />
+              {/* The sentence above offers a retry, so one exists. It
+                  repeats the boards download and NOTHING else - USB
+                  discovery and the attach/detach subscriptions are not
+                  involved in an HTTP failure and are not disturbed. */}
+              <FirmwareButton
+                title="إعادة تحميل القائمة"
+                tone="secondary"
+                size="compact"
+                onPress={loadTargetCatalog}
+                testID="retry-targets-picker"
+              />
+            </View>
           ) : null}
           <FlatList
             data={filteredTargets}
@@ -1579,6 +1990,8 @@ export default function FirmwareFlasherScreen({
             keyboardShouldPersistTaps="handled"
             renderItem={({item}) => (
               <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{selected: selectedTarget === item.target}}
                 testID={`target-${item.target}`}
                 onPress={() => {
                   setSelectedTarget(item.target);
@@ -1609,7 +2022,7 @@ export default function FirmwareFlasherScreen({
           disabled={isBusy}
           onPress={() => navigation?.goBack()}
           style={[styles.backButton, isBusy && styles.dimmed]}>
-          <Text style={styles.backText}>‹</Text>
+          <Icon name="chevron-back" size={24} color={colors.textPrimary} />
         </Pressable>
         <View style={styles.headerCopy}>
           <Text style={styles.headerEyebrow}>أداة مستقلة وآمنة</Text>
@@ -1683,7 +2096,7 @@ export default function FirmwareFlasherScreen({
 
             {sourceMode === 'online' ? (
               <>
-                <FirmwareSection title="Flight Controller والـ Target" caption="اختر جهاز USB عند التعدد، أو استخدم التعرف التلقائي الذي يقرأ MSP_BOARD_INFO فعلياً.">
+                <FirmwareSection title="Flight Controller والـ Target" caption="اختر جهاز USB عند التعدد، أو استخدم التعرف التلقائي الذي يسأل اللوحة عن اسمها فعليًا.">
                   <View style={styles.twoButtons}>
                     <View style={styles.flexOne}>
                       <FirmwareButton
@@ -1703,6 +2116,8 @@ export default function FirmwareFlasherScreen({
                   )}
                   {serialDevices.map(device => (
                     <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{selected: selectedSerialId === device.deviceId}}
                       key={device.deviceId}
                       testID={`detect-serial-device-${device.deviceId}`}
                       disabled={isBusy}
@@ -1740,7 +2155,18 @@ export default function FirmwareFlasherScreen({
                     />
                   ) : null}
                   {targetsLoadState === 'loading' ? <FirmwareNotice title="قائمة اللوحات" text="يجري تحميلها الآن؛ الاختيار المحلي وUSB يبقيان متاحين." /> : null}
-                  {targetsLoadState === 'error' ? <FirmwareNotice title="القائمة غير متاحة" text={targetsLoadError ?? 'استخدم الملف المحلي أو أعد المحاولة.'} tone="error" /> : null}
+                  {targetsLoadState === 'error' ? (
+                    <View style={styles.catalogRetry}>
+                      <FirmwareNotice title="القائمة غير متاحة" text={targetsLoadError ?? 'استخدم الملف المحلي أو أعد المحاولة.'} tone="error" />
+                      <FirmwareButton
+                        title="إعادة تحميل القائمة"
+                        tone="secondary"
+                        size="compact"
+                        onPress={loadTargetCatalog}
+                        testID="retry-targets"
+                      />
+                    </View>
+                  ) : null}
                 </FirmwareSection>
 
                 <FirmwareSection title="إصدار Firmware" caption="اختر القناة أولاً، ثم الإصدار والتاريخ بوضوح. الإصدارات التطويرية تحتاج إقراراً منفصلاً قبل التفليش.">
@@ -1777,6 +2203,8 @@ export default function FirmwareFlasherScreen({
                         <View style={styles.choiceRows}>
                           {visibleReleases.map(release => (
                             <Pressable
+                              accessibilityRole="radio"
+                              accessibilityState={{selected: selectedRelease === release.release}}
                               key={release.release}
                               testID={`release-${release.release}`}
                               disabled={isBusy}
@@ -1812,7 +2240,7 @@ export default function FirmwareFlasherScreen({
 
                 <FirmwareSection
                   title="تهيئة البناء"
-                  caption="Core Build أو Cloud Build، ثم Radio وTelemetry وOSD وMotor وبقية الخيارات."
+                  caption="⁦Core Build⁩ أو ⁦Cloud Build⁩، ثم ⁦Radio⁩ و⁦Telemetry⁩ و⁦OSD⁩ و⁦Motor⁩ وبقية الخيارات."
                   testID="build-configuration">
                   {targetDetail ? (
                     <>
@@ -1923,6 +2351,8 @@ export default function FirmwareFlasherScreen({
                                 />
                                 {filteredCommits.slice(0, 20).map(item => (
                                   <Pressable
+                                    accessibilityRole="radio"
+                                    accessibilityState={{selected: commit === item.sha}}
                                     key={item.sha}
                                     onPress={() => setCommit(item.sha)}
                                     style={[styles.commitRow, commit === item.sha && styles.targetRowSelected]}>
@@ -2124,6 +2554,8 @@ export default function FirmwareFlasherScreen({
               {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>أجهزة Serial</Text> : null}
               {serialDevices.map(device => (
                 <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{selected: selectedSerialId === device.deviceId}}
                   key={device.deviceId}
                   disabled={isBusy}
                   onPress={() => { setSelectedSerialId(device.deviceId); setSelectedPortIndex(0); }}
@@ -2143,6 +2575,8 @@ export default function FirmwareFlasherScreen({
               {dfuDevices.length > 0 ? <Text style={styles.fieldLabel}>أجهزة DFU</Text> : null}
               {dfuDevices.map(device => (
                 <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{selected: selectedDfuId === device.deviceId}}
                   key={device.deviceId}
                   testID={`dfu-device-${device.deviceId}`}
                   disabled={isBusy}
@@ -2298,6 +2732,54 @@ export default function FirmwareFlasherScreen({
 
         <FirmwareSection title="حالة العملية" caption="آخر 60 رسالة فقط تُحفظ في الذاكرة لمنع نمو السجل وإبطاء الشاشة.">
           <FirmwareProgress percent={progress} label={status} />
+          {flashResult !== undefined ? (
+            /* THE ONE RESULT (P0-F). Every flash attempt ends with exactly
+             * one of these three lines - never a bar left claiming 98%. */
+            <View
+              style={[
+                styles.resultNotice,
+                flashResult.kind === 'SUCCESS'
+                  ? styles.resultSuccess
+                  : flashResult.kind === 'FAILED'
+                    ? styles.resultFailed
+                    : styles.resultUnconfirmed,
+              ]}
+              testID="flash-result">
+              <Text
+                style={[
+                  styles.resultTitle,
+                  flashResult.kind === 'SUCCESS'
+                    ? styles.resultTitleSuccess
+                    : flashResult.kind === 'FAILED'
+                      ? styles.resultTitleFailed
+                      : styles.resultTitleUnconfirmed,
+                ]}
+                testID="flash-result-title">
+                {t(`firmwareFlasher.result.${flashResult.kind}`)}
+              </Text>
+              {flashResult.reason !== undefined && flashResult.kind !== 'SUCCESS' ? (
+                <Text style={styles.resultBody} testID="flash-result-reason">
+                  {flashResult.reason}
+                </Text>
+              ) : null}
+              {flashResult.nextAction !== undefined ? (
+                <Text style={styles.resultBody} testID="flash-result-next-action">
+                  {flashResult.nextAction}
+                </Text>
+              ) : null}
+              {flashResult.restore?.kind === 'FAILED' ? (
+                <Text style={styles.resultBody} testID="flash-restore-failed">
+                  {t('firmwareFlasher.result.restoreFailed', {
+                    reason: flashResult.restore.detail ?? '',
+                  })}
+                </Text>
+              ) : flashResult.restore?.kind === 'SUCCEEDED' ? (
+                <Text style={styles.resultBody} testID="flash-restore-succeeded">
+                  {t('firmwareFlasher.result.restoreSucceeded')}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           {bootloaderState !== undefined ? (
             <Text style={styles.stallBody} testID="flasher-bootloader-state">
               {t(bootloaderStateLabelKey(bootloaderState))}
@@ -2365,7 +2847,7 @@ export default function FirmwareFlasherScreen({
               />
               {buildLogText ? (
                 <View style={styles.logBox} testID="build-log">
-                  <Text style={styles.logLine}>{buildLogText}</Text>
+                  <Text style={styles.machineLine}>{buildLogText}</Text>
                 </View>
               ) : null}
             </>
@@ -2395,25 +2877,53 @@ export default function FirmwareFlasherScreen({
 }
 
 const styles = StyleSheet.create({
-  stallNotice: {
+  resultNotice: {
     marginTop: spacing.sm,
     padding: spacing.md,
     borderRadius: radii.md,
     borderWidth: 1,
-    borderColor: colors.warning,
-    backgroundColor: '#FFF4D8',
     gap: spacing.xs,
   },
+  resultSuccess: {
+    backgroundColor: colors.successSoft,
+    borderColor: colors.success,
+  },
+  resultFailed: {
+    backgroundColor: colors.errorSoft,
+    borderColor: colors.error,
+  },
+  resultUnconfirmed: {
+    backgroundColor: colors.warningSoft,
+    borderColor: colors.warning,
+  },
+  resultTitle: {
+    ...typography.bodyStrong,
+    color: colors.textPrimary,
+  },
+  resultTitleSuccess: {
+    color: colors.success,
+  },
+  resultTitleFailed: {
+    color: colors.error,
+  },
+  resultTitleUnconfirmed: {
+    color: colors.warning,
+  },
+  resultBody: {
+    ...typography.caption,
+    color: colors.textPrimary, maxWidth: PROSE_MEASURE},
+  stallNotice: {...noticeSurface, marginTop: spacing.sm,
+    borderColor: colors.warning,
+    backgroundColor: colors.warningSoft,
+    gap: spacing.xs},
   stallTitle: {
     ...typography.sectionTitle,
     color: colors.warning,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl'},
   stallBody: {
     ...typography.caption,
     color: colors.textSecondary,
-    writingDirection: 'rtl',
-  },
+    writingDirection: 'rtl', maxWidth: PROSE_MEASURE},
   root: {flex: 1, backgroundColor: colors.background},
   modalRoot: {
     flex: 1,
@@ -2435,6 +2945,9 @@ const styles = StyleSheet.create({
   },
   modalCloseText: {fontSize: 30, lineHeight: 32, color: colors.textPrimary},
   loadingRow: {minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: spacing.sm},
+  /* The notice and its recovery, stacked and left-aligned: the retry
+     trails the sentence rather than stretching across the card. */
+  catalogRetry: {gap: spacing.sm, alignItems: 'flex-start', alignSelf: 'stretch'},
   loadingText: {...typography.body, color: colors.textSecondary},
   header: {
     minHeight: 72,
@@ -2447,17 +2960,36 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.borderSoft,
   },
-  backButton: {width: 42, height: 42, borderRadius: 21, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center'},
-  backText: {fontSize: 30, lineHeight: 32, color: colors.textPrimary},
+  /* 44, not 42: MIN_TOUCH_TARGET, which the simple flasher's own back
+     button already uses. Measured at 42x42 on every width. Now the
+     constant itself rather than a copy of its value - a hard-coded 44
+     is how the floor drifted out of six files in the first place. */
+  backButton: {
+    width: MIN_TOUCH_TARGET,
+    height: MIN_TOUCH_TARGET,
+    borderRadius: 22,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   headerCopy: {flex: 1},
   headerEyebrow: {...typography.eyebrow, color: colors.accentStrong},
   headerTitle: {...typography.title, color: colors.textPrimary},
   formatPill: {paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.pill, backgroundColor: colors.surfaceAlt},
-  formatPillText: {...typography.caption, color: colors.info, fontWeight: '800'},
+  formatPillText: {...typography.caption, color: colors.info, fontWeight: '700'},
   steps: {flexDirection: 'row', padding: spacing.sm, gap: spacing.sm, backgroundColor: colors.backgroundRaised},
-  step: {flex: 1, minHeight: 40, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center'},
+  /* 44, not 40. These two step tabs are the widest controls in the
+     inventory (up to 949px) and still missed the floor, because only
+     the height was ever short. */
+  step: {
+    flex: 1,
+    minHeight: MIN_TOUCH_TARGET,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   stepActive: {backgroundColor: colors.accentSoft, borderWidth: 1, borderColor: colors.accent},
-  stepText: {...typography.caption, color: colors.textMuted, fontWeight: '800'},
+  stepText: {...typography.caption, color: colors.textMuted, fontWeight: '700'},
   stepTextActive: {color: colors.accentStrong},
   scroll: {flex: 1},
   content: {
@@ -2477,12 +3009,11 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     paddingHorizontal: spacing.md,
     textAlign: 'right',
-    ...typography.body,
-  },
+    ...typography.body, maxWidth: PROSE_MEASURE},
   monoInput: {...typography.mono, textAlign: 'left', writingDirection: 'ltr'},
-  selectorButton: {padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surfaceAlt, borderWidth: 1, borderColor: colors.border},
+  selectorButton: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm, minHeight: 48, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.borderStrong}, selectorCopy: {flex: 1, gap: 2},
   selectorValue: {...typography.sectionTitle, color: colors.textPrimary},
-  selectorHint: {...typography.caption, color: colors.textMuted},
+  selectorHint: {...typography.caption, color: colors.textMuted, maxWidth: PROSE_MEASURE},
   targetList: {flex: 1, borderRadius: radii.md, backgroundColor: colors.backgroundRaised},
   targetListContent: {paddingBottom: spacing.xl},
   targetRow: {minHeight: 58, flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft},
@@ -2507,9 +3038,18 @@ const styles = StyleSheet.create({
   deviceName: {...typography.sectionTitle, color: colors.textPrimary},
   deviceMeta: {...typography.caption, color: colors.textMuted},
   commitRow: {padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.borderSoft, gap: 2},
-  commitMessage: {...typography.caption, color: colors.textPrimary, fontWeight: '700'},
+  commitMessage: {...typography.caption, color: colors.textPrimary, fontWeight: '700', maxWidth: PROSE_MEASURE},
   commitSha: {...typography.mono, color: colors.textMuted, textAlign: 'left', writingDirection: 'ltr'},
-  logBox: {maxHeight: 280, padding: spacing.md, borderRadius: radii.md, backgroundColor: '#EEF3F4', gap: 4},
-  logLine: {...typography.mono, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr'},
+  logBox: {maxHeight: 280, padding: spacing.md, borderRadius: radii.md, backgroundColor: colors.surfaceAlt, gap: 4},
+  /* THE APP'S OWN MESSAGES, and they are Arabic sentences:
+     «اكتشاف USB: 1 serial و0 DFU.». They used to share the ltr style
+     below with the build server's log, which laid each sentence out
+     left-to-right-first and painted its words out of order. The Latin
+     identifiers inside stay left-to-right on their own, as bidi
+     isolates - that never needed the whole line to be ltr. */
+  logLine: {...typography.mono, color: colors.textSecondary, textAlign: 'right', writingDirection: 'rtl'},
+  /* The BUILD SERVER's output. Machine text, genuinely left-to-right,
+     and it keeps that. */
+  machineLine: {...typography.mono, color: colors.textSecondary, textAlign: 'left', writingDirection: 'ltr'},
   dimmed: {opacity: 0.4},
 });

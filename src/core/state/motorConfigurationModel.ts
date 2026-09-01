@@ -11,6 +11,102 @@ export const FEATURE_ESC_SENSOR_BIT = 2 ** 27;
 /** Raw motor protocol enum at the pinned API-1.47 firmware. */
 export const MOTOR_PROTOCOL_RAW_MIN = 0;
 export const MOTOR_PROTOCOL_RAW_MAX = 9;
+
+/**
+ * MOTOR POLE COUNT IS BOUNDED AT FOUR, NOT AT ONE.
+ *
+ * The firmware's own bound, unchanged across every reviewed revision:
+ *
+ *   cli/settings.c   PARAM_NAME_MOTOR_POLES, VAR_UINT8 | MASTER_VALUE,
+ *                    .config.minmaxUnsigned = { 4, UINT8_MAX }
+ *
+ * and the official Configurator's Motors tab enforces the same thing on the
+ * input itself (src/tabs/motors.html: `min="4" max="255"`).
+ *
+ * This matters because MSP DOES NOT RE-CHECK IT. The setter is a bare
+ * assignment - `motorConfigMutable()->motorPoleCount = sbufReadU8(src);`
+ * (msp.c, MSP_SET_MOTOR_CONFIG) - with no clamp, so a value the CLI would
+ * have refused is accepted, stored and committed to EEPROM without a word.
+ *
+ * And it is not an inert number. The pole count is the divisor that turns
+ * an ESC's electrical RPM into mechanical RPM, so a value below four
+ * silently scales every DShot telemetry reading and everything downstream
+ * of it - the RPM filter's notch centres above all. Nothing reports an
+ * error; the aircraft simply filters the wrong frequencies.
+ *
+ * The lower bound was 1 here. That was this app's own invention, matching
+ * neither of the two sources above.
+ */
+export const MOTOR_POLE_COUNT_MIN = 4;
+export const MOTOR_POLE_COUNT_MAX = 255;
+
+/**
+ * THE PULSE WIDTHS A BETAFLIGHT CONFIGURATION MAY LEGALLY HOLD.
+ *
+ *   rx/rx.h   PWM_PULSE_MIN 750, PWM_PULSE_MAX 2250
+ *             PWM_RANGE_MIDDLE = PWM_RANGE_MIN + PWM_RANGE / 2 = 1500
+ *
+ * These are not style limits. `cli/settings.c` refuses anything outside
+ * them, and MSP does not re-check - the 3D setter is three bare
+ * `sbufReadU16` assignments (msp.c, MSP_SET_MOTOR_3D_CONFIG).
+ */
+const PWM_PULSE_MIN = 750;
+const PWM_PULSE_MAX = 2250;
+const PWM_RANGE_MIDDLE = 1500;
+
+/**
+ * 3D DEADBANDS: WIDE ENOUGH TO BE WRONG WAS WIDE ENOUGH TO BE DANGEROUS.
+ *
+ * These three were bounded 0..2000 here - a number this app invented. The
+ * firmware's own bounds, from cli/settings.c, are:
+ *
+ *   3d_deadband_low    { PWM_PULSE_MIN,     PWM_RANGE_MIDDLE }   750..1500
+ *   3d_deadband_high   { PWM_RANGE_MIDDLE,  PWM_PULSE_MAX    }  1500..2250
+ *   3d_neutral         { PWM_PULSE_MIN,     PWM_PULSE_MAX    }   750..2250
+ *
+ * and Betaflight Configurator's own inputs are tighter still
+ * (1250..1600 / 1400..1750 / 1400..1600, src/tabs/motors.html).
+ *
+ * WHY THIS IS A SAFETY BOUND AND NOT A TIDINESS ONE. In 3D mode these
+ * three numbers ARE the motor-stop band, and `neutral3d` is literally the
+ * DISARMED OUTPUT:
+ *
+ *   drivers/pwm_output.c:38    *disarm = flight3DConfig()->neutral3d;
+ *   drivers/pwm_output.c:41-42 *deadbandMotor3dHigh / Low
+ *
+ * The old bound accepted low=0, neutral=1, high=2 - which satisfies the
+ * ordering rule below, passes validation, encodes cleanly, is stored by
+ * MSP without complaint and survives EEPROM. On a 3D-enabled craft that
+ * puts the entire throttle stick above `deadband3d_high` and hands the
+ * ESCs a disarm pulse of one microsecond.
+ *
+ * The firmware bound is used rather than the Configurator's, because the
+ * question this validator answers is "will the flight controller hold
+ * this?", not "is this a sensible tune?".
+ */
+export const MOTOR_3D_DEADBAND_LOW_MIN = PWM_PULSE_MIN;
+export const MOTOR_3D_DEADBAND_LOW_MAX = PWM_RANGE_MIDDLE;
+export const MOTOR_3D_DEADBAND_HIGH_MIN = PWM_RANGE_MIDDLE;
+export const MOTOR_3D_DEADBAND_HIGH_MAX = PWM_PULSE_MAX;
+export const MOTOR_3D_NEUTRAL_MIN = PWM_PULSE_MIN;
+export const MOTOR_3D_NEUTRAL_MAX = PWM_PULSE_MAX;
+
+/**
+ * Unsynced PWM output frequency, in Hz.
+ *
+ * Two independent sources agree and this app agreed with neither:
+ *
+ *   cli/settings.c        motor_pwm_rate      { 200, 32000 }
+ *   src/tabs/motors.html  unsyncedpwmfreq     min="200" max="32000"
+ *
+ * The bound here was 0..65535 - the width of the u16 field, which is a
+ * statement about the wire and not about the setting. Zero is not a
+ * frequency, and `validateAndFixConfig` only clamps this for the PWM
+ * protocol specifically (to BRUSHLESS_MOTORS_PWM_RATE, config.c), so on
+ * every other analog protocol an out-of-range rate is simply kept.
+ */
+export const MOTOR_PWM_RATE_MIN = 200;
+export const MOTOR_PWM_RATE_MAX = 32000;
 export const MOTOR_PROTOCOL_DSHOT_MIN = 5;
 // The configurator's API-1.47 protocol table treats PROSHOT1000 (raw 8)
 // as part of the digital DShot-family feature surface as well.
@@ -168,15 +264,45 @@ export function validateMotorConfigurationDraft(
     MOTOR_PROTOCOL_RAW_MIN,
     MOTOR_PROTOCOL_RAW_MAX,
   );
-  checkIntegerRange(draft, issues, 'motorPwmRate', 0, 65535);
+  checkIntegerRange(
+    draft,
+    issues,
+    'motorPwmRate',
+    MOTOR_PWM_RATE_MIN,
+    MOTOR_PWM_RATE_MAX,
+  );
   // The official UI exposes motor idle as 0.0..20.0%; wire units are 0.01%.
   checkIntegerRange(draft, issues, 'motorIdleRaw', 0, 2000);
   checkIntegerRange(draft, issues, 'maxThrottle', 0, 2000);
   checkIntegerRange(draft, issues, 'minCommand', 0, 2000);
-  checkIntegerRange(draft, issues, 'motorPoleCount', 1, 255);
-  checkIntegerRange(draft, issues, 'deadband3dLow', 0, 2000);
-  checkIntegerRange(draft, issues, 'deadband3dHigh', 0, 2000);
-  checkIntegerRange(draft, issues, 'neutral3d', 0, 2000);
+  checkIntegerRange(
+    draft,
+    issues,
+    'motorPoleCount',
+    MOTOR_POLE_COUNT_MIN,
+    MOTOR_POLE_COUNT_MAX,
+  );
+  checkIntegerRange(
+    draft,
+    issues,
+    'deadband3dLow',
+    MOTOR_3D_DEADBAND_LOW_MIN,
+    MOTOR_3D_DEADBAND_LOW_MAX,
+  );
+  checkIntegerRange(
+    draft,
+    issues,
+    'deadband3dHigh',
+    MOTOR_3D_DEADBAND_HIGH_MIN,
+    MOTOR_3D_DEADBAND_HIGH_MAX,
+  );
+  checkIntegerRange(
+    draft,
+    issues,
+    'neutral3d',
+    MOTOR_3D_NEUTRAL_MIN,
+    MOTOR_3D_NEUTRAL_MAX,
+  );
 
   const booleanFields: readonly (keyof MotorConfigurationDraft)[] = [
     'yawMotorsReversed',

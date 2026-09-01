@@ -83,6 +83,13 @@ export const MSP_ANALOG = 110;
  * (decodeStatusEx.ts). */
 export const MSP_STATUS_EX = 150;
 
+/** src/main/msp/msp_protocol.h:230 @ the pinned Betaflight API 1.47
+ * authority (79065c96ba0bb5cdc675e67d7093e05dab8b330e):
+ * `#define MSP_TX_INFO 187`. Receiver P2 reads it for the firmware's
+ * rssiSource enum (msp.c:2164-2176); see decodeTxInfo.ts. It carries no
+ * link-quality value - the pinned firmware serialises none. */
+export const MSP_TX_INFO = 187;
+
 /** src/main/msp/msp_protocol.h:187 @ BETAFLIGHT_API147_COMMIT (Pass 7.7):
  * `#define MSP_BOXIDS 119  // out message: Get the permanent IDs
  * associated to BOXes` - msp.c:2336-2341 serializes the permanent IDs in
@@ -107,6 +114,22 @@ export const MSP_SET_FAILSAFE_CONFIG = 76;
 export const MSP_RXFAIL_CONFIG = 77;
 export const MSP_SET_RXFAIL_CONFIG = 78;
 
+/**
+ * GPS Rescue - the stage-2 procedure's own parameters.
+ *
+ * `#define MSP_GPS_RESCUE 135` / `#define MSP_SET_GPS_RESCUE 225`, from
+ * betaflight-configurator's src/js/msp/MSPCodes.js and the firmware's
+ * src/main/msp/msp_protocol.h.
+ *
+ * BOTH ARE OPTIONAL COMMANDS. The firmware wraps them in
+ * `#ifdef USE_GPS_RESCUE` and `#ifndef USE_WING`, so a build without GPS
+ * Rescue - and every wing build - answers MSP_RESULT_CMD_UNKNOWN. A caller
+ * must treat "this board does not answer" as an absent capability, not as
+ * a failed read.
+ */
+export const MSP_GPS_RESCUE = 135;
+export const MSP_SET_GPS_RESCUE = 225;
+
 /** Betaflight 2025.12.2 / MSP API 1.47 power configuration and meters. */
 export const MSP_BATTERY_CONFIG = 32;
 export const MSP_SET_BATTERY_CONFIG = 33;
@@ -116,6 +139,24 @@ export const MSP_VOLTAGE_METER_CONFIG = 56;
 export const MSP_SET_VOLTAGE_METER_CONFIG = 57;
 export const MSP_VOLTAGE_METERS = 128;
 export const MSP_CURRENT_METERS = 129;
+
+/**
+ * Blackbox / onboard-logging reads and the one configuration write.
+ *
+ * Command ids and payload shapes verified at the pinned Betaflight commit
+ * 7348054f268f0058574719c134e9f149565bb8ea (API 1.47) and re-checked
+ * byte-for-byte against master (API 1.49). API 1.48 has no reachable
+ * source and is NOT VERIFIED for this group.
+ *
+ * MSP_DATAFLASH_ERASE (72) is DELIBERATELY ABSENT. It is a destructive
+ * asynchronous operation whose completion is only observable by polling
+ * MSP_DATAFLASH_SUMMARY, and it will be declared alongside the controller
+ * that owns its lifecycle - not ahead of it, where anything could send it.
+ */
+export const MSP_DATAFLASH_SUMMARY = 70;
+export const MSP_SDCARD_SUMMARY = 79;
+export const MSP_BLACKBOX_CONFIG = 80;
+export const MSP_SET_BLACKBOX_CONFIG = 81;
 
 /** Betaflight 2025.12.2 / MSP API 1.47 on-screen-display configuration.
  * MSP_OSD_CONFIG returns the complete layout/settings snapshot,
@@ -205,6 +246,23 @@ export const MSP_REBOOT = 68;
  * for whether 3D mode is active. */
 export const MSP_FEATURE_CONFIG = 36;
 
+/**
+ * BOARD ALIGNMENT - the mounting angles of the whole flight controller.
+ *
+ * `#define MSP_BOARD_ALIGNMENT_CONFIG 38` / `MSP_SET_BOARD_ALIGNMENT_CONFIG 39`,
+ * matching betaflight-configurator's MSPCodes.js:18-19. Six bytes each
+ * way: three little-endian 16-bit values, roll then pitch then yaw, in
+ * WHOLE DEGREES over -180..360 (cli/settings.c:995-997).
+ *
+ * NOT to be confused with MSP_SENSOR_ALIGNMENT (126) /
+ * MSP_SET_SENSOR_ALIGNMENT (220), which carry per-sensor orientation
+ * ENUMS rather than whole-board angles. Those are declared in the sensor
+ * block at the foot of this file; the two names have caused confusion
+ * before, so each block names the other explicitly.
+ */
+export const MSP_BOARD_ALIGNMENT_CONFIG = 38;
+export const MSP_SET_BOARD_ALIGNMENT_CONFIG = 39;
+
 /** General configuration groups used by the integrated Configurations area.
  * Values and payload layouts are pinned to Betaflight 2025.12.2 / MSP 1.47.
  * The SET commands are consumed only by the guarded configuration
@@ -252,6 +310,36 @@ export const MSP_PID_ADVANCED = 94;
 export const MSP_SET_FILTER_CONFIG = 93;
 export const MSP_SET_PID_ADVANCED = 95;
 export const MSP_SET_PID = 202;
+
+/**
+ * `#define MSP_SELECT_SETTING 210` - the profile selector, and the ONE
+ * command that changes which PID or rate profile the board is running.
+ *
+ * ONE PAYLOAD BYTE, and the encoding is not symmetric:
+ *
+ *   PID profile   the zero-based index, sent as-is
+ *   RATE profile  the zero-based index OR'd with 0x80
+ *
+ * Verified in betaflight-configurator's own PidTuningTab.vue:
+ *
+ *   MSP.promise(MSPCodes.MSP_SELECT_SETTING, [currentProfile.value]);
+ *   MSP.promise(MSPCodes.MSP_SELECT_SETTING, [currentRateProfile.value | 128]);
+ *
+ * The high bit is therefore a DISCRIMINATOR, not part of the index, and
+ * an index of 128 or more is not representable - which is also why the
+ * count the board reports is validated before anything is sent.
+ *
+ * NOT a settings write: it selects the active profile and does not need
+ * an EEPROM write to take effect. Betaflight re-reads every profile-
+ * dependent group afterwards rather than assuming, and so does this app.
+ *
+ * The 0x80 discriminator itself lives in encoding/encodeSelectSetting.ts,
+ * NOT here. Every number in this module is a command id, and a test
+ * enforces that they are all distinct - a payload bit-flag sitting among
+ * them would collide with MSP_VOLTAGE_METERS (128) and make that
+ * invariant meaningless.
+ */
+export const MSP_SELECT_SETTING = 210;
 export const MSP_SET_RC_TUNING = 204;
 
 /** src/main/msp/msp_protocol.h @ BETAFLIGHT_2025_12_2_COMMIT:
@@ -316,6 +404,103 @@ export const MSP_VTX_CONFIG = 88;
 /** Betaflight's versioned MSP v2 serial-port read and write commands. */
 export const MSP2_COMMON_SERIAL_CONFIG = 0x1009;
 export const MSP2_COMMON_SET_SERIAL_CONFIG = 0x100a;
+
+/* ------------------------------------------------------------------ *
+ * SENSORS.
+ *
+ * Every value below was read out of src/main/msp/msp_protocol.h and
+ * src/main/msp/msp_protocol_v2_betaflight.h at the pinned API-1.47
+ * firmware revision 7348054f268f0058574719c134e9f149565bb8ea, not copied
+ * from a client. Where the reference configurator uses a shortened name
+ * for the same opcode, the FIRMWARE name wins here and the divergence is
+ * written down beside it, so a future reader never has to guess which of
+ * two spellings is the real one.
+ *
+ * Declaring a constant is not a write path. The SET opcodes below have no
+ * caller in this pass: B-1 builds wire codecs only, and the controller
+ * that would be allowed to send them does not exist yet.
+ * ------------------------------------------------------------------ */
+
+/**
+ * CONFIGURED sensor hardware - what the operator asked the board to use.
+ *
+ * `#define MSP_SENSOR_CONFIG 96` / `MSP_SET_SENSOR_CONFIG 97`.
+ *
+ * THERE IS NO GYRO BYTE. The firmware's own comment above the handler
+ * claims "0:GyroHardware, 1:AccHardware, ..." and the executable code
+ * immediately below it writes `accelerometerConfig()->acc_hardware`
+ * first. The code is the contract; the comment is stale. Byte 0 is ACC.
+ */
+export const MSP_SENSOR_CONFIG = 96;
+export const MSP_SET_SENSOR_CONFIG = 97;
+
+/**
+ * PER-SENSOR ORIENTATION - not the board angles (those are 38/39 above).
+ *
+ * `#define MSP_SENSOR_ALIGNMENT 126` / `MSP_SET_SENSOR_ALIGNMENT 220`.
+ *
+ * THE READ AND THE WRITE ARE DIFFERENT SHAPES, and byte 3 changes meaning
+ * between them - see decodeSensorAlignment.ts / encodeSensorAlignment.ts.
+ * Echoing a read payload back as a write corrupts the gyro enable mask.
+ */
+export const MSP_SENSOR_ALIGNMENT = 126;
+export const MSP_SET_SENSOR_ALIGNMENT = 220;
+
+/**
+ * MAGNETIC DECLINATION, and nothing else.
+ *
+ * `#define MSP_COMPASS_CONFIG 133` / `#define MSP_SET_COMPASS_CONFIG 224`.
+ * A single value each way, in tenths of a degree.
+ */
+export const MSP_COMPASS_CONFIG = 133;
+export const MSP_SET_COMPASS_CONFIG = 224;
+
+/**
+ * ACCELEROMETER ANGLE TRIM. Note the opcode ordering: the SET is the
+ * LOWER number.
+ *
+ * `#define MSP_SET_ACC_TRIM 239` / `#define MSP_ACC_TRIM 240`.
+ */
+export const MSP_SET_ACC_TRIM = 239;
+export const MSP_ACC_TRIM = 240;
+
+/**
+ * DETECTED sensor hardware - what the board actually found at boot. A
+ * different question from MSP_SENSOR_CONFIG, and the two disagree often
+ * enough that the semantic layer keeps them apart permanently.
+ *
+ * `#define MSP2_SENSOR_CONFIG_ACTIVE 0x300A`.
+ */
+export const MSP2_SENSOR_CONFIG_ACTIVE = 0x300a;
+
+/**
+ * PER-GYRO detection results on a multi-gyro board.
+ *
+ * `#define MSP2_GYRO_SENSOR_ACTIVE 0x300D`.
+ *
+ * NAME DIVERGENCE, deliberate: betaflight-configurator calls this opcode
+ * `MSP2_GYRO_SENSOR` (src/js/msp/MSPCodes.js). The firmware name carries
+ * the "_ACTIVE" that distinguishes detection from configuration, which is
+ * the whole distinction this layer exists to keep, so the firmware name is
+ * the one used here.
+ */
+export const MSP2_GYRO_SENSOR_ACTIVE = 0x300d;
+
+/**
+ * `#define MSP_SONAR_ALTITUDE 58   // out message: Get sonar altitude [cm]`
+ *
+ * NAME DIVERGENCE, deliberate: betaflight-configurator calls this
+ * `MSP_SONAR` and annotates it "notice, in firmware named as
+ * MSP_SONAR_ALTITUDE" (src/js/msp/MSPCodes.js). The firmware name is used
+ * here.
+ *
+ * DECLARED, NOT DECODED. A rangefinder-free build answers this with a
+ * hard-coded `sbufWriteU32(dst, 0)`, so the number alone cannot tell a
+ * real zero-centimetre reading from "there is no rangefinder". Reading it
+ * without the presence and capability facts beside it would manufacture a
+ * measurement, so no decoder is offered for it in this pass.
+ */
+export const MSP_SONAR_ALTITUDE = 58;
 
 /**
  * THE ONLY MOTOR *WRITE* COMMAND IN THIS REPOSITORY, AND A CONSTANT ONLY.

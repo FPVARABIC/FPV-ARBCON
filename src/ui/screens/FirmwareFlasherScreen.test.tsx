@@ -91,6 +91,136 @@ async function flushAsyncEffects(rounds = 8): Promise<void> {
 }
 
 describe('FirmwareFlasherScreen', () => {
+  /**
+   * "استخدم الملف المحلي أو أعد المحاولة" - with, until now, nothing to
+   * press. The boards download lived inline in the mount effect, whose
+   * dependencies never changed, so the only way to run it again was to
+   * unmount the screen. The sentence promised an action the screen did
+   * not have.
+   *
+   * The retry repeats THAT DOWNLOAD AND NOTHING ELSE: USB discovery and
+   * the attach/detach subscriptions have no part in an HTTP failure and
+   * must not be torn down and rebuilt by a press on it.
+   */
+  describe('the boards download can actually be retried', () => {
+    const TARGETS = [
+      {target: 'KAKUTEH7', group: 'supported', manufacturer: 'HBRO', mcu: 'STM32H743'},
+      {target: 'SPEEDYBEEF405V3', group: 'supported', manufacturer: 'SPBE', mcu: 'STM32F405'},
+    ] as unknown as readonly BetaflightTarget[];
+
+    /** Fails the first `failures` calls, then serves the catalogue. */
+    function flakyApi(failures: number) {
+      const api = fakeApi();
+      let calls = 0;
+      api.loadTargets = jest.fn(async () => {
+        calls += 1;
+        if (calls <= failures) throw new Error('Failed to fetch');
+        return TARGETS;
+      }) as never;
+      return {api, calls: () => calls};
+    }
+
+    it('failure -> retry -> success, with no stuck spinner and no stale error', async () => {
+      const {api, calls} = flakyApi(1);
+      const client = fakeClient();
+      const {renderer} = await renderScreen(client, api);
+      await flushAsyncEffects();
+
+      // The defect state, and the control the sentence implies.
+      expect(allText(renderer)).toContain('القائمة غير متاحة');
+      expect(calls()).toBe(1);
+      const attachSubscriptions = client.onDeviceAttached.mock.calls.length;
+
+      await press(renderer, 'retry-targets');
+      await flushAsyncEffects(16);
+
+      expect(calls()).toBe(2);
+      // The error is gone, and so is the loading row - not one replaced
+      // by the other and left there.
+      const text = allText(renderer);
+      expect(text).not.toContain('القائمة غير متاحة');
+      expect(text).not.toContain('يجري تحميلها الآن');
+      expect(renderer.root.findAllByProps({testID: 'retry-targets'})).toHaveLength(0);
+
+      // The catalogue really arrived: the boards are selectable.
+      await press(renderer, 'target-selector');
+      expect(renderer.root.findAllByProps({testID: 'target-KAKUTEH7'}).length).toBeGreaterThan(0);
+
+      // And the retry touched nothing but the download.
+      expect(client.onDeviceAttached.mock.calls).toHaveLength(attachSubscriptions);
+      act(() => renderer.unmount());
+    });
+
+    it('failure -> retry -> failure leaves a retryable error, never a spinner', async () => {
+      const {api, calls} = flakyApi(5);
+      const {renderer} = await renderScreen(fakeClient(), api);
+      await flushAsyncEffects();
+      expect(allText(renderer)).toContain('القائمة غير متاحة');
+
+      await press(renderer, 'retry-targets');
+      await flushAsyncEffects(16);
+
+      expect(calls()).toBe(2);
+      const text = allText(renderer);
+      // Still an error, still recoverable, and NOT still loading.
+      expect(text).toContain('القائمة غير متاحة');
+      expect(text).not.toContain('يجري تحميلها الآن');
+      expect(renderer.root.findAllByProps({testID: 'retry-targets'}).length).toBeGreaterThan(0);
+
+      // A third press still works - the control does not consume itself.
+      await press(renderer, 'retry-targets');
+      await flushAsyncEffects(16);
+      expect(calls()).toBe(3);
+      act(() => renderer.unmount());
+    });
+
+    it('abandons an in-flight retry when the operator leaves the screen', async () => {
+      /*
+       * The reason each attempt carries its own AbortController and the
+       * cleanup aborts it.
+       *
+       * Two attempts cannot overlap through the interface - the retry
+       * only exists in the error state, and pressing it moves the screen
+       * to loading, where it is not rendered - so the honest thing to
+       * test is the overlap that IS reachable: an operator who presses
+       * retry and then goes back while the request is still open.
+       */
+      const api = fakeApi();
+      const signals: AbortSignal[] = [];
+      let releaseSecond: (() => void) | undefined;
+      let calls = 0;
+      api.loadTargets = jest.fn(async (signal: AbortSignal) => {
+        calls += 1;
+        signals.push(signal);
+        if (calls === 1) throw new Error('Failed to fetch');
+        await new Promise<void>(resolve => {
+          releaseSecond = resolve;
+        });
+        return TARGETS;
+      }) as never;
+
+      const {renderer} = await renderScreen(fakeClient(), api);
+      await flushAsyncEffects();
+      expect(allText(renderer)).toContain('القائمة غير متاحة');
+
+      await press(renderer, 'retry-targets');
+      await flushAsyncEffects();
+      expect(calls).toBe(2);
+      expect(signals[1]?.aborted).toBe(false);
+
+      act(() => renderer.unmount());
+      expect(signals[1]?.aborted).toBe(true);
+
+      // The abandoned request settling afterwards must go nowhere and
+      // must not throw.
+      releaseSecond?.();
+      await act(async () => {
+        for (let index = 0; index < 8; index += 1) await Promise.resolve();
+      });
+      expect(signals).toHaveLength(2);
+    });
+  });
+
   it('recovers a stale Android USB id only when one serial device is unambiguous', () => {
     const only = {
       deviceId: 41,

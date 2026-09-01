@@ -1,3 +1,8 @@
+// ENTRY CLEANUP: the shell's Setup tab hosts the USB connection workspace
+// now, so this import chain reaches the transport client whose TurboModule
+// must be mocked under Jest - the exact mock App.test.tsx has always used.
+jest.mock('../../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 /**
  * Bottom tab bar - order, RTL scroll position, disabled state and the
  * Motors stop guard.
@@ -12,6 +17,7 @@ import ReactTestRenderer from 'react-test-renderer';
 import '../../../i18n';
 import i18n from '../../../i18n';
 import BottomTabBar from './BottomTabBar';
+import {presentConnectedBoard} from '../../session/__testUtils__/connectedBoard';
 import MainTabsScreen from '../../screens/MainTabsScreen';
 import {
   MAIN_TABS,
@@ -176,6 +182,10 @@ function renderShell(sessionId = 'session-1') {
     name: 'Setup' as const,
     params: { sessionKey: { sessionId, generation: 1 } },
   } as never;
+  /* The shell's connection gate reads the coordinator, not the route
+     parameter, so a rendered configurator needs a board presented to
+     it. See ui/session/__testUtils__/connectedBoard.ts. */
+  presentConnectedBoard(sessionId);
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   ReactTestRenderer.act(() => {
     renderer = ReactTestRenderer.create(

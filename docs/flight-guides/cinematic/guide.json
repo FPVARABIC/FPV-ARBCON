@@ -1,0 +1,208 @@
+{
+  "id": "cinematic",
+  "kind": "FLIGHT_STYLE",
+  "title_ar": "الطيران السينمائي",
+  "title_en": "Cinematic",
+  "description_ar": "طيران هادئ ومتصل، الهدف فيه أن تبدو اللقطة كأن كاميرا محمولة على ذراع.",
+  "description_en": "Smooth, continuous flying where the shot should look like a camera on a gimbal, not on a drone.",
+  "difficulty": "beginner",
+  "difficulty_ar": "مبتدئ",
+  "intended_aircraft": [
+    "Cinewhoop",
+    "Cinelog",
+    "5 إنش بكاميرا HD",
+    "7 إنش للقطات الواسعة"
+  ],
+  "required_screens": [
+    "PidTuningScreen",
+    "ReceiverScreen",
+    "FailsafeScreen"
+  ],
+  "optional_screens": [
+    "MotorsScreen",
+    "OsdScreen",
+    "ModesScreen"
+  ],
+  "hardware_requirements": [
+    "كاميرا أو مسجّل فيديو",
+    "ESC يدعم DShot ثنائي الاتجاه (لفلتر RPM)"
+  ],
+  "hardware_verification_status": "NOT VERIFIED — DEFERRED",
+  "verification_level": "SOFTWARE / REFERENCE VERIFIED",
+  "image": "_shared/images/pid-rates-and-feel.png",
+  "sources": [
+    "S1.1",
+    "S1.2",
+    "S1.10b",
+    "S1.11a",
+    "S1.11b",
+    "S1.13"
+  ],
+  "steps": [
+    {
+      "n": 1,
+      "title_ar": "المستقبل",
+      "screen": "المستقبل · بطاقة تنعيم الإشارة",
+      "screenshot": "images/1-receiver-smoothing.png",
+      "targets": [
+        {
+          "control": "receiver-setpoint-factor",
+          "kind": "stepper",
+          "expected": "90",
+          "source": "S1.1"
+        },
+        {
+          "control": "receiver-throttle-factor",
+          "kind": "stepper",
+          "expected": "50",
+          "source": "S1.1"
+        }
+      ]
+    },
+    {
+      "n": 2,
+      "title_ar": "إحساس العصا",
+      "screen": "ضبط PID · بطاقة إحساس العصا",
+      "screenshot": "images/2-pid-feel.png",
+      "targets": [
+        {
+          "control": "pid-ff-jitter",
+          "kind": "stepper",
+          "expected": "12",
+          "source": "S1.1"
+        },
+        {
+          "control": "pid-ff-boost",
+          "kind": "stepper",
+          "expected": "15",
+          "source": "S1.13"
+        },
+        {
+          "control": "pid-ff-averaging-0",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.1"
+        }
+      ]
+    },
+    {
+      "n": 3,
+      "title_ar": "المحركات",
+      "screen": "المحركات · إعدادات ESC",
+      "screenshot": "images/3-motors.png",
+      "targets": [
+        {
+          "control": "motor-config-protocol-7",
+          "kind": "option",
+          "expected": "selected",
+          "source": "S1.11a"
+        },
+        {
+          "control": "motor-config-bidirectional-dshot",
+          "kind": "switch",
+          "expected": "on",
+          "source": "S1.10b"
+        },
+        {
+          "control": "motor-config-poles",
+          "kind": "input",
+          "expected": "14",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 4,
+      "title_ar": "Dynamic Idle",
+      "screen": "ضبط PID · بطاقة Dynamic Idle",
+      "screenshot": "images/4-dynamic-idle.png",
+      "targets": [
+        {
+          "control": "pid-idle-min-rpm",
+          "kind": "stepper",
+          "expected": "35",
+          "source": "S1.11a"
+        }
+      ]
+    },
+    {
+      "n": 5,
+      "title_ar": "Failsafe",
+      "screen": "Failsafe · إجراء المرحلة 2",
+      "screenshot": "images/5-failsafe.png",
+      "targets": [
+        {
+          "control": "failsafe-procedure-0",
+          "kind": "option",
+          "expected": "selected",
+          "source": "C"
+        }
+      ]
+    },
+    {
+      "n": 6,
+      "title_ar": "OSD",
+      "screen": "OSD · بطاقة التنبيهات",
+      "screenshot": "images/6-osd-alarms.png",
+      "targets": [
+        {
+          "control": "osd-rssi-dbm",
+          "kind": "stepper",
+          "expected": "-102 dBm",
+          "source": "S1.1"
+        }
+      ]
+    }
+  ],
+  "step_count": 6,
+  "decisions": [
+    {
+      "requirement": "ترددا القطع (setpoint · الخانق)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتركهما 0 — أي «تلقائي». الإعداد السينمائي الرسمي يضبط المعاملين التلقائيين ولا يلمس ترددي القطع.",
+      "source": "S1.13"
+    },
+    {
+      "requirement": "Rates",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "لا توجد Rates رسمية للسينمائي. اختر ملفًا أبطأ من ملفك المعتاد وارفع expo قليلًا لتنعيم المنتصف — ولا نفرض رقمًا واحدًا لهذا النمط.",
+      "source": null
+    },
+    {
+      "requirement": "قيم PID (P · I · D)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "الإعدادان السينمائيان الرسميان لا يلمسان P أو I أو D إطلاقًا. النعومة تأتي من إحساس العصا والتنعيم، لا من خفض PID.",
+      "source": "S1.1"
+    },
+    {
+      "requirement": "الفلاتر (Gyro LPF · D-term LPF · Dynamic Notch)",
+      "decision": "KEEP_DEFAULT",
+      "detail": "اتبع ضبط منصتك. القيم المرجعية للسينمائي (سقف 750Hz لـ Cinelog، أدنى 125Hz لبناء نظيف) في قسم «اختياري»، والتطبيق لا يعدّلها إلا إذا أثبتت القراءة أن الميزة نشطة.",
+      "source": "S1.11a"
+    },
+    {
+      "requirement": "الأوضاع (Modes)",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "مفتاح ARM إلزامي ويُضبط مرة واحدة لكل طائرة. ما بعده — Angle أو Beeper أو Turtle — تفضيلك.",
+      "source": null
+    },
+    {
+      "requirement": "الطاقة والبطارية",
+      "decision": "PILOT_PREFERENCE",
+      "detail": "لا توجد حدود بطارية «سينمائية». اضبطها على حزمتك أنت: عدد الخلايا، وتحذير الخلية، والسعة.",
+      "source": null
+    },
+    {
+      "requirement": "مرسل الفيديو (VTX)",
+      "decision": "NOT_APPLICABLE",
+      "detail": "لا يغيّره هذا النمط. اضبط القناة والطاقة مرة واحدة حسب مكانك وقوانينه.",
+      "source": null
+    },
+    {
+      "requirement": "`thrust_linear`",
+      "decision": "NOT_APPLICABLE",
+      "detail": "يضبطه الإعداد الرسمي حسب تردد ESC (0 عند 24k · 20 عند 48k · 40 عند 96k)، ولا يعرضه هذا التطبيق. يُضبط من سطر الأوامر أو بتطبيق الحزمة.",
+      "source": "S1.11a"
+    }
+  ]
+}

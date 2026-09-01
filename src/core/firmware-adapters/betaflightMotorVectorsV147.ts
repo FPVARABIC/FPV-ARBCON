@@ -45,11 +45,10 @@
  * airframe corner an index sits at, and it never remaps outputs.
  */
 
-import {MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48} from '../protocol/msp/decoding/decodeAdvancedConfig';
+import type {MotorTestValueDomain} from './betaflightMotorDomainV147';
 import {
   MSP_SET_MOTOR_EXTERNAL_MAX_VALUE,
   MSP_SET_MOTOR_EXTERNAL_MIN_VALUE,
-  MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT,
 } from '../protocol/msp/encoding/encodeSetMotorPayload';
 
 /** External value that means STOP in non-3D DShot (drivers/dshot.c:90).
@@ -73,9 +72,6 @@ export const MOTOR_EXTERNAL_PROTOCOL_FLOOR_VALUE = MSP_SET_MOTOR_EXTERNAL_MIN_VA
 /** Highest legal external value (drivers/dshot.c:79 constrains to this
  * firmware-side; this module rejects rather than relies on that). */
 export const MOTOR_EXTERNAL_MAX_VALUE = MSP_SET_MOTOR_EXTERNAL_MAX_VALUE;
-
-/** Approved scope: Quad X, four motors. */
-export const MOTOR_VECTOR_MOTOR_COUNT = MSP_SET_MOTOR_SUPPORTED_MOTOR_COUNT;
 
 /**
  * The already-decoded FC facts this module needs. Deliberately a narrow
@@ -108,93 +104,134 @@ export class MotorVectorValueError extends Error {
   }
 }
 
-/**
- * Throws unless the decoded configuration is inside the reviewed
- * scope. 3D is checked FIRST because it inverts stop semantics; a caller
- * that ignored the ordering could otherwise build a "stop" vector for a
- * 3D aircraft.
+/* M-C: `assertSupportedMotorScope`, `buildAllStopVector` and
+ * `buildSingleMotorVector` were REMOVED here.
+ *
+ * They were the shipping single-pulse scope: exactly four motors, the
+ * DShot family, and FEATURE_3D refused outright. Two of those three
+ * refusals were not firmware facts. Nothing in the mixer table makes four
+ * special, and digital 3D is fully knowable - its neutral is the protocol
+ * constant PWM_RANGE_MIDDLE and dshotConvertFromExternal() splits forward
+ * from reverse in the firmware's own branch.
+ *
+ * Their replacements were already here, below, and are what the
+ * controller now uses: the domain-driven primitives, with the count from
+ * MSP_MOTOR_CONFIG and the 3D question owned by exactly one module,
+ * motorControlRuntimeScope. The strict half of the old rule survives
+ * there by name - ANALOG 3D is still refused, because `limit3d_low` and
+ * `limit3d_high` are not on the wire at API 1.47 or 1.49.
  */
-export function assertSupportedMotorScope(scope: MotorVectorScope): void {
-  if (scope.feature3dEnabled) {
-    throw new MotorVectorScopeError(
-      'Motor vectors are refused while FEATURE_3D is enabled: with 3D on, stop is external 1500 and ' +
-        '1000 is FULL REVERSE (drivers/dshot.c:81-88). This pass supports non-3D only.',
-    );
-  }
-  if (!Number.isInteger(scope.motorCount) || scope.motorCount !== MOTOR_VECTOR_MOTOR_COUNT) {
-    throw new MotorVectorScopeError(
-      `Motor vectors are refused: only motorCount ${MOTOR_VECTOR_MOTOR_COUNT} is in scope, received ${String(scope.motorCount)}. ` +
-        'Motor count must come from MSP_MOTOR_CONFIG offset 6.',
-    );
-  }
-  if (
-    !MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48.includes(
-      scope.motorProtocolRaw,
-    )
-  ) {
-    throw new MotorVectorScopeError(
-      'Motor vectors are refused: only the reviewed Betaflight API-1.46..1.48 DShot-family raw protocols ' +
-        `[${MOTOR_PROTOCOL_RAWS_BETAFLIGHT_API_1_46_TO_1_48.join(', ')}] are in scope, received ${String(scope.motorProtocolRaw)}. ` +
-        'The raw MSP_ADVANCED_CONFIG byte is compared, never a display-adjusted value.',
-    );
-  }
-}
+
+/* ===================================================================== *
+ * P1-C - THE GENERAL MOTOR VECTOR PRIMITIVES.
+ *
+ * The three functions above describe the SHIPPING single-pulse scope and
+ * are deliberately left byte-identical: `motorTestController.ts` still
+ * calls them, and P1 changes no runtime behaviour. The primitives below
+ * are the general form the professional workspace will use once P2
+ * migrates the controller. Nothing in this repository calls them yet.
+ *
+ * They are driven by a resolved MotorTestValueDomain rather than by the
+ * old MotorVectorScope, because stop is not a constant: it moves with the
+ * protocol family and with FEATURE_3D. See betaflightMotorDomainV147.ts
+ * for the source trace of every bound.
+ *
+ * NO PHYSICAL CLAIMS. A vector is a list of external protocol values. It
+ * asserts nothing about rotation, direction, airframe position, or
+ * whether any output will do anything at all. Physical consequences
+ * remain REQUIRES HARDWARE TEST.
+ * ===================================================================== */
 
 /**
- * The all-stop vector: every motor at the non-3D stop value. Returns a
- * fresh frozen array on every call.
+ * The all-stop vector for a resolved domain: every element at that
+ * configuration's own stop value - PWM_RANGE_MIN for non-3D DShot,
+ * `mincommand` for non-3D analog, and the 3D neutral when FEATURE_3D is
+ * enabled. Returns a fresh frozen array on every call.
  */
-export function buildAllStopVector(scope: MotorVectorScope): readonly number[] {
-  assertSupportedMotorScope(scope);
-  const values: number[] = [];
-  for (let index = 0; index < MOTOR_VECTOR_MOTOR_COUNT; index++) {
-    values.push(MOTOR_EXTERNAL_STOP_VALUE);
-  }
-  return Object.freeze(values);
-}
-
-/**
- * A vector with exactly ONE output above stop and the rest at stop.
- *
- * `externalActiveValue` is REQUIRED and has no default. It must be an
- * integer strictly above stop and at most the maximum. Supplying it is
- * the caller's explicit decision; this function neither suggests nor
- * validates physical suitability.
- *
- * `motorIndex` selects an OUTPUT INDEX only - no airframe position and
- * no rotation direction is implied.
- */
-export function buildSingleMotorVector(
-  scope: MotorVectorScope,
-  motorIndex: number,
-  externalActiveValue: number,
+export function buildAllStopVectorForDomain(
+  domain: MotorTestValueDomain,
 ): readonly number[] {
-  assertSupportedMotorScope(scope);
-
-  if (!Number.isInteger(motorIndex) || motorIndex < 0 || motorIndex >= MOTOR_VECTOR_MOTOR_COUNT) {
-    throw new MotorVectorValueError(
-      `motorIndex must be an integer in 0..${MOTOR_VECTOR_MOTOR_COUNT - 1}, received ${String(motorIndex)}.`,
-    );
-  }
-  if (typeof externalActiveValue !== 'number' || !Number.isInteger(externalActiveValue)) {
-    throw new MotorVectorValueError(
-      `externalActiveValue must be an integer, received ${String(externalActiveValue)}. ` +
-        'There is deliberately no default: pulse magnitude is an undecided safety question.',
-    );
-  }
-  if (
-    externalActiveValue <= MOTOR_EXTERNAL_STOP_VALUE ||
-    externalActiveValue > MOTOR_EXTERNAL_MAX_VALUE
-  ) {
-    throw new MotorVectorValueError(
-      `externalActiveValue must be within ${MOTOR_EXTERNAL_PROTOCOL_FLOOR_VALUE}..${MOTOR_EXTERNAL_MAX_VALUE}, ` +
-        `received ${externalActiveValue}. ${MOTOR_EXTERNAL_STOP_VALUE} is stop, not an active value.`,
-    );
-  }
-
   const values: number[] = [];
-  for (let index = 0; index < MOTOR_VECTOR_MOTOR_COUNT; index++) {
-    values.push(index === motorIndex ? externalActiveValue : MOTOR_EXTERNAL_STOP_VALUE);
+  for (let index = 0; index < domain.motorCount; index++) {
+    values.push(domain.stopValue);
   }
   return Object.freeze(values);
+}
+
+/**
+ * A full motor vector: one external value per output, all supplied by the
+ * caller. Every element is validated against the resolved domain; there
+ * is no default, no fill, no padding and no truncation, and no limit on
+ * how many elements may sit above the stop value - `MSP_SET_MOTOR` is a
+ * vector write (msp.c, `for (i = 0; i < getMotorCount(); i++)`), and the
+ * decision about how many outputs a caller MAY drive belongs to the
+ * layers above this one.
+ */
+export function buildMotorVector(
+  domain: MotorTestValueDomain,
+  values: readonly number[],
+): readonly number[] {
+  if (!Array.isArray(values)) {
+    throw new MotorVectorValueError(
+      `buildMotorVector: values must be an array, received ${typeof values}.`,
+    );
+  }
+  if (values.length !== domain.motorCount) {
+    throw new MotorVectorValueError(
+      `buildMotorVector: expected exactly ${domain.motorCount} values (the FC-reported motor count), ` +
+        `received ${values.length}.`,
+    );
+  }
+  for (let index = 0; index < values.length; index++) {
+    if (!Object.prototype.hasOwnProperty.call(values, index)) {
+      throw new MotorVectorValueError(
+        `buildMotorVector: values[${index}] is a hole; a sparse array is not a valid motor vector.`,
+      );
+    }
+    const value = values[index];
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+      throw new MotorVectorValueError(
+        `buildMotorVector: values[${index}] must be an integer, received ${String(value)}.`,
+      );
+    }
+    if (value < domain.commandDomainMin || value > domain.commandDomainMax) {
+      throw new MotorVectorValueError(
+        `buildMotorVector: values[${index}] must be within the command domain ` +
+          `${domain.commandDomainMin}..${domain.commandDomainMax} for this configuration (source: ` +
+          `${domain.domainSource}), received ${value}. Being inside the command domain is not a claim ` +
+          'that the value lies in any proven active region.',
+      );
+    }
+  }
+  return Object.freeze([...values]);
+}
+
+/**
+ * A vector with one output at `externalValue` and every other output at
+ * the domain's stop value. The general-domain counterpart of
+ * `buildSingleMotorVector`; unlike that legacy helper it works for any
+ * FC-reported motor count, any protocol family, and 3D configurations,
+ * and it accepts the stop value itself (a caller may legitimately build a
+ * vector that commands nothing).
+ */
+export function buildSingleOutputVectorForDomain(
+  domain: MotorTestValueDomain,
+  motorIndex: number,
+  externalValue: number,
+): readonly number[] {
+  if (
+    !Number.isInteger(motorIndex) ||
+    motorIndex < 0 ||
+    motorIndex >= domain.motorCount
+  ) {
+    throw new MotorVectorValueError(
+      `buildSingleOutputVectorForDomain: motorIndex must be an integer in 0..${domain.motorCount - 1}, ` +
+        `received ${String(motorIndex)}.`,
+    );
+  }
+  const values: number[] = [];
+  for (let index = 0; index < domain.motorCount; index++) {
+    values.push(index === motorIndex ? externalValue : domain.stopValue);
+  }
+  return buildMotorVector(domain, values);
 }

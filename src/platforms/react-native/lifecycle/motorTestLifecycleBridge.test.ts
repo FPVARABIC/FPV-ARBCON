@@ -27,6 +27,7 @@ import {
   createMotorTestController,
   type MotorTestController,
   type MotorTestControllerSnapshot,
+  MotorTestStopRequestResult,
 } from '../../../core/state/motorTestController';
 import {
   createMotorTestState,
@@ -179,11 +180,14 @@ class ReducerBackedController implements MotorTestController {
       outcome: {kind: 'READY'},
       firmwareCompatibility: undefined,
       motorScope: undefined,
+      mixerModeRaw: undefined,
       motorDiagnosticsSupport: undefined,
       telemetryHeld: true,
       warnings: [],
       stopDescriptors: [],
       teardown: undefined,
+      // A command may be live: the same fact the wire-stop gate reads.
+      outputMayBeLive: false,
       stopExecution: {
         attempts: 0,
         commandDispatched: false,
@@ -209,6 +213,8 @@ class ReducerBackedController implements MotorTestController {
         outcome: undefined,
       },
       armedStateEvidence: 'UNKNOWN_OR_STALE',
+  motorDomain: undefined,
+  motorRuntimeScope: undefined,
     };
   }
 
@@ -255,6 +261,21 @@ class ReducerBackedController implements MotorTestController {
 
   subscribe(): () => void {
     return () => undefined;
+  }
+
+  // P2-ii: the professional facade, stubbed inert - this suite drives
+  // lifecycle triggers, never motor commands.
+  setMotorValues(): {kind: 'REFUSED'; reason: 'NOT_COMMANDABLE'} {
+    return {kind: 'REFUSED', reason: 'NOT_COMMANDABLE'};
+  }
+  setMotorValue(): {kind: 'REFUSED'; reason: 'NOT_COMMANDABLE'} {
+    return {kind: 'REFUSED', reason: 'NOT_COMMANDABLE'};
+  }
+  setMaster(): {kind: 'REFUSED'; reason: 'NOT_COMMANDABLE'} {
+    return {kind: 'REFUSED', reason: 'NOT_COMMANDABLE'};
+  }
+  stopAll(): MotorTestStopRequestResult {
+    return this.requestStop('STOP_BUTTON_PRESSED');
   }
 
   close(): Promise<MotorTestControllerSnapshot> {

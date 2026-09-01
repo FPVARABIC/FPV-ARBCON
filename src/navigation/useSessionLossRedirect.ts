@@ -4,25 +4,38 @@
  * This logic used to live inline in App.tsx, which was correct while
  * Android was the only entry point. It is not correct now: index.web.tsx
  * mounts its own root (App.web.tsx) so the Start screen can stay in the
- * entry chunk while Connection/MainTabs/FirmwareFlasher load lazily, and a
+ * entry chunk while MainTabs/FirmwareFlasher load lazily, and a
  * second copy of "redirect when the tracked MSP session dies" would be a
  * second copy of a SAFETY rule. A Web build whose redirect drifted from
  * Android's would leave the operator sitting on a Motors or GPS tab whose
  * session is already gone - exactly the state this rule exists to prevent.
+ *
+ * WHERE THE REDIRECT LANDS: HOME. There is no connection screen in this
+ * application - not a route, not a tab, not an embedded workspace. A
+ * dead tracked session resets the stack to exactly [Start], so the
+ * operator is on the front page with the configuration door one press
+ * away, and Home says why they are there (connectionNotice).
+ *
+ * The SAFETY property is unchanged and is the whole point: no screen is
+ * ever left holding a sessionKey whose MSP ownership is INACTIVE,
+ * because the reset unmounts the entire shell.
  *
  * Nothing here is platform-specific: it is react-navigation state plus the
  * existing useMspOwnershipState() hook. Both entries pass the returned
  * ref/onReady/onStateChange straight to their own NavigationContainer.
  *
  * The comments below are the original App.tsx investigation notes, kept
- * verbatim with the code they describe rather than left behind on a file
- * that no longer contains the logic.
+ * with the code they describe rather than left behind on a file that no
+ * longer contains the logic, updated only where the 'Connection' route
+ * they referenced no longer exists.
  */
 
 import {useCallback, useEffect, useState} from 'react';
 import {useNavigationContainerRef} from '@react-navigation/native';
 
 import {useMspOwnershipState} from '../platforms/react-native/protocol';
+import {fcRebootRecovery} from '../platforms/react-native/protocol/fcRebootRecovery';
+import {connectionNotice} from '../ui/session/connectionNotice';
 import type {RootStackParamList} from './types';
 
 export type SessionLossRedirect = {
@@ -55,25 +68,25 @@ export function useSessionLossRedirect(): SessionLossRedirect {
   // set/cleared from exactly one place: handleNavigationStateChange below,
   // itself only ever invoked by NavigationContainer's own onStateChange
   // prop, which React Navigation fires after EVERY navigation state change
-  // (a navigate(), goBack(), or reset() call anywhere in the tree,
-  // including UsbConnectionScreen's own navigation.navigate('Setup',
-  // {sessionKey}) call in handleConnect()). Deliberately NOT threaded down
-  // as a callback prop into UsbConnectionScreen: onStateChange is
-  // react-navigation's own supported mechanism for "know the current route
-  // from outside the navigator", so this stays correct for ANY future
-  // navigation to 'Setup' (or away from it), not just that one call site,
-  // without UsbConnectionScreen needing to know this tracking exists at
-  // all.
+  // (a navigate(), goBack(), reset() or setParams() call anywhere in the
+  // tree - including SetupScreen's own navigation.setParams({sessionKey})
+  // the moment the embedded connection workspace establishes a session).
+  // Deliberately NOT threaded down as a callback prop into that
+  // workspace: onStateChange is react-navigation's own supported
+  // mechanism for "know the current route from outside the navigator",
+  // so this stays correct for ANY way 'Setup' gains or loses a
+  // sessionKey, not just today's one call site.
   //
-  //  - Landing on 'Setup' (name === 'Setup'): trackedSessionId is set to
-  //    that route's own sessionKey.sessionId - always the CURRENT
+  //  - 'Setup' WITH sessionKey params: trackedSessionId is set to that
+  //    route's own sessionKey.sessionId - always the CURRENT
   //    navigation's own params, never stale.
-  //  - Landing back on 'Connection' (via hardware Back, or this listener's
-  //    own reset() below): trackedSessionId is cleared. Without this, a
-  //    manual Back off 'Setup' (which must NOT deactivate the session -
-  //    see SetupScreen/App.test.tsx) would leave a stale tracked id
-  //    watched forever; a later, unrelated deactivate from the Connection
-  //    screen would then trigger an unnecessary extra reset().
+  //  - 'Setup' WITHOUT params (the disconnected configurator - a
+  //    first-class state now, see navigation/types.ts) and 'Start':
+  //    trackedSessionId is cleared. Without this, a manual Back off a
+  //    connected 'Setup' (which must NOT deactivate the session - see
+  //    App.test.tsx) would leave a stale tracked id watched forever; a
+  //    later, unrelated deactivate would then trigger an unnecessary
+  //    extra reset().
   //
   // trackedOwnershipState below is the existing, reactive
   // useMspOwnershipState() hook (Pass 6.4b), watching whichever sessionId
@@ -86,23 +99,30 @@ export function useSessionLossRedirect(): SessionLossRedirect {
     const currentRoute = navigationRef.getCurrentRoute();
     if (currentRoute?.name === 'Setup') {
       // Defense-in-depth (mspClient.ts/RNMspTransport.ts precedent): the
-      // only call site today (UsbConnectionScreen.tsx) always supplies
-      // sessionKey, TypeScript-enforced - but `as` below is a compile-time
-      // assertion only, and nothing at runtime guarantees a future
-      // linking config or another call site can't reach 'Setup' without
-      // it. If params are genuinely absent/malformed, this is not really
-      // "on Setup" as far as tracking is concerned - skip silently rather
-      // than throw uncaught inside a React-invoked callback.
+      // params type is `... | undefined` and the runtime shape is not
+      // guaranteed by the compile-time assertion below, so both branches
+      // handle absence gracefully rather than throw uncaught inside a
+      // React-invoked callback.
       const params = currentRoute.params as
         | RootStackParamList['Setup']
         | undefined;
-      if (params?.sessionKey) {
+      // The same truth check the connect workspace applies: a key with no
+      // sessionId names no session, so tracking it would watch the
+      // ownership of `undefined` - reported INACTIVE - and fire the
+      // redirect below against a session that never existed.
+      if (
+        typeof params?.sessionKey?.sessionId === 'string' &&
+        params.sessionKey.sessionId.length > 0
+      ) {
         setTrackedSessionId(params.sessionKey.sessionId);
+      } else {
+        // The disconnected configurator: nothing to watch. Clearing here
+        // (not just on 'Start') matters because the redirect below lands
+        // exactly on this state - a stale id surviving that landing
+        // would re-fire the reset on the next unrelated INACTIVE report.
+        setTrackedSessionId(null);
       }
-    } else if (
-      currentRoute?.name === 'Connection' ||
-      currentRoute?.name === 'Start'
-    ) {
+    } else if (currentRoute?.name === 'Start') {
       setTrackedSessionId(null);
     }
   }, [navigationRef]);
@@ -125,39 +145,102 @@ export function useSessionLossRedirect(): SessionLossRedirect {
     setIsNavigationReady(true);
   }, []);
 
+  // THE LOSS IS RECORDED SEPARATELY FROM THE SESSION IT CAME FROM, and
+  // that separation is the whole fix for the race this pass re-opened.
+  //
+  // The original Pass 7.1 bug was "the redirect cleared trackedSessionId
+  // before checking readiness, so its own re-entry guard blocked the
+  // retry". Keeping the id set instead was enough while 'Setup' stayed
+  // registered no matter what. It is NOT enough now: the hard connection
+  // wall (App.tsx) unregisters the whole configuration workspace the
+  // instant the board goes, react-navigation drops that route from its
+  // state, and onStateChange above sees 'Start' and clears
+  // trackedSessionId - wiping the pending redirect a second way, before
+  // onReady ever fires.
+  //
+  // So a detected loss becomes its own piece of state. Nothing that
+  // happens to the navigation state afterwards can erase it; it survives
+  // until the navigator is actually drivable and the reset has run.
+  const [pendingReturn, setPendingReturn] = useState<{
+    readonly expected: boolean;
+  } | null>(null);
+
   const trackedOwnershipState = useMspOwnershipState(trackedSessionId ?? '');
 
   useEffect(() => {
     if (trackedSessionId === null || trackedOwnershipState !== 'INACTIVE') {
       return;
     }
-    if (!isNavigationReady) {
-      // Do NOT clear trackedSessionId here - the redirect has not actually
-      // happened yet. Leaving it set is what lets this same branch run
-      // again (and this time actually redirect) once isNavigationReady
-      // itself flips true and re-triggers this effect - clearing it here
-      // would permanently block that retry via the guard above, silently
-      // dropping the redirect for good.
-      return;
-    }
     // The tracked session (physically detached, or deactivated some other
     // way) is gone while 'Setup' - or wherever it was navigated to from -
-    // still has it in view. Clearing trackedSessionId here (not just
-    // resetting the stack) is what stops this effect from firing again on
-    // its own next run - see the note above. Safe to call reset()
-    // unconditionally now: onReady having already fired is exactly
-    // react-navigation's own contract for "the ref is safe to use
-    // imperatively" - no separate navigationRef.isReady() check needed
-    // (and deliberately not kept as a second, independent source of truth
-    // that could disagree with isNavigationReady).
+    // still has it in view. Recorded here, at the moment it happens,
+    // whether or not the navigator can be driven yet.
+    //
+    // WAS THIS LOSS OURS?
+    //
+    // A session can end for two completely different reasons and the
+    // right response is not the same for both:
+    //
+    //   the cable came out, the board browned out, the link desynced
+    //       -> a FAULT. Land the operator on the connection workspace
+    //          and let them decide. Reaching for the hardware here is
+    //          how a reconnect loop starts: reopen the port, the link
+    //          dies again, this reset runs again, forever.
+    //
+    //   WE asked the board to reboot - a CLI `save`
+    //       -> NOT a fault. The application caused it, knows which board
+    //          is coming back, and told the operator it would happen.
+    //          Making them press Connect after pressing Save is the
+    //          defect this branch exists to close: it is what left
+    //          Motors, PID, Ports and every other screen holding a
+    //          session id that no longer named anything.
+    //
+    // The expectation is ONE-SHOT and deadline-bounded (see
+    // fcRebootRecovery.ts), so the loop the comment above warns about
+    // still cannot happen: the second loss in a row is never expected.
+    // It is answered HERE rather than at reset() time because the
+    // deadline runs from the loss, not from whenever navigation happens
+    // to become ready.
+    const expected = fcRebootRecovery.noteSessionLost(trackedSessionId);
+    // Clearing the id is what stops this effect from firing again on its
+    // own next run. Safe now: the loss it detected is already recorded
+    // in pendingReturn, which the guard below - not this id - drives.
     setTrackedSessionId(null);
-    navigationRef.reset({index: 0, routes: [{name: 'Connection'}]});
-  }, [
-    navigationRef,
-    trackedSessionId,
-    trackedOwnershipState,
-    isNavigationReady,
-  ]);
+    setPendingReturn({expected});
+  }, [trackedSessionId, trackedOwnershipState]);
+
+  useEffect(() => {
+    if (pendingReturn === null || !isNavigationReady) {
+      // Not ready yet: hold the pending return exactly as it is. This is
+      // the branch the Pass 7.1 bugfix exists for - it must leave the
+      // record intact so that isNavigationReady flipping true re-runs
+      // this effect and completes the redirect, instead of silently
+      // dropping it for good.
+      return;
+    }
+    // Safe to call reset() unconditionally: onReady having already fired
+    // is exactly react-navigation's own contract for "the ref is safe to
+    // use imperatively" - no separate navigationRef.isReady() check
+    // needed (and deliberately not kept as a second, independent source
+    // of truth that could disagree with isNavigationReady).
+    //
+    // HOME, AND ONLY HOME. There is no connection route to land on any
+    // more - see App.tsx. One route, index 0: the stack is exactly Home,
+    // so there is no history behind it for Back to walk into and nothing
+    // for the operator to be stranded on. Losing a board takes them to
+    // the front page of the application, where connecting again is one
+    // press away.
+    setPendingReturn(null);
+    // An UNEXPECTED loss is news and Home says so. A reboot the
+    // application itself asked for is not: the recovery lifecycle is
+    // already running and already telling the operator what is
+    // happening, so announcing a lost connection on top of it would be
+    // both wrong and alarming.
+    if (!pendingReturn.expected) {
+      connectionNotice.raise('SESSION_LOST');
+    }
+    navigationRef.reset({index: 0, routes: [{name: 'Start'}]});
+  }, [navigationRef, pendingReturn, isNavigationReady]);
 
   return {navigationRef, onReady, onStateChange};
 }

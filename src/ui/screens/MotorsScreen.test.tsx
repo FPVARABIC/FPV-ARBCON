@@ -28,6 +28,7 @@ import {
   endMotorTestSessionSafely,
 } from './MotorsScreen';
 import '../../i18n';
+import ar from '../../i18n/locales/ar.json';
 import i18n from '../../i18n';
 import type {
   MotorTestActivationBlockReason,
@@ -109,6 +110,9 @@ function snapshotFor(options: {
     outcome: { kind: 'READY' },
     firmwareCompatibility: undefined,
     motorScope: { motorCount: 4, motorProtocolRaw: 7, feature3dEnabled: false },
+    // MIXER_QUADX. These fixtures have always described a Quad X; the
+    // mixer byte is now stated rather than assumed from the count.
+    mixerModeRaw: 3,
     motorDiagnosticsSupport: {
       motorCount: 4,
       dshotTelemetryEnabled: true,
@@ -116,10 +120,14 @@ function snapshotFor(options: {
       escTelemetrySource: 'BIDIRECTIONAL_DSHOT',
     },
     armedStateEvidence: allowed ? 'FRESH_DISARMED' : 'UNKNOWN_OR_STALE',
+    motorDomain: undefined,
+    motorRuntimeScope: undefined,
     telemetryHeld: true,
     warnings: [],
     stopDescriptors: [],
     teardown: undefined,
+    // A command may be live: the same fact the wire-stop gate reads.
+    outputMayBeLive: false,
     stopExecution: {
       attempts: 0,
       commandDispatched: false,
@@ -231,6 +239,25 @@ class FakeOperator implements MotorTestOperatorPort {
     return 'ACCEPTED';
   }
 
+  // P3: professional facade. The fakes record calls; refusal by default
+  // mirrors a session with no engine.
+  professionalCalls: Array<{op: string; args: unknown[]}> = [];
+  setMotorValues(values: readonly number[]) {
+    this.professionalCalls.push({op: 'setMotorValues', args: [values]});
+    return {kind: 'ACCEPTED' as const, coalesced: false};
+  }
+  setMotorValue(motorIndex: number, value: number) {
+    this.professionalCalls.push({op: 'setMotorValue', args: [motorIndex, value]});
+    return {kind: 'ACCEPTED' as const, coalesced: false};
+  }
+  setMaster(value: number) {
+    this.professionalCalls.push({op: 'setMaster', args: [value]});
+    return {kind: 'ACCEPTED' as const, coalesced: false};
+  }
+  stopAll() {
+    this.professionalCalls.push({op: 'stopAll', args: []});
+    return this.requestStop('STOP_BUTTON_PRESSED');
+  }
   endSession(): Promise<MotorTestControllerSnapshot> {
     this.endCalls += 1;
     if (this.endError !== undefined) throw this.endError;
@@ -280,12 +307,17 @@ function render(operator: MotorTestOperatorPort | undefined): Rendered {
       return node;
     },
     press: (testID: string) => {
-      const node = query(testID);
+      // The node that owns the gesture. `onPress?.()` on the first testID
+      // match silently no-ops for a ToggleSwitch, which would let a
+      // session test pass while pressing nothing at all.
+      const node = tree.root
+        .findAll(candidate => candidate.props?.testID === testID)
+        .find(candidate => typeof candidate.props?.onPress === 'function');
       if (node === undefined) {
-        throw new Error(`no node with testID "${testID}"`);
+        throw new Error(`no pressable node with testID "${testID}"`);
       }
       act(() => {
-        node.props.onPress?.();
+        node.props.onPress();
       });
     },
     unmount: () => {
@@ -516,7 +548,7 @@ describe('MotorsScreen - state presentation', () => {
             'CONTROLLER_LINK_UNAVAILABLE',
             'REQUIRES_NEW_CONNECTION',
             'PULSE_OR_STOP_IN_PROGRESS',
-            'MOTOR_SCOPE_UNSUPPORTED',
+            'UNSUPPORTED_PROTOCOL_DOMAIN',
           ],
         }),
       ),
@@ -524,7 +556,7 @@ describe('MotorsScreen - state presentation', () => {
     // The real cause wins over every consequence regardless of the order
     // the controller happened to emit them in.
     expect(
-      rendered.query('motors-block-MOTOR_SCOPE_UNSUPPORTED'),
+      rendered.query('motors-block-UNSUPPORTED_PROTOCOL_DOMAIN'),
     ).toBeDefined();
     for (const consequence of [
       'CONTROLLER_LINK_UNAVAILABLE',
@@ -600,16 +632,23 @@ describe('MotorsScreen - state presentation', () => {
         safetyMonitorStopped: true,
         leaseRelease: 'RELEASED' as const,
         telemetryTokensReleased: true,
+      armingRestrictionRelease: 'RELEASED' as const,
         complete: true,
       },
     } satisfies MotorTestControllerSnapshot;
     const rendered = render(new FakeOperator(blocked));
 
+    // The HOLD is disabled in the primary flow, where the operator is -
+    // that part is unchanged and is the safety-bearing half. The exact
+    // diagnostic code moved under the technical details disclosure with
+    // the rest of the internal state (M-E §44), in full.
+    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    expect(rendered.query('motors-readiness-blocked-detail')).toBeUndefined();
+    rendered.press('motors-advanced-verification-toggle');
     expect(rendered.query('motors-readiness-blocked-detail')).toBeDefined();
     expect(texts(rendered)).toContain(
       'توقف فحص الجاهزية عند FIRST_OBSERVATION (رمز التشخيص: FIRST_OBSERVATION_UNAVAILABLE). لم يُرسل التطبيق أمر تشغيل للمحرك.',
     );
-    expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
     rendered.unmount();
   });
 
@@ -627,9 +666,18 @@ describe('MotorsScreen - state presentation', () => {
       setupStep: 'READY' as const,
       outcome: {kind: 'READY' as const},
       armedStateEvidence: 'UNKNOWN_OR_STALE' as const,
+      motorDomain: undefined,
+      motorRuntimeScope: undefined,
     } satisfies MotorTestControllerSnapshot;
     const rendered = render(new FakeOperator(barredReady));
 
+    // M-E §44: the exact diagnostic code is technical detail and now
+    // lives under the disclosure. It is not weaker - the same sentence,
+    // the same code - it simply stopped standing between the operator and
+    // the motors. The assertion first proves it is NOT in the primary
+    // flow, then opens the section and proves it is all still there.
+    expect(rendered.query('motors-readiness-blocked-detail')).toBeUndefined();
+    rendered.press('motors-advanced-verification-toggle');
     expect(rendered.query('motors-readiness-blocked-detail')).toBeDefined();
     expect(texts(rendered)).toContain(
       'توقف فحص الجاهزية عند READY (رمز التشخيص: ARMED_STATE_UNKNOWN_OR_STALE). لم يُرسل التطبيق أمر تشغيل للمحرك.',
@@ -641,18 +689,24 @@ describe('MotorsScreen - state presentation', () => {
     rendered.unmount();
   });
 
-  it('names 3D specifically rather than as a generic scope refusal', () => {
+  it('names ANALOG 3D specifically, and says what MSP could not tell it', () => {
     const rendered = render(
       new FakeOperator(
         snapshotFor({
           machine: 'Locked',
           allowed: false,
-          reasons: ['MOTOR_3D_ENABLED'],
+          reasons: ['ANALOG_3D_ENDPOINTS_UNKNOWN'],
         }),
       ),
     );
-    expect(rendered.query('motors-block-MOTOR_3D_ENABLED')).toBeDefined();
-    expect(texts(rendered)).toContain('إعداد 3D غير مدعوم.');
+    expect(
+      rendered.query('motors-block-ANALOG_3D_ENDPOINTS_UNKNOWN'),
+    ).toBeDefined();
+    // The sentence says WHAT IS MISSING - the two active endpoints - not
+    // that "3D is unsupported", which was never true of digital 3D.
+    expect(texts(rendered)).toContain(
+      'وضع 3D التماثلي: حدود الاتجاهين غير متاحة عبر MSP، فلا يمكن تمييز الأمام من الخلف.',
+    );
     rendered.unmount();
   });
 
@@ -676,8 +730,14 @@ describe('MotorsScreen - activation gating', () => {
     const ids = rendered.tree.root
       .findAll(node => typeof node.props?.testID === 'string')
       .map(node => node.props.testID as string);
-    expect(ids.indexOf('motors-acknowledgements')).toBeLessThan(
-      ids.indexOf('motors-workspace'),
+    // The acknowledgement ritual is gone entirely - it has no index to
+    // compare, and that IS the contract.
+    expect(ids).not.toContain('motors-acknowledgements');
+    // The safety banner still leads the page, and the diagram still
+    // precedes the control that spins the motor it labels.
+    expect(ids.indexOf('motors-propeller-warning')).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf('motors-propeller-warning')).toBeLessThan(
+      ids.indexOf('motors-primary-workspace'),
     );
     expect(ids.indexOf('motors-diagram')).toBeLessThan(
       ids.indexOf('motors-hold-button'),
@@ -774,12 +834,33 @@ describe('MotorsScreen - long-press contract', () => {
     rendered.unmount();
   });
 
-  it('keeps the real hold action in the persistent session dock', () => {
+  /**
+   * REWRITTEN IN P3. The hold action used to live in the always-pinned
+   * dock, which made press-and-hold read as THE way to drive motors. The
+   * professional workspace is the primary path now, so the hold control
+   * moved into the التحقق والأدوات bench area - still fully functional,
+   * no longer pinned teaching.
+   *
+   * THE DOCK NOW PINS STOP AND NOTHING ELSE. The end-session rectangle it
+   * used to carry is gone: session lifecycle belongs to the ONE جلسة
+   * المحركات switch at the top of the workspace, and a second remote
+   * control for the same authority was the confusion the operator
+   * reported. STOP stays pinned because STOP is not a lifecycle action.
+   */
+  it('pins STOP only; lifecycle lives on the session switch and the hold action in the tools bench', () => {
     const { rendered } = readyRendered();
     const dock = rendered.find('motors-session-dock');
-    expect(dock.findAll(node => node.props?.testID === 'motors-hold-button').length).toBeGreaterThan(0);
+    expect(dock.findAll(node => node.props?.testID === 'motors-hold-button')).toHaveLength(0);
     expect(dock.findAll(node => node.props?.testID === 'motors-stop-button').length).toBeGreaterThan(0);
-    expect(dock.findAll(node => node.props?.testID === 'motors-end-session-button').length).toBeGreaterThan(0);
+    // No session lifecycle control in the dock - anywhere.
+    expect(
+      dock.findAll(node => node.props?.testID === 'motors-end-session-button'),
+    ).toHaveLength(0);
+    expect(
+      dock.findAll(node => node.props?.testID === 'motor-session-toggle'),
+    ).toHaveLength(0);
+    // The hold action itself remains reachable, after the diagram.
+    expect(rendered.find('motors-hold-button')).toBeDefined();
     rendered.unmount();
   });
 
@@ -813,7 +894,7 @@ describe('MotorsScreen - long-press contract', () => {
       resolveBegin = resolve;
     });
     const rendered = render(operator);
-    rendered.press('motors-begin-session-button');
+    rendered.press('motor-session-toggle');
     expect(operator.beginCalls).toBe(1);
     expect(operator.pulseCalls).toEqual([]);
     const ready = snapshotFor({allowed: true});
@@ -848,7 +929,7 @@ describe('MotorsScreen - long-press contract', () => {
     });
     const rendered = render(operator);
 
-    rendered.press('motors-begin-session-button');
+    rendered.press('motor-session-toggle');
     await act(async () => {
       await operator.beginResult;
       await Promise.resolve();
@@ -863,7 +944,7 @@ describe('MotorsScreen - long-press contract', () => {
 
   it('activates exactly the selected output, exactly once per hold', () => {
     const { operator, rendered } = readyRendered();
-    rendered.press('motors-slot-3');
+    rendered.press('motors-airframe-slot-3');
     longPress(rendered);
     act(() => {
       const hold = rendered.find('motors-hold-button');
@@ -961,7 +1042,7 @@ describe('MotorsScreen - long-press contract', () => {
 
   it('stops the live episode on a motor switch and never auto-starts the second output', () => {
     const { operator, rendered } = readyRendered();
-    rendered.press('motors-slot-1');
+    rendered.press('motors-airframe-slot-1');
     longPress(rendered);
     act(() => {
       operator.publish(
@@ -973,7 +1054,7 @@ describe('MotorsScreen - long-press contract', () => {
       );
     });
 
-    rendered.press('motors-slot-2');
+    rendered.press('motors-airframe-slot-2');
     expect(operator.stopCalls).toEqual(['MOTOR_SELECTION_CHANGED']);
     // Motor 2 was NOT started. Only the original activation happened.
     expect(operator.pulseCalls).toEqual([1]);
@@ -1076,8 +1157,12 @@ describe('MotorsScreen - safety dominance', () => {
     'CONTROLLER_LINK_UNAVAILABLE',
     'FC_ARMED',
     'ARMED_STATE_UNKNOWN_OR_STALE',
-    'MOTOR_3D_ENABLED',
-    'MOTOR_SCOPE_UNSUPPORTED',
+    // M-C: the four scope refusals and the drift guard, each on its own.
+    'ANALOG_3D_ENDPOINTS_UNKNOWN',
+    'NO_RUNTIME_MOTORS',
+    'MOTOR_COUNT_OUT_OF_RANGE',
+    'UNSUPPORTED_PROTOCOL_DOMAIN',
+    'MOTOR_CONFIGURATION_DRIFTED',
     'PULSE_OR_STOP_IN_PROGRESS',
   ] as const)('lets %s dominate UI interaction', reason => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
@@ -1195,13 +1280,19 @@ describe('MotorsScreen - expected reference is labelled as expected', () => {
     for (const slot of MOTOR_TEST_OUTPUT_SLOTS) {
       expect(rendered.query(`motors-diagram-slot-${slot}`)).toBeDefined();
     }
-    // Explicitly labelled EXPECTED, not confirmed. This test asserts the
-    // label only; it establishes NOTHING about real wiring, physical frame
-    // position or rotation direction - that is Phase 2I plus the
+    // Explicitly labelled as a REFERENCE, not a measurement. This test
+    // asserts the label only; it establishes NOTHING about real wiring,
+    // physical frame position or rotation direction - that is the
     // operator's own physical observation.
-    const notice = rendered.find('motors-diagram-notice');
-    expect(notice.props.children).toContain('المتوقع');
-    expect(notice.props.children).toContain('وليس نتيجة مؤكدة');
+    //
+    // M-E moved the claim from a paragraph above the drawing into the
+    // drawing's own caption, in one sentence, and made it name the source
+    // the positions actually come from. The property is unchanged and the
+    // wording is keyed to the catalogue rather than copied.
+    const notice = rendered.find('motors-diagram-caption');
+    expect(notice.props.children).toBe(ar.motorsScreen.diagramCaption);
+    expect(ar.motorsScreen.diagramCaption).toContain('جدول المازج');
+    expect(ar.motorsScreen.diagramCaption).toContain('لا يُقرأ');
     rendered.unmount();
   });
 
@@ -1550,7 +1641,7 @@ describe('MotorsScreen - the four-motor flow', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
-    rendered.press(`motors-slot-${slot}`);
+    rendered.press(`motors-airframe-slot-${slot}`);
     longPress(rendered);
     // The number on the card IS the number handed to the controller.
     expect(operator.pulseCalls).toEqual([slot]);
@@ -1563,7 +1654,7 @@ describe('MotorsScreen - the four-motor flow', () => {
     acknowledgeAll(rendered);
 
     for (const slot of [3, 1, 4, 2, 3]) {
-      rendered.press(`motors-slot-${slot}`);
+      rendered.press(`motors-airframe-slot-${slot}`);
       longPress(rendered);
       pressOut(rendered);
       // The release round trip the controller really performs.
@@ -1592,6 +1683,19 @@ describe('MotorsScreen - direction handling', () => {
     const operator = new FakeOperator(snapshotFor({ allowed: true }));
     const rendered = render(operator);
     acknowledgeAll(rendered);
+    // P1b-C put the authoring panel inside the core direction section;
+    // P1b-C.1 collapsed it behind an explicit action, so the resting
+    // state offers the entry and the form appears only when asked for.
+    // M-E §18 / §44 moved the workflow under the technical details
+    // disclosure; M-F2 §18 promoted it back to a PRIMARY one-press entry
+    // (`اتجاه المحركات`) beside the aircraft - hiding the direction
+    // workflow behind the advanced toggle was judged over-hiding. The
+    // panel, its review step and its apply gate are unchanged.
+    expect(rendered.query('motor-direction-section')).toBeUndefined();
+    rendered.press('motors-open-direction');
+    expect(rendered.query('motor-direction-section')).toBeDefined();
+    expect(rendered.query('esc-direction-panel')).toBeUndefined();
+    rendered.press('motor-direction-authoring-open');
     expect(rendered.query('esc-direction-panel')).toBeDefined();
     expect(rendered.query('esc-direction-review')).toBeDefined();
     expect(rendered.query('esc-direction-apply')).toBeUndefined();
@@ -1606,12 +1710,25 @@ describe('MotorsScreen - direction handling', () => {
     rendered.unmount();
   });
 
-  it('never presents the displayed directions as read from the aircraft', () => {
+  it('never presents a rotation direction as read from the aircraft', () => {
     const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
-    expect(rendered.query('motors-diagram-direction-source')).toBeDefined();
-    expect(texts(rendered)).toContain(
-      'اتجاهات الدوران المعروضة مرجع شائع لمخطط Quad X وليست قراءة من متحكم الطيران.',
-    );
+    // P1b-B.2 shortened the visible line and moved the longer explanation
+    // under a details toggle. M-D §25 went further: the operational map
+    // shows no rotation AT ALL, so the visible line no longer says the
+    // arrows are expected - it says there are none and why. The claim is
+    // strictly stronger, and it still requires no interaction to read.
+    //
+    // Keyed to the catalogue rather than a copied string. The previous
+    // version of this test held its own copy of the Arabic, so a wording
+    // change failed it for the wrong reason.
+    // M-E folded the standalone direction-source line into the drawing's
+    // single caption: one sentence stating where the positions come from
+    // AND that rotation is not read. Same claim, one line instead of two.
+    expect(rendered.query('motors-diagram-caption')).toBeDefined();
+    const visible = texts(rendered);
+    expect(visible).toContain(ar.motorsScreen.diagramCaption);
+    // And nothing anywhere on the screen prints a rotation token.
+    expect(String(visible)).not.toMatch(/\bCW\b|\bCCW\b/);
     rendered.unmount();
   });
 });
@@ -1694,6 +1811,133 @@ describe('MotorsScreen - continuous hold survives the activation gate closing', 
     longPress(rendered);
     expect(operator.pulseCalls).toEqual([]);
     expect(rendered.find('motors-hold-button').props.disabled).toBe(true);
+    rendered.unmount();
+  });
+});
+
+describe('P3 - sticky professional STOP', () => {
+  it('keeps exactly ONE pinned stop, in every state, and it is outside the scroller', async () => {
+    const operator = new FakeOperator(snapshotFor({ machine: 'Ready' }));
+    const {tree: renderer} = render(operator);
+    // Enable through the workspace toggle.
+    const toggle = renderer.root.findAll(
+      node =>
+        (node.props as {testID?: string}).testID === 'motor-workspace-enable' &&
+        typeof (node.props as {onValueChange?: unknown}).onValueChange ===
+          'function',
+    )[0];
+    await act(async () => {
+      (toggle.props as {onValueChange: (v: boolean) => void}).onValueChange(
+        true,
+      );
+    });
+    /*
+     * THERE USED TO BE THREE STOP CONTROLS, two of them pinned: a
+     * "sticky" dock rendered only while motor control was on, and the
+     * session dock rendered always - identical red, identical wording,
+     * stacked one above the other. The sticky one is gone.
+     *
+     * The one that was KEPT is the unconditional one, deliberately: it
+     * is pinned in every state, including a fault with motor control
+     * already withdrawn, which is exactly the state where a stop matters
+     * most and where the sticky one was hidden.
+     */
+    expect(
+      renderer.root.findAll(
+        node =>
+          typeof node.type === 'string' &&
+          (node.props as {testID?: string}).testID === 'motors-sticky-stop',
+      ),
+    ).toHaveLength(0);
+
+    const pinned = renderer.root.findAll(
+      node => (node.props as {testID?: string}).testID === 'motors-stop-button',
+    );
+    expect(pinned.length).toBeGreaterThan(0);
+    // Pinned means OUTSIDE the scrolling body.
+    const {ScrollView} = require('react-native');
+    for (const scroll of renderer.root.findAllByType(ScrollView)) {
+      expect(
+        scroll.findAll(
+          node =>
+            (node.props as {testID?: string}).testID === 'motors-stop-button',
+        ),
+      ).toHaveLength(0);
+    }
+    expect(JSON.stringify(renderer.toJSON())).toContain('إيقاف المحركات');
+  });
+
+  it('is still pinned with motor control inactive - and is still not duplicated', () => {
+    const operator = new FakeOperator(snapshotFor({ machine: 'Ready' }));
+    const {tree: renderer} = render(operator);
+    expect(
+      renderer.root.findAll(
+        node =>
+          typeof node.type === 'string' &&
+          (node.props as {testID?: string}).testID === 'motors-sticky-stop',
+      ),
+    ).toHaveLength(0);
+    // One pinned host element, not two.
+    expect(
+      renderer.root.findAll(
+        node =>
+          typeof node.type === 'string' &&
+          (node.props as {testID?: string}).testID === 'motors-stop-button',
+      ),
+    ).toHaveLength(1);
+  });
+});
+
+describe('P3 - final page organization', () => {
+  it('renders the professional workspace BEFORE the legacy tools bench', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const ids = rendered.tree.root
+      .findAll(node => typeof node.props?.testID === 'string')
+      .map(node => node.props.testID as string);
+    // The primary workspace still comes first, and the verification
+    // bench still comes after it. What changed is that the bench now
+    // lives INSIDE a collapsed disclosure whose header carries the
+    // section name - so the name has a position even when the card does
+    // not, which is what makes this ordering assertable at all.
+    expect(ids.indexOf('motor-workspace')).toBeGreaterThanOrEqual(0);
+    expect(ids.indexOf('motor-workspace')).toBeLessThan(
+      ids.indexOf('motors-tools-heading'),
+    );
+    expect(ids).not.toContain('motors-workspace');
+    rendered.unmount();
+  });
+
+  it('labels configuration under إعدادات المحركات and tools under التحقق والأدوات', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const body = JSON.stringify(rendered.tree.toJSON());
+    expect(body).toContain('إعدادات المحركات');
+    expect(body).toContain('التحقق والأدوات');
+    rendered.unmount();
+  });
+
+  it('shows the propeller warning exactly ONCE, with no acknowledgement ritual', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const body = JSON.stringify(rendered.tree.toJSON());
+    // Exact banner sentence once; the tools bench step may mention props
+    // in its own instructions without being a second page warning.
+    expect(body.split('أزل المراوح قبل اختبار المحركات.').length - 1).toBe(1);
+    // The old checklist/acknowledgement block is gone from the page.
+    expect(
+      rendered.tree.root.findAll(
+        node => node.props?.testID === 'motors-acknowledgements',
+      ),
+    ).toHaveLength(0);
+    rendered.unmount();
+  });
+
+  it('the pinned dock no longer teaches press-and-hold while idle', () => {
+    const rendered = render(new FakeOperator(snapshotFor({ allowed: true })));
+    const dock = rendered.find('motors-session-dock');
+    expect(
+      JSON.stringify(
+        dock.findAll(node => node.props?.testID === 'motors-hold-button'),
+      ),
+    ).toBe('[]');
     rendered.unmount();
   });
 });
