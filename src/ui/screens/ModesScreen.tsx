@@ -185,7 +185,7 @@ function LogicToggle({value, disabled, onChange}: {value: 0 | 1; disabled: boole
   return <View style={styles.logicRow}>
     <Text style={styles.fieldLabel}>المنطق</Text>
     <View style={styles.segmented}>
-      {([{value: 0 as const, label: 'OR'}, {value: 1 as const, label: 'AND'}]).map(option => <Pressable key={option.value} disabled={disabled} onPress={() => onChange(option.value)} style={[styles.segment, value === option.value && styles.segmentSelected]}><Text style={[styles.segmentText, value === option.value && styles.segmentTextSelected]}>{option.label}</Text></Pressable>)}
+      {([{value: 0 as const, label: 'OR'}, {value: 1 as const, label: 'AND'}]).map(option => <Pressable accessibilityRole="radio" accessibilityState={{selected: value === option.value}} key={option.value} disabled={disabled} onPress={() => onChange(option.value)} style={[styles.segment, value === option.value && styles.segmentSelected]}><Text style={[styles.segmentText, value === option.value && styles.segmentTextSelected]}>{option.label}</Text></Pressable>)}
     </View>
   </View>;
 }

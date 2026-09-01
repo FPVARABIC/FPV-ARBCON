@@ -1990,6 +1990,8 @@ export default function FirmwareFlasherScreen({
             keyboardShouldPersistTaps="handled"
             renderItem={({item}) => (
               <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{selected: selectedTarget === item.target}}
                 testID={`target-${item.target}`}
                 onPress={() => {
                   setSelectedTarget(item.target);
@@ -2114,6 +2116,8 @@ export default function FirmwareFlasherScreen({
                   )}
                   {serialDevices.map(device => (
                     <Pressable
+                      accessibilityRole="radio"
+                      accessibilityState={{selected: selectedSerialId === device.deviceId}}
                       key={device.deviceId}
                       testID={`detect-serial-device-${device.deviceId}`}
                       disabled={isBusy}
@@ -2199,6 +2203,8 @@ export default function FirmwareFlasherScreen({
                         <View style={styles.choiceRows}>
                           {visibleReleases.map(release => (
                             <Pressable
+                              accessibilityRole="radio"
+                              accessibilityState={{selected: selectedRelease === release.release}}
                               key={release.release}
                               testID={`release-${release.release}`}
                               disabled={isBusy}
@@ -2345,6 +2351,8 @@ export default function FirmwareFlasherScreen({
                                 />
                                 {filteredCommits.slice(0, 20).map(item => (
                                   <Pressable
+                                    accessibilityRole="radio"
+                                    accessibilityState={{selected: commit === item.sha}}
                                     key={item.sha}
                                     onPress={() => setCommit(item.sha)}
                                     style={[styles.commitRow, commit === item.sha && styles.targetRowSelected]}>
@@ -2546,6 +2554,8 @@ export default function FirmwareFlasherScreen({
               {serialDevices.length > 0 ? <Text style={styles.fieldLabel}>أجهزة Serial</Text> : null}
               {serialDevices.map(device => (
                 <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{selected: selectedSerialId === device.deviceId}}
                   key={device.deviceId}
                   disabled={isBusy}
                   onPress={() => { setSelectedSerialId(device.deviceId); setSelectedPortIndex(0); }}
@@ -2565,6 +2575,8 @@ export default function FirmwareFlasherScreen({
               {dfuDevices.length > 0 ? <Text style={styles.fieldLabel}>أجهزة DFU</Text> : null}
               {dfuDevices.map(device => (
                 <Pressable
+                  accessibilityRole="radio"
+                  accessibilityState={{selected: selectedDfuId === device.deviceId}}
                   key={device.deviceId}
                   testID={`dfu-device-${device.deviceId}`}
                   disabled={isBusy}
