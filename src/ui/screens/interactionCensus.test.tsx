@@ -59,6 +59,11 @@ const IDENTITY = {
   },
 };
 
+/* StartScreen reaches the session layer, which reaches the native USB
+   TurboModule. There is no native binary under Jest, and this census is
+   about what the screens DRAW, not about the transport. */
+jest.mock('../../platforms/react-native/transport/native/NativeUsbSerialTransport');
+
 jest.mock('../../platforms/react-native/protocol/useMspSessionState', () => ({
   ...jest.requireActual('../../platforms/react-native/protocol/useMspSessionState'),
   useMspOwnershipState: () => 'ACTIVE',
@@ -85,6 +90,24 @@ import VideoTransmitterScreen from './VideoTransmitterScreen';
 import {MotorConfigurationPanel} from './MotorConfigurationPanel';
 import FlightStyleGuideScreen from './FlightStyleGuideScreen';
 import FlightStyleCornerScreen from './FlightStyleCornerScreen';
+import StartScreen from './StartScreen';
+import FirmwareFlasherSimpleScreen from './FirmwareFlasherSimpleScreen';
+import LedStripScreen from './LedStripScreen';
+import SensorsScreen from './SensorsScreen';
+import BlackboxScreen from './BlackboxScreen';
+import PresetsScreen from './PresetsScreen';
+import CliScreen from './CliScreen';
+import {MotorsScreenView} from './MotorsScreen';
+import {LedStripConfigurationController} from '../../platforms/react-native/protocol/LedStripConfigurationController';
+import {SensorsConfigurationController} from '../../platforms/react-native/protocol/SensorsConfigurationController';
+import {BlackboxConfigurationController} from '../../platforms/react-native/protocol/BlackboxConfigurationController';
+import {VirtualLedBoard} from '../../platforms/react-native/protocol/__testUtils__/virtualLedBoard';
+import {
+  LedBaseFunction,
+  LedDirectionBit,
+  encodeLedEntry,
+} from '../../core/protocol/msp/decoding/ledStripWireContract';
+import {VirtualSensorsFc} from '../../platforms/react-native/protocol/__testUtils__/virtualSensorsFc';
 import {FailsafeConfigurationController} from '../../platforms/react-native/protocol/FailsafeConfigurationController';
 import {GpsConfigurationController} from '../../platforms/react-native/protocol/GpsConfigurationController';
 import {ModesConfigurationController} from '../../platforms/react-native/protocol/ModesConfigurationController';
@@ -200,6 +223,55 @@ async function snapshotVia(
   return outcome.snapshot ?? outcome;
 }
 
+/**
+ * The load outcome over a subsystem's OWN virtual board, whatever it is.
+ *
+ * LED, Sensors and Blackbox do not answer over the shared quad board -
+ * they have their own. Where a subsystem still cannot reach LOADED, the
+ * honest thing is to hand the screen the REAL refusal and census the
+ * state it actually draws for it. A screen's unsupported/failed surface
+ * is a state operators see, and its controls deserve pressing too.
+ */
+const OUTCOME_CACHE = new Map<string, any>();
+
+async function outcomeVia(
+  make: (options: any) => {load: (key: any) => Promise<any>},
+  virtualBoard: unknown,
+  apiMinor: number,
+  sessionId: string,
+): Promise<any> {
+  /* Each screen is mounted once per pass. Driving a virtual board ten
+     times over is the difference between a fast census and one that
+     exceeds its own budget, and the outcome is identical every time. */
+  const cached = OUTCOME_CACHE.get(sessionId);
+  if (cached !== undefined) return cached;
+  const session = new VirtualSession({
+    sessionId,
+    board: virtualBoard as never,
+    apiMinor,
+  });
+  let outcome: any;
+  try {
+    outcome = await make(session.options as any).load(session.key);
+  } catch (error) {
+    outcome = {kind: 'THREW', reason: String(error).slice(0, 120)};
+  }
+  OUTCOME_CACHE.set(sessionId, outcome);
+  return outcome;
+}
+
+/** A controller double that replays one real outcome and refuses writes. */
+function replay(outcome: any, record: Recorder, label: string): any {
+  return watched(
+    {
+      load: async () => outcome,
+      save: async () => ({kind: 'NO_CHANGES', snapshot: outcome.snapshot}),
+    },
+    record,
+    label,
+  );
+}
+
 /* ==================================================================== *
  * THE RECORDER
  *
@@ -218,6 +290,19 @@ function recorder(): Recorder {
   return {calls: 0, log: []};
 }
 
+/**
+ * OPEN SUBSCRIPTIONS, WHILE ANYONE IS COUNTING.
+ *
+ * A screen that subscribes to a port and never calls the teardown it was
+ * handed keeps receiving updates into a component that no longer exists.
+ * `watched` already sits on every port, so it is the one place that can
+ * see a `subscribe` handed out and the returned unsubscribe never used.
+ * Off by default - only the lifecycle pass installs a ledger.
+ */
+let subscriptions: Map<number, string> | undefined;
+let subscriptionSeq = 0;
+const SUBSCRIBES = /^(subscribe|addListener|addEventListener|on[A-Z])/;
+
 /** Wraps every function on a port so a call counts as an effect. */
 function watched<T extends object>(port: T, record: Recorder, label: string): T {
   return new Proxy(port, {
@@ -226,8 +311,26 @@ function watched<T extends object>(port: T, record: Recorder, label: string): T 
       if (typeof value !== 'function') return value;
       return (...args: unknown[]) => {
         record.calls += 1;
-        record.log.push(`${label}.${String(property)}`);
-        return (value as (...a: unknown[]) => unknown).apply(target, args);
+        const name = String(property);
+        record.log.push(`${label}.${name}`);
+        const outcome = (value as (...a: unknown[]) => unknown).apply(
+          target,
+          args,
+        );
+        if (
+          subscriptions === undefined ||
+          typeof outcome !== 'function' ||
+          !SUBSCRIBES.test(name)
+        ) {
+          return outcome;
+        }
+        const ticket = (subscriptionSeq += 1);
+        subscriptions.set(ticket, `${label}.${name}`);
+        const ledger = subscriptions;
+        return (...teardown: unknown[]) => {
+          ledger.delete(ticket);
+          return (outcome as (...a: unknown[]) => unknown)(...teardown);
+        };
       };
     },
   });
@@ -271,6 +374,126 @@ interface Discovered {
   /** Why the harness cannot press it honestly, when it cannot. */
   readonly unmeasurable?: string;
   readonly invoke: () => unknown;
+  /**
+   * Drives the real touch responder chain, for controls that have one.
+   * `undefined` where the interaction is not a press at all - a Switch's
+   * `onValueChange` and a TextInput's `onChangeText` are not gestures.
+   */
+  readonly touch?: () => Touch;
+  /**
+   * IT CAN BE REACHED WITHOUT A POINTER.
+   *
+   * React Native and react-native-web both decide focus order from the
+   * host view's `accessible` and `focusable` props: `accessible={false}`
+   * takes a control out of the accessibility tree, `focusable={false}`
+   * takes it out of the tab order, and either one leaves a control that
+   * a mouse can use and a keyboard or a screen reader cannot. Measured
+   * on the rendered host, not inferred from the component.
+   *
+   * `undefined` where the question does not apply - a control with no
+   * touch-handling host, or one that is disabled and correctly absent
+   * from the tab order.
+   */
+  readonly keyboardReachable?: boolean;
+}
+
+/* ==================================================================== *
+ * A REAL PRESS, NOT A PROP CALL
+ *
+ * Calling `props.onPress()` is not what a finger does. React Native
+ * decides whether a press happens at the TOUCH RESPONDER layer: the host
+ * view that `Pressable` renders is asked `onStartShouldSetResponder`, and
+ * a disabled Pressable answers false - the handler is never reached, no
+ * matter what the props say.
+ *
+ * That distinction is the whole of the "disabled but activatable" defect
+ * class. A control that carries `disabled` is genuinely unreachable. A
+ * control that carries only `accessibilityState={{disabled: true}}` tells
+ * a screen reader the action is unavailable and then performs it anyway -
+ * and the only instrument that can tell those two apart is one that goes
+ * through the responder chain instead of around it. Measured, not
+ * assumed:
+ *
+ *   <Pressable disabled>                         claimed=false fired=0
+ *   <Pressable>                                  claimed=true  fired=1
+ *   <Pressable accessibilityState={{disabled}}>  claimed=true  fired=1  <- the defect
+ * ==================================================================== */
+
+/** A synthetic touch, shaped the way Pressability reads it. */
+function touchEvent(): any {
+  const at = Date.now();
+  return {
+    nativeEvent: {
+      locationX: 1,
+      locationY: 1,
+      pageX: 1,
+      pageY: 1,
+      timestamp: at,
+      touches: [],
+      changedTouches: [],
+      identifier: 1,
+      target: 1,
+    },
+    currentTarget: 1,
+    target: 1,
+    timeStamp: at,
+    persist: () => undefined,
+    preventDefault: () => undefined,
+    stopPropagation: () => undefined,
+  };
+}
+
+interface Touch {
+  /** A host view underneath this control accepts touches at all. */
+  readonly reachable: boolean;
+  /** The responder chain agreed to take the gesture. */
+  readonly claimed: boolean;
+}
+
+/** The touch-handling host view this control renders, if it renders one. */
+function responderHost(
+  node: ReactTestRenderer.ReactTestInstance,
+): ReactTestRenderer.ReactTestInstance | undefined {
+  const wired = (candidate: ReactTestRenderer.ReactTestInstance): boolean =>
+    typeof candidate.type === 'string' &&
+    typeof (candidate.props as any)?.onStartShouldSetResponder === 'function';
+  if (wired(node)) return node;
+  try {
+    return node.findAll(wired, {deep: true})[0];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Presses through the responder chain, exactly as a finger would. */
+function touchThrough(node: ReactTestRenderer.ReactTestInstance): Touch {
+  const host = responderHost(node);
+  if (host === undefined) return {reachable: false, claimed: false};
+  const props = host.props as any;
+  const claimed = props.onStartShouldSetResponder() !== false;
+  if (!claimed) return {reachable: true, claimed: false};
+  const event = touchEvent();
+  props.onResponderGrant?.(event);
+  props.onResponderMove?.(event);
+  props.onResponderRelease?.(event);
+  return {reachable: true, claimed: true};
+}
+
+/** The nearest testID at or above a node, within a few generations. */
+function inheritedTestID(
+  node: ReactTestRenderer.ReactTestInstance,
+): string | undefined {
+  let current: ReactTestRenderer.ReactTestInstance | null = node;
+  for (let up = 0; up < 3 && current !== null; up += 1) {
+    const own = (current.props as any)?.testID;
+    if (typeof own === 'string') return own;
+    try {
+      current = current.parent;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 /** The text a control carries, for controls with neither id nor label. */
@@ -309,13 +532,23 @@ function discover(tree: ReactTestRenderer.ReactTestRenderer): Discovered[] {
     );
     if (handler === undefined) continue;
 
+    /* ONE CONTROL, ONE IDENTITY.
+       A Pressable and the host view it renders both carry the handler,
+       and they do not always carry the same identifying props - the LED
+       grid's cells surfaced twice, once as `led-cell-7-3` and once as
+       the Arabic label on the inner node. Two identities for one control
+       means two census rows, two verdicts, and an action contract that
+       matches only one of them. So a node with no testID of its own
+       borrows the nearest one above it. */
+    const ownedTestID =
+      typeof props.testID === 'string' ? props.testID : inheritedTestID(node);
     const labelled =
-      typeof props.testID === 'string' ||
+      typeof ownedTestID === 'string' ||
       typeof props.accessibilityLabel === 'string' ||
       typeof props.label === 'string';
     const text = labelled ? '' : textOf(node);
     const id: string =
-      props.testID ??
+      ownedTestID ??
       props.accessibilityLabel ??
       (typeof props.label === 'string' ? props.label : undefined) ??
       (text.length > 0
@@ -337,6 +570,9 @@ function discover(tree: ReactTestRenderer.ReactTestRenderer): Discovered[] {
     const declaredDisabled = props.accessibilityState?.disabled === true;
     const disabled = guarded || declaredDisabled;
     const argument = argumentFor(handler, props);
+    const gesture = handler === 'onPress' || handler === 'onLongPress';
+    const host = gesture && !disabled ? responderHost(node) : undefined;
+    const hostProps = host?.props as any;
 
     const entry: Discovered = {
       id,
@@ -348,13 +584,18 @@ function discover(tree: ReactTestRenderer.ReactTestRenderer): Discovered[] {
       selected:
         props.accessibilityState?.selected === true ||
         props['aria-checked'] === true,
-      unmeasurable: argument.kind === 'UNKNOWN' ? argument.why : undefined,
+      unmeasurable: refusedPress(id) ?? (argument.kind === 'UNKNOWN' ? argument.why : undefined),
       invoke: () => {
         const live = node.props as any;
         return argument.kind === 'VALUE'
           ? live[handler](argument.value)
           : live[handler]();
       },
+      touch: gesture ? () => touchThrough(node) : undefined,
+      keyboardReachable:
+        hostProps === undefined
+          ? undefined
+          : hostProps.accessible !== false && hostProps.focusable !== false,
     };
     /* A composite and the host it renders both carry the handler. The
        INNER one is the control; `findAll` yields parents first, so the
@@ -364,6 +605,44 @@ function discover(tree: ReactTestRenderer.ReactTestRenderer): Discovered[] {
 
   for (const entry of byKey.values()) found.push(entry);
   return found;
+}
+
+/**
+ * CONTROLS THIS CENSUS DELIBERATELY WILL NOT PRESS.
+ *
+ * Not because pressing them is hard - because pressing them means
+ * driving a motor-test session, and a generic presser is the wrong
+ * instrument for the one subsystem in this application that can spin a
+ * propeller. Their behaviour is already proven, per control, by the
+ * Motors production-path suites; what would be added here is risk, not
+ * evidence. Each is reported NOT_MEASURED with this reason attached,
+ * never as an executed control and never as a dead one.
+ */
+const NOT_PRESSED: readonly {readonly id: RegExp; readonly why: string}[] = [
+  {
+    id: /^motor-session-toggle$/,
+    why: 'opens the motor-test session; exercised by the Motors production-path suites, not by a generic presser',
+  },
+  {
+    id: /^motors-stop-button$/,
+    why: 'the emergency stop is deliberately always enabled and acts only on a live session; its stop path is proven in the Motors safety suites',
+  },
+  {
+    id: /^motor-output-mapping-read$/,
+    why: 'reads diagnostics from a live motor-test session',
+  },
+  {
+    id: /^motor-config-refresh$/,
+    why: 'refreshes against a live motor-test session',
+  },
+  {
+    id: /^home-connect-retry$/,
+    why: 'retries a failed connection attempt; requires a prior transport failure this census does not stage',
+  },
+];
+
+function refusedPress(id: string): string | undefined {
+  return NOT_PRESSED.find(rule => rule.id.test(id))?.why;
 }
 
 /** The argument a handler needs, or an honest refusal to invent one. */
@@ -434,6 +713,128 @@ function argumentFor(handler: (typeof HANDLERS)[number], props: any): Argument {
 }
 
 /* ==================================================================== *
+ * WHAT THE CONTROL PROMISED
+ *
+ * "Something changed" is not proof that a control did its job. A Refresh
+ * wired to navigation changes plenty and refreshes nothing; an
+ * effect-only oracle waves it through. So each control is read for the
+ * action CLASS its own name commits it to, and the evidence has to match
+ * that class - not merely be non-empty.
+ *
+ * The classes are deliberately few and derived from the identifiers the
+ * product already uses. Where a control makes no such promise it is
+ * ANY, and the old rule applies: do something observable, or be dead.
+ * ==================================================================== */
+
+type ActionClass =
+  | 'READ'
+  | 'SAVE'
+  | 'NAVIGATE'
+  | 'SELECT'
+  | 'CONFIRM'
+  | 'REVEAL'
+  | 'ANY';
+
+/**
+ * WHAT EACH CONTROL IS FOR, TAKEN FROM THE PRODUCT - NOT FROM ITS NAME.
+ *
+ * Guessing the class from a testID suffix is how an oracle invents
+ * defects. Every one of these entries was written after reading what the
+ * control actually does, and the first pass at this table is the proof:
+ * suffix rules flagged ten controls as wrong-action, and all ten were
+ * correct products behaving exactly as designed - a Save that asks
+ * before it writes, a "cancel-save" that cancels, tools that open in
+ * place rather than navigate, and a Presets reload whose read is called
+ * `loadIndex`.
+ */
+const ACTION_CONTRACT: readonly {
+  readonly id: RegExp;
+  readonly expected: ActionClass;
+  readonly why: string;
+}[] = [
+  {
+    id: /^(gps|configurations)-(save|reload)$/,
+    expected: 'CONFIRM',
+    why: 'guarded by a confirmation dialog before it touches the board',
+  },
+  {
+    id: /^motors-open-(settings|reorder|direction)$/,
+    expected: 'REVEAL',
+    why: 'Motors tools open IN PLACE; they are disclosures, not routes',
+  },
+  {
+    id: /^motor-config-(review|cancel)-save$/,
+    expected: 'REVEAL',
+    why: 'enters and leaves the review step; the write is a later press',
+  },
+  {
+    id: /^presets-reload$/,
+    expected: 'READ',
+    why: 'reads the preset index and the firmware version',
+  },
+  {id: /^led-cell-\d+-\d+$/, expected: 'SELECT', why: 'selects that position'},
+  {id: /-save$/, expected: 'SAVE', why: 'writes the draft through the controller'},
+  {id: /(reload|refresh)$/i, expected: 'READ', why: 're-reads from the board'},
+  {id: /-open-/, expected: 'NAVIGATE', why: 'hands off to another screen'},
+];
+
+function expectedActionFor(id: string): {expected: ActionClass; why: string} {
+  for (const rule of ACTION_CONTRACT) {
+    if (rule.id.test(id)) return {expected: rule.expected, why: rule.why};
+  }
+  return {expected: 'ANY', why: 'no action class this control commits to'};
+}
+
+interface Evidence {
+  readonly moved: boolean;
+  readonly calls: readonly string[];
+  readonly selectedAfter: boolean | undefined;
+}
+
+const READ_CALL = /\.(load|loadIndex|loadFirmwareVersion|loadPreset|read|refresh|capture)/i;
+
+function actionSatisfied(expected: ActionClass, evidence: Evidence): boolean {
+  const {moved, calls, selectedAfter} = evidence;
+  switch (expected) {
+    case 'READ':
+      return calls.some(call => READ_CALL.test(call)) && !calls.some(c => /\.save$/.test(c));
+    case 'SAVE':
+      return calls.some(call => /\.save$/.test(call));
+    case 'NAVIGATE':
+      return calls.some(
+        call => call.startsWith('navigate.') || call === 'Linking.openURL',
+      );
+    case 'SELECT':
+      return selectedAfter === true;
+    case 'CONFIRM':
+      /* Asking first IS the action. What it must not do is write
+         silently, or wander off somewhere else entirely. */
+      return calls.includes('Alert.alert');
+    case 'REVEAL':
+      /* It opens something in place: the tree moves and nothing is
+         written to the board. */
+      return moved && !calls.some(call => /\.save$/.test(call));
+    default:
+      return moved || calls.length > 0;
+  }
+}
+
+/** Whether a control now reports itself selected, by testID. */
+function selectedNow(
+  tree: ReactTestRenderer.ReactTestRenderer,
+  id: string,
+): boolean | undefined {
+  const nodes = tree.root.findAll(
+    node => (node.props as any)?.testID === id,
+    {deep: true},
+  );
+  if (nodes.length === 0) return undefined;
+  return nodes.some(
+    node => (node.props as any)?.accessibilityState?.selected === true,
+  );
+}
+
+/* ==================================================================== *
  * THE PRESS
  * ==================================================================== */
 
@@ -448,6 +849,8 @@ interface Result {
     | 'TIMEOUT'
     | 'FIRED_TWICE'
     | 'DISABLED_BUT_RESPONDED'
+    /** It did something - but not the thing its name promises. */
+    | 'WRONG_ACTION'
     /** Its group already holds this value and offers nowhere else to go. */
     | 'ALREADY_IN_TARGET_STATE';
   readonly detail: string;
@@ -467,12 +870,71 @@ async function press(
   );
   const t0 = Date.now();
 
-  /* THE PLATFORM'S OWN GUARD IS RESPECTED.
-     `<Pressable disabled>` never reaches onPress, and `editable={false}`
-     never reaches onChangeText. Calling the prop by hand would sail past
-     that and let the census report an interaction no operator can
-     perform. The control is recorded in the state it was found in, and
-     not pressed. */
+  /* A DISABLED CONTROL IS PRESSED FOR REAL, THROUGH THE RESPONDER CHAIN.
+     Calling `props.onPress()` by hand would sail straight past a guard no
+     operator can sail past, and report an interaction nobody can perform.
+     Driving `onStartShouldSetResponder` -> grant -> release is what a
+     finger does, so a refusal here is EVIDENCE the control is inert
+     rather than an assumption that it must be. It also makes the opposite
+     visible: a control carrying only `accessibilityState={{disabled}}`
+     claims the gesture and fires, which is the defect. */
+  if (control.disabled && control.touch !== undefined) {
+    const wasCalls = record.calls;
+    const wasTree = JSON.stringify(tree.toJSON());
+    let outcome: Touch = {reachable: false, claimed: false};
+    let blew: string | undefined;
+    await act(async () => {
+      try {
+        outcome = control.touch!();
+      } catch (error) {
+        blew = String(error).slice(0, 90);
+      }
+      await Promise.resolve();
+    });
+    const acted =
+      record.calls > wasCalls || JSON.stringify(tree.toJSON()) !== wasTree;
+    const ms = Date.now() - t0;
+    trace(
+      `CONTROL_ACTION_END   ${control.id}::${control.handler} disabled` +
+        ` reachable=${outcome.reachable} claimed=${outcome.claimed} acted=${acted}`,
+    );
+    if (blew !== undefined) {
+      return {
+        id: control.id,
+        handler: control.handler,
+        verdict: 'THREW',
+        detail: blew,
+        labelled: control.labelled,
+        ms,
+      };
+    }
+    if (acted) {
+      return {
+        id: control.id,
+        handler: control.handler,
+        verdict: 'DISABLED_BUT_RESPONDED',
+        detail: control.guarded
+          ? 'carries `disabled` yet a real touch still reached its action'
+          : 'declares itself disabled to assistive technology, and a real touch performed the action anyway',
+        labelled: control.labelled,
+        ms,
+      };
+    }
+    return {
+      id: control.id,
+      handler: control.handler,
+      verdict: 'DISABLED_WITH_VALID_REASON',
+      detail: outcome.reachable
+        ? `a real touch was refused by the responder chain (claimed=${outcome.claimed})`
+        : 'renders no touch-handling host - unreachable by gesture',
+      labelled: control.labelled,
+      ms,
+    };
+  }
+
+  /* No responder chain to drive: a Switch's `onValueChange` and a
+     TextInput's `onChangeText` are not gestures, and `disabled` /
+     `editable={false}` are enforced by the native component itself. */
   if (control.guarded) {
     trace(`CONTROL_ACTION_END   ${control.id}::${control.handler} guarded, not pressed`);
     return {
@@ -550,13 +1012,21 @@ async function press(
     };
   }
 
-  /* ONE PRESS, ONE CALL.
-     A single press that reaches the same port method twice is a
-     double-fire: two writes to the flight controller where the operator
-     asked for one. Two DIFFERENT methods in one press is ordinary (save
-     then reload); the same one twice is not. */
+  /* ONE PRESS, ONE COMMAND.
+     A single press that issues the same COMMAND twice is a double-fire:
+     two writes where the operator asked for one. Two different commands
+     in one press is ordinary (save then reload).
+
+     Accessors are excluded, and not as a convenience: `getPhase` and
+     `getOutput` are pure reads that React calls again on every render a
+     press causes. Counting those as a double-fire flagged eight healthy
+     CLI buttons at once - a getter is idempotent by definition, and
+     reading state twice is what rendering IS. */
   const during = record.log.slice(logBefore);
-  const repeated = during.filter((entry, at) => during.indexOf(entry) !== at);
+  const commands = during.filter(
+    entry => !/\.(get[A-Z]\w*|subscribe|is[A-Z]\w*|has[A-Z]\w*)$/.test(entry),
+  );
+  const repeated = commands.filter((entry, at) => commands.indexOf(entry) !== at);
   if (repeated.length > 0) {
     return {
       id: control.id,
@@ -577,13 +1047,48 @@ async function press(
       ms,
     };
   }
+  const {expected} = expectedActionFor(control.id);
+  const evidence: Evidence = {
+    moved,
+    calls: during,
+    selectedAfter: expected === 'SELECT' ? selectedNow(tree, control.id) : undefined,
+  };
+  const satisfied = actionSatisfied(expected, evidence);
+  const detail =
+    `expected=${expected} tree=${moved ? 'changed' : 'same'}` +
+    ` ports=${during.length === 0 ? 'none' : during.join(',')}` +
+    (evidence.selectedAfter === undefined
+      ? ''
+      : ` selected=${evidence.selectedAfter}`);
+
+  if (satisfied) {
+    return {
+      id: control.id,
+      handler: control.handler,
+      verdict: 'EXECUTED_CORRECT_ACTION',
+      detail,
+      labelled: control.labelled,
+      ms,
+    };
+  }
+  /* It acted - just not as promised. That is a different defect from a
+     control that does nothing, and it is the one an effect-only oracle
+     can never see. */
+  if (expected !== 'ANY' && (moved || called)) {
+    return {
+      id: control.id,
+      handler: control.handler,
+      verdict: 'WRONG_ACTION',
+      detail,
+      labelled: control.labelled,
+      ms,
+    };
+  }
   return {
     id: control.id,
     handler: control.handler,
-    verdict: moved || called ? 'EXECUTED_CORRECT_ACTION' : 'NO_EFFECT',
-    detail: `tree=${moved ? 'changed' : 'same'} ports=${
-      called ? record.log[record.log.length - 1] : 'none'
-    }`,
+    verdict: 'NO_EFFECT',
+    detail,
     labelled: control.labelled,
     ms,
   };
@@ -596,9 +1101,84 @@ async function press(
 interface ScreenCase {
   readonly name: string;
   readonly mount: (record: Recorder) => Promise<React.ReactElement>;
+  /**
+   * State a control needs before pressing it means anything.
+   *
+   * Some controls are gated on something else being true first - the LED
+   * grid's empty cells MOVE the selected LED, so with no selection they
+   * correctly do nothing. Pressing them in that state and calling them
+   * dead would be a false finding; the honest answer is to establish the
+   * precondition the product itself requires, then press. Runs once per
+   * mount, before discovery.
+   */
+  readonly precondition?: (
+    tree: ReactTestRenderer.ReactTestRenderer,
+  ) => Promise<void>;
+}
+
+/** Presses one control by testID, for use as a precondition. */
+async function pressById(
+  tree: ReactTestRenderer.ReactTestRenderer,
+  testID: string,
+): Promise<boolean> {
+  const nodes = tree.root.findAll(
+    node =>
+      (node.props as any)?.testID === testID &&
+      typeof (node.props as any)?.onPress === 'function',
+    {deep: true},
+  );
+  if (nodes.length === 0) return false;
+  await act(async () => {
+    (nodes[nodes.length - 1].props as any).onPress();
+    await Promise.resolve();
+  });
+  return true;
 }
 
 const noop = () => undefined;
+
+/**
+ * The CLI screen reads a live phase, an output buffer and a subscription
+ * - it is not a request/response port. A double that answers only
+ * `send` makes the screen throw before it draws anything.
+ */
+function cliPort(record: Recorder): any {
+  let phase: 'IDLE' | 'ACTIVE' | 'SENDING' = 'IDLE';
+  let output = '';
+  const listeners = new Set<() => void>();
+  const publish = (): void => listeners.forEach(listener => listener());
+  return watched(
+    {
+      getPhase: () => phase,
+      getOutput: () => output,
+      getIdentification: () => IDENTITY,
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      begin: async () => {
+        phase = 'ACTIVE';
+        output = 'Entering CLI Mode\n# ';
+        publish();
+      },
+      execute: async () => {
+        phase = 'ACTIVE';
+        output += 'ok\n# ';
+        publish();
+      },
+      saveAndClose: async () => {
+        phase = 'IDLE';
+        publish();
+      },
+      exitWithoutSave: async () => {
+        phase = 'IDLE';
+        publish();
+      },
+    },
+    record,
+    'cli',
+  );
+}
 
 /**
  * A navigation collaborator that RECORDS.
@@ -876,6 +1456,182 @@ const SCREENS: readonly ScreenCase[] = [
     },
   },
   {
+    name: 'Start',
+    mount: async record =>
+      (
+        <StartScreen
+          navigation={
+            watched({navigate: noop, goBack: noop}, record, 'nav') as any
+          }
+          route={{params: {}} as any}
+        />
+      ),
+  },
+  {
+    name: 'Motors',
+    mount: async record => {
+      const snapshot = await snapshotVia(o => new MotorConfigurationController(o));
+      return (
+        <MotorsScreenView
+          sessionKey={KEY}
+          sessionId={KEY.sessionId}
+          active
+          operator={undefined}
+          onRequestLeave={navigateTo(record, 'Leave')}
+          airframeConfigPort={
+            watched(
+              {
+                load: async () => ({kind: 'LOADED', snapshot}),
+                save: async () => ({kind: 'NO_CHANGES', snapshot}),
+                requestReboot: async () => ({kind: 'REBOOT_ACCEPTED'}),
+              },
+              record,
+              'motors',
+            ) as any
+          }
+        />
+      );
+    },
+  },
+  {
+    name: 'LED',
+    mount: async record => {
+      const outcome = await outcomeVia(
+        o => new LedStripConfigurationController(o),
+        new VirtualLedBoard({
+          maxLength: 32,
+          advancedRaw: 1,
+          profile: 0,
+          /* A strip with real LEDs on it. An EMPTY strip is not a
+             neutral fixture here: the grid's empty-cell handler moves
+             the selected LED, so with nothing to select every cell in
+             the canvas is correctly inert and the census would report
+             four hundred dead controls that are nothing of the kind. */
+          entries: [0, 1, 2].map(index =>
+            encodeLedEntry({
+              x: index * 5,
+              y: index * 3,
+              baseFunction: LedBaseFunction.COLOR,
+              overlayMask: 0,
+              colorIndex: index + 1,
+              /* eslint-disable-next-line no-bitwise -- one firmware bit. */
+              directionMask: 1 << LedDirectionBit.NORTH,
+            }),
+          ),
+        }),
+        48,
+        'census-led',
+      );
+      return (
+        <LedStripScreen
+          sessionKey={KEY}
+          active
+          onOpenSetup={navigateTo(record, 'Setup')}
+          controller={replay(outcome, record, 'led')}
+        />
+      );
+    },
+    /* Select an LED that exists, so the grid's empty cells have
+       something to move and can be measured for what they really do. */
+    precondition: async tree => {
+      await pressById(tree, 'led-cell-0-0');
+      await pressById(tree, 'led-cell-5-3');
+    },
+  },
+  {
+    name: 'Sensors',
+    mount: async record => {
+      const outcome = await outcomeVia(
+        o => new SensorsConfigurationController(o),
+        new VirtualSensorsFc('census-sensors'),
+        47,
+        'census-sensors',
+      );
+      return (
+        <SensorsScreen
+          sessionKey={KEY}
+          active
+          onOpenSetup={navigateTo(record, 'Setup')}
+          controller={replay(outcome, record, 'sensors')}
+          now={() => 0}
+        />
+      );
+    },
+  },
+  {
+    name: 'Blackbox',
+    mount: async record => {
+      /* No exported virtual board for this subsystem: the one that
+         exists lives inside its own production-path suite. The screen is
+         censused over the shared board's REAL refusal rather than a
+         snapshot nobody's firmware produced. */
+      const outcome = await outcomeVia(
+        o => new BlackboxConfigurationController(o),
+        board(),
+        47,
+        'census-blackbox',
+      );
+      return (
+        <BlackboxScreen
+          sessionKey={KEY}
+          active
+          controller={replay(outcome, record, 'blackbox')}
+          now={() => 0}
+        />
+      );
+    },
+  },
+  {
+    name: 'Presets',
+    mount: async record =>
+      (
+        <PresetsScreen
+          sessionKey={KEY}
+          active
+          onCliBusyChange={noop}
+          repository={
+            watched(
+              {
+                loadIndex: async () => ({presets: [], categories: []}),
+                loadFirmwareVersion: async () => undefined,
+                loadPreset: async () => undefined,
+                commands: () => [],
+              },
+              record,
+              'presets',
+            ) as any
+          }
+          cli={
+            watched(
+              {
+                getPhase: () => 'IDLE' as const,
+                begin: async () => undefined,
+                captureDiffAll: async () => '# diff all\n',
+                saveTextFile: async () => true,
+                executeBatch: async () => ({commandCount: 0, errors: []}),
+                saveAndClose: async () => undefined,
+                exitWithoutSave: async () => undefined,
+              },
+              record,
+              'presetsCli',
+            ) as any
+          }
+        />
+      ),
+  },
+  {
+    name: 'CLI',
+    mount: async record =>
+      (
+        <CliScreen
+          sessionKey={KEY}
+          active
+          onCliBusyChange={noop}
+          cli={cliPort(record)}
+        />
+      ),
+  },
+  {
     name: 'FlightStyleGuide',
     mount: async record =>
       (
@@ -907,7 +1663,15 @@ const SCREENS: readonly ScreenCase[] = [
 
 const CENSUS: Record<string, Result[]> = {};
 /** DISCOVERED vs what each verdict accounts for, per screen. */
-const COVERAGE: Record<string, {discovered: number; notMeasured: number}> = {};
+const COVERAGE: Record<
+  string,
+  {
+    discovered: number;
+    notMeasured: number;
+    keyboard: number;
+    noKeyboard: number;
+  }
+> = {};
 
 describe('every rendered control is pressed, and every press does something', () => {
   it.each(SCREENS.map(screen => [screen.name, screen] as const))(
@@ -932,6 +1696,10 @@ describe('every rendered control is pressed, and every press does something', ()
       const results: Result[] = [];
       const seen = new Set<string>();
       const everSeen = new Set<string>();
+      /* KEYBOARD REACH, measured on every enabled gesture control this
+         screen ever rendered - not only the ones that got pressed. */
+      const reachable = new Set<string>();
+      const unreachableByKeyboard = new Set<string>();
       const unmeasured = new Map<string, string>();
       const opened = Date.now();
       let remaining = 0;
@@ -956,6 +1724,12 @@ describe('every rendered control is pressed, and every press does something', ()
         await act(async () => {
           await Promise.resolve();
         });
+        if (screen.precondition !== undefined) {
+          await screen.precondition(tree);
+          await act(async () => {
+            await Promise.resolve();
+          });
+        }
         if (pass === 0) trace(`SCREEN_RENDERED ${name}`);
         const before = results.length;
 
@@ -970,6 +1744,11 @@ describe('every rendered control is pressed, and every press does something', ()
           spent.discover += Date.now() - mark;
           for (const control of all) {
             everSeen.add(`${control.id}::${control.handler}`);
+            if (control.keyboardReachable === true) {
+              reachable.add(`${control.id}::${control.handler}`);
+            } else if (control.keyboardReachable === false) {
+              unreachableByKeyboard.add(`${control.id}::${control.handler}`);
+            }
           }
           if (pass === 0 && pressed === 0) {
             firstCount = all.length;
@@ -1081,6 +1860,8 @@ describe('every rendered control is pressed, and every press does something', ()
       COVERAGE[name] = {
         discovered: everSeen.size,
         notMeasured: unreachable.length + remaining,
+        keyboard: reachable.size,
+        noKeyboard: unreachableByKeyboard.size,
       };
       trace(
         `SCREEN_DONE ${name} first_render=${firstCount} pressed=${results.length}` +
@@ -1093,6 +1874,7 @@ describe('every rendered control is pressed, and every press does something', ()
       const threw = results.filter(row => row.verdict === 'THREW');
       const timedOut = results.filter(row => row.verdict === 'TIMEOUT');
       const twice = results.filter(row => row.verdict === 'FIRED_TWICE');
+      const wrong = results.filter(row => row.verdict === 'WRONG_ACTION');
       const liveWhenDisabled = results.filter(
         row => row.verdict === 'DISABLED_BUT_RESPONDED',
       );
@@ -1103,6 +1885,7 @@ describe('every rendered control is pressed, and every press does something', ()
           threw.length +
           timedOut.length +
           twice.length +
+          wrong.length +
           liveWhenDisabled.length +
           unreachable.length >
           0 ||
@@ -1114,12 +1897,14 @@ describe('every rendered control is pressed, and every press does something', ()
             `--- ${name}: ${results.length} pressed,` +
               ` ${dead.length} NO_EFFECT, ${threw.length} THREW,` +
               ` ${timedOut.length} TIMEOUT, ${twice.length} FIRED_TWICE,` +
+              ` ${wrong.length} WRONG_ACTION,` +
               ` ${liveWhenDisabled.length} DISABLED_BUT_RESPONDED,` +
               ` ${unreachable.length + remaining} NOT_MEASURED ---`,
             ...dead.map(r => `  NO_EFFECT    ${r.handler} ${r.id}  [${r.detail}]`),
             ...threw.map(r => `  THREW        ${r.handler} ${r.id}  [${r.detail}]`),
             ...timedOut.map(r => `  TIMEOUT      ${r.handler} ${r.id}  [${r.detail}]`),
             ...twice.map(r => `  FIRED_TWICE  ${r.handler} ${r.id}  [${r.detail}]`),
+            ...wrong.map(r => `  WRONG_ACTION ${r.handler} ${r.id}  [${r.detail}]`),
             ...liveWhenDisabled.map(
               r => `  DISABLED_BUT_RESPONDED ${r.handler} ${r.id}  [${r.detail}]`,
             ),
@@ -1134,6 +1919,24 @@ describe('every rendered control is pressed, and every press does something', ()
         );
       }
 
+      /* EVERY ENABLED CONTROL IS REACHABLE WITHOUT A POINTER.
+         A control taken out of the tab order or out of the accessibility
+         tree still works for a mouse and stops existing for a keyboard
+         and a screen reader. Measured on the rendered host. */
+      if (unreachableByKeyboard.size > 0) {
+        console.log(
+          [
+            '',
+            `--- ${name}: ${unreachableByKeyboard.size} NOT KEYBOARD REACHABLE ---`,
+            ...[...unreachableByKeyboard].map(key => `  NO_KEYBOARD  ${key}`),
+          ].join('\n'),
+        );
+      }
+      expect({
+        screen: name,
+        notKeyboardReachable: [...unreachableByKeyboard],
+      }).toEqual({screen: name, notKeyboardReachable: []});
+
       /* A budget overrun is a harness failure with a name, never a pass. */
       expect({screen: name, notMeasured: remaining}).toEqual({
         screen: name,
@@ -1147,6 +1950,10 @@ describe('every rendered control is pressed, and every press does something', ()
         screen: name,
         firedTwice: twice.map(row => `${row.id}: ${row.detail}`),
       }).toEqual({screen: name, firedTwice: []});
+      expect({
+        screen: name,
+        wrongAction: wrong.map(row => `${row.id}: ${row.detail}`),
+      }).toEqual({screen: name, wrongAction: []});
       expect({
         screen: name,
         disabledButResponded: liveWhenDisabled.map(row => row.id),
@@ -1172,8 +1979,11 @@ describe('every rendered control is pressed, and every press does something', ()
       dead: 0,
       threw: 0,
       timeout: 0,
+      wrong: 0,
       notMeasured: 0,
       unlabelled: 0,
+      keyboard: 0,
+      noKeyboard: 0,
     };
     const lines: string[] = [];
     for (const [screen, results] of rows) {
@@ -1182,6 +1992,8 @@ describe('every rendered control is pressed, and every press does something', ()
       const coverage = COVERAGE[screen] ?? {
         discovered: results.length,
         notMeasured: 0,
+        keyboard: 0,
+        noKeyboard: 0,
       };
       const anon = results.filter(row => !row.labelled).length;
       sum.discovered += coverage.discovered;
@@ -1191,7 +2003,10 @@ describe('every rendered control is pressed, and every press does something', ()
       sum.dead += count('NO_EFFECT');
       sum.threw += count('THREW');
       sum.timeout += count('TIMEOUT');
+      sum.wrong += count('WRONG_ACTION');
       sum.unlabelled += anon;
+      sum.keyboard += coverage.keyboard;
+      sum.noKeyboard += coverage.noKeyboard;
       lines.push(
         `  ${screen.padEnd(19)}` +
           ` disc=${String(coverage.discovered).padStart(3)}` +
@@ -1200,8 +2015,11 @@ describe('every rendered control is pressed, and every press does something', ()
           ` dead=${String(count('NO_EFFECT')).padStart(3)}` +
           ` threw=${String(count('THREW')).padStart(2)}` +
           ` timeout=${String(count('TIMEOUT')).padStart(2)}` +
+          ` wrong=${String(count('WRONG_ACTION')).padStart(2)}` +
           ` notMeasured=${String(coverage.notMeasured).padStart(3)}` +
-          ` unlabelled=${String(anon).padStart(3)}`,
+          ` unlabelled=${String(anon).padStart(3)}` +
+          ` keyboard=${String(coverage.keyboard).padStart(3)}` +
+          ` noKeyboard=${String(coverage.noKeyboard).padStart(2)}`,
       );
     }
     console.log(
@@ -1211,13 +2029,353 @@ describe('every rendered control is pressed, and every press does something', ()
         ...lines,
         `  TOTAL discovered=${sum.discovered} executed=${sum.executed}` +
           ` disabled=${sum.disabled} dead=${sum.dead} threw=${sum.threw}` +
-          ` timeout=${sum.timeout} notMeasured=${sum.notMeasured}` +
-          ` unlabelled=${sum.unlabelled}`,
+          ` timeout=${sum.timeout} wrongAction=${sum.wrong}` +
+          ` notMeasured=${sum.notMeasured}` +
+          ` unlabelled=${sum.unlabelled}` +
+          ` keyboardReachable=${sum.keyboard}` +
+          ` notKeyboardReachable=${sum.noKeyboard}`,
         '============================================',
         '',
       ].join('\n'),
     );
     expect(rows.length).toBe(SCREENS.length);
     expect(sum.executed + sum.disabled).toBeGreaterThan(0);
+  });
+});
+
+/* ==================================================================== *
+ * WHAT A SCREEN LEAVES RUNNING AFTER IT IS GONE
+ *
+ * Every screen here polls something. A screen that starts an interval, a
+ * poll or a subscription in an effect and does not tear it down keeps
+ * running after the operator has navigated away: it keeps issuing MSP
+ * traffic over a link another screen now owns, and it keeps calling
+ * setState on a component React has already unmounted. Nothing about that
+ * is visible in a render assertion, which is why it survives ordinary
+ * screen tests.
+ *
+ * The oracle is a ledger, not a flag. Node's timer functions are replaced
+ * with counting versions for the duration of one mount, every handle is
+ * recorded with the source line that created it, and clears and fires
+ * remove it again. What is still live after `unmount()` is what the
+ * screen leaked - by name, with its creation site.
+ *
+ * Deliberately NOT `--detectOpenHandles`: that reports the whole process
+ * at the end of a run, attributes nothing to a screen, and cannot tell a
+ * leak from a timer some library legitimately holds. This attributes.
+ * ==================================================================== */
+
+interface Handle {
+  readonly kind: 'interval' | 'timeout';
+  readonly where: string;
+}
+
+/** The first application frame that created a timer. */
+function creationSite(): string {
+  const frames = (new Error().stack ?? '').split('\n').slice(2);
+  const mine = frames.find(
+    frame =>
+      /[\\/]src[\\/]/.test(frame) && !frame.includes('interactionCensus.test'),
+  );
+  return (mine ?? frames[0] ?? 'unknown').trim().replace(/^at\s+/, '');
+}
+
+function timerLedger(): {
+  live: () => Handle[];
+  restore: () => void;
+} {
+  const open = new Map<unknown, Handle>();
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+
+  (globalThis as any).setInterval = (
+    callback: (...a: unknown[]) => void,
+    ms?: number,
+    ...rest: unknown[]
+  ) => {
+    const handle = (realSetInterval as any)(callback, ms, ...rest);
+    open.set(handle, {kind: 'interval', where: creationSite()});
+    return handle;
+  };
+  (globalThis as any).setTimeout = (
+    callback: (...a: unknown[]) => void,
+    ms?: number,
+    ...rest: unknown[]
+  ) => {
+    let handle: unknown;
+    const once = (...args: unknown[]): void => {
+      open.delete(handle);
+      callback(...args);
+    };
+    handle = (realSetTimeout as any)(once, ms, ...rest);
+    open.set(handle, {kind: 'timeout', where: creationSite()});
+    return handle;
+  };
+  (globalThis as any).clearInterval = (handle: unknown) => {
+    open.delete(handle);
+    return (realClearInterval as any)(handle);
+  };
+  (globalThis as any).clearTimeout = (handle: unknown) => {
+    open.delete(handle);
+    return (realClearTimeout as any)(handle);
+  };
+
+  return {
+    live: () => [...open.values()],
+    restore: () => {
+      /* Anything still open belongs to nobody now - stop it rather than
+         leave real timers running into the next test. */
+      for (const handle of open.keys()) {
+        (realClearInterval as any)(handle);
+        (realClearTimeout as any)(handle);
+      }
+      open.clear();
+      globalThis.setInterval = realSetInterval;
+      globalThis.clearInterval = realClearInterval;
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    },
+  };
+}
+
+interface Leak {
+  readonly screen: string;
+  readonly what: string;
+}
+
+const LEAKS: Leak[] = [];
+const LIFECYCLE: string[] = [];
+
+describe('a screen that is gone stops working', () => {
+  it.each(SCREENS.map(screen => [screen.name, screen] as const))(
+    '%s releases its timers and subscriptions on unmount',
+    async (name, screen) => {
+      const record = recorder();
+      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+      const open = jest
+        .spyOn(Linking, 'openURL')
+        .mockImplementation(async () => true);
+
+      /* Built BEFORE the ledger is installed: constructing the fixture
+         is not the screen's lifecycle, and a timer the virtual board
+         starts while answering a snapshot is not a screen leak. */
+      const element = await screen.mount(record);
+
+      const timers = timerLedger();
+      subscriptions = new Map();
+      subscriptionSeq = 0;
+      let tree!: ReactTestRenderer.ReactTestRenderer;
+      try {
+        await act(async () => {
+          tree = ReactTestRenderer.create(element);
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+        const mountedIntervals = timers
+          .live()
+          .filter(handle => handle.kind === 'interval').length;
+        const mountedSubscriptions = subscriptions.size;
+
+        await act(async () => {
+          tree.unmount();
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+
+        const stillRunning = timers.live();
+        const stillSubscribed = [...subscriptions.values()];
+        /* INTERVALS are the assertion. An interval that outlives its
+           screen repeats forever, with nobody to receive it - there is no
+           reading of that which is correct. Pending TIMEOUTS are
+           reported, not asserted: a one-shot that has not fired yet is
+           routinely legitimate (a debounce, a retry backoff), and failing
+           on those would manufacture defects out of working code. */
+        const leakedIntervals = stillRunning.filter(
+          handle => handle.kind === 'interval',
+        );
+        const pendingTimeouts = stillRunning.filter(
+          handle => handle.kind === 'timeout',
+        );
+        LIFECYCLE.push(
+          `  ${name.padEnd(19)}` +
+            ` intervals=${String(mountedIntervals).padStart(2)}` +
+            ` subs=${String(mountedSubscriptions).padStart(2)}` +
+            ` leakedIntervals=${String(leakedIntervals.length).padStart(2)}` +
+            ` leakedSubs=${String(stillSubscribed.length).padStart(2)}` +
+            ` pendingTimeouts=${String(pendingTimeouts.length).padStart(2)}`,
+        );
+        for (const handle of leakedIntervals) {
+          LEAKS.push({screen: name, what: `interval from ${handle.where}`});
+        }
+        for (const label of stillSubscribed) {
+          LEAKS.push({screen: name, what: `subscription to ${label}`});
+        }
+        if (leakedIntervals.length + stillSubscribed.length > 0) {
+          console.log(
+            [
+              '',
+              `--- ${name}: LIFECYCLE LEAK ---`,
+              ...leakedIntervals.map(h => `  interval still running: ${h.where}`),
+              ...stillSubscribed.map(l => `  subscription never torn down: ${l}`),
+            ].join('\n'),
+          );
+        }
+        expect({
+          screen: name,
+          leakedIntervals: leakedIntervals.map(handle => handle.where),
+          leakedSubscriptions: stillSubscribed,
+        }).toEqual({screen: name, leakedIntervals: [], leakedSubscriptions: []});
+      } finally {
+        subscriptions = undefined;
+        timers.restore();
+        alert.mockRestore();
+        open.mockRestore();
+      }
+    },
+  );
+
+  /**
+   * A SCREEN THAT REALLY DOES START AN INTERVAL.
+   *
+   * The twenty screens above all came back with zero live intervals, and
+   * a ledger that only ever counts zero proves nothing about the
+   * application - only that it was pointed at screens with nothing to
+   * count. The firmware flasher is the one route that starts a repeating
+   * probe unconditionally the moment it mounts
+   * (FirmwareFlasherSimpleScreen.tsx:632, `setInterval(probe, 2_000)`),
+   * so it is the subject that makes the clean rows mean something: the
+   * ledger must SEE that interval while the screen is up, and must find
+   * it gone afterwards.
+   */
+  it('the flasher starts a real repeating probe, and stops it on unmount', async () => {
+    const client = {
+      supportsDevicePicker: () => true,
+      requestDevicePermission: async () => null,
+      listDevices: async () => [],
+      listDfuDevices: async () => [],
+      onDeviceAttached: () => () => undefined,
+      onDeviceDetached: () => () => undefined,
+      onSessionDetached: () => () => undefined,
+      onDfuFlashProgress: () => () => undefined,
+      flashDfuFirmware: async () => undefined,
+      cancelDfuFlash: async () => undefined,
+      requestDfuDevicePermission: async () => null,
+    };
+    const timers = timerLedger();
+    try {
+      let tree!: ReactTestRenderer.ReactTestRenderer;
+      await act(async () => {
+        tree = ReactTestRenderer.create(
+          <FirmwareFlasherSimpleScreen client={client as never} />,
+        );
+      });
+      await act(async () => {
+        for (let round = 0; round < 8; round += 1) await Promise.resolve();
+      });
+      const whileMounted = timers
+        .live()
+        .filter(handle => handle.kind === 'interval');
+      /* The subject exists. Without this the assertion below is vacuous. */
+      expect(whileMounted.length).toBeGreaterThanOrEqual(1);
+
+      await act(async () => {
+        tree.unmount();
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(
+        timers
+          .live()
+          .filter(handle => handle.kind === 'interval')
+          .map(handle => handle.where),
+      ).toEqual([]);
+    } finally {
+      timers.restore();
+    }
+  });
+
+  it('the leak detector catches a screen that forgets to clean up', async () => {
+    /* THE ORACLE, ATTACKED.
+       If this ever stops finding the leak, every clean row above is
+       worthless. Two components, identical except for the one line that
+       returns the teardown. */
+    function Leaky(): React.ReactElement | null {
+      React.useEffect(() => {
+        /* Started and deliberately never cleared - the whole plant. */
+        setInterval(() => undefined, 25);
+      }, []);
+      return null;
+    }
+    function Clean(): React.ReactElement | null {
+      React.useEffect(() => {
+        const handle = setInterval(() => undefined, 25);
+        return () => clearInterval(handle);
+      }, []);
+      return null;
+    }
+
+    const measure = async (
+      Component: () => React.ReactElement | null,
+    ): Promise<number> => {
+      const timers = timerLedger();
+      try {
+        let tree!: ReactTestRenderer.ReactTestRenderer;
+        await act(async () => {
+          tree = ReactTestRenderer.create(<Component />);
+        });
+        await act(async () => {
+          tree.unmount();
+        });
+        return timers.live().filter(handle => handle.kind === 'interval').length;
+      } finally {
+        timers.restore();
+      }
+    };
+
+    expect(await measure(Leaky)).toBe(1);
+    expect(await measure(Clean)).toBe(0);
+  });
+
+  it('the subscription ledger catches a listener that is never torn down', async () => {
+    const record = recorder();
+    const port = watched(
+      {
+        subscribe: (listener: () => void) => () => {
+          listener();
+        },
+      },
+      record,
+      'probe',
+    );
+    subscriptions = new Map();
+    try {
+      const teardown = port.subscribe(() => undefined);
+      expect(subscriptions.size).toBe(1);
+      teardown();
+      expect(subscriptions.size).toBe(0);
+      port.subscribe(() => undefined);
+      expect([...subscriptions.values()]).toEqual(['probe.subscribe']);
+    } finally {
+      subscriptions = undefined;
+    }
+  });
+
+  it('prints the lifecycle ledger', () => {
+    console.log(
+      [
+        '',
+        '===== UI-X1B SCREEN LIFECYCLE LEDGER =====',
+        ...LIFECYCLE,
+        `  TOTAL leaks=${LEAKS.length}`,
+        '==========================================',
+        '',
+      ].join('\n'),
+    );
+    expect(LIFECYCLE.length).toBe(SCREENS.length);
   });
 });
