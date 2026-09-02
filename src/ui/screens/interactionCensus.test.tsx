@@ -108,6 +108,7 @@ import {
   encodeLedEntry,
 } from '../../core/protocol/msp/decoding/ledStripWireContract';
 import {VirtualSensorsFc} from '../../platforms/react-native/protocol/__testUtils__/virtualSensorsFc';
+import {MspSessionCoordinator} from '../../platforms/react-native/protocol';
 import {FailsafeConfigurationController} from '../../platforms/react-native/protocol/FailsafeConfigurationController';
 import {GpsConfigurationController} from '../../platforms/react-native/protocol/GpsConfigurationController';
 import {ModesConfigurationController} from '../../platforms/react-native/protocol/ModesConfigurationController';
@@ -234,30 +235,90 @@ async function snapshotVia(
  */
 const OUTCOME_CACHE = new Map<string, any>();
 
+/**
+ * THE SNAPSHOT MUST BELONG TO THE SESSION THE SCREEN IS BOUND TO.
+ *
+ * U-R3 made every screen refuse a snapshot minted under a different
+ * session, which is the entire point of that work. A cache key is not a
+ * session id, and using one as the other produced two screens -
+ * Sensors and Blackbox - that quietly declined everything handed to
+ * them and rendered a single control each. The census then reported
+ * "1 control, clean", which is not a clean screen; it is a screen that
+ * never opened. The label below is the cache key; the session is always
+ * this census's own.
+ */
 async function outcomeVia(
   make: (options: any) => {load: (key: any) => Promise<any>},
   virtualBoard: unknown,
   apiMinor: number,
-  sessionId: string,
+  label: string,
 ): Promise<any> {
   /* Each screen is mounted once per pass. Driving a virtual board ten
      times over is the difference between a fast census and one that
      exceeds its own budget, and the outcome is identical every time. */
-  const cached = OUTCOME_CACHE.get(sessionId);
+  const cached = OUTCOME_CACHE.get(label);
   if (cached !== undefined) return cached;
   const session = new VirtualSession({
-    sessionId,
+    sessionId: KEY.sessionId,
     board: virtualBoard as never,
     apiMinor,
   });
-  let outcome: any;
-  try {
-    outcome = await make(session.options as any).load(session.key);
-  } catch (error) {
-    outcome = {kind: 'THREW', reason: String(error).slice(0, 120)};
-  }
-  OUTCOME_CACHE.set(sessionId, outcome);
+  /* A THROW HERE IS THE HARNESS FAILING, NOT THE SCREEN.
+     It used to be caught and handed to the screen as a `THREW` outcome,
+     which the screen correctly rendered as "nothing to show" - and the
+     census then counted that as a clean screen with one control. Two
+     screens sat like that for a whole pass. A fixture that cannot be
+     built is a loud failure now, with the name of the screen on it. */
+  const outcome = await make(session.options as any)
+    .load(session.key)
+    .catch((error: unknown) => {
+      throw new Error(
+        `census fixture for "${label}" could not be built: ${String(error).slice(0, 160)}`,
+      );
+    });
+  OUTCOME_CACHE.set(label, outcome);
   return outcome;
+}
+
+/**
+ * SENSORS OPENS A REAL SESSION, BECAUSE IT HAS TO.
+ *
+ * `VirtualSensorsFc` is not a board - it is a device that exposes a
+ * `.client`, and it is meant to be opened on a real
+ * `MspSessionCoordinator`, exactly as `sensorsScreenProductionPath`
+ * does. Handing it to `VirtualSession` as if it were a board threw
+ * `client.getEpoch is not a function`, the census swallowed that, and
+ * the screen was censused over an outcome no firmware ever produced.
+ */
+async function sensorsOutcome(label: string): Promise<{outcome: any; key: any}> {
+  /* STILL NOT A POPULATED SCREEN. The real controller answers REJECTED
+     on this board, so the screen legitimately renders its refusal state
+     and the census sees one control. That is an honest reading of what
+     this fixture produces - it is NOT whole-screen coverage, and it is
+     reported as an open gap rather than as a clean screen. */
+  const cached = OUTCOME_CACHE.get(label);
+  if (cached !== undefined) return cached;
+  const sessionId = `${KEY.sessionId}-sensors`;
+  const fc = new VirtualSensorsFc(sessionId);
+  const coordinator = new MspSessionCoordinator();
+  coordinator.openSession(fc.client, sessionId);
+  /* Identification is asynchronous over the real client. */
+  for (let round = 0; round < 400 && coordinator.getSessionKey(sessionId) === undefined; round += 1) {
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  const key = coordinator.getSessionKey(sessionId);
+  if (key === undefined) {
+    throw new Error('census fixture for "Sensors": no session key after identification');
+  }
+  const controller = new SensorsConfigurationController({
+    coordinator,
+    appStateOwner: {getPhase: () => 'ACTIVE'},
+    rebootLifecycle: {expectReboot: () => undefined},
+  } as never);
+  const outcome = await controller.load(key);
+  const built = {outcome, key};
+  OUTCOME_CACHE.set(label, built);
+  return built;
 }
 
 /** A controller double that replays one real outcome and refuses writes. */
@@ -1541,15 +1602,10 @@ const SCREENS: readonly ScreenCase[] = [
   {
     name: 'Sensors',
     mount: async record => {
-      const outcome = await outcomeVia(
-        o => new SensorsConfigurationController(o),
-        new VirtualSensorsFc('census-sensors'),
-        47,
-        'census-sensors',
-      );
+      const {outcome, key} = await sensorsOutcome('census-sensors');
       return (
         <SensorsScreen
-          sessionKey={KEY}
+          sessionKey={key}
           active
           onOpenSetup={navigateTo(record, 'Setup')}
           controller={replay(outcome, record, 'sensors')}
