@@ -100,7 +100,6 @@ import CliScreen from './CliScreen';
 import {MotorsScreenView} from './MotorsScreen';
 import {LedStripConfigurationController} from '../../platforms/react-native/protocol/LedStripConfigurationController';
 import {SensorsConfigurationController} from '../../platforms/react-native/protocol/SensorsConfigurationController';
-import {BlackboxConfigurationController} from '../../platforms/react-native/protocol/BlackboxConfigurationController';
 import {VirtualLedBoard} from '../../platforms/react-native/protocol/__testUtils__/virtualLedBoard';
 import {
   LedBaseFunction,
@@ -109,6 +108,11 @@ import {
 } from '../../core/protocol/msp/decoding/ledStripWireContract';
 import {VirtualSensorsFc} from '../../platforms/react-native/protocol/__testUtils__/virtualSensorsFc';
 import {MspSessionCoordinator} from '../../platforms/react-native/protocol';
+import {
+  classifyBlackboxConfig,
+  classifyDataflash,
+  classifySdcard,
+} from '../../core/state/blackboxStorageSemantics';
 import {FailsafeConfigurationController} from '../../platforms/react-native/protocol/FailsafeConfigurationController';
 import {GpsConfigurationController} from '../../platforms/react-native/protocol/GpsConfigurationController';
 import {ModesConfigurationController} from '../../platforms/react-native/protocol/ModesConfigurationController';
@@ -290,22 +294,22 @@ async function outcomeVia(
  * `client.getEpoch is not a function`, the census swallowed that, and
  * the screen was censused over an outcome no firmware ever produced.
  */
-async function sensorsOutcome(label: string): Promise<{outcome: any; key: any}> {
-  /* STILL NOT A POPULATED SCREEN. The real controller answers REJECTED
-     on this board, so the screen legitimately renders its refusal state
-     and the census sees one control. That is an honest reading of what
-     this fixture produces - it is NOT whole-screen coverage, and it is
-     reported as an open gap rather than as a clean screen. */
+async function sensorsOutcome(
+  label: string,
+): Promise<{outcome: any; key: any}> {
   const cached = OUTCOME_CACHE.get(label);
   if (cached !== undefined) return cached;
   const sessionId = `${KEY.sessionId}-sensors`;
   const fc = new VirtualSensorsFc(sessionId);
   const coordinator = new MspSessionCoordinator();
   coordinator.openSession(fc.client, sessionId);
-  /* Identification is asynchronous over the real client. */
-  for (let round = 0; round < 400 && coordinator.getSessionKey(sessionId) === undefined; round += 1) {
-    await new Promise(resolve => setTimeout(resolve, 5));
-  }
+  /* LET IDENTIFICATION FINISH, don't just wait for a key to exist.
+     The session key appears as soon as the session is registered, which
+     is well before the board has answered the reads the controller needs.
+     Loading at that moment returns REJECTED - and the previous pass
+     recorded that refusal as if the board had meant it. The production
+     path suite waits a fixed settle before taking the key; so does this. */
+  await new Promise(resolve => setTimeout(resolve, 600));
   const key = coordinator.getSessionKey(sessionId);
   if (key === undefined) {
     throw new Error('census fixture for "Sensors": no session key after identification');
@@ -316,9 +320,61 @@ async function sensorsOutcome(label: string): Promise<{outcome: any; key: any}> 
     rebootLifecycle: {expectReboot: () => undefined},
   } as never);
   const outcome = await controller.load(key);
+  coordinator.deactivateMspSession(sessionId);
   const built = {outcome, key};
   OUTCOME_CACHE.set(label, built);
   return built;
+}
+
+/**
+ * SENSORS' WHOLE PORT, ANSWERED DETERMINISTICALLY.
+ *
+ * The snapshot above is real - read from a real board over a real
+ * coordinator - but the PORT the screen is given must be steady, and the
+ * live controller is not: it keeps reading in the background, so the
+ * rendered tree differs from one flush to the next with nobody touching
+ * anything, and a census that decides "did this press change the screen"
+ * by comparing trees cannot work on a surface that redraws by itself.
+ *
+ * Seven methods, because the screen calls seven. The two calibration
+ * lifecycles matter most: each returns an observation whose `result`
+ * stays PENDING until `cancel()` is called, which is what makes the Stop
+ * button a control with real work to do. Answering only `load` and
+ * `save` leaves Stop with nothing to cancel and scores it dead.
+ */
+function sensorsPort(outcome: any, record: Recorder): any {
+  const snapshot = outcome?.snapshot;
+  let cancelled: (() => void) | undefined;
+  const observation = () => {
+    let settle!: (value: unknown) => void;
+    const result = new Promise(resolve => {
+      settle = resolve;
+    });
+    cancelled = () => settle({kind: 'CANCELLED'});
+    return {
+      result,
+      cancel: () => {
+        record.calls += 1;
+        record.log.push('sensors.calibration.cancel');
+        cancelled?.();
+      },
+    };
+  };
+  const saved = async () => ({kind: 'NO_CHANGES', snapshot});
+  return watched(
+    {
+      load: async () => outcome,
+      saveHardwareSelection: saved,
+      verifyHardwarePersistence: saved,
+      saveMagAlignment: saved,
+      saveAccTrim: saved,
+      saveCompassDeclination: saved,
+      calibrateAccelerometer: observation,
+      calibrateMagnetometer: observation,
+    },
+    record,
+    'sensors',
+  );
 }
 
 /** A controller double that replays one real outcome and refuses writes. */
@@ -860,7 +916,13 @@ function actionSatisfied(expected: ActionClass, evidence: Evidence): boolean {
     case 'READ':
       return calls.some(call => READ_CALL.test(call)) && !calls.some(c => /\.save$/.test(c));
     case 'SAVE':
-      return calls.some(call => /\.save$/.test(call));
+      /* Not every write is called `save`. Sensors owns four separate
+         write paths - `saveAccTrim`, `saveMagAlignment`,
+         `saveCompassDeclination`, `saveHardwareSelection` - because the
+         firmware takes them as four different messages, and a rule that
+         only matched `.save` scored all three visible Save buttons as
+         WRONG_ACTION while their evidence showed the correct write. */
+      return calls.some(call => /\.save([A-Z]\w*)?$/.test(call));
     case 'NAVIGATE':
       return calls.some(
         call => call.startsWith('navigate.') || call === 'Linking.openURL',
@@ -940,6 +1002,20 @@ async function press(
      visible: a control carrying only `accessibilityState={{disabled}}`
      claims the gesture and fires, which is the defect. */
   if (control.disabled && control.touch !== undefined) {
+    /* A NEGATIVE CONTROL FIRST: does this screen redraw on its own?
+       Sensors paints live traces, so its tree differs from one flush to
+       the next with nobody touching anything. Comparing a before and an
+       after across a touch on a screen like that reports every disabled
+       control as having acted - which is how `sensors-alignment-preset`
+       came out as DISABLED_BUT_RESPONDED while `SelectField` puts
+       `disabled` straight on its trigger Pressable and React Native
+       refuses the gesture. Measure the drift, then subtract it: on a
+       drifting screen only a PORT CALL counts as having acted. */
+    const settle = JSON.stringify(tree.toJSON());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const drifts = JSON.stringify(tree.toJSON()) !== settle;
     const wasCalls = record.calls;
     const wasTree = JSON.stringify(tree.toJSON());
     let outcome: Touch = {reachable: false, claimed: false};
@@ -953,11 +1029,13 @@ async function press(
       await Promise.resolve();
     });
     const acted =
-      record.calls > wasCalls || JSON.stringify(tree.toJSON()) !== wasTree;
+      record.calls > wasCalls ||
+      (!drifts && JSON.stringify(tree.toJSON()) !== wasTree);
     const ms = Date.now() - t0;
     trace(
       `CONTROL_ACTION_END   ${control.id}::${control.handler} disabled` +
-        ` reachable=${outcome.reachable} claimed=${outcome.claimed} acted=${acted}`,
+        ` reachable=${outcome.reachable} claimed=${outcome.claimed}` +
+        ` acted=${acted} ambientDrift=${drifts}`,
     );
     if (blew !== undefined) {
       return {
@@ -1255,6 +1333,87 @@ function navigateTo(record: Recorder, label: string): () => void {
     record.calls += 1;
     record.log.push(`navigate.${label}`);
   };
+}
+
+/**
+ * BLACKBOX, WITH STORAGE THAT EXISTS.
+ *
+ * The shared virtual board answers none of the Blackbox messages - every
+ * one of the five drone fixtures returns FAILED - so the screen drew its
+ * "cannot read" state and the census saw a single control. The snapshot
+ * below is assembled the way this subsystem's own screen suite assembles
+ * one: raw firmware fields put through the PRODUCTION classifiers, so
+ * nothing here is a capability the app invented. It describes a board
+ * with onboard flash present, ready, and half full - the state in which
+ * the screen has something to show and something to erase.
+ */
+const SIXTEEN_MIB = 16777216;
+const EIGHT_MIB = 8388608;
+
+function blackboxSnapshot(): any {
+  const config = {
+    supported: true,
+    supportedRaw: 1,
+    deviceRaw: 1,
+    legacyRateNumerator: 1,
+    legacyRateDenominator: 1,
+    pRatio: 32,
+    sampleRateRaw: 0,
+    disabledFieldsMask: 0,
+  };
+  return {
+    config,
+    configuration: classifyBlackboxConfig(config as never),
+    dataflash: classifyDataflash({
+      flagsRaw: 3,
+      supported: true,
+      ready: true,
+      sectorCount: 256,
+      totalBytes: SIXTEEN_MIB,
+      usedBytes: EIGHT_MIB,
+    } as never),
+    sdcard: classifySdcard({
+      flagsRaw: 0,
+      configured: false,
+      stateRaw: 0,
+      filesystemLastError: 0,
+      freeKilobytes: 0,
+      totalKilobytes: 0,
+    } as never),
+    debugMode: 0,
+    debugModeCount: 60,
+    pidProcessDenom: 4,
+  };
+}
+
+/** The whole Blackbox port, including an erase a Cancel can stop. */
+function blackboxPort(record: Recorder): any {
+  const snapshot = blackboxSnapshot();
+  let stop: (() => void) | undefined;
+  return watched(
+    {
+      load: async () => ({kind: 'LOADED', snapshot}),
+      save: async () => ({kind: 'NO_CHANGES', snapshot}),
+      verifyPersistence: async () => ({kind: 'SUCCEEDED', snapshot}),
+      eraseDataflash: () => {
+        let settle!: (value: unknown) => void;
+        const result = new Promise(resolve => {
+          settle = resolve;
+        });
+        stop = () => settle({kind: 'CANCELLED'});
+        return {
+          result,
+          cancel: () => {
+            record.calls += 1;
+            record.log.push('blackbox.erase.cancel');
+            stop?.();
+          },
+        };
+      },
+    },
+    record,
+    'blackbox',
+  );
 }
 
 const SCREENS: readonly ScreenCase[] = [
@@ -1608,7 +1767,7 @@ const SCREENS: readonly ScreenCase[] = [
           sessionKey={key}
           active
           onOpenSetup={navigateTo(record, 'Setup')}
-          controller={replay(outcome, record, 'sensors')}
+          controller={sensorsPort(outcome, record)}
           now={() => 0}
         />
       );
@@ -1621,17 +1780,11 @@ const SCREENS: readonly ScreenCase[] = [
          exists lives inside its own production-path suite. The screen is
          censused over the shared board's REAL refusal rather than a
          snapshot nobody's firmware produced. */
-      const outcome = await outcomeVia(
-        o => new BlackboxConfigurationController(o),
-        board(),
-        47,
-        'census-blackbox',
-      );
       return (
         <BlackboxScreen
           sessionKey={KEY}
           active
-          controller={replay(outcome, record, 'blackbox')}
+          controller={blackboxPort(record)}
           now={() => 0}
         />
       );

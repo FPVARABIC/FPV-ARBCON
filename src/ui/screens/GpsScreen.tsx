@@ -397,6 +397,15 @@ export default function GpsScreen({
     !gpsDraftsEqual(draft, originalDraft);
   const invalid = draft === undefined ? [] : validateGpsDraft(draft);
   const busy = phase === 'LOADING' || phase === 'SAVING';
+  /* HAS THE BOARD ANSWERED YET?
+     Whether GPS is enabled and whether a UART is assigned to it are
+     CONFIGURATION facts, and they arrive together in one read. Until
+     that read lands - and if it fails or is refused, it never does -
+     this screen knows neither, and must not fall to the negative and
+     tell the operator the feature is off and no port is assigned. Those
+     are the two most likely real causes of GPS not working, so saying
+     them wrongly sends people to change settings that were correct. */
+  const configurationRead = snapshot !== undefined;
   /* DOES THIS SCREEN'S BASELINE BELONG TO THE SESSION IT WOULD WRITE
      THROUGH? `sessionKey` is a prop; the snapshot and the draft are state
      that outlive a prop change by at least one render - and by the entire
@@ -533,20 +542,25 @@ export default function GpsScreen({
             <View
               style={[
                 styles.statusPill,
-                draft?.enabled === true && styles.statusGood,
+                configurationRead && draft?.enabled === true && styles.statusGood,
               ]}
             >
               <Text style={styles.statusText}>
-                {draft?.enabled === true
-                  ? t('gpsSystem.featureOn')
-                  : t('gpsSystem.featureOff')}
+                {!configurationRead
+                  ? t('gpsSystem.featureUnknown')
+                  : draft?.enabled === true
+                    ? t('gpsSystem.featureOn')
+                    : t('gpsSystem.featureOff')}
               </Text>
             </View>
           </View>
         </View>
 
         <View
-          style={[styles.card, ports.length === 0 && styles.warningCard]}
+          style={[
+            styles.card,
+            configurationRead && ports.length === 0 && styles.warningCard,
+          ]}
           testID="gps-port-integration"
         >
           <View style={styles.cardHeaderRow}>
@@ -555,12 +569,16 @@ export default function GpsScreen({
                 {t('gpsSystem.portEyebrow')}
               </Text>
               <Text style={styles.cardTitle}>
-                {ports.length === 0
-                  ? t('gpsSystem.noPort')
-                  : t('gpsSystem.portReady')}
+                {!configurationRead
+                  ? t('gpsSystem.portUnknown')
+                  : ports.length === 0
+                    ? t('gpsSystem.noPort')
+                    : t('gpsSystem.portReady')}
               </Text>
               <Text style={styles.cardBody}>
-                {ports.length === 0
+                {!configurationRead
+                  ? t('gpsSystem.portUnknownDetail')
+                  : ports.length === 0
                   ? t('gpsSystem.noPortDetail')
                   : ports
                       .map(
