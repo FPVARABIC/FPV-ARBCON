@@ -446,11 +446,24 @@ export class VirtualFlightController {
   }
 
   /** MSP_STATUS_EX, in the shape decodeStatusExDiagnostics reads: the
-   *  arming flag lives in the flight-mode bitfield at offset 6. */
+   *  arming flag lives in the flight-mode bitfield at offset 6.
+   *
+   *  THE LAST THREE BYTES ARE NOT DECORATION. Betaflight appends
+   *  `cpuTemp` (u16, API 1.46) and `numberOfRateProfiles` (u8, API 1.47)
+   *  to the end of this frame, and this decoder reads by LENGTH: a frame
+   *  that stops early reports those fields as absent, which is correct
+   *  for old firmware and wrong for the 1.47 board this fixture claims
+   *  to be. Without them the rate-profile selector had no count, drew a
+   *  dash, and rendered no options at all - so six real controls existed
+   *  on no fixture anywhere. 6 is CONTROL_RATE_PROFILE_COUNT. */
   private statusEx(): Uint8Array {
     const bytes = Uint8Array.from([
       0, 0, 0, 0, 0, 0, this.armedState ? 1 : 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 29,
       0, 0, 0, 0, 0,
+      /* cpuTemp: 32.5 C, little endian. */
+      0x45, 0x01,
+      /* numberOfRateProfiles. */
+      6,
     ]);
     return bytes;
   }

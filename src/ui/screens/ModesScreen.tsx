@@ -168,7 +168,12 @@ const RangeLiveValue = React.memo(function RangeLiveValue({sessionKey, active, c
         {`${modeName} · \u2066${condition.start}–${condition.end}\u2069`}
       </Text>
     </View>
-    <Text style={[styles.liveRangeText, inside && styles.liveRangeTextInside]}>القيمة الحية: {value ?? '—'}{inside ? ' · داخل النطاق' : ''}</Text>
+    {/* A CHANNEL VALUE THAT STOPPED ARRIVING IS NOT THE LIVE ONE.
+        `valueOf` keeps the last reading while it ages, which is right -
+        a switch position is still worth seeing - but «القيمة الحية»
+        beside a frozen number told the operator the transmitter was
+        still saying this. The poller already knows it is not. */}
+    <Text style={[styles.liveRangeText, inside && styles.liveRangeTextInside]}>القيمة الحية: {value ?? '—'}{inside ? ' · داخل النطاق' : ''}{telemetry.status === 'STALE' ? ` · القراءة غير محدثة` : ''}</Text>
   </View>;
 });
 

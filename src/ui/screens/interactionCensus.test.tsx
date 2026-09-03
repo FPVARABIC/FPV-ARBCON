@@ -71,66 +71,32 @@ jest.mock('../../platforms/react-native/protocol/useMspSessionState', () => ({
   useMspRecoveryState: () => 'READY',
 }));
 
+
 import React from 'react';
 import ReactTestRenderer, {act} from 'react-test-renderer';
 import {Alert, Linking} from 'react-native';
 
 import '../../i18n';
 import i18n from '../../i18n';
-import FailsafeScreen from './FailsafeScreen';
-import PowerBatteryScreen from './PowerBatteryScreen';
-import GpsScreen from './GpsScreen';
-import PidTuningScreen from './PidTuningScreen';
-import OsdScreen from './OsdScreen';
-import ModesScreen from './ModesScreen';
-import PortsScreen from './PortsScreen';
-import ReceiverScreen from './ReceiverScreen';
-import ConfigurationsScreen from './ConfigurationsScreen';
-import VideoTransmitterScreen from './VideoTransmitterScreen';
-import {MotorConfigurationPanel} from './MotorConfigurationPanel';
-import FlightStyleGuideScreen from './FlightStyleGuideScreen';
-import FlightStyleCornerScreen from './FlightStyleCornerScreen';
-import StartScreen from './StartScreen';
+/* Mounted directly by the lifecycle pass rather than through the shared
+   registry: the subject there is the repeating device probe the flasher
+   starts, which needs its own client double to exist at all. */
 import FirmwareFlasherSimpleScreen from './FirmwareFlasherSimpleScreen';
-import LedStripScreen from './LedStripScreen';
-import SensorsScreen from './SensorsScreen';
-import BlackboxScreen from './BlackboxScreen';
-import PresetsScreen from './PresetsScreen';
-import CliScreen from './CliScreen';
-import {MotorsScreenView} from './MotorsScreen';
-import {LedStripConfigurationController} from '../../platforms/react-native/protocol/LedStripConfigurationController';
-import {SensorsConfigurationController} from '../../platforms/react-native/protocol/SensorsConfigurationController';
-import {VirtualLedBoard} from '../../platforms/react-native/protocol/__testUtils__/virtualLedBoard';
+/* THE FIXTURES ARE SHARED, ON PURPOSE.
+   Every UI-X1 pass that mounts a screen mounts the one this registry
+   builds, so two harnesses cannot disagree about what the application
+   renders. See __censusFixtures__/censusScreens.tsx. */
 import {
-  LedBaseFunction,
-  LedDirectionBit,
-  encodeLedEntry,
-} from '../../core/protocol/msp/decoding/ledStripWireContract';
-import {VirtualSensorsFc} from '../../platforms/react-native/protocol/__testUtils__/virtualSensorsFc';
-import {MspSessionCoordinator} from '../../platforms/react-native/protocol';
-import {
-  classifyBlackboxConfig,
-  classifyDataflash,
-  classifySdcard,
-} from '../../core/state/blackboxStorageSemantics';
-import {FailsafeConfigurationController} from '../../platforms/react-native/protocol/FailsafeConfigurationController';
-import {GpsConfigurationController} from '../../platforms/react-native/protocol/GpsConfigurationController';
-import {ModesConfigurationController} from '../../platforms/react-native/protocol/ModesConfigurationController';
-import {MotorConfigurationController} from '../../platforms/react-native/protocol/MotorConfigurationController';
-import {OsdConfigurationController} from '../../platforms/react-native/protocol/OsdConfigurationController';
-import {PidTuningController} from '../../platforms/react-native/protocol/PidTuningController';
-import {PortsConfigurationController} from '../../platforms/react-native/protocol/PortsConfigurationController';
-import {PowerConfigurationController} from '../../platforms/react-native/protocol/PowerConfigurationController';
-import {ReceiverConfigurationController} from '../../platforms/react-native/protocol/ReceiverConfigurationController';
-import {GeneralConfigurationController} from '../../platforms/react-native/protocol/GeneralConfigurationController';
-import {VtxConfigurationController} from '../../platforms/react-native/protocol/VtxConfigurationController';
-import {MSP_MODE_RANGES} from '../../core/protocol/msp/commands/mspCommands';
-import {
-  DRONE_SPECS,
-  buildFactoryBoard,
-} from '../../platforms/react-native/protocol/__testUtils__/virtualDroneFixtures';
-import {VirtualFlightController} from '../../platforms/react-native/protocol/__testUtils__/virtualFlightController';
-import {VirtualSession} from '../../platforms/react-native/protocol/__testUtils__/virtualSession';
+  SCREENS,
+  closeSubscriptionLedger,
+  openSubscriptionLedger,
+  readSubscriptionLedger,
+  recorder,
+  installAct,
+  watched,
+} from './__censusFixtures__/censusScreens';
+import type {Recorder} from './__censusFixtures__/censusScreens';
+
 
 /* ==================================================================== *
  * HARD TIME BOUNDS
@@ -152,7 +118,21 @@ import {VirtualSession} from '../../platforms/react-native/protocol/__testUtils_
  * ==================================================================== */
 const PRESS_BUDGET_MS = 2000;
 const SCREEN_BUDGET_MS = 60000;
-jest.setTimeout(120000);
+/**
+ * The second pass mounts a whole screen per target and walks a
+ * disclosure path before each press, so its unit cost is far above the
+ * sweep's. The budget is per screen, and running out is reported as
+ * STILL_NOT_MEASURED with that reason attached - never as coverage.
+ */
+const RERUN_BUDGET_MS = 240000;
+/** How far the second pass will explore a screen looking for one control
+ *  the recorded disclosure path did not produce. Bounded so a screen that
+ *  simply never renders it reports that, rather than walking for ever. */
+const EXPLORE_PRESSES = 40;
+jest.setTimeout(300000);
+
+/* The registry's preconditions press controls; give them React's act. */
+installAct(act);
 
 /**
  * Harness-only progress trace. Off by default; UIX1_TRACE=1 turns it on.
@@ -194,264 +174,6 @@ const cost = (): Cost => ({discover: 0, serialise: 0, invoke: 0});
 beforeAll(async () => {
   if (!i18n.isInitialized) await i18n.init();
 });
-
-const KEY = {sessionId: 'census', generation: 1} as const;
-
-/* ==================================================================== *
- * REAL SNAPSHOTS, THROUGH REAL CONTROLLERS
- * ==================================================================== */
-
-function board(): VirtualFlightController {
-  const spec = DRONE_SPECS.find(candidate => candidate.key === 'LONG_RANGE');
-  if (spec === undefined) throw new Error('no LONG_RANGE spec');
-  const built = new VirtualFlightController({parameters: buildFactoryBoard(spec)});
-  /* Modes draws its editor only when a range exists. */
-  const ranges = new Uint8Array(4 * 20);
-  ranges[2] = (1300 - 900) / 25;
-  ranges[3] = (1700 - 900) / 25;
-  built.overwriteParameter(MSP_MODE_RANGES, ranges);
-  return built;
-}
-
-async function snapshotVia(
-  make: (options: any) => {load: (key: any) => Promise<any>},
-): Promise<any> {
-  const session = new VirtualSession({
-    sessionId: KEY.sessionId,
-    board: board(),
-    apiMinor: 47,
-  });
-  const outcome = await make(session.options as any).load(session.key);
-  if (outcome.kind !== 'LOADED') {
-    throw new Error(`census: expected LOADED, got ${outcome.kind}`);
-  }
-  return outcome.snapshot ?? outcome;
-}
-
-/**
- * The load outcome over a subsystem's OWN virtual board, whatever it is.
- *
- * LED, Sensors and Blackbox do not answer over the shared quad board -
- * they have their own. Where a subsystem still cannot reach LOADED, the
- * honest thing is to hand the screen the REAL refusal and census the
- * state it actually draws for it. A screen's unsupported/failed surface
- * is a state operators see, and its controls deserve pressing too.
- */
-const OUTCOME_CACHE = new Map<string, any>();
-
-/**
- * THE SNAPSHOT MUST BELONG TO THE SESSION THE SCREEN IS BOUND TO.
- *
- * U-R3 made every screen refuse a snapshot minted under a different
- * session, which is the entire point of that work. A cache key is not a
- * session id, and using one as the other produced two screens -
- * Sensors and Blackbox - that quietly declined everything handed to
- * them and rendered a single control each. The census then reported
- * "1 control, clean", which is not a clean screen; it is a screen that
- * never opened. The label below is the cache key; the session is always
- * this census's own.
- */
-async function outcomeVia(
-  make: (options: any) => {load: (key: any) => Promise<any>},
-  virtualBoard: unknown,
-  apiMinor: number,
-  label: string,
-): Promise<any> {
-  /* Each screen is mounted once per pass. Driving a virtual board ten
-     times over is the difference between a fast census and one that
-     exceeds its own budget, and the outcome is identical every time. */
-  const cached = OUTCOME_CACHE.get(label);
-  if (cached !== undefined) return cached;
-  const session = new VirtualSession({
-    sessionId: KEY.sessionId,
-    board: virtualBoard as never,
-    apiMinor,
-  });
-  /* A THROW HERE IS THE HARNESS FAILING, NOT THE SCREEN.
-     It used to be caught and handed to the screen as a `THREW` outcome,
-     which the screen correctly rendered as "nothing to show" - and the
-     census then counted that as a clean screen with one control. Two
-     screens sat like that for a whole pass. A fixture that cannot be
-     built is a loud failure now, with the name of the screen on it. */
-  const outcome = await make(session.options as any)
-    .load(session.key)
-    .catch((error: unknown) => {
-      throw new Error(
-        `census fixture for "${label}" could not be built: ${String(error).slice(0, 160)}`,
-      );
-    });
-  OUTCOME_CACHE.set(label, outcome);
-  return outcome;
-}
-
-/**
- * SENSORS OPENS A REAL SESSION, BECAUSE IT HAS TO.
- *
- * `VirtualSensorsFc` is not a board - it is a device that exposes a
- * `.client`, and it is meant to be opened on a real
- * `MspSessionCoordinator`, exactly as `sensorsScreenProductionPath`
- * does. Handing it to `VirtualSession` as if it were a board threw
- * `client.getEpoch is not a function`, the census swallowed that, and
- * the screen was censused over an outcome no firmware ever produced.
- */
-async function sensorsOutcome(
-  label: string,
-): Promise<{outcome: any; key: any}> {
-  const cached = OUTCOME_CACHE.get(label);
-  if (cached !== undefined) return cached;
-  const sessionId = `${KEY.sessionId}-sensors`;
-  const fc = new VirtualSensorsFc(sessionId);
-  const coordinator = new MspSessionCoordinator();
-  coordinator.openSession(fc.client, sessionId);
-  /* LET IDENTIFICATION FINISH, don't just wait for a key to exist.
-     The session key appears as soon as the session is registered, which
-     is well before the board has answered the reads the controller needs.
-     Loading at that moment returns REJECTED - and the previous pass
-     recorded that refusal as if the board had meant it. The production
-     path suite waits a fixed settle before taking the key; so does this. */
-  await new Promise(resolve => setTimeout(resolve, 600));
-  const key = coordinator.getSessionKey(sessionId);
-  if (key === undefined) {
-    throw new Error('census fixture for "Sensors": no session key after identification');
-  }
-  const controller = new SensorsConfigurationController({
-    coordinator,
-    appStateOwner: {getPhase: () => 'ACTIVE'},
-    rebootLifecycle: {expectReboot: () => undefined},
-  } as never);
-  const outcome = await controller.load(key);
-  coordinator.deactivateMspSession(sessionId);
-  const built = {outcome, key};
-  OUTCOME_CACHE.set(label, built);
-  return built;
-}
-
-/**
- * SENSORS' WHOLE PORT, ANSWERED DETERMINISTICALLY.
- *
- * The snapshot above is real - read from a real board over a real
- * coordinator - but the PORT the screen is given must be steady, and the
- * live controller is not: it keeps reading in the background, so the
- * rendered tree differs from one flush to the next with nobody touching
- * anything, and a census that decides "did this press change the screen"
- * by comparing trees cannot work on a surface that redraws by itself.
- *
- * Seven methods, because the screen calls seven. The two calibration
- * lifecycles matter most: each returns an observation whose `result`
- * stays PENDING until `cancel()` is called, which is what makes the Stop
- * button a control with real work to do. Answering only `load` and
- * `save` leaves Stop with nothing to cancel and scores it dead.
- */
-function sensorsPort(outcome: any, record: Recorder): any {
-  const snapshot = outcome?.snapshot;
-  let cancelled: (() => void) | undefined;
-  const observation = () => {
-    let settle!: (value: unknown) => void;
-    const result = new Promise(resolve => {
-      settle = resolve;
-    });
-    cancelled = () => settle({kind: 'CANCELLED'});
-    return {
-      result,
-      cancel: () => {
-        record.calls += 1;
-        record.log.push('sensors.calibration.cancel');
-        cancelled?.();
-      },
-    };
-  };
-  const saved = async () => ({kind: 'NO_CHANGES', snapshot});
-  return watched(
-    {
-      load: async () => outcome,
-      saveHardwareSelection: saved,
-      verifyHardwarePersistence: saved,
-      saveMagAlignment: saved,
-      saveAccTrim: saved,
-      saveCompassDeclination: saved,
-      calibrateAccelerometer: observation,
-      calibrateMagnetometer: observation,
-    },
-    record,
-    'sensors',
-  );
-}
-
-/** A controller double that replays one real outcome and refuses writes. */
-function replay(outcome: any, record: Recorder, label: string): any {
-  return watched(
-    {
-      load: async () => outcome,
-      save: async () => ({kind: 'NO_CHANGES', snapshot: outcome.snapshot}),
-    },
-    record,
-    label,
-  );
-}
-
-/* ==================================================================== *
- * THE RECORDER
- *
- * Everything a control could legitimately do, other than change the
- * tree, funnels through one counter. A press that reaches the flight
- * controller, opens a dialog, navigates, or opens a map is not dead - it
- * simply had its effect somewhere the rendered tree cannot show.
- * ==================================================================== */
-
-interface Recorder {
-  calls: number;
-  readonly log: string[];
-}
-
-function recorder(): Recorder {
-  return {calls: 0, log: []};
-}
-
-/**
- * OPEN SUBSCRIPTIONS, WHILE ANYONE IS COUNTING.
- *
- * A screen that subscribes to a port and never calls the teardown it was
- * handed keeps receiving updates into a component that no longer exists.
- * `watched` already sits on every port, so it is the one place that can
- * see a `subscribe` handed out and the returned unsubscribe never used.
- * Off by default - only the lifecycle pass installs a ledger.
- */
-let subscriptions: Map<number, string> | undefined;
-let subscriptionSeq = 0;
-const SUBSCRIBES = /^(subscribe|addListener|addEventListener|on[A-Z])/;
-
-/** Wraps every function on a port so a call counts as an effect. */
-function watched<T extends object>(port: T, record: Recorder, label: string): T {
-  return new Proxy(port, {
-    get(target, property, receiver) {
-      const value = Reflect.get(target, property, receiver);
-      if (typeof value !== 'function') return value;
-      return (...args: unknown[]) => {
-        record.calls += 1;
-        const name = String(property);
-        record.log.push(`${label}.${name}`);
-        const outcome = (value as (...a: unknown[]) => unknown).apply(
-          target,
-          args,
-        );
-        if (
-          subscriptions === undefined ||
-          typeof outcome !== 'function' ||
-          !SUBSCRIBES.test(name)
-        ) {
-          return outcome;
-        }
-        const ticket = (subscriptionSeq += 1);
-        subscriptions.set(ticket, `${label}.${name}`);
-        const ledger = subscriptions;
-        return (...teardown: unknown[]) => {
-          ledger.delete(ticket);
-          return (outcome as (...a: unknown[]) => unknown)(...teardown);
-        };
-      };
-    },
-  });
-}
 
 /* ==================================================================== *
  * DISCOVERY
@@ -688,6 +410,54 @@ function discover(tree: ReactTestRenderer.ReactTestRenderer): Discovered[] {
     const disabled = guarded || declaredDisabled;
     const argument = argumentFor(handler, props);
     const gesture = handler === 'onPress' || handler === 'onLongPress';
+    /* A COMPOSITION SEAM IS NOT A CONTROL.
+       `<ProfileSelector onSelect=…>` and `<ColorSlotRow onSelect=…>` carry
+       a callback prop, but nobody touches a ProfileSelector: the thing an
+       operator presses is one of the Pressables it renders, each with its
+       own identity, each already in this census. Calling the wrapper's
+       prop directly would need an argument invented for a gesture that
+       does not exist.
+       So a non-gesture handler with no argument readable from its own
+       props, on a node that RENDERS other discovered controls, is named
+       for what it is - and the controls beneath it are named too, which
+       is what makes this a statement of coverage rather than an excuse. */
+    let seam: string | undefined;
+    if (argument.kind === 'UNKNOWN' && !gesture) {
+      const beneath = node
+        .findAll(
+          child =>
+            child !== node &&
+            child.props !== undefined &&
+            HANDLERS.some(
+              candidate => typeof (child.props as any)[candidate] === 'function',
+            ),
+          {deep: true},
+        )
+        .map(child => {
+          const own = (child.props as any)?.testID;
+          return typeof own === 'string' ? own : inheritedTestID(child);
+        })
+        .filter((value): value is string => typeof value === 'string');
+      const named = [...new Set(beneath)];
+      /* A COMPOSITE, not a host: nothing here receives a gesture. Whether
+         it currently renders controls or not is a fact about the state,
+         not about the seam - a selector whose board reports no options
+         renders none, and there is then nothing on screen to press. Both
+         are named, and neither is silently counted as covered. */
+      if (typeof node.type !== 'string') {
+        seam =
+          named.length > 0
+            ? 'SOURCE_REALISTIC_NOT_APPLICABLE: a composition seam, not an' +
+              ' operator control - the controls it renders are measured in' +
+              ` their own right (${named.slice(0, 4).join(', ')}${
+                named.length > 4 ? `, +${named.length - 4} more` : ''
+              })`
+            : 'SOURCE_REALISTIC_NOT_APPLICABLE: a composition seam that, in' +
+              ' the state this board puts it in, renders no interactive' +
+              ' control at all - there is nothing on screen for an operator' +
+              ' to press here';
+      }
+    }
     const host = gesture && !disabled ? responderHost(node) : undefined;
     const hostProps = host?.props as any;
 
@@ -701,7 +471,10 @@ function discover(tree: ReactTestRenderer.ReactTestRenderer): Discovered[] {
       selected:
         props.accessibilityState?.selected === true ||
         props['aria-checked'] === true,
-      unmeasurable: refusedPress(id) ?? (argument.kind === 'UNKNOWN' ? argument.why : undefined),
+      unmeasurable:
+        refusedPress(id) ??
+        seam ??
+        (argument.kind === 'UNKNOWN' ? argument.why : undefined),
       invoke: () => {
         const live = node.props as any;
         return argument.kind === 'VALUE'
@@ -738,23 +511,23 @@ function discover(tree: ReactTestRenderer.ReactTestRenderer): Discovered[] {
 const NOT_PRESSED: readonly {readonly id: RegExp; readonly why: string}[] = [
   {
     id: /^motor-session-toggle$/,
-    why: 'opens the motor-test session; exercised by the Motors production-path suites, not by a generic presser',
+    why: 'SAFETY_CONTROLLED_NOT_MEASURED: opens the motor-test session, which arms outputs. Driven for real in motorsFinalWorkspace.test.tsx (onValueChange(true) over a scripted board, then a live workspace) and refused for every blocking reason in motorsBlockedStateMatrix.test.tsx - not by a generic presser',
   },
   {
     id: /^motors-stop-button$/,
-    why: 'the emergency stop is deliberately always enabled and acts only on a live session; its stop path is proven in the Motors safety suites',
+    why: 'SAFETY_CONTROLLED_NOT_MEASURED: the emergency stop is deliberately always enabled and acts on a live session. Pressed for real in motorsNoCountCommandTruth.test.tsx, which asserts the STOP FRAMES it puts on the wire - every command slot, not an ordinary drive',
   },
   {
     id: /^motor-output-mapping-read$/,
-    why: 'reads diagnostics from a live motor-test session',
+    why: 'SAFETY_CONTROLLED_NOT_MEASURED: reads diagnostics from a live motor-test session. Pressed for real in motorsCoreIdentityMapping.test.tsx, which asserts loadOutputOrder was called with the session key and the rows it returned are rendered',
   },
   {
     id: /^motor-config-refresh$/,
-    why: 'refreshes against a live motor-test session',
+    why: 'SAFETY_CONTROLLED_NOT_MEASURED: refreshes against a live motor-test session. Pressed for real in MotorConfigurationPanel.test.tsx, which asserts the controller load - including the second load behind the discard confirmation',
   },
   {
     id: /^home-connect-retry$/,
-    why: 'retries a failed connection attempt; requires a prior transport failure this census does not stage',
+    why: 'SOURCE_REALISTIC_NOT_APPLICABLE: under Jest there is no USB transport, so the attempt this button repeats fails the same way every time and the settled screen is byte-identical - "did anything happen" is not answerable by comparing renders here. Measured in homeConnectRetry.test.tsx instead, over a transport that answers: the press scans again (once per press), passes through the in-progress state, and stops reporting the old failure when the second scan finds a board',
   },
 ];
 
@@ -820,6 +593,35 @@ function argumentFor(handler: (typeof HANDLERS)[number], props: any): Argument {
        index that is certainly different from the current one. */
     if (typeof props.selectedIndex === 'number') {
       return {kind: 'VALUE', value: props.selectedIndex === 0 ? 1 : 0};
+    }
+    /* THE OTHER SHAPES THIS PRODUCT ACTUALLY USES.
+       Each is read off props the component already declares - a range and
+       a current position - so the value handed back is one the control
+       itself says exists. Nothing here invents a range.
+
+         palette + value   the LED colour rows (ColorSlotRow,
+                           ColorIndexPicker): a palette of swatches and
+                           the index currently shown.
+         count + active    the PID profile badges (ProfileSelector): how
+                           many profiles the board reports and which one
+                           is live.
+         roles + selected  the Ports role groups (ChoiceGroup): the roles
+                           this category offers and the one assigned. */
+    if (Array.isArray(props.palette) && props.palette.length > 1) {
+      const current = typeof props.value === 'number' ? props.value : 0;
+      return {kind: 'VALUE', value: (current + 1) % props.palette.length};
+    }
+    if (typeof props.count === 'number' && props.count > 1) {
+      const current = typeof props.active === 'number' ? props.active : 0;
+      return {kind: 'VALUE', value: (current + 1) % props.count};
+    }
+    if (Array.isArray(props.roles) && props.roles.length > 0) {
+      const other = props.roles.find(
+        (role: any) => (role?.key ?? role) !== props.selected,
+      );
+      if (other !== undefined) {
+        return {kind: 'VALUE', value: other?.key ?? other};
+      }
     }
     return {
       kind: 'UNKNOWN',
@@ -940,6 +742,59 @@ function actionSatisfied(expected: ActionClass, evidence: Evidence): boolean {
     default:
       return moved || calls.length > 0;
   }
+}
+
+/* ==================================================================== *
+ * THE CONFIRMATION IS PART OF THE SAVE
+ *
+ * Several screens gate a write behind `Alert.alert` - GPS and
+ * Configurations do, deliberately, because the write goes to a flight
+ * controller and the operator should be asked first. To a census that
+ * only watches ports, pressing Save then "does something that is not a
+ * write" reads as WRONG_ACTION, and reporting that would be reporting
+ * the safety gate as a defect.
+ *
+ * The answer is not to soften the SAVE contract into "or it opened a
+ * dialog" - that would let a Save button which asks a question and then
+ * does nothing pass. The answer is to FOLLOW THE OPERATOR'S PATH: press
+ * Save, take the confirm button out of the dialog the product raised,
+ * press that too, and then require the write. A dialog with no confirm
+ * action, or a confirm action that writes nothing, still fails.
+ * ==================================================================== */
+
+interface DialogButton {
+  readonly text?: string;
+  readonly style?: string;
+  readonly onPress?: () => unknown;
+}
+
+let lastDialog: readonly DialogButton[] | undefined;
+
+/** Dialogs and external links are effects, not tree changes. */
+function watchEffects(record: Recorder): () => void {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(
+    (_title?: string, _body?: string, buttons?: readonly DialogButton[]) => {
+      record.calls += 1;
+      record.log.push('Alert.alert');
+      lastDialog = buttons;
+    },
+  );
+  const open = jest.spyOn(Linking, 'openURL').mockImplementation(async () => {
+    record.calls += 1;
+    record.log.push('Linking.openURL');
+    return true;
+  });
+  return () => {
+    alert.mockRestore();
+    open.mockRestore();
+  };
+}
+
+/** The button a person would press to go through with it. */
+function confirmButton(): DialogButton | undefined {
+  return lastDialog?.find(
+    button => button.style !== 'cancel' && typeof button.onPress === 'function',
+  );
 }
 
 /** Whether a control now reports itself selected, by testID. */
@@ -1093,28 +948,78 @@ async function press(
   const logBefore = record.log.length;
   let threw: string | undefined;
   let expired = false;
+  let mark2 = 0;
 
   mark = Date.now();
   const bound = deadline(PRESS_BUDGET_MS);
+  /* TWO LOOKS, NOT ONE.
+     A press whose whole answer is asynchronous can pass through a state
+     and come back to where it started. Home's Retry does exactly that:
+     `begin()` sets OPENING synchronously, the scan fails on the next
+     microtask, and the screen is back on the same failure message. A
+     before/after comparison sees two identical trees and calls a working
+     control dead - which is what it did, until this split.
+       IMMEDIATE  what the press changed by itself, once React has
+                  flushed the synchronous part.
+       SETTLED    where the screen came to rest.
+     Either one differing from `before` is the control having acted. A
+     control that changes nothing at either point is still dead: the
+     D1 plant (`onPress={() => undefined}`) moves neither. */
+  let pending: unknown;
+  await act(async () => {
+    try {
+      pending = control.invoke();
+    } catch (error) {
+      threw = String(error).slice(0, 90);
+    }
+  });
+  mark2 = Date.now();
+  const midway = JSON.stringify(tree.toJSON());
+  spent.serialise += Date.now() - mark2;
   await act(async () => {
     try {
       const outcome = await Promise.race([
-        (async () => control.invoke())(),
+        Promise.resolve(pending),
         bound.promise,
       ]);
       if (outcome === 'TIMEOUT') expired = true;
     } catch (error) {
-      threw = String(error).slice(0, 90);
+      threw ??= String(error).slice(0, 90);
     }
     await Promise.resolve();
   });
   bound.cancel();
   spent.invoke += Date.now() - mark;
 
+  /* SAVE IS GATED BEHIND A QUESTION ON SOME SCREENS. Go through it, the
+     way an operator does. Only for SAVE: a destructive CONFIRM is
+     answered by the suites that own that action, and pressing "yes,
+     erase" here would be the census taking a decision on its own. */
+  const promise = expectedActionFor(control.id).expected;
+  let confirmed = false;
+  if (
+    promise === 'SAVE' &&
+    record.log.slice(logBefore).includes('Alert.alert')
+  ) {
+    const button = confirmButton();
+    if (button?.onPress !== undefined) {
+      confirmed = true;
+      await act(async () => {
+        try {
+          await button.onPress?.();
+        } catch (error) {
+          threw ??= String(error).slice(0, 90);
+        }
+        for (let round = 0; round < 4; round += 1) await Promise.resolve();
+      });
+    }
+  }
+  lastDialog = undefined;
+
   mark = Date.now();
   const after = JSON.stringify(tree.toJSON());
   spent.serialise += Date.now() - mark;
-  const moved = before !== after;
+  const moved = before !== after || before !== midway;
   const called = record.calls > callsBefore;
   const ms = Date.now() - t0;
   trace(
@@ -1186,7 +1091,7 @@ async function press(
       ms,
     };
   }
-  const {expected} = expectedActionFor(control.id);
+  const expected = promise;
   const evidence: Evidence = {
     moved,
     calls: during,
@@ -1194,7 +1099,10 @@ async function press(
   };
   const satisfied = actionSatisfied(expected, evidence);
   const detail =
-    `expected=${expected} tree=${moved ? 'changed' : 'same'}` +
+    `expected=${expected}${confirmed ? ' (through its confirmation)' : ''}` +
+    ` tree=${
+      before === after && moved ? 'changed and returned' : moved ? 'changed' : 'same'
+    }` +
     ` ports=${during.length === 0 ? 'none' : during.join(',')}` +
     (evidence.selectedAfter === undefined
       ? ''
@@ -1233,638 +1141,6 @@ async function press(
   };
 }
 
-/* ==================================================================== *
- * THE SCREENS
- * ==================================================================== */
-
-interface ScreenCase {
-  readonly name: string;
-  readonly mount: (record: Recorder) => Promise<React.ReactElement>;
-  /**
-   * State a control needs before pressing it means anything.
-   *
-   * Some controls are gated on something else being true first - the LED
-   * grid's empty cells MOVE the selected LED, so with no selection they
-   * correctly do nothing. Pressing them in that state and calling them
-   * dead would be a false finding; the honest answer is to establish the
-   * precondition the product itself requires, then press. Runs once per
-   * mount, before discovery.
-   */
-  readonly precondition?: (
-    tree: ReactTestRenderer.ReactTestRenderer,
-  ) => Promise<void>;
-}
-
-/** Presses one control by testID, for use as a precondition. */
-async function pressById(
-  tree: ReactTestRenderer.ReactTestRenderer,
-  testID: string,
-): Promise<boolean> {
-  const nodes = tree.root.findAll(
-    node =>
-      (node.props as any)?.testID === testID &&
-      typeof (node.props as any)?.onPress === 'function',
-    {deep: true},
-  );
-  if (nodes.length === 0) return false;
-  await act(async () => {
-    (nodes[nodes.length - 1].props as any).onPress();
-    await Promise.resolve();
-  });
-  return true;
-}
-
-const noop = () => undefined;
-
-/**
- * The CLI screen reads a live phase, an output buffer and a subscription
- * - it is not a request/response port. A double that answers only
- * `send` makes the screen throw before it draws anything.
- */
-function cliPort(record: Recorder): any {
-  let phase: 'IDLE' | 'ACTIVE' | 'SENDING' = 'IDLE';
-  let output = '';
-  const listeners = new Set<() => void>();
-  const publish = (): void => listeners.forEach(listener => listener());
-  return watched(
-    {
-      getPhase: () => phase,
-      getOutput: () => output,
-      getIdentification: () => IDENTITY,
-      subscribe: (listener: () => void) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-      begin: async () => {
-        phase = 'ACTIVE';
-        output = 'Entering CLI Mode\n# ';
-        publish();
-      },
-      execute: async () => {
-        phase = 'ACTIVE';
-        output += 'ok\n# ';
-        publish();
-      },
-      saveAndClose: async () => {
-        phase = 'IDLE';
-        publish();
-      },
-      exitWithoutSave: async () => {
-        phase = 'IDLE';
-        publish();
-      },
-    },
-    record,
-    'cli',
-  );
-}
-
-/**
- * A navigation collaborator that RECORDS.
- *
- * A "go to Ports" button has its entire effect outside the screen: it
- * calls the callback its host passed in and changes nothing locally.
- * Handing those callbacks a bare no-op would score every working
- * cross-screen link as a dead control - a false finding, and exactly the
- * class of harness error this pass is required not to publish.
- */
-function navigateTo(record: Recorder, label: string): () => void {
-  return () => {
-    record.calls += 1;
-    record.log.push(`navigate.${label}`);
-  };
-}
-
-/**
- * BLACKBOX, WITH STORAGE THAT EXISTS.
- *
- * The shared virtual board answers none of the Blackbox messages - every
- * one of the five drone fixtures returns FAILED - so the screen drew its
- * "cannot read" state and the census saw a single control. The snapshot
- * below is assembled the way this subsystem's own screen suite assembles
- * one: raw firmware fields put through the PRODUCTION classifiers, so
- * nothing here is a capability the app invented. It describes a board
- * with onboard flash present, ready, and half full - the state in which
- * the screen has something to show and something to erase.
- */
-const SIXTEEN_MIB = 16777216;
-const EIGHT_MIB = 8388608;
-
-function blackboxSnapshot(): any {
-  const config = {
-    supported: true,
-    supportedRaw: 1,
-    deviceRaw: 1,
-    legacyRateNumerator: 1,
-    legacyRateDenominator: 1,
-    pRatio: 32,
-    sampleRateRaw: 0,
-    disabledFieldsMask: 0,
-  };
-  return {
-    config,
-    configuration: classifyBlackboxConfig(config as never),
-    dataflash: classifyDataflash({
-      flagsRaw: 3,
-      supported: true,
-      ready: true,
-      sectorCount: 256,
-      totalBytes: SIXTEEN_MIB,
-      usedBytes: EIGHT_MIB,
-    } as never),
-    sdcard: classifySdcard({
-      flagsRaw: 0,
-      configured: false,
-      stateRaw: 0,
-      filesystemLastError: 0,
-      freeKilobytes: 0,
-      totalKilobytes: 0,
-    } as never),
-    debugMode: 0,
-    debugModeCount: 60,
-    pidProcessDenom: 4,
-  };
-}
-
-/** The whole Blackbox port, including an erase a Cancel can stop. */
-function blackboxPort(record: Recorder): any {
-  const snapshot = blackboxSnapshot();
-  let stop: (() => void) | undefined;
-  return watched(
-    {
-      load: async () => ({kind: 'LOADED', snapshot}),
-      save: async () => ({kind: 'NO_CHANGES', snapshot}),
-      verifyPersistence: async () => ({kind: 'SUCCEEDED', snapshot}),
-      eraseDataflash: () => {
-        let settle!: (value: unknown) => void;
-        const result = new Promise(resolve => {
-          settle = resolve;
-        });
-        stop = () => settle({kind: 'CANCELLED'});
-        return {
-          result,
-          cancel: () => {
-            record.calls += 1;
-            record.log.push('blackbox.erase.cancel');
-            stop?.();
-          },
-        };
-      },
-    },
-    record,
-    'blackbox',
-  );
-}
-
-const SCREENS: readonly ScreenCase[] = [
-  {
-    name: 'Failsafe',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new FailsafeConfigurationController(o));
-      return (
-        <FailsafeScreen
-          sessionKey={KEY}
-          active
-          onOpenReceiver={navigateTo(record, 'Receiver')}
-          onOpenMotors={navigateTo(record, 'Motors')}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'failsafe',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'Power',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new PowerConfigurationController(o));
-      return (
-        <PowerBatteryScreen
-          sessionKey={KEY}
-          active
-          onOpenMotors={navigateTo(record, 'Motors')}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'power',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'GPS',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new GpsConfigurationController(o));
-      return (
-        <GpsScreen
-          sessionKey={KEY}
-          active
-          onOpenPorts={navigateTo(record, 'Ports')}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'gps',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'PID',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new PidTuningController(o));
-      return (
-        <PidTuningScreen
-          sessionKey={KEY}
-          active
-          onOpenMotors={navigateTo(record, 'Motors')}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'pid',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'OSD',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new OsdConfigurationController(o));
-      return (
-        <OsdScreen
-          sessionKey={KEY}
-          active
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'osd',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'Modes',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new ModesConfigurationController(o));
-      return (
-        <ModesScreen
-          sessionKey={KEY}
-          active
-          onOpenMotors={navigateTo(record, 'Motors')}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'modes',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'Ports',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new PortsConfigurationController(o));
-      return (
-        <PortsScreen
-          sessionKey={KEY}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'ports',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'Receiver',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new ReceiverConfigurationController(o));
-      return (
-        <ReceiverScreen
-          sessionKey={KEY}
-          active
-          onOpenPorts={navigateTo(record, 'Ports')}
-          onOpenMotors={navigateTo(record, 'Motors')}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'receiver',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'Configurations',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new GeneralConfigurationController(o));
-      return (
-        <ConfigurationsScreen
-          sessionKey={KEY}
-          active
-          onOpenSetup={navigateTo(record, 'Setup')}
-          onOpenMotors={navigateTo(record, 'Motors')}
-          onOpenPorts={navigateTo(record, 'Ports')}
-          onOpenGps={navigateTo(record, 'Gps')}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'general',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'VTX',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new VtxConfigurationController(o));
-      return (
-        <VideoTransmitterScreen
-          sessionKey={KEY}
-          active
-          onOpenMotors={navigateTo(record, 'Motors')}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-              },
-              record,
-              'vtx',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'MotorConfiguration',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new MotorConfigurationController(o));
-      return (
-        <MotorConfigurationPanel
-          sessionKey={KEY}
-          controller={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({
-                  kind: 'SAVED_VERIFIED',
-                  snapshot,
-                  rebootRequired: true,
-                  changedGroups: ['ADVANCED'],
-                }),
-              },
-              record,
-              'motors',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'Start',
-    mount: async record =>
-      (
-        <StartScreen
-          navigation={
-            watched({navigate: noop, goBack: noop}, record, 'nav') as any
-          }
-          route={{params: {}} as any}
-        />
-      ),
-  },
-  {
-    name: 'Motors',
-    mount: async record => {
-      const snapshot = await snapshotVia(o => new MotorConfigurationController(o));
-      return (
-        <MotorsScreenView
-          sessionKey={KEY}
-          sessionId={KEY.sessionId}
-          active
-          operator={undefined}
-          onRequestLeave={navigateTo(record, 'Leave')}
-          airframeConfigPort={
-            watched(
-              {
-                load: async () => ({kind: 'LOADED', snapshot}),
-                save: async () => ({kind: 'NO_CHANGES', snapshot}),
-                requestReboot: async () => ({kind: 'REBOOT_ACCEPTED'}),
-              },
-              record,
-              'motors',
-            ) as any
-          }
-        />
-      );
-    },
-  },
-  {
-    name: 'LED',
-    mount: async record => {
-      const outcome = await outcomeVia(
-        o => new LedStripConfigurationController(o),
-        new VirtualLedBoard({
-          maxLength: 32,
-          advancedRaw: 1,
-          profile: 0,
-          /* A strip with real LEDs on it. An EMPTY strip is not a
-             neutral fixture here: the grid's empty-cell handler moves
-             the selected LED, so with nothing to select every cell in
-             the canvas is correctly inert and the census would report
-             four hundred dead controls that are nothing of the kind. */
-          entries: [0, 1, 2].map(index =>
-            encodeLedEntry({
-              x: index * 5,
-              y: index * 3,
-              baseFunction: LedBaseFunction.COLOR,
-              overlayMask: 0,
-              colorIndex: index + 1,
-              /* eslint-disable-next-line no-bitwise -- one firmware bit. */
-              directionMask: 1 << LedDirectionBit.NORTH,
-            }),
-          ),
-        }),
-        48,
-        'census-led',
-      );
-      return (
-        <LedStripScreen
-          sessionKey={KEY}
-          active
-          onOpenSetup={navigateTo(record, 'Setup')}
-          controller={replay(outcome, record, 'led')}
-        />
-      );
-    },
-    /* Select an LED that exists, so the grid's empty cells have
-       something to move and can be measured for what they really do. */
-    precondition: async tree => {
-      await pressById(tree, 'led-cell-0-0');
-      await pressById(tree, 'led-cell-5-3');
-    },
-  },
-  {
-    name: 'Sensors',
-    mount: async record => {
-      const {outcome, key} = await sensorsOutcome('census-sensors');
-      return (
-        <SensorsScreen
-          sessionKey={key}
-          active
-          onOpenSetup={navigateTo(record, 'Setup')}
-          controller={sensorsPort(outcome, record)}
-          now={() => 0}
-        />
-      );
-    },
-  },
-  {
-    name: 'Blackbox',
-    mount: async record => {
-      /* No exported virtual board for this subsystem: the one that
-         exists lives inside its own production-path suite. The screen is
-         censused over the shared board's REAL refusal rather than a
-         snapshot nobody's firmware produced. */
-      return (
-        <BlackboxScreen
-          sessionKey={KEY}
-          active
-          controller={blackboxPort(record)}
-          now={() => 0}
-        />
-      );
-    },
-  },
-  {
-    name: 'Presets',
-    mount: async record =>
-      (
-        <PresetsScreen
-          sessionKey={KEY}
-          active
-          onCliBusyChange={noop}
-          repository={
-            watched(
-              {
-                loadIndex: async () => ({presets: [], categories: []}),
-                loadFirmwareVersion: async () => undefined,
-                loadPreset: async () => undefined,
-                commands: () => [],
-              },
-              record,
-              'presets',
-            ) as any
-          }
-          cli={
-            watched(
-              {
-                getPhase: () => 'IDLE' as const,
-                begin: async () => undefined,
-                captureDiffAll: async () => '# diff all\n',
-                saveTextFile: async () => true,
-                executeBatch: async () => ({commandCount: 0, errors: []}),
-                saveAndClose: async () => undefined,
-                exitWithoutSave: async () => undefined,
-              },
-              record,
-              'presetsCli',
-            ) as any
-          }
-        />
-      ),
-  },
-  {
-    name: 'CLI',
-    mount: async record =>
-      (
-        <CliScreen
-          sessionKey={KEY}
-          active
-          onCliBusyChange={noop}
-          cli={cliPort(record)}
-        />
-      ),
-  },
-  {
-    name: 'FlightStyleGuide',
-    mount: async record =>
-      (
-        <FlightStyleGuideScreen
-          navigation={
-            watched({navigate: noop, goBack: noop}, record, 'nav') as any
-          }
-          route={{params: {}} as any}
-        />
-      ),
-  },
-  {
-    name: 'FlightStyleCorner',
-    mount: async record =>
-      (
-        <FlightStyleCornerScreen
-          navigation={
-            watched({navigate: noop, goBack: noop}, record, 'nav') as any
-          }
-          route={{params: {styleId: 'freestyle'}} as any}
-        />
-      ),
-  },
-];
 
 /* ==================================================================== *
  * THE CENSUS
@@ -1882,23 +1158,88 @@ const COVERAGE: Record<
   }
 > = {};
 
+/**
+ * WHAT THE FIRST SWEEP COULD NOT REACH, AND HOW TO REACH IT.
+ *
+ * `UNREACHED` is every control this screen rendered at some point and
+ * never got to press, with the reason. `REVEALED_BY` is the press that
+ * put each control on the screen, observed during the sweep itself.
+ * Together they are the input to the second pass below, which mounts the
+ * screen again, walks the product's own disclosure path to the control,
+ * and presses it there. Neither map is a maintained list: both are
+ * written by the sweep, from what the application actually did.
+ */
+const HIDDEN_FIRST = 'hidden by an earlier press before its turn came';
+
+/* ==================================================================== *
+ * NOTHING REACHES THE FLIGHT CONTROLLER UNTIL SAVE
+ *
+ * Every editing screen in this application is a DRAFT: a toggle, a
+ * slider, a stepper, a chip moves a local value, and the board hears
+ * nothing until the operator presses Save. That is not a style choice -
+ * it is what makes a half-finished edit survivable, and it is the
+ * property every one of the control censuses below shares.
+ *
+ * So it is checked once, over every control on every screen, from the
+ * ports' own call log: any write that happened during a press of a
+ * control that is not a Save is a wire mutation the operator did not
+ * ask for.
+ *
+ * A few operations ARE live by design and say so here, each with the
+ * reason it cannot be a draft. Anything not on this list and not a Save
+ * fails, by name, with the control that caused it.
+ * ==================================================================== */
+const WRITE_CALL = /\.(save[A-Z]?\w*|erase\w*|write\w*|set[A-Z]\w*|select[A-Z]\w*)$/;
+
+const LIVE_BY_DESIGN: readonly {readonly call: RegExp; readonly why: string}[] = [
+  {
+    call: /\.calibrate[A-Z]\w*$/,
+    why: 'a calibration runs ON the board; there is no draft of a gyro bias',
+  },
+  {
+    call: /\.eraseDataflash$/,
+    why: 'erasing the log is the action itself, and it is behind a confirmation',
+  },
+  {
+    call: /\.selectProfile$/,
+    why: 'switching the active PID or rate profile changes what the board is flying with; it is an operation, not an edit',
+  },
+  {
+    call: /^cli\./,
+    why: 'the CLI is a live terminal - every line is sent as it is typed',
+  },
+  {
+    call: /\.verifyPersistence$/,
+    why: 'a read-back after a write, not a write',
+  },
+  {
+    call: /\.setEscDirection$/,
+    why: 'writing an ESC direction is the action; it is inside the motor-test session and behind its safety gate',
+  },
+];
+
+function liveByDesign(call: string): string | undefined {
+  return LIVE_BY_DESIGN.find(rule => rule.call.test(call))?.why;
+}
+
+/** Every wire write the sweep saw, and the control that caused it. */
+const WRITES: {screen: string; control: string; call: string; expected: string}[] = [];
+const UNREACHED: Record<string, Map<string, string>> = {};
+const REVEALED_BY: Record<string, Map<string, string>> = {};
+/** The verdict the second pass reached, per control. */
+const RERUN: Record<string, Result[]> = {};
+/** For a control the second pass reached but still could not press: the
+ *  reason it found there, which is more precise than "the sweep never got
+ *  to it". Keyed `screen::control::handler`. */
+const STILL: Record<string, string> = {};
+
 describe('every rendered control is pressed, and every press does something', () => {
   it.each(SCREENS.map(screen => [screen.name, screen] as const))(
     '%s',
     async (name, screen) => {
       const record = recorder();
-      /* Dialogs and external links are effects, not tree changes. */
-      const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {
-        record.calls += 1;
-        record.log.push('Alert.alert');
-      });
-      const open = jest
-        .spyOn(Linking, 'openURL')
-        .mockImplementation(async () => {
-          record.calls += 1;
-          record.log.push('Linking.openURL');
-          return true;
-        });
+      const reveals = (REVEALED_BY[name] ??= new Map<string, string>());
+      const stopWatching = watchEffects(record);
 
       trace(`SCREEN_START ${name}`);
       const spent = cost();
@@ -1925,6 +1266,16 @@ describe('every rendered control is pressed, and every press does something', ()
          control at the top of a tree where it still exists. Passes stop
          as soon as one adds nothing. */
       for (let pass = 0; pass < 10 && !exhausted; pass += 1) {
+        /* WHICH PRESS PUT THIS CONTROL ON THE SCREEN.
+           Recorded from the diff the loop already computes for free: the
+           set discovered at the top of one iteration, against the set
+           discovered at the top of the previous one. A control that was
+           not there before the last press and is there after it was
+           REVEALED by that press - which is the precondition a later
+           pass needs in order to measure it on a mount of its own. Reset
+           per mount: a diff across a remount says nothing. */
+        let visibleBefore: Set<string> | undefined;
+        let lastPressed: string | undefined;
         const element = await screen.mount(record);
         let tree!: ReactTestRenderer.ReactTestRenderer;
         await act(async () => {
@@ -1951,6 +1302,17 @@ describe('every rendered control is pressed, and every press does something', ()
           const mark = Date.now();
           const all = discover(tree);
           spent.discover += Date.now() - mark;
+          const visibleNow = new Set(
+            all.map(control => `${control.id}::${control.handler}`),
+          );
+          if (visibleBefore !== undefined && lastPressed !== undefined) {
+            for (const key of visibleNow) {
+              if (!visibleBefore.has(key) && !reveals.has(key)) {
+                reveals.set(key, lastPressed);
+              }
+            }
+          }
+          visibleBefore = visibleNow;
           for (const control of all) {
             everSeen.add(`${control.id}::${control.handler}`);
             if (control.keyboardReachable === true) {
@@ -1982,6 +1344,7 @@ describe('every rendered control is pressed, and every press does something', ()
              has taken the selection and the press has real work to do. */
           const next = pending.find(control => !control.selected) ?? pending[0];
           seen.add(`${next.id}::${next.handler}`);
+          lastPressed = `${next.id}::${next.handler}`;
           if (next.unmeasurable !== undefined) {
             /* Pressed with a value the harness would have had to invent.
                Named as NOT_MEASURED instead - a guess here manufactures
@@ -1989,7 +1352,19 @@ describe('every rendered control is pressed, and every press does something', ()
             unmeasured.set(`${next.id}::${next.handler}`, next.unmeasurable);
             continue;
           }
-          results.push(await press(tree, next, record, spent));
+          {
+            const from = record.log.length;
+            results.push(await press(tree, next, record, spent));
+            for (const call of record.log.slice(from)) {
+              if (!WRITE_CALL.test(call)) continue;
+              WRITES.push({
+                screen: name,
+                control: `${next.id}::${next.handler}`,
+                call,
+                expected: expectedActionFor(next.id).expected,
+              });
+            }
+          }
         }
 
         /* SECOND CHANCE, ON A SCREEN THAT HAS MOVED.
@@ -2059,12 +1434,14 @@ describe('every rendered control is pressed, and every press does something', ()
       }
 
       CENSUS[name] = results;
-      alert.mockRestore();
-      open.mockRestore();
+      stopWatching();
       /* Discovered in some tree, but gone before its turn came. Named,
          never silently dropped. */
       const unreachable = [...everSeen].filter(
         key => !seen.has(key) || unmeasured.has(key),
+      );
+      UNREACHED[name] = new Map(
+        unreachable.map(key => [key, unmeasured.get(key) ?? HIDDEN_FIRST]),
       );
       COVERAGE[name] = {
         discovered: everSeen.size,
@@ -2122,7 +1499,7 @@ describe('every rendered control is pressed, and every press does something', ()
                 `  NOT_MEASURED ${key}` +
                 (unmeasured.has(key)
                   ? `  [${unmeasured.get(key)}]`
-                  : '  [hidden by an earlier press before its turn came]'),
+                  : `  [${HIDDEN_FIRST}]`),
             ),
           ].join('\n'),
         );
@@ -2250,6 +1627,472 @@ describe('every rendered control is pressed, and every press does something', ()
     expect(rows.length).toBe(SCREENS.length);
     expect(sum.executed + sum.disabled).toBeGreaterThan(0);
   });
+
+  it('nothing reached the flight controller except a Save or a declared live action', () => {
+    const unexplained = WRITES.filter(
+      row => row.expected !== 'SAVE' && liveByDesign(row.call) === undefined,
+    );
+    const declared = WRITES.filter(
+      row => row.expected !== 'SAVE' && liveByDesign(row.call) !== undefined,
+    );
+    console.log(
+      [
+        '',
+        '===== UI-X1D WIRE WRITES DURING THE SWEEP =====',
+        `  writes observed                    : ${WRITES.length}`,
+        `  from a Save                        : ${
+          WRITES.filter(row => row.expected === 'SAVE').length
+        }`,
+        `  live by design (declared)          : ${declared.length}`,
+        `  from something else                : ${unexplained.length}`,
+        '',
+        ...[
+          ...new Set(
+            declared.map(
+              row =>
+                `    ${row.screen.padEnd(19)} ${row.control.padEnd(46)} ${row.call}` +
+                `\n        ${liveByDesign(row.call)}`,
+            ),
+          ),
+        ],
+        ...(unexplained.length > 0
+          ? [
+              '',
+              '  A CONTROL THAT IS NOT A SAVE WROTE TO THE BOARD:',
+              ...unexplained.map(
+                row => `    ${row.screen} ${row.control} -> ${row.call}`,
+              ),
+            ]
+          : []),
+        '==============================================',
+        '',
+      ].join('\n'),
+    );
+    expect(
+      unexplained.map(row => `${row.screen} ${row.control} -> ${row.call}`),
+    ).toEqual([]);
+    /* THE SUBJECT EXISTS. If the sweep never pressed a Save at all, the
+       clean answer above would be the answer of an empty set. */
+    expect(WRITES.filter(row => row.expected === 'SAVE').length).toBeGreaterThan(0);
+  });
+});
+
+/* ==================================================================== *
+ * THE SECOND PASS: EVERY CONTROL THE SWEEP COULD NOT REACH, ON A MOUNT
+ * OF ITS OWN.
+ *
+ * The sweep above walks a live screen and presses whatever it finds. On
+ * a screen with disclosure - a palette that opens over the grid, a port
+ * card that expands, an inspector that replaces its neighbour - one
+ * press closes what the next press was going to reach, and the control
+ * underneath never gets its turn. 347 controls ended the first sweep
+ * that way.
+ *
+ * "An earlier press hid it" is a statement about the ORDER THIS HARNESS
+ * CHOSE. It is not a fact about the application, and reporting it as
+ * coverage would be reporting a harness limitation as a product limit.
+ * So each one is measured again, alone:
+ *
+ *   FRESH MOUNT      nothing carried over from the sweep.
+ *   PRECONDITION     the disclosure path the PRODUCT itself requires,
+ *                    taken from `REVEALED_BY` - the press the sweep
+ *                    OBSERVED putting this control on the screen, walked
+ *                    back to a control that is there at mount. Nothing
+ *                    here is a hand-written route; if the application
+ *                    changes its disclosure, the recorded path changes
+ *                    with it.
+ *   ONE TARGET       the control this run exists for, located in the
+ *                    tree it now lives in.
+ *   REAL PRESS       through `press()` - the same oracle, the same
+ *                    semantic action contract, the same disabled
+ *                    real-touch path as the sweep.
+ *   UNMOUNT          so the next target starts from a clean screen.
+ *
+ * A control that STILL cannot be reached is not quietly dropped: it is
+ * reported with the exact path that was tried, and it fails.
+ * ==================================================================== */
+
+/** The disclosure path to a control, outermost press first. */
+function revealPath(screen: string, target: string): string[] {
+  const map = REVEALED_BY[screen];
+  if (map === undefined) return [];
+  const path: string[] = [];
+  const guard = new Set<string>([target]);
+  let cursor = target;
+  /* Bounded: a reveal graph with a cycle in it would otherwise walk for
+     ever, and depth beyond a handful means the recorded path has stopped
+     describing a disclosure a person could follow. */
+  for (let depth = 0; depth < 8; depth += 1) {
+    const parent = map.get(cursor);
+    if (parent === undefined || guard.has(parent)) break;
+    guard.add(parent);
+    path.unshift(parent);
+    cursor = parent;
+  }
+  return path;
+}
+
+function findControl(
+  tree: ReactTestRenderer.ReactTestRenderer,
+  key: string,
+): Discovered | undefined {
+  return discover(tree).find(
+    control => `${control.id}::${control.handler}` === key,
+  );
+}
+
+describe('a control an earlier press hid is measured on a mount of its own', () => {
+  it.each(SCREENS.map(screen => [screen.name, screen] as const))(
+    '%s',
+    async (name, screen) => {
+      const unreached = UNREACHED[name];
+      /* Nothing to re-run is a legitimate outcome, not a skip: it means
+         the sweep reached everything this screen rendered. */
+      if (unreached === undefined || unreached.size === 0) {
+        RERUN[name] = [];
+        expect(true).toBe(true);
+        return;
+      }
+      const targets = [...unreached.entries()].filter(
+        ([, why]) => why === HIDDEN_FIRST,
+      );
+      const record = recorder();
+      const stopWatching = watchEffects(record);
+
+      const spent = cost();
+      const results: Result[] = [];
+      const unreachable: string[] = [];
+      const opened = Date.now();
+      trace(`RERUN_START ${name} targets=${targets.length}`);
+
+      for (const [key] of targets) {
+        if (Date.now() - opened > RERUN_BUDGET_MS) {
+          unreachable.push(`${key}  [re-run budget exhausted before its turn]`);
+          continue;
+        }
+        const path = revealPath(name, key);
+        const element = await screen.mount(record);
+        let tree!: ReactTestRenderer.ReactTestRenderer;
+        await act(async () => {
+          tree = ReactTestRenderer.create(element);
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+        if (screen.precondition !== undefined) {
+          await screen.precondition(tree);
+          await act(async () => {
+            await Promise.resolve();
+          });
+        }
+        /* WALK THE PRODUCT'S OWN DISCLOSURE PATH.
+           Each step is pressed exactly as a person would press it; its
+           verdict is deliberately discarded, because this run is about
+           the target. A step that is not there is not fatal on its own -
+           a later step may already be reachable - so the walk continues
+           and the TARGET decides the outcome. */
+        const walked: string[] = [];
+        for (const step of path) {
+          const control = findControl(tree, step);
+          if (control === undefined || control.unmeasurable !== undefined) {
+            walked.push(`${step}(absent)`);
+            continue;
+          }
+          await press(tree, control, record, spent);
+          walked.push(step);
+        }
+        let target = findControl(tree, key);
+        /* THE RECORDED PATH IS ONE ROUTE, NOT THE ONLY ROUTE.
+           `modes-save-bar-save` appears when the draft becomes dirty, and
+           the press the sweep happened to record last was a DELETE that
+           made it dirty a second time; replaying add-then-delete lands on
+           a draft where the bar is gone again. So when the recorded route
+           misses, walk the screen instead: press whatever is in front of
+           us, one control at a time, and stop the moment the target shows
+           up. That is a person finding it by using the screen, and the
+           steps taken are printed with the verdict. */
+        if (target === undefined) {
+          /* START OVER, CLEAN. The recorded route did not land, and the
+             tree in front of us now carries whatever that route did -
+             Modes' route adds a condition and then deletes it again,
+             which is exactly the state where the save bar is gone. So
+             the exploration gets its own mount and its own record of
+             what it has tried; otherwise it would skip the very control
+             the failed route already pressed. */
+          await act(async () => tree.unmount());
+          const again = await screen.mount(record);
+          await act(async () => {
+            tree = ReactTestRenderer.create(again);
+          });
+          await act(async () => {
+            await Promise.resolve();
+          });
+          if (screen.precondition !== undefined) {
+            await screen.precondition(tree);
+            await act(async () => {
+              await Promise.resolve();
+            });
+          }
+          walked.length = 0;
+          walked.push('(explored)');
+          /* TWO ORDERS, BECAUSE ORDER IS THE WHOLE PROBLEM.
+             Walking the screen top to bottom reaches Modes' Reload before
+             it reaches the control that makes the draft dirty - and
+             Reload throws the draft away, so the save bar can never
+             appear no matter how long the walk continues. Running the
+             same walk from the BOTTOM presses the deep control first.
+             Two orders is not a guess about this screen; it is the
+             minimum that makes the search independent of the direction
+             the tree happens to be built in. */
+          const tried = new Set<string>();
+          for (const backwards of [false, true]) {
+            if (target !== undefined) break;
+            if (backwards) {
+              await act(async () => tree.unmount());
+              const afresh = await screen.mount(record);
+              await act(async () => {
+                tree = ReactTestRenderer.create(afresh);
+              });
+              await act(async () => {
+                await Promise.resolve();
+              });
+              if (screen.precondition !== undefined) {
+                await screen.precondition(tree);
+                await act(async () => {
+                  await Promise.resolve();
+                });
+              }
+              tried.clear();
+              walked.push('(re-explored from the far end)');
+            }
+            for (let step = 0; step < EXPLORE_PRESSES; step += 1) {
+              const options = discover(tree).filter(
+                control =>
+                  `${control.id}::${control.handler}` !== key &&
+                  !control.disabled &&
+                  control.unmeasurable === undefined &&
+                  !tried.has(`${control.id}::${control.handler}`),
+              );
+              if (options.length === 0) break;
+              const option = backwards
+                ? options[options.length - 1]
+                : options[0];
+              tried.add(`${option.id}::${option.handler}`);
+              await press(tree, option, record, spent);
+              walked.push(`${option.id}::${option.handler}`);
+              target = findControl(tree, key);
+              if (target !== undefined) break;
+            }
+          }
+        }
+        if (target === undefined) {
+          unreachable.push(
+            `${key}  [not on the screen after walking ${
+              walked.length === 0 ? '(no recorded disclosure path)' : walked.join(' -> ')
+            }]`,
+          );
+          await act(async () => tree.unmount());
+          continue;
+        }
+        if (target.unmeasurable !== undefined) {
+          STILL[`${name}::${key}`] = target.unmeasurable;
+          unreachable.push(`${key}  [${target.unmeasurable}]`);
+          await act(async () => tree.unmount());
+          continue;
+        }
+        let outcome = await press(tree, target, record, spent);
+        /* ASKING A CONTROL FOR WHAT IT ALREADY HAS IS NOT A DEAD CONTROL.
+           The disclosure path frequently SETS the very thing the target
+           selects - opening the palette lands on slot 0, choosing the GPS
+           role sets its default baud - so the target's post-condition
+           already holds and a correct control does nothing. The sweep has
+           a second chance for exactly this; so does this pass. Move the
+           group with a sibling, then ask again. */
+        if (outcome.verdict === 'NO_EFFECT') {
+          const cut = target.id.lastIndexOf('-');
+          const sibling =
+            cut <= 0
+              ? undefined
+              : discover(tree).find(
+                  control =>
+                    control.id !== target!.id &&
+                    control.handler === target!.handler &&
+                    control.id.startsWith(target!.id.slice(0, cut + 1)) &&
+                    !control.disabled &&
+                    control.unmeasurable === undefined,
+                );
+          if (sibling !== undefined) {
+            await press(tree, sibling, record, spent);
+            const again = findControl(tree, key);
+            if (again !== undefined && !again.disabled) {
+              const retried = await press(tree, again, record, spent);
+              if (retried.verdict !== 'NO_EFFECT') {
+                outcome = {
+                  ...retried,
+                  detail: `${retried.detail} (on retry after ${sibling.id} took the selection)`,
+                };
+              }
+            }
+          } else if (target.selected) {
+            outcome = {
+              ...outcome,
+              verdict: 'ALREADY_IN_TARGET_STATE',
+              detail:
+                'already selected by the disclosure path that reached it;' +
+                ' no other option in its group is available',
+            };
+          }
+        }
+        results.push(
+          walked.length === 0
+            ? outcome
+            : {...outcome, detail: `${outcome.detail} (after ${walked.join(' -> ')})`},
+        );
+        await act(async () => tree.unmount());
+      }
+
+      RERUN[name] = results;
+      stopWatching();
+      const dead = results.filter(row => row.verdict === 'NO_EFFECT');
+      const threw = results.filter(row => row.verdict === 'THREW');
+      const timedOut = results.filter(row => row.verdict === 'TIMEOUT');
+      const twice = results.filter(row => row.verdict === 'FIRED_TWICE');
+      const wrong = results.filter(row => row.verdict === 'WRONG_ACTION');
+      const live = results.filter(row => row.verdict === 'DISABLED_BUT_RESPONDED');
+      trace(
+        `RERUN_DONE ${name} measured=${results.length}` +
+          ` unreachable=${unreachable.length}`,
+      );
+      if (
+        dead.length + threw.length + timedOut.length + twice.length +
+          wrong.length + live.length + unreachable.length > 0
+      ) {
+        console.log(
+          [
+            '',
+            `--- ${name} SECOND PASS: ${results.length} measured on their own mount,` +
+              ` ${dead.length} NO_EFFECT, ${threw.length} THREW,` +
+              ` ${timedOut.length} TIMEOUT, ${twice.length} FIRED_TWICE,` +
+              ` ${wrong.length} WRONG_ACTION,` +
+              ` ${live.length} DISABLED_BUT_RESPONDED,` +
+              ` ${unreachable.length} STILL_NOT_MEASURED ---`,
+            ...dead.map(r => `  NO_EFFECT    ${r.handler} ${r.id}  [${r.detail}]`),
+            ...threw.map(r => `  THREW        ${r.handler} ${r.id}  [${r.detail}]`),
+            ...timedOut.map(r => `  TIMEOUT      ${r.handler} ${r.id}  [${r.detail}]`),
+            ...twice.map(r => `  FIRED_TWICE  ${r.handler} ${r.id}  [${r.detail}]`),
+            ...wrong.map(r => `  WRONG_ACTION ${r.handler} ${r.id}  [${r.detail}]`),
+            ...live.map(
+              r => `  DISABLED_BUT_RESPONDED ${r.handler} ${r.id}  [${r.detail}]`,
+            ),
+            ...unreachable.map(row => `  STILL_NOT_MEASURED ${row}`),
+          ].join('\n'),
+        );
+      }
+      /* THE POINT OF THE PASS. A control the sweep could not reach and
+         this pass could not reach either is still unmeasured, and saying
+         so is the requirement - not tolerating it. */
+      expect({screen: name, stillNotMeasured: unreachable}).toEqual({
+        screen: name,
+        stillNotMeasured: [],
+      });
+      expect({screen: name, dead: dead.map(r => `${r.id}: ${r.detail}`)}).toEqual({
+        screen: name,
+        dead: [],
+      });
+      expect({screen: name, wrong: wrong.map(r => `${r.id}: ${r.detail}`)}).toEqual({
+        screen: name,
+        wrong: [],
+      });
+      expect({screen: name, threw: threw.map(r => `${r.id}: ${r.detail}`)}).toEqual({
+        screen: name,
+        threw: [],
+      });
+      expect({screen: name, timedOut: timedOut.map(r => `${r.id}: ${r.detail}`)}).toEqual(
+        {screen: name, timedOut: []},
+      );
+      expect({screen: name, firedTwice: twice.map(r => `${r.id}: ${r.detail}`)}).toEqual({
+        screen: name,
+        firedTwice: [],
+      });
+      expect({
+        screen: name,
+        liveWhenDisabled: live.map(r => `${r.id}: ${r.detail}`),
+      }).toEqual({screen: name, liveWhenDisabled: []});
+    },
+  );
+
+  /**
+   * THE THREE THINGS A REMAINING NOT_MEASURED IS ALLOWED TO BE.
+   *
+   * Anything else - and "the harness pressed something else first" above
+   * all - is a gap in this pass, not a property of the application.
+   */
+  const CLASSES = [
+    'SOURCE_REALISTIC_NOT_APPLICABLE',
+    'PLATFORM_UNAVAILABLE',
+    'SAFETY_CONTROLLED_NOT_MEASURED',
+  ] as const;
+
+  function classifyRemaining(why: string): string | undefined {
+    return CLASSES.find(name => why.startsWith(name));
+  }
+
+  it('prints the closing NOT_MEASURED ledger', () => {
+    const rows: string[] = [];
+    const unclassified: string[] = [];
+    const perClass = new Map<string, number>();
+    let sequencing = 0;
+    let measuredHere = 0;
+    let remaining = 0;
+    for (const [screen, unreached] of Object.entries(UNREACHED)) {
+      const rerun = RERUN[screen] ?? [];
+      const measured = new Map(
+        rerun.map(row => [`${row.id}::${row.handler}`, row]),
+      );
+      for (const [key, why] of unreached) {
+        if (why === HIDDEN_FIRST) {
+          sequencing += 1;
+          if (measured.has(key)) {
+            measuredHere += 1;
+            continue;
+          }
+        }
+        remaining += 1;
+        /* The reason the SECOND pass gave, where it reached the control
+           and found a real reason not to press it - that is more precise
+           than "the sweep never got here". */
+        const settled = STILL[`${screen}::${key}`] ?? why;
+        const kind = classifyRemaining(settled);
+        perClass.set(kind ?? 'UNCLASSIFIED', (perClass.get(kind ?? 'UNCLASSIFIED') ?? 0) + 1);
+        if (kind === undefined) unclassified.push(`${screen} ${key}: ${settled}`);
+        rows.push(
+          `  ${screen.padEnd(19)} ${key.padEnd(44)} ${kind ?? 'UNCLASSIFIED'}` +
+            `\n      ${settled}`,
+        );
+      }
+    }
+    console.log(
+      [
+        '',
+        '===== UI-X1D CLOSING NOT_MEASURED LEDGER =====',
+        `  sequencing NOT_MEASURED after the first sweep : ${sequencing}`,
+        `  measured on a mount of their own             : ${measuredHere}`,
+        `  SEQUENCING NOT_MEASURED REMAINING            : ${sequencing - measuredHere}`,
+        `  NOT_MEASURED for a reason that is not order  : ${remaining}`,
+        ...[...perClass.entries()].map(
+          ([kind, count]) => `    ${kind.padEnd(34)} ${count}`,
+        ),
+        ...(rows.length > 0 ? ['', ...rows] : []),
+        '==============================================',
+        '',
+      ].join('\n'),
+    );
+    /* SEQUENCING_NOT_MEASURED = 0. Every control the first sweep lost to
+       its own press order was pressed on a mount of its own. */
+    expect(sequencing - measuredHere).toBe(0);
+    /* And every row that is left says which of the three it is. */
+    expect(unclassified).toEqual([]);
+  });
 });
 
 /* ==================================================================== *
@@ -2373,8 +2216,7 @@ describe('a screen that is gone stops working', () => {
       const element = await screen.mount(record);
 
       const timers = timerLedger();
-      subscriptions = new Map();
-      subscriptionSeq = 0;
+      openSubscriptionLedger();
       let tree!: ReactTestRenderer.ReactTestRenderer;
       try {
         await act(async () => {
@@ -2386,7 +2228,7 @@ describe('a screen that is gone stops working', () => {
         const mountedIntervals = timers
           .live()
           .filter(handle => handle.kind === 'interval').length;
-        const mountedSubscriptions = subscriptions.size;
+        const mountedSubscriptions = readSubscriptionLedger().size;
 
         await act(async () => {
           tree.unmount();
@@ -2396,7 +2238,7 @@ describe('a screen that is gone stops working', () => {
         });
 
         const stillRunning = timers.live();
-        const stillSubscribed = [...subscriptions.values()];
+        const stillSubscribed = [...readSubscriptionLedger().values()];
         /* INTERVALS are the assertion. An interval that outlives its
            screen repeats forever, with nobody to receive it - there is no
            reading of that which is correct. Pending TIMEOUTS are
@@ -2439,7 +2281,7 @@ describe('a screen that is gone stops working', () => {
           leakedSubscriptions: stillSubscribed,
         }).toEqual({screen: name, leakedIntervals: [], leakedSubscriptions: []});
       } finally {
-        subscriptions = undefined;
+        closeSubscriptionLedger();
         timers.restore();
         alert.mockRestore();
         open.mockRestore();
@@ -2561,16 +2403,16 @@ describe('a screen that is gone stops working', () => {
       record,
       'probe',
     );
-    subscriptions = new Map();
+    openSubscriptionLedger();
     try {
       const teardown = port.subscribe(() => undefined);
-      expect(subscriptions.size).toBe(1);
+      expect(readSubscriptionLedger().size).toBe(1);
       teardown();
-      expect(subscriptions.size).toBe(0);
+      expect(readSubscriptionLedger().size).toBe(0);
       port.subscribe(() => undefined);
-      expect([...subscriptions.values()]).toEqual(['probe.subscribe']);
+      expect([...readSubscriptionLedger().values()]).toEqual(['probe.subscribe']);
     } finally {
-      subscriptions = undefined;
+      closeSubscriptionLedger();
     }
   });
 

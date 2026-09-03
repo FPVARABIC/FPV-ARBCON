@@ -51,6 +51,10 @@ import {
   setOsdPosition,
   setOsdProfileVisibility,
 } from '../../src/core/state/osdConfigurationModel';
+import {
+  SCREENS,
+  recorder,
+} from '../../src/ui/screens/__censusFixtures__/censusScreens';
 
 const KEY = { sessionId: 'touch-fixture', generation: 1 } as const;
 
@@ -494,11 +498,63 @@ const SCENES: Record<string, () => React.JSX.Element> = {
   ),
 };
 
+/* ==================================================================== *
+ * EVERY SCREEN, FROM THE ONE REGISTRY
+ *
+ * `?s=census:GPS` mounts the same GPS the Jest censuses mount, in the
+ * same source-realistic state, inside the real browser shell. The
+ * registry is shared on purpose: a responsive sweep over screens built
+ * by a second set of doubles would be measuring a second application.
+ *
+ * The named scenes above stay as they are - each exists to force a state
+ * the registry does not reach (a failed airframe read, a configured AUX
+ * range) and the touch-floor verifier addresses them by name.
+ * ==================================================================== */
+const CENSUS_PREFIX = 'census:';
+
+function RegistryScene({name}: {name: string}): React.JSX.Element {
+  const [element, setElement] = React.useState<React.ReactElement | null>(null);
+  const [failed, setFailed] = React.useState<string | undefined>(undefined);
+  React.useEffect(() => {
+    let live = true;
+    const screen = SCREENS.find(candidate => candidate.name === name);
+    if (screen === undefined) {
+      setFailed(`no screen named ${name} in the shared registry`);
+      return () => {
+        live = false;
+      };
+    }
+    screen
+      .mount(recorder())
+      .then(built => {
+        if (live) setElement(built);
+      })
+      .catch((error: unknown) => {
+        if (live) setFailed(String(error).slice(0, 200));
+      });
+    return () => {
+      live = false;
+    };
+  }, [name]);
+  if (failed !== undefined) {
+    return <div data-fixture="scene-failed">{failed}</div>;
+  }
+  /* `data-ready` is what the verifier waits for: a screen measured
+     before its snapshot arrives is a measurement of a spinner. */
+  return (
+    <View testID={element === null ? 'scene-loading' : 'scene-ready'}>
+      {element === null ? null : <Shell>{element}</Shell>}
+    </View>
+  );
+}
+
 const scene = new URLSearchParams(window.location.search).get('s') ?? 'motors';
 const render = SCENES[scene];
 const root = createRoot(document.getElementById('root')!);
 root.render(
-  render === undefined ? (
+  scene.startsWith(CENSUS_PREFIX) ? (
+    <RegistryScene name={scene.slice(CENSUS_PREFIX.length)} />
+  ) : render === undefined ? (
     <div data-fixture="unknown-scene">unknown scene: {scene}</div>
   ) : (
     render()

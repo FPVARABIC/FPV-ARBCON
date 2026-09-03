@@ -17,7 +17,8 @@
     "scan:web-bundle": "node scripts/scan-web-bundle.js",
     "verify:touch-targets": "vite build --config e2e/touch-targets/vite.config.mts && node scripts/verify-touch-targets.mjs",
     "verify:osd-labels": "vite build --config e2e/touch-targets/vite.config.mts && node scripts/verify-osd-labels.mjs",
-    "verify:desktop-workspace": "node scripts/verify-desktop-workspace.mjs"
+    "verify:desktop-workspace": "node scripts/verify-desktop-workspace.mjs",
+    "verify:responsive-interaction": "vite build --config e2e/touch-targets/vite.config.mts && node scripts/verify-responsive-interaction.mjs"
   },
   "dependencies": {
     "@react-navigation/native": "^7.3.13",

@@ -39,6 +39,14 @@ export interface VirtualCoordinator {
   getMspRecoveryState(sessionId: string): MspClientState | undefined;
 }
 
+/** `jest.fn(impl)` where Jest exists, `impl` where it does not. */
+function spy<T extends (...args: never[]) => unknown>(implementation: T): T {
+  const runner = (globalThis as unknown as {jest?: {fn?: unknown}}).jest;
+  return typeof runner?.fn === 'function'
+    ? ((runner.fn as (fn: T) => T)(implementation) as T)
+    : implementation;
+}
+
 export class VirtualSession {
   readonly sessionId: string;
   board: VirtualFlightController;
@@ -57,11 +65,17 @@ export class VirtualSession {
     this.board = options.board;
     this.apiMinor = options.apiMinor;
     this.firmwareIdentifier = options.firmwareIdentifier ?? 'BTFL';
+    /* THE SCHEDULER STUB HAS TO EXIST OUTSIDE JEST TOO.
+       These fixtures are mounted by the Jest censuses AND, through
+       e2e/touch-targets, by a real Chromium build - and `jest` is not a
+       global there. Under Jest these stay `jest.fn()`, so anything that
+       inspects their calls is unchanged; in a browser they are the same
+       no-ops without the recorder. */
     this.telemetry = {
-      acquirePauseLease: jest.fn(() => ({release: jest.fn()})),
-      discardPendingDemands: jest.fn(),
-      waitUntilIdle: jest.fn(() => Promise.resolve()),
-      requestRefresh: jest.fn(),
+      acquirePauseLease: spy(() => ({release: spy(() => undefined)})),
+      discardPendingDemands: spy(() => undefined),
+      waitUntilIdle: spy(() => Promise.resolve()),
+      requestRefresh: spy(() => undefined),
     } as unknown as MspTelemetryScheduler;
     this.coordinator = {
       getOwnershipState: () => this.ownership,

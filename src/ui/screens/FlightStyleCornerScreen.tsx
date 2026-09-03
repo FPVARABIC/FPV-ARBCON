@@ -85,8 +85,18 @@ function StepBlock({
         <View style={styles.recommend}>
           <Text style={styles.recommendLabel}>الموصى به</Text>
           <View style={styles.recommendValues}>
-            {step.recommended.map(value => (
-              <View key={value} style={styles.valueChip}>
+            {/* KEYED BY POSITION, NOT BY VALUE.
+                A step can recommend the same number twice - Freestyle's
+                receiver step is ['50','50'], one per smoothing field -
+                and two children with the same key is a condition React
+                documents as unsupported: it "may cause children to be
+                duplicated and/or omitted". Measured on this renderer it
+                currently draws both, so nothing is lost today; the key
+                below removes the condition rather than relying on that
+                staying true. Position IS the identity here: the list is
+                static content and the nth chip is the nth field. */}
+            {step.recommended.map((value, index) => (
+              <View key={`${index}:${value}`} style={styles.valueChip}>
                 <Text style={styles.valueChipText}>{value}</Text>
               </View>
             ))}
