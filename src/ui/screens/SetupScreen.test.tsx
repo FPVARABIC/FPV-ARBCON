@@ -46,6 +46,16 @@ import {
   ARMED_TELEMETRY_POLL_ID,
   ARMING_BLOCKERS_TELEMETRY_POLL_ID,
 } from '../../platforms/react-native/protocol';
+/* The liveness verdict's own two numbers, imported from the module that
+   owns them rather than restated here: a test that hardcodes 3 and 10ms
+   keeps passing after production changes either one, which is precisely
+   how the RECOVERY_FAILED race below went unnoticed. Not re-exported
+   through the barrel on purpose - adding an export to production source
+   to satisfy a test is a change to production source. */
+import {
+  LINK_DEAD_AFTER_CONSECUTIVE_FAILURES,
+  TELEMETRY_TICK_INTERVAL_MS,
+} from '../../platforms/react-native/protocol/MspSessionCoordinator';
 import {
   MSP_API_VERSION,
   MSP_FC_VARIANT,
@@ -489,6 +499,16 @@ describe('SetupScreen', () => {
  * unauthorized production behavior change, out of Step 6's own scope.
  */
 describe('SetupScreen - Step 6: connection-indicator states through the real screen', () => {
+  /* Only the RECOVERY_FAILED pair below installs fake timers, and only
+     for the reason written above it. This restores the real clock even
+     if one of them fails its assertion, so a fake-timer install can
+     never escape the test that asked for it. Every other test here runs
+     on real timers exactly as before - useRealTimers() on an already-real
+     clock is a no-op. */
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   it('DISCONNECTED (غير متصل): a never-opened session', () => {
     const props = makeProps({
       sessionKey: { sessionId: 'step6-disconnected-1', generation: 1 },
@@ -648,7 +668,35 @@ describe('SetupScreen - Step 6: connection-indicator states through the real scr
     });
   });
 
+  /**
+   * THE TELEMETRY CLOCK IS HELD STILL FOR THIS ONE TEST, and the reason
+   * is a measured property of the application rather than a preference.
+   *
+   * RECOVERY_FAILED is not a resting state. Once recovery has failed the
+   * link is dead, so every telemetry dispatch fails, and after
+   * LINK_DEAD_AFTER_CONSECUTIVE_FAILURES of them in a row the
+   * coordinator's liveness verdict ends the session exactly as a
+   * physical detach ends it: the entry is deleted, ownership goes
+   * INACTIVE, and the indicator correctly reads «غير متصل». That is
+   * right, and the test below this one asserts it directly.
+   *
+   * The tick is TELEMETRY_TICK_INTERVAL_MS = 10ms and the threshold is 3,
+   * so on real timers the state THIS test is about survives about FOUR
+   * MILLISECONDS of wall-clock. Measured at 1ms resolution, not
+   * estimated: ACTIVE/RECOVERY_FAILED at +3ms, gone at +4ms. Whether the
+   * expectation or the third failed dispatch went first was therefore
+   * decided by how busy the machine was - which is how one CI run of this
+   * suite reported «غير متصل» here while every local run reported
+   * «تعذّرت الاستعادة».
+   *
+   * Fake timers remove that dependence without touching the scenario or
+   * softening the expectation: the same fixture, the same two rejections,
+   * the same assertions - only the 10ms telemetry clock can no longer
+   * advance behind them. Nothing about production changed; a test was
+   * asserting a state it had not pinned in time.
+   */
   it('RECOVERY_FAILED (تعذّرت الاستعادة): the restart step itself fails', async () => {
+    jest.useFakeTimers();
     const sessionId = 'step6-recovery-failed-1';
     const client = makeFakeClient(sessionId);
     const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
@@ -683,6 +731,98 @@ describe('SetupScreen - Step 6: connection-indicator states through the real scr
     await act(async () => {
       mspSessionCoordinator.deactivateMspSession(sessionId);
     });
+    act(() => {
+      renderer.unmount();
+    });
+  });
+
+  /**
+   * THE BEHAVIOUR THAT USED TO WIN THAT RACE - asserted now, instead of
+   * raced.
+   *
+   * A link whose recovery has failed cannot carry telemetry, so the
+   * scheduler's dispatches fail one after another and the coordinator
+   * ends the session on the LINK_DEAD_AFTER_CONSECUTIVE_FAILURES'th -
+   * the same teardown a physical detach performs, because the situation
+   * is the same: there is nothing on the other end any more.
+   *
+   * That is a safety property, not an implementation detail. An operator
+   * must not keep reading a board's identity, firmware and MSP version
+   * off a screen after the link to that board is gone. It is pinned here
+   * so that holding the clock still in the test above can never be
+   * mistaken for hiding it - if this teardown were ever removed, this
+   * test fails, and the previous test would go on passing.
+   */
+  it('a dead link is ended by the liveness verdict, and the screen stops claiming a board', async () => {
+    jest.useFakeTimers();
+    const sessionId = 'step6-liveness-teardown-1';
+    const client = makeFakeClient(sessionId);
+    const props = makeProps({ sessionKey: { sessionId, generation: 1 } });
+
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    let mspClient: ReturnType<typeof mspSessionCoordinator.openSession>;
+    act(() => {
+      renderer = ReactTestRenderer.create(<SetupScreen {...props} />);
+    });
+    await act(async () => {
+      mspClient = mspSessionCoordinator.openSession(
+        client as unknown as UsbSerialTransportClient,
+        sessionId,
+      );
+      await flushAsync();
+    });
+    /* Identified and NAMED before anything fails, so the disappearance
+       below is a real transition rather than a screen that never had
+       anything on it to lose. */
+    expect(allText(renderer)).toContain('MyBoard');
+
+    await act(async () => {
+      client.rejectNextWrite('write failed');
+      client.rejectNextRestart('stop failed');
+      await mspClient!
+        .request(42, new Uint8Array(0), { wireFormat: 'v1' })
+        .catch(() => undefined);
+      await flushAsync();
+    });
+    expect(mspSessionCoordinator.getOwnershipState(sessionId)).toBe('ACTIVE');
+    expect(mspSessionCoordinator.getMspRecoveryState(sessionId)).toBe(
+      'RECOVERY_FAILED',
+    );
+
+    /* ONE TICK AT A TIME, recording the tick the verdict actually fires
+       on. A single bulk advance would pass identically whether the
+       threshold were 1, 3 or 30 - and the whole point of this test is
+       which. */
+    let ticksToTeardown: number | undefined;
+    for (let tick = 1; tick <= 20; tick++) {
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(TELEMETRY_TICK_INTERVAL_MS);
+        await flushAsync();
+      });
+      if (mspSessionCoordinator.getOwnershipState(sessionId) === 'INACTIVE') {
+        ticksToTeardown = tick;
+        break;
+      }
+    }
+
+    expect(ticksToTeardown).toBeDefined();
+    /* At most one dispatch settles per tick, so the verdict cannot
+       possibly have fired before its own threshold's worth of them
+       failed. This is the direction that matters: firing EARLY would end
+       a session that is still recoverable. */
+    expect(ticksToTeardown).toBeGreaterThanOrEqual(
+      LINK_DEAD_AFTER_CONSECUTIVE_FAILURES,
+    );
+    /* Torn down the physical-detach way - the entry is gone, not merely
+       marked CLOSING. */
+    expect(mspSessionCoordinator.getMspRecoveryState(sessionId)).toBeUndefined();
+    expect(mspSessionCoordinator.listSessionIds()).not.toContain(sessionId);
+    expect(allText(renderer)).toContain(
+      i18n.t('setupTopBar.connectionState.disconnected'),
+    );
+    /* And the board it used to name is no longer presented as present. */
+    expect(allText(renderer)).not.toContain('MyBoard');
+
     act(() => {
       renderer.unmount();
     });
