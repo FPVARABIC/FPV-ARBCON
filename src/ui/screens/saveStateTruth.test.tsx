@@ -147,6 +147,21 @@ interface Ending {
   readonly extra: Record<string, unknown>;
 }
 
+/**
+ * NOT BUILT *HERE* - AND NOW CLASSIFIED SOMEWHERE ELSE.
+ *
+ * These five carry payloads this file will not invent, which was the
+ * right call and the wrong conclusion: a payload nobody can INVENT can
+ * still be OBTAINED, by making a real board fail the way a real board
+ * fails and letting the production controller build the detail itself.
+ * `saveEndingsFromRealBoards.test.tsx` does exactly that, and classifies
+ * all five - two of them constructed from a faulted VirtualLedBoard and
+ * rendered on the real screen, one recorded as a missing harness
+ * capability, two pointed at the suites that already build them.
+ *
+ * The reasons below stay as they are: they say why this file does not
+ * build them, which is still true.
+ */
 const SKIPPED_ENDINGS: Record<string, readonly {kind: string; why: string}[]> = {
   LED: [
     {

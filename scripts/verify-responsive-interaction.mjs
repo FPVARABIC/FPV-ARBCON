@@ -93,6 +93,22 @@ const SCREENS = [
 
 const failures = [];
 const rows = [];
+/**
+ * ZOOM ROWS ARE THEIR OWN LEDGER.
+ *
+ * The 200% pass used to run twenty screens at three widths - sixty
+ * measurements - and push NOTHING, so the printed total was 140 normal
+ * rows plus the single interceptor row and read as "141 rows" for a
+ * sweep that also claimed to cover zoom. Sixty measurements happened and
+ * none of them was in the count anybody read.
+ *
+ * Two ledgers now, with their own arithmetic, and the interceptor
+ * counted apart from both: it is a self-attack on the probe, not a
+ * screen measurement, and adding it to a screen x width product is what
+ * made the old number impossible to check.
+ */
+const zoomRows = [];
+const attackRows = [];
 const fail = message => failures.push(message);
 
 /* ------------------------------------------------------------------ *
@@ -337,9 +353,24 @@ try {
   /* ---------------- 200% zoom ------------------------------------- */
   for (const screen of SCREENS) {
     for (const width of ZOOM_WIDTHS) {
+      /* HOW A BROWSER ACTUALLY ZOOMS.
+         Setting `body { zoom: 200% }` keeps the CSS viewport at its full
+         width and draws everything twice as large inside it, which is a
+         state no browser produces. Real zoom does the opposite: the
+         device stays 1024 physical pixels and the CSS viewport becomes
+         512, so the layout re-evaluates its breakpoints and a desktop
+         page legitimately becomes the phone layout.
+         The difference is not academic. Under the `zoom` model the
+         desktop side rail stayed on a 1024 page and overlapped the
+         content beside it, and the hit test - correctly - reported taps
+         landing on the wrong control. Under the model below the same
+         page is 512 CSS px, takes the phone layout with its bottom tab
+         bar, and the overlap does not exist because the rail does not.
+         Measuring the first one would have published a defect that
+         cannot happen. */
       const context = await browser.newContext({
-        viewport: {width, height: 900},
-        deviceScaleFactor: 1,
+        viewport: {width: Math.round(width / 2), height: 450},
+        deviceScaleFactor: 2,
       });
       const page = await context.newPage();
       const where = `${screen}@${width}@200%`;
@@ -350,9 +381,6 @@ try {
         await page
           .waitForSelector('[data-testid="scene-ready"]', {timeout: 20000})
           .catch(() => undefined);
-        await page.evaluate(() => {
-          document.body.style.zoom = '200%';
-        });
         await page.waitForTimeout(400);
         const probe = await page.evaluate(PROBE);
         if (probe.overflow > 1) {
@@ -365,6 +393,206 @@ try {
               ` "${control.ownedBy ?? 'something else'}"`,
           );
         }
+
+        /* ---- what 200% has to be judged on IN ITS OWN RIGHT ---------
+           Doubling the type is where a layout that merely looked tight
+           becomes unusable: focus rings leave the viewport, two icon
+           buttons that were 8px apart start overlapping, a status line
+           gets clipped by the card that used to hold it. None of that is
+           visible in the 100% result, so none of it may be inferred from
+           it. */
+        const zoom = await page.evaluate(() => {
+          const SEL =
+            '[role="button"],[role="tab"],[role="switch"],[role="radio"],' +
+            '[role="checkbox"],[role="adjustable"],[role="link"],' +
+            'button,input,select,textarea,[tabindex]:not([tabindex="-1"])';
+          const idOf = el =>
+            el.getAttribute('data-testid') ??
+            el.getAttribute('aria-label') ??
+            (el.innerText ?? '').trim().split('\n')[0].slice(0, 40);
+          const enabled = [...document.querySelectorAll(SEL)].filter(el => {
+            const r = el.getBoundingClientRect();
+            return (
+              (r.width > 0 || r.height > 0) &&
+              el.getAttribute('aria-disabled') !== 'true' &&
+              !el.hasAttribute('disabled')
+            );
+          });
+
+          /* FOCUS REACHABLE, AND VISIBLE ONCE FOCUSED. */
+          let focusable = 0;
+          let focusVisible = 0;
+          let firstUnfocusable = null;
+          for (const el of enabled.slice(0, 25)) {
+            el.focus();
+            if (document.activeElement !== el) {
+              if (firstUnfocusable === null) firstUnfocusable = idOf(el);
+              continue;
+            }
+            focusable += 1;
+            el.scrollIntoView({block: 'center'});
+            const r = el.getBoundingClientRect();
+            if (
+              r.right > 0 &&
+              r.left < window.innerWidth &&
+              r.bottom > 0 &&
+              r.top < window.innerHeight
+            ) {
+              focusVisible += 1;
+            }
+          }
+
+          /* NO OVERLAPPING CONTROLS. Two hit areas that intersect at 200%
+             are two controls an operator cannot choose between. */
+          const boxes = enabled
+            .map(el => ({el, id: idOf(el), r: el.getBoundingClientRect()}))
+            .filter(b => b.r.width > 0 && b.r.height > 0);
+          /* WHO OWNS THE TAP IS A QUESTION FOR THE BROWSER.
+
+             A first version compared bounding boxes and reported any two
+             that shared pixels. It was wrong three ways over: a toggle
+             INSIDE a row shares its parent's box by construction; two
+             neighbours whose edges meet still each own their own centre;
+             and a box that visually overlaps another may sit under it,
+             over it, or be transparent to pointer events - geometry
+             cannot say. It reported four screens.
+
+             `elementFromPoint` can say, and already does: every control
+             carries `ownsCentre` from the main probe, and the pass above
+             fails on any control whose centre resolves to something
+             else. That IS the overlap test - "a tap aimed here lands
+             somewhere else" - measured by the engine that will deliver
+             the tap.
+
+             So this reports the pairs the ENGINE disputes, not the pairs
+             that merely intersect. */
+          /* WHAT COUNTS AS AN OVERLAP, AND WHAT DOES NOT.
+             Two boxes sharing pixels is not by itself a defect:
+               - a toggle INSIDE a row (osd-element-3 contains
+                 osd-element-3-toggle) is ordinary composition, and
+               - two neighbours whose edges meet still each own their
+                 own centre, so a tap on either lands where the operator
+                 aimed.
+             What an operator cannot resolve is a box that covers ANOTHER
+             CONTROL'S CENTRE - that is the tap going somewhere else -
+             and only that is reported. The first version reported both
+             of the harmless shapes, on four screens. */
+          const covers = (a, b) =>
+            (a.left + a.right) / 2 > b.left &&
+            (a.left + a.right) / 2 < b.right &&
+            (a.top + a.bottom) / 2 > b.top &&
+            (a.top + a.bottom) / 2 < b.bottom;
+          const overlaps = [];
+          for (const one of boxes) {
+            if (overlaps.length >= 4) break;
+            const cx = (one.r.left + one.r.right) / 2;
+            const cy = (one.r.top + one.r.bottom) / 2;
+            if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) {
+              continue;
+            }
+            const hit = document.elementFromPoint(cx, cy);
+            if (hit === null) continue;
+            if (one.el.contains(hit) || hit.contains(one.el)) continue;
+            const thief = boxes.find(
+              other => other.el === hit || other.el.contains(hit),
+            );
+            if (thief !== undefined && covers(one.r, thief.r)) {
+              overlaps.push(`${one.id} -> tap lands on ${thief.id}`);
+            }
+          }
+
+          /* STATUS READABLE: no text clipped by an ancestor that cannot
+             scroll. */
+          /* ONLY WHAT AN OPERATOR CAN ACTUALLY SEE.
+
+             Two things made the first version report clipping that was
+             not there. It judged nodes far outside the viewport - a GPS
+             hint at y=1118 on a 900px page, an OSD element at y=-2832 -
+             where "clipped" means nothing, nobody is looking. And it
+             counted the OSD CANVAS, whose whole purpose is to be a
+             fixed video frame that clips what falls outside it: an
+             element positioned off the video is clipped BY DESIGN, and
+             calling that a defect would be asking the preview to stop
+             being a preview. */
+          const onScreen = r =>
+            r.bottom > 0 &&
+            r.top < window.innerHeight &&
+            r.right > 0 &&
+            r.left < window.innerWidth;
+          const CLIPS_BY_DESIGN = new Set(['osd-canvas']);
+          let clippedText = 0;
+          const clippedSamples = [];
+          for (const el of document.querySelectorAll('div,span,p')) {
+            if (el.children.length > 0) continue;
+            const text = (el.textContent ?? '').trim();
+            if (text.length === 0) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width === 0 && r.height === 0) continue;
+            if (!onScreen(r)) continue;
+            for (let n = el.parentElement; n !== null; n = n.parentElement) {
+              const style = getComputedStyle(n);
+              if (style.overflowY === 'auto' || style.overflowY === 'scroll') break;
+              if (style.overflow === 'hidden' || style.overflowY === 'hidden') {
+                if (CLIPS_BY_DESIGN.has(n.getAttribute('data-testid') ?? '')) break;
+                const box = n.getBoundingClientRect();
+                if (r.bottom > box.bottom + 2 || r.top < box.top - 2) {
+                  clippedText += 1;
+                  if (clippedSamples.length < 3) {
+                    clippedSamples.push(
+                      `${text.slice(0, 40)} [by ${n.getAttribute('data-testid') ?? n.tagName}` +
+                        ` overflow=${style.overflow}/${style.overflowY}` +
+                        ` text=${Math.round(r.top)}..${Math.round(r.bottom)}` +
+                        ` box=${Math.round(box.top)}..${Math.round(box.bottom)}]`,
+                    );
+                  }
+                }
+                break;
+              }
+            }
+          }
+
+          return {
+            controls: enabled.length,
+            focusable,
+            focusVisible,
+            firstUnfocusable,
+            overlaps,
+            clippedText,
+            clippedSamples,
+          };
+        });
+
+        if (zoom.controls > 0 && zoom.focusable === 0) {
+          fail(`${where}: no control could take focus at 200% zoom`);
+        }
+        if (zoom.focusable !== zoom.focusVisible) {
+          fail(
+            `${where}: ${zoom.focusable - zoom.focusVisible} focused control(s)` +
+              ' were outside the viewport at 200% zoom',
+          );
+        }
+        if (zoom.overlaps.length > 0) {
+          fail(
+            `${where}: overlapping hit areas at 200% zoom - ${zoom.overlaps.join(', ')}`,
+          );
+        }
+        if (zoom.clippedText > 0) {
+          fail(
+            `${where}: ${zoom.clippedText} text node(s) clipped by a` +
+              ` non-scrollable ancestor at 200% zoom - ${zoom.clippedSamples.join(' ; ')}`,
+          );
+        }
+        zoomRows.push({
+          screen,
+          width,
+          controls: zoom.controls,
+          focusable: zoom.focusable,
+          focusVisible: zoom.focusVisible,
+          overlaps: zoom.overlaps.length,
+          clippedText: zoom.clippedText,
+          overflow: probe.overflow,
+          stolen: stolen.length,
+        });
       } catch (error) {
         fail(`${where}: ${String(error).slice(0, 160)}`);
       } finally {
@@ -430,7 +658,7 @@ try {
             ' cannot be trusted on the clean runs above',
         );
       } else {
-        rows.push({
+        attackRows.push({
           screen: 'hit-routing',
           width: 1024,
           controls: after.controls.length,
@@ -476,10 +704,67 @@ for (const row of rows) {
       ` ${row.responded ? 'yes' : 'NO'}`,
   );
 }
-console.log(`  rows: ${rows.length}   screens: ${SCREENS.length}   widths: ${WIDTHS.join(', ')}`);
 console.log(`  clicks that changed nothing: ${silent.length}`);
 console.log('===============================================');
 console.log('');
+
+console.log('===== UI-X1D 200% ZOOM MATRIX =====');
+console.log(
+  '  screen              width  controls  focusable  focus in view  overlaps  clipped text  overflow',
+);
+for (const row of zoomRows) {
+  console.log(
+    `  ${row.screen.padEnd(19)}` +
+      ` ${String(row.width).padStart(5)}` +
+      ` ${String(row.controls).padStart(9)}` +
+      ` ${String(row.focusable).padStart(10)}` +
+      ` ${String(row.focusVisible).padStart(14)}` +
+      ` ${String(row.overlaps).padStart(9)}` +
+      ` ${String(row.clippedText).padStart(13)}` +
+      ` ${String(row.overflow).padStart(9)}`,
+  );
+}
+console.log('===================================');
+console.log('');
+
+/* ------------------------------------------------------------------ *
+ * ROW ARITHMETIC, ASSERTED RATHER THAN ASSERTED-TO.
+ *
+ * Three ledgers, three products, and each one is checked against the
+ * screens and widths it was actually built from. A sweep that silently
+ * skipped a screen - or one that counted the interceptor self-attack as
+ * a screen measurement, which is how the old single total became
+ * uncheckable - fails here rather than printing a plausible number.
+ * ------------------------------------------------------------------ */
+const EXPECTED_NORMAL = SCREENS.length * WIDTHS.length;
+const EXPECTED_ZOOM = SCREENS.length * ZOOM_WIDTHS.length;
+console.log('===== UI-X1D RESPONSIVE ROW ARITHMETIC =====');
+console.log(`  screens                       : ${SCREENS.length}`);
+console.log(`  normal widths                 : ${WIDTHS.length}  (${WIDTHS.join(', ')})`);
+console.log(`  zoom widths (200%)            : ${ZOOM_WIDTHS.length}  (${ZOOM_WIDTHS.join(', ')})`);
+console.log('');
+console.log(`  NORMAL_ROWS  measured ${String(rows.length).padStart(4)}   expected ${String(EXPECTED_NORMAL).padStart(4)}   (screens x normal widths)`);
+console.log(`  ZOOM_ROWS    measured ${String(zoomRows.length).padStart(4)}   expected ${String(EXPECTED_ZOOM).padStart(4)}   (screens x zoom widths)`);
+console.log(`  ATTACK_ROWS  measured ${String(attackRows.length).padStart(4)}   expected    1   (the planted interceptor - a self-attack, not a screen)`);
+console.log(`  TOTAL MEASUREMENTS    ${String(rows.length + zoomRows.length + attackRows.length).padStart(4)}`);
+console.log('============================================');
+console.log('');
+
+if (rows.length !== EXPECTED_NORMAL) {
+  fail(
+    `row arithmetic: ${rows.length} normal rows for ${SCREENS.length} screens x` +
+      ` ${WIDTHS.length} widths (expected ${EXPECTED_NORMAL})`,
+  );
+}
+if (zoomRows.length !== EXPECTED_ZOOM) {
+  fail(
+    `row arithmetic: ${zoomRows.length} zoom rows for ${SCREENS.length} screens x` +
+      ` ${ZOOM_WIDTHS.length} zoom widths (expected ${EXPECTED_ZOOM})`,
+  );
+}
+if (attackRows.length !== 1) {
+  fail(`row arithmetic: ${attackRows.length} interceptor rows (expected 1)`);
+}
 
 if (failures.length > 0) {
   console.error(`${failures.length} responsive interaction failures:`);

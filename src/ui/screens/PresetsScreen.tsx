@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Pressable,
@@ -123,8 +123,19 @@ export default function PresetsScreen({
     (busy: boolean) => onCliBusyChange(busy),
     [onCliBusyChange],
   );
+  /* WHICH AIRCRAFT IS ON SCREEN RIGHT NOW.
+     The staleness test has to be about the SESSION, not about the
+     effect: the fetch effect below re-runs when `loading` flips, so a
+     guard tied to the effect's own lifetime cancelled the very fetch
+     that had just set `loading` and the screen sat on «تحميل…» for
+     ever. That is what the regression alongside this file caught. */
+  const currentSession = useRef(sessionKey);
+  currentSession.current = sessionKey;
+
   const loadCatalog = useCallback(async () => {
     if (!sessionKey) return;
+    const askedFor = sessionKey;
+    const isStale = (): boolean => currentSession.current !== askedFor;
     setLoading(true);
     setFailure(undefined);
     setSelected(undefined);
@@ -134,6 +145,13 @@ export default function PresetsScreen({
         repository.loadIndex(),
         repository.loadFirmwareVersion(sessionKey),
       ]);
+      /* THE CATALOGUE IS FILTERED BY THIS AIRCRAFT'S FIRMWARE.
+         `loadFirmwareVersion` is a read of the connected board, so an
+         answer that arrives after the operator swapped aircraft would
+         list packages "compatible with" a firmware version the board in
+         front of them is not running. Dropped, exactly as every
+         configuration screen drops a stale read. */
+      if (isStale()) return;
       const compatible = filterCompatiblePresets(index, version.versionString);
       setFirmwareVersion(version.versionString);
       setPresets(compatible);
@@ -150,15 +168,48 @@ export default function PresetsScreen({
           : `لا توجد حزم في المصدر الرسمي للإصدار ${version.versionString}.${dropped}`,
       );
     } catch (error) {
+      if (isStale()) return;
       setFailure(errorText(error));
     } finally {
-      setLoading(false);
+      if (!isStale()) setLoading(false);
     }
   }, [repository, sessionKey]);
+  /**
+   * ONE FETCH PER AIRCRAFT, AND A NEW ONE WHEN THE AIRCRAFT CHANGES.
+   *
+   * This used to decide whether to fetch by asking whether `presets` was
+   * empty, and that reads two completely different situations as the
+   * same one:
+   *
+   *   - nothing has been fetched yet, and
+   *   - the official index was fetched and holds NOTHING compatible with
+   *     this firmware.
+   *
+   * The second is an ordinary outcome the screen even has a sentence for
+   * («لا توجد حزم في المصدر الرسمي للإصدار …»), and after it the
+   * condition was true again: the screen re-fetched the index, got the
+   * same empty answer, and re-fetched, without end. Measured against the
+   * unmodified screen: the index request never stopped repeating.
+   *
+   * It also never re-fetched when the SESSION changed, because by then
+   * `presets` was not empty - so a list built for the previous board's
+   * firmware stayed on screen, presented as fitting the new one.
+   *
+   * Remembering which aircraft was actually asked answers both: one
+   * fetch per aircraft, a fresh one per aircraft, and none in between.
+   */
+  const fetchedFor = useRef<typeof sessionKey | undefined>(undefined);
   useEffect(() => {
-    if (active && presets.length === 0 && !loading && failure === undefined)
-      loadCatalog().catch(() => undefined);
-  }, [active, failure, loadCatalog, loading, presets.length]);
+    if (!active || sessionKey === undefined) return;
+    if (fetchedFor.current === sessionKey) return;
+    fetchedFor.current = sessionKey;
+    setPresets([]);
+    setFirmwareVersion(undefined);
+    setSelected(undefined);
+    setLoaded(undefined);
+    setStatus('حمّل الفهرس الرسمي ثم اختر حزمة متوافقة.');
+    loadCatalog().catch(() => undefined);
+  }, [active, loadCatalog, sessionKey]);
   useEffect(
     () => () => {
       if (cli.getPhase() !== 'IDLE')

@@ -156,6 +156,32 @@ async function driftOf(tree: ReactTestRenderer.ReactTestRenderer): Promise<boole
   return snapshotOf(tree) !== before;
 }
 
+/**
+ * TWO DENOMINATORS, NAMED APART.
+ *
+ * This suite reports two different quantities and they must never share
+ * a label:
+ *
+ *   UNIQUE_CONTROL_SUBJECTS  one per (screen, control, kind) examined -
+ *                            the rows of `ROWS`, one outcome each.
+ *   ACTION_ROWS              one per interaction actually performed.
+ *                            A round trip is two or three of them
+ *                            (toggle twice; minus then plus; away, then
+ *                            back to the group's home), so this is
+ *                            always the larger number.
+ *
+ * `ROUND_TRIP_CLEAN` is neither: it is a SUBSET of the subjects - the
+ * ones that could round-trip at all. A subject that is DISABLED or
+ * PINNED never performs one, which is why 269 clean does not add up to
+ * 655 subjects and never should.
+ *
+ * Counted here rather than inferred from the shape of the loop, because
+ * a count derived from what the code is supposed to do is not a
+ * measurement.
+ */
+const ACTIONS: {screen: string; id: string; kind: Kind}[] = [];
+let currentScreen = '(none)';
+
 async function tap(
   tree: ReactTestRenderer.ReactTestRenderer,
   id: string,
@@ -165,6 +191,7 @@ async function tap(
     candidate => candidate.id === id && candidate.kind === kind,
   );
   if (control === undefined || control.disabled) return false;
+  ACTIONS.push({screen: currentScreen, id, kind});
   const props = control.node.props as any;
   await act(async () => {
     try {
@@ -216,6 +243,7 @@ describe('a control puts the screen back when it is taken back', () => {
         });
       }
 
+      currentScreen = name;
       const drifts = await driftOf(tree);
       const found = discover(tree);
       const done = new Set<string>();
@@ -441,7 +469,28 @@ describe('a control puts the screen back when it is taken back', () => {
               .join(''),
         ),
         '',
-        `  rows: ${ROWS.length}  across ${new Set(ROWS.map(r => r.screen)).size} screens`,
+        '  DENOMINATORS - these count different things and are never mixed',
+        `    UNIQUE_CONTROL_SUBJECTS  ${String(ROWS.length).padStart(5)}` +
+          `   one per (screen, control, kind), one outcome each`,
+        `    ACTION_ROWS              ${String(ACTIONS.length).padStart(5)}` +
+          `   one per interaction actually performed`,
+        `    ROUND_TRIP_CLEAN         ${String(
+          ROWS.filter(row => row.outcome === 'ROUND_TRIP_CLEAN').length,
+        ).padStart(5)}   a SUBSET of the subjects, not a third total`,
+        '',
+        '  kind        UNIQUE_SUBJECTS      ACTION_ROWS',
+        ...kinds.map(
+          kind =>
+            `    ${kind.padEnd(10)}` +
+            String(ROWS.filter(row => row.kind === kind).length).padStart(15) +
+            String(ACTIONS.filter(row => row.kind === kind).length).padStart(17),
+        ),
+        `    ${'(TEXT/SLIDER, skipped)'.padEnd(10)}` +
+          String(
+            ACTIONS.filter(row => !kinds.includes(row.kind)).length,
+          ).padStart(32),
+        '',
+        `  subjects: ${ROWS.length}  across ${new Set(ROWS.map(r => r.screen)).size} screens`,
         '==========================================',
         '',
       ].join('\n'),
@@ -450,6 +499,40 @@ describe('a control puts the screen back when it is taken back', () => {
     expect(
       ROWS.filter(row => row.outcome === 'ROUND_TRIP_CLEAN').length,
     ).toBeGreaterThan(30);
+
+    /* THE TWO DENOMINATORS ARE REALLY DIFFERENT, AND THE SUBJECT ONE IS
+       REALLY UNIQUE. A duplicated subject would inflate the row count
+       while every per-outcome column still looked plausible. */
+    const subjectKeys = ROWS.map(row => `${row.screen}::${row.id}::${row.kind}`);
+    expect(new Set(subjectKeys).size).toBe(ROWS.length);
+    /* Every outcome column adds up to the subject total - no row is
+       counted under two outcomes and none is dropped. */
+    const perOutcome = outcomes.reduce(
+      (sum, outcome) =>
+        sum + ROWS.filter(row => row.outcome === outcome).length,
+      0,
+    );
+    expect({sumOfOutcomeColumns: perOutcome}).toEqual({
+      sumOfOutcomeColumns: ROWS.length,
+    });
+    /* And per kind, the same. */
+    for (const kind of kinds) {
+      const rows = ROWS.filter(row => row.kind === kind);
+      const columns = outcomes.reduce(
+        (sum, outcome) =>
+          sum + rows.filter(row => row.outcome === outcome).length,
+        0,
+      );
+      expect({kind, sumOfOutcomeColumns: columns}).toEqual({
+        kind,
+        sumOfOutcomeColumns: rows.length,
+      });
+    }
+    /* A round trip is more than one press, so actions must exceed the
+       subjects that performed one. */
+    expect(ACTIONS.length).toBeGreaterThan(
+      ROWS.filter(row => row.outcome === 'ROUND_TRIP_CLEAN').length,
+    );
   });
 
   it('the round-trip oracle sees a control that leaves something behind', () => {

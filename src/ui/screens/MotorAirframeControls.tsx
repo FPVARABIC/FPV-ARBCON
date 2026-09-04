@@ -329,45 +329,63 @@ export function MotorAirframeControls({
     [onTopology, sessionId],
   );
 
-  const load = useCallback(async () => {
-    if (sessionId === undefined || sessionKey === undefined) {
-      setLoadState('UNAVAILABLE');
-      applySnapshot(undefined);
-      return;
-    }
-    setLoadState('LOADING');
-    reportBusy(true);
-    try {
-      const result = await controller.load(sessionKey);
-      if (!mounted.current) {
+  /**
+   * `mounted` IS NOT ENOUGH. Still mounted and still the same aircraft
+   * are different questions, and only the first was being asked: a read
+   * issued for the previous board landed on a screen that had already
+   * moved to the next one, and `applySnapshot` put that board's mixer,
+   * motor count and reversal flag on it as READY. The effect below
+   * already knows a session change means a new aircraft - it throws the
+   * draft away for exactly that reason - so the read in flight has to go
+   * the same way.
+   */
+  const load = useCallback(
+    async (isStale?: () => boolean) => {
+      const gone = (): boolean => !mounted.current || isStale?.() === true;
+      if (sessionId === undefined || sessionKey === undefined) {
+        setLoadState('UNAVAILABLE');
+        applySnapshot(undefined);
         return;
       }
-      if (result.kind === 'LOADED') {
-        applySnapshot(result.snapshot);
-        setLoadState('READY');
-      } else {
-        applySnapshot(undefined);
-        setLoadState('UNAVAILABLE');
+      setLoadState('LOADING');
+      reportBusy(true);
+      try {
+        const result = await controller.load(sessionKey);
+        if (gone()) {
+          return;
+        }
+        if (result.kind === 'LOADED') {
+          applySnapshot(result.snapshot);
+          setLoadState('READY');
+        } else {
+          applySnapshot(undefined);
+          setLoadState('UNAVAILABLE');
+        }
+      } catch {
+        if (!gone()) {
+          applySnapshot(undefined);
+          setLoadState('UNAVAILABLE');
+        }
+      } finally {
+        if (!gone()) {
+          reportBusy(false);
+        }
       }
-    } catch {
-      if (mounted.current) {
-        applySnapshot(undefined);
-        setLoadState('UNAVAILABLE');
-      }
-    } finally {
-      if (mounted.current) {
-        reportBusy(false);
-      }
-    }
-  }, [applySnapshot, controller, reportBusy, sessionId, sessionKey]);
+    },
+    [applySnapshot, controller, reportBusy, sessionId, sessionKey],
+  );
 
   useEffect(() => {
     // A new connection is a new aircraft: whatever was drafted against
     // the old one is meaningless against it.
+    let cancelled = false;
     setDraft(NO_DRAFT);
     setSavedNeedsReboot(false);
     setOutcome(undefined);
-    load().catch(() => undefined);
+    load(() => cancelled).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   /* ---- truth layers ------------------------------------------------- */

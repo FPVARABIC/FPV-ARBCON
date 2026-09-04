@@ -35,6 +35,43 @@ import {spawn} from 'node:child_process';
 import {chromium} from 'playwright-core';
 
 const MIN = 44;
+
+/**
+ * WAIT FOR THE SCENE, THEN SETTLE.
+ *
+ * Every probe below used to `goto(..., {waitUntil: 'networkidle'})`,
+ * wait a fixed 400-500ms, and then query the DOM exactly once. That is a
+ * bet that React has mounted the scene inside the fixed wait, and on a
+ * loaded machine it is a bet that loses: the query finds nothing and the
+ * probe reports "could not locate <control>", which reads as a missing
+ * control and is nothing of the kind.
+ *
+ * Observed once, on a run that shared the machine with the full Jest
+ * suite; it did not reproduce in five clean runs or in three runs under
+ * deliberate 8x CPU contention. Rather than leave a verifier whose
+ * verdict depends on what else the machine is doing, the fixed wait now
+ * follows an actual wait FOR THE SCENE: any interactive control, or the
+ * fixture's own failure marker.
+ *
+ * This weakens nothing. A control that genuinely never renders still
+ * fails - after a bounded wait instead of immediately - and every
+ * measurement still happens on a settled page.
+ */
+const SCENE_READY =
+  '[role="button"],[role="tab"],[role="radio"],[role="checkbox"],button,' +
+  '[tabindex]:not([tabindex="-1"]),[data-fixture]';
+
+async function openScene(page, url, settleMs) {
+  await page.goto(url, {waitUntil: 'networkidle'});
+  try {
+    await page.waitForSelector(SCENE_READY, {timeout: 15000, state: 'attached'});
+  } catch {
+    /* Reported by the probe itself, with the control it was looking for
+       - not swallowed here. */
+  }
+  await page.waitForTimeout(settleMs);
+}
+
 const PORT = 4193;
 const BASE = `http://127.0.0.1:${PORT}/index.html`;
 const CHROME = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -325,8 +362,7 @@ try {
         deviceScaleFactor: 1,
       });
       const page = await ctx.newPage();
-      await page.goto(`${BASE}?dir=rtl&s=${scene}`, {waitUntil: 'networkidle'});
-      await page.waitForTimeout(500);
+      await openScene(page, `${BASE}?dir=rtl&s=${scene}`, 500);
 
       const res = await page.evaluate(PROBE, MIN);
       const seen = res.controls.map(c => c.id);
@@ -411,8 +447,7 @@ try {
              had unmounted comes back as "could not locate" - a property
              of the probe order, not of the product. */
           const edgePage = await ctx.newPage();
-          await edgePage.goto(`${BASE}?dir=rtl&s=${scene}`, {waitUntil: 'networkidle'});
-          await edgePage.waitForTimeout(400);
+          await openScene(edgePage, `${BASE}?dir=rtl&s=${scene}`, 400);
           const probe = await edgePage.evaluate(
             ([targetId, sel]) => {
               const el = [...document.querySelectorAll(sel)].find(
@@ -507,8 +542,7 @@ try {
              Space activate the control, and an activated control can
              remove the next one from the tree. */
           const kbPage = await ctx.newPage();
-          await kbPage.goto(`${BASE}?dir=rtl&s=${scene}`, {waitUntil: 'networkidle'});
-          await kbPage.waitForTimeout(400);
+          await openScene(kbPage, `${BASE}?dir=rtl&s=${scene}`, 400);
           const found = await kbPage.evaluate(
             ([targetId, sel]) => {
               const el = [...document.querySelectorAll(sel)].find(
@@ -595,7 +629,7 @@ try {
         deviceScaleFactor: 1,
       });
       const page = await ctx.newPage();
-      await page.goto(`${BASE}?dir=rtl&s=${scene}`, {waitUntil: 'networkidle'});
+      await openScene(page, `${BASE}?dir=rtl&s=${scene}`, 0);
       await page.evaluate(() => {
         document.body.style.zoom = '200%';
       });

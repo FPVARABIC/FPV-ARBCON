@@ -314,30 +314,57 @@ export function MotorConfigurationPanel({
     [],
   );
 
-  const load = useCallback(async () => {
-    setPhase('LOADING');
-    setLoadError(undefined);
-    setSaveOutcome(undefined);
-    try {
-      const result = await controller.load(sessionKey);
-      if (result.kind === 'LOADED') {
-        installSnapshot(result.snapshot);
-      } else if (result.kind === 'REJECTED') {
-        setLoadError(blockReasonText(t, result.reason));
-      } else if (result.kind === 'SESSION_ENDED') {
-        setLoadError(t('motorConfiguration.reasonDisconnected'));
-      } else {
+  /**
+   * A READ THAT LANDS AFTER THE AIRCRAFT CHANGED IS NOT THIS AIRCRAFT'S.
+   *
+   * `sessionKey` is a prop and this read is asynchronous, so a pilot who
+   * unplugs one quad and plugs in the next while a load is in flight has
+   * two reads outstanding: the old board's and the new one's. Without
+   * `isStale` the old board's answer called `installSnapshot` and put ITS
+   * motor protocol, idle throttle and motor count on a panel that is now
+   * labelled with the new aircraft.
+   *
+   * The write itself was never in danger - `MotorConfigurationController`
+   * refuses a save whose baseline belongs to another session - but the
+   * operator was reading one quad's configuration as another's, which is
+   * how the wrong protocol gets "confirmed" by eye.
+   *
+   * Every other configuration screen already guards this way; this one
+   * did not, and the async census found it.
+   */
+  const load = useCallback(
+    async (isStale?: () => boolean) => {
+      setPhase('LOADING');
+      setLoadError(undefined);
+      setSaveOutcome(undefined);
+      try {
+        const result = await controller.load(sessionKey);
+        if (isStale?.() === true) return;
+        if (result.kind === 'LOADED') {
+          installSnapshot(result.snapshot);
+        } else if (result.kind === 'REJECTED') {
+          setLoadError(blockReasonText(t, result.reason));
+        } else if (result.kind === 'SESSION_ENDED') {
+          setLoadError(t('motorConfiguration.reasonDisconnected'));
+        } else {
+          setLoadError(t('motorConfiguration.loadFailed'));
+        }
+      } catch {
+        if (isStale?.() === true) return;
         setLoadError(t('motorConfiguration.loadFailed'));
+      } finally {
+        if (isStale?.() !== true) setPhase('IDLE');
       }
-    } catch {
-      setLoadError(t('motorConfiguration.loadFailed'));
-    } finally {
-      setPhase('IDLE');
-    }
-  }, [controller, installSnapshot, sessionKey, t]);
+    },
+    [controller, installSnapshot, sessionKey, t],
+  );
 
   useEffect(() => {
-    load().catch(() => undefined);
+    let cancelled = false;
+    load(() => cancelled).catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   const effectiveDraft = useMemo(

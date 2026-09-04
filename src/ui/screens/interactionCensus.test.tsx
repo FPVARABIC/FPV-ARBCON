@@ -111,13 +111,23 @@ import type {Recorder} from './__censusFixtures__/censusScreens';
  *   PRESS_BUDGET_MS   a handler runs against in-memory doubles and a
  *                     virtual board; two seconds is orders of magnitude
  *                     over anything legitimate.
- *   SCREEN_BUDGET_MS  the widest screen measured so far draws 172
- *                     controls; sixty seconds is ~350ms each.
+ *   SCREEN_BUDGET_MS  the widest screen measured so far - LED - draws
+ *                     412 controls, and this sweep shares four cores
+ *                     with every other suite in the run. Sixty seconds
+ *                     was enough while this file was one of ~458; it is
+ *                     not enough now that the UI-X1D family has grown by
+ *                     a dozen heavy browser-and-registry suites, and the
+ *                     LED sweep began reporting 28 controls it simply
+ *                     ran out of time to press. That is a harness limit,
+ *                     and the assertion below is right to fail on it
+ *                     rather than call the remainder coverage - so the
+ *                     budget moves to match the machine, not the
+ *                     assertion to match the budget.
  *   jest.setTimeout   screen budget + snapshot load over the virtual
  *                     board + margin.
  * ==================================================================== */
 const PRESS_BUDGET_MS = 2000;
-const SCREEN_BUDGET_MS = 60000;
+const SCREEN_BUDGET_MS = 150000;
 /**
  * The second pass mounts a whole screen per target and walks a
  * disclosure path before each press, so its unit cost is far above the
@@ -129,7 +139,7 @@ const RERUN_BUDGET_MS = 240000;
  *  the recorded disclosure path did not produce. Bounded so a screen that
  *  simply never renders it reports that, rather than walking for ever. */
 const EXPLORE_PRESSES = 40;
-jest.setTimeout(300000);
+jest.setTimeout(600000);
 
 /* The registry's preconditions press controls; give them React's act. */
 installAct(act);
@@ -1157,6 +1167,15 @@ const COVERAGE: Record<
     noKeyboard: number;
   }
 > = {};
+/**
+ * EVERY SUBJECT THIS SCREEN EVER SHOWED, BY NAME.
+ *
+ * `COVERAGE.discovered` is only the SIZE of this set, and a size cannot
+ * be reconciled: it cannot say whether a subject was counted twice, or
+ * not at all. The reconciliation at the end of this file needs the names
+ * themselves, so it keeps them.
+ */
+const DISCOVERED_KEYS: Record<string, Set<string>> = {};
 
 /**
  * WHAT THE FIRST SWEEP COULD NOT REACH, AND HOW TO REACH IT.
@@ -1443,9 +1462,18 @@ describe('every rendered control is pressed, and every press does something', ()
       UNREACHED[name] = new Map(
         unreachable.map(key => [key, unmeasured.get(key) ?? HIDDEN_FIRST]),
       );
+      DISCOVERED_KEYS[name] = new Set(everSeen);
       COVERAGE[name] = {
         discovered: everSeen.size,
-        notMeasured: unreachable.length + remaining,
+        /* `unreachable` ALREADY CONTAINS the budget remainder: a control
+           left pending when the budget ran out was never added to
+           `seen`, so it is unreachable by this filter's first clause.
+           Adding `remaining` on top of it counted those controls twice.
+           It has always been zero here - the per-screen assertion below
+           requires it - so no published number was ever wrong, but the
+           reconciliation at the end of this file has to be able to trust
+           the formula and not just the value. */
+        notMeasured: unreachable.length,
         keyboard: reachable.size,
         noKeyboard: unreachableByKeyboard.size,
       };
@@ -1485,7 +1513,7 @@ describe('every rendered control is pressed, and every press does something', ()
               ` ${timedOut.length} TIMEOUT, ${twice.length} FIRED_TWICE,` +
               ` ${wrong.length} WRONG_ACTION,` +
               ` ${liveWhenDisabled.length} DISABLED_BUT_RESPONDED,` +
-              ` ${unreachable.length + remaining} NOT_MEASURED ---`,
+              ` ${unreachable.length} NOT_MEASURED ---`,
             ...dead.map(r => `  NO_EFFECT    ${r.handler} ${r.id}  [${r.detail}]`),
             ...threw.map(r => `  THREW        ${r.handler} ${r.id}  [${r.detail}]`),
             ...timedOut.map(r => `  TIMEOUT      ${r.handler} ${r.id}  [${r.detail}]`),
@@ -1566,6 +1594,13 @@ describe('every rendered control is pressed, and every press does something', ()
       threw: 0,
       timeout: 0,
       wrong: 0,
+      /* PRINTED BECAUSE THEY EXIST, not because they are non-zero. The
+         three verdicts below were absent from this line, so the totals
+         it printed could never be added up - see the arithmetic
+         reconciliation at the end of this file. */
+      already: 0,
+      twice: 0,
+      liveWhenDisabled: 0,
       notMeasured: 0,
       unlabelled: 0,
       keyboard: 0,
@@ -1590,6 +1625,9 @@ describe('every rendered control is pressed, and every press does something', ()
       sum.threw += count('THREW');
       sum.timeout += count('TIMEOUT');
       sum.wrong += count('WRONG_ACTION');
+      sum.already += count('ALREADY_IN_TARGET_STATE');
+      sum.twice += count('FIRED_TWICE');
+      sum.liveWhenDisabled += count('DISABLED_BUT_RESPONDED');
       sum.unlabelled += anon;
       sum.keyboard += coverage.keyboard;
       sum.noKeyboard += coverage.noKeyboard;
@@ -1616,6 +1654,9 @@ describe('every rendered control is pressed, and every press does something', ()
         `  TOTAL discovered=${sum.discovered} executed=${sum.executed}` +
           ` disabled=${sum.disabled} dead=${sum.dead} threw=${sum.threw}` +
           ` timeout=${sum.timeout} wrongAction=${sum.wrong}` +
+          ` firedTwice=${sum.twice}` +
+          ` disabledButResponded=${sum.liveWhenDisabled}` +
+          ` alreadyInTargetState=${sum.already}` +
           ` notMeasured=${sum.notMeasured}` +
           ` unlabelled=${sum.unlabelled}` +
           ` keyboardReachable=${sum.keyboard}` +
@@ -2092,6 +2133,173 @@ describe('a control an earlier press hid is measured on a mount of its own', () 
     expect(sequencing - measuredHere).toBe(0);
     /* And every row that is left says which of the three it is. */
     expect(unclassified).toEqual([]);
+  });
+
+  /* ================================================================== *
+   * EVERY DISCOVERED SUBJECT LANDS IN EXACTLY ONE BUCKET
+   *
+   * The census used to print `discovered`, `executed`, `disabled` and
+   * `notMeasured` on one line, and those four do not add up:
+   *
+   *     1878 - 1380 - 140 - 355 = 3
+   *
+   * The three were real and were not lost - they are
+   * `ALREADY_IN_TARGET_STATE`, a ninth verdict the TOTAL line simply did
+   * not print. `FIRED_TWICE` and `DISABLED_BUT_RESPONDED` were missing
+   * from it too; they happen to be zero, so the line was arithmetically
+   * broken without ever being visibly wrong.
+   *
+   * A count nobody can add up is a count nobody can check. So this does
+   * not print a summary: it assigns EVERY subject the sweep ever
+   * discovered, by name, to exactly one bucket, and fails on a subject
+   * that lands in two or in none.
+   * ================================================================== */
+  const BUCKET_OF: Record<Result['verdict'], string> = {
+    EXECUTED_CORRECT_ACTION: 'EXECUTED',
+    DISABLED_WITH_VALID_REASON: 'DISABLED_VALID',
+    ALREADY_IN_TARGET_STATE: 'ALREADY_IN_TARGET_STATE',
+    NO_EFFECT: 'NO_EFFECT',
+    THREW: 'THREW',
+    TIMEOUT: 'TIMEOUT',
+    FIRED_TWICE: 'FIRED_TWICE',
+    WRONG_ACTION: 'WRONG_ACTION',
+    DISABLED_BUT_RESPONDED: 'DISABLED_BUT_RESPONDED',
+  };
+  /** Printed in this order, so a defect bucket cannot hide at the end. */
+  const BUCKET_ORDER = [
+    'EXECUTED',
+    'EXECUTED_ON_ITS_OWN_MOUNT',
+    'DISABLED_VALID',
+    'ALREADY_IN_TARGET_STATE',
+    'SAFETY_CONTROLLED_NOT_MEASURED',
+    'SOURCE_REALISTIC_NOT_APPLICABLE',
+    'PLATFORM_UNAVAILABLE',
+    'SEQUENCING_NOT_MEASURED',
+    'UNCLASSIFIED_NOT_MEASURED',
+    'NO_EFFECT',
+    'THREW',
+    'TIMEOUT',
+    'FIRED_TWICE',
+    'WRONG_ACTION',
+    'DISABLED_BUT_RESPONDED',
+  ] as const;
+  /** Buckets that are findings. Any of them non-zero is a defect. */
+  const DEFECT_BUCKETS = [
+    'NO_EFFECT',
+    'THREW',
+    'TIMEOUT',
+    'FIRED_TWICE',
+    'WRONG_ACTION',
+    'DISABLED_BUT_RESPONDED',
+    'SEQUENCING_NOT_MEASURED',
+    'UNCLASSIFIED_NOT_MEASURED',
+  ];
+
+  it('every discovered subject lands in exactly one bucket', () => {
+    const bucketed = new Map<string, string[]>();
+    const collisions: string[] = [];
+    const orphans: string[] = [];
+    const assign = (subject: string, bucket: string): void => {
+      const already = bucketed.get(subject);
+      if (already !== undefined) {
+        collisions.push(`${subject}: ${already.join(' + ')} + ${bucket}`);
+        already.push(bucket);
+        return;
+      }
+      bucketed.set(subject, [bucket]);
+    };
+
+    for (const [screen, discovered] of Object.entries(DISCOVERED_KEYS)) {
+      /* The first sweep pressed these and has a verdict for each. */
+      for (const row of CENSUS[screen] ?? []) {
+        assign(`${screen}::${row.id}::${row.handler}`, BUCKET_OF[row.verdict]);
+      }
+      /* The second pass pressed these, on a mount of their own. Its
+         EXECUTED rows get their own bucket so that "reached by the sweep"
+         and "reached only by replaying the disclosure path" stay
+         distinguishable in the total. */
+      for (const row of RERUN[screen] ?? []) {
+        const key = `${screen}::${row.id}::${row.handler}`;
+        assign(
+          key,
+          row.verdict === 'EXECUTED_CORRECT_ACTION'
+            ? 'EXECUTED_ON_ITS_OWN_MOUNT'
+            : BUCKET_OF[row.verdict],
+        );
+      }
+      /* And whatever neither pass pressed, with the reason. */
+      const rerunKeys = new Set(
+        (RERUN[screen] ?? []).map(row => `${row.id}::${row.handler}`),
+      );
+      for (const [key, why] of UNREACHED[screen] ?? []) {
+        if (rerunKeys.has(key)) continue;
+        const settled = STILL[`${screen}::${key}`] ?? why;
+        const kind = classifyRemaining(settled);
+        assign(
+          `${screen}::${key}`,
+          kind ??
+            (settled === HIDDEN_FIRST
+              ? 'SEQUENCING_NOT_MEASURED'
+              : 'UNCLASSIFIED_NOT_MEASURED'),
+        );
+      }
+      /* A subject that was discovered and reached neither a verdict nor
+         a reason would be invisible in every ledger above. */
+      for (const key of discovered) {
+        if (!bucketed.has(`${screen}::${key}`)) {
+          orphans.push(`${screen}::${key}`);
+        }
+      }
+    }
+
+    const totals = new Map<string, number>();
+    for (const [, buckets] of bucketed) {
+      totals.set(buckets[0], (totals.get(buckets[0]) ?? 0) + 1);
+    }
+    const discoveredTotal = Object.values(DISCOVERED_KEYS).reduce(
+      (sum, set) => sum + set.size,
+      0,
+    );
+    const bucketTotal = [...totals.values()].reduce((sum, n) => sum + n, 0);
+
+    console.log(
+      [
+        '',
+        '===== UI-X1D CENSUS ARITHMETIC (MUTUALLY EXCLUSIVE BUCKETS) =====',
+        ...BUCKET_ORDER.filter(name => (totals.get(name) ?? 0) > 0).map(
+          name => `  ${name.padEnd(34)} ${String(totals.get(name)).padStart(5)}`,
+        ),
+        `  ${'-'.repeat(34)} ${'-'.repeat(5)}`,
+        `  ${'SUM OF ALL BUCKETS'.padEnd(34)} ${String(bucketTotal).padStart(5)}`,
+        `  ${'TOTAL DISCOVERED'.padEnd(34)} ${String(discoveredTotal).padStart(5)}`,
+        `  ${'REMAINDER'.padEnd(34)} ${String(
+          discoveredTotal - bucketTotal,
+        ).padStart(5)}`,
+        '=================================================================',
+        '',
+      ].join('\n'),
+    );
+
+    /* NO SUBJECT IN TWO BUCKETS. */
+    expect(collisions).toEqual([]);
+    /* NO SUBJECT IN NONE. */
+    expect(orphans).toEqual([]);
+    /* AND THE ARITHMETIC INVARIANT ITSELF. */
+    expect({sum: bucketTotal}).toEqual({sum: discoveredTotal});
+    /* Every bucket that is a finding is empty. */
+    for (const name of DEFECT_BUCKETS) {
+      expect({bucket: name, count: totals.get(name) ?? 0}).toEqual({
+        bucket: name,
+        count: 0,
+      });
+    }
+    /* And no bucket outside the printed order exists, which would mean a
+       verdict was added without being reconciled. */
+    expect(
+      [...totals.keys()].filter(
+        name => !(BUCKET_ORDER as readonly string[]).includes(name),
+      ),
+    ).toEqual([]);
   });
 });
 

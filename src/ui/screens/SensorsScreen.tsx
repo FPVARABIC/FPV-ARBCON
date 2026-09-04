@@ -494,9 +494,18 @@ export default function SensorsScreen({
     }));
   }, [imu]);
 
+  /* A TRACE BELONGS TO ONE AIRCRAFT.
+     This used to clear only when the screen went inactive, so a session
+     change under a mounted screen - a pilot unplugging one quad and
+     plugging in the next - left the previous aircraft's samples on the
+     trace and appended the new board's to the same line. The screen
+     already treats `sessionId` as something that changes: it re-acquires
+     telemetry on it, two effects above. The history it accumulated for
+     the old session has to go the same way, or the plot is a picture of
+     two aircraft with a step in the middle that belongs to neither. */
   useEffect(() => {
-    if (!active) setHistory({GYRO: [], ACC: [], MAG: []});
-  }, [active]);
+    setHistory({GYRO: [], ACC: [], MAG: []});
+  }, [active, sessionId]);
 
   /* ---------------------------------------------------------------- *
    * ELAPSED CLOCK - real seconds, never a percentage
