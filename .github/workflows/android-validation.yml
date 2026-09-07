@@ -197,8 +197,26 @@ jobs:
       # A GitHub runner has 16 GB; 6 GB gives the suite real room while
       # still failing loudly on a genuine runaway leak instead of swallowing
       # one.
+      # THE WHOLE-SUITE WALL-CLOCK GUARD, not a test budget. It exists to
+      # stop a hung or runaway run, and nothing about per-test timeouts or
+      # assertions changes with it: jest.config.js keeps testTimeout 30000,
+      # every suite still runs, and no retry or --forceExit is involved.
+      #
+      # RAISED BECAUSE THE OLD BUDGET WAS EXHAUSTED BY THE RUNNERS, NOT BY
+      # THE SUITE. Measured with a paired control on the same day and the
+      # same hosted-runner pool, both runs stopped by this timeout with ZERO
+      # Jest FAIL lines and no OOM, SIGKILL or open-handle report:
+      #
+      #   e91ddb15  run 34071305457 attempt 3   Jest 612s  TIMED OUT
+      #   34bf8200  run 34124815112 attempt 1   Jest 612s  TIMED OUT
+      #
+      # e91ddb15 is the commit that passed this same step in 415s earlier
+      # the same day (run 34071305457 attempt 1). On the newer runners its
+      # npm ci / tsc / eslint steps are 20-50% slower too, so the baseline
+      # itself no longer fits 10 minutes. 20 minutes restores the headroom
+      # 415s once had without weakening a single assertion.
       - name: Jest
-        timeout-minutes: 10
+        timeout-minutes: 20
         env:
           JEST_LEAK_OUT: ${{ github.workspace }}/jest-open-handles.txt
           NODE_OPTIONS: --max-old-space-size=6144
