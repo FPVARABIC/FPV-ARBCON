@@ -112,7 +112,12 @@ jobs:
         run: node scripts/ci-diagnostics/verifyJestShards.js "${{ env.JEST_SHARD_COUNT }}"
 
   jest:
-    name: Jest shard ${{ matrix.shard }}/${{ env.JEST_SHARD_COUNT }}
+    # The divisor is spelled out here because GitHub does not expose the
+    # `env` context in a JOB name (only in step names, `run` and `with`).
+    # It is cosmetic: the correctness-bearing link between the matrix and
+    # JEST_SHARD_COUNT is enforced by the completeness gate above, which
+    # fails the build if they ever disagree and a test file goes unrun.
+    name: Jest shard ${{ matrix.shard }}/4
     runs-on: ubuntu-latest
     strategy:
       # Every shard reports its own verdict: one red shard must not hide
