@@ -77,8 +77,27 @@ export class FirmwareDetectionError extends Error {
   }
 }
 
+/**
+ * WHO OWES THE RELEASE.
+ *
+ * A detected controller carries EXACTLY ONE release obligation. It starts
+ * with the caller. Calling `rebootToBootloader()` TRANSFERS that obligation
+ * to the callee, which discharges it on every exit - success, either early
+ * guard, a rejected MSP request or a cancellation. On any path where the
+ * caller does not call `rebootToBootloader()`, the caller discharges it
+ * itself.
+ *
+ * The obligation is therefore held by exactly one party at any instant and
+ * moves at one syntactically identifiable point. Redundant cleanup at two
+ * layers is deliberately NOT the specification: `released` remains a
+ * safety net so a double call cannot close a port twice, but the lease
+ * state below is what the contract is written against.
+ */
+export type LeaseState = 'HELD_BY_CALLER' | 'TRANSFERRED' | 'RELEASED';
+
 export class DetectedFlightController {
   private released = false;
+  private lease: LeaseState = 'HELD_BY_CALLER';
 
   constructor(
     readonly device: UsbSerialDeviceDescriptor,
@@ -108,17 +127,29 @@ export class DetectedFlightController {
     return (this.identity.board.targetCapabilities & (1 << 3)) !== 0 ? 4 : 1;
   }
 
+  /** The lease obligation, for callers that must know whether it moved. */
+  get leaseState(): LeaseState {
+    return this.lease;
+  }
+
+  /**
+   * CONSUMES THE LEASE. Ownership transfers here, at this one point, and is
+   * discharged by the `finally` below on every exit - including the two
+   * early guards, which used to throw BEFORE the try and leave the session
+   * open and still owned by the coordinator after the attempt had ended.
+   */
   async rebootToBootloader(selectedTarget: string, allowMismatch = false): Promise<1 | 4> {
-    if (this.identity.firmware.knownFamily !== 'BETAFLIGHT') {
-      throw new FirmwareDetectionError('إعادة التشغيل التلقائية إلى bootloader غير مدعومة لعائلة Firmware المكتشفة.');
-    }
-    if (!allowMismatch && !this.targetMatches(selectedTarget)) {
-      throw new FirmwareDetectionError(
-        `Target المحدد ${selectedTarget} لا يطابق المتحكم ${this.hardwareName}.`,
-      );
-    }
+    this.lease = 'TRANSFERRED';
     const mode = this.rebootMode;
     try {
+      if (this.identity.firmware.knownFamily !== 'BETAFLIGHT') {
+        throw new FirmwareDetectionError('إعادة التشغيل التلقائية إلى bootloader غير مدعومة لعائلة Firmware المكتشفة.');
+      }
+      if (!allowMismatch && !this.targetMatches(selectedTarget)) {
+        throw new FirmwareDetectionError(
+          `Target المحدد ${selectedTarget} لا يطابق المتحكم ${this.hardwareName}.`,
+        );
+      }
       await this.mspClient.request(MSP_REBOOT, Uint8Array.of(mode), {
         wireFormat: 'v1',
         responseTimeoutMs: 1200,
@@ -138,6 +169,7 @@ export class DetectedFlightController {
   async release(): Promise<void> {
     if (this.released) return;
     this.released = true;
+    this.lease = 'RELEASED';
     this.coordinator.deactivateMspSession(this.sessionId);
     await this.client.stopReading(this.sessionId).catch(() => undefined);
     await this.client.closeSession(this.sessionId).catch(() => undefined);

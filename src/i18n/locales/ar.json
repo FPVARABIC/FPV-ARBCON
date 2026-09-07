@@ -559,7 +559,25 @@
       "DFU_INTERFACE_MISSING": "الجهاز المختار لا يعرض واجهة DFU. اختر متحكم الطيران الصحيح في وضع DFU.",
       "DFU_FIRMWARE_INVALID": "ملف Firmware غير صالح أو فارغ. أعد تحضير Firmware ثم أعد المحاولة.",
       "DFU_EXIT_FAILED": "تعذّر إخراج اللوحة من وضع DFU. افصل USB وأعد توصيله لتشغيلها على Firmware المثبّت.",
-      "DFU_UNPROTECT_FAILED": "لم تكتمل إزالة حماية القراءة. افصل اللوحة وأعد توصيلها في وضع DFU ثم أعد المحاولة."
+      "DFU_UNPROTECT_FAILED": "لم تكتمل إزالة حماية القراءة. افصل اللوحة وأعد توصيلها في وضع DFU ثم أعد المحاولة.",
+      "STM32_MISSING_REQUIRED_COMMAND": "محمّل إقلاع STM32 لا يعلن أمراً آمناً مطلوباً؛ لن يبدأ المسح.",
+      "STM32_NO_ERASE_COMMAND": "محمّل إقلاع STM32 لا يعلن أي أمر مسح مدعوم.",
+      "STM32_CHIP_UNSUPPORTED": "معرّف شريحة STM32 غير مدعوم بأمان في هذا التطبيق.",
+      "STM32_GET_ID_SHAPE_INVALID": "ردّ معرّف شريحة STM32 لا يطابق الشكل الموثّق؛ أُوقفت العملية قبل المسح.",
+      "STM32_IMAGE_TOO_LARGE": "حجم ملف Firmware أكبر من ذاكرة Flash المعلنة لهذه الشريحة.",
+      "STM32_IMAGE_OUT_OF_FLASH": "ملف Firmware يشير إلى عنوان خارج ذاكرة Flash المعلنة لهذه الشريحة.",
+      "STM32_PAGE_COUNT_REQUIRES_EXTENDED_ERASE": "عدد صفحات المسح يتطلب أمر Extended Erase وهو غير متوفر على هذه اللوحة.",
+      "STM32_VERIFY_MISMATCH": "فشل التحقق بالقراءة الراجعة؛ البيانات المقروءة لا تطابق الملف.",
+      "STM32_NACK": "رفضت اللوحة الأمر المُرسل (NACK).",
+      "STM32_UNEXPECTED_RESPONSE": "وصل ردّ غير متوقع من محمّل إقلاع STM32.",
+      "STM32_CANCELLED": "أُلغيَت عملية تفليش STM32 بطلب من المشغّل.",
+      "SERIAL_OPERATION_CANCELLED": "أُلغيَت عملية Firmware بطلب من المشغّل.",
+      "SERIAL_SESSION_CLOSED": "أُغلقت جلسة Firmware قبل اكتمال العملية.",
+      "SERIAL_DEVICE_DETACHED": "فُصل جهاز USB أثناء عملية Firmware.",
+      "FLASH_PLAN_UNENCODABLE_BLOCK": "ملف Firmware يحتوي كتلة كتابة لا يمكن ترميزها وفق بروتوكول اللوحة؛ رُفض قبل أي مسح.",
+      "FLASH_PLAN_GO_NOT_COVERED": "ملف Firmware لا يغطي عنوان الإقلاع المطلوب؛ رُفض قبل أي مسح.",
+      "FLASH_PLAN_ADDRESS_RANGE_INVALID": "ملف Firmware يحتوي مجال عناوين غير صالح؛ رُفض قبل أي مسح.",
+      "FLASH_PLAN_SEGMENT_BELOW_FLASH_BASE": "ملف Firmware يحتوي منطقة تبدأ قبل بداية ذاكرة Flash؛ رُفض قبل أي مسح."
     },
     "nextAction": {
       "VERIFY_UNFINISHED": "افصل USB، أعد إدخال وضع DFU، ثم أعد التفليش كاملًا قبل أي استخدام للوحة.",
@@ -572,6 +590,16 @@
       "NO_DFU_INTERFACE": "الجهاز المختار لا يعرض واجهة DFU صالحة. لم يُفلَّش شيء.",
       "NO_MEMORY_LAYOUT": "الجهاز المختار لا يعلن تخطيط ذاكرة، ولا يجوز تفليشه بلا تحقق من العناوين.",
       "STALE_OPERATION": "هذه ليست العملية المعلّقة نفسها. ابدأ من جديد."
+    },
+    "recovery": {
+      "ERASE_CONFIRMED": "تم مسح ذاكرة اللوحة. لم يعد عليها Firmware صالح؛ يجب إعادة التفليش قبل أي تشغيل أو طيران.",
+      "ERASE_UNCERTAIN": "قد تكون ذاكرة اللوحة مُسحت دون تأكيد. تحقّق من اللوحة أو أعد التفليش قبل أي تشغيل أو طيران."
+    },
+    "cancelConfirm": {
+      "title": "تأكيد إلغاء التفليش",
+      "body": "بدأت عملية المسح فعلياً. الإلغاء الآن قد يترك اللوحة بلا Firmware صالح ويستلزم إعادة التفليش قبل التشغيل.",
+      "confirm": "إلغاء رغم ذلك",
+      "dismiss": "متابعة التفليش"
     }
   },
   "editing": {

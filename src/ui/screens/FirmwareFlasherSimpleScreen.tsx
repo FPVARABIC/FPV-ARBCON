@@ -195,6 +195,12 @@ export type FlasherProblemCategory =
 function codedTransportDetail(reason: unknown): string | undefined {
   const code = (reason as {code?: unknown} | null)?.code;
   if (typeof code !== 'string' || code.length === 0) return undefined;
+  /* The SAME resolution chain the full flasher screen uses: the
+   * flasher-specific key first, then the shared `errors.*` namespace. The
+   * STM32 engine and the raw serial port now carry stable codes, so their
+   * failures reach this screen as translated sentences too. */
+  const specific = i18n.t(`firmwareFlasher.reason.${code}`, {defaultValue: ''});
+  if (typeof specific === 'string' && specific.length > 0) return specific;
   const sentence = i18n.t(`errors.${code}`, {defaultValue: ''});
   return typeof sentence === 'string' && sentence.length > 0 ? sentence : undefined;
 }
@@ -202,17 +208,31 @@ function codedTransportDetail(reason: unknown): string | undefined {
 /**
  * What the operator reads under a problem heading, in priority order:
  *
- *   1. a message the app itself wrote in Arabic - shown as-is
- *   2. the Arabic sentence for the transport's own error code
+ *   1. the catalogue sentence for the failure's own error CODE
+ *   2. a message the app itself wrote in Arabic, when there is no code or
+ *      no catalogue entry for it - shown as-is
  *   3. the category's Arabic explanation
  *
  * An untranslated English fragment never reaches the operator: it tells
  * an Arabic reader nothing and reads as a defect in the product.
+ *
+ * THE CODE OUTRANKS THE MESSAGE, and it did not before. Every failure the
+ * STM32 engine and the raw serial port raise carries hard-coded Arabic
+ * diagnostics, so a "raw Arabic wins" rule matched them first and the
+ * coded lookup below was unreachable for exactly the failures it exists
+ * to translate. Engine text is written for a developer reading a log; the
+ * catalogue sentence is written for an operator deciding whether the
+ * aircraft is safe, and it is the one that is reviewed and translated.
+ * The raw branch survives only for genuinely uncoded, app-composed
+ * messages - a target mismatch naming the two boards, for instance, which
+ * no static catalogue string could reproduce.
  */
 export function operatorDetail(reason: unknown, category: FlasherProblemCategory): string {
+  const coded = codedTransportDetail(reason);
+  if (coded !== undefined) return coded;
   const raw = errorText(reason);
   if (/[\u0600-\u06FF]/.test(raw)) return raw;
-  return codedTransportDetail(reason) ?? PROBLEM_FALLBACKS[category];
+  return PROBLEM_FALLBACKS[category];
 }
 
 export const PROBLEM_FALLBACKS: Readonly<Record<FlasherProblemCategory, string>> = {

@@ -101,6 +101,15 @@ import {
 } from '../../core/firmware-flasher/flashCompletionModel';
 import type {FlashOutcomeKind} from '../../core/firmware-flasher/flashCompletionModel';
 import {
+  flashRecoveryLabelKey,
+  readFlashFailureDetail,
+  recoveryAdvisoryFor,
+  resolveFlashReason,
+  FlashPlanError,
+} from '../../core/firmware-flasher/flashErrorCodes';
+import {runImagePreflight} from '../../core/firmware-flasher/imagePreflight';
+import type {CancellationTicket} from '../../platforms/react-native/protocol/Stm32SerialFlasher';
+import {
   bootloaderStateLabelKey,
   canResumePendingFlash,
   dfuRejectionLabelKey,
@@ -167,6 +176,12 @@ type FlashResultPresentation = {
   readonly reason?: string;
   readonly nextAction?: string;
   readonly restore?: FlashRestoreTruth;
+  /**
+   * The DESTRUCTIVE-STATE advisory, shown ALONGSIDE the reason and never
+   * instead of it. Present only when the board's flash may no longer hold
+   * runnable firmware.
+   */
+  readonly recovery?: string;
 };
 
 /** What a flash method hands back to startFlash. `completed: false`
@@ -468,6 +483,11 @@ export default function FirmwareFlasherScreen({
    * instead of overwriting a newer attempt's truth.
    */
   const flashAttemptSerial = useRef(0);
+  /** The flasher instance that owns the CURRENT attempt's cancellation
+   *  decision. React's rendered progress is one frame behind the wire and
+   *  must never be the thing that decides whether cancelling is safe. */
+  const activeFlasher = useRef<Stm32SerialFlasher | null>(null);
+  const [pendingCancel, setPendingCancel] = useState<CancellationTicket | null>(null);
 
   const bootloader = useMemo(() => new FirmwareBootloaderController(client), [client]);
   const cliBackup = useMemo(() => new CliBackupService(client), [client]);
@@ -1271,13 +1291,18 @@ export default function FirmwareFlasherScreen({
         deviceId: serial.deviceId,
         portIndex: selectedPortIndex,
       });
-      if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
-        const actual = describeFlightControllerHardware(detected.identity.board);
-        setDetectedTarget(actual);
-        await detected.release();
-        throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}. فعّل تجاوز عدم التطابق فقط بعد التحقق اليدوي.`);
+      try {
+        if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
+          const actual = describeFlightControllerHardware(detected.identity.board);
+          setDetectedTarget(actual);
+          throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}. فعّل تجاوز عدم التطابق فقط بعد التحقق اليدوي.`);
+        }
+        await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
+      } finally {
+        /* Model B: the reboot CONSUMES the lease. The caller discharges the
+         * obligation only when that transfer never happened. */
+        if (detected.leaseState === 'HELD_BY_CALLER') await detected.release();
       }
-      await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
       setStatus('انتظار ظهور STM32 DFU…');
       try {
         dfu = await bootloader.waitForOneDfuDevice(20_000, signal);
@@ -1333,7 +1358,25 @@ export default function FirmwareFlasherScreen({
   const flashHexSerial = useCallback(async (
     image: Extract<FirmwareImage, {kind: 'HEX'}>,
     signal: AbortSignal,
+    attempt: number,
   ): Promise<FlashMethodOutcome> => {
+    /**
+     * THE AUTHORITATIVE PREFLIGHT, on the FINAL composed image and before
+     * anything touches the bus. Unified Config is injected at flash time
+     * and appends a segment of arbitrary length, so an image that looked
+     * writable at file load can be unwritable here - these are the bytes
+     * that would actually be sent. Every refusal below happens with no
+     * port open, which is what makes it impossible to discover an
+     * image-local fault after the board has already been erased.
+     */
+    const preflight = runImagePreflight(image.hex);
+    if (!preflight.accepted) {
+      throw new FlashPlanError(
+        preflight.rejections[0].code,
+        preflight.rejections.map(rejection => rejection.detail).join(' | '),
+      );
+    }
+
     let device = await requireOneSerial();
     const backup = noReboot ? null : await saveCliBackup(device, signal);
     if (!noReboot) {
@@ -1341,13 +1384,20 @@ export default function FirmwareFlasherScreen({
         deviceId: device.deviceId,
         portIndex: selectedPortIndex,
       });
-      if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
-        const actual = describeFlightControllerHardware(detected.identity.board);
-        setDetectedTarget(actual);
-        await detected.release();
-        throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
+      try {
+        if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
+          const actual = describeFlightControllerHardware(detected.identity.board);
+          setDetectedTarget(actual);
+          throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
+        }
+        await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
+      } finally {
+        /* Model B: rebootToBootloader CONSUMES the lease and releases on
+         * every one of its own exits. The caller discharges the obligation
+         * only on paths where that transfer never happened - so exactly one
+         * logical release, never two. */
+        if (detected.leaseState === 'HELD_BY_CALLER') await detected.release();
       }
-      await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
       device = await bootloader.waitForOneSerialDevice(30_000, signal);
     }
     setOperation('flashing');
@@ -1360,8 +1410,16 @@ export default function FirmwareFlasherScreen({
         update.processedBytes,
         update.totalBytes,
       );
+    }, {
+      attemptId: attempt,
+      onCancelConfirmed: () => operationController.current?.abort(),
     });
-    await flasher.flash(image.hex, {baudRate: manualBaud ? baudRate : 256000, fullErase});
+    activeFlasher.current = flasher;
+    try {
+      await flasher.flash(preflight.snapshot, {baudRate: manualBaud ? baudRate : 256000, fullErase});
+    } finally {
+      if (activeFlasher.current === flasher) activeFlasher.current = null;
+    }
     return {completed: true, backup};
   }, [
     reportPhaseProgress,
@@ -1439,23 +1497,37 @@ export default function FirmwareFlasherScreen({
   const settleFlashFailure = useCallback((error: unknown) => {
     const code = errorCode(error);
     const kind = classifyFlashRejection(code, flashSnapshotRef.current?.phase);
-    const fallback = sanitizeUserVisibleText(errorMessage(error));
-    const reason =
-      code === undefined
-        ? fallback
-        : t(flashReasonLabelKey(code), {defaultValue: fallback});
+    const diagnostics = sanitizeUserVisibleText(errorMessage(error));
+    /**
+     * A CODED failure is resolved from its code through the shared chain -
+     * flasher key, then the shared `errors.*` namespace, then a localized
+     * unknown. That is what stops the MSP layer's English sentences from
+     * being the primary line an Arabic-reading operator sees. An uncoded
+     * failure is one this application composed itself, in Arabic, for the
+     * operator; its own sentence remains the reason.
+     */
+    const reason = code === undefined ? diagnostics : resolveFlashReason(t, code);
+    /* Orthogonal to the reason: what state the board's flash was left in. */
+    const detail = readFlashFailureDetail(error);
+    const advisory = recoveryAdvisoryFor(detail?.destructiveState);
+    const recovery = advisory === 'NONE' ? undefined : t(flashRecoveryLabelKey(advisory));
     lastFlashErrorCode.current = code;
     if (kind === 'UNCONFIRMED') {
       const nextAction = t(flashNextActionLabelKey(code));
-      setFlashResult({kind: 'UNCONFIRMED', reason, nextAction});
+      setFlashResult({kind: 'UNCONFIRMED', reason, nextAction, recovery});
       setOperation('unconfirmed');
       setStatus(reason);
       appendLog(`لم يتأكد اكتمال التفليش: ${reason}`);
     } else {
-      setFlashResult({kind: 'FAILED', reason});
+      setFlashResult({kind: 'FAILED', reason, recovery});
       setOperation('error');
       setStatus(reason);
       appendLog(`خطأ: ${reason}`);
+    }
+    if (recovery !== undefined) appendLog(recovery);
+    /* The engine's own words are kept, as diagnostics, never as the reason. */
+    if (code !== undefined && diagnostics.length > 0) {
+      appendLog(`تفاصيل تشخيصية: ${diagnostics}`);
     }
   }, [appendLog, t]);
 
@@ -1545,7 +1617,7 @@ export default function FirmwareFlasherScreen({
       if (selectedFirmware.kind === 'HEX') {
         outcome = hexMethod === 'dfu'
           ? await flashHexDfu(selectedFirmware, controller.signal)
-          : await flashHexSerial(selectedFirmware, controller.signal);
+          : await flashHexSerial(selectedFirmware, controller.signal, attempt);
       } else {
         outcome = await flashEsp(selectedFirmware, controller.signal);
       }
@@ -1827,11 +1899,60 @@ export default function FirmwareFlasherScreen({
       .catch(() => setFlashReportCopied('failed'));
   }, [flashSnapshot]);
 
+  /**
+   * Cancellation is decided by the ACTIVE FLASHER, not by what React last
+   * rendered. Before anything destructive has been transmitted the abort is
+   * immediate; from the moment the erase request is handed to the transport
+   * it is potentially destructive, so a confirmation is required first.
+   */
+  /**
+   * COMPLETION WINS. If the attempt settles while the confirmation is on
+   * screen, the question is moot: dismiss it and keep the real outcome.
+   * The terminal advisory is derived from the FINAL destructive state, not
+   * from the state captured when the ticket was issued.
+   */
+  useEffect(() => {
+    if (pendingCancel === null) return;
+    if (!['flashing', 'restoring'].includes(operation)) setPendingCancel(null);
+  }, [operation, pendingCancel]);
+
   const cancelOperation = useCallback(() => {
+    const flasher = activeFlasher.current;
+    if (flasher !== null) {
+      const request = flasher.requestCancellation();
+      if (request.kind === 'CONFIRMATION_REQUIRED') {
+        setPendingCancel(request.ticket);
+        appendLog('طلب المستخدم الإلغاء بعد بدء المسح؛ بانتظار تأكيد صريح.');
+        return;
+      }
+      if (request.kind === 'CANCELLED_IMMEDIATELY') {
+        appendLog('طلب المستخدم إلغاء العملية الحالية قبل أي مسح.');
+        return;
+      }
+    }
     operationController.current?.abort();
     if (operation === 'flashing') client.cancelDfuFlash().catch(() => undefined);
     appendLog('طلب المستخدم إلغاء العملية الحالية.');
   }, [appendLog, client, operation]);
+
+  /** Only the instance and attempt that issued the ticket may be aborted by
+   *  it, so a confirmation belonging to a superseded attempt is inert. */
+  const confirmCancelOperation = useCallback(() => {
+    const ticket = pendingCancel;
+    setPendingCancel(null);
+    if (ticket === null) return;
+    const accepted = activeFlasher.current?.confirmCancellation(ticket) ?? false;
+    appendLog(accepted
+      ? 'أكّد المستخدم الإلغاء بعد المسح.'
+      : 'وصل تأكيد إلغاء لا يخص المحاولة الحالية؛ أُهمل.');
+  }, [appendLog, pendingCancel]);
+
+  const dismissCancelOperation = useCallback(() => {
+    const ticket = pendingCancel;
+    setPendingCancel(null);
+    if (ticket !== null) activeFlasher.current?.withdrawCancellation(ticket);
+    appendLog('تراجع المستخدم عن الإلغاء؛ تستمر العملية.');
+  }, [appendLog, pendingCancel]);
 
   const exitDfu = useCallback(async () => {
     try {
@@ -2011,6 +2132,42 @@ export default function FirmwareFlasherScreen({
               ? <Text style={styles.emptyText}>لا توجد Targets مطابقة.</Text>
               : null}
           />
+        </View>
+      </Modal>
+
+      <Modal
+        visible={pendingCancel !== null}
+        animationType="fade"
+        transparent
+        onRequestClose={dismissCancelOperation}>
+        <View style={styles.confirmBackdrop} testID="cancel-flash-confirm">
+          <View
+            style={styles.confirmCard}
+            accessibilityViewIsModal
+            accessibilityRole="alert">
+            <Text style={styles.modalTitle}>{t('firmwareFlasher.cancelConfirm.title')}</Text>
+            <Text style={styles.confirmBody} testID="cancel-flash-confirm-body">
+              {t('firmwareFlasher.cancelConfirm.body')}
+            </Text>
+            <View style={styles.twoButtons}>
+              <View style={styles.flexOne}>
+                <FirmwareButton
+                  title={t('firmwareFlasher.cancelConfirm.dismiss')}
+                  onPress={dismissCancelOperation}
+                  tone="secondary"
+                  testID="cancel-flash-dismiss"
+                />
+              </View>
+              <View style={styles.flexOne}>
+                <FirmwareButton
+                  title={t('firmwareFlasher.cancelConfirm.confirm')}
+                  onPress={confirmCancelOperation}
+                  tone="danger"
+                  testID="cancel-flash-confirm-accept"
+                />
+              </View>
+            </View>
+          </View>
         </View>
       </Modal>
 
@@ -2767,6 +2924,14 @@ export default function FirmwareFlasherScreen({
                   {flashResult.nextAction}
                 </Text>
               ) : null}
+              {/* The destructive-state advisory sits BESIDE the reason, never
+                * in place of it: the operator needs both what went wrong and
+                * what state the board was left in. */}
+              {flashResult.recovery !== undefined ? (
+                <Text style={styles.resultRecovery} testID="flash-result-recovery">
+                  {flashResult.recovery}
+                </Text>
+              ) : null}
               {flashResult.restore?.kind === 'FAILED' ? (
                 <Text style={styles.resultBody} testID="flash-restore-failed">
                   {t('firmwareFlasher.result.restoreFailed', {
@@ -2935,6 +3100,30 @@ const styles = StyleSheet.create({
   },
   modalHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.md},
   modalTitle: {...typography.title, color: colors.textPrimary},
+  confirmBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+  },
+  confirmCard: {
+    width: '100%',
+    maxWidth: 520,
+    gap: spacing.md,
+    padding: spacing.lg,
+    borderRadius: radii.lg,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.error,
+  },
+  confirmBody: {...typography.body, color: colors.textPrimary, textAlign: 'right'},
+  resultRecovery: {
+    ...typography.body,
+    color: colors.error,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
   modalClose: {
     width: 44,
     height: 44,

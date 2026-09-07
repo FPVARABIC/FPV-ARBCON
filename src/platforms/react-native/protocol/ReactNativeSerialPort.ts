@@ -1,3 +1,4 @@
+import type {FlashErrorCode} from '../../../core/firmware-flasher/flashErrorCodes';
 import type {SerialConfiguration, UsbSerialTransportClient} from '../transport';
 import {base64ToBytes, bytesToBase64} from './base64';
 
@@ -10,10 +11,19 @@ type ReadWaiter = {
   readonly timer: ReturnType<typeof setTimeout>;
 };
 
+/**
+ * Carries a STABLE CODE alongside the message. The operator sentence is
+ * resolved from the code through the shared translation chain; this text is
+ * diagnostics, and an untranslatable sentence must never be the only thing
+ * an Arabic-reading operator is shown.
+ */
 export class RawSerialError extends Error {
-  constructor(message: string) {
+  readonly code: FlashErrorCode | undefined;
+
+  constructor(message: string, code?: FlashErrorCode) {
     super(message);
     this.name = 'RawSerialError';
+    this.code = code;
   }
 }
 
@@ -34,7 +44,7 @@ export class ReactNativeSerialPort {
   private terminalError: Error | null = null;
   private deviceLostCallback: (() => void) | null = null;
   private readonly handleAbort = () => {
-    this.fail(new RawSerialError('أُلغيَت عملية Firmware.'));
+    this.fail(new RawSerialError('أُلغيَت عملية Firmware.', 'SERIAL_OPERATION_CANCELLED'));
   };
 
   constructor(
@@ -113,7 +123,7 @@ export class ReactNativeSerialPort {
     });
     this.unsubscribeDetached = this.client.onSessionDetached(event => {
       if (event.sessionId === sessionId) {
-        this.fail(new RawSerialError('تم فصل جهاز USB أثناء عملية Firmware.'));
+        this.fail(new RawSerialError('تم فصل جهاز USB أثناء عملية Firmware.', 'SERIAL_DEVICE_DETACHED'));
         this.deviceLostCallback?.();
       }
     });
@@ -134,7 +144,7 @@ export class ReactNativeSerialPort {
     this.unsubscribeDetached?.();
     this.unsubscribeData = null;
     this.unsubscribeDetached = null;
-    this.rejectWaiter(new RawSerialError('تم إغلاق جلسة Firmware.'));
+    this.rejectWaiter(new RawSerialError('تم إغلاق جلسة Firmware.', 'SERIAL_SESSION_CLOSED'));
     if (sessionId !== null) {
       await this.client.stopReading(sessionId).catch(() => undefined);
       await this.client.closeSession(sessionId);
@@ -319,7 +329,7 @@ export class ReactNativeSerialPort {
   }
 
   private throwIfUnavailable(): void {
-    if (this.signal?.aborted) throw new RawSerialError('أُلغيَت عملية Firmware.');
+    if (this.signal?.aborted) throw new RawSerialError('أُلغيَت عملية Firmware.', 'SERIAL_OPERATION_CANCELLED');
     if (this.terminalError !== null) throw this.terminalError;
   }
 }
