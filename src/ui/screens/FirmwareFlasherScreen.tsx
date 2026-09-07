@@ -1,3 +1,4 @@
+import {OperatorMessageError} from '../../core/firmware-flasher/operatorMessage';
 import React, {
   useCallback,
   useEffect,
@@ -11,6 +12,7 @@ import {
   Alert,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -104,7 +106,7 @@ import {
   flashRecoveryLabelKey,
   readFlashFailureDetail,
   recoveryAdvisoryFor,
-  resolveFlashReason,
+  resolveOperatorFacingText,
   FlashPlanError,
 } from '../../core/firmware-flasher/flashErrorCodes';
 import {runImagePreflight} from '../../core/firmware-flasher/imagePreflight';
@@ -171,6 +173,28 @@ type FlashRestoreTruth = {
  * next step. `restore` is the SEPARATE post-flash settings-restore truth:
  * a restore failure never rewrites a verified flash into a failure.
  */
+/**
+ * The three DOM shapes this screen's web-only dialog path needs. Declared
+ * structurally so the React Native project need not pull in `lib.dom`.
+ */
+type WebFocusable = {
+  focus?: () => void;
+  readonly isConnected?: boolean;
+  getAttribute?: (name: string) => string | null;
+};
+type WebKeyEvent = {
+  readonly key: string;
+  readonly shiftKey: boolean;
+  preventDefault: () => void;
+};
+type WebElementList = {readonly length: number; readonly [index: number]: WebFocusable};
+type WebDocument = {
+  readonly activeElement?: WebFocusable | null;
+  querySelector: (selector: string) => {querySelectorAll: (s: string) => WebElementList} | null;
+  addEventListener: (type: string, listener: (event: WebKeyEvent) => void, capture?: boolean) => void;
+  removeEventListener: (type: string, listener: (event: WebKeyEvent) => void, capture?: boolean) => void;
+};
+
 type FlashResultPresentation = {
   readonly kind: FlashOutcomeKind;
   readonly reason?: string;
@@ -488,6 +512,9 @@ export default function FirmwareFlasherScreen({
    *  must never be the thing that decides whether cancelling is safe. */
   const activeFlasher = useRef<Stm32SerialFlasher | null>(null);
   const [pendingCancel, setPendingCancel] = useState<CancellationTicket | null>(null);
+  /** The authority for "is a question still unanswered", readable and
+   *  clearable synchronously so one keypress cannot be answered twice. */
+  const pendingCancelRef = useRef<CancellationTicket | null>(null);
 
   const bootloader = useMemo(() => new FirmwareBootloaderController(client), [client]);
   const cliBackup = useMemo(() => new CliBackupService(client), [client]);
@@ -499,12 +526,22 @@ export default function FirmwareFlasherScreen({
     setLogLines(previous => [`${new Date().toLocaleTimeString('ar')} — ${clean}`, ...previous].slice(0, MAX_LOG_LINES));
   }, []);
 
+  /**
+   * The NON-FLASH failure funnel. It used to render `error.message`
+   * verbatim, so whatever text an exception happened to carry became the
+   * operator's line. It now goes through the same contract as the flash
+   * funnel; the raw sentence survives on the diagnostic surface below.
+   */
   const setFailure = useCallback((error: unknown) => {
-    const message = sanitizeUserVisibleText(errorMessage(error));
+    const message = resolveOperatorFacingText(t, error);
+    const diagnostics = sanitizeUserVisibleText(errorMessage(error));
     setOperation('error');
     setStatus(message);
     appendLog(`خطأ: ${message}`);
-  }, [appendLog]);
+    if (diagnostics.length > 0 && diagnostics !== message) {
+      appendLog(`تفاصيل تشخيصية: ${diagnostics}`);
+    }
+  }, [appendLog, t]);
 
   /**
    * `percent` is clamped to 99 while an operation is still running: 100
@@ -964,7 +1001,7 @@ export default function FirmwareFlasherScreen({
       setStatus('فك ترميز ملف Firmware والتحقق منه…');
       await afterInteractions();
       const bytes = await base64ToBytesAsync(selection.dataBase64);
-      if (bytes.length !== selection.sizeBytes) throw new Error('حجم ملف Firmware لا يطابق بياناته المستلمة.');
+      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e01'}, 'حجم ملف Firmware لا يطابق بياناته المستلمة.');
       await loadFirmwareBytes(selection.name, bytes);
     } catch (error) {
       setFailure(error);
@@ -976,12 +1013,12 @@ export default function FirmwareFlasherScreen({
       const selection = await client.pickFirmwareFile();
       if (selection === null) return;
       if (selection.sizeBytes > MAX_UNIFIED_CONFIG_BYTES) {
-        throw new Error('ملف Unified Config أكبر من الحد الآمن 256 KiB.');
+        throw new OperatorMessageError({key: 'flasherScreen.e02'}, 'ملف Unified Config أكبر من الحد الآمن 256 KiB.');
       }
       setOperation('loading');
       setStatus('فك ترميز Unified Config والتحقق منه…');
       const bytes = await base64ToBytesAsync(selection.dataBase64);
-      if (bytes.length !== selection.sizeBytes) throw new Error('حجم Unified Config لا يطابق بياناته المستلمة.');
+      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e03'}, 'حجم Unified Config لا يطابق بياناته المستلمة.');
       let text = '';
       for (let offset = 0; offset < bytes.length; offset += 0x8000) {
         text += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
@@ -1073,14 +1110,20 @@ export default function FirmwareFlasherScreen({
       const devices = (await client.listDevices()).filter(isSupportedDevice);
       const chosen = resolveSerialSelection(devices, selectedSerialId);
       if (!chosen) {
-        throw new FirmwareDetectionError(
-          devices.length > 1
-            ? 'اختر جهاز USB واحداً يدوياً قبل التعرف التلقائي.'
-            : 'لم يُعثر على Flight Controller تسلسلي مدعوم.',
-        );
+        throw devices.length > 1
+          ? new FirmwareDetectionError(
+              'اختر جهاز USB واحداً يدوياً قبل التعرف التلقائي.',
+              undefined,
+              {key: 'flasherScreen.e26'},
+            )
+          : new FirmwareDetectionError(
+              'لم يُعثر على Flight Controller تسلسلي مدعوم.',
+              undefined,
+              {key: 'flasherScreen.e27'},
+            );
       }
       if (selectedPortIndex < 0 || selectedPortIndex >= chosen.portCount) {
-        throw new FirmwareDetectionError('منفذ USB serial المحدد غير صالح؛ اختر المنفذ من القائمة ثم أعد المحاولة.');
+        throw new FirmwareDetectionError('منفذ USB serial المحدد غير صالح؛ اختر المنفذ من القائمة ثم أعد المحاولة.', undefined, {key: 'flasherScreen.e04'});
       }
       if (chosen.deviceId !== selectedSerialId) {
         setSelectedSerialId(chosen.deviceId);
@@ -1156,17 +1199,18 @@ export default function FirmwareFlasherScreen({
       if (devices.length === 0) {
         const dfu = await client.listDfuDevices();
         if (dfu.length > 0) {
-          throw new Error(
+          throw new OperatorMessageError(
+            {key: 'flasherScreen.e28'},
             'الجهاز متصل في وضع DFU بالفعل، وليس Serial. فعّل «بدون تسلسل إعادة تشغيل»، اختر جهاز DFU، وأكّد Target يدوياً.',
           );
         }
       }
-      throw new Error(devices.length > 1
-        ? 'اختر جهاز serial واحداً يدوياً قبل المتابعة.'
-        : 'لم يُعثر على جهاز serial المحدد.');
+      throw devices.length > 1
+        ? new OperatorMessageError({key: 'flasherScreen.e29'}, 'اختر جهاز serial واحداً يدوياً قبل المتابعة.')
+        : new OperatorMessageError({key: 'flasherScreen.e30'}, 'لم يُعثر على جهاز serial المحدد.');
     }
     if (selectedPortIndex < 0 || selectedPortIndex >= chosen.portCount) {
-      throw new Error('رقم منفذ serial المحدد غير صالح.');
+      throw new OperatorMessageError({key: 'flasherScreen.e05'}, 'رقم منفذ serial المحدد غير صالح.');
     }
     if (chosen.deviceId !== selectedSerialId) {
       setSelectedSerialId(chosen.deviceId);
@@ -1230,20 +1274,20 @@ export default function FirmwareFlasherScreen({
     // Same reasoning as saveCurrentFirmware: a save dialog has no honest
     // deadline, so the flash's own cancel is what ends the wait.
     const saved = await abortable(cliBackup.saveBackup(filename, backup), signal);
-    if (!saved) throw new Error('أُلغيَ حفظ النسخة الاحتياطية؛ لن يبدأ المسح.');
+    if (!saved) throw new OperatorMessageError({key: 'flasherScreen.e06'}, 'أُلغيَ حفظ النسخة الاحتياطية؛ لن يبدأ المسح.');
     appendLog(`حُفظت نسخة CLI (${backup.length} حرفاً) قبل التفليش.`);
     return backup;
   }, [appendLog, backupMode, backupThisRun, cliBackup, selectedPortIndex, selectedTarget]);
 
   const validateSafety = useCallback(() => {
-    if (!firmware) throw new Error('حمّل Firmware صالحاً أولاً.');
-    if (!propsRemoved) throw new Error('أكّد إزالة المراوح قبل التفليش.');
-    if (!usbPowerOnly) throw new Error('أكّد فصل البطارية والاعتماد على USB فقط.');
+    if (!firmware) throw new OperatorMessageError({key: 'flasherScreen.e07'}, 'حمّل Firmware صالحاً أولاً.');
+    if (!propsRemoved) throw new OperatorMessageError({key: 'flasherScreen.e08'}, 'أكّد إزالة المراوح قبل التفليش.');
+    if (!usbPowerOnly) throw new OperatorMessageError({key: 'flasherScreen.e09'}, 'أكّد فصل البطارية والاعتماد على USB فقط.');
     if (selectedReleaseInfo?.channel === 'development' && !unstableConfirmed) {
-      throw new Error('الإصدار التطويري يحتاج إقراراً صريحاً بالمخاطر.');
+      throw new OperatorMessageError({key: 'flasherScreen.e10'}, 'الإصدار التطويري يحتاج إقراراً صريحاً بالمخاطر.');
     }
     if (noReboot && !manualTargetConfirmed) {
-      throw new Error('في وضع «بدون إعادة تشغيل» يجب تأكيد Target يدوياً.');
+      throw new OperatorMessageError({key: 'flasherScreen.e11'}, 'في وضع «بدون إعادة تشغيل» يجب تأكيد Target يدوياً.');
     }
   }, [firmware, manualTargetConfirmed, noReboot, propsRemoved, selectedReleaseInfo, unstableConfirmed, usbPowerOnly]);
 
@@ -1266,7 +1310,7 @@ export default function FirmwareFlasherScreen({
       reportProgress(total > 0 ? 95 + done * 4 / total : 95, `استعادة CLI: ${done}/${total}`);
     });
     if (result.errors.length > 0) {
-      throw new Error(`لم تُرسل save لأن ${result.errors.length} أوامر CLI فشلت.`);
+      throw new OperatorMessageError({key: 'flasherScreen.e12', values: {v0: result.errors.length}}, `لم تُرسل save لأن ${result.errors.length} أوامر CLI فشلت.`);
     }
     appendLog(`استُعيدت ${result.commandCount} أوامر CLI ثم أُرسلت save.`);
     return 'SUCCEEDED';
@@ -1282,11 +1326,11 @@ export default function FirmwareFlasherScreen({
     if (noReboot) {
       const devices = await client.listDfuDevices();
       const chosen = resolveDfuSelection(devices, selectedDfuId);
-      if (!chosen) throw new Error('اختر جهاز DFU واحداً؛ لن يخمّن التطبيق جهاز التفليش.');
+      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e13'}, 'اختر جهاز DFU واحداً؛ لن يخمّن التطبيق جهاز التفليش.');
       if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       dfu = chosen;
     } else {
-      if (serial === null) throw new Error('لم يُحدد جهاز serial لإعادة التشغيل إلى DFU.');
+      if (serial === null) throw new OperatorMessageError({key: 'flasherScreen.e14'}, 'لم يُحدد جهاز serial لإعادة التشغيل إلى DFU.');
       const detected = await bootloader.detectFlightController(signal, {
         deviceId: serial.deviceId,
         portIndex: selectedPortIndex,
@@ -1295,7 +1339,7 @@ export default function FirmwareFlasherScreen({
         if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
           const actual = describeFlightControllerHardware(detected.identity.board);
           setDetectedTarget(actual);
-          throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}. فعّل تجاوز عدم التطابق فقط بعد التحقق اليدوي.`);
+          throw new OperatorMessageError({key: 'flasherScreen.e15', values: {v0: selectedTarget, v1: actual}}, `Target المحدد ${selectedTarget} لا يطابق ${actual}. فعّل تجاوز عدم التطابق فقط بعد التحقق اليدوي.`);
         }
         await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
       } finally {
@@ -1388,7 +1432,7 @@ export default function FirmwareFlasherScreen({
         if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
           const actual = describeFlightControllerHardware(detected.identity.board);
           setDetectedTarget(actual);
-          throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
+          throw new OperatorMessageError({key: 'flasherScreen.e16', values: {v0: selectedTarget, v1: actual}}, `Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
         }
         await detected.rebootToBootloader(selectedTarget, targetMismatchOverride);
       } finally {
@@ -1450,7 +1494,7 @@ export default function FirmwareFlasherScreen({
         if (!targetMismatchOverride && !detected.targetMatches(selectedTarget)) {
           const actual = describeFlightControllerHardware(detected.identity.board);
           setDetectedTarget(actual);
-          throw new Error(`Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
+          throw new OperatorMessageError({key: 'flasherScreen.e17', values: {v0: selectedTarget, v1: actual}}, `Target المحدد ${selectedTarget} لا يطابق ${actual}.`);
         }
       } finally {
         await detected.release();
@@ -1506,7 +1550,7 @@ export default function FirmwareFlasherScreen({
      * failure is one this application composed itself, in Arabic, for the
      * operator; its own sentence remains the reason.
      */
-    const reason = code === undefined ? diagnostics : resolveFlashReason(t, code);
+    const reason = resolveOperatorFacingText(t, error);
     /* Orthogonal to the reason: what state the board's flash was left in. */
     const detail = readFlashFailureDetail(error);
     const advisory = recoveryAdvisoryFor(detail?.destructiveState);
@@ -1525,6 +1569,15 @@ export default function FirmwareFlasherScreen({
       appendLog(`خطأ: ${reason}`);
     }
     if (recovery !== undefined) appendLog(recovery);
+    /**
+     * THE ONLY PLACE ALLOWED TO SAY NO ERASE BEGAN. The engine has settled
+     * and its terminal destructive state is `PRE_DESTRUCTIVE`, which means
+     * the erase payload was never handed to the transport - a claim about
+     * bytes that have already not been sent, rather than a prediction.
+     */
+    if (code === 'STM32_CANCELLED' && detail?.destructiveState === 'PRE_DESTRUCTIVE') {
+      appendLog(t('firmwareFlasher.cancel.noEraseBegan'));
+    }
     /* The engine's own words are kept, as diagnostics, never as the reason. */
     if (code !== undefined && diagnostics.length > 0) {
       appendLog(`تفاصيل تشخيصية: ${diagnostics}`);
@@ -1913,52 +1966,188 @@ export default function FirmwareFlasherScreen({
    */
   useEffect(() => {
     if (pendingCancel === null) return;
-    if (!['flashing', 'restoring'].includes(operation)) setPendingCancel(null);
+    if (!['flashing', 'restoring'].includes(operation)) {
+      pendingCancelRef.current = null;
+      setPendingCancel(null);
+    }
   }, [operation, pendingCancel]);
+
+  /* ------------------------------------------------------------------ *
+   * THE CONFIRMATION DIALOG'S KEYBOARD AND FOCUS CONTRACT
+   *
+   * Measured, not assumed: a Chromium run of this exact dialog showed
+   * focus staying on the button that opened it and Escape doing nothing,
+   * while the app's own target-picker modal moved focus and closed on
+   * Escape. Both are restored here, and only ever on the SAFE action.
+   *
+   * The DOM is reached through the minimal structural types below rather
+   * than the global `lib.dom` ones: this project's React Native tsconfig
+   * has no DOM library, and a web-only path should not drag one in.
+   * ------------------------------------------------------------------ */
+
+  /** The dialog's safe action - «متابعة التفليش» - takes initial focus. */
+  const dismissButtonRef = useRef<View | null>(null);
+  /** Where focus came from, so it can be handed back on dismiss. */
+  const focusBeforeDialog = useRef<WebFocusable | null>(null);
+
+  const restoreFocusToCancelControl = useCallback(() => {
+    if (Platform.OS !== 'web') return;
+    const previous = focusBeforeDialog.current;
+    focusBeforeDialog.current = null;
+    /* Only if the control still exists - a settled attempt removes it. */
+    if (previous?.isConnected === true) previous.focus?.();
+  }, []);
+
+
+  /**
+   * ARIA the platform does not derive on its own. RN's
+   * `accessibilityViewIsModal` maps to nothing on the web, so the dialog
+   * role and its Arabic name/description are declared explicitly. Inert on
+   * native, where `accessibilityRole="alert"` already carries the meaning.
+   */
+  const dialogContainerProps =
+    Platform.OS === 'web'
+      ? ({
+          role: 'dialog',
+          'aria-modal': true,
+          'aria-labelledby': 'cancel-flash-confirm-title',
+          'aria-describedby': 'cancel-flash-confirm-description',
+          'aria-label': t('firmwareFlasher.cancelConfirm.accessibilityLabel'),
+        } as unknown as Record<string, unknown>)
+      : {};
 
   const cancelOperation = useCallback(() => {
     const flasher = activeFlasher.current;
     if (flasher !== null) {
       const request = flasher.requestCancellation();
       if (request.kind === 'CONFIRMATION_REQUIRED') {
+        pendingCancelRef.current = request.ticket;
         setPendingCancel(request.ticket);
-        appendLog('طلب المستخدم الإلغاء بعد بدء المسح؛ بانتظار تأكيد صريح.');
+        appendLog(t('firmwareFlasher.cancel.confirmationPending'));
         return;
       }
       if (request.kind === 'CANCELLED_IMMEDIATELY') {
-        appendLog('طلب المستخدم إلغاء العملية الحالية قبل أي مسح.');
+        /**
+         * A REQUEST, NOT AN OUTCOME. Whether the attempt really ended with
+         * the board untouched is stated once the engine has settled and its
+         * terminal destructive state is known - see settleFlashFailure. A
+         * line claiming "before any erase" written at request time would be
+         * a promise about bytes that had not been sent yet.
+         */
+        appendLog(t('firmwareFlasher.cancel.requested'));
         return;
       }
     }
     operationController.current?.abort();
     if (operation === 'flashing') client.cancelDfuFlash().catch(() => undefined);
-    appendLog('طلب المستخدم إلغاء العملية الحالية.');
-  }, [appendLog, client, operation]);
+    appendLog(t('firmwareFlasher.cancel.requested'));
+  }, [appendLog, client, operation, t]);
 
   /** Only the instance and attempt that issued the ticket may be aborted by
    *  it, so a confirmation belonging to a superseded attempt is inert. */
   const confirmCancelOperation = useCallback(() => {
-    const ticket = pendingCancel;
+    /* TAKE-AND-CLEAR: one answer per question, however many times the
+     * platform and this application both deliver the same keypress. */
+    const ticket = pendingCancelRef.current;
+    pendingCancelRef.current = null;
     setPendingCancel(null);
     if (ticket === null) return;
     const accepted = activeFlasher.current?.confirmCancellation(ticket) ?? false;
-    appendLog(accepted
-      ? 'أكّد المستخدم الإلغاء بعد المسح.'
-      : 'وصل تأكيد إلغاء لا يخص المحاولة الحالية؛ أُهمل.');
-  }, [appendLog, pendingCancel]);
+    appendLog(t(accepted
+      ? 'firmwareFlasher.cancel.confirmed'
+      : 'firmwareFlasher.cancel.staleTicket'));
+    restoreFocusToCancelControl();
+  }, [appendLog, restoreFocusToCancelControl, t]);
 
   const dismissCancelOperation = useCallback(() => {
-    const ticket = pendingCancel;
+    const ticket = pendingCancelRef.current;
+    pendingCancelRef.current = null;
     setPendingCancel(null);
-    if (ticket !== null) activeFlasher.current?.withdrawCancellation(ticket);
-    appendLog('تراجع المستخدم عن الإلغاء؛ تستمر العملية.');
-  }, [appendLog, pendingCancel]);
+    if (ticket === null) return;
+    activeFlasher.current?.withdrawCancellation(ticket);
+    appendLog(t('firmwareFlasher.cancel.withdrawn'));
+    restoreFocusToCancelControl();
+  }, [appendLog, restoreFocusToCancelControl, t]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    if (pendingCancel === null) return undefined;
+    const web = (globalThis as unknown as {document?: WebDocument}).document;
+    if (web === undefined) return undefined;
+
+    focusBeforeDialog.current = web.activeElement ?? null;
+    /* One frame later: RN-Web has mounted the modal subtree by then, and
+     * focusing a node that is not in the document is a silent no-op. */
+    const handle = setTimeout(() => {
+      (dismissButtonRef.current as unknown as WebFocusable | null)?.focus?.();
+    }, 0);
+
+    const onKeyDown = (event: WebKeyEvent): void => {
+      /**
+       * ESCAPE IS HANDLED HERE. react-native-web's own Escape handling
+       * answered a `transparent` Modal only sometimes - measured across
+       * three viewport widths, it closed this dialog on some and not on
+       * others - so the safe dismissal cannot depend on it. Enter and Space
+       * are NOT handled here: Pressable already answers both, and Wave
+       * 1D-A's contrary finding came from a synthetic KeyboardEvent.
+       *
+       * Because both this handler and the platform's may fire for one
+       * keypress, the two answers below are idempotent by construction:
+       * they take the pending ticket out of a ref, so the second call finds
+       * nothing to do.
+       */
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        dismissCancelOperation();
+        return;
+      }
+      /**
+       * (the rest of the original note)
+       *
+       * Wave 1D-A found this dialog ignoring all three while the app's own
+       * target-picker modal answered them. The difference was not the key
+       * handling: it was FOCUS. The picker autofocuses its search field, so
+       * the keys reached the modal; this dialog left focus on the button
+       * behind it, so they never did. Moving focus to the safe action - the
+       * effect above - is the whole fix, and react-native-web's Modal and
+       * Pressable then answer Escape, Enter and Space themselves.
+       *
+       * Handling them here as well made every answer fire twice and wrote
+       * the operator's log twice for one keypress, so the finding is
+       * corrected rather than patched around. What remains genuinely
+       * missing is the focus trap below.
+       */
+      if (event.key !== 'Tab') return;
+      /* FOCUS TRAP. While a question about erasing a board is open, Tab
+       * must not walk out behind it. */
+      const card = web.querySelector('[data-testid="cancel-flash-confirm"]');
+      if (card === null || card === undefined) return;
+      const focusable = card.querySelectorAll('[tabindex]:not([tabindex="-1"])');
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = web.activeElement;
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus?.();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus?.();
+      }
+    };
+
+    web.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      clearTimeout(handle);
+      web.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [dismissCancelOperation, pendingCancel]);
 
   const exitDfu = useCallback(async () => {
     try {
       const devices = await client.listDfuDevices();
       const chosen = resolveDfuSelection(devices, selectedDfuId);
-      if (!chosen) throw new Error('اختر جهاز DFU واحداً للخروج الآمن.');
+      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e18'}, 'اختر جهاز DFU واحداً للخروج الآمن.');
       if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       setOperation('flashing');
       setStatus('إرسال أمر الخروج من DFU…');
@@ -1980,7 +2169,7 @@ export default function FirmwareFlasherScreen({
     try {
       const devices = await client.listDfuDevices();
       const chosen = resolveDfuSelection(devices, selectedDfuId);
-      if (!chosen) throw new Error('اختر جهاز DFU واحداً لإزالة Read Protection.');
+      if (!chosen) throw new OperatorMessageError({key: 'flasherScreen.e19'}, 'اختر جهاز DFU واحداً لإزالة Read Protection.');
       if (chosen.deviceId !== selectedDfuId) setSelectedDfuId(chosen.deviceId);
       setOperation('flashing');
       setStatus('إزالة Read Protection؛ لا تفصل USB حتى يعيد الجهاز التشغيل…');
@@ -2003,22 +2192,22 @@ export default function FirmwareFlasherScreen({
       const selection = await client.pickFirmwareFile();
       if (selection === null) return;
       if (selection.sizeBytes > MAX_CLI_BACKUP_BYTES) {
-        throw new Error('ملف CLI أكبر من الحد الآمن 1 MiB.');
+        throw new OperatorMessageError({key: 'flasherScreen.e20'}, 'ملف CLI أكبر من الحد الآمن 1 MiB.');
       }
       const bytes = await base64ToBytesAsync(selection.dataBase64);
-      if (bytes.length !== selection.sizeBytes) throw new Error('حجم ملف CLI لا يطابق بياناته المستلمة.');
+      if (bytes.length !== selection.sizeBytes) throw new OperatorMessageError({key: 'flasherScreen.e21'}, 'حجم ملف CLI لا يطابق بياناته المستلمة.');
       let text = '';
       for (const byte of bytes) {
-        if (byte > 127) throw new Error('ملف CLI يجب أن يكون ASCII.');
+        if (byte > 127) throw new OperatorMessageError({key: 'flasherScreen.e22'}, 'ملف CLI يجب أن يكون ASCII.');
         text += String.fromCharCode(byte);
       }
-      if (!isPlausibleCliBackup(text)) throw new Error('ملف CLI المختار غير صالح.');
+      if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'flasherScreen.e23'}, 'ملف CLI المختار غير صالح.');
       const device = await requireOneSerial();
       setOperation('restoring');
       const result = await cliBackup.restore(device.deviceId, selectedPortIndex, text, controller.signal, (done, total) => {
         reportProgress(total > 0 ? done * 100 / total : 0, `استعادة CLI: ${done}/${total}`);
       });
-      if (result.errors.length > 0) throw new Error(`فشل ${result.errors.length} أوامر؛ لم يُرسل save.`);
+      if (result.errors.length > 0) throw new OperatorMessageError({key: 'flasherScreen.e24', values: {v0: result.errors.length}}, `فشل ${result.errors.length} أوامر؛ لم يُرسل save.`);
       setOperation('success');
       setStatus(`استُعيد ${result.commandCount} أوامر CLI بنجاح.`);
     } catch (error) {
@@ -2135,18 +2324,44 @@ export default function FirmwareFlasherScreen({
         </View>
       </Modal>
 
+      {/**
+        * THE DESTRUCTIVE CONFIRMATION.
+        *
+        * Measured in Chromium against the app's own target-picker modal,
+        * this dialog used to differ from it on three counts: focus stayed
+        * behind the dialog, Escape did nothing, and Enter did not activate
+        * the focused control. A keyboard or screen-reader operator was
+        * therefore never taken to a question about erasing their board.
+        *
+        * The SAFE action takes initial focus. «إلغاء رغم ذلك» - the
+        * destructive one - is never focused automatically, so no single
+        * stray Enter or Space can end a flash mid-erase.
+        */}
       <Modal
         visible={pendingCancel !== null}
         animationType="fade"
         transparent
+        /* Android hardware Back and RN-Web's own close request both land
+         * here, on the SAFE path: dismissing continues the flash. */
         onRequestClose={dismissCancelOperation}>
-        <View style={styles.confirmBackdrop} testID="cancel-flash-confirm">
+        <View
+          style={styles.confirmBackdrop}
+          testID="cancel-flash-confirm"
+          onStartShouldSetResponder={() => true}
+          {...dialogContainerProps}>
           <View
             style={styles.confirmCard}
             accessibilityViewIsModal
-            accessibilityRole="alert">
-            <Text style={styles.modalTitle}>{t('firmwareFlasher.cancelConfirm.title')}</Text>
-            <Text style={styles.confirmBody} testID="cancel-flash-confirm-body">
+            accessibilityRole="alert"
+            accessibilityLabel={t('firmwareFlasher.cancelConfirm.title')}
+            accessibilityHint={t('firmwareFlasher.cancelConfirm.body')}>
+            <Text style={styles.modalTitle} nativeID="cancel-flash-confirm-title">
+              {t('firmwareFlasher.cancelConfirm.title')}
+            </Text>
+            <Text
+              style={styles.confirmBody}
+              testID="cancel-flash-confirm-body"
+              nativeID="cancel-flash-confirm-description">
               {t('firmwareFlasher.cancelConfirm.body')}
             </Text>
             <View style={styles.twoButtons}>
@@ -2156,6 +2371,7 @@ export default function FirmwareFlasherScreen({
                   onPress={dismissCancelOperation}
                   tone="secondary"
                   testID="cancel-flash-dismiss"
+                  buttonRef={dismissButtonRef}
                 />
               </View>
               <View style={styles.flexOne}>

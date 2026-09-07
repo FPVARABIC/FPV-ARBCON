@@ -30,6 +30,9 @@
  * screen and are only RENDERED here.
  */
 
+import {resolveOperatorFacingText} from '../../core/firmware-flasher/flashErrorCodes';
+import {resolveOperatorMessage} from '../../core/firmware-flasher/operatorMessage';
+import {OperatorMessageError} from '../../core/firmware-flasher/operatorMessage';
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import type {NativeStackScreenProps} from '@react-navigation/native-stack';
 import {
@@ -104,7 +107,6 @@ import i18n from '../../i18n';
 import {
   classifyFlashRejection,
   flashNextActionLabelKey,
-  flashReasonLabelKey,
 } from '../../core/firmware-flasher/flashCompletionModel';
 import {toFlashPhase} from '../../core/firmware-flasher/flashPhaseModel';
 import type {FlashPhase} from '../../core/firmware-flasher/flashPhaseModel';
@@ -143,20 +145,6 @@ export type SimpleFlasherPhase =
   | 'unconfirmed'
   /** A problem that is NOT a flash verdict - see FlasherProblemCategory. */
   | 'problem';
-
-function errorText(reason: unknown): string {
-  if (reason instanceof Error && reason.message.trim().length > 0) {
-    return reason.message;
-  }
-  // The transport client rejects with a plain {code, nativeMessage}
-  // object (normalizeNativeError strips everything else); without this
-  // read every DFU failure showed only the generic line below.
-  const native = (reason as {nativeMessage?: unknown} | null)?.nativeMessage;
-  if (typeof native === 'string' && native.trim().length > 0) {
-    return native;
-  }
-  return 'حدث خطأ غير متوقع أثناء العملية.';
-}
 
 /**
  * WHAT WENT WRONG, AND WHETHER IT WAS THE FLASH AT ALL.
@@ -230,8 +218,13 @@ function codedTransportDetail(reason: unknown): string | undefined {
 export function operatorDetail(reason: unknown, category: FlasherProblemCategory): string {
   const coded = codedTransportDetail(reason);
   if (coded !== undefined) return coded;
-  const raw = errorText(reason);
-  if (/[\u0600-\u06FF]/.test(raw)) return raw;
+  /* A message this application WROTE, addressed by catalogue key. */
+  const authored = resolveOperatorMessage(
+    (key: string, options?: Record<string, unknown>) => i18n.t(key, options) as string,
+    reason,
+  );
+  if (authored !== undefined) return authored;
+  /* Everything else is untrusted text, whatever alphabet it is in. */
   return PROBLEM_FALLBACKS[category];
 }
 
@@ -281,13 +274,13 @@ export const PROBLEM_TITLES: Readonly<Record<FlasherProblemCategory, string>> = 
 export function simpleFailurePresentation(
   reason: unknown,
   phaseAtFailure: FlashPhase | undefined,
-  translate: (key: string, options?: {defaultValue: string}) => string,
+  translate: (key: string, options?: Record<string, unknown>) => string,
 ): {readonly phase: 'failed' | 'unconfirmed'; readonly text: string} {
   const rawCode = (reason as {code?: unknown} | null)?.code;
   const code = typeof rawCode === 'string' && rawCode.length > 0 ? rawCode : undefined;
-  const message = errorText(reason);
-  const reasonLine =
-    code === undefined ? message : translate(flashReasonLabelKey(code), {defaultValue: message});
+  /* THE SAME CONTRACT as every other operator line: a code, then a trusted
+   * app-authored key, then the localized unknown - never raw text. */
+  const reasonLine = resolveOperatorFacingText(translate, reason);
   if (classifyFlashRejection(code, phaseAtFailure) === 'UNCONFIRMED') {
     return {
       phase: 'unconfirmed',
@@ -990,21 +983,26 @@ export default function FirmwareFlasherSimpleScreen({
     const devices = attached.filter(isSupportedDevice);
     if (devices.length === 0) {
       if (attached.length > 0) {
-        throw new Error(
+        throw new OperatorMessageError(
+          {key: 'flasherSimple.e08'},
           'تم العثور على جهاز USB، لكنه لا يعرض منفذًا تسلسليًا يمكن فتحه. تأكد أن الكابل كابل بيانات وأن اللوحة في الوضع العادي وليست في وضع DFU.',
         );
       }
-      throw new Error(
-        supportsSerialPicker
-          ? 'لا يوجد منفذ تسلسلي مسموح به. إن كانت اللوحة في الوضع العادي اضغط «اختيار جهاز USB»، وإن كانت في وضع DFU اضغط «اختيار جهاز DFU».'
-          : 'لا يوجد أي جهاز USB متصل في الوضع العادي. إن كانت اللوحة في وضع DFU فسيكتشفها التطبيق تلقائياً خلال لحظات.',
-      );
+      throw supportsSerialPicker
+        ? new OperatorMessageError(
+            {key: 'flasherSimple.e09'},
+            'لا يوجد منفذ تسلسلي مسموح به. إن كانت اللوحة في الوضع العادي اضغط «اختيار جهاز USB»، وإن كانت في وضع DFU اضغط «اختيار جهاز DFU».',
+          )
+        : new OperatorMessageError(
+            {key: 'flasherSimple.e10'},
+            'لا يوجد أي جهاز USB متصل في الوضع العادي. إن كانت اللوحة في وضع DFU فسيكتشفها التطبيق تلقائياً خلال لحظات.',
+          );
     }
     if (devices.length > 1) {
-      throw new Error('يوجد أكثر من Flight Controller. اترك لوحة واحدة متصلة ثم أعد المحاولة.');
+      throw new OperatorMessageError({key: 'flasherSimple.e01'}, 'يوجد أكثر من Flight Controller. اترك لوحة واحدة متصلة ثم أعد المحاولة.');
     }
     if (devices[0].portCount !== 1) {
-      throw new Error('للوحة أكثر من منفذ USB serial. استخدم «متقدم» لاختيار المنفذ يدوياً.');
+      throw new OperatorMessageError({key: 'flasherSimple.e02'}, 'للوحة أكثر من منفذ USB serial. استخدم «متقدم» لاختيار المنفذ يدوياً.');
     }
     return devices[0];
   }, [client, supportsSerialPicker]);
@@ -1147,7 +1145,7 @@ export default function FirmwareFlasherSimpleScreen({
         if (live.length === 1) {
           bound = live[0];
         } else if (live.length === 0 && supportsSerialPicker) {
-          throw new Error('جهاز DFU لم يعد ظاهراً. أعد توصيل اللوحة في وضع DFU ثم أعد المحاولة.');
+          throw new OperatorMessageError({key: 'flasherSimple.e03'}, 'جهاز DFU لم يعد ظاهراً. أعد توصيل اللوحة في وضع DFU ثم أعد المحاولة.');
         }
       } catch (probeError) {
         if (probeError instanceof Error && probeError.message.startsWith('جهاز DFU')) {
@@ -1221,7 +1219,7 @@ export default function FirmwareFlasherSimpleScreen({
       if (selectedTarget && !detected.targetMatches(selectedTarget)) {
         const actual = describeFlightControllerHardware(detected.identity.board);
         await detected.release();
-        throw new Error(`Target المحدد ${selectedTarget} لا يطابق اللوحة ${actual}. صحّح Target قبل المتابعة.`);
+        throw new OperatorMessageError({key: 'flasherSimple.e04', values: {v0: selectedTarget, v1: actual}}, `Target المحدد ${selectedTarget} لا يطابق اللوحة ${actual}. صحّح Target قبل المتابعة.`);
       }
       if (detected.identity.firmware.knownFamily !== 'BETAFLIGHT') {
         await detected.release();
@@ -1341,7 +1339,7 @@ export default function FirmwareFlasherSimpleScreen({
       if (!detected.targetMatches(selectedTarget)) {
         const actual = describeFlightControllerHardware(detected.identity.board);
         await detected.release();
-        throw new Error(`تم إيقاف التفليش: Target ${selectedTarget} لا يطابق اللوحة ${actual}.`);
+        throw new OperatorMessageError({key: 'flasherSimple.e05', values: {v0: selectedTarget, v1: actual}}, `تم إيقاف التفليش: Target ${selectedTarget} لا يطابق اللوحة ${actual}.`);
       }
       setDetectedTarget(selectedTarget);
       freezeIdentity(detected.identity);
@@ -1403,7 +1401,7 @@ export default function FirmwareFlasherSimpleScreen({
           pendingFlash.pending.operationId,
         );
         if (!verdict.ok) {
-          throw new Error('جهاز DFU المختار غير صالح لهذه العملية. اختر Flight Controller الصحيح.');
+          throw new OperatorMessageError({key: 'flasherSimple.e06'}, 'جهاز DFU المختار غير صالح لهذه العملية. اختر Flight Controller الصحيح.');
         }
         await completeFlash(device, pendingFlash.image);
       })

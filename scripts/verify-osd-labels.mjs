@@ -22,8 +22,8 @@
  * Run: npm run verify:osd-labels
  * Exits non-zero naming the label and the transition that broke it.
  */
-import {spawn} from 'node:child_process';
 import {chromium} from 'playwright-core';
+import {startPreviewServer, stopPreviewServer} from './lib/preview-server.mjs';
 
 const PORT = 4199;
 const BASE = `http://127.0.0.1:${PORT}/index.html`;
@@ -233,12 +233,7 @@ const PROBE = () => {
 };
 
 function serve() {
-  return spawn(
-    'npx',
-    ['vite', 'preview', '--config', 'e2e/touch-targets/vite.config.mts',
-      '--port', String(PORT), '--strictPort'],
-    {stdio: 'ignore'},
-  );
+  return startPreviewServer({port: PORT});
 }
 
 async function waitForServer() {
@@ -474,7 +469,7 @@ try {
   }
 } finally {
   if (browser !== undefined) await browser.close();
-  server.kill('SIGTERM');
+  await stopPreviewServer(server);
 }
 
 for (const note of notes) console.log(`  ${note}`);

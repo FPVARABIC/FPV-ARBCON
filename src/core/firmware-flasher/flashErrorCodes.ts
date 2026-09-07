@@ -1,3 +1,5 @@
+import {resolveOperatorMessage} from './operatorMessage';
+
 /**
  * THE ONE FLASH ERROR-CODE AUTHORITY.
  *
@@ -100,18 +102,6 @@ export type FlashDestructiveState =
   | 'GO_IN_FLIGHT'
   | 'COMPLETED';
 
-/** States in which the board's flash may no longer hold runnable firmware. */
-export function isPotentiallyDestructive(state: FlashDestructiveState): boolean {
-  return (
-    state === 'ERASE_REQUEST_IN_FLIGHT' ||
-    state === 'ERASE_OUTCOME_UNKNOWN' ||
-    state === 'ERASE_CONFIRMED' ||
-    state === 'WRITING' ||
-    state === 'GO_IN_FLIGHT' ||
-    state === 'COMPLETED'
-  );
-}
-
 /**
  * The advisory to show ALONGSIDE the reason - never instead of it.
  * `NONE` renders nothing.
@@ -143,8 +133,12 @@ export function flashRecoveryLabelKey(advisory: Exclude<FlashRecoveryAdvisory, '
  * Operator-text resolution
  * ------------------------------------------------------------------ */
 
-/** Minimal shape of i18next's `t`, so this module needs no i18n import. */
-export type FlashTranslate = (key: string, options?: {defaultValue?: string}) => string;
+/**
+ * Minimal shape of i18next's `t`, so this module needs no i18n import. The
+ * options bag is open because a trusted app-authored message carries
+ * interpolation VALUES alongside its `defaultValue`.
+ */
+export type FlashTranslate = (key: string, options?: Record<string, unknown>) => string;
 
 /**
  * THE RESOLUTION CHAIN.
@@ -168,6 +162,37 @@ export function resolveFlashReason(t: FlashTranslate, code: string | undefined):
     const shared = t(`errors.${code}`, {defaultValue: ''});
     if (typeof shared === 'string' && shared.length > 0) return shared;
   }
+  return t('errors.UNKNOWN');
+}
+
+/**
+ * ANY string code an error carries, not only the eighteen this module owns.
+ * MSP and transport codes live in the shared `errors.*` namespace and must
+ * reach the operator through the catalogue exactly like the flasher's own.
+ */
+function anyErrorCode(error: unknown): string | undefined {
+  const code = (error as {code?: unknown} | null)?.code;
+  return typeof code === 'string' && code.length > 0 ? code : undefined;
+}
+
+/**
+ * THE ONE OPERATOR-TEXT CONTRACT, shared by both flasher screens.
+ *
+ *   1. a CODE -> firmwareFlasher.reason.<code> -> errors.<code> -> UNKNOWN
+ *   2. a TRUSTED app-authored message -> its catalogue key + values
+ *   3. anything else -> errors.UNKNOWN
+ *
+ * There is deliberately no fourth case. A raw `Error.message` is never
+ * rendered, in any script: the previous Unicode-range test asked what
+ * alphabet a string was written in, which is not a statement about who
+ * wrote it or whether anyone reviewed it. Raw text stays on the diagnostic
+ * surfaces, where unreviewed text belongs.
+ */
+export function resolveOperatorFacingText(t: FlashTranslate, error: unknown): string {
+  const code = anyErrorCode(error);
+  if (code !== undefined) return resolveFlashReason(t, code);
+  const authored = resolveOperatorMessage(t, error);
+  if (authored !== undefined) return authored;
   return t('errors.UNKNOWN');
 }
 

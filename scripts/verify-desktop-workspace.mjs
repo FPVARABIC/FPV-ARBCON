@@ -45,8 +45,9 @@
  * because "desktop layout failed" tells a maintainer nothing about
  * which way the layout failed.
  */
-import {spawn, spawnSync} from 'node:child_process';
 import {chromium} from 'playwright-core';
+import {spawnSync} from 'node:child_process';
+import {startPreviewServer, stopPreviewServer} from './lib/preview-server.mjs';
 
 const PORT = Number(process.env.W1_PORT ?? 4211);
 const BASE = `http://127.0.0.1:${PORT}/index.html`;
@@ -98,14 +99,7 @@ if (process.env.W1_SKIP_BUILD !== '1') {
   }
 }
 
-const server = spawn(
-  'npx',
-  [
-    'vite', 'preview', '--config', 'e2e/touch-targets/vite.config.mts',
-    '--port', String(PORT), '--strictPort',
-  ],
-  {stdio: 'ignore'},
-);
+const server = startPreviewServer({port: PORT});
 let up = false;
 for (let i = 0; i < 60; i += 1) {
   try {
@@ -114,7 +108,7 @@ for (let i = 0; i < 60; i += 1) {
   await new Promise(r => setTimeout(r, 500));
 }
 if (!up) {
-  server.kill('SIGTERM');
+  await stopPreviewServer(server);
   console.error('desktop-workspace: the fixture preview server never came up');
   process.exit(1);
 }
@@ -520,7 +514,7 @@ for (const screen of SCREENS) {
 }
 
 await browser.close();
-server.kill('SIGTERM');
+await stopPreviewServer(server);
 
 for (const note of notes) console.log(note);
 

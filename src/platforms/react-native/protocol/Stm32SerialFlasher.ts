@@ -374,6 +374,13 @@ export class Stm32SerialFlasher {
    * The PAYLOAD is different - once its bytes are handed to the transport
    * the device may act on them, and losing the link before an answer leaves
    * the outcome genuinely unknown rather than known-good.
+   *
+   * BECAUSE the command frame is not destructive, the whole of its
+   * round trip is still a window in which an operator may withdraw for
+   * free - and that round trip is a real ACK wait, not an instant. The
+   * cancellation check below is what makes the answer this engine gives
+   * during that window (`CANCELLED_IMMEDIATELY`, i.e. "nothing destructive
+   * has been transmitted") true afterwards as well.
    */
   private async erase(plan: DeviceFlashPlan): Promise<void> {
     this.report('erasing', 2, 0, plan.totalBytes);
@@ -381,12 +388,39 @@ export class Stm32SerialFlasher {
     try {
       await this.command(commandByte);
     } catch (error) {
+      /**
+       * A CANCELLATION IS NOT A DEVICE REFUSAL. `sendAndAck()` checks for
+       * one before it writes, so an operator who cancelled while the
+       * handshake was still in progress arrives here too - and labelling
+       * that `ERASE_REJECTED` would tell the operator the board turned the
+       * erase down, which it never saw. Nothing destructive happened on
+       * either path, so the state simply stays where it is.
+       */
+      if (isCancellation(error)) throw error;
       /* The device refused the command itself; it never ran an erase. */
       this.destructiveState = 'ERASE_REJECTED';
       throw this.restate(error, 'ERASE_REJECTED');
     }
 
     const payload = buildErasePayload(plan);
+
+    /**
+     * THE LAST INSTANT AT WHICH THE BOARD IS PROVABLY UNTOUCHED.
+     *
+     * `sendAndAck()` used to carry the erase payload and begins with this
+     * check; moving the payload to a raw `writeRaw` - so the state below
+     * could be set with nothing awaited in between - took the check with
+     * it, and a cancellation raised while the command frame was awaiting
+     * its ACK went on to erase the board anyway.
+     *
+     * It throws while the state is still PRE_DESTRUCTIVE, so the operator
+     * is told the truth and no recovery advisory is raised. Everything
+     * from here on is ordered by the single-threaded event loop: there is
+     * no await between this check and the state transition, and none
+     * between the transition and handing the first payload byte to the
+     * transport, so no cancellation can slip between them.
+     */
+    this.checkCancelled();
 
     /* SYNCHRONOUSLY, immediately before the first payload byte is handed to
      * the transport. Nothing awaits between this assignment and the write. */
@@ -516,6 +550,12 @@ export class Stm32SerialFlasher {
     restated.stack = cause.stack;
     return restated;
   }
+}
+
+/** Cancellation, whichever layer raised it - the engine or the transport. */
+function isCancellation(error: unknown): boolean {
+  const code = (error as {code?: unknown} | null)?.code;
+  return code === 'STM32_CANCELLED' || code === 'SERIAL_OPERATION_CANCELLED';
 }
 
 /** The exact erase payload the accepted plan describes - no other source. */

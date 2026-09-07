@@ -1,3 +1,5 @@
+import type {CarriesOperatorMessage, OperatorMessage} from './operatorMessage';
+
 export type IntelHexSegment = {
   readonly address: number;
   readonly data: Uint8Array;
@@ -11,23 +13,32 @@ export type IntelHexImage = {
   readonly entryPoint?: number;
 };
 
-export class IntelHexError extends Error {
-  constructor(message: string) {
+export class IntelHexError extends Error implements Partial<CarriesOperatorMessage> {
+  /**
+   * The catalogue key for the operator line. `message` stays the diagnostic
+   * sentence so logs and reports are unchanged; only the trust decision
+   * moved, from "does this text look Arabic" to "did this application name
+   * a reviewed string".
+   */
+  readonly operatorMessage?: OperatorMessage;
+
+  constructor(message: string, operatorMessage?: OperatorMessage) {
     super(message);
     this.name = 'IntelHexError';
+    this.operatorMessage = operatorMessage;
   }
 }
 
 function parseHexByte(text: string, lineNumber: number): number {
   if (!/^[0-9a-fA-F]{2}$/.test(text)) {
-    throw new IntelHexError(`سطر HEX رقم ${lineNumber} يحتوي قيمة غير سداسية.`);
+    throw new IntelHexError(`سطر HEX رقم ${lineNumber} يحتوي قيمة غير سداسية.`, {key: 'intelHex.e01', values: {v0: lineNumber}});
   }
   return Number.parseInt(text, 16);
 }
 
 function checkedAddress(value: number, lineNumber: number): number {
   if (!Number.isSafeInteger(value) || value < 0 || value > 0xffffffff) {
-    throw new IntelHexError(`عنوان خارج المجال في سطر HEX رقم ${lineNumber}.`);
+    throw new IntelHexError(`عنوان خارج المجال في سطر HEX رقم ${lineNumber}.`, {key: 'intelHex.e02', values: {v0: lineNumber}});
   }
   return value;
 }
@@ -47,10 +58,10 @@ export function parseIntelHex(source: string): IntelHexImage {
       continue;
     }
     if (sawEndOfFile) {
-      throw new IntelHexError(`توجد بيانات بعد سجل نهاية الملف في السطر ${lineNumber}.`);
+      throw new IntelHexError(`توجد بيانات بعد سجل نهاية الملف في السطر ${lineNumber}.`, {key: 'intelHex.e03', values: {v0: lineNumber}});
     }
     if (!line.startsWith(':') || line.length < 11 || (line.length - 1) % 2 !== 0) {
-      throw new IntelHexError(`بنية Intel HEX غير صالحة في السطر ${lineNumber}.`);
+      throw new IntelHexError(`بنية Intel HEX غير صالحة في السطر ${lineNumber}.`, {key: 'intelHex.e04', values: {v0: lineNumber}});
     }
 
     const encoded = line.slice(1);
@@ -60,14 +71,14 @@ export function parseIntelHex(source: string): IntelHexImage {
     }
     const byteCount = bytes[0];
     if (bytes.length !== byteCount + 5) {
-      throw new IntelHexError(`طول سجل Intel HEX لا يطابق محتواه في السطر ${lineNumber}.`);
+      throw new IntelHexError(`طول سجل Intel HEX لا يطابق محتواه في السطر ${lineNumber}.`, {key: 'intelHex.e05', values: {v0: lineNumber}});
     }
     let checksum = 0;
     for (const byte of bytes) {
       checksum = (checksum + byte) & 0xff;
     }
     if (checksum !== 0) {
-      throw new IntelHexError(`Checksum غير صحيح في سطر HEX رقم ${lineNumber}.`);
+      throw new IntelHexError(`Checksum غير صحيح في سطر HEX رقم ${lineNumber}.`, {key: 'intelHex.e06', values: {v0: lineNumber}});
     }
 
     const relativeAddress = (bytes[1] << 8) | bytes[2];
@@ -84,19 +95,19 @@ export function parseIntelHex(source: string): IntelHexImage {
       }
       case 0x01:
         if (byteCount !== 0 || relativeAddress !== 0) {
-          throw new IntelHexError(`سجل نهاية ملف غير صالح في السطر ${lineNumber}.`);
+          throw new IntelHexError(`سجل نهاية ملف غير صالح في السطر ${lineNumber}.`, {key: 'intelHex.e07', values: {v0: lineNumber}});
         }
         sawEndOfFile = true;
         break;
       case 0x02:
         if (byteCount !== 2 || relativeAddress !== 0) {
-          throw new IntelHexError(`سجل عنوان مقطعي غير صالح في السطر ${lineNumber}.`);
+          throw new IntelHexError(`سجل عنوان مقطعي غير صالح في السطر ${lineNumber}.`, {key: 'intelHex.e08', values: {v0: lineNumber}});
         }
         baseAddress = ((data[0] << 8) | data[1]) << 4;
         break;
       case 0x03:
         if (byteCount !== 4 || relativeAddress !== 0) {
-          throw new IntelHexError(`سجل بدء مقطعي غير صالح في السطر ${lineNumber}.`);
+          throw new IntelHexError(`سجل بدء مقطعي غير صالح في السطر ${lineNumber}.`, {key: 'intelHex.e09', values: {v0: lineNumber}});
         }
         entryPoint = checkedAddress(
           (((data[0] << 8) | data[1]) << 4) + ((data[2] << 8) | data[3]),
@@ -105,13 +116,13 @@ export function parseIntelHex(source: string): IntelHexImage {
         break;
       case 0x04:
         if (byteCount !== 2 || relativeAddress !== 0) {
-          throw new IntelHexError(`سجل عنوان خطي غير صالح في السطر ${lineNumber}.`);
+          throw new IntelHexError(`سجل عنوان خطي غير صالح في السطر ${lineNumber}.`, {key: 'intelHex.e10', values: {v0: lineNumber}});
         }
         baseAddress = ((data[0] << 8) | data[1]) * 0x10000;
         break;
       case 0x05:
         if (byteCount !== 4 || relativeAddress !== 0) {
-          throw new IntelHexError(`سجل بدء خطي غير صالح في السطر ${lineNumber}.`);
+          throw new IntelHexError(`سجل بدء خطي غير صالح في السطر ${lineNumber}.`, {key: 'intelHex.e11', values: {v0: lineNumber}});
         }
         entryPoint = checkedAddress(
           data[0] * 0x1000000 + data[1] * 0x10000 + data[2] * 0x100 + data[3],
@@ -121,15 +132,16 @@ export function parseIntelHex(source: string): IntelHexImage {
       default:
         throw new IntelHexError(
           `نوع سجل Intel HEX غير مدعوم (0x${recordType.toString(16)}) في السطر ${lineNumber}.`,
+          {key: 'intelHex.e15', values: {v0: recordType.toString(16), v1: lineNumber}},
         );
     }
   }
 
   if (!sawEndOfFile) {
-    throw new IntelHexError('ملف Intel HEX لا يحتوي سجل نهاية الملف.');
+    throw new IntelHexError('ملف Intel HEX لا يحتوي سجل نهاية الملف.', {key: 'intelHex.e12'});
   }
   if (records.length === 0) {
-    throw new IntelHexError('ملف Intel HEX لا يحتوي بيانات Firmware.');
+    throw new IntelHexError('ملف Intel HEX لا يحتوي بيانات Firmware.', {key: 'intelHex.e13'});
   }
 
   records.sort((left, right) => left.address - right.address);
@@ -142,7 +154,7 @@ export function parseIntelHex(source: string): IntelHexImage {
     while (groupEnd < records.length) {
       const next = records[groupEnd];
       if (next.address < endAddress) {
-        throw new IntelHexError('ملف Intel HEX يحتوي مناطق ذاكرة متداخلة.');
+        throw new IntelHexError('ملف Intel HEX يحتوي مناطق ذاكرة متداخلة.', {key: 'intelHex.e14'});
       }
       if (next.address !== endAddress) break;
       groupBytes += next.data.length;

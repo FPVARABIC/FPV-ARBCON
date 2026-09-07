@@ -50,8 +50,8 @@
  * Run: node scripts/verify-responsive-interaction.mjs
  * (build the fixture first: vite build --config e2e/touch-targets/vite.config.mts)
  */
-import {spawn} from 'node:child_process';
 import {chromium} from 'playwright-core';
+import {startPreviewServer, stopPreviewServer} from './lib/preview-server.mjs';
 
 const PORT = 4194;
 const BASE = `http://127.0.0.1:${PORT}/index.html`;
@@ -194,12 +194,7 @@ const PROBE = () => {
 };
 
 function serve() {
-  return spawn(
-    'npx',
-    ['vite', 'preview', '--config', 'e2e/touch-targets/vite.config.mts',
-     '--port', String(PORT), '--host', '127.0.0.1'],
-    {stdio: 'ignore'},
-  );
+  return startPreviewServer({port: PORT, strictPort: false, host: '127.0.0.1'});
 }
 
 async function waitForServer() {
@@ -686,7 +681,7 @@ try {
 
   await browser.close();
 } finally {
-  server.kill();
+  await stopPreviewServer(server);
 }
 
 const silent = rows.filter(row => row.responded === false);

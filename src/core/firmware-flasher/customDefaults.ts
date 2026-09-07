@@ -1,3 +1,4 @@
+import type {CarriesOperatorMessage, OperatorMessage} from './operatorMessage';
 import type {FirmwareImage} from './firmwareFile';
 import type {IntelHexImage, IntelHexSegment} from './intelHex';
 
@@ -5,17 +6,21 @@ const CUSTOM_DEFAULTS_POINTER_ADDRESS = 0x08002800;
 const CUSTOM_DEFAULTS_HEADER = '# Betaflight\n';
 export const MAX_UNIFIED_CONFIG_BYTES = 256 * 1024;
 
-export class CustomDefaultsError extends Error {
-  constructor(message: string) {
+export class CustomDefaultsError extends Error implements Partial<CarriesOperatorMessage> {
+  /** See IntelHexError: `message` is diagnostics, this is the operator line. */
+  readonly operatorMessage?: OperatorMessage;
+
+  constructor(message: string, operatorMessage?: OperatorMessage) {
     super(message);
     this.name = 'CustomDefaultsError';
+    this.operatorMessage = operatorMessage;
   }
 }
 
 /** Mirrors Betaflight's unified-config cleaner while bounding untrusted input. */
 export function parseUnifiedConfigText(source: string): readonly string[] {
   if (source.length === 0 || source.length > MAX_UNIFIED_CONFIG_BYTES) {
-    throw new CustomDefaultsError('ملف Unified Config فارغ أو يتجاوز الحد الآمن 256 KiB.');
+    throw new CustomDefaultsError('ملف Unified Config فارغ أو يتجاوز الحد الآمن 256 KiB.', {key: 'customDefaults.e01'});
   }
   const output: string[] = [];
   let inComment = false;
@@ -26,13 +31,13 @@ export function parseUnifiedConfigText(source: string): readonly string[] {
     if (character === '#') inComment = true;
     const codePoint = clean.codePointAt(index) ?? 0;
     if (codePoint > 255 && !inComment) {
-      throw new CustomDefaultsError('Unified Config يحتوي محرفاً غير صالح خارج التعليقات.');
+      throw new CustomDefaultsError('Unified Config يحتوي محرفاً غير صالح خارج التعليقات.', {key: 'customDefaults.e02'});
     }
     output.push(codePoint > 255 ? '_' : character);
   }
   const lines = output.join('').replace(/\r/g, '').split('\n');
   if (!lines.some(line => line.trim().length > 0 && !line.trimStart().startsWith('#'))) {
-    throw new CustomDefaultsError('Unified Config لا يحتوي أوامر إعداد قابلة للإدخال.');
+    throw new CustomDefaultsError('Unified Config لا يحتوي أوامر إعداد قابلة للإدخال.', {key: 'customDefaults.e03'});
   }
   return lines;
 }
@@ -40,11 +45,11 @@ export function parseUnifiedConfigText(source: string): readonly string[] {
 export function normalizeConfigurationLines(value: unknown): readonly string[] | undefined {
   if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value) || value.length > 4096) {
-    throw new CustomDefaultsError('قائمة إعدادات Target من الخادم غير صالحة.');
+    throw new CustomDefaultsError('قائمة إعدادات Target من الخادم غير صالحة.', {key: 'customDefaults.e04'});
   }
   if (value.length === 0) return undefined;
   if (!value.every(line => typeof line === 'string')) {
-    throw new CustomDefaultsError('قائمة إعدادات Target تحتوي قيمة غير نصية.');
+    throw new CustomDefaultsError('قائمة إعدادات Target تحتوي قيمة غير نصية.', {key: 'customDefaults.e05'});
   }
   return parseUnifiedConfigText((value as string[]).join('\n'));
 }
@@ -71,7 +76,7 @@ function mergeSegments(segments: readonly IntelHexSegment[]): readonly IntelHexS
   for (const segment of ordered) {
     const previous = merged[merged.length - 1];
     if (previous && segment.address < previous.address + previous.data.length) {
-      throw new CustomDefaultsError('منطقة Custom Defaults تتداخل مع بيانات Firmware.');
+      throw new CustomDefaultsError('منطقة Custom Defaults تتداخل مع بيانات Firmware.', {key: 'customDefaults.e06'});
     }
     if (previous && segment.address === previous.address + previous.data.length) {
       const data = new Uint8Array(previous.data.length + segment.data.length);
@@ -89,7 +94,7 @@ function configBytes(lines: readonly string[]): Uint8Array {
   const normalized = parseUnifiedConfigText(lines.join('\n'));
   const text = `${CUSTOM_DEFAULTS_HEADER}${normalized.join('\n')}\0`;
   if (text.length > MAX_UNIFIED_CONFIG_BYTES) {
-    throw new CustomDefaultsError('Custom Defaults تتجاوز الحد الآمن 256 KiB.');
+    throw new CustomDefaultsError('Custom Defaults تتجاوز الحد الآمن 256 KiB.', {key: 'customDefaults.e07'});
   }
   return Uint8Array.from(text, character => character.charCodeAt(0));
 }
@@ -98,11 +103,11 @@ export function insertCustomDefaults(image: IntelHexImage, lines: readonly strin
   const startAddress = readU32LE(image, CUSTOM_DEFAULTS_POINTER_ADDRESS);
   const endAddress = readU32LE(image, CUSTOM_DEFAULTS_POINTER_ADDRESS + 4);
   if (startAddress === undefined || endAddress === undefined || endAddress <= startAddress) {
-    throw new CustomDefaultsError('Firmware المحدد لا يعلن منطقة Custom Defaults صالحة.');
+    throw new CustomDefaultsError('Firmware المحدد لا يعلن منطقة Custom Defaults صالحة.', {key: 'customDefaults.e08'});
   }
   const payload = configBytes(lines);
   if (payload.length >= endAddress - startAddress) {
-    throw new CustomDefaultsError('منطقة Custom Defaults في Firmware أصغر من الإعدادات المختارة.');
+    throw new CustomDefaultsError('منطقة Custom Defaults في Firmware أصغر من الإعدادات المختارة.', {key: 'customDefaults.e09'});
   }
   const segments = mergeSegments([...image.segments, {address: startAddress, data: payload}]);
   const totalBytes = segments.reduce((sum, segment) => sum + segment.data.length, 0);

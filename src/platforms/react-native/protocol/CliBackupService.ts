@@ -1,3 +1,4 @@
+import {OperatorMessageError} from '../../../core/firmware-flasher/operatorMessage';
 import type {UsbSerialTransportClient} from '../transport';
 import {bytesToBase64} from './base64';
 import {
@@ -35,12 +36,12 @@ export function isPlausibleCliBackup(text: string): boolean {
 }
 
 export function restoreCommands(text: string): string[] {
-  if (!isPlausibleCliBackup(text)) throw new Error('ملف النسخة الاحتياطية CLI غير صالح.');
+  if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'cliBackup.e01'}, 'ملف النسخة الاحتياطية CLI غير صالح.');
   const commands = text
     .split(/\r?\n/)
     .map(line => line.trim())
     .filter(line => line.length > 0 && !line.startsWith('#') && line.toLowerCase() !== 'save');
-  if (commands.length > MAX_RESTORE_COMMANDS) throw new Error('النسخة الاحتياطية تحتوي أوامر أكثر من الحد الآمن.');
+  if (commands.length > MAX_RESTORE_COMMANDS) throw new OperatorMessageError({key: 'cliBackup.e02'}, 'النسخة الاحتياطية تحتوي أوامر أكثر من الحد الآمن.');
   return commands;
 }
 
@@ -66,7 +67,7 @@ export class CliBackupService {
       // the batch terminator has been seen - see cliReplyReader.
       const output = await this.readReply(port, CLI_DIFF_REPLY, 30_000);
       const backup = stripCliEnvelope(output, 'diff all');
-      if (!isPlausibleCliBackup(backup)) throw new Error('لم يُرجع Flight Controller نسخة CLI صالحة.');
+      if (!isPlausibleCliBackup(backup)) throw new OperatorMessageError({key: 'cliBackup.e03'}, 'لم يُرجع Flight Controller نسخة CLI صالحة.');
       return backup;
     } finally {
       await port.writeRaw(asciiBytes('exit\r')).catch(() => undefined);
@@ -75,7 +76,7 @@ export class CliBackupService {
   }
 
   async saveBackup(filename: string, text: string): Promise<boolean> {
-    if (!isPlausibleCliBackup(text)) throw new Error('لن تُحفظ نسخة CLI غير صالحة.');
+    if (!isPlausibleCliBackup(text)) throw new OperatorMessageError({key: 'cliBackup.e04'}, 'لن تُحفظ نسخة CLI غير صالحة.');
     return this.client.saveFirmwareFile(
       filename,
       'text/plain',
@@ -98,7 +99,7 @@ export class CliBackupService {
       await port.writeRaw(Uint8Array.of(0x23, 0x0d));
       await this.readReply(port, CLI_PLAIN_REPLY, 5000);
       for (let index = 0; index < commands.length; index += 1) {
-        if (signal?.aborted) throw new Error('أُلغيَت استعادة إعدادات CLI.');
+        if (signal?.aborted) throw new OperatorMessageError({key: 'cliBackup.e05'}, 'أُلغيَت استعادة إعدادات CLI.');
         port.flushInput();
         await port.writeRaw(asciiBytes(`${commands[index]}\r`));
         // A replayed line is a `set`, a `batch`, or a profile switch -
@@ -150,13 +151,13 @@ export class CliBackupService {
       const state = reply.push(byte);
       if (state.kind === 'COMPLETE') return reply.text;
       if (state.kind === 'BINARY') {
-        throw new Error('استجابة CLI تحتوي بيانات ثنائية غير متوقعة.');
+        throw new OperatorMessageError({key: 'cliBackup.e06'}, 'استجابة CLI تحتوي بيانات ثنائية غير متوقعة.');
       }
       if (state.kind === 'OVERFLOW') {
-        throw new Error('استجابة CLI تجاوزت الحد الآمن.');
+        throw new OperatorMessageError({key: 'cliBackup.e07'}, 'استجابة CLI تجاوزت الحد الآمن.');
       }
     }
     if (reply.settleAtDeadline().kind === 'COMPLETE') return reply.text;
-    throw new Error('انتهت مهلة انتظار CLI prompt.');
+    throw new OperatorMessageError({key: 'cliBackup.e08'}, 'انتهت مهلة انتظار CLI prompt.');
   }
 }

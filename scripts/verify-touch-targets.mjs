@@ -31,8 +31,8 @@
  * Exits non-zero, naming the control and its measured size, on any
  * violation.
  */
-import {spawn} from 'node:child_process';
 import {chromium} from 'playwright-core';
+import {startPreviewServer, stopPreviewServer} from './lib/preview-server.mjs';
 
 const MIN = 44;
 
@@ -324,13 +324,7 @@ const OVERLAP = () => {
 /* ------------------------------------------------------------------ */
 
 function serve() {
-  const child = spawn(
-    'npx',
-    ['vite', 'preview', '--config', 'e2e/touch-targets/vite.config.mts',
-      '--port', String(PORT), '--strictPort'],
-    {stdio: 'ignore', detached: false},
-  );
-  return child;
+  return startPreviewServer({port: PORT});
 }
 
 async function waitForServer() {
@@ -658,9 +652,332 @@ try {
       await ctx.close();
     }
   }
+
+  /* ================================================================== *
+   * THE POST-ERASE CANCEL-CONFIRMATION DIALOG
+   *
+   * The only destructive question this application asks, and the one
+   * control surface the scenes above cannot reach: it exists only while a
+   * flash is mid-erase. The `flasher-cancel` scene drives the real screen
+   * over a virtual STM32 byte stream and parks it exactly there.
+   *
+   * Measured rather than inferred from FirmwareButton reuse: geometry,
+   * overflow, the accessible dialog role and name, which control takes
+   * initial focus, Enter, Space, Escape, RTL order, focus restoration and
+   * listener cleanup.
+   * ================================================================== */
+  const byId = id => `[data-testid="${id}"]`;
+  const clickId = async (page, id) => {
+    await page.waitForSelector(byId(id), {timeout: 15000});
+    await page.click(byId(id));
+    await page.waitForTimeout(180);
+  };
+  const clickAria = async (page, label) => {
+    const target = page.locator(`[aria-label="${label}"]`).first();
+    if ((await target.count()) === 0) throw new Error(`no control labelled "${label}"`);
+    await target.click();
+    await page.waitForTimeout(180);
+  };
+
+  for (const width of [390, 768, 1366]) {
+    const ctx = await browser.newContext({
+      viewport: {width, height: width <= 480 ? 844 : 900},
+      deviceScaleFactor: 1,
+    });
+    const page = await ctx.newPage();
+    const scene = 'flasher-cancel';
+    try {
+      await page.goto(`${BASE}?dir=rtl&s=${scene}`, {waitUntil: 'networkidle'});
+      await page.waitForTimeout(400);
+
+      /* The manual-bootloader route, by real clicks only. The order is not
+         arbitrary: the manual-verify switch does not exist until the
+         no-reboot switch has been turned on. */
+      await clickId(page, 'firmware-source-local');
+      await clickId(page, 'pick-local-firmware');
+      await clickId(page, 'hex-method-serial');
+      await clickId(page, 'toggle-advanced-flash-options');
+      await clickAria(page, 'بدون تسلسل إعادة تشغيل');
+      await clickId(page, 'confirm-props-removed');
+      await clickId(page, 'confirm-usb-power-only');
+      await clickAria(page, 'تحققت يدوياً من Target والـ bootloader');
+      await clickId(page, 'start-safe-flash');
+
+      /* A real signal from the device, not a sleep. */
+      await page.waitForFunction(() => globalThis.__flasherCancelParked === true, null, {
+        timeout: 20000,
+      });
+      /* Opening is not the same as being ready: RN-Web mounts the modal
+         subtree first and focus moves a tick later, so the gate waits for
+         the focus itself rather than for the markup. */
+      /* Is the dialog on screen right now? Declared before every helper
+         that consults it. */
+      const open = async () =>
+        (await page.locator(byId('cancel-flash-confirm-body')).count()) > 0;
+
+      /* Focus landing is the FIRST commit, not the last: opening the dialog
+         also appends a log line, which re-renders the screen and re-runs the
+         dialog's key-listener effect. A key pressed inside that window
+         measures React's commit schedule rather than the dialog. So rather
+         than sleeping a guessed interval, the gate waits for the focus to
+         have been CONTINUOUSLY on the safe control across a run of polls -
+         a real quiescence condition, which also fails loudly if focus is
+         handed away again. */
+      const awaitSettledFocus = async () => {
+        await page.evaluate(() => {
+          globalThis.__focusRun = {id: null, count: 0};
+        });
+        try {
+          await page.waitForFunction(
+            () => {
+              const id = document.activeElement?.getAttribute('data-testid') ?? null;
+              const run = globalThis.__focusRun;
+              if (id === run.id) run.count += 1;
+              else {
+                run.id = id;
+                run.count = 1;
+              }
+              return id === 'cancel-flash-dismiss' && run.count >= 10;
+            },
+            null,
+            {timeout: 8000, polling: 50},
+          );
+          return true;
+        } catch {
+          /* NAME THE DEFECT, not the wait. A bare timeout here would be
+             reported as a Playwright message and read as gate flake; what
+             it actually means is that the safe action never took focus. */
+          const focus = await page.evaluate(
+            () => document.activeElement?.getAttribute('data-testid') ?? null,
+          );
+          fail(
+            `${scene}@${width}: focus settled on "${focus}", not the safe ` +
+              'action cancel-flash-dismiss',
+          );
+          return false;
+        }
+      };
+      /* Each of the three openings is guarded the same way, so a failure in
+         one check cannot surface as an unrelated error in the next. */
+      const openDialog = async () => {
+        if (await open()) {
+          fail(`${scene}@${width}: a previous dialog never closed, so the next check cannot start`);
+          return false;
+        }
+        try {
+          await page.click(byId('cancel-firmware-operation'), {timeout: 10000});
+        } catch {
+          fail(`${scene}@${width}: the cancel control could not be clicked to open the dialog`);
+          return false;
+        }
+        try {
+          await page.waitForSelector(byId('cancel-flash-confirm-body'), {timeout: 10000});
+        } catch {
+          fail(`${scene}@${width}: the cancel dialog did not open`);
+          return false;
+        }
+        return awaitSettledFocus();
+      };
+      await openDialog();
+
+      const dialog = await page.evaluate(min => {
+        const pick = id => document.querySelector(`[data-testid="${id}"]`);
+        const describe = id => {
+          const node = pick(id);
+          if (node === null) return {missing: true};
+          const rect = node.getBoundingClientRect();
+          const text = (node.textContent ?? '').trim();
+          return {
+            missing: false,
+            w: Math.round(rect.width * 100) / 100,
+            h: Math.round(rect.height * 100) / 100,
+            left: Math.round(rect.left * 100) / 100,
+            meets: rect.width >= min && rect.height >= min,
+            name: node.getAttribute('aria-label') ?? text,
+            role: node.getAttribute('role') ?? node.tagName.toLowerCase(),
+            tabIndex: node.tabIndex,
+          };
+        };
+        const backdrop = pick('cancel-flash-confirm');
+        return {
+          confirm: describe('cancel-flash-confirm-accept'),
+          dismiss: describe('cancel-flash-dismiss'),
+          role: backdrop?.getAttribute('role') ?? null,
+          ariaModal: backdrop?.getAttribute('aria-modal') ?? null,
+          ariaLabel: backdrop?.getAttribute('aria-label') ?? null,
+          focus: document.activeElement?.getAttribute('data-testid') ?? null,
+          overflow: Math.max(
+            0,
+            Math.round(document.documentElement.scrollWidth - document.documentElement.clientWidth),
+          ),
+        };
+      }, MIN);
+
+      for (const [name, control] of [['confirm', dialog.confirm], ['dismiss', dialog.dismiss]]) {
+        if (control.missing) {
+          fail(`${scene}@${width}: the ${name} control did not render`);
+          continue;
+        }
+        if (!control.meets)
+          fail(`${scene}@${width}: ${name} = ${control.w}x${control.h} (floor ${MIN})`);
+        if (!/[\u0600-\u06FF]/.test(control.name))
+          fail(`${scene}@${width}: ${name} has no Arabic accessible name ("${control.name}")`);
+        if (control.tabIndex < 0)
+          fail(`${scene}@${width}: ${name} is not keyboard reachable`);
+        notes.push(
+          `${scene}@${width} ${name}: ${control.w}x${control.h} role=${control.role} ` +
+            `tabIndex=${control.tabIndex} name="${control.name}"`,
+        );
+      }
+
+      if (dialog.role !== 'dialog')
+        fail(`${scene}@${width}: the dialog exposes role="${dialog.role}", not "dialog"`);
+      if (dialog.ariaModal !== 'true')
+        fail(`${scene}@${width}: the dialog does not expose aria-modal (${dialog.ariaModal})`);
+      if (dialog.ariaLabel === null || !/[\u0600-\u06FF]/.test(dialog.ariaLabel))
+        fail(`${scene}@${width}: the dialog has no Arabic accessible name`);
+      /* THE SAFE ACTION TAKES FOCUS. The destructive one must never be the
+         control a stray Enter or Space reaches first. */
+      if (dialog.focus !== 'cancel-flash-dismiss')
+        fail(
+          `${scene}@${width}: initial focus is "${dialog.focus}", not the safe ` +
+            'action cancel-flash-dismiss',
+        );
+      if (dialog.overflow > 0)
+        fail(`${scene}@${width}: the dialog adds ${dialog.overflow}px of horizontal overflow`);
+      if (!dialog.confirm.missing && !dialog.dismiss.missing) {
+        /* RTL: the first-declared control paints rightmost. */
+        if (dialog.dismiss.left <= dialog.confirm.left)
+          fail(
+            `${scene}@${width}: under RTL dismiss is not right of confirm ` +
+              `(${dialog.dismiss.left} vs ${dialog.confirm.left})`,
+          );
+        notes.push(
+          `${scene}@${width} RTL order: dismiss.left=${dialog.dismiss.left} ` +
+            `confirm.left=${dialog.confirm.left}`,
+        );
+      }
+
+      /* A key check is only meaningful on a dialog that is actually there.
+         Reporting "the key did nothing" for a dialog that never opened
+         would name the wrong defect. */
+      const requireOpen = async label => {
+        if (await open()) return true;
+        const state = await page.evaluate(() => ({
+          cancelButton: document.querySelector('[data-testid="cancel-firmware-operation"]') !== null,
+          result: document.querySelector('[data-testid="flash-result-title"]')?.textContent ?? null,
+        }));
+        fail(
+          `${scene}@${width}: the dialog was not open for the ${label} check ` +
+            `(cancel control present=${state.cancelButton}, result="${state.result}")`,
+        );
+        return false;
+      };
+
+      /* One key, one answer. The close is awaited as an EVENT - the dialog
+         subtree leaving the document - not sampled once after a guessed
+         interval. A fixed sample reported "the key did nothing" for a
+         dialog that had in fact closed a few milliseconds later, which is
+         the wrong defect: the ceiling below is an upper bound on patience,
+         and the check returns the instant the dialog is gone. */
+      const pressAndExpectClose = async (key, verb) => {
+        if (!(await requireOpen(key))) return false;
+        await awaitSettledFocus();
+        await page.keyboard.press(key);
+        try {
+          await page.waitForSelector(byId('cancel-flash-confirm-body'), {
+            state: 'detached',
+            timeout: 10000,
+          });
+          return true;
+        } catch {
+          const focus = await page.evaluate(
+            () => document.activeElement?.getAttribute('data-testid') ?? null,
+          );
+          fail(
+            `${scene}@${width}: ${key} did not ${verb} (still open after 10s, ` +
+              `focus="${focus}")`,
+          );
+          return false;
+        }
+      };
+      /* ENTER on the focused SAFE action closes the dialog. */
+      await pressAndExpectClose('Enter', 'activate the focused control');
+      /* Focus goes back where it came from, if that control still exists. */
+      let restored = null;
+      try {
+        await page.waitForFunction(
+          () =>
+            document.activeElement?.getAttribute('data-testid') === 'cancel-firmware-operation',
+          null,
+          {timeout: 10000, polling: 50},
+        );
+        restored = 'cancel-firmware-operation';
+      } catch {
+        restored = await page.evaluate(
+          () => document.activeElement?.getAttribute('data-testid') ?? null,
+        );
+        fail(`${scene}@${width}: focus was not restored (now "${restored}")`);
+      }
+      notes.push(`${scene}@${width}: Enter activates, focus restored to ${restored}`);
+
+      /* SPACE on the focused safe action, from a freshly opened dialog. */
+      await openDialog();
+      await pressAndExpectClose('Space', 'activate the focused control');
+
+      /* ESCAPE dismisses, i.e. continues flashing - the safe direction. */
+      await openDialog();
+      await pressAndExpectClose('Escape', 'dismiss the dialog');
+      notes.push(`${scene}@${width}: Space and Escape both answered`);
+
+      /* LISTENER CLEANUP: with the dialog closed, Escape must be inert -
+         a keydown listener left behind would keep answering for a dialog
+         that no longer exists. */
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(150);
+      const countWithdrawals = async () =>
+        page.evaluate(() => {
+          const box = document.querySelector('[data-testid="firmware-log"]');
+          return (box?.textContent ?? '').split('تراجع المستخدم عن الإلغاء').length - 1;
+        });
+      /* Exactly three dialogs were opened and dismissed above, so exactly
+         three withdrawals should be on record. More would mean one
+         keypress activated twice. */
+      const afterDismissals = await countWithdrawals();
+      if (afterDismissals !== 3)
+        fail(
+          `${scene}@${width}: 3 dismissals produced ${afterDismissals} log entries - ` +
+            'a keypress is being answered more than once',
+        );
+      /* And with the dialog closed, its listeners must be gone. */
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(200);
+      const afterStrayKeys = await countWithdrawals();
+      if (afterStrayKeys !== afterDismissals)
+        fail(
+          `${scene}@${width}: stray keys after the dialog closed added ` +
+            `${afterStrayKeys - afterDismissals} entries - a listener outlived the dialog`,
+        );
+      notes.push(
+        `${scene}@${width}: ${afterDismissals} withdrawals for 3 dismissals, ` +
+          'stray keys inert after close',
+      );
+
+      await page.evaluate(() => globalThis.__flasherCancelRelease?.());
+      await page.waitForTimeout(400);
+    } catch (error) {
+      fail(`${scene}@${width}: ${error.message}`);
+    }
+    await ctx.close();
+  }
 } finally {
   if (browser !== undefined) await browser.close();
-  server.kill('SIGTERM');
+  /* Stated, not assumed: a server this gate could not stop is a finding of
+     its own, because the next run would inherit it. */
+  const stopped = await stopPreviewServer(server);
+  if (stopped === 'leaked') fail(`the fixture preview server on ${PORT} outlived the gate`);
+  else notes.push(`fixture preview server ${stopped} (pid group ${server.pid})`);
 }
 
 for (const note of notes) console.log(`  ${note}`);

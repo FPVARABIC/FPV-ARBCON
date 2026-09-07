@@ -1,3 +1,4 @@
+import type {CarriesOperatorMessage, OperatorMessage} from '../../../core/firmware-flasher/operatorMessage';
 import {
   MSP_REBOOT,
   boardMatchesTarget,
@@ -67,13 +68,16 @@ export class DfuPermissionRequiredError extends Error {
  * or absent, port openable, MSP answering, board named. Callers can
  * present the real stage instead of one catch-all sentence.
  */
-export class FirmwareDetectionError extends Error {
+export class FirmwareDetectionError extends Error implements Partial<CarriesOperatorMessage> {
   readonly stage?: ConnectionStage;
+  /** See IntelHexError: `message` is diagnostics, this is the operator line. */
+  readonly operatorMessage?: OperatorMessage;
 
-  constructor(message: string, stage?: ConnectionStage) {
+  constructor(message: string, stage?: ConnectionStage, operatorMessage?: OperatorMessage) {
     super(message);
     this.name = 'FirmwareDetectionError';
     this.stage = stage;
+    this.operatorMessage = operatorMessage;
   }
 }
 
@@ -143,11 +147,13 @@ export class DetectedFlightController {
     const mode = this.rebootMode;
     try {
       if (this.identity.firmware.knownFamily !== 'BETAFLIGHT') {
-        throw new FirmwareDetectionError('إعادة التشغيل التلقائية إلى bootloader غير مدعومة لعائلة Firmware المكتشفة.');
+        throw new FirmwareDetectionError('إعادة التشغيل التلقائية إلى bootloader غير مدعومة لعائلة Firmware المكتشفة.', undefined, {key: 'bootloader.e01'});
       }
       if (!allowMismatch && !this.targetMatches(selectedTarget)) {
         throw new FirmwareDetectionError(
           `Target المحدد ${selectedTarget} لا يطابق المتحكم ${this.hardwareName}.`,
+          undefined,
+          {key: 'bootloader.e11', values: {v0: selectedTarget, v1: this.hardwareName}},
         );
       }
       await this.mspClient.request(MSP_REBOOT, Uint8Array.of(mode), {
@@ -186,7 +192,7 @@ export class FirmwareBootloaderController {
     signal?: AbortSignal,
     selection?: {readonly deviceId: number; readonly portIndex: number},
   ): Promise<DetectedFlightController> {
-    if (signal?.aborted) throw new FirmwareDetectionError('أُلغيَ اكتشاف Flight Controller.');
+    if (signal?.aborted) throw new FirmwareDetectionError('أُلغيَ اكتشاف Flight Controller.', undefined, {key: 'bootloader.e02'});
     // Developer diagnostics only; see connectionTrace.ts. Started here so
     // a failure at ANY stage - including "nothing on the bus" - produces
     // an exportable report rather than only the successful cases.
@@ -205,34 +211,41 @@ export class FirmwareBootloaderController {
         serialCapableCount: 0,
       });
       trace.failed('USB_DEVICE_FOUND', stage);
-      throw new FirmwareDetectionError(
-        stage === 'NO_USB_DEVICE'
-          ? 'لا يوجد أي جهاز USB متصل. وصّل متحكم الطيران بكابل بيانات ثم أعد المحاولة.'
-          : 'تم العثور على جهاز USB، لكنه لا يعرض منفذًا تسلسليًا يمكن فتحه. تأكد أن الكابل كابل بيانات وأن اللوحة في الوضع العادي وليست في وضع DFU.',
-        stage,
-      );
+      throw stage === 'NO_USB_DEVICE'
+        ? new FirmwareDetectionError(
+            'لا يوجد أي جهاز USB متصل. وصّل متحكم الطيران بكابل بيانات ثم أعد المحاولة.',
+            stage,
+            {key: 'bootloader.e12'},
+          )
+        : new FirmwareDetectionError(
+            'تم العثور على جهاز USB، لكنه لا يعرض منفذًا تسلسليًا يمكن فتحه. تأكد أن الكابل كابل بيانات وأن اللوحة في الوضع العادي وليست في وضع DFU.',
+            stage,
+            {key: 'bootloader.e13'},
+          );
     }
     if (selection === undefined && supported.length > 1) {
       throw new FirmwareDetectionError(
         'وُجد أكثر من متحكم؛ اختر جهاز USB يدوياً لتجنب تفليش الجهاز الخطأ.',
         'MULTIPLE_USB_DEVICES',
+        {key: 'bootloader.e14'},
       );
     }
     const device = selection === undefined
       ? supported[0]
       : supported.find(candidate => candidate.deviceId === selection.deviceId);
     if (device === undefined) {
-      throw new FirmwareDetectionError('جهاز USB المحدد يدوياً لم يعد متصلاً.');
+      throw new FirmwareDetectionError('جهاز USB المحدد يدوياً لم يعد متصلاً.', undefined, {key: 'bootloader.e03'});
     }
     if (selection === undefined && device.portCount !== 1) {
       throw new FirmwareDetectionError(
         'للمتحكم أكثر من منفذ؛ يلزم اختيار المنفذ يدوياً.',
         'MULTIPLE_PORTS',
+        {key: 'bootloader.e15'},
       );
     }
     const portIndex = selection?.portIndex ?? 0;
     if (!Number.isInteger(portIndex) || portIndex < 0 || portIndex >= device.portCount) {
-      throw new FirmwareDetectionError('منفذ USB serial المحدد غير صالح.');
+      throw new FirmwareDetectionError('منفذ USB serial المحدد غير صالح.', undefined, {key: 'bootloader.e04'});
     }
     trace.reached('USB_DEVICE_FOUND', `vid=0x${device.vendorId.toString(16)} pid=0x${device.productId.toString(16)}`);
     trace.fact('vendorId', `0x${device.vendorId.toString(16).padStart(4, '0')}`);
@@ -284,12 +297,17 @@ export class FirmwareBootloaderController {
          the cable", which is what the generic path used to say. */
       if (isDeviceBusyError(openError)) {
         trace.failed('PORT_OPENED', 'DEVICE_ALREADY_IN_USE after releasing own sessions');
-        throw new FirmwareDetectionError(
-          releaseOutcome.closeFailures.length > 0
-            ? 'تعذّر تأكيد إغلاق جلسة الاتصال السابقة داخل التطبيق، والمنفذ ما زال مشغولًا. افصل الكابل وأعد توصيله ثم أعد المحاولة.'
-            : 'منفذ اللوحة مشغول من تطبيق أو تبويب آخر. أغلق أي نافذة أخرى متصلة بهذه اللوحة ثم أعد المحاولة.',
-          'TRANSPORT_OPEN_FAILED',
-        );
+        throw releaseOutcome.closeFailures.length > 0
+          ? new FirmwareDetectionError(
+              'تعذّر تأكيد إغلاق جلسة الاتصال السابقة داخل التطبيق، والمنفذ ما زال مشغولًا. افصل الكابل وأعد توصيله ثم أعد المحاولة.',
+              'TRANSPORT_OPEN_FAILED',
+              {key: 'bootloader.e16'},
+            )
+          : new FirmwareDetectionError(
+              'منفذ اللوحة مشغول من تطبيق أو تبويب آخر. أغلق أي نافذة أخرى متصلة بهذه اللوحة ثم أعد المحاولة.',
+              'TRANSPORT_OPEN_FAILED',
+              {key: 'bootloader.e17'},
+            );
       }
       throw openError;
     }
@@ -341,7 +359,7 @@ export class FirmwareBootloaderController {
       const devices = await this.client.listDfuDevices();
       if (devices.length === 1) return devices[0];
       if (devices.length > 1) {
-        throw new FirmwareDetectionError('وُجد أكثر من جهاز DFU؛ افصل الأجهزة الإضافية لتجنب التفليش الخاطئ.');
+        throw new FirmwareDetectionError('وُجد أكثر من جهاز DFU؛ افصل الأجهزة الإضافية لتجنب التفليش الخاطئ.', undefined, {key: 'bootloader.e05'});
       }
       await delay(250, signal);
     }
@@ -357,11 +375,11 @@ export class FirmwareBootloaderController {
       const devices = (await this.client.listDevices()).filter(isSupportedDevice);
       if (devices.length === 1) return devices[0];
       if (devices.length > 1) {
-        throw new FirmwareDetectionError('وُجد أكثر من جهاز تسلسلي؛ لا يمكن اختيار جهاز الاستعادة بأمان.');
+        throw new FirmwareDetectionError('وُجد أكثر من جهاز تسلسلي؛ لا يمكن اختيار جهاز الاستعادة بأمان.', undefined, {key: 'bootloader.e06'});
       }
       await delay(300, signal);
     }
-    throw new FirmwareDetectionError('انتهت مهلة انتظار Flight Controller بعد التفليش.');
+    throw new FirmwareDetectionError('انتهت مهلة انتظار Flight Controller بعد التفليش.', undefined, {key: 'bootloader.e07'});
   }
 
   private waitForIdentity(sessionId: string, signal?: AbortSignal): Promise<FlightControllerIdentity> {
@@ -388,12 +406,13 @@ export class FirmwareBootloaderController {
               new FirmwareDetectionError(
                 'فُتح المنفذ لكن لم يرد متحكم الطيران على بروتوكول MSP. تأكد أن اللوحة تعمل ببرنامج ثابت متوافق مع MSP وليست في وضع DFU.',
                 'MSP_NOT_RESPONDING',
+                {key: 'bootloader.e18'},
               ),
             ),
           ),
         10_000,
       );
-      const onAbort = () => finish(() => reject(new FirmwareDetectionError('أُلغيَ التعرف التلقائي.')));
+      const onAbort = () => finish(() => reject(new FirmwareDetectionError('أُلغيَ التعرف التلقائي.', undefined, {key: 'bootloader.e19'})));
       signal?.addEventListener('abort', onAbort, {once: true});
       inspect();
     });

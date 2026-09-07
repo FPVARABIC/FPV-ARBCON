@@ -154,6 +154,78 @@ describe('erase outcome states', () => {
 });
 
 /**
+ * A CLEANUP FAILURE IS NOT THE FAILURE. The port is closed in a `finally`,
+ * so a disconnect that throws runs while a real flashing error is already
+ * in flight. Whichever error reaches the operator decides whether they are
+ * told the board was erased or merely that a port would not close.
+ */
+describe('cleanup never replaces the primary error', () => {
+  /** A channel whose disconnect always throws, over a scripted device. */
+  function brittleCleanup(device: Stm32DeviceConfig): {
+    channel: ConstructorParameters<typeof Stm32SerialFlasher>[0];
+    transcript: Stm32Transcript;
+  } {
+    const {client, transcript} = createStm32Device(device);
+    const port = new ReactNativeSerialPort(client, 7, 0);
+    return {
+      transcript,
+      channel: {
+        connect: port.connect.bind(port),
+        writeRaw: port.writeRaw.bind(port),
+        readExactly: port.readExactly.bind(port),
+        flushInput: port.flushInput.bind(port),
+        disconnect: async () => {
+          throw new Error('the probe made closing the port fail');
+        },
+      },
+    };
+  }
+
+  it('a PRE-destructive refusal keeps its own code and its NONE advisory', async () => {
+    const {channel, transcript} = brittleCleanup({faultAt: 'ERASE_COMMAND'});
+    const flasher = new Stm32SerialFlasher(channel);
+    await expect(
+      flasher.flash(acceptedSnapshot(), {baudRate: 256000, fullErase: false}),
+    ).rejects.toMatchObject({code: 'STM32_NACK'});
+    expect(transcript.erasePayloadBytes).toBeNull();
+    expect(recoveryAdvisoryFor(flasher.getDestructiveState())).toBe('NONE');
+  });
+
+  it('a POST-erase failure keeps its erased advisory', async () => {
+    const {channel, transcript} = brittleCleanup({faultAt: 'WRITE_DATA'});
+    const flasher = new Stm32SerialFlasher(channel);
+    await expect(
+      flasher.flash(acceptedSnapshot(), {baudRate: 256000, fullErase: false}),
+    ).rejects.toBeDefined();
+    expect(transcript.eraseAcknowledged).toBe(true);
+    expect(recoveryAdvisoryFor(flasher.getDestructiveState())).toBe('ERASE_CONFIRMED');
+  });
+
+  it('a successful flash is not turned into a failure by a failing close', async () => {
+    const {channel, transcript} = brittleCleanup({});
+    const flasher = new Stm32SerialFlasher(channel);
+    await flasher.flash(acceptedSnapshot(), {baudRate: 256000, fullErase: false});
+    expect(flasher.getDestructiveState()).toBe('COMPLETED');
+    expect(transcript.goAddress).toBe(0x08000000);
+  });
+});
+
+/**
+ * GO LAUNCHES WHAT WAS WRITTEN. A read-back that disagrees with the plan
+ * means the board does not hold the image this run intended, so the one
+ * thing that must not follow is a jump into it.
+ */
+describe('a failed verification is never followed by GO', () => {
+  it('a read-back mismatch stops the run with the erase history intact', async () => {
+    const {flasher, transcript, error} = await run({faultAt: 'VERIFY_MISMATCH'});
+    expect((error as {code?: string} | undefined)?.code).toBe('STM32_VERIFY_MISMATCH');
+    expect(transcript.eraseAcknowledged).toBe(true);
+    expect(transcript.goAddress).toBeNull();
+    expect(recoveryAdvisoryFor(flasher.getDestructiveState())).toBe('ERASE_CONFIRMED');
+  });
+});
+
+/**
  * ONLY THE ISSUER MAY BE CANCELLED BY ITS OWN TICKET.
  *
  * A confirmation is answered by a human, so it can arrive arbitrarily late -

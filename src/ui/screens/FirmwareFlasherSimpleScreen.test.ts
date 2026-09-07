@@ -9,6 +9,7 @@ import {
   simpleFlasherNavigationLocked,
 } from './FirmwareFlasherSimpleScreen';
 import type {FirmwareRelease} from '../../core/firmware-flasher';
+import catalogue from '../../i18n/locales/ar.json';
 
 function release(
   value: string,
@@ -48,8 +49,24 @@ describe('FirmwareFlasherSimpleScreen product contracts', () => {
   });
 });
 describe('simpleFailurePresentation maps rejections onto the shared truth contract', () => {
-  const translate = (key: string, options?: {defaultValue: string}) =>
-    options?.defaultValue !== undefined ? `${key}|${options.defaultValue}` : key;
+  /**
+   * A FAITHFUL i18next STUB. It answers the one question the resolver
+   * actually asks - does the SHIPPED catalogue have this key? - by looking
+   * in the shipped catalogue, and returns `defaultValue` when it does not,
+   * exactly as i18next would. A stub that echoed every key back would make
+   * every lookup "succeed" and hide a resolver that never falls through.
+   */
+  const catalogueHas = (key: string): boolean =>
+    key
+      .split('.')
+      .reduce<unknown>(
+        (node, part) => (node as Record<string, unknown> | undefined)?.[part],
+        catalogue as unknown,
+      ) !== undefined;
+  const translate = (key: string, options?: Record<string, unknown>) => {
+    if (catalogueHas(key)) return key;
+    return typeof options?.defaultValue === 'string' ? options.defaultValue : key;
+  };
 
   it('shows engine UNCONFIRMED codes as the honest third result with a next action', () => {
     const presentation = simpleFailurePresentation(
@@ -79,16 +96,25 @@ describe('simpleFailurePresentation maps rejections onto the shared truth contra
     ).toBe('failed');
   });
 
-  it('reads the transport client rejection shape {code, nativeMessage} instead of a generic line', () => {
+  /**
+   * THE CONTRACT CHANGED HERE, DELIBERATELY.
+   *
+   * This case used to require the transport's own `nativeMessage` to become
+   * the operator's line whenever the code was unrecognised. That is the
+   * exposure Wave 1D-A named: unreviewed text reaching the one line an
+   * operator reads before deciding whether the aircraft is safe. An
+   * unrecognised code now resolves to the localized unknown, and the native
+   * sentence stays on the diagnostic surfaces where it belongs.
+   */
+  it('an UNRECOGNISED code resolves to the localized unknown, not to raw native text', () => {
     const presentation = simpleFailurePresentation(
       {code: 'SOME_UNKNOWN_CODE', nativeMessage: 'DFU read-back mismatch at 0x8000010.'},
       'VERIFYING',
       translate,
     );
     expect(presentation.phase).toBe('failed');
-    // Unknown code -> the REAL native message survives as the fallback.
-    expect(presentation.text).toContain('DFU read-back mismatch at 0x8000010.');
-    expect(presentation.text).not.toContain('حدث خطأ غير متوقع');
+    expect(presentation.text).not.toContain('DFU read-back mismatch at 0x8000010.');
+    expect(presentation.text).toBe('errors.UNKNOWN');
   });
 
   it('a poisoned-session refusal is a stated failure to START, never unconfirmed completion', () => {

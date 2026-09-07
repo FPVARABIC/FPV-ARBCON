@@ -202,6 +202,88 @@ const flasherBuildApi = {
   loadBuildLog: async () => '',
 } as any;
 
+/* ------- Flasher: the REAL post-erase cancel-confirmation dialog ---- */
+
+/**
+ * The confirmation this screen shows when Cancel is pressed AFTER the erase
+ * request has gone out is the only genuinely destructive question the
+ * flasher asks, and it cannot be reached by pressing buttons alone: the
+ * flash has to be mid-erase at the moment Cancel is pressed.
+ *
+ * So the scene drives the SAME real screen over the SAME virtual STM32
+ * byte-stream the Jest suites use, with the device parked on the erase
+ * PAYLOAD. Nothing about the screen, the modal or its buttons is
+ * substituted - only the device beneath them, which is a byte stream in
+ * memory and reaches no hardware.
+ *
+ * Adjudicated in Wave 1D-A: the gate's ordinary `flasher` scene mounts the
+ * screen with no board, so no flash ever starts and this dialog never
+ * exists. Measuring it needed a scene that can actually open it.
+ */
+import {
+  createStm32Device as makeVirtualStm32,
+  makeHexImage as makeVirtualHex,
+} from '../../src/platforms/react-native/protocol/__testUtils__/stm32Bootloader';
+import {
+  base64ToBytes as decodeBase64,
+  bytesToBase64 as encodeBase64,
+} from '../../src/platforms/react-native/protocol/base64';
+
+const CANCEL_SCENE_IMAGE = makeVirtualHex(8);
+
+/** True for the AN3155 selective-erase payload this fixture's plan emits. */
+const isErasePayloadFrame = (frame: number[]): boolean =>
+  frame.length === 3 && frame[0] === 0x00;
+
+function makeCancelSceneClient(): any {
+  const {client: device} = makeVirtualStm32({});
+  const hexBytes = Uint8Array.from([...CANCEL_SCENE_IMAGE].map(c => c.charCodeAt(0)));
+  let armed = true;
+  let release: (() => void) | undefined;
+  const held = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  /* The verifier waits on this instead of sleeping, and releases the
+     parked frame once it has finished measuring. */
+  (globalThis as any).__flasherCancelParked = false;
+  (globalThis as any).__flasherCancelRelease = () => release?.();
+  const write = (device as any).writeBytes;
+  return {
+    ...(device as any),
+    writeBytes: async (sessionId: string, dataBase64: string) => {
+      if (armed && isErasePayloadFrame(Array.from(decodeBase64(dataBase64)))) {
+        armed = false;
+        (globalThis as any).__flasherCancelParked = true;
+        await held;
+      }
+      return write(sessionId, dataBase64);
+    },
+    supportsDevicePicker: () => false,
+    supportsDfuDevicePicker: () => false,
+    listDevices: async () => [
+      {
+        deviceId: 7, vendorId: 0x0483, productId: 0x5740,
+        productName: 'STM32 Virtual COM', manufacturerName: 'STMicroelectronics',
+        driverType: 'CDC_ACM', portCount: 1,
+      },
+    ],
+    listDfuDevices: async () => [],
+    saveFirmwareFile: async () => true,
+    pickFirmwareFile: async () => ({
+      name: 'touch-target-fixture.hex',
+      sizeBytes: hexBytes.length,
+      mimeType: 'application/octet-stream',
+      dataBase64: encodeBase64(hexBytes),
+    }),
+    cancelDfuFlash: async () => undefined,
+    onDeviceAttached: () => () => undefined,
+    onDeviceDetached: () => () => undefined,
+    onDfuFlashProgress: () => () => undefined,
+  };
+}
+
+const cancelSceneClient = makeCancelSceneClient();
+
 /* ---------------- OSD: the full element list ---------------------- */
 
 /**
@@ -492,6 +574,9 @@ const SCENES: Record<string, () => React.JSX.Element> = {
   choice: () => <ChoiceMatrix />,
   flasher: () => (
     <FirmwareFlasherScreen client={flasherClient} buildApi={flasherBuildApi} />
+  ),
+  'flasher-cancel': () => (
+    <FirmwareFlasherScreen client={cancelSceneClient} buildApi={flasherBuildApi} />
   ),
   osd: () => (
     <OsdScreen sessionKey={KEY as any} active controller={osdController} />

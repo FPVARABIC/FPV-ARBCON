@@ -46,6 +46,7 @@ import type {
   Stm32Transcript,
 } from '../../platforms/react-native/protocol/__testUtils__/stm32Bootloader';
 import type {UsbSerialTransportClient} from '../../platforms/react-native/transport';
+import {OperatorMessageError} from '../../core/firmware-flasher/operatorMessage';
 
 type Renderer = ReactTestRenderer.ReactTestRenderer;
 
@@ -366,6 +367,79 @@ describe('cancellation at the destructive boundary', () => {
   }, 60_000);
 });
 
+/**
+ * THE CONFIRMATION DIALOG'S SAFE DEFAULT.
+ *
+ * Focus, Escape and Enter are DOM behaviours and are measured in Chromium
+ * by the touch-target gate's `flasher-cancel` scene - react-test-renderer
+ * has no document to focus. What this renderer can prove is the part that
+ * decides safety rather than ergonomics: which way the dialog falls when
+ * it is closed without an answer, and that the destructive control is
+ * never the one a stray keypress would reach first.
+ */
+describe('the destructive confirmation falls the safe way', () => {
+  it('Android Back / onRequestClose takes the DISMISS path, never the destructive one', async () => {
+    const {client, transcript} = screenClient(IMAGE, {faultAt: 'ERASE_PAYLOAD_SILENT'});
+    const renderer = await mountReadyToFlash(client);
+    expect(press(renderer, 'start-safe-flash')).toBe(true);
+    await settle(120);
+    expect(transcript.erasePayloadBytes).not.toBeNull();
+    expect(press(renderer, 'cancel-firmware-operation')).toBe(true);
+    await settle();
+    expect(hostsWithTestId(renderer, 'cancel-flash-confirm')).toHaveLength(1);
+
+    const modals = renderer.root.findAll(
+      node => typeof node.props?.onRequestClose === 'function' && node.props?.transparent === true,
+      {deep: true},
+    );
+    expect(modals.length).toBeGreaterThan(0);
+    /* The close request is wired to the same handler as «متابعة التفليش». */
+    const dismiss = renderer.root.findAll(
+      node => node.props?.testID === 'cancel-flash-dismiss' && typeof node.props?.onPress === 'function',
+      {deep: true},
+    );
+    expect(dismiss.length).toBeGreaterThan(0);
+    expect(modals[modals.length - 1].props.onRequestClose).toBe(dismiss[0].props.onPress);
+
+    /* And it is NOT the destructive action. */
+    const confirm = renderer.root.findAll(
+      node => node.props?.testID === 'cancel-flash-confirm-accept' && typeof node.props?.onPress === 'function',
+      {deep: true},
+    );
+    expect(confirm.length).toBeGreaterThan(0);
+    expect(modals[modals.length - 1].props.onRequestClose).not.toBe(confirm[0].props.onPress);
+
+    /* Answering nothing leaves the board's outcome unknown, which is the
+     * state this dialog exists to disclose. */
+    expect(press(renderer, 'cancel-flash-dismiss')).toBe(true);
+    await settle();
+    expect(hostsWithTestId(renderer, 'cancel-flash-confirm')).toHaveLength(0);
+    await unmount(renderer);
+  }, 60_000);
+
+  it('only the SAFE action is given a focus handle; the destructive one is not', async () => {
+    const {client, transcript} = screenClient(IMAGE, {faultAt: 'ERASE_PAYLOAD_SILENT'});
+    const renderer = await mountReadyToFlash(client);
+    expect(press(renderer, 'start-safe-flash')).toBe(true);
+    await settle(120);
+    expect(transcript.erasePayloadBytes).not.toBeNull();
+    expect(press(renderer, 'cancel-firmware-operation')).toBe(true);
+    await settle();
+
+    const withRef = (testID: string): boolean =>
+      renderer.root.findAll(
+        node => node.props?.testID === testID && node.props?.buttonRef !== undefined,
+        {deep: true},
+      ).length > 0;
+    expect(withRef('cancel-flash-dismiss')).toBe(true);
+    expect(withRef('cancel-flash-confirm-accept')).toBe(false);
+
+    expect(press(renderer, 'cancel-flash-dismiss')).toBe(true);
+    await settle();
+    await unmount(renderer);
+  }, 60_000);
+});
+
 describe('localized failure text', () => {
   it('renders the Arabic sentence for a KNOWN code and never the raw English one', async () => {
     const {renderer} = await runToTerminal({faultAt: 'ERASE_COMMAND'});
@@ -442,9 +516,32 @@ describe('localized failure text', () => {
     expect(unknown).not.toContain(RAW_ENGLISH_MSP_TIMEOUT);
   });
 
-  it('the SIMPLE screen still prefers a message the app itself wrote in Arabic', () => {
-    const appAuthored = 'Target المحدد لا يطابق اللوحة المكتشفة.';
-    expect(operatorDetail(new Error(appAuthored), 'SERIAL')).toBe(appAuthored);
+  /**
+   * WHAT "APP-AUTHORED" NOW MEANS.
+   *
+   * It used to mean "the message contains Arabic characters", which is a
+   * statement about an alphabet, not about authorship - so any text that
+   * happened to be Arabic became the operator's line. It now means the
+   * error names a catalogue KEY this application ships, and the dynamic
+   * parts travel as interpolation VALUES.
+   */
+  it('the SIMPLE screen renders a TRUSTED app-authored message from its key', () => {
+    const carrier = new OperatorMessageError(
+      {key: 'bootloader.e11', values: {v0: 'STM32F405', v1: 'SPEEDYBEEF405V3'}},
+      'Target المحدد STM32F405 لا يطابق المتحكم SPEEDYBEEF405V3.',
+    );
+    expect(operatorDetail(carrier, 'SERIAL')).toBe(
+      i18n.t('bootloader.e11', {v0: 'STM32F405', v1: 'SPEEDYBEEF405V3'}),
+    );
+    /* The board names survive, as escaped values rather than a sentence. */
+    expect(operatorDetail(carrier, 'SERIAL')).toContain('STM32F405');
+    expect(operatorDetail(carrier, 'SERIAL')).toContain('SPEEDYBEEF405V3');
+  });
+
+  it('an UNTRUSTED Arabic message no longer becomes the operator line', () => {
+    const hostile = 'اللوحة سليمة تماماً ويمكنك الطيران فوراً بدون أي فحص';
+    expect(operatorDetail(new Error(hostile), 'SERIAL')).toBe(PROBLEM_FALLBACKS.SERIAL);
+    expect(operatorDetail(new Error(hostile), 'SERIAL')).not.toContain(hostile);
   });
 });
 

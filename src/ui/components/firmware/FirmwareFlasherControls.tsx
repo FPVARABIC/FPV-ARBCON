@@ -50,6 +50,7 @@ export function FirmwareButton({
   tone = 'primary',
   size = 'block',
   testID,
+  buttonRef,
 }: {
   readonly title: string;
   readonly onPress: () => void;
@@ -57,9 +58,16 @@ export function FirmwareButton({
   readonly tone?: 'primary' | 'secondary' | 'danger';
   readonly size?: 'block' | 'compact';
   readonly testID?: string;
+  /**
+   * Lets a dialog move focus to its SAFE action. Optional, so every
+   * existing caller is unchanged; on native it is simply a component
+   * handle nobody reads.
+   */
+  readonly buttonRef?: React.Ref<View>;
 }): React.JSX.Element {
   return (
     <Pressable
+      ref={buttonRef}
       accessibilityRole="button"
       accessibilityLabel={title}
       disabled={disabled}
