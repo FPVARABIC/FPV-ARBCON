@@ -65,6 +65,12 @@ on:
       - 'scripts/**'
       - '.github/workflows/android-validation.yml'
 
+env:
+  # ONE definition of the shard count. The matrix indices below must run
+  # 1..JEST_SHARD_COUNT; verifyJestShards.js fails the build if they ever
+  # drift apart and a test file is left unrun.
+  JEST_SHARD_COUNT: 4
+
 permissions:
   contents: read
 
@@ -73,54 +79,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  android-validation:
-    name: Android validation (Pass 1-4)
+  # Static gates run ONCE for the whole workflow rather than once per
+  # shard: they are not per-shard work, and repeating them would spend
+  # four runners to learn the same fact four times.
+  static-validation:
+    name: Static validation (TypeScript + ESLint)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      # Run-30089612606 root cause (evidence-first investigation): the
-      # runner entered the native builds with only 7.2GB free (91% full)
-      # and the 4-ABI release build ran the disk to zero mid-way through
-      # :shopify_react-native-skia:bundleReleaseLocalLintAar (explicit
-      # "No space left on device" seconds later on the same filesystem).
-      # This deletes ONLY explicitly-listed preinstalled toolchains this
-      # workflow never uses - Node comes from setup-node, Java/SDK/NDK/
-      # Gradle are installed explicitly by later steps and are untouched.
-      - name: Free runner disk space
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Disk before cleanup:"
-          df -h /
-
-          codeql_path="${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/CodeQL"
-
-          cleanup_paths=(
-            "/usr/share/dotnet"
-            "/opt/ghc"
-            "/usr/local/.ghcup"
-            "/usr/share/swift"
-            "/opt/az"
-            "/usr/local/share/powershell"
-            "/usr/local/share/chromium"
-            "$codeql_path"
-          )
-
-          echo "Removing unused preinstalled toolchains:"
-          for path in "${cleanup_paths[@]}"; do
-            if [[ -e "$path" ]]; then
-              echo "  Removing: $path"
-              sudo rm -rf -- "$path"
-            else
-              echo "  Not present: $path"
-            fi
-          done
-
-          echo "Disk after cleanup:"
-          df -h /
 
       - name: Setup Node
         uses: actions/setup-node@v7
@@ -136,6 +103,60 @@ jobs:
 
       - name: ESLint
         run: npx eslint .
+
+      # Proves the shard partition is lossless on this runner, with this
+      # Jest, before the matrix is allowed to stand in for the unsharded
+      # suite. Fails the workflow if any test file is claimed by no shard
+      # or by more than one.
+      - name: Jest shard completeness (union == universe)
+        run: node scripts/ci-diagnostics/verifyJestShards.js "${{ env.JEST_SHARD_COUNT }}"
+
+  jest:
+    name: Jest shard ${{ matrix.shard }}/${{ env.JEST_SHARD_COUNT }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Every shard reports its own verdict: one red shard must not hide
+      # the state of the other three.
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      # WHY THIS IS A MATRIX AND NOT ONE STEP.
+      #
+      # The monolithic Jest step stopped fitting its wall-clock budget on
+      # the hosted runners, and a paired control proved the cause was the
+      # runners rather than any commit: e91ddb15 - the very commit that had
+      # passed this step in 415s that morning - also timed out at 612s on
+      # the same pool that afternoon, as did its child, both with ZERO Jest
+      # FAIL lines and no OOM, SIGKILL or open handle. Raising 10 -> 20
+      # minutes was not enough either (1212s, twice).
+      #
+      # So the suite is SPLIT, NOT SHORTENED. `--shard=i/N` is Jest's own
+      # partitioner: the shards are disjoint and their union is the whole
+      # universe, which verifyJestShards.js re-proves ON THE RUNNER before
+      # any shard is trusted. Nothing is excluded, no per-test timeout is
+      # moved, no retry or continue-on-error is added - a failing test
+      # still fails its shard, and a failing shard still fails this job and
+      # blocks the Android build.
+      #
+      # FOUR shards, measured rather than guessed. Locally, idle, the whole
+      # suite is 366s; four shards are 62/144/99/52s and six are
+      # 42/47/140/74/59/21s - the critical path barely moves (144s -> 140s)
+      # because one heavy group of files cannot be split further, so six
+      # runners would buy 3% for 50% more machines.
 
       # BOUNDED ON PURPOSE. Run 30491403562 finished all 95 suites / 2559
       # tests green in 41.6 seconds, then printed "Jest did not exit one
@@ -215,7 +236,7 @@ jobs:
       # npm ci / tsc / eslint steps are 20-50% slower too, so the baseline
       # itself no longer fits 10 minutes. 20 minutes restores the headroom
       # 415s once had without weakening a single assertion.
-      - name: Jest
+      - name: Jest shard ${{ matrix.shard }}/${{ env.JEST_SHARD_COUNT }}
         timeout-minutes: 20
         env:
           JEST_LEAK_OUT: ${{ github.workspace }}/jest-open-handles.txt
@@ -224,10 +245,11 @@ jobs:
           if [ "${{ inputs.diagnostic_js_only }}" = "true" ]; then
             echo "DIAGNOSTIC RUN: open-handle reporter attached, one worker, no Android steps."
             npx jest --ci --maxWorkers=1 \
+              --shard=${{ matrix.shard }}/${{ env.JEST_SHARD_COUNT }} \
               --reporters=default \
               --reporters=./scripts/ci-diagnostics/jestLeakReporter.js
           else
-            npx jest --ci
+            npx jest --ci --shard=${{ matrix.shard }}/${{ env.JEST_SHARD_COUNT }}
           fi
 
       # always(), so it survives the Jest step being killed by its own
@@ -238,10 +260,76 @@ jobs:
         if: ${{ always() && format('{0}', inputs.diagnostic_js_only) == 'true' }}
         uses: actions/upload-artifact@v7
         with:
-          name: fpv-arbcon-jest-open-handles
+          name: fpv-arbcon-jest-open-handles-shard-${{ matrix.shard }}
           path: jest-open-handles.txt
           if-no-files-found: warn
           retention-days: 14
+
+
+  android-validation:
+    name: Android validation (Pass 1-4)
+    runs-on: ubuntu-latest
+    # HARD GATE. `needs` requires SUCCESS, and a matrix job succeeds only
+    # when every one of its shards does. So a single failing shard - or a
+    # shard killed by its own 20-minute timeout - skips this job and the
+    # workflow conclusion is failure: no APK is assembled, signed,
+    # verified or uploaded. Assembly happens HERE, ONCE, and never inside
+    # the matrix.
+    needs: [static-validation, jest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Run-30089612606 root cause (evidence-first investigation): the
+      # runner entered the native builds with only 7.2GB free (91% full)
+      # and the 4-ABI release build ran the disk to zero mid-way through
+      # :shopify_react-native-skia:bundleReleaseLocalLintAar (explicit
+      # "No space left on device" seconds later on the same filesystem).
+      # This deletes ONLY explicitly-listed preinstalled toolchains this
+      # workflow never uses - Node comes from setup-node, Java/SDK/NDK/
+      # Gradle are installed explicitly by later steps and are untouched.
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Disk before cleanup:"
+          df -h /
+
+          codeql_path="${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/CodeQL"
+
+          cleanup_paths=(
+            "/usr/share/dotnet"
+            "/opt/ghc"
+            "/usr/local/.ghcup"
+            "/usr/share/swift"
+            "/opt/az"
+            "/usr/local/share/powershell"
+            "/usr/local/share/chromium"
+            "$codeql_path"
+          )
+
+          echo "Removing unused preinstalled toolchains:"
+          for path in "${cleanup_paths[@]}"; do
+            if [[ -e "$path" ]]; then
+              echo "  Removing: $path"
+              sudo rm -rf -- "$path"
+            else
+              echo "  Not present: $path"
+            fi
+          done
+
+          echo "Disk after cleanup:"
+          df -h /
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
 
       # MANDATORY GATE. Builds the real --dev false bundle and fails the
       # workflow if a debug-only token is present, if the motor engine or
