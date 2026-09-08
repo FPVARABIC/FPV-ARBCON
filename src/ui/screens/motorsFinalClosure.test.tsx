@@ -246,7 +246,16 @@ function mountView(
         candidate => typeof candidate.props?.onPress === 'function',
       );
       if (node === undefined) throw new Error(`no pressable "${testID}"`);
-      ReactTestRenderer.act(() => node.props.onPress());
+      /* A BLOCK body, on purpose. These handlers are async, so a concise
+       * body would RETURN their promise to act() - and a synchronous
+       * act() given a thenable silently becomes an ASYNC act nobody awaits.
+       * React then leaves the act scope open, and every later passive-effect
+       * flush - including the destroys unmount() should run - is queued into
+       * a scope that never drains. That is what leaked MotorDiagnosticsPanel's
+       * 650ms setInterval and hung Jest's exit. */
+      ReactTestRenderer.act(() => {
+        node.props.onPress();
+      });
     },
     within: (parentId: string, childId: string) => {
       const parent = all(parentId)[0];
@@ -327,7 +336,9 @@ describe('M-F3 §34/§35 - motor test refuses a drafted or un-rebooted topology'
     const toggle = view
       .all('motor-workspace-enable')
       .find(node => typeof node.props?.onValueChange === 'function');
-    ReactTestRenderer.act(() => toggle?.props.onValueChange(true));
+    ReactTestRenderer.act(() => {
+      toggle?.props.onValueChange(true);
+    });
     const after = view
       .all('motor-workspace-enable')
       .find(node => typeof node.props?.onValueChange === 'function');
@@ -382,7 +393,9 @@ describe('M-F3 §34/§35 - motor test refuses a drafted or un-rebooted topology'
     const toggle = view
       .all('motor-workspace-enable')
       .find(node => typeof node.props?.onValueChange === 'function');
-    ReactTestRenderer.act(() => toggle?.props.onValueChange(true));
+    ReactTestRenderer.act(() => {
+      toggle?.props.onValueChange(true);
+    });
     const after = view
       .all('motor-workspace-enable')
       .find(node => typeof node.props?.onValueChange === 'function');
@@ -481,7 +494,9 @@ describe('M-F3 §15-§18 - the guided direction workflow', () => {
     const ack = view
       .all('motor-direction-props-ack-toggle')
       .find(node => typeof node.props?.onValueChange === 'function');
-    ReactTestRenderer.act(() => ack?.props.onValueChange(true));
+    ReactTestRenderer.act(() => {
+      ack?.props.onValueChange(true);
+    });
     expect(view.has('motors-identify-action')).toBe(false);
     expect(view.within('motor-direction-workflow', 'motors-hold-button')).toBe(true);
     // Exactly one hold button anywhere on the page.
@@ -499,7 +514,9 @@ describe('M-F3 §15-§18 - the guided direction workflow', () => {
     const ack = view
       .all('motor-direction-props-ack-toggle')
       .find(node => typeof node.props?.onValueChange === 'function');
-    ReactTestRenderer.act(() => ack?.props.onValueChange(true));
+    ReactTestRenderer.act(() => {
+      ack?.props.onValueChange(true);
+    });
 
     // All four motors start unchecked.
     expect(view.text()).toContain(ar.motorsScreen.directionStatusUnchecked);
@@ -537,7 +554,9 @@ describe('M-F3 §15-§18 - the guided direction workflow', () => {
     const ack = view
       .all('motor-direction-props-ack-toggle')
       .find(node => typeof node.props?.onValueChange === 'function');
-    ReactTestRenderer.act(() => ack?.props.onValueChange(true));
+    ReactTestRenderer.act(() => {
+      ack?.props.onValueChange(true);
+    });
     view.press('motor-direction-answer-no');
 
     const workflow = view
@@ -545,9 +564,9 @@ describe('M-F3 §15-§18 - the guided direction workflow', () => {
       .map(node => node.parent)
       .find(node => typeof node?.props?.onCommandOutcome === 'function');
     expect(workflow).toBeDefined();
-    ReactTestRenderer.act(() =>
-      workflow?.props.onCommandOutcome(1, 'REVERSED', 'ACKNOWLEDGED'),
-    );
+    ReactTestRenderer.act(() => {
+      workflow?.props.onCommandOutcome(1, 'REVERSED', 'ACKNOWLEDGED');
+    });
     const chipText = () =>
       JSON.stringify(
         view.all('motor-direction-status-1-state')[0]?.props.children,
@@ -573,9 +592,9 @@ describe('M-F3 §15-§18 - the guided direction workflow', () => {
       .all('motor-direction-workflow')
       .map(node => node.parent)
       .find(node => typeof node?.props?.onCommandOutcome === 'function');
-    ReactTestRenderer.act(() =>
-      workflow?.props.onCommandOutcome(1, 'REVERSED', 'UNCONFIRMED'),
-    );
+    ReactTestRenderer.act(() => {
+      workflow?.props.onCommandOutcome(1, 'REVERSED', 'UNCONFIRMED');
+    });
     // A command that may never have arrived cannot even claim "reversed".
     expect(
       JSON.stringify(
@@ -613,12 +632,23 @@ describe('M-F3 §38-§40/§42 - one reason, one block, full-width telemetry', ()
 });
 
 /* ================================================================== *
- * THE WIRE LEG - deliberately the LAST test in this file. Driving the
- * reverse form's async apply corrupts this legacy renderer's act
- * bookkeeping for updates scheduled afterwards (verified by bisection:
- * the same seam works before it and fails after it), so nothing may
- * run after this test in this file. The assertion that matters is that
- * the form hands the operator port EXACTLY the authored request.
+ * THE WIRE LEG. The assertion that matters is that the form hands the
+ * operator port EXACTLY the authored request.
+ *
+ * ATTRIBUTION CORRECTED. This block used to say that driving the
+ * reverse form's async apply "corrupts this legacy renderer's act
+ * bookkeeping", and that nothing could therefore run after it. The
+ * bisection behind that claim was real, but it blamed the renderer.
+ * The cause was this file's own `press()` helper: a concise arrow body
+ * returned the async handler's promise to a SYNCHRONOUS
+ * ReactTestRenderer.act(), which React then treats as an async act
+ * nobody awaits - so it warned, and left the act scope open for
+ * everything scheduled afterwards. That is also what stranded
+ * MotorDiagnosticsPanel's 650ms setInterval and hung Jest's exit on CI.
+ * The helper now discards the promise inside a block body, and the
+ * scope closes. The ordering is left as it was: this test is still
+ * last, which is harmless, and moving it is a separate change from
+ * repairing the leak.
  * ================================================================== */
 
 describe('M-F3 §15 - the reverse form reaches the operator port with the authored request', () => {
@@ -630,7 +660,9 @@ describe('M-F3 §15 - the reverse form reaches the operator port with the author
     const ack = view
       .all('motor-direction-props-ack-toggle')
       .find(node => typeof node.props?.onValueChange === 'function');
-    ReactTestRenderer.act(() => ack?.props.onValueChange(true));
+    ReactTestRenderer.act(() => {
+      ack?.props.onValueChange(true);
+    });
     view.press('motor-direction-answer-no');
     expect(view.has('esc-direction-panel')).toBe(true);
     view.press('esc-direction-reversed');

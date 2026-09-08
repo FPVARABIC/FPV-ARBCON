@@ -74,8 +74,17 @@
  * tests 1+4 together pass; test 3+4 together fail. Closing the capability
  * first, pumping the responder during teardown, and ending the session
  * through the UI toggle were all tried and none of them cures it - the
- * same legacy-renderer artifact this repository already documents in
- * motorsFinalClosure.test.tsx.
+ * same artifact this repository documents in motorsFinalClosure.test.tsx.
+ *
+ * ATTRIBUTION NOTE (Wave 1D-D). That companion note used to blame the
+ * legacy renderer; it has since been corrected, because the measured
+ * cause there was this same helper's `press()` handing a promise to a
+ * SYNCHRONOUS act(), which leaves React's act scope open for everything
+ * scheduled afterwards. `press()` here has been repaired the same way.
+ * Whether that also accounts for the ordering constraint described above
+ * was NOT measured, so the ordering is left exactly as it was - the
+ * repair closed a timer leak, and re-grouping these tests would be a
+ * separate change needing its own evidence.
  *
  * So the observations that need a completed command are made INSIDE the
  * test that makes it - within one test everything after the send behaves
@@ -290,7 +299,15 @@ function renderShell() {
       if (node.props.disabled === true) {
         throw new Error(`pressable "${testID}" is disabled`);
       }
-      ReactTestRenderer.act(() => node.props.onPress());
+      /* A BLOCK body, on purpose - see the note on the same helper in
+       * motorsFinalClosure.test.tsx. A concise body would RETURN this
+       * async handler's promise; a synchronous act() given a thenable
+       * turns into an ASYNC act nobody awaits, React leaves the scope open,
+       * and every later passive destroy - unmount()'s included - is queued
+       * into a scope that never drains. */
+      ReactTestRenderer.act(() => {
+        node.props.onPress();
+      });
     },
     pressIsDisabled: (testID: string) =>
       find(testID, 'onPress')?.props.disabled === true,
@@ -300,7 +317,9 @@ function renderShell() {
       if (node.props.disabled === true) {
         throw new Error(`switch "${testID}" is disabled`);
       }
-      ReactTestRenderer.act(() => node.props.onValueChange(next));
+      ReactTestRenderer.act(() => {
+        node.props.onValueChange(next);
+      });
     },
     has: (testID: string) =>
       renderer.root.findAll(candidate => candidate.props?.testID === testID)
