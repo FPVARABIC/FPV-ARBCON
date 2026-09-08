@@ -15,10 +15,44 @@ import {
 
 const SESSION = 'session-under-test';
 
+/**
+ * EVERY RECOVERY THIS FILE BUILDS, SO EVERY ONE CAN BE PUT DOWN.
+ *
+ * The factory below injects a CLOCK the test drives, but not a SCHEDULER,
+ * so `syncTimer()` arms a real `setTimeout` of FC_REBOOT_RECOVERY_TIMEOUT_MS
+ * - ten seconds - every time a scenario leaves the recovery in a pending
+ * phase. Most cases here end pending on purpose, because that is the state
+ * under test, and only two of them reset afterwards. Three of those real
+ * timers were still armed when the file finished.
+ *
+ * A ref'd timer keeps Node's event loop open, so this file's shard printed
+ * "Jest did not exit one second after the test run has completed" and then
+ * sat there until they expired. Measured before this teardown existed:
+ * three `delay=10000 repeat=null REF=true` handles, all attributed to this
+ * file, still live at the leak reporter's +7500ms sample.
+ *
+ * `reset()` is production's own cancel path - it re-enters `syncTimer()`,
+ * which clears the pending handle - so ownership is discharged by calling
+ * it. Deliberately NOT fake timers: this is a real-timer lifecycle test,
+ * and switching it over would hide the resource rather than release it.
+ * `reset()` returns void, so there is nothing here to await.
+ */
+const OPEN_RECOVERIES: FcRebootRecovery[] = [];
+afterEach(() => {
+  /* Taken FIRST, so the collection is empty even if a reset throws: the
+     next case must never inherit this one's instances. Jest runs this
+     after a failing test too, so a failure cannot leak a timer either. */
+  const owned = OPEN_RECOVERIES.splice(0, OPEN_RECOVERIES.length);
+  for (const instance of owned) {
+    instance.reset();
+  }
+});
+
 /** A recovery with a clock the test drives, so no scenario here waits. */
 function recovery(timeoutMs = FC_REBOOT_RECOVERY_TIMEOUT_MS) {
   let clock = 1_000;
   const instance = new FcRebootRecovery({now: () => clock, timeoutMs});
+  OPEN_RECOVERIES.push(instance);
   return {
     instance,
     advance: (ms: number) => {
