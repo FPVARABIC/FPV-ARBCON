@@ -45,6 +45,31 @@ export const KNOWN_ERROR_CODES = [
   'WEB_SERIAL_UNSUPPORTED',
   'WEB_USB_UNSUPPORTED',
   'INSECURE_CONTEXT',
+  /**
+   * UI-X3: the rest of the codes UsbSerialTransportModule.kt can reject
+   * with. They were missing here AND from ar.json, so each one reached the
+   * operator as the generic `errors.UNKNOWN` sentence - "an unexpected
+   * error occurred DURING CONNECTION" - which names the wrong phase for a
+   * flash, a file read or a denied permission, and offers no action.
+   *
+   * The drift is exactly what this file's own header warns about ("the
+   * native-sourced entries must be updated by hand"). Nothing enforced it,
+   * so nativeErrorCatalogueContract.test.ts now reads the shipped Kotlin
+   * source and fails if any emitted code lacks a dedicated Arabic entry.
+   */
+  'USB_PERMISSION_DENIED',
+  'USB_PERMISSION_REQUEST_FAILED',
+  'INVALID_FIRMWARE',
+  'DFU_FLASH_FAILED',
+  'DFU_ENUMERATION_FAILED',
+  'DFU_OPERATION_BUSY',
+  'FILE_OPERATION_BUSY',
+  'FILE_PICK_FAILED',
+  'FILE_READ_FAILED',
+  'FILE_SAVE_FAILED',
+  'NO_ACTIVITY',
+  'BAUD_RATE_FAILED',
+  'CONTROL_LINES_FAILED',
 ] as const;
 
 export type KnownTransportErrorCode = (typeof KNOWN_ERROR_CODES)[number];
