@@ -1014,44 +1014,34 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     }
 
     try {
-      // 6. Re-fetch and revalidate the full device identity - not deviceId alone.
-      val currentDevice =
-        usbManager.deviceList.values.find {
-          it.deviceId == identity.deviceId && it.vendorId == identity.vendorId && it.productId == identity.productId
-        }
-          ?: throw UsbTransportException(
-            "DEVICE_CHANGED_DURING_OPEN",
-            "Device ${identity.deviceId} was detached or changed while permission was pending.",
-          )
-
-      // 7. Open the USB connection.
-      val connection =
-        usbManager.openDevice(currentDevice)
-          ?: throw UsbTransportException("OPEN_FAILED", "Failed to open USB connection for device ${identity.deviceId}.")
-
-      // 8. Open the serial port.
-      try {
-        port.open(connection)
-      } catch (error: Exception) {
-        closeQuietly(connection)
-        throw UsbTransportException("OPEN_FAILED", error.message ?: "Failed to open serial port.")
-      }
-
-      // 9-10. Apply serial parameters and flow control. Both cleanup calls
-      // are best-effort (closeQuietly swallows their own failures) so that
-      // a secondary close failure here can never replace the real
+      // 6-10. Find the device again, open the connection, open the port
+      // (which is where the driver claims the interface and selects its
+      // alternate setting) and apply the requested serial parameters -
+      // each refusal closing exactly what the step before it opened, and
+      // nothing more. The sequence and its cleanup policy live in
+      // SerialOpenSequence.kt so that every one of those refusals can be
+      // injected one at a time in an ordinary JVM test; only the native
+      // calls are supplied here. Both cleanup calls remain best-effort so
+      // that a secondary close failure can never replace the real
       // UNSUPPORTED_SERIAL_CONFIGURATION cause with a less specific one.
-      try {
-        port.setParameters(parsedConfig.baudRate, parsedConfig.dataBits, parsedConfig.stopBits, parsedConfig.parity)
-        port.setFlowControl(parsedConfig.flowControl)
-      } catch (error: Exception) {
-        closeQuietly(port)
-        closeQuietly(connection)
-        throw UsbTransportException(
-          "UNSUPPORTED_SERIAL_CONFIGURATION",
-          error.message ?: "Driver rejected the requested serial configuration.",
-        )
-      }
+      val connection = openSerialConnection<UsbDevice, UsbDeviceConnection>(
+        deviceId = identity.deviceId,
+        findDevice = {
+          usbManager.deviceList.values.find {
+            it.deviceId == identity.deviceId &&
+              it.vendorId == identity.vendorId &&
+              it.productId == identity.productId
+          }
+        },
+        openConnection = { device -> usbManager.openDevice(device) },
+        openPort = { openedConnection -> port.open(openedConnection) },
+        applyConfiguration = {
+          port.setParameters(parsedConfig.baudRate, parsedConfig.dataBits, parsedConfig.stopBits, parsedConfig.parity)
+          port.setFlowControl(parsedConfig.flowControl)
+        },
+        closePortQuietly = { closeQuietly(port) },
+        closeConnectionQuietly = { openedConnection -> closeQuietly(openedConnection) },
+      )
 
       // 11. Build the completed local session and its id - not registered yet.
       val sessionId = UUID.randomUUID().toString()
