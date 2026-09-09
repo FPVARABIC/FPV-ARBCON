@@ -938,3 +938,33 @@ jobs:
             android/app/build/reports/lint-results-release.xml
           if-no-files-found: error
           retention-days: 14
+
+
+      # THE FINDINGS, AGAIN, AT THE END.
+      #
+      # Not cosmetic. GitHub's log API returns only a bounded tail, and in
+      # the environment this repository is audited from, artifact storage
+      # is not reachable at all - a fetch of the lint artifact fails with
+      # "CONNECT tunnel failed, response 403". Run 227 proved the
+      # consequence: :app:lintDebug printed all its findings at 10:31, the
+      # job ran until 11:34, and by then the debug findings had scrolled
+      # out of every retrievable window while the release ones - printed
+      # last - were still readable.
+      #
+      # Reprinting both reports as the final act of the job makes the
+      # findings retrievable whatever else the job did. It asserts nothing
+      # and gates nothing; the gates are the two lint steps above, which
+      # have already run and already failed the job if they should.
+      - name: Android Lint findings digest (both variants, printed last)
+        if: ${{ always() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        run: |
+          for variant in debug release; do
+            report="android/app/build/reports/lint-results-${variant}.xml"
+            echo "::group::Android Lint digest - ${variant}"
+            if [ -s "$report" ]; then
+              python3 scripts/ci/print-lint-findings.py "$report" "$variant" || true
+            else
+              echo "no report at $report (the lint step for this variant did not reach it)"
+            fi
+            echo "::endgroup::"
+          done

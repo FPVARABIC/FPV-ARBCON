@@ -92,9 +92,13 @@ class ReleasePackageContractTest {
     info.activities?.forEach { if (it.exported) exported += "activity ${it.name} guard=${it.permission}" }
     info.services?.forEach { if (it.exported) exported += "service ${it.name} guard=${it.permission}" }
     info.receivers?.forEach { if (it.exported) exported += "receiver ${it.name} guard=${it.permission}" }
+    // ProviderInfo has no single `permission` field - a provider is guarded
+    // by readPermission and writePermission separately, which is also the
+    // more useful thing to see, since a provider can be readable by anyone
+    // and writable by nobody.
     info.providers?.forEach {
       if (it.exported) {
-        exported += "provider ${it.name} guard=${it.permission}/r=${it.readPermission}/w=${it.writePermission}"
+        exported += "provider ${it.name} read=${it.readPermission} write=${it.writePermission}"
       }
     }
 
