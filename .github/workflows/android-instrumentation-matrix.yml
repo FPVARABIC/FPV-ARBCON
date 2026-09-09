@@ -68,13 +68,29 @@ jobs:
         if: ${{ steps.gate.outputs.run == 'true' }}
         uses: actions/checkout@v7
 
+      # The NDK stays. This job builds the release APK, which compiles
+      # Skia, Reanimated and Worklets from C++ against
+      # ndk/27.1.12297006; removing it fails the build for a reason that
+      # has nothing to do with the API level under test.
       - name: Free runner disk space
         if: ${{ steps.gate.outputs.run == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk \
-                      /opt/ghc /usr/local/.ghcup /usr/share/swift || true
+          echo "Disk before cleanup:"
+          df -h /
+          codeql_path="${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/CodeQL"
+          for path in /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
+                      /opt/az /usr/local/share/powershell /usr/local/share/chromium \
+                      "$codeql_path"; do
+            if [ -e "$path" ]; then
+              echo "  Removing: $path"
+              sudo rm -rf -- "$path"
+            else
+              echo "  Not present: $path"
+            fi
+          done
+          echo "Disk after cleanup:"
           df -h /
 
       - name: Setup Node
@@ -121,6 +137,20 @@ jobs:
       # supply-chain note there for how a421e438... was resolved (the
       # PEELED commit of v2.38.0, not the annotated tag object) and for the
       # two traps that made an earlier pin here point at v2.9.0.
+      # Built ahead of the emulator for the same reason as the mandatory
+      # job: a compile failure and a test failure are different findings.
+      - name: Build the release APK and the androidTest APK
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        working-directory: android
+        timeout-minutes: 60
+        run: |
+          ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest \
+            -PreactNativeArchitectures=x86_64 \
+            --max-workers=2 \
+            --no-daemon \
+            --stacktrace \
+            --console=plain
+
       - name: Instrumentation tests
         if: ${{ steps.gate.outputs.run == 'true' }}
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
@@ -133,41 +163,33 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           working-directory: android
           script: |
+            set -o pipefail
             adb devices
+            adb logcat -c || true
+            status=0
             ./gradlew :app:connectedAndroidTest \
               -PreactNativeArchitectures=x86_64 \
               --max-workers=2 \
               --no-daemon \
               --stacktrace \
-              --console=plain
+              --console=plain || status=$?
+            mkdir -p ../instrumentation-diagnostics
+            adb logcat -d > ../instrumentation-diagnostics/logcat.txt 2>&1 || true
+            adb shell getprop > ../instrumentation-diagnostics/getprop.txt 2>&1 || true
+            adb shell dumpsys package com.fpvarbcon \
+              > ../instrumentation-diagnostics/dumpsys-package.txt 2>&1 || true
+            adb shell ps -A > ../instrumentation-diagnostics/processes.txt 2>&1 || true
+            echo "gradle connectedAndroidTest status: $status"
+            exit $status
 
-      - name: Assert instrumentation actually executed tests
+      - name: Verify instrumentation results
         if: ${{ always() && steps.gate.outputs.run == 'true' }}
-        shell: bash
         run: |
-          set -euo pipefail
-          results=android/app/build/outputs/androidTest-results/connected
-          if [ ! -d "$results" ]; then
-            echo "::error::no androidTest results directory at $results"
-            exit 1
-          fi
-          total=$(grep -rho 'tests="[0-9]*"' "$results" --include='*.xml' \
-                  | grep -o '[0-9]*' | paste -sd+ - | bc 2>/dev/null || echo 0)
-          failures=$(grep -rho 'failures="[0-9]*"' "$results" --include='*.xml' \
-                  | grep -o '[0-9]*' | paste -sd+ - | bc 2>/dev/null || echo 0)
-          errors=$(grep -rho 'errors="[0-9]*"' "$results" --include='*.xml' \
-                  | grep -o '[0-9]*' | paste -sd+ - | bc 2>/dev/null || echo 0)
-          echo "API ${{ matrix.api-level }}: tests=$total failures=$failures errors=$errors"
-          if [ "${total:-0}" -eq 0 ]; then
-            echo "::error::API ${{ matrix.api-level }} executed ZERO tests"
-            exit 1
-          fi
-          if [ "${failures:-0}" -ne 0 ] || [ "${errors:-0}" -ne 0 ]; then
-            echo "::error::API ${{ matrix.api-level }} failures=$failures errors=$errors"
-            exit 1
-          fi
+          scripts/ci/verify-instrumentation-results.sh \
+            android/app/build/outputs/androidTest-results/connected \
+            instrumentation-diagnostics/logcat.txt
 
-      - name: Upload instrumentation results
+      - name: Upload instrumentation results and diagnostics
         if: ${{ always() && steps.gate.outputs.run == 'true' }}
         uses: actions/upload-artifact@v7
         with:
@@ -175,5 +197,6 @@ jobs:
           path: |
             android/app/build/outputs/androidTest-results/**
             android/app/build/reports/androidTests/**
+            instrumentation-diagnostics/**
           if-no-files-found: warn
           retention-days: 14
