@@ -400,6 +400,41 @@ jobs:
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest
 
+      # ANDROID LINT, AS A REAL GATE.
+      #
+      # Until UI-X3 this workflow ran no lint task at all. It only uploaded
+      # app/build/reports/lint-results-debug.html with `if-no-files-found:
+      # ignore`, so the step went green on a file nothing ever produced -
+      # a gate that looked present and checked nothing. `assemble` does not
+      # run lint in AGP; at most `assembleRelease` pulls in the fatal-only
+      # lintVitalRelease, which is not the same check and writes no report.
+      #
+      # Both variants are linted, no baseline file is used, and no category
+      # is disabled: a finding must be repaired or narrowly suppressed at
+      # the source with a written reason, never hidden here.
+      #
+      # Placed BEFORE the two assemble steps on purpose. Those cost ~45
+      # minutes together, and there is no sense paying that to discover a
+      # lint error afterwards.
+      - name: Android Lint (debug)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        working-directory: android
+        timeout-minutes: 25
+        run: |
+          ./gradlew :app:lintDebug --no-daemon --stacktrace --console=plain
+          # A lint task that "succeeded" without writing its report is not
+          # evidence that anything was checked, so treat that as a failure.
+          missing=0
+          for report in app/build/reports/lint-results-debug.html \
+                        app/build/reports/lint-results-debug.xml; do
+            if [ ! -s "$report" ]; then
+              echo "::error::Android Lint produced no report at $report"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
+
+
       # CI-only mitigation for the run-30086823998 failure (runner died
       # ~26min into the first-ever native build of Skia/Reanimated/Worklets,
       # signature of host resource exhaustion): the DEBUG validation build
@@ -503,6 +538,30 @@ jobs:
             | sort -h \
             | tail -40 || true
 
+      # RELEASE LINT, deliberately AFTER assembleRelease.
+      #
+      # lintRelease analyses the release variant, so run on its own it
+      # would first have to produce the release JS bundle and merged
+      # assets - the work the assemble step above already measured at
+      # ~38 minutes. Ordering it here reuses those outputs instead of
+      # paying for them twice, and keeps the debug lint gate early where
+      # it can still fail the run cheaply.
+      - name: Android Lint (release)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        working-directory: android
+        timeout-minutes: 30
+        run: |
+          ./gradlew :app:lintRelease --no-daemon --stacktrace --console=plain
+          missing=0
+          for report in app/build/reports/lint-results-release.html \
+                        app/build/reports/lint-results-release.xml; do
+            if [ ! -s "$report" ]; then
+              echo "::error::Android Lint produced no report at $report"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
+
       - name: Locate and verify standalone release APK
         if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
@@ -603,11 +662,23 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Upload Android lint report
+      # always(), so the reports survive a lint step that failed - that is
+      # exactly the run whose findings need reading. `error` rather than
+      # `ignore`: the old `ignore` is what let a report that was never
+      # generated pass silently for the whole life of this workflow.
+      #
+      # This upload cannot mask the real failure. If lint failed, its own
+      # step already failed the job; a later upload failure only adds to
+      # the log, it does not replace the primary error.
+      - name: Upload Android lint reports (debug + release)
         if: ${{ always() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: fpv-arbcon-lint-report
-          path: android/app/build/reports/lint-results-debug.html
-          if-no-files-found: ignore
+          path: |
+            android/app/build/reports/lint-results-debug.html
+            android/app/build/reports/lint-results-debug.xml
+            android/app/build/reports/lint-results-release.html
+            android/app/build/reports/lint-results-release.xml
+          if-no-files-found: error
           retention-days: 14
