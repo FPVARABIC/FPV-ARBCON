@@ -378,6 +378,14 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          # The post-action's build summary is ~2 KB of HTML at the very
+          # end of every job, and GitHub's log API returns only the last
+          # few kilobytes - so on run 34414443294 it displaced the
+          # instrumentation digest that had been printed as the final
+          # step. The same information is in the job's own steps; only
+          # the duplicate copy at the end goes.
+          add-job-summary: 'never'
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
@@ -498,6 +506,7 @@ jobs:
             android/app/build/outputs/androidTest-results/**
             android/app/build/reports/androidTests/**
             instrumentation-diagnostics/**
+            instrumentation-digest.txt
           if-no-files-found: warn
           retention-days: 14
 
@@ -747,6 +756,14 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
+        with:
+          # The post-action's build summary is ~2 KB of HTML at the very
+          # end of every job, and GitHub's log API returns only the last
+          # few kilobytes - so on run 34414443294 it displaced the
+          # instrumentation digest that had been printed as the final
+          # step. The same information is in the job's own steps; only
+          # the duplicate copy at the end goes.
+          add-job-summary: 'never'
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
@@ -809,6 +826,7 @@ jobs:
             android/app/build/outputs/androidTest-results/**
             android/app/build/reports/androidTests/**
             instrumentation-diagnostics/**
+            instrumentation-digest.txt
           if-no-files-found: warn
           retention-days: 14
 
@@ -847,6 +865,65 @@ jobs:
             echo "no stuck-process capture - the emulator phase did not reach it"
           fi
           echo "::endgroup::"
+  # EVERY VERDICT IN ONE SHORT JOB, SO IT CAN ACTUALLY BE READ.
+  #
+  # GitHub's log API returns only the last few kilobytes of a job. In the
+  # emulator jobs and in Android validation those kilobytes are spent by
+  # the Gradle post-action's own build summary, so the digest printed two
+  # steps earlier is pushed out no matter where it is placed - run
+  # 34414443294's API 34 row proved that even a last step is not last
+  # enough. Fighting the tail is the wrong fix.
+  #
+  # This job does almost nothing, so its whole log fits in that window. It
+  # downloads the verdict files the other jobs uploaded and prints them:
+  # the instrumentation digest for every API level, the raw page-size
+  # transcript of the device each one ran on, where a stuck suite was
+  # standing, and the native coverage verdict.
+  #
+  # It is a REPORTER, not a gate - it re-prints results the jobs above
+  # already passed or failed on, and never turns a red row green. It runs
+  # on always() precisely because the interesting case is a failure.
+  evidence-report:
+    name: Evidence report (all verdicts, readable)
+    runs-on: ubuntu-latest
+    needs: [android-instrumentation, android-instrumentation-matrix, android-validation]
+    if: ${{ always() }}
+    steps:
+      - name: Download every verdict artifact
+        uses: actions/download-artifact@v6
+        with:
+          path: evidence
+        continue-on-error: true
+
+      - name: Print every verdict
+        run: |
+          set -uo pipefail
+          if [ ! -d evidence ]; then
+            echo "no artifacts were produced by any job - read the jobs above"
+            exit 0
+          fi
+          for digest in $(find evidence -name 'instrumentation-digest.txt' | sort); do
+            echo "===== ${digest} ====="
+            cat "$digest"
+            echo
+          done
+          for page in $(find evidence -name 'page-size.txt' | sort); do
+            echo "===== ${page} ====="
+            cat "$page"
+            echo
+          done
+          for stuck in $(find evidence -name 'stuck-process.txt' | sort); do
+            echo "===== ${stuck} (first 60 lines) ====="
+            head -60 "$stuck"
+            echo
+          done
+          for verdict in $(find evidence -name 'native-coverage-verdict.txt' | sort); do
+            echo "===== ${verdict} ====="
+            cat "$verdict"
+            echo
+          done
+          echo "===== end of evidence ====="
+
   android-validation:
     name: Android validation (Pass 1-4)
     runs-on: ubuntu-latest
@@ -942,6 +1019,14 @@ jobs:
       - name: Setup Gradle
         if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: gradle/actions/setup-gradle@v6
+        with:
+          # The post-action's build summary is ~2 KB of HTML at the very
+          # end of every job, and GitHub's log API returns only the last
+          # few kilobytes - so on run 34414443294 it displaced the
+          # instrumentation digest that had been printed as the final
+          # step. The same information is in the job's own steps; only
+          # the duplicate copy at the end goes.
+          add-job-summary: 'never'
 
       - name: Make gradlew executable
         if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
@@ -1033,7 +1118,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: kotlin-unit-test-coverage
-          path: android/app/build/reports/coverage/
+          path: |
+            android/app/build/reports/coverage/
+            native-coverage-verdict.txt
           if-no-files-found: error
 
       # ANDROID LINT, AS A REAL GATE.
