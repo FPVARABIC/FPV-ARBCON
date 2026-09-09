@@ -12,8 +12,28 @@
   app: below that. Weights above 700 are intentionally absent — the type
   scale caps at Bold (see src/ui/theme/typography.ts).
 -->
+<!--
+  UnusedAttribute is suppressed HERE ONLY, on this one element, and only
+  for that one issue id. It is a false positive in this file by design.
+
+  Lint reports twelve times that `font`, `fontStyle` and `fontWeight`
+  "are only used in API level 26 and higher (current min is 24)". That is
+  true and it is the point: the android: attributes exist FOR API 26+,
+  and the app: attributes beside them exist for 24 and 25, where
+  androidx's ResourcesCompat reads them instead. Dropping either
+  namespace to silence the warning would lose weight mapping on one half
+  of the supported range - the SemiBold and Medium faces would collapse
+  to a synthetically bolded Regular.
+
+  This is the narrowest suppression the tool offers: one issue id, one
+  element, with the reason written down. No category is disabled, no
+  baseline exists, and every other UnusedAttribute anywhere in the
+  project is still reported.
+-->
 <font-family xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto">
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="UnusedAttribute">
     <font
         android:font="@font/cairo_regular"
         android:fontStyle="normal"

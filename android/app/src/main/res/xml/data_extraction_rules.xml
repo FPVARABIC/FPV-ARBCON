@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  NOTHING LEAVES THE DEVICE, INCLUDING TO ANOTHER DEVICE.
+
+  android:allowBackup="false" is NOT enough here. Android's own Auto
+  Backup guide says so, for exactly this app's targetSdkVersion:
+
+      "Note: For apps targeting Android 12 (API level 31) or higher, this
+       behavior varies. On devices from some device manufacturers,
+       specifying android:allowBackup="false" disables cloud-based backup
+       and restore (such as Google Drive backups) but doesn't disable
+       device-to-device transfers for the app."
+
+  This application targets 36. So on some manufacturers' devices the
+  manifest's stated intent - back nothing up - was being honoured for
+  Google Drive and quietly ignored for a device-to-device transfer, which
+  would copy this app's private storage onto a new phone. That storage
+  holds the operator's board configuration and whatever firmware file
+  they last opened.
+
+  Android Lint reported the gap as DataExtractionRules; this file is the
+  answer to it, not a suppression of it.
+
+  Every domain the schema defines is excluded from BOTH transfer types,
+  so the rule is "nothing", not "nothing except what I forgot to list".
+  cross-platform-transfer is deliberately absent: an absent section is
+  not a permission, and adding an empty one would only invite the
+  assumption that something in it was considered and allowed.
+-->
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+        <exclude domain="device_root" />
+        <exclude domain="device_file" />
+        <exclude domain="device_database" />
+        <exclude domain="device_sharedpref" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+        <exclude domain="device_root" />
+        <exclude domain="device_file" />
+        <exclude domain="device_database" />
+        <exclude domain="device_sharedpref" />
+    </device-transfer>
+</data-extraction-rules>
