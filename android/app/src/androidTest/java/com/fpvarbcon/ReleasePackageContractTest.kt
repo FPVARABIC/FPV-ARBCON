@@ -82,14 +82,25 @@ class ReleasePackageContractTest {
         PackageManager.GET_PROVIDERS,
     )
     val exported = mutableListOf<String>()
-    info.activities?.forEach { if (it.exported) exported += "activity ${it.name}" }
-    info.services?.forEach { if (it.exported) exported += "service ${it.name}" }
-    info.receivers?.forEach { if (it.exported) exported += "receiver ${it.name}" }
-    info.providers?.forEach { if (it.exported) exported += "provider ${it.name}" }
+    // The permission guard is captured alongside the name. An exported
+    // component behind a permission an ordinary app cannot hold is a very
+    // different thing from an open one, and a failure here has to say
+    // which of the two it found rather than leaving that to be looked up
+    // afterwards. androidx.profileinstaller and androidx.startup are both
+    // on the runtime classpath, so components from a merged library
+    // manifest are a live possibility, not a hypothetical.
+    info.activities?.forEach { if (it.exported) exported += "activity ${it.name} guard=${it.permission}" }
+    info.services?.forEach { if (it.exported) exported += "service ${it.name} guard=${it.permission}" }
+    info.receivers?.forEach { if (it.exported) exported += "receiver ${it.name} guard=${it.permission}" }
+    info.providers?.forEach {
+      if (it.exported) {
+        exported += "provider ${it.name} guard=${it.permission}/r=${it.readPermission}/w=${it.writePermission}"
+      }
+    }
 
     assertEquals(
       "unexpected exported components in the merged manifest: $exported",
-      listOf("activity com.fpvarbcon.MainActivity"),
+      listOf("activity com.fpvarbcon.MainActivity guard=null"),
       exported,
     )
   }
