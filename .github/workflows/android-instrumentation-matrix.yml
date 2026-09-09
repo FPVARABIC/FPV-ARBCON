@@ -1,0 +1,178 @@
+name: Android Instrumentation Matrix
+
+# THE WIDE API SWEEP.
+#
+# android-validation.yml runs ONE mandatory emulator job on API 34 for every
+# validation. This workflow is the rest of the sweep, kept separate for one
+# reason only: cost. Four emulator jobs on every commit would add roughly an
+# hour of runner time to a workflow that already takes over an hour, and the
+# mandatory job is what has to stay fast enough to be run constantly.
+#
+# The levels are chosen mechanically from the application's own declaration
+# in android/build.gradle - minSdkVersion 24, targetSdkVersion 36:
+#
+#   24  the LOWEST level the app claims to support. If the app cannot run
+#       here, either it is broken on the oldest supported device or minSdk
+#       is a false claim. Both are findings, and neither may be hidden by
+#       quietly deleting this entry.
+#   30  a representative middle level, still very widely installed.
+#   34  the level the mandatory job uses, repeated here so the matrix is a
+#       superset and a divergence between the two is visible.
+#   36  the DECLARED TARGET. Behaviour changes are opt-in by targetSdk, so
+#       this is the level whose new restrictions actually apply to the app.
+#
+# fail-fast is false on purpose: one failing level must not hide the result
+# of the others. No continue-on-error and no retry anywhere - a failure here
+# is a result, not something to paper over.
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_levels:
+        description: >-
+          Optional JSON array to narrow the sweep, e.g. "[24]". Leave blank
+          to run the full declared range.
+        type: string
+        default: ''
+
+concurrency:
+  group: android-instrumentation-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  instrumentation:
+    name: Instrumentation API ${{ matrix.api-level }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        api-level: [24, 30, 34, 36]
+    steps:
+      - name: Skip levels not requested
+        id: gate
+        shell: bash
+        run: |
+          requested='${{ inputs.api_levels }}'
+          if [ -z "$requested" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif echo "$requested" | grep -q "\b${{ matrix.api-level }}\b"; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "API ${{ matrix.api-level }} not in $requested - skipping"
+          fi
+
+      - name: Checkout
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: actions/checkout@v7
+
+      - name: Free runner disk space
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android/sdk/ndk \
+                      /opt/ghc /usr/local/.ghcup /usr/share/swift || true
+          df -h /
+
+      - name: Setup Node
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: npm ci
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        run: npm ci
+
+      - name: Setup JDK 17 (Temurin)
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: android-actions/setup-android@v4
+
+      - name: Setup Gradle
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Make gradlew executable
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        run: chmod +x ./gradlew
+        working-directory: android
+
+      - name: Enable KVM for the runner user
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      # Same immutable commit pin as android-validation.yml. See the
+      # supply-chain note there: pinned to the commit v2.9.0 resolves to,
+      # never to a movable tag.
+      - name: Instrumentation tests
+        if: ${{ steps.gate.outputs.run == 'true' }}
+        uses: reactivecircus/android-emulator-runner@e93c997dcab69054e999e3924af3d21c4a736e13
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          working-directory: android
+          script: |
+            adb devices
+            ./gradlew :app:connectedAndroidTest \
+              -PreactNativeArchitectures=x86_64 \
+              --max-workers=2 \
+              --no-daemon \
+              --stacktrace \
+              --console=plain
+
+      - name: Assert instrumentation actually executed tests
+        if: ${{ always() && steps.gate.outputs.run == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          results=android/app/build/outputs/androidTest-results/connected
+          if [ ! -d "$results" ]; then
+            echo "::error::no androidTest results directory at $results"
+            exit 1
+          fi
+          total=$(grep -rho 'tests="[0-9]*"' "$results" --include='*.xml' \
+                  | grep -o '[0-9]*' | paste -sd+ - | bc 2>/dev/null || echo 0)
+          failures=$(grep -rho 'failures="[0-9]*"' "$results" --include='*.xml' \
+                  | grep -o '[0-9]*' | paste -sd+ - | bc 2>/dev/null || echo 0)
+          errors=$(grep -rho 'errors="[0-9]*"' "$results" --include='*.xml' \
+                  | grep -o '[0-9]*' | paste -sd+ - | bc 2>/dev/null || echo 0)
+          echo "API ${{ matrix.api-level }}: tests=$total failures=$failures errors=$errors"
+          if [ "${total:-0}" -eq 0 ]; then
+            echo "::error::API ${{ matrix.api-level }} executed ZERO tests"
+            exit 1
+          fi
+          if [ "${failures:-0}" -ne 0 ] || [ "${errors:-0}" -ne 0 ]; then
+            echo "::error::API ${{ matrix.api-level }} failures=$failures errors=$errors"
+            exit 1
+          fi
+
+      - name: Upload instrumentation results
+        if: ${{ always() && steps.gate.outputs.run == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-instrumentation-api-${{ matrix.api-level }}
+          path: |
+            android/app/build/outputs/androidTest-results/**
+            android/app/build/reports/androidTests/**
+          if-no-files-found: warn
+          retention-days: 14

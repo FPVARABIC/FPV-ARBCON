@@ -84,7 +84,26 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
+
+    /**
+     * INSTRUMENTATION RUNS AGAINST THE RELEASE VARIANT, ON PURPOSE.
+     *
+     * The React Native Gradle plugin does not bundle JS for any variant
+     * listed in `debuggableVariants`, which defaults to
+     * ['debug', 'debugOptimized'] (ReactExtension.kt:105). A debug APK
+     * therefore carries no JS bundle and expects a Metro server, so an
+     * instrumentation test that launched it on a CI emulator would fail
+     * for the absence of Metro rather than for anything about the app.
+     *
+     * The release variant is self-contained - the workflow already proves
+     * it contains the bundle - so pointing androidTest at it both fixes
+     * that and makes the instrumentation exercise the artifact that
+     * actually ships. It changes nothing about assembleDebug or
+     * assembleRelease themselves.
+     */
+    testBuildType "release"
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -123,4 +142,20 @@ dependencies {
 
     // JVM unit tests for pure Kotlin logic (e.g. USB driver-type mapping).
     testImplementation("junit:junit:4.13.2")
+
+    /**
+     * INSTRUMENTATION TESTS ONLY. Every one of these is
+     * `androidTestImplementation`, so none of them can reach the debug or
+     * release APK - they are compiled into the separate androidTest APK
+     * and nothing here becomes a runtime dependency of the product.
+     *
+     * Kept to the official AndroidX test artifacts and nothing else: a
+     * runner, the JUnit4 bridge that provides ActivityScenario, and
+     * Espresso only because rendered-UI assertions need it.
+     */
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:core:1.6.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 }
