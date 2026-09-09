@@ -823,6 +823,38 @@ jobs:
         working-directory: android
         run: ./gradlew :app:testDebugUnitTest
 
+      # HOW MUCH OF THE NATIVE CODE THOSE TESTS ACTUALLY RAN.
+      #
+      # "The Android tests pass" says nothing about coverage, and a
+      # percentage would hide which file is at zero. This prints raw
+      # covered/total per Kotlin production file and fails if a file
+      # classified as JVM-executed ran no lines at all, or if a production
+      # file has no classification entry. The classification itself - and
+      # why there is no instrumentation column - is documented in the
+      # script.
+      - name: Native coverage and classification ledger
+        id: native-coverage
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        run: |
+          set -euo pipefail
+          cd android
+          ./gradlew :app:createDebugUnitTestCoverageReport
+          cd ..
+          python3 scripts/ci/kotlin-coverage-ledger.py \
+            android/app/build/reports/coverage/test/debug/report.xml
+
+      # Uploaded whether the ledger passed or failed - a failing ledger is
+      # exactly when the raw report is worth reading - but not when the
+      # step never ran, where `if-no-files-found: error` would raise a
+      # second, misleading failure on top of the real one.
+      - name: Upload JaCoCo unit-test coverage report
+        if: ${{ always() && steps.native-coverage.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: kotlin-unit-test-coverage
+          path: android/app/build/reports/coverage/test/debug/
+          if-no-files-found: error
+
       # ANDROID LINT, AS A REAL GATE.
       #
       # Until UI-X3 this workflow ran no lint task at all. It only uploaded

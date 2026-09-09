@@ -115,6 +115,27 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            /**
+             * JVM UNIT TEST COVERAGE, AND ONLY THAT.
+             *
+             * enableUnitTestCoverage attaches the JaCoCo agent to the unit
+             * test JVM. It does not touch the packaged classes, so neither
+             * assembleDebug nor assembleRelease produces a different APK
+             * because of this line - which matters, because the release
+             * APK is the artifact whose alignment, DEX contents, signing
+             * and size this project asserts elsewhere.
+             *
+             * Its sibling enableAndroidTestCoverage is deliberately NOT
+             * set. That one offline-instruments the APK under test, and
+             * androidTest here targets the RELEASE variant (see
+             * testBuildType above), so switching it on would instrument
+             * exactly the artifact those assertions are about. The
+             * per-file instrumentation column is reported UNMEASURED for
+             * that reason rather than filled in with a number that would
+             * describe a different binary. See
+             * scripts/ci/kotlin-coverage-ledger.py.
+             */
+            enableUnitTestCoverage true
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
