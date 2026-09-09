@@ -44,6 +44,7 @@ import {
 import type {
   Stm32DeviceConfig,
   Stm32Transcript,
+  Stm32WriteBarrier,
 } from '../../platforms/react-native/protocol/__testUtils__/stm32Bootloader';
 import type {UsbSerialTransportClient} from '../../platforms/react-native/transport';
 import {OperatorMessageError} from '../../core/firmware-flasher/operatorMessage';
@@ -101,6 +102,110 @@ async function settle(ms = 60): Promise<void> {
       setTimeout(resolve, ms);
     });
   });
+}
+
+/**
+ * ORDERING WITHOUT A CLOCK.
+ *
+ * `settle(ms)` waits a duration. That is fine for "let the mount finish",
+ * and wrong for "wait until the board has acknowledged the erase": the
+ * second is a fact about the exchange, and asking the clock about it means
+ * the test passes or fails according to how busy the machine is.
+ *
+ * COMPLETION WINS used to be written the second way, and it was
+ * reproducible: idle it passed, and with twelve busy loops on four cores
+ * it failed three times out of three with "flash failed" - because the
+ * virtual board's 8 ms-per-write sleeps stretched until the flasher's own
+ * ACK timeout fired. The attempt really did fail; the screen really was
+ * right; the test was measuring the runner.
+ *
+ * These two helpers replace duration with condition. [flushUntil] yields
+ * to the event loop and to React until a stated fact is true, bounded by a
+ * count of TURNS rather than milliseconds - so a loaded machine takes
+ * longer to arrive and arrives at the same answer. `setImmediate` is a
+ * yield, not a sleep: it fires on the next loop iteration whatever the
+ * load, and no timeout can be outrun by it.
+ */
+const TURN_BUDGET = 5_000;
+
+async function flushUntil(predicate: () => boolean, expectation: string): Promise<void> {
+  for (let turn = 0; turn < TURN_BUDGET; turn += 1) {
+    if (predicate()) return;
+    // The loop IS the wait: each turn yields once and re-asks.
+    await act(async () => {
+      await new Promise<void>(resolve => {
+        setImmediate(resolve);
+      });
+    });
+  }
+  throw new Error(
+    `flushUntil gave up after ${TURN_BUDGET} turns waiting for: ${expectation}. ` +
+      'This is a real stall, not slowness - the budget counts event-loop turns, not time.',
+  );
+}
+
+/**
+ * A hold the test can place on the virtual board's next write, and lift
+ * when it chooses. While held the flash attempt is genuinely mid-exchange:
+ * the erase is already on the wire and answered, and the write that would
+ * finish the image has not been consumed.
+ *
+ * This is the cancel window the old test bought with sleeps, expressed as
+ * a fact instead of a duration.
+ */
+function createWriteHold(): {
+  barrier: Stm32WriteBarrier;
+  holdWhen: (condition: () => boolean) => void;
+  isHolding: () => boolean;
+  release: () => void;
+  writesConsumed: () => number;
+} {
+  /**
+   * THE DEVICE STOPS ITSELF. The test does not race it.
+   *
+   * An earlier attempt had the test arm the hold after observing the
+   * erase acknowledgement, and it could not work: with the sleeps gone
+   * the whole flash finishes between two of the test's own statements, so
+   * there was nothing left to hold and flushUntil correctly reported a
+   * stall. Handing the CONDITION to the barrier removes the race - the
+   * board pauses at the first write after the condition is true, however
+   * fast or slow everything around it runs.
+   */
+  let condition: () => boolean = () => false;
+  let holding = false;
+  let consumed = 0;
+  let gate: Promise<void> | undefined;
+  let open: (() => void) | undefined;
+  let released = false;
+
+  return {
+    barrier: {
+      async beforeWrite() {
+        if (!released && condition()) {
+          if (gate === undefined) {
+            gate = new Promise<void>(resolve => {
+              open = resolve;
+            });
+          }
+          holding = true;
+          await gate;
+          holding = false;
+        }
+        consumed += 1;
+      },
+    },
+    holdWhen(next: () => boolean) {
+      condition = next;
+    },
+    isHolding: () => holding,
+    writesConsumed: () => consumed,
+    release() {
+      released = true;
+      open?.();
+      open = undefined;
+      gate = undefined;
+    },
+  };
 }
 
 function hostsWithTestId(renderer: Renderer, testID: string): ReactTestRenderer.ReactTestInstance[] {
@@ -327,13 +432,62 @@ describe('cancellation at the destructive boundary', () => {
     await unmount(renderer);
   }, 60_000);
 
+  /**
+   * The four moments this case is about, each reached as a FACT rather
+   * than after a duration:
+   *
+   *   1. erase request emitted            transcript.eraseCommandSent
+   *   2. erase acknowledgement received   transcript.eraseAcknowledged
+   *   4. cancellation question delivered  the dialog is on screen, while
+   *                                       the board is held mid-write
+   *   3. completion committed             the hold is lifted and the
+   *                                       attempt settles
+   *
+   * Numbered as the brief numbers them; 4 deliberately happens before 3,
+   * because the whole claim is that a completion arriving WHILE the
+   * question is up wins over the question.
+   *
+   * The two closing assertions are unchanged from the wall-clock version.
+   * Everything above them is new and strictly stronger: the old test only
+   * hoped the dialog had been open at the right moment, and this one
+   * requires it.
+   */
   it('COMPLETION WINS: a flash that finishes while the dialog is open keeps its success', async () => {
-    const {client} = screenClient(IMAGE, {writeDelayMs: 8});
+    const hold = createWriteHold();
+    const {client, transcript} = screenClient(IMAGE, {writeBarrier: hold.barrier});
+    // The board stops itself at the first write after it has acknowledged
+    // the erase, so moments 1 and 2 are behind us whenever the hold engages.
+    hold.holdWhen(() => transcript.eraseAcknowledged);
     const renderer = await mountReadyToFlash(client);
     expect(press(renderer, 'start-safe-flash')).toBe(true);
-    await settle(40);
-    press(renderer, 'cancel-firmware-operation');
-    await settle(800);
+
+    // Hold the exchange open. The attempt is now genuinely in flight and
+    // cannot finish until this test lets it.
+    await flushUntil(() => hold.isHolding(), 'the board to be held mid-write');
+
+    // 1 and 2, now facts rather than hopes. Nothing below is a claim about
+    // a board that was never asked to erase.
+    expect(transcript.eraseCommandSent).toBe(true);
+    expect(transcript.eraseAcknowledged).toBe(true);
+    const writesBeforeTheQuestion = hold.writesConsumed();
+
+    // 4. The question is asked while the attempt is still running.
+    expect(press(renderer, 'cancel-firmware-operation')).toBe(true);
+    await flushUntil(
+      () => hostsWithTestId(renderer, 'cancel-flash-confirm').length === 1,
+      'the cancel confirmation to appear',
+    );
+    expect(hold.isHolding()).toBe(true);
+    expect(readTestId(renderer, 'flash-result-title')).toBeUndefined();
+
+    // 3. Completion is committed while that question is still on screen.
+    hold.release();
+    await flushUntil(
+      () => readTestId(renderer, 'flash-result-title') !== undefined,
+      'the attempt to settle',
+    );
+    expect(hold.writesConsumed()).toBeGreaterThan(writesBeforeTheQuestion);
+
     /* The attempt settled while the question was on screen: the dialog is
      * gone and the real outcome stands. */
     expect(hostsWithTestId(renderer, 'cancel-flash-confirm')).toHaveLength(0);

@@ -36,6 +36,30 @@ export type Stm32FaultPoint =
   | 'VERIFY_MISMATCH'
   | 'GO';
 
+/**
+ * A DETERMINISTIC REPLACEMENT FOR `writeDelayMs`.
+ *
+ * `writeDelayMs` buys a cancel window with real wall-clock sleeps, which
+ * makes any test that relies on it a race against the machine. Under CPU
+ * contention each 8 ms sleep stretches, the whole exchange overruns the
+ * flasher's own ACK timeout, and the board never acknowledges the erase -
+ * so the attempt genuinely fails and the screen truthfully says so. The
+ * product is right and the test is measuring the runner's load.
+ *
+ * A barrier moves that decision from the clock to the test. The device
+ * awaits [beforeWrite] before consuming each write, so the test can hold
+ * the exchange open at an exact point, do something to the UI, and then
+ * let it continue - with no wall-clock duration anywhere in the sequence,
+ * and therefore nothing for load to stretch.
+ *
+ * Ordering only. A barrier must never introduce a real delay, or it would
+ * reintroduce exactly the problem it exists to remove.
+ */
+export interface Stm32WriteBarrier {
+  /** Awaited before write number [index] (0-based) is consumed. */
+  readonly beforeWrite: (index: number) => Promise<void> | void;
+}
+
 export interface Stm32DeviceConfig {
   readonly productId?: number;
   /** Get-ID `N`. AN3155 mandates 1 for an STM32. */
@@ -47,6 +71,12 @@ export interface Stm32DeviceConfig {
   readonly faultAt?: Stm32FaultPoint;
   /** Milliseconds each accepted write takes, so a cancel has a real window. */
   readonly writeDelayMs?: number;
+  /**
+   * Deterministic alternative to [writeDelayMs]. When set it REPLACES the
+   * delay: the two are mutually exclusive, because a test that wanted an
+   * exact ordering and also slept would still be racing the clock.
+   */
+  readonly writeBarrier?: Stm32WriteBarrier;
 }
 
 export interface Stm32WriteFrame {
@@ -101,6 +131,7 @@ export function createStm32Device(config: Stm32DeviceConfig = {}): {
   let pendingAddress = 0;
   let eraseExtended = false;
   let inbox: number[] = [];
+  let writeIndex = 0;
   let listener: ((event: UsbSerialDataEvent) => void) | undefined;
 
   const emit = (bytes: readonly number[]): void => {
@@ -318,7 +349,12 @@ export function createStm32Device(config: Stm32DeviceConfig = {}): {
     setBaudRate: async () => undefined,
     setControlLines: async () => undefined,
     writeBytes: async (_sessionId: string, dataBase64: string) => {
-      if (config.writeDelayMs !== undefined && config.writeDelayMs > 0) {
+      const index = writeIndex;
+      writeIndex += 1;
+      if (config.writeBarrier !== undefined) {
+        // Ordering, decided by the test. No clock is consulted.
+        await config.writeBarrier.beforeWrite(index);
+      } else if (config.writeDelayMs !== undefined && config.writeDelayMs > 0) {
         await new Promise<void>(resolve => {
           setTimeout(resolve, config.writeDelayMs);
         });
