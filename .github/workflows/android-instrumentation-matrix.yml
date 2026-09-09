@@ -41,14 +41,52 @@ concurrency:
 
 jobs:
   instrumentation:
-    name: Instrumentation API ${{ matrix.api-level }}
+    name: Instrumentation API ${{ matrix.label }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        api-level: [24, 30, 34, 36]
+        # include: entries rather than a bare api-level list, because the
+        # rows differ in more than their API level now - the 16 KB row
+        # needs its own system-image tag and its own hard expectation.
+        include:
+          - api-level: 24
+            target: google_apis
+            label: 24 - minSdkVersion
+          - api-level: 30
+            target: google_apis
+            label: 30 - representative middle
+          - api-level: 34
+            target: google_apis
+            label: 34 - same level as the mandatory job
+          - api-level: 36
+            target: google_apis
+            label: 36 - declared targetSdkVersion
+          # THE 16 KB PAGE ROW.
+          #
+          # Everything else here runs on a 4 KB image, so no other row is
+          # evidence about a 16 KB device however green it is. Android's
+          # guide names the image - "Google APIs Experimental 16 KB Page
+          # Size Intel x86_64 Atom System Image", which is the
+          # google_apis_experimental tag - and names the check:
+          #
+          #   "run the following command to verify that it's using a 16 KB
+          #    environment: adb shell getconf PAGE_SIZE. The command
+          #    should return a value of 16384."
+          #
+          # expected-page-size makes that a requirement rather than a
+          # note: the run fails if the image turns out to be a 4 KB one,
+          # so this row cannot report success for a property it did not
+          # test. The system image is not reachable from the environment
+          # this workflow was written in (dl.google.com is blocked there),
+          # so whether the tag resolves on a runner is decided by running
+          # it - which is why this workflow is dispatch-only.
+          - api-level: 35
+            target: google_apis_experimental
+            label: 35 - 16 KB page size
+            expected-page-size: 16384
     steps:
       - name: Skip levels not requested
         id: gate
@@ -154,42 +192,27 @@ jobs:
       - name: Instrumentation tests
         if: ${{ steps.gate.outputs.run == 'true' }}
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        # Empty for every 4 KB row, which leaves the page size reported and
+        # not asserted. On the 16 KB row it is 16384, and the script exits
+        # non-zero if the emulator disagrees.
+        env:
+          EXPECT_PAGE_SIZE: ${{ matrix.expected-page-size }}
         with:
           api-level: ${{ matrix.api-level }}
-          target: google_apis
+          target: ${{ matrix.target }}
           arch: x86_64
           ram-size: 4096M
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           working-directory: android
-          script: |
-            set -o pipefail
-            adb devices
-            adb logcat -c || true
-            status=0
-            ./gradlew :app:connectedAndroidTest \
-              -PreactNativeArchitectures=x86_64 \
-              --max-workers=2 \
-              --no-daemon \
-              --stacktrace \
-              --console=plain || status=$?
-            mkdir -p ../instrumentation-diagnostics
-            adb logcat -d > ../instrumentation-diagnostics/logcat.txt 2>&1 || true
-            adb shell getprop > ../instrumentation-diagnostics/getprop.txt 2>&1 || true
-            adb shell dumpsys package com.fpvarbcon \
-              > ../instrumentation-diagnostics/dumpsys-package.txt 2>&1 || true
-            adb shell ps -A > ../instrumentation-diagnostics/processes.txt 2>&1 || true
-            echo "gradle connectedAndroidTest status: $status"
-            # Fresh-install cold launch, per API level. See the note in
-            # android-validation.yml: no in-process test can reach the
-            # first launch, and API 24 is exactly where a platform
-            # difference would show up.
-            rtl_status=0
-            ../scripts/ci/verify-rtl-cold-launch.sh 2>&1 \
-              | tee ../instrumentation-diagnostics/rtl-cold-launch.txt || rtl_status=${PIPESTATUS[0]}
-            echo "rtl cold-launch status: $rtl_status"
-            if [ "$status" -eq 0 ]; then status=$rtl_status; fi
-            exit $status
+          # The same file the mandatory job runs, for the same reason: the
+          # action executes this input with dash, so anything written
+          # inline has to be dash-clean, and an inline block cannot be
+          # rehearsed locally. Running the identical file across API
+          # levels also means a difference between two rows is a platform
+          # difference and not a difference between two copies of a
+          # script. See scripts/ci/run-instrumentation-on-emulator.sh.
+          script: ../scripts/ci/run-instrumentation-on-emulator.sh
 
       - name: Verify instrumentation results
         if: ${{ always() && steps.gate.outputs.run == 'true' }}
@@ -202,7 +225,7 @@ jobs:
         if: ${{ always() && steps.gate.outputs.run == 'true' }}
         uses: actions/upload-artifact@v7
         with:
-          name: fpv-arbcon-instrumentation-api-${{ matrix.api-level }}
+          name: fpv-arbcon-instrumentation-api-${{ matrix.api-level }}-${{ matrix.target }}
           path: |
             android/app/build/outputs/androidTest-results/**
             android/app/build/reports/androidTests/**

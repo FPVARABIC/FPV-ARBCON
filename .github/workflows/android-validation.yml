@@ -437,56 +437,27 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           working-directory: android
+          # ONE LINE, ON PURPOSE.
+          #
+          # This used to be a ~45-line inline block, and run 34353419058
+          # showed the cost: the action runs its `script` input with
+          # /usr/bin/sh, which on the Ubuntu runner is dash, and the block
+          # opened with `set -o pipefail`. dash does not have it:
+          #
+          #   [command]/usr/bin/sh -c set -o pipefail
+          #   /usr/bin/sh: 1: set: Illegal option -o pipefail
+          #
+          # The block died on its first line, after a 17-minute APK build
+          # and a 71-second emulator boot, with a healthy emulator and not
+          # one test executed. A file with a bash shebang cannot be run by
+          # the wrong shell, and it can be exercised locally against a fake
+          # adb before it is ever pushed. See the header of
+          # scripts/ci/run-instrumentation-on-emulator.sh.
+          #
           # The diagnostics are captured whether the run passed or failed,
           # and the gradle status is preserved across that capture, so a
           # failing run still reports as failing AND still leaves evidence.
-          script: |
-            set -o pipefail
-            adb devices
-            adb logcat -c || true
-            status=0
-            ./gradlew :app:connectedAndroidTest \
-              -PreactNativeArchitectures=x86_64 \
-              --max-workers=2 \
-              --no-daemon \
-              --stacktrace \
-              --console=plain || status=$?
-            mkdir -p ../instrumentation-diagnostics
-            adb logcat -d > ../instrumentation-diagnostics/logcat.txt 2>&1 || true
-            adb shell getprop > ../instrumentation-diagnostics/getprop.txt 2>&1 || true
-            adb shell dumpsys package com.fpvarbcon \
-              > ../instrumentation-diagnostics/dumpsys-package.txt 2>&1 || true
-            adb shell ps -A > ../instrumentation-diagnostics/processes.txt 2>&1 || true
-            adb shell dumpsys activity activities \
-              > ../instrumentation-diagnostics/dumpsys-activities.txt 2>&1 || true
-            echo "gradle connectedAndroidTest status: $status"
-            # The right-to-left repair is about the FIRST launch after an
-            # install, which no in-process instrumentation test can reach:
-            # MainApplication.onCreate has already run before the first
-            # assertion executes. This wipes the package data, cold-launches
-            # the release app and reads React Native's own preference file
-            # off the device as root. It runs LAST because `pm clear` would
-            # disturb the suite, and its status is folded in rather than
-            # discarded.
-            rtl_status=0
-            ../scripts/ci/verify-rtl-cold-launch.sh 2>&1 \
-              | tee ../instrumentation-diagnostics/rtl-cold-launch.txt || rtl_status=${PIPESTATUS[0]}
-            echo "rtl cold-launch status: $rtl_status"
-            if [ "$status" -eq 0 ]; then status=$rtl_status; fi
-            # Large text and a labelled accessibility tree: the app must
-            # survive a 2x system font scale, and its window must contain
-            # nodes TalkBack could actually read. Neither is reachable from
-            # Jest or from an APK inspection.
-            a11y_status=0
-            cd ..
-            DIAG_DIR=instrumentation-diagnostics \
-              scripts/ci/verify-large-text-and-accessibility.sh 2>&1 \
-              | tee instrumentation-diagnostics/large-text-accessibility.txt \
-              || a11y_status=${PIPESTATUS[0]}
-            cd android
-            echo "large-text/accessibility status: $a11y_status"
-            if [ "$status" -eq 0 ]; then status=$a11y_status; fi
-            exit $status
+          script: ../scripts/ci/run-instrumentation-on-emulator.sh
 
       # Counts the executed tests, prints every suite and every failing
       # case, and scans the captured logcat for a crash or an ANR that a
@@ -892,6 +863,13 @@ jobs:
       #
       # Proved against real ELF binaries before shipping - see
       # scripts/ci/verify-native-packaging.sh.
+      #
+      # Two independent 16 KB checks, because passing one says nothing
+      # about the other: readelf proves each .so is internally aligned,
+      # and `zipalign -c -P 16 -v 4` proves the APK puts them on 16 KB
+      # boundaries. The second was missing until now; it is Android's own
+      # verification command, and zipalign comes from the build-tools
+      # package this job already installs.
       - name: Release native packaging - 16 KB alignment and ABI coverage
         if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         run: |

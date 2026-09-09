@@ -21,33 +21,62 @@
   Android Lint reported the gap as DataExtractionRules; this file is the
   answer to it, not a suppression of it.
 
-  Every domain the schema defines is excluded from BOTH transfer types,
+  EVERY EXCLUDE CARRIES path=".".
+
+  The guide's syntax block gives path as part of both elements:
+
+      <exclude domain=["file" | "database" | "sharedpref" | "external" |
+                       "root" | "device_file" | "device_database" |
+                       "device_sharedpref" | "device_root" ]
+               path="string" />
+
+  and its own examples spell "the whole domain" as path="." - e.g.
+  <include domain="sharedpref" path="."/> is described as backing up all
+  shared preferences. The first version of this file left path off
+  entirely. Lint did not object, which is not the same as the platform
+  honouring it, and an exclude the parser drops is not an exclusion at
+  all - it is this file appearing to do its job while the data goes
+  across anyway. path="." removes the question.
+
+  AN ABSENT SECTION IS NOT A DENIAL. It is the opposite:
+
+      "If there are no rules for a particular backup mode, such as if the
+       <device-transfer> section is missing, that mode is fully enabled
+       for all content except for no-backup and cache directories, as
+       described in the Files that are backed up section."
+
+  That sentence is why <device-transfer> is written out in full below
+  rather than left implicit - and it is also why the earlier comment
+  here, which claimed the absence of <cross-platform-transfer> was a
+  deliberate refusal, was simply wrong. Absence enables. See
+  res/xml-v36/data_extraction_rules.xml, which carries the
+  <cross-platform-transfer> section; the split by API level is explained
+  there.
+
+  Every domain the schema defines is excluded from every section present,
   so the rule is "nothing", not "nothing except what I forgot to list".
-  cross-platform-transfer is deliberately absent: an absent section is
-  not a permission, and adding an empty one would only invite the
-  assumption that something in it was considered and allowed.
 -->
 <data-extraction-rules>
     <cloud-backup disableIfNoEncryptionCapabilities="true">
-        <exclude domain="root" />
-        <exclude domain="file" />
-        <exclude domain="database" />
-        <exclude domain="sharedpref" />
-        <exclude domain="external" />
-        <exclude domain="device_root" />
-        <exclude domain="device_file" />
-        <exclude domain="device_database" />
-        <exclude domain="device_sharedpref" />
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
     </cloud-backup>
     <device-transfer>
-        <exclude domain="root" />
-        <exclude domain="file" />
-        <exclude domain="database" />
-        <exclude domain="sharedpref" />
-        <exclude domain="external" />
-        <exclude domain="device_root" />
-        <exclude domain="device_file" />
-        <exclude domain="device_database" />
-        <exclude domain="device_sharedpref" />
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
     </device-transfer>
 </data-extraction-rules>

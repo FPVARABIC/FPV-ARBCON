@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  THE SAME REFUSAL AS res/xml/data_extraction_rules.xml, IN THE FORMAT
+  ANDROID 11 AND LOWER UNDERSTANDS.
+
+  minSdkVersion here is 24 and targetSdkVersion is 36, so this app runs
+  across both backup configuration formats. Android's Auto Backup guide
+  keeps them strictly separate:
+
+      "Use the following XML syntax for the configuration file that
+       controls backup for devices running Android 11 or lower."
+       <full-backup-content> ... </full-backup-content>
+
+      "Important: Even if your app targets Android 12 or higher, you must
+       also specify another set of XML backup rules to support devices
+       that run Android 11 (API level 30) or lower."
+
+  Android Lint said the same thing about the manifest as it stood:
+
+      DataExtractionRules  AndroidManifest.xml:15
+      The attribute `android:dataExtractionRules` only applies for
+      Android 12 and higher; since `minSdkVersion` is API 24 you should
+      also set `android:fullBackupContent`
+
+  This file is that second set of rules. It is the answer to the warning,
+  not a suppression of it: nothing about the finding is being silenced,
+  the missing half is being written.
+
+  This is defence in depth, and the depth is deliberate. On API 24-30 the
+  primary control is still android:allowBackup="false", which on those
+  releases does disable Auto Backup outright - the "varies by
+  manufacturer" caveat in Android's guide is scoped to apps targeting
+  API 31 and above. If allowBackup is ever flipped, on purpose or by a
+  merged library manifest, this file is what decides the answer, and the
+  answer it gives is the same as everywhere else: nothing.
+
+  Every domain the API 30 schema defines, excluded at path="." - the
+  spelling the guide's own examples use for a whole domain.
+-->
+<full-backup-content>
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
+    <exclude domain="device_root" path="." />
+    <exclude domain="device_file" path="." />
+    <exclude domain="device_database" path="." />
+    <exclude domain="device_sharedpref" path="." />
+</full-backup-content>

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  THE SAME REFUSAL AS res/xml/data_extraction_rules.xml, PLUS THE
+  CROSS-PLATFORM SECTION.
+
+  Read that file first; the reasoning for excluding every domain from
+  every section is there and is not repeated here.
+
+  WHY THIS IS A SEPARATE, API-QUALIFIED COPY.
+
+  Android's Auto Backup guide states plainly what an omitted section
+  means:
+
+      "If there are no rules for a particular backup mode, such as if the
+       <device-transfer> section is missing, that mode is fully enabled
+       for all content except for no-backup and cache directories."
+
+  So leaving <cross-platform-transfer> out does not refuse a transfer to
+  iOS - it permits one, for all content. The section has to be present
+  and empty of permissions, not absent.
+
+  But the same guide dates the feature:
+
+      "The data-extraction-rules format also supports Cross-Platform
+       Transfers (e.g., to iOS). This capability is available from
+       Android 16 QPR2."
+
+  Android 16 is API 36. A device on Android 12 through 15 has a backup
+  rules parser that predates the element entirely, and this repository
+  cannot prove how that parser reacts to a tag it has never seen: the
+  platform source is not reachable from this environment, and no
+  emulator test exercises the backup parser, which only runs during an
+  actual backup or transfer. If it were to reject the document, the
+  result would not be a small regression - it would be the whole file
+  ignored, and with it the <device-transfer> exclusion that is the entire
+  reason the file exists. That trade is unacceptable: closing a gap on
+  Android 16 by risking the same gap re-opening on four earlier releases.
+
+  A resource qualifier settles it without needing to know how that parser
+  behaves. -v36 is resolved by the resource system, so an Android 15
+  device loads res/xml/data_extraction_rules.xml and never parses the new
+  element, while Android 16 and later load this file and get the
+  cross-platform refusal as well.
+
+  NOT VERIFIED ON REAL HARDWARE: no device or emulator in this
+  environment performs a cross-platform transfer, so what is proven here
+  is that the rule is declared, not that a transfer was observed being
+  refused.
+
+  Keep the two files in step. BackupExtractionRulesTest asserts that they
+  are.
+-->
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </device-transfer>
+    <cross-platform-transfer platform="ios">
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+        <exclude domain="device_root" path="." />
+        <exclude domain="device_file" path="." />
+        <exclude domain="device_database" path="." />
+        <exclude domain="device_sharedpref" path="." />
+    </cross-platform-transfer>
+</data-extraction-rules>

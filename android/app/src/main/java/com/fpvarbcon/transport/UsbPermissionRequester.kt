@@ -38,6 +38,33 @@ import android.os.Build
  * RECEIVER_NOT_EXPORTED (below) was already independently verified correct
  * against the same library example and is unaffected by this correction.
  */
+/**
+ * Runs the steps that hand a permission request over to Android -
+ * registering the broadcast receiver, building the PendingIntent, asking
+ * UsbManager - so that a failure in ANY of them ends in [onFailure]
+ * rather than as an exception thrown back at whoever asked for
+ * permission.
+ *
+ * It is deliberately free of Android types. UsbPermissionRequester cannot
+ * be exercised off-device: Context, UsbManager, PendingIntent and
+ * UsbDevice are all framework classes, and UsbDevice in particular has no
+ * constructor an emulator test could call. This function is the part of
+ * that class whose behaviour is a decision rather than a framework call,
+ * so it is the part that can carry a real regression test - see
+ * UsbPermissionHandshakeTest.
+ *
+ * [onFailure] runs at most once, and only for a failure: a handshake that
+ * completes leaves the request pending on purpose, waiting for the
+ * broadcast that will settle it.
+ */
+internal fun withPermissionHandshake(onFailure: (Exception) -> Unit, handshake: () -> Unit) {
+  try {
+    handshake()
+  } catch (error: Exception) {
+    onFailure(error)
+  }
+}
+
 internal class UsbPermissionRequester(
   private val context: Context,
   private val usbManager: UsbManager,
@@ -111,38 +138,65 @@ internal class UsbPermissionRequester(
 
     synchronized(pendingReceivers) { pendingReceivers[requestId] = receiver }
 
-    val filter = IntentFilter(action)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-      // API 33+ requires an explicit export flag for dynamically
-      // registered receivers; this receiver is internal to the app only.
-      context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-    } else {
-      context.registerReceiver(receiver, filter)
-    }
+    // THE WHOLE HANDSHAKE IS COVERED, NOT JUST ITS LAST STEP.
+    //
+    // Only usbManager.requestPermission used to be inside a try. The two
+    // steps before it can throw as well - Context.registerReceiver raises
+    // IllegalStateException once an app has accumulated too many
+    // receivers, and either call can fail outright against a torn-down
+    // context - and when one of them did, the exception left this method
+    // while the coordinator still held the request. Nothing settled it and
+    // nothing could: the broadcast it was waiting for is one this method
+    // never asked Android to send.
+    //
+    // The caller was not left hanging forever, because
+    // UsbSerialTransportModule.awaitPermissionResult waits on a bounded
+    // latch, so the visible symptom was a connect attempt that spent the
+    // whole connect budget before reporting "Permission result never
+    // arrived" - a timeout standing in for an error that was already
+    // known, with its real message thrown away. But this file's own
+    // contract, three comments above, is "EVERY EXIT FROM HERE CALLS
+    // BACK", and that exit did not.
+    //
+    // Nothing is swallowed here. The failure is delivered through the
+    // same settle-once path and with the same message the throwing call
+    // produced, exactly as the requestPermission failure already was.
+    // withPermissionHandshake is a seam, not a policy: it exists so the
+    // ordering above can be proved on the JVM without an Android device.
+    withPermissionHandshake(
+      onFailure = { error ->
+        val failed = coordinator.settle(requestId, UsbPermissionRequestCoordinator.SettleReason.REQUEST_FAILURE)
+        unregister(requestId)
+        failed?.onResult(false, error.message ?: "Failed to request USB permission.")
+      },
+    ) {
+      val filter = IntentFilter(action)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // API 33+ requires an explicit export flag for dynamically
+        // registered receivers; this receiver is internal to the app only.
+        context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+      } else {
+        context.registerReceiver(receiver, filter)
+      }
 
-    // FLAG_MUTABLE + setPackage() - retained verbatim from the Pass 5.6
-    // real-hardware fix (see the file history note below): the USB
-    // framework fills EXTRA_DEVICE/EXTRA_PERMISSION_GRANTED into this
-    // intent, so it must remain mutable, and setPackage() keeps delivery
-    // scoped to this app. minSdkVersion is 24 (android/build.gradle), so
-    // no pre-M branch is needed.
-    val permissionRequestIntent = Intent(action).apply { setPackage(context.packageName) }
-    val permissionIntent =
-      PendingIntent.getBroadcast(
-        context,
-        // A distinct requestCode per request: two concurrent requests must
-        // not collide onto one cached PendingIntent.
-        requestId.toInt(),
-        permissionRequestIntent,
-        PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-      )
+      // FLAG_MUTABLE + setPackage() - retained verbatim from the Pass 5.6
+      // real-hardware fix (see the file history note below): the USB
+      // framework fills EXTRA_DEVICE/EXTRA_PERMISSION_GRANTED into this
+      // intent, so it must remain mutable, and setPackage() keeps delivery
+      // scoped to this app. minSdkVersion is 24 (android/build.gradle), so
+      // no pre-M branch is needed.
+      val permissionRequestIntent = Intent(action).apply { setPackage(context.packageName) }
+      val permissionIntent =
+        PendingIntent.getBroadcast(
+          context,
+          // A distinct requestCode per request: two concurrent requests must
+          // not collide onto one cached PendingIntent.
+          requestId.toInt(),
+          permissionRequestIntent,
+          PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
 
-    try {
       usbManager.requestPermission(device, permissionIntent)
-    } catch (error: Exception) {
-      val failed = coordinator.settle(requestId, UsbPermissionRequestCoordinator.SettleReason.REQUEST_FAILURE)
-      unregister(requestId)
-      failed?.onResult(false, error.message ?: "Failed to request USB permission.")
     }
   }
 
