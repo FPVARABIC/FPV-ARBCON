@@ -97,5 +97,19 @@ cat "$DIAG/large-text-accessibility.txt"
 echo "large-text/accessibility status: $a11y_status"
 if [ "$status" -eq 0 ]; then status=$a11y_status; fi
 
+# The 16 KB row, and only that row, proves the page-size claim on the
+# device: which libraries the dynamic linker actually mapped, whether it
+# refused any of them, and whether the platform quietly put the app into
+# page-size compatibility mode. A host-side alignment check cannot answer
+# any of those. Runs last because it uninstalls and reinstalls the app.
+if [ "${EXPECT_PAGE_SIZE:-}" = "16384" ]; then
+  echo "=== 16 KB runtime proof ==="
+  runtime16k_status=0
+  ../scripts/ci/verify-16kb-runtime.sh "$DIAG" > "$DIAG/16kb-runtime.txt" 2>&1 || runtime16k_status=$?
+  cat "$DIAG/16kb-runtime.txt"
+  echo "16 KB runtime status: $runtime16k_status"
+  if [ "$status" -eq 0 ]; then status=$runtime16k_status; fi
+fi
+
 echo "=== emulator phase finished with status $status ==="
 exit "$status"

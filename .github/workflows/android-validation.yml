@@ -32,6 +32,14 @@ on:
           reporter) and skip every Android/Gradle step. Produces NO APKs.
         type: boolean
         default: false
+      api_matrix:
+        description: >-
+          Also run the API 24 / 36 / 35-16KB emulator matrix. Off by
+          default because it adds roughly two hours of runner time; the
+          API 34 job above is the reference run that goes with every
+          validation.
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -476,6 +484,190 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: fpv-arbcon-instrumentation-results
+          path: |
+            android/app/build/outputs/androidTest-results/**
+            android/app/build/reports/androidTests/**
+            instrumentation-diagnostics/**
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------
+  # THE REST OF THE SUPPORTED RANGE.
+  #
+  # The job above is the API 34 reference run and goes with every
+  # validation. This one covers the ends of the declared range and the
+  # 16 KB page size, and it lives HERE - inside a workflow that already
+  # exists on the default branch - rather than in a file of its own.
+  #
+  # That is not a style choice. A separate dispatch-only workflow was
+  # tried and GitHub refused it:
+  #
+  #   POST /repos/.../actions/workflows/android-instrumentation-matrix.yml
+  #        /dispatches -> 404 Not Found
+  #
+  # workflow_dispatch only registers from the DEFAULT BRANCH, so a
+  # workflow file that exists solely on a feature branch is invisible to
+  # the API no matter which ref is passed. The definition that RUNS,
+  # however, is the one on the dispatched ref - which is why every step
+  # this branch has added to the job above has been executing. Putting the
+  # matrix in this file therefore makes it reachable without merging
+  # anything to the default branch to register it.
+  #
+  # Off by default: three emulator rows are roughly two hours of runner
+  # time. `api_matrix: true` on a dispatch turns it on; `[api-matrix]` in
+  # a commit message does the same for a push, so the branch has a trigger
+  # that does not depend on the input list either.
+  #
+  # LEVELS, chosen from android/build.gradle's own declaration
+  # (minSdkVersion 24, targetSdkVersion 36) rather than by taste:
+  #
+  #   24  the LOWEST level the app claims. Also the only level where
+  #       ProcessTermination's destroyForcibly fallback is the branch that
+  #       actually executes - destroyForcibly is API 26.
+  #   36  the DECLARED TARGET, where the opt-in behaviour changes apply.
+  #   35  a genuine 16 KB page-size image. Every other row runs 4 KB
+  #       pages, so no other row is evidence about 16 KB however green.
+  #
+  # fail-fast is false so one red level cannot hide the others, and each
+  # row fails on zero executed tests (verify-instrumentation-results.sh).
+  # ---------------------------------------------------------------------
+  android-instrumentation-matrix:
+    name: Instrumentation API ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    needs: [static-validation, jest]
+    if: >-
+      ${{ format('{0}', inputs.diagnostic_js_only) != 'true'
+          && (format('{0}', inputs.api_matrix) == 'true'
+              || contains(github.event.head_commit.message, '[api-matrix]')) }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - api-level: 24
+            target: google_apis
+            label: 24 - minSdkVersion
+          - api-level: 36
+            target: google_apis
+            label: 36 - declared targetSdkVersion
+          # Android's guide names this image "Google APIs Experimental
+          # 16 KB Page Size Intel x86_64 Atom System Image", which is the
+          # google_apis_experimental tag, and names the check:
+          #
+          #   "run the following command to verify that it's using a 16 KB
+          #    environment: adb shell getconf PAGE_SIZE. The command
+          #    should return a value of 16384."
+          #
+          # expected-page-size turns that from a note into a requirement:
+          # the run fails if the image turns out to be a 4 KB one, so this
+          # row cannot report success for the property it exists to test.
+          - api-level: 35
+            target: google_apis_experimental
+            label: 35 - 16 KB page size
+            expected-page-size: 16384
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # The NDK stays: this job builds the release APK, which compiles
+      # Skia, Reanimated and Worklets from C++.
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+          codeql_path="${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}/CodeQL"
+          for path in /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift \
+                      /opt/az /usr/local/share/powershell /usr/local/share/chromium \
+                      "$codeql_path"; do
+            if [ -e "$path" ]; then
+              echo "  Removing: $path"
+              sudo rm -rf -- "$path"
+            else
+              echo "  Not present: $path"
+            fi
+          done
+          df -h /
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: npm ci
+        run: npm ci
+
+      - name: Setup JDK 17 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+        working-directory: android
+
+      - name: Enable KVM for the runner user
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      # Ahead of the emulator, for the same reason as the reference job: a
+      # compile failure and a test failure are different findings.
+      - name: Build the release APK and the androidTest APK
+        working-directory: android
+        timeout-minutes: 60
+        run: |
+          ./gradlew :app:assembleRelease :app:assembleReleaseAndroidTest \
+            -PreactNativeArchitectures=x86_64 \
+            --max-workers=2 \
+            --no-daemon \
+            --stacktrace \
+            --console=plain
+
+      # Same immutable commit pin as the reference job. See the supply
+      # chain note there for how a421e438... was resolved and the two
+      # traps that made an earlier pin point at v2.9.0.
+      - name: Instrumentation tests
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        # Empty on every 4 KB row, which leaves the page size reported and
+        # not asserted. On the 16 KB row it is 16384, and the script exits
+        # non-zero if the emulator disagrees.
+        env:
+          EXPECT_PAGE_SIZE: ${{ matrix.expected-page-size }}
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: ${{ matrix.target }}
+          arch: x86_64
+          ram-size: 4096M
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          working-directory: android
+          script: ../scripts/ci/run-instrumentation-on-emulator.sh
+
+      - name: Verify instrumentation results
+        if: ${{ always() }}
+        run: |
+          scripts/ci/verify-instrumentation-results.sh \
+            android/app/build/outputs/androidTest-results/connected \
+            instrumentation-diagnostics/logcat.txt
+
+      - name: Upload instrumentation results and diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fpv-arbcon-instrumentation-api-${{ matrix.api-level }}-${{ matrix.target }}
           path: |
             android/app/build/outputs/androidTest-results/**
             android/app/build/reports/androidTests/**
