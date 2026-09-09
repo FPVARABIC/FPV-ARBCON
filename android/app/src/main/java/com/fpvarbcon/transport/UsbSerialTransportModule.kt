@@ -697,10 +697,25 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
     Thread(
       {
         try {
-          reactApplicationContext.contentResolver.openOutputStream(uri, "w").use { output ->
+          // "wt", not "w". Android's own reference: "the implementation of
+          // "w" is up to each Provider implementation and it may or may
+          // not truncate", while ""wt" is write and truncate". Saving a
+          // smaller firmware over a larger existing document through a
+          // non-truncating provider left the tail of the previous image in
+          // place and still resolved this promise true - a corrupt file
+          // the operator had been told was saved, and one they could go on
+          // to flash. See FirmwareSaveVerification.kt.
+          reactApplicationContext.contentResolver.openOutputStream(uri, "wt").use { output ->
             requireNotNull(output) { "Android could not open the destination file." }
             output.write(pending.bytes)
             output.flush()
+          }
+          // And then check, because the mode is a request, not a promise:
+          // the same reference says provider behaviour "may differ".
+          val complaint = firmwareSaveSizeComplaint(pending.bytes.size, queryDocumentSize(uri))
+          if (complaint != null) {
+            pending.promise.reject("FILE_SAVE_TRUNCATION_FAILED", complaint)
+            return@Thread
           }
           pending.promise.resolve(true)
         } catch (error: Exception) {
@@ -710,6 +725,27 @@ class UsbSerialTransportModule(reactContext: ReactApplicationContext) :
       "FirmwareFileSave",
     ).apply { isDaemon = true }.start()
   }
+
+  /**
+   * The document's size as the provider reports it, or null when it will
+   * not say - a missing SIZE column, a null value, or a cursor that will
+   * not open. Null means unknown, never zero: reporting an unknown size as
+   * 0 would turn every streaming provider into a failed save.
+   */
+  private fun queryDocumentSize(uri: Uri): Long? =
+    runCatching {
+      reactApplicationContext.contentResolver.query(
+        uri,
+        arrayOf(OpenableColumns.SIZE),
+        null,
+        null,
+        null,
+      )?.use { cursor ->
+        if (!cursor.moveToFirst()) return@use null
+        val column = cursor.getColumnIndex(OpenableColumns.SIZE)
+        if (column < 0 || cursor.isNull(column)) null else cursor.getLong(column)
+      }
+    }.getOrNull()
 
   private fun readBoundedFile(uri: Uri): ByteArray {
     val output = ByteArrayOutputStream()
