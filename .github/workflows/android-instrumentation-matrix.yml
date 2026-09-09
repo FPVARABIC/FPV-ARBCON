@@ -118,11 +118,12 @@ jobs:
           ls -l /dev/kvm
 
       # Same immutable commit pin as android-validation.yml. See the
-      # supply-chain note there: pinned to the commit v2.9.0 resolves to,
-      # never to a movable tag.
+      # supply-chain note there for how a421e438... was resolved (the
+      # PEELED commit of v2.38.0, not the annotated tag object) and for the
+      # two traps that made an earlier pin here point at v2.9.0.
       - name: Instrumentation tests
         if: ${{ steps.gate.outputs.run == 'true' }}
-        uses: reactivecircus/android-emulator-runner@e93c997dcab69054e999e3924af3d21c4a736e13
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
           api-level: ${{ matrix.api-level }}
           target: google_apis
