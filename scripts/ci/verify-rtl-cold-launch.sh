@@ -88,7 +88,16 @@ crashed_since_marker() {
 # ---------------------------------------------------------------------------
 echo "::group::installed package"
 if ! adb shell pm list packages 2>/dev/null | tr -d '\r' | grep -qx "package:${PKG}"; then
-  APK="$(find android/app/build/outputs/apk/release -name '*.apk' 2>/dev/null | head -n 1)"
+  # Both roots, because this is invoked from the emulator step with the
+  # working directory set to android/ and from the repository root
+  # elsewhere. Looking in only one of them would turn "installed after
+  # all" into a spurious failure.
+  APK=""
+  for root in app/build/outputs/apk/release android/app/build/outputs/apk/release; do
+    [ -d "$root" ] || continue
+    APK="$(find "$root" -name '*.apk' 2>/dev/null | head -n 1)"
+    [ -n "$APK" ] && break
+  done
   if [ -z "$APK" ]; then
     echo "::error::${PKG} is not installed and no release APK was found to install"
     echo "::endgroup::"
