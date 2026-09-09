@@ -50,19 +50,35 @@ class ResourceGrowthCampaignTest {
     /** Enough repetitions that a per-cycle leak becomes unmistakable. */
     const val CYCLES = 12
 
-    /**
-     * Threads the platform may legitimately add across a dozen cycles:
-     * binder pool growth, a GC helper, a finaliser. A per-cycle leak over
-     * 12 cycles would be at least 12.
-     */
-    const val THREAD_ALLOWANCE = 8
+    /** The cycle at which the second measurement is taken. */
+    const val HALFWAY = CYCLES / 2
 
     /**
-     * File descriptors likewise. Sockets to the window manager, an
-     * inotify handle, a memfd for a new surface. A descriptor leaked per
-     * cycle would be 12 or more.
+     * WHAT IS MEASURED, AND WHY IT IS NOT AN ABSOLUTE ALLOWANCE.
+     *
+     * The claim is "nothing ACCUMULATES", and an absolute allowance cannot
+     * test that. React Native, Hermes, Skia and Reanimated add threads and
+     * descriptors the first time a surface exists, and those are a
+     * one-time cost, not a leak - but they are indistinguishable from a
+     * leak if all you compare is "before the first cycle" against "after
+     * the last one". Picking a number big enough to absorb them is exactly
+     * the tuning-until-green this campaign refuses.
+     *
+     * So the comparison is between the FIRST half of the cycles and the
+     * SECOND half. One-time initialisation lands entirely in the first
+     * half and cancels; a leak of k per cycle shows up as k * 6 in the
+     * second half, whatever the absolute numbers are. The allowance below
+     * therefore only has to absorb platform noise between two identical
+     * halves, which is a small number that can be justified rather than
+     * tuned.
+     *
+     * Absolute counts are printed either way, so a reader can see the
+     * one-time cost and judge it separately.
      */
-    const val DESCRIPTOR_ALLOWANCE = 24
+    const val THREAD_DRIFT_ALLOWANCE = 3
+
+    /** Descriptors, same reasoning: a socket or an inotify handle may come and go. */
+    const val DESCRIPTOR_DRIFT_ALLOWANCE = 8
   }
 
   private fun liveThreads(): Int = Thread.getAllStackTraces().keys.count { it.isAlive }
@@ -100,62 +116,70 @@ class ResourceGrowthCampaignTest {
    * climb with them.
    */
   @Test
-  fun repeatedActivityCyclesDoNotGrowThreadsOrDescriptors() {
+  fun repeatedActivityCyclesAccumulateNothing() {
     // Warm-up: the first launch initialises React Native, Hermes, Skia and
     // the rest. Counting that as growth would report every app that works
     // as leaking.
+    oneCycle()
+    settle()
+    encourageCollection()
+
+    val startThreads = liveThreads()
+    val startDescriptors = openDescriptors()
+    val startNames = threadNames().toSet()
+
+    repeat(HALFWAY) { oneCycle() }
+    settle()
+    encourageCollection()
+    val midThreads = liveThreads()
+    val midDescriptors = openDescriptors()
+    val midNames = threadNames().toSet()
+
+    repeat(CYCLES - HALFWAY) { oneCycle() }
+    settle()
+    encourageCollection()
+    val endThreads = liveThreads()
+    val endDescriptors = openDescriptors()
+    val endNames = threadNames().toSet()
+
+    val threadDrift = endThreads - midThreads
+    val descriptorDrift = endDescriptors - midDescriptors
+
+    println("===== UI-X3B ACTIVITY CYCLE RESOURCE CENSUS =====")
+    println("  threads     start=$startThreads  after $HALFWAY=$midThreads  after $CYCLES=$endThreads")
+    println("  descriptors start=$startDescriptors  after $HALFWAY=$midDescriptors  after $CYCLES=$endDescriptors")
+    println("  one-time cost (first half) : threads ${midThreads - startThreads}, descriptors ${midDescriptors - startDescriptors}")
+    println("  ACCUMULATION (second half) : threads $threadDrift, descriptors $descriptorDrift")
+    println("  threads present at the end that were not there at the start:")
+    (endNames - startNames).sorted().forEach { println("    $it") }
+    println("  threads that appeared only in the SECOND half (the leak signature):")
+    (endNames - midNames).sorted().forEach { println("    $it") }
+    println("=================================================")
+
+    assertTrue(
+      "the live thread count rose by $threadDrift between the halfway mark ($midThreads) and " +
+        "the end ($endThreads) of $CYCLES identical Activity cycles. One-time initialisation " +
+        "cannot explain that, because it already happened before the halfway mark. Threads " +
+        "that appeared only in the second half: ${(endNames - midNames).sorted()}",
+      threadDrift <= THREAD_DRIFT_ALLOWANCE,
+    )
+    if (midDescriptors > 0 && endDescriptors > 0) {
+      assertTrue(
+        "open file descriptors rose by $descriptorDrift between the halfway mark " +
+          "($midDescriptors) and the end ($endDescriptors) of $CYCLES identical cycles",
+        descriptorDrift <= DESCRIPTOR_DRIFT_ALLOWANCE,
+      )
+    }
+  }
+
+  private fun oneCycle() {
     ActivityScenario.launch(MainActivity::class.java).use { scenario ->
       scenario.moveToState(Lifecycle.State.RESUMED)
       scenario.recreate()
+      scenario.moveToState(Lifecycle.State.CREATED)
+      scenario.moveToState(Lifecycle.State.RESUMED)
     }
     settle()
-    encourageCollection()
-
-    val baselineThreads = liveThreads()
-    val baselineDescriptors = openDescriptors()
-    val baselineNames = threadNames().toSet()
-
-    repeat(CYCLES) { cycle ->
-      ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-        scenario.moveToState(Lifecycle.State.RESUMED)
-        scenario.recreate()
-        scenario.moveToState(Lifecycle.State.CREATED)
-        scenario.moveToState(Lifecycle.State.RESUMED)
-      }
-      settle()
-      if (cycle % 4 == 3) {
-        encourageCollection()
-        println(
-          "cycle ${cycle + 1}: threads=${liveThreads()} (baseline $baselineThreads), " +
-            "fds=${openDescriptors()} (baseline $baselineDescriptors)",
-        )
-      }
-    }
-
-    settle()
-    encourageCollection()
-
-    val threadsNow = liveThreads()
-    val descriptorsNow = openDescriptors()
-    val added = (threadNames().toSet() - baselineNames).sorted()
-
-    println("threads: $baselineThreads -> $threadsNow after $CYCLES cycles")
-    println("descriptors: $baselineDescriptors -> $descriptorsNow after $CYCLES cycles")
-    println("thread names added since the baseline: $added")
-
-    assertTrue(
-      "the live thread count rose from $baselineThreads to $threadsNow across $CYCLES " +
-        "Activity cycles, which is more than the $THREAD_ALLOWANCE the platform may " +
-        "legitimately add. Threads added: $added",
-      threadsNow - baselineThreads <= THREAD_ALLOWANCE,
-    )
-    if (baselineDescriptors > 0 && descriptorsNow > 0) {
-      assertTrue(
-        "open file descriptors rose from $baselineDescriptors to $descriptorsNow across " +
-          "$CYCLES Activity cycles, which is more than the $DESCRIPTOR_ALLOWANCE allowance",
-        descriptorsNow - baselineDescriptors <= DESCRIPTOR_ALLOWANCE,
-      )
-    }
   }
 
   /**
@@ -260,7 +284,7 @@ class ResourceGrowthCampaignTest {
     if (baseline > 0 && now > 0) {
       assertTrue(
         "open descriptors rose from $baseline to $now across ${CYCLES * 4} preference writes",
-        now - baseline <= DESCRIPTOR_ALLOWANCE,
+        now - baseline <= DESCRIPTOR_DRIFT_ALLOWANCE,
       )
     }
     assertEquals(

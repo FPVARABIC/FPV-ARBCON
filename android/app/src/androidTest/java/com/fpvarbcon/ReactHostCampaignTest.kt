@@ -57,9 +57,17 @@ class ReactHostCampaignTest {
     const val SETTLE_TIMEOUT_SECONDS = 20L
     const val CYCLES = 12
 
-    /** Threads the platform may add across a dozen build/teardown cycles. */
-    const val THREAD_ALLOWANCE = 8
-    const val DESCRIPTOR_ALLOWANCE = 24
+    const val HALFWAY = CYCLES / 2
+
+    /**
+     * Measured as accumulation between two identical halves, not as an
+     * absolute allowance - see ResourceGrowthCampaignTest for the full
+     * reasoning. One-time cost lands in the first half and cancels; a leak
+     * of k per cycle shows as k * 6 in the second half whatever the
+     * absolute numbers are.
+     */
+    const val THREAD_DRIFT_ALLOWANCE = 3
+    const val DESCRIPTOR_DRIFT_ALLOWANCE = 8
 
     /**
      * Android declares an application not responding after five seconds of
@@ -127,6 +135,9 @@ class ReactHostCampaignTest {
   }
 
   private fun liveThreads(): Int = Thread.getAllStackTraces().keys.count { it.isAlive }
+
+  private fun threadNames(): List<String> =
+    Thread.getAllStackTraces().keys.filter { it.isAlive }.map { it.name }.sorted()
 
   private fun openDescriptors(): Int = File("/proc/self/fd").listFiles()?.size ?: -1
 
@@ -254,45 +265,80 @@ class ReactHostCampaignTest {
    * census predicts and this measures.
    */
   @Test
-  fun repeatedModuleConstructionAndTeardownDoesNotGrowThreadsOrDescriptors() {
+  fun repeatedModuleConstructionAndTeardownAccumulatesNothing() {
     withReactContext { context ->
-      // Warm-up, so one-time initialisation is not counted as a leak.
-      UsbSerialTransportModule(context).invalidate()
-      Runtime.getRuntime().gc()
-      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-
-      val baselineThreads = liveThreads()
-      val baselineDescriptors = openDescriptors()
-
-      repeat(CYCLES) {
+      fun cycle(index: Int) {
         val module = UsbSerialTransportModule(context)
         val promise = RecordingPromise()
         module.listDevices(promise)
-        assertTrue("cycle $it: listDevices never settled", promise.await())
+        assertTrue("cycle $index: listDevices never settled", promise.await())
         module.invalidate()
       }
 
-      Runtime.getRuntime().gc()
-      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-      val threadsNow = liveThreads()
-      val descriptorsNow = openDescriptors()
-      println(
-        "module cycles: threads $baselineThreads -> $threadsNow, " +
-          "descriptors $baselineDescriptors -> $descriptorsNow over $CYCLES cycles",
-      )
+      fun quiesce() {
+        Runtime.getRuntime().gc()
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      }
+
+      // Warm-up, so one-time initialisation is not counted as a leak.
+      cycle(-1)
+      quiesce()
+      val startThreads = liveThreads()
+      val startDescriptors = openDescriptors()
+      val startNames = threadNames()
+
+      repeat(HALFWAY) { cycle(it) }
+      quiesce()
+      val midThreads = liveThreads()
+      val midDescriptors = openDescriptors()
+      val midNames = threadNames()
+
+      repeat(CYCLES - HALFWAY) { cycle(it + HALFWAY) }
+      quiesce()
+      val endThreads = liveThreads()
+      val endDescriptors = openDescriptors()
+      val endNames = threadNames()
+
+      val threadDrift = endThreads - midThreads
+      val descriptorDrift = endDescriptors - midDescriptors
+
+      println("===== UI-X3B MODULE BUILD/TEARDOWN CENSUS =====")
+      println("  threads     start=$startThreads  after $HALFWAY=$midThreads  after $CYCLES=$endThreads")
+      println("  descriptors start=$startDescriptors  after $HALFWAY=$midDescriptors  after $CYCLES=$endDescriptors")
+      println("  one-time cost (first half) : threads ${midThreads - startThreads}")
+      println("  ACCUMULATION (second half) : threads $threadDrift, descriptors $descriptorDrift")
+      println("  module-owned threads still alive at the end (name -> declared owner):")
+      for (name in endNames.filter { it.startsWith("UsbIoExecutor") || it.startsWith("UsbSerial") || it.startsWith("Dfu") || it.startsWith("Firmware") }) {
+        println("    $name -> see scripts/ci/native-thread-census.py for its declared owner")
+      }
+      println("  threads that appeared only in the SECOND half (the leak signature):")
+      (endNames.toSet() - midNames.toSet()).sorted().forEach { println("    $it") }
+      println("===============================================")
 
       assertTrue(
-        "live threads rose from $baselineThreads to $threadsNow across $CYCLES module " +
-          "build/teardown cycles - invalidate() is not shutting something down",
-        threadsNow - baselineThreads <= THREAD_ALLOWANCE,
+        "live threads rose by $threadDrift between the halfway mark ($midThreads) and the end " +
+          "($endThreads) of $CYCLES identical module build/teardown cycles - invalidate() is " +
+          "not shutting something down. Threads new in the second half: " +
+          "${(endNames.toSet() - midNames.toSet()).sorted()}",
+        threadDrift <= THREAD_DRIFT_ALLOWANCE,
       )
-      if (baselineDescriptors > 0 && descriptorsNow > 0) {
+      if (midDescriptors > 0 && endDescriptors > 0) {
         assertTrue(
-          "open descriptors rose from $baselineDescriptors to $descriptorsNow across " +
-            "$CYCLES cycles",
-          descriptorsNow - baselineDescriptors <= DESCRIPTOR_ALLOWANCE,
+          "open descriptors rose by $descriptorDrift between the halfway mark " +
+            "($midDescriptors) and the end ($endDescriptors) of $CYCLES cycles",
+          descriptorDrift <= DESCRIPTOR_DRIFT_ALLOWANCE,
         )
       }
+
+      // The module's own named threads must not survive its teardown. This
+      // is the specific claim the thread census makes about UsbIoExecutor
+      // and the write queues, asked of a live process rather than of the
+      // source.
+      val survivors = endNames.filter { it == "UsbIoExecutor" || it.startsWith("UsbSerialTx-") }
+      assertTrue(
+        "these module-owned threads outlived every invalidate(): $survivors",
+        survivors.isEmpty(),
+      )
     }
   }
 
