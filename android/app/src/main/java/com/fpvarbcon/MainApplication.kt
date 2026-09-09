@@ -30,6 +30,14 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
+    // Right-to-left, before loadReactNative and therefore before the first
+    // surface reads it. App.tsx asks for this too, but on Android its call
+    // only writes a preference that nothing re-reads until the NEXT launch,
+    // so without this line a fresh install rendered its first session
+    // left-to-right. See RtlBootstrap.kt for the two sources that make that
+    // so. Ordered ahead of everything else here because a surface must
+    // never be able to start before the answer exists.
+    applyArabicLayoutDirection(this)
     // The Arabic UI typeface. Registering the res/font XML family under
     // the name "Cairo" is what makes { fontFamily: 'Cairo', fontWeight }
     // in shared JS styles resolve to the real weight-mapped faces (see
