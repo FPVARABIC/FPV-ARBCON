@@ -65,6 +65,45 @@ internal fun withPermissionHandshake(onFailure: (Exception) -> Unit, handshake: 
   }
 }
 
+/**
+ * RELEASE A RECEIVER AT MOST ONCE, AND SURVIVE A REFUSAL TO RELEASE IT.
+ *
+ * Two things have to be true of receiver cleanup and neither is obvious
+ * from the call site:
+ *
+ *  1. EXACTLY ONCE. Three different things can decide a request is over -
+ *     the broadcast arriving, the handover to Android failing, and
+ *     cancelAll during module invalidation - and they can race. The
+ *     ownership test is the REMOVAL from the pending map, not a flag read
+ *     beforehand: whoever removes the receiver owns unregistering it, and
+ *     everyone else finds nothing and does nothing.
+ *
+ *  2. A FAILURE TO UNREGISTER IS NOT A FAILURE. Android throws
+ *     IllegalArgumentException from unregisterReceiver when the receiver
+ *     is already gone - a torn-down Context has already dropped it - and
+ *     that is the normal shape of teardown, not an error to propagate
+ *     into a caller who is only trying to settle a promise. The receiver
+ *     has still been removed from the map by then, so the cleanup did
+ *     happen; only the platform call declined.
+ *
+ * Returns whether THIS call was the one that owned the removal, which is
+ * what makes "exactly once" observable to a test.
+ *
+ * Deliberately free of Android types so the ownership and the swallowed
+ * failure can both be proved off-device; UsbPermissionRequester cannot be
+ * instantiated in a JVM test, and UsbDevice has no constructor an
+ * instrumentation test could call either.
+ */
+internal fun <R : Any> unregisterReceiverOnce(take: () -> R?, unregister: (R) -> Unit): Boolean {
+  val receiver = take() ?: return false
+  try {
+    unregister(receiver)
+  } catch (_: Exception) {
+    // Already unregistered by the system (e.g. context torn down) - safe to ignore.
+  }
+  return true
+}
+
 internal class UsbPermissionRequester(
   private val context: Context,
   private val usbManager: UsbManager,
@@ -222,12 +261,10 @@ internal class UsbPermissionRequester(
 
   /** Unregisters (idempotently) the receiver owned by [requestId]. */
   private fun unregister(requestId: Long) {
-    val receiver = synchronized(pendingReceivers) { pendingReceivers.remove(requestId) } ?: return
-    try {
-      context.unregisterReceiver(receiver)
-    } catch (_: Exception) {
-      // Already unregistered by the system (e.g. context torn down) - safe to ignore.
-    }
+    unregisterReceiverOnce(
+      take = { synchronized(pendingReceivers) { pendingReceivers.remove(requestId) } },
+      unregister = context::unregisterReceiver,
+    )
   }
 
   /**

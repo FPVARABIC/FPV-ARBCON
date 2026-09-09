@@ -2,6 +2,7 @@ package com.fpvarbcon.transport
 
 import java.util.concurrent.atomic.AtomicInteger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -330,6 +331,250 @@ class UsbPermissionHandshakeTest {
     assertEquals(0, deliverBroadcast(coordinator, requestId, action, device, permissionGranted = true))
     assertEquals("a late broadcast settled an already-failed request", 1, settlements.count.get())
     assertEquals(false, settlements.granted)
+  }
+
+  // -------------------------------------------------------------------
+  // The remaining fault points from the UI-X3B brief.
+  // -------------------------------------------------------------------
+
+  /**
+   * DETACH BEFORE THE RESULT. The operator pulls the cable while the
+   * system dialog is on screen. Nothing will ever broadcast a result for
+   * that request, so the caller has to be released by the detach path or
+   * it waits for the whole connect budget and then reports a timeout for
+   * something that was already known.
+   */
+  @Test
+  fun `a detach before the result settles the request once, as not granted`() {
+    val coordinator = coordinator()
+    val settlements = Settlements()
+    val requestId = coordinator.register(device, settlements.callback)!!
+    val action = coordinator.actionFor(requestId)
+
+    val abandoned = coordinator.settle(requestId, UsbPermissionRequestCoordinator.SettleReason.CANCELLED)
+    assertNotNull("the detach path found nothing to settle", abandoned)
+    abandoned!!.onResult(false, "USB permission request was cancelled before a result arrived.")
+
+    assertEquals(1, settlements.count.get())
+    assertEquals(false, settlements.granted)
+    assertEquals(0, coordinator.pendingCount())
+
+    // And the grant that arrives after the cable is already out cannot
+    // reopen it.
+    assertEquals(0, deliverBroadcast(coordinator, requestId, action, device, permissionGranted = true))
+    assertEquals(1, settlements.count.get())
+  }
+
+  /**
+   * A STALE RESULT FROM A PREVIOUS REQUEST. Attempt 1 is abandoned, the
+   * operator retries, and attempt 1's broadcast then arrives. It must not
+   * settle attempt 2 - the two are different questions about the same
+   * device, and answering the second with the first's answer is exactly
+   * the "already granted" confusion the per-request action string exists
+   * to prevent.
+   */
+  @Test
+  fun `a stale broadcast from an abandoned request cannot settle its successor`() {
+    val coordinator = coordinator()
+    val first = Settlements()
+    val firstId = coordinator.register(device, first.callback)!!
+    val firstAction = coordinator.actionFor(firstId)
+
+    coordinator.settle(firstId, UsbPermissionRequestCoordinator.SettleReason.TIMEOUT)
+      ?.onResult(false, "Timed out waiting for the USB permission result.")
+    assertEquals(1, first.count.get())
+
+    // The retry, for the very same device.
+    val second = Settlements()
+    val secondId = coordinator.register(device, second.callback)!!
+    assertTrue("a retry reused the abandoned request's id", secondId != firstId)
+    assertTrue(
+      "a retry reused the abandoned request's action string",
+      coordinator.actionFor(secondId) != firstAction,
+    )
+
+    // Attempt 1's broadcast, arriving late, aimed at attempt 2's id.
+    assertEquals(0, deliverBroadcast(coordinator, secondId, firstAction, device, permissionGranted = true))
+    assertEquals("a stale broadcast settled the retry", 0, second.count.get())
+    assertEquals(1, coordinator.pendingCount())
+
+    // Attempt 2's own broadcast still works.
+    assertEquals(1, deliverBroadcast(coordinator, secondId, coordinator.actionFor(secondId), device, true))
+    assertEquals(1, second.count.get())
+    assertEquals(true, second.granted)
+  }
+
+  /**
+   * A DENIAL MUST NOT POISON THE MODULE. Refusing once is an ordinary
+   * answer, not a terminal state: the operator can tap Allow next time,
+   * and a requester that quietly stopped asking would look like broken
+   * hardware.
+   */
+  @Test
+  fun `a denial does not prevent a later legitimate request from succeeding`() {
+    val coordinator = coordinator()
+
+    val denied = Settlements()
+    val deniedId = coordinator.register(device, denied.callback)!!
+    deliverBroadcast(coordinator, deniedId, coordinator.actionFor(deniedId), device, permissionGranted = false)
+    assertEquals(1, denied.count.get())
+    assertEquals(false, denied.granted)
+
+    assertTrue("a denial cancelled the coordinator", !coordinator.isCancelled())
+
+    val retry = Settlements()
+    val retryId = coordinator.register(device, retry.callback)
+    assertNotNull("a denial stopped the coordinator accepting a new request", retryId)
+    assertEquals(1, deliverBroadcast(coordinator, retryId!!, coordinator.actionFor(retryId), device, true))
+    assertEquals(1, retry.count.get())
+    assertEquals(true, retry.granted)
+  }
+
+  // -------------------------------------------------------------------
+  // Receiver cleanup: exactly once, and tolerant of a platform refusal.
+  // -------------------------------------------------------------------
+
+  /**
+   * The ownership rule, stated as a race. Three callers try to clean up
+   * the same receiver; the map hands it to one of them and the platform
+   * is asked exactly once.
+   */
+  @Test
+  fun `receiver cleanup runs exactly once however many callers try`() {
+    val slot = java.util.concurrent.atomic.AtomicReference<String?>("receiver")
+    val unregistered = AtomicInteger(0)
+    val owners = AtomicInteger(0)
+
+    repeat(3) {
+      val owned = unregisterReceiverOnce(
+        take = { slot.getAndSet(null) },
+        unregister = { unregistered.incrementAndGet() },
+      )
+      if (owned) owners.incrementAndGet()
+    }
+
+    assertEquals("more than one caller believed it owned the cleanup", 1, owners.get())
+    assertEquals("the platform was asked to unregister more than once", 1, unregistered.get())
+  }
+
+  /**
+   * UNREGISTER FAILURE. Android throws IllegalArgumentException from
+   * unregisterReceiver when the receiver is already gone, which is the
+   * normal shape of a torn-down Context rather than an error. It must not
+   * escape into a caller who is only trying to settle a promise, and the
+   * receiver must still count as cleaned up - it was removed from the map
+   * before the platform was asked.
+   */
+  @Test
+  fun `a platform refusal to unregister is absorbed and still counts as cleanup`() {
+    val slot = java.util.concurrent.atomic.AtomicReference<String?>("receiver")
+    val owned = unregisterReceiverOnce(
+      take = { slot.getAndSet(null) },
+      unregister = { throw IllegalArgumentException("Receiver not registered") },
+    )
+    assertTrue("a throwing unregister was not treated as cleanup", owned)
+    assertNull("the receiver was left in the map after a failed unregister", slot.get())
+
+    // And a second attempt still finds nothing, so the failure did not
+    // reopen the ownership question.
+    assertTrue(
+      !unregisterReceiverOnce(take = { slot.getAndSet(null) }, unregister = { }),
+    )
+  }
+
+  @Test
+  fun `cleanup for a request that was never registered is a no-op, not a failure`() {
+    val unregistered = AtomicInteger(0)
+    assertTrue(
+      !unregisterReceiverOnce<String>(take = { null }, unregister = { unregistered.incrementAndGet() }),
+    )
+    assertEquals(0, unregistered.get())
+  }
+
+  // -------------------------------------------------------------------
+  // Two fault points from the brief that turn out to be claims about the
+  // SHAPE of this file rather than about a runtime path. They are pinned
+  // here so that the day either stops being true, something says so.
+  // -------------------------------------------------------------------
+
+  private val requesterSource: String by lazy {
+    var directory: java.io.File? =
+      java.io.File(System.getProperty("user.dir") ?: ".").absoluteFile
+    while (directory != null) {
+      for (root in listOf(directory, java.io.File(directory, "android/app"))) {
+        val candidate = java.io.File(
+          root,
+          "src/main/java/com/fpvarbcon/transport/UsbPermissionRequester.kt",
+        )
+        if (candidate.isFile) return@lazy candidate.readText()
+      }
+      directory = directory.parentFile
+    }
+    throw AssertionError("could not locate UsbPermissionRequester.kt")
+  }
+
+  /**
+   * "NO ACTIVITY" IS NOT A FAILURE MODE ON THIS PATH, and that is worth
+   * proving rather than asserting in prose.
+   *
+   * UsbManager.requestPermission takes a PendingIntent, not an Activity,
+   * so a USB permission request does not care whether one is in the
+   * foreground. The NO_ACTIVITY code this project does emit belongs to the
+   * file-operation paths in UsbSerialTransportModule
+   * (ACTION_OPEN_DOCUMENT / ACTION_CREATE_DOCUMENT need a real Activity to
+   * start), and those already reject with it and already have an Arabic
+   * entry.
+   *
+   * If an Activity dependency is ever introduced here, this fails - and it
+   * should, because that would add a failure mode with no handling and no
+   * message.
+   */
+  @Test
+  fun `the permission path has no Activity dependency to lose`() {
+    val mentions = Regex("""\bActivity\b""").findAll(requesterSource).count()
+    assertEquals(
+      "UsbPermissionRequester now references an Activity. USB permission is granted through a " +
+        "PendingIntent and has never needed one, so this is a new failure mode: it needs its own " +
+        "rejection path and its own Arabic message before this assertion is relaxed.",
+      0,
+      mentions,
+    )
+  }
+
+  /**
+   * Every operator-visible outcome this class produces must be a real
+   * sentence, and the two cancellation paths must be indistinguishable -
+   * a caller cannot act differently on "refused before the coordinator saw
+   * it" versus "drained by cancelAll", and offering two wordings would
+   * only invite someone to try.
+   *
+   * The CODE-to-Arabic half of the brief's requirement is enforced
+   * repository-wide by nativeErrorCatalogueContract.test.ts, which reads
+   * every UsbTransportException and promise.reject code out of the shipped
+   * Kotlin and requires each to resolve to something other than
+   * errors.UNKNOWN. This is the half that test cannot see: these strings
+   * are failureMessage values, not codes.
+   */
+  @Test
+  fun `every operator-visible message is a real sentence and the cancellations agree`() {
+    val messages = Regex("""onResult\(false, "([^"]+)"""")
+      .findAll(requesterSource)
+      .map { it.groupValues[1] }
+      .toList()
+    val constant = Regex("""CANCELLED_MESSAGE = "([^"]+)"""")
+      .find(requesterSource)?.groupValues?.get(1)
+
+    assertNotNull("CANCELLED_MESSAGE has gone", constant)
+    assertTrue("no operator-visible messages found at all", messages.isNotEmpty())
+    for (message in messages + listOfNotNull(constant)) {
+      assertTrue("an empty operator message: '$message'", message.trim().length > 10)
+      assertTrue("a message with no sentence end: '$message'", message.trim().endsWith("."))
+    }
+    assertTrue(
+      "the module-invalidated wording drifted from CANCELLED_MESSAGE, so a caller could tell " +
+        "the two cancellation paths apart",
+      messages.any { it == constant },
+    )
   }
 
   /**
