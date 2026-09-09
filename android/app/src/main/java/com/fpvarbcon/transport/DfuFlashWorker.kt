@@ -61,6 +61,7 @@ internal class DfuFlashWorker(
         throw UsbTransportException("DFU_CLAIM_FAILED", "Unable to claim the DFU interface.")
       }
       try {
+        selectFlashAlternate(connection, flashInterface, layout)
         if (!layout.hasWritableSectors) {
           throw UsbTransportException(
             "DFU_MEMORY_LAYOUT_NOT_WRITABLE",
@@ -222,6 +223,54 @@ internal class DfuFlashWorker(
     } finally {
       connection.close()
     }
+  }
+
+  /**
+   * ACTIVATES the alternate that was chosen, instead of only choosing it.
+   *
+   * DfuSe puts each memory region on its own ALTERNATE SETTING of the same
+   * interface number, and on Android an alternate is activated by
+   * UsbDeviceConnection.setInterface - "Sets the current UsbInterface. Used
+   * to select between two interfaces with the same ID but different
+   * alternate setting." claimInterface does not do it: it "Claims exclusive
+   * access to a UsbInterface" and says nothing about alternates.
+   *
+   * Without this call the erase, the write and the read-back all address
+   * whichever alternate happened to be active - alternate 0 - so
+   * selectDfuFlashInterface above could name Internal Flash while the
+   * device wrote somewhere else, and the layout bounds checks below would
+   * be validating addresses against a region that was never selected. On a
+   * board whose first DFU alternate is option bytes, that is exactly the
+   * outcome selectDfuFlashInterface exists to prevent.
+   *
+   * The web engine already does this, immediately after its own claim and
+   * for the same stated reason (webUsbDfu.web.ts: "DfuSe puts each memory
+   * region on its own alternate setting; the wrong one silently addresses
+   * option bytes instead of flash"). The error code is deliberately the
+   * same one the web engine raises, so both platforms tell the operator
+   * the same thing.
+   *
+   * NOTHING HAS BEEN ERASED OR WRITTEN when this throws: it runs before
+   * the first erase command leaves the host.
+   */
+  private fun selectFlashAlternate(
+    connection: android.hardware.usb.UsbDeviceConnection,
+    flashInterface: UsbInterface,
+    layout: DfuMemoryLayout,
+  ) {
+    if (connection.setInterface(flashInterface)) return
+    val declaredAlternates = (0 until device.interfaceCount)
+      .map(device::getInterface)
+      .filter { it.id == flashInterface.id }
+      .map { it.alternateSetting }
+    if (!dfuAlternateSelectionIsMandatory(flashInterface.alternateSetting, declaredAlternates)) {
+      return
+    }
+    throw UsbTransportException(
+      "DFU_ALTERNATE_SELECTION_FAILED",
+      "Unable to select alternate setting ${flashInterface.alternateSetting} (${layout.name}); " +
+        "refusing to erase or write without knowing which memory region would be addressed.",
+    )
   }
 
   private fun setAddress(connection: android.hardware.usb.UsbDeviceConnection, address: Long) {
@@ -415,6 +464,34 @@ internal fun <T> selectDfuFlashInterface(
   named("external flash")?.let { return it }
   val writable = parsed.filter { it.second.hasWritableSectors }
   return writable.singleOrNull()
+}
+
+/**
+ * Whether SET_INTERFACE must have SUCCEEDED before a write may proceed.
+ *
+ * USB 2.0 §9.4.10 lets a device STALL SET_INTERFACE when the interface has
+ * only its default setting, because there is then nothing to choose: after
+ * SET_CONFIGURATION every interface is already on alternate 0. That single
+ * case, and only that case, is a failure this code may proceed through -
+ * the alternate it wanted is provably the active one anyway.
+ *
+ * Everything else is mandatory. A refused selection with more than one
+ * alternate declared, or with a non-zero alternate wanted, means the
+ * region that would be erased and written is unknown, and an unknown
+ * region is not something to guess about on a flight controller.
+ *
+ * Pure, and takes plain integers rather than UsbInterface, so the policy is
+ * exercised by ordinary JVM unit tests with no USB connection and no
+ * Android framework classes - the same seam selectDfuFlashInterface uses.
+ */
+internal fun dfuAlternateSelectionIsMandatory(
+  chosenAlternateSetting: Int,
+  alternateSettingsOnTheSameInterface: List<Int>,
+): Boolean {
+  if (chosenAlternateSetting != 0) return true
+  // Not "at most one": exactly the default one. An empty list proves
+  // nothing, so it is treated as mandatory rather than waved through.
+  return alternateSettingsOnTheSameInterface.distinct() != listOf(0)
 }
 
 private val SUPPORTED_DFU_IDS = setOf(
