@@ -922,8 +922,17 @@ jobs:
           cd android
           ./gradlew :app:createDebugUnitTestCoverageReport
           cd ..
-          python3 scripts/ci/kotlin-coverage-ledger.py \
-            android/app/build/reports/coverage/test/debug/report.xml
+          # AGP writes it here today. Locating it rather than insisting on
+          # the path means an AGP layout change surfaces as a ledger result
+          # instead of as "file not found"; if there is genuinely no report,
+          # the ledger still fails and says so.
+          report="android/app/build/reports/coverage/test/debug/report.xml"
+          if [ ! -f "$report" ]; then
+            found="$(find android/app/build/reports -name 'report.xml' -path '*coverage*' | head -1)"
+            echo "expected report at $report; found instead: ${found:-<nothing>}"
+            report="${found:-$report}"
+          fi
+          python3 scripts/ci/kotlin-coverage-ledger.py "$report"
 
       # Uploaded whether the ledger passed or failed - a failing ledger is
       # exactly when the raw report is worth reading - but not when the
@@ -934,7 +943,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: kotlin-unit-test-coverage
-          path: android/app/build/reports/coverage/test/debug/
+          path: android/app/build/reports/coverage/
           if-no-files-found: error
 
       # ANDROID LINT, AS A REAL GATE.
