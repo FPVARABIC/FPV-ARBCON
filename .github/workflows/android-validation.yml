@@ -861,6 +861,31 @@ jobs:
             exit 1
           fi
 
+      # 16 KB PAGE ALIGNMENT AND ABI COVERAGE.
+      #
+      # targetSdkVersion is 36, and from Android 15 a device may use a
+      # 16 KB memory page. A shared library whose LOAD segments are
+      # aligned to the old 4 KB page cannot be mapped there - the loader
+      # rejects it and the app fails at startup on real hardware, with
+      # nothing wrong in any test that ran on a 4 KB emulator. The APK
+      # carries native code this repository does not build (Hermes, Skia,
+      # Reanimated, Worklets, the RN runtime), so a prebuilt that was
+      # never re-linked is a real possibility and a real finding.
+      #
+      # The ABI list is checked in the same step because
+      # reactNativeArchitectures decides it, and an accidentally narrowed
+      # build produces an APK that will not install on half the fleet
+      # while every functional test still passes.
+      #
+      # Proved against real ELF binaries before shipping - see
+      # scripts/ci/verify-native-packaging.sh.
+      - name: Release native packaging - 16 KB alignment and ABI coverage
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        run: |
+          scripts/ci/verify-native-packaging.sh \
+            "${RELEASE_APK_PATH}" \
+            armeabi-v7a,arm64-v8a,x86,x86_64
+
       - name: Upload standalone release APK artifact (the only user-facing download)
         if: ${{ success() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: actions/upload-artifact@v7
