@@ -591,6 +591,13 @@ jobs:
             echo "no digest - verify-instrumentation-results.sh did not reach the point of writing one"
           fi
           echo "::endgroup::"
+          echo "::group::Where a stuck suite was standing"
+          if [ -s instrumentation-diagnostics/stuck-process.txt ]; then
+            head -80 instrumentation-diagnostics/stuck-process.txt
+          else
+            echo "no stuck-process capture - the emulator phase did not reach it"
+          fi
+          echo "::endgroup::"
   sixteen-kb-image-inventory:
     name: 16 KB system image availability (evidence)
     runs-on: ubuntu-latest
@@ -831,6 +838,13 @@ jobs:
             cat instrumentation-digest.txt
           else
             echo "no digest - verify-instrumentation-results.sh did not reach the point of writing one"
+          fi
+          echo "::endgroup::"
+          echo "::group::Where a stuck suite was standing"
+          if [ -s instrumentation-diagnostics/stuck-process.txt ]; then
+            head -80 instrumentation-diagnostics/stuck-process.txt
+          else
+            echo "no stuck-process capture - the emulator phase did not reach it"
           fi
           echo "::endgroup::"
   android-validation:

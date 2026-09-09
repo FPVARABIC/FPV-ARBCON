@@ -75,13 +75,32 @@ fi
 adb logcat -c || true
 
 echo "=== connectedAndroidTest ==="
+# BOUNDED, SO A HANG BECOMES EVIDENCE INSTEAD OF AN OPAQUE KILL.
+#
+# On run 34402391642 the API 24 row sat in this command from 21:05:40
+# until the job's own 120-minute limit killed the whole runner at
+# 22:47:02 - and because the runner was killed, none of the diagnostics
+# below ran. No logcat, no process list, no ANR traces: the one row that
+# failed differently from the others produced the least information about
+# why.
+#
+# 40 minutes is four times what API 34, 35 and 36 each take end to end
+# (roughly 9 to 10 minutes), so this cannot cut short a run that is merely
+# slow. What it does is hand control back to this script, which then
+# captures the state of a stuck device and reports the timeout as a
+# failure - the run still fails, it just says something.
+SUITE_TIMEOUT_SECONDS="${SUITE_TIMEOUT_SECONDS:-2400}"
 status=0
-./gradlew :app:connectedAndroidTest \
-  -PreactNativeArchitectures=x86_64 \
-  --max-workers=2 \
-  --no-daemon \
-  --stacktrace \
-  --console=plain || status=$?
+timeout --signal=TERM --kill-after=120 "$SUITE_TIMEOUT_SECONDS" \
+  ./gradlew :app:connectedAndroidTest \
+    -PreactNativeArchitectures=x86_64 \
+    --max-workers=2 \
+    --no-daemon \
+    --stacktrace \
+    --console=plain || status=$?
+if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+  echo "::error::connectedAndroidTest did not finish within ${SUITE_TIMEOUT_SECONDS}s and was stopped. The other API levels complete this in roughly 10 minutes, so this is a hang rather than slowness. Diagnostics below were captured from the stuck device."
+fi
 echo "gradle connectedAndroidTest status: $status"
 
 echo "=== diagnostics ==="
@@ -90,6 +109,21 @@ adb shell getprop > "$DIAG/getprop.txt" 2>&1 || true
 adb shell dumpsys package com.fpvarbcon > "$DIAG/dumpsys-package.txt" 2>&1 || true
 adb shell ps -A > "$DIAG/processes.txt" 2>&1 || true
 adb shell dumpsys activity activities > "$DIAG/dumpsys-activities.txt" 2>&1 || true
+# WHERE A HUNG TEST IS ACTUALLY STANDING. A stack dump of the app and the
+# instrumentation process is the only thing that distinguishes "waiting on
+# a latch that will never fall" from "slow". SIGQUIT makes ART write the
+# thread dump to logcat, so it is captured a second time afterwards.
+{
+  echo "=== processes matching fpvarbcon ==="
+  adb shell ps -A 2>/dev/null | grep -i fpvarbcon || echo "(no fpvarbcon process)"
+  echo "=== ANR traces, if the platform wrote any ==="
+  adb shell ls -l /data/anr/ 2>/dev/null || echo "(no /data/anr listing)"
+  adb shell cat /data/anr/traces.txt 2>/dev/null | head -400 || echo "(no traces.txt)"
+} > "$DIAG/stuck-process.txt" 2>&1 || true
+for pid in $(adb shell ps -A 2>/dev/null | grep -i fpvarbcon | awk '{print $2}'); do
+  adb shell kill -3 "$pid" 2>/dev/null || true
+done
+adb logcat -d > "$DIAG/logcat-after-sigquit.txt" 2>&1 || true
 echo "logcat lines captured: $(wc -l < "$DIAG/logcat.txt" 2>/dev/null || echo 0)"
 
 # The right-to-left repair is about the FIRST launch after an install,
