@@ -119,6 +119,16 @@ jobs:
       - name: Jest shard completeness (union == universe)
         run: node scripts/ci-diagnostics/verifyJestShards.js "${{ env.JEST_SHARD_COUNT }}"
 
+      # A thread that is never joined and never returns is not a crash and
+      # not a test failure - it is a process that grows quietly until the
+      # app is killed. This requires every background thread and executor
+      # the native code starts to be declared with its owner and what makes
+      # it end, and refuses a synchronous bridge method or any UI-thread
+      # dispatch. Pure source analysis, so it runs here rather than costing
+      # an Android toolchain.
+      - name: Native thread and executor census
+        run: python3 scripts/ci/native-thread-census.py
+
   jest:
     # The divisor is spelled out here because GitHub does not expose the
     # `env` context in a JOB name (only in step names, `run` and `with`).
