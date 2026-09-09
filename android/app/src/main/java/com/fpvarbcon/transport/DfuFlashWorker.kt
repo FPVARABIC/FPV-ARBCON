@@ -57,11 +57,19 @@ internal class DfuFlashWorker(
       val flashInterface = selection.first
       val layout = selection.second
       interfaceNumber = flashInterface.id
-      if (!connection.claimInterface(flashInterface, true)) {
-        throw UsbTransportException("DFU_CLAIM_FAILED", "Unable to claim the DFU interface.")
-      }
-      try {
-        selectFlashAlternate(connection, flashInterface, layout)
+      val declaredAlternates = (0 until device.interfaceCount)
+        .map(device::getInterface)
+        .filter { it.id == flashInterface.id }
+        .map { it.alternateSetting }
+      withClaimedDfuFlashInterface(
+        target = flashInterface,
+        alternateSetting = flashInterface.alternateSetting,
+        declaredAlternates = declaredAlternates,
+        layoutName = layout.name,
+        claim = { connection.claimInterface(it, true) },
+        selectAlternate = { connection.setInterface(it) },
+        release = { connection.releaseInterface(it) },
+      ) {
         if (!layout.hasWritableSectors) {
           throw UsbTransportException(
             "DFU_MEMORY_LAYOUT_NOT_WRITABLE",
@@ -214,63 +222,10 @@ internal class DfuFlashWorker(
             resetConfirmed,
           ),
         )
-      } finally {
-        try {
-          connection.releaseInterface(flashInterface)
-        } catch (_: Exception) {
-        }
       }
     } finally {
       connection.close()
     }
-  }
-
-  /**
-   * ACTIVATES the alternate that was chosen, instead of only choosing it.
-   *
-   * DfuSe puts each memory region on its own ALTERNATE SETTING of the same
-   * interface number, and on Android an alternate is activated by
-   * UsbDeviceConnection.setInterface - "Sets the current UsbInterface. Used
-   * to select between two interfaces with the same ID but different
-   * alternate setting." claimInterface does not do it: it "Claims exclusive
-   * access to a UsbInterface" and says nothing about alternates.
-   *
-   * Without this call the erase, the write and the read-back all address
-   * whichever alternate happened to be active - alternate 0 - so
-   * selectDfuFlashInterface above could name Internal Flash while the
-   * device wrote somewhere else, and the layout bounds checks below would
-   * be validating addresses against a region that was never selected. On a
-   * board whose first DFU alternate is option bytes, that is exactly the
-   * outcome selectDfuFlashInterface exists to prevent.
-   *
-   * The web engine already does this, immediately after its own claim and
-   * for the same stated reason (webUsbDfu.web.ts: "DfuSe puts each memory
-   * region on its own alternate setting; the wrong one silently addresses
-   * option bytes instead of flash"). The error code is deliberately the
-   * same one the web engine raises, so both platforms tell the operator
-   * the same thing.
-   *
-   * NOTHING HAS BEEN ERASED OR WRITTEN when this throws: it runs before
-   * the first erase command leaves the host.
-   */
-  private fun selectFlashAlternate(
-    connection: android.hardware.usb.UsbDeviceConnection,
-    flashInterface: UsbInterface,
-    layout: DfuMemoryLayout,
-  ) {
-    if (connection.setInterface(flashInterface)) return
-    val declaredAlternates = (0 until device.interfaceCount)
-      .map(device::getInterface)
-      .filter { it.id == flashInterface.id }
-      .map { it.alternateSetting }
-    if (!dfuAlternateSelectionIsMandatory(flashInterface.alternateSetting, declaredAlternates)) {
-      return
-    }
-    throw UsbTransportException(
-      "DFU_ALTERNATE_SELECTION_FAILED",
-      "Unable to select alternate setting ${flashInterface.alternateSetting} (${layout.name}); " +
-        "refusing to erase or write without knowing which memory region would be addressed.",
-    )
   }
 
   private fun setAddress(connection: android.hardware.usb.UsbDeviceConnection, address: Long) {
@@ -464,6 +419,83 @@ internal fun <T> selectDfuFlashInterface(
   named("external flash")?.let { return it }
   val writable = parsed.filter { it.second.hasWritableSectors }
   return writable.singleOrNull()
+}
+
+/**
+ * CLAIM, ACTIVATE, WORK, RELEASE - the order the device has to see, in
+ * one place that can be tested without a USB bus.
+ *
+ * DfuSe puts each memory region on its own ALTERNATE SETTING of the same
+ * interface number. On Android an alternate is activated by
+ * UsbDeviceConnection.setInterface - "Sets the current UsbInterface. Used
+ * to select between two interfaces with the same ID but different
+ * alternate setting." claimInterface does not do it: it "Claims exclusive
+ * access to a UsbInterface" and says nothing about alternates.
+ *
+ * Until this existed the activation was simply missing, so every erase,
+ * write and read-back went to whichever alternate happened to be active
+ * while selectDfuFlashInterface had merely NAMED a different one - and
+ * the layout bounds checks in [body] were validating addresses against a
+ * region the device was never going to write. On a board whose first DFU
+ * alternate is option bytes that is exactly the outcome
+ * selectDfuFlashInterface exists to prevent. The web engine has always
+ * done this step (webUsbDfu.web.ts calls selectAlternateInterface right
+ * after its claim, for the same stated reason), and this raises the same
+ * DFU_ALTERNATE_SELECTION_FAILED code so both platforms say the same
+ * thing to the operator.
+ *
+ * FOUR GUARANTEES, each one a named case in DfuAlternateSelectionTest:
+ *
+ *  1. [selectAlternate] runs BEFORE [body]. Every erase and write lives
+ *     in [body], so nothing can reach the device on an unselected
+ *     alternate.
+ *  2. A refused OR THROWN selection stops the flash, when selection is
+ *     mandatory. Nothing has been erased at that point - this runs before
+ *     the first erase command leaves the host.
+ *  3. A refusal is survivable in exactly one case: the interface declares
+ *     nothing but its default setting, so USB 2.0 section 9.4.10 permits
+ *     the STALL and alternate 0 is active anyway. See
+ *     [dfuAlternateSelectionIsMandatory].
+ *  4. [release] is called exactly once, on the interface that was
+ *     actually claimed, on every exit path - success, refusal, or a throw
+ *     from [body] - and never when the claim itself failed, because
+ *     nothing was claimed then. A throwing [release] cannot replace the
+ *     outcome that was already decided.
+ *
+ * Generic in the interface type so it is exercised by ordinary JVM unit
+ * tests with no USB connection and no Android framework classes - the
+ * same seam [selectDfuFlashInterface] uses.
+ */
+internal fun <I, R> withClaimedDfuFlashInterface(
+  target: I,
+  alternateSetting: Int,
+  declaredAlternates: List<Int>,
+  layoutName: String,
+  claim: (I) -> Boolean,
+  selectAlternate: (I) -> Boolean,
+  release: (I) -> Unit,
+  body: () -> R,
+): R {
+  if (!claim(target)) {
+    throw UsbTransportException("DFU_CLAIM_FAILED", "Unable to claim the DFU interface.")
+  }
+  try {
+    if (!selectAlternate(target) &&
+      dfuAlternateSelectionIsMandatory(alternateSetting, declaredAlternates)
+    ) {
+      throw UsbTransportException(
+        "DFU_ALTERNATE_SELECTION_FAILED",
+        "Unable to select alternate setting $alternateSetting ($layoutName); " +
+          "refusing to erase or write without knowing which memory region would be addressed.",
+      )
+    }
+    return body()
+  } finally {
+    // Releasing must not turn a decided outcome into a different one: a
+    // device that has already reset can fail this call, and that is not
+    // news about the flash.
+    runCatching { release(target) }
+  }
 }
 
 /**
