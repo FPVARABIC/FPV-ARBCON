@@ -102,12 +102,15 @@ CLASSIFICATION: dict[str, tuple[str, str]] = {
     "com/fpvarbcon/transport/UsbSerialSessionLifecycle.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbSerialSessionRegistry.kt": (JVM_EXECUTED, ""),
     "com/fpvarbcon/transport/UsbSerialTransportModule.kt": (
-        UNMEASURED,
+        ANDROID_ONLY,
         "The TurboModule itself. Constructing it needs a ReactApplicationContext and the "
-        "generated Codegen spec, neither of which exists in a JVM test, and every "
-        "decision it makes has deliberately been lifted into the files above so it can "
-        "be. What remains here is dispatch and plumbing. Measuring it would take either "
-        "a Robolectric runtime or a React host on a device, and neither is present.",
+        "generated Codegen spec, so no JVM test can reach it - but a device can, and does: "
+        "ReactHostCampaignTest builds it on the real React host and drives construction, "
+        "enumeration with nothing attached, refusal of an unknown session, closeSession, "
+        "invalidate(), and twelve build/teardown cycles measured for thread and descriptor "
+        "growth. Its remaining entry points - open, permission, read, write, DFU, hotplug - "
+        "are REAL_HARDWARE_REQUIRED and are named one by one in that file. Every DECISION "
+        "it makes has additionally been lifted into the JVM-executed files above.",
     ),
     "com/fpvarbcon/transport/UsbSerialTransportPackage.kt": (
         BUILD_ONLY,
@@ -134,19 +137,35 @@ def production_files(source_root: str) -> set[str]:
 
 
 def counters(report: str) -> dict[str, dict[str, tuple[int, int]]]:
-    """{sourcefile path -> {counter type -> (covered, total)}}."""
+    """
+    {source file NAME -> {counter type -> (covered, total)}}.
+
+    Keyed on the bare file name rather than package/name on purpose. The
+    package attribute's separator is a detail of whoever wrote the report -
+    JaCoCo's own XML uses slashes, other producers use dots - and getting
+    that wrong makes every file look absent, which is a parser bug wearing
+    the costume of a coverage finding. File names are checked for
+    uniqueness before this is used, so the shortcut cannot silently merge
+    two files.
+    """
     tree = ElementTree.parse(report)
     result: dict[str, dict[str, tuple[int, int]]] = {}
     for package in tree.getroot().iter("package"):
-        package_name = package.get("name", "")
         for sourcefile in package.findall("sourcefile"):
-            key = f"{package_name}/{sourcefile.get('name', '')}"
+            name = sourcefile.get("name", "")
             per_type: dict[str, tuple[int, int]] = {}
             for counter in sourcefile.findall("counter"):
                 missed = int(counter.get("missed", "0"))
                 covered = int(counter.get("covered", "0"))
                 per_type[counter.get("type", "?")] = (covered, covered + missed)
-            result[key] = per_type
+            # A file can appear once per package if two packages share a
+            # name; sum rather than overwrite.
+            if name in result:
+                for kind, (covered, total) in per_type.items():
+                    before = result[name].get(kind, (0, 0))
+                    result[name][kind] = (before[0] + covered, before[1] + total)
+            else:
+                result[name] = per_type
     return result
 
 
@@ -175,6 +194,15 @@ def main(argv: list[str]) -> int:
             print(f"::error::{name} is in the ledger but not in the source tree")
         return 1
 
+    basenames = [name.rsplit("/", 1)[-1] for name in tree_files]
+    duplicated = sorted({name for name in basenames if basenames.count(name) > 1})
+    if duplicated:
+        print(
+            "::error::two production files share a name, so coverage cannot be attributed "
+            f"by name: {duplicated}"
+        )
+        return 1
+
     measured = counters(report)
 
     print("===== UI-X3B NATIVE COVERAGE AND CLASSIFICATION LEDGER =====")
@@ -192,7 +220,7 @@ def main(argv: list[str]) -> int:
         classification, reason = CLASSIFICATION[name]
         by_class[classification] = by_class.get(classification, 0) + 1
 
-        per_type = measured.get(name, {})
+        per_type = measured.get(name.rsplit("/", 1)[-1], {})
         line_covered, line_total = per_type.get("LINE", (0, 0))
         branch_covered, branch_total = per_type.get("BRANCH", (0, 0))
         totals["line_covered"] += line_covered
@@ -233,13 +261,33 @@ def main(argv: list[str]) -> int:
     )
     print("=" * 78)
 
-    for failure in failures:
-        print(f"::error::{failure}")
+    verdict: list[str] = []
     if failures:
-        print(f"coverage ledger: {len(failures)} problem(s)")
-        return 1
-    print("coverage ledger: every production file is classified and every JVM_EXECUTED file ran")
-    return 0
+        # What the report DOES contain, so a mismatch between the tree and
+        # the report is one read away instead of one CI cycle away.
+        verdict.append("source files present in the JaCoCo report:")
+        for name in sorted(measured):
+            line = measured[name].get("LINE", (0, 0))
+            verdict.append(f"  {name:52} {line[0]}/{line[1]}")
+        verdict.extend(f"::error::{failure}" for failure in failures)
+        verdict.append(f"coverage ledger: {len(failures)} problem(s)")
+    else:
+        verdict.append(
+            "coverage ledger: every production file is classified and every JVM_EXECUTED "
+            "file ran"
+        )
+
+    for line in verdict:
+        print(line)
+
+    # Written as well as printed: this step runs in the middle of a long
+    # job, and a later step prints this file so the verdict is readable
+    # from the end of the log rather than buried under everything that
+    # came after it.
+    with open(os.environ.get("COVERAGE_VERDICT_FILE", "native-coverage-verdict.txt"), "w") as out:
+        out.write("\n".join(verdict) + "\n")
+
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

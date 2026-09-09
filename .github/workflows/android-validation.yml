@@ -990,6 +990,7 @@ jobs:
       # environment this repository is audited in, so an unprinted finding
       # is a lost one. See scripts/ci/verify-android-lint.sh.
       - name: Android Lint (debug)
+        id: lint-debug
         if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
         timeout-minutes: 25
@@ -1295,8 +1296,14 @@ jobs:
       # This upload cannot mask the real failure. If lint failed, its own
       # step already failed the job; a later upload failure only adds to
       # the log, it does not replace the primary error.
+      # Not attempted when lint never ran: on run 34402391642 an earlier
+      # step failed the job, lint was skipped, and this upload then raised
+      # a SECOND error for the absence of reports nothing had produced -
+      # noise on top of the real failure. `if-no-files-found: error` is
+      # kept, because a lint that ran and produced nothing IS a finding.
       - name: Upload Android lint reports (debug + release)
-        if: ${{ always() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        if: ${{ always() && steps.lint-debug.outcome != 'skipped'
+                && format('{0}', inputs.diagnostic_js_only) != 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: fpv-arbcon-lint-report
@@ -1337,3 +1344,23 @@ jobs:
             fi
             echo "::endgroup::"
           done
+
+      # THE COVERAGE VERDICT, PRINTED LAST FOR THE SAME REASON THE LINT
+      # DIGEST IS.
+      #
+      # The ledger runs in the middle of this job. When it failed on run
+      # 34402391642 its output was buried under forty more steps, and the
+      # log tail the API returns held only the post-job cleanup - so the
+      # one thing needed to diagnose it was the one thing unreadable.
+      # Re-printing the verdict here puts it at the end of the log, where a
+      # tail will always contain it.
+      - name: Native coverage verdict (printed last)
+        if: ${{ always() && format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        run: |
+          echo "::group::Native coverage ledger verdict"
+          if [ -s native-coverage-verdict.txt ]; then
+            cat native-coverage-verdict.txt
+          else
+            echo "no verdict file - the coverage ledger step did not reach the point of writing one"
+          fi
+          echo "::endgroup::"
