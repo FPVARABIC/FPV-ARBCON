@@ -799,6 +799,25 @@ jobs:
         working-directory: android
         run: ./gradlew :app:compileDebugKotlin
 
+      # THE androidTest SOURCES MUST COMPILE ON EVERY RUN, NOT ONLY WHEN AN
+      # EMULATOR IS BOOTED.
+      #
+      # androidTest targets the release variant, so until this step existed
+      # the only thing that ever compiled those sources was an emulator job,
+      # after a ~17-minute release build. A misspelled symbol in a device
+      # test therefore cost a full matrix cycle to discover, and cost it in
+      # every row at once.
+      #
+      # This also settles a visibility question no other step can: the
+      # device tests call `internal` production declarations
+      # (firmwareSaveSizeComplaint, IntelHexFirmware), which compile only if
+      # AGP associates the androidTest compilation with the tested variant.
+      # If it does not, this fails here in minutes instead of there in hours.
+      - name: Compile androidTest sources (release variant)
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        working-directory: android
+        run: ./gradlew :app:compileReleaseAndroidTestKotlin
+
       - name: JVM unit tests (debug)
         if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
         working-directory: android
