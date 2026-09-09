@@ -45,9 +45,15 @@
  */
 
 /*
- * The census drives thirteen screens through deliberately minimal
- * doubles. Each port's real shape is enforced by the screen and by tsc,
- * not here; the `any` casts below are confined to the harness.
+ * The census drives every screen in __censusFixtures__/censusScreens.tsx
+ * through deliberately minimal doubles - twenty cases at the time of
+ * writing, which is a number that has grown and is deliberately not
+ * repeated here as a literal, because a count in a comment goes stale
+ * silently. androidDestinationCensus.test.ts is what holds the
+ * denominator: it reads that registry and requires every Android-visible
+ * destination to be covered by a case in it or by a named harness of its
+ * own. Each port's real shape is enforced by the screen and by tsc, not
+ * here; the `any` casts below are confined to the harness.
  */
 
 const IDENTITY = {

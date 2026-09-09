@@ -1033,6 +1033,43 @@ jobs:
           echo "Debug APK SHA-256: $(sha256sum "$APK_PATH" | cut -d' ' -f1)"
           echo "DEBUG_APK_PATH=android/$APK_PATH" >> "$GITHUB_ENV"
 
+      # THE COVERAGE FLAG MUST NOT REACH AN APK.
+      #
+      # enableUnitTestCoverage is set on the debug build type so the JVM
+      # unit tests can be measured. The claim that goes with it is that it
+      # attaches the JaCoCo agent to the unit test JVM and does NOT
+      # instrument packaged classes - and a claim in a comment is not
+      # evidence. This checks the shipped DEX of the debug APK, which is
+      # the one that carries the flag, for JaCoCo's own classes.
+      #
+      # The release APK cannot be affected either way: the flag is inside
+      # buildTypes { debug { ... } }, and its sibling
+      # enableAndroidTestCoverage - the one that does instrument the app
+      # under test - is not set anywhere.
+      - name: Debug DEX check - JaCoCo must not be packaged
+        if: ${{ format('{0}', inputs.diagnostic_js_only) != 'true' }}
+        working-directory: android
+        run: |
+          set -euo pipefail
+          APK="${DEBUG_APK_PATH#android/}"
+          workdir="$(mktemp -d)"
+          unzip -o -q "$APK" 'classes*.dex' -d "$workdir"
+          total=0
+          for token in org/jacoco jacocoInit \$jacocoData; do
+            hits=0
+            for dex in "$workdir"/classes*.dex; do
+              hits=$((hits + $(grep -a -o -F "$token" "$dex" | wc -l || true)))
+            done
+            echo "  $token: x$hits"
+            total=$((total + hits))
+          done
+          rm -rf "$workdir"
+          if [ "$total" -ne 0 ]; then
+            echo "::error::the debug APK carries $total JaCoCo reference(s) in its DEX - enableUnitTestCoverage is instrumenting packaged classes, not only the unit test JVM"
+            exit 1
+          fi
+          echo "no JaCoCo classes in the debug APK: the coverage flag stays in the test JVM"
+
       # Pass 7.6c - see the workflow header comment: __DEV__-only hardware
       # observability requires the debug variant; this artifact is named
       # and documented so it can never be mistaken for the standalone

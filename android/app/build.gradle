@@ -119,10 +119,14 @@ android {
              * JVM UNIT TEST COVERAGE, AND ONLY THAT.
              *
              * enableUnitTestCoverage attaches the JaCoCo agent to the unit
-             * test JVM. It does not touch the packaged classes, so neither
-             * assembleDebug nor assembleRelease produces a different APK
-             * because of this line - which matters, because the release
-             * APK is the artifact whose alignment, DEX contents, signing
+             * test JVM. That it does not also instrument packaged classes
+             * is CHECKED rather than asserted: the workflow's "Debug DEX
+             * check - JaCoCo must not be packaged" step scans the shipped
+             * DEX of the debug APK - the variant that carries this flag -
+             * for org/jacoco, jacocoInit and $jacocoData, and fails on any
+             * hit. The release APK cannot be affected either way, because
+             * this line is inside buildTypes { debug }, and the release
+             * artifact is the one whose alignment, DEX contents, signing
              * and size this project asserts elsewhere.
              *
              * Its sibling enableAndroidTestCoverage is deliberately NOT
