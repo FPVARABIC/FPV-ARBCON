@@ -90,6 +90,9 @@ internal class DfuFlashWorker(
               "Firmware address 0x${segment.address.toString(16)} is outside the DFU memory layout.",
             )
           }
+          dfuBlockNumberOverflow(segment.data.size, transferSize, segment.address)?.let { reason ->
+            throw UsbTransportException("DFU_BLOCK_NUMBER_OVERFLOW", reason)
+          }
           if (!layout.containsWritable(segment.address, segment.data.size)) {
             throw UsbTransportException(
               "DFU_MEMORY_LAYOUT_NOT_WRITABLE",
@@ -466,6 +469,68 @@ internal fun <T> selectDfuFlashInterface(
  * tests with no USB connection and no Android framework classes - the
  * same seam [selectDfuFlashInterface] uses.
  */
+/**
+ * THE BLOCK NUMBER IS A 16-BIT FIELD, AND PAST THE END OF IT LIE THE
+ * COMMANDS.
+ *
+ * The write loop numbers its data blocks from 2 and increments once per
+ * transfer, then hands that number to UsbDeviceConnection.controlTransfer
+ * as `value` - the USB wValue field, which is sixteen bits wide. Nothing
+ * in that path reports an out-of-range block number: the upper bits are
+ * simply gone.
+ *
+ * DfuSe reserves the low block numbers for commands. wValue 0 is a
+ * command block, whose FIRST PAYLOAD BYTE selects the command - 0x21 set
+ * address pointer, 0x41 erase, 0x92 read unprotect. So a wrapped block
+ * does not fail and does not write to the wrong address; it presents 64
+ * or more bytes of firmware to the device as a command, and whatever
+ * happens next is decided by an arbitrary byte of the image.
+ *
+ * Reachability, measured against this application's own limits rather
+ * than assumed. MAX_FIRMWARE_FILE_BYTES is 16 MiB and
+ * MIN_DFU_TRANSFER_SIZE is 64, so:
+ *
+ *     transferSize   blocks for 16 MiB   last wValue   wraps
+ *               64            262,144              1   yes
+ *              128            131,072              1   yes
+ *              256             65,536              1   yes
+ *              512             32,768         32,769   no
+ *             2048              8,192          8,193   no
+ *
+ * A real STM32 DfuSe bootloader reports 2048, where the field would not
+ * wrap until 128 MiB, which is why this has not been seen. The exposure
+ * is a device that declares a small wTransferSize - a clone, a
+ * re-implemented bootloader, or a descriptor read from a device that is
+ * not what it claims to be - and this code accepts any value from 64 up.
+ *
+ * The refusal therefore happens BEFORE the first erase command leaves the
+ * host, beside the address and writability checks, for the same reason
+ * those are there: a write that cannot be completed correctly must not
+ * start by erasing the flash.
+ *
+ * Returns null when every block of the segment fits, or the reason it
+ * does not.
+ */
+internal fun dfuBlockNumberOverflow(
+  segmentBytes: Int,
+  transferSize: Int,
+  segmentAddress: Long,
+): String? {
+  if (segmentBytes <= 0) return null
+  if (transferSize <= 0) {
+    return "The device declared a DFU transfer size of $transferSize bytes, which cannot carry a " +
+      "firmware block; refusing to erase or write."
+  }
+  val blocks = (segmentBytes + transferSize - 1) / transferSize
+  val lastBlockNumber = blocks.toLong() + DFU_FIRST_DATA_BLOCK - 1
+  if (lastBlockNumber <= USB_MAX_WVALUE) return null
+  return "This firmware needs $blocks blocks of $transferSize bytes at " +
+    "0x${segmentAddress.toString(16)}, so the last DFU block number would be $lastBlockNumber - " +
+    "past the 16-bit limit of $USB_MAX_WVALUE. A wrapped block number is not rejected by the " +
+    "device: it is read as a DfuSe command, with a byte of this firmware selecting which one. " +
+    "Refusing to erase or write."
+}
+
 internal fun <I, R> withClaimedDfuFlashInterface(
   target: I,
   alternateSetting: Int,
@@ -547,6 +612,18 @@ private const val DFU_STATE_ERROR = 10
 private const val DFUSE_SET_ADDRESS: Byte = 0x21
 private const val DFUSE_ERASE: Byte = 0x41
 private const val DEFAULT_DFU_TRANSFER_SIZE = 2048
+
+/**
+ * DfuSe numbers data blocks from 2; 0 is a command block and 1 is
+ * reserved. This is the value the write and verify loops start from, and
+ * it is what makes a wrapped block number land on a command rather than
+ * on a harmless address.
+ */
+internal const val DFU_FIRST_DATA_BLOCK = 2
+
+/** wValue in a USB control transfer is sixteen bits. */
+internal const val USB_MAX_WVALUE = 0xFFFF
+
 private const val CONTROL_TIMEOUT_MS = 5_000
 /** Matches DFU_RESET_OBSERVATION_MS on the web engine. */
 private const val RESET_OBSERVATION_MS = 8_000L
