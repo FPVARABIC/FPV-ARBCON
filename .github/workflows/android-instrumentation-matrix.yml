@@ -180,6 +180,15 @@ jobs:
               > ../instrumentation-diagnostics/dumpsys-package.txt 2>&1 || true
             adb shell ps -A > ../instrumentation-diagnostics/processes.txt 2>&1 || true
             echo "gradle connectedAndroidTest status: $status"
+            # Fresh-install cold launch, per API level. See the note in
+            # android-validation.yml: no in-process test can reach the
+            # first launch, and API 24 is exactly where a platform
+            # difference would show up.
+            rtl_status=0
+            ../scripts/ci/verify-rtl-cold-launch.sh 2>&1 \
+              | tee ../instrumentation-diagnostics/rtl-cold-launch.txt || rtl_status=${PIPESTATUS[0]}
+            echo "rtl cold-launch status: $rtl_status"
+            if [ "$status" -eq 0 ]; then status=$rtl_status; fi
             exit $status
 
       - name: Verify instrumentation results

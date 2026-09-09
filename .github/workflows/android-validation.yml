@@ -460,6 +460,19 @@ jobs:
             adb shell dumpsys activity activities \
               > ../instrumentation-diagnostics/dumpsys-activities.txt 2>&1 || true
             echo "gradle connectedAndroidTest status: $status"
+            # The right-to-left repair is about the FIRST launch after an
+            # install, which no in-process instrumentation test can reach:
+            # MainApplication.onCreate has already run before the first
+            # assertion executes. This wipes the package data, cold-launches
+            # the release app and reads React Native's own preference file
+            # off the device as root. It runs LAST because `pm clear` would
+            # disturb the suite, and its status is folded in rather than
+            # discarded.
+            rtl_status=0
+            ../scripts/ci/verify-rtl-cold-launch.sh 2>&1 \
+              | tee ../instrumentation-diagnostics/rtl-cold-launch.txt || rtl_status=${PIPESTATUS[0]}
+            echo "rtl cold-launch status: $rtl_status"
+            if [ "$status" -eq 0 ]; then status=$rtl_status; fi
             exit $status
 
       # Counts the executed tests, prints every suite and every failing

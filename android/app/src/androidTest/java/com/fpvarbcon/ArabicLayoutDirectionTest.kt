@@ -1,10 +1,13 @@
 package com.fpvarbcon
 
 import android.content.Context
+import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.facebook.react.modules.i18nmanager.I18nUtil
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -86,6 +89,35 @@ class ArabicLayoutDirectionTest {
       "a fresh install would still not be RTL after the bootstrap ran",
       I18nUtil.instance.isRTL(target),
     )
+  }
+
+  /**
+   * A configuration change that destroys and rebuilds the Activity must
+   * not land the operator in a left-to-right session. The manifest's
+   * configChanges list means a rotation does NOT recreate this Activity,
+   * so recreate() is the stronger path: it forces the destruction and
+   * rebuild that a change outside that list, or a process-level restart,
+   * would take.
+   *
+   * The fresh-install and process-relaunch halves of this claim cannot be
+   * made from inside the app process at all - MainApplication.onCreate
+   * has already run by the time this class is loaded. They are proved
+   * separately, from outside, by scripts/ci/verify-rtl-cold-launch.sh.
+   */
+  @Test
+  fun rightToLeftSurvivesActivityRecreation() {
+    ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+      scenario.moveToState(Lifecycle.State.RESUMED)
+      assertTrue("the app was not RTL before recreation", I18nUtil.instance.isRTL(target))
+
+      scenario.recreate()
+
+      assertEquals(Lifecycle.State.RESUMED, scenario.state)
+      assertTrue("Activity recreation left the app laying out left-to-right", I18nUtil.instance.isRTL(target))
+      scenario.onActivity { activity ->
+        assertFalse("MainActivity finished during recreation", activity.isFinishing)
+      }
+    }
   }
 
   /**
