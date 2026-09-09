@@ -90,6 +90,16 @@ if total == 0:
 if failures or errors:
     print(f"::error::instrumentation reported failures={failures} errors={errors}")
     raise SystemExit(1)
+# A SKIPPED CASE IS A CASE THAT DID NOT RUN. It was already counted and
+# printed above, but only as information - so a test that quietly started
+# skipping (an Assume that stopped holding, an @Ignore added to get past a
+# red build) would have gone on reporting green forever. Every device test
+# in this project is expected to run on every level in the matrix; if one
+# of them ever genuinely cannot, that is a decision to make deliberately
+# and not something to discover from a count nobody was reading.
+if skipped:
+    print(f"::error::instrumentation SKIPPED {skipped} case(s) - a case that did not run cannot be counted as one that passed")
+    raise SystemExit(1)
 PY
 RESULTS_STATUS=$?
 echo "::endgroup::"

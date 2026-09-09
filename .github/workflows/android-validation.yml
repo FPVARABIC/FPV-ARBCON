@@ -633,19 +633,39 @@ jobs:
           - api-level: 36
             target: google_apis
             label: 36 - declared targetSdkVersion
-          # Android's guide names this image "Google APIs Experimental
-          # 16 KB Page Size Intel x86_64 Atom System Image", which is the
-          # google_apis_experimental tag, and names the check:
+          # THE TAG CAME FROM THE SDK, NOT FROM THE GUIDE.
           #
-          #   "run the following command to verify that it's using a 16 KB
-          #    environment: adb shell getconf PAGE_SIZE. The command
-          #    should return a value of 16384."
+          # Android's 16 KB guide names "Google APIs Experimental 16 KB
+          # Page Size Intel x86_64 Atom System Image", which reads as the
+          # google_apis_experimental tag - and that is what this row asked
+          # for first. Run 34394649731 answered:
           #
-          # expected-page-size turns that from a note into a requirement:
+          #   sdkmanager --install
+          #     'system-images;android-35;google_apis_experimental;x86_64'
+          #     --channel=0
+          #   Warning: Failed to find package
+          #     'system-images;android-35;google_apis_experimental;x86_64'
+          #
+          # The sixteen-kb-image-inventory job then listed what the SDK
+          # does offer, on all four channels, and the image exists under a
+          # different tag:
+          #
+          #   system-images;android-35;google_apis_ps16k;x86_64
+          #     | 5 | 16 KB Page Size Google APIs Intel x86_64 Atom System Image
+          #
+          # (android-36 carries google_apis_ps16k too, and there are
+          # playstore and google-tv variants of both. API 35 is kept here
+          # because that is the level at which the Play requirement
+          # begins.)
+          #
+          # The check itself is Android's own: "run the following command
+          # to verify that it's using a 16 KB environment: adb shell
+          # getconf PAGE_SIZE. The command should return a value of 16384."
+          # expected-page-size turns that from a note into a requirement -
           # the run fails if the image turns out to be a 4 KB one, so this
           # row cannot report success for the property it exists to test.
           - api-level: 35
-            target: google_apis_experimental
+            target: google_apis_ps16k
             label: 35 - 16 KB page size
             expected-page-size: 16384
     steps:
