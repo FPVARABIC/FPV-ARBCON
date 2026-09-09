@@ -78,7 +78,7 @@ internal class UsbAppLogCaptureCore(
       // teardown already ran.
       inFlight.set(process)
       if (invalidated.get()) {
-        process.destroyForcibly()
+        terminateForcibly(process)
         settleOnce.reject(ERROR_CANCELLED, "The app-log capture module was invalidated.")
         return
       }
@@ -136,7 +136,7 @@ internal class UsbAppLogCaptureCore(
    * React Native bridge thread for no additional guarantee.
    */
   private fun terminateAndAwait(process: Process) {
-    process.destroyForcibly()
+    terminateForcibly(process)
     try {
       process.waitFor()
     } catch (interrupted: InterruptedException) {
@@ -148,14 +148,14 @@ internal class UsbAppLogCaptureCore(
    * unblocks the reader's in-flight read. Safe when nothing is running. */
   fun cancel() {
     cancelRequested.set(true)
-    inFlight.getAndSet(null)?.destroyForcibly()
+    inFlight.getAndSet(null)?.let(::terminateForcibly)
   }
 
   /** Module invalidation (React context teardown): terminates anything
    * running and refuses every later capture. */
   fun invalidate() {
     invalidated.set(true)
-    inFlight.getAndSet(null)?.destroyForcibly()
+    inFlight.getAndSet(null)?.let(::terminateForcibly)
   }
 
   internal companion object {

@@ -85,7 +85,7 @@ internal fun readProcessOutputBounded(process: Process, timeoutMillis: Long): St
       output
     } catch (_: TimeoutException) {
       if (settled.compareAndSet(false, true)) {
-        process.destroyForcibly()
+        terminateForcibly(process)
       }
       future.cancel(true)
       throw ProcessReadTimeoutException("Timed out reading process output after ${timeoutMillis}ms.")
