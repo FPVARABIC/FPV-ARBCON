@@ -563,6 +563,34 @@ jobs:
   # the probe is broken. An image that is genuinely absent is a finding to
   # read, not a build to fail, and the matrix row above is what reports it
   # as a failure.
+
+      # THE VERDICT, PRINTED LAST.
+      #
+      # GitHub's log API returns only the last few kilobytes of a job. On
+      # run 34402391642 the API 36 row's INSTRUMENTATION_SUMMARY printed
+      # two seconds before that window began, so the failing case names -
+      # the one thing needed to diagnose it - were unreadable, while the
+      # artifact holding them sits on blob storage this environment cannot
+      # reach. Re-printing here puts the transcript inside the tail
+      # whatever ran in between, and it is the same trick the lint digest
+      # and the coverage verdict already use.
+      - name: Instrumentation digest and page size (printed last)
+        if: ${{ always() }}
+        run: |
+          echo "::group::Device under test"
+          if [ -s instrumentation-diagnostics/page-size.txt ]; then
+            cat instrumentation-diagnostics/page-size.txt
+          else
+            echo "no page-size transcript - the emulator phase did not reach it"
+          fi
+          echo "::endgroup::"
+          echo "::group::Instrumentation digest"
+          if [ -s instrumentation-digest.txt ]; then
+            cat instrumentation-digest.txt
+          else
+            echo "no digest - verify-instrumentation-results.sh did not reach the point of writing one"
+          fi
+          echo "::endgroup::"
   sixteen-kb-image-inventory:
     name: 16 KB system image availability (evidence)
     runs-on: ubuntu-latest
@@ -777,6 +805,34 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+
+      # THE VERDICT, PRINTED LAST.
+      #
+      # GitHub's log API returns only the last few kilobytes of a job. On
+      # run 34402391642 the API 36 row's INSTRUMENTATION_SUMMARY printed
+      # two seconds before that window began, so the failing case names -
+      # the one thing needed to diagnose it - were unreadable, while the
+      # artifact holding them sits on blob storage this environment cannot
+      # reach. Re-printing here puts the transcript inside the tail
+      # whatever ran in between, and it is the same trick the lint digest
+      # and the coverage verdict already use.
+      - name: Instrumentation digest and page size (printed last)
+        if: ${{ always() }}
+        run: |
+          echo "::group::Device under test"
+          if [ -s instrumentation-diagnostics/page-size.txt ]; then
+            cat instrumentation-diagnostics/page-size.txt
+          else
+            echo "no page-size transcript - the emulator phase did not reach it"
+          fi
+          echo "::endgroup::"
+          echo "::group::Instrumentation digest"
+          if [ -s instrumentation-digest.txt ]; then
+            cat instrumentation-digest.txt
+          else
+            echo "no digest - verify-instrumentation-results.sh did not reach the point of writing one"
+          fi
+          echo "::endgroup::"
   android-validation:
     name: Android validation (Pass 1-4)
     runs-on: ubuntu-latest

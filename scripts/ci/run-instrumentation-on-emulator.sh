@@ -47,7 +47,21 @@ echo "=== page size of the emulator under test ==="
 # return a value of 16384."
 PAGE_SIZE="$(adb shell getconf PAGE_SIZE 2>/dev/null | tr -d '\r')"
 echo "adb shell getconf PAGE_SIZE -> ${PAGE_SIZE:-<unavailable>}"
-echo "${PAGE_SIZE:-unknown}" > "$DIAG/page-size.txt"
+# The RAW command and its RAW output, recorded verbatim: a claim about
+# page size is only worth the transcript behind it, and this file is
+# re-printed as the job's last step so the transcript survives the log
+# tail. The ABI list and the device fingerprint go with it, because "which
+# page size" is meaningless without "on what".
+{
+  echo "\$ adb shell getconf PAGE_SIZE"
+  echo "${PAGE_SIZE:-<unavailable>}"
+  echo "\$ adb shell getprop ro.product.cpu.abilist"
+  adb shell getprop ro.product.cpu.abilist 2>/dev/null | tr -d '\r'
+  echo "\$ adb shell getprop ro.build.version.sdk"
+  adb shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r'
+  echo "\$ adb shell getprop ro.build.fingerprint"
+  adb shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r'
+} > "$DIAG/page-size.txt"
 if [ "$PAGE_SIZE" = "16384" ]; then
   echo "this emulator uses 16 KB pages, so the launches below exercise that path"
 else

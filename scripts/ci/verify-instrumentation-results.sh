@@ -27,24 +27,53 @@ set -uo pipefail
 RESULTS_DIR="${1:?usage: verify-instrumentation-results.sh <results-dir> [logcat-file]}"
 LOGCAT="${2:-}"
 
+# WHERE THE VERDICT IS ALSO WRITTEN, AND WHY.
+#
+# This script runs in the middle of a job. GitHub's log API returns only
+# the last few kilobytes of a job's log, and on run 34402391642 the API 36
+# row's summary printed two seconds before that window began - so the one
+# thing needed to diagnose the failure was the one thing unreadable. The
+# verdict is therefore written to a file as well as printed, and the
+# workflow re-prints that file as its final step, which puts it inside the
+# tail whatever happens in between.
+DIGEST="${INSTRUMENTATION_DIGEST_FILE:-instrumentation-digest.txt}"
+: > "$DIGEST"
+note() { echo "$*"; echo "$*" >> "$DIGEST"; }
+
 FAILED=0
 
 if [ ! -d "$RESULTS_DIR" ]; then
-  echo "::error::no androidTest results directory at $RESULTS_DIR - the APKs did not build, the emulator did not come up, or the run never started. This is NOT a test failure; read the build and emulator steps above."
+  note "::error::no androidTest results directory at $RESULTS_DIR - the APKs did not build, the emulator did not come up, or the run never started. This is NOT a test failure; read the build and emulator steps above."
   exit 1
 fi
 
 echo "::group::Instrumentation results ($RESULTS_DIR)"
-python3 - "$RESULTS_DIR" <<'PY'
+python3 - "$RESULTS_DIR" "$DIGEST" <<'PY'
 import glob
 import os
 import sys
 import xml.etree.ElementTree as ET
 
 results_dir = sys.argv[1]
+digest_path = sys.argv[2]
+digest = []
+
+
+def say(line):
+    """Print, and keep for the digest the workflow re-prints last."""
+    print(line)
+    digest.append(line)
+
+
+def flush():
+    with open(digest_path, "a", encoding="utf-8") as handle:
+        handle.write("\n".join(digest) + "\n")
+
+
 files = sorted(glob.glob(os.path.join(results_dir, "**", "*.xml"), recursive=True))
 if not files:
-    print(f"::error::no JUnit XML under {results_dir}")
+    say(f"::error::no JUnit XML under {results_dir}")
+    flush()
     raise SystemExit(1)
 
 total = failures = errors = skipped = 0
@@ -55,7 +84,8 @@ for path in files:
     try:
         root = ET.parse(path).getroot()
     except ET.ParseError as error:
-        print(f"::error::{path} is not parseable XML: {error}")
+        say(f"::error::{path} is not parseable XML: {error}")
+        flush()
         raise SystemExit(1)
     elements = [root] if root.tag == "testsuite" else root.findall("testsuite")
     for suite in elements:
@@ -76,19 +106,21 @@ for path in files:
                     f"{case.get('classname', '?')}#{case.get('name', '?')}: {message[:400]}"
                 )
 
-print(f"\nINSTRUMENTATION_SUMMARY suites={suites} tests={total} "
-      f"failures={failures} errors={errors} skipped={skipped}")
+say(f"INSTRUMENTATION_SUMMARY suites={suites} tests={total} "
+    f"failures={failures} errors={errors} skipped={skipped}")
 
 if failing:
-    print("\nfailing cases:")
+    say("failing cases:")
     for line in failing:
-        print(f"  {line}")
+        say(f"  {line}")
 
 if total == 0:
-    print("::error::instrumentation executed ZERO tests - a run that asserted nothing is not a pass")
+    say("::error::instrumentation executed ZERO tests - a run that asserted nothing is not a pass")
+    flush()
     raise SystemExit(1)
 if failures or errors:
-    print(f"::error::instrumentation reported failures={failures} errors={errors}")
+    say(f"::error::instrumentation reported failures={failures} errors={errors}")
+    flush()
     raise SystemExit(1)
 # A SKIPPED CASE IS A CASE THAT DID NOT RUN. It was already counted and
 # printed above, but only as information - so a test that quietly started
@@ -98,8 +130,10 @@ if failures or errors:
 # of them ever genuinely cannot, that is a decision to make deliberately
 # and not something to discover from a count nobody was reading.
 if skipped:
-    print(f"::error::instrumentation SKIPPED {skipped} case(s) - a case that did not run cannot be counted as one that passed")
+    say(f"::error::instrumentation SKIPPED {skipped} case(s) - a case that did not run cannot be counted as one that passed")
+    flush()
     raise SystemExit(1)
+flush()
 PY
 RESULTS_STATUS=$?
 echo "::endgroup::"
@@ -112,22 +146,22 @@ echo "::endgroup::"
 if [ -n "$LOGCAT" ] && [ -s "$LOGCAT" ]; then
   echo "::group::logcat crash and ANR scan"
   if grep -n "FATAL EXCEPTION" "$LOGCAT"; then
-    echo "::error::the app under test hit an uncaught exception during instrumentation"
+    note "::error::the app under test hit an uncaught exception during instrumentation"
     FAILED=1
   else
-    echo "no FATAL EXCEPTION in logcat"
+    note "no FATAL EXCEPTION in logcat"
   fi
   if grep -nE "ANR in com\.fpvarbcon|Reason: Input dispatching timed out" "$LOGCAT"; then
-    echo "::error::the app under test was reported as not responding (ANR)"
+    note "::error::the app under test was reported as not responding (ANR)"
     FAILED=1
   else
-    echo "no ANR for com.fpvarbcon in logcat"
+    note "no ANR for com.fpvarbcon in logcat"
   fi
   echo "::endgroup::"
 elif [ -n "$LOGCAT" ]; then
   # Not a gate: a missing logcat means the capture failed, which is worth
   # seeing but is not itself evidence that the app misbehaved.
-  echo "::warning::no logcat captured at $LOGCAT - crash and ANR scanning was skipped"
+  note "::warning::no logcat captured at $LOGCAT - crash and ANR scanning was skipped"
 fi
 
 exit "$FAILED"
