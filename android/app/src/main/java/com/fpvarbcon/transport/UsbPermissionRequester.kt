@@ -57,7 +57,22 @@ internal class UsbPermissionRequester(
 
   /** onResult(granted, failureMessage). failureMessage set only for infrastructure failures. */
   fun requestPermission(device: UsbDevice, onResult: (granted: Boolean, failureMessage: String?) -> Unit) {
-    if (coordinator.isCancelled()) return
+    // EVERY EXIT FROM HERE CALLS BACK.
+    //
+    // UsbPermissionRequestCoordinator.register states the contract for a
+    // null return: "the caller must then send nothing to Android and
+    // settle its own promise". This used to do only the first half - both
+    // cancelled paths returned silently - which leaves whoever called
+    // requestPermission waiting on a callback that can no longer arrive.
+    // Nothing was registered in that case, so cancelAll() has nothing to
+    // drain and cannot settle it either.
+    //
+    // Calling back here cannot double-settle: the request never entered
+    // the coordinator's pending map, so no other path owns it.
+    if (coordinator.isCancelled()) {
+      onResult(false, CANCELLED_MESSAGE)
+      return
+    }
 
     if (usbManager.hasPermission(device)) {
       onResult(true, null)
@@ -65,7 +80,12 @@ internal class UsbPermissionRequester(
     }
 
     val identity = UsbDeviceIdentity(device.deviceId, device.vendorId, device.productId)
-    val requestId = coordinator.register(identity, onResult) ?: return
+    val requestId = coordinator.register(identity, onResult)
+    if (requestId == null) {
+      // Cancelled between the check above and the registration.
+      onResult(false, CANCELLED_MESSAGE)
+      return
+    }
     val action = coordinator.actionFor(requestId)
 
     val receiver =
@@ -183,4 +203,13 @@ internal class UsbPermissionRequester(
 
   /** Test/diagnostic seam: how many permission requests are still pending. */
   fun pendingRequestCount(): Int = coordinator.pendingCount()
+
+  private companion object {
+    /**
+     * Worded to match cancelAll()'s own drain message, so a caller cannot
+     * tell - and does not need to - whether its request was refused before
+     * or after it reached the coordinator.
+     */
+    const val CANCELLED_MESSAGE = "USB permission request was cancelled (module invalidated)."
+  }
 }
