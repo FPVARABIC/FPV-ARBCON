@@ -541,6 +541,78 @@ jobs:
   # fail-fast is false so one red level cannot hide the others, and each
   # row fails on zero executed tests (verify-instrumentation-results.sh).
   # ---------------------------------------------------------------------
+  # WHICH 16 KB SYSTEM IMAGE, IF ANY, THIS RUNNER CAN ACTUALLY INSTALL.
+  #
+  # EVIDENCE, NOT A GATE. Run 231's API 35 row got no further than:
+  #
+  #   sdkmanager --install 'system-images;android-35;google_apis_experimental;x86_64'
+  #     --channel=0
+  #   Warning: Failed to find package
+  #     'system-images;android-35;google_apis_experimental;x86_64'
+  #   adb -s emulator-5554 emu kill
+  #   error: could not connect to TCP port 5554: Connection refused
+  #
+  # The APKs built (BUILD SUCCESSFUL, :app:assembleRelease
+  # :app:assembleReleaseAndroidTest) and the emulator never came up, so
+  # that row proved an SDK availability fact and nothing about the
+  # application. This job asks the question directly instead of inferring
+  # it from a 17-minute build: it lists every system image the SDK offers
+  # on every channel and prints the ones that could carry 16 KB pages.
+  #
+  # It fails only if the listing itself produced nothing - that would mean
+  # the probe is broken. An image that is genuinely absent is a finding to
+  # read, not a build to fail, and the matrix row above is what reports it
+  # as a failure.
+  sixteen-kb-image-inventory:
+    name: 16 KB system image availability (evidence)
+    runs-on: ubuntu-latest
+    needs: [static-validation]
+    if: >-
+      ${{ format('{0}', inputs.diagnostic_js_only) != 'true'
+          && (format('{0}', inputs.api_matrix) == 'true'
+              || contains(github.event.head_commit.message, '[api-matrix]')) }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup JDK 17 (Temurin)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: List every system image the SDK offers, on every channel
+        run: |
+          set -uo pipefail
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          : > images.txt
+          for channel in 0 1 2 3; do
+            echo "===== channel $channel =====" >> images.txt
+            sdkmanager --list --channel="$channel" 2>/dev/null \
+              | grep -E "system-images;android-3[4-9];" >> images.txt \
+              || echo "(no android-34..39 system image listed on channel $channel)" >> images.txt
+          done
+          cat images.txt
+          echo "=== images whose tag could carry 16 KB pages ==="
+          grep -Ei "experimental|16k|ps16k" images.txt || echo "NONE FOUND ON ANY CHANNEL"
+          echo "=== the exact package this workflow asks for, on the canary channel ==="
+          sdkmanager --install 'system-images;android-35;google_apis_experimental;x86_64' \
+            --channel=3 2>&1 | tail -20 || true
+          # The probe is only meaningful if the listing worked at all.
+          test -s images.txt
+
+      - name: Upload the system image inventory
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: sixteen-kb-image-inventory
+          path: images.txt
+          if-no-files-found: error
+
   android-instrumentation-matrix:
     name: Instrumentation API ${{ matrix.label }}
     runs-on: ubuntu-latest
