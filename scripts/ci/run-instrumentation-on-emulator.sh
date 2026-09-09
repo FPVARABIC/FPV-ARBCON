@@ -97,6 +97,18 @@ cat "$DIAG/large-text-accessibility.txt"
 echo "large-text/accessibility status: $a11y_status"
 if [ "$status" -eq 0 ]; then status=$a11y_status; fi
 
+# The lifecycle cases that cannot be driven from inside the process they
+# would have to kill: a genuine first install, a warm launch, `am kill`
+# and relaunch, and three consecutive cold launches - each asserting the
+# operator's state afterwards rather than only that the launch returned
+# ok. Runs after the RTL check because it uninstalls the app.
+echo "=== lifecycle from outside the process ==="
+lifecycle_status=0
+../scripts/ci/verify-lifecycle-from-outside.sh "$DIAG" > "$DIAG/lifecycle.txt" 2>&1 || lifecycle_status=$?
+cat "$DIAG/lifecycle.txt"
+echo "lifecycle-from-outside status: $lifecycle_status"
+if [ "$status" -eq 0 ]; then status=$lifecycle_status; fi
+
 # The 16 KB row, and only that row, proves the page-size claim on the
 # device: which libraries the dynamic linker actually mapped, whether it
 # refused any of them, and whether the platform quietly put the app into
