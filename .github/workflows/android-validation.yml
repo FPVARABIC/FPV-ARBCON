@@ -473,6 +473,19 @@ jobs:
               | tee ../instrumentation-diagnostics/rtl-cold-launch.txt || rtl_status=${PIPESTATUS[0]}
             echo "rtl cold-launch status: $rtl_status"
             if [ "$status" -eq 0 ]; then status=$rtl_status; fi
+            # Large text and a labelled accessibility tree: the app must
+            # survive a 2x system font scale, and its window must contain
+            # nodes TalkBack could actually read. Neither is reachable from
+            # Jest or from an APK inspection.
+            a11y_status=0
+            cd ..
+            DIAG_DIR=instrumentation-diagnostics \
+              scripts/ci/verify-large-text-and-accessibility.sh 2>&1 \
+              | tee instrumentation-diagnostics/large-text-accessibility.txt \
+              || a11y_status=${PIPESTATUS[0]}
+            cd android
+            echo "large-text/accessibility status: $a11y_status"
+            if [ "$status" -eq 0 ]; then status=$a11y_status; fi
             exit $status
 
       # Counts the executed tests, prints every suite and every failing
