@@ -945,6 +945,11 @@ jobs:
             head -60 "$stuck"
             echo
           done
+          for extract in $(find evidence -name 'input-and-anr.txt' | sort); do
+            echo "===== ${extract} ====="
+            cat "$extract"
+            echo
+          done
           for verdict in $(find evidence -name 'native-coverage-verdict.txt' | sort); do
             echo "===== ${verdict} ====="
             cat "$verdict"

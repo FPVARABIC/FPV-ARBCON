@@ -248,6 +248,14 @@ print(f"started={len(started)} finished={len(finished)} never finished={len(hang
 for name in hanging:
     print(f"  NEVER FINISHED: {name}")
 PY
+  # THE GEOMETRY BEHIND THE TAP COORDINATES. TapGeometryDiagnosticTest
+  # prints this and asserts nothing, so it never reaches the digest - the
+  # digest only carries FAILING cases. Without lifting it out of logcat the
+  # measurement would be captured and unreadable, which is the trap this
+  # campaign has fallen into three times now.
+  echo "=== tap geometry diagnostic ==="
+  grep -a -A 70 "UI-X3B TAP GEOMETRY DIAGNOSTIC" "$DIAG/logcat.txt" 2>/dev/null \
+    | sed 's/.*System\.out: //' | cut -c1-200 | head -80 || true
   echo "=== cases the runner itself reported as FAILED, with the first frames ==="
   grep -a -A 12 "TestRunner:.*failed:" "$DIAG/logcat.txt" 2>/dev/null \
     | sed 's/.*TestRunner:/TestRunner:/' | cut -c1-240 | head -120 || true
