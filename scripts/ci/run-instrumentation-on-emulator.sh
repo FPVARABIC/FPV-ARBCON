@@ -90,10 +90,22 @@ echo "=== connectedAndroidTest ==="
 # captures the state of a stuck device and reports the timeout as a
 # failure - the run still fails, it just says something.
 SUITE_TIMEOUT_SECONDS="${SUITE_TIMEOUT_SECONDS:-2400}"
+# WHICH TEST, NOT JUST WHICH SUITE. AndroidJUnitRunner's timeout_msec
+# applies a per-test bound, so a case that never returns fails as
+# TestTimedOutException with its own name and stack instead of taking the
+# whole run down anonymously. Four API 24 runs have now hung without ever
+# naming a case; this is the mechanism that names one.
+#
+# It is a BOUND BEING ADDED, not a bound being relaxed. Nothing in this
+# suite is expected to take five minutes - the slowest single wait in it is
+# awaitTag's forty seconds - so this cannot mask slowness that matters, and
+# a case that trips it is a finding rather than a tidied-away failure.
+PER_TEST_TIMEOUT_MSEC="${PER_TEST_TIMEOUT_MSEC:-300000}"
 status=0
 timeout --signal=TERM --kill-after=120 "$SUITE_TIMEOUT_SECONDS" \
   ./gradlew :app:connectedAndroidTest \
     -PreactNativeArchitectures=x86_64 \
+    "-Pandroid.testInstrumentationRunnerArguments.timeout_msec=${PER_TEST_TIMEOUT_MSEC}" \
     --max-workers=2 \
     --no-daemon \
     --stacktrace \
@@ -104,26 +116,58 @@ fi
 echo "gradle connectedAndroidTest status: $status"
 
 echo "=== diagnostics ==="
-adb logcat -d > "$DIAG/logcat.txt" 2>&1 || true
-adb shell getprop > "$DIAG/getprop.txt" 2>&1 || true
-adb shell dumpsys package com.fpvarbcon > "$DIAG/dumpsys-package.txt" 2>&1 || true
-adb shell ps -A > "$DIAG/processes.txt" 2>&1 || true
-adb shell dumpsys activity activities > "$DIAG/dumpsys-activities.txt" 2>&1 || true
+# EVERY adb CALL IS BOUNDED FROM HERE ON.
+#
+# On run 34418366288 the API 24 row's suite was stopped at its 40-minute
+# bound exactly as intended - and then the job sat for another twenty-plus
+# minutes in the diagnostics below and was heading for the runner's own
+# 120-minute kill. adb has no per-command timeout, so against a wedged
+# device every one of these blocks forever, and the phase whose entire
+# purpose is to produce evidence when the suite hangs was itself the thing
+# that hung.
+#
+# `bounded` fixes that: a command that does not answer is recorded as not
+# answering and the script moves on. A missing capture is a fact worth
+# having; a killed runner is not.
+ADB_TIMEOUT_SECONDS="${ADB_TIMEOUT_SECONDS:-90}"
+# Descriptor 9 is the job log as it was before any redirection. Every call
+# below sends its output to a capture file or into a command substitution,
+# so a warning written to plain stdout would land in the very file the
+# reader is being warned about rather than in the log.
+exec 9>&1
+bounded() {
+  local label="$1"
+  shift
+  if timeout --signal=TERM --kill-after=10 "$ADB_TIMEOUT_SECONDS" "$@"; then
+    return 0
+  fi
+  local code=$?
+  if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+    echo "::warning::${label} did not answer within ${ADB_TIMEOUT_SECONDS}s - the device is not responding to adb" >&9
+  fi
+  return "$code"
+}
+
+bounded "adb logcat -d" adb logcat -d > "$DIAG/logcat.txt" 2>&1 || true
+bounded "adb shell getprop" adb shell getprop > "$DIAG/getprop.txt" 2>&1 || true
+bounded "dumpsys package" adb shell dumpsys package com.fpvarbcon > "$DIAG/dumpsys-package.txt" 2>&1 || true
+bounded "adb shell ps -A" adb shell ps -A > "$DIAG/processes.txt" 2>&1 || true
+bounded "dumpsys activity activities" adb shell dumpsys activity activities > "$DIAG/dumpsys-activities.txt" 2>&1 || true
 # WHERE A HUNG TEST IS ACTUALLY STANDING. A stack dump of the app and the
 # instrumentation process is the only thing that distinguishes "waiting on
 # a latch that will never fall" from "slow". SIGQUIT makes ART write the
 # thread dump to logcat, so it is captured a second time afterwards.
 {
   echo "=== processes matching fpvarbcon ==="
-  adb shell ps -A 2>/dev/null | grep -i fpvarbcon || echo "(no fpvarbcon process)"
+  bounded "ps -A" adb shell ps -A 2>/dev/null | grep -i fpvarbcon || echo "(no fpvarbcon process)"
   echo "=== ANR traces, if the platform wrote any ==="
-  adb shell ls -l /data/anr/ 2>/dev/null || echo "(no /data/anr listing)"
-  adb shell cat /data/anr/traces.txt 2>/dev/null | head -400 || echo "(no traces.txt)"
+  bounded "ls /data/anr" adb shell ls -l /data/anr/ 2>/dev/null || echo "(no /data/anr listing)"
+  bounded "cat traces.txt" adb shell cat /data/anr/traces.txt 2>/dev/null | head -400 || echo "(no traces.txt)"
 } > "$DIAG/stuck-process.txt" 2>&1 || true
-for pid in $(adb shell ps -A 2>/dev/null | grep -i fpvarbcon | awk '{print $2}'); do
-  adb shell kill -3 "$pid" 2>/dev/null || true
+for pid in $(bounded "ps -A for SIGQUIT" adb shell ps -A 2>/dev/null | grep -i fpvarbcon | awk '{print $2}'); do
+  bounded "kill -3 $pid" adb shell kill -3 "$pid" 2>/dev/null || true
 done
-adb logcat -d > "$DIAG/logcat-after-sigquit.txt" 2>&1 || true
+bounded "logcat after SIGQUIT" adb logcat -d > "$DIAG/logcat-after-sigquit.txt" 2>&1 || true
 echo "logcat lines captured: $(wc -l < "$DIAG/logcat.txt" 2>/dev/null || echo 0)"
 
 # THE FOUR QUESTIONS A 110,000-LINE LOGCAT IS ASKED, ANSWERED IN A FILE
@@ -151,7 +195,7 @@ echo "logcat lines captured: $(wc -l < "$DIAG/logcat.txt" 2>/dev/null || echo 0)
   grep -aE "Focus (request|entering|leaving)|setFocusedWindow|focusedWindow|Window\{.*\} .*focus" \
     "$DIAG/logcat.txt" 2>/dev/null | head -40 || true
   echo "=== windows on top at the end of the run ==="
-  adb shell dumpsys window 2>/dev/null | tr -d '\r' \
+  bounded "dumpsys window" adb shell dumpsys window 2>/dev/null | tr -d '\r' \
     | grep -aE "mCurrentFocus|mFocusedApp" || echo "(no focus lines)"
 } > "$DIAG/input-and-anr.txt" 2>&1 || true
 echo "input/ANR extract: $(wc -l < "$DIAG/input-and-anr.txt" 2>/dev/null || echo 0) lines"
@@ -161,7 +205,7 @@ echo "input/ANR extract: $(wc -l < "$DIAG/input-and-anr.txt" 2>/dev/null || echo
 # suite because `pm clear` would disturb it.
 echo "=== fresh-install RTL cold launch ==="
 rtl_status=0
-../scripts/ci/verify-rtl-cold-launch.sh > "$DIAG/rtl-cold-launch.txt" 2>&1 || rtl_status=$?
+timeout --signal=TERM --kill-after=30 600 ../scripts/ci/verify-rtl-cold-launch.sh > "$DIAG/rtl-cold-launch.txt" 2>&1 || rtl_status=$?
 cat "$DIAG/rtl-cold-launch.txt"
 echo "rtl cold-launch status: $rtl_status"
 if [ "$status" -eq 0 ]; then status=$rtl_status; fi
@@ -169,7 +213,8 @@ if [ "$status" -eq 0 ]; then status=$rtl_status; fi
 echo "=== large text and accessibility ==="
 a11y_status=0
 ( cd .. && DIAG_DIR=instrumentation-diagnostics \
-    scripts/ci/verify-large-text-and-accessibility.sh ) \
+    timeout --signal=TERM --kill-after=30 900 \
+      scripts/ci/verify-large-text-and-accessibility.sh ) \
   > "$DIAG/large-text-accessibility.txt" 2>&1 || a11y_status=$?
 cat "$DIAG/large-text-accessibility.txt"
 echo "large-text/accessibility status: $a11y_status"
@@ -182,7 +227,7 @@ if [ "$status" -eq 0 ]; then status=$a11y_status; fi
 # ok. Runs after the RTL check because it uninstalls the app.
 echo "=== lifecycle from outside the process ==="
 lifecycle_status=0
-../scripts/ci/verify-lifecycle-from-outside.sh "$DIAG" > "$DIAG/lifecycle.txt" 2>&1 || lifecycle_status=$?
+timeout --signal=TERM --kill-after=30 900 ../scripts/ci/verify-lifecycle-from-outside.sh "$DIAG" > "$DIAG/lifecycle.txt" 2>&1 || lifecycle_status=$?
 cat "$DIAG/lifecycle.txt"
 echo "lifecycle-from-outside status: $lifecycle_status"
 if [ "$status" -eq 0 ]; then status=$lifecycle_status; fi
@@ -195,7 +240,7 @@ if [ "$status" -eq 0 ]; then status=$lifecycle_status; fi
 if [ "${EXPECT_PAGE_SIZE:-}" = "16384" ]; then
   echo "=== 16 KB runtime proof ==="
   runtime16k_status=0
-  ../scripts/ci/verify-16kb-runtime.sh "$DIAG" > "$DIAG/16kb-runtime.txt" 2>&1 || runtime16k_status=$?
+  timeout --signal=TERM --kill-after=30 900 ../scripts/ci/verify-16kb-runtime.sh "$DIAG" > "$DIAG/16kb-runtime.txt" 2>&1 || runtime16k_status=$?
   cat "$DIAG/16kb-runtime.txt"
   echo "16 KB runtime status: $runtime16k_status"
   if [ "$status" -eq 0 ]; then status=$runtime16k_status; fi
