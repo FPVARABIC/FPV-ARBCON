@@ -4,6 +4,7 @@ import android.os.SystemClock
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -121,6 +122,29 @@ class InputInjectionControlTest {
     }
   }
 
+  /**
+   * THE FOUR THINGS A PRESS HAS TO ESTABLISH.
+   *
+   * "The screen changed after I injected an event" is not proof that the
+   * press worked - the screen could have changed for any reason, and the
+   * event could have gone anywhere. So all four are recorded:
+   *
+   *   1  it entered the right WINDOW      the active window belongs to
+   *                                       com.fpvarbcon, not the launcher
+   *                                       and not a system dialog
+   *   2  it reached the right VIEW        the topmost drawn view at the
+   *                                       coordinate is the control, or is
+   *                                       inside it
+   *   3  the platform ACCEPTED it         both injections returned true
+   *   4  a PRODUCTION state changed       the firmware screen appeared,
+   *                                       which is the app's own navigation
+   *                                       and not something this test set
+   *
+   * Nothing in this file calls a React handler, a navigation method or
+   * performClick. The only thing done to the application is two
+   * MotionEvents put into InputDispatcher at a coordinate - which is why
+   * theSamePressDoesNothingWhenTheControlIsCovered can exist at all.
+   */
   @Test
   fun theUntargetedInjectionPathMakesTheApplicationMove() {
     ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -129,12 +153,91 @@ class InputInjectionControlTest {
       scenario.awaitTag(CONTROL)
 
       val started = SystemClock.uptimeMillis()
-      scenario.tapTag(CONTROL)
+      val evidence = scenario.tapTagWithEvidence(CONTROL)
+      println("positive control: $evidence")
+
+      assertEquals(
+        "the press went into a window owned by ${evidence.activeWindowPackage}, not the " +
+          "application. Whatever it did, it did not press this control. ${activeWindowReport()}",
+        "com.fpvarbcon",
+        evidence.activeWindowPackage,
+      )
+      assertTrue(
+        "at (${evidence.x}, ${evidence.y}) the topmost drawn view was " +
+          "\"${evidence.topmostTagAtPoint}\", which is neither \"$CONTROL\" nor inside it, so " +
+          "the coordinate was not on the control",
+        evidence.landedOnTarget,
+      )
+      assertTrue(
+        "UiAutomation refused the events: down=${evidence.downAccepted} up=${evidence.upAccepted}",
+        evidence.downAccepted && evidence.upAccepted,
+      )
+
       scenario.awaitTag(DESTINATION)
       println(
         "positive control: pressing \"$CONTROL\" opened \"$DESTINATION\" in " +
           "${SystemClock.uptimeMillis() - started}ms",
       )
+    }
+  }
+
+  /**
+   * THE SAME PRESS, THE SAME COORDINATE, SOMETHING ELSE ON TOP.
+   *
+   * withoutThePressThatScreenNeverAppears already shows the screen does not
+   * open on its own. This is the stronger half: it presses the exact
+   * coordinate that just worked, with a clickable view covering the
+   * content, and requires nothing to happen.
+   *
+   * Occluding rather than moving the coordinate is deliberate. Pressing
+   * somewhere else would leave open the possibility that the coordinate was
+   * never what mattered; pressing the SAME point and getting a different
+   * outcome can only be explained by what was under it.
+   *
+   * The occluder is removed afterwards and the press is repeated to show
+   * the screen still opens - so a failure here is about occlusion and not
+   * about the app having been left broken.
+   */
+  @Test
+  fun theSamePressDoesNothingWhenTheControlIsCovered() {
+    ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+      scenario.moveToState(Lifecycle.State.RESUMED)
+      scenario.awaitTag(START)
+      scenario.awaitTag(CONTROL)
+      val centre = scenario.centreOfTag(CONTROL)
+
+      val whileCovered = scenario.withContentOccluded {
+        tapAt(centre[0], centre[1])
+        val deadline = SystemClock.uptimeMillis() + MUST_NOT_APPEAR_MILLIS
+        var appeared = false
+        while (SystemClock.uptimeMillis() < deadline) {
+          if (scenario.hasTag(DESTINATION)) {
+            appeared = true
+            break
+          }
+          SystemClock.sleep(100)
+        }
+        appeared
+      }
+
+      println(
+        "occlusion control: pressed (${centre[0]}, ${centre[1]}) with the content covered, " +
+          "\"$DESTINATION\" present = $whileCovered",
+      )
+      assertFalse(
+        "pressing (${centre[0]}, ${centre[1]}) opened \"$DESTINATION\" while a clickable view " +
+          "covered the entire content. The press is therefore not reaching the application " +
+          "through the view under the coordinate, and every result in this suite that concludes " +
+          "\"the control was pressed\" is measuring something else.",
+        whileCovered,
+      )
+
+      // And with the cover gone the same coordinate still works, so the
+      // result above is about the occluder and not about a broken app.
+      scenario.awaitTag(CONTROL)
+      tapAt(centre[0], centre[1])
+      scenario.awaitTag(DESTINATION)
+      println("occlusion control: with the cover removed, the same coordinate opened \"$DESTINATION\"")
     }
   }
 

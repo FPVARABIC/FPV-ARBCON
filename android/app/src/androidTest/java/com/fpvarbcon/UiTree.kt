@@ -200,6 +200,130 @@ fun ActivityScenario<MainActivity>.tapTag(testId: String) {
 }
 
 /**
+ * THE DEEPEST DRAWN VIEW UNDER A POINT, in the order the platform would
+ * hand it a touch. Children are visited after their parent and later
+ * siblings after earlier ones, so the LAST match in traversal order is the
+ * one drawn on top - which is the one a finger would hit.
+ */
+fun viewAt(root: View, x: Float, y: Float): View? =
+  everyView(root)
+    .filter { view ->
+      val rect = Rect()
+      view.visibility == View.VISIBLE && view.isShown && view.alpha > 0f &&
+        view.getGlobalVisibleRect(rect) && rect.contains(x.toInt(), y.toInt())
+    }
+    .lastOrNull()
+
+/** What a press was able to establish about itself. */
+data class TapEvidence(
+  val testId: String,
+  val x: Float,
+  val y: Float,
+  /** The package owning the window the platform considers active. */
+  val activeWindowPackage: String?,
+  /** The testID of the topmost drawn view at the coordinate, if it has one. */
+  val topmostTagAtPoint: String?,
+  /** Whether the target view is the topmost one at the point, or contains it. */
+  val landedOnTarget: Boolean,
+  /** What UiAutomation reported for the two injections. */
+  val downAccepted: Boolean,
+  val upAccepted: Boolean,
+) {
+  override fun toString(): String =
+    "press on \"$testId\" at ($x, $y): activeWindow=$activeWindowPackage " +
+      "topmostTagAtPoint=$topmostTagAtPoint landedOnTarget=$landedOnTarget " +
+      "down=$downAccepted up=$upAccepted"
+}
+
+/**
+ * A press that records what it can prove about itself, rather than one
+ * that is assumed to have happened.
+ *
+ * It answers three of the four questions a press has to answer - whose
+ * window was in front, what was actually under the coordinate, and whether
+ * the platform accepted the events. The fourth, whether the APPLICATION
+ * moved, is not something a press can answer about itself: only the caller
+ * can, by waiting for a production state to change afterwards.
+ *
+ * Nothing here calls a React handler, a navigation method or performClick.
+ * The only thing it does to the application is put two MotionEvents into
+ * InputDispatcher at a coordinate.
+ */
+fun ActivityScenario<MainActivity>.tapTagWithEvidence(testId: String): TapEvidence {
+  val centre = centreOfTag(testId)
+  val x = centre[0]
+  val y = centre[1]
+
+  val activePackage = runCatching {
+    instrumentation().uiAutomation.rootInActiveWindow?.packageName?.toString()
+  }.getOrNull()
+
+  val (topmostTag, landed) = readMain { activity ->
+    val root = activity.window.decorView
+    val target = findByTag(root, testId)
+    val hit = viewAt(root, x, y)
+    val within = hit != null && target != null &&
+      (hit === target || everyView(target).contains(hit) || everyView(hit).contains(target))
+    (hit?.tag as? String) to within
+  }
+
+  val down = SystemClock.uptimeMillis()
+  val press = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0)
+  press.source = InputDevice.SOURCE_TOUCHSCREEN
+  val downAccepted = try {
+    inject(press)
+  } finally {
+    press.recycle()
+  }
+  SystemClock.sleep(60)
+  val release = MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0)
+  release.source = InputDevice.SOURCE_TOUCHSCREEN
+  val upAccepted = try {
+    inject(release)
+  } finally {
+    release.recycle()
+  }
+  instrumentation().waitForIdleSync()
+
+  return TapEvidence(testId, x, y, activePackage, topmostTag, landed, downAccepted, upAccepted)
+}
+
+/**
+ * Puts a full-screen clickable view over the application's content and
+ * runs [block] with it in place, then removes it.
+ *
+ * This is how "the press worked because of WHERE it landed" is proved: the
+ * same coordinate is pressed with something else on top of the control, and
+ * nothing may happen. Changing the coordinate instead would leave open the
+ * possibility that the coordinate was never what mattered.
+ */
+fun <T> ActivityScenario<MainActivity>.withContentOccluded(block: () -> T): T {
+  val added = readMain { activity ->
+    val content = activity.findViewById<ViewGroup>(android.R.id.content)
+    val blocker = View(activity)
+    blocker.isClickable = true
+    blocker.tag = "test-only-occluder"
+    content.addView(
+      blocker,
+      ViewGroup.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT,
+      ),
+    )
+    blocker
+  }
+  instrumentation().waitForIdleSync()
+  return try {
+    block()
+  } finally {
+    readMain { activity ->
+      activity.findViewById<ViewGroup>(android.R.id.content).removeView(added)
+    }
+    instrumentation().waitForIdleSync()
+  }
+}
+
+/**
  * The same press through Instrumentation.sendPointerSync, which injects
  * with a target UID. Returns what the platform did, so a test can record
  * it rather than a comment claiming it.
