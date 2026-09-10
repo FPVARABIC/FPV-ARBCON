@@ -29,8 +29,42 @@ set -uo pipefail
 DIAG="../instrumentation-diagnostics"
 mkdir -p "$DIAG"
 
+# EVERY adb CALL IN THIS FILE IS BOUNDED, INCLUDING THE FIRST ONE.
+#
+# Run 34418366288's API 24 row sat in this script for 67 minutes and 47
+# seconds and produced NO page-size transcript, NO results directory and NO
+# stuck-process capture. page-size.txt is written a few lines below, before
+# anything else happens, so its absence localises the stall precisely: the
+# script started and never got past its FIRST `adb shell`.
+#
+# An earlier version of this file bounded only the calls after the suite,
+# on the reasoning that the emulator is healthy at this point because the
+# action just waited for it to boot. That reasoning was wrong. The action
+# waits for sys.boot_completed; a device can answer that and then stop
+# answering `adb shell` - and when it does, an unbounded call here burns
+# the job's entire 120-minute allowance without printing one useful line.
+#
+# So the helper is defined FIRST and used everywhere. Descriptor 9 is the
+# job log as it was before any redirection, because most call sites below
+# redirect into a capture file or a command substitution, where a warning
+# on plain stdout would be swallowed by the very file it is warning about.
+ADB_TIMEOUT_SECONDS="${ADB_TIMEOUT_SECONDS:-90}"
+exec 9>&1
+bounded() {
+  local label="$1"
+  shift
+  if timeout --signal=TERM --kill-after=10 "$ADB_TIMEOUT_SECONDS" "$@"; then
+    return 0
+  fi
+  local code=$?
+  if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
+    echo "::warning::${label} did not answer within ${ADB_TIMEOUT_SECONDS}s - the device is not responding to adb" >&9
+  fi
+  return "$code"
+}
+
 echo "=== devices ==="
-adb devices
+bounded "adb devices" adb devices || true
 
 echo "=== page size of the emulator under test ==="
 # Which page size the image uses decides whether this run says anything
@@ -45,8 +79,24 @@ echo "=== page size of the emulator under test ==="
 # Android's own: "run the following command to verify that it's using a
 # 16 KB environment: adb shell getconf PAGE_SIZE. The command should
 # return a value of 16384."
-PAGE_SIZE="$(adb shell getconf PAGE_SIZE 2>/dev/null | tr -d '\r')"
+PAGE_SIZE="$(bounded "adb shell getconf PAGE_SIZE" adb shell getconf PAGE_SIZE 2>/dev/null | tr -d '\r')"
 echo "adb shell getconf PAGE_SIZE -> ${PAGE_SIZE:-<unavailable>}"
+# A DEVICE THAT WILL NOT ANSWER ITS FIRST SHELL COMMAND IS NOT A TEST
+# FAILURE, and pretending otherwise is how one row spends two hours saying
+# nothing. If the very first shell round trip produced nothing, stop here
+# and say so - everything below needs the same channel.
+if [ -z "$PAGE_SIZE" ]; then
+  echo "::error::the emulator did not answer 'adb shell getconf PAGE_SIZE' within ${ADB_TIMEOUT_SECONDS}s. The action reported the device booted, so this is a device that came up and then stopped answering adb - not a test result. Nothing below could run against it."
+  {
+    echo "\$ adb shell getconf PAGE_SIZE"
+    echo "<no answer within ${ADB_TIMEOUT_SECONDS}s>"
+    echo "\$ adb devices"
+    bounded "adb devices" adb devices 2>&1 || echo "<no answer>"
+    echo "\$ adb get-state"
+    bounded "adb get-state" adb get-state 2>&1 || echo "<no answer>"
+  } > "$DIAG/page-size.txt"
+  exit 1
+fi
 # The RAW command and its RAW output, recorded verbatim: a claim about
 # page size is only worth the transcript behind it, and this file is
 # re-printed as the job's last step so the transcript survives the log
@@ -56,11 +106,11 @@ echo "adb shell getconf PAGE_SIZE -> ${PAGE_SIZE:-<unavailable>}"
   echo "\$ adb shell getconf PAGE_SIZE"
   echo "${PAGE_SIZE:-<unavailable>}"
   echo "\$ adb shell getprop ro.product.cpu.abilist"
-  adb shell getprop ro.product.cpu.abilist 2>/dev/null | tr -d '\r'
+  bounded "getprop abilist" adb shell getprop ro.product.cpu.abilist 2>/dev/null | tr -d '\r'
   echo "\$ adb shell getprop ro.build.version.sdk"
-  adb shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r'
+  bounded "getprop sdk" adb shell getprop ro.build.version.sdk 2>/dev/null | tr -d '\r'
   echo "\$ adb shell getprop ro.build.fingerprint"
-  adb shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r'
+  bounded "getprop fingerprint" adb shell getprop ro.build.fingerprint 2>/dev/null | tr -d '\r'
 } > "$DIAG/page-size.txt"
 if [ "$PAGE_SIZE" = "16384" ]; then
   echo "this emulator uses 16 KB pages, so the launches below exercise that path"
@@ -72,7 +122,7 @@ if [ -n "${EXPECT_PAGE_SIZE:-}" ] && [ "$PAGE_SIZE" != "$EXPECT_PAGE_SIZE" ]; th
   exit 1
 fi
 
-adb logcat -c || true
+bounded "adb logcat -c" adb logcat -c || true
 
 echo "=== connectedAndroidTest ==="
 # BOUNDED, SO A HANG BECOMES EVIDENCE INSTEAD OF AN OPAQUE KILL.
@@ -129,25 +179,6 @@ echo "=== diagnostics ==="
 # `bounded` fixes that: a command that does not answer is recorded as not
 # answering and the script moves on. A missing capture is a fact worth
 # having; a killed runner is not.
-ADB_TIMEOUT_SECONDS="${ADB_TIMEOUT_SECONDS:-90}"
-# Descriptor 9 is the job log as it was before any redirection. Every call
-# below sends its output to a capture file or into a command substitution,
-# so a warning written to plain stdout would land in the very file the
-# reader is being warned about rather than in the log.
-exec 9>&1
-bounded() {
-  local label="$1"
-  shift
-  if timeout --signal=TERM --kill-after=10 "$ADB_TIMEOUT_SECONDS" "$@"; then
-    return 0
-  fi
-  local code=$?
-  if [ "$code" -eq 124 ] || [ "$code" -eq 137 ]; then
-    echo "::warning::${label} did not answer within ${ADB_TIMEOUT_SECONDS}s - the device is not responding to adb" >&9
-  fi
-  return "$code"
-}
-
 bounded "adb logcat -d" adb logcat -d > "$DIAG/logcat.txt" 2>&1 || true
 bounded "adb shell getprop" adb shell getprop > "$DIAG/getprop.txt" 2>&1 || true
 bounded "dumpsys package" adb shell dumpsys package com.fpvarbcon > "$DIAG/dumpsys-package.txt" 2>&1 || true
