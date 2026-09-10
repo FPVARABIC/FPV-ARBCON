@@ -209,7 +209,11 @@ class ReactHostCampaignTest {
     shell("dumpsys activity broadcasts")
       .lineSequence()
       .map { it.trim() }
-      .filter { it.startsWith("* ReceiverList{") && it.contains("com.fpvarbcon") }
+      // Matched on the substring rather than on a leading "* ", because the
+      // bullet is a formatting detail that has differed between platform
+      // versions and this suite runs on four of them. The package name is
+      // what makes the line ours.
+      .filter { it.contains("ReceiverList{") && it.contains("com.fpvarbcon") }
       .toList()
 
   /**
