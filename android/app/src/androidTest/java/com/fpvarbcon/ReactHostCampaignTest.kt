@@ -145,18 +145,51 @@ class ReactHostCampaignTest {
    * WHO OWNS A THREAD, NAMED HERE RATHER THAN POINTED AT.
    *
    * A census that prints thread names and says "look the owner up
-   * elsewhere" is not a census. Every thread this module creates has a
-   * declared owner and this is the map; a module-shaped thread name that is
-   * NOT in it fails theResourceCensusNamesEveryOwnerItReports below, so the
-   * map cannot quietly fall behind the code.
+   * elsewhere" is not a census.
+   *
+   * This is the RUNTIME half of a pair. scripts/ci/native-thread-census.py
+   * reads the source and requires all thirteen construction sites to be
+   * declared, owned and terminated - it is what stops a new thread being
+   * added without a decision. This map is what stops one being SEEN on a
+   * live device without an owner, and the two must agree: every entry below
+   * is one of the thirteen names that census prints, with the file and line
+   * it is constructed at.
+   *
+   * A module-shaped thread name that is NOT in this map fails
+   * theResourceCensusNamesEveryOwnerItReports, so the map cannot quietly
+   * fall behind the code.
    */
-  private fun moduleOwnerOf(threadName: String): String? = when {
-    threadName == "UsbIoExecutor" -> "UsbIoExecutor.kt - the module's single serialised I/O thread"
-    threadName.startsWith("UsbSerialTx-") -> "UsbSerialWriteQueue.kt - one write queue per session"
-    threadName.startsWith("UsbSerialRx-") -> "SerialReadLoop.kt - one read loop per open session"
-    threadName.startsWith("DfuFlash") -> "DfuFlashWorker.kt - the firmware flash worker"
-    threadName.startsWith("UsbAttempt-") -> "UsbBoundedAttempt.kt - one bounded attempt at a time"
-    else -> null
+  private fun moduleOwnerOf(threadName: String): String? {
+    // UsbBoundedAttempt names its watchdog after the thread it is watching,
+    // so the pair share an owner.
+    val base = threadName.removeSuffix("-watchdog")
+    val owner = when {
+      base == "UsbIoExecutor" ->
+        "UsbIoExecutor.kt:57 - the module's single serialised I/O thread"
+      base == "FirmwareFileRead" ->
+        "UsbSerialTransportModule.kt:672 - reads a firmware file off the device"
+      base == "FirmwareFileSave" ->
+        "UsbSerialTransportModule.kt:697 - writes a firmware file to the device"
+      base.startsWith("UsbSerialTx-") ->
+        "UsbSerialWriteQueue.kt:130 - one write queue per open session"
+      base.startsWith("UsbSerialRxStart-") ->
+        "UsbSerialTransportModule.kt:1307 - starts a session's read loop"
+      base.startsWith("UsbSerialRx-") ->
+        "UsbSerialTransportModule.kt:1523 - one read loop per open session"
+      base.startsWith("UsbSerialControl-") ->
+        "UsbSerialTransportModule.kt:1247 - a bounded control-line change"
+      base.startsWith("UsbSerialBaud-") ->
+        "UsbSerialTransportModule.kt:1269 - a bounded baud-rate change"
+      base.startsWith("DfuFlash-") ->
+        "UsbSerialTransportModule.kt:353 - the DFU flash worker"
+      base.startsWith("DfuExit-") ->
+        "UsbSerialTransportModule.kt:436 - the DFU exit worker"
+      base.startsWith("DfuUnprotect-") ->
+        "UsbSerialTransportModule.kt:504 - the DFU read-unprotect worker"
+      else -> null
+    } ?: return null
+    return if (threadName.endsWith("-watchdog")) "$owner (watchdog, UsbBoundedAttempt.kt:76)"
+    else owner
   }
 
   /**

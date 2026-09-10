@@ -261,6 +261,61 @@ def resolve_name(lines: list[str], index: int, column: int) -> str | None:
     return None
 
 
+RUNTIME_OWNER_MAP = (
+    "android/app/src/androidTest/java/com/fpvarbcon/ReactHostCampaignTest.kt"
+)
+
+
+def runtime_owner_gaps(found: dict) -> list[str]:
+    """
+    THE SOURCE CENSUS AND THE RUNTIME CENSUS MUST AGREE.
+
+    This file reads the source and requires every construction site to be
+    declared. ReactHostCampaignTest.moduleOwnerOf is the other half: it maps
+    a thread name SEEN ON A DEVICE back to its owner, and its census prints
+    that owner next to the name.
+
+    Nothing kept the two in step. A new thread could be declared here, pass
+    this gate, and then appear in a device census as a name with no owner -
+    or worse, be quietly skipped by a map that does not recognise it, which
+    is how a leaked thread stops being reported. So each name declared here
+    must be matched by an arm of that map.
+
+    Names carrying an interpolated suffix are matched on their literal
+    prefix, which is what moduleOwnerOf branches on; a name that is entirely
+    a parameter belongs to the caller that supplies it and is covered by
+    that caller's own entry.
+    """
+    try:
+        with open(RUNTIME_OWNER_MAP, encoding="utf-8") as handle:
+            source = handle.read()
+    except OSError as error:
+        return [f"cannot read the runtime owner map at {RUNTIME_OWNER_MAP}: {error}"]
+
+    start = source.find("private fun moduleOwnerOf")
+    end = source.find("private fun registeredReceivers")
+    if start < 0 or end < 0 or end <= start:
+        return [
+            f"{RUNTIME_OWNER_MAP} no longer contains a moduleOwnerOf block, so a thread seen on "
+            "a device would be reported without an owner"
+        ]
+    block = source[start:end]
+
+    gaps = []
+    for name in sorted(found):
+        if name.startswith("$"):
+            # A caller-supplied name: the concrete forms are the other
+            # entries, each of which is checked on its own.
+            continue
+        literal = name.split("$", 1)[0]
+        if f'"{literal}"' not in block:
+            gaps.append(
+                f'thread "{name}" is declared here but moduleOwnerOf in {RUNTIME_OWNER_MAP} has '
+                f'no arm matching "{literal}", so a device census would print it with no owner'
+            )
+    return gaps
+
+
 def main(argv: list[str]) -> int:
     source_root = "android/app/src/main/java"
     if "--source-root" in argv:
@@ -346,6 +401,8 @@ def main(argv: list[str]) -> int:
     for name, (_file, owner, ends) in DECLARED.items():
         if len(owner.strip()) < 40 or len(ends.strip()) < 40:
             failures.append(f'"{name}" is declared without a real owner or termination path')
+
+    failures.extend(runtime_owner_gaps(found))
 
     for failure in failures:
         print(f"::error::{failure}")
