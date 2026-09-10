@@ -184,6 +184,39 @@ echo "logcat lines captured: $(wc -l < "$DIAG/logcat.txt" 2>/dev/null || echo 0)
 # - which process was not responding, if any
 # - what the focused window was while all that happened
 {
+  # WHICH CASE WAS RUNNING WHEN IT STOPPED.
+  #
+  # When the suite is killed, AGP never writes the JUnit XML, so the digest
+  # can only say "no results" - and four API 24 runs have now ended without
+  # naming a single case. AndroidJUnitRunner logs every case as it starts
+  # and again as it finishes, and that IS in the captured logcat. The last
+  # `started:` with no matching `finished:` is the case that hung, which is
+  # the one fact those four runs never produced.
+  echo "=== last cases the runner started, and whether they finished ==="
+  grep -aE "TestRunner:\s+(started|finished):" "$DIAG/logcat.txt" 2>/dev/null \
+    | sed 's/.*TestRunner:/TestRunner:/' | tail -30 || true
+  echo "=== cases STARTED but never FINISHED ==="
+  python3 - "$DIAG/logcat.txt" <<'PY' || true
+import re, sys
+started, finished = [], set()
+try:
+    with open(sys.argv[1], errors="replace") as handle:
+        for line in handle:
+            match = re.search(r"TestRunner:\s+(started|finished):\s+(.+?)\s*$", line)
+            if not match:
+                continue
+            if match.group(1) == "started":
+                started.append(match.group(2))
+            else:
+                finished.add(match.group(2))
+except OSError as error:
+    print(f"(no logcat to read: {error})")
+    raise SystemExit(0)
+hanging = [name for name in started if name not in finished]
+print(f"started={len(started)} finished={len(finished)} never finished={len(hanging)}")
+for name in hanging:
+    print(f"  NEVER FINISHED: {name}")
+PY
   echo "=== uncaught exceptions, with frames ==="
   grep -a -A 30 -m 2 "FATAL EXCEPTION" "$DIAG/logcat.txt" 2>/dev/null | cut -c1-300 || true
   echo "=== input injection rejected (InputDispatcher / InputManager) ==="
