@@ -140,6 +140,8 @@ echo "logcat lines captured: $(wc -l < "$DIAG/logcat.txt" 2>/dev/null || echo 0)
 # - which process was not responding, if any
 # - what the focused window was while all that happened
 {
+  echo "=== uncaught exceptions, with frames ==="
+  grep -a -A 30 -m 2 "FATAL EXCEPTION" "$DIAG/logcat.txt" 2>/dev/null | cut -c1-300 || true
   echo "=== input injection rejected (InputDispatcher / InputManager) ==="
   grep -aiE "not directed at a window owned|Targeted input event|Permission denied.*inject|injectInputEvent.*(fail|denied)|Dropping .*(injected|untrusted)" \
     "$DIAG/logcat.txt" 2>/dev/null | head -40 || true

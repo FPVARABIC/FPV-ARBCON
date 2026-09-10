@@ -313,11 +313,17 @@ fun setSystemFontScale(scale: String) {
   SystemClock.sleep(500)
 }
 
-fun readSystemFontScale(): String {
-  val output = instrumentation().uiAutomation.executeShellCommand("settings get system font_scale")
-  return output.use { descriptor ->
+/**
+ * Runs a shell command through the instrumentation and returns everything
+ * it printed. This is the same channel `adb shell` uses, which is how a
+ * test can ask the PLATFORM a question - what it has registered, what it
+ * thinks is focused - instead of asking the object under test about itself.
+ */
+fun shell(command: String): String =
+  instrumentation().uiAutomation.executeShellCommand(command).use { descriptor ->
     android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { stream ->
-      stream.readBytes().toString(Charsets.UTF_8).trim()
+      stream.readBytes().toString(Charsets.UTF_8)
     }
   }
-}
+
+fun readSystemFontScale(): String = shell("settings get system font_scale").trim()

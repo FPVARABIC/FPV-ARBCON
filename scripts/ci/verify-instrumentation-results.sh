@@ -145,8 +145,22 @@ echo "::endgroup::"
 # ---------------------------------------------------------------------------
 if [ -n "$LOGCAT" ] && [ -s "$LOGCAT" ]; then
   echo "::group::logcat crash and ANR scan"
-  if grep -n "FATAL EXCEPTION" "$LOGCAT"; then
+  # THE STACK, NOT JUST THE VERDICT. Run 34418366288's 16 KB row reported
+  # "the app under test hit an uncaught exception" and the exception itself
+  # was in the part of the log the API does not return - so the one line
+  # that mattered said only that something had gone wrong. The matched
+  # lines and the frames after them go into the digest, which is re-printed
+  # last, so the crash arrives with the verdict.
+  if grep -n "FATAL EXCEPTION" "$LOGCAT" >/dev/null; then
     note "::error::the app under test hit an uncaught exception during instrumentation"
+    note "--- first uncaught exception, with the frames after it ---"
+    while IFS= read -r line; do note "  $line"; done < <(
+      grep -A 40 -m 1 "FATAL EXCEPTION" "$LOGCAT" | cut -c1-300
+    )
+    note "--- every FATAL EXCEPTION header in this run ---"
+    while IFS= read -r line; do note "  $line"; done < <(
+      grep -n "FATAL EXCEPTION" "$LOGCAT" | head -20 | cut -c1-300
+    )
     FAILED=1
   else
     note "no FATAL EXCEPTION in logcat"
