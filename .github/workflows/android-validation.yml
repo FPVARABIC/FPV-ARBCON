@@ -593,13 +593,6 @@ jobs:
             echo "no page-size transcript - the emulator phase did not reach it"
           fi
           echo "::endgroup::"
-          echo "::group::Instrumentation digest"
-          if [ -s instrumentation-digest.txt ]; then
-            cat instrumentation-digest.txt
-          else
-            echo "no digest - verify-instrumentation-results.sh did not reach the point of writing one"
-          fi
-          echo "::endgroup::"
           echo "::group::Where a stuck suite was standing"
           if [ -s instrumentation-diagnostics/stuck-process.txt ]; then
             head -80 instrumentation-diagnostics/stuck-process.txt
@@ -612,6 +605,20 @@ jobs:
             cat instrumentation-diagnostics/input-and-anr.txt
           else
             echo "no input/ANR extract - the emulator phase did not reach it"
+          fi
+          echo "::endgroup::"
+          # THE DIGEST IS PRINTED LAST, DELIBERATELY. The log API returns
+          # only a job's last few kilobytes, and on run 34425165313 the
+          # input/ANR extract added above pushed the digest - the list of
+          # which CASES failed and why - out of that window on every row.
+          # Of everything this step prints, the digest is the one thing a
+          # reader cannot reconstruct from anywhere else, so it goes at the
+          # bottom where the tail is guaranteed to reach it.
+          echo "::group::Instrumentation digest"
+          if [ -s instrumentation-digest.txt ]; then
+            cat instrumentation-digest.txt
+          else
+            echo "no digest - verify-instrumentation-results.sh did not reach the point of writing one"
           fi
           echo "::endgroup::"
   sixteen-kb-image-inventory:
@@ -858,13 +865,6 @@ jobs:
             echo "no page-size transcript - the emulator phase did not reach it"
           fi
           echo "::endgroup::"
-          echo "::group::Instrumentation digest"
-          if [ -s instrumentation-digest.txt ]; then
-            cat instrumentation-digest.txt
-          else
-            echo "no digest - verify-instrumentation-results.sh did not reach the point of writing one"
-          fi
-          echo "::endgroup::"
           echo "::group::Where a stuck suite was standing"
           if [ -s instrumentation-diagnostics/stuck-process.txt ]; then
             head -80 instrumentation-diagnostics/stuck-process.txt
@@ -877,6 +877,20 @@ jobs:
             cat instrumentation-diagnostics/input-and-anr.txt
           else
             echo "no input/ANR extract - the emulator phase did not reach it"
+          fi
+          echo "::endgroup::"
+          # THE DIGEST IS PRINTED LAST, DELIBERATELY. The log API returns
+          # only a job's last few kilobytes, and on run 34425165313 the
+          # input/ANR extract added above pushed the digest - the list of
+          # which CASES failed and why - out of that window on every row.
+          # Of everything this step prints, the digest is the one thing a
+          # reader cannot reconstruct from anywhere else, so it goes at the
+          # bottom where the tail is guaranteed to reach it.
+          echo "::group::Instrumentation digest"
+          if [ -s instrumentation-digest.txt ]; then
+            cat instrumentation-digest.txt
+          else
+            echo "no digest - verify-instrumentation-results.sh did not reach the point of writing one"
           fi
           echo "::endgroup::"
   # EVERY VERDICT IN ONE SHORT JOB, SO IT CAN ACTUALLY BE READ.

@@ -248,6 +248,9 @@ print(f"started={len(started)} finished={len(finished)} never finished={len(hang
 for name in hanging:
     print(f"  NEVER FINISHED: {name}")
 PY
+  echo "=== cases the runner itself reported as FAILED, with the first frames ==="
+  grep -a -A 12 "TestRunner:.*failed:" "$DIAG/logcat.txt" 2>/dev/null \
+    | sed 's/.*TestRunner:/TestRunner:/' | cut -c1-240 | head -120 || true
   echo "=== uncaught exceptions, with frames ==="
   grep -a -A 30 -m 2 "FATAL EXCEPTION" "$DIAG/logcat.txt" 2>/dev/null | cut -c1-300 || true
   echo "=== input injection rejected (InputDispatcher / InputManager) ==="

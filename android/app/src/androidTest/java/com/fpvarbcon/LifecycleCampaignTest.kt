@@ -1,15 +1,20 @@
 package com.fpvarbcon
 
 import android.app.Activity
+import android.app.Application
+import android.content.ComponentCallbacks
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
-import android.os.SystemClock
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.facebook.react.modules.i18nmanager.I18nUtil
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -54,6 +59,20 @@ class LifecycleCampaignTest {
   private val target: Context
     get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+  private companion object {
+    /**
+     * How long a lifecycle or configuration transition is given to be
+     * REPORTED BY THE PLATFORM. Chosen against what these transitions
+     * actually cost on the slowest level in the matrix - API 24 - not
+     * against what makes a red case go green; a transition that has not
+     * been reported by now has not happened, and the case says so.
+     */
+    const val SETTLE_TIMEOUT_MILLIS = 15_000L
+
+    /** The bound the control below proves is honoured. */
+    const val CONTROL_TIMEOUT_MILLIS = 3_000L
+  }
+
   /**
    * Whatever a case did to the shared preference, the installed app is
    * left in the state MainApplication would have put it in - so no case
@@ -65,42 +84,117 @@ class LifecycleCampaignTest {
   }
 
   /**
-   * WAITING FOR A CONDITION INSTEAD OF FOR THE LOOPER.
+   * WAITING FOR THE EVENT, NOT POLLING FOR THE STATE.
    *
    * `waitForIdleSync()` returns when the main looper has nothing left to
    * run. That is not the same as "the window manager has applied the
    * configuration I asked for" or "the Activity has finished tearing
-   * itself down": both of those are round trips through system_server,
-   * and the looper can be idle in the middle of one.
+   * itself down": both are round trips through system_server, and the
+   * looper can be idle in the middle of one.
    *
-   * Run 34418366288 showed both halves of that. API 34 reported
+   * Run 34418366288 showed both halves. API 34 reported
    *
    *   after Back the Activity is in STARTED - neither still usable nor
    *   cleanly finished
    *
    * (STARTED is a state an Activity passes THROUGH on its way to
-   * DESTROYED), and API 34 and 36 both reported
+   * DESTROYED), and API 34, 35 and 36 all reported
    *
    *   the Activity did not adopt the requested orientation ...
    *   expected:<1> but was:<2>
    *
-   * on the SECOND rotation, having passed the first. A single idle sync
-   * happened to be enough once and not twice, which is the signature of a
-   * race and not of a broken app.
+   * on the SECOND rotation, having passed the first. One idle sync was
+   * enough once and not twice, which is the signature of a race.
    *
-   * So these poll for the condition with a deadline. The assertion that
-   * follows is unchanged and still fails if the condition never holds -
-   * the deadline only decides how long the truth is given to arrive, and a
-   * timeout here is still a failure.
+   * The obvious repair - poll the state on a deadline - trades one weak
+   * barrier for another: a poll still samples, still needs a sleep between
+   * samples, and can still miss a transition that comes and goes between
+   * two reads. So neither helper below polls, sleeps, or calls
+   * waitForIdleSync. Each registers for the PLATFORM CALLBACK that marks
+   * the transition, blocks on a latch with a bound, and unregisters. A
+   * transition that never happens ends at the bound and is reported by
+   * name; one that happens is observed exactly when it happens.
    */
-  private fun awaitCondition(what: String, timeoutMillis: Long = 15_000L, condition: () -> Boolean) {
-    val deadline = SystemClock.uptimeMillis() + timeoutMillis
-    while (SystemClock.uptimeMillis() < deadline) {
-      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
-      if (condition()) return
-      SystemClock.sleep(100)
+
+  /** Every callback in this interface is a no-op unless a helper overrides it. */
+  private open class LifecycleWatcher : Application.ActivityLifecycleCallbacks {
+    override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) = Unit
+    override fun onActivityStarted(activity: Activity) = Unit
+    override fun onActivityResumed(activity: Activity) = Unit
+    override fun onActivityPaused(activity: Activity) = Unit
+    override fun onActivityStopped(activity: Activity) = Unit
+    override fun onActivitySaveInstanceState(activity: Activity, outState: android.os.Bundle) = Unit
+    override fun onActivityDestroyed(activity: Activity) = Unit
+  }
+
+  /**
+   * Runs [trigger] and returns the first of RESUMED or DESTROYED the
+   * platform reports afterwards, or the Activity's own state if the bound
+   * passes with neither - which is the legitimate "nothing moved" case,
+   * because an Activity that was already RESUMED and stays RESUMED emits
+   * no further callback.
+   */
+  private fun settleAfter(timeoutMillis: Long, scenario: ActivityScenario<MainActivity>, trigger: () -> Unit): String {
+    val application = target.applicationContext as Application
+    val settled = CountDownLatch(1)
+    val observed = AtomicReference<String>(null)
+    val watcher = object : LifecycleWatcher() {
+      override fun onActivityResumed(activity: Activity) {
+        if (observed.compareAndSet(null, "RESUMED")) settled.countDown()
+      }
+
+      override fun onActivityDestroyed(activity: Activity) {
+        if (observed.compareAndSet(null, "DESTROYED")) settled.countDown()
+      }
     }
-    println("awaitCondition gave up after ${timeoutMillis}ms waiting for: $what")
+    application.registerActivityLifecycleCallbacks(watcher)
+    try {
+      trigger()
+      settled.await(timeoutMillis, TimeUnit.MILLISECONDS)
+    } finally {
+      application.unregisterActivityLifecycleCallbacks(watcher)
+    }
+    return observed.get() ?: runCatching { scenario.state.name }.getOrElse { "UNREADABLE" }
+  }
+
+  /**
+   * Runs [trigger] and returns the orientation the ACTIVITY was told about,
+   * waiting on Android's own configuration callback. Returns the current
+   * orientation immediately when it already matches, because a callback
+   * that has nothing to report never arrives.
+   */
+  private fun orientationAfter(
+    scenario: ActivityScenario<MainActivity>,
+    expected: Int,
+    timeoutMillis: Long,
+    trigger: () -> Unit,
+  ): Int {
+    var current = Configuration.ORIENTATION_UNDEFINED
+    scenario.onActivity { current = it.resources.configuration.orientation }
+    if (current == expected) return current
+
+    val reached = CountDownLatch(1)
+    val last = AtomicInteger(current)
+    val callbacks = object : ComponentCallbacks {
+      override fun onConfigurationChanged(newConfig: Configuration) {
+        last.set(newConfig.orientation)
+        if (newConfig.orientation == expected) reached.countDown()
+      }
+
+      override fun onLowMemory() = Unit
+    }
+    scenario.onActivity { it.registerComponentCallbacks(callbacks) }
+    try {
+      trigger()
+      reached.await(timeoutMillis, TimeUnit.MILLISECONDS)
+    } finally {
+      runCatching { scenario.onActivity { it.unregisterComponentCallbacks(callbacks) } }
+    }
+    // Read it back from the Activity rather than trusting the callback's
+    // copy: what the Activity BELIEVES is what its layout was computed for.
+    var settled = last.get()
+    runCatching { scenario.onActivity { settled = it.resources.configuration.orientation } }
+    return settled
   }
 
   /** A window that still has content the operator could read. */
@@ -110,6 +204,94 @@ class LifecycleCampaignTest {
     assertTrue("$moment: the decor view has zero width or height", root!!.width >= 0)
     val content = activity.findViewById<android.view.View>(android.R.id.content)
     assertNotNull("$moment: the Activity has no content view", content)
+  }
+
+  // ===================================================================
+  // The waits are real subjects
+  // ===================================================================
+
+  /**
+   * A TRANSITION THAT NEVER COMES MUST END AT THE BOUND, AND SAY SO.
+   *
+   * settleAfter and orientationAfter are what every lifecycle assertion in
+   * this file now rests on. If either one returned "yes" without the
+   * transition happening, or blocked past its bound, every green result
+   * here would be worthless - so both are asked for something that cannot
+   * happen and measured.
+   *
+   * The orientation half is the planted case the brief asks for: the
+   * Activity is put in PORTRAIT and then asked to wait for LANDSCAPE with
+   * nothing requesting it. That state is never reached, and what is
+   * checked is that the helper gives up INSIDE its bound and reports the
+   * orientation the Activity is actually in - not that it hangs, and not
+   * that it claims success.
+   */
+  @Test
+  fun aTransitionThatNeverHappensEndsAtTheBoundAndReportsTheTruth() {
+    ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+      scenario.moveToState(Lifecycle.State.RESUMED)
+
+      val settled = orientationAfter(
+        scenario,
+        Configuration.ORIENTATION_PORTRAIT,
+        SETTLE_TIMEOUT_MILLIS,
+      ) { scenario.onActivity { it.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT } }
+      assertEquals("the control could not even reach its starting state", Configuration.ORIENTATION_PORTRAIT, settled)
+
+      // Now wait for LANDSCAPE with nothing asking for it.
+      val startedAt = System.nanoTime()
+      val reported = orientationAfter(
+        scenario,
+        Configuration.ORIENTATION_LANDSCAPE,
+        CONTROL_TIMEOUT_MILLIS,
+      ) { /* deliberately nothing: no rotation is requested */ }
+      val elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000
+
+      println(
+        "wait control: asked for LANDSCAPE with nothing requesting it, gave up after " +
+          "${elapsedMillis}ms (bound ${CONTROL_TIMEOUT_MILLIS}ms) and reported $reported",
+      )
+      assertEquals(
+        "orientationAfter reported LANDSCAPE when nothing rotated the Activity, so every " +
+          "orientation result in this file is meaningless",
+        Configuration.ORIENTATION_PORTRAIT,
+        reported,
+      )
+      assertTrue(
+        "orientationAfter took ${elapsedMillis}ms to give up on a transition that never " +
+          "happens, against a bound of ${CONTROL_TIMEOUT_MILLIS}ms. A wait that overruns its " +
+          "own bound is how a suite hangs instead of failing.",
+        elapsedMillis < CONTROL_TIMEOUT_MILLIS * 3,
+      )
+    }
+  }
+
+  /**
+   * The other half: settleAfter must not invent a transition either. With
+   * no trigger at all, an Activity that is already RESUMED emits no
+   * callback, and the helper has to fall back to reading the state rather
+   * than reporting whatever it saw last.
+   */
+  @Test
+  fun settleAfterReportsTheRestingStateWhenNothingMoves() {
+    ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+      scenario.moveToState(Lifecycle.State.RESUMED)
+
+      val startedAt = System.nanoTime()
+      val state = settleAfter(CONTROL_TIMEOUT_MILLIS, scenario) { /* nothing is triggered */ }
+      val elapsedMillis = (System.nanoTime() - startedAt) / 1_000_000
+
+      println("wait control: settleAfter with no trigger returned $state after ${elapsedMillis}ms")
+      assertEquals(
+        "settleAfter reported $state for an Activity nothing touched, which was RESUMED",
+        "RESUMED",
+        state,
+      )
+      assertTrue(
+        "settleAfter took ${elapsedMillis}ms against a bound of ${CONTROL_TIMEOUT_MILLIS}ms",
+        elapsedMillis < CONTROL_TIMEOUT_MILLIS * 3,
+      )
+    }
   }
 
   // ===================================================================
@@ -135,17 +317,16 @@ class LifecycleCampaignTest {
         ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE to Configuration.ORIENTATION_LANDSCAPE,
         ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to Configuration.ORIENTATION_PORTRAIT,
       )) {
-        scenario.onActivity { it.requestedOrientation = requested }
-        awaitCondition("the Activity's configuration to report orientation $expected") {
-          var adopted = false
-          // If the Activity has gone, this poll must simply not match and
-          // let the assertion below report it, rather than throw from
-          // inside a wait and hide which case failed.
-          runCatching {
-            scenario.onActivity { adopted = it.resources.configuration.orientation == expected }
-          }
-          adopted
+        val adopted = orientationAfter(scenario, expected, SETTLE_TIMEOUT_MILLIS) {
+          scenario.onActivity { it.requestedOrientation = requested }
         }
+        assertEquals(
+          "the Activity was never told about orientation $expected within " +
+            "${SETTLE_TIMEOUT_MILLIS}ms of requesting it; Android reported $adopted instead, so " +
+            "its layout was computed for the wrong one",
+          expected,
+          adopted,
+        )
 
         scenario.onActivity { activity ->
           assertEquals(
@@ -232,24 +413,23 @@ class LifecycleCampaignTest {
     ActivityScenario.launch(MainActivity::class.java).use { scenario ->
       scenario.moveToState(Lifecycle.State.RESUMED)
 
-      scenario.onActivity { activity ->
-        @Suppress("DEPRECATION")
-        activity.onBackPressed()
-      }
       // STARTED and CREATED are states an Activity passes THROUGH while it
-      // finishes. Waiting for it to settle is the difference between
-      // "Back left the app somewhere undefined" - which is what this case
-      // exists to catch - and "the assertion looked mid-teardown".
-      awaitCondition("the Activity to settle in RESUMED or DESTROYED after Back") {
-        scenario.state == Lifecycle.State.RESUMED || scenario.state == Lifecycle.State.DESTROYED
+      // finishes, so the question is not what it is one instant after Back
+      // but where it comes to rest. settleAfter waits for the platform to
+      // say so rather than sampling until it agrees.
+      val state = settleAfter(SETTLE_TIMEOUT_MILLIS, scenario) {
+        scenario.onActivity { activity ->
+          @Suppress("DEPRECATION")
+          activity.onBackPressed()
+        }
       }
-
-      val state = scenario.state
       assertTrue(
-        "after Back the Activity is in $state - neither still usable nor cleanly finished",
-        state == Lifecycle.State.RESUMED || state == Lifecycle.State.DESTROYED,
+        "after Back the Activity came to rest in $state - neither still usable nor cleanly " +
+          "finished. RESUMED means JS handled Back and the screen is still there; DESTROYED " +
+          "means the Activity finished; anything else is a teardown that stopped halfway.",
+        state == "RESUMED" || state == "DESTROYED",
       )
-      if (state == Lifecycle.State.RESUMED) {
+      if (state == "RESUMED") {
         scenario.onActivity { activity ->
           assertWindowStillHasContent(activity, "after Android Back")
           assertTrue(
