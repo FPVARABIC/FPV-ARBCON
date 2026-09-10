@@ -955,6 +955,16 @@ jobs:
             cat "$verdict"
             echo
           done
+          # LAST, AND ON PURPOSE. Everything above can grow without
+          # bound - a crash dump, an ANR list, a coverage inventory - and
+          # the log API returns only the tail. The tap geometry is a fixed
+          # eighty lines and is the measurement a repair is chosen from, so
+          # it goes where nothing can push it out.
+          for geometry in $(find evidence -name 'tap-geometry.txt' | sort); do
+            echo "===== ${geometry} ====="
+            cat "$geometry"
+            echo
+          done
           echo "===== end of evidence ====="
 
   android-validation:

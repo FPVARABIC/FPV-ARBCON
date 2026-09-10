@@ -248,24 +248,16 @@ print(f"started={len(started)} finished={len(finished)} never finished={len(hang
 for name in hanging:
     print(f"  NEVER FINISHED: {name}")
 PY
-  # THE GEOMETRY BEHIND THE TAP COORDINATES. TapGeometryDiagnosticTest
-  # prints this and asserts nothing, so it never reaches the digest - the
-  # digest only carries FAILING cases. Without lifting it out of logcat the
-  # measurement would be captured and unreadable, which is the trap this
-  # campaign has fallen into three times now.
-  echo "=== tap geometry diagnostic ==="
-  grep -a -A 70 "UI-X3B TAP GEOMETRY DIAGNOSTIC" "$DIAG/logcat.txt" 2>/dev/null \
-    | sed 's/.*System\.out: //' | cut -c1-200 | head -80 || true
   echo "=== cases the runner itself reported as FAILED, with the first frames ==="
   grep -a -A 12 "TestRunner:.*failed:" "$DIAG/logcat.txt" 2>/dev/null \
     | sed 's/.*TestRunner:/TestRunner:/' | cut -c1-240 | head -120 || true
   echo "=== uncaught exceptions, with frames ==="
-  grep -a -A 30 -m 2 "FATAL EXCEPTION" "$DIAG/logcat.txt" 2>/dev/null | cut -c1-300 || true
+  grep -a -A 12 -m 1 "FATAL EXCEPTION" "$DIAG/logcat.txt" 2>/dev/null | cut -c1-300 || true
   echo "=== input injection rejected (InputDispatcher / InputManager) ==="
   grep -aiE "not directed at a window owned|Targeted input event|Permission denied.*inject|injectInputEvent.*(fail|denied)|Dropping .*(injected|untrusted)" \
     "$DIAG/logcat.txt" 2>/dev/null | head -40 || true
   echo "=== ANRs, whatever the process ==="
-  grep -aE "ANR in |Reason: |am_anr" "$DIAG/logcat.txt" 2>/dev/null | head -40 || true
+  grep -aE "ANR in |am_anr" "$DIAG/logcat.txt" 2>/dev/null | head -15 || true
   echo "=== focus changes ==="
   grep -aE "Focus (request|entering|leaving)|setFocusedWindow|focusedWindow|Window\{.*\} .*focus" \
     "$DIAG/logcat.txt" 2>/dev/null | head -40 || true
@@ -274,6 +266,18 @@ PY
     | grep -aE "mCurrentFocus|mFocusedApp" || echo "(no focus lines)"
 } > "$DIAG/input-and-anr.txt" 2>&1 || true
 echo "input/ANR extract: $(wc -l < "$DIAG/input-and-anr.txt" 2>/dev/null || echo 0) lines"
+
+# THE TAP GEOMETRY, IN A FILE OF ITS OWN.
+#
+# It lived inside input-and-anr.txt for exactly one run, and a 30-frame
+# crash dump from an unrelated Google process pushed it out of the window
+# the log API returns. A measurement that shares a file with unbounded
+# output is a measurement that disappears the moment something else has a
+# bad day, so it gets its own file and evidence-report prints that file
+# LAST, after everything that can grow.
+grep -a -A 70 "UI-X3B TAP GEOMETRY DIAGNOSTIC" "$DIAG/logcat.txt" 2>/dev/null \
+  | sed 's/.*System\.out: //' | cut -c1-200 | head -80 > "$DIAG/tap-geometry.txt" 2>/dev/null || true
+echo "tap geometry: $(wc -l < "$DIAG/tap-geometry.txt" 2>/dev/null || echo 0) lines"
 
 # The right-to-left repair is about the FIRST launch after an install,
 # which no in-process instrumentation test can reach. It runs after the
