@@ -15,6 +15,15 @@ must be listed below as one of
   JVM_EXECUTED     executed by JVM unit tests, and asserted there. The
                    ledger FAILS if such a file shows zero covered lines -
                    that is the check that keeps this table honest.
+
+                   EXECUTION IS DECIDED BY LINE COVERAGE AND NOTHING ELSE.
+                   Not by whether some test file imports the class, not by
+                   whether a name appears in a reference analysis: those
+                   say a file COULD have run. Only the JaCoCo LINE counter
+                   says it DID. A file whose report entry is absent, or
+                   present with zero covered lines, fails here even if
+                   every test in the repository mentions it.
+
   ANDROID_ONLY     cannot run off a device (Activity, Application,
                    platform preferences). Executed by instrumentation
                    instead; the reason names where.
@@ -136,6 +145,60 @@ def production_files(source_root: str) -> set[str]:
     return found
 
 
+def _counters_of(element) -> dict[str, tuple[int, int]]:
+    per_type: dict[str, tuple[int, int]] = {}
+    for counter in element.findall("counter"):
+        missed = int(counter.get("missed", "0"))
+        covered = int(counter.get("covered", "0"))
+        per_type[counter.get("type", "?")] = (covered, covered + missed)
+    return per_type
+
+
+def inventory(report: str) -> list[tuple[str, str, str, dict[str, tuple[int, int]]]]:
+    """
+    EVERYTHING THE REPORT ACTUALLY CONTAINS, verbatim.
+
+    Returns (package/@name, sourcefile name, where it came from, counters)
+    with the package and file names exactly as written in the XML, because
+    a mismatch between the tree and the report has to be readable as two
+    strings side by side. Run 34418366288 failed this ledger with no way to
+    see what the report held, and a coverage finding that cannot be
+    distinguished from a parser bug is not a finding.
+
+    TWO SHAPES ARE READ. A JaCoCo XML report normally carries a <sourcefile>
+    per file. When the report task is given class files but no source
+    directories it carries only <class> elements, each naming its
+    @sourcefilename. Both are valid reports of the same execution, so both
+    are read - and which one a row came from is printed, so the answer is
+    never "the parser silently found something somewhere".
+    """
+    tree = ElementTree.parse(report)
+    rows: list[tuple[str, str, str, dict[str, tuple[int, int]]]] = []
+    for package in tree.getroot().iter("package"):
+        package_name = package.get("name", "")
+        sourcefiles = package.findall("sourcefile")
+        for sourcefile in sourcefiles:
+            rows.append(
+                (package_name, sourcefile.get("name", ""), "sourcefile", _counters_of(sourcefile))
+            )
+        if sourcefiles:
+            continue
+        # No <sourcefile> in this package: fall back to its classes, summed
+        # per source file so a file with several classes is counted once.
+        per_file: dict[str, dict[str, tuple[int, int]]] = {}
+        for klass in package.findall("class"):
+            name = klass.get("sourcefilename", "")
+            if not name:
+                continue
+            target = per_file.setdefault(name, {})
+            for kind, (covered, total) in _counters_of(klass).items():
+                before = target.get(kind, (0, 0))
+                target[kind] = (before[0] + covered, before[1] + total)
+        for name, per_type in per_file.items():
+            rows.append((package_name, name, "class/@sourcefilename", per_type))
+    return rows
+
+
 def counters(report: str) -> dict[str, dict[str, tuple[int, int]]]:
     """
     {source file NAME -> {counter type -> (covered, total)}}.
@@ -148,24 +211,16 @@ def counters(report: str) -> dict[str, dict[str, tuple[int, int]]]:
     uniqueness before this is used, so the shortcut cannot silently merge
     two files.
     """
-    tree = ElementTree.parse(report)
     result: dict[str, dict[str, tuple[int, int]]] = {}
-    for package in tree.getroot().iter("package"):
-        for sourcefile in package.findall("sourcefile"):
-            name = sourcefile.get("name", "")
-            per_type: dict[str, tuple[int, int]] = {}
-            for counter in sourcefile.findall("counter"):
-                missed = int(counter.get("missed", "0"))
-                covered = int(counter.get("covered", "0"))
-                per_type[counter.get("type", "?")] = (covered, covered + missed)
-            # A file can appear once per package if two packages share a
-            # name; sum rather than overwrite.
-            if name in result:
-                for kind, (covered, total) in per_type.items():
-                    before = result[name].get(kind, (0, 0))
-                    result[name][kind] = (before[0] + covered, before[1] + total)
-            else:
-                result[name] = per_type
+    for _package, name, _origin, per_type in inventory(report):
+        # A file can appear once per package if two packages share a
+        # name; sum rather than overwrite.
+        if name in result:
+            for kind, (covered, total) in per_type.items():
+                before = result[name].get(kind, (0, 0))
+                result[name][kind] = (before[0] + covered, before[1] + total)
+        else:
+            result[name] = dict(per_type)
     return result
 
 
@@ -203,11 +258,42 @@ def main(argv: list[str]) -> int:
         )
         return 1
 
+    rows = inventory(report)
     measured = counters(report)
 
+    # WHAT THE REPORT HOLDS, PRINTED WHETHER OR NOT ANYTHING IS WRONG.
+    # Printing it only on failure means the one run that could have shown
+    # a keying problem coming is the one run that did not print it.
+    expected_basenames = {name.rsplit("/", 1)[-1]: name for name in tree_files}
+    found = sorted(name for name in expected_basenames if name in measured)
+    absent = sorted(name for name in expected_basenames if name not in measured)
+    zero = sorted(
+        name
+        for name in found
+        if measured[name].get("LINE", (0, 0))[0] == 0
+    )
+    origins = sorted({origin for _p, _n, origin, _c in rows})
+
     print("===== UI-X3B NATIVE COVERAGE AND CLASSIFICATION LEDGER =====")
-    print(f"  production Kotlin files            : {len(tree_files)}")
-    print(f"  files present in the JaCoCo report : {len(measured)}")
+    print(f"  report read                        : {report}")
+    print(f"  rows the report contains           : {len(rows)} (from {origins or ['<nothing>']})")
+    print(f"  production Kotlin files EXPECTED   : {len(tree_files)}")
+    print(f"  of those FOUND in the report       : {len(found)}")
+    print(f"  of those MISSING from the report   : {len(absent)}")
+    print(f"  of those found with ZERO lines     : {len(zero)}")
+    if absent:
+        print("  MISSING (expected, not in the report):")
+        for name in absent:
+            print(f"    {expected_basenames[name]}")
+    if zero:
+        print("  ZERO covered lines:")
+        for name in zero:
+            print(f"    {expected_basenames[name]}")
+    print("  report inventory, package/@name -> sourcefile/@name:")
+    for package_name, name, origin, per_type in sorted(rows, key=lambda row: (row[0], row[1])):
+        line = per_type.get("LINE", (0, 0))
+        print(f"    {package_name or '<empty>'} -> {name or '<empty>'} "
+              f": {line[0]}/{line[1]} [{origin}]")
     print("  instrumentation coverage column    : UNMEASURED for every row (see header)")
     print("-" * 78)
     print(f"  {'FILE':52} {'LINES':>11}  CLASS")
@@ -261,14 +347,28 @@ def main(argv: list[str]) -> int:
     )
     print("=" * 78)
 
-    verdict: list[str] = []
+    # The verdict file is re-printed by a later step and carried by the
+    # evidence-report job, so the counts go in it too - a verdict that says
+    # only "3 problems" sends the reader back to a log they cannot reach.
+    verdict: list[str] = [
+        f"coverage ledger read {report}",
+        f"  rows in report={len(rows)} origins={origins or ['<nothing>']}",
+        f"  expected={len(tree_files)} found={len(found)} missing={len(absent)} zero={len(zero)}",
+        f"  classified JVM_EXECUTED={by_class.get(JVM_EXECUTED, 0)} "
+        f"ANDROID_ONLY={by_class.get(ANDROID_ONLY, 0)} "
+        f"BUILD_ONLY={by_class.get(BUILD_ONLY, 0)} "
+        f"UNMEASURED={by_class.get(UNMEASURED, 0)}",
+    ]
     if failures:
         # What the report DOES contain, so a mismatch between the tree and
         # the report is one read away instead of one CI cycle away.
-        verdict.append("source files present in the JaCoCo report:")
-        for name in sorted(measured):
-            line = measured[name].get("LINE", (0, 0))
-            verdict.append(f"  {name:52} {line[0]}/{line[1]}")
+        verdict.append("package/@name -> sourcefile/@name actually present in the report:")
+        for package_name, name, origin, per_type in sorted(rows, key=lambda row: (row[0], row[1])):
+            line = per_type.get("LINE", (0, 0))
+            verdict.append(
+                f"  {package_name or '<empty>'} -> {name or '<empty>'} "
+                f": {line[0]}/{line[1]} [{origin}]"
+            )
         verdict.extend(f"::error::{failure}" for failure in failures)
         verdict.append(f"coverage ledger: {len(failures)} problem(s)")
     else:
