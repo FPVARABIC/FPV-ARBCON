@@ -534,4 +534,45 @@ class DestinationInteractionTest {
       )
     }
   }
+
+  /**
+   * WHY THE GATE CANNOT BE PASSED HERE, MEASURED RATHER THAN ASSERTED.
+   *
+   * The claim behind the eighteen is that the chain to CONNECTED starts at
+   * an enumerated USB device and there is none. That is only worth
+   * something if the emulator is asked. So this reads the platform's own
+   * device list and prints it.
+   *
+   * If a device ever IS present, this fails - and it should, because the
+   * whole classification in androidDestinationReachability.test.ts rests on
+   * this being empty, and eighteen destinations would then be reachable
+   * after all.
+   *
+   * The consequence of this fact, one layer up, is
+   * ReactHostCampaignTest#listDevicesResolvesWithAnEmptyListRatherThanHangingOrFailing:
+   * the shipped module asked on the same device answers with an empty list.
+   */
+  @Test
+  fun theEmulatorHasNoUsbDeviceSoTheChainToConnectedCannotEvenStart() {
+    val context = androidx.test.platform.app.InstrumentationRegistry
+      .getInstrumentation().targetContext
+    val usbManager =
+      context.getSystemService(android.content.Context.USB_SERVICE) as android.hardware.usb.UsbManager
+    val devices = usbManager.deviceList
+
+    println("===== UI-X3B USB ENUMERATION ON THIS EMULATOR =====")
+    println("  UsbManager.getDeviceList() size = ${devices.size}")
+    devices.forEach { (name, device) ->
+      println("    $name vendorId=${device.vendorId} productId=${device.productId}")
+    }
+    println("===================================================")
+
+    assertTrue(
+      "this emulator reports ${devices.size} USB device(s): ${devices.keys}. The eighteen " +
+        "gated destinations are classified as needing real hardware BECAUSE this list is " +
+        "empty, so that classification is now wrong and has to be redone rather than left " +
+        "standing.",
+      devices.isEmpty(),
+    )
+  }
 }
