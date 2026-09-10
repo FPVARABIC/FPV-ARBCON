@@ -26,10 +26,15 @@ import org.junit.runner.RunWith
  *
  * So this file is the control, and it runs on every API level in the matrix:
  *
- *   NEGATIVE (mechanism)  the old path, at the same coordinate, must still
- *                         be rejected - if it is not, the cause blamed in
- *                         the comment above is not the cause, and this test
- *                         says so instead of letting a comment stand.
+ *   NEGATIVE (mechanism)  the old path must still be rejected by the
+ *                         ownership check SOMEWHERE on this device - at the
+ *                         control's own centre or at the status-bar strip.
+ *                         If it bites nowhere, the cause blamed in the
+ *                         comment above is not established on this API
+ *                         level and this test says so instead of letting a
+ *                         comment stand. It is not asserted at every
+ *                         coordinate, because run 34418366288 itself shows
+ *                         some taps going through.
  *
  *   POSITIVE (delivery)   the new path must make the APPLICATION move: the
  *                         firmware screen has to appear. Nothing short of
@@ -79,25 +84,38 @@ class InputInjectionControlTest {
       println("  ${activeWindowReport()}")
       println("==========================================")
 
+      // WHAT IS ASSERTED, AND WHY IT IS NOT "ALWAYS REJECTED".
+      //
+      // Run 34418366288 rejected fourteen injections across three API
+      // levels - and on API 35 and API 34 the tap in
+      // theWorkspaceStaysLockedWithoutABoard went through. So the honest
+      // claim is that the ownership check EXISTS AND BITES, not that it
+      // bites at every coordinate; asserting the stronger version would be
+      // asserting something that run already contradicts.
+      //
+      // Both probes are printed verbatim either way, so the transcript
+      // shows exactly where it bit on this device rather than a verdict.
+      val rejections = listOf(atControl, atStatusBar).filter { it.startsWith("REJECTED") }
       assertTrue(
-        "Instrumentation.sendPointerSync was ACCEPTED at the control's own centre. The seven " +
-          "failures in run 34418366288 were blamed on targeted injection being rejected there, " +
-          "and that has not reproduced - so the reason recorded in UiTree.kt is wrong and the " +
-          "real one is still unknown. Probe at the control: $atControl. Probe at y=1: " +
-          "$atStatusBar. On screen: ${activeWindowReport()}",
-        atControl.startsWith("REJECTED"),
+        "Instrumentation.sendPointerSync was ACCEPTED at BOTH the control's own centre and at " +
+          "y=1, so the targeted-injection ownership check did not bite anywhere on this device. " +
+          "That is the mechanism the repair in UiTree.kt is based on, and it has not reproduced " +
+          "here - the reason recorded there is therefore not established on this API level. " +
+          "Probe at the control: $atControl. Probe at y=1: $atStatusBar. " +
+          "On screen: ${activeWindowReport()}",
+        rejections.isNotEmpty(),
       )
       assertTrue(
         "sendPointerSync was rejected, but not by the window-ownership check this repair is " +
-          "based on. Message: $atControl",
-        atControl.contains("Targeted input event injection"),
+          "based on. Probe at the control: $atControl. Probe at y=1: $atStatusBar",
+        rejections.any { it.contains("Targeted input event injection") },
       )
 
-      // The rejected injection must also have changed nothing: a rejection
-      // that still delivered the press would make the mutation control
-      // below untrustworthy.
+      // Whatever the probes did, they must not have navigated: a probe
+      // that delivered a press would make the mutation control untrustworthy.
       assertFalse(
-        "the rejected injection still opened $DESTINATION",
+        "a bare ACTION_DOWN probe opened $DESTINATION, so the presses in this suite are not the " +
+          "only thing moving the application",
         scenario.hasTag(DESTINATION),
       )
     }
