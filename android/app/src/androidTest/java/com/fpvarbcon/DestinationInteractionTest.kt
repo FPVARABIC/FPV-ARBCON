@@ -1,11 +1,13 @@
 package com.fpvarbcon
 
 import android.graphics.Rect
+import android.text.TextUtils
 import android.view.View
 import android.widget.TextView
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.facebook.react.modules.i18nmanager.I18nUtil
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -164,26 +166,103 @@ class DestinationInteractionTest {
   // Right to left
   // ===================================================================
 
+  /**
+   * WHAT "LAID OUT RIGHT TO LEFT" IS MEASURED ON, AND WHAT IT IS NOT.
+   *
+   * This test used to assert on `window.decorView.layoutDirection`, and it
+   * failed on API 34 and API 36 alike with `expected:<1> but was:<0>`. That
+   * was the test being wrong, not the product: the decor view belongs to
+   * the framework, and its direction is resolved from the CONFIGURATION
+   * LOCALE. The emulator runs en-US, so the decor view is left-to-right and
+   * would be left-to-right no matter what the application did.
+   *
+   * React Native's right-to-left is not the locale. I18nUtil.isRTL is
+   *
+   *     applicationHasRtlSupport(context) &&
+   *         (isRTLForced(context) || (isRTLAllowed(context) && ...))
+   *
+   * and this application forces it at startup, deliberately, so the Arabic
+   * UI is right-to-left on an English device too. That value is handed to
+   * the surface (ReactSurfaceImpl passes isRTL(context) into the binding),
+   * Yoga lays the tree out in that direction, and SurfaceMountingManager
+   * writes the result onto each mounted view - `2 -> LAYOUT_DIRECTION_RTL`.
+   *
+   * So the subject is the mounted view the destination is made of, and the
+   * decor view is recorded next to the locale as the explanation of why it
+   * differs rather than asserted on.
+   */
   @Test
   fun everyReachableDestinationIsLaidOutRightToLeft() {
+    val notRightToLeft = mutableListOf<String>()
     for (destination in REACHABLE) {
-      val direction = onDestination(destination) { scenario ->
-        scenario.readMain { it.window.decorView.layoutDirection }
+      val report = onDestination(destination) { scenario ->
+        scenario.readMain { activity ->
+          val locale = activity.resources.configuration.locales[0]
+          val localeDirection = TextUtils.getLayoutDirectionFromLocale(locale)
+          val decor = activity.window.decorView.layoutDirection
+          val marker = findByTag(activity.window.decorView, destination.marker)
+            ?: throw AssertionError("${destination.name}: its own marker view is gone")
+
+          if (marker.layoutDirection != View.LAYOUT_DIRECTION_RTL) {
+            notRightToLeft += "${destination.name}: the view tagged \"${destination.marker}\" " +
+              "resolves layoutDirection=${marker.layoutDirection}, not " +
+              "${View.LAYOUT_DIRECTION_RTL}"
+          }
+          if (!I18nUtil.instance.isRTL(activity)) {
+            notRightToLeft += "${destination.name}: I18nUtil.isRTL is false, so React Native is " +
+              "laying the whole application out left to right"
+          }
+
+          // The control for the claim above: the decor view is not a
+          // measurement of the application, it is a measurement of the
+          // device locale. If those two ever disagreed, this explanation
+          // would be wrong and the reader should know.
+          assertEquals(
+            "${destination.name}: the decor view's direction ($decor) does not match the one " +
+              "implied by the device locale $locale ($localeDirection). The reasoning above - " +
+              "that the decor view reports the locale rather than the app - does not hold here.",
+            localeDirection,
+            decor,
+          )
+
+          val tagged = everyView(activity.window.decorView)
+            .filter { it.tag is String && it.isShown }
+            .joinToString(", ") { "${it.tag}=${it.layoutDirection}" }
+          "  ${destination.name.padEnd(20)} marker=${marker.layoutDirection} " +
+            "decor=$decor locale=$locale($localeDirection) " +
+            "I18nUtil.isRTL=${I18nUtil.instance.isRTL(activity)}\n      tagged: $tagged"
+        }
       }
-      assertEquals(
-        "${destination.name} is not laid out right to left, which is the whole product",
-        View.LAYOUT_DIRECTION_RTL,
-        direction,
-      )
+      println(report)
     }
+    assertTrue(
+      "these destinations are not laid out right to left, which is the whole product:\n" +
+        notRightToLeft.joinToString("\n"),
+      notRightToLeft.isEmpty(),
+    )
   }
 
   // ===================================================================
-  // What TalkBack would say
+  // Accessibility semantics - which is NOT a TalkBack test
   // ===================================================================
 
+  /**
+   * WHAT THIS PROVES, AND WHAT IT DOES NOT.
+   *
+   * It reads the semantics the view tree exposes: whether every pressable
+   * control carries a contentDescription, or text a screen reader could
+   * fall back on. A control that carries neither is unusable without sight,
+   * and that is worth failing over.
+   *
+   * It is NOT a TalkBack test and must not be reported as one. TalkBack was
+   * never enabled here, no focus traversal happened, no order was measured
+   * and nothing was announced. The verdict this case supports is
+   * ACCESSIBILITY_SEMANTICS_VERIFIED; a TalkBack claim would need TalkBack
+   * actually running, with traversal order and announcements recorded, and
+   * this run has none of that.
+   */
   @Test
-  fun everyClickableControlHasSomethingTalkBackCanAnnounce() {
+  fun everyClickableControlExposesAnAccessibilityName() {
     val nameless = mutableListOf<String>()
     for (destination in REACHABLE) {
       onDestination(destination) { scenario ->
@@ -202,7 +281,8 @@ class DestinationInteractionTest {
       }
     }
     assertTrue(
-      "these controls are pressable and announce nothing - a TalkBack user cannot tell what " +
+      "these controls are pressable and expose no accessibility name at all, so a screen " +
+        "reader has nothing to read from them and an operator without sight cannot tell what " +
         "they do:\n" + nameless.joinToString("\n"),
       nameless.isEmpty(),
     )

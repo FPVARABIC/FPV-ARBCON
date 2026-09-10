@@ -3,6 +3,9 @@ package com.fpvarbcon
 import android.app.Activity
 import android.graphics.Rect
 import android.os.SystemClock
+import android.view.InputDevice
+import android.view.InputEvent
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -28,8 +31,27 @@ import java.util.concurrent.atomic.AtomicReference
  * WHY NOT performClick(). React Native does not attach OnClickListeners.
  * A Pressable receives touches through the view group's own touch handling
  * and the JS touch dispatcher, so performClick() fires nothing. Presses
- * here are real MotionEvents injected through the instrumentation, at the
- * view's actual screen coordinates - the same path a finger takes.
+ * here are real MotionEvents injected at the view's actual screen
+ * coordinates - the same path a finger takes.
+ *
+ * WHY NOT Instrumentation.sendPointerSync. It injects with a TARGET UID:
+ * the platform delivers the event only if the window that would receive it
+ * is owned by the instrumented application, and otherwise rejects the whole
+ * injection. Run 34418366288 hit that on both API 34 and API 36, seven
+ * cases each, with the same message:
+ *
+ *   java.lang.IllegalArgumentException: Targeted input event injection
+ *   from pid 5448 was not directed at a window owned by uid 10216.
+ *
+ * UiAutomation.injectInputEvent is the untargeted path - it is what
+ * androidx.test.uiautomator's own InteractionController uses - and it is
+ * not subject to that ownership check. Nothing else changes: the same
+ * MotionEvents, at the same coordinates, through the same InputDispatcher.
+ *
+ * That mechanism is not asserted from a manual: InputInjectionControlTest
+ * runs both APIs against the same coordinate on the device and records
+ * which one is rejected, and a press is only believed when the app visibly
+ * responds to it.
  *
  * testID is readable from the native tree because React Native's
  * BaseViewManager sets it as the view's tag as well as an id resource, so
@@ -73,10 +95,14 @@ fun drawnViews(root: View): List<View> =
   }
 
 /**
- * What TalkBack would announce for [view]: its own content description, or
+ * The accessibility name [view] EXPOSES: its own content description, or
  * failing that the text of the text nodes it contains. A Pressable that
  * sets accessibilityLabel gets the former; one that simply wraps a Text
  * gets the latter, and both are legitimate.
+ *
+ * This is the semantics a screen reader would read FROM. It is not what a
+ * screen reader announced: nothing here enables TalkBack, and no result
+ * derived from this function may be reported as a TalkBack measurement.
  */
 fun accessibleName(view: View): String? {
   val described = view.contentDescription?.toString()?.trim()
@@ -116,7 +142,8 @@ fun ActivityScenario<MainActivity>.awaitTag(
     SystemClock.sleep(POLL_MILLIS)
   }
   throw AssertionError(
-    "no drawn view tagged \"$testId\" within ${timeoutMillis}ms. Tags present: $lastSeen",
+    "no drawn view tagged \"$testId\" within ${timeoutMillis}ms. Tags present: $lastSeen. " +
+      "On top at that moment: ${activeWindowReport()}",
   )
 }
 
@@ -124,37 +151,121 @@ fun ActivityScenario<MainActivity>.awaitTag(
 fun ActivityScenario<MainActivity>.hasTag(testId: String): Boolean =
   readMain { activity -> findByTag(activity.window.decorView, testId)?.isShown == true }
 
+/** Untargeted injection - see the note at the top of this file. */
+private fun inject(event: InputEvent): Boolean =
+  instrumentation().uiAutomation.injectInputEvent(event, true)
+
+/** The centre of the view carrying [testId], in display coordinates. */
+fun ActivityScenario<MainActivity>.centreOfTag(testId: String): FloatArray = readMain { activity ->
+  val view = findByTag(activity.window.decorView, testId)
+    ?: throw AssertionError("cannot locate \"$testId\": no such view")
+  val location = IntArray(2)
+  view.getLocationOnScreen(location)
+  floatArrayOf(
+    (location[0] + view.width / 2).toFloat(),
+    (location[1] + view.height / 2).toFloat(),
+  )
+}
+
 /**
- * A real press: ACTION_DOWN and ACTION_UP at the view's centre on screen,
- * injected through the instrumentation so React Native's touch dispatcher
- * sees exactly what a finger produces.
+ * A real press: ACTION_DOWN and ACTION_UP at [x], [y] in display
+ * coordinates. Each event carries the uptime at which it is actually sent,
+ * because a MotionEvent stamped with a future eventTime is not what a
+ * finger produces and not what the dispatcher expects.
  */
-fun ActivityScenario<MainActivity>.tapTag(testId: String) {
-  val centre = readMain { activity ->
-    val view = findByTag(activity.window.decorView, testId)
-      ?: throw AssertionError("cannot press \"$testId\": no such view")
-    val location = IntArray(2)
-    view.getLocationOnScreen(location)
-    floatArrayOf(
-      (location[0] + view.width / 2).toFloat(),
-      (location[1] + view.height / 2).toFloat(),
-    )
-  }
+fun tapAt(x: Float, y: Float) {
   val down = SystemClock.uptimeMillis()
-  val press = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, centre[0], centre[1], 0)
-  val release = MotionEvent.obtain(down, down + 60, MotionEvent.ACTION_UP, centre[0], centre[1], 0)
+  val press = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0)
+  press.source = InputDevice.SOURCE_TOUCHSCREEN
   try {
-    instrumentation().sendPointerSync(press)
-    instrumentation().sendPointerSync(release)
+    inject(press)
   } finally {
     press.recycle()
+  }
+  SystemClock.sleep(60)
+  val release =
+    MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0)
+  release.source = InputDevice.SOURCE_TOUCHSCREEN
+  try {
+    inject(release)
+  } finally {
     release.recycle()
   }
   instrumentation().waitForIdleSync()
 }
 
+fun ActivityScenario<MainActivity>.tapTag(testId: String) {
+  val centre = centreOfTag(testId)
+  tapAt(centre[0], centre[1])
+}
+
+/**
+ * The same press through Instrumentation.sendPointerSync, which injects
+ * with a target UID. Returns what the platform did, so a test can record
+ * it rather than a comment claiming it.
+ */
+fun probeTargetedInjection(x: Float, y: Float): String {
+  val down = SystemClock.uptimeMillis()
+  val press = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0)
+  return try {
+    instrumentation().sendPointerSync(press)
+    // It went through, so a gesture is now open. Cancel it on the
+    // untargeted path: leaving a dangling ACTION_DOWN behind would make
+    // every later press in this process meaningless.
+    val cancel =
+      MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_CANCEL, x, y, 0)
+    cancel.source = InputDevice.SOURCE_TOUCHSCREEN
+    try {
+      inject(cancel)
+    } finally {
+      cancel.recycle()
+    }
+    "ACCEPTED"
+  } catch (rejected: IllegalArgumentException) {
+    "REJECTED: ${rejected.message}"
+  } catch (rejected: SecurityException) {
+    "REJECTED: ${rejected.message}"
+  } finally {
+    press.recycle()
+  }
+}
+
+/**
+ * Which window is actually on top, and who owns it. When a press does not
+ * arrive, this is the difference between "the control moved" and "something
+ * else is covering the application".
+ */
+fun activeWindowReport(): String {
+  val automation = instrumentation().uiAutomation
+  val active = runCatching { automation.rootInActiveWindow }.getOrNull()
+  val windows = runCatching {
+    automation.windows.joinToString("; ") { window ->
+      val bounds = Rect().also { window.getBoundsInScreen(it) }
+      "type=${window.type} focused=${window.isFocused} active=${window.isActive} " +
+        "package=${runCatching { window.root?.packageName }.getOrNull()} at $bounds"
+    }
+  }.getOrElse { "<windows unreadable: ${it.message}>" }
+  return "activeWindow=${active?.packageName ?: "<none>"} windows=[$windows]"
+}
+
 fun pressBack() {
-  instrumentation().sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+  val time = SystemClock.uptimeMillis()
+  for (action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+    inject(
+      KeyEvent(
+        time,
+        SystemClock.uptimeMillis(),
+        action,
+        KeyEvent.KEYCODE_BACK,
+        0,
+        0,
+        KeyCharacterMap.VIRTUAL_KEYBOARD,
+        0,
+        0,
+        InputDevice.SOURCE_KEYBOARD,
+      ),
+    )
+  }
   instrumentation().waitForIdleSync()
 }
 

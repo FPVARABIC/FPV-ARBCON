@@ -12,9 +12,15 @@
 #   * Does anything in the rendered UI carry a name? React Native draws
 #     into its own view tree, and a screen whose controls have no
 #     accessibilityLabel produces an accessibility tree of unnamed nodes:
-#     TalkBack reads nothing useful and the Arabic UI is unusable without
-#     sight. That is invisible to every test that only checks the app did
-#     not crash.
+#     a screen reader has nothing to read and the Arabic UI is unusable
+#     without sight. That is invisible to every test that only checks the
+#     app did not crash.
+#
+# WHAT THE RESULT MAY BE CALLED. This reads the semantics the window
+# EXPOSES, through uiautomator's dump. TalkBack is never enabled, no focus
+# ever traverses, and nothing is ever announced - so a green result here is
+# ACCESSIBILITY_SEMANTICS_VERIFIED and nothing stronger. Calling it a
+# TalkBack test would be claiming a measurement that was not taken.
 #
 # This is NOT a claim that the app is fully accessible - that needs human
 # judgement. It is the mechanical floor: the app runs at 2x text, and its
@@ -114,6 +120,16 @@ for attempt in 1 2 3; do
   sleep 5
 done
 
+# WHAT THE WINDOW MANAGER THINKS IS IN FRONT, recorded before the tree is
+# judged. If the dump turns out to hold no node of ours, this is the line
+# that says whether the app was even the focused window - and it is cheap
+# enough to print either way.
+echo "current focus and resumed activity:"
+adb shell dumpsys window 2>/dev/null | tr -d '\r' \
+  | grep -E "mCurrentFocus|mFocusedApp|mHoldScreenWindow" || echo "  (no focus lines)"
+adb shell dumpsys activity activities 2>/dev/null | tr -d '\r' \
+  | grep -E "mResumedActivity|topResumedActivity|ResumedActivity:" || echo "  (no resumed-activity lines)"
+
 if [ "$DUMP_OK" -ne 1 ] || [ ! -s "$DIAG_DIR/window_dump.xml" ]; then
   fail "could not capture an accessibility tree with uiautomator - the check could not be performed, which is not the same as passing"
 else
@@ -133,6 +149,21 @@ ours = [n for n in nodes if n.get("package") == package]
 print(f"nodes in dump: {len(nodes)}, belonging to {package}: {len(ours)}")
 
 if not ours:
+    # WHOSE WINDOW IS IT THEN. "No node belonging to the app" has two very
+    # different causes - the app draws an anonymous canvas, or something
+    # else is on top of it - and the dump already knows which. Naming the
+    # packages that ARE there turns the error from a puzzle into a fact.
+    seen = {}
+    for n in nodes:
+        key = n.get("package") or "<no package>"
+        seen[key] = seen.get(key, 0) + 1
+    print("packages present in the dump instead:")
+    for name, count in sorted(seen.items(), key=lambda item: -item[1]):
+        print(f"  {name}: {count} node(s)")
+    for n in nodes[:20]:
+        label = (n.get("content-desc") or "").strip() or (n.get("text") or "").strip()
+        print(f"  [{n.get('package','?')}] {n.get('class','?')} "
+              f"{n.get('bounds','?')} {label[:70]}")
     print(f"::error::the accessibility tree contains no node belonging to {package} - "
           f"either the app was not in the foreground or it exposes no accessibility nodes at all")
     raise SystemExit(1)
@@ -147,9 +178,13 @@ for n in named[:15]:
     print(f"  [{n.get('class','?')}] {label[:90]}")
 
 if not named:
-    print("::error::every accessibility node in the app's window is unnamed. TalkBack "
-          "would read nothing, and the Arabic UI would be unusable without sight.")
+    print("::error::every accessibility node in the app's window is unnamed. A screen reader "
+          "would have nothing to read, and the Arabic UI would be unusable without sight.")
     raise SystemExit(1)
+
+print("ACCESSIBILITY_SEMANTICS_VERIFIED: the window exposes named nodes. TalkBack was not "
+      "enabled and no focus traversal or announcement was measured, so this is not a "
+      "TalkBack result.")
 PY
   [ "$?" -ne 0 ] && FAILED=1
 fi

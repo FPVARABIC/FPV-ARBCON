@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
+import android.os.SystemClock
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -63,6 +64,45 @@ class LifecycleCampaignTest {
     applyArabicLayoutDirection(target)
   }
 
+  /**
+   * WAITING FOR A CONDITION INSTEAD OF FOR THE LOOPER.
+   *
+   * `waitForIdleSync()` returns when the main looper has nothing left to
+   * run. That is not the same as "the window manager has applied the
+   * configuration I asked for" or "the Activity has finished tearing
+   * itself down": both of those are round trips through system_server,
+   * and the looper can be idle in the middle of one.
+   *
+   * Run 34418366288 showed both halves of that. API 34 reported
+   *
+   *   after Back the Activity is in STARTED - neither still usable nor
+   *   cleanly finished
+   *
+   * (STARTED is a state an Activity passes THROUGH on its way to
+   * DESTROYED), and API 34 and 36 both reported
+   *
+   *   the Activity did not adopt the requested orientation ...
+   *   expected:<1> but was:<2>
+   *
+   * on the SECOND rotation, having passed the first. A single idle sync
+   * happened to be enough once and not twice, which is the signature of a
+   * race and not of a broken app.
+   *
+   * So these poll for the condition with a deadline. The assertion that
+   * follows is unchanged and still fails if the condition never holds -
+   * the deadline only decides how long the truth is given to arrive, and a
+   * timeout here is still a failure.
+   */
+  private fun awaitCondition(what: String, timeoutMillis: Long = 15_000L, condition: () -> Boolean) {
+    val deadline = SystemClock.uptimeMillis() + timeoutMillis
+    while (SystemClock.uptimeMillis() < deadline) {
+      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      if (condition()) return
+      SystemClock.sleep(100)
+    }
+    println("awaitCondition gave up after ${timeoutMillis}ms waiting for: $what")
+  }
+
   /** A window that still has content the operator could read. */
   private fun assertWindowStillHasContent(activity: Activity, moment: String) {
     val root = activity.window?.decorView
@@ -96,7 +136,16 @@ class LifecycleCampaignTest {
         ActivityInfo.SCREEN_ORIENTATION_PORTRAIT to Configuration.ORIENTATION_PORTRAIT,
       )) {
         scenario.onActivity { it.requestedOrientation = requested }
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        awaitCondition("the Activity's configuration to report orientation $expected") {
+          var adopted = false
+          // If the Activity has gone, this poll must simply not match and
+          // let the assertion below report it, rather than throw from
+          // inside a wait and hide which case failed.
+          runCatching {
+            scenario.onActivity { adopted = it.resources.configuration.orientation == expected }
+          }
+          adopted
+        }
 
         scenario.onActivity { activity ->
           assertEquals(
@@ -187,7 +236,13 @@ class LifecycleCampaignTest {
         @Suppress("DEPRECATION")
         activity.onBackPressed()
       }
-      InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+      // STARTED and CREATED are states an Activity passes THROUGH while it
+      // finishes. Waiting for it to settle is the difference between
+      // "Back left the app somewhere undefined" - which is what this case
+      // exists to catch - and "the assertion looked mid-teardown".
+      awaitCondition("the Activity to settle in RESUMED or DESTROYED after Back") {
+        scenario.state == Lifecycle.State.RESUMED || scenario.state == Lifecycle.State.DESTROYED
+      }
 
       val state = scenario.state
       assertTrue(

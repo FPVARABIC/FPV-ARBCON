@@ -126,6 +126,34 @@ done
 adb logcat -d > "$DIAG/logcat-after-sigquit.txt" 2>&1 || true
 echo "logcat lines captured: $(wc -l < "$DIAG/logcat.txt" 2>/dev/null || echo 0)"
 
+# THE FOUR QUESTIONS A 110,000-LINE LOGCAT IS ASKED, ANSWERED IN A FILE
+# SMALL ENOUGH TO PRINT.
+#
+# Run 34418366288 failed fourteen cases across two API levels on rejected
+# input injection, and the logcat holding the reason was captured, uploaded,
+# and unreachable: the artifact lives on blob storage this environment
+# cannot reach, and the log API returns only the tail of a job. So the
+# decisive lines are extracted here, next to the digest that is already
+# re-printed as the last step.
+#
+# - who rejected an injected event, and which window it landed on instead
+# - which process was not responding, if any
+# - what the focused window was while all that happened
+{
+  echo "=== input injection rejected (InputDispatcher / InputManager) ==="
+  grep -aiE "not directed at a window owned|Targeted input event|Permission denied.*inject|injectInputEvent.*(fail|denied)|Dropping .*(injected|untrusted)" \
+    "$DIAG/logcat.txt" 2>/dev/null | head -40 || true
+  echo "=== ANRs, whatever the process ==="
+  grep -aE "ANR in |Reason: |am_anr" "$DIAG/logcat.txt" 2>/dev/null | head -40 || true
+  echo "=== focus changes ==="
+  grep -aE "Focus (request|entering|leaving)|setFocusedWindow|focusedWindow|Window\{.*\} .*focus" \
+    "$DIAG/logcat.txt" 2>/dev/null | head -40 || true
+  echo "=== windows on top at the end of the run ==="
+  adb shell dumpsys window 2>/dev/null | tr -d '\r' \
+    | grep -aE "mCurrentFocus|mFocusedApp" || echo "(no focus lines)"
+} > "$DIAG/input-and-anr.txt" 2>&1 || true
+echo "input/ANR extract: $(wc -l < "$DIAG/input-and-anr.txt" 2>/dev/null || echo 0) lines"
+
 # The right-to-left repair is about the FIRST launch after an install,
 # which no in-process instrumentation test can reach. It runs after the
 # suite because `pm clear` would disturb it.

@@ -607,6 +607,13 @@ jobs:
             echo "no stuck-process capture - the emulator phase did not reach it"
           fi
           echo "::endgroup::"
+          echo "::group::Rejected input, ANRs and focus changes"
+          if [ -s instrumentation-diagnostics/input-and-anr.txt ]; then
+            cat instrumentation-diagnostics/input-and-anr.txt
+          else
+            echo "no input/ANR extract - the emulator phase did not reach it"
+          fi
+          echo "::endgroup::"
   sixteen-kb-image-inventory:
     name: 16 KB system image availability (evidence)
     runs-on: ubuntu-latest
@@ -863,6 +870,13 @@ jobs:
             head -80 instrumentation-diagnostics/stuck-process.txt
           else
             echo "no stuck-process capture - the emulator phase did not reach it"
+          fi
+          echo "::endgroup::"
+          echo "::group::Rejected input, ANRs and focus changes"
+          if [ -s instrumentation-diagnostics/input-and-anr.txt ]; then
+            cat instrumentation-diagnostics/input-and-anr.txt
+          else
+            echo "no input/ANR extract - the emulator phase did not reach it"
           fi
           echo "::endgroup::"
   # EVERY VERDICT IN ONE SHORT JOB, SO IT CAN ACTUALLY BE READ.
