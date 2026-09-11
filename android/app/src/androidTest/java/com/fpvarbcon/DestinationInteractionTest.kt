@@ -407,24 +407,96 @@ class DestinationInteractionTest {
   // Back
   // ===================================================================
 
+  /**
+   * WHERE ONE BACK ACTUALLY GOES, WHICH IS ONE LEVEL - NOT ALWAYS START.
+   *
+   * This test used to press BACK once from every destination and require
+   * the Start screen. That is right for a destination one push deep and
+   * wrong for anything deeper, and run 34642729506 said so the moment the
+   * firmware route started working and the loop finally reached the
+   * three-deep one:
+   *
+   *   Back from FlightStyleCorner did not return to the start screen,
+   *   and the app is in an undefined place
+   *
+   * The application is not at fault. App.tsx:141-147 declares Start,
+   * FirmwareFlasher, FlightStyleGuide and FlightStyleCorner as four
+   * separate routes in one stack, and FlightStyleGuideScreen.tsx:166
+   * reaches the corner with navigation.navigate('FlightStyleCorner'), a
+   * PUSH. So Start -> FlightStyleGuide -> FlightStyleCorner is three
+   * entries deep and one BACK is supposed to land on FlightStyleGuide.
+   * The old assertion demanded that a single key press unwind two of them.
+   *
+   * So the contract asserted here is the one the platform actually offers,
+   * and it is asserted step by step rather than in one jump:
+   *
+   *   - after ONE back, the app is at the destination reached by this
+   *     destination's route minus its last step - Start when the route is
+   *     one step long
+   *   - after as many backs as the route has steps, the app is at Start
+   *
+   * The parent is DERIVED by finding the destination whose route is this
+   * one's route without its last step, so a new destination cannot be
+   * added with a hand-written parent that quietly disagrees with its own
+   * route.
+   *
+   * EVERY DESTINATION IS ITS OWN POSITIVE CONTROL, IN THIS RUN. The
+   * one-step destinations still have to reach Start on a single back, so
+   * a genuinely broken BACK key cannot pass this test by being generous
+   * about where it lands - it would fail on them first.
+   *
+   * WHAT IS RECORDED AND WHAT IS NOT. The marker tag on screen, every
+   * visible testID, the Activity lifecycle state and whether the platform
+   * ACCEPTED the key are all printed, because "back did nothing" and "back
+   * never arrived" look the same from the screen alone. The JS navigator's
+   * own route name and the number of registered BackHandler callbacks are
+   * NOT MEASURABLE from an instrumentation test - nothing native exposes
+   * them - so neither is claimed here; the marker testID the product
+   * itself renders is used as the observable instead.
+   */
   @Test
-  fun backReturnsToStartFromEveryPushedDestination() {
+  fun oneBackGoesUpExactlyOneLevelAndTheRouteUnwindsToStart() {
     for (destination in REACHABLE.filter { it.route.isNotEmpty() }) {
+      val parent = REACHABLE.firstOrNull { it.route == destination.route.dropLast(1) }
+        ?: throw AssertionError(
+          "${destination.name} has route ${destination.route}, but no destination in REACHABLE " +
+            "has route ${destination.route.dropLast(1)} - so there is nothing to call the place " +
+            "one back from it, and this test cannot say where it should land",
+        )
+
       onDestination(destination) { scenario ->
-        pressBack()
-        val returned = run {
-          var seen = false
-          repeat(100) {
-            if (!seen && scenario.hasTag(START)) seen = true
-            if (seen) return@repeat
-            android.os.SystemClock.sleep(100)
-          }
-          seen || scenario.hasTag(START)
-        }
+        val before = scenario.visibleTags()
+        val accepted = pressBack()
+        val landedOnParent = scenario.awaitTagOrNull(parent.marker)
+        val after = scenario.visibleTags()
+        println(
+          "back control: from ${destination.name} (route=${destination.route}) one back " +
+            "accepted=$accepted lifecycle=${scenario.state} expected=\"${parent.marker}\" " +
+            "present=$landedOnParent",
+        )
+        println("back control:   tags before = $before")
+        println("back control:   tags after  = $after")
+
         assertTrue(
-          "Back from ${destination.name} did not return to the start screen, and the app is " +
-            "in an undefined place",
-          returned,
+          "one BACK from ${destination.name} did not land on \"${parent.marker}\", the place " +
+            "one level up. The key was ${if (accepted) "ACCEPTED" else "REJECTED"} by the " +
+            "platform, the activity is ${scenario.state}, and what is on screen now is " +
+            "$after. If the key was accepted and the screen did not change, BACK is not " +
+            "working; if it was rejected, nothing was ever delivered.",
+          landedOnParent,
+        )
+
+        // And the whole route unwinds: one back per step reaches Start.
+        repeat(destination.route.size - 1) { pressBack() }
+        val atStart = scenario.awaitTagOrNull(START)
+        println(
+          "back control: ${destination.route.size} backs from ${destination.name} " +
+            "reached start=$atStart",
+        )
+        assertTrue(
+          "${destination.route.size} BACK presses from ${destination.name} did not unwind to " +
+            "the start screen. On screen now: ${scenario.visibleTags()}",
+          atStart,
         )
       }
     }

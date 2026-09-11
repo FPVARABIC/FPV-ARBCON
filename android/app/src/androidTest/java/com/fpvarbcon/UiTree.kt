@@ -158,6 +158,27 @@ fun ActivityScenario<MainActivity>.awaitTag(
   )
 }
 
+/**
+ * Waits like [awaitTag] but ANSWERS instead of throwing.
+ *
+ * For a caller that has something to say about a false - which screen it
+ * is on instead, whether the key that should have taken it there was even
+ * accepted - a thrown AssertionError from inside the wait would replace
+ * that report with a generic one.
+ */
+fun ActivityScenario<MainActivity>.awaitTagOrNull(
+  testId: String,
+  timeoutMillis: Long = RENDER_TIMEOUT_MILLIS,
+): Boolean {
+  val deadline = SystemClock.uptimeMillis() + timeoutMillis
+  while (SystemClock.uptimeMillis() < deadline) {
+    if (hasTag(testId)) return true
+    instrumentation().waitForIdleSync()
+    SystemClock.sleep(POLL_MILLIS)
+  }
+  return false
+}
+
 /** True if a view with this testID is drawn right now, without waiting. */
 fun ActivityScenario<MainActivity>.hasTag(testId: String): Boolean =
   readMain { activity -> findByTag(activity.window.decorView, testId)?.isShown == true }
@@ -524,10 +545,20 @@ fun activeWindowReport(): String {
   return "activeWindow=${active?.packageName ?: "<none>"} windows=[$windows]"
 }
 
-fun pressBack() {
+/**
+ * Sends a real BACK key, down and up, and returns whether the PLATFORM
+ * accepted both injections.
+ *
+ * The return value matters: "back did nothing" and "back was never
+ * delivered" look identical from the screen afterwards, and only one of
+ * them is a fact about the application. A caller that asserts on where the
+ * app ended up should report this alongside it.
+ */
+fun pressBack(): Boolean {
   val time = SystemClock.uptimeMillis()
+  var accepted = true
   for (action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
-    inject(
+    accepted = inject(
       KeyEvent(
         time,
         SystemClock.uptimeMillis(),
@@ -540,9 +571,19 @@ fun pressBack() {
         0,
         InputDevice.SOURCE_KEYBOARD,
       ),
-    )
+    ) && accepted
   }
   instrumentation().waitForIdleSync()
+  return accepted
+}
+
+/** Every testID currently drawn, sorted - what the screen says it is. */
+fun ActivityScenario<MainActivity>.visibleTags(): List<String> = readMain { activity ->
+  everyView(activity.window.decorView)
+    .filter { it.isShown }
+    .mapNotNull { it.tag as? String }
+    .distinct()
+    .sorted()
 }
 
 /** The outermost vertical scroll container on screen, if the screen has one. */
