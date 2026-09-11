@@ -573,22 +573,40 @@ class DestinationInteractionTest {
     val text = view.text.toString().take(60)
 
     val available = view.height - view.paddingTop - view.paddingBottom
-    if (available > 0 && layout.height > available) {
-      return "$destination: \"$text\" needs ${layout.height}px tall and has ${available}px"
-    }
-
-    // AND THE OTHER AXIS. A fixed-width box around growing text cuts the
-    // glyph off sideways instead of underneath, and reports nothing
-    // either. Checking only height would pass a badge that had been made
-    // tall enough and left too narrow.
-    val availableWidth = view.width - view.paddingStart - view.paddingEnd
-    if (availableWidth <= 0) return null
-    val widest = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 0f
-    if (widest > availableWidth) {
-      return "$destination: \"$text\" needs ${widest.toInt()}px wide and has ${availableWidth}px"
-    }
-    return null
+    if (available <= 0) return null
+    if (layout.height <= available) return null
+    return "$destination: \"$text\" needs ${layout.height}px and has ${available}px"
   }
+
+  /*
+   * WHY THERE IS NO WIDTH CHECK HERE, HAVING BRIEFLY ADDED ONE.
+   *
+   * A width comparison was added alongside the height one, on the
+   * reasoning that a box made tall enough and left too narrow would cut
+   * the glyph off sideways. Run 34649197028 showed that reasoning is
+   * wrong, and produced ten complaints that are all false:
+   *
+   *   FlightStyleGuide@1.0: "كل نمط ركن مستقل..." needs 284px wide and has 284px
+   *   FlightStyleGuide@1.0: "الطيران خارج مدى البصر..." needs 247px wide and has 246px
+   *   Start@2.0: "FPV Arabic Configurator" needs 193px wide and has 191px
+   *   FlightStyleGuide@2.0: "كل رقم مأخوذ..." needs 263px wide and has 258px
+   *
+   * Nought to five pixels, on text that WRAPPED correctly. Text with no
+   * line limit does not clip horizontally - it breaks to the next line -
+   * and Layout.getLineWidth returns a float advance width that can exceed
+   * the wrap constraint by a fraction for shaped Arabic. Comparing it
+   * against the view's width measures the line breaker's rounding, not a
+   * cut-off glyph.
+   *
+   * The height check already covers the case that motivated it: a box too
+   * narrow for its text makes the text wrap to more lines, which makes it
+   * taller than the box, which is exactly what this function detects. It
+   * is what caught the step badges at "٤ needs 35px and has 28px".
+   *
+   * No tolerance was added instead. A threshold picked to make ten
+   * complaints go away is a number chosen to produce a colour, and the
+   * next real defect would have to be larger than whatever was picked.
+   */
 
   /**
    * The detector is a real subject. A text view deliberately squeezed to
