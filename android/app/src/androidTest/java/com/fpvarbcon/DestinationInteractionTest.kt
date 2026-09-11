@@ -506,34 +506,52 @@ class DestinationInteractionTest {
   // Font scale 2.0
   // ===================================================================
 
+  /**
+   * BOTH TEXT SIZES, NOT JUST THE LARGE ONE.
+   *
+   * Run 34642729506 measured the step badges in the firmware flasher being
+   * cut off at scale 2.0 ("٤" needs 35px and has 28px). A repair for that
+   * can break the ordinary size just as easily as the large one, so the
+   * default is measured too and in the same run - a screen that is only
+   * ever checked at one text size has only ever been checked for one
+   * operator.
+   */
   @Test
-  fun atFontScaleTwoNoTextIsSilentlyClipped() {
-    setSystemFontScale("2.0")
-    val applied = readSystemFontScale()
-    println("system font_scale is now: $applied")
-    assertTrue("the system font scale did not become 2.0, it is \"$applied\"", applied.startsWith("2"))
-
+  fun atFontScaleOneAndTwoNoTextIsSilentlyClipped() {
     val clipped = mutableListOf<String>()
-    for (destination in REACHABLE) {
-      onDestination(destination) { scenario ->
-        scenario.scrollToEnd()
-        val found = scenario.readMain { activity ->
-          assertEquals(
-            "${destination.name} did not adopt the 2.0 font scale",
-            2.0f,
-            activity.resources.configuration.fontScale,
-            0.01f,
-          )
-          drawnViews(activity.window.decorView)
-            .filterIsInstance<TextView>()
-            .filter { !it.text.isNullOrBlank() }
-            .mapNotNull { view -> clippingComplaint(destination.name, view) }
+    for (scale in listOf("1.0", "2.0")) {
+      setSystemFontScale(scale)
+      val applied = readSystemFontScale()
+      println("system font_scale is now: $applied")
+      assertTrue(
+        "the system font scale did not become $scale, it is \"$applied\"",
+        applied.startsWith(scale.take(1)),
+      )
+
+      for (destination in REACHABLE) {
+        onDestination(destination) { scenario ->
+          // Every scroll position, not just the end - see scrollSweep for
+          // the three step badges the single-measurement version missed.
+          scenario.scrollSweep {
+            val found = scenario.readMain { activity ->
+              assertEquals(
+                "${destination.name} did not adopt the $scale font scale",
+                scale.toFloat(),
+                activity.resources.configuration.fontScale,
+                0.01f,
+              )
+              drawnViews(activity.window.decorView)
+                .filterIsInstance<TextView>()
+                .filter { !it.text.isNullOrBlank() }
+                .mapNotNull { view -> clippingComplaint("${destination.name}@$scale", view) }
+            }
+            clipped += found
+          }
         }
-        clipped += found
       }
     }
     assertTrue(
-      "text is cut off at font scale 2.0:\n" + clipped.joinToString("\n"),
+      "text is cut off:\n" + clipped.joinToString("\n"),
       clipped.isEmpty(),
     )
   }
@@ -552,11 +570,24 @@ class DestinationInteractionTest {
   private fun clippingComplaint(destination: String, view: TextView): String? {
     val layout = view.layout ?: return null
     if (view.maxLines != Int.MAX_VALUE) return null
-    val available = view.height - view.paddingTop - view.paddingBottom
-    if (available <= 0) return null
-    if (layout.height <= available) return null
     val text = view.text.toString().take(60)
-    return "$destination: \"$text\" needs ${layout.height}px and has ${available}px"
+
+    val available = view.height - view.paddingTop - view.paddingBottom
+    if (available > 0 && layout.height > available) {
+      return "$destination: \"$text\" needs ${layout.height}px tall and has ${available}px"
+    }
+
+    // AND THE OTHER AXIS. A fixed-width box around growing text cuts the
+    // glyph off sideways instead of underneath, and reports nothing
+    // either. Checking only height would pass a badge that had been made
+    // tall enough and left too narrow.
+    val availableWidth = view.width - view.paddingStart - view.paddingEnd
+    if (availableWidth <= 0) return null
+    val widest = (0 until layout.lineCount).maxOfOrNull { layout.getLineWidth(it) } ?: 0f
+    if (widest > availableWidth) {
+      return "$destination: \"$text\" needs ${widest.toInt()}px wide and has ${availableWidth}px"
+    }
+    return null
   }
 
   /**

@@ -614,6 +614,41 @@ fun ActivityScenario<MainActivity>.scrollToEnd(): Boolean {
   return moved
 }
 
+/**
+ * SWEEPS THE WHOLE SCREEN PAST THE VIEWPORT, running [atEachRest] once at
+ * the top and once after every page of scrolling.
+ *
+ * A check that scrolls to the end and then measures has only measured what
+ * happens to be on screen at the end. Run 34642729506 reported the firmware
+ * flasher's step badges "٤" and "٥" as cut off and said nothing about "١",
+ * "٢" or "٣" - not because those were fine, but because they were above the
+ * fold when the one measurement was taken. Anything measured this way is
+ * measured for every part of the screen an operator can reach.
+ *
+ * A screen with nothing to scroll gets exactly one pass, which is correct:
+ * all of it was already visible.
+ */
+fun ActivityScenario<MainActivity>.scrollSweep(atEachRest: () -> Unit) {
+  readMain { activity -> outermostScroll(activity.window.decorView)?.scrollTo(0, 0) }
+  instrumentation().waitForIdleSync()
+  atEachRest()
+
+  repeat(40) {
+    val moved = readMain { activity ->
+      val scroll = outermostScroll(activity.window.decorView) ?: return@readMain false
+      val before = scroll.scrollY
+      // Four fifths of a viewport, so consecutive pages overlap and
+      // nothing can fall between two measurements.
+      scroll.scrollBy(0, (scroll.height * 4) / 5)
+      scroll.scrollY != before
+    }
+    if (!moved) return
+    instrumentation().waitForIdleSync()
+    SystemClock.sleep(POLL_MILLIS)
+    atEachRest()
+  }
+}
+
 /** The display rectangle the app is allowed to draw in. */
 fun ActivityScenario<MainActivity>.displayBounds(): Rect = readMain { activity ->
   val rect = Rect()

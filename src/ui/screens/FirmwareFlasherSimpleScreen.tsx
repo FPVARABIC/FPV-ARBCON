@@ -40,6 +40,7 @@ import {
   Alert,
   FlatList,
   Modal,
+  PixelRatio,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -319,6 +320,42 @@ const CHANNEL_TITLES: Readonly<Record<FirmwareReleaseChannel, string>> = {
  * Small presentation pieces
  * ------------------------------------------------------------------ */
 
+/**
+ * The step badge at the system's DEFAULT text size. It is a floor, not a
+ * fixed size - see [stepBadgeSize].
+ */
+const STEP_BADGE_BASE_SIZE = 28;
+
+/**
+ * HOW BIG THE STEP BADGE HAS TO BE AT THIS TEXT SIZE.
+ *
+ * The badge used to be a fixed 28x28 circle wrapped around a caption that
+ * grows with the operator's text-size setting, so at a large setting the
+ * digit was drawn taller than the box holding it and the bottom of it was
+ * simply cut off. Run 34642729506 measured it on API 34 at font scale 2.0
+ * on a 320px display:
+ *
+ *   FirmwareFlasher: "٤" needs 35px and has 28px
+ *   FirmwareFlasher: "٥" needs 35px and has 28px
+ *
+ * Steps ١ ٢ ٣ are the same badge and were merely scrolled out of view when
+ * the measurement ran, so all five were affected.
+ *
+ * The box therefore grows with the text instead of the text being made to
+ * fit the box. Shrinking the digit, pinning allowFontScaling to false,
+ * capping maxFontSizeMultiplier, adding an ellipsis or hiding the number
+ * would each make the complaint go away by making the screen worse for the
+ * operator who chose the larger text, which is the opposite of the point.
+ *
+ * PixelRatio.getFontScale() is read during render rather than once at
+ * module load, so a text-size change the operator makes while the app is
+ * installed is picked up when the screen is next drawn rather than being
+ * frozen at whatever the setting was when the bundle loaded.
+ */
+function stepBadgeSize(): number {
+  return Math.ceil(STEP_BADGE_BASE_SIZE * Math.max(1, PixelRatio.getFontScale()));
+}
+
 function StepHeader({
   number,
   title,
@@ -326,9 +363,16 @@ function StepHeader({
   readonly number: string;
   readonly title: string;
 }): React.JSX.Element {
+  const size = stepBadgeSize();
   return (
     <View style={styles.stepHeader}>
-      <View style={styles.stepNumber}><Text style={styles.stepNumberText}>{number}</Text></View>
+      <View
+        style={[
+          styles.stepNumber,
+          {minWidth: size, minHeight: size, borderRadius: size / 2},
+        ]}>
+        <Text style={styles.stepNumberText}>{number}</Text>
+      </View>
       <Text style={styles.stepTitle}>{title}</Text>
     </View>
   );
@@ -2067,10 +2111,12 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   stepHeader: {flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  // minWidth/minHeight/borderRadius are supplied per render by
+  // stepBadgeSize() - see its note. They are floors here so the badge can
+  // still grow past them if the glyph itself is wider, and are never a
+  // ceiling on the text.
   stepNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.accentSoft,
