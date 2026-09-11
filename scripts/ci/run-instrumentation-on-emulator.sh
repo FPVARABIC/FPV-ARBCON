@@ -275,8 +275,18 @@ echo "input/ANR extract: $(wc -l < "$DIAG/input-and-anr.txt" 2>/dev/null || echo
 # output is a measurement that disappears the moment something else has a
 # bad day, so it gets its own file and evidence-report prints that file
 # LAST, after everything that can grow.
-grep -a -A 70 "UI-X3B TAP GEOMETRY DIAGNOSTIC" "$DIAG/logcat.txt" 2>/dev/null \
-  | sed 's/.*System\.out: //' | cut -c1-200 | head -80 > "$DIAG/tap-geometry.txt" 2>/dev/null || true
+#
+# The lines collected here used to come from a test that only printed.
+# That test is gone: run 34544271920 answered the question it existed to
+# ask (two of three controls were below the fold of a 320x640 display and
+# were being pressed at coordinates no window contains), and a diagnostic
+# that can no longer fail is a comment that costs a minute of emulator
+# time. The same geometry is now printed by the controls in
+# InputInjectionControlTest that ASSERT it, so these lines are a record of
+# a test that would have failed had the numbers been wrong.
+grep -aE "scroll-and-press control:|no-scroll control:|sensitivity control:|positive control:|occlusion control:|mutation control:" \
+  "$DIAG/logcat.txt" 2>/dev/null \
+  | sed 's/.*System\.out: //' | cut -c1-220 | head -60 > "$DIAG/tap-geometry.txt" 2>/dev/null || true
 echo "tap geometry: $(wc -l < "$DIAG/tap-geometry.txt" 2>/dev/null || echo 0) lines"
 
 # The right-to-left repair is about the FIRST launch after an install,
