@@ -76,7 +76,29 @@ class DestinationInteractionTest {
 
     val REACHABLE = listOf(
       Destination("Start", START, emptyList()),
-      Destination("FirmwareFlasher", "firmware-flasher-screen", listOf("start-firmware")),
+      /**
+       * ONE ROUTE, AND THE MARKER IT ACTUALLY RENDERS.
+       *
+       * Run 34548620198 failed all seven cases in this class waiting forty
+       * seconds each for "firmware-flasher-screen" while the screen that
+       * had actually opened sat in front of them, carrying
+       * "firmware-flasher-simple-screen" and nine "simple-" controls.
+       *
+       * The product has two flasher screens -
+       * FirmwareFlasherSimpleScreen.tsx:1495 and
+       * FirmwareFlasherScreen.tsx:2237 - but App.tsx:145 declares ONE
+       * route for them, `<Stack.Screen name="FirmwareFlasher">`. Arriving
+       * there renders the simple one, and the advanced one is a state
+       * inside it behind "flasher-advanced-mode", not a second
+       * destination. So the name stays as the route's name - it is checked
+       * against App.tsx by androidDestinationReachability.test.ts - and
+       * only the marker is corrected to what the route draws.
+       *
+       * The advanced screen is not dropped: it is driven as its own step
+       * by InputInjectionControlTest, which presses through to it and
+       * asserts it was not already there.
+       */
+      Destination("FirmwareFlasher", "firmware-flasher-simple-screen", listOf("start-firmware")),
       Destination(
         "FlightStyleGuide",
         "flight-style-guide-screen",

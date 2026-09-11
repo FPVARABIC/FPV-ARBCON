@@ -8,6 +8,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -48,6 +49,19 @@ import org.junit.runner.RunWith
  *                         coincidence of timing rather than a consequence
  *                         of the touch.
  *
+ * Four more controls were added after run 34548620198, one for each thing
+ * the harness now claims about a press. Each names the single mutation that
+ * must break it, so none of them can quietly stop testing anything:
+ *
+ *   1  THE SCROLL       drop bringTagOnScreen from centreOfTag
+ *   2  THE ANCESTOR     restore "|| everyView(hit).contains(target)"
+ *   3  THE CLIP         hit-test with screenRectOf, not visibleScreenRectOf
+ *   4  THE DESTINATION  await ADVANCED_DESTINATION where DESTINATION belongs
+ *
+ * Controls 2, 3 and 4 need no particular screen size and bite on every row.
+ * Control 1 only bites where a probed control is below the fold, and says
+ * so in words when it does not.
+ *
  * NOT VERIFIED ON REAL HARDWARE.
  */
 @RunWith(AndroidJUnit4::class)
@@ -56,7 +70,31 @@ class InputInjectionControlTest {
   private companion object {
     const val START = "start-screen"
     const val CONTROL = "start-firmware"
-    const val DESTINATION = "firmware-flasher-screen"
+
+    /**
+     * WHERE "start-firmware" ACTUALLY GOES, which is not where this file
+     * used to look.
+     *
+     * Run 34548620198 waited forty seconds for "firmware-flasher-screen"
+     * and timed out with the screen open in front of it, listing the tags
+     * that WERE present:
+     *
+     *   [firmware-flasher-simple-screen, flasher-advanced-mode,
+     *    simple-auto-detect, simple-back, simple-build-configuration,
+     *    simple-enter-dfu, simple-flash-firmware, simple-load-firmware,
+     *    simple-release-placeholder, simple-target-selector]
+     *
+     * There are two flasher screens in the product -
+     * FirmwareFlasherSimpleScreen.tsx:1495 carries
+     * "firmware-flasher-simple-screen" and FirmwareFlasherScreen.tsx:2237
+     * carries "firmware-flasher-screen" - and the application's own
+     * navigation opens the simple one first, with the advanced one behind
+     * the "flasher-advanced-mode" control. The application's behaviour is
+     * the reference here; the constant was wrong, not the product.
+     */
+    const val DESTINATION = "firmware-flasher-simple-screen"
+    const val TO_ADVANCED = "flasher-advanced-mode"
+    const val ADVANCED_DESTINATION = "firmware-flasher-screen"
 
     /**
      * The three controls run 34544271920 measured. One was on the display
@@ -96,13 +134,11 @@ class InputInjectionControlTest {
   }
 
   /**
-   * Whether [hit] and [target] are the same view or one genuinely contains
-   * the other. A Pressable's inner Text carries no testID of its own, so
-   * "the tag at the point is not the control's tag" is not the question -
-   * "is the view under the point part of the control" is.
+   * The production rule, used here rather than a copy of it: a press counts
+   * as landing on a control only when the view under the point IS that
+   * control or is genuinely inside it. See landedOn in UiTree.kt.
    */
-  private fun isWithin(hit: View, target: View): Boolean =
-    hit === target || everyView(target).contains(hit) || everyView(hit).contains(target)
+  private fun isWithin(hit: View?, target: View?): Boolean = landedOn(hit, target)
 
   /**
    * Puts the start screen back at the top and confirms it stayed there.
@@ -349,7 +385,7 @@ class InputInjectionControlTest {
             targetRect = screenRectOf(target),
             displayRect = screenRectOf(root),
             hitDescription = hit?.let { "${it.javaClass.simpleName}[${it.tag}]" } ?: "<none>",
-            landed = hit != null && isWithin(hit, target),
+            landed = isWithin(hit, target),
           )
         }
         println("scroll-and-press control: $report")
@@ -374,32 +410,41 @@ class InputInjectionControlTest {
     }
   }
 
+  // ===================================================================
+  // FOUR NEGATIVE CONTROLS, ONE PER REPAIR
+  //
+  // Each repair in the harness is a claim about cause. A claim about
+  // cause is worth nothing until the thing it blames is put back and the
+  // failure returns, so there is one control per repair and each names
+  // the exact mutation that must break it:
+  //
+  //   1  drop bringTagOnScreen from centreOfTag
+  //   2  restore "|| everyView(hit).contains(target)" in landedOn
+  //   3  hit-test viewAt with screenRectOf instead of visibleScreenRectOf
+  //   4  await ADVANCED_DESTINATION where DESTINATION belongs
+  //
+  // None of them presses anything by calling into React: every press in
+  // this file is two MotionEvents through UiAutomation.
+  // ===================================================================
+
   /**
-   * THE SENSITIVITY CONTROL: TAKE THE SCROLL AWAY AND THE FAILURE COMES BACK.
+   * CONTROL 1 - THE SCROLL. Mutation: delete the bringTagOnScreen call in
+   * centreOfTag.
    *
-   * The repair's causal claim is that scrolling the control onto the
-   * display is what makes the press land. That is only established if NOT
-   * scrolling makes it stop landing, at the same coordinate arithmetic, on
-   * the same control, in the same run.
+   * With the screen at the top, a control below the fold sits at a
+   * coordinate off the display; after the scroll the same control sits at
+   * one on it. Both halves are measured for every probe, so the control
+   * says which controls it applied to instead of implying it applied to
+   * all of them.
    *
-   * So the screen is put back to the top - a deterministic state, not
-   * whatever the previous test left - and each control's centre is
-   * computed the way the harness computed it before this repair: straight
-   * from the view's position, with no scroll. For every control that is
-   * below the fold in that state, the press must NOT resolve onto it, and
-   * then scrolling must make the very same control resolve.
-   *
-   * WHETHER IT BITES DEPENDS ON THE DISPLAY, AND THAT IS REPORTED RATHER
-   * THAN HIDDEN. The workflow sets no hardware profile on any row, so the
-   * default device of each system image decides the size, and on a display
-   * tall enough to show all three controls at once there is nothing below
-   * the fold and removing the scroll changes nothing. That is a fact about
-   * the device, not a pass: the count of controls that bit is printed
-   * either way, and a run where it is zero is a run where this control
-   * proved nothing - read the transcript, do not read the colour.
+   * Whether it bites depends on the display: no row in the workflow sets a
+   * hardware profile, so each system image's default device decides the
+   * size, and where all three controls already fit there is nothing below
+   * the fold. The count is printed either way, and a zero says in words
+   * that nothing was proved on that row.
    */
   @Test
-  fun withoutTheScrollTheSameControlsStopBeingReachable() {
+  fun withoutTheScrollTheControlStaysOffTheDisplay() {
     ActivityScenario.launch(MainActivity::class.java).use { scenario ->
       scenario.moveToState(Lifecycle.State.RESUMED)
       scenario.awaitTag(START)
@@ -427,37 +472,29 @@ class InputInjectionControlTest {
             targetRect = rect,
             displayRect = screenRectOf(root),
             hitDescription = hit?.let { "${it.javaClass.simpleName}[${it.tag}]" } ?: "<none>",
-            landed = hit != null && isWithin(hit, target),
+            landed = isWithin(hit, target),
           )
         }
-        val offDisplay = !unscrolled.displayRect.contains(
+        val display = unscrolled.displayRect
+        val offDisplay = !display.contains(
           unscrolled.centre[0].toInt(),
           unscrolled.centre[1].toInt(),
         )
         println("no-scroll control: $unscrolled offDisplay=$offDisplay")
         if (!offDisplay) continue
-
         bit++
-        assertFalse(
-          "\"$probe\" is at ${unscrolled.centreText}, outside the display " +
-            "${unscrolled.displayRect}, yet the harness still resolved a press there onto it " +
-            "(${unscrolled.hitDescription}). The hit test is finding views no finger could " +
-            "reach, so it cannot be used to say a press landed.",
-          unscrolled.landed,
-        )
 
         // The same control, the same arithmetic, with the scroll put back.
         val centre = scenario.centreOfTag(probe)
-        val scrolled = scenario.readMain { activity ->
-          val root = activity.window.decorView
-          val target = findByTag(root, probe)!!
-          val hit = viewAt(root, centre[0], centre[1])
-          hit != null && isWithin(hit, target)
-        }
+        println(
+          "scrolled control: \"$probe\" moved from ${unscrolled.centreText} to " +
+            "(${centre[0]}, ${centre[1]}) inside $display",
+        )
         assertTrue(
-          "\"$probe\" did not resolve onto itself even after being scrolled onto the display, " +
-            "so the difference above is not the scroll",
-          scrolled,
+          "\"$probe\" was at ${unscrolled.centreText}, off the display $display, and after " +
+            "bringTagOnScreen its centre is (${centre[0]}, ${centre[1]}), which is STILL off " +
+            "it. The scroll is not putting the control where the press is aimed.",
+          display.contains(centre[0].toInt(), centre[1].toInt()),
         )
       }
 
@@ -467,12 +504,159 @@ class InputInjectionControlTest {
             "top, so removing the scroll changes nothing here and this control proved nothing " +
             "on this row. Read this line, not the colour."
         } else {
-          "each of them resolved onto nothing without the scroll and onto itself with it."
+          "each was off the display before the scroll and on it afterwards."
         }
       println(
-        "sensitivity control: $bit of ${PROBES.size} probed controls were below the fold on " +
-          "this display - $verdict",
+        "sensitivity control 1 (scroll): $bit of ${PROBES.size} probed controls were below the " +
+          "fold on this display - $verdict",
       )
+    }
+  }
+
+  /**
+   * CONTROL 2 - THE ANCESTOR. Mutation: restore the third clause,
+   * "|| everyView(hit).contains(target)", in landedOn.
+   *
+   * Run 34548620198 reported a press landing on "start-firmware" at
+   * (167.5, 910.0) - below the bottom of a 320x640 screen - because the
+   * view found there was the ReactViewGroup the button scrolls inside, and
+   * the old rule accepted any view that CONTAINED the target. A finger on
+   * the scrolling surface is not a press on a button somewhere inside it.
+   *
+   * This asserts the rule directly on real views from the live tree: the
+   * control itself counts, something inside it counts, its parent does
+   * not. It needs no particular screen size, so unlike control 1 it bites
+   * on every row.
+   */
+  @Test
+  fun anAncestorOfTheControlIsNotAPressOnTheControl() {
+    ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+      scenario.moveToState(Lifecycle.State.RESUMED)
+      scenario.awaitTag(START)
+      scenario.awaitTag(CONTROL)
+      scenario.centreOfTag(CONTROL)
+
+      val report = scenario.readMain { activity ->
+        val root = activity.window.decorView
+        val target = findByTag(root, CONTROL)
+          ?: throw AssertionError("cannot locate \"$CONTROL\": no such view")
+        val parent = target.parent as? View
+          ?: throw AssertionError("\"$CONTROL\" has no parent view to test the rule against")
+        val inside = everyView(target).firstOrNull { it !== target }
+          ?: throw AssertionError("\"$CONTROL\" has no child view to test the rule against")
+
+        val itself = isWithin(target, target)
+        val descendant = isWithin(inside, target)
+        val ancestor = isWithin(parent, target)
+        println(
+          "ancestor control: target=${target.javaClass.simpleName} " +
+            "parent=${parent.javaClass.simpleName} inner=${inside.javaClass.simpleName} " +
+            "landedOn(self)=$itself landedOn(inner)=$descendant landedOn(parent)=$ancestor",
+        )
+        Triple(itself, descendant, ancestor)
+      }
+
+      assertTrue("landedOn rejected the control itself, which is the one case it must accept", report.first)
+      assertTrue(
+        "landedOn rejected a view genuinely inside \"$CONTROL\". A Pressable's inner Text " +
+          "carries no testID of its own, so rejecting it would reject real presses.",
+        report.second,
+      )
+      assertFalse(
+        "landedOn accepted the PARENT of \"$CONTROL\" as a press on it. That is the rule that " +
+          "made run 34548620198 report a press landing on this control at a coordinate below " +
+          "the bottom of the screen: the view under the point was the scroll container, and " +
+          "containing the target was treated as being it.",
+        report.third,
+      )
+    }
+  }
+
+  /**
+   * CONTROL 3 - THE CLIP. Mutation: hit-test viewAt with screenRectOf
+   * instead of visibleScreenRectOf.
+   *
+   * A scroll container's own rectangle spans its entire content, so an
+   * unclipped hit test answers "yes, there is a view here" for points far
+   * below the screen. The clipped rectangle is the platform's own answer
+   * to what survives every ancestor's bounds, and below the bottom of the
+   * display nothing does - so the only honest answer there is no view.
+   *
+   * The point used is the display's own bottom edge plus a margin, derived
+   * from the measured display rather than hard-coded, so this bites on any
+   * screen size.
+   */
+  @Test
+  fun nothingResolvesAtAPointBelowTheDisplay() {
+    ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+      scenario.moveToState(Lifecycle.State.RESUMED)
+      scenario.awaitTag(START)
+      scenario.awaitTag(CONTROL)
+      scenario.scrollStartScreenToTop()
+
+      val report = scenario.readMain { activity ->
+        val root = activity.window.decorView
+        val display = screenRectOf(root)
+        val belowX = display.exactCenterX()
+        val belowY = (display.bottom + 200).toFloat()
+        val clipped = viewAt(root, belowX, belowY)
+        val unclipped = everyView(root)
+          .filter { view ->
+            view.visibility == View.VISIBLE && view.isShown && view.alpha > 0f &&
+              screenRectOf(view).contains(belowX.toInt(), belowY.toInt())
+          }
+          .lastOrNull()
+        println(
+          "clip control: display=$display probed=($belowX, $belowY) " +
+            "clippedHit=${clipped?.javaClass?.simpleName ?: "<none>"} " +
+            "unclippedHit=${unclipped?.javaClass?.simpleName ?: "<none>"}",
+        )
+        clipped?.let { "${it.javaClass.simpleName}[${it.tag}] at ${screenRectOf(it)}" }
+      }
+
+      assertNull(
+        "a point 200 pixels below the bottom of the display resolved to a view ($report). " +
+          "Nothing is visible there, so the hit test is reading unclipped bounds - which is " +
+          "how run 34548620198 found a ReactViewGroup at (167.5, 910.0) on a 320x640 screen.",
+        report,
+      )
+    }
+  }
+
+  /**
+   * CONTROL 4 - THE DESTINATION. Mutation: await ADVANCED_DESTINATION
+   * where DESTINATION belongs.
+   *
+   * Pressing "start-firmware" opens the SIMPLE flasher. The advanced one
+   * is a second press away, behind "flasher-advanced-mode". Run
+   * 34548620198 spent forty seconds per case waiting for the advanced tag
+   * with the simple screen already drawn in front of it, so this asserts
+   * both halves of the route and, in between, that the advanced screen is
+   * NOT already present - which is what makes awaiting the wrong tag fail
+   * rather than accidentally succeed.
+   */
+  @Test
+  fun startFirmwareOpensTheSimpleFlasherAndAdvancedModeOpensTheOtherOne() {
+    ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+      scenario.moveToState(Lifecycle.State.RESUMED)
+      scenario.awaitTag(START)
+      scenario.awaitTag(CONTROL)
+
+      scenario.tapTag(CONTROL)
+      scenario.awaitTag(DESTINATION)
+      println("destination control: \"$CONTROL\" opened \"$DESTINATION\"")
+
+      assertFalse(
+        "\"$ADVANCED_DESTINATION\" is already present on the screen \"$CONTROL\" opens, so " +
+          "awaiting it there would pass without the advanced control ever being pressed and " +
+          "this route would not be tested at all",
+        scenario.hasTag(ADVANCED_DESTINATION),
+      )
+
+      scenario.awaitTag(TO_ADVANCED)
+      scenario.tapTag(TO_ADVANCED)
+      scenario.awaitTag(ADVANCED_DESTINATION)
+      println("destination control: \"$TO_ADVANCED\" opened \"$ADVANCED_DESTINATION\"")
     }
   }
 

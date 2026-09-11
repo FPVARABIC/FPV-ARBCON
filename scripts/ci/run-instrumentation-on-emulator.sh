@@ -284,7 +284,7 @@ echo "input/ANR extract: $(wc -l < "$DIAG/input-and-anr.txt" 2>/dev/null || echo
 # time. The same geometry is now printed by the controls in
 # InputInjectionControlTest that ASSERT it, so these lines are a record of
 # a test that would have failed had the numbers been wrong.
-grep -aE "scroll-and-press control:|no-scroll control:|sensitivity control:|positive control:|occlusion control:|mutation control:" \
+grep -aE "scroll-and-press control:|no-scroll control:|scrolled control:|sensitivity control|ancestor control:|clip control:|destination control:|positive control:|occlusion control:|mutation control:" \
   "$DIAG/logcat.txt" 2>/dev/null \
   | sed 's/.*System\.out: //' | cut -c1-220 | head -60 > "$DIAG/tap-geometry.txt" 2>/dev/null || true
 echo "tap geometry: $(wc -l < "$DIAG/tap-geometry.txt" 2>/dev/null || echo 0) lines"

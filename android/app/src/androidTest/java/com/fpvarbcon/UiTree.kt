@@ -167,36 +167,54 @@ private fun inject(event: InputEvent): Boolean =
   instrumentation().uiAutomation.injectInputEvent(event, true)
 
 /**
- * THE RECTANGLE A VIEW OCCUPIES ON THE DISPLAY: where getLocationOnScreen
- * puts it, and its own width and height.
+ * WHERE A VIEW IS ON THE DISPLAY: its getLocationOnScreen position and its
+ * own width and height, unclipped.
  *
- * Deliberately NOT getGlobalVisibleRect, which run 34544271920 measured
- * side by side with this for the same three controls on API 34:
+ * This is the right rectangle to AIM at. getLocationOnScreen reports the
+ * display position, which is the space MotionEvents are injected in, so
+ * taking a centre from it is correct and always was - the coordinate
+ * (167.5, 910.0) that run 34544271920 rejected was a truthful answer to
+ * "where is this view", asked about a view that had been scrolled off the
+ * screen. See [bringTagOnScreen] for what was actually missing.
  *
- *   start-configure, on screen      getLocationOnScreen 91,530 size 184x48
- *                                   getGlobalVisibleRect Rect(91, 530 - 275, 578)
- *                                   returned TRUE - the two agree exactly
- *
- *   start-firmware, off screen      getLocationOnScreen 60,886 size 215x48
- *                                   getGlobalVisibleRect Rect(60, 862 - 275, 910)
- *                                   returned FALSE
- *
- * getGlobalVisibleRect reports the VISIBLE part and returns false when none
- * of the view is visible - and the rectangle it leaves behind in that case
- * is not meaningful, which the second row shows: 862..910 for a view that
- * actually spans 886..934. Anything that reads that rectangle without
- * reading the return value is reading a number that means nothing.
- *
- * The same run also measured the root at getLocationOnScreen 0,0 with
- * "screen and root spaces differ : false", so on that device the two are
- * the same space. This function does not depend on that: it works from the
- * display position directly, so the press path measures, injects and
- * hit-tests in ONE space whether or not the window sits at the origin.
+ * It is the wrong rectangle to HIT-TEST with, because it does not know
+ * about clipping: a scroll container's own rectangle spans its entire
+ * content, far past the viewport, so a point hundreds of pixels below the
+ * screen still falls inside it. [visibleScreenRectOf] is the hit-testing
+ * counterpart.
  */
 fun screenRectOf(view: View): Rect {
   val location = IntArray(2)
   view.getLocationOnScreen(location)
   return Rect(location[0], location[1], location[0] + view.width, location[1] + view.height)
+}
+
+/**
+ * WHAT OF A VIEW IS ACTUALLY VISIBLE, in display coordinates, or null when
+ * none of it is.
+ *
+ * getGlobalVisibleRect is the platform's own clipping answer: it intersects
+ * the view with every ancestor's bounds and with the window, and returns
+ * false when nothing survives. That is exactly the question a press has to
+ * ask, and it is the half [screenRectOf] cannot answer - run 34548620198
+ * showed a ReactViewGroup scroll container being reported as the view under
+ * (167.5, 910.0) on a 320x640 display, because its unclipped rectangle
+ * covers the whole scrollable content while its VISIBLE rectangle stops at
+ * the viewport.
+ *
+ * It reports in the root view's coordinates, so the root's own screen
+ * position is added to bring it into display space. On the measured device
+ * that offset is (0, 0) - run 34544271920 printed "screen and root spaces
+ * differ : false" - and adding it anyway means the press path does not
+ * depend on that happening to be true.
+ */
+fun visibleScreenRectOf(root: View, view: View): Rect? {
+  val rect = Rect()
+  if (!view.getGlobalVisibleRect(rect)) return null
+  val rootOnScreen = IntArray(2)
+  root.getLocationOnScreen(rootOnScreen)
+  rect.offset(rootOnScreen[0], rootOnScreen[1])
+  return rect
 }
 
 /**
@@ -314,24 +332,40 @@ fun ActivityScenario<MainActivity>.tapTag(testId: String) {
  * one drawn on top - which is the one a finger would hit.
  *
  * [x] and [y] are DISPLAY coordinates, the same space centreOfTag measures
- * in and the same space the MotionEvents are injected in. The candidates
- * are compared in that space too, via [screenRectOf], so measure, inject
- * and hit-test are one space end to end.
+ * in and the same space the MotionEvents are injected in.
  *
- * getGlobalVisibleRect is still called, but only for its RETURN VALUE: it
- * is the platform's own answer to "is any part of this view actually
- * visible", which a scrolled-away view fails. The rectangle it fills in is
- * not read, because when it returns false that rectangle is meaningless -
- * see [screenRectOf] for the measurement that showed it 24 pixels adrift.
+ * The candidates are compared against their CLIPPED rectangles, not their
+ * own bounds. Run 34548620198 showed why: at (167.5, 910.0) on a 320x640
+ * display - below the bottom of the screen - hit-testing against unclipped
+ * bounds returned a ReactViewGroup, because a scroll container's own
+ * rectangle spans its whole content. Nothing is visible at that point, so
+ * the honest answer there is no view at all, and [visibleScreenRectOf]
+ * gives it by asking the platform what survives every ancestor's clip.
  */
 fun viewAt(root: View, x: Float, y: Float): View? =
   everyView(root)
     .filter { view ->
       view.visibility == View.VISIBLE && view.isShown && view.alpha > 0f &&
-        view.getGlobalVisibleRect(Rect()) &&
-        screenRectOf(view).contains(x.toInt(), y.toInt())
+        visibleScreenRectOf(root, view)?.contains(x.toInt(), y.toInt()) == true
     }
     .lastOrNull()
+
+/**
+ * Whether a press that resolved to [hit] is a press ON [target].
+ *
+ * Only two things count: the view under the point IS the control, or it is
+ * genuinely INSIDE it - a Pressable's inner Text carries no testID of its
+ * own, so requiring tag equality would reject real presses.
+ *
+ * An ANCESTOR of the control does not count, and used to. That is how run
+ * 34548620198 reported a press landing on "start-firmware" at a coordinate
+ * below the bottom of the screen: the view found there was the scroll
+ * container the button lives in, and "the hit contains the target" accepted
+ * it. A finger on the scrolling surface is not a press on a button inside
+ * it, however far down that button is.
+ */
+fun landedOn(hit: View?, target: View?): Boolean =
+  hit != null && target != null && (hit === target || everyView(target).contains(hit))
 
 /** What a press was able to establish about itself. */
 data class TapEvidence(
@@ -381,8 +415,7 @@ fun ActivityScenario<MainActivity>.tapTagWithEvidence(testId: String): TapEviden
     val root = activity.window.decorView
     val target = findByTag(root, testId)
     val hit = viewAt(root, x, y)
-    val within = hit != null && target != null &&
-      (hit === target || everyView(target).contains(hit) || everyView(hit).contains(target))
+    val within = landedOn(hit, target)
     (hit?.tag as? String) to within
   }
 
