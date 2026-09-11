@@ -151,19 +151,38 @@ if [ -n "$LOGCAT" ] && [ -s "$LOGCAT" ]; then
   # that mattered said only that something had gone wrong. The matched
   # lines and the frames after them go into the digest, which is re-printed
   # last, so the crash arrives with the verdict.
-  if grep -n "FATAL EXCEPTION" "$LOGCAT" >/dev/null; then
-    note "::error::the app under test hit an uncaught exception during instrumentation"
-    note "--- first uncaught exception, with the frames after it ---"
-    while IFS= read -r line; do note "  $line"; done < <(
-      grep -A 40 -m 1 "FATAL EXCEPTION" "$LOGCAT" | cut -c1-300
-    )
-    note "--- every FATAL EXCEPTION header in this run ---"
-    while IFS= read -r line; do note "  $line"; done < <(
-      grep -n "FATAL EXCEPTION" "$LOGCAT" | head -20 | cut -c1-300
-    )
+  # WHOSE CRASH IT WAS, NOT MERELY THAT THERE WAS ONE.
+  #
+  # This used to be `grep FATAL EXCEPTION` followed by "the app under test
+  # hit an uncaught exception". An emulator runs Gmail, Play services, a
+  # launcher and a wallpaper picker, and run 34642729506 was failed for a
+  # crash in com.google.android.gm. Attribution now comes from the
+  # "Process:" line the platform writes under each header - see
+  # classify-fatal-blocks.py for the three verdicts and why only one of
+  # them fails a run.
+  SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+  CLASSIFIER="$SCRIPT_DIR/classify-fatal-blocks.py"
+
+  # THE CONTROLS RUN FIRST, EVERY TIME. A classifier whose own controls
+  # have not run is a guess with line numbers, and its verdict below would
+  # be worth no more than the grep it replaced.
+  control_report="$(mktemp)"
+  control_status=0
+  python3 "$CLASSIFIER" --self-test > "$control_report" 2>&1 || control_status=$?
+  while IFS= read -r line; do note "$line"; done < "$control_report"
+  rm -f "$control_report"
+  if [ "$control_status" -ne 0 ]; then
+    note "::error::the FATAL attribution controls did not pass, so the verdicts below cannot be trusted"
     FAILED=1
-  else
-    note "no FATAL EXCEPTION in logcat"
+  fi
+
+  fatal_report="$(mktemp)"
+  fatal_status=0
+  python3 "$CLASSIFIER" "$LOGCAT" > "$fatal_report" 2>&1 || fatal_status=$?
+  while IFS= read -r line; do note "$line"; done < "$fatal_report"
+  rm -f "$fatal_report"
+  if [ "$fatal_status" -ne 0 ]; then
+    FAILED=1
   fi
   if grep -nE "ANR in com\.fpvarbcon|Reason: Input dispatching timed out" "$LOGCAT"; then
     note "::error::the app under test was reported as not responding (ANR)"
