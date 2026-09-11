@@ -232,11 +232,26 @@ fun screenRectOf(view: View): Rect {
 fun visibleScreenRectOf(root: View, view: View): Rect? {
   val rect = Rect()
   if (!view.getGlobalVisibleRect(rect)) return null
-  val rootOnScreen = IntArray(2)
-  root.getLocationOnScreen(rootOnScreen)
-  rect.offset(rootOnScreen[0], rootOnScreen[1])
-  return rect
+  return toDisplaySpace(rect, rootOriginOf(root))
 }
+
+/** Where the root view's own origin sits on the display. */
+fun rootOriginOf(root: View): IntArray = IntArray(2).also { root.getLocationOnScreen(it) }
+
+/**
+ * A rectangle in the root view's (window) coordinates, expressed on the
+ * DISPLAY, given where the root's origin sits.
+ *
+ * Split out as arithmetic on purpose. Every emulator row in this matrix so
+ * far has reported a root origin of (0, 0), which makes the two spaces
+ * identical and makes this conversion impossible to tell apart from doing
+ * nothing at all. A conversion that is only ever exercised with a zero
+ * offset has never been exercised. CoordinateSpaceTest drives this
+ * function with a non-zero origin directly, so the arithmetic is proved
+ * whatever the device happens to report.
+ */
+fun toDisplaySpace(windowRect: Rect, rootOnScreen: IntArray): Rect =
+  Rect(windowRect).also { it.offset(rootOnScreen[0], rootOnScreen[1]) }
 
 /**
  * SCROLLS THE CONTROL ONTO THE DISPLAY BEFORE ANYONE AIMS AT IT.

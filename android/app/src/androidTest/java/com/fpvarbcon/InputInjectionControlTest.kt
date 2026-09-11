@@ -123,13 +123,23 @@ class InputInjectionControlTest {
     val centre: FloatArray,
     val targetRect: Rect,
     val displayRect: Rect,
+    /**
+     * The root's own screen origin, PRINTED rather than assumed. Every row
+     * so far has reported (0, 0), which is what makes the window-to-display
+     * conversion invisible on this hardware - see CoordinateSpaceTest.
+     */
+    val rootOrigin: IntArray,
+    /** The target's genuinely visible area, converted into display space. */
+    val visibleRect: Rect?,
     val hitDescription: String,
     val landed: Boolean,
   ) {
     val centreText: String get() = "(${centre[0]}, ${centre[1]})"
+    val originText: String get() = "(${rootOrigin[0]}, ${rootOrigin[1]})"
 
     override fun toString(): String =
-      "\"$testId\" centre=$centreText rect=$targetRect display=$displayRect " +
+      "\"$testId\" centre=$centreText rect=$targetRect visible=${visibleRect ?: "<none>"} " +
+        "display=$displayRect rootOrigin=$originText " +
         "deepestViewThere=$hitDescription landed=$landed"
   }
 
@@ -384,6 +394,8 @@ class InputInjectionControlTest {
             centre = centre,
             targetRect = screenRectOf(target),
             displayRect = screenRectOf(root),
+            rootOrigin = rootOriginOf(root),
+            visibleRect = visibleScreenRectOf(root, target),
             hitDescription = hit?.let { "${it.javaClass.simpleName}[${it.tag}]" } ?: "<none>",
             landed = isWithin(hit, target),
           )
@@ -400,6 +412,24 @@ class InputInjectionControlTest {
             "the display ${report.displayRect}. An event injected there reaches no window, so " +
             "the press would report nothing happening whether or not the control works.",
           report.displayRect.contains(centre[0].toInt(), centre[1].toInt()),
+        )
+        // THE VISIBLE RECTANGLE, ASSERTED RATHER THAN IMPLIED.
+        //
+        // The three checks above use the control's OWN rectangle and the
+        // display's. Neither knows about clipping, so together they would
+        // still pass for a control scrolled half out of a container. This
+        // one uses the platform's clipped answer, converted into display
+        // space by the root's measured origin, which is the rectangle a
+        // finger could actually touch. The origin is printed above rather
+        // than assumed, and CoordinateSpaceTest proves the conversion with
+        // a non-zero origin - which no emulator row has yet reported.
+        assertTrue(
+          "the coordinate that would be pressed for \"$probe\", ${report.centreText}, is not " +
+            "inside the control's VISIBLE rectangle ${report.visibleRect ?: "<nothing visible>"}. " +
+            "Its own bounds are ${report.targetRect} and the root origin is " +
+            "${report.originText}, so part of the control is clipped away by something between " +
+            "it and the window and the press would land on whatever is doing the clipping.",
+          report.visibleRect?.contains(centre[0].toInt(), centre[1].toInt()) == true,
         )
         assertTrue(
           "at ${report.centreText} the deepest drawn view is ${report.hitDescription}, which is " +
@@ -471,6 +501,8 @@ class InputInjectionControlTest {
             centre = centre,
             targetRect = rect,
             displayRect = screenRectOf(root),
+            rootOrigin = rootOriginOf(root),
+            visibleRect = visibleScreenRectOf(root, target),
             hitDescription = hit?.let { "${it.javaClass.simpleName}[${it.tag}]" } ?: "<none>",
             landed = isWithin(hit, target),
           )
