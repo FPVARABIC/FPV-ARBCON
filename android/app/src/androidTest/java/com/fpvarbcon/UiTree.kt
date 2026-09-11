@@ -34,6 +34,14 @@ import java.util.concurrent.atomic.AtomicReference
  * here are real MotionEvents injected at the view's actual screen
  * coordinates - the same path a finger takes.
  *
+ * WHY A PRESS SCROLLS FIRST. Taking the finger's path seriously means
+ * taking its reach seriously: a finger cannot press what is not on the
+ * screen. Being in the view tree is not the same as being on the display,
+ * and run 34544271920 measured two controls sitting hundreds of pixels
+ * below the bottom of a 320x640 screen while every presence check in this
+ * file was satisfied. See bringTagOnScreen for the numbers and for what
+ * the harness was doing with them.
+ *
  * WHY NOT Instrumentation.sendPointerSync. It injects with a TARGET UID:
  * the platform delivers the event only if the window that would receive it
  * is owned by the instrumented application, and otherwise rejects the whole
@@ -65,6 +73,9 @@ private const val POLL_MILLIS = 100L
 
 /** How long a React Native screen is given to appear before it is a failure. */
 const val RENDER_TIMEOUT_MILLIS = 40_000L
+
+/** How long a scroll is given to bring a control onto the display. */
+const val SCROLL_SETTLE_TIMEOUT_MILLIS = 8_000L
 
 private fun instrumentation() = InstrumentationRegistry.getInstrumentation()
 
@@ -155,16 +166,113 @@ fun ActivityScenario<MainActivity>.hasTag(testId: String): Boolean =
 private fun inject(event: InputEvent): Boolean =
   instrumentation().uiAutomation.injectInputEvent(event, true)
 
-/** The centre of the view carrying [testId], in display coordinates. */
-fun ActivityScenario<MainActivity>.centreOfTag(testId: String): FloatArray = readMain { activity ->
-  val view = findByTag(activity.window.decorView, testId)
-    ?: throw AssertionError("cannot locate \"$testId\": no such view")
+/**
+ * THE RECTANGLE A VIEW OCCUPIES ON THE DISPLAY: where getLocationOnScreen
+ * puts it, and its own width and height.
+ *
+ * Deliberately NOT getGlobalVisibleRect, which run 34544271920 measured
+ * side by side with this for the same three controls on API 34:
+ *
+ *   start-configure, on screen      getLocationOnScreen 91,530 size 184x48
+ *                                   getGlobalVisibleRect Rect(91, 530 - 275, 578)
+ *                                   returned TRUE - the two agree exactly
+ *
+ *   start-firmware, off screen      getLocationOnScreen 60,886 size 215x48
+ *                                   getGlobalVisibleRect Rect(60, 862 - 275, 910)
+ *                                   returned FALSE
+ *
+ * getGlobalVisibleRect reports the VISIBLE part and returns false when none
+ * of the view is visible - and the rectangle it leaves behind in that case
+ * is not meaningful, which the second row shows: 862..910 for a view that
+ * actually spans 886..934. Anything that reads that rectangle without
+ * reading the return value is reading a number that means nothing.
+ *
+ * The same run also measured the root at getLocationOnScreen 0,0 with
+ * "screen and root spaces differ : false", so on that device the two are
+ * the same space. This function does not depend on that: it works from the
+ * display position directly, so the press path measures, injects and
+ * hit-tests in ONE space whether or not the window sits at the origin.
+ */
+fun screenRectOf(view: View): Rect {
   val location = IntArray(2)
   view.getLocationOnScreen(location)
-  floatArrayOf(
-    (location[0] + view.width / 2).toFloat(),
-    (location[1] + view.height / 2).toFloat(),
+  return Rect(location[0], location[1], location[0] + view.width, location[1] + view.height)
+}
+
+/**
+ * SCROLLS THE CONTROL ONTO THE DISPLAY BEFORE ANYONE AIMS AT IT.
+ *
+ * awaitTag is satisfied by isShown, and isShown is true for a view that is
+ * attached and visible up its whole chain - INCLUDING one scrolled far past
+ * the bottom of the screen. So a control could be "there" by every check
+ * this file made and still be nowhere a finger could reach.
+ *
+ * That is exactly what run 34544271920 found on a 320x640 display:
+ *
+ *   start-firmware            at y 886, centre injected at (167, 910)
+ *   start-flight-style-guide  at y 1247, centre injected at (189, 1271)
+ *
+ * Both coordinates are below the 640-pixel bottom of the display, so the
+ * events went to a coordinate no window contains and nothing happened -
+ * while start-configure, at y 530, worked. The controls are not broken and
+ * the product is not broken: the start screen is a ReactScrollView and a
+ * user scrolls to them. The harness did not.
+ *
+ * requestRectangleOnScreen asks the ancestors - the ReactScrollView among
+ * them - to bring the view's own rectangle into view immediately, which is
+ * the same mechanism the platform uses for focus and accessibility. The
+ * loop then waits for the position to STOP CHANGING and for the view to be
+ * genuinely visible with its centre inside the display, because a scroll
+ * that is still moving would be measured mid-flight.
+ */
+fun ActivityScenario<MainActivity>.bringTagOnScreen(testId: String) {
+  val deadline = SystemClock.uptimeMillis() + SCROLL_SETTLE_TIMEOUT_MILLIS
+  var previous: Rect? = null
+  var lastRect = Rect()
+  var lastDisplay = Rect()
+  var lastVisible = false
+  while (SystemClock.uptimeMillis() < deadline) {
+    val settled = readMain { activity ->
+      val root = activity.window.decorView
+      val view = findByTag(root, testId)
+        ?: throw AssertionError("cannot locate \"$testId\": no such view")
+      view.requestRectangleOnScreen(Rect(0, 0, view.width, view.height), true)
+      val now = screenRectOf(view)
+      val stable = now == previous
+      previous = now
+      lastRect = now
+      lastDisplay = screenRectOf(root)
+      lastVisible = view.getGlobalVisibleRect(Rect())
+      // The centre is what gets injected, so the centre is what has to be
+      // on the display - not merely some corner of the view.
+      stable && lastVisible && lastDisplay.contains(now.centerX(), now.centerY())
+    }
+    if (settled) return
+    instrumentation().waitForIdleSync()
+    SystemClock.sleep(POLL_MILLIS)
+  }
+  throw AssertionError(
+    "\"$testId\" could not be brought onto the display within " +
+      "${SCROLL_SETTLE_TIMEOUT_MILLIS}ms. It occupies $lastRect on the display, the display " +
+      "area is $lastDisplay, and getGlobalVisibleRect returned $lastVisible. A press aimed at " +
+      "a control in this state is injected at a coordinate no window contains, so it would " +
+      "report nothing happening whether or not the control works.",
   )
+}
+
+/**
+ * The centre of the view carrying [testId], in display coordinates, AFTER
+ * the control has been scrolled onto the display - see [bringTagOnScreen]
+ * for what happens when that step is missing.
+ */
+fun ActivityScenario<MainActivity>.centreOfTag(testId: String): FloatArray {
+  bringTagOnScreen(testId)
+  return readMain { activity ->
+    val view = findByTag(activity.window.decorView, testId)
+      ?: throw AssertionError("cannot locate \"$testId\": no such view")
+    val rect = screenRectOf(view)
+    floatArrayOf(rect.exactCenterX(), rect.exactCenterY())
+  }
 }
 
 /**
@@ -204,13 +312,24 @@ fun ActivityScenario<MainActivity>.tapTag(testId: String) {
  * hand it a touch. Children are visited after their parent and later
  * siblings after earlier ones, so the LAST match in traversal order is the
  * one drawn on top - which is the one a finger would hit.
+ *
+ * [x] and [y] are DISPLAY coordinates, the same space centreOfTag measures
+ * in and the same space the MotionEvents are injected in. The candidates
+ * are compared in that space too, via [screenRectOf], so measure, inject
+ * and hit-test are one space end to end.
+ *
+ * getGlobalVisibleRect is still called, but only for its RETURN VALUE: it
+ * is the platform's own answer to "is any part of this view actually
+ * visible", which a scrolled-away view fails. The rectangle it fills in is
+ * not read, because when it returns false that rectangle is meaningless -
+ * see [screenRectOf] for the measurement that showed it 24 pixels adrift.
  */
 fun viewAt(root: View, x: Float, y: Float): View? =
   everyView(root)
     .filter { view ->
-      val rect = Rect()
       view.visibility == View.VISIBLE && view.isShown && view.alpha > 0f &&
-        view.getGlobalVisibleRect(rect) && rect.contains(x.toInt(), y.toInt())
+        view.getGlobalVisibleRect(Rect()) &&
+        screenRectOf(view).contains(x.toInt(), y.toInt())
     }
     .lastOrNull()
 
