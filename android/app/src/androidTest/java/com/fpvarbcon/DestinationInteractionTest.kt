@@ -9,6 +9,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.facebook.react.modules.i18nmanager.I18nUtil
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -120,6 +121,31 @@ class DestinationInteractionTest {
       "MODES", "FAILSAFE", "POWER", "OSD", "VTX", "LED", "SENSORS", "BLACKBOX",
       "PRESETS", "CLI",
     )
+  }
+
+  /**
+   * EVERY CASE STARTS AT A KNOWN TEXT SIZE, NOT AT WHATEVER THE LAST ONE
+   * LEFT BEHIND.
+   *
+   * The font scale is SYSTEM state: one case setting it to 2.0 changes the
+   * device for every case that runs afterwards. Restoring it in @After was
+   * the only guard, which makes correctness depend on the previous case
+   * having finished its restore - and on the order JUnit happens to pick,
+   * which is not specified.
+   *
+   * Run 34649197028 failed everyClickableControlExposesAnAccessibilityName
+   * with the guide control parked at Rect(-68, 29 - 0, 640) on a 320x640
+   * display, in a run where atFontScaleOneAndTwoNoTextIsSilentlyClipped
+   * had set 2.0. Whether those two facts are connected is NOT established
+   * here and this does not claim they are. What is established is that a
+   * case could inherit another case's system state, which makes any result
+   * that depends on it unreliable in both directions - so it is pinned
+   * before as well as restored after, and the scale each case ran at is no
+   * longer a question about ordering.
+   */
+  @Before
+  fun pinFontScale() {
+    setSystemFontScale("1.0")
   }
 
   @After

@@ -305,12 +305,44 @@ fun ActivityScenario<MainActivity>.bringTagOnScreen(testId: String) {
     instrumentation().waitForIdleSync()
     SystemClock.sleep(POLL_MILLIS)
   }
+  // WHY THIS FAILURE PRINTS A CHAIN AND NOT JUST A RECTANGLE.
+  //
+  // Run 34649197028 failed here with
+  //
+  //   "start-flight-style-guide" could not be brought onto the display
+  //   within 8000ms. It occupies Rect(-68, 29 - 0, 640)
+  //
+  // - 68 wide, 611 tall, entirely to the left of a 320x640 display, for a
+  // control that measured 226x48 and scrolled onto the screen correctly
+  // elsewhere in the SAME run. A rectangle alone cannot say whether the
+  // product laid the control out there or the harness measured it during
+  // a configuration change, and those need opposite repairs. So the class,
+  // the ancestors with their own rectangles, the font scale and the
+  // lifecycle state go with it.
+  val context = readMain { activity ->
+    val view = findByTag(activity.window.decorView, testId)
+    val chain = StringBuilder()
+    var current: View? = view
+    var depth = 0
+    while (current != null && depth < 12) {
+      chain.append("\n      ${current.javaClass.simpleName}")
+      (current.tag as? String)?.let { chain.append("[$it]") }
+      chain.append(" at ${screenRectOf(current)} shown=${current.isShown}")
+      current = current.parent as? View
+      depth++
+    }
+    "view=${view?.javaClass?.simpleName ?: "<gone>"} " +
+      "fontScale=${activity.resources.configuration.fontScale} " +
+      "layoutDirection=${activity.window.decorView.layoutDirection}" +
+      "\n    ancestors, nearest first:$chain"
+  }
+
   throw AssertionError(
     "\"$testId\" could not be brought onto the display within " +
       "${SCROLL_SETTLE_TIMEOUT_MILLIS}ms. It occupies $lastRect on the display, the display " +
       "area is $lastDisplay, and getGlobalVisibleRect returned $lastVisible. A press aimed at " +
       "a control in this state is injected at a coordinate no window contains, so it would " +
-      "report nothing happening whether or not the control works.",
+      "report nothing happening whether or not the control works.\n    $context",
   )
 }
 
